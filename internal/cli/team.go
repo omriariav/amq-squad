@@ -30,10 +30,12 @@ func runTeam(args []string) error {
 		return runTeamRules(args[1:])
 	case "sync":
 		return runTeamSync(args[1:])
+	case "open":
+		return runTeamOpen(args[1:])
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'show', 'rules', or 'sync'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'show', 'rules', 'sync', or 'open'.", args[0])
 	}
 }
 
@@ -515,6 +517,8 @@ Usage:
   amq-squad team rules init           Seed .amq-squad/team-rules.md with a stub
   amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
                                       (default: preview; --apply writes)
+  amq-squad team open [--layout h|v]  Open every team member in an iTerm2 window
+                                      (macOS + iTerm2 only)
 
 Roles come from the built-in catalog. Run 'amq-squad team init --help' to
 see them and the available flags.
