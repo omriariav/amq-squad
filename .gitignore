@@ -1,0 +1,9 @@
+/amq-squad
+*.test
+*.out
+coverage.txt
+.DS_Store
+.idea/
+.vscode/
+.agent-mail/
+.amqrc
