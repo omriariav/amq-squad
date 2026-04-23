@@ -104,6 +104,62 @@ func TestScanFindsRecordsAcrossSessions(t *testing.T) {
 	}
 }
 
+func TestScanMatchesBaseRootLayout(t *testing.T) {
+	// Base-root agents (no session) live at .agent-mail/agents/<handle>,
+	// not under .agent-mail/<session>/agents/<handle>. Scan must find both.
+	project := t.TempDir()
+	dir := filepath.Join(project, ".agent-mail", "agents", "claude")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := Record{
+		CWD:       project,
+		Binary:    "claude",
+		Handle:    "claude",
+		Role:      "fullstack",
+		Root:      filepath.Join(project, ".agent-mail"),
+		StartedAt: time.Now().UTC(),
+	}
+	if err := Write(dir, rec); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := Scan(project)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("Scan returned %d records, want 1", len(recs))
+	}
+	if recs[0].Handle != "claude" || recs[0].Role != "fullstack" {
+		t.Errorf("unexpected record: %+v", recs[0])
+	}
+}
+
+func TestScanDedupesAcrossPatterns(t *testing.T) {
+	// Mix session and base-root layouts in one project. Both should be
+	// returned, with no duplicates.
+	project := t.TempDir()
+	mk := func(path string, rec Record) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := Write(filepath.Dir(path), rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(filepath.Join(project, ".agent-mail", "collab", "agents", "cto", FileName),
+		Record{Handle: "cto", Role: "cto", Binary: "codex"})
+	mk(filepath.Join(project, ".agent-mail", "agents", "claude", FileName),
+		Record{Handle: "claude", Role: "fullstack", Binary: "claude"})
+	recs, err := Scan(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("want 2 records (cto + claude), got %d: %+v", len(recs), recs)
+	}
+}
+
 func TestScanEmptyProject(t *testing.T) {
 	recs, err := Scan(t.TempDir())
 	if err != nil {

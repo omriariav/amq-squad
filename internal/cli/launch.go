@@ -45,6 +45,9 @@ Side effects before exec:
   2. Writes <root>/agents/<handle>/launch.json with cwd, binary, argv, role.
   3. Writes a role.md stub if one does not already exist.
   4. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
+
+With --dry-run, none of the above run: the resolved coop exec command is
+printed and amq-squad exits. Disk state is untouched.
 `)
 	}
 
@@ -90,19 +93,9 @@ Side effects before exec:
 		Root:      root,
 		StartedAt: time.Now().UTC(),
 	}
-	if err := launch.Write(agentDir, rec); err != nil {
-		return fmt.Errorf("write launch record: %w", err)
-	}
 
-	// Seed role.md from the catalog when the role is known. Never
-	// overwrites existing user edits.
-	if *roleFlag != "" {
-		if err := seedRoleStub(agentDir, *roleFlag); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: seed role.md: %v\n", err)
-		}
-	}
-
-	// Build the coop exec invocation.
+	// Build the coop exec invocation. Done before any disk writes so
+	// --dry-run is a true preview with zero side effects.
 	coopArgs := []string{"coop", "exec"}
 	if *session != "" {
 		coopArgs = append(coopArgs, "--session", *session)
@@ -121,8 +114,20 @@ Side effects before exec:
 
 	if *dryRun {
 		fmt.Println("amq", strings.Join(coopArgs, " "))
-		fmt.Fprintln(os.Stderr, "(dry run - launch.json written, not execing)")
+		fmt.Fprintln(os.Stderr, "(dry run - no files written, not execing)")
 		return nil
+	}
+
+	if err := launch.Write(agentDir, rec); err != nil {
+		return fmt.Errorf("write launch record: %w", err)
+	}
+
+	// Seed role.md from the catalog when the role is known. Never
+	// overwrites existing user edits.
+	if *roleFlag != "" {
+		if err := seedRoleStub(agentDir, *roleFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: seed role.md: %v\n", err)
+		}
 	}
 
 	amqBin, err := exec.LookPath("amq")

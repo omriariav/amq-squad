@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -98,6 +100,32 @@ func TestUniqueMemberCWDs(t *testing.T) {
 	}
 	if got[0] != "/home/u/proj-a" || got[1] != "/home/u/proj-b" {
 		t.Errorf("uniqueMemberCWDs = %v, want [proj-a proj-b]", got)
+	}
+}
+
+func TestExpandPathTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	cases := map[string]string{
+		"~":               home,
+		"~/Code/proj":     filepath.Join(home, "Code", "proj"),
+		"/already/abs":    "/already/abs",
+		"relative/subdir": "", // expect an absolute result; exact value depends on cwd
+	}
+	for in, want := range cases {
+		got, err := expandPath(in)
+		if err != nil {
+			t.Errorf("expandPath(%q) err: %v", in, err)
+			continue
+		}
+		if !filepath.IsAbs(got) {
+			t.Errorf("expandPath(%q) = %q, not absolute", in, got)
+		}
+		if want != "" && got != want {
+			t.Errorf("expandPath(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

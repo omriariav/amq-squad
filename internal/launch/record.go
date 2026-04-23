@@ -71,22 +71,36 @@ func Read(agentDir string) (Record, error) {
 	return rec, nil
 }
 
-// Scan walks <projectRoot>/.agent-mail/*/agents/*/ for launch.json records
-// and returns every record found. Order is whatever filepath.Glob returns;
+// Scan walks a projectRoot for launch.json records across both AMQ layouts:
+//
+//	<projectRoot>/.agent-mail/<session>/agents/<handle>/launch.json  (coop exec)
+//	<projectRoot>/.agent-mail/agents/<handle>/launch.json            (base root, no session)
+//
+// Returns every record found. Order is whatever filepath.Glob returns;
 // callers that care about ordering should sort the result themselves.
 func Scan(projectRoot string) ([]Record, error) {
-	pattern := filepath.Join(projectRoot, ".agent-mail", "*", "agents", "*", FileName)
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("glob: %w", err)
+	patterns := []string{
+		filepath.Join(projectRoot, ".agent-mail", "*", "agents", "*", FileName),
+		filepath.Join(projectRoot, ".agent-mail", "agents", "*", FileName),
 	}
-	out := make([]Record, 0, len(matches))
-	for _, m := range matches {
-		rec, err := Read(filepath.Dir(m))
+	seen := map[string]bool{}
+	var out []Record
+	for _, p := range patterns {
+		matches, err := filepath.Glob(p)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("glob %s: %w", p, err)
 		}
-		out = append(out, rec)
+		for _, m := range matches {
+			if seen[m] {
+				continue
+			}
+			seen[m] = true
+			rec, err := Read(filepath.Dir(m))
+			if err != nil {
+				continue
+			}
+			out = append(out, rec)
+		}
 	}
 	return out, nil
 }

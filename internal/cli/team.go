@@ -145,7 +145,7 @@ Known roles:
 			Session: session,
 		}
 		if c, ok := cwdOverrides[id]; ok {
-			abs, err := filepath.Abs(c)
+			abs, err := expandPath(c)
 			if err != nil {
 				return fmt.Errorf("resolve cwd for %s: %w", id, err)
 			}
@@ -318,6 +318,23 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// expandPath resolves a user-supplied path: expands a leading "~" or "~/"
+// to the user's home directory, then makes the result absolute.
+func expandPath(p string) (string, error) {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("home dir: %w", err)
+		}
+		if p == "~" {
+			p = home
+		} else {
+			p = filepath.Join(home, p[2:])
+		}
+	}
+	return filepath.Abs(p)
 }
 
 func parseKV(s string) (map[string]string, error) {
