@@ -88,14 +88,17 @@ only.
 // iTerm2 uses. In iTerm2's terminology: "split vertically" creates a pane
 // to the right (divider is vertical); "split horizontally" creates a pane
 // below (divider is horizontal).
+//
+// Accepts the short aliases "v" and "h" alongside the full names, matching
+// the --help / README usage strings.
 func splitVerbFor(layout string) (string, error) {
-	switch layout {
-	case "vertical":
+	switch strings.ToLower(layout) {
+	case "vertical", "v":
 		return "split vertically", nil
-	case "horizontal":
+	case "horizontal", "h":
 		return "split horizontally", nil
 	default:
-		return "", fmt.Errorf("unknown layout %q (want: vertical, horizontal)", layout)
+		return "", fmt.Errorf("unknown layout %q (want: vertical|v or horizontal|h)", layout)
 	}
 }
 
@@ -125,7 +128,11 @@ func buildITermScript(projectDir, squadBin string, members []team.Member, splitV
 		cmd := emitTeamCommand(m.EffectiveCWD(projectDir), squadBin, m)
 		paneVar := fmt.Sprintf("pane%d", i+1)
 		if i > 0 {
-			fmt.Fprintf(&b, `  tell current tab of newWindow to set %s to (%s with default profile)`+"\n", paneVar, splitVerb)
+			// iTerm2: `split ...` is a session command, not a tab command.
+			// Split off the immediately preceding pane so new panes cascade
+			// naturally rather than repeatedly subdividing pane1.
+			prevPane := fmt.Sprintf("pane%d", i)
+			fmt.Fprintf(&b, `  tell %s to set %s to (%s with default profile)`+"\n", prevPane, paneVar, splitVerb)
 		}
 		fmt.Fprintf(&b, `  tell %s to write text %s`+"\n", paneVar, applescriptString(cmd))
 	}
