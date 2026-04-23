@@ -15,11 +15,20 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 
 `amq-squad` captures this at team-setup time (`.amq-squad/team.json`) and per-agent at launch time (`launch.json` + `role.md` inside the AMQ mailbox). AMQ itself stays unchanged.
 
+## Install
+
+```
+go install github.com/omriariav/amq-squad/cmd/amq-squad@latest
+```
+
+Requires Go 1.25+ and the `amq` binary in `PATH` (v0.32+). Installing to `$GOBIN` (or `$HOME/go/bin`) is enough; the launch commands `team show` emits use the absolute path to whichever `amq-squad` binary is running, so nothing else needs to be on `PATH`.
+
 ## Quick start
 
 ```
 cd ~/Code/my-project
-amq-squad team
+amq coop init          # one time, sets up .amqrc and .agent-mail/
+amq-squad team         # pick roles, writes .amq-squad/team.json, prints launch commands
 ```
 
 First time: you're prompted to pick which of the built-in roles should be on the team. A `.amq-squad/team.json` is written. Every subsequent run prints the launch commands, one per role. Paste each into its own terminal tab.
@@ -116,6 +125,11 @@ amq-squad list [--json]             List registered agents across known projects
 ```
 
 `<AM_ROOT>` is resolved via `amq env --json` so amq-squad and `amq coop exec` always agree on where the mailbox lives.
+
+## Known gaps
+
+- Sending a cross-session message from a setup terminal (outside any `amq coop exec`) has no clean idiom upstream. Tracked in [avivsinai/agent-message-queue#96](https://github.com/avivsinai/agent-message-queue/issues/96) with a proposed `--from-session` flag. Current workaround: boot your own session first, then send from inside it.
+- Multi-cwd teams still need manual `peers` config in each project's `.amqrc` for cross-project AMQ routing. `team sync` doesn't touch `.amqrc`; that's left to the user until we're sure of the shape.
 
 ## Requires
 
