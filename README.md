@@ -90,6 +90,94 @@ amq-squad team sync --apply      Write the managed block into CLAUDE.md and AGEN
 
 On first `--apply` with an existing CLAUDE.md, your content is adopted as the user region and the managed block is appended. Subsequent syncs only refresh the managed block.
 
+## Walkthroughs
+
+### Squad in a single project
+
+Two agents in one repo: CTO on codex, Fullstack on claude.
+
+```
+cd ~/Code/my-project
+amq coop init                              # one time; writes .amqrc and .agent-mail/
+amq-squad team init --roles cto,fullstack  # writes .amq-squad/team.json
+amq-squad team rules init                  # seeds .amq-squad/team-rules.md
+```
+
+Open `.amq-squad/team-rules.md` and replace the TODO sections with your team's actual workflow, approvals, and communication norms. Then push the managed block into the doc files each binary reads:
+
+```
+amq-squad team sync          # preview (exit 1 if anything would change)
+amq-squad team sync --apply  # writes the managed block into CLAUDE.md and AGENTS.md
+```
+
+Print the launch commands:
+
+```
+amq-squad team
+```
+
+You'll get two commands, one per role. Open an iTerm2 window (⌘N) and split (⌘D), paste one command per pane. Each agent boots through `amq-squad launch`, which writes `launch.json` + a catalog-seeded `role.md` into the mailbox before handing off to `amq coop exec`. From there both agents share the thread `p2p/cto__fullstack` for design escalations and review handoffs.
+
+### Squad spanning two projects
+
+One team, members in two repos: CTO and Fullstack in `project-a`, QA in `project-b`. The team-home (`team.json` + `team-rules.md`) lives in `project-a`.
+
+Initialize AMQ in each project so the mailbox trees exist:
+
+```
+(cd ~/Code/project-a && amq coop init)
+(cd ~/Code/project-b && amq coop init)
+```
+
+For cross-project messages to route, each project's `.amqrc` needs a `peers` entry pointing at the other project's `.agent-mail/`. Edit `~/Code/project-a/.amqrc`:
+
+```json
+{
+  "root": ".agent-mail",
+  "project": "project-a",
+  "peers": {
+    "project-b": "/Users/you/Code/project-b/.agent-mail"
+  }
+}
+```
+
+Mirror it in `~/Code/project-b/.amqrc`:
+
+```json
+{
+  "root": ".agent-mail",
+  "project": "project-b",
+  "peers": {
+    "project-a": "/Users/you/Code/project-a/.agent-mail"
+  }
+}
+```
+
+This peers step is manual today; see the **Known gaps** section below.
+
+Now pick the team from the team-home project:
+
+```
+cd ~/Code/project-a
+amq-squad team init --roles cto,fullstack,qa --cwd qa=~/Code/project-b
+amq-squad team rules init
+```
+
+Edit `~/Code/project-a/.amq-squad/team-rules.md`. Then sync. Because one member lives elsewhere, sync walks both cwds and writes CLAUDE.md + AGENTS.md in each:
+
+```
+amq-squad team sync --apply
+# Wrote 4 files: CLAUDE.md and AGENTS.md in project-a, same in project-b
+```
+
+Print the launch commands:
+
+```
+amq-squad team
+```
+
+You'll get three commands, each with the correct `cd <member-cwd>` so every agent boots in the right repo. Open three panes and paste one per pane. QA's codex or claude will live in `project-b`'s mailbox tree; CTO and Fullstack in `project-a`'s. AMQ uses the `peers` config you set above to route messages across.
+
 ## Commands
 
 ```
