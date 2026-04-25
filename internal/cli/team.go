@@ -287,6 +287,13 @@ func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap 
 	}
 	b.WriteString(" ")
 	b.WriteString(shellQuote(m.Binary))
+	if defaultArgs := defaultChildArgsForBinary(m.Binary); len(defaultArgs) > 0 {
+		b.WriteString(" --")
+		for _, arg := range defaultArgs {
+			b.WriteString(" ")
+			b.WriteString(shellQuote(arg))
+		}
+	}
 	return b.String()
 }
 

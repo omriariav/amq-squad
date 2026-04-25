@@ -45,7 +45,9 @@ Supported user inputs:
 4. Generate team rules.
    - Run `amq-squad team rules init` if `.amq-squad/team-rules.md` does not exist.
    - Write a concise rules file tailored to the requested team.
+   - Include exact active routes from `.amq-squad/team.json`: role, handle, session, project, and member cwd.
    - Include a startup-context section that names the old AMQ sessions to inspect.
+   - State that old AMQ history is context only and must not override the active roster.
    - Preserve existing user rules unless the user asks to replace them.
    - Use `references/team-rules-template.md` as the starting template.
 
@@ -55,6 +57,7 @@ Supported user inputs:
 
 6. Print fresh launch commands.
    - Run `amq-squad team show`.
+   - Expect generated commands to include Codex `--dangerously-bypass-approvals-and-sandbox` and Claude `--permission-mode auto` after `--`.
    - Tell the user to paste one command into each terminal pane or tab.
 
 ## Command Pattern
@@ -80,7 +83,7 @@ amq-squad team show
 
 Generate `.amq-squad/team-rules.md` with these sections:
 
-- Team members and ownership
+- Team members, ownership, and exact active routes
 - Startup context from previous AMQ history
 - Workflow
 - Approvals
@@ -97,6 +100,7 @@ For fresh teams, use old history for context, not execution:
 - Good: `amq-squad list`, `amq list`, `amq read`, `amq thread --include-body`
 - Good: `amq-squad restore` as a preview list
 - Avoid: `amq-squad restore --exec` unless the user asks to resume an old agent
+- Avoid: sending new work to a restorable legacy handle when `team.json` names a different current handle/session for that role
 
 ## Validation
 
