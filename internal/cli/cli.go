@@ -46,7 +46,7 @@ Usage:
 Commands:
   team      Pick your team once, then print launch commands on demand
   launch    Launch a single agent with a role (called by 'team show' output)
-  restore   Emit bash commands to restore registered agents from launch.json
+  restore   Restore registered agents from local launch history
   list      List registered agents across known projects
 
 Run 'amq-squad <command> --help' for command-specific options.

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -37,6 +38,7 @@ func TestEmitCommandIncludesRoleAndSession(t *testing.T) {
 	for _, want := range []string{
 		"cd /home/user/proj",
 		"amq-squad launch",
+		"--no-bootstrap",
 		"--role qa",
 		"--session stream1",
 		"claude",
@@ -77,6 +79,107 @@ func TestEmitCommandQuotesArgvWithSpaces(t *testing.T) {
 	}
 	if !strings.Contains(cmd, " -- ") {
 		t.Errorf("expected -- separator before argv in: %s", cmd)
+	}
+}
+
+func TestEmitCommandIncludesRootWhenSessionMissing(t *testing.T) {
+	rec := launch.Record{
+		CWD:    "/p",
+		Binary: "claude",
+		Handle: "claude",
+		Root:   "/p/.agent-mail",
+	}
+	cmd := emitCommand(rec)
+	if !strings.Contains(cmd, "--root /p/.agent-mail") {
+		t.Errorf("expected --root for base-root restore in: %s", cmd)
+	}
+}
+
+func TestLaunchArgsFromRecord(t *testing.T) {
+	rec := launch.Record{
+		CWD:     "/p",
+		Binary:  "claude",
+		Argv:    []string{"--resume", "abc"},
+		Session: "stream1",
+		Handle:  "fullstack",
+		Role:    "fullstack",
+		Root:    "/p/.agent-mail/stream1",
+	}
+	got := launchArgsFromRecord(rec)
+	want := []string{
+		"--no-bootstrap",
+		"--role", "fullstack",
+		"--session", "stream1",
+		"--me", "fullstack",
+		"claude",
+		"--",
+		"--resume", "abc",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+}
+
+func TestLaunchArgsFromRecordUsesRootWithoutSession(t *testing.T) {
+	rec := launch.Record{
+		Binary: "codex",
+		Handle: "codex",
+		Root:   "/p/.agent-mail",
+	}
+	got := launchArgsFromRecord(rec)
+	want := []string{"--no-bootstrap", "--root", "/p/.agent-mail", "--me", "codex", "codex"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+}
+
+func TestMatchesRestoreFilters(t *testing.T) {
+	rec := launch.Record{Role: "cto", Handle: "cto", Session: "stream1"}
+	cases := []struct {
+		name    string
+		role    string
+		handle  string
+		session string
+		want    bool
+	}{
+		{name: "no filters", want: true},
+		{name: "role match", role: "cto", want: true},
+		{name: "role mismatch", role: "qa", want: false},
+		{name: "handle match", handle: "cto", want: true},
+		{name: "handle mismatch", handle: "fullstack", want: false},
+		{name: "session match", session: "stream1", want: true},
+		{name: "session mismatch", session: "stream2", want: false},
+	}
+	for _, tc := range cases {
+		got := matchesRestoreFilters(rec, tc.role, tc.handle, tc.session)
+		if got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestRestoreMetadataMarksLegacyHistory(t *testing.T) {
+	entry := launch.Entry{
+		Record: launch.Record{
+			CWD:     "/p",
+			Binary:  "claude",
+			Session: "stream1",
+			Handle:  "claude",
+		},
+		AgentDir: "/p/.agent-mail/stream1/agents/claude",
+		Source:   "amq history",
+	}
+	got := restoreMetadata(entry)
+	for _, want := range []string{
+		"session: stream1",
+		"handle: claude",
+		"persona: missing",
+		"source: amq",
+		"cwd: /p",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("restoreMetadata missing %q in: %s", want, got)
+		}
 	}
 }
 

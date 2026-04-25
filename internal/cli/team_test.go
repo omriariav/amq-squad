@@ -55,12 +55,13 @@ func TestEmitTeamCommandShape(t *testing.T) {
 		Handle:  "designer",
 		Session: "designer",
 	}
-	cmd := emitTeamCommand("/home/u/proj", "amq-squad", m)
+	cmd := emitTeamCommand("/home/u/proj", "amq-squad", "/home/u/proj", m, false)
 	for _, want := range []string{
 		"cd /home/u/proj",
 		"amq-squad launch",
 		"--role designer",
 		"--session designer",
+		"--team-home /home/u/proj",
 		"--me designer",
 		" claude",
 	} {
@@ -72,7 +73,7 @@ func TestEmitTeamCommandShape(t *testing.T) {
 
 func TestEmitTeamCommandQuotesPathsWithSpaces(t *testing.T) {
 	m := team.Member{Role: "cpo", Binary: "codex", Handle: "cpo", Session: "cpo"}
-	cmd := emitTeamCommand("/home/user/my project", "amq-squad", m)
+	cmd := emitTeamCommand("/home/user/my project", "amq-squad", "/home/user/my project", m, false)
 	if !strings.Contains(cmd, "'/home/user/my project'") {
 		t.Errorf("project path not quoted: %s", cmd)
 	}
@@ -80,9 +81,17 @@ func TestEmitTeamCommandQuotesPathsWithSpaces(t *testing.T) {
 
 func TestEmitTeamCommandUsesBinaryPath(t *testing.T) {
 	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
-	cmd := emitTeamCommand("/p", "/usr/local/bin/amq-squad", m)
+	cmd := emitTeamCommand("/p", "/usr/local/bin/amq-squad", "/p", m, false)
 	if !strings.Contains(cmd, "/usr/local/bin/amq-squad launch") {
 		t.Errorf("expected absolute binary path in: %s", cmd)
+	}
+}
+
+func TestEmitTeamCommandNoBootstrap(t *testing.T) {
+	m := team.Member{Role: "qa", Binary: "claude", Handle: "qa", Session: "qa"}
+	cmd := emitTeamCommand("/p", "amq-squad", "/team", m, true)
+	if !strings.Contains(cmd, "--no-bootstrap") {
+		t.Errorf("expected --no-bootstrap in: %s", cmd)
 	}
 }
 
