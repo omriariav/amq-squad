@@ -110,13 +110,15 @@ amq-squad team sync          # preview (exit 1 if anything would change)
 amq-squad team sync --apply  # writes the managed block into CLAUDE.md and AGENTS.md
 ```
 
-Print the launch commands:
+Boot the whole team in one iTerm2 window (macOS + iTerm2 only):
 
 ```
-amq-squad team
+amq-squad team open --layout horizontal   # or --layout vertical for side-by-side
 ```
 
-You'll get two commands, one per role. Open an iTerm2 window (⌘N) and split (⌘D), paste one command per pane. Each agent boots through `amq-squad launch`, which writes `launch.json` + a catalog-seeded `role.md` into the mailbox before handing off to `amq coop exec`. From there both agents share the thread `p2p/cto__fullstack` for design escalations and review handoffs.
+That opens a new window, splits it one pane per role, and pastes each launch command. Each agent boots through `amq-squad launch`, which writes `launch.json` + a catalog-seeded `role.md` into the mailbox before handing off to `amq coop exec`. From there both agents share the thread `p2p/cto__fullstack` for design escalations and review handoffs.
+
+Prefer to handle the panes yourself? `amq-squad team` prints the same commands to stdout so you can paste them manually.
 
 ### Squad spanning two projects
 
@@ -186,6 +188,8 @@ amq-squad team init [--roles ...]   Set up this project's team
 amq-squad team show                 Print launch commands for the configured team
 amq-squad team rules init           Seed .amq-squad/team-rules.md
 amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
+amq-squad team open [--layout h|v]  Open every team member in one iTerm2 window
+                                    (macOS + iTerm2 only; --dry-run prints the osascript)
 
 amq-squad launch --role <r> --session <s> --me <handle> <binary> [-- <flags>]
                                     Launch one agent. Writes launch.json + role.md
