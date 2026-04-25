@@ -98,13 +98,15 @@ printed and amq-squad exits. Disk state is untouched.
 		StartedAt: time.Now().UTC(),
 	}
 
+	// Keep generated bootstrap out of launch.json so restore stays compact
+	// and does not replay stale startup text.
+	effectiveChildArgs := childArgs
 	if !*noBootstrap && len(childArgs) == 0 {
 		prompt, err := buildBootstrapPrompt(bootstrapContextFor(rec, agentDir, *teamHome))
 		if err != nil {
 			return err
 		}
-		childArgs = append(childArgs, prompt)
-		rec.Argv = childArgs
+		effectiveChildArgs = append(effectiveChildArgs, prompt)
 	}
 
 	// Build the coop exec invocation. Done before any disk writes so
@@ -120,9 +122,9 @@ printed and amq-squad exits. Disk state is untouched.
 		coopArgs = append(coopArgs, "--me", *me)
 	}
 	coopArgs = append(coopArgs, binary)
-	if len(childArgs) > 0 {
+	if len(effectiveChildArgs) > 0 {
 		coopArgs = append(coopArgs, "--")
-		coopArgs = append(coopArgs, childArgs...)
+		coopArgs = append(coopArgs, effectiveChildArgs...)
 	}
 
 	if *dryRun {
