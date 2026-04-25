@@ -4,10 +4,14 @@ Shared norms for this amq-squad team. Every fresh agent should read this before 
 
 ## Team Members
 
-- cpo (codex): Owns product direction, priorities, and scope.
-- cto (codex): Owns technical direction, architecture, and final engineering sign-off.
-- fullstack (claude): Owns backend/dev implementation. Rename in prose if the user calls this "backend dev".
-- qa (claude): Owns validation and regression checks. May run from a different project cwd.
+- cpo (codex): handle `<handle>`, session `<session>`, project `<project>`. Owns product direction, priorities, and scope.
+- cto (codex): handle `<handle>`, session `<session>`, project `<project>`. Owns technical direction, architecture, and final engineering sign-off.
+- fullstack (claude): handle `<handle>`, session `<session>`, project `<project>`. Owns backend/dev implementation. Rename in prose if the user calls this "backend dev".
+- qa (claude): handle `<handle>`, session `<session>`, project `<project>`. Owns validation and regression checks. May run from a different project cwd.
+
+The current `.amq-squad/team.json` roster is authoritative for live routing.
+Use old AMQ history only as context. Do not route new work to an inferred or
+restorable legacy handle when it conflicts with the current roster.
 
 ## Startup Context
 
@@ -47,6 +51,7 @@ Each agent should summarize the prior context it used before taking new work.
 
 - Use focused AMQ threads.
 - Use p2p threads for role-to-role handoffs.
+- Route messages by the current roster's handle, project, and session.
 - Include project, session, and role when referencing old history.
 - One concern per message when practical.
 

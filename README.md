@@ -59,6 +59,18 @@ amq-squad team init \
 
 `team show` emits a `cd <member-cwd>` per command so every agent boots in the right project. `team sync` walks each unique member cwd and syncs CLAUDE.md + AGENTS.md in all of them.
 
+Generated launch commands include low-friction agent defaults: Codex gets
+`--dangerously-bypass-approvals-and-sandbox`, and Claude gets
+`--permission-mode auto`. These defaults are passed through after `--` while
+the generated bootstrap prompt is still added at launch time.
+
+At launch time, each agent's bootstrap prompt includes a current team routing
+block generated from `.amq-squad/team.json`. That block is the live routing
+source of truth: role, handle, session, project, cwd, and the appropriate
+`amq send` shape from the agent's current project. Restorable AMQ history is
+still useful context, but it should not be used as the active roster when it
+conflicts with `team.json`.
+
 ## Built-in roles
 
 | ID          | Label                                | Default binary | Notable skills                      |
@@ -178,6 +190,14 @@ amq-squad team
 
 You'll get three commands, each with the correct `cd <member-cwd>` so every agent boots in the right repo. Open three panes and paste one per pane. QA's codex or claude will live in `project-b`'s mailbox tree; CTO and Fullstack in `project-a`'s. AMQ uses the `peers` config you set above to route messages across.
 
+The generated bootstrap for each role prints send commands relative to that
+role's project. For example, a `project-a` agent sending to QA in `project-b`
+will see a route shaped like:
+
+```
+amq send --to qa --project project-b --session qa
+```
+
 ## Commands
 
 ```
@@ -193,6 +213,8 @@ amq-squad launch --role <r> --session <s> --me <handle> [--no-bootstrap] <binary
                                     in the AMQ mailbox, adds a bootstrap prompt,
                                     then execs 'amq coop exec'.
                                     Usually called by the output of 'team show'.
+                                    'team show' passes Codex and Claude default
+                                    permission flags after '--'.
 
 amq-squad restore [--project dir1,dir2,...]
                                     Reconstruct launch commands from local

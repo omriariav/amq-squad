@@ -64,10 +64,19 @@ func TestEmitTeamCommandShape(t *testing.T) {
 		"--team-home /home/u/proj",
 		"--me designer",
 		" claude",
+		"-- --permission-mode auto",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("emitTeamCommand missing %q in: %s", want, cmd)
 		}
+	}
+}
+
+func TestEmitTeamCommandAddsCodexDefaultArgs(t *testing.T) {
+	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
+	cmd := emitTeamCommand("/p", "amq-squad", "/p", m, false)
+	if !strings.Contains(cmd, "-- --dangerously-bypass-approvals-and-sandbox") {
+		t.Errorf("expected codex default args in: %s", cmd)
 	}
 }
 
@@ -92,6 +101,26 @@ func TestEmitTeamCommandNoBootstrap(t *testing.T) {
 	cmd := emitTeamCommand("/p", "amq-squad", "/team", m, true)
 	if !strings.Contains(cmd, "--no-bootstrap") {
 		t.Errorf("expected --no-bootstrap in: %s", cmd)
+	}
+}
+
+func TestShouldAppendBootstrapWithDefaultChildArgs(t *testing.T) {
+	cases := []struct {
+		name      string
+		binary    string
+		childArgs []string
+		want      bool
+	}{
+		{name: "empty args", binary: "codex", want: true},
+		{name: "codex defaults", binary: "codex", childArgs: []string{"--dangerously-bypass-approvals-and-sandbox"}, want: true},
+		{name: "claude defaults", binary: "claude", childArgs: []string{"--permission-mode", "auto"}, want: true},
+		{name: "non-default args", binary: "claude", childArgs: []string{"--resume", "abc"}, want: false},
+		{name: "defaults plus custom args", binary: "codex", childArgs: []string{"--dangerously-bypass-approvals-and-sandbox", "--foo"}, want: false},
+	}
+	for _, tc := range cases {
+		if got := shouldAppendBootstrap(tc.binary, tc.childArgs); got != tc.want {
+			t.Errorf("%s: shouldAppendBootstrap(%q, %v) = %v, want %v", tc.name, tc.binary, tc.childArgs, got, tc.want)
+		}
 	}
 }
 
