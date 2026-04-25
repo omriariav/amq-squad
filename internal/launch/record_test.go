@@ -104,6 +104,167 @@ func TestScanFindsRecordsAcrossSessions(t *testing.T) {
 	}
 }
 
+func TestScanEntriesIncludesAgentDir(t *testing.T) {
+	project := t.TempDir()
+	agentDir := filepath.Join(project, ".agent-mail", "stream1", "agents", "cto")
+	rec := Record{
+		CWD:       project,
+		Binary:    "codex",
+		Session:   "stream1",
+		Handle:    "cto",
+		Role:      "cto",
+		Root:      filepath.Join(project, ".agent-mail", "stream1"),
+		StartedAt: time.Now().UTC(),
+	}
+	if err := Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ScanEntries(project)
+	if err != nil {
+		t.Fatalf("ScanEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("ScanEntries returned %d records, want 1", len(entries))
+	}
+	if entries[0].AgentDir != agentDir {
+		t.Errorf("AgentDir = %q, want %q", entries[0].AgentDir, agentDir)
+	}
+	if entries[0].Record.Handle != "cto" {
+		t.Errorf("Record.Handle = %q, want cto", entries[0].Record.Handle)
+	}
+}
+
+func TestScanLegacyEntriesFromPresence(t *testing.T) {
+	project := t.TempDir()
+	agentDir := filepath.Join(project, ".agent-mail", "stream1", "agents", "claude")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lastSeen := "2026-04-25T05:48:47Z"
+	if err := os.WriteFile(filepath.Join(agentDir, "presence.json"), []byte(`{"last_seen":"`+lastSeen+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ScanLegacyEntries(project)
+	if err != nil {
+		t.Fatalf("ScanLegacyEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("ScanLegacyEntries returned %d records, want 1", len(entries))
+	}
+	rec := entries[0].Record
+	if rec.CWD != project || rec.Binary != "claude" || rec.Handle != "claude" ||
+		rec.Session != "stream1" || rec.Root != filepath.Join(project, ".agent-mail", "stream1") {
+		t.Errorf("unexpected legacy record: %+v", rec)
+	}
+	if entries[0].Source != "amq history" {
+		t.Errorf("Source = %q, want amq history", entries[0].Source)
+	}
+	if got := rec.StartedAt.Format(time.RFC3339); got != lastSeen {
+		t.Errorf("StartedAt = %q, want %q", got, lastSeen)
+	}
+}
+
+func TestScanLegacyEntriesFromBaseRootHistory(t *testing.T) {
+	project := t.TempDir()
+	sentDir := filepath.Join(project, ".agent-mail", "agents", "codex", "outbox", "sent")
+	if err := os.MkdirAll(sentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sentDir, "message.md"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ScanLegacyEntries(project)
+	if err != nil {
+		t.Fatalf("ScanLegacyEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("ScanLegacyEntries returned %d records, want 1", len(entries))
+	}
+	rec := entries[0].Record
+	if rec.Binary != "codex" || rec.Handle != "codex" || rec.Session != "" ||
+		rec.Root != filepath.Join(project, ".agent-mail") {
+		t.Errorf("unexpected base-root legacy record: %+v", rec)
+	}
+}
+
+func TestScanLegacyEntriesSkipsUnknownBinaryHandle(t *testing.T) {
+	project := t.TempDir()
+	agentDir := filepath.Join(project, ".agent-mail", "stream1", "agents", "fullstack")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "presence.json"), []byte(`{"last_seen":"2026-04-25T05:48:47Z"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ScanLegacyEntries(project)
+	if err != nil {
+		t.Fatalf("ScanLegacyEntries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("ScanLegacyEntries returned %d records, want 0: %+v", len(entries), entries)
+	}
+}
+
+func TestScanLegacyEntriesInfersRoleFromBinaryPrefixedHandle(t *testing.T) {
+	project := t.TempDir()
+	agentDir := filepath.Join(project, ".agent-mail", "stream1", "agents", "claude-qa")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	receiptDir := filepath.Join(agentDir, "receipts")
+	if err := os.MkdirAll(receiptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(receiptDir, "receipt.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ScanLegacyEntries(project)
+	if err != nil {
+		t.Fatalf("ScanLegacyEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("ScanLegacyEntries returned %d records, want 1", len(entries))
+	}
+	rec := entries[0].Record
+	if rec.Binary != "claude" || rec.Handle != "claude-qa" || rec.Role != "qa" {
+		t.Errorf("unexpected inferred record: %+v", rec)
+	}
+}
+
+func TestScanRestorableEntriesDedupesLegacyWhenLaunchExists(t *testing.T) {
+	project := t.TempDir()
+	agentDir := filepath.Join(project, ".agent-mail", "stream1", "agents", "claude")
+	rec := Record{
+		CWD:     project,
+		Binary:  "claude",
+		Session: "stream1",
+		Handle:  "claude",
+		Root:    filepath.Join(project, ".agent-mail", "stream1"),
+	}
+	if err := Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "presence.json"), []byte(`{"last_seen":"2026-04-25T05:48:47Z"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ScanRestorableEntries(project)
+	if err != nil {
+		t.Fatalf("ScanRestorableEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("ScanRestorableEntries returned %d records, want 1", len(entries))
+	}
+	if entries[0].Source != FileName {
+		t.Errorf("Source = %q, want %s", entries[0].Source, FileName)
+	}
+}
+
 func TestScanMatchesBaseRootLayout(t *testing.T) {
 	// Base-root agents (no session) live at .agent-mail/agents/<handle>,
 	// not under .agent-mail/<session>/agents/<handle>. Scan must find both.
