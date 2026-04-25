@@ -183,21 +183,29 @@ You'll get three commands, each with the correct `cd <member-cwd>` so every agen
 ```
 amq-squad team                      Smart default: show commands, or init if none exists
 amq-squad team init [--roles ...]   Set up this project's team
-amq-squad team show                 Print launch commands for the configured team
+amq-squad team show [--no-bootstrap]
+                                    Print launch commands for the configured team
 amq-squad team rules init           Seed .amq-squad/team-rules.md
 amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
 
-amq-squad launch --role <r> --session <s> --me <handle> <binary> [-- <flags>]
+amq-squad launch --role <r> --session <s> --me <handle> [--no-bootstrap] <binary> [-- <flags>]
                                     Launch one agent. Writes launch.json + role.md
-                                    in the AMQ mailbox, then execs 'amq coop exec'.
+                                    in the AMQ mailbox, adds a bootstrap prompt,
+                                    then execs 'amq coop exec'.
                                     Usually called by the output of 'team show'.
 
 amq-squad restore [--project dir1,dir2,...]
-                                    Reconstruct launch commands from existing
-                                    launch.json files (post-boot evidence, in
-                                    contrast to team.json which is pre-boot intent).
+                                    Reconstruct launch commands from local
+                                    launch.json history and nearby role.md
+                                    persona files. Falls back to older AMQ
+                                    mailbox history when launch.json is absent
+                                    and the binary can be inferred.
+amq-squad restore --exec --role cto Exec one selected local launch through
+                                    amq coop exec.
 
-amq-squad list [--json]             List registered agents across known projects.
+amq-squad list [--json]             List restorable amq-squad records and
+                                    AMQ-only inferred history across known
+                                    projects.
 ```
 
 ## Files it writes

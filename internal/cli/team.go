@@ -45,7 +45,7 @@ func runTeamSmart() error {
 		return fmt.Errorf("getwd: %w", err)
 	}
 	if team.Exists(cwd) {
-		return emitTeamCommands(cwd)
+		return emitTeamCommands(cwd, false)
 	}
 	fmt.Fprintln(os.Stderr, "No team configured for this project yet. Let's set one up.")
 	fmt.Fprintln(os.Stderr)
@@ -53,7 +53,7 @@ func runTeamSmart() error {
 		return err
 	}
 	fmt.Fprintln(os.Stderr)
-	return emitTeamCommands(cwd)
+	return emitTeamCommands(cwd, false)
 }
 
 func runTeamInit(args []string) error {
@@ -169,11 +169,12 @@ Known roles:
 
 func runTeamShow(args []string) error {
 	fs := flag.NewFlagSet("team show", flag.ContinueOnError)
+	noBootstrap := fs.Bool("no-bootstrap", false, "emit launch commands that skip the generated bootstrap prompt")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
 
 Usage:
-  amq-squad team show
+  amq-squad team show [--no-bootstrap]
 `)
 	}
 	if err := fs.Parse(args); err != nil {
@@ -186,10 +187,10 @@ Usage:
 	if !team.Exists(cwd) {
 		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
 	}
-	return emitTeamCommands(cwd)
+	return emitTeamCommands(cwd, *noBootstrap)
 }
 
-func emitTeamCommands(projectDir string) error {
+func emitTeamCommands(projectDir string, noBootstrap bool) error {
 	t, err := team.Read(projectDir)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
@@ -239,7 +240,7 @@ func emitTeamCommands(projectDir string) error {
 		}
 		cwd := m.EffectiveCWD(t.Project)
 		fmt.Printf("# %d. %s - %s (session: %s, cwd: %s)\n", i+1, label, m.Binary, m.Session, cwd)
-		fmt.Println(emitTeamCommand(cwd, squadBin, m))
+		fmt.Println(emitTeamCommand(cwd, squadBin, t.Project, m, noBootstrap))
 		fmt.Println()
 	}
 	return nil
@@ -260,7 +261,7 @@ func uniqueMemberCWDs(projectDir string, members []team.Member) []string {
 	return out
 }
 
-func emitTeamCommand(cwd, squadBin string, m team.Member) string {
+func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap bool) string {
 	var b strings.Builder
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(cwd))
@@ -271,6 +272,13 @@ func emitTeamCommand(cwd, squadBin string, m team.Member) string {
 	b.WriteString(shellQuote(m.Role))
 	b.WriteString(" --session ")
 	b.WriteString(shellQuote(m.Session))
+	if teamHome != "" {
+		b.WriteString(" --team-home ")
+		b.WriteString(shellQuote(teamHome))
+	}
+	if noBootstrap {
+		b.WriteString(" --no-bootstrap")
+	}
 	if m.Handle != "" {
 		// Always explicit: a role-named handle avoids collisions when the
 		// same binary (e.g. codex) hosts multiple roles in one project.
@@ -511,7 +519,8 @@ func printTeamUsage() {
 Usage:
   amq-squad team                      Smart default: show commands, or init if none exists
   amq-squad team init [options]       Set up .amq-squad/team.json
-  amq-squad team show                 Print launch commands for configured team
+  amq-squad team show [--no-bootstrap]
+                                      Print launch commands for configured team
   amq-squad team rules init           Seed .amq-squad/team-rules.md with a stub
   amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
                                       (default: preview; --apply writes)

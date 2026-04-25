@@ -9,23 +9,36 @@ import (
 	"strings"
 
 	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/internal/role"
 )
+
+type restoreCandidate struct {
+	entry launch.Entry
+}
 
 func runRestore(args []string) error {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	projectDirs := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")
+	execRestore := fs.Bool("exec", false, "exec the selected launch in this terminal")
+	roleFilter := fs.String("role", "", "only consider records with this role")
+	handleFilter := fs.String("handle", "", "only consider records with this handle")
+	sessionFilter := fs.String("session", "", "only consider records with this session")
 
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad restore - emit bash commands to restore every registered agent
+		fmt.Fprint(os.Stderr, `amq-squad restore - restore registered agents from local launch history
 
 Usage:
-  amq-squad restore [--project dir1,dir2,...]
+  amq-squad restore [--project dir1,dir2,...] [--role r] [--handle h] [--session s]
+  amq-squad restore --exec --role cto
 
 Scans each project for .agent-mail/<session>/agents/<handle>/launch.json
-records and prints a bash command per agent. Default scope is the current
-working directory if --project is omitted.
+records, nearby role.md persona files, and older AMQ mailbox history when
+launch.json is missing and the original binary can be inferred. Default
+scope is the current working directory if --project is omitted. Without
+--exec, prints a bash command per matching agent.
 
-Each emitted command is ready to paste into its own terminal tab.
+With --exec, exactly one record must match; amq-squad changes to that
+record's cwd and execs the saved launch through 'amq coop exec'.
 `)
 	}
 	if err := fs.Parse(args); err != nil {
@@ -47,46 +60,157 @@ Each emitted command is ready to paste into its own terminal tab.
 		}
 	}
 
-	type found struct {
-		project string
-		rec     launch.Record
-	}
-	var records []found
+	var records []restoreCandidate
 
 	for _, dir := range dirs {
-		recs, err := launch.Scan(dir)
+		entries, err := launch.ScanRestorableEntries(dir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: scan %s: %v\n", dir, err)
 			continue
 		}
-		for _, r := range recs {
-			records = append(records, found{project: dir, rec: r})
+		for _, e := range entries {
+			if !matchesRestoreFilters(e.Record, *roleFilter, *handleFilter, *sessionFilter) {
+				continue
+			}
+			records = append(records, restoreCandidate{entry: e})
 		}
 	}
 
 	if len(records) == 0 {
-		return fmt.Errorf("no launch.json records found in %s", strings.Join(dirs, ", "))
+		return fmt.Errorf("no matching launch.json records found in %s", strings.Join(dirs, ", "))
 	}
 
 	sort.Slice(records, func(i, j int) bool {
-		if records[i].rec.Role != records[j].rec.Role {
-			return records[i].rec.Role < records[j].rec.Role
+		if records[i].entry.Record.Role != records[j].entry.Record.Role {
+			return records[i].entry.Record.Role < records[j].entry.Record.Role
 		}
-		return records[i].rec.Handle < records[j].rec.Handle
+		return records[i].entry.Record.Handle < records[j].entry.Record.Handle
 	})
+
+	if *execRestore {
+		if len(records) != 1 {
+			printRestoreCandidates(os.Stderr, records)
+			return fmt.Errorf("--exec requires exactly one matching record; narrow with --role, --handle, or --session")
+		}
+		rec := records[0].entry.Record
+		fmt.Fprintf(os.Stderr, "Restoring %s via amq coop exec.\n", restoreLabel(rec))
+		return execRestoreRecord(rec)
+	}
 
 	fmt.Println("# amq-squad restore - run each command in its own terminal tab")
 	fmt.Println()
 	for i, f := range records {
-		label := f.rec.Role
-		if label == "" {
-			label = f.rec.Handle
-		}
-		fmt.Printf("# %d. %s - %s (%s/%s)\n", i+1, label, f.rec.Binary, f.rec.CWD, f.rec.Session)
-		fmt.Println(emitCommand(f.rec))
+		rec := f.entry.Record
+		fmt.Printf("# %d. %s - %s (%s)\n", i+1, restoreLabel(rec), rec.Binary, restoreMetadata(f.entry))
+		fmt.Println(emitCommand(rec))
 		fmt.Println()
 	}
 	return nil
+}
+
+func matchesRestoreFilters(rec launch.Record, roleFilter, handleFilter, sessionFilter string) bool {
+	if roleFilter != "" && rec.Role != roleFilter {
+		return false
+	}
+	if handleFilter != "" && rec.Handle != handleFilter {
+		return false
+	}
+	if sessionFilter != "" && rec.Session != sessionFilter {
+		return false
+	}
+	return true
+}
+
+func printRestoreCandidates(out *os.File, records []restoreCandidate) {
+	fmt.Fprintln(out, "Matching restore candidates:")
+	for i, f := range records {
+		rec := f.entry.Record
+		fmt.Fprintf(out, "  %d. %s - %s (%s)\n", i+1, restoreLabel(rec), rec.Binary, restoreMetadata(f.entry))
+	}
+}
+
+func restoreLabel(rec launch.Record) string {
+	if rec.Role != "" {
+		return rec.Role
+	}
+	if rec.Handle != "" {
+		return rec.Handle
+	}
+	return "(unknown)"
+}
+
+func restoreMetadata(entry launch.Entry) string {
+	rec := entry.Record
+	parts := []string{}
+	if rec.Session != "" {
+		parts = append(parts, "session: "+rec.Session)
+	}
+	if rec.Handle != "" {
+		parts = append(parts, "handle: "+rec.Handle)
+	}
+	if _, err := os.Stat(filepath.Join(entry.AgentDir, role.FileName)); err == nil {
+		parts = append(parts, "persona: role.md")
+	} else {
+		parts = append(parts, "persona: missing")
+	}
+	if entry.Source != "" {
+		parts = append(parts, "source: "+sourceLabel(entry.Source))
+	}
+	if !rec.StartedAt.IsZero() {
+		label := "started"
+		if entry.Source != "" && entry.Source != launch.FileName {
+			label = "last seen"
+		}
+		parts = append(parts, label+": "+rec.StartedAt.Format("2006-01-02 15:04"))
+	}
+	if rec.CWD != "" {
+		parts = append(parts, "cwd: "+rec.CWD)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func sourceLabel(source string) string {
+	switch source {
+	case launch.FileName:
+		return "amq-squad"
+	case "amq history":
+		return "amq"
+	case "":
+		return "(unknown)"
+	default:
+		return source
+	}
+}
+
+func execRestoreRecord(rec launch.Record) error {
+	if rec.CWD == "" {
+		return fmt.Errorf("launch record has empty cwd")
+	}
+	if err := os.Chdir(rec.CWD); err != nil {
+		return fmt.Errorf("chdir %s: %w", rec.CWD, err)
+	}
+	return runLaunch(launchArgsFromRecord(rec))
+}
+
+func launchArgsFromRecord(rec launch.Record) []string {
+	args := []string{"--no-bootstrap"}
+	if rec.Role != "" {
+		args = append(args, "--role", rec.Role)
+	}
+	if rec.Session != "" {
+		args = append(args, "--session", rec.Session)
+	} else if rec.Root != "" {
+		args = append(args, "--root", rec.Root)
+	}
+	if rec.Handle != "" {
+		args = append(args, "--me", rec.Handle)
+	}
+	args = append(args, rec.Binary)
+	if len(rec.Argv) > 0 {
+		args = append(args, "--")
+		args = append(args, rec.Argv...)
+	}
+	return args
 }
 
 // emitCommand reconstructs the bash command for a launch record.
@@ -97,6 +221,7 @@ func emitCommand(rec launch.Record) string {
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(rec.CWD))
 	b.WriteString(" && amq-squad launch")
+	b.WriteString(" --no-bootstrap")
 	if rec.Role != "" {
 		b.WriteString(" --role ")
 		b.WriteString(shellQuote(rec.Role))
@@ -104,6 +229,9 @@ func emitCommand(rec launch.Record) string {
 	if rec.Session != "" {
 		b.WriteString(" --session ")
 		b.WriteString(shellQuote(rec.Session))
+	} else if rec.Root != "" {
+		b.WriteString(" --root ")
+		b.WriteString(shellQuote(rec.Root))
 	}
 	if rec.Handle != "" && rec.Handle != defaultHandleFor(rec.Binary) {
 		b.WriteString(" --me ")
