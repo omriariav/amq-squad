@@ -47,7 +47,7 @@ Side effects before exec:
   2. Writes <root>/agents/<handle>/launch.json with cwd, binary, argv, role.
   3. Writes a role.md stub if one does not already exist.
   4. Adds a generated bootstrap prompt unless --no-bootstrap is set or
-     explicit binary args were provided.
+     non-default binary args were provided.
   5. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
 
 With --dry-run, none of the above run: the resolved coop exec command is
@@ -100,8 +100,8 @@ printed and amq-squad exits. Disk state is untouched.
 
 	// Keep generated bootstrap out of launch.json so restore stays compact
 	// and does not replay stale startup text.
-	effectiveChildArgs := childArgs
-	if !*noBootstrap && len(childArgs) == 0 {
+	effectiveChildArgs := append([]string(nil), childArgs...)
+	if !*noBootstrap && shouldAppendBootstrap(binary, childArgs) {
 		prompt, err := buildBootstrapPrompt(bootstrapContextFor(rec, agentDir, *teamHome))
 		if err != nil {
 			return err
