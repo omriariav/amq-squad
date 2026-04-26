@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -58,8 +59,9 @@ func runTeamSmart() error {
 
 func runTeamInit(args []string) error {
 	fs := flag.NewFlagSet("team init", flag.ContinueOnError)
-	rolesFlag := fs.String("roles", "", "comma-separated role IDs to include (skips interactive prompt)")
-	binaryFlag := fs.String("binary", "", "per-role binary overrides, e.g. qa=codex,pm=codex")
+	personasFlag := fs.String("personas", "", "comma-separated persona IDs to include (alias for --roles)")
+	rolesFlag := fs.String("roles", "", "comma-separated role/persona IDs to include (skips interactive prompt)")
+	binaryFlag := fs.String("binary", "", "per-persona CLI overrides, e.g. fullstack=codex,qa=claude")
 	sessionFlag := fs.String("session", "", "per-role session overrides, e.g. cpo=stream1,cto=stream2")
 	cwdFlag := fs.String("cwd", "", "per-role working directory overrides, e.g. qa=/path/to/sibling-project")
 	force := fs.Bool("force", false, "overwrite an existing team.json")
@@ -67,21 +69,26 @@ func runTeamInit(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--roles id1,id2,...] [--binary role=bin,...] [--session role=name,...] [--force]
+  amq-squad team init [--personas id1,id2,...] [--binary persona=cli,...] [--session role=name,...] [--force]
+  amq-squad team init [--roles id1,id2,...] [--binary role=cli,...] [--session role=name,...] [--force]
 
-Without --roles, prompts interactively. Writes <cwd>/.amq-squad/team.json.
-Also seeds <cwd>/.amq-squad/team-rules.md if it does not already exist.
-The directory where this runs becomes the team-home. Members can live in other
+Without --personas or --roles, prompts interactively: first choose personas,
+then choose the CLI for each persona. Writes <cwd>/.amq-squad/team.json and
+seeds <cwd>/.amq-squad/team-rules.md if it does not already exist. The
+directory where this runs becomes the team-home. Members can live in other
 directories via --cwd role=/path.
 
-Known roles:
+Known personas:
 `)
 		for _, r := range catalog.All() {
-			fmt.Fprintf(os.Stderr, "  %-10s %s (default: %s)\n", r.ID, r.Label, r.PreferredBinary)
+			fmt.Fprintf(os.Stderr, "  %-10s %s (default CLI: %s)\n", r.ID, r.Label, r.PreferredBinary)
 		}
 	}
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *rolesFlag != "" && *personasFlag != "" {
+		return fmt.Errorf("use either --personas or --roles, not both")
 	}
 
 	cwd, err := os.Getwd()
@@ -91,19 +98,6 @@ Known roles:
 
 	if team.Exists(cwd) && !*force {
 		return fmt.Errorf("team.json already exists at %s. Use --force to overwrite.", team.Path(cwd))
-	}
-
-	var picked []string
-	if *rolesFlag != "" {
-		picked = splitCSV(*rolesFlag)
-	} else {
-		picked, err = promptRoleSelection()
-		if err != nil {
-			return err
-		}
-	}
-	if len(picked) == 0 {
-		return fmt.Errorf("no roles selected, aborting")
 	}
 
 	binaryOverrides, err := parseKV(*binaryFlag)
@@ -117,6 +111,26 @@ Known roles:
 	cwdOverrides, err := parseKV(*cwdFlag)
 	if err != nil {
 		return fmt.Errorf("parse --cwd: %w", err)
+	}
+
+	var picked []string
+	interactive := *rolesFlag == "" && *personasFlag == ""
+	if *personasFlag != "" {
+		picked = splitCSV(*personasFlag)
+	} else if *rolesFlag != "" {
+		picked = splitCSV(*rolesFlag)
+	} else {
+		reader := bufio.NewReader(os.Stdin)
+		picked, err = promptPersonaSelection(reader, os.Stderr)
+		if err != nil {
+			return err
+		}
+		if err := promptBinarySelection(reader, os.Stderr, picked, binaryOverrides); err != nil {
+			return err
+		}
+	}
+	if len(picked) == 0 {
+		return fmt.Errorf("no personas selected, aborting")
 	}
 
 	members := make([]team.Member, 0, len(picked))
@@ -134,6 +148,9 @@ Known roles:
 		binary := r.PreferredBinary
 		if b, ok := binaryOverrides[id]; ok {
 			binary = b
+		}
+		if interactive && binary == "" {
+			binary = r.PreferredBinary
 		}
 		session := id
 		if s, ok := sessionOverrides[id]; ok {
@@ -305,19 +322,18 @@ func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap 
 	return b.String()
 }
 
-func promptRoleSelection() ([]string, error) {
-	fmt.Fprintln(os.Stderr, "Available roles:")
+func promptPersonaSelection(reader *bufio.Reader, out io.Writer) ([]string, error) {
+	fmt.Fprintln(out, "Available personas:")
 	for _, r := range catalog.All() {
 		skills := ""
 		if len(r.Skills) > 0 {
 			skills = "  [" + strings.Join(r.Skills, ", ") + "]"
 		}
-		fmt.Fprintf(os.Stderr, "  %-10s %s (%s)%s\n", r.ID, r.Label, r.PreferredBinary, skills)
+		fmt.Fprintf(out, "  %-10s %s (default CLI: %s)%s\n", r.ID, r.Label, r.PreferredBinary, skills)
 	}
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprint(os.Stderr, "Which roles do you want on this team? (comma-separated IDs, or 'all'): ")
+	fmt.Fprintln(out)
+	fmt.Fprint(out, "Which personas do you want on this team? (comma-separated IDs, or 'all'): ")
 
-	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		return nil, fmt.Errorf("read selection: %w", err)
@@ -330,6 +346,34 @@ func promptRoleSelection() ([]string, error) {
 		return catalog.IDs(), nil
 	}
 	return splitCSV(line), nil
+}
+
+func promptBinarySelection(reader *bufio.Reader, out io.Writer, personas []string, overrides map[string]string) error {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Choose CLI per persona. Press Enter to use the default.")
+	for _, raw := range personas {
+		id := strings.TrimSpace(strings.ToLower(raw))
+		if id == "" {
+			continue
+		}
+		if _, ok := overrides[id]; ok {
+			continue
+		}
+		r := catalog.Lookup(id)
+		if r == nil {
+			continue
+		}
+		fmt.Fprintf(out, "CLI for %s (%s) [%s]: ", id, r.Label, r.PreferredBinary)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("read CLI for %s: %w", id, err)
+		}
+		cli := strings.TrimSpace(line)
+		if cli != "" {
+			overrides[id] = cli
+		}
+	}
+	return nil
 }
 
 func splitCSV(s string) []string {
@@ -533,14 +577,15 @@ func printTeamUsage() {
 
 Usage:
   amq-squad team                      Smart default: show commands, or init if none exists
-  amq-squad team init [options]       Set up team.json and seed team-rules.md
+  amq-squad team init [options]       Pick personas, choose CLIs, and seed rules
   amq-squad team show [--no-bootstrap]
                                       Print launch commands for configured team
   amq-squad team rules init           Seed missing team-rules.md with a stub
   amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
                                       (default: preview; --apply writes)
 
-Roles come from the built-in catalog. Run 'amq-squad team init --help' to
-see them and the available flags.
+Personas come from the built-in catalog. Run 'amq-squad team init --help' to
+see them and the available flags. Use --binary fullstack=codex to run a
+persona with a different CLI.
 `)
 }

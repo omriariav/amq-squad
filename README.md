@@ -39,10 +39,10 @@ cd ~/Code/my-project
 amq-squad team
 ```
 
-First run: pick roles. `amq-squad` writes `.amq-squad/team.json`, seeds
-`.amq-squad/team-rules.md`, and prints launch commands. Later runs print the
-same launch commands without asking again. Paste one command into each terminal
-pane or tab.
+First run: pick personas, then choose which CLI runs each one. `amq-squad`
+writes `.amq-squad/team.json`, seeds `.amq-squad/team-rules.md`, and prints
+launch commands. Later runs print the same launch commands without asking
+again. Paste one command into each terminal pane or tab.
 
 You do not need to run `amq coop init` for the normal single-project flow.
 Generated launch commands include `--session`, and AMQ creates the needed
@@ -53,14 +53,14 @@ cross-project peer routing.
 Non-interactive setup:
 
 ```sh
-amq-squad team init --roles cpo,cto,fullstack,qa,pm,designer
+amq-squad team init --personas cpo,cto,fullstack,qa,pm,designer
 ```
 
-With per-role overrides:
+With per-persona CLI overrides:
 
 ```sh
 amq-squad team init \
-  --roles cpo,fullstack,qa \
+  --personas cpo,fullstack,qa \
   --binary fullstack=codex \
   --session cpo=stream1,fullstack=stream2,qa=stream3
 ```
@@ -72,7 +72,7 @@ individual members can live in other projects:
 ```sh
 cd ~/Code/project-a
 amq-squad team init \
-  --roles cpo,cto,fullstack,qa \
+  --personas cpo,cto,fullstack,qa \
   --cwd qa=~/Code/project-b
 ```
 
@@ -110,7 +110,7 @@ source of truth: role, handle, session, project, cwd, and the appropriate
 still useful context, but it should not be used as the active roster when it
 conflicts with `team.json`.
 
-## Built-in roles
+## Built-in personas
 
 | ID          | Label                                | Default binary | Notable skills                      |
 |-------------|--------------------------------------|----------------|-------------------------------------|
@@ -121,7 +121,7 @@ conflicts with `team.json`.
 | `pm`        | Project Manager / Product Owner      | claude         |                                     |
 | `designer`  | Product Designer                     | claude         | `/frontend-design`, `/canvas-design`|
 
-Defaults are starting points. Override binary or session per role via flags at
+Defaults are starting points. Override binary or session per persona via flags at
 `team init` time, or edit `.amq-squad/team.json` directly.
 
 ## Shared team rules
@@ -156,7 +156,7 @@ Two agents in one repo: CTO on codex, Fullstack on claude.
 
 ```sh
 cd ~/Code/my-project
-amq-squad team init --roles cto,fullstack
+amq-squad team init --personas cto,fullstack
 ```
 
 Open `.amq-squad/team-rules.md` and replace the template sections with your
@@ -227,7 +227,7 @@ Now pick the team from the team-home project:
 
 ```sh
 cd ~/Code/project-a
-amq-squad team init --roles cto,fullstack,qa --cwd qa=~/Code/project-b
+amq-squad team init --personas cto,fullstack,qa --cwd qa=~/Code/project-b
 ```
 
 Edit `~/Code/project-a/.amq-squad/team-rules.md`. Then sync. Because one member
@@ -262,7 +262,8 @@ amq send --to qa --project project-b --session qa
 
 ```text
 amq-squad team                      Smart default: show commands, or init if none exists
-amq-squad team init [--roles ...]   Set up this project's team and rules stub
+amq-squad team init [--personas ...]
+                                    Pick personas, choose CLIs, and seed rules
 amq-squad team show [--no-bootstrap]
                                     Print launch commands for the configured team
 amq-squad team rules init           Seed missing .amq-squad/team-rules.md

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -140,6 +142,93 @@ func TestApplyDefaultChildArgs(t *testing.T) {
 	got = applyDefaultChildArgs("codex", explicit)
 	if !reflect.DeepEqual(got, explicit) {
 		t.Errorf("applyDefaultChildArgs should preserve explicit args: got %v, want %v", got, explicit)
+	}
+}
+
+func TestPromptPersonaSelection(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("fullstack,cto\n"))
+	var out bytes.Buffer
+	got, err := promptPersonaSelection(reader, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"fullstack", "cto"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("promptPersonaSelection = %v, want %v", got, want)
+	}
+	if !strings.Contains(out.String(), "Available personas") {
+		t.Errorf("prompt output missing personas list: %s", out.String())
+	}
+}
+
+func TestPromptBinarySelection(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("codex\n\n"))
+	var out bytes.Buffer
+	overrides := map[string]string{}
+	if err := promptBinarySelection(reader, &out, []string{"fullstack", "qa"}, overrides); err != nil {
+		t.Fatal(err)
+	}
+	if overrides["fullstack"] != "codex" {
+		t.Errorf("fullstack override = %q, want codex", overrides["fullstack"])
+	}
+	if _, ok := overrides["qa"]; ok {
+		t.Errorf("qa should keep default, got override %q", overrides["qa"])
+	}
+	if !strings.Contains(out.String(), "CLI for fullstack") {
+		t.Errorf("prompt output missing fullstack CLI prompt: %s", out.String())
+	}
+}
+
+func TestPromptBinarySelectionPreservesFlagOverride(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("\n"))
+	var out bytes.Buffer
+	overrides := map[string]string{"fullstack": "codex"}
+	if err := promptBinarySelection(reader, &out, []string{"fullstack"}, overrides); err != nil {
+		t.Fatal(err)
+	}
+	if overrides["fullstack"] != "codex" {
+		t.Errorf("fullstack override = %q, want codex", overrides["fullstack"])
+	}
+	if strings.Contains(out.String(), "CLI for fullstack") {
+		t.Errorf("prompt should skip personas with flag overrides: %s", out.String())
+	}
+}
+
+func TestRunTeamInitPersonasAliasAndBinaryOverride(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	if err := runTeamInit([]string{"--personas", "fullstack", "--binary", "fullstack=codex"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	got, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Members) != 1 {
+		t.Fatalf("members = %v, want one", got.Members)
+	}
+	m := got.Members[0]
+	if m.Role != "fullstack" || m.Binary != "codex" {
+		t.Fatalf("member = %+v, want fullstack on codex", m)
+	}
+}
+
+func TestRunTeamInitRejectsRolesAndPersonasTogether(t *testing.T) {
+	err := runTeamInit([]string{"--roles", "cto", "--personas", "fullstack"})
+	if err == nil || !strings.Contains(err.Error(), "either --personas or --roles") {
+		t.Fatalf("runTeamInit error = %v, want roles/personas conflict", err)
 	}
 }
 
