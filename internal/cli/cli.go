@@ -18,7 +18,7 @@ func Run(args []string, version string) error {
 		printUsage()
 		return nil
 	}
-	if args[0] == "--version" || args[0] == "-v" {
+	if args[0] == "--version" || args[0] == "-v" || args[0] == "version" {
 		fmt.Println("amq-squad", version)
 		return nil
 	}
@@ -48,6 +48,7 @@ Commands:
   launch    Launch a single agent with a role (called by 'team show' output)
   restore   Restore registered agents from local launch history
   list      List registered agents across known projects
+  version   Print the amq-squad version
 
 Run 'amq-squad <command> --help' for command-specific options.
 `)
