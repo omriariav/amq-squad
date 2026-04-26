@@ -148,6 +148,12 @@ func TestApplyConversationRestoreArgsRejectsConflicts(t *testing.T) {
 	if _, err := applyConversationRestoreArgs("claude", []string{"--permission-mode", "auto", "--model", "sonnet"}, "abc"); err == nil {
 		t.Fatal("claude extra args plus conversation should fail")
 	}
+	if _, err := applyConversationRestoreArgs("codex", []string{"--dangerously-bypass-approvals-and-sandbox", "resume", "abc", "--model", "gpt-5"}, "abc"); err == nil {
+		t.Fatal("codex native resume plus extra args should fail")
+	}
+	if _, err := applyConversationRestoreArgs("claude", []string{"--permission-mode", "auto", "--resume", "abc", "--model", "sonnet"}, "abc"); err == nil {
+		t.Fatal("claude native resume plus extra args should fail")
+	}
 }
 
 func setupFakeAMQ(t *testing.T) {

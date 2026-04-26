@@ -203,6 +203,9 @@ func applyConversationRestoreArgs(binary string, childArgs []string, conversatio
 			if ref != conversation {
 				return nil, fmt.Errorf("--conversation %q conflicts with existing codex resume %q", conversation, ref)
 			}
+			if !hasNoExtraConversationArgs(binary, stripCodexResumeRef(childArgs, conversation)) {
+				return nil, fmt.Errorf("--conversation cannot be combined with extra codex args; omit --conversation and pass native resume args after --")
+			}
 			return childArgs, nil
 		}
 		if !hasNoExtraConversationArgs(binary, childArgs) {
@@ -217,6 +220,9 @@ func applyConversationRestoreArgs(binary string, childArgs []string, conversatio
 			}
 			if ref != conversation {
 				return nil, fmt.Errorf("--conversation %q conflicts with existing claude resume %q", conversation, ref)
+			}
+			if !hasNoExtraConversationArgs(binary, stripClaudeResumeRef(childArgs, conversation)) {
+				return nil, fmt.Errorf("--conversation cannot be combined with extra claude args; omit --conversation and pass native resume args after --")
 			}
 			return childArgs, nil
 		}
