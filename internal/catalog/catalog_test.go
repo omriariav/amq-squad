@@ -36,10 +36,13 @@ func TestEveryRoleIsConsistent(t *testing.T) {
 		if r.ID == "" || r.Label == "" {
 			t.Errorf("role %+v missing ID or Label", r)
 		}
+		if r.Profile == "" {
+			t.Errorf("role %s missing profile", r.ID)
+		}
 		if r.PreferredBinary != "claude" && r.PreferredBinary != "codex" {
 			t.Errorf("role %s has unexpected binary %q", r.ID, r.PreferredBinary)
 		}
-		// DefaultPeers must reference known role IDs so team show doesn't
+		// DefaultPeers must reference known persona IDs so team show doesn't
 		// emit stale role references.
 		for _, p := range r.DefaultPeers {
 			if Lookup(p) == nil {

@@ -39,10 +39,11 @@ cd ~/Code/my-project
 amq-squad team
 ```
 
-First run: pick personas, then choose which CLI runs each one. `amq-squad`
-writes `.amq-squad/team.json`, seeds `.amq-squad/team-rules.md`, and prints
-launch commands. Later runs print the same launch commands without asking
-again. Paste one command into each terminal pane or tab.
+First run: pick personas from the squad market, then choose which CLI runs
+each one. `amq-squad` writes `.amq-squad/team.json`, seeds
+`.amq-squad/team-rules.md`, and prints launch commands. Later runs print the
+same launch commands without asking again. Paste one command into each terminal
+pane or tab.
 
 You do not need to run `amq coop init` for the normal single-project flow.
 Generated launch commands include `--session`, and AMQ creates the needed
@@ -53,16 +54,16 @@ cross-project peer routing.
 Non-interactive setup:
 
 ```sh
-amq-squad team init --personas cpo,cto,fullstack,qa,pm,designer
+amq-squad team init --personas cpo,cto,senior-dev,frontend-dev,mobile-dev,qa,pm,designer
 ```
 
 With per-persona CLI overrides:
 
 ```sh
 amq-squad team init \
-  --personas cpo,fullstack,qa \
-  --binary fullstack=codex \
-  --session cpo=stream1,fullstack=stream2,qa=stream3
+  --personas cto,junior-dev,qa \
+  --binary junior-dev=codex,qa=claude \
+  --session cto=stream1,junior-dev=stream2,qa=stream3
 ```
 
 Members don't have to share a working directory. The dir where you run
@@ -112,14 +113,22 @@ conflicts with `team.json`.
 
 ## Built-in personas
 
-| ID          | Label                                | Default binary | Notable skills                      |
-|-------------|--------------------------------------|----------------|-------------------------------------|
-| `cpo`       | CPO                                  | codex          | `/product-strategy`                 |
-| `cto`       | CTO                                  | codex          |                                     |
-| `fullstack` | Fullstack Developer                  | claude         |                                     |
-| `qa`        | QA Manager                           | claude         |                                     |
-| `pm`        | Project Manager / Product Owner      | claude         |                                     |
-| `designer`  | Product Designer                     | claude         | `/frontend-design`, `/canvas-design`|
+Think of personas as employees in a small internal market. The persona is the
+job you are hiring for; the CLI is the tool that employee runs on.
+
+| ID             | Label                                | Default binary | Profile                                            |
+|----------------|--------------------------------------|----------------|----------------------------------------------------|
+| `cpo`          | CPO                                  | codex          | Product direction, scope pressure, user value.     |
+| `cto`          | CTO                                  | codex          | Architecture, tradeoffs, final technical review.   |
+| `senior-dev`   | Senior Developer                     | codex          | Takes harder code paths and reviews junior work.   |
+| `fullstack`    | Fullstack Developer                  | claude         | End-to-end feature builder across UI and backend.  |
+| `frontend-dev` | Frontend Developer                   | claude         | Product UI, components, state, browser polish.     |
+| `backend-dev`  | Backend Developer                    | codex          | APIs, data flow, services, integrations.           |
+| `mobile-dev`   | Mobile Developer                     | claude         | Native and mobile app flows, device polish.        |
+| `junior-dev`   | Junior Developer                     | codex          | Fast on scoped tasks, needs review before merge.   |
+| `qa`           | QA Manager                           | claude         | Regression thinking, release risk, test coverage.  |
+| `pm`           | Project Manager / Product Owner      | claude         | Keeps work ordered, unblocked, and shippable.      |
+| `designer`     | Product Designer                     | claude         | Product flows, visual shape, UI polish.            |
 
 Defaults are starting points. Override binary or session per persona via flags at
 `team init` time, or edit `.amq-squad/team.json` directly.

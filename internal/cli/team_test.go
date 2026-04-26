@@ -146,7 +146,7 @@ func TestApplyDefaultChildArgs(t *testing.T) {
 }
 
 func TestPromptPersonaSelection(t *testing.T) {
-	reader := bufio.NewReader(strings.NewReader("fullstack,cto\n"))
+	reader := bufio.NewReader(strings.NewReader("4,2\n"))
 	var out bytes.Buffer
 	got, err := promptPersonaSelection(reader, &out)
 	if err != nil {
@@ -156,13 +156,34 @@ func TestPromptPersonaSelection(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("promptPersonaSelection = %v, want %v", got, want)
 	}
-	if !strings.Contains(out.String(), "Available personas") {
-		t.Errorf("prompt output missing personas list: %s", out.String())
+	if !strings.Contains(out.String(), "Squad market") {
+		t.Errorf("prompt output missing squad market: %s", out.String())
+	}
+}
+
+func TestParsePersonaSelection(t *testing.T) {
+	got, err := parsePersonaSelection("junior-dev,2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"junior-dev", "cto"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parsePersonaSelection = %v, want %v", got, want)
+	}
+	got, err = parsePersonaSelection("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) == 0 || got[0] != "cpo" {
+		t.Errorf("parsePersonaSelection all = %v, want catalog IDs", got)
+	}
+	if _, err := parsePersonaSelection("999"); err == nil {
+		t.Error("parsePersonaSelection should reject out-of-range numbers")
 	}
 }
 
 func TestPromptBinarySelection(t *testing.T) {
-	reader := bufio.NewReader(strings.NewReader("codex\n\n"))
+	reader := bufio.NewReader(strings.NewReader("fullstack=codex\n"))
 	var out bytes.Buffer
 	overrides := map[string]string{}
 	if err := promptBinarySelection(reader, &out, []string{"fullstack", "qa"}, overrides); err != nil {
@@ -174,8 +195,8 @@ func TestPromptBinarySelection(t *testing.T) {
 	if _, ok := overrides["qa"]; ok {
 		t.Errorf("qa should keep default, got override %q", overrides["qa"])
 	}
-	if !strings.Contains(out.String(), "CLI for fullstack") {
-		t.Errorf("prompt output missing fullstack CLI prompt: %s", out.String())
+	if !strings.Contains(out.String(), "Squad plan") || !strings.Contains(out.String(), "Updated squad plan") {
+		t.Errorf("prompt output missing squad plans: %s", out.String())
 	}
 }
 
@@ -189,8 +210,8 @@ func TestPromptBinarySelectionPreservesFlagOverride(t *testing.T) {
 	if overrides["fullstack"] != "codex" {
 		t.Errorf("fullstack override = %q, want codex", overrides["fullstack"])
 	}
-	if strings.Contains(out.String(), "CLI for fullstack") {
-		t.Errorf("prompt should skip personas with flag overrides: %s", out.String())
+	if !strings.Contains(out.String(), "fullstack") || !strings.Contains(out.String(), "codex") {
+		t.Errorf("prompt should show existing override in plan: %s", out.String())
 	}
 }
 

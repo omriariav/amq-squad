@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/omriariav/amq-squad/internal/catalog"
@@ -62,8 +63,8 @@ func runTeamInit(args []string) error {
 	personasFlag := fs.String("personas", "", "comma-separated persona IDs to include (alias for --roles)")
 	rolesFlag := fs.String("roles", "", "comma-separated role/persona IDs to include (skips interactive prompt)")
 	binaryFlag := fs.String("binary", "", "per-persona CLI overrides, e.g. fullstack=codex,qa=claude")
-	sessionFlag := fs.String("session", "", "per-role session overrides, e.g. cpo=stream1,cto=stream2")
-	cwdFlag := fs.String("cwd", "", "per-role working directory overrides, e.g. qa=/path/to/sibling-project")
+	sessionFlag := fs.String("session", "", "per-persona session overrides, e.g. cpo=stream1,cto=stream2")
+	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
 	force := fs.Bool("force", false, "overwrite an existing team.json")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
@@ -143,7 +144,7 @@ Known personas:
 		seen[id] = true
 		r := catalog.Lookup(id)
 		if r == nil {
-			return fmt.Errorf("unknown role %q. Known roles: %s", id, strings.Join(catalog.IDs(), ", "))
+			return fmt.Errorf("unknown persona %q. Known personas: %s", id, strings.Join(catalog.IDs(), ", "))
 		}
 		binary := r.PreferredBinary
 		if b, ok := binaryOverrides[id]; ok {
@@ -232,7 +233,18 @@ func emitTeamCommands(projectDir string, noBootstrap bool) error {
 	}
 	members := append([]team.Member(nil), t.Members...)
 	sort.SliceStable(members, func(i, j int) bool {
-		return idx[members[i].Role] < idx[members[j].Role]
+		left, lok := idx[members[i].Role]
+		right, rok := idx[members[j].Role]
+		if !lok && !rok {
+			return members[i].Role < members[j].Role
+		}
+		if !lok {
+			return false
+		}
+		if !rok {
+			return true
+		}
+		return left < right
 	})
 
 	fmt.Println("# amq-squad team - run each command in its own terminal tab")
@@ -323,21 +335,61 @@ func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap 
 }
 
 func promptPersonaSelection(reader *bufio.Reader, out io.Writer) ([]string, error) {
-	fmt.Fprintln(out, "Available personas:")
-	for _, r := range catalog.All() {
-		skills := ""
-		if len(r.Skills) > 0 {
-			skills = "  [" + strings.Join(r.Skills, ", ") + "]"
-		}
-		fmt.Fprintf(out, "  %-10s %s (default CLI: %s)%s\n", r.ID, r.Label, r.PreferredBinary, skills)
-	}
+	fmt.Fprintln(out, "Squad market")
+	printPersonaMarket(out)
 	fmt.Fprintln(out)
-	fmt.Fprint(out, "Which personas do you want on this team? (comma-separated IDs, or 'all'): ")
+	fmt.Fprintln(out, "Choose personas to hire:")
+	fmt.Fprintln(out, "  names or numbers, comma-separated")
+	fmt.Fprintln(out, "  examples: cto,junior-dev,qa | 2,8,9 | all")
+	fmt.Fprintln(out)
+	fmt.Fprint(out, "> ")
 
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		return nil, fmt.Errorf("read selection: %w", err)
 	}
+	return parsePersonaSelection(line)
+}
+
+func promptBinarySelection(reader *bufio.Reader, out io.Writer, personas []string, overrides map[string]string) error {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Squad plan")
+	printSquadPlan(out, personas, overrides)
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "CLI overrides?")
+	fmt.Fprintln(out, "  Press Enter to keep defaults.")
+	fmt.Fprintln(out, "  Example: fullstack=codex,junior-dev=claude")
+	fmt.Fprintln(out)
+	fmt.Fprint(out, "> ")
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("read CLI overrides: %w", err)
+	}
+	overrideLine := strings.TrimSpace(line)
+	if overrideLine == "" {
+		return nil
+	}
+	parsed, err := parseKV(overrideLine)
+	if err != nil {
+		return fmt.Errorf("parse CLI overrides: %w", err)
+	}
+	for k, v := range parsed {
+		overrides[strings.ToLower(k)] = v
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Updated squad plan")
+	printSquadPlan(out, personas, overrides)
+	return nil
+}
+
+func printPersonaMarket(out io.Writer) {
+	fmt.Fprintf(out, "  %-2s %-12s %-31s %-7s %s\n", "#", "PERSONA", "PROFILE", "CLI", "FIT")
+	for i, r := range catalog.All() {
+		fmt.Fprintf(out, "  %-2d %-12s %-31s %-7s %s\n", i+1, r.ID, r.Label, r.PreferredBinary, r.Profile)
+	}
+}
+
+func parsePersonaSelection(line string) ([]string, error) {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return nil, fmt.Errorf("no selection provided")
@@ -345,35 +397,40 @@ func promptPersonaSelection(reader *bufio.Reader, out io.Writer) ([]string, erro
 	if strings.EqualFold(line, "all") {
 		return catalog.IDs(), nil
 	}
-	return splitCSV(line), nil
+	all := catalog.All()
+	picked := splitCSV(line)
+	out := make([]string, 0, len(picked))
+	for _, p := range picked {
+		if n, err := strconv.Atoi(p); err == nil {
+			if n < 1 || n > len(all) {
+				return nil, fmt.Errorf("persona number %d is out of range", n)
+			}
+			out = append(out, all[n-1].ID)
+			continue
+		}
+		out = append(out, strings.ToLower(p))
+	}
+	return out, nil
 }
 
-func promptBinarySelection(reader *bufio.Reader, out io.Writer, personas []string, overrides map[string]string) error {
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Choose CLI per persona. Press Enter to use the default.")
+func printSquadPlan(out io.Writer, personas []string, overrides map[string]string) {
+	fmt.Fprintf(out, "  %-12s %-31s %-7s %s\n", "PERSONA", "PROFILE", "CLI", "SESSION")
 	for _, raw := range personas {
 		id := strings.TrimSpace(strings.ToLower(raw))
 		if id == "" {
 			continue
 		}
-		if _, ok := overrides[id]; ok {
-			continue
-		}
 		r := catalog.Lookup(id)
 		if r == nil {
+			fmt.Fprintf(out, "  %-12s %-31s %-7s %s\n", id, "(unknown)", "", id)
 			continue
 		}
-		fmt.Fprintf(out, "CLI for %s (%s) [%s]: ", id, r.Label, r.PreferredBinary)
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("read CLI for %s: %w", id, err)
+		binary := r.PreferredBinary
+		if b, ok := overrides[id]; ok {
+			binary = b
 		}
-		cli := strings.TrimSpace(line)
-		if cli != "" {
-			overrides[id] = cli
-		}
+		fmt.Fprintf(out, "  %-12s %-31s %-7s %s\n", id, r.Label, binary, id)
 	}
-	return nil
 }
 
 func splitCSV(s string) []string {
