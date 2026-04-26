@@ -127,21 +127,31 @@ func TestShouldAppendBootstrapWithDefaultChildArgs(t *testing.T) {
 	}
 }
 
-func TestApplyDefaultChildArgs(t *testing.T) {
-	got := applyDefaultChildArgs("codex", nil)
+func TestEnsureDefaultChildArgs(t *testing.T) {
+	got := ensureDefaultChildArgs("codex", nil)
 	want := []string{"--dangerously-bypass-approvals-and-sandbox"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("applyDefaultChildArgs codex = %v, want %v", got, want)
+		t.Errorf("ensureDefaultChildArgs codex = %v, want %v", got, want)
 	}
-	got = applyDefaultChildArgs("claude", nil)
+	got = ensureDefaultChildArgs("claude", nil)
 	want = []string{"--permission-mode", "auto"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("applyDefaultChildArgs claude = %v, want %v", got, want)
+		t.Errorf("ensureDefaultChildArgs claude = %v, want %v", got, want)
 	}
-	explicit := []string{"--resume", "abc"}
-	got = applyDefaultChildArgs("codex", explicit)
+	got = ensureDefaultChildArgs("codex", []string{"test-prompt"})
+	want = []string{"--dangerously-bypass-approvals-and-sandbox", "test-prompt"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ensureDefaultChildArgs should prepend defaults: got %v, want %v", got, want)
+	}
+	explicit := []string{"--dangerously-bypass-approvals-and-sandbox", "--resume", "abc"}
+	got = ensureDefaultChildArgs("codex", explicit)
 	if !reflect.DeepEqual(got, explicit) {
-		t.Errorf("applyDefaultChildArgs should preserve explicit args: got %v, want %v", got, explicit)
+		t.Errorf("ensureDefaultChildArgs should not duplicate defaults: got %v, want %v", got, explicit)
+	}
+	got = ensureDefaultChildArgs("codex", []string{"test-prompt", "--dangerously-bypass-approvals-and-sandbox"})
+	want = []string{"--dangerously-bypass-approvals-and-sandbox", "test-prompt", "--dangerously-bypass-approvals-and-sandbox"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ensureDefaultChildArgs should keep defaults before prompts: got %v, want %v", got, want)
 	}
 }
 
@@ -337,7 +347,7 @@ func TestRunTeamInitSeedsTeamRules(t *testing.T) {
 		}
 	})
 
-	if err := runTeamInit([]string{"--roles", "cto,fullstack"}); err != nil {
+	if err := runTeamInit([]string{"--roles", "pm,fullstack"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
 	if !team.Exists(dir) {
@@ -345,6 +355,22 @@ func TestRunTeamInitSeedsTeamRules(t *testing.T) {
 	}
 	if _, err := os.Stat(rules.Path(dir)); err != nil {
 		t.Fatalf("team-rules.md was not written: %v", err)
+	}
+	got, err := os.ReadFile(rules.Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	for _, want := range []string{
+		"## Role Scope",
+		"pm (Project Manager / Product Owner)",
+		"Turns feedback into scoped tasks for the right owner. Does not implement code unless explicitly assigned by the user.",
+		"fullstack (Fullstack Developer)",
+		"Owns scoped end-to-end implementation",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("team-rules.md missing %q in:\n%s", want, body)
+		}
 	}
 }
 
@@ -379,6 +405,56 @@ func TestRunTeamInitDoesNotClobberTeamRules(t *testing.T) {
 	}
 	if string(got) != custom {
 		t.Fatalf("team-rules.md was clobbered: got %q, want %q", string(got), custom)
+	}
+}
+
+func TestRunTeamRulesInitForceRefreshesScopedRules(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	if err := team.Write(dir, team.Team{
+		Project: dir,
+		Members: []team.Member{
+			{Role: "pm", Binary: "codex", Handle: "pm", Session: "pm"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "fullstack"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rules.Write(dir, "old generic stub\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runTeamRules([]string{"init", "--force"}); err != nil {
+		t.Fatalf("runTeamRules init --force: %v", err)
+	}
+	got, err := os.ReadFile(rules.Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	if strings.Contains(body, "old generic stub") {
+		t.Fatalf("team-rules.md was not refreshed:\n%s", body)
+	}
+	for _, want := range []string{
+		"pm (Project Manager / Product Owner)",
+		"Turns feedback into scoped tasks for the right owner. Does not implement code unless explicitly assigned by the user.",
+		"fullstack (Fullstack Developer)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("team-rules.md missing %q in:\n%s", want, body)
+		}
 	}
 }
 

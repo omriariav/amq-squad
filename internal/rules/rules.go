@@ -67,19 +67,34 @@ func Read(projectDir string) (string, error) {
 // EnsureStub writes a stub team-rules.md if one does not already exist.
 // Returns true if it wrote a new file.
 func EnsureStub(projectDir string) (bool, error) {
+	return Ensure(projectDir, StubContent)
+}
+
+// Ensure writes team-rules.md with content if one does not already exist.
+// Returns true if it wrote a new file.
+func Ensure(projectDir, content string) (bool, error) {
 	p := Path(projectDir)
 	if _, err := os.Stat(p); err == nil {
 		return false, nil
 	} else if !os.IsNotExist(err) {
 		return false, err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return false, err
-	}
-	if err := os.WriteFile(p, []byte(StubContent), 0o644); err != nil {
+	if err := Write(projectDir, content); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// Write writes team-rules.md with content, creating .amq-squad if needed.
+func Write(projectDir, content string) error {
+	p := Path(projectDir)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		return err
+	}
+	return nil
 }
 
 // SyncPlan describes what sync would do for a single target file.

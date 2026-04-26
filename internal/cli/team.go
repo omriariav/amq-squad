@@ -183,7 +183,7 @@ Known personas:
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Wrote %s with %d members.\n", team.Path(cwd), len(members))
-	wroteRules, err := rules.EnsureStub(cwd)
+	wroteRules, err := rules.Ensure(cwd, renderTeamRules(cwd, members))
 	if err != nil {
 		return fmt.Errorf("seed team-rules.md: %w", err)
 	}
@@ -487,7 +487,7 @@ func runTeamRules(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad team rules - manage .amq-squad/team-rules.md
 
 Usage:
-  amq-squad team rules init   Seed team-rules.md with a stub (won't clobber)
+  amq-squad team rules init [--force]   Seed or refresh team-rules.md
 `)
 		if len(args) == 0 {
 			return usageErrorf("rules requires a subcommand (e.g. 'init')")
@@ -496,11 +496,27 @@ Usage:
 	}
 	switch args[0] {
 	case "init":
+		fs := flag.NewFlagSet("team rules init", flag.ContinueOnError)
+		force := fs.Bool("force", false, "overwrite an existing team-rules.md with the generated template")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
 		cwd, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getwd: %w", err)
 		}
-		wrote, err := rules.EnsureStub(cwd)
+		content := rules.StubContent
+		if t, err := team.Read(cwd); err == nil {
+			content = renderTeamRules(t.Project, t.Members)
+		}
+		if *force {
+			if err := rules.Write(cwd, content); err != nil {
+				return fmt.Errorf("write team-rules.md: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Wrote %s\n", rules.Path(cwd))
+			return nil
+		}
+		wrote, err := rules.Ensure(cwd, content)
 		if err != nil {
 			return fmt.Errorf("seed team-rules.md: %w", err)
 		}
@@ -637,7 +653,7 @@ Usage:
   amq-squad team init [options]       Pick personas, choose CLIs, and seed rules
   amq-squad team show [--no-bootstrap]
                                       Print launch commands for configured team
-  amq-squad team rules init           Seed missing team-rules.md with a stub
+  amq-squad team rules init [--force] Seed or refresh team-rules.md
   amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
                                       (default: preview; --apply writes)
 

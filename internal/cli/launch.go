@@ -27,6 +27,7 @@ func runLaunch(args []string) error {
 	rootFlag := fs.String("root", "", "override AMQ root directory")
 	teamHome := fs.String("team-home", "", "team-home directory used to find .amq-squad/team-rules.md for bootstrap")
 	noBootstrap := fs.Bool("no-bootstrap", false, "do not pass the generated bootstrap prompt to the agent")
+	noDefaultArgs := fs.Bool("no-default-args", false, "do not prepend Codex or Claude default permission args")
 	dryRun := fs.Bool("dry-run", false, "print the coop exec command without executing")
 
 	fs.Usage = func() {
@@ -46,9 +47,11 @@ Side effects before exec:
   1. Resolves AMQ root via 'amq env --json' for the target session.
   2. Writes <root>/agents/<handle>/launch.json with cwd, binary, argv, role.
   3. Writes a role.md stub if one does not already exist.
-  4. Adds a generated bootstrap prompt unless --no-bootstrap is set or
+  4. Prepends Codex and Claude default permission args unless
+     --no-default-args is set.
+  5. Adds a generated bootstrap prompt unless --no-bootstrap is set or
      non-default binary args were provided.
-  5. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
+  6. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
 
 With --dry-run, none of the above run: the resolved coop exec command is
 printed and amq-squad exits. Disk state is untouched.
@@ -67,7 +70,9 @@ printed and amq-squad exits. Disk state is untouched.
 	if len(remaining) > 1 {
 		childArgs = append(remaining[1:], childArgs...)
 	}
-	childArgs = applyDefaultChildArgs(binary, childArgs)
+	if !*noDefaultArgs {
+		childArgs = ensureDefaultChildArgs(binary, childArgs)
+	}
 
 	handle := *me
 	if handle == "" {

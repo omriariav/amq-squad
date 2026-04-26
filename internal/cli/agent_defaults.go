@@ -11,15 +11,26 @@ func defaultChildArgsForBinary(binary string) []string {
 	}
 }
 
-func applyDefaultChildArgs(binary string, childArgs []string) []string {
-	if len(childArgs) > 0 {
-		return childArgs
-	}
+func ensureDefaultChildArgs(binary string, childArgs []string) []string {
 	defaultArgs := defaultChildArgsForBinary(binary)
-	if len(defaultArgs) == 0 {
+	if len(defaultArgs) == 0 || hasLeadingDefaultChildArgs(binary, childArgs) {
 		return childArgs
 	}
-	return append([]string(nil), defaultArgs...)
+	out := append([]string(nil), defaultArgs...)
+	return append(out, childArgs...)
+}
+
+func hasLeadingDefaultChildArgs(binary string, childArgs []string) bool {
+	defaultArgs := defaultChildArgsForBinary(binary)
+	if len(defaultArgs) == 0 || len(childArgs) < len(defaultArgs) {
+		return false
+	}
+	for i := range defaultArgs {
+		if childArgs[i] != defaultArgs[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func shouldAppendBootstrap(binary string, childArgs []string) bool {

@@ -87,6 +87,7 @@ amq-squad team show
 Generate `.amq-squad/team-rules.md` with these sections:
 
 - Team members, ownership, and exact active routes
+- Role scope and boundaries for each selected persona
 - Startup context from previous AMQ history
 - Workflow
 - Approvals
@@ -95,6 +96,8 @@ Generate `.amq-squad/team-rules.md` with these sections:
 - Style
 
 Keep the generated file concrete. Name exact sessions and project paths when known. Use short bullets.
+Make role boundaries explicit: PM, CPO, Designer, QA, and CTO route implementation
+to developer roles by default instead of editing code themselves.
 
 ## Fresh Team Rule
 

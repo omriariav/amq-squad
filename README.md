@@ -84,7 +84,10 @@ AGENTS.md in all of them.
 Generated launch commands include these agent defaults: Codex gets
 `--dangerously-bypass-approvals-and-sandbox`, and Claude gets
 `--permission-mode auto`. These defaults are passed through after `--` while
-the generated bootstrap prompt is still added at launch time.
+the generated bootstrap prompt is still added at launch time. Direct
+`amq-squad launch` calls also prepend these defaults when they are missing, so
+custom prompts still inherit the expected permission mode. Pass
+`--no-default-args` to opt out.
 
 Representative generated commands look like this:
 
@@ -168,8 +171,8 @@ cd ~/Code/my-project
 amq-squad team init --personas cto,fullstack
 ```
 
-Open `.amq-squad/team-rules.md` and replace the template sections with your
-team's actual workflow, approvals, and communication norms. Then push the
+Open `.amq-squad/team-rules.md` and refine the generated role scope, workflow,
+approvals, and communication norms for your team. Then push the
 managed block into the doc files each binary reads:
 
 ```sh
@@ -275,16 +278,16 @@ amq-squad team init [--personas ...]
                                     Pick personas, choose CLIs, and seed rules
 amq-squad team show [--no-bootstrap]
                                     Print launch commands for the configured team
-amq-squad team rules init           Seed missing .amq-squad/team-rules.md
+amq-squad team rules init [--force] Seed or refresh .amq-squad/team-rules.md
 amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
 
-amq-squad launch --role <r> --session <s> --me <handle> [--no-bootstrap] <binary> [-- <flags>]
+amq-squad launch --role <r> --session <s> --me <handle> [--no-bootstrap] [--no-default-args] <binary> [-- <flags>]
                                     Launch one agent. Writes launch.json + role.md
                                     in the AMQ mailbox, adds a bootstrap prompt,
                                     then execs 'amq coop exec'.
                                     Usually called by the output of 'team show'.
-                                    'team show' passes Codex and Claude default
-                                    permission flags after '--'.
+                                    Codex and Claude default permission flags
+                                    are prepended when missing.
 
 amq-squad restore [--project dir1,dir2,...]
                                     Reconstruct launch commands from local
