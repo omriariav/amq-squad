@@ -28,6 +28,8 @@ func runTeam(args []string) error {
 		return runTeamInit(args[1:])
 	case "show":
 		return runTeamShow(args[1:])
+	case "launch":
+		return runTeamLaunch(args[1:])
 	case "rules":
 		return runTeamRules(args[1:])
 	case "sync":
@@ -35,7 +37,7 @@ func runTeam(args []string) error {
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'show', 'rules', or 'sync'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'show', 'launch', 'rules', or 'sync'.", args[0])
 	}
 }
 
@@ -64,14 +66,15 @@ func runTeamInit(args []string) error {
 	rolesFlag := fs.String("roles", "", "comma-separated role/persona IDs to include (skips interactive prompt)")
 	binaryFlag := fs.String("binary", "", "per-persona CLI overrides, e.g. fullstack=codex,qa=claude")
 	sessionFlag := fs.String("session", "", "per-persona session overrides, e.g. cpo=stream1,cto=stream2")
+	conversationFlag := fs.String("conversation", "", "per-persona conversation refs, e.g. cto=thread-name,qa=session-uuid")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
 	force := fs.Bool("force", false, "overwrite an existing team.json")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--personas id1,id2,...] [--binary persona=cli,...] [--session role=name,...] [--force]
-  amq-squad team init [--roles id1,id2,...] [--binary role=cli,...] [--session role=name,...] [--force]
+  amq-squad team init [--personas id1,id2,...] [--binary persona=cli,...] [--session role=name,...] [--conversation role=ref,...] [--force]
+  amq-squad team init [--roles id1,id2,...] [--binary role=cli,...] [--session role=name,...] [--conversation role=ref,...] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes <cwd>/.amq-squad/team.json and
@@ -108,6 +111,10 @@ Known personas:
 	sessionOverrides, err := parseKV(*sessionFlag)
 	if err != nil {
 		return fmt.Errorf("parse --session: %w", err)
+	}
+	conversationOverrides, err := parseKV(*conversationFlag)
+	if err != nil {
+		return fmt.Errorf("parse --conversation: %w", err)
 	}
 	cwdOverrides, err := parseKV(*cwdFlag)
 	if err != nil {
@@ -157,11 +164,16 @@ Known personas:
 		if s, ok := sessionOverrides[id]; ok {
 			session = s
 		}
+		conversation := ""
+		if c, ok := conversationOverrides[id]; ok {
+			conversation = c
+		}
 		m := team.Member{
-			Role:    id,
-			Binary:  binary,
-			Handle:  id,
-			Session: session,
+			Role:         id,
+			Binary:       binary,
+			Handle:       id,
+			Session:      session,
+			Conversation: conversation,
 		}
 		if c, ok := cwdOverrides[id]; ok {
 			abs, err := expandPath(c)
@@ -225,27 +237,7 @@ func emitTeamCommands(projectDir string, noBootstrap bool) error {
 		return fmt.Errorf("team has no members")
 	}
 
-	// Stable display order: catalog order, not file order. Keeps output
-	// consistent regardless of how the user listed roles at init.
-	idx := make(map[string]int, len(catalog.IDs()))
-	for i, id := range catalog.IDs() {
-		idx[id] = i
-	}
-	members := append([]team.Member(nil), t.Members...)
-	sort.SliceStable(members, func(i, j int) bool {
-		left, lok := idx[members[i].Role]
-		right, rok := idx[members[j].Role]
-		if !lok && !rok {
-			return members[i].Role < members[j].Role
-		}
-		if !lok {
-			return false
-		}
-		if !rok {
-			return true
-		}
-		return left < right
-	})
+	members := orderedTeamMembers(t.Members)
 
 	fmt.Println("# amq-squad team - run each command in its own terminal tab")
 	fmt.Println("#")
@@ -283,6 +275,29 @@ func emitTeamCommands(projectDir string, noBootstrap bool) error {
 	return nil
 }
 
+func orderedTeamMembers(members []team.Member) []team.Member {
+	idx := make(map[string]int, len(catalog.IDs()))
+	for i, id := range catalog.IDs() {
+		idx[id] = i
+	}
+	out := append([]team.Member(nil), members...)
+	sort.SliceStable(out, func(i, j int) bool {
+		left, lok := idx[out[i].Role]
+		right, rok := idx[out[j].Role]
+		if !lok && !rok {
+			return out[i].Role < out[j].Role
+		}
+		if !lok {
+			return false
+		}
+		if !rok {
+			return true
+		}
+		return left < right
+	})
+	return out
+}
+
 func uniqueMemberCWDs(projectDir string, members []team.Member) []string {
 	seen := map[string]bool{}
 	out := []string{}
@@ -315,6 +330,10 @@ func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap 
 	}
 	if noBootstrap {
 		b.WriteString(" --no-bootstrap")
+	}
+	if m.Conversation != "" {
+		b.WriteString(" --conversation ")
+		b.WriteString(shellQuote(m.Conversation))
 	}
 	if m.Handle != "" {
 		// Always explicit: a role-named handle avoids collisions when the
@@ -653,6 +672,7 @@ Usage:
   amq-squad team init [options]       Pick personas, choose CLIs, and seed rules
   amq-squad team show [--no-bootstrap]
                                       Print launch commands for configured team
+  amq-squad team launch [options]     Open the configured team in a terminal
   amq-squad team rules init [--force] Seed or refresh team-rules.md
   amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
                                       (default: preview; --apply writes)

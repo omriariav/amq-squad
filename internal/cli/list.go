@@ -13,13 +13,14 @@ import (
 )
 
 type listRecord struct {
-	Role      string    `json:"role"`
-	Handle    string    `json:"handle"`
-	Binary    string    `json:"binary"`
-	Session   string    `json:"session"`
-	Source    string    `json:"source"`
-	CWD       string    `json:"cwd"`
-	StartedAt time.Time `json:"started_at,omitempty"`
+	Role         string    `json:"role"`
+	Handle       string    `json:"handle"`
+	Binary       string    `json:"binary"`
+	Session      string    `json:"session"`
+	Conversation string    `json:"conversation,omitempty"`
+	Source       string    `json:"source"`
+	CWD          string    `json:"cwd"`
+	StartedAt    time.Time `json:"started_at,omitempty"`
 }
 
 func runList(args []string) error {
@@ -74,14 +75,14 @@ where the original binary can be inferred.
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSOURCE\tCWD\tSTARTED")
+	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tCONVERSATION\tSOURCE\tCWD\tSTARTED")
 	for _, r := range rows {
 		role := r.Role
 		if role == "" {
 			role = "(none)"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			role, r.Handle, r.Binary, r.Session, r.Source, r.CWD, formatListTime(r.StartedAt))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			role, r.Handle, r.Binary, r.Session, r.Conversation, r.Source, r.CWD, formatListTime(r.StartedAt))
 	}
 	return w.Flush()
 }
@@ -105,13 +106,14 @@ func listRecordsFromEntries(entries []launch.Entry) []listRecord {
 	for _, e := range entries {
 		r := e.Record
 		rows = append(rows, listRecord{
-			Role:      r.Role,
-			Handle:    r.Handle,
-			Binary:    r.Binary,
-			Session:   r.Session,
-			Source:    sourceLabel(e.Source),
-			CWD:       r.CWD,
-			StartedAt: r.StartedAt,
+			Role:         r.Role,
+			Handle:       r.Handle,
+			Binary:       r.Binary,
+			Session:      r.Session,
+			Conversation: r.Conversation,
+			Source:       sourceLabel(e.Source),
+			CWD:          r.CWD,
+			StartedAt:    r.StartedAt,
 		})
 	}
 	return rows
