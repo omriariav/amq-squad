@@ -58,6 +58,10 @@ Side effects before exec:
 
 With --dry-run, none of the above run: the resolved coop exec command is
 printed and amq-squad exits. Disk state is untouched.
+
+When --conversation generates resume args, do not pass additional child args.
+For advanced Codex or Claude flags, omit --conversation and pass native resume
+args after "--".
 `)
 	}
 
@@ -201,6 +205,9 @@ func applyConversationRestoreArgs(binary string, childArgs []string, conversatio
 			}
 			return childArgs, nil
 		}
+		if !hasNoExtraConversationArgs(binary, childArgs) {
+			return nil, fmt.Errorf("--conversation cannot be combined with extra codex args; omit --conversation and pass native resume args after --")
+		}
 		out := append([]string(nil), childArgs...)
 		return append(out, "resume", conversation), nil
 	case "claude":
@@ -213,11 +220,30 @@ func applyConversationRestoreArgs(binary string, childArgs []string, conversatio
 			}
 			return childArgs, nil
 		}
+		if !hasNoExtraConversationArgs(binary, childArgs) {
+			return nil, fmt.Errorf("--conversation cannot be combined with extra claude args; omit --conversation and pass native resume args after --")
+		}
 		out := append([]string(nil), childArgs...)
 		return append(out, "--resume", conversation), nil
 	default:
 		return nil, fmt.Errorf("--conversation is supported for codex and claude, got %q", binary)
 	}
+}
+
+func hasNoExtraConversationArgs(binary string, childArgs []string) bool {
+	if len(childArgs) == 0 {
+		return true
+	}
+	defaultArgs := defaultChildArgsForBinary(binary)
+	if len(childArgs) != len(defaultArgs) {
+		return false
+	}
+	for i := range childArgs {
+		if childArgs[i] != defaultArgs[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func stripConversationRestoreArgs(binary string, childArgs []string, conversation string) []string {

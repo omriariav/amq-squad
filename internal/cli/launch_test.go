@@ -86,6 +86,34 @@ func TestRunLaunchDryRunQuotesConversationWithSpaces(t *testing.T) {
 	}
 }
 
+func TestRunLaunchConversationRejectsPromptArgs(t *testing.T) {
+	setupFakeAMQ(t)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--conversation", "cto-thread", "codex", "hello prompt"})
+	})
+	if err == nil {
+		t.Fatal("conversation with prompt args should fail")
+	}
+	if !strings.Contains(err.Error(), "extra codex args") {
+		t.Fatalf("error should mention extra codex args, got %v\nstderr:\n%s", err, stderr)
+	}
+}
+
+func TestRunLaunchConversationRejectsPassthroughArgs(t *testing.T) {
+	setupFakeAMQ(t)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--conversation", "claude-thread", "claude", "--", "--model", "sonnet"})
+	})
+	if err == nil {
+		t.Fatal("conversation with passthrough args should fail")
+	}
+	if !strings.Contains(err.Error(), "extra claude args") {
+		t.Fatalf("error should mention extra claude args, got %v\nstderr:\n%s", err, stderr)
+	}
+}
+
 func TestApplyConversationRestoreArgsIsIdempotent(t *testing.T) {
 	got, err := applyConversationRestoreArgs("codex", []string{"--dangerously-bypass-approvals-and-sandbox", "resume", "abc"}, "abc")
 	if err != nil {
@@ -113,6 +141,12 @@ func TestApplyConversationRestoreArgsRejectsConflicts(t *testing.T) {
 	}
 	if _, err := applyConversationRestoreArgs("node", nil, "abc"); err == nil {
 		t.Fatal("unsupported binary should fail")
+	}
+	if _, err := applyConversationRestoreArgs("codex", []string{"--dangerously-bypass-approvals-and-sandbox", "prompt"}, "abc"); err == nil {
+		t.Fatal("codex extra args plus conversation should fail")
+	}
+	if _, err := applyConversationRestoreArgs("claude", []string{"--permission-mode", "auto", "--model", "sonnet"}, "abc"); err == nil {
+		t.Fatal("claude extra args plus conversation should fail")
 	}
 }
 

@@ -355,6 +355,9 @@ amq-squad launch --role <r> --session <s> --me <handle> [--conversation ref] [--
                                     are prepended when missing.
                                     --conversation stores a restore ref and
                                     translates it to Codex or Claude resume args.
+                                    Do not combine --conversation with extra
+                                    binary args. For advanced flags, pass native
+                                    resume args after "--" instead.
 
 amq-squad restore [--project dir1,dir2,...] [--conversation ref]
                                     Reconstruct launch commands from local
