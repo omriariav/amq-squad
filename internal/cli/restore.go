@@ -23,12 +23,13 @@ func runRestore(args []string) error {
 	roleFilter := fs.String("role", "", "only consider records with this role")
 	handleFilter := fs.String("handle", "", "only consider records with this handle")
 	sessionFilter := fs.String("session", "", "only consider records with this session")
+	conversationFilter := fs.String("conversation", "", "only consider records with this conversation name/id")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad restore - restore registered agents from local launch history
 
 Usage:
-  amq-squad restore [--project dir1,dir2,...] [--role r] [--handle h] [--session s]
+  amq-squad restore [--project dir1,dir2,...] [--role r] [--handle h] [--session s] [--conversation ref]
   amq-squad restore --exec --role cto
 
 Scans each project for .agent-mail/<session>/agents/<handle>/launch.json
@@ -69,7 +70,7 @@ record's cwd and execs the saved launch through 'amq coop exec'.
 			continue
 		}
 		for _, e := range entries {
-			if !matchesRestoreFilters(e.Record, *roleFilter, *handleFilter, *sessionFilter) {
+			if !matchesRestoreFilters(e.Record, *roleFilter, *handleFilter, *sessionFilter, *conversationFilter) {
 				continue
 			}
 			records = append(records, restoreCandidate{entry: e})
@@ -90,7 +91,7 @@ record's cwd and execs the saved launch through 'amq coop exec'.
 	if *execRestore {
 		if len(records) != 1 {
 			printRestoreCandidates(os.Stderr, records)
-			return fmt.Errorf("--exec requires exactly one matching record; narrow with --role, --handle, or --session")
+			return fmt.Errorf("--exec requires exactly one matching record; narrow with --role, --handle, --session, or --conversation")
 		}
 		rec := records[0].entry.Record
 		fmt.Fprintf(os.Stderr, "Restoring %s via amq coop exec.\n", restoreLabel(rec))
@@ -108,7 +109,7 @@ record's cwd and execs the saved launch through 'amq coop exec'.
 	return nil
 }
 
-func matchesRestoreFilters(rec launch.Record, roleFilter, handleFilter, sessionFilter string) bool {
+func matchesRestoreFilters(rec launch.Record, roleFilter, handleFilter, sessionFilter, conversationFilter string) bool {
 	if roleFilter != "" && rec.Role != roleFilter {
 		return false
 	}
@@ -116,6 +117,9 @@ func matchesRestoreFilters(rec launch.Record, roleFilter, handleFilter, sessionF
 		return false
 	}
 	if sessionFilter != "" && rec.Session != sessionFilter {
+		return false
+	}
+	if conversationFilter != "" && rec.Conversation != conversationFilter {
 		return false
 	}
 	return true
@@ -144,6 +148,9 @@ func restoreMetadata(entry launch.Entry) string {
 	parts := []string{}
 	if rec.Session != "" {
 		parts = append(parts, "session: "+rec.Session)
+	}
+	if rec.Conversation != "" {
+		parts = append(parts, "conversation: "+rec.Conversation)
 	}
 	if rec.Handle != "" {
 		parts = append(parts, "handle: "+rec.Handle)
@@ -202,15 +209,26 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	} else if rec.Root != "" {
 		args = append(args, "--root", rec.Root)
 	}
+	if rec.Conversation != "" {
+		args = append(args, "--conversation", rec.Conversation)
+	}
 	if rec.Handle != "" {
 		args = append(args, "--me", rec.Handle)
 	}
 	args = append(args, rec.Binary)
-	if len(rec.Argv) > 0 {
+	argv := restoreArgvFromRecord(rec)
+	if len(argv) > 0 {
 		args = append(args, "--")
-		args = append(args, rec.Argv...)
+		args = append(args, argv...)
 	}
 	return args
+}
+
+func restoreArgvFromRecord(rec launch.Record) []string {
+	if rec.Conversation == "" {
+		return append([]string(nil), rec.Argv...)
+	}
+	return stripConversationRestoreArgs(rec.Binary, rec.Argv, rec.Conversation)
 }
 
 // emitCommand reconstructs the bash command for a launch record.
@@ -233,15 +251,20 @@ func emitCommand(rec launch.Record) string {
 		b.WriteString(" --root ")
 		b.WriteString(shellQuote(rec.Root))
 	}
+	if rec.Conversation != "" {
+		b.WriteString(" --conversation ")
+		b.WriteString(shellQuote(rec.Conversation))
+	}
 	if rec.Handle != "" && rec.Handle != defaultHandleFor(rec.Binary) {
 		b.WriteString(" --me ")
 		b.WriteString(shellQuote(rec.Handle))
 	}
 	b.WriteString(" ")
 	b.WriteString(shellQuote(rec.Binary))
-	if len(rec.Argv) > 0 {
+	argv := restoreArgvFromRecord(rec)
+	if len(argv) > 0 {
 		b.WriteString(" --")
-		for _, a := range rec.Argv {
+		for _, a := range argv {
 			b.WriteString(" ")
 			b.WriteString(shellQuote(a))
 		}
@@ -271,4 +294,13 @@ func shellQuote(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func shellCommand(bin string, args ...string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, shellQuote(bin))
+	for _, arg := range args {
+		parts = append(parts, shellQuote(arg))
+	}
+	return strings.Join(parts, " ")
 }

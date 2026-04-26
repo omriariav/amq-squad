@@ -22,7 +22,7 @@ AMQ itself stays unchanged.
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.3.0
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.4.0
 ```
 
 Use `@latest` if you intentionally want the newest published tag.
@@ -42,8 +42,9 @@ amq-squad team
 First run: pick personas from the squad market, then choose which CLI runs
 each one. `amq-squad` writes `.amq-squad/team.json`, seeds
 `.amq-squad/team-rules.md`, and prints launch commands. Later runs print the
-same launch commands without asking again. Paste one command into each terminal
-pane or tab.
+same launch commands without asking again. If you are inside tmux, use
+`amq-squad team launch` to open the squad automatically. Otherwise, paste one
+command into each terminal pane or tab.
 
 You do not need to run `amq coop init` for the normal single-project flow.
 Generated launch commands include `--session`, and AMQ creates the needed
@@ -88,6 +89,65 @@ the generated bootstrap prompt is still added at launch time. Direct
 `amq-squad launch` calls also prepend these defaults when they are missing, so
 custom prompts still inherit the expected permission mode. Pass
 `--no-default-args` to opt out.
+
+## Launching a team in tmux
+
+If you are already working inside tmux, `team launch` opens the configured team
+in the current tmux window:
+
+```sh
+amq-squad team launch
+```
+
+Defaults:
+
+- `--terminal tmux`
+- `--target current-window`
+- `--layout vertical`
+- `--stagger 750ms`
+
+The current pane becomes the first agent pane. Additional team members are
+opened as vertical side-by-side panes, pane titles are set to role names, and
+agent launches are staggered to avoid flooding terminal control channels.
+
+Preview the exact tmux script without creating panes:
+
+```sh
+amq-squad team launch --dry-run
+```
+
+Alternative layouts:
+
+```sh
+amq-squad team launch --layout horizontal
+amq-squad team launch --layout tiled
+```
+
+To create a separate detached tmux session instead:
+
+```sh
+amq-squad team launch --target new-session
+tmux attach -t amq-squad-<project>
+```
+
+When iTerm2 `tmux -CC` control-mode clients are detected, `amq-squad` warns
+about the known pause-after risk. If input stalls in iTerm2 cc-mode, recover
+from a non-tmux shell:
+
+```sh
+tmux list-clients
+tmux detach-client -t /dev/ttysXXX
+```
+
+### Terminal backend plugins
+
+`team launch` is wired as a small backend registry. The CLI handles shared
+team loading, bootstrap flags, and common launch options, then dispatches to a
+terminal backend by name. v0.4.0 ships the `tmux` backend.
+
+Adding another terminal should be isolated to a new
+`internal/cli/team_launch_<name>.go` file that implements `teamLaunchBackend`
+and registers itself with `registerTeamLaunchBackend` from `init`.
 
 Representative generated commands look like this:
 
@@ -187,8 +247,9 @@ amq-squad team
 ```
 
 You'll get two commands, one per role. Open separate terminal panes or tabs and
-paste one command per pane. Each agent boots through `amq-squad launch`, which
-writes `launch.json` + a catalog-seeded `role.md` into the mailbox before
+paste one command per pane, or run `amq-squad team launch` from inside tmux to
+create the panes automatically. Each agent boots through `amq-squad launch`,
+which writes `launch.json` + a catalog-seeded `role.md` into the mailbox before
 handing off to `amq coop exec`. From there both agents share the thread
 `p2p/cto__fullstack` for design escalations and review handoffs.
 
@@ -278,18 +339,27 @@ amq-squad team init [--personas ...]
                                     Pick personas, choose CLIs, and seed rules
 amq-squad team show [--no-bootstrap]
                                     Print launch commands for the configured team
+amq-squad team launch [--terminal tmux] [--target current-window|new-session]
+                      [--layout vertical|horizontal|tiled] [--stagger 750ms]
+                      [--no-bootstrap] [--dry-run]
+                                    Open the configured team in tmux panes
 amq-squad team rules init [--force] Seed or refresh .amq-squad/team-rules.md
 amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
 
-amq-squad launch --role <r> --session <s> --me <handle> [--no-bootstrap] [--no-default-args] <binary> [-- <flags>]
+amq-squad launch --role <r> --session <s> --me <handle> [--conversation ref] [--no-bootstrap] [--no-default-args] <binary> [-- <flags>]
                                     Launch one agent. Writes launch.json + role.md
                                     in the AMQ mailbox, adds a bootstrap prompt,
                                     then execs 'amq coop exec'.
                                     Usually called by the output of 'team show'.
                                     Codex and Claude default permission flags
                                     are prepended when missing.
+                                    --conversation stores a restore ref and
+                                    translates it to Codex or Claude resume args.
+                                    Do not combine --conversation with extra
+                                    binary args. For advanced flags, pass native
+                                    resume args after "--" instead.
 
-amq-squad restore [--project dir1,dir2,...]
+amq-squad restore [--project dir1,dir2,...] [--conversation ref]
                                     Reconstruct launch commands from local
                                     launch.json history and nearby role.md
                                     persona files. Falls back to older AMQ
@@ -311,6 +381,7 @@ amq-squad list [--json]             List restorable amq-squad records and
 <project>/CLAUDE.md, AGENTS.md           Managed block synced from team-rules.md;
                                          user content outside markers untouched.
 <AM_ROOT>/agents/<handle>/launch.json    Per-agent invocation record, written at launch.
+                                         Includes conversation ref when supplied.
 <AM_ROOT>/agents/<handle>/role.md        Per-agent role doc, seeded from the catalog
                                          and never overwritten once it exists.
 ```
@@ -332,3 +403,4 @@ amq-squad list [--json]             List restorable amq-squad records and
 
 - Go 1.25+
 - `amq` binary in PATH (v0.32+)
+- `tmux` in PATH for `amq-squad team launch`

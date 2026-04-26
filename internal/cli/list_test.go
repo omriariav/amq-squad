@@ -12,12 +12,13 @@ func TestListRecordsFromEntriesIncludesSource(t *testing.T) {
 	entries := []launch.Entry{
 		{
 			Record: launch.Record{
-				Role:      "cto",
-				Handle:    "cto",
-				Binary:    "codex",
-				Session:   "cto",
-				CWD:       "/p",
-				StartedAt: when,
+				Role:         "cto",
+				Handle:       "cto",
+				Binary:       "codex",
+				Session:      "cto",
+				Conversation: "cto-thread",
+				CWD:          "/p",
+				StartedAt:    when,
 			},
 			Source: launch.FileName,
 		},
@@ -41,6 +42,9 @@ func TestListRecordsFromEntriesIncludesSource(t *testing.T) {
 	}
 	if !rows[0].StartedAt.Equal(when) {
 		t.Errorf("StartedAt = %v, want %v", rows[0].StartedAt, when)
+	}
+	if rows[0].Conversation != "cto-thread" {
+		t.Errorf("Conversation = %q, want cto-thread", rows[0].Conversation)
 	}
 }
 

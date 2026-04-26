@@ -12,14 +12,15 @@ import (
 func TestWriteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	in := Record{
-		CWD:       "/some/project",
-		Binary:    "claude",
-		Argv:      []string{"--flag", "value"},
-		Session:   "stream1",
-		Handle:    "cpo",
-		Role:      "cpo",
-		Root:      dir,
-		StartedAt: time.Now().UTC().Truncate(time.Second),
+		CWD:          "/some/project",
+		Binary:       "claude",
+		Argv:         []string{"--flag", "value"},
+		Session:      "stream1",
+		Conversation: "drive-fix",
+		Handle:       "cpo",
+		Role:         "cpo",
+		Root:         dir,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
 	}
 	if err := Write(dir, in); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -36,6 +37,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	// Write sets Schema, so zero out in.Schema for comparison of other fields.
 	in.Schema = SchemaVersion
 	if out.CWD != in.CWD || out.Binary != in.Binary || out.Session != in.Session ||
+		out.Conversation != in.Conversation ||
 		out.Handle != in.Handle || out.Role != in.Role || out.Root != in.Root {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", out, in)
 	}
