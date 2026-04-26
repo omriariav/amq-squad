@@ -23,12 +23,11 @@ const (
 // the team's project dir". Members can live in different directories; the
 // team-home (where team.json lives) is just one of them.
 type Member struct {
-	Role         string `json:"role"`    // catalog role ID, e.g. "cpo"
-	Binary       string `json:"binary"`  // "claude" or "codex"
-	Handle       string `json:"handle"`  // AMQ handle, defaults to Role
-	Session      string `json:"session"` // AMQ session name, defaults to Role
-	Conversation string `json:"conversation,omitempty"`
-	CWD          string `json:"cwd,omitempty"`
+	Role    string `json:"role"`    // catalog role ID, e.g. "cpo"
+	Binary  string `json:"binary"`  // "claude" or "codex"
+	Handle  string `json:"handle"`  // AMQ handle, defaults to Role
+	Session string `json:"session"` // AMQ session name, defaults to Role
+	CWD     string `json:"cwd,omitempty"`
 }
 
 // EffectiveCWD returns the member's working directory, falling back to the

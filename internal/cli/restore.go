@@ -295,3 +295,12 @@ func shellQuote(s string) string {
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
+
+func shellCommand(bin string, args ...string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, shellQuote(bin))
+	for _, arg := range args {
+		parts = append(parts, shellQuote(arg))
+	}
+	return strings.Join(parts, " ")
+}

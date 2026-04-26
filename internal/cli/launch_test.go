@@ -71,6 +71,21 @@ func TestRunLaunchDryRunConversationClaudeResume(t *testing.T) {
 	}
 }
 
+func TestRunLaunchDryRunQuotesConversationWithSpaces(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--conversation", "cto thread", "codex"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	want := "resume 'cto thread'"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
 func TestApplyConversationRestoreArgsIsIdempotent(t *testing.T) {
 	got, err := applyConversationRestoreArgs("codex", []string{"--dangerously-bypass-approvals-and-sandbox", "resume", "abc"}, "abc")
 	if err != nil {

@@ -67,18 +67,6 @@ amq-squad team init \
   --session cto=stream1,junior-dev=stream2,qa=stream3
 ```
 
-With a saved Codex or Claude conversation:
-
-```sh
-amq-squad team init \
-  --personas cto,fullstack \
-  --conversation cto=architecture-thread,fullstack=550e8400-e29b-41d4-a716-446655440000
-```
-
-`--conversation` stores a name, UUID, or GUID in `.amq-squad/team.json` and
-passes it through at launch time. Codex receives `resume <ref>`; Claude
-receives `--resume <ref>`.
-
 Members don't have to share a working directory. The dir where you run
 `team init` becomes the team-home (where team.json and team-rules.md live);
 individual members can live in other projects:
@@ -138,13 +126,13 @@ amq-squad team launch --layout tiled
 To create a separate detached tmux session instead:
 
 ```sh
-amq-squad team launch --target new-session --no-attach
+amq-squad team launch --target new-session
 tmux attach -t amq-squad-<project>
 ```
 
 When iTerm2 `tmux -CC` control-mode clients are detected, `amq-squad` warns
-about the known pause-after risk and avoids automatic attach or switch-client.
-If input stalls in iTerm2 cc-mode, recover from a non-tmux shell:
+about the known pause-after risk. If input stalls in iTerm2 cc-mode, recover
+from a non-tmux shell:
 
 ```sh
 tmux list-clients
@@ -349,13 +337,11 @@ amq send --to qa --project project-b --session qa
 amq-squad team                      Smart default: show commands, or init if none exists
 amq-squad team init [--personas ...]
                                     Pick personas, choose CLIs, and seed rules
-                                    Use --conversation role=ref to resume
-                                    Codex or Claude conversations.
 amq-squad team show [--no-bootstrap]
                                     Print launch commands for the configured team
 amq-squad team launch [--terminal tmux] [--target current-window|new-session]
                       [--layout vertical|horizontal|tiled] [--stagger 750ms]
-                      [--no-bootstrap] [--no-attach] [--dry-run]
+                      [--no-bootstrap] [--dry-run]
                                     Open the configured team in tmux panes
 amq-squad team rules init [--force] Seed or refresh .amq-squad/team-rules.md
 amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md

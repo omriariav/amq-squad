@@ -17,7 +17,6 @@ type teamLaunchOptions struct {
 	Layout      string
 	Session     string
 	NoBootstrap bool
-	NoAttach    bool
 	Stagger     time.Duration
 	DryRun      bool
 	SquadBin    string
@@ -59,14 +58,14 @@ func runTeamLaunch(args []string) error {
 	layout := fs.String("layout", "vertical", "terminal layout, backend-specific")
 	sessionName := fs.String("session", "", "terminal session name")
 	noBootstrap := fs.Bool("no-bootstrap", false, "launch agents without the generated bootstrap prompt")
-	noAttach := fs.Bool("no-attach", false, "create the terminal session without attaching")
+	_ = fs.Bool("no-attach", false, "legacy no-op; new-session never attaches automatically")
 	stagger := fs.Duration("stagger", 750*time.Millisecond, "delay between starting agent panes")
 	dryRun := fs.Bool("dry-run", false, "print terminal commands without executing them")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `amq-squad team launch - open the configured team in a terminal
 
 Usage:
-  amq-squad team launch [--terminal tmux] [--target current-window|new-session] [--layout vertical|horizontal|tiled] [--session name] [--stagger 750ms] [--no-bootstrap] [--no-attach] [--dry-run]
+  amq-squad team launch [--terminal tmux] [--target current-window|new-session] [--layout vertical|horizontal|tiled] [--session name] [--stagger 750ms] [--no-bootstrap] [--dry-run]
 
 Supported terminal backends: %s
 
@@ -87,7 +86,6 @@ to create a detached squad session.
 		Layout:      *layout,
 		Session:     *sessionName,
 		NoBootstrap: *noBootstrap,
-		NoAttach:    *noAttach,
 		Stagger:     *stagger,
 		DryRun:      *dryRun,
 		SquadBin:    teamSquadBin(),

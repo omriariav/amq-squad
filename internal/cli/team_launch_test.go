@@ -17,7 +17,7 @@ func TestBuildTmuxLaunchPlanUsesCatalogOrderAndLaunchCommands(t *testing.T) {
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
 		},
 	}
-	plan := buildTmuxLaunchPlan(tm, "/bin/amq-squad", "amq-squad-repo", "new-session", "vertical", true, false, 750*time.Millisecond)
+	plan := buildTmuxLaunchPlan(tm, "/bin/amq-squad", "amq-squad-repo", "new-session", "vertical", false, 750*time.Millisecond)
 	if plan.Session != "amq-squad-repo" {
 		t.Fatalf("Session = %q", plan.Session)
 	}
@@ -65,7 +65,6 @@ func TestTmuxDryRunLinesShowPaneFlow(t *testing.T) {
 		Session: "amq-squad-repo",
 		Target:  "new-session",
 		Layout:  "vertical",
-		Attach:  false,
 		Panes: []teamLaunchPane{
 			{Role: "cto", CWD: "/repo", Command: "cd /repo && amq-squad launch codex"},
 			{Role: "qa", CWD: "/repo", Command: "cd /repo && amq-squad launch claude"},
@@ -95,7 +94,6 @@ func TestTmuxDryRunLinesCanTargetCurrentWindow(t *testing.T) {
 		Session: "ignored",
 		Target:  "current-window",
 		Layout:  "vertical",
-		Attach:  false,
 		Panes: []teamLaunchPane{
 			{Role: "cto", CWD: "/repo", Command: "cd /repo && amq-squad launch codex"},
 			{Role: "qa", CWD: "/repo", Command: "cd /repo && amq-squad launch claude"},
@@ -164,6 +162,42 @@ func TestRunTeamLaunchDryRunDefaultsToCurrentWindow(t *testing.T) {
 	}
 	if strings.Contains(stdout, "POC") {
 		t.Errorf("dry-run output should not mention POC:\n%s", stdout)
+	}
+}
+
+func TestRunTeamLaunchDryRunNewSessionDoesNotAutoAttach(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamLaunch([]string{"--target", "new-session", "--dry-run", "--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stdout, "\ntmux attach-session") {
+		t.Fatalf("new-session should not auto-attach:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "# attach later with: tmux attach-session") {
+		t.Fatalf("new-session should print manual attach hint:\n%s", stdout)
 	}
 }
 

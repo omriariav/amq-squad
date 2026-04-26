@@ -66,15 +66,14 @@ func runTeamInit(args []string) error {
 	rolesFlag := fs.String("roles", "", "comma-separated role/persona IDs to include (skips interactive prompt)")
 	binaryFlag := fs.String("binary", "", "per-persona CLI overrides, e.g. fullstack=codex,qa=claude")
 	sessionFlag := fs.String("session", "", "per-persona session overrides, e.g. cpo=stream1,cto=stream2")
-	conversationFlag := fs.String("conversation", "", "per-persona conversation refs, e.g. cto=thread-name,qa=session-uuid")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
 	force := fs.Bool("force", false, "overwrite an existing team.json")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--personas id1,id2,...] [--binary persona=cli,...] [--session role=name,...] [--conversation role=ref,...] [--force]
-  amq-squad team init [--roles id1,id2,...] [--binary role=cli,...] [--session role=name,...] [--conversation role=ref,...] [--force]
+  amq-squad team init [--personas id1,id2,...] [--binary persona=cli,...] [--session role=name,...] [--force]
+  amq-squad team init [--roles id1,id2,...] [--binary role=cli,...] [--session role=name,...] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes <cwd>/.amq-squad/team.json and
@@ -111,10 +110,6 @@ Known personas:
 	sessionOverrides, err := parseKV(*sessionFlag)
 	if err != nil {
 		return fmt.Errorf("parse --session: %w", err)
-	}
-	conversationOverrides, err := parseKV(*conversationFlag)
-	if err != nil {
-		return fmt.Errorf("parse --conversation: %w", err)
 	}
 	cwdOverrides, err := parseKV(*cwdFlag)
 	if err != nil {
@@ -164,16 +159,11 @@ Known personas:
 		if s, ok := sessionOverrides[id]; ok {
 			session = s
 		}
-		conversation := ""
-		if c, ok := conversationOverrides[id]; ok {
-			conversation = c
-		}
 		m := team.Member{
-			Role:         id,
-			Binary:       binary,
-			Handle:       id,
-			Session:      session,
-			Conversation: conversation,
+			Role:    id,
+			Binary:  binary,
+			Handle:  id,
+			Session: session,
 		}
 		if c, ok := cwdOverrides[id]; ok {
 			abs, err := expandPath(c)
@@ -330,10 +320,6 @@ func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap 
 	}
 	if noBootstrap {
 		b.WriteString(" --no-bootstrap")
-	}
-	if m.Conversation != "" {
-		b.WriteString(" --conversation ")
-		b.WriteString(shellQuote(m.Conversation))
 	}
 	if m.Handle != "" {
 		// Always explicit: a role-named handle avoids collisions when the

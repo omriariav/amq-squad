@@ -149,7 +149,7 @@ printed and amq-squad exits. Disk state is untouched.
 	}
 
 	if *dryRun {
-		fmt.Println("amq", strings.Join(coopArgs, " "))
+		fmt.Println(shellCommand("amq", coopArgs...))
 		fmt.Fprintln(os.Stderr, "(dry run - no files written, not execing)")
 		return nil
 	}

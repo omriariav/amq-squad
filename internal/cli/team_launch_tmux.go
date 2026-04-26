@@ -23,7 +23,6 @@ type tmuxLaunchPlan struct {
 	Target     string
 	Layout     string
 	Panes      []teamLaunchPane
-	Attach     bool
 	StartDelay time.Duration
 }
 
@@ -59,8 +58,7 @@ func (b tmuxTeamLaunchBackend) Launch(t team.Team, opts teamLaunchOptions) error
 	plan := b.buildPlan(t, opts)
 	controlClients := tmuxControlModeClients()
 	if len(controlClients) > 0 {
-		warnTmuxControlModeClients(controlClients, plan.Session, plan.Attach)
-		plan.Attach = false
+		warnTmuxControlModeClients(controlClients)
 	}
 	return runTmuxLaunchPlan(plan)
 }
@@ -70,17 +68,15 @@ func (tmuxTeamLaunchBackend) buildPlan(t team.Team, opts teamLaunchOptions) tmux
 	if session == "" {
 		session = defaultTmuxSessionName(t.Project)
 	}
-	attach := !opts.NoAttach && opts.Target == "new-session"
-	return buildTmuxLaunchPlan(t, opts.SquadBin, session, opts.Target, opts.Layout, attach, opts.NoBootstrap, opts.Stagger)
+	return buildTmuxLaunchPlan(t, opts.SquadBin, session, opts.Target, opts.Layout, opts.NoBootstrap, opts.Stagger)
 }
 
-func buildTmuxLaunchPlan(t team.Team, squadBin, sessionName, target, layout string, attach, noBootstrap bool, startDelay time.Duration) tmuxLaunchPlan {
+func buildTmuxLaunchPlan(t team.Team, squadBin, sessionName, target, layout string, noBootstrap bool, startDelay time.Duration) tmuxLaunchPlan {
 	return tmuxLaunchPlan{
 		Session:    sessionName,
 		Target:     target,
 		Layout:     layout,
 		Panes:      buildTeamLaunchPanes(t, squadBin, noBootstrap),
-		Attach:     attach,
 		StartDelay: startDelay,
 	}
 }
@@ -162,9 +158,7 @@ func tmuxDryRunLines(plan tmuxLaunchPlan) []string {
 			lines = append(lines, sleepDryRunLine(plan.StartDelay))
 		}
 	}
-	if plan.Attach {
-		lines = append(lines, shellCommand("tmux", "attach-session", "-t", plan.Session))
-	} else if plan.Target == "current-window" {
+	if plan.Target == "current-window" {
 		lines = append(lines, "# using current tmux window; no attach needed")
 	} else {
 		lines = append(lines, "# attach later with: "+shellCommand("tmux", "attach-session", "-t", plan.Session))
@@ -202,15 +196,6 @@ func tmuxSelectPaneDryRunLine(target, title string) string {
 
 func tmuxSendKeysDryRunLine(target, command string) string {
 	return "tmux send-keys -t " + shellTarget(target) + " " + shellQuote(command) + " C-m"
-}
-
-func shellCommand(bin string, args ...string) string {
-	parts := make([]string, 0, len(args)+1)
-	parts = append(parts, shellQuote(bin))
-	for _, arg := range args {
-		parts = append(parts, shellQuote(arg))
-	}
-	return strings.Join(parts, " ")
 }
 
 func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
@@ -276,18 +261,12 @@ func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
 			time.Sleep(plan.StartDelay)
 		}
 	}
-	if !plan.Attach {
-		if plan.Target == "current-window" {
-			fmt.Fprintln(os.Stderr, "Added team panes to current tmux window.")
-			return nil
-		}
-		fmt.Fprintf(os.Stderr, "Created tmux session %s. Attach with: tmux attach -t %s\n", plan.Session, shellQuote(plan.Session))
+	if plan.Target == "current-window" {
+		fmt.Fprintln(os.Stderr, "Added team panes to current tmux window.")
 		return nil
 	}
-	if os.Getenv("TMUX") != "" {
-		return runCommand("tmux", "switch-client", "-t", plan.Session)
-	}
-	return runCommand("tmux", "attach-session", "-t", plan.Session)
+	fmt.Fprintf(os.Stderr, "Created tmux session %s. Attach with: tmux attach -t %s\n", plan.Session, shellQuote(plan.Session))
+	return nil
 }
 
 func tmuxSplitDirection(layout string) string {
@@ -345,7 +324,7 @@ func parseTmuxClients(out string) []tmuxClient {
 	return clients
 }
 
-func warnTmuxControlModeClients(clients []tmuxClient, session string, attachRequested bool) {
+func warnTmuxControlModeClients(clients []tmuxClient) {
 	fmt.Fprintf(os.Stderr, "warning: detected %d tmux control-mode client(s). iTerm2 tmux -CC can pause when several agent TUIs start at once.\n", len(clients))
 	for _, c := range clients {
 		fmt.Fprintf(os.Stderr, "warning: control client %s flags: %s\n", c.TTY, c.Flags)
@@ -353,9 +332,6 @@ func warnTmuxControlModeClients(clients []tmuxClient, session string, attachRequ
 	fmt.Fprintln(os.Stderr, "warning: starting panes with a stagger to reduce the initial output burst.")
 	fmt.Fprintln(os.Stderr, "warning: if input stalls, recover from a non-tmux shell with: tmux detach-client -t <tty>")
 	fmt.Fprintln(os.Stderr, "warning: consider raising the control client limit with: tmux refresh-client -f pause-after=0")
-	if attachRequested {
-		fmt.Fprintf(os.Stderr, "warning: skipping automatic attach or switch-client for cc-mode safety. Attach manually with: tmux attach -t %s\n", shellQuote(session))
-	}
 }
 
 func tmuxEnsureSessionAbsent(session string) error {

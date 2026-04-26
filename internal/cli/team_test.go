@@ -107,14 +107,6 @@ func TestEmitTeamCommandNoBootstrap(t *testing.T) {
 	}
 }
 
-func TestEmitTeamCommandIncludesConversation(t *testing.T) {
-	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto", Conversation: "cto-thread"}
-	cmd := emitTeamCommand("/p", "amq-squad", "/team", m, false)
-	if !strings.Contains(cmd, "--conversation cto-thread") {
-		t.Errorf("expected --conversation in: %s", cmd)
-	}
-}
-
 func TestShouldAppendBootstrapWithDefaultChildArgs(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -266,7 +258,7 @@ func TestRunTeamInitPersonasAliasAndBinaryOverride(t *testing.T) {
 		}
 	})
 
-	if err := runTeamInit([]string{"--personas", "fullstack", "--binary", "fullstack=codex", "--conversation", "fullstack=thread-123"}); err != nil {
+	if err := runTeamInit([]string{"--personas", "fullstack", "--binary", "fullstack=codex"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
 	got, err := team.Read(dir)
@@ -277,8 +269,8 @@ func TestRunTeamInitPersonasAliasAndBinaryOverride(t *testing.T) {
 		t.Fatalf("members = %v, want one", got.Members)
 	}
 	m := got.Members[0]
-	if m.Role != "fullstack" || m.Binary != "codex" || m.Conversation != "thread-123" {
-		t.Fatalf("member = %+v, want fullstack on codex with conversation", m)
+	if m.Role != "fullstack" || m.Binary != "codex" {
+		t.Fatalf("member = %+v, want fullstack on codex", m)
 	}
 }
 
