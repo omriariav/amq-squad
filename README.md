@@ -22,7 +22,7 @@ AMQ itself stays unchanged.
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.2.2
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.3.0
 ```
 
 Use `@latest` if you intentionally want the newest published tag.
@@ -39,9 +39,11 @@ cd ~/Code/my-project
 amq-squad team
 ```
 
-First run: pick roles. `amq-squad` writes `.amq-squad/team.json` and prints
-launch commands. Later runs print the same launch commands without asking
-again. Paste one command into each terminal pane or tab.
+First run: pick personas from the squad market, then choose which CLI runs
+each one. `amq-squad` writes `.amq-squad/team.json`, seeds
+`.amq-squad/team-rules.md`, and prints launch commands. Later runs print the
+same launch commands without asking again. Paste one command into each terminal
+pane or tab.
 
 You do not need to run `amq coop init` for the normal single-project flow.
 Generated launch commands include `--session`, and AMQ creates the needed
@@ -52,16 +54,16 @@ cross-project peer routing.
 Non-interactive setup:
 
 ```sh
-amq-squad team init --roles cpo,cto,fullstack,qa,pm,designer
+amq-squad team init --personas cpo,cto,senior-dev,frontend-dev,mobile-dev,qa,pm,designer
 ```
 
-With per-role overrides:
+With per-persona CLI overrides:
 
 ```sh
 amq-squad team init \
-  --roles cpo,fullstack,qa \
-  --binary fullstack=codex \
-  --session cpo=stream1,fullstack=stream2,qa=stream3
+  --personas cto,junior-dev,qa \
+  --binary junior-dev=codex,qa=claude \
+  --session cto=stream1,junior-dev=stream2,qa=stream3
 ```
 
 Members don't have to share a working directory. The dir where you run
@@ -71,7 +73,7 @@ individual members can live in other projects:
 ```sh
 cd ~/Code/project-a
 amq-squad team init \
-  --roles cpo,cto,fullstack,qa \
+  --personas cpo,cto,fullstack,qa \
   --cwd qa=~/Code/project-b
 ```
 
@@ -109,18 +111,26 @@ source of truth: role, handle, session, project, cwd, and the appropriate
 still useful context, but it should not be used as the active roster when it
 conflicts with `team.json`.
 
-## Built-in roles
+## Built-in personas
 
-| ID          | Label                                | Default binary | Notable skills                      |
-|-------------|--------------------------------------|----------------|-------------------------------------|
-| `cpo`       | CPO                                  | codex          | `/product-strategy`                 |
-| `cto`       | CTO                                  | codex          |                                     |
-| `fullstack` | Fullstack Developer                  | claude         |                                     |
-| `qa`        | QA Manager                           | claude         |                                     |
-| `pm`        | Project Manager / Product Owner      | claude         |                                     |
-| `designer`  | Product Designer                     | claude         | `/frontend-design`, `/canvas-design`|
+Think of personas as employees in a small internal market. The persona is the
+job you are hiring for; the CLI is the tool that employee runs on.
 
-Defaults are starting points. Override binary or session per role via flags at
+| ID             | Label                                | Default binary | Profile                                            |
+|----------------|--------------------------------------|----------------|----------------------------------------------------|
+| `cpo`          | CPO                                  | codex          | Product direction, scope pressure, user value.     |
+| `cto`          | CTO                                  | codex          | Architecture, tradeoffs, final technical review.   |
+| `senior-dev`   | Senior Developer                     | codex          | Takes harder code paths and reviews junior work.   |
+| `fullstack`    | Fullstack Developer                  | claude         | End-to-end feature builder across UI and backend.  |
+| `frontend-dev` | Frontend Developer                   | claude         | Product UI, components, state, browser polish.     |
+| `backend-dev`  | Backend Developer                    | codex          | APIs, data flow, services, integrations.           |
+| `mobile-dev`   | Mobile Developer                     | claude         | Native and mobile app flows, device polish.        |
+| `junior-dev`   | Junior Developer                     | codex          | Fast on scoped tasks, needs review before merge.   |
+| `qa`           | QA Manager                           | claude         | Regression thinking, release risk, test coverage.  |
+| `pm`           | Project Manager / Product Owner      | claude         | Keeps work ordered, unblocked, and shippable.      |
+| `designer`     | Product Designer                     | claude         | Product flows, visual shape, UI polish.            |
+
+Defaults are starting points. Override binary or session per persona via flags at
 `team init` time, or edit `.amq-squad/team.json` directly.
 
 ## Shared team rules
@@ -138,7 +148,7 @@ content into a managed block in both files. Everything outside the markers is
 yours and stays untouched.
 
 ```text
-amq-squad team rules init        Seed .amq-squad/team-rules.md with a stub
+amq-squad team rules init        Seed missing .amq-squad/team-rules.md with a stub
 amq-squad team sync              Preview what would change (exit 1 if drift)
 amq-squad team sync --apply      Write the managed block into CLAUDE.md and AGENTS.md
 ```
@@ -155,8 +165,7 @@ Two agents in one repo: CTO on codex, Fullstack on claude.
 
 ```sh
 cd ~/Code/my-project
-amq-squad team init --roles cto,fullstack  # writes .amq-squad/team.json
-amq-squad team rules init                  # seeds .amq-squad/team-rules.md
+amq-squad team init --personas cto,fullstack
 ```
 
 Open `.amq-squad/team-rules.md` and replace the template sections with your
@@ -227,8 +236,7 @@ Now pick the team from the team-home project:
 
 ```sh
 cd ~/Code/project-a
-amq-squad team init --roles cto,fullstack,qa --cwd qa=~/Code/project-b
-amq-squad team rules init
+amq-squad team init --personas cto,fullstack,qa --cwd qa=~/Code/project-b
 ```
 
 Edit `~/Code/project-a/.amq-squad/team-rules.md`. Then sync. Because one member
@@ -263,10 +271,11 @@ amq send --to qa --project project-b --session qa
 
 ```text
 amq-squad team                      Smart default: show commands, or init if none exists
-amq-squad team init [--roles ...]   Set up this project's team
+amq-squad team init [--personas ...]
+                                    Pick personas, choose CLIs, and seed rules
 amq-squad team show [--no-bootstrap]
                                     Print launch commands for the configured team
-amq-squad team rules init           Seed .amq-squad/team-rules.md
+amq-squad team rules init           Seed missing .amq-squad/team-rules.md
 amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
 
 amq-squad launch --role <r> --session <s> --me <handle> [--no-bootstrap] <binary> [-- <flags>]

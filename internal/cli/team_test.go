@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/omriariav/amq-squad/internal/rules"
 	"github.com/omriariav/amq-squad/internal/team"
 )
 
@@ -121,6 +124,261 @@ func TestShouldAppendBootstrapWithDefaultChildArgs(t *testing.T) {
 		if got := shouldAppendBootstrap(tc.binary, tc.childArgs); got != tc.want {
 			t.Errorf("%s: shouldAppendBootstrap(%q, %v) = %v, want %v", tc.name, tc.binary, tc.childArgs, got, tc.want)
 		}
+	}
+}
+
+func TestApplyDefaultChildArgs(t *testing.T) {
+	got := applyDefaultChildArgs("codex", nil)
+	want := []string{"--dangerously-bypass-approvals-and-sandbox"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("applyDefaultChildArgs codex = %v, want %v", got, want)
+	}
+	got = applyDefaultChildArgs("claude", nil)
+	want = []string{"--permission-mode", "auto"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("applyDefaultChildArgs claude = %v, want %v", got, want)
+	}
+	explicit := []string{"--resume", "abc"}
+	got = applyDefaultChildArgs("codex", explicit)
+	if !reflect.DeepEqual(got, explicit) {
+		t.Errorf("applyDefaultChildArgs should preserve explicit args: got %v, want %v", got, explicit)
+	}
+}
+
+func TestPromptPersonaSelection(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("4,2\n"))
+	var out bytes.Buffer
+	got, err := promptPersonaSelection(reader, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"fullstack", "cto"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("promptPersonaSelection = %v, want %v", got, want)
+	}
+	if !strings.Contains(out.String(), "Squad market") {
+		t.Errorf("prompt output missing squad market: %s", out.String())
+	}
+}
+
+func TestPrintPersonaMarketIncludesEmployeeProfiles(t *testing.T) {
+	var out bytes.Buffer
+	printPersonaMarket(&out)
+	got := out.String()
+	for _, want := range []string{
+		"frontend-dev",
+		"Frontend Developer",
+		"mobile-dev",
+		"Mobile Developer",
+		"junior-dev",
+		"Fast on scoped tasks",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("market output missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestParsePersonaSelection(t *testing.T) {
+	got, err := parsePersonaSelection("junior-dev,2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"junior-dev", "cto"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parsePersonaSelection = %v, want %v", got, want)
+	}
+	got, err = parsePersonaSelection("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) == 0 || got[0] != "cpo" {
+		t.Errorf("parsePersonaSelection all = %v, want catalog IDs", got)
+	}
+	if _, err := parsePersonaSelection("999"); err == nil {
+		t.Error("parsePersonaSelection should reject out-of-range numbers")
+	}
+}
+
+func TestPromptBinarySelection(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("fullstack=codex\n"))
+	var out bytes.Buffer
+	overrides := map[string]string{}
+	if err := promptBinarySelection(reader, &out, []string{"fullstack", "qa"}, overrides); err != nil {
+		t.Fatal(err)
+	}
+	if overrides["fullstack"] != "codex" {
+		t.Errorf("fullstack override = %q, want codex", overrides["fullstack"])
+	}
+	if _, ok := overrides["qa"]; ok {
+		t.Errorf("qa should keep default, got override %q", overrides["qa"])
+	}
+	if !strings.Contains(out.String(), "Squad plan") || !strings.Contains(out.String(), "Updated squad plan") {
+		t.Errorf("prompt output missing squad plans: %s", out.String())
+	}
+}
+
+func TestPromptBinarySelectionPreservesFlagOverride(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("\n"))
+	var out bytes.Buffer
+	overrides := map[string]string{"fullstack": "codex"}
+	if err := promptBinarySelection(reader, &out, []string{"fullstack"}, overrides); err != nil {
+		t.Fatal(err)
+	}
+	if overrides["fullstack"] != "codex" {
+		t.Errorf("fullstack override = %q, want codex", overrides["fullstack"])
+	}
+	if !strings.Contains(out.String(), "fullstack") || !strings.Contains(out.String(), "codex") {
+		t.Errorf("prompt should show existing override in plan: %s", out.String())
+	}
+}
+
+func TestRunTeamInitPersonasAliasAndBinaryOverride(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	if err := runTeamInit([]string{"--personas", "fullstack", "--binary", "fullstack=codex"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	got, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Members) != 1 {
+		t.Fatalf("members = %v, want one", got.Members)
+	}
+	m := got.Members[0]
+	if m.Role != "fullstack" || m.Binary != "codex" {
+		t.Fatalf("member = %+v, want fullstack on codex", m)
+	}
+}
+
+func TestRunTeamInitMarketPersonasAndBinaryOverrides(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	err = runTeamInit([]string{
+		"--personas", "cto,frontend-dev,mobile-dev,junior-dev,qa",
+		"--binary", "frontend-dev=codex,mobile-dev=codex",
+	})
+	if err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	got, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBinary := map[string]string{
+		"cto":          "codex",
+		"frontend-dev": "codex",
+		"mobile-dev":   "codex",
+		"junior-dev":   "codex",
+		"qa":           "claude",
+	}
+	if len(got.Members) != len(wantBinary) {
+		t.Fatalf("members = %v, want %d members", got.Members, len(wantBinary))
+	}
+	for _, m := range got.Members {
+		want, ok := wantBinary[m.Role]
+		if !ok {
+			t.Errorf("unexpected member %+v", m)
+			continue
+		}
+		if m.Binary != want {
+			t.Errorf("member %s binary = %q, want %q", m.Role, m.Binary, want)
+		}
+		if m.Handle != m.Role || m.Session != m.Role {
+			t.Errorf("member %s handle/session = %q/%q, want role defaults", m.Role, m.Handle, m.Session)
+		}
+	}
+}
+
+func TestRunTeamInitRejectsRolesAndPersonasTogether(t *testing.T) {
+	err := runTeamInit([]string{"--roles", "cto", "--personas", "fullstack"})
+	if err == nil || !strings.Contains(err.Error(), "either --personas or --roles") {
+		t.Fatalf("runTeamInit error = %v, want roles/personas conflict", err)
+	}
+}
+
+func TestRunTeamInitSeedsTeamRules(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	if err := runTeamInit([]string{"--roles", "cto,fullstack"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	if !team.Exists(dir) {
+		t.Fatalf("team.json was not written")
+	}
+	if _, err := os.Stat(rules.Path(dir)); err != nil {
+		t.Fatalf("team-rules.md was not written: %v", err)
+	}
+}
+
+func TestRunTeamInitDoesNotClobberTeamRules(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+	custom := "custom rules\n"
+	if err := os.MkdirAll(filepath.Dir(rules.Path(dir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rules.Path(dir), []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runTeamInit([]string{"--roles", "cto"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	got, err := os.ReadFile(rules.Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != custom {
+		t.Fatalf("team-rules.md was clobbered: got %q, want %q", string(got), custom)
 	}
 }
 

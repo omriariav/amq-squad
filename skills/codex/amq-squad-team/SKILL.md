@@ -1,6 +1,6 @@
 ---
 name: amq-squad-team
-description: Bootstrap or refresh an amq-squad team for the current project by default, including selecting roles, mapping agents across explicit project directories, discovering prior AMQ history in explicitly scoped folders, generating .amq-squad/team-rules.md, optionally syncing CLAUDE.md and AGENTS.md, and printing fresh launch commands. Use when the user asks to start a fresh agent team, set up cpo/cto/dev/qa roles, preserve context from old AMQ sessions, or generate team-rules for amq-squad. Default to the current working directory unless the user names one or more other folders.
+description: Bootstrap or refresh an amq-squad team for the current project by default, including selecting personas, mapping agents across explicit project directories, discovering prior AMQ history in explicitly scoped folders, generating .amq-squad/team-rules.md, optionally syncing CLAUDE.md and AGENTS.md, and printing fresh launch commands. Use when the user asks to start a fresh agent team, set up cpo/cto/dev/qa personas, preserve context from old AMQ sessions, or generate team-rules for amq-squad. Default to the current working directory unless the user names one or more other folders.
 ---
 
 # AMQ Squad Team
@@ -38,8 +38,11 @@ Supported user inputs:
    - Do not run `amq-squad restore --exec` for a fresh team.
 
 3. Create or update the team.
-   - Use built-in role IDs when possible: `cpo`, `cto`, `fullstack`, `qa`, `pm`, `designer`.
-   - Model backend/dev as `fullstack` unless the user wants a custom manual launch.
+   - Use built-in persona IDs when possible: `cpo`, `cto`, `senior-dev`, `fullstack`, `frontend-dev`, `backend-dev`, `mobile-dev`, `junior-dev`, `qa`, `pm`, `designer`.
+   - Model "works fast but needs review" as `junior-dev`.
+   - Model web UI work as `frontend-dev`; model mobile app work as `mobile-dev`; model APIs/services work as `backend-dev`.
+   - Model backend/dev as `fullstack` unless the user wants a narrower persona.
+   - Use `--binary persona=cli` when the user wants a persona on a different CLI, for example `--binary fullstack=codex`.
    - Use fresh session names such as `fresh-cpo`, `fresh-cto`, `fresh-backend`, `fresh-qa`.
 
 4. Generate team rules.
@@ -68,7 +71,7 @@ For a four-agent team with CPO, CTO, backend/dev, and QA in a second project:
 cd /path/to/team-home
 
 amq-squad team init --force \
-  --roles cpo,cto,fullstack,qa \
+  --personas cpo,cto,fullstack,qa \
   --binary cpo=codex,cto=codex,fullstack=claude,qa=claude \
   --session cpo=fresh-cpo,cto=fresh-cto,fullstack=fresh-backend,qa=fresh-qa \
   --cwd qa=/path/to/qa-project
