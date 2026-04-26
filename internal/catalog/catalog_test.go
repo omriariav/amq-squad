@@ -31,6 +31,31 @@ func TestLookupKnownAndUnknown(t *testing.T) {
 	}
 }
 
+func TestMarketPersonas(t *testing.T) {
+	cases := map[string]struct {
+		label  string
+		binary string
+	}{
+		"senior-dev":   {label: "Senior Developer", binary: "codex"},
+		"frontend-dev": {label: "Frontend Developer", binary: "claude"},
+		"backend-dev":  {label: "Backend Developer", binary: "codex"},
+		"mobile-dev":   {label: "Mobile Developer", binary: "claude"},
+		"junior-dev":   {label: "Junior Developer", binary: "codex"},
+	}
+	for id, want := range cases {
+		got := Lookup(id)
+		if got == nil {
+			t.Fatalf("persona %s missing from catalog", id)
+		}
+		if got.Label != want.label || got.PreferredBinary != want.binary {
+			t.Errorf("persona %s = (%q, %q), want (%q, %q)", id, got.Label, got.PreferredBinary, want.label, want.binary)
+		}
+		if got.Profile == "" || got.Description == "" {
+			t.Errorf("persona %s should have profile and description", id)
+		}
+	}
+}
+
 func TestEveryRoleIsConsistent(t *testing.T) {
 	for _, r := range All() {
 		if r.ID == "" || r.Label == "" {

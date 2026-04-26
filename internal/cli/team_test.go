@@ -161,6 +161,24 @@ func TestPromptPersonaSelection(t *testing.T) {
 	}
 }
 
+func TestPrintPersonaMarketIncludesEmployeeProfiles(t *testing.T) {
+	var out bytes.Buffer
+	printPersonaMarket(&out)
+	got := out.String()
+	for _, want := range []string{
+		"frontend-dev",
+		"Frontend Developer",
+		"mobile-dev",
+		"Mobile Developer",
+		"junior-dev",
+		"Fast on scoped tasks",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("market output missing %q in:\n%s", want, got)
+		}
+	}
+}
+
 func TestParsePersonaSelection(t *testing.T) {
 	got, err := parsePersonaSelection("junior-dev,2")
 	if err != nil {
@@ -243,6 +261,57 @@ func TestRunTeamInitPersonasAliasAndBinaryOverride(t *testing.T) {
 	m := got.Members[0]
 	if m.Role != "fullstack" || m.Binary != "codex" {
 		t.Fatalf("member = %+v, want fullstack on codex", m)
+	}
+}
+
+func TestRunTeamInitMarketPersonasAndBinaryOverrides(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	err = runTeamInit([]string{
+		"--personas", "cto,frontend-dev,mobile-dev,junior-dev,qa",
+		"--binary", "frontend-dev=codex,mobile-dev=codex",
+	})
+	if err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	got, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBinary := map[string]string{
+		"cto":          "codex",
+		"frontend-dev": "codex",
+		"mobile-dev":   "codex",
+		"junior-dev":   "codex",
+		"qa":           "claude",
+	}
+	if len(got.Members) != len(wantBinary) {
+		t.Fatalf("members = %v, want %d members", got.Members, len(wantBinary))
+	}
+	for _, m := range got.Members {
+		want, ok := wantBinary[m.Role]
+		if !ok {
+			t.Errorf("unexpected member %+v", m)
+			continue
+		}
+		if m.Binary != want {
+			t.Errorf("member %s binary = %q, want %q", m.Role, m.Binary, want)
+		}
+		if m.Handle != m.Role || m.Session != m.Role {
+			t.Errorf("member %s handle/session = %q/%q, want role defaults", m.Role, m.Handle, m.Session)
+		}
 	}
 }
 
