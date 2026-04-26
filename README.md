@@ -371,6 +371,7 @@ amq-squad restore --exec --role cto Exec one selected local launch through
 amq-squad list [--json]             List restorable amq-squad records and
                                     AMQ-only inferred history across known
                                     projects.
+amq-squad version                   Print the installed amq-squad version.
 ```
 
 ## Files it writes
