@@ -41,6 +41,121 @@ func TestRunLaunchDryRunNoDefaultArgsOptOut(t *testing.T) {
 	}
 }
 
+func TestRunLaunchDryRunConversationCodexResume(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--conversation", "cto-thread", "codex"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	want := "amq coop exec codex -- --dangerously-bypass-approvals-and-sandbox resume cto-thread"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
+func TestRunLaunchDryRunConversationClaudeResume(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--conversation-id", "550e8400-e29b-41d4-a716-446655440000", "claude"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	want := "amq coop exec claude -- --permission-mode auto --resume 550e8400-e29b-41d4-a716-446655440000"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
+func TestRunLaunchDryRunQuotesConversationWithSpaces(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--conversation", "cto thread", "codex"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	want := "resume 'cto thread'"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
+func TestRunLaunchConversationRejectsPromptArgs(t *testing.T) {
+	setupFakeAMQ(t)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--conversation", "cto-thread", "codex", "hello prompt"})
+	})
+	if err == nil {
+		t.Fatal("conversation with prompt args should fail")
+	}
+	if !strings.Contains(err.Error(), "extra codex args") {
+		t.Fatalf("error should mention extra codex args, got %v\nstderr:\n%s", err, stderr)
+	}
+}
+
+func TestRunLaunchConversationRejectsPassthroughArgs(t *testing.T) {
+	setupFakeAMQ(t)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--conversation", "claude-thread", "claude", "--", "--model", "sonnet"})
+	})
+	if err == nil {
+		t.Fatal("conversation with passthrough args should fail")
+	}
+	if !strings.Contains(err.Error(), "extra claude args") {
+		t.Fatalf("error should mention extra claude args, got %v\nstderr:\n%s", err, stderr)
+	}
+}
+
+func TestApplyConversationRestoreArgsIsIdempotent(t *testing.T) {
+	got, err := applyConversationRestoreArgs("codex", []string{"--dangerously-bypass-approvals-and-sandbox", "resume", "abc"}, "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, " ") != "--dangerously-bypass-approvals-and-sandbox resume abc" {
+		t.Fatalf("codex args = %v", got)
+	}
+
+	got, err = applyConversationRestoreArgs("claude", []string{"--permission-mode", "auto", "--resume", "abc"}, "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, " ") != "--permission-mode auto --resume abc" {
+		t.Fatalf("claude args = %v", got)
+	}
+}
+
+func TestApplyConversationRestoreArgsRejectsConflicts(t *testing.T) {
+	if _, err := applyConversationRestoreArgs("codex", []string{"resume", "other"}, "abc"); err == nil {
+		t.Fatal("codex conflicting resume should fail")
+	}
+	if _, err := applyConversationRestoreArgs("claude", []string{"--continue"}, "abc"); err == nil {
+		t.Fatal("claude continue plus conversation should fail")
+	}
+	if _, err := applyConversationRestoreArgs("node", nil, "abc"); err == nil {
+		t.Fatal("unsupported binary should fail")
+	}
+	if _, err := applyConversationRestoreArgs("codex", []string{"--dangerously-bypass-approvals-and-sandbox", "prompt"}, "abc"); err == nil {
+		t.Fatal("codex extra args plus conversation should fail")
+	}
+	if _, err := applyConversationRestoreArgs("claude", []string{"--permission-mode", "auto", "--model", "sonnet"}, "abc"); err == nil {
+		t.Fatal("claude extra args plus conversation should fail")
+	}
+	if _, err := applyConversationRestoreArgs("codex", []string{"--dangerously-bypass-approvals-and-sandbox", "resume", "abc", "--model", "gpt-5"}, "abc"); err == nil {
+		t.Fatal("codex native resume plus extra args should fail")
+	}
+	if _, err := applyConversationRestoreArgs("claude", []string{"--permission-mode", "auto", "--resume", "abc", "--model", "sonnet"}, "abc"); err == nil {
+		t.Fatal("claude native resume plus extra args should fail")
+	}
+}
+
 func setupFakeAMQ(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()

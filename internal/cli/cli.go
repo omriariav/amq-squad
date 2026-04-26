@@ -44,7 +44,7 @@ Usage:
   amq-squad <command> [options]
 
 Commands:
-  team      Pick your team once, then print launch commands on demand
+  team      Pick your team once, then show or launch it on demand
   launch    Launch a single agent with a role (called by 'team show' output)
   restore   Restore registered agents from local launch history
   list      List registered agents across known projects

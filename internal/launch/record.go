@@ -22,15 +22,16 @@ const (
 // Record is the persisted launch invocation for a single agent. It lives at
 // <AM_ROOT>/agents/<handle>/launch.json.
 type Record struct {
-	Schema    int       `json:"schema"`
-	CWD       string    `json:"cwd"`
-	Binary    string    `json:"binary"`
-	Argv      []string  `json:"argv"`
-	Session   string    `json:"session"`
-	Handle    string    `json:"handle"`
-	Role      string    `json:"role,omitempty"`
-	Root      string    `json:"root"`
-	StartedAt time.Time `json:"started_at"`
+	Schema       int       `json:"schema"`
+	CWD          string    `json:"cwd"`
+	Binary       string    `json:"binary"`
+	Argv         []string  `json:"argv"`
+	Session      string    `json:"session"`
+	Conversation string    `json:"conversation,omitempty"`
+	Handle       string    `json:"handle"`
+	Role         string    `json:"role,omitempty"`
+	Root         string    `json:"root"`
+	StartedAt    time.Time `json:"started_at"`
 }
 
 // Entry is a launch record plus the mailbox directory it was discovered in.

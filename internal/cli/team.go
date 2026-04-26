@@ -28,6 +28,8 @@ func runTeam(args []string) error {
 		return runTeamInit(args[1:])
 	case "show":
 		return runTeamShow(args[1:])
+	case "launch":
+		return runTeamLaunch(args[1:])
 	case "rules":
 		return runTeamRules(args[1:])
 	case "sync":
@@ -35,7 +37,7 @@ func runTeam(args []string) error {
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'show', 'rules', or 'sync'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'show', 'launch', 'rules', or 'sync'.", args[0])
 	}
 }
 
@@ -225,27 +227,7 @@ func emitTeamCommands(projectDir string, noBootstrap bool) error {
 		return fmt.Errorf("team has no members")
 	}
 
-	// Stable display order: catalog order, not file order. Keeps output
-	// consistent regardless of how the user listed roles at init.
-	idx := make(map[string]int, len(catalog.IDs()))
-	for i, id := range catalog.IDs() {
-		idx[id] = i
-	}
-	members := append([]team.Member(nil), t.Members...)
-	sort.SliceStable(members, func(i, j int) bool {
-		left, lok := idx[members[i].Role]
-		right, rok := idx[members[j].Role]
-		if !lok && !rok {
-			return members[i].Role < members[j].Role
-		}
-		if !lok {
-			return false
-		}
-		if !rok {
-			return true
-		}
-		return left < right
-	})
+	members := orderedTeamMembers(t.Members)
 
 	fmt.Println("# amq-squad team - run each command in its own terminal tab")
 	fmt.Println("#")
@@ -281,6 +263,29 @@ func emitTeamCommands(projectDir string, noBootstrap bool) error {
 		fmt.Println()
 	}
 	return nil
+}
+
+func orderedTeamMembers(members []team.Member) []team.Member {
+	idx := make(map[string]int, len(catalog.IDs()))
+	for i, id := range catalog.IDs() {
+		idx[id] = i
+	}
+	out := append([]team.Member(nil), members...)
+	sort.SliceStable(out, func(i, j int) bool {
+		left, lok := idx[out[i].Role]
+		right, rok := idx[out[j].Role]
+		if !lok && !rok {
+			return out[i].Role < out[j].Role
+		}
+		if !lok {
+			return false
+		}
+		if !rok {
+			return true
+		}
+		return left < right
+	})
+	return out
 }
 
 func uniqueMemberCWDs(projectDir string, members []team.Member) []string {
@@ -653,6 +658,7 @@ Usage:
   amq-squad team init [options]       Pick personas, choose CLIs, and seed rules
   amq-squad team show [--no-bootstrap]
                                       Print launch commands for configured team
+  amq-squad team launch [options]     Open the configured team in a terminal
   amq-squad team rules init [--force] Seed or refresh team-rules.md
   amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
                                       (default: preview; --apply writes)

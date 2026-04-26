@@ -26,6 +26,8 @@ func runLaunch(args []string) error {
 	me := fs.String("me", "", "override the agent handle (defaults to binary basename)")
 	rootFlag := fs.String("root", "", "override AMQ root directory")
 	teamHome := fs.String("team-home", "", "team-home directory used to find .amq-squad/team-rules.md for bootstrap")
+	conversation := fs.String("conversation", "", "resume and store a Codex or Claude conversation name/id")
+	conversationID := fs.String("conversation-id", "", "alias for --conversation")
 	noBootstrap := fs.Bool("no-bootstrap", false, "do not pass the generated bootstrap prompt to the agent")
 	noDefaultArgs := fs.Bool("no-default-args", false, "do not prepend Codex or Claude default permission args")
 	dryRun := fs.Bool("dry-run", false, "print the coop exec command without executing")
@@ -49,16 +51,25 @@ Side effects before exec:
   3. Writes a role.md stub if one does not already exist.
   4. Prepends Codex and Claude default permission args unless
      --no-default-args is set.
-  5. Adds a generated bootstrap prompt unless --no-bootstrap is set or
+  5. Translates --conversation for Codex or Claude resume when provided.
+  6. Adds a generated bootstrap prompt unless --no-bootstrap is set or
      non-default binary args were provided.
-  6. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
+  7. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
 
 With --dry-run, none of the above run: the resolved coop exec command is
 printed and amq-squad exits. Disk state is untouched.
+
+When --conversation generates resume args, do not pass additional child args.
+For advanced Codex or Claude flags, omit --conversation and pass native resume
+args after "--".
 `)
 	}
 
 	if err := fs.Parse(squadArgs); err != nil {
+		return err
+	}
+	conversationRef, err := conversationRefFromFlags(*conversation, *conversationID)
+	if err != nil {
 		return err
 	}
 	remaining := fs.Args()
@@ -72,6 +83,13 @@ printed and amq-squad exits. Disk state is untouched.
 	}
 	if !*noDefaultArgs {
 		childArgs = ensureDefaultChildArgs(binary, childArgs)
+	}
+	if conversationRef != "" {
+		var err error
+		childArgs, err = applyConversationRestoreArgs(binary, childArgs, conversationRef)
+		if err != nil {
+			return err
+		}
 	}
 
 	handle := *me
@@ -94,14 +112,15 @@ printed and amq-squad exits. Disk state is untouched.
 
 	agentDir := filepath.Join(root, "agents", handle)
 	rec := launch.Record{
-		CWD:       cwd,
-		Binary:    binary,
-		Argv:      childArgs,
-		Session:   *session,
-		Handle:    handle,
-		Role:      *roleFlag,
-		Root:      root,
-		StartedAt: time.Now().UTC(),
+		CWD:          cwd,
+		Binary:       binary,
+		Argv:         childArgs,
+		Session:      *session,
+		Conversation: conversationRef,
+		Handle:       handle,
+		Role:         *roleFlag,
+		Root:         root,
+		StartedAt:    time.Now().UTC(),
 	}
 
 	// Keep generated bootstrap out of launch.json so restore stays compact
@@ -134,7 +153,7 @@ printed and amq-squad exits. Disk state is untouched.
 	}
 
 	if *dryRun {
-		fmt.Println("amq", strings.Join(coopArgs, " "))
+		fmt.Println(shellCommand("amq", coopArgs...))
 		fmt.Fprintln(os.Stderr, "(dry run - no files written, not execing)")
 		return nil
 	}
@@ -156,6 +175,160 @@ printed and amq-squad exits. Disk state is untouched.
 		return fmt.Errorf("amq not found in PATH: %w", err)
 	}
 	return syscall.Exec(amqBin, append([]string{"amq"}, coopArgs...), os.Environ())
+}
+
+func conversationRefFromFlags(conversation, conversationID string) (string, error) {
+	conversation = strings.TrimSpace(conversation)
+	conversationID = strings.TrimSpace(conversationID)
+	if conversation != "" && conversationID != "" && conversation != conversationID {
+		return "", fmt.Errorf("use only one of --conversation or --conversation-id")
+	}
+	if conversation != "" {
+		return conversation, nil
+	}
+	return conversationID, nil
+}
+
+func applyConversationRestoreArgs(binary string, childArgs []string, conversation string) ([]string, error) {
+	conversation = strings.TrimSpace(conversation)
+	if conversation == "" {
+		return childArgs, nil
+	}
+	switch normalizedAgentBinary(binary) {
+	case "codex":
+		if ref, ok := codexResumeRef(childArgs); ok {
+			if ref == "" {
+				return nil, fmt.Errorf("--conversation cannot be combined with existing codex resume without a ref")
+			}
+			if ref != conversation {
+				return nil, fmt.Errorf("--conversation %q conflicts with existing codex resume %q", conversation, ref)
+			}
+			if !hasNoExtraConversationArgs(binary, stripCodexResumeRef(childArgs, conversation)) {
+				return nil, fmt.Errorf("--conversation cannot be combined with extra codex args; omit --conversation and pass native resume args after --")
+			}
+			return childArgs, nil
+		}
+		if !hasNoExtraConversationArgs(binary, childArgs) {
+			return nil, fmt.Errorf("--conversation cannot be combined with extra codex args; omit --conversation and pass native resume args after --")
+		}
+		out := append([]string(nil), childArgs...)
+		return append(out, "resume", conversation), nil
+	case "claude":
+		if ref, ok := claudeResumeRef(childArgs); ok {
+			if ref == "" {
+				return nil, fmt.Errorf("--conversation cannot be combined with existing claude resume or continue without a ref")
+			}
+			if ref != conversation {
+				return nil, fmt.Errorf("--conversation %q conflicts with existing claude resume %q", conversation, ref)
+			}
+			if !hasNoExtraConversationArgs(binary, stripClaudeResumeRef(childArgs, conversation)) {
+				return nil, fmt.Errorf("--conversation cannot be combined with extra claude args; omit --conversation and pass native resume args after --")
+			}
+			return childArgs, nil
+		}
+		if !hasNoExtraConversationArgs(binary, childArgs) {
+			return nil, fmt.Errorf("--conversation cannot be combined with extra claude args; omit --conversation and pass native resume args after --")
+		}
+		out := append([]string(nil), childArgs...)
+		return append(out, "--resume", conversation), nil
+	default:
+		return nil, fmt.Errorf("--conversation is supported for codex and claude, got %q", binary)
+	}
+}
+
+func hasNoExtraConversationArgs(binary string, childArgs []string) bool {
+	if len(childArgs) == 0 {
+		return true
+	}
+	defaultArgs := defaultChildArgsForBinary(binary)
+	if len(childArgs) != len(defaultArgs) {
+		return false
+	}
+	for i := range childArgs {
+		if childArgs[i] != defaultArgs[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func stripConversationRestoreArgs(binary string, childArgs []string, conversation string) []string {
+	conversation = strings.TrimSpace(conversation)
+	if conversation == "" {
+		return append([]string(nil), childArgs...)
+	}
+	switch normalizedAgentBinary(binary) {
+	case "codex":
+		return stripCodexResumeRef(childArgs, conversation)
+	case "claude":
+		return stripClaudeResumeRef(childArgs, conversation)
+	default:
+		return append([]string(nil), childArgs...)
+	}
+}
+
+func normalizedAgentBinary(binary string) string {
+	return strings.ToLower(filepath.Base(binary))
+}
+
+func codexResumeRef(args []string) (string, bool) {
+	for i, arg := range args {
+		if arg != "resume" {
+			continue
+		}
+		if i+1 < len(args) {
+			return args[i+1], true
+		}
+		return "", true
+	}
+	return "", false
+}
+
+func stripCodexResumeRef(args []string, conversation string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == "resume" && i+1 < len(args) && args[i+1] == conversation {
+			i++
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
+}
+
+func claudeResumeRef(args []string) (string, bool) {
+	for i, arg := range args {
+		switch {
+		case arg == "--resume" || arg == "-r" || arg == "--session-id":
+			if i+1 < len(args) {
+				return args[i+1], true
+			}
+			return "", true
+		case strings.HasPrefix(arg, "--resume="):
+			return strings.TrimPrefix(arg, "--resume="), true
+		case strings.HasPrefix(arg, "--session-id="):
+			return strings.TrimPrefix(arg, "--session-id="), true
+		case arg == "--continue" || arg == "-c":
+			return "", true
+		}
+	}
+	return "", false
+}
+
+func stripClaudeResumeRef(args []string, conversation string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if (arg == "--resume" || arg == "-r" || arg == "--session-id") && i+1 < len(args) && args[i+1] == conversation {
+			i++
+			continue
+		}
+		if arg == "--resume="+conversation || arg == "--session-id="+conversation {
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 // resolveAMQRoot shells out to `amq env --json` to discover the final root

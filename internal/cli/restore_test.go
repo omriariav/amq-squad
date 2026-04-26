@@ -67,6 +67,30 @@ func TestEmitCommandIncludesMeWhenHandleDiffers(t *testing.T) {
 	}
 }
 
+func TestEmitCommandIncludesConversationWithoutDuplicatingResumeArgs(t *testing.T) {
+	rec := launch.Record{
+		CWD:          "/p",
+		Binary:       "codex",
+		Argv:         []string{"--dangerously-bypass-approvals-and-sandbox", "resume", "cto-thread"},
+		Session:      "cto",
+		Conversation: "cto-thread",
+		Handle:       "cto",
+		Role:         "cto",
+	}
+	cmd := emitCommand(rec)
+	for _, want := range []string{
+		"--conversation cto-thread",
+		"-- --dangerously-bypass-approvals-and-sandbox",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("emitCommand missing %q in: %s", want, cmd)
+		}
+	}
+	if strings.Contains(cmd, " resume cto-thread") {
+		t.Errorf("emitCommand should strip generated resume args when --conversation is present: %s", cmd)
+	}
+}
+
 func TestEmitCommandQuotesArgvWithSpaces(t *testing.T) {
 	rec := launch.Record{
 		CWD:    "/p",
@@ -97,23 +121,25 @@ func TestEmitCommandIncludesRootWhenSessionMissing(t *testing.T) {
 
 func TestLaunchArgsFromRecord(t *testing.T) {
 	rec := launch.Record{
-		CWD:     "/p",
-		Binary:  "claude",
-		Argv:    []string{"--resume", "abc"},
-		Session: "stream1",
-		Handle:  "fullstack",
-		Role:    "fullstack",
-		Root:    "/p/.agent-mail/stream1",
+		CWD:          "/p",
+		Binary:       "claude",
+		Argv:         []string{"--permission-mode", "auto", "--resume", "abc"},
+		Session:      "stream1",
+		Conversation: "abc",
+		Handle:       "fullstack",
+		Role:         "fullstack",
+		Root:         "/p/.agent-mail/stream1",
 	}
 	got := launchArgsFromRecord(rec)
 	want := []string{
 		"--no-bootstrap",
 		"--role", "fullstack",
 		"--session", "stream1",
+		"--conversation", "abc",
 		"--me", "fullstack",
 		"claude",
 		"--",
-		"--resume", "abc",
+		"--permission-mode", "auto",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
@@ -134,13 +160,14 @@ func TestLaunchArgsFromRecordUsesRootWithoutSession(t *testing.T) {
 }
 
 func TestMatchesRestoreFilters(t *testing.T) {
-	rec := launch.Record{Role: "cto", Handle: "cto", Session: "stream1"}
+	rec := launch.Record{Role: "cto", Handle: "cto", Session: "stream1", Conversation: "cto-thread"}
 	cases := []struct {
-		name    string
-		role    string
-		handle  string
-		session string
-		want    bool
+		name         string
+		role         string
+		handle       string
+		session      string
+		conversation string
+		want         bool
 	}{
 		{name: "no filters", want: true},
 		{name: "role match", role: "cto", want: true},
@@ -149,9 +176,11 @@ func TestMatchesRestoreFilters(t *testing.T) {
 		{name: "handle mismatch", handle: "fullstack", want: false},
 		{name: "session match", session: "stream1", want: true},
 		{name: "session mismatch", session: "stream2", want: false},
+		{name: "conversation match", conversation: "cto-thread", want: true},
+		{name: "conversation mismatch", conversation: "other", want: false},
 	}
 	for _, tc := range cases {
-		got := matchesRestoreFilters(rec, tc.role, tc.handle, tc.session)
+		got := matchesRestoreFilters(rec, tc.role, tc.handle, tc.session, tc.conversation)
 		if got != tc.want {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
@@ -161,10 +190,11 @@ func TestMatchesRestoreFilters(t *testing.T) {
 func TestRestoreMetadataMarksLegacyHistory(t *testing.T) {
 	entry := launch.Entry{
 		Record: launch.Record{
-			CWD:     "/p",
-			Binary:  "claude",
-			Session: "stream1",
-			Handle:  "claude",
+			CWD:          "/p",
+			Binary:       "claude",
+			Session:      "stream1",
+			Conversation: "bug-fix-chat",
+			Handle:       "claude",
 		},
 		AgentDir: "/p/.agent-mail/stream1/agents/claude",
 		Source:   "amq history",
@@ -172,6 +202,7 @@ func TestRestoreMetadataMarksLegacyHistory(t *testing.T) {
 	got := restoreMetadata(entry)
 	for _, want := range []string{
 		"session: stream1",
+		"conversation: bug-fix-chat",
 		"handle: claude",
 		"persona: missing",
 		"source: amq",
