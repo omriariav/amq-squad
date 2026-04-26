@@ -39,9 +39,10 @@ cd ~/Code/my-project
 amq-squad team
 ```
 
-First run: pick roles. `amq-squad` writes `.amq-squad/team.json` and prints
-launch commands. Later runs print the same launch commands without asking
-again. Paste one command into each terminal pane or tab.
+First run: pick roles. `amq-squad` writes `.amq-squad/team.json`, seeds
+`.amq-squad/team-rules.md`, and prints launch commands. Later runs print the
+same launch commands without asking again. Paste one command into each terminal
+pane or tab.
 
 You do not need to run `amq coop init` for the normal single-project flow.
 Generated launch commands include `--session`, and AMQ creates the needed
@@ -138,7 +139,7 @@ content into a managed block in both files. Everything outside the markers is
 yours and stays untouched.
 
 ```text
-amq-squad team rules init        Seed .amq-squad/team-rules.md with a stub
+amq-squad team rules init        Seed missing .amq-squad/team-rules.md with a stub
 amq-squad team sync              Preview what would change (exit 1 if drift)
 amq-squad team sync --apply      Write the managed block into CLAUDE.md and AGENTS.md
 ```
@@ -155,8 +156,7 @@ Two agents in one repo: CTO on codex, Fullstack on claude.
 
 ```sh
 cd ~/Code/my-project
-amq-squad team init --roles cto,fullstack  # writes .amq-squad/team.json
-amq-squad team rules init                  # seeds .amq-squad/team-rules.md
+amq-squad team init --roles cto,fullstack
 ```
 
 Open `.amq-squad/team-rules.md` and replace the template sections with your
@@ -228,7 +228,6 @@ Now pick the team from the team-home project:
 ```sh
 cd ~/Code/project-a
 amq-squad team init --roles cto,fullstack,qa --cwd qa=~/Code/project-b
-amq-squad team rules init
 ```
 
 Edit `~/Code/project-a/.amq-squad/team-rules.md`. Then sync. Because one member
@@ -263,10 +262,10 @@ amq send --to qa --project project-b --session qa
 
 ```text
 amq-squad team                      Smart default: show commands, or init if none exists
-amq-squad team init [--roles ...]   Set up this project's team
+amq-squad team init [--roles ...]   Set up this project's team and rules stub
 amq-squad team show [--no-bootstrap]
                                     Print launch commands for the configured team
-amq-squad team rules init           Seed .amq-squad/team-rules.md
+amq-squad team rules init           Seed missing .amq-squad/team-rules.md
 amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
 
 amq-squad launch --role <r> --session <s> --me <handle> [--no-bootstrap] <binary> [-- <flags>]

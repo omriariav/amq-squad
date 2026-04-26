@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omriariav/amq-squad/internal/rules"
 	"github.com/omriariav/amq-squad/internal/team"
 )
 
@@ -121,6 +122,84 @@ func TestShouldAppendBootstrapWithDefaultChildArgs(t *testing.T) {
 		if got := shouldAppendBootstrap(tc.binary, tc.childArgs); got != tc.want {
 			t.Errorf("%s: shouldAppendBootstrap(%q, %v) = %v, want %v", tc.name, tc.binary, tc.childArgs, got, tc.want)
 		}
+	}
+}
+
+func TestApplyDefaultChildArgs(t *testing.T) {
+	got := applyDefaultChildArgs("codex", nil)
+	want := []string{"--dangerously-bypass-approvals-and-sandbox"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("applyDefaultChildArgs codex = %v, want %v", got, want)
+	}
+	got = applyDefaultChildArgs("claude", nil)
+	want = []string{"--permission-mode", "auto"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("applyDefaultChildArgs claude = %v, want %v", got, want)
+	}
+	explicit := []string{"--resume", "abc"}
+	got = applyDefaultChildArgs("codex", explicit)
+	if !reflect.DeepEqual(got, explicit) {
+		t.Errorf("applyDefaultChildArgs should preserve explicit args: got %v, want %v", got, explicit)
+	}
+}
+
+func TestRunTeamInitSeedsTeamRules(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	if err := runTeamInit([]string{"--roles", "cto,fullstack"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	if !team.Exists(dir) {
+		t.Fatalf("team.json was not written")
+	}
+	if _, err := os.Stat(rules.Path(dir)); err != nil {
+		t.Fatalf("team-rules.md was not written: %v", err)
+	}
+}
+
+func TestRunTeamInitDoesNotClobberTeamRules(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+	custom := "custom rules\n"
+	if err := os.MkdirAll(filepath.Dir(rules.Path(dir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rules.Path(dir), []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runTeamInit([]string{"--roles", "cto"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	got, err := os.ReadFile(rules.Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != custom {
+		t.Fatalf("team-rules.md was clobbered: got %q, want %q", string(got), custom)
 	}
 }
 

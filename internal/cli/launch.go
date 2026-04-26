@@ -67,6 +67,7 @@ printed and amq-squad exits. Disk state is untouched.
 	if len(remaining) > 1 {
 		childArgs = append(remaining[1:], childArgs...)
 	}
+	childArgs = applyDefaultChildArgs(binary, childArgs)
 
 	handle := *me
 	if handle == "" {

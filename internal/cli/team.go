@@ -70,8 +70,9 @@ Usage:
   amq-squad team init [--roles id1,id2,...] [--binary role=bin,...] [--session role=name,...] [--force]
 
 Without --roles, prompts interactively. Writes <cwd>/.amq-squad/team.json.
-The directory where this runs becomes the team-home. Members can live in
-other directories via --cwd role=/path.
+Also seeds <cwd>/.amq-squad/team-rules.md if it does not already exist.
+The directory where this runs becomes the team-home. Members can live in other
+directories via --cwd role=/path.
 
 Known roles:
 `)
@@ -164,6 +165,13 @@ Known roles:
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Wrote %s with %d members.\n", team.Path(cwd), len(members))
+	wroteRules, err := rules.EnsureStub(cwd)
+	if err != nil {
+		return fmt.Errorf("seed team-rules.md: %w", err)
+	}
+	if wroteRules {
+		fmt.Fprintf(os.Stderr, "Wrote %s.\n", rules.Path(cwd))
+	}
 	return nil
 }
 
@@ -525,10 +533,10 @@ func printTeamUsage() {
 
 Usage:
   amq-squad team                      Smart default: show commands, or init if none exists
-  amq-squad team init [options]       Set up .amq-squad/team.json
+  amq-squad team init [options]       Set up team.json and seed team-rules.md
   amq-squad team show [--no-bootstrap]
                                       Print launch commands for configured team
-  amq-squad team rules init           Seed .amq-squad/team-rules.md with a stub
+  amq-squad team rules init           Seed missing team-rules.md with a stub
   amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
                                       (default: preview; --apply writes)
 
