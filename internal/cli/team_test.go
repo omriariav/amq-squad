@@ -819,6 +819,60 @@ func TestUniqueMemberCWDs(t *testing.T) {
 	}
 }
 
+func TestSyncTargetDirsRejectsOutsideTeamHome(t *testing.T) {
+	home := t.TempDir()
+	outside := t.TempDir()
+	_, err := syncTargetDirs(home, []team.Member{{Role: "qa", CWD: outside}}, false)
+	if err == nil || !strings.Contains(err.Error(), "outside team-home") {
+		t.Fatalf("syncTargetDirs error = %v, want outside team-home", err)
+	}
+}
+
+func TestSyncTargetDirsAllowsOutsideWhenExplicit(t *testing.T) {
+	home := t.TempDir()
+	outside := t.TempDir()
+	got, err := syncTargetDirs(home, []team.Member{{Role: "qa", CWD: outside}}, true)
+	if err != nil {
+		t.Fatalf("syncTargetDirs: %v", err)
+	}
+	want, err := filepath.EvalSymlinks(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("syncTargetDirs = %v, want [%s]", got, want)
+	}
+}
+
+func TestSyncTargetDirsRequiresExistingDirectory(t *testing.T) {
+	home := t.TempDir()
+	missing := filepath.Join(home, "missing")
+	_, err := syncTargetDirs(home, []team.Member{{Role: "qa", CWD: missing}}, true)
+	if err == nil || !strings.Contains(err.Error(), "no such file") {
+		t.Fatalf("syncTargetDirs error = %v, want missing dir", err)
+	}
+}
+
+func TestEnsureTeamHomeSyncTargetUsesCanonicalPath(t *testing.T) {
+	realHome := t.TempDir()
+	linkParent := t.TempDir()
+	linkHome := filepath.Join(linkParent, "team-home")
+	if err := os.Symlink(realHome, linkHome); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	canonical, err := filepath.EvalSymlinks(linkHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ensureTeamHomeSyncTarget([]string{canonical}, linkHome)
+	if err != nil {
+		t.Fatalf("ensureTeamHomeSyncTarget: %v", err)
+	}
+	if len(got) != 1 || got[0] != canonical {
+		t.Fatalf("ensureTeamHomeSyncTarget = %v, want one canonical target %s", got, canonical)
+	}
+}
+
 func TestExpandPathTilde(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

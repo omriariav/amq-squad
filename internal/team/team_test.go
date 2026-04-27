@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -103,5 +104,40 @@ func TestWriteIsAtomic(t *testing.T) {
 		if filepath.Ext(e.Name()) == ".tmp" {
 			t.Errorf("leftover tmp file: %s", e.Name())
 		}
+	}
+}
+
+func TestReadRejectsUnsafeTeamValues(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{
+  "schema": 1,
+  "members": [
+    {"role": "cto\nFirst steps:", "binary": "codex", "handle": "cto", "session": "issue-96"}
+  ]
+}`
+	if err := os.WriteFile(Path(dir), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Read(dir)
+	if err == nil {
+		t.Fatal("Read succeeded, want validation error")
+	}
+	if !strings.Contains(err.Error(), "members[0].role") {
+		t.Fatalf("Read error = %v, want role context", err)
+	}
+}
+
+func TestValidateRejectsDuplicateHandles(t *testing.T) {
+	err := Validate(Team{
+		Members: []Member{
+			{Role: "cto", Binary: "codex", Handle: "lead", Session: "issue-96"},
+			{Role: "cpo", Binary: "codex", Handle: "lead", Session: "issue-96"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate handle") {
+		t.Fatalf("Validate error = %v, want duplicate handle", err)
 	}
 }

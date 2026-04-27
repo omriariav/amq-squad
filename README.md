@@ -22,7 +22,7 @@ AMQ itself stays unchanged.
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.1
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.2
 ```
 
 Use `@latest` if you intentionally want the newest published tag.
@@ -235,11 +235,17 @@ yours and stays untouched.
 amq-squad team rules init        Seed missing .amq-squad/team-rules.md with a stub
 amq-squad team sync              Preview what would change (exit 1 if drift)
 amq-squad team sync --apply      Write the managed block into CLAUDE.md and AGENTS.md
+amq-squad team sync --apply --allow-outside
+                                  Also write member cwds outside team-home
 ```
 
 On first `--apply` with an existing CLAUDE.md, your content is adopted as the
 user region and the managed block is appended. Subsequent syncs only refresh
-the managed block.
+the managed block. Sync writes are guarded with same-directory temporary files,
+atomic rename, and a stale-plan check. Member cwds outside the team-home
+directory require `--allow-outside` so a hand-edited `team.json` cannot write
+instructions into unrelated folders by surprise. Every configured cwd must
+already exist before sync writes there.
 
 ## Walkthroughs
 
@@ -329,7 +335,7 @@ Edit `~/Code/project-a/.amq-squad/team-rules.md`. Then sync. Because one member
 lives elsewhere, sync walks both cwds and writes CLAUDE.md + AGENTS.md in each:
 
 ```sh
-amq-squad team sync --apply
+amq-squad team sync --apply --allow-outside
 # Wrote 4 files: CLAUDE.md and AGENTS.md in project-a, same in project-b
 ```
 
@@ -368,7 +374,8 @@ amq-squad team launch [--terminal tmux] [--target current-window|new-session]
                       [--no-bootstrap] [--dry-run]
                                     Open the configured team in tmux panes
 amq-squad team rules init [--force] Seed or refresh .amq-squad/team-rules.md
-amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
+amq-squad team sync [--apply] [--allow-outside]
+                                    Sync CLAUDE.md and AGENTS.md from team-rules.md
 
 amq-squad launch --role <r> --session <s> [--team-workstream] --me <handle> [--conversation ref] [--no-bootstrap] [--no-default-args] <binary> [-- <flags>]
                                     Launch one agent. Writes launch.json + role.md
