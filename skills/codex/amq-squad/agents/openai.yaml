@@ -1,0 +1,4 @@
+interface:
+  display_name: "AMQ Squad"
+  short_description: "Run amq-squad teams and AMQ handoffs"
+  default_prompt: "Use $amq-squad to coordinate this amq-squad team, route AMQ messages, and manage the team workstream."

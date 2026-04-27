@@ -32,6 +32,7 @@ type bootstrapContext struct {
 	RolePath      string
 	LaunchPath    string
 	CurrentTeam   []bootstrapTeamMember
+	Workstreams   []bootstrapWorkstream
 }
 
 type bootstrapTeamMember struct {
@@ -84,6 +85,7 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		RolePath:      role.Path(agentDir),
 		LaunchPath:    filepath.Join(agentDir, launch.FileName),
 		CurrentTeam:   bootstrapCurrentTeam(rec, teamHome),
+		Workstreams:   siblingWorkstreamSummaries(rec.Root, rec.Session),
 	}
 }
 
@@ -103,18 +105,26 @@ func bootstrapCurrentTeam(rec launch.Record, teamHome string) []bootstrapTeamMem
 		cwd := m.EffectiveCWD(t.Project)
 		project := projectNameForCWD(cwd)
 		handle := memberHandle(m)
+		session := routingSessionForMember(rec, m)
 		out = append(out, bootstrapTeamMember{
 			Role:    m.Role,
 			Handle:  handle,
 			Binary:  m.Binary,
-			Session: m.Session,
+			Session: session,
 			Project: project,
 			CWD:     cwd,
-			Route:   routeCommandFor(currentProject, project, handle, m.Session),
+			Route:   routeCommandFor(currentProject, project, rec.Handle, handle, session),
 			You:     sameLaunchTarget(rec, cwd, handle, m),
 		})
 	}
 	return out
+}
+
+func routingSessionForMember(rec launch.Record, m team.Member) string {
+	if rec.SharedWorkstream || (rec.Session != "" && rec.Session != rec.Role && rec.Session != rec.Handle) {
+		return rec.Session
+	}
+	return m.Session
 }
 
 func memberHandle(m team.Member) string {
@@ -130,17 +140,20 @@ func memberHandle(m team.Member) string {
 func sameLaunchTarget(rec launch.Record, cwd, handle string, m team.Member) bool {
 	return rec.Role == m.Role &&
 		rec.Handle == handle &&
-		rec.Session == m.Session &&
+		rec.Session == routingSessionForMember(rec, m) &&
 		rec.CWD == cwd
 }
 
-func routeCommandFor(currentProject, targetProject, handle, session string) string {
+func routeCommandFor(currentProject, targetProject, fromHandle, handle, session string) string {
 	args := []string{"amq", "send", "--to", handle}
 	if currentProject != "" && targetProject != "" && currentProject != targetProject {
 		args = append(args, "--project", targetProject)
 	}
 	if session != "" {
 		args = append(args, "--session", session)
+	}
+	if fromHandle != "" && handle != "" && fromHandle != handle {
+		args = append(args, "--thread", canonicalP2PThread(fromHandle, handle))
 	}
 	for i, arg := range args {
 		args[i] = shellQuote(arg)

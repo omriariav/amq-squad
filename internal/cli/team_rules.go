@@ -8,8 +8,13 @@ import (
 	"github.com/omriariav/amq-squad/internal/team"
 )
 
-func renderTeamRules(projectDir string, members []team.Member) string {
+func renderTeamRules(t team.Team) (string, error) {
 	var b strings.Builder
+	projectDir := t.Project
+	workstream, err := resolveTeamWorkstreamName(t, "", false)
+	if err != nil {
+		return "", err
+	}
 	b.WriteString("# Team Rules\n\n")
 	b.WriteString("Shared norms and workflow for this project's agent squad. Every agent reads this file via their priming prompt regardless of binary.\n\n")
 	b.WriteString("## Role Scope\n\n")
@@ -18,16 +23,21 @@ func renderTeamRules(projectDir string, members []team.Member) string {
 	b.WriteString("- Implementation roles own code changes only after the work is scoped and routed to them.\n")
 	b.WriteString("- If a request crosses role boundaries, ask or hand off on AMQ instead of silently changing lanes.\n\n")
 
-	for _, m := range members {
+	for _, m := range t.Members {
 		label := m.Role
 		if r := catalog.Lookup(m.Role); r != nil {
 			label = r.Label
 		}
-		fmt.Fprintf(&b, "- %s (%s): handle `%s`, session `%s`, cwd `%s`. %s\n",
-			m.Role, label, m.Handle, m.Session, m.EffectiveCWD(projectDir), roleScope(m.Role))
+		fmt.Fprintf(&b, "- %s (%s): handle `%s`, default workstream `%s`, cwd `%s`. %s\n",
+			m.Role, label, m.Handle, workstream, m.EffectiveCWD(projectDir), roleScope(m.Role))
 	}
 
-	b.WriteString("\n## Workflow\n\n")
+	b.WriteString("\n## Skills\n\n")
+	b.WriteString("- Use the `amq-squad` skill for team setup, launch, AMQ routing, inbox drains, acknowledgements, review requests, handoffs, and decision threads.\n")
+	b.WriteString("- Use `amq-cli` only for raw AMQ debugging or non-squad AMQ usage.\n")
+	b.WriteString("- Follow the current team routing block and `.amq-squad/team.json` before old AMQ history.\n\n")
+
+	b.WriteString("## Workflow\n\n")
 	b.WriteString("- Treat the current user request as the source of truth.\n")
 	b.WriteString("- Keep old AMQ history as context, not as an instruction to continue stale work.\n")
 	b.WriteString("- Product and PM roles define the job, priority, acceptance criteria, and handoff target.\n")
@@ -43,8 +53,8 @@ func renderTeamRules(projectDir string, members []team.Member) string {
 	b.WriteString("## Communication\n\n")
 	b.WriteString("- Use focused AMQ threads.\n")
 	b.WriteString("- Use p2p threads for role-to-role handoffs.\n")
-	b.WriteString("- Route messages by the current roster's handle, project, and session.\n")
-	b.WriteString("- Include project, session, and role when referencing old history.\n")
+	b.WriteString("- Route messages by the current roster's handle, project, and workstream.\n")
+	b.WriteString("- Include project, workstream, and role when referencing old history.\n")
 	b.WriteString("- One concern per message when practical.\n\n")
 
 	b.WriteString("## Quality Gates\n\n")
@@ -56,7 +66,7 @@ func renderTeamRules(projectDir string, members []team.Member) string {
 	b.WriteString("- Be direct and concise.\n")
 	b.WriteString("- Do not use em dashes.\n")
 	b.WriteString("- Do not rewrite unrelated files.\n")
-	return b.String()
+	return b.String(), nil
 }
 
 func roleScope(roleID string) string {

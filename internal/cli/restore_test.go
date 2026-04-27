@@ -146,6 +146,24 @@ func TestLaunchArgsFromRecord(t *testing.T) {
 	}
 }
 
+func TestLaunchArgsFromRecordPreservesSharedWorkstream(t *testing.T) {
+	rec := launch.Record{
+		Binary:           "codex",
+		Session:          "cto",
+		SharedWorkstream: true,
+		Handle:           "cto",
+		Role:             "cto",
+	}
+	got := launchArgsFromRecord(rec)
+	want := []string{"--no-bootstrap", "--role", "cto", "--session", "cto", "--team-workstream", "--me", "cto", "codex"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+	if cmd := emitCommand(rec); !strings.Contains(cmd, "--team-workstream") {
+		t.Fatalf("emitCommand should preserve shared workstream metadata: %s", cmd)
+	}
+}
+
 func TestLaunchArgsFromRecordUsesRootWithoutSession(t *testing.T) {
 	rec := launch.Record{
 		Binary: "codex",

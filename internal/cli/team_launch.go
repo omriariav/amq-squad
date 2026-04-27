@@ -12,14 +12,16 @@ import (
 )
 
 type teamLaunchOptions struct {
-	Terminal    string
-	Target      string
-	Layout      string
-	Session     string
-	NoBootstrap bool
-	Stagger     time.Duration
-	DryRun      bool
-	SquadBin    string
+	Terminal        string
+	Target          string
+	Layout          string
+	Workstream      string
+	TerminalSession string
+	Fresh           bool
+	NoBootstrap     bool
+	Stagger         time.Duration
+	DryRun          bool
+	SquadBin        string
 }
 
 type teamLaunchPane struct {
@@ -56,7 +58,9 @@ func runTeamLaunch(args []string) error {
 	terminal := fs.String("terminal", "tmux", "terminal backend to use")
 	target := fs.String("target", "current-window", "terminal target, backend-specific")
 	layout := fs.String("layout", "vertical", "terminal layout, backend-specific")
-	sessionName := fs.String("session", "", "terminal session name")
+	sessionName := fs.String("session", "", "AMQ workstream session name (default: sanitized team-home directory name; lowercase a-z, 0-9, -, _)")
+	terminalSession := fs.String("terminal-session", "", "terminal session name when the backend creates one")
+	fresh := fs.Bool("fresh", false, "fail if the selected workstream session already exists")
 	noBootstrap := fs.Bool("no-bootstrap", false, "launch agents without the generated bootstrap prompt")
 	_ = fs.Bool("no-attach", false, "legacy no-op; new-session never attaches automatically")
 	stagger := fs.Duration("stagger", 750*time.Millisecond, "delay between starting agent panes")
@@ -65,7 +69,7 @@ func runTeamLaunch(args []string) error {
 		fmt.Fprintf(os.Stderr, `amq-squad team launch - open the configured team in a terminal
 
 Usage:
-  amq-squad team launch [--terminal tmux] [--target current-window|new-session] [--layout vertical|horizontal|tiled] [--session name] [--stagger 750ms] [--no-bootstrap] [--dry-run]
+  amq-squad team launch [--session workstream] [--fresh] [--terminal tmux] [--target current-window|new-session] [--layout vertical|horizontal|tiled] [--terminal-session name] [--stagger 750ms] [--no-bootstrap] [--dry-run]
 
 Supported terminal backends: %s
 
@@ -81,14 +85,16 @@ to create a detached squad session.
 		return err
 	}
 	opts := teamLaunchOptions{
-		Terminal:    *terminal,
-		Target:      *target,
-		Layout:      *layout,
-		Session:     *sessionName,
-		NoBootstrap: *noBootstrap,
-		Stagger:     *stagger,
-		DryRun:      *dryRun,
-		SquadBin:    teamSquadBin(),
+		Terminal:        *terminal,
+		Target:          *target,
+		Layout:          *layout,
+		Workstream:      *sessionName,
+		TerminalSession: *terminalSession,
+		Fresh:           *fresh,
+		NoBootstrap:     *noBootstrap,
+		Stagger:         *stagger,
+		DryRun:          *dryRun,
+		SquadBin:        teamSquadBin(),
 	}
 	backend, ok := teamLaunchBackends[opts.Terminal]
 	if !ok {
@@ -109,6 +115,20 @@ to create a detached squad session.
 	if len(t.Members) == 0 {
 		return fmt.Errorf("team has no members")
 	}
+	workstream, err := resolveTeamWorkstreamName(t, opts.Workstream, flagWasSet(fs, "session"))
+	if err != nil {
+		return err
+	}
+	opts.Workstream = workstream
+	if opts.Fresh {
+		exists, root, err := teamWorkstreamExists(t, opts.Workstream)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("workstream session %q already exists at %s", opts.Workstream, root)
+		}
+	}
 
 	if opts.DryRun {
 		return backend.DryRun(t, opts)
@@ -125,7 +145,7 @@ func registeredTeamLaunchTerminals() []string {
 	return names
 }
 
-func buildTeamLaunchPanes(t team.Team, squadBin string, noBootstrap bool) []teamLaunchPane {
+func buildTeamLaunchPanes(t team.Team, squadBin string, noBootstrap bool, workstream string) []teamLaunchPane {
 	members := orderedTeamMembers(t.Members)
 	panes := make([]teamLaunchPane, 0, len(members))
 	for _, m := range members {
@@ -133,7 +153,7 @@ func buildTeamLaunchPanes(t team.Team, squadBin string, noBootstrap bool) []team
 		panes = append(panes, teamLaunchPane{
 			Role:    m.Role,
 			CWD:     cwd,
-			Command: emitTeamCommand(cwd, squadBin, t.Project, m, noBootstrap),
+			Command: emitTeamCommand(cwd, squadBin, t.Project, m, noBootstrap, workstream),
 		})
 	}
 	return panes

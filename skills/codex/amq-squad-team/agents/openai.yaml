@@ -1,4 +1,0 @@
-interface:
-  display_name: "AMQ Squad Team"
-  short_description: "Bootstrap local amq-squad teams and rules"
-  default_prompt: "Use $amq-squad-team to create a fresh amq-squad team for this project and generate team-rules.md."
