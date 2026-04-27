@@ -22,7 +22,7 @@ AMQ itself stays unchanged.
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.4.0
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.0
 ```
 
 Use `@latest` if you intentionally want the newest published tag.
@@ -156,7 +156,7 @@ tmux detach-client -t /dev/ttysXXX
 
 `team launch` is wired as a small backend registry. The CLI handles shared
 team loading, bootstrap flags, and common launch options, then dispatches to a
-terminal backend by name. v0.4.0 ships the `tmux` backend.
+terminal backend by name. v0.5.0 ships the `tmux` backend.
 
 Adding another terminal should be isolated to a new
 `internal/cli/team_launch_<name>.go` file that implements `teamLaunchBackend`
