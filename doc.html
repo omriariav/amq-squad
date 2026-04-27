@@ -510,7 +510,7 @@
     <main>
       <header class="hero">
         <div class="hero-inner">
-          <p class="eyebrow">v0.5.1 guide</p>
+          <p class="eyebrow">v0.5.2 guide</p>
           <h1>How to use amq-squad</h1>
           <p class="lead">
             amq-squad is the project layer above AMQ. It records who is on the
@@ -542,7 +542,7 @@
             into <code class="inline-code">$GOBIN</code> or
             <code class="inline-code">$HOME/go/bin</code>.
           </p>
-          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.1
+          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.2
 amq-squad version</code></pre></div>
           <p>
             You also need Go 1.25 or newer, the <code class="inline-code">amq</code>
@@ -709,7 +709,8 @@ amq-squad team launch --fresh --session issue-96</code></pre></div>
             <div class="panel">
               <h3>Sync rules</h3>
               <div class="code"><pre><code>amq-squad team sync
-amq-squad team sync --apply</code></pre></div>
+amq-squad team sync --apply
+amq-squad team sync --apply --allow-outside</code></pre></div>
               <p>Preview first. Apply writes managed blocks into CLAUDE.md and AGENTS.md.</p>
             </div>
           </div>
@@ -717,6 +718,12 @@ amq-squad team sync --apply</code></pre></div>
             Content outside the managed markers remains yours. Update
             <code class="inline-code">team-rules.md</code> and sync again when
             team norms change.
+          </p>
+          <p>
+            Sync writes use same-directory temporary files, atomic rename, and
+            a stale-plan check. Member cwds outside the team-home require
+            <code class="inline-code">--allow-outside</code>, and every
+            configured cwd must already exist before sync writes there.
           </p>
         </div>
       </section>
@@ -848,7 +855,7 @@ amq drain --include-body</code></pre></div>
               <p>Check which binary is running, then reinstall the desired tag.</p>
               <div class="code"><pre><code>which -a amq-squad
 amq-squad version
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.1</code></pre></div>
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.2</code></pre></div>
             </div>
             <div class="panel">
               <h3>Launch plan looks wrong</h3>
@@ -867,7 +874,8 @@ amq-squad restore</code></pre></div>
               <p>Use per-role <code class="inline-code">--cwd</code> mappings, then configure AMQ peers in each project when members live in different repos.</p>
               <div class="code"><pre><code>amq-squad team init \
   --personas cto,fullstack,qa \
-  --cwd qa=~/Code/project-b</code></pre></div>
+  --cwd qa=~/Code/project-b
+amq-squad team sync --apply --allow-outside</code></pre></div>
             </div>
           </div>
         </div>

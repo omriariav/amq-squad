@@ -158,6 +158,78 @@ func TestApplyOnlyWritesChanged(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsChangedFileSincePlan(t *testing.T) {
+	project := t.TempDir()
+	plans, err := Plan(project, "# Team Rules\n")
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ClaudeFile), []byte("user edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Apply(plans)
+	if err == nil || !strings.Contains(err.Error(), "changed since sync plan") {
+		t.Fatalf("Apply error = %v, want stale plan error", err)
+	}
+}
+
+func TestApplyRejectsNewEmptyFileSincePlan(t *testing.T) {
+	project := t.TempDir()
+	plans, err := Plan(project, "# Team Rules\n")
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ClaudeFile), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Apply(plans)
+	if err == nil || !strings.Contains(err.Error(), "changed since sync plan") {
+		t.Fatalf("Apply error = %v, want stale plan error", err)
+	}
+}
+
+func TestApplyDoesNotLeaveTempFiles(t *testing.T) {
+	project := t.TempDir()
+	plans, err := Plan(project, "# Team Rules\n")
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if _, err := Apply(plans); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	entries, err := os.ReadDir(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Fatalf("left temp file behind: %s", e.Name())
+		}
+	}
+}
+
+func TestApplyPreservesExistingFileMode(t *testing.T) {
+	project := t.TempDir()
+	path := filepath.Join(project, ClaudeFile)
+	if err := os.WriteFile(path, []byte("# Existing\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plans, err := Plan(project, "# Team Rules\n")
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if _, err := Apply(plans); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("mode = %o, want 600", got)
+	}
+}
+
 func TestEnsureStub(t *testing.T) {
 	project := t.TempDir()
 	wrote, err := EnsureStub(project)
