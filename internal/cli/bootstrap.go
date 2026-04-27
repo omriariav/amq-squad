@@ -33,20 +33,23 @@ type bootstrapContext struct {
 	LaunchPath    string
 	CurrentTeam   []bootstrapTeamMember
 	Workstreams   []bootstrapWorkstream
+	Warnings      []string
 }
 
 type bootstrapTeamMember struct {
-	Role    string
-	Handle  string
-	Binary  string
-	Session string
-	Project string
-	CWD     string
-	Route   string
-	You     bool
+	Role       string
+	Handle     string
+	Binary     string
+	Session    string
+	Project    string
+	CWD        string
+	Route      string
+	RouteError string
+	You        bool
 }
 
 func buildBootstrapPrompt(ctx bootstrapContext) (string, error) {
+	ctx = sanitizeBootstrapContext(ctx)
 	tpl, err := template.New("bootstrap").Funcs(template.FuncMap{
 		"orDefault": func(s, fallback string) string {
 			if s == "" {
@@ -65,6 +68,60 @@ func buildBootstrapPrompt(ctx bootstrapContext) (string, error) {
 	return b.String(), nil
 }
 
+func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
+	ctx.Role = promptText(ctx.Role)
+	ctx.Handle = promptText(ctx.Handle)
+	ctx.Binary = promptText(ctx.Binary)
+	ctx.Session = promptText(ctx.Session)
+	ctx.CWD = promptText(ctx.CWD)
+	ctx.Root = promptText(ctx.Root)
+	ctx.AgentDir = promptText(ctx.AgentDir)
+	ctx.TeamHome = promptText(ctx.TeamHome)
+	ctx.TeamRulesPath = promptText(ctx.TeamRulesPath)
+	ctx.RolePath = promptText(ctx.RolePath)
+	ctx.LaunchPath = promptText(ctx.LaunchPath)
+	for i := range ctx.CurrentTeam {
+		m := &ctx.CurrentTeam[i]
+		m.Role = promptText(m.Role)
+		m.Handle = promptText(m.Handle)
+		m.Binary = promptText(m.Binary)
+		m.Session = promptText(m.Session)
+		m.Project = promptText(m.Project)
+		m.CWD = promptText(m.CWD)
+		m.Route = promptText(m.Route)
+		m.RouteError = promptText(m.RouteError)
+	}
+	for i := range ctx.Workstreams {
+		w := &ctx.Workstreams[i]
+		w.Name = promptText(w.Name)
+		w.Handles = promptText(w.Handles)
+		w.LastTouched = promptText(w.LastTouched)
+	}
+	for i := range ctx.Warnings {
+		ctx.Warnings[i] = promptText(ctx.Warnings[i])
+	}
+	return ctx
+}
+
+func promptText(s string) string {
+	// Keep prompt data single-line and out of inline-code delimiters; team.Read
+	// already rejects control characters in persisted team fields.
+	var b strings.Builder
+	lastSpace := false
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || r == '`' {
+			if !lastSpace {
+				b.WriteByte(' ')
+				lastSpace = true
+			}
+			continue
+		}
+		b.WriteRune(r)
+		lastSpace = false
+	}
+	return strings.TrimSpace(b.String())
+}
+
 func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrapContext {
 	teamRulesPath := ""
 	if teamHome != "" {
@@ -72,6 +129,7 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 	} else if _, err := os.Stat(rules.Path(rec.CWD)); err == nil {
 		teamRulesPath = rules.Path(rec.CWD)
 	}
+	currentTeam, warnings := bootstrapCurrentTeam(rec, teamHome)
 	return bootstrapContext{
 		Role:          rec.Role,
 		Handle:        rec.Handle,
@@ -84,40 +142,49 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		TeamRulesPath: teamRulesPath,
 		RolePath:      role.Path(agentDir),
 		LaunchPath:    filepath.Join(agentDir, launch.FileName),
-		CurrentTeam:   bootstrapCurrentTeam(rec, teamHome),
+		CurrentTeam:   currentTeam,
 		Workstreams:   siblingWorkstreamSummaries(rec.Root, rec.Session),
+		Warnings:      warnings,
 	}
 }
 
-func bootstrapCurrentTeam(rec launch.Record, teamHome string) []bootstrapTeamMember {
+func bootstrapCurrentTeam(rec launch.Record, teamHome string) ([]bootstrapTeamMember, []string) {
 	home := teamHome
 	if home == "" {
 		home = rec.CWD
 	}
 	t, err := team.Read(home)
-	if err != nil || len(t.Members) == 0 {
-		return nil
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, []string{fmt.Sprintf("current team routing unavailable: %v", err)}
+	}
+	if len(t.Members) == 0 {
+		return nil, nil
 	}
 
-	currentProject := projectNameForCWD(rec.CWD)
+	currentProject := projectIdentityForCWD(rec.CWD)
 	out := make([]bootstrapTeamMember, 0, len(t.Members))
 	for _, m := range t.Members {
 		cwd := m.EffectiveCWD(t.Project)
-		project := projectNameForCWD(cwd)
+		project := projectIdentityForCWD(cwd)
 		handle := memberHandle(m)
 		session := routingSessionForMember(rec, m)
+		route, routeError := routeCommandFor(currentProject, project, samePath(rec.CWD, cwd), rec.Handle, handle, session)
 		out = append(out, bootstrapTeamMember{
-			Role:    m.Role,
-			Handle:  handle,
-			Binary:  m.Binary,
-			Session: session,
-			Project: project,
-			CWD:     cwd,
-			Route:   routeCommandFor(currentProject, project, rec.Handle, handle, session),
-			You:     sameLaunchTarget(rec, cwd, handle, m),
+			Role:       m.Role,
+			Handle:     handle,
+			Binary:     m.Binary,
+			Session:    session,
+			Project:    project.DisplayName(),
+			CWD:        cwd,
+			Route:      route,
+			RouteError: routeError,
+			You:        sameLaunchTarget(rec, cwd, handle, m),
 		})
 	}
-	return out
+	return out, nil
 }
 
 func routingSessionForMember(rec launch.Record, m team.Member) string {
@@ -144,10 +211,29 @@ func sameLaunchTarget(rec launch.Record, cwd, handle string, m team.Member) bool
 		rec.CWD == cwd
 }
 
-func routeCommandFor(currentProject, targetProject, fromHandle, handle, session string) string {
+type projectIdentity struct {
+	Name  string
+	Dir   string
+	Known bool
+}
+
+func (p projectIdentity) DisplayName() string {
+	if p.Name != "" {
+		return p.Name
+	}
+	return "(unknown)"
+}
+
+func routeCommandFor(currentProject, targetProject projectIdentity, sameCWD bool, fromHandle, handle, session string) (string, string) {
+	if !sameCWD && (!currentProject.Known || !targetProject.Known) {
+		return "", "AMQ project identity is missing; add .amqrc project names or use amq route manually"
+	}
+	if !sameCWD && currentProject.Name == targetProject.Name && !samePath(currentProject.Dir, targetProject.Dir) {
+		return "", "AMQ project identity is ambiguous; matching project names come from different .amqrc roots"
+	}
 	args := []string{"amq", "send", "--to", handle}
-	if currentProject != "" && targetProject != "" && currentProject != targetProject {
-		args = append(args, "--project", targetProject)
+	if !sameCWD && currentProject.Name != targetProject.Name {
+		args = append(args, "--project", targetProject.Name)
 	}
 	if session != "" {
 		args = append(args, "--session", session)
@@ -158,19 +244,29 @@ func routeCommandFor(currentProject, targetProject, fromHandle, handle, session 
 	for i, arg := range args {
 		args[i] = shellQuote(arg)
 	}
-	return strings.Join(args, " ")
+	return strings.Join(args, " "), ""
 }
 
-func projectNameForCWD(cwd string) string {
+func projectIdentityForCWD(cwd string) projectIdentity {
 	if cwd == "" {
-		return ""
+		return projectIdentity{}
 	}
 	if dir, name := findProjectName(cwd); name != "" {
-		return name
-	} else if dir != "" {
-		return filepath.Base(dir)
+		return projectIdentity{Name: name, Dir: dir, Known: true}
 	}
-	return filepath.Base(cwd)
+	return projectIdentity{}
+}
+
+func samePath(a, b string) bool {
+	aa, err := filepath.Abs(a)
+	if err != nil {
+		aa = filepath.Clean(a)
+	}
+	bb, err := filepath.Abs(b)
+	if err != nil {
+		bb = filepath.Clean(b)
+	}
+	return aa == bb
 }
 
 func findProjectName(start string) (string, string) {

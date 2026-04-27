@@ -565,19 +565,23 @@ Usage:
 func runTeamSync(args []string) error {
 	fs := flag.NewFlagSet("team sync", flag.ContinueOnError)
 	apply := fs.Bool("apply", false, "write the planned changes (default: preview only)")
+	allowOutside := fs.Bool("allow-outside", false, "allow sync writes outside the team-home directory")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team sync - sync CLAUDE.md and AGENTS.md from team-rules.md
 
 Usage:
   amq-squad team sync            Preview what would change (exit 1 if drift)
   amq-squad team sync --apply    Write the managed block into both files
+  amq-squad team sync --apply --allow-outside
+                                  Also write configured member cwds outside team-home
 
 Existing content in CLAUDE.md / AGENTS.md is preserved. On first run,
 existing content is adopted as the user region and a managed block is
 appended between markers. Subsequent runs only refresh the managed block.
 
 When team members span multiple directories, sync walks every unique cwd
-in team.json and syncs CLAUDE.md + AGENTS.md in each.
+in team.json and syncs CLAUDE.md + AGENTS.md in each. Use --allow-outside
+when a member cwd is outside the team-home directory.
 `)
 	}
 	if err := fs.Parse(args); err != nil {
@@ -600,14 +604,17 @@ in team.json and syncs CLAUDE.md + AGENTS.md in each.
 	// AGENTS.md picks up the managed block.
 	targetDirs := []string{cwd}
 	if team.Exists(cwd) {
-		if t, err := team.Read(cwd); err == nil {
-			targetDirs = uniqueMemberCWDs(cwd, t.Members)
-			if !containsString(targetDirs, cwd) {
-				// Team-home cwd may not host a member, but it still owns
-				// team-rules.md so its own CLAUDE.md/AGENTS.md should sync.
-				targetDirs = append(targetDirs, cwd)
-				sort.Strings(targetDirs)
-			}
+		t, err := team.Read(cwd)
+		if err != nil {
+			return fmt.Errorf("read team: %w", err)
+		}
+		targetDirs, err = syncTargetDirs(cwd, t.Members, *allowOutside)
+		if err != nil {
+			return err
+		}
+		targetDirs, err = ensureTeamHomeSyncTarget(targetDirs, cwd)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -661,6 +668,75 @@ func containsString(xs []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func syncTargetDirs(projectDir string, members []team.Member, allowOutside bool) ([]string, error) {
+	home, err := canonicalDir(projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve team-home: %w", err)
+	}
+	targets := uniqueMemberCWDs(home, members)
+	if len(targets) == 0 {
+		targets = []string{home}
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(targets))
+	for _, raw := range targets {
+		dir, err := canonicalDir(raw)
+		if err != nil {
+			return nil, fmt.Errorf("resolve sync target %s: %w", raw, err)
+		}
+		if !allowOutside && !pathWithin(home, dir) {
+			return nil, fmt.Errorf("sync target %s is outside team-home %s; pass --allow-outside to write there", dir, home)
+		}
+		if !seen[dir] {
+			seen[dir] = true
+			out = append(out, dir)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func ensureTeamHomeSyncTarget(targetDirs []string, projectDir string) ([]string, error) {
+	homeDir, err := canonicalDir(projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve team-home: %w", err)
+	}
+	if containsString(targetDirs, homeDir) {
+		return targetDirs, nil
+	}
+	out := append([]string(nil), targetDirs...)
+	out = append(out, homeDir)
+	sort.Strings(out)
+	return out, nil
+}
+
+func canonicalDir(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", abs)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+func pathWithin(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func describePlan(p rules.SyncPlan) string {
