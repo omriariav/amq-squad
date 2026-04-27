@@ -22,7 +22,7 @@ AMQ itself stays unchanged.
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.0
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.1
 ```
 
 Use `@latest` if you intentionally want the newest published tag.
