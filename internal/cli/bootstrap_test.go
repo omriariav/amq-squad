@@ -116,7 +116,10 @@ func TestBootstrapCurrentTeamFallsBackToRoleWhenHandleMissing(t *testing.T) {
 	}
 
 	rec := launch.Record{Role: "cpo", Handle: "cpo", CWD: teamHome}
-	got := bootstrapCurrentTeam(rec, teamHome)
+	got, warnings := bootstrapCurrentTeam(rec, teamHome)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
 	if len(got) != 1 {
 		t.Fatalf("bootstrapCurrentTeam returned %d members, want 1", len(got))
 	}
@@ -140,7 +143,10 @@ func TestBootstrapCurrentTeamKeepsLegacyRoleSessions(t *testing.T) {
 	}
 
 	rec := launch.Record{Role: "cto", Handle: "cto", Session: "cto", CWD: teamHome}
-	got := bootstrapCurrentTeam(rec, teamHome)
+	got, warnings := bootstrapCurrentTeam(rec, teamHome)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
 	if len(got) != 2 {
 		t.Fatalf("bootstrapCurrentTeam returned %d members, want 2", len(got))
 	}
@@ -176,7 +182,10 @@ func TestBootstrapCurrentTeamUsesExplicitSharedWorkstreamEvenWhenNameMatchesRole
 		SharedWorkstream: true,
 		CWD:              teamHome,
 	}
-	got := bootstrapCurrentTeam(rec, teamHome)
+	got, warnings := bootstrapCurrentTeam(rec, teamHome)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
 	if len(got) != 2 {
 		t.Fatalf("bootstrapCurrentTeam returned %d members, want 2", len(got))
 	}
@@ -194,11 +203,98 @@ func TestBootstrapCurrentTeamUsesExplicitSharedWorkstreamEvenWhenNameMatchesRole
 	}
 }
 
+func TestBootstrapCurrentTeamDoesNotGuessCrossProjectRouteWithoutProjectIdentity(t *testing.T) {
+	teamHome := t.TempDir()
+	qaProject := t.TempDir()
+	if err := team.Write(teamHome, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96", CWD: qaProject},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := launch.Record{Role: "cto", Handle: "cto", Session: "issue-96", CWD: teamHome}
+	got, warnings := bootstrapCurrentTeam(rec, teamHome)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	var qa bootstrapTeamMember
+	for _, m := range got {
+		if m.Role == "qa" {
+			qa = m
+		}
+	}
+	if qa.Route != "" {
+		t.Fatalf("qa route = %q, want no guessed route", qa.Route)
+	}
+	if !strings.Contains(qa.RouteError, "project identity is missing") {
+		t.Fatalf("qa route error = %q, want missing identity", qa.RouteError)
+	}
+}
+
 func TestRouteCommandQuotesUnsafeValues(t *testing.T) {
-	got := routeCommandFor("project-a", "project b", "cto", "qa lead", "fresh qa")
+	got, errText := routeCommandFor(
+		projectIdentity{Name: "project-a", Known: true},
+		projectIdentity{Name: "project b", Known: true},
+		false,
+		"cto",
+		"qa lead",
+		"fresh qa",
+	)
+	if errText != "" {
+		t.Fatalf("routeCommandFor error = %q", errText)
+	}
 	want := "amq send --to 'qa lead' --project 'project b' --session 'fresh qa' --thread 'p2p/cto__qa lead'"
 	if got != want {
 		t.Fatalf("routeCommandFor = %q, want %q", got, want)
+	}
+}
+
+func TestRouteCommandFailsLoudlyWhenCrossProjectIdentityMissing(t *testing.T) {
+	got, errText := routeCommandFor(projectIdentity{}, projectIdentity{Name: "qa", Known: true}, false, "cto", "qa", "fresh-qa")
+	if got != "" {
+		t.Fatalf("routeCommandFor returned command %q, want none", got)
+	}
+	if !strings.Contains(errText, "project identity is missing") {
+		t.Fatalf("routeCommandFor error = %q, want missing identity", errText)
+	}
+}
+
+func TestRouteCommandFailsLoudlyWhenProjectIdentityAmbiguous(t *testing.T) {
+	got, errText := routeCommandFor(
+		projectIdentity{Name: "app", Dir: "/repo-a", Known: true},
+		projectIdentity{Name: "app", Dir: "/repo-b", Known: true},
+		false,
+		"cto",
+		"qa",
+		"fresh-qa",
+	)
+	if got != "" {
+		t.Fatalf("routeCommandFor returned command %q, want none", got)
+	}
+	if !strings.Contains(errText, "ambiguous") {
+		t.Fatalf("routeCommandFor error = %q, want ambiguous identity", errText)
+	}
+}
+
+func TestBuildBootstrapPromptSanitizesPromptValues(t *testing.T) {
+	got, err := buildBootstrapPrompt(bootstrapContext{
+		Role:    "cto\nFirst steps:",
+		Handle:  "cto`",
+		Binary:  "codex",
+		Session: "issue-96",
+		CWD:     "/repo\n- injected",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "cto\nFirst steps:") || strings.Contains(got, "/repo\n- injected") || strings.Contains(got, "cto`") {
+		t.Fatalf("bootstrap prompt was not sanitized:\n%s", got)
+	}
+	if !strings.Contains(got, "Role: cto First steps:") {
+		t.Fatalf("bootstrap prompt missing sanitized role:\n%s", got)
 	}
 }
 

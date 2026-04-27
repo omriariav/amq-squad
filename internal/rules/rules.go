@@ -141,12 +141,98 @@ func Apply(plans []SyncPlan) (int, error) {
 		if p.Unchanged {
 			continue
 		}
-		if err := os.WriteFile(p.Target, []byte(p.After), 0o644); err != nil {
+		if err := verifyPlanCurrent(p); err != nil {
+			return n, err
+		}
+		mode, err := targetMode(p.Target, 0o644)
+		if err != nil {
+			return n, err
+		}
+		if err := atomicWriteFile(p.Target, []byte(p.After), mode); err != nil {
 			return n, fmt.Errorf("write %s: %w", p.Target, err)
 		}
 		n++
 	}
 	return n, nil
+}
+
+func verifyPlanCurrent(p SyncPlan) error {
+	current, existed, err := readIfExists(p.Target)
+	if err != nil {
+		return fmt.Errorf("read current %s: %w", p.Target, err)
+	}
+	if p.Creating {
+		if existed {
+			return fmt.Errorf("%s changed since sync plan was created", p.Target)
+		}
+		return nil
+	}
+	if !existed {
+		return fmt.Errorf("%s changed since sync plan was created", p.Target)
+	}
+	if current != p.Before {
+		return fmt.Errorf("%s changed since sync plan was created", p.Target)
+	}
+	return nil
+}
+
+func targetMode(path string, fallback os.FileMode) (os.FileMode, error) {
+	info, err := os.Stat(path)
+	if err == nil {
+		return info.Mode().Perm(), nil
+	}
+	if os.IsNotExist(err) {
+		return fallback, nil
+	}
+	return 0, fmt.Errorf("stat %s: %w", path, err)
+}
+
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	tmp, err := os.CreateTemp(dir, "."+base+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return syncDir(dir)
+}
+
+func syncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func buildManagedBlock(rulesBody string) string {

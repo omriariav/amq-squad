@@ -21,7 +21,11 @@ Current team routing:
 These entries come from the current `.amq-squad/team.json` and are authoritative for live routing. Treat `amq-squad list` and `amq-squad restore` output as history only unless the user explicitly asks to resume an old session.
 {{- range .CurrentTeam }}
 - {{.Role}}{{if .You}} (you){{end}}: handle {{.Handle}}, binary {{.Binary}}, workstream {{orDefault .Session "(default)"}}, project {{.Project}}, cwd {{.CWD}}
+  {{- if .Route }}
   send: `{{.Route}}`
+  {{- else }}
+  send: unavailable ({{.RouteError}})
+  {{- end }}
 {{- end }}
 
 {{- end }}
@@ -30,6 +34,13 @@ Other workstreams in this project:
 These are sibling AMQ sessions for orientation only. Do not load their message bodies unless the user asks.
 {{- range .Workstreams }}
 - {{.Name}}: handles {{.Handles}}{{if .LastTouched}}, last touched {{.LastTouched}}{{end}}
+{{- end }}
+
+{{- end }}
+{{- if .Warnings }}
+Startup warnings:
+{{- range .Warnings }}
+- {{.}}
 {{- end }}
 
 {{- end }}
