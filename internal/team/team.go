@@ -22,11 +22,14 @@ const (
 // CWD is the working directory this agent runs from. Empty means "same as
 // the team's project dir". Members can live in different directories; the
 // team-home (where team.json lives) is just one of them.
+//
+// Session stores the member's default workstream hint. Current launch commands
+// may override it with a shared workstream for the whole team run.
 type Member struct {
 	Role    string `json:"role"`    // catalog role ID, e.g. "cpo"
 	Binary  string `json:"binary"`  // "claude" or "codex"
 	Handle  string `json:"handle"`  // AMQ handle, defaults to Role
-	Session string `json:"session"` // AMQ session name, defaults to Role
+	Session string `json:"session"` // AMQ workstream session name
 	CWD     string `json:"cwd,omitempty"`
 }
 
@@ -44,12 +47,15 @@ func (m Member) EffectiveCWD(projectDir string) string {
 // Project is not serialized: it's always the directory that contains
 // .amq-squad/team.json, derived at Read time. Persisting an absolute path
 // would leak local paths into shared repos and break when the repo moves.
-// CreatedAt is informational.
+// Workstream is the team's default shared AMQ session. CreatedAt is
+// informational. Member sessions are legacy/default workstream hints; the live
+// workstream can be overridden at launch time.
 type Team struct {
-	Schema    int       `json:"schema"`
-	Project   string    `json:"-"`
-	Members   []Member  `json:"members"`
-	CreatedAt time.Time `json:"created_at"`
+	Schema     int       `json:"schema"`
+	Project    string    `json:"-"`
+	Workstream string    `json:"workstream,omitempty"`
+	Members    []Member  `json:"members"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // Path returns the team.json path for the given project directory.

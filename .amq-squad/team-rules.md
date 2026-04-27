@@ -8,6 +8,14 @@ Team members (see .amq-squad/team.json):
 - cto (codex): owns technical direction, architecture, sign-off.
 - fullstack (claude): implements features end to end.
 
+## Skills
+
+- Use the `amq-squad` skill for team setup, launch, AMQ routing, inbox drains,
+  acknowledgements, review requests, handoffs, and decision threads.
+- Use `amq-cli` only for raw AMQ debugging or non-squad AMQ usage.
+- Treat `.amq-squad/team.json` and the generated routing block as the live
+  source of truth. Restore output and old AMQ history are context only.
+
 ## Workflow
 
 - All code changes ship via a pull request. No direct pushes to main.

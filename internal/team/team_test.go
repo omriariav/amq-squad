@@ -11,7 +11,8 @@ import (
 func TestWriteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	in := Team{
-		Project: dir,
+		Project:    dir,
+		Workstream: "stream1",
 		Members: []Member{
 			{Role: "cpo", Binary: "codex", Handle: "cpo", Session: "stream1"},
 			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "stream2"},
@@ -35,6 +36,9 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 	if out.Project != dir {
 		t.Errorf("Project = %q, want %q", out.Project, dir)
+	}
+	if out.Workstream != in.Workstream {
+		t.Errorf("Workstream = %q, want %q", out.Workstream, in.Workstream)
 	}
 	if len(out.Members) != len(in.Members) {
 		t.Fatalf("Members len = %d, want %d", len(out.Members), len(in.Members))

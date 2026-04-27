@@ -23,6 +23,7 @@ func runLaunch(args []string) error {
 	fs := flag.NewFlagSet("launch", flag.ContinueOnError)
 	roleFlag := fs.String("role", "", "role label for this agent (e.g. cpo, cto, dev, qa)")
 	session := fs.String("session", "", "AMQ session name (passed through to coop exec)")
+	sharedWorkstream := fs.Bool("team-workstream", false, "mark --session as the shared amq-squad team workstream")
 	me := fs.String("me", "", "override the agent handle (defaults to binary basename)")
 	rootFlag := fs.String("root", "", "override AMQ root directory")
 	teamHome := fs.String("team-home", "", "team-home directory used to find .amq-squad/team-rules.md for bootstrap")
@@ -112,15 +113,16 @@ args after "--".
 
 	agentDir := filepath.Join(root, "agents", handle)
 	rec := launch.Record{
-		CWD:          cwd,
-		Binary:       binary,
-		Argv:         childArgs,
-		Session:      *session,
-		Conversation: conversationRef,
-		Handle:       handle,
-		Role:         *roleFlag,
-		Root:         root,
-		StartedAt:    time.Now().UTC(),
+		CWD:              cwd,
+		Binary:           binary,
+		Argv:             childArgs,
+		Session:          *session,
+		SharedWorkstream: *sharedWorkstream,
+		Conversation:     conversationRef,
+		Handle:           handle,
+		Role:             *roleFlag,
+		Root:             root,
+		StartedAt:        time.Now().UTC(),
 	}
 
 	// Keep generated bootstrap out of launch.json so restore stays compact
@@ -335,6 +337,10 @@ func stripClaudeResumeRef(args []string, conversation string) []string {
 // path that coop exec will use. This keeps amq-squad out of the root
 // resolution business - amq owns it, we just ask.
 func resolveAMQRoot(rootFlag, session, handle string) (string, error) {
+	return resolveAMQRootInDir("", rootFlag, session, handle)
+}
+
+func resolveAMQRootInDir(cwd, rootFlag, session, handle string) (string, error) {
 	args := []string{"env", "--json", "--me", handle}
 	if rootFlag != "" {
 		args = append(args, "--root", rootFlag)
@@ -343,6 +349,9 @@ func resolveAMQRoot(rootFlag, session, handle string) (string, error) {
 		args = append(args, "--session", session)
 	}
 	cmd := exec.Command("amq", args...)
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("amq env: %w", err)

@@ -11,7 +11,7 @@ after a restart.
 AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `claude` or `codex`, but it doesn't know:
 
 - Which agent is the "CPO" vs "CTO" vs "Fullstack" vs "QA" vs "PM" vs "Designer"
-- What command you originally used to launch each one (cwd, binary, flags, session)
+- What command you originally used to launch each one (cwd, binary, flags, workstream)
 - What slash commands or skills that role leans on
 - Which peers a given agent actively talks to
 
@@ -47,10 +47,11 @@ same launch commands without asking again. If you are inside tmux, use
 command into each terminal pane or tab.
 
 You do not need to run `amq coop init` for the normal single-project flow.
-Generated launch commands include `--session`, and AMQ creates the needed
-mailbox directories on first launch. Use `amq coop init` or a hand-written
-`.amqrc` only when you want a custom root, explicit project name, or
-cross-project peer routing.
+Generated launch commands put the team into one AMQ workstream session. By
+default that workstream is the sanitized team-home directory name, and AMQ
+creates the needed mailbox directories on first launch. Use `amq coop init` or
+a hand-written `.amqrc` only when you want a custom root, explicit project name,
+or cross-project peer routing.
 
 Non-interactive setup:
 
@@ -63,8 +64,7 @@ With per-persona CLI overrides:
 ```sh
 amq-squad team init \
   --personas cto,junior-dev,qa \
-  --binary junior-dev=codex,qa=claude \
-  --session cto=stream1,junior-dev=stream2,qa=stream3
+  --binary junior-dev=codex,qa=claude
 ```
 
 Members don't have to share a working directory. The dir where you run
@@ -104,6 +104,7 @@ Defaults:
 - `--terminal tmux`
 - `--target current-window`
 - `--layout vertical`
+- `--session <sanitized team-home directory name>`
 - `--stagger 750ms`
 
 The current pane becomes the first agent pane. Additional team members are
@@ -116,6 +117,18 @@ Preview the exact tmux script without creating panes:
 amq-squad team launch --dry-run
 ```
 
+Launch into an explicit AMQ workstream:
+
+```sh
+amq-squad team launch --session issue-96
+```
+
+Use `--fresh --session issue-96` when accidental reuse should fail if the
+workstream already exists.
+
+Explicit workstream names must be AMQ-safe: lowercase letters, digits, `-`, and
+`_`. Release names such as `v0.5.0` should be written as `v0-5-0`.
+
 Alternative layouts:
 
 ```sh
@@ -126,8 +139,8 @@ amq-squad team launch --layout tiled
 To create a separate detached tmux session instead:
 
 ```sh
-amq-squad team launch --target new-session
-tmux attach -t amq-squad-<project>
+amq-squad team launch --target new-session --terminal-session squad-issue-96
+tmux attach -t squad-issue-96
 ```
 
 When iTerm2 `tmux -CC` control-mode clients are detected, `amq-squad` warns
@@ -154,14 +167,16 @@ Representative generated commands look like this:
 ```sh
 cd ~/Code/my-project && /path/to/amq-squad launch \
   --role cto \
-  --session cto \
+  --session my-project \
+  --team-workstream \
   --team-home /Users/you/Code/my-project \
   --me cto \
   codex -- --dangerously-bypass-approvals-and-sandbox
 
 cd ~/Code/my-project && /path/to/amq-squad launch \
   --role fullstack \
-  --session fullstack \
+  --session my-project \
+  --team-workstream \
   --team-home /Users/you/Code/my-project \
   --me fullstack \
   claude -- --permission-mode auto
@@ -169,10 +184,10 @@ cd ~/Code/my-project && /path/to/amq-squad launch \
 
 At launch time, each agent's bootstrap prompt includes a current team routing
 block generated from `.amq-squad/team.json`. That block is the live routing
-source of truth: role, handle, session, project, cwd, and the appropriate
-`amq send` shape from the agent's current project. Restorable AMQ history is
-still useful context, but it should not be used as the active roster when it
-conflicts with `team.json`.
+source of truth: role, handle, workstream, project, cwd, and the appropriate
+`amq send` shape from the agent's current project. Sibling workstreams are
+listed as metadata only; message bodies from old workstreams are not loaded
+unless the user asks.
 
 ## Built-in personas
 
@@ -193,8 +208,14 @@ job you are hiring for; the CLI is the tool that employee runs on.
 | `pm`           | Project Manager / Product Owner      | claude         | Keeps work ordered, unblocked, and shippable.      |
 | `designer`     | Product Designer                     | claude         | Product flows, visual shape, UI polish.            |
 
-Defaults are starting points. Override binary or session per persona via flags at
-`team init` time, or edit `.amq-squad/team.json` directly.
+Defaults are starting points. Override binaries per persona at `team init` time.
+Choose a workstream for a run with `--session` on `team show` or `team launch`,
+or store a shared default with `team init --session <workstream>`.
+Launch-time overrides do not write back to `.amq-squad/team.json`.
+
+`team init --session` is a single shared workstream name. The old
+comma-separated `role=name` syntax is intentionally rejected; use one
+workstream for the team run, then use threads for focused conversations.
 
 ## Shared team rules
 
@@ -250,8 +271,9 @@ You'll get two commands, one per role. Open separate terminal panes or tabs and
 paste one command per pane, or run `amq-squad team launch` from inside tmux to
 create the panes automatically. Each agent boots through `amq-squad launch`,
 which writes `launch.json` + a catalog-seeded `role.md` into the mailbox before
-handing off to `amq coop exec`. From there both agents share the thread
-`p2p/cto__fullstack` for design escalations and review handoffs.
+handing off to `amq coop exec`. From there both agents share one AMQ workstream
+and use the canonical thread `p2p/cto__fullstack` for design escalations and
+review handoffs.
 
 ### Squad spanning two projects
 
@@ -328,25 +350,27 @@ role's project. For example, a `project-a` agent sending to QA in `project-b`
 will see a route shaped like:
 
 ```sh
-amq send --to qa --project project-b --session qa
+amq send --to qa --project project-b --session project-a --thread p2p/cto__qa
 ```
 
 ## Commands
 
 ```text
 amq-squad team                      Smart default: show commands, or init if none exists
-amq-squad team init [--personas ...]
+amq-squad team init [--personas ...] [--session workstream]
                                     Pick personas, choose CLIs, and seed rules
-amq-squad team show [--no-bootstrap]
+amq-squad team show [--session name] [--fresh] [--no-bootstrap]
                                     Print launch commands for the configured team
 amq-squad team launch [--terminal tmux] [--target current-window|new-session]
-                      [--layout vertical|horizontal|tiled] [--stagger 750ms]
+                      [--session workstream] [--fresh]
+                      [--layout vertical|horizontal|tiled]
+                      [--terminal-session name] [--stagger 750ms]
                       [--no-bootstrap] [--dry-run]
                                     Open the configured team in tmux panes
 amq-squad team rules init [--force] Seed or refresh .amq-squad/team-rules.md
 amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
 
-amq-squad launch --role <r> --session <s> --me <handle> [--conversation ref] [--no-bootstrap] [--no-default-args] <binary> [-- <flags>]
+amq-squad launch --role <r> --session <s> [--team-workstream] --me <handle> [--conversation ref] [--no-bootstrap] [--no-default-args] <binary> [-- <flags>]
                                     Launch one agent. Writes launch.json + role.md
                                     in the AMQ mailbox, adds a bootstrap prompt,
                                     then execs 'amq coop exec'.
@@ -384,18 +408,19 @@ amq-squad version                   Print the installed amq-squad version.
 <AM_ROOT>/agents/<handle>/launch.json    Per-agent invocation record, written at launch.
                                          Includes conversation ref when supplied.
 <AM_ROOT>/agents/<handle>/role.md        Per-agent role doc, seeded from the catalog
-                                         and never overwritten once it exists.
+                                         with default operating guidance. User
+                                         edits are preserved.
 ```
 
 `<AM_ROOT>` is resolved via `amq env --json` so amq-squad and `amq coop exec` always agree on where the mailbox lives.
 
 ## Known gaps
 
-- Sending a cross-session message from a setup terminal (outside any
-  `amq coop exec`) has no clean idiom upstream. Tracked in
-  [avivsinai/agent-message-queue#96](https://github.com/avivsinai/agent-message-queue/issues/96)
-  with a proposed `--from-session` flag. Current workaround: boot your own
-  session first, then send from inside it.
+- True cross-workstream sends from a setup terminal still depend on upstream
+  AMQ semantics tracked in
+  [avivsinai/agent-message-queue#96](https://github.com/avivsinai/agent-message-queue/issues/96).
+  The normal team flow now avoids that path by launching one workstream and
+  routing peer conversations with `--thread`.
 - Multi-cwd teams still need manual `peers` config in each project's `.amqrc`
   for cross-project AMQ routing. `team sync` doesn't touch `.amqrc`; that's
   left to the user until we're sure of the shape.

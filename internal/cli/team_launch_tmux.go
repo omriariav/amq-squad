@@ -20,6 +20,7 @@ type tmuxTeamLaunchBackend struct{}
 
 type tmuxLaunchPlan struct {
 	Session    string
+	Workstream string
 	Target     string
 	Layout     string
 	Panes      []teamLaunchPane
@@ -64,19 +65,20 @@ func (b tmuxTeamLaunchBackend) Launch(t team.Team, opts teamLaunchOptions) error
 }
 
 func (tmuxTeamLaunchBackend) buildPlan(t team.Team, opts teamLaunchOptions) tmuxLaunchPlan {
-	session := opts.Session
+	session := opts.TerminalSession
 	if session == "" {
 		session = defaultTmuxSessionName(t.Project)
 	}
-	return buildTmuxLaunchPlan(t, opts.SquadBin, session, opts.Target, opts.Layout, opts.NoBootstrap, opts.Stagger)
+	return buildTmuxLaunchPlan(t, opts.SquadBin, session, opts.Target, opts.Layout, opts.NoBootstrap, opts.Stagger, opts.Workstream)
 }
 
-func buildTmuxLaunchPlan(t team.Team, squadBin, sessionName, target, layout string, noBootstrap bool, startDelay time.Duration) tmuxLaunchPlan {
+func buildTmuxLaunchPlan(t team.Team, squadBin, sessionName, target, layout string, noBootstrap bool, startDelay time.Duration, workstream string) tmuxLaunchPlan {
 	return tmuxLaunchPlan{
 		Session:    sessionName,
+		Workstream: workstream,
 		Target:     target,
 		Layout:     layout,
-		Panes:      buildTeamLaunchPanes(t, squadBin, noBootstrap),
+		Panes:      buildTeamLaunchPanes(t, squadBin, noBootstrap, workstream),
 		StartDelay: startDelay,
 	}
 }
@@ -115,6 +117,9 @@ func printTmuxLaunchPlan(plan tmuxLaunchPlan) {
 	fmt.Println("# amq-squad team launch - tmux")
 	fmt.Printf("# target:  %s\n", plan.Target)
 	fmt.Printf("# layout:  %s\n", plan.Layout)
+	if plan.Workstream != "" {
+		fmt.Printf("# workstream: %s\n", plan.Workstream)
+	}
 	fmt.Printf("# session: %s\n", plan.Session)
 	fmt.Printf("# panes:   %d\n\n", len(plan.Panes))
 	for _, line := range tmuxDryRunLines(plan) {
@@ -337,7 +342,7 @@ func warnTmuxControlModeClients(clients []tmuxClient) {
 func tmuxEnsureSessionAbsent(session string) error {
 	err := exec.Command("tmux", "has-session", "-t", session).Run()
 	if err == nil {
-		return fmt.Errorf("tmux session %q already exists. Attach with 'tmux attach -t %s' or choose --session", session, session)
+		return fmt.Errorf("tmux session %q already exists. Attach with 'tmux attach -t %s' or choose --terminal-session", session, session)
 	}
 	return nil
 }

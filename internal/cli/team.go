@@ -49,7 +49,7 @@ func runTeamSmart() error {
 		return fmt.Errorf("getwd: %w", err)
 	}
 	if team.Exists(cwd) {
-		return emitTeamCommands(cwd, false)
+		return emitTeamCommands(cwd, false, "", false, false)
 	}
 	fmt.Fprintln(os.Stderr, "No team configured for this project yet. Let's set one up.")
 	fmt.Fprintln(os.Stderr)
@@ -57,7 +57,7 @@ func runTeamSmart() error {
 		return err
 	}
 	fmt.Fprintln(os.Stderr)
-	return emitTeamCommands(cwd, false)
+	return emitTeamCommands(cwd, false, "", false, false)
 }
 
 func runTeamInit(args []string) error {
@@ -65,21 +65,22 @@ func runTeamInit(args []string) error {
 	personasFlag := fs.String("personas", "", "comma-separated persona IDs to include (alias for --roles)")
 	rolesFlag := fs.String("roles", "", "comma-separated role/persona IDs to include (skips interactive prompt)")
 	binaryFlag := fs.String("binary", "", "per-persona CLI overrides, e.g. fullstack=codex,qa=claude")
-	sessionFlag := fs.String("session", "", "per-persona session overrides, e.g. cpo=stream1,cto=stream2")
+	sessionFlag := fs.String("session", "", "AMQ workstream session name for all members (lowercase a-z, 0-9, -, _)")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
 	force := fs.Bool("force", false, "overwrite an existing team.json")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--personas id1,id2,...] [--binary persona=cli,...] [--session role=name,...] [--force]
-  amq-squad team init [--roles id1,id2,...] [--binary role=cli,...] [--session role=name,...] [--force]
+  amq-squad team init [--personas id1,id2,...] [--binary persona=cli,...] [--session workstream] [--force]
+  amq-squad team init [--roles id1,id2,...] [--binary role=cli,...] [--session workstream] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes <cwd>/.amq-squad/team.json and
 seeds <cwd>/.amq-squad/team-rules.md if it does not already exist. The
 directory where this runs becomes the team-home. Members can live in other
-directories via --cwd role=/path.
+directories via --cwd role=/path. Default AMQ workstream sessions are derived
+from the team-home directory name.
 
 Known personas:
 `)
@@ -107,9 +108,12 @@ Known personas:
 	if err != nil {
 		return fmt.Errorf("parse --binary: %w", err)
 	}
-	sessionOverrides, err := parseKV(*sessionFlag)
+	if flagWasSet(fs, "session") && strings.ContainsAny(*sessionFlag, "=,") {
+		return fmt.Errorf("old per-role --session syntax is no longer supported; pass one shared workstream name, e.g. --session issue-96")
+	}
+	workstream, err := resolveWorkstreamName(cwd, *sessionFlag, flagWasSet(fs, "session"))
 	if err != nil {
-		return fmt.Errorf("parse --session: %w", err)
+		return err
 	}
 	cwdOverrides, err := parseKV(*cwdFlag)
 	if err != nil {
@@ -155,15 +159,11 @@ Known personas:
 		if interactive && binary == "" {
 			binary = r.PreferredBinary
 		}
-		session := id
-		if s, ok := sessionOverrides[id]; ok {
-			session = s
-		}
 		m := team.Member{
 			Role:    id,
 			Binary:  binary,
 			Handle:  id,
-			Session: session,
+			Session: workstream,
 		}
 		if c, ok := cwdOverrides[id]; ok {
 			abs, err := expandPath(c)
@@ -178,14 +178,19 @@ Known personas:
 	}
 
 	t := team.Team{
-		Project: cwd,
-		Members: members,
+		Project:    cwd,
+		Workstream: workstream,
+		Members:    members,
 	}
 	if err := team.Write(cwd, t); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Wrote %s with %d members.\n", team.Path(cwd), len(members))
-	wroteRules, err := rules.Ensure(cwd, renderTeamRules(cwd, members))
+	rulesContent, err := renderTeamRules(t)
+	if err != nil {
+		return fmt.Errorf("render team-rules.md: %w", err)
+	}
+	wroteRules, err := rules.Ensure(cwd, rulesContent)
 	if err != nil {
 		return fmt.Errorf("seed team-rules.md: %w", err)
 	}
@@ -198,11 +203,13 @@ Known personas:
 func runTeamShow(args []string) error {
 	fs := flag.NewFlagSet("team show", flag.ContinueOnError)
 	noBootstrap := fs.Bool("no-bootstrap", false, "emit launch commands that skip the generated bootstrap prompt")
+	session := fs.String("session", "", "AMQ workstream session name (default: sanitized team-home directory name; lowercase a-z, 0-9, -, _)")
+	fresh := fs.Bool("fresh", false, "fail if the selected workstream session already exists")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
 
 Usage:
-  amq-squad team show [--no-bootstrap]
+  amq-squad team show [--session name] [--fresh] [--no-bootstrap]
 `)
 	}
 	if err := fs.Parse(args); err != nil {
@@ -215,10 +222,10 @@ Usage:
 	if !team.Exists(cwd) {
 		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
 	}
-	return emitTeamCommands(cwd, *noBootstrap)
+	return emitTeamCommands(cwd, *noBootstrap, *session, flagWasSet(fs, "session"), *fresh)
 }
 
-func emitTeamCommands(projectDir string, noBootstrap bool) error {
+func emitTeamCommands(projectDir string, noBootstrap bool, requestedSession string, explicitSession bool, fresh bool) error {
 	t, err := team.Read(projectDir)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
@@ -226,12 +233,26 @@ func emitTeamCommands(projectDir string, noBootstrap bool) error {
 	if len(t.Members) == 0 {
 		return fmt.Errorf("team has no members")
 	}
+	workstream, err := resolveTeamWorkstreamName(t, requestedSession, explicitSession)
+	if err != nil {
+		return err
+	}
+	if fresh {
+		exists, root, err := teamWorkstreamExists(t, workstream)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("workstream session %q already exists at %s", workstream, root)
+		}
+	}
 
 	members := orderedTeamMembers(t.Members)
 
 	fmt.Println("# amq-squad team - run each command in its own terminal tab")
 	fmt.Println("#")
 	fmt.Printf("# team-home: %s\n", t.Project)
+	fmt.Printf("# workstream: %s\n", workstream)
 	fmt.Printf("# members:   %d\n", len(members))
 	// List unique member cwds so a multi-project team is obvious at a glance.
 	uniqueCWDs := uniqueMemberCWDs(t.Project, members)
@@ -258,8 +279,8 @@ func emitTeamCommands(projectDir string, noBootstrap bool) error {
 			label = r.Label
 		}
 		cwd := m.EffectiveCWD(t.Project)
-		fmt.Printf("# %d. %s - %s (session: %s, cwd: %s)\n", i+1, label, m.Binary, m.Session, cwd)
-		fmt.Println(emitTeamCommand(cwd, squadBin, t.Project, m, noBootstrap))
+		fmt.Printf("# %d. %s - %s (workstream: %s, cwd: %s)\n", i+1, label, m.Binary, workstream, cwd)
+		fmt.Println(emitTeamCommand(cwd, squadBin, t.Project, m, noBootstrap, workstream))
 		fmt.Println()
 	}
 	return nil
@@ -303,7 +324,7 @@ func uniqueMemberCWDs(projectDir string, members []team.Member) []string {
 	return out
 }
 
-func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap bool) string {
+func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap bool, workstream string) string {
 	var b strings.Builder
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(cwd))
@@ -313,7 +334,8 @@ func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap 
 	b.WriteString(" --role ")
 	b.WriteString(shellQuote(m.Role))
 	b.WriteString(" --session ")
-	b.WriteString(shellQuote(m.Session))
+	b.WriteString(shellQuote(workstream))
+	b.WriteString(" --team-workstream")
 	if teamHome != "" {
 		b.WriteString(" --team-home ")
 		b.WriteString(shellQuote(teamHome))
@@ -512,7 +534,11 @@ Usage:
 		}
 		content := rules.StubContent
 		if t, err := team.Read(cwd); err == nil {
-			content = renderTeamRules(t.Project, t.Members)
+			rendered, err := renderTeamRules(t)
+			if err != nil {
+				return fmt.Errorf("render team-rules.md: %w", err)
+			}
+			content = rendered
 		}
 		if *force {
 			if err := rules.Write(cwd, content); err != nil {
@@ -656,7 +682,7 @@ func printTeamUsage() {
 Usage:
   amq-squad team                      Smart default: show commands, or init if none exists
   amq-squad team init [options]       Pick personas, choose CLIs, and seed rules
-  amq-squad team show [--no-bootstrap]
+  amq-squad team show [--session name] [--fresh] [--no-bootstrap]
                                       Print launch commands for configured team
   amq-squad team launch [options]     Open the configured team in a terminal
   amq-squad team rules init [--force] Seed or refresh team-rules.md

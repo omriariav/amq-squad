@@ -5,7 +5,7 @@ package catalog
 
 // Role is one persona entry in the catalog. Field semantics:
 //
-//	ID               short slug (also used as default handle and session name)
+//	ID               short slug, also used as default handle
 //	Label            human title shown in listings and role.md
 //	PreferredBinary  "claude" or "codex", user can override at team init time
 //	Profile          short market-listing copy shown in interactive setup
