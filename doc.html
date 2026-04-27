@@ -1,0 +1,883 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How to use amq-squad</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172026;
+      --muted: #5f6c72;
+      --line: #d9e1e5;
+      --soft: #f4f7f8;
+      --panel: #ffffff;
+      --accent: #0f7b6c;
+      --accent-strong: #075e53;
+      --warn: #a95012;
+      --code-bg: #101820;
+      --code-ink: #e8f2f3;
+      --blue: #1f5d91;
+      --violet: #694fa3;
+      --gold: #b17313;
+      --radius: 8px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background: #fbfcfd;
+      color: var(--ink);
+      line-height: 1.55;
+    }
+
+    a {
+      color: var(--accent-strong);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 22px;
+      border-right: 1px solid var(--line);
+      background: #eef4f4;
+      overflow-y: auto;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      color: #ffffff;
+      font-weight: 800;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,.22), rgba(255,255,255,0) 48%),
+        #0f7b6c;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 17px;
+      line-height: 1.15;
+    }
+
+    .brand span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 2px;
+    }
+
+    nav {
+      display: grid;
+      gap: 4px;
+    }
+
+    nav a {
+      display: block;
+      border-radius: 8px;
+      padding: 9px 10px;
+      color: #203036;
+      font-size: 14px;
+    }
+
+    nav a:hover {
+      background: rgba(15, 123, 108, .1);
+      text-decoration: none;
+    }
+
+    .side-note {
+      margin-top: 26px;
+      padding: 12px;
+      border: 1px solid #c9dad8;
+      border-radius: var(--radius);
+      color: #304146;
+      font-size: 13px;
+      background: rgba(255,255,255,.55);
+    }
+
+    main {
+      min-width: 0;
+    }
+
+    .hero {
+      padding: 56px clamp(22px, 5vw, 72px) 30px;
+      background:
+        linear-gradient(120deg, rgba(15,123,108,.1), rgba(31,93,145,.08)),
+        #ffffff;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .hero-inner {
+      max-width: 1040px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 14px;
+      color: var(--accent-strong);
+      font-weight: 700;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 860px;
+      font-size: clamp(36px, 5vw, 64px);
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 780px;
+      margin: 20px 0 0;
+      color: #33464d;
+      font-size: 19px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 34px;
+      max-width: 940px;
+    }
+
+    .metric {
+      min-height: 118px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.82);
+    }
+
+    .metric b {
+      display: block;
+      color: var(--ink);
+      font-size: 28px;
+      line-height: 1.05;
+      margin-bottom: 8px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    section {
+      padding: 44px clamp(22px, 5vw, 72px);
+      border-bottom: 1px solid var(--line);
+    }
+
+    section > .content {
+      max-width: 1040px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 29px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 26px 0 10px;
+      font-size: 19px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    p {
+      max-width: 820px;
+      margin: 0 0 16px;
+      color: #2b3c42;
+    }
+
+    ul, ol {
+      margin: 0 0 20px;
+      padding-left: 22px;
+      color: #2b3c42;
+    }
+
+    li + li {
+      margin-top: 6px;
+    }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: .94em;
+    }
+
+    .code {
+      position: relative;
+      margin: 14px 0 22px;
+      overflow: auto;
+      border-radius: var(--radius);
+      background: var(--code-bg);
+      color: var(--code-ink);
+      border: 1px solid #1d2b34;
+    }
+
+    .code pre {
+      margin: 0;
+      padding: 18px;
+      white-space: pre;
+      min-width: max-content;
+    }
+
+    .inline-code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #eaf1f2;
+      color: #172026;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .step {
+      min-height: 170px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+
+    .step .num {
+      display: inline-grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      margin-bottom: 14px;
+      color: #ffffff;
+      background: var(--accent);
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .step b {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+
+    .step span {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .model {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 22px;
+    }
+
+    .model-panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .model-panel header {
+      padding: 14px 16px;
+      font-weight: 800;
+      color: #ffffff;
+      background: var(--blue);
+    }
+
+    .model-panel:nth-child(2) header {
+      background: var(--violet);
+    }
+
+    .model-panel .body {
+      padding: 16px;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid #cfdadd;
+      background: #f8fbfb;
+      color: #26383e;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .table-wrap {
+      margin: 18px 0 24px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+
+    table {
+      width: 100%;
+      min-width: 680px;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 13px 14px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      color: #26383e;
+      background: #edf4f5;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .callout {
+      max-width: 860px;
+      margin: 20px 0;
+      padding: 16px 18px;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      background: #edf7f5;
+    }
+
+    .callout.warn {
+      border-left-color: var(--warn);
+      background: #fff5eb;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+
+    .panel h3 {
+      margin-top: 0;
+    }
+
+    .footer {
+      padding: 32px clamp(22px, 5vw, 72px);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 920px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      aside {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      nav {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .hero-grid,
+      .flow,
+      .model,
+      .split {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 560px) {
+      nav {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        padding-top: 34px;
+      }
+
+      section {
+        padding-top: 34px;
+        padding-bottom: 34px;
+      }
+
+      .metric,
+      .step,
+      .panel {
+        padding: 15px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand" aria-label="amq-squad">
+        <div class="mark">AQ</div>
+        <div>
+          <strong>amq-squad</strong>
+          <span>Team launcher guide</span>
+        </div>
+      </div>
+      <nav aria-label="Guide sections">
+        <a href="#install">Install</a>
+        <a href="#model">Core model</a>
+        <a href="#quickstart">Quick start</a>
+        <a href="#workstreams">Sessions and threads</a>
+        <a href="#rules">Team rules</a>
+        <a href="#launch">Launch options</a>
+        <a href="#messaging">Messaging</a>
+        <a href="#files">Files</a>
+        <a href="#troubleshooting">Troubleshooting</a>
+      </nav>
+      <div class="side-note">
+        Use this guide when you want a repeatable agent team in one repo or
+        across several repos. AMQ still owns delivery. amq-squad owns team
+        shape, launch context, and role routing.
+      </div>
+    </aside>
+
+    <main>
+      <header class="hero">
+        <div class="hero-inner">
+          <p class="eyebrow">v0.5.1 guide</p>
+          <h1>How to use amq-squad</h1>
+          <p class="lead">
+            amq-squad is the project layer above AMQ. It records who is on the
+            team, what role each agent plays, which binary each role runs, and
+            how to launch the whole team back into the same AMQ workstream.
+          </p>
+          <div class="hero-grid" aria-label="Key concepts">
+            <div class="metric">
+              <b>1</b>
+              <span>shared AMQ session per issue, release, branch, or focused workstream</span>
+            </div>
+            <div class="metric">
+              <b>n</b>
+              <span>threads inside that session for reviews, decisions, and role handoffs</span>
+            </div>
+            <div class="metric">
+              <b>0</b>
+              <span>required AMQ changes. amq-squad launches through normal AMQ commands</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section id="install">
+        <div class="content">
+          <h2>Install</h2>
+          <p>
+            Install the published binary with Go. The command below installs
+            into <code class="inline-code">$GOBIN</code> or
+            <code class="inline-code">$HOME/go/bin</code>.
+          </p>
+          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.1
+amq-squad version</code></pre></div>
+          <p>
+            You also need Go 1.25 or newer, the <code class="inline-code">amq</code>
+            binary in <code class="inline-code">PATH</code>, and
+            <code class="inline-code">tmux</code> if you want automatic pane launch.
+          </p>
+        </div>
+      </section>
+
+      <section id="model">
+        <div class="content">
+          <h2>Core model</h2>
+          <p>
+            AMQ is the message queue. amq-squad is the team operating layer.
+            It keeps durable team intent in the project and writes per-agent
+            launch records when each role starts.
+          </p>
+          <div class="model">
+            <article class="model-panel">
+              <header>AMQ owns messaging</header>
+              <div class="body">
+                <p>AMQ delivers messages, keeps mailboxes, tracks sessions, and exposes commands such as <code class="inline-code">amq send</code>, <code class="inline-code">amq list</code>, and <code class="inline-code">amq drain</code>.</p>
+                <div class="pill-row">
+                  <span class="pill">mailbox</span>
+                  <span class="pill">session</span>
+                  <span class="pill">thread</span>
+                  <span class="pill">receipt</span>
+                </div>
+              </div>
+            </article>
+            <article class="model-panel">
+              <header>amq-squad owns teams</header>
+              <div class="body">
+                <p>amq-squad stores the roster, role docs, shared rules, member working directories, and exact launch commands needed to recreate the team.</p>
+                <div class="pill-row">
+                  <span class="pill">roles</span>
+                  <span class="pill">binaries</span>
+                  <span class="pill">team rules</span>
+                  <span class="pill">launch records</span>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="quickstart">
+        <div class="content">
+          <h2>Quick start</h2>
+          <p>
+            Start in the repository that should own the team. That directory
+            becomes the team-home and receives <code class="inline-code">.amq-squad/team.json</code>.
+          </p>
+          <div class="flow">
+            <div class="step">
+              <span class="num">1</span>
+              <b>Pick a team</b>
+              <span>Choose personas such as CTO, Fullstack, QA, PM, or Designer.</span>
+            </div>
+            <div class="step">
+              <span class="num">2</span>
+              <b>Name the workstream</b>
+              <span>Use one shared AMQ session for the whole issue, release, or branch.</span>
+            </div>
+            <div class="step">
+              <span class="num">3</span>
+              <b>Sync rules</b>
+              <span>Push shared team rules into CLAUDE.md and AGENTS.md.</span>
+            </div>
+            <div class="step">
+              <span class="num">4</span>
+              <b>Launch agents</b>
+              <span>Paste generated commands or let tmux create panes.</span>
+            </div>
+          </div>
+
+          <h3>Interactive setup</h3>
+          <div class="code"><pre><code>cd ~/Code/my-project
+amq-squad team</code></pre></div>
+          <p>
+            On first run, this asks which personas you want and which CLI each
+            one should run. Later runs print the same launch commands.
+          </p>
+
+          <h3>Non-interactive setup</h3>
+          <div class="code"><pre><code>amq-squad team init \
+  --personas cto,fullstack,qa \
+  --binary fullstack=claude,qa=claude \
+  --session issue-96</code></pre></div>
+          <p>
+            The <code class="inline-code">--session</code> value is the AMQ
+            workstream name. Use an explicit name when the work should be easy
+            to resume later.
+          </p>
+        </div>
+      </section>
+
+      <section id="workstreams">
+        <div class="content">
+          <h2>Sessions and threads</h2>
+          <p>
+            The recommended team shape is one AMQ session per workstream and
+            many focused threads inside that session.
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Concept</th>
+                  <th>What it means</th>
+                  <th>Example</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Session</td>
+                  <td>The shared AMQ workstream for a team run.</td>
+                  <td><code>issue-96</code>, <code>v0-5-0</code>, <code>auth-refactor</code></td>
+                </tr>
+                <tr>
+                  <td>Thread</td>
+                  <td>A focused conversation inside the shared workstream.</td>
+                  <td><code>p2p/cto__fullstack</code>, <code>decision/session-model</code></td>
+                </tr>
+                <tr>
+                  <td>Team profile</td>
+                  <td>A future named roster for one folder. This is separate from AMQ sessions and is not implemented yet.</td>
+                  <td><code>core-team</code>, <code>release-team</code></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout">
+            <p>
+              AMQ session names must use lowercase letters, digits, hyphens,
+              and underscores. Write release names as
+              <code class="inline-code">v0-5-0</code>, not
+              <code class="inline-code">v0.5.0</code>.
+            </p>
+          </div>
+          <div class="code"><pre><code>amq-squad team show --session issue-96
+amq-squad team launch --session issue-96
+amq-squad team launch --fresh --session issue-96</code></pre></div>
+          <p>
+            Use <code class="inline-code">--fresh</code> when accidental reuse
+            should fail if the workstream already exists.
+          </p>
+        </div>
+      </section>
+
+      <section id="rules">
+        <div class="content">
+          <h2>Team rules</h2>
+          <p>
+            Shared norms live in <code class="inline-code">.amq-squad/team-rules.md</code>.
+            amq-squad can sync those rules into the files each binary reads.
+          </p>
+          <div class="split">
+            <div class="panel">
+              <h3>Initialize rules</h3>
+              <div class="code"><pre><code>amq-squad team rules init</code></pre></div>
+              <p>Edit the generated file for workflow, approval, communication, and style rules.</p>
+            </div>
+            <div class="panel">
+              <h3>Sync rules</h3>
+              <div class="code"><pre><code>amq-squad team sync
+amq-squad team sync --apply</code></pre></div>
+              <p>Preview first. Apply writes managed blocks into CLAUDE.md and AGENTS.md.</p>
+            </div>
+          </div>
+          <p>
+            Content outside the managed markers remains yours. Update
+            <code class="inline-code">team-rules.md</code> and sync again when
+            team norms change.
+          </p>
+        </div>
+      </section>
+
+      <section id="launch">
+        <div class="content">
+          <h2>Launch options</h2>
+          <h3>Print commands</h3>
+          <p>
+            Use this when you want to paste one command into each terminal tab
+            or pane yourself.
+          </p>
+          <div class="code"><pre><code>amq-squad team show --session issue-96</code></pre></div>
+
+          <h3>Launch in tmux</h3>
+          <p>
+            If you are already inside tmux, amq-squad can create panes and
+            start every role automatically.
+          </p>
+          <div class="code"><pre><code>amq-squad team launch --session issue-96
+amq-squad team launch --session issue-96 --layout tiled
+amq-squad team launch --session issue-96 --dry-run</code></pre></div>
+
+          <h3>Launch into a named tmux session</h3>
+          <div class="code"><pre><code>amq-squad team launch \
+  --target new-session \
+  --terminal-session squad-issue-96 \
+  --session issue-96
+
+tmux attach -t squad-issue-96</code></pre></div>
+
+          <div class="callout warn">
+            <p>
+              Use <code class="inline-code">--terminal-session</code> for tmux
+              session names. Keep <code class="inline-code">--session</code>
+              reserved for AMQ workstream names.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="messaging">
+        <div class="content">
+          <h2>Messaging inside a squad</h2>
+          <p>
+            Once launched, agents normally use plain AMQ commands. amq-squad
+            injects role routing into each agent bootstrap prompt, so agents
+            know the current roster and canonical thread names.
+          </p>
+          <h3>Read incoming work</h3>
+          <div class="code"><pre><code>amq list --new
+amq read --id &lt;id&gt;
+amq drain --include-body</code></pre></div>
+
+          <h3>Send a review request</h3>
+          <div class="code"><pre><code>amq send \
+  --to fullstack \
+  --thread p2p/cto__fullstack \
+  --kind review_request \
+  --subject "Review: workstream session model" \
+  --body "Please review the branch, tests, and problem framing."</code></pre></div>
+
+          <h3>Wait for a peer to drain</h3>
+          <div class="code"><pre><code>amq send \
+  --to fullstack \
+  --thread p2p/cto__fullstack \
+  --kind review_request \
+  --subject "Review: PR" \
+  --body "Please review the current PR." \
+  --wait-for drained \
+  --wait-timeout 60s</code></pre></div>
+
+          <p>
+            Acknowledgements are normal messages. Use them when they reduce
+            ambiguity, and keep them short.
+          </p>
+          <div class="code"><pre><code>amq send \
+  --to cto \
+  --thread p2p/cto__fullstack \
+  --subject ack \
+  --body "Reviewed the update and will run final checks."</code></pre></div>
+        </div>
+      </section>
+
+      <section id="files">
+        <div class="content">
+          <h2>Files amq-squad writes</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th>Purpose</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>.amq-squad/team.json</code></td>
+                  <td>Team intent: roles, handles, binaries, member cwds, and shared workstream defaults.</td>
+                </tr>
+                <tr>
+                  <td><code>.amq-squad/team-rules.md</code></td>
+                  <td>Human-edited team workflow, approval, quality, communication, and style rules.</td>
+                </tr>
+                <tr>
+                  <td><code>CLAUDE.md</code> and <code>AGENTS.md</code></td>
+                  <td>Managed blocks synced from team rules so each binary starts with the same team norms.</td>
+                </tr>
+                <tr>
+                  <td><code>.agent-mail/&lt;session&gt;/agents/&lt;handle&gt;/launch.json</code></td>
+                  <td>Durable launch record for one role in one AMQ workstream.</td>
+                </tr>
+                <tr>
+                  <td><code>.agent-mail/&lt;session&gt;/agents/&lt;handle&gt;/role.md</code></td>
+                  <td>Role-specific operating guidance seeded from the persona catalog.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="troubleshooting">
+        <div class="content">
+          <h2>Troubleshooting</h2>
+          <div class="split">
+            <div class="panel">
+              <h3>Version looks old</h3>
+              <p>Check which binary is running, then reinstall the desired tag.</p>
+              <div class="code"><pre><code>which -a amq-squad
+amq-squad version
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.1</code></pre></div>
+            </div>
+            <div class="panel">
+              <h3>Launch plan looks wrong</h3>
+              <p>Inspect the team config and preview tmux commands before launching.</p>
+              <div class="code"><pre><code>amq-squad team show --session issue-96
+amq-squad team launch --session issue-96 --dry-run</code></pre></div>
+            </div>
+            <div class="panel">
+              <h3>Need old context</h3>
+              <p>List restorable history, but treat old workstreams as context unless you explicitly resume them.</p>
+              <div class="code"><pre><code>amq-squad list
+amq-squad restore</code></pre></div>
+            </div>
+            <div class="panel">
+              <h3>Cross-project routing</h3>
+              <p>Use per-role <code class="inline-code">--cwd</code> mappings, then configure AMQ peers in each project when members live in different repos.</p>
+              <div class="code"><pre><code>amq-squad team init \
+  --personas cto,fullstack,qa \
+  --cwd qa=~/Code/project-b</code></pre></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="footer">
+        Generated as a standalone local guide. Open this file directly in a
+        browser from the repository root.
+      </div>
+    </main>
+  </div>
+</body>
+</html>
