@@ -209,6 +209,9 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	} else if rec.Root != "" {
 		args = append(args, "--root", rec.Root)
 	}
+	if rec.SharedWorkstream {
+		args = append(args, "--team-workstream")
+	}
 	if rec.Conversation != "" {
 		args = append(args, "--conversation", rec.Conversation)
 	}
@@ -250,6 +253,9 @@ func emitCommand(rec launch.Record) string {
 	} else if rec.Root != "" {
 		b.WriteString(" --root ")
 		b.WriteString(shellQuote(rec.Root))
+	}
+	if rec.SharedWorkstream {
+		b.WriteString(" --team-workstream")
 	}
 	if rec.Conversation != "" {
 		b.WriteString(" --conversation ")
