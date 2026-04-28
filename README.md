@@ -1,6 +1,6 @@
 # amq-squad
 
-Role-aware agent team launcher built on top of [AMQ](https://github.com/avivsinai/agent-message-queue).
+Role-aware agent team launcher built on top of [AMQ](https://github.com/avivsinai/agent-message-queue) by [Aviv Sinai](https://github.com/avivsinai).
 
 AMQ owns messaging between agents. `amq-squad` owns the layer above: who is in
 the team, what role each agent plays, and how to bring the whole squad back up
