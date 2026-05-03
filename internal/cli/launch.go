@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -49,8 +48,8 @@ The <binary> is the agent launcher (claude, codex, etc). Flags after "--"
 are passed through to that binary via 'amq coop exec'.
 
 Side effects before exec:
-  1. Resolves AMQ root via 'amq env --json' for the target session.
-  2. Writes <root>/agents/<handle>/launch.json with cwd, binary, argv, role.
+  1. Resolves AMQ env via 'amq env --json' for the target session.
+  2. Writes launch.json under the amq-squad extension namespace.
   3. Writes a role.md stub if one does not already exist.
   4. Prepends Codex and Claude default permission args unless
      --no-default-args is set.
@@ -60,8 +59,8 @@ Side effects before exec:
      non-default binary args were provided.
   8. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
 
-With --dry-run, none of the above run: the resolved coop exec command is
-printed and amq-squad exits. Disk state is untouched.
+With --dry-run, the resolved coop exec command is printed and amq-squad exits.
+Disk state is untouched and no exec occurs.
 
 When --conversation generates resume args, do not pass additional child args
 after "--". Use --codex-args or --claude-args for native flags that should
@@ -110,12 +109,16 @@ still combine with --conversation.
 		return fmt.Errorf("getwd: %w", err)
 	}
 
-	// Resolve the AMQ root via the amq CLI. This respects .amqrc, --session,
-	// and --root exactly as coop exec will, so launch.json and the actual
-	// mailbox agree.
-	root, err := resolveAMQRoot(*rootFlag, *session, handle)
+	// Resolve the AMQ env via the amq CLI. This respects .amqrc, --session,
+	// --root, and AMQ's validated sender identity exactly as coop exec will, so
+	// launch.json and the actual mailbox agree.
+	env, err := resolveAMQEnv(*rootFlag, *session, handle)
 	if err != nil {
-		return fmt.Errorf("resolve amq root: %w", err)
+		return fmt.Errorf("resolve amq env: %w", err)
+	}
+	root := env.Root
+	if env.Me != "" {
+		handle = env.Me
 	}
 
 	agentDir := filepath.Join(root, "agents", handle)
@@ -123,12 +126,15 @@ still combine with --conversation.
 		CWD:              cwd,
 		Binary:           binary,
 		Argv:             childArgs,
-		Session:          *session,
+		Session:          env.SessionName,
 		SharedWorkstream: *sharedWorkstream,
 		Conversation:     conversationRef,
 		Handle:           handle,
 		Role:             *roleFlag,
 		Root:             root,
+		BaseRoot:         env.BaseRoot,
+		RootSource:       env.RootSource,
+		AMQVersion:       env.AMQVersion,
 		StartedAt:        time.Now().UTC(),
 	}
 
@@ -343,39 +349,17 @@ func stripClaudeResumeRef(args []string, conversation string) []string {
 	return out
 }
 
-// resolveAMQRoot shells out to `amq env --json` to discover the final root
-// path that coop exec will use. This keeps amq-squad out of the root
-// resolution business - amq owns it, we just ask.
+// resolveAMQRoot shells out to `amq env --json` to discover the final root path.
 func resolveAMQRoot(rootFlag, session, handle string) (string, error) {
 	return resolveAMQRootInDir("", rootFlag, session, handle)
 }
 
 func resolveAMQRootInDir(cwd, rootFlag, session, handle string) (string, error) {
-	args := []string{"env", "--json", "--me", handle}
-	if rootFlag != "" {
-		args = append(args, "--root", rootFlag)
-	}
-	if session != "" {
-		args = append(args, "--session", session)
-	}
-	cmd := exec.Command("amq", args...)
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
-	out, err := cmd.Output()
+	env, err := resolveAMQEnvInDir(cwd, rootFlag, session, handle)
 	if err != nil {
-		return "", fmt.Errorf("amq env: %w", err)
+		return "", err
 	}
-	var parsed struct {
-		Root string `json:"root"`
-	}
-	if err := json.Unmarshal(out, &parsed); err != nil {
-		return "", fmt.Errorf("parse amq env output: %w", err)
-	}
-	if parsed.Root == "" {
-		return "", fmt.Errorf("amq env returned empty root")
-	}
-	return parsed.Root, nil
+	return env.Root, nil
 }
 
 // seedRoleStub writes a role.md stub for the given agent directory based on

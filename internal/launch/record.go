@@ -15,12 +15,15 @@ const (
 	// SchemaVersion is bumped on any breaking change to the on-disk record.
 	SchemaVersion = 1
 
+	// LayerName is the AMQ extension namespace used for amq-squad metadata.
+	LayerName = "io.github.omriariav.amq-squad"
+
 	// FileName is the name of the launch record inside an agent's mailbox dir.
 	FileName = "launch.json"
 )
 
-// Record is the persisted launch invocation for a single agent. It lives at
-// <AM_ROOT>/agents/<handle>/launch.json.
+// Record is the persisted launch invocation for a single agent. New records
+// live under the amq-squad extension namespace inside the agent mailbox.
 type Record struct {
 	Schema  int      `json:"schema"`
 	CWD     string   `json:"cwd"`
@@ -34,6 +37,9 @@ type Record struct {
 	Handle           string    `json:"handle"`
 	Role             string    `json:"role,omitempty"`
 	Root             string    `json:"root"`
+	BaseRoot         string    `json:"base_root,omitempty"`
+	RootSource       string    `json:"root_source,omitempty"`
+	AMQVersion       string    `json:"amq_version,omitempty"`
 	StartedAt        time.Time `json:"started_at"`
 }
 
@@ -44,14 +50,54 @@ type Entry struct {
 	Source   string
 }
 
-// Write atomically writes the record into the agent's mailbox directory.
+// ExtensionDir returns the amq-squad extension directory for an agent mailbox.
+func ExtensionDir(agentDir string) string {
+	return filepath.Join(agentDir, "extensions", LayerName)
+}
+
+// Path returns the v0.6+ launch record path for an agent mailbox.
+func Path(agentDir string) string {
+	return filepath.Join(ExtensionDir(agentDir), FileName)
+}
+
+// LegacyPath returns the pre-v0.6 launch record path for an agent mailbox.
+func LegacyPath(agentDir string) string {
+	return filepath.Join(agentDir, FileName)
+}
+
+// ExistingPath returns the launch record path that should be read, preferring
+// the extension namespace and falling back to the legacy direct-agent path.
+func ExistingPath(agentDir string) string {
+	p := Path(agentDir)
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	if _, err := os.Stat(LegacyPath(agentDir)); err == nil {
+		return LegacyPath(agentDir)
+	}
+	return p
+}
+
+// HasRecord reports whether either the extension or legacy record exists.
+func HasRecord(agentDir string) bool {
+	if _, err := os.Stat(Path(agentDir)); err == nil {
+		return true
+	}
+	if _, err := os.Stat(LegacyPath(agentDir)); err == nil {
+		return true
+	}
+	return false
+}
+
+// Write atomically writes the record into the agent's amq-squad extension dir.
 // The agent mailbox is expected to exist (coop exec creates it), but Write
 // also creates missing parents so the record can be written pre-exec.
 func Write(agentDir string, rec Record) error {
-	if err := os.MkdirAll(agentDir, 0o700); err != nil {
-		return fmt.Errorf("ensure agent dir: %w", err)
+	dir := ExtensionDir(agentDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("ensure extension dir: %w", err)
 	}
-	path := filepath.Join(agentDir, FileName)
+	path := Path(agentDir)
 	tmp := path + ".tmp"
 
 	rec.Schema = SchemaVersion
@@ -71,7 +117,7 @@ func Write(agentDir string, rec Record) error {
 // Read loads a launch record from an agent's mailbox directory. Returns
 // os.ErrNotExist if no launch.json is present.
 func Read(agentDir string) (Record, error) {
-	path := filepath.Join(agentDir, FileName)
+	path := ExistingPath(agentDir)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return Record{}, err
@@ -83,37 +129,71 @@ func Read(agentDir string) (Record, error) {
 	return rec, nil
 }
 
-// ScanEntries walks a projectRoot for launch.json records across both AMQ layouts:
+// ScanEntries walks a projectRoot for launch.json records across AMQ layouts:
 //
-//	<projectRoot>/.agent-mail/<session>/agents/<handle>/launch.json  (coop exec)
-//	<projectRoot>/.agent-mail/agents/<handle>/launch.json            (base root, no session)
+//	<projectRoot>/.agent-mail/<session>/agents/<handle>/extensions/<layer>/launch.json
+//	<projectRoot>/.agent-mail/agents/<handle>/extensions/<layer>/launch.json
+//	<projectRoot>/.agent-mail/<session>/agents/<handle>/launch.json
+//	<projectRoot>/.agent-mail/agents/<handle>/launch.json
 //
 // Returns every record found. Order is whatever filepath.Glob returns;
 // callers that care about ordering should sort the result themselves.
 func ScanEntries(projectRoot string) ([]Entry, error) {
-	patterns := []string{
-		filepath.Join(projectRoot, ".agent-mail", "*", "agents", "*", FileName),
-		filepath.Join(projectRoot, ".agent-mail", "agents", "*", FileName),
+	return ScanEntriesInRoot(projectRoot, filepath.Join(projectRoot, ".agent-mail"))
+}
+
+// ScanEntriesInRoot walks an AMQ base root for launch.json records across
+// extension and legacy layouts.
+func ScanEntriesInRoot(projectRoot, baseRoot string) ([]Entry, error) {
+	patterns := []struct {
+		glob     string
+		agentDir func(string) string
+	}{
+		{
+			glob: filepath.Join(baseRoot, "*", "agents", "*", "extensions", LayerName, FileName),
+			agentDir: func(path string) string {
+				return filepath.Dir(filepath.Dir(filepath.Dir(path)))
+			},
+		},
+		{
+			glob: filepath.Join(baseRoot, "agents", "*", "extensions", LayerName, FileName),
+			agentDir: func(path string) string {
+				return filepath.Dir(filepath.Dir(filepath.Dir(path)))
+			},
+		},
+		{
+			glob: filepath.Join(baseRoot, "*", "agents", "*", FileName),
+			agentDir: func(path string) string {
+				return filepath.Dir(path)
+			},
+		},
+		{
+			glob: filepath.Join(baseRoot, "agents", "*", FileName),
+			agentDir: func(path string) string {
+				return filepath.Dir(path)
+			},
+		},
 	}
 	seen := map[string]bool{}
 	var out []Entry
 	for _, p := range patterns {
-		matches, err := filepath.Glob(p)
+		matches, err := filepath.Glob(p.glob)
 		if err != nil {
-			return nil, fmt.Errorf("glob %s: %w", p, err)
+			return nil, fmt.Errorf("glob %s: %w", p.glob, err)
 		}
 		for _, m := range matches {
-			if seen[m] {
+			agentDir := p.agentDir(m)
+			if seen[agentDir] {
 				continue
 			}
-			seen[m] = true
-			rec, err := Read(filepath.Dir(m))
+			seen[agentDir] = true
+			rec, err := Read(agentDir)
 			if err != nil {
 				continue
 			}
 			out = append(out, Entry{
 				Record:   rec,
-				AgentDir: filepath.Dir(m),
+				AgentDir: agentDir,
 				Source:   FileName,
 			})
 		}
@@ -124,7 +204,13 @@ func ScanEntries(projectRoot string) ([]Entry, error) {
 // ScanRestorableEntries returns launch records plus best-effort records
 // inferred from older AMQ mailboxes that predate amq-squad launch.json.
 func ScanRestorableEntries(projectRoot string) ([]Entry, error) {
-	entries, err := ScanEntries(projectRoot)
+	return ScanRestorableEntriesInRoot(projectRoot, filepath.Join(projectRoot, ".agent-mail"))
+}
+
+// ScanRestorableEntriesInRoot returns launch records plus best-effort records
+// inferred from older AMQ mailboxes under a resolved AMQ base root.
+func ScanRestorableEntriesInRoot(projectRoot, baseRoot string) ([]Entry, error) {
+	entries, err := ScanEntriesInRoot(projectRoot, baseRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +219,7 @@ func ScanRestorableEntries(projectRoot string) ([]Entry, error) {
 		seen[e.AgentDir] = true
 	}
 
-	legacy, err := ScanLegacyEntries(projectRoot)
+	legacy, err := ScanLegacyEntriesInRoot(projectRoot, baseRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -150,19 +236,24 @@ func ScanRestorableEntries(projectRoot string) ([]Entry, error) {
 // directories that do not have launch.json. The binary is inferred from the
 // handle, which matches AMQ's default handle derivation for claude/codex.
 func ScanLegacyEntries(projectRoot string) ([]Entry, error) {
-	agentDirs, err := legacyAgentDirs(projectRoot)
+	return ScanLegacyEntriesInRoot(projectRoot, filepath.Join(projectRoot, ".agent-mail"))
+}
+
+// ScanLegacyEntriesInRoot infers restorable launches under a resolved AMQ base root.
+func ScanLegacyEntriesInRoot(projectRoot, baseRoot string) ([]Entry, error) {
+	agentDirs, err := legacyAgentDirs(baseRoot)
 	if err != nil {
 		return nil, err
 	}
 	var out []Entry
 	for _, agentDir := range agentDirs {
-		if _, err := os.Stat(filepath.Join(agentDir, FileName)); err == nil {
+		if HasRecord(agentDir) {
 			continue
 		}
 		if !hasLegacyActivity(agentDir) {
 			continue
 		}
-		rec, err := legacyRecord(projectRoot, agentDir)
+		rec, err := legacyRecord(projectRoot, baseRoot, agentDir)
 		if err != nil {
 			continue
 		}
@@ -175,10 +266,10 @@ func ScanLegacyEntries(projectRoot string) ([]Entry, error) {
 	return out, nil
 }
 
-func legacyAgentDirs(projectRoot string) ([]string, error) {
+func legacyAgentDirs(baseRoot string) ([]string, error) {
 	patterns := []string{
-		filepath.Join(projectRoot, ".agent-mail", "*", "agents", "*"),
-		filepath.Join(projectRoot, ".agent-mail", "agents", "*"),
+		filepath.Join(baseRoot, "*", "agents", "*"),
+		filepath.Join(baseRoot, "agents", "*"),
 	}
 	seen := map[string]bool{}
 	var out []string
@@ -223,9 +314,8 @@ func hasFiles(root string) bool {
 	return found
 }
 
-func legacyRecord(projectRoot, agentDir string) (Record, error) {
-	rootDir := filepath.Join(projectRoot, ".agent-mail")
-	rel, err := filepath.Rel(rootDir, agentDir)
+func legacyRecord(projectRoot, baseRoot, agentDir string) (Record, error) {
+	rel, err := filepath.Rel(baseRoot, agentDir)
 	if err != nil {
 		return Record{}, err
 	}
@@ -235,7 +325,7 @@ func legacyRecord(projectRoot, agentDir string) (Record, error) {
 	}
 
 	session := ""
-	root := rootDir
+	root := baseRoot
 	handle := filepath.Base(agentDir)
 	binary, ok := inferLegacyBinary(handle)
 	if !ok {
@@ -243,7 +333,7 @@ func legacyRecord(projectRoot, agentDir string) (Record, error) {
 	}
 	if parts[0] != "agents" {
 		session = parts[0]
-		root = filepath.Join(rootDir, session)
+		root = filepath.Join(baseRoot, session)
 	}
 
 	return Record{
@@ -253,6 +343,7 @@ func legacyRecord(projectRoot, agentDir string) (Record, error) {
 		Handle:    handle,
 		Role:      inferLegacyRole(handle),
 		Root:      root,
+		BaseRoot:  baseRoot,
 		StartedAt: legacyActivityTime(agentDir),
 	}, nil
 }
@@ -316,10 +407,12 @@ func readPresenceLastSeen(path string) (time.Time, bool) {
 	return parsed.LastSeen, true
 }
 
-// Scan walks a projectRoot for launch.json records across both AMQ layouts:
+// Scan walks a projectRoot for launch.json records across AMQ layouts:
 //
-//	<projectRoot>/.agent-mail/<session>/agents/<handle>/launch.json  (coop exec)
-//	<projectRoot>/.agent-mail/agents/<handle>/launch.json            (base root, no session)
+//	<projectRoot>/.agent-mail/<session>/agents/<handle>/extensions/<layer>/launch.json
+//	<projectRoot>/.agent-mail/agents/<handle>/extensions/<layer>/launch.json
+//	<projectRoot>/.agent-mail/<session>/agents/<handle>/launch.json
+//	<projectRoot>/.agent-mail/agents/<handle>/launch.json
 //
 // Returns every record found. Order is whatever filepath.Glob returns;
 // callers that care about ordering should sort the result themselves.

@@ -32,11 +32,11 @@ Usage:
   amq-squad restore [--project dir1,dir2,...] [--role r] [--handle h] [--session s] [--conversation ref]
   amq-squad restore --exec --role cto
 
-Scans each project for .agent-mail/<session>/agents/<handle>/launch.json
-records, nearby role.md persona files, and older AMQ mailbox history when
-launch.json is missing and the original binary can be inferred. Default
-scope is the current working directory if --project is omitted. Without
---exec, prints a bash command per matching agent.
+Scans each project for amq-squad extension launch records, nearby role.md
+persona files, and older AMQ mailbox history when launch.json is missing and
+the original binary can be inferred. Default scope is the current working
+directory if --project is omitted. Without --exec, prints a bash command per
+matching agent.
 
 With --exec, exactly one record must match; amq-squad changes to that
 record's cwd and execs the saved launch through 'amq coop exec'.
@@ -64,7 +64,17 @@ record's cwd and execs the saved launch through 'amq coop exec'.
 	var records []restoreCandidate
 
 	for _, dir := range dirs {
-		entries, err := launch.ScanRestorableEntries(dir)
+		baseRoot, err := scanBaseRootForProject(dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: resolve amq env for %s: %v\n", dir, err)
+			baseRoot = ""
+		}
+		var entries []launch.Entry
+		if baseRoot != "" {
+			entries, err = launch.ScanRestorableEntriesInRoot(dir, baseRoot)
+		} else {
+			entries, err = launch.ScanRestorableEntries(dir)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: scan %s: %v\n", dir, err)
 			continue
@@ -155,7 +165,7 @@ func restoreMetadata(entry launch.Entry) string {
 	if rec.Handle != "" {
 		parts = append(parts, "handle: "+rec.Handle)
 	}
-	if _, err := os.Stat(filepath.Join(entry.AgentDir, role.FileName)); err == nil {
+	if role.Exists(entry.AgentDir) {
 		parts = append(parts, "persona: role.md")
 	} else {
 		parts = append(parts, "persona: missing")
@@ -206,6 +216,9 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	}
 	if rec.Session != "" {
 		args = append(args, "--session", rec.Session)
+		if rec.BaseRoot != "" {
+			args = append(args, "--root", rec.BaseRoot)
+		}
 	} else if rec.Root != "" {
 		args = append(args, "--root", rec.Root)
 	}
@@ -250,6 +263,10 @@ func emitCommand(rec launch.Record) string {
 	if rec.Session != "" {
 		b.WriteString(" --session ")
 		b.WriteString(shellQuote(rec.Session))
+		if rec.BaseRoot != "" {
+			b.WriteString(" --root ")
+			b.WriteString(shellQuote(rec.BaseRoot))
+		}
 	} else if rec.Root != "" {
 		b.WriteString(" --root ")
 		b.WriteString(shellQuote(rec.Root))

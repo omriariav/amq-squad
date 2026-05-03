@@ -119,6 +119,23 @@ func TestEmitCommandIncludesRootWhenSessionMissing(t *testing.T) {
 	}
 }
 
+func TestEmitCommandIncludesBaseRootWithSession(t *testing.T) {
+	rec := launch.Record{
+		CWD:      "/p",
+		Binary:   "claude",
+		Session:  "stream1",
+		Handle:   "claude",
+		Root:     "/tmp/mail/stream1",
+		BaseRoot: "/tmp/mail",
+	}
+	cmd := emitCommand(rec)
+	for _, want := range []string{"--root /tmp/mail", "--session stream1"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("emitCommand missing %q in: %s", want, cmd)
+		}
+	}
+}
+
 func TestLaunchArgsFromRecord(t *testing.T) {
 	rec := launch.Record{
 		CWD:          "/p",
@@ -172,6 +189,21 @@ func TestLaunchArgsFromRecordUsesRootWithoutSession(t *testing.T) {
 	}
 	got := launchArgsFromRecord(rec)
 	want := []string{"--no-bootstrap", "--root", "/p/.agent-mail", "--me", "codex", "codex"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+}
+
+func TestLaunchArgsFromRecordPreservesBaseRootWithSession(t *testing.T) {
+	rec := launch.Record{
+		Binary:   "claude",
+		Session:  "stream1",
+		Handle:   "claude",
+		Root:     "/tmp/mail/stream1",
+		BaseRoot: "/tmp/mail",
+	}
+	got := launchArgsFromRecord(rec)
+	want := []string{"--no-bootstrap", "--session", "stream1", "--root", "/tmp/mail", "--me", "claude", "claude"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
 	}

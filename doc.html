@@ -510,7 +510,7 @@
     <main>
       <header class="hero">
         <div class="hero-inner">
-          <p class="eyebrow">v0.5.3 guide</p>
+          <p class="eyebrow">v0.6.0 guide</p>
           <h1>How to use amq-squad</h1>
           <p class="lead">
             amq-squad is the project layer above AMQ. It records who is on the
@@ -542,11 +542,11 @@
             into <code class="inline-code">$GOBIN</code> or
             <code class="inline-code">$HOME/go/bin</code>.
           </p>
-          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.3
+          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.6.0
 amq-squad version</code></pre></div>
           <p>
             You also need Go 1.25 or newer, the <code class="inline-code">amq</code>
-            binary in <code class="inline-code">PATH</code>, and
+            binary in <code class="inline-code">PATH</code> at v0.34 or newer, and
             <code class="inline-code">tmux</code> if you want automatic pane launch.
           </p>
         </div>
@@ -851,12 +851,12 @@ amq drain --include-body</code></pre></div>
                   <td>Managed blocks synced from team rules so each binary starts with the same team norms.</td>
                 </tr>
                 <tr>
-                  <td><code>.agent-mail/&lt;session&gt;/agents/&lt;handle&gt;/launch.json</code></td>
-                  <td>Durable launch record for one role in one AMQ workstream.</td>
+                  <td><code>.agent-mail/&lt;session&gt;/agents/&lt;handle&gt;/extensions/io.github.omriariav.amq-squad/launch.json</code></td>
+                  <td>Durable launch record for one role in one AMQ workstream. Legacy direct-agent launch records remain readable.</td>
                 </tr>
                 <tr>
-                  <td><code>.agent-mail/&lt;session&gt;/agents/&lt;handle&gt;/role.md</code></td>
-                  <td>Role-specific operating guidance seeded from the persona catalog.</td>
+                  <td><code>.agent-mail/&lt;session&gt;/agents/&lt;handle&gt;/extensions/io.github.omriariav.amq-squad/role.md</code></td>
+                  <td>Role-specific operating guidance seeded from the persona catalog. Legacy direct-agent role files remain readable.</td>
                 </tr>
               </tbody>
             </table>
@@ -873,7 +873,7 @@ amq drain --include-body</code></pre></div>
               <p>Check which binary is running, then reinstall the desired tag.</p>
               <div class="code"><pre><code>which -a amq-squad
 amq-squad version
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.3</code></pre></div>
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.6.0</code></pre></div>
             </div>
             <div class="panel">
               <h3>Launch plan looks wrong</h3>

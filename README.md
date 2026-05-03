@@ -22,12 +22,12 @@ AMQ itself stays unchanged.
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.3
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.6.0
 ```
 
 Use `@latest` if you intentionally want the newest published tag.
 
-Requires Go 1.25+ and the `amq` binary in `PATH` (v0.32+). Installing to
+Requires Go 1.25+ and the `amq` binary in `PATH` (v0.34+). Installing to
 `$GOBIN` (or `$HOME/go/bin`) is enough; the launch commands `team show` emits
 use the absolute path to whichever `amq-squad` binary is running, so nothing
 else needs to be on `PATH`.
@@ -439,14 +439,20 @@ amq-squad version                   Print the installed amq-squad version.
 <project>/.amq-squad/team-rules.md       Shared norms and workflow (user-edited).
 <project>/CLAUDE.md, AGENTS.md           Managed block synced from team-rules.md;
                                          user content outside markers untouched.
-<AM_ROOT>/agents/<handle>/launch.json    Per-agent invocation record, written at launch.
+<AM_ROOT>/agents/<handle>/extensions/
+  io.github.omriariav.amq-squad/
+    launch.json                          Per-agent invocation record, written at launch.
                                          Includes conversation ref when supplied.
-<AM_ROOT>/agents/<handle>/role.md        Per-agent role doc, seeded from the catalog
+    role.md                              Per-agent role doc, seeded from the catalog
                                          with default operating guidance. User
                                          edits are preserved.
 ```
 
-`<AM_ROOT>` is resolved via `amq env --json` so amq-squad and `amq coop exec` always agree on where the mailbox lives.
+`<AM_ROOT>` is resolved via AMQ's JSON env contract (`amq env --json`) so
+amq-squad and `amq coop exec` always agree on the mailbox, root source, handle,
+and session. v0.6.0 writes extension namespaced metadata under
+`extensions/io.github.omriariav.amq-squad/` and still reads legacy
+direct-agent `launch.json` and `role.md` files created by v0.5.x.
 
 ## Known gaps
 
@@ -462,5 +468,5 @@ amq-squad version                   Print the installed amq-squad version.
 ## Requires
 
 - Go 1.25+
-- `amq` binary in PATH (v0.32+)
+- `amq` binary in PATH (v0.34+)
 - `tmux` in PATH for `amq-squad team launch`
