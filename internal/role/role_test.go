@@ -49,8 +49,10 @@ func TestEnsureStubWritesAllSections(t *testing.T) {
 		"amq-cli only for raw AMQ debugging",
 		"## System Prompt",
 		"Use the binary default system behavior",
+		"start by identifying your role and handle",
 		"## Priming Template",
 		"At launch, amq-squad injects identity",
+		"start your first response by stating your role and handle",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("role.md missing %q", want)

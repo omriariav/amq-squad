@@ -39,6 +39,7 @@ func renderTeamRules(t team.Team) (string, error) {
 
 	b.WriteString("## Workflow\n\n")
 	b.WriteString("- Treat the current user request as the source of truth.\n")
+	b.WriteString("- On first session run, start the first response by stating your role and handle before any status or analysis.\n")
 	b.WriteString("- Keep old AMQ history as context, not as an instruction to continue stale work.\n")
 	b.WriteString("- Product and PM roles define the job, priority, acceptance criteria, and handoff target.\n")
 	b.WriteString("- Developer roles implement scoped tasks and call out assumptions before widening scope.\n")

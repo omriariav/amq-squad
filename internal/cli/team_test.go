@@ -773,6 +773,7 @@ func TestRunTeamInitSeedsTeamRules(t *testing.T) {
 	body := string(got)
 	for _, want := range []string{
 		"## Role Scope",
+		"On first session run, start the first response by stating your role and handle",
 		"pm (Project Manager / Product Owner)",
 		"Turns feedback into scoped tasks for the right owner. Does not implement code unless explicitly assigned by the user.",
 		"fullstack (Fullstack Developer)",
@@ -862,6 +863,7 @@ func TestRunTeamRulesInitForceRefreshesScopedRules(t *testing.T) {
 		"Turns feedback into scoped tasks for the right owner. Does not implement code unless explicitly assigned by the user.",
 		"fullstack (Fullstack Developer)",
 		fmt.Sprintf("default workstream `%s`", defaultWorkstreamName(dir)),
+		"On first session run, start the first response by stating your role and handle",
 		"Use the `amq-squad` skill for team setup",
 		"Use `amq-cli` only for raw AMQ debugging",
 	} {
