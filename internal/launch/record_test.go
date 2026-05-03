@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -21,10 +22,19 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		Handle:           "cpo",
 		Role:             "cpo",
 		Root:             dir,
+		BaseRoot:         filepath.Dir(dir),
+		RootSource:       "project_amqrc",
+		AMQVersion:       "0.34.0",
 		StartedAt:        time.Now().UTC().Truncate(time.Second),
 	}
 	if err := Write(dir, in); err != nil {
 		t.Fatalf("Write: %v", err)
+	}
+	if _, err := os.Stat(Path(dir)); err != nil {
+		t.Fatalf("Write did not create extension launch record: %v", err)
+	}
+	if _, err := os.Stat(LegacyPath(dir)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Write created legacy launch record, err=%v", err)
 	}
 
 	out, err := Read(dir)
@@ -40,7 +50,9 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	if out.CWD != in.CWD || out.Binary != in.Binary || out.Session != in.Session ||
 		out.SharedWorkstream != in.SharedWorkstream ||
 		out.Conversation != in.Conversation ||
-		out.Handle != in.Handle || out.Role != in.Role || out.Root != in.Root {
+		out.Handle != in.Handle || out.Role != in.Role || out.Root != in.Root ||
+		out.BaseRoot != in.BaseRoot || out.RootSource != in.RootSource ||
+		out.AMQVersion != in.AMQVersion {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", out, in)
 	}
 	if len(out.Argv) != len(in.Argv) {
@@ -61,6 +73,37 @@ func TestReadMissing(t *testing.T) {
 	_, err := Read(dir)
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("err = %v, want ErrNotExist", err)
+	}
+}
+
+func TestReadFallsBackToLegacyPath(t *testing.T) {
+	dir := t.TempDir()
+	rec := Record{
+		Schema:  SchemaVersion,
+		CWD:     "/some/project",
+		Binary:  "codex",
+		Session: "stream1",
+		Handle:  "cto",
+		Role:    "cto",
+		Root:    "/some/project/.agent-mail/stream1",
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(LegacyPath(dir), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Read(dir)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.Handle != "cto" || got.Root != rec.Root {
+		t.Fatalf("Read = %+v, want legacy record %+v", got, rec)
+	}
+	if ExistingPath(dir) != LegacyPath(dir) {
+		t.Fatalf("ExistingPath = %q, want legacy path %q", ExistingPath(dir), LegacyPath(dir))
 	}
 }
 
@@ -136,6 +179,38 @@ func TestScanEntriesIncludesAgentDir(t *testing.T) {
 	}
 	if entries[0].Record.Handle != "cto" {
 		t.Errorf("Record.Handle = %q, want cto", entries[0].Record.Handle)
+	}
+}
+
+func TestScanEntriesInRootFindsExtensionRecordsUnderCustomBaseRoot(t *testing.T) {
+	project := t.TempDir()
+	baseRoot := filepath.Join(t.TempDir(), "mail")
+	agentDir := filepath.Join(baseRoot, "stream1", "agents", "cto")
+	rec := Record{
+		CWD:      project,
+		Binary:   "codex",
+		Session:  "stream1",
+		Handle:   "cto",
+		Role:     "cto",
+		Root:     filepath.Join(baseRoot, "stream1"),
+		BaseRoot: baseRoot,
+	}
+	if err := Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ScanEntriesInRoot(project, baseRoot)
+	if err != nil {
+		t.Fatalf("ScanEntriesInRoot: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("ScanEntriesInRoot returned %d records, want 1", len(entries))
+	}
+	if entries[0].AgentDir != agentDir {
+		t.Fatalf("AgentDir = %q, want %q", entries[0].AgentDir, agentDir)
+	}
+	if entries[0].Record.BaseRoot != baseRoot {
+		t.Fatalf("BaseRoot = %q, want %q", entries[0].Record.BaseRoot, baseRoot)
 	}
 }
 

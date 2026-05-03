@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -140,8 +141,8 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		AgentDir:      agentDir,
 		TeamHome:      teamHome,
 		TeamRulesPath: teamRulesPath,
-		RolePath:      role.Path(agentDir),
-		LaunchPath:    filepath.Join(agentDir, launch.FileName),
+		RolePath:      role.ExistingPath(agentDir),
+		LaunchPath:    launch.ExistingPath(agentDir),
 		CurrentTeam:   currentTeam,
 		Workstreams:   siblingWorkstreamSummaries(rec.Root, rec.Session),
 		Warnings:      warnings,
@@ -171,7 +172,7 @@ func bootstrapCurrentTeam(rec launch.Record, teamHome string) ([]bootstrapTeamMe
 		project := projectIdentityForCWD(cwd)
 		handle := memberHandle(m)
 		session := routingSessionForMember(rec, m)
-		route, routeError := routeCommandFor(currentProject, project, samePath(rec.CWD, cwd), rec.Handle, handle, session)
+		route, routeError := routeCommandFor(rec.Root, rec.Session, currentProject, project, samePath(rec.CWD, cwd), rec.Handle, handle, session)
 		out = append(out, bootstrapTeamMember{
 			Role:       m.Role,
 			Handle:     handle,
@@ -224,12 +225,17 @@ func (p projectIdentity) DisplayName() string {
 	return "(unknown)"
 }
 
-func routeCommandFor(currentProject, targetProject projectIdentity, sameCWD bool, fromHandle, handle, session string) (string, string) {
+func routeCommandFor(sourceRoot, sourceSession string, currentProject, targetProject projectIdentity, sameCWD bool, fromHandle, handle, session string) (string, string) {
 	if !sameCWD && (!currentProject.Known || !targetProject.Known) {
 		return "", "AMQ project identity is missing; add .amqrc project names or use amq route manually"
 	}
 	if !sameCWD && currentProject.Name == targetProject.Name && !samePath(currentProject.Dir, targetProject.Dir) {
 		return "", "AMQ project identity is ambiguous; matching project names come from different .amqrc roots"
+	}
+	if sourceRoot != "" && fromHandle != "" && handle != "" {
+		if route, routeError, ok := routeExplainCommand(sourceRoot, sourceSession, currentProject, targetProject, sameCWD, fromHandle, handle, session); ok {
+			return route, routeError
+		}
 	}
 	args := []string{"amq", "send", "--to", handle}
 	if !sameCWD && currentProject.Name != targetProject.Name {
@@ -247,9 +253,56 @@ func routeCommandFor(currentProject, targetProject projectIdentity, sameCWD bool
 	return strings.Join(args, " "), ""
 }
 
+type routeExplainResult struct {
+	Routable       bool     `json:"routable"`
+	Argv           []string `json:"argv"`
+	DisplayCommand string   `json:"display_command"`
+	Error          string   `json:"error"`
+}
+
+func routeExplainCommand(sourceRoot, sourceSession string, currentProject, targetProject projectIdentity, sameCWD bool, fromHandle, handle, session string) (string, string, bool) {
+	args := []string{"route", "explain", "--from-root", sourceRoot, "--me", fromHandle, "--to", handle, "--json"}
+	if !sameCWD && currentProject.Name != targetProject.Name && targetProject.Name != "" {
+		args = append(args, "--project", targetProject.Name)
+	}
+	if session != "" && session != sourceSession {
+		args = append(args, "--session", session)
+	}
+	cmd := exec.Command("amq", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", "", false
+	}
+	var parsed routeExplainResult
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return "", "", false
+	}
+	if !parsed.Routable {
+		if parsed.Error == "" {
+			parsed.Error = "AMQ route explain reported route is not routable"
+		}
+		return "", parsed.Error, true
+	}
+	if len(parsed.Argv) == 0 {
+		return "", "AMQ route explain returned empty argv", true
+	}
+	argv := append([]string(nil), parsed.Argv...)
+	if fromHandle != "" && handle != "" && fromHandle != handle {
+		argv = append(argv, "--thread", canonicalP2PThread(fromHandle, handle))
+	}
+	return shellCommand(argv[0], argv[1:]...), "", true
+}
+
 func projectIdentityForCWD(cwd string) projectIdentity {
 	if cwd == "" {
 		return projectIdentity{}
+	}
+	if env, err := resolveAMQEnvInDir(cwd, "", "", "amq-squad"); err == nil && env.Project != "" {
+		dir := env.BaseRoot
+		if dir == "" {
+			dir = env.Root
+		}
+		return projectIdentity{Name: env.Project, Dir: dir, Known: true}
 	}
 	if dir, name := findProjectName(cwd); name != "" {
 		return projectIdentity{Name: name, Dir: dir, Known: true}

@@ -2,6 +2,7 @@ package role
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -21,6 +22,12 @@ func TestEnsureStubWritesAllSections(t *testing.T) {
 	}
 	if !wrote {
 		t.Fatal("EnsureStub returned false on first call")
+	}
+	if _, err := os.Stat(Path(dir)); err != nil {
+		t.Fatalf("EnsureStub did not create extension role file: %v", err)
+	}
+	if _, err := os.Stat(LegacyPath(dir)); !os.IsNotExist(err) {
+		t.Fatalf("EnsureStub created legacy role file, err=%v", err)
 	}
 
 	b, err := os.ReadFile(Path(dir))
@@ -56,6 +63,9 @@ func TestEnsureStubWritesAllSections(t *testing.T) {
 
 func TestEnsureStubNoClobber(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(Path(dir), []byte("USER EDIT"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -93,6 +103,30 @@ func TestEnsureStubFallsBackToRoleID(t *testing.T) {
 	}
 }
 
+func TestExistingPathFallsBackToLegacyRole(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(LegacyPath(dir), []byte("USER EDIT"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := ExistingPath(dir); got != LegacyPath(dir) {
+		t.Fatalf("ExistingPath = %q, want %q", got, LegacyPath(dir))
+	}
+	if !Exists(dir) {
+		t.Fatal("Exists returned false for legacy role file")
+	}
+	wrote, err := EnsureStub(dir, Stub{RoleID: "qa", Label: "QA"})
+	if err != nil {
+		t.Fatalf("EnsureStub: %v", err)
+	}
+	if wrote {
+		t.Fatal("EnsureStub wrote over legacy role file")
+	}
+	if _, err := os.Stat(Path(dir)); !os.IsNotExist(err) {
+		t.Fatalf("EnsureStub created extension role despite legacy role, err=%v", err)
+	}
+}
+
 func TestEnsureStubUpgradesUntouchedLegacyPlaceholder(t *testing.T) {
 	dir := t.TempDir()
 	stub := Stub{
@@ -100,6 +134,9 @@ func TestEnsureStubUpgradesUntouchedLegacyPlaceholder(t *testing.T) {
 		RoleID:      "qa",
 		Description: "Owns test strategy.",
 		Peers:       []string{"cto", "fullstack"},
+	}
+	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o700); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(Path(dir), []byte(renderLegacyPlaceholder(stub)), 0o600); err != nil {
 		t.Fatal(err)
