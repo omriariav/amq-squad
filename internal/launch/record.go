@@ -40,6 +40,8 @@ type Record struct {
 	BaseRoot         string    `json:"base_root,omitempty"`
 	RootSource       string    `json:"root_source,omitempty"`
 	AMQVersion       string    `json:"amq_version,omitempty"`
+	CodexArgs        []string  `json:"codex_args,omitempty"`
+	ClaudeArgs       []string  `json:"claude_args,omitempty"`
 	StartedAt        time.Time `json:"started_at"`
 }
 
