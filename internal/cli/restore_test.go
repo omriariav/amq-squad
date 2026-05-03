@@ -297,6 +297,37 @@ func TestBinaryArgsJoinedRoundTripPreservesQuotingAndEscapes(t *testing.T) {
 	}
 }
 
+// --no-default-args must round-trip — without persistence the restore replay
+// silently re-injects the binary defaults the original launch opted out of.
+func TestLaunchArgsFromRecordPreservesNoDefaultArgs(t *testing.T) {
+	rec := launch.Record{
+		CWD:           "/p",
+		Binary:        "codex",
+		Argv:          []string{"--enable", "goals"},
+		Session:       "rt",
+		Handle:        "cto",
+		Role:          "cto",
+		CodexArgs:     []string{"--enable", "goals"},
+		NoDefaultArgs: true,
+	}
+	got := launchArgsFromRecord(rec)
+	want := []string{
+		"--no-bootstrap",
+		"--role", "cto",
+		"--session", "rt",
+		"--no-default-args",
+		"--codex-args", "--enable goals",
+		"--me", "cto",
+		"codex",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+	if cmd := emitCommand(rec); !strings.Contains(cmd, "--no-default-args") {
+		t.Errorf("emitCommand missing --no-default-args: %s", cmd)
+	}
+}
+
 func TestRemoveContiguousSubsequenceFirstMatchOnly(t *testing.T) {
 	// Stripping is intentionally first-match. Document the behavior so a
 	// future refactor doesn't quietly change it.
