@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"flag"
 	"reflect"
 	"strings"
 	"testing"
@@ -206,6 +207,140 @@ func TestLaunchArgsFromRecordPreservesBaseRootWithSession(t *testing.T) {
 	want := []string{"--no-bootstrap", "--session", "stream1", "--root", "/tmp/mail", "--me", "claude", "claude"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+}
+
+// Restore round-trip: a launch made with --conversation plus --codex-args must
+// re-emit through the same flag rather than baking the binary args into the
+// argv after "--", otherwise the conversation gate on the second pass rejects
+// them as "extra codex args".
+func TestLaunchArgsFromRecordRoundTripsConversationWithCodexArgs(t *testing.T) {
+	rec := launch.Record{
+		CWD:          "/p",
+		Binary:       "codex",
+		Argv:         []string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals", "resume", "X"},
+		Session:      "cto",
+		Conversation: "X",
+		Handle:       "cto",
+		Role:         "cto",
+		CodexArgs:    []string{"--enable", "goals"},
+	}
+	got := launchArgsFromRecord(rec)
+	want := []string{
+		"--no-bootstrap",
+		"--role", "cto",
+		"--session", "cto",
+		"--conversation", "X",
+		"--codex-args", "--enable goals",
+		"--me", "cto",
+		"codex",
+		"--",
+		"--dangerously-bypass-approvals-and-sandbox",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+
+	assertConversationReplayAccepted(t, got)
+}
+
+func TestLaunchArgsFromRecordRoundTripsConversationWithClaudeArgs(t *testing.T) {
+	rec := launch.Record{
+		CWD:          "/p",
+		Binary:       "claude",
+		Argv:         []string{"--permission-mode", "auto", "--chrome", "--resume", "Y"},
+		Session:      "fs",
+		Conversation: "Y",
+		Handle:       "fullstack",
+		Role:         "fullstack",
+		ClaudeArgs:   []string{"--chrome"},
+	}
+	got := launchArgsFromRecord(rec)
+	want := []string{
+		"--no-bootstrap",
+		"--role", "fullstack",
+		"--session", "fs",
+		"--conversation", "Y",
+		"--claude-args", "--chrome",
+		"--me", "fullstack",
+		"claude",
+		"--",
+		"--permission-mode", "auto",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+	assertConversationReplayAccepted(t, got)
+}
+
+// joinedAgentArgs writes a value that parseAgentArgs must re-tokenize
+// identically — pin the round-trip for spaces, single quotes, double quotes,
+// and backslash escapes.
+func TestBinaryArgsJoinedRoundTripPreservesQuotingAndEscapes(t *testing.T) {
+	cases := [][]string{
+		{"--enable", "goals"},
+		{"--prompt", "hello world"},
+		{"--label", "it's fine"},
+		{`--regex`, `a\nb`},
+		{"--quoted", `say "hi"`},
+		{"--empty", ""},
+	}
+	for _, args := range cases {
+		joined := joinedAgentArgs(args)
+		got, err := parseAgentArgs(joined)
+		if err != nil {
+			t.Fatalf("parseAgentArgs(%q) error: %v", joined, err)
+		}
+		if !reflect.DeepEqual(got, args) {
+			t.Errorf("round-trip %q -> %q -> %v, want %v", args, joined, got, args)
+		}
+	}
+}
+
+func TestRemoveContiguousSubsequenceFirstMatchOnly(t *testing.T) {
+	// Stripping is intentionally first-match. Document the behavior so a
+	// future refactor doesn't quietly change it.
+	got := removeContiguousSubsequence(
+		[]string{"--enable", "goals", "x", "--enable", "goals"},
+		[]string{"--enable", "goals"},
+	)
+	want := []string{"x", "--enable", "goals"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("removeContiguousSubsequence = %v, want %v", got, want)
+	}
+}
+
+// assertConversationReplayAccepted reproduces the replay path runLaunch takes
+// and confirms the conversation gate accepts the restored argv.
+func assertConversationReplayAccepted(t *testing.T, args []string) {
+	t.Helper()
+	squadArgs, postDash := splitDashDash(args)
+	fs := flag.NewFlagSet("launch", flag.ContinueOnError)
+	codexArgsRaw := fs.String("codex-args", "", "")
+	claudeArgsRaw := fs.String("claude-args", "", "")
+	conversation := fs.String("conversation", "", "")
+	_ = fs.Bool("no-bootstrap", false, "")
+	_ = fs.String("role", "", "")
+	_ = fs.String("session", "", "")
+	_ = fs.String("me", "", "")
+	if err := fs.Parse(squadArgs); err != nil {
+		t.Fatalf("parse restore squadArgs: %v", err)
+	}
+	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
+	if err != nil {
+		t.Fatalf("parseBinaryArgFlags: %v", err)
+	}
+	remaining := fs.Args()
+	if len(remaining) == 0 {
+		t.Fatalf("restore args missing binary: %#v", args)
+	}
+	binary := remaining[0]
+	childArgs := append([]string(nil), remaining[1:]...)
+	childArgs = append(childArgs, postDash...)
+	defaultArgs := launchDefaultChildArgs(binary, true, binaryArgsFor(binary, binaryArgs))
+	childArgs = ensureLeadingChildArgs(defaultArgs, childArgs)
+	if _, err := applyConversationRestoreArgsWithDefaults(binary, childArgs, *conversation, defaultArgs); err != nil {
+		t.Fatalf("conversation restore rejected: %v", err)
 	}
 }
 

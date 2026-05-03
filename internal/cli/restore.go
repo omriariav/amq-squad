@@ -228,6 +228,12 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if rec.Conversation != "" {
 		args = append(args, "--conversation", rec.Conversation)
 	}
+	if len(rec.CodexArgs) > 0 {
+		args = append(args, "--codex-args", joinedAgentArgs(rec.CodexArgs))
+	}
+	if len(rec.ClaudeArgs) > 0 {
+		args = append(args, "--claude-args", joinedAgentArgs(rec.ClaudeArgs))
+	}
 	if rec.Handle != "" {
 		args = append(args, "--me", rec.Handle)
 	}
@@ -241,10 +247,46 @@ func launchArgsFromRecord(rec launch.Record) []string {
 }
 
 func restoreArgvFromRecord(rec launch.Record) []string {
-	if rec.Conversation == "" {
-		return append([]string(nil), rec.Argv...)
+	argv := append([]string(nil), rec.Argv...)
+	if rec.Conversation != "" {
+		argv = stripConversationRestoreArgs(rec.Binary, argv, rec.Conversation)
 	}
-	return stripConversationRestoreArgs(rec.Binary, rec.Argv, rec.Conversation)
+	if extras := launchExtraBinaryArgs(rec); len(extras) > 0 {
+		argv = removeContiguousSubsequence(argv, extras)
+	}
+	return argv
+}
+
+func launchExtraBinaryArgs(rec launch.Record) []string {
+	switch normalizedAgentBinary(rec.Binary) {
+	case "codex":
+		return rec.CodexArgs
+	case "claude":
+		return rec.ClaudeArgs
+	}
+	return nil
+}
+
+func removeContiguousSubsequence(args, sub []string) []string {
+	if len(sub) == 0 || len(args) < len(sub) {
+		return args
+	}
+	for i := 0; i+len(sub) <= len(args); i++ {
+		match := true
+		for j := range sub {
+			if args[i+j] != sub[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			out := make([]string, 0, len(args)-len(sub))
+			out = append(out, args[:i]...)
+			out = append(out, args[i+len(sub):]...)
+			return out
+		}
+	}
+	return args
 }
 
 // emitCommand reconstructs the bash command for a launch record.
@@ -277,6 +319,14 @@ func emitCommand(rec launch.Record) string {
 	if rec.Conversation != "" {
 		b.WriteString(" --conversation ")
 		b.WriteString(shellQuote(rec.Conversation))
+	}
+	if len(rec.CodexArgs) > 0 {
+		b.WriteString(" --codex-args ")
+		b.WriteString(shellQuote(joinedAgentArgs(rec.CodexArgs)))
+	}
+	if len(rec.ClaudeArgs) > 0 {
+		b.WriteString(" --claude-args ")
+		b.WriteString(shellQuote(joinedAgentArgs(rec.ClaudeArgs)))
 	}
 	if rec.Handle != "" && rec.Handle != defaultHandleFor(rec.Binary) {
 		b.WriteString(" --me ")

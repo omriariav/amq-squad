@@ -135,6 +135,8 @@ still combine with --conversation.
 		BaseRoot:         env.BaseRoot,
 		RootSource:       env.RootSource,
 		AMQVersion:       env.AMQVersion,
+		CodexArgs:        binaryArgs["codex"],
+		ClaudeArgs:       binaryArgs["claude"],
 		StartedAt:        time.Now().UTC(),
 	}
 
