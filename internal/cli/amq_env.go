@@ -3,7 +3,9 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"strings"
 )
 
 type amqEnv struct {
@@ -37,6 +39,7 @@ func resolveAMQEnvInDir(cwd, rootFlag, session, handle string) (amqEnv, error) {
 	cmd := exec.Command("amq", args...)
 	if cwd != "" {
 		cmd.Dir = cwd
+		cmd.Env = envWithoutAMQIdentity(os.Environ())
 	}
 	out, err := cmd.Output()
 	if err != nil {
@@ -59,6 +62,22 @@ func resolveAMQEnvInDir(cwd, rootFlag, session, handle string) (amqEnv, error) {
 		parsed.SessionName = session
 	}
 	return parsed, nil
+}
+
+func envWithoutAMQIdentity(env []string) []string {
+	remove := map[string]bool{
+		"AM_ROOT":      true,
+		"AM_BASE_ROOT": true,
+		"AM_ME":        true,
+	}
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok || !remove[key] {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 func scanBaseRootForProject(projectDir string) (string, error) {
