@@ -11,17 +11,33 @@ func defaultChildArgsForBinary(binary string) []string {
 	}
 }
 
+func launchDefaultChildArgs(binary string, includeBuiltIn bool, extraArgs []string) []string {
+	out := []string{}
+	if includeBuiltIn {
+		out = append(out, defaultChildArgsForBinary(binary)...)
+	}
+	out = append(out, extraArgs...)
+	return out
+}
+
 func ensureDefaultChildArgs(binary string, childArgs []string) []string {
-	defaultArgs := defaultChildArgsForBinary(binary)
-	if len(defaultArgs) == 0 || hasLeadingDefaultChildArgs(binary, childArgs) {
+	return ensureLeadingChildArgs(defaultChildArgsForBinary(binary), childArgs)
+}
+
+func ensureLeadingChildArgs(defaultArgs, childArgs []string) []string {
+	if len(defaultArgs) == 0 || hasLeadingArgs(defaultArgs, childArgs) {
 		return childArgs
 	}
+	prefixLen := leadingDefaultPrefixLen(defaultArgs, childArgs)
 	out := append([]string(nil), defaultArgs...)
-	return append(out, childArgs...)
+	return append(out, childArgs[prefixLen:]...)
 }
 
 func hasLeadingDefaultChildArgs(binary string, childArgs []string) bool {
-	defaultArgs := defaultChildArgsForBinary(binary)
+	return hasLeadingArgs(defaultChildArgsForBinary(binary), childArgs)
+}
+
+func hasLeadingArgs(defaultArgs, childArgs []string) bool {
 	if len(defaultArgs) == 0 || len(childArgs) < len(defaultArgs) {
 		return false
 	}
@@ -33,11 +49,34 @@ func hasLeadingDefaultChildArgs(binary string, childArgs []string) bool {
 	return true
 }
 
+func leadingDefaultPrefixLen(defaultArgs, childArgs []string) int {
+	max := len(defaultArgs)
+	if len(childArgs) < max {
+		max = len(childArgs)
+	}
+	for n := max; n > 0; n-- {
+		match := true
+		for i := 0; i < n; i++ {
+			if childArgs[i] != defaultArgs[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return n
+		}
+	}
+	return 0
+}
+
 func shouldAppendBootstrap(binary string, childArgs []string) bool {
+	return shouldAppendBootstrapWithDefaults(childArgs, defaultChildArgsForBinary(binary))
+}
+
+func shouldAppendBootstrapWithDefaults(childArgs []string, defaultArgs []string) bool {
 	if len(childArgs) == 0 {
 		return true
 	}
-	defaultArgs := defaultChildArgsForBinary(binary)
 	if len(childArgs) != len(defaultArgs) {
 		return false
 	}

@@ -31,6 +31,8 @@ func runLaunch(args []string) error {
 	conversationID := fs.String("conversation-id", "", "alias for --conversation")
 	noBootstrap := fs.Bool("no-bootstrap", false, "do not pass the generated bootstrap prompt to the agent")
 	noDefaultArgs := fs.Bool("no-default-args", false, "do not prepend Codex or Claude default permission args")
+	codexArgsRaw := fs.String("codex-args", "", "extra Codex args to treat as launch defaults, e.g. '--enable goals'")
+	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args to treat as launch defaults, e.g. '--chrome'")
 	dryRun := fs.Bool("dry-run", false, "print the coop exec command without executing")
 
 	fs.Usage = func() {
@@ -52,17 +54,18 @@ Side effects before exec:
   3. Writes a role.md stub if one does not already exist.
   4. Prepends Codex and Claude default permission args unless
      --no-default-args is set.
-  5. Translates --conversation for Codex or Claude resume when provided.
-  6. Adds a generated bootstrap prompt unless --no-bootstrap is set or
+  5. Prepends --codex-args or --claude-args for the matching binary.
+  6. Translates --conversation for Codex or Claude resume when provided.
+  7. Adds a generated bootstrap prompt unless --no-bootstrap is set or
      non-default binary args were provided.
-  7. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
+  8. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
 
 With --dry-run, none of the above run: the resolved coop exec command is
 printed and amq-squad exits. Disk state is untouched.
 
-When --conversation generates resume args, do not pass additional child args.
-For advanced Codex or Claude flags, omit --conversation and pass native resume
-args after "--".
+When --conversation generates resume args, do not pass additional child args
+after "--". Use --codex-args or --claude-args for native flags that should
+still combine with --conversation.
 `)
 	}
 
@@ -70,6 +73,10 @@ args after "--".
 		return err
 	}
 	conversationRef, err := conversationRefFromFlags(*conversation, *conversationID)
+	if err != nil {
+		return err
+	}
+	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
 	if err != nil {
 		return err
 	}
@@ -82,12 +89,12 @@ args after "--".
 	if len(remaining) > 1 {
 		childArgs = append(remaining[1:], childArgs...)
 	}
-	if !*noDefaultArgs {
-		childArgs = ensureDefaultChildArgs(binary, childArgs)
-	}
+	extraDefaultArgs := binaryArgsFor(binary, binaryArgs)
+	defaultArgs := launchDefaultChildArgs(binary, !*noDefaultArgs, extraDefaultArgs)
+	childArgs = ensureLeadingChildArgs(defaultArgs, childArgs)
 	if conversationRef != "" {
 		var err error
-		childArgs, err = applyConversationRestoreArgs(binary, childArgs, conversationRef)
+		childArgs, err = applyConversationRestoreArgsWithDefaults(binary, childArgs, conversationRef, defaultArgs)
 		if err != nil {
 			return err
 		}
@@ -128,7 +135,7 @@ args after "--".
 	// Keep generated bootstrap out of launch.json so restore stays compact
 	// and does not replay stale startup text.
 	effectiveChildArgs := append([]string(nil), childArgs...)
-	if !*noBootstrap && shouldAppendBootstrap(binary, childArgs) {
+	if !*noBootstrap && shouldAppendBootstrapWithDefaults(childArgs, defaultArgs) {
 		prompt, err := buildBootstrapPrompt(bootstrapContextFor(rec, agentDir, *teamHome))
 		if err != nil {
 			return err
@@ -192,6 +199,10 @@ func conversationRefFromFlags(conversation, conversationID string) (string, erro
 }
 
 func applyConversationRestoreArgs(binary string, childArgs []string, conversation string) ([]string, error) {
+	return applyConversationRestoreArgsWithDefaults(binary, childArgs, conversation, defaultChildArgsForBinary(binary))
+}
+
+func applyConversationRestoreArgsWithDefaults(binary string, childArgs []string, conversation string, defaultArgs []string) ([]string, error) {
 	conversation = strings.TrimSpace(conversation)
 	if conversation == "" {
 		return childArgs, nil
@@ -205,12 +216,12 @@ func applyConversationRestoreArgs(binary string, childArgs []string, conversatio
 			if ref != conversation {
 				return nil, fmt.Errorf("--conversation %q conflicts with existing codex resume %q", conversation, ref)
 			}
-			if !hasNoExtraConversationArgs(binary, stripCodexResumeRef(childArgs, conversation)) {
+			if !hasNoExtraConversationArgs(stripCodexResumeRef(childArgs, conversation), defaultArgs) {
 				return nil, fmt.Errorf("--conversation cannot be combined with extra codex args; omit --conversation and pass native resume args after --")
 			}
 			return childArgs, nil
 		}
-		if !hasNoExtraConversationArgs(binary, childArgs) {
+		if !hasNoExtraConversationArgs(childArgs, defaultArgs) {
 			return nil, fmt.Errorf("--conversation cannot be combined with extra codex args; omit --conversation and pass native resume args after --")
 		}
 		out := append([]string(nil), childArgs...)
@@ -223,12 +234,12 @@ func applyConversationRestoreArgs(binary string, childArgs []string, conversatio
 			if ref != conversation {
 				return nil, fmt.Errorf("--conversation %q conflicts with existing claude resume %q", conversation, ref)
 			}
-			if !hasNoExtraConversationArgs(binary, stripClaudeResumeRef(childArgs, conversation)) {
+			if !hasNoExtraConversationArgs(stripClaudeResumeRef(childArgs, conversation), defaultArgs) {
 				return nil, fmt.Errorf("--conversation cannot be combined with extra claude args; omit --conversation and pass native resume args after --")
 			}
 			return childArgs, nil
 		}
-		if !hasNoExtraConversationArgs(binary, childArgs) {
+		if !hasNoExtraConversationArgs(childArgs, defaultArgs) {
 			return nil, fmt.Errorf("--conversation cannot be combined with extra claude args; omit --conversation and pass native resume args after --")
 		}
 		out := append([]string(nil), childArgs...)
@@ -238,11 +249,10 @@ func applyConversationRestoreArgs(binary string, childArgs []string, conversatio
 	}
 }
 
-func hasNoExtraConversationArgs(binary string, childArgs []string) bool {
+func hasNoExtraConversationArgs(childArgs []string, defaultArgs []string) bool {
 	if len(childArgs) == 0 {
 		return true
 	}
-	defaultArgs := defaultChildArgsForBinary(binary)
 	if len(childArgs) != len(defaultArgs) {
 		return false
 	}

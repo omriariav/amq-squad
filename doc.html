@@ -510,7 +510,7 @@
     <main>
       <header class="hero">
         <div class="hero-inner">
-          <p class="eyebrow">v0.5.2 guide</p>
+          <p class="eyebrow">v0.5.3 guide</p>
           <h1>How to use amq-squad</h1>
           <p class="lead">
             amq-squad is the project layer above AMQ. It records who is on the
@@ -542,7 +542,7 @@
             into <code class="inline-code">$GOBIN</code> or
             <code class="inline-code">$HOME/go/bin</code>.
           </p>
-          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.2
+          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.3
 amq-squad version</code></pre></div>
           <p>
             You also need Go 1.25 or newer, the <code class="inline-code">amq</code>
@@ -636,6 +636,16 @@ amq-squad team</code></pre></div>
             The <code class="inline-code">--session</code> value is the AMQ
             workstream name. Use an explicit name when the work should be easy
             to resume later.
+          </p>
+          <h3>Native binary flags</h3>
+          <div class="code"><pre><code>amq-squad team init \
+  --personas cto,fullstack \
+  --codex-args '--enable goals' \
+  --claude-args '--chrome'</code></pre></div>
+          <p>
+            Binary args are stored in <code class="inline-code">team.json</code>
+            and added to every matching Codex or Claude launch. They are treated
+            as launch defaults, so bootstrap and conversation restore still work.
           </p>
         </div>
       </section>
@@ -747,6 +757,14 @@ amq-squad team sync --apply --allow-outside</code></pre></div>
 amq-squad team launch --session issue-96 --layout tiled
 amq-squad team launch --session issue-96 --dry-run</code></pre></div>
 
+          <h3>One-off binary flags</h3>
+          <div class="code"><pre><code>amq-squad team show --codex-args '--enable goals'
+amq-squad team launch --claude-args '--chrome'</code></pre></div>
+          <p>
+            Use these when a single run needs extra native CLI flags without
+            changing the stored team config.
+          </p>
+
           <h3>Launch into a named tmux session</h3>
           <div class="code"><pre><code>amq-squad team launch \
   --target new-session \
@@ -822,7 +840,7 @@ amq drain --include-body</code></pre></div>
               <tbody>
                 <tr>
                   <td><code>.amq-squad/team.json</code></td>
-                  <td>Team intent: roles, handles, binaries, member cwds, and shared workstream defaults.</td>
+                  <td>Team intent: roles, handles, binaries, binary args, member cwds, and shared workstream defaults.</td>
                 </tr>
                 <tr>
                   <td><code>.amq-squad/team-rules.md</code></td>
@@ -855,7 +873,7 @@ amq drain --include-body</code></pre></div>
               <p>Check which binary is running, then reinstall the desired tag.</p>
               <div class="code"><pre><code>which -a amq-squad
 amq-squad version
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.2</code></pre></div>
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.3</code></pre></div>
             </div>
             <div class="panel">
               <h3>Launch plan looks wrong</h3>

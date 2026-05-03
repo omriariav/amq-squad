@@ -52,6 +52,20 @@ func TestParseKV(t *testing.T) {
 	}
 }
 
+func TestParseAgentArgs(t *testing.T) {
+	got, err := parseAgentArgs(`--enable goals --label "hello world" --name 'cto lead'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--enable", "goals", "--label", "hello world", "--name", "cto lead"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parseAgentArgs = %#v, want %#v", got, want)
+	}
+	if _, err := parseAgentArgs(`--label "unterminated`); err == nil {
+		t.Fatal("parseAgentArgs should reject unterminated quotes")
+	}
+}
+
 func TestEmitTeamCommandShape(t *testing.T) {
 	m := team.Member{
 		Role:    "designer",
@@ -59,7 +73,7 @@ func TestEmitTeamCommandShape(t *testing.T) {
 		Handle:  "designer",
 		Session: "designer",
 	}
-	cmd := emitTeamCommand("/home/u/proj", "amq-squad", "/home/u/proj", m, false, "proj")
+	cmd := emitTeamCommand("/home/u/proj", "amq-squad", "/home/u/proj", m, false, "proj", nil)
 	for _, want := range []string{
 		"cd /home/u/proj",
 		"amq-squad launch",
@@ -79,15 +93,30 @@ func TestEmitTeamCommandShape(t *testing.T) {
 
 func TestEmitTeamCommandAddsCodexDefaultArgs(t *testing.T) {
 	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
-	cmd := emitTeamCommand("/p", "amq-squad", "/p", m, false, "p")
+	cmd := emitTeamCommand("/p", "amq-squad", "/p", m, false, "p", nil)
 	if !strings.Contains(cmd, "-- --dangerously-bypass-approvals-and-sandbox") {
 		t.Errorf("expected codex default args in: %s", cmd)
 	}
 }
 
+func TestEmitTeamCommandAddsConfiguredBinaryArgs(t *testing.T) {
+	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
+	cmd := emitTeamCommand("/p", "amq-squad", "/p", m, false, "p", map[string][]string{
+		"codex": {"--enable", "goals"},
+	})
+	for _, want := range []string{
+		"--codex-args='--enable goals'",
+		"codex -- --dangerously-bypass-approvals-and-sandbox --enable goals",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("emitTeamCommand missing %q in: %s", want, cmd)
+		}
+	}
+}
+
 func TestEmitTeamCommandQuotesPathsWithSpaces(t *testing.T) {
 	m := team.Member{Role: "cpo", Binary: "codex", Handle: "cpo", Session: "cpo"}
-	cmd := emitTeamCommand("/home/user/my project", "amq-squad", "/home/user/my project", m, false, "my-project")
+	cmd := emitTeamCommand("/home/user/my project", "amq-squad", "/home/user/my project", m, false, "my-project", nil)
 	if !strings.Contains(cmd, "'/home/user/my project'") {
 		t.Errorf("project path not quoted: %s", cmd)
 	}
@@ -95,7 +124,7 @@ func TestEmitTeamCommandQuotesPathsWithSpaces(t *testing.T) {
 
 func TestEmitTeamCommandUsesBinaryPath(t *testing.T) {
 	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
-	cmd := emitTeamCommand("/p", "/usr/local/bin/amq-squad", "/p", m, false, "p")
+	cmd := emitTeamCommand("/p", "/usr/local/bin/amq-squad", "/p", m, false, "p", nil)
 	if !strings.Contains(cmd, "/usr/local/bin/amq-squad launch") {
 		t.Errorf("expected absolute binary path in: %s", cmd)
 	}
@@ -103,7 +132,7 @@ func TestEmitTeamCommandUsesBinaryPath(t *testing.T) {
 
 func TestEmitTeamCommandNoBootstrap(t *testing.T) {
 	m := team.Member{Role: "qa", Binary: "claude", Handle: "qa", Session: "qa"}
-	cmd := emitTeamCommand("/p", "amq-squad", "/team", m, true, "team")
+	cmd := emitTeamCommand("/p", "amq-squad", "/team", m, true, "team", nil)
 	if !strings.Contains(cmd, "--no-bootstrap") {
 		t.Errorf("expected --no-bootstrap in: %s", cmd)
 	}
@@ -185,6 +214,46 @@ func TestRunTeamShowUsesStoredSharedWorkstream(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "# workstream: issue-96") || !strings.Contains(stdout, "--session issue-96 --team-workstream --team-home") {
 		t.Fatalf("team show did not use stored shared workstream:\n%s", stdout)
+	}
+}
+
+func TestRunTeamShowMergesStoredAndRunBinaryArgs(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+	if err := team.Write(dir, team.Team{
+		BinaryArgs: map[string][]string{"codex": {"--enable", "goals"}},
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamShow([]string{"--no-bootstrap", "--codex-args=--profile fast"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamShow: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"# binary args: codex: --enable goals --profile fast",
+		"--codex-args='--enable goals --profile fast'",
+		"codex -- --dangerously-bypass-approvals-and-sandbox --enable goals --profile fast",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("team show output missing %q in:\n%s", want, stdout)
+		}
 	}
 }
 
@@ -335,6 +404,13 @@ func TestShouldAppendBootstrapWithDefaultChildArgs(t *testing.T) {
 			t.Errorf("%s: shouldAppendBootstrap(%q, %v) = %v, want %v", tc.name, tc.binary, tc.childArgs, got, tc.want)
 		}
 	}
+	defaults := []string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals"}
+	if !shouldAppendBootstrapWithDefaults(defaults, defaults) {
+		t.Errorf("configured binary args should still allow bootstrap")
+	}
+	if shouldAppendBootstrapWithDefaults([]string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals", "prompt"}, defaults) {
+		t.Errorf("configured binary args plus prompt should not auto-bootstrap")
+	}
 }
 
 func TestEnsureDefaultChildArgs(t *testing.T) {
@@ -362,6 +438,11 @@ func TestEnsureDefaultChildArgs(t *testing.T) {
 	want = []string{"--dangerously-bypass-approvals-and-sandbox", "test-prompt", "--dangerously-bypass-approvals-and-sandbox"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ensureDefaultChildArgs should keep defaults before prompts: got %v, want %v", got, want)
+	}
+	got = ensureLeadingChildArgs([]string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals"}, []string{"--dangerously-bypass-approvals-and-sandbox", "prompt"})
+	want = []string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals", "prompt"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ensureLeadingChildArgs should insert missing configured defaults after existing prefix: got %v, want %v", got, want)
 	}
 }
 
@@ -481,6 +562,40 @@ func TestRunTeamInitPersonasAliasAndBinaryOverride(t *testing.T) {
 	m := got.Members[0]
 	if m.Role != "fullstack" || m.Binary != "codex" {
 		t.Fatalf("member = %+v, want fullstack on codex", m)
+	}
+}
+
+func TestRunTeamInitStoresBinaryArgs(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	if err := runTeamInit([]string{
+		"--personas", "cto,fullstack",
+		"--codex-args=--enable goals",
+		"--claude-args=--chrome",
+	}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	got, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.BinaryArgs["codex"], []string{"--enable", "goals"}) {
+		t.Fatalf("codex args = %#v", got.BinaryArgs["codex"])
+	}
+	if !reflect.DeepEqual(got.BinaryArgs["claude"], []string{"--chrome"}) {
+		t.Fatalf("claude args = %#v", got.BinaryArgs["claude"])
 	}
 }
 

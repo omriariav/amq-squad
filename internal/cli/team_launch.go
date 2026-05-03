@@ -22,6 +22,7 @@ type teamLaunchOptions struct {
 	Stagger         time.Duration
 	DryRun          bool
 	SquadBin        string
+	BinaryArgs      map[string][]string
 }
 
 type teamLaunchPane struct {
@@ -62,6 +63,8 @@ func runTeamLaunch(args []string) error {
 	terminalSession := fs.String("terminal-session", "", "terminal session name when the backend creates one")
 	fresh := fs.Bool("fresh", false, "fail if the selected workstream session already exists")
 	noBootstrap := fs.Bool("no-bootstrap", false, "launch agents without the generated bootstrap prompt")
+	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for this run, e.g. '--enable goals'")
+	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'")
 	_ = fs.Bool("no-attach", false, "legacy no-op; new-session never attaches automatically")
 	stagger := fs.Duration("stagger", 750*time.Millisecond, "delay between starting agent panes")
 	dryRun := fs.Bool("dry-run", false, "print terminal commands without executing them")
@@ -69,7 +72,7 @@ func runTeamLaunch(args []string) error {
 		fmt.Fprintf(os.Stderr, `amq-squad team launch - open the configured team in a terminal
 
 Usage:
-  amq-squad team launch [--session workstream] [--fresh] [--terminal tmux] [--target current-window|new-session] [--layout vertical|horizontal|tiled] [--terminal-session name] [--stagger 750ms] [--no-bootstrap] [--dry-run]
+  amq-squad team launch [--session workstream] [--fresh] [--terminal tmux] [--target current-window|new-session] [--layout vertical|horizontal|tiled] [--terminal-session name] [--stagger 750ms] [--no-bootstrap] [--codex-args args] [--claude-args args] [--dry-run]
 
 Supported terminal backends: %s
 
@@ -84,6 +87,10 @@ to create a detached squad session.
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
+	if err != nil {
+		return err
+	}
 	opts := teamLaunchOptions{
 		Terminal:        *terminal,
 		Target:          *target,
@@ -95,6 +102,7 @@ to create a detached squad session.
 		Stagger:         *stagger,
 		DryRun:          *dryRun,
 		SquadBin:        teamSquadBin(),
+		BinaryArgs:      binaryArgs,
 	}
 	backend, ok := teamLaunchBackends[opts.Terminal]
 	if !ok {
@@ -145,15 +153,16 @@ func registeredTeamLaunchTerminals() []string {
 	return names
 }
 
-func buildTeamLaunchPanes(t team.Team, squadBin string, noBootstrap bool, workstream string) []teamLaunchPane {
+func buildTeamLaunchPanes(t team.Team, squadBin string, noBootstrap bool, workstream string, extraBinaryArgs map[string][]string) []teamLaunchPane {
 	members := orderedTeamMembers(t.Members)
+	binaryArgs := mergeBinaryArgs(t.BinaryArgs, extraBinaryArgs)
 	panes := make([]teamLaunchPane, 0, len(members))
 	for _, m := range members {
 		cwd := m.EffectiveCWD(t.Project)
 		panes = append(panes, teamLaunchPane{
 			Role:    m.Role,
 			CWD:     cwd,
-			Command: emitTeamCommand(cwd, squadBin, t.Project, m, noBootstrap, workstream),
+			Command: emitTeamCommand(cwd, squadBin, t.Project, m, noBootstrap, workstream, binaryArgs),
 		})
 	}
 	return panes

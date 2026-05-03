@@ -69,16 +69,16 @@ func (tmuxTeamLaunchBackend) buildPlan(t team.Team, opts teamLaunchOptions) tmux
 	if session == "" {
 		session = defaultTmuxSessionName(t.Project)
 	}
-	return buildTmuxLaunchPlan(t, opts.SquadBin, session, opts.Target, opts.Layout, opts.NoBootstrap, opts.Stagger, opts.Workstream)
+	return buildTmuxLaunchPlan(t, opts.SquadBin, session, opts.Target, opts.Layout, opts.NoBootstrap, opts.Stagger, opts.Workstream, opts.BinaryArgs)
 }
 
-func buildTmuxLaunchPlan(t team.Team, squadBin, sessionName, target, layout string, noBootstrap bool, startDelay time.Duration, workstream string) tmuxLaunchPlan {
+func buildTmuxLaunchPlan(t team.Team, squadBin, sessionName, target, layout string, noBootstrap bool, startDelay time.Duration, workstream string, extraBinaryArgs map[string][]string) tmuxLaunchPlan {
 	return tmuxLaunchPlan{
 		Session:    sessionName,
 		Workstream: workstream,
 		Target:     target,
 		Layout:     layout,
-		Panes:      buildTeamLaunchPanes(t, squadBin, noBootstrap, workstream),
+		Panes:      buildTeamLaunchPanes(t, squadBin, noBootstrap, workstream, extraBinaryArgs),
 		StartDelay: startDelay,
 	}
 }

@@ -41,6 +41,39 @@ func TestRunLaunchDryRunNoDefaultArgsOptOut(t *testing.T) {
 	}
 }
 
+func TestRunLaunchDryRunAddsBinaryArgs(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--codex-args=--enable goals", "codex"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	want := "amq coop exec codex -- --dangerously-bypass-approvals-and-sandbox --enable goals"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
+func TestRunLaunchDryRunNoDefaultArgsKeepsExplicitBinaryArgs(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--no-default-args", "--codex-args=--enable goals", "codex"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stdout, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("stdout should not include codex default args:\n%s", stdout)
+	}
+	want := "amq coop exec codex -- --enable goals"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
 func TestRunLaunchDryRunConversationCodexResume(t *testing.T) {
 	setupFakeAMQ(t)
 
@@ -51,6 +84,21 @@ func TestRunLaunchDryRunConversationCodexResume(t *testing.T) {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
 	want := "amq coop exec codex -- --dangerously-bypass-approvals-and-sandbox resume cto-thread"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
+func TestRunLaunchDryRunConversationAllowsBinaryArgs(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--conversation", "cto-thread", "--codex-args=--enable goals", "codex"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	want := "amq coop exec codex -- --dangerously-bypass-approvals-and-sandbox --enable goals resume cto-thread"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -129,6 +177,17 @@ func TestApplyConversationRestoreArgsIsIdempotent(t *testing.T) {
 	}
 	if strings.Join(got, " ") != "--permission-mode auto --resume abc" {
 		t.Fatalf("claude args = %v", got)
+	}
+}
+
+func TestApplyConversationRestoreArgsAllowsConfiguredDefaults(t *testing.T) {
+	defaults := []string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals"}
+	got, err := applyConversationRestoreArgsWithDefaults("codex", defaults, "abc", defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, " ") != "--dangerously-bypass-approvals-and-sandbox --enable goals resume abc" {
+		t.Fatalf("codex args = %v", got)
 	}
 }
 
