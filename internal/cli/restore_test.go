@@ -231,7 +231,7 @@ func TestLaunchArgsFromRecordRoundTripsConversationWithCodexArgs(t *testing.T) {
 		"--role", "cto",
 		"--session", "cto",
 		"--conversation", "X",
-		"--codex-args", "--enable goals",
+		"--codex-args=--enable goals",
 		"--me", "cto",
 		"codex",
 		"--",
@@ -261,7 +261,7 @@ func TestLaunchArgsFromRecordRoundTripsConversationWithClaudeArgs(t *testing.T) 
 		"--role", "fullstack",
 		"--session", "fs",
 		"--conversation", "Y",
-		"--claude-args", "--chrome",
+		"--claude-args=--chrome",
 		"--me", "fullstack",
 		"claude",
 		"--",
@@ -316,7 +316,7 @@ func TestLaunchArgsFromRecordPreservesNoDefaultArgs(t *testing.T) {
 		"--role", "cto",
 		"--session", "rt",
 		"--no-default-args",
-		"--codex-args", "--enable goals",
+		"--codex-args=--enable goals",
 		"--me", "cto",
 		"codex",
 	}
@@ -326,6 +326,54 @@ func TestLaunchArgsFromRecordPreservesNoDefaultArgs(t *testing.T) {
 	if cmd := emitCommand(rec); !strings.Contains(cmd, "--no-default-args") {
 		t.Errorf("emitCommand missing --no-default-args: %s", cmd)
 	}
+}
+
+// A literal "--" inside CodexArgs must not be intercepted by splitDashDash on
+// replay. The =VALUE emission keeps the value glued to the flag name; the
+// only bare "--" left in the emitted args is the binary/child separator,
+// which sits AFTER the binary token and is intentionally split there.
+func TestLaunchArgsFromRecordEscapesLiteralDashDashInBinaryArgs(t *testing.T) {
+	rec := launch.Record{
+		CWD:       "/p",
+		Binary:    "codex",
+		Argv:      []string{"--dangerously-bypass-approvals-and-sandbox", "--"},
+		Session:   "rt",
+		Handle:    "cto",
+		Role:      "cto",
+		CodexArgs: []string{"--"},
+	}
+	got := launchArgsFromRecord(rec)
+	squadArgs, postDash := splitDashDash(got)
+	// The emitted "--codex-args=--" token must survive into squadArgs; the
+	// only thing past the binary/child separator should be the leftover argv
+	// (the built-in default). If splitDashDash had grabbed the "--" inside
+	// the flag value, --codex-args would land with no value and the flag
+	// state would shift entirely.
+	for _, a := range squadArgs {
+		if a == "--codex-args" || a == "--codex-args=" {
+			t.Fatalf("--codex-args lost its value on replay: %#v", squadArgs)
+		}
+	}
+	if !reflect.DeepEqual(postDash, []string{"--dangerously-bypass-approvals-and-sandbox"}) {
+		t.Fatalf("postDash = %#v, want only the leftover default", postDash)
+	}
+	parsed, err := parseAgentArgs(extractFlagValue(squadArgs, "--codex-args"))
+	if err != nil {
+		t.Fatalf("parseAgentArgs: %v", err)
+	}
+	if !reflect.DeepEqual(parsed, []string{"--"}) {
+		t.Errorf("parsed CodexArgs = %#v, want [--]", parsed)
+	}
+}
+
+func extractFlagValue(args []string, name string) string {
+	prefix := name + "="
+	for _, a := range args {
+		if strings.HasPrefix(a, prefix) {
+			return strings.TrimPrefix(a, prefix)
+		}
+	}
+	return ""
 }
 
 func TestRemoveContiguousSubsequenceFirstMatchOnly(t *testing.T) {
