@@ -137,6 +137,7 @@ still combine with --conversation.
 		AMQVersion:       env.AMQVersion,
 		CodexArgs:        binaryArgs["codex"],
 		ClaudeArgs:       binaryArgs["claude"],
+		NoDefaultArgs:    *noDefaultArgs,
 		StartedAt:        time.Now().UTC(),
 	}
 

@@ -228,6 +228,9 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if rec.Conversation != "" {
 		args = append(args, "--conversation", rec.Conversation)
 	}
+	if rec.NoDefaultArgs {
+		args = append(args, "--no-default-args")
+	}
 	if len(rec.CodexArgs) > 0 {
 		args = append(args, "--codex-args", joinedAgentArgs(rec.CodexArgs))
 	}
@@ -319,6 +322,9 @@ func emitCommand(rec launch.Record) string {
 	if rec.Conversation != "" {
 		b.WriteString(" --conversation ")
 		b.WriteString(shellQuote(rec.Conversation))
+	}
+	if rec.NoDefaultArgs {
+		b.WriteString(" --no-default-args")
 	}
 	if len(rec.CodexArgs) > 0 {
 		b.WriteString(" --codex-args ")
