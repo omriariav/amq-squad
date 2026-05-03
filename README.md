@@ -22,7 +22,7 @@ AMQ itself stays unchanged.
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.2
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.5.3
 ```
 
 Use `@latest` if you intentionally want the newest published tag.
@@ -89,6 +89,25 @@ the generated bootstrap prompt is still added at launch time. Direct
 `amq-squad launch` calls also prepend these defaults when they are missing, so
 custom prompts still inherit the expected permission mode. Pass
 `--no-default-args` to opt out.
+
+Add native Codex or Claude flags as binary args when the whole team should run
+with the same extra switches:
+
+```sh
+amq-squad team init \
+  --personas cto,fullstack \
+  --codex-args '--enable goals' \
+  --claude-args '--chrome'
+```
+
+Those args are stored in `.amq-squad/team.json`, included in `team show` and
+`team launch`, and treated as launch defaults so bootstrap and `--conversation`
+continue to work. Use the same flags on `team show` or `team launch` for a
+one-off run without changing `team.json`:
+
+```sh
+amq-squad team launch --codex-args '--enable goals' --claude-args '--chrome'
+```
 
 ## Launching a team in tmux
 
@@ -364,31 +383,39 @@ amq send --to qa --project project-b --session project-a --thread p2p/cto__qa
 ```text
 amq-squad team                      Smart default: show commands, or init if none exists
 amq-squad team init [--personas ...] [--session workstream]
+                    [--codex-args args] [--claude-args args]
                                     Pick personas, choose CLIs, and seed rules
 amq-squad team show [--session name] [--fresh] [--no-bootstrap]
+                    [--codex-args args] [--claude-args args]
                                     Print launch commands for the configured team
 amq-squad team launch [--terminal tmux] [--target current-window|new-session]
                       [--session workstream] [--fresh]
                       [--layout vertical|horizontal|tiled]
                       [--terminal-session name] [--stagger 750ms]
-                      [--no-bootstrap] [--dry-run]
+                      [--no-bootstrap]
+                      [--codex-args args] [--claude-args args]
+                      [--dry-run]
                                     Open the configured team in tmux panes
 amq-squad team rules init [--force] Seed or refresh .amq-squad/team-rules.md
 amq-squad team sync [--apply] [--allow-outside]
                                     Sync CLAUDE.md and AGENTS.md from team-rules.md
 
-amq-squad launch --role <r> --session <s> [--team-workstream] --me <handle> [--conversation ref] [--no-bootstrap] [--no-default-args] <binary> [-- <flags>]
+amq-squad launch --role <r> --session <s> [--team-workstream] --me <handle> [--conversation ref] [--no-bootstrap] [--no-default-args] [--codex-args args] [--claude-args args] <binary> [-- <flags>]
                                     Launch one agent. Writes launch.json + role.md
                                     in the AMQ mailbox, adds a bootstrap prompt,
                                     then execs 'amq coop exec'.
                                     Usually called by the output of 'team show'.
                                     Codex and Claude default permission flags
                                     are prepended when missing.
+                                    --codex-args and --claude-args add native
+                                    binary flags, such as '--enable goals' or
+                                    '--chrome', while still allowing bootstrap.
                                     --conversation stores a restore ref and
                                     translates it to Codex or Claude resume args.
-                                    Do not combine --conversation with extra
-                                    binary args. For advanced flags, pass native
-                                    resume args after "--" instead.
+                                    Do not combine --conversation with extra args
+                                    after "--"; use --codex-args or --claude-args
+                                    for native flags that should remain compatible
+                                    with conversation restore.
 
 amq-squad restore [--project dir1,dir2,...] [--conversation ref]
                                     Reconstruct launch commands from local
