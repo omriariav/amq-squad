@@ -149,10 +149,10 @@ func render(s Stub) string {
 	}
 
 	b.WriteString("## System Prompt\n")
-	b.WriteString("Use the binary default system behavior together with team-rules.md and this role file. Stay within the role scope, use the amq-squad protocol for team handoffs, and treat old AMQ history as context unless the user asks to resume it.\n\n")
+	b.WriteString("Use the binary default system behavior together with team-rules.md and this role file. Stay within the role scope, use the amq-squad protocol for team handoffs, and treat old AMQ history as context unless the user asks to resume it. On your first response in a fresh session, start by identifying your role and handle before any status or analysis.\n\n")
 
 	b.WriteString("## Priming Template\n")
-	b.WriteString("At launch, amq-squad injects identity, startup file paths, current team routing, first steps, and the path to this role file. Read those startup files, summarize relevant context, then stop and wait for the user's instruction.\n")
+	b.WriteString("At launch, amq-squad injects identity, startup file paths, current team routing, first steps, and the path to this role file. Read those startup files, start your first response by stating your role and handle, summarize relevant context, then stop and wait for the user's instruction.\n")
 
 	return b.String()
 }
