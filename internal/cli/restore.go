@@ -231,11 +231,13 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if rec.NoDefaultArgs {
 		args = append(args, "--no-default-args")
 	}
+	// =VALUE form keeps the value glued to the flag so a literal "--" inside
+	// the binary args never reaches splitDashDash on replay.
 	if len(rec.CodexArgs) > 0 {
-		args = append(args, "--codex-args", joinedAgentArgs(rec.CodexArgs))
+		args = append(args, "--codex-args="+joinedAgentArgs(rec.CodexArgs))
 	}
 	if len(rec.ClaudeArgs) > 0 {
-		args = append(args, "--claude-args", joinedAgentArgs(rec.ClaudeArgs))
+		args = append(args, "--claude-args="+joinedAgentArgs(rec.ClaudeArgs))
 	}
 	if rec.Handle != "" {
 		args = append(args, "--me", rec.Handle)
@@ -327,11 +329,11 @@ func emitCommand(rec launch.Record) string {
 		b.WriteString(" --no-default-args")
 	}
 	if len(rec.CodexArgs) > 0 {
-		b.WriteString(" --codex-args ")
+		b.WriteString(" --codex-args=")
 		b.WriteString(shellQuote(joinedAgentArgs(rec.CodexArgs)))
 	}
 	if len(rec.ClaudeArgs) > 0 {
-		b.WriteString(" --claude-args ")
+		b.WriteString(" --claude-args=")
 		b.WriteString(shellQuote(joinedAgentArgs(rec.ClaudeArgs)))
 	}
 	if rec.Handle != "" && rec.Handle != defaultHandleFor(rec.Binary) {
