@@ -49,7 +49,7 @@ func runTeamSmart() error {
 		return fmt.Errorf("getwd: %w", err)
 	}
 	if team.Exists(cwd) {
-		return emitTeamCommands(cwd, false, "", false, false)
+		return emitTeamCommands(cwd, false, "", false, false, nil)
 	}
 	fmt.Fprintln(os.Stderr, "No team configured for this project yet. Let's set one up.")
 	fmt.Fprintln(os.Stderr)
@@ -57,7 +57,7 @@ func runTeamSmart() error {
 		return err
 	}
 	fmt.Fprintln(os.Stderr)
-	return emitTeamCommands(cwd, false, "", false, false)
+	return emitTeamCommands(cwd, false, "", false, false, nil)
 }
 
 func runTeamInit(args []string) error {
@@ -67,13 +67,15 @@ func runTeamInit(args []string) error {
 	binaryFlag := fs.String("binary", "", "per-persona CLI overrides, e.g. fullstack=codex,qa=claude")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name for all members (lowercase a-z, 0-9, -, _)")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
+	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
+	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
 	force := fs.Bool("force", false, "overwrite an existing team.json")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--personas id1,id2,...] [--binary persona=cli,...] [--session workstream] [--force]
-  amq-squad team init [--roles id1,id2,...] [--binary role=cli,...] [--session workstream] [--force]
+  amq-squad team init [--personas id1,id2,...] [--binary persona=cli,...] [--session workstream] [--codex-args args] [--claude-args args] [--force]
+  amq-squad team init [--roles id1,id2,...] [--binary role=cli,...] [--session workstream] [--codex-args args] [--claude-args args] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes <cwd>/.amq-squad/team.json and
@@ -118,6 +120,10 @@ Known personas:
 	cwdOverrides, err := parseKV(*cwdFlag)
 	if err != nil {
 		return fmt.Errorf("parse --cwd: %w", err)
+	}
+	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
+	if err != nil {
+		return err
 	}
 
 	var picked []string
@@ -180,6 +186,7 @@ Known personas:
 	t := team.Team{
 		Project:    cwd,
 		Workstream: workstream,
+		BinaryArgs: binaryArgs,
 		Members:    members,
 	}
 	if err := team.Write(cwd, t); err != nil {
@@ -205,14 +212,20 @@ func runTeamShow(args []string) error {
 	noBootstrap := fs.Bool("no-bootstrap", false, "emit launch commands that skip the generated bootstrap prompt")
 	session := fs.String("session", "", "AMQ workstream session name (default: sanitized team-home directory name; lowercase a-z, 0-9, -, _)")
 	fresh := fs.Bool("fresh", false, "fail if the selected workstream session already exists")
+	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for this run, e.g. '--enable goals'")
+	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
 
 Usage:
-  amq-squad team show [--session name] [--fresh] [--no-bootstrap]
+  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--codex-args args] [--claude-args args]
 `)
 	}
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
+	if err != nil {
 		return err
 	}
 	cwd, err := os.Getwd()
@@ -222,10 +235,10 @@ Usage:
 	if !team.Exists(cwd) {
 		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
 	}
-	return emitTeamCommands(cwd, *noBootstrap, *session, flagWasSet(fs, "session"), *fresh)
+	return emitTeamCommands(cwd, *noBootstrap, *session, flagWasSet(fs, "session"), *fresh, binaryArgs)
 }
 
-func emitTeamCommands(projectDir string, noBootstrap bool, requestedSession string, explicitSession bool, fresh bool) error {
+func emitTeamCommands(projectDir string, noBootstrap bool, requestedSession string, explicitSession bool, fresh bool, extraBinaryArgs map[string][]string) error {
 	t, err := team.Read(projectDir)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
@@ -248,12 +261,16 @@ func emitTeamCommands(projectDir string, noBootstrap bool, requestedSession stri
 	}
 
 	members := orderedTeamMembers(t.Members)
+	binaryArgs := mergeBinaryArgs(t.BinaryArgs, extraBinaryArgs)
 
 	fmt.Println("# amq-squad team - run each command in its own terminal tab")
 	fmt.Println("#")
 	fmt.Printf("# team-home: %s\n", t.Project)
 	fmt.Printf("# workstream: %s\n", workstream)
 	fmt.Printf("# members:   %d\n", len(members))
+	if formatted := formatBinaryArgs(binaryArgs); formatted != "" {
+		fmt.Printf("# binary args: %s\n", formatted)
+	}
 	// List unique member cwds so a multi-project team is obvious at a glance.
 	uniqueCWDs := uniqueMemberCWDs(t.Project, members)
 	if len(uniqueCWDs) > 1 {
@@ -280,7 +297,7 @@ func emitTeamCommands(projectDir string, noBootstrap bool, requestedSession stri
 		}
 		cwd := m.EffectiveCWD(t.Project)
 		fmt.Printf("# %d. %s - %s (workstream: %s, cwd: %s)\n", i+1, label, m.Binary, workstream, cwd)
-		fmt.Println(emitTeamCommand(cwd, squadBin, t.Project, m, noBootstrap, workstream))
+		fmt.Println(emitTeamCommand(cwd, squadBin, t.Project, m, noBootstrap, workstream, binaryArgs))
 		fmt.Println()
 	}
 	return nil
@@ -324,7 +341,7 @@ func uniqueMemberCWDs(projectDir string, members []team.Member) []string {
 	return out
 }
 
-func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap bool, workstream string) string {
+func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap bool, workstream string, binaryArgs map[string][]string) string {
 	var b strings.Builder
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(cwd))
@@ -349,9 +366,20 @@ func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap 
 		b.WriteString(" --me ")
 		b.WriteString(shellQuote(m.Handle))
 	}
+	extraDefaultArgs := binaryArgsFor(m.Binary, binaryArgs)
+	if len(extraDefaultArgs) > 0 {
+		switch normalizedAgentBinary(m.Binary) {
+		case "codex":
+			b.WriteString(" --codex-args=")
+			b.WriteString(shellQuote(joinedAgentArgs(extraDefaultArgs)))
+		case "claude":
+			b.WriteString(" --claude-args=")
+			b.WriteString(shellQuote(joinedAgentArgs(extraDefaultArgs)))
+		}
+	}
 	b.WriteString(" ")
 	b.WriteString(shellQuote(m.Binary))
-	if defaultArgs := defaultChildArgsForBinary(m.Binary); len(defaultArgs) > 0 {
+	if defaultArgs := launchDefaultChildArgs(m.Binary, true, extraDefaultArgs); len(defaultArgs) > 0 {
 		b.WriteString(" --")
 		for _, arg := range defaultArgs {
 			b.WriteString(" ")

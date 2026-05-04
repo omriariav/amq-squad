@@ -50,13 +50,15 @@ func (m Member) EffectiveCWD(projectDir string) string {
 // would leak local paths into shared repos and break when the repo moves.
 // Workstream is the team's default shared AMQ session. CreatedAt is
 // informational. Member sessions are legacy/default workstream hints; the live
-// workstream can be overridden at launch time.
+// workstream can be overridden at launch time. BinaryArgs stores extra native
+// CLI args by binary name, for example codex or claude.
 type Team struct {
-	Schema     int       `json:"schema"`
-	Project    string    `json:"-"`
-	Workstream string    `json:"workstream,omitempty"`
-	Members    []Member  `json:"members"`
-	CreatedAt  time.Time `json:"created_at"`
+	Schema     int                 `json:"schema"`
+	Project    string              `json:"-"`
+	Workstream string              `json:"workstream,omitempty"`
+	BinaryArgs map[string][]string `json:"binary_args,omitempty"`
+	Members    []Member            `json:"members"`
+	CreatedAt  time.Time           `json:"created_at"`
 }
 
 // Path returns the team.json path for the given project directory.
@@ -122,6 +124,16 @@ func Validate(t Team) error {
 	if t.Workstream != "" {
 		if err := ValidateSessionName(t.Workstream); err != nil {
 			return fmt.Errorf("workstream: %w", err)
+		}
+	}
+	for binary, args := range t.BinaryArgs {
+		if err := ValidateDisplayValue("binary_args key", binary); err != nil {
+			return fmt.Errorf("binary_args[%q]: %w", binary, err)
+		}
+		for i, arg := range args {
+			if err := ValidateDisplayValue("arg", arg); err != nil {
+				return fmt.Errorf("binary_args[%q][%d]: %w", binary, i, err)
+			}
 		}
 	}
 	seenHandles := map[string]bool{}

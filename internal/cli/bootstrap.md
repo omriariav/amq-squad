@@ -49,5 +49,5 @@ First steps:
 2. Use the current team routing above for live messages and handoffs.
 3. Inspect prior AMQ history in this workstream relevant to your role using `amq-squad list`, `amq-squad restore`, `amq list`, `amq read`, and `amq thread --include-body` as needed.
 4. Do not resume old sessions or route work to historical agents unless the user explicitly asks.
-5. Summarize your role, relevant prior context, and what you are waiting for.
+5. Start your first response by stating your role and handle, then summarize relevant prior context and what you are waiting for.
 6. Stop and wait for instructions.

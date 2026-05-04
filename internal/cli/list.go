@@ -59,7 +59,17 @@ where the original binary can be inferred.
 
 	var all []launch.Entry
 	for _, dir := range dirs {
-		entries, err := launch.ScanRestorableEntries(dir)
+		baseRoot, err := scanBaseRootForProject(dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: resolve amq env for %s: %v\n", dir, err)
+			baseRoot = ""
+		}
+		var entries []launch.Entry
+		if baseRoot != "" {
+			entries, err = launch.ScanRestorableEntriesInRoot(dir, baseRoot)
+		} else {
+			entries, err = launch.ScanRestorableEntries(dir)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: scan %s: %v\n", dir, err)
 			continue

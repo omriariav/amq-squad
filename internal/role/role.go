@@ -1,5 +1,5 @@
 // Package role reads and writes role.md, the per-agent markdown doc that
-// lives alongside launch.json in the agent's mailbox directory. role.md is
+// lives alongside launch.json in the amq-squad extension directory. role.md is
 // the human-editable source of a role's description, peers, system prompt
 // guidance, and priming notes.
 package role
@@ -11,7 +11,10 @@ import (
 	"strings"
 )
 
-const FileName = "role.md"
+const (
+	FileName  = "role.md"
+	LayerName = "io.github.omriariav.amq-squad"
+)
 
 // Stub is the data used to seed a new role.md. Fields come from the catalog
 // entry at team init time; the user can edit the rendered file freely.
@@ -23,9 +26,43 @@ type Stub struct {
 	Peers       []string
 }
 
-// Path returns the role.md path inside an agent's mailbox directory.
+// ExtensionDir returns the amq-squad extension directory for an agent mailbox.
+func ExtensionDir(agentDir string) string {
+	return filepath.Join(agentDir, "extensions", LayerName)
+}
+
+// Path returns the v0.6+ role.md path inside an agent's extension directory.
 func Path(agentDir string) string {
+	return filepath.Join(ExtensionDir(agentDir), FileName)
+}
+
+// LegacyPath returns the pre-v0.6 direct-agent role.md path.
+func LegacyPath(agentDir string) string {
 	return filepath.Join(agentDir, FileName)
+}
+
+// ExistingPath returns the role.md path that should be read, preferring the
+// extension namespace and falling back to the legacy direct-agent path.
+func ExistingPath(agentDir string) string {
+	p := Path(agentDir)
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	if _, err := os.Stat(LegacyPath(agentDir)); err == nil {
+		return LegacyPath(agentDir)
+	}
+	return p
+}
+
+// Exists reports whether either the extension or legacy role file exists.
+func Exists(agentDir string) bool {
+	if _, err := os.Stat(Path(agentDir)); err == nil {
+		return true
+	}
+	if _, err := os.Stat(LegacyPath(agentDir)); err == nil {
+		return true
+	}
+	return false
 }
 
 // EnsureStub writes a role.md for the given agent if one doesn't already
@@ -49,8 +86,13 @@ func EnsureStub(agentDir string, s Stub) (bool, error) {
 	} else if !os.IsNotExist(err) {
 		return false, fmt.Errorf("stat %s: %w", p, err)
 	}
-	if err := os.MkdirAll(agentDir, 0o700); err != nil {
-		return false, fmt.Errorf("ensure agent dir: %w", err)
+	if _, err := os.Stat(LegacyPath(agentDir)); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("stat %s: %w", LegacyPath(agentDir), err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return false, fmt.Errorf("ensure extension dir: %w", err)
 	}
 	if err := writeFile(p, render(s)); err != nil {
 		return false, err
@@ -107,10 +149,10 @@ func render(s Stub) string {
 	}
 
 	b.WriteString("## System Prompt\n")
-	b.WriteString("Use the binary default system behavior together with team-rules.md and this role file. Stay within the role scope, use the amq-squad protocol for team handoffs, and treat old AMQ history as context unless the user asks to resume it.\n\n")
+	b.WriteString("Use the binary default system behavior together with team-rules.md and this role file. Stay within the role scope, use the amq-squad protocol for team handoffs, and treat old AMQ history as context unless the user asks to resume it. On your first response in a fresh session, start by identifying your role and handle before any status or analysis.\n\n")
 
 	b.WriteString("## Priming Template\n")
-	b.WriteString("At launch, amq-squad injects identity, startup file paths, current team routing, first steps, and the path to this role file. Read those startup files, summarize relevant context, then stop and wait for the user's instruction.\n")
+	b.WriteString("At launch, amq-squad injects identity, startup file paths, current team routing, first steps, and the path to this role file. Read those startup files, start your first response by stating your role and handle, summarize relevant context, then stop and wait for the user's instruction.\n")
 
 	return b.String()
 }

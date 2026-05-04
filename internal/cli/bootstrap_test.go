@@ -33,6 +33,7 @@ func TestBuildBootstrapPrompt(t *testing.T) {
 		"Team rules: /repo/.amq-squad/team-rules.md",
 		"Role file: /repo/.agent-mail/fresh-cto/agents/cto/role.md",
 		"Launch record: /repo/.agent-mail/fresh-cto/agents/cto/launch.json",
+		"Start your first response by stating your role and handle",
 		"Stop and wait for instructions.",
 	} {
 		if !strings.Contains(got, want) {
@@ -60,7 +61,12 @@ func TestBuildBootstrapPromptWithoutRules(t *testing.T) {
 func TestBootstrapPromptIncludesCurrentTeamRouting(t *testing.T) {
 	teamHome := t.TempDir()
 	qaProject := t.TempDir()
-	if err := os.WriteFile(filepath.Join(teamHome, ".amqrc"), []byte(`{"root":".agent-mail","project":"pm-context"}`), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(qaProject, ".agent-mail", "fresh-cpo", "agents", "qa", "inbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	qaRoot := strings.ReplaceAll(filepath.Join(qaProject, ".agent-mail"), `\`, `\\`)
+	teamAMQRC := `{"root":".agent-mail","project":"pm-context","peers":{"omri-pm":"` + qaRoot + `"}}`
+	if err := os.WriteFile(filepath.Join(teamHome, ".amqrc"), []byte(teamAMQRC), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(qaProject, ".amqrc"), []byte(`{"root":".agent-mail","project":"omri-pm"}`), 0o644); err != nil {
@@ -94,9 +100,11 @@ func TestBootstrapPromptIncludesCurrentTeamRouting(t *testing.T) {
 		"Current team routing:",
 		"from the current `.amq-squad/team.json`",
 		"- cpo (you): handle cpo, binary codex, workstream fresh-cpo, project pm-context",
-		"send: `amq send --to cpo --session fresh-cpo`",
+		"send: `amq send --root",
+		"--me cpo --to cpo`",
 		"- qa: handle qa, binary claude, workstream fresh-cpo, project omri-pm",
-		"send: `amq send --to qa --project omri-pm --session fresh-cpo --thread p2p/cpo__qa`",
+		"--project omri-pm",
+		"--thread p2p/cpo__qa`",
 		"Do not resume old sessions or route work to historical agents unless the user explicitly asks.",
 	} {
 		if !strings.Contains(got, want) {
@@ -236,6 +244,8 @@ func TestBootstrapCurrentTeamDoesNotGuessCrossProjectRouteWithoutProjectIdentity
 
 func TestRouteCommandQuotesUnsafeValues(t *testing.T) {
 	got, errText := routeCommandFor(
+		"",
+		"",
 		projectIdentity{Name: "project-a", Known: true},
 		projectIdentity{Name: "project b", Known: true},
 		false,
@@ -253,7 +263,7 @@ func TestRouteCommandQuotesUnsafeValues(t *testing.T) {
 }
 
 func TestRouteCommandFailsLoudlyWhenCrossProjectIdentityMissing(t *testing.T) {
-	got, errText := routeCommandFor(projectIdentity{}, projectIdentity{Name: "qa", Known: true}, false, "cto", "qa", "fresh-qa")
+	got, errText := routeCommandFor("", "", projectIdentity{}, projectIdentity{Name: "qa", Known: true}, false, "cto", "qa", "fresh-qa")
 	if got != "" {
 		t.Fatalf("routeCommandFor returned command %q, want none", got)
 	}
@@ -264,6 +274,8 @@ func TestRouteCommandFailsLoudlyWhenCrossProjectIdentityMissing(t *testing.T) {
 
 func TestRouteCommandFailsLoudlyWhenProjectIdentityAmbiguous(t *testing.T) {
 	got, errText := routeCommandFor(
+		"",
+		"",
 		projectIdentity{Name: "app", Dir: "/repo-a", Known: true},
 		projectIdentity{Name: "app", Dir: "/repo-b", Known: true},
 		false,

@@ -18,7 +18,7 @@ func TestBuildTmuxLaunchPlanUsesCatalogOrderAndLaunchCommands(t *testing.T) {
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
 		},
 	}
-	plan := buildTmuxLaunchPlan(tm, "/bin/amq-squad", "amq-squad-repo", "new-session", "vertical", false, 750*time.Millisecond, "repo")
+	plan := buildTmuxLaunchPlan(tm, "/bin/amq-squad", "amq-squad-repo", "new-session", "vertical", false, 750*time.Millisecond, "repo", nil)
 	if plan.Session != "amq-squad-repo" {
 		t.Fatalf("Session = %q", plan.Session)
 	}
@@ -210,6 +210,47 @@ func TestRunTeamLaunchDryRunUsesExplicitSharedWorkstream(t *testing.T) {
 	}
 	if strings.Contains(stdout, "--session cto") || strings.Contains(stdout, "--session fullstack") {
 		t.Fatalf("dry-run used role-per-session routing instead of shared workstream:\n%s", stdout)
+	}
+}
+
+func TestRunTeamLaunchDryRunUsesBinaryArgs(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "fullstack"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamLaunch([]string{"--dry-run", "--no-bootstrap", "--codex-args=--enable goals", "--claude-args=--chrome"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"--codex-args=",
+		"codex -- --dangerously-bypass-approvals-and-sandbox --enable goals",
+		"--claude-args=--chrome",
+		"claude -- --permission-mode auto --chrome",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("dry-run output missing %q in:\n%s", want, stdout)
+		}
 	}
 }
 
