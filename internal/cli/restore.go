@@ -32,11 +32,11 @@ Usage:
   amq-squad restore [--project dir1,dir2,...] [--role r] [--handle h] [--session s] [--conversation ref]
   amq-squad restore --exec --role cto
 
-Scans each project for .agent-mail/<session>/agents/<handle>/launch.json
-records, nearby role.md persona files, and older AMQ mailbox history when
-launch.json is missing and the original binary can be inferred. Default
-scope is the current working directory if --project is omitted. Without
---exec, prints a bash command per matching agent.
+Scans each project for amq-squad extension launch records, nearby role.md
+persona files, and older AMQ mailbox history when launch.json is missing and
+the original binary can be inferred. Default scope is the current working
+directory if --project is omitted. Without --exec, prints a bash command per
+matching agent.
 
 With --exec, exactly one record must match; amq-squad changes to that
 record's cwd and execs the saved launch through 'amq coop exec'.
@@ -64,7 +64,17 @@ record's cwd and execs the saved launch through 'amq coop exec'.
 	var records []restoreCandidate
 
 	for _, dir := range dirs {
-		entries, err := launch.ScanRestorableEntries(dir)
+		baseRoot, err := scanBaseRootForProject(dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: resolve amq env for %s: %v\n", dir, err)
+			baseRoot = ""
+		}
+		var entries []launch.Entry
+		if baseRoot != "" {
+			entries, err = launch.ScanRestorableEntriesInRoot(dir, baseRoot)
+		} else {
+			entries, err = launch.ScanRestorableEntries(dir)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: scan %s: %v\n", dir, err)
 			continue
@@ -155,7 +165,7 @@ func restoreMetadata(entry launch.Entry) string {
 	if rec.Handle != "" {
 		parts = append(parts, "handle: "+rec.Handle)
 	}
-	if _, err := os.Stat(filepath.Join(entry.AgentDir, role.FileName)); err == nil {
+	if role.Exists(entry.AgentDir) {
 		parts = append(parts, "persona: role.md")
 	} else {
 		parts = append(parts, "persona: missing")
@@ -206,6 +216,9 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	}
 	if rec.Session != "" {
 		args = append(args, "--session", rec.Session)
+		if rec.BaseRoot != "" {
+			args = append(args, "--root", rec.BaseRoot)
+		}
 	} else if rec.Root != "" {
 		args = append(args, "--root", rec.Root)
 	}
@@ -214,6 +227,17 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	}
 	if rec.Conversation != "" {
 		args = append(args, "--conversation", rec.Conversation)
+	}
+	if rec.NoDefaultArgs {
+		args = append(args, "--no-default-args")
+	}
+	// =VALUE form keeps the value glued to the flag so a literal "--" inside
+	// the binary args never reaches splitDashDash on replay.
+	if len(rec.CodexArgs) > 0 {
+		args = append(args, "--codex-args="+joinedAgentArgs(rec.CodexArgs))
+	}
+	if len(rec.ClaudeArgs) > 0 {
+		args = append(args, "--claude-args="+joinedAgentArgs(rec.ClaudeArgs))
 	}
 	if rec.Handle != "" {
 		args = append(args, "--me", rec.Handle)
@@ -228,10 +252,46 @@ func launchArgsFromRecord(rec launch.Record) []string {
 }
 
 func restoreArgvFromRecord(rec launch.Record) []string {
-	if rec.Conversation == "" {
-		return append([]string(nil), rec.Argv...)
+	argv := append([]string(nil), rec.Argv...)
+	if rec.Conversation != "" {
+		argv = stripConversationRestoreArgs(rec.Binary, argv, rec.Conversation)
 	}
-	return stripConversationRestoreArgs(rec.Binary, rec.Argv, rec.Conversation)
+	if extras := launchExtraBinaryArgs(rec); len(extras) > 0 {
+		argv = removeContiguousSubsequence(argv, extras)
+	}
+	return argv
+}
+
+func launchExtraBinaryArgs(rec launch.Record) []string {
+	switch normalizedAgentBinary(rec.Binary) {
+	case "codex":
+		return rec.CodexArgs
+	case "claude":
+		return rec.ClaudeArgs
+	}
+	return nil
+}
+
+func removeContiguousSubsequence(args, sub []string) []string {
+	if len(sub) == 0 || len(args) < len(sub) {
+		return args
+	}
+	for i := 0; i+len(sub) <= len(args); i++ {
+		match := true
+		for j := range sub {
+			if args[i+j] != sub[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			out := make([]string, 0, len(args)-len(sub))
+			out = append(out, args[:i]...)
+			out = append(out, args[i+len(sub):]...)
+			return out
+		}
+	}
+	return args
 }
 
 // emitCommand reconstructs the bash command for a launch record.
@@ -250,6 +310,10 @@ func emitCommand(rec launch.Record) string {
 	if rec.Session != "" {
 		b.WriteString(" --session ")
 		b.WriteString(shellQuote(rec.Session))
+		if rec.BaseRoot != "" {
+			b.WriteString(" --root ")
+			b.WriteString(shellQuote(rec.BaseRoot))
+		}
 	} else if rec.Root != "" {
 		b.WriteString(" --root ")
 		b.WriteString(shellQuote(rec.Root))
@@ -260,6 +324,17 @@ func emitCommand(rec launch.Record) string {
 	if rec.Conversation != "" {
 		b.WriteString(" --conversation ")
 		b.WriteString(shellQuote(rec.Conversation))
+	}
+	if rec.NoDefaultArgs {
+		b.WriteString(" --no-default-args")
+	}
+	if len(rec.CodexArgs) > 0 {
+		b.WriteString(" --codex-args=")
+		b.WriteString(shellQuote(joinedAgentArgs(rec.CodexArgs)))
+	}
+	if len(rec.ClaudeArgs) > 0 {
+		b.WriteString(" --claude-args=")
+		b.WriteString(shellQuote(joinedAgentArgs(rec.ClaudeArgs)))
 	}
 	if rec.Handle != "" && rec.Handle != defaultHandleFor(rec.Binary) {
 		b.WriteString(" --me ")

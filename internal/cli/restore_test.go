@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"flag"
 	"reflect"
 	"strings"
 	"testing"
@@ -119,6 +120,23 @@ func TestEmitCommandIncludesRootWhenSessionMissing(t *testing.T) {
 	}
 }
 
+func TestEmitCommandIncludesBaseRootWithSession(t *testing.T) {
+	rec := launch.Record{
+		CWD:      "/p",
+		Binary:   "claude",
+		Session:  "stream1",
+		Handle:   "claude",
+		Root:     "/tmp/mail/stream1",
+		BaseRoot: "/tmp/mail",
+	}
+	cmd := emitCommand(rec)
+	for _, want := range []string{"--root /tmp/mail", "--session stream1"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("emitCommand missing %q in: %s", want, cmd)
+		}
+	}
+}
+
 func TestLaunchArgsFromRecord(t *testing.T) {
 	rec := launch.Record{
 		CWD:          "/p",
@@ -174,6 +192,234 @@ func TestLaunchArgsFromRecordUsesRootWithoutSession(t *testing.T) {
 	want := []string{"--no-bootstrap", "--root", "/p/.agent-mail", "--me", "codex", "codex"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+}
+
+func TestLaunchArgsFromRecordPreservesBaseRootWithSession(t *testing.T) {
+	rec := launch.Record{
+		Binary:   "claude",
+		Session:  "stream1",
+		Handle:   "claude",
+		Root:     "/tmp/mail/stream1",
+		BaseRoot: "/tmp/mail",
+	}
+	got := launchArgsFromRecord(rec)
+	want := []string{"--no-bootstrap", "--session", "stream1", "--root", "/tmp/mail", "--me", "claude", "claude"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+}
+
+// Restore round-trip: a launch made with --conversation plus --codex-args must
+// re-emit through the same flag rather than baking the binary args into the
+// argv after "--", otherwise the conversation gate on the second pass rejects
+// them as "extra codex args".
+func TestLaunchArgsFromRecordRoundTripsConversationWithCodexArgs(t *testing.T) {
+	rec := launch.Record{
+		CWD:          "/p",
+		Binary:       "codex",
+		Argv:         []string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals", "resume", "X"},
+		Session:      "cto",
+		Conversation: "X",
+		Handle:       "cto",
+		Role:         "cto",
+		CodexArgs:    []string{"--enable", "goals"},
+	}
+	got := launchArgsFromRecord(rec)
+	want := []string{
+		"--no-bootstrap",
+		"--role", "cto",
+		"--session", "cto",
+		"--conversation", "X",
+		"--codex-args=--enable goals",
+		"--me", "cto",
+		"codex",
+		"--",
+		"--dangerously-bypass-approvals-and-sandbox",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+
+	assertConversationReplayAccepted(t, got)
+}
+
+func TestLaunchArgsFromRecordRoundTripsConversationWithClaudeArgs(t *testing.T) {
+	rec := launch.Record{
+		CWD:          "/p",
+		Binary:       "claude",
+		Argv:         []string{"--permission-mode", "auto", "--chrome", "--resume", "Y"},
+		Session:      "fs",
+		Conversation: "Y",
+		Handle:       "fullstack",
+		Role:         "fullstack",
+		ClaudeArgs:   []string{"--chrome"},
+	}
+	got := launchArgsFromRecord(rec)
+	want := []string{
+		"--no-bootstrap",
+		"--role", "fullstack",
+		"--session", "fs",
+		"--conversation", "Y",
+		"--claude-args=--chrome",
+		"--me", "fullstack",
+		"claude",
+		"--",
+		"--permission-mode", "auto",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+	assertConversationReplayAccepted(t, got)
+}
+
+// joinedAgentArgs writes a value that parseAgentArgs must re-tokenize
+// identically — pin the round-trip for spaces, single quotes, double quotes,
+// and backslash escapes.
+func TestBinaryArgsJoinedRoundTripPreservesQuotingAndEscapes(t *testing.T) {
+	cases := [][]string{
+		{"--enable", "goals"},
+		{"--prompt", "hello world"},
+		{"--label", "it's fine"},
+		{`--regex`, `a\nb`},
+		{"--quoted", `say "hi"`},
+		{"--empty", ""},
+	}
+	for _, args := range cases {
+		joined := joinedAgentArgs(args)
+		got, err := parseAgentArgs(joined)
+		if err != nil {
+			t.Fatalf("parseAgentArgs(%q) error: %v", joined, err)
+		}
+		if !reflect.DeepEqual(got, args) {
+			t.Errorf("round-trip %q -> %q -> %v, want %v", args, joined, got, args)
+		}
+	}
+}
+
+// --no-default-args must round-trip — without persistence the restore replay
+// silently re-injects the binary defaults the original launch opted out of.
+func TestLaunchArgsFromRecordPreservesNoDefaultArgs(t *testing.T) {
+	rec := launch.Record{
+		CWD:           "/p",
+		Binary:        "codex",
+		Argv:          []string{"--enable", "goals"},
+		Session:       "rt",
+		Handle:        "cto",
+		Role:          "cto",
+		CodexArgs:     []string{"--enable", "goals"},
+		NoDefaultArgs: true,
+	}
+	got := launchArgsFromRecord(rec)
+	want := []string{
+		"--no-bootstrap",
+		"--role", "cto",
+		"--session", "rt",
+		"--no-default-args",
+		"--codex-args=--enable goals",
+		"--me", "cto",
+		"codex",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
+	}
+	if cmd := emitCommand(rec); !strings.Contains(cmd, "--no-default-args") {
+		t.Errorf("emitCommand missing --no-default-args: %s", cmd)
+	}
+}
+
+// A literal "--" inside CodexArgs must not be intercepted by splitDashDash on
+// replay. The =VALUE emission keeps the value glued to the flag name; the
+// only bare "--" left in the emitted args is the binary/child separator,
+// which sits AFTER the binary token and is intentionally split there.
+func TestLaunchArgsFromRecordEscapesLiteralDashDashInBinaryArgs(t *testing.T) {
+	rec := launch.Record{
+		CWD:       "/p",
+		Binary:    "codex",
+		Argv:      []string{"--dangerously-bypass-approvals-and-sandbox", "--"},
+		Session:   "rt",
+		Handle:    "cto",
+		Role:      "cto",
+		CodexArgs: []string{"--"},
+	}
+	got := launchArgsFromRecord(rec)
+	squadArgs, postDash := splitDashDash(got)
+	// The emitted "--codex-args=--" token must survive into squadArgs; the
+	// only thing past the binary/child separator should be the leftover argv
+	// (the built-in default). If splitDashDash had grabbed the "--" inside
+	// the flag value, --codex-args would land with no value and the flag
+	// state would shift entirely.
+	for _, a := range squadArgs {
+		if a == "--codex-args" || a == "--codex-args=" {
+			t.Fatalf("--codex-args lost its value on replay: %#v", squadArgs)
+		}
+	}
+	if !reflect.DeepEqual(postDash, []string{"--dangerously-bypass-approvals-and-sandbox"}) {
+		t.Fatalf("postDash = %#v, want only the leftover default", postDash)
+	}
+	parsed, err := parseAgentArgs(extractFlagValue(squadArgs, "--codex-args"))
+	if err != nil {
+		t.Fatalf("parseAgentArgs: %v", err)
+	}
+	if !reflect.DeepEqual(parsed, []string{"--"}) {
+		t.Errorf("parsed CodexArgs = %#v, want [--]", parsed)
+	}
+}
+
+func extractFlagValue(args []string, name string) string {
+	prefix := name + "="
+	for _, a := range args {
+		if strings.HasPrefix(a, prefix) {
+			return strings.TrimPrefix(a, prefix)
+		}
+	}
+	return ""
+}
+
+func TestRemoveContiguousSubsequenceFirstMatchOnly(t *testing.T) {
+	// Stripping is intentionally first-match. Document the behavior so a
+	// future refactor doesn't quietly change it.
+	got := removeContiguousSubsequence(
+		[]string{"--enable", "goals", "x", "--enable", "goals"},
+		[]string{"--enable", "goals"},
+	)
+	want := []string{"x", "--enable", "goals"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("removeContiguousSubsequence = %v, want %v", got, want)
+	}
+}
+
+// assertConversationReplayAccepted reproduces the replay path runLaunch takes
+// and confirms the conversation gate accepts the restored argv.
+func assertConversationReplayAccepted(t *testing.T, args []string) {
+	t.Helper()
+	squadArgs, postDash := splitDashDash(args)
+	fs := flag.NewFlagSet("launch", flag.ContinueOnError)
+	codexArgsRaw := fs.String("codex-args", "", "")
+	claudeArgsRaw := fs.String("claude-args", "", "")
+	conversation := fs.String("conversation", "", "")
+	_ = fs.Bool("no-bootstrap", false, "")
+	_ = fs.String("role", "", "")
+	_ = fs.String("session", "", "")
+	_ = fs.String("me", "", "")
+	if err := fs.Parse(squadArgs); err != nil {
+		t.Fatalf("parse restore squadArgs: %v", err)
+	}
+	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
+	if err != nil {
+		t.Fatalf("parseBinaryArgFlags: %v", err)
+	}
+	remaining := fs.Args()
+	if len(remaining) == 0 {
+		t.Fatalf("restore args missing binary: %#v", args)
+	}
+	binary := remaining[0]
+	childArgs := append([]string(nil), remaining[1:]...)
+	childArgs = append(childArgs, postDash...)
+	defaultArgs := launchDefaultChildArgs(binary, true, binaryArgsFor(binary, binaryArgs))
+	childArgs = ensureLeadingChildArgs(defaultArgs, childArgs)
+	if _, err := applyConversationRestoreArgsWithDefaults(binary, childArgs, *conversation, defaultArgs); err != nil {
+		t.Fatalf("conversation restore rejected: %v", err)
 	}
 }
 

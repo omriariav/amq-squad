@@ -66,6 +66,7 @@ Supported user inputs:
    - Model web UI work as `frontend-dev`; model mobile app work as `mobile-dev`; model APIs/services work as `backend-dev`.
    - Model backend/dev as `fullstack` unless the user wants a narrower persona.
    - Use `--binary persona=cli` when the user wants a persona on a different CLI, for example `--binary fullstack=codex`.
+   - Use `--codex-args '<args>'` or `--claude-args '<args>'` when every matching binary should launch with native flags, for example `--codex-args '--enable goals'`.
    - Use one shared workstream name with `--session <workstream>`. Do not use the removed comma-separated `role=name` session syntax.
    - If the user does not name a workstream, let amq-squad default to the sanitized team-home directory name.
 
@@ -85,6 +86,7 @@ Supported user inputs:
 6. Print launch commands.
    - Run `amq-squad team show --session <workstream>` when the user named a workstream.
    - Run `amq-squad team launch --session <workstream>` from tmux when the user wants panes created automatically.
+   - Add one-off `--codex-args '<args>'` or `--claude-args '<args>'` to `team show` or `team launch` when the user wants native binary flags for only this run.
    - Use `--fresh --session <workstream>` when accidental reuse should fail.
    - Expect generated commands to include `--team-workstream`, Codex `--dangerously-bypass-approvals-and-sandbox`, and Claude `--permission-mode auto`.
    - Tell the user to paste one command into each terminal pane or tab when not using `team launch`.
