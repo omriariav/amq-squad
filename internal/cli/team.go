@@ -30,6 +30,8 @@ func runTeam(args []string) error {
 		return runTeamShow(args[1:])
 	case "launch":
 		return runTeamLaunch(args[1:])
+	case "resume":
+		return runTeamResume(args[1:])
 	case "rules":
 		return runTeamRules(args[1:])
 	case "sync":
@@ -37,7 +39,7 @@ func runTeam(args []string) error {
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'show', 'launch', 'rules', or 'sync'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'show', 'launch', 'resume', 'rules', or 'sync'.", args[0])
 	}
 }
 
@@ -49,7 +51,7 @@ func runTeamSmart() error {
 		return fmt.Errorf("getwd: %w", err)
 	}
 	if team.Exists(cwd) {
-		return emitTeamCommands(cwd, false, "", false, false, nil)
+		return emitTeamCommands(cwd, emitTeamOptions{})
 	}
 	fmt.Fprintln(os.Stderr, "No team configured for this project yet. Let's set one up.")
 	fmt.Fprintln(os.Stderr)
@@ -57,7 +59,7 @@ func runTeamSmart() error {
 		return err
 	}
 	fmt.Fprintln(os.Stderr)
-	return emitTeamCommands(cwd, false, "", false, false, nil)
+	return emitTeamCommands(cwd, emitTeamOptions{})
 }
 
 func runTeamInit(args []string) error {
@@ -67,6 +69,8 @@ func runTeamInit(args []string) error {
 	binaryFlag := fs.String("binary", "", "per-persona CLI overrides, e.g. fullstack=codex,qa=claude")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name for all members (lowercase a-z, 0-9, -, _)")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
+	modelFlag := fs.String("model", "", "per-persona model overrides, e.g. cto=gpt-5,fullstack=sonnet")
+	trustRaw := fs.String("trust", "", "Codex trust profile for generated commands: sandboxed (default) or trusted")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
 	force := fs.Bool("force", false, "overwrite an existing team.json")
@@ -74,8 +78,8 @@ func runTeamInit(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--personas id1,id2,...] [--binary persona=cli,...] [--session workstream] [--codex-args args] [--claude-args args] [--force]
-  amq-squad team init [--roles id1,id2,...] [--binary role=cli,...] [--session workstream] [--codex-args args] [--claude-args args] [--force]
+  amq-squad team init [--personas id1,id2,...] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--codex-args args] [--claude-args args] [--force]
+  amq-squad team init [--roles id1,id2,...] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--codex-args args] [--claude-args args] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes <cwd>/.amq-squad/team.json and
@@ -91,6 +95,10 @@ Known personas:
 		}
 	}
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	trustMode, err := normalizeTrustMode(*trustRaw)
+	if err != nil {
 		return err
 	}
 	if *rolesFlag != "" && *personasFlag != "" {
@@ -121,10 +129,22 @@ Known personas:
 	if err != nil {
 		return fmt.Errorf("parse --cwd: %w", err)
 	}
+	modelOverrides, err := parseKV(*modelFlag)
+	if err != nil {
+		return fmt.Errorf("parse --model: %w", err)
+	}
 	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
 	if err != nil {
 		return err
 	}
+	// Validate trust + binary-args contradictions up-front so a team config
+	// never persists a setting that would fail at launch time.
+	if err := validateTrustCombination(trustMode, flagWasSet(fs, "trust"), false, binaryArgs); err != nil {
+		return err
+	}
+	// Normalize override keys to lowercase so we can match them against the
+	// chosen persona IDs without surprises.
+	modelOverrides = lowercaseKeys(modelOverrides)
 
 	var picked []string
 	interactive := *rolesFlag == "" && *personasFlag == ""
@@ -141,9 +161,36 @@ Known personas:
 		if err := promptBinarySelection(reader, os.Stderr, picked, binaryOverrides); err != nil {
 			return err
 		}
+		if err := promptModelSelection(reader, os.Stderr, modelOverrides); err != nil {
+			return err
+		}
+		if !flagWasSet(fs, "trust") {
+			chosen, err := promptTrustSelection(reader, os.Stderr, trustMode)
+			if err != nil {
+				return err
+			}
+			trustMode = chosen
+		}
+		if !flagWasSet(fs, "session") {
+			chosen, err := promptWorkstreamSelection(reader, os.Stderr, workstream)
+			if err != nil {
+				return err
+			}
+			workstream = chosen
+		}
 	}
 	if len(picked) == 0 {
 		return fmt.Errorf("no personas selected, aborting")
+	}
+
+	// Reject --model role=model where role is not a chosen persona, so a
+	// typo never silently drops a model override.
+	pickedSet := make(map[string]bool, len(picked))
+	for _, id := range picked {
+		pickedSet[strings.ToLower(strings.TrimSpace(id))] = true
+	}
+	if err := validateModelOverrideKeys(modelOverrides, pickedSet); err != nil {
+		return err
 	}
 
 	members := make([]team.Member, 0, len(picked))
@@ -171,6 +218,9 @@ Known personas:
 			Handle:  id,
 			Session: workstream,
 		}
+		if model, ok := modelOverrides[id]; ok {
+			m.Model = strings.TrimSpace(model)
+		}
 		if c, ok := cwdOverrides[id]; ok {
 			abs, err := expandPath(c)
 			if err != nil {
@@ -186,6 +236,7 @@ Known personas:
 	t := team.Team{
 		Project:    cwd,
 		Workstream: workstream,
+		Trust:      trustMode,
 		BinaryArgs: binaryArgs,
 		Members:    members,
 	}
@@ -204,6 +255,12 @@ Known personas:
 	if wroteRules {
 		fmt.Fprintf(os.Stderr, "Wrote %s.\n", rules.Path(cwd))
 	}
+	if interactive {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Next:")
+		fmt.Fprintln(os.Stderr, "  amq-squad team launch          # open all members in the current tmux window")
+		fmt.Fprintln(os.Stderr, "  amq-squad team show            # print one launch command per member")
+	}
 	return nil
 }
 
@@ -212,18 +269,30 @@ func runTeamShow(args []string) error {
 	noBootstrap := fs.Bool("no-bootstrap", false, "emit launch commands that skip the generated bootstrap prompt")
 	session := fs.String("session", "", "AMQ workstream session name (default: sanitized team-home directory name; lowercase a-z, 0-9, -, _)")
 	fresh := fs.Bool("fresh", false, "fail if the selected workstream session already exists")
+	trustRaw := fs.String("trust", "", "Codex trust profile for this run: sandboxed or trusted")
+	modelFlag := fs.String("model", "", "per-persona model overrides for this run, e.g. cto=gpt-5,fullstack=sonnet")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for this run, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'")
+	forceDuplicate := fs.Bool("force-duplicate", false, "include --force-duplicate in emitted launch commands")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
 
 Usage:
-  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--codex-args args] [--claude-args args]
+  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate]
 `)
 	}
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	trustMode, err := normalizeTrustMode(*trustRaw)
+	if err != nil {
+		return err
+	}
+	modelOverrides, err := parseKV(*modelFlag)
+	if err != nil {
+		return fmt.Errorf("parse --model: %w", err)
+	}
+	modelOverrides = lowercaseKeys(modelOverrides)
 	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
 	if err != nil {
 		return err
@@ -235,10 +304,32 @@ Usage:
 	if !team.Exists(cwd) {
 		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
 	}
-	return emitTeamCommands(cwd, *noBootstrap, *session, flagWasSet(fs, "session"), *fresh, binaryArgs)
+	return emitTeamCommands(cwd, emitTeamOptions{
+		NoBootstrap:      *noBootstrap,
+		RequestedSession: *session,
+		ExplicitSession:  flagWasSet(fs, "session"),
+		Fresh:            *fresh,
+		ExtraBinaryArgs:  binaryArgs,
+		RequestedTrust:   trustMode,
+		ExplicitTrust:    flagWasSet(fs, "trust"),
+		ModelOverrides:   modelOverrides,
+		ForceDuplicate:   *forceDuplicate,
+	})
 }
 
-func emitTeamCommands(projectDir string, noBootstrap bool, requestedSession string, explicitSession bool, fresh bool, extraBinaryArgs map[string][]string) error {
+type emitTeamOptions struct {
+	NoBootstrap      bool
+	RequestedSession string
+	ExplicitSession  bool
+	Fresh            bool
+	ExtraBinaryArgs  map[string][]string
+	RequestedTrust   string
+	ExplicitTrust    bool
+	ModelOverrides   map[string]string
+	ForceDuplicate   bool
+}
+
+func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 	t, err := team.Read(projectDir)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
@@ -246,11 +337,11 @@ func emitTeamCommands(projectDir string, noBootstrap bool, requestedSession stri
 	if len(t.Members) == 0 {
 		return fmt.Errorf("team has no members")
 	}
-	workstream, err := resolveTeamWorkstreamName(t, requestedSession, explicitSession)
+	workstream, err := resolveTeamWorkstreamName(t, opts.RequestedSession, opts.ExplicitSession)
 	if err != nil {
 		return err
 	}
-	if fresh {
+	if opts.Fresh {
 		exists, root, err := teamWorkstreamExists(t, workstream)
 		if err != nil {
 			return err
@@ -261,12 +352,34 @@ func emitTeamCommands(projectDir string, noBootstrap bool, requestedSession stri
 	}
 
 	members := orderedTeamMembers(t.Members)
-	binaryArgs := mergeBinaryArgs(t.BinaryArgs, extraBinaryArgs)
+	binaryArgs := mergeBinaryArgs(t.BinaryArgs, opts.ExtraBinaryArgs)
+	trustMode, err := resolveTeamTrustMode(t, opts.RequestedTrust, opts.ExplicitTrust)
+	if err != nil {
+		return err
+	}
+	// Apply the same trust-vs-binary-args contradiction check direct launch
+	// uses, after effective trust + merged binary args are known. A team
+	// config that combines sandboxed trust with bypass smuggled into
+	// --codex-args is rejected here rather than emitted as a launch command
+	// that would self-reject inside runLaunch.
+	if err := validateTrustCombination(trustMode, opts.ExplicitTrust || strings.TrimSpace(t.Trust) != "", false, binaryArgs); err != nil {
+		return err
+	}
+	// Reject --model role=model where role is not on the team, so a typo on
+	// team show / team launch never silently drops the override.
+	memberRoles := make(map[string]bool, len(members))
+	for _, m := range members {
+		memberRoles[strings.ToLower(m.Role)] = true
+	}
+	if err := validateModelOverrideKeys(opts.ModelOverrides, memberRoles); err != nil {
+		return err
+	}
 
 	fmt.Println("# amq-squad team - run each command in its own terminal tab")
 	fmt.Println("#")
 	fmt.Printf("# team-home: %s\n", t.Project)
 	fmt.Printf("# workstream: %s\n", workstream)
+	fmt.Printf("# trust:     %s\n", trustMode)
 	fmt.Printf("# members:   %d\n", len(members))
 	if formatted := formatBinaryArgs(binaryArgs); formatted != "" {
 		fmt.Printf("# binary args: %s\n", formatted)
@@ -295,12 +408,76 @@ func emitTeamCommands(projectDir string, noBootstrap bool, requestedSession stri
 		if r := catalog.Lookup(m.Role); r != nil {
 			label = r.Label
 		}
+		effectiveModel := memberEffectiveModel(m, opts.ModelOverrides)
 		cwd := m.EffectiveCWD(t.Project)
-		fmt.Printf("# %d. %s - %s (workstream: %s, cwd: %s)\n", i+1, label, m.Binary, workstream, cwd)
-		fmt.Println(emitTeamCommand(cwd, squadBin, t.Project, m, noBootstrap, workstream, binaryArgs))
+		modelLabel := effectiveModel
+		if modelLabel == "" {
+			modelLabel = "(default)"
+		}
+		fmt.Printf("# %d. %s - %s (workstream: %s, model: %s, cwd: %s)\n", i+1, label, m.Binary, workstream, modelLabel, cwd)
+		fmt.Println(emitTeamCommand(emitTeamCommandInput{
+			CWD:            cwd,
+			SquadBin:       squadBin,
+			TeamHome:       t.Project,
+			Member:         m,
+			NoBootstrap:    opts.NoBootstrap,
+			Workstream:     workstream,
+			BinaryArgs:     binaryArgs,
+			TrustMode:      trustMode,
+			Model:          effectiveModel,
+			ForceDuplicate: opts.ForceDuplicate,
+		}))
 		fmt.Println()
 	}
 	return nil
+}
+
+func resolveTeamTrustMode(t team.Team, requested string, explicit bool) (string, error) {
+	if explicit {
+		return normalizeTrustMode(requested)
+	}
+	if strings.TrimSpace(t.Trust) != "" {
+		return normalizeTrustMode(t.Trust)
+	}
+	return trustModeSandboxed, nil
+}
+
+func memberEffectiveModel(m team.Member, overrides map[string]string) string {
+	if v, ok := overrides[strings.ToLower(m.Role)]; ok {
+		return strings.TrimSpace(v)
+	}
+	return strings.TrimSpace(m.Model)
+}
+
+// validateModelOverrideKeys rejects --model role=model entries whose role is
+// not one of the known roles. Silent drops on typos are a DX trap; an error
+// makes the mistake visible.
+func validateModelOverrideKeys(overrides map[string]string, known map[string]bool) error {
+	if len(overrides) == 0 {
+		return nil
+	}
+	var unknown []string
+	for k := range overrides {
+		if !known[strings.ToLower(strings.TrimSpace(k))] {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return fmt.Errorf("--model has unknown role(s): %s", strings.Join(unknown, ", "))
+}
+
+func lowercaseKeys(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return m
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[strings.ToLower(strings.TrimSpace(k))] = v
+	}
+	return out
 }
 
 func orderedTeamMembers(members []team.Member) []team.Member {
@@ -341,24 +518,49 @@ func uniqueMemberCWDs(projectDir string, members []team.Member) []string {
 	return out
 }
 
-func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap bool, workstream string, binaryArgs map[string][]string) string {
+type emitTeamCommandInput struct {
+	CWD            string
+	SquadBin       string
+	TeamHome       string
+	Member         team.Member
+	NoBootstrap    bool
+	Workstream     string
+	BinaryArgs     map[string][]string
+	TrustMode      string
+	Model          string
+	ForceDuplicate bool
+}
+
+func emitTeamCommand(in emitTeamCommandInput) string {
+	m := in.Member
 	var b strings.Builder
 	b.WriteString("cd ")
-	b.WriteString(shellQuote(cwd))
+	b.WriteString(shellQuote(in.CWD))
 	b.WriteString(" && ")
-	b.WriteString(shellQuote(squadBin))
+	b.WriteString(shellQuote(in.SquadBin))
 	b.WriteString(" launch")
 	b.WriteString(" --role ")
 	b.WriteString(shellQuote(m.Role))
 	b.WriteString(" --session ")
-	b.WriteString(shellQuote(workstream))
+	b.WriteString(shellQuote(in.Workstream))
 	b.WriteString(" --team-workstream")
-	if teamHome != "" {
-		b.WriteString(" --team-home ")
-		b.WriteString(shellQuote(teamHome))
+	if in.TrustMode != "" {
+		b.WriteString(" --trust ")
+		b.WriteString(shellQuote(in.TrustMode))
 	}
-	if noBootstrap {
+	if in.Model != "" {
+		b.WriteString(" --model ")
+		b.WriteString(shellQuote(in.Model))
+	}
+	if in.TeamHome != "" {
+		b.WriteString(" --team-home ")
+		b.WriteString(shellQuote(in.TeamHome))
+	}
+	if in.NoBootstrap {
 		b.WriteString(" --no-bootstrap")
+	}
+	if in.ForceDuplicate {
+		b.WriteString(" --force-duplicate")
 	}
 	if m.Handle != "" {
 		// Always explicit: a role-named handle avoids collisions when the
@@ -366,7 +568,7 @@ func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap 
 		b.WriteString(" --me ")
 		b.WriteString(shellQuote(m.Handle))
 	}
-	extraDefaultArgs := binaryArgsFor(m.Binary, binaryArgs)
+	extraDefaultArgs := binaryArgsFor(m.Binary, in.BinaryArgs)
 	if len(extraDefaultArgs) > 0 {
 		switch normalizedAgentBinary(m.Binary) {
 		case "codex":
@@ -379,7 +581,8 @@ func emitTeamCommand(cwd, squadBin, teamHome string, m team.Member, noBootstrap 
 	}
 	b.WriteString(" ")
 	b.WriteString(shellQuote(m.Binary))
-	if defaultArgs := launchDefaultChildArgs(m.Binary, true, extraDefaultArgs); len(defaultArgs) > 0 {
+	modelArgs := modelArgsForBinary(m.Binary, in.Model)
+	if defaultArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, extraDefaultArgs, in.TrustMode); len(defaultArgs) > 0 {
 		b.WriteString(" --")
 		for _, arg := range defaultArgs {
 			b.WriteString(" ")
@@ -404,6 +607,83 @@ func promptPersonaSelection(reader *bufio.Reader, out io.Writer) ([]string, erro
 		return nil, fmt.Errorf("read selection: %w", err)
 	}
 	return parsePersonaSelection(line)
+}
+
+// promptModelSelection asks the user for per-role model overrides. Empty
+// input keeps current overrides untouched. Existing values from --model are
+// preserved and may be augmented.
+func promptModelSelection(reader *bufio.Reader, out io.Writer, overrides map[string]string) error {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Model overrides?")
+	fmt.Fprintln(out, "  Press Enter to keep binary defaults.")
+	fmt.Fprintln(out, "  Example: cto=gpt-5,fullstack=sonnet")
+	fmt.Fprintln(out)
+	fmt.Fprint(out, "> ")
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("read model overrides: %w", err)
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+	parsed, err := parseKV(line)
+	if err != nil {
+		return fmt.Errorf("parse model overrides: %w", err)
+	}
+	for k, v := range parsed {
+		overrides[strings.ToLower(k)] = strings.TrimSpace(v)
+	}
+	return nil
+}
+
+// promptWorkstreamSelection asks for the AMQ workstream session name with
+// the project default offered as Enter-to-accept. The chosen value is
+// validated to AMQ session naming rules.
+func promptWorkstreamSelection(reader *bufio.Reader, out io.Writer, defaultName string) (string, error) {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Workstream / AMQ session?")
+	fmt.Fprintln(out, "  lowercase a-z, 0-9, -, _ only.")
+	fmt.Fprintf(out, "  Press Enter to use %q.\n", defaultName)
+	fmt.Fprintln(out)
+	fmt.Fprint(out, "> ")
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("read workstream: %w", err)
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return defaultName, nil
+	}
+	if err := team.ValidateSessionName(line); err != nil {
+		return "", err
+	}
+	return line, nil
+}
+
+// promptTrustSelection asks for the Codex trust profile. Default is the
+// current trust mode (sandboxed). Returns the selected normalized trust mode.
+func promptTrustSelection(reader *bufio.Reader, out io.Writer, current string) (string, error) {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Codex trust profile?")
+	fmt.Fprintln(out, "  sandboxed (recommended) - Codex prompts for approvals/sandbox")
+	fmt.Fprintln(out, "  trusted   (local power) - prepends --dangerously-bypass-approvals-and-sandbox")
+	fmt.Fprintf(out, "  Press Enter for %s.\n", current)
+	fmt.Fprintln(out)
+	fmt.Fprint(out, "> ")
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("read trust profile: %w", err)
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return current, nil
+	}
+	mode, err := normalizeTrustMode(strings.ToLower(line))
+	if err != nil {
+		return "", err
+	}
+	return mode, nil
 }
 
 func promptBinarySelection(reader *bufio.Reader, out io.Writer, personas []string, overrides map[string]string) error {
@@ -789,6 +1069,11 @@ Usage:
   amq-squad team show [--session name] [--fresh] [--no-bootstrap]
                                       Print launch commands for configured team
   amq-squad team launch [options]     Open the configured team in a terminal
+  amq-squad team resume [options]     Plan the safe path to bring the team back
+                                      after reboot/upgrade/terminal close.
+                                      Classifies each member as live/restore/
+                                      launch fresh/blocked and prints copy-
+                                      pasteable commands. Plan-only by default.
   amq-squad team rules init [--force] Seed or refresh team-rules.md
   amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
                                       (default: preview; --apply writes)

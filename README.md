@@ -22,7 +22,7 @@ AMQ itself stays unchanged.
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.6.0
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.6.1
 ```
 
 Use `@latest` if you intentionally want the newest published tag.
@@ -82,13 +82,39 @@ amq-squad team init \
 right project. `team sync` walks each unique member cwd and syncs CLAUDE.md +
 AGENTS.md in all of them.
 
-Generated launch commands include these agent defaults: Codex gets
-`--dangerously-bypass-approvals-and-sandbox`, and Claude gets
-`--permission-mode auto`. These defaults are passed through after `--` while
-the generated bootstrap prompt is still added at launch time. Direct
-`amq-squad launch` calls also prepend these defaults when they are missing, so
-custom prompts still inherit the expected permission mode. Pass
-`--no-default-args` to opt out.
+Generated launch commands include these agent defaults:
+
+- **Claude**: `--permission-mode auto`
+- **Codex**: nothing by default (sandboxed). Pass `--trust trusted` to
+  prepend `--dangerously-bypass-approvals-and-sandbox` for the local
+  power-user path. The trust profile is persisted in `team.json` from
+  `team init` and re-emitted by `team show` / `team launch`.
+
+`amq-squad launch --trust sandboxed|trusted` controls the same boundary for
+direct launches. Trust is Codex-specific; Claude defaults are unaffected.
+Pass `--no-default-args` to skip all built-in defaults entirely.
+
+`--trust trusted` and `--no-default-args` together are rejected, as is
+sandboxed mode with `--dangerously-bypass-approvals-and-sandbox` smuggled
+through `--codex-args`.
+
+Pass a model name to either binary natively via `--model`:
+
+```sh
+amq-squad launch --model gpt-5 codex
+amq-squad launch --model sonnet claude
+```
+
+`team init --model role=model,...` persists per-member models in
+`team.json`. `team show --model role=model,...` and `team launch --model ...`
+override per run. Restore replays the persisted model.
+
+Duplicate-launch guard: `amq-squad launch` refuses by default when a live
+agent for the same handle/workstream is detected (live `amq wake` lock,
+running agent PID with matching command, or fresh active presence). Stale
+artifacts are cleaned up automatically. `team launch` preflights the entire
+roster before any tmux command so a partial team never appears. Override
+with `--force-duplicate` when you really want a second instance.
 
 Add native Codex or Claude flags as binary args when the whole team should run
 with the same extra switches:
@@ -181,25 +207,79 @@ Adding another terminal should be isolated to a new
 `internal/cli/team_launch_<name>.go` file that implements `teamLaunchBackend`
 and registers itself with `registerTeamLaunchBackend` from `init`.
 
-Representative generated commands look like this:
+Representative generated commands look like this (sandboxed Codex, the new
+default):
 
 ```sh
 cd ~/Code/my-project && /path/to/amq-squad launch \
   --role cto \
   --session my-project \
   --team-workstream \
+  --trust sandboxed \
   --team-home /Users/you/Code/my-project \
   --me cto \
-  codex -- --dangerously-bypass-approvals-and-sandbox
+  codex
 
 cd ~/Code/my-project && /path/to/amq-squad launch \
   --role fullstack \
   --session my-project \
   --team-workstream \
+  --trust sandboxed \
   --team-home /Users/you/Code/my-project \
   --me fullstack \
   claude -- --permission-mode auto
 ```
+
+Run `amq-squad team init --trust trusted` (or pick `trusted` in the
+interactive prompt) for the local-power-user profile that includes
+`--dangerously-bypass-approvals-and-sandbox` for Codex.
+
+## Bringing the team back after reboot, terminal close, or upgrade
+
+When a terminal closes, the machine reboots, or you upgrade Codex/Claude,
+you do not need to remember whether to use `team launch` or `restore`. Run:
+
+```sh
+amq-squad team resume
+```
+
+This inspects `.amq-squad/team.json`, local launch history, and live-agent
+signals (wake locks, agent PIDs, presence) and prints a per-member plan
+plus copy-pasteable commands. Per-member action labels:
+
+- `live`: a matching agent is still running; the command is suppressed by
+  default. Pass `--force-duplicate` to launch a second instance anyway.
+- `restore`: a launch record exists for the workstream; the emitted
+  command replays it and preserves trust, model, conversation, role,
+  handle, and binary args.
+- `launch fresh`: no matching launch history; the emitted command is the
+  same shape `team launch` would use, with current team trust/model/binary
+  args.
+- `blocked`: ambiguous live state; choose `--force-duplicate` or narrow
+  with `--session`.
+
+Common flows:
+
+```sh
+# Default: resume the team's saved workstream, prefer restore.
+amq-squad team resume
+
+# Resume into an explicit session.
+amq-squad team resume --session v0-6-0-review
+
+# Refuse if no member has restorable history (catch a stale workstream pick).
+amq-squad team resume --restore-existing
+
+# Start a brand-new workstream from team.json (ignore restore records).
+amq-squad team resume --fresh --session v0-6-1
+
+# Force a second instance even when a live agent is detected.
+amq-squad team resume --force-duplicate
+```
+
+`team resume` is plan-only. The existing power-user commands stay
+available: `team launch` for tmux-pane launches from team intent, `restore`
+for explicit launch-history replay, and `list` for inspection.
 
 At launch time, each agent's bootstrap prompt includes a current team routing
 block generated from `.amq-squad/team.json`. That block is the live routing
@@ -383,35 +463,72 @@ amq send --to qa --project project-b --session project-a --thread p2p/cto__qa
 ```text
 amq-squad team                      Smart default: show commands, or init if none exists
 amq-squad team init [--personas ...] [--session workstream]
+                    [--trust sandboxed|trusted]
+                    [--model role=model,...]
                     [--codex-args args] [--claude-args args]
-                                    Pick personas, choose CLIs, and seed rules
+                                    Pick personas, choose CLIs, models, and
+                                    Codex trust profile; seed rules.
 amq-squad team show [--session name] [--fresh] [--no-bootstrap]
+                    [--trust sandboxed|trusted]
+                    [--model role=model,...]
                     [--codex-args args] [--claude-args args]
+                    [--force-duplicate]
                                     Print launch commands for the configured team
 amq-squad team launch [--terminal tmux] [--target current-window|new-session]
                       [--session workstream] [--fresh]
                       [--layout vertical|horizontal|tiled]
                       [--terminal-session name] [--stagger 750ms]
                       [--no-bootstrap]
+                      [--trust sandboxed|trusted]
+                      [--model role=model,...]
                       [--codex-args args] [--claude-args args]
-                      [--dry-run]
-                                    Open the configured team in tmux panes
+                      [--force-duplicate] [--dry-run]
+                                    Open the configured team in tmux panes.
+                                    Whole-roster live-agent preflight runs
+                                    before any tmux command; --force-duplicate
+                                    overrides.
+amq-squad team resume [--session name] [--fresh] [--restore-existing]
+                      [--dry-run] [--force-duplicate]
+                      [--no-bootstrap] [--trust sandboxed|trusted]
+                      [--model role=model,...]
+                      [--codex-args args] [--claude-args args]
+                                    Plan the safe path to bring the team back
+                                    after reboot/upgrade/terminal close.
+                                    Classifies each member as
+                                    live / restore / launch fresh / blocked
+                                    and prints copy-pasteable commands.
+                                    Plan-only; no disk mutation.
 amq-squad team rules init [--force] Seed or refresh .amq-squad/team-rules.md
 amq-squad team sync [--apply] [--allow-outside]
                                     Sync CLAUDE.md and AGENTS.md from team-rules.md
 
-amq-squad launch --role <r> --session <s> [--team-workstream] --me <handle> [--conversation ref] [--no-bootstrap] [--no-default-args] [--codex-args args] [--claude-args args] <binary> [-- <flags>]
+amq-squad launch --role <r> --session <s> [--team-workstream] --me <handle>
+                 [--conversation ref] [--no-bootstrap] [--no-default-args]
+                 [--trust sandboxed|trusted] [--model <name>]
+                 [--codex-args args] [--claude-args args]
+                 [--force-duplicate]
+                 <binary> [-- <flags>]
                                     Launch one agent. Writes launch.json + role.md
                                     in the AMQ mailbox, adds a bootstrap prompt,
                                     then execs 'amq coop exec'.
                                     Usually called by the output of 'team show'.
-                                    Codex and Claude default permission flags
-                                    are prepended when missing.
+                                    --trust sandboxed (default) keeps Codex
+                                    out of bypass mode; --trust trusted
+                                    prepends --dangerously-bypass-approvals-and-sandbox.
+                                    Claude defaults (--permission-mode auto)
+                                    are still prepended when missing.
+                                    --no-default-args opts out of all built-in
+                                    defaults.
+                                    --model passes a native --model <name>
+                                    flag to Codex or Claude.
                                     --codex-args and --claude-args add native
                                     binary flags, such as '--enable goals' or
                                     '--chrome', while still allowing bootstrap.
                                     --conversation stores a restore ref and
                                     translates it to Codex or Claude resume args.
+                                    --force-duplicate overrides the duplicate
+                                    live-agent guard for the same handle and
+                                    workstream.
                                     Do not combine --conversation with extra args
                                     after "--"; use --codex-args or --claude-args
                                     for native flags that should remain compatible
@@ -423,6 +540,15 @@ amq-squad restore [--project dir1,dir2,...] [--conversation ref]
                                     persona files. Falls back to older AMQ
                                     mailbox history when launch.json is absent
                                     and the binary can be inferred.
+                                    For records that look active, the metadata
+                                    line surfaces wake-health:
+                                      wake: pid:N    wake.lock present and
+                                                     the wake process is alive
+                                      wake: missing  agent looks active but
+                                                     no wake.lock was found
+                                      wake: stale    wake.lock present but
+                                                     the PID is dead or
+                                                     unrelated
 amq-squad restore --exec --role cto Exec one selected local launch through
                                     amq coop exec.
 
@@ -450,7 +576,7 @@ amq-squad version                   Print the installed amq-squad version.
 
 `<AM_ROOT>` is resolved via AMQ's JSON env contract (`amq env --json`) so
 amq-squad and `amq coop exec` always agree on the mailbox, root source, handle,
-and session. v0.6.0 writes extension namespaced metadata under
+and session. v0.6.1 writes extension namespaced metadata under
 `extensions/io.github.omriariav.amq-squad/` and still reads legacy
 direct-agent `launch.json` and `role.md` files created by v0.5.x.
 

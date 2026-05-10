@@ -40,6 +40,11 @@ matching agent.
 
 With --exec, exactly one record must match; amq-squad changes to that
 record's cwd and execs the saved launch through 'amq coop exec'.
+
+For records that look active, the metadata line includes wake-health:
+  wake: pid:N    - wake.lock present and the wake process is alive
+  wake: missing  - agent looks active but no wake.lock was found
+  wake: stale    - wake.lock present but the PID is dead or unrelated
 `)
 	}
 	if err := fs.Parse(args); err != nil {
@@ -173,6 +178,9 @@ func restoreMetadata(entry launch.Entry) string {
 	if entry.Source != "" {
 		parts = append(parts, "source: "+sourceLabel(entry.Source))
 	}
+	if wake := wakeHealthForEntry(entry, defaultDuplicateLaunchProbe); wake != "" {
+		parts = append(parts, "wake: "+wake)
+	}
 	if !rec.StartedAt.IsZero() {
 		label := "started"
 		if entry.Source != "" && entry.Source != launch.FileName {
@@ -231,6 +239,12 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if rec.NoDefaultArgs {
 		args = append(args, "--no-default-args")
 	}
+	if trust := trustModeFromRecord(rec); trust != "" {
+		args = append(args, "--trust", trust)
+	}
+	if model := strings.TrimSpace(rec.Model); model != "" {
+		args = append(args, "--model", model)
+	}
 	// =VALUE form keeps the value glued to the flag so a literal "--" inside
 	// the binary args never reaches splitDashDash on replay.
 	if len(rec.CodexArgs) > 0 {
@@ -259,6 +273,15 @@ func restoreArgvFromRecord(rec launch.Record) []string {
 	if extras := launchExtraBinaryArgs(rec); len(extras) > 0 {
 		argv = removeContiguousSubsequence(argv, extras)
 	}
+	if model := strings.TrimSpace(rec.Model); model != "" {
+		argv = removeContiguousSubsequence(argv, []string{"--model", model})
+	}
+	if !rec.NoDefaultArgs {
+		trust := trustModeFromRecord(rec)
+		if defaults := defaultChildArgsForBinaryWithTrust(rec.Binary, trust); len(defaults) > 0 {
+			argv = removeContiguousSubsequence(argv, defaults)
+		}
+	}
 	return argv
 }
 
@@ -270,6 +293,32 @@ func launchExtraBinaryArgs(rec launch.Record) []string {
 		return rec.ClaudeArgs
 	}
 	return nil
+}
+
+// trustModeFromRecord returns the trust mode to re-emit on restore. If the
+// record has Trust set, it wins. Otherwise legacy codex records that contain
+// the bypass arg in argv (and did not opt out of defaults) are restored as
+// trusted; everything else is sandboxed.
+func trustModeFromRecord(rec launch.Record) string {
+	if t, err := normalizeTrustMode(rec.Trust); err == nil && rec.Trust != "" {
+		return t
+	}
+	if normalizedAgentBinary(rec.Binary) != "codex" {
+		return ""
+	}
+	if !rec.NoDefaultArgs && argvContainsBypass(rec.Argv) {
+		return trustModeTrusted
+	}
+	return trustModeSandboxed
+}
+
+func argvContainsBypass(argv []string) bool {
+	for _, a := range argv {
+		if a == "--dangerously-bypass-approvals-and-sandbox" {
+			return true
+		}
+	}
+	return false
 }
 
 func removeContiguousSubsequence(args, sub []string) []string {
@@ -298,11 +347,26 @@ func removeContiguousSubsequence(args, sub []string) []string {
 // It prefers 'amq-squad launch' so role + metadata round-trip cleanly;
 // callers who want the raw amq invocation can run with --dry-run to see it.
 func emitCommand(rec launch.Record) string {
+	return emitCommandWithOptions(rec, emitCommandOptions{})
+}
+
+// emitCommandOptions controls extra flags injected into the emitted
+// 'amq-squad launch' invocation. Force adds --force-duplicate so a planner
+// (e.g. team resume) can emit a command that matches the plan when a live
+// agent has been overridden.
+type emitCommandOptions struct {
+	Force bool
+}
+
+func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	var b strings.Builder
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(rec.CWD))
 	b.WriteString(" && amq-squad launch")
 	b.WriteString(" --no-bootstrap")
+	if opts.Force {
+		b.WriteString(" --force-duplicate")
+	}
 	if rec.Role != "" {
 		b.WriteString(" --role ")
 		b.WriteString(shellQuote(rec.Role))
@@ -327,6 +391,14 @@ func emitCommand(rec launch.Record) string {
 	}
 	if rec.NoDefaultArgs {
 		b.WriteString(" --no-default-args")
+	}
+	if trust := trustModeFromRecord(rec); trust != "" {
+		b.WriteString(" --trust ")
+		b.WriteString(shellQuote(trust))
+	}
+	if model := strings.TrimSpace(rec.Model); model != "" {
+		b.WriteString(" --model ")
+		b.WriteString(shellQuote(model))
 	}
 	if len(rec.CodexArgs) > 0 {
 		b.WriteString(" --codex-args=")
