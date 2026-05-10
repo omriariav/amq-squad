@@ -31,6 +31,7 @@ type Member struct {
 	Binary  string `json:"binary"`  // "claude" or "codex"
 	Handle  string `json:"handle"`  // AMQ handle, defaults to Role
 	Session string `json:"session"` // AMQ workstream session name
+	Model   string `json:"model,omitempty"`
 	CWD     string `json:"cwd,omitempty"`
 }
 
@@ -50,12 +51,15 @@ func (m Member) EffectiveCWD(projectDir string) string {
 // would leak local paths into shared repos and break when the repo moves.
 // Workstream is the team's default shared AMQ session. CreatedAt is
 // informational. Member sessions are legacy/default workstream hints; the live
-// workstream can be overridden at launch time. BinaryArgs stores extra native
-// CLI args by binary name, for example codex or claude.
+// workstream can be overridden at launch time. Trust controls Codex trust
+// defaults for generated launch commands ("sandboxed" or "trusted"; empty
+// means sandboxed). BinaryArgs stores extra native CLI args by binary name,
+// for example codex or claude.
 type Team struct {
 	Schema     int                 `json:"schema"`
 	Project    string              `json:"-"`
 	Workstream string              `json:"workstream,omitempty"`
+	Trust      string              `json:"trust,omitempty"`
 	BinaryArgs map[string][]string `json:"binary_args,omitempty"`
 	Members    []Member            `json:"members"`
 	CreatedAt  time.Time           `json:"created_at"`
@@ -126,6 +130,9 @@ func Validate(t Team) error {
 			return fmt.Errorf("workstream: %w", err)
 		}
 	}
+	if t.Trust != "" && t.Trust != "sandboxed" && t.Trust != "trusted" {
+		return fmt.Errorf("trust: invalid trust mode %q: use sandboxed or trusted", t.Trust)
+	}
 	for binary, args := range t.BinaryArgs {
 		if err := ValidateDisplayValue("binary_args key", binary); err != nil {
 			return fmt.Errorf("binary_args[%q]: %w", binary, err)
@@ -176,6 +183,11 @@ func validateMember(prefix string, m Member) error {
 	if m.Binary != "" {
 		if err := ValidateDisplayValue("binary", m.Binary); err != nil {
 			return fmt.Errorf("%s.binary: %w", prefix, err)
+		}
+	}
+	if m.Model != "" {
+		if err := ValidateDisplayValue("model", m.Model); err != nil {
+			return fmt.Errorf("%s.model: %w", prefix, err)
 		}
 	}
 	if m.CWD != "" {

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestRunLaunchDryRunPrependsCodexDefaultArgsWithPrompt(t *testing.T) {
+func TestRunLaunchDryRunSandboxedCodexOmitsBypassDefault(t *testing.T) {
 	setupFakeAMQ(t)
 
 	stdout, stderr, err := captureOutput(t, func() error {
@@ -17,7 +17,81 @@ func TestRunLaunchDryRunPrependsCodexDefaultArgsWithPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
+	if strings.Contains(stdout, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("sandboxed codex must not include bypass arg by default:\n%s", stdout)
+	}
+	want := "amq coop exec codex -- test-prompt"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
+func TestRunLaunchDryRunTrustedCodexPrependsBypass(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--trust", "trusted", "codex", "test-prompt"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
 	want := "amq coop exec codex -- --dangerously-bypass-approvals-and-sandbox test-prompt"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
+func TestRunLaunchTrustedRejectsNoDefaultArgs(t *testing.T) {
+	setupFakeAMQ(t)
+	_, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--trust", "trusted", "--no-default-args", "codex"})
+	})
+	if err == nil {
+		t.Fatalf("expected --trust trusted with --no-default-args to fail\nstderr:\n%s", stderr)
+	}
+	if !strings.Contains(err.Error(), "--no-default-args") {
+		t.Fatalf("error should mention --no-default-args, got %v", err)
+	}
+}
+
+func TestRunLaunchSandboxedRejectsBypassInCodexArgs(t *testing.T) {
+	setupFakeAMQ(t)
+	_, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--codex-args=--dangerously-bypass-approvals-and-sandbox", "codex"})
+	})
+	if err == nil {
+		t.Fatalf("expected sandboxed codex with bypass in --codex-args to fail\nstderr:\n%s", stderr)
+	}
+	if !strings.Contains(err.Error(), "trusted") {
+		t.Fatalf("error should suggest --trust trusted, got %v", err)
+	}
+}
+
+func TestRunLaunchModelInsertsNativeFlag(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--model", "gpt-5", "codex"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	want := "amq coop exec codex -- --model gpt-5"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
+func TestRunLaunchModelClaudePlacement(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--model", "sonnet", "claude"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	want := "amq coop exec claude -- --permission-mode auto --model sonnet"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -45,7 +119,7 @@ func TestRunLaunchDryRunAddsBinaryArgs(t *testing.T) {
 	setupFakeAMQ(t)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--codex-args=--enable goals", "codex"})
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--trust", "trusted", "--codex-args=--enable goals", "codex"})
 	})
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
@@ -78,7 +152,7 @@ func TestRunLaunchDryRunConversationCodexResume(t *testing.T) {
 	setupFakeAMQ(t)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runLaunch([]string{"--dry-run", "--conversation", "cto-thread", "codex"})
+		return runLaunch([]string{"--dry-run", "--trust", "trusted", "--conversation", "cto-thread", "codex"})
 	})
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
@@ -89,11 +163,29 @@ func TestRunLaunchDryRunConversationCodexResume(t *testing.T) {
 	}
 }
 
+func TestRunLaunchDryRunConversationCodexResumeSandboxed(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--conversation", "cto-thread", "codex"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stdout, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("sandboxed conversation restore must not include bypass:\n%s", stdout)
+	}
+	want := "amq coop exec codex -- resume cto-thread"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
 func TestRunLaunchDryRunConversationAllowsBinaryArgs(t *testing.T) {
 	setupFakeAMQ(t)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runLaunch([]string{"--dry-run", "--conversation", "cto-thread", "--codex-args=--enable goals", "codex"})
+		return runLaunch([]string{"--dry-run", "--trust", "trusted", "--conversation", "cto-thread", "--codex-args=--enable goals", "codex"})
 	})
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
@@ -163,12 +255,24 @@ func TestRunLaunchConversationRejectsPassthroughArgs(t *testing.T) {
 }
 
 func TestApplyConversationRestoreArgsIsIdempotent(t *testing.T) {
-	got, err := applyConversationRestoreArgs("codex", []string{"--dangerously-bypass-approvals-and-sandbox", "resume", "abc"}, "abc")
+	// Trusted Codex: defaults include bypass, so argv with bypass + resume
+	// should round-trip cleanly via the WithDefaults form.
+	trustedDefaults := defaultChildArgsForBinaryWithTrust("codex", trustModeTrusted)
+	got, err := applyConversationRestoreArgsWithDefaults("codex", []string{"--dangerously-bypass-approvals-and-sandbox", "resume", "abc"}, "abc", trustedDefaults)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(got, " ") != "--dangerously-bypass-approvals-and-sandbox resume abc" {
 		t.Fatalf("codex args = %v", got)
+	}
+
+	// Sandboxed Codex: defaults are empty. argv with just resume should round-trip.
+	got, err = applyConversationRestoreArgs("codex", []string{"resume", "abc"}, "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, " ") != "resume abc" {
+		t.Fatalf("sandboxed codex args = %v", got)
 	}
 
 	got, err = applyConversationRestoreArgs("claude", []string{"--permission-mode", "auto", "--resume", "abc"}, "abc")

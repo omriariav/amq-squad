@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,9 @@ type teamLaunchOptions struct {
 	DryRun          bool
 	SquadBin        string
 	BinaryArgs      map[string][]string
+	Trust           string
+	ModelOverrides  map[string]string
+	ForceDuplicate  bool
 }
 
 type teamLaunchPane struct {
@@ -63,8 +67,11 @@ func runTeamLaunch(args []string) error {
 	terminalSession := fs.String("terminal-session", "", "terminal session name when the backend creates one")
 	fresh := fs.Bool("fresh", false, "fail if the selected workstream session already exists")
 	noBootstrap := fs.Bool("no-bootstrap", false, "launch agents without the generated bootstrap prompt")
+	trustRaw := fs.String("trust", "", "Codex trust profile for this run: sandboxed or trusted")
+	modelFlag := fs.String("model", "", "per-persona model overrides for this run, e.g. cto=gpt-5,fullstack=sonnet")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for this run, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'")
+	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent is detected for any member")
 	_ = fs.Bool("no-attach", false, "legacy no-op; new-session never attaches automatically")
 	stagger := fs.Duration("stagger", 750*time.Millisecond, "delay between starting agent panes")
 	dryRun := fs.Bool("dry-run", false, "print terminal commands without executing them")
@@ -72,12 +79,18 @@ func runTeamLaunch(args []string) error {
 		fmt.Fprintf(os.Stderr, `amq-squad team launch - open the configured team in a terminal
 
 Usage:
-  amq-squad team launch [--session workstream] [--fresh] [--terminal tmux] [--target current-window|new-session] [--layout vertical|horizontal|tiled] [--terminal-session name] [--stagger 750ms] [--no-bootstrap] [--codex-args args] [--claude-args args] [--dry-run]
+  amq-squad team launch [--session workstream] [--fresh] [--terminal tmux]
+    [--target current-window|new-session] [--layout vertical|horizontal|tiled]
+    [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
+    [--trust sandboxed|trusted] [--model role=model,...]
+    [--codex-args args] [--claude-args args]
+    [--force-duplicate] [--dry-run]
 
 Supported terminal backends: %s
 
 tmux defaults to splitting the current tmux window. Use --target new-session
-to create a detached squad session.
+to create a detached squad session. The whole roster is preflighted for live
+duplicates before any tmux command runs; --force-duplicate overrides.
 `, strings.Join(registeredTeamLaunchTerminals(), ", "))
 	}
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
@@ -87,6 +100,15 @@ to create a detached squad session.
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	requestedTrust, err := normalizeTrustMode(*trustRaw)
+	if err != nil {
+		return err
+	}
+	modelOverrides, err := parseKV(*modelFlag)
+	if err != nil {
+		return fmt.Errorf("parse --model: %w", err)
+	}
+	modelOverrides = lowercaseKeys(modelOverrides)
 	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
 	if err != nil {
 		return err
@@ -103,6 +125,9 @@ to create a detached squad session.
 		DryRun:          *dryRun,
 		SquadBin:        teamSquadBin(),
 		BinaryArgs:      binaryArgs,
+		Trust:           requestedTrust,
+		ModelOverrides:  modelOverrides,
+		ForceDuplicate:  *forceDuplicate,
 	}
 	backend, ok := teamLaunchBackends[opts.Terminal]
 	if !ok {
@@ -128,6 +153,26 @@ to create a detached squad session.
 		return err
 	}
 	opts.Workstream = workstream
+	trustMode, err := resolveTeamTrustMode(t, opts.Trust, flagWasSet(fs, "trust"))
+	if err != nil {
+		return err
+	}
+	opts.Trust = trustMode
+	// Apply the trust + binary-args contradiction check before opening any
+	// pane, so a misconfigured team never partially launches into runLaunch
+	// errors per pane.
+	mergedBinaryArgs := mergeBinaryArgs(t.BinaryArgs, opts.BinaryArgs)
+	if err := validateTrustCombination(trustMode, flagWasSet(fs, "trust") || strings.TrimSpace(t.Trust) != "", false, mergedBinaryArgs); err != nil {
+		return err
+	}
+	// Reject --model role=model entries whose role is not on the team.
+	memberRoles := make(map[string]bool, len(t.Members))
+	for _, m := range t.Members {
+		memberRoles[strings.ToLower(m.Role)] = true
+	}
+	if err := validateModelOverrideKeys(opts.ModelOverrides, memberRoles); err != nil {
+		return err
+	}
 	if opts.Fresh {
 		exists, root, err := teamWorkstreamExists(t, opts.Workstream)
 		if err != nil {
@@ -138,10 +183,52 @@ to create a detached squad session.
 		}
 	}
 
+	// Preflight the whole roster before any tmux command (or dry-run output)
+	// so a partially-launched team never appears.
+	preflights, err := buildTeamPreflights(t, opts)
+	if err != nil {
+		return err
+	}
+	if err := preflightTeam(preflights, defaultDuplicateLaunchProbe); err != nil {
+		return err
+	}
+
 	if opts.DryRun {
 		return backend.DryRun(t, opts)
 	}
 	return backend.Launch(t, opts)
+}
+
+// buildTeamPreflights computes the agent-identity tuples team launch would
+// produce so preflightTeam can refuse before any pane is created. dryRun
+// passes through to each preflight so a --dry-run team launch never mutates
+// disk state during stale-artifact handling.
+func buildTeamPreflights(t team.Team, opts teamLaunchOptions) ([]agentLaunchPreflight, error) {
+	members := orderedTeamMembers(t.Members)
+	out := make([]agentLaunchPreflight, 0, len(members))
+	for _, m := range members {
+		cwd := m.EffectiveCWD(t.Project)
+		env, err := resolveAMQEnvInDir(cwd, "", opts.Workstream, m.Handle)
+		if err != nil {
+			return nil, fmt.Errorf("resolve amq env for %s: %w", m.Handle, err)
+		}
+		root := env.Root
+		handle := m.Handle
+		if env.Me != "" {
+			handle = env.Me
+		}
+		agentDir := filepath.Join(root, "agents", handle)
+		out = append(out, agentLaunchPreflight{
+			AgentDir:   agentDir,
+			Handle:     handle,
+			Workstream: env.SessionName,
+			Root:       root,
+			Binary:     m.Binary,
+			Force:      opts.ForceDuplicate,
+			DryRun:     opts.DryRun,
+		})
+	}
+	return out, nil
 }
 
 func registeredTeamLaunchTerminals() []string {
@@ -153,16 +240,27 @@ func registeredTeamLaunchTerminals() []string {
 	return names
 }
 
-func buildTeamLaunchPanes(t team.Team, squadBin string, noBootstrap bool, workstream string, extraBinaryArgs map[string][]string) []teamLaunchPane {
+func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane {
 	members := orderedTeamMembers(t.Members)
-	binaryArgs := mergeBinaryArgs(t.BinaryArgs, extraBinaryArgs)
+	binaryArgs := mergeBinaryArgs(t.BinaryArgs, opts.BinaryArgs)
 	panes := make([]teamLaunchPane, 0, len(members))
 	for _, m := range members {
 		cwd := m.EffectiveCWD(t.Project)
 		panes = append(panes, teamLaunchPane{
-			Role:    m.Role,
-			CWD:     cwd,
-			Command: emitTeamCommand(cwd, squadBin, t.Project, m, noBootstrap, workstream, binaryArgs),
+			Role: m.Role,
+			CWD:  cwd,
+			Command: emitTeamCommand(emitTeamCommandInput{
+				CWD:            cwd,
+				SquadBin:       opts.SquadBin,
+				TeamHome:       t.Project,
+				Member:         m,
+				NoBootstrap:    opts.NoBootstrap,
+				Workstream:     opts.Workstream,
+				BinaryArgs:     binaryArgs,
+				TrustMode:      opts.Trust,
+				Model:          memberEffectiveModel(m, opts.ModelOverrides),
+				ForceDuplicate: opts.ForceDuplicate,
+			}),
 		})
 	}
 	return panes

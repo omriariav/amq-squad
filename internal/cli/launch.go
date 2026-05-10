@@ -30,8 +30,11 @@ func runLaunch(args []string) error {
 	conversationID := fs.String("conversation-id", "", "alias for --conversation")
 	noBootstrap := fs.Bool("no-bootstrap", false, "do not pass the generated bootstrap prompt to the agent")
 	noDefaultArgs := fs.Bool("no-default-args", false, "do not prepend Codex or Claude default permission args")
+	trustRaw := fs.String("trust", "", "Codex trust profile: sandboxed (default) or trusted (local power mode)")
+	model := fs.String("model", "", "native model name to pass to the agent binary, e.g. 'gpt-5' or 'sonnet'")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args to treat as launch defaults, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args to treat as launch defaults, e.g. '--chrome'")
+	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent for the same handle/workstream is detected")
 	dryRun := fs.Bool("dry-run", false, "print the coop exec command without executing")
 
 	fs.Usage = func() {
@@ -49,15 +52,19 @@ are passed through to that binary via 'amq coop exec'.
 
 Side effects before exec:
   1. Resolves AMQ env via 'amq env --json' for the target session.
-  2. Writes launch.json under the amq-squad extension namespace.
-  3. Writes a role.md stub if one does not already exist.
-  4. Prepends Codex and Claude default permission args unless
-     --no-default-args is set.
-  5. Prepends --codex-args or --claude-args for the matching binary.
-  6. Translates --conversation for Codex or Claude resume when provided.
-  7. Adds a generated bootstrap prompt unless --no-bootstrap is set or
+  2. Refuses by default when a live agent for the same handle/workstream is
+     already running. Override with --force-duplicate.
+  3. Writes launch.json under the amq-squad extension namespace.
+  4. Writes a role.md stub if one does not already exist.
+  5. Prepends Claude default permission args, and prepends Codex permission
+     args only when --trust trusted is set. --no-default-args opts out of all
+     built-in defaults.
+  6. Inserts --model <name> for codex or claude when --model is provided.
+  7. Prepends --codex-args or --claude-args for the matching binary.
+  8. Translates --conversation for Codex or Claude resume when provided.
+  9. Adds a generated bootstrap prompt unless --no-bootstrap is set or
      non-default binary args were provided.
-  8. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
+ 10. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
 
 With --dry-run, the resolved coop exec command is printed and amq-squad exits.
 Disk state is untouched and no exec occurs.
@@ -71,12 +78,20 @@ still combine with --conversation.
 	if err := fs.Parse(squadArgs); err != nil {
 		return err
 	}
+	trustExplicit := flagWasSet(fs, "trust")
+	trustMode, err := normalizeTrustMode(*trustRaw)
+	if err != nil {
+		return err
+	}
 	conversationRef, err := conversationRefFromFlags(*conversation, *conversationID)
 	if err != nil {
 		return err
 	}
 	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
 	if err != nil {
+		return err
+	}
+	if err := validateTrustCombination(trustMode, trustExplicit, *noDefaultArgs, binaryArgs); err != nil {
 		return err
 	}
 	remaining := fs.Args()
@@ -89,7 +104,8 @@ still combine with --conversation.
 		childArgs = append(remaining[1:], childArgs...)
 	}
 	extraDefaultArgs := binaryArgsFor(binary, binaryArgs)
-	defaultArgs := launchDefaultChildArgs(binary, !*noDefaultArgs, extraDefaultArgs)
+	modelArgs := modelArgsForBinary(binary, *model)
+	defaultArgs := launchDefaultChildArgsWithTrust(binary, !*noDefaultArgs, modelArgs, extraDefaultArgs, trustMode)
 	childArgs = ensureLeadingChildArgs(defaultArgs, childArgs)
 	if conversationRef != "" {
 		var err error
@@ -137,7 +153,11 @@ still combine with --conversation.
 		AMQVersion:       env.AMQVersion,
 		CodexArgs:        binaryArgs["codex"],
 		ClaudeArgs:       binaryArgs["claude"],
+		Model:            strings.TrimSpace(*model),
+		Trust:            trustMode,
 		NoDefaultArgs:    *noDefaultArgs,
+		AgentPID:         os.Getpid(),
+		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
 	}
 
@@ -174,6 +194,20 @@ still combine with --conversation.
 		fmt.Println(shellCommand("amq", coopArgs...))
 		fmt.Fprintln(os.Stderr, "(dry run - no files written, not execing)")
 		return nil
+	}
+
+	preflight := agentLaunchPreflight{
+		AgentDir:   agentDir,
+		Handle:     handle,
+		Workstream: env.SessionName,
+		Root:       root,
+		Binary:     binary,
+		Force:      *forceDuplicate,
+	}
+	if blocker, err := preflight.check(defaultDuplicateLaunchProbe); err != nil {
+		return err
+	} else if blocker != nil {
+		return blocker
 	}
 
 	if err := launch.Write(agentDir, rec); err != nil {
