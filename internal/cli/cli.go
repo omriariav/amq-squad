@@ -1,7 +1,11 @@
 // Package cli is the top-level command dispatcher for amq-squad.
 package cli
 
-import "fmt"
+import (
+	"errors"
+	"flag"
+	"fmt"
+)
 
 // UsageError signals a misuse of the CLI; main prints it and exits 2.
 type UsageError string
@@ -12,7 +16,8 @@ func usageErrorf(format string, args ...any) error {
 	return UsageError(fmt.Sprintf(format, args...))
 }
 
-// Run dispatches to a subcommand.
+// Run dispatches to a subcommand. flag.ErrHelp from any --help path is
+// swallowed so help output exits 0 across commands.
 func Run(args []string, version string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		printUsage()
@@ -23,6 +28,14 @@ func Run(args []string, version string) error {
 		return nil
 	}
 
+	err := dispatch(args)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+	return err
+}
+
+func dispatch(args []string) error {
 	switch args[0] {
 	case "team":
 		return runTeam(args[1:])

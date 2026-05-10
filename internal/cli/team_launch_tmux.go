@@ -65,21 +65,20 @@ func (b tmuxTeamLaunchBackend) Launch(t team.Team, opts teamLaunchOptions) error
 }
 
 func (tmuxTeamLaunchBackend) buildPlan(t team.Team, opts teamLaunchOptions) tmuxLaunchPlan {
-	session := opts.TerminalSession
-	if session == "" {
-		session = defaultTmuxSessionName(t.Project)
+	if opts.TerminalSession == "" {
+		opts.TerminalSession = defaultTmuxSessionName(t.Project)
 	}
-	return buildTmuxLaunchPlan(t, opts.SquadBin, session, opts.Target, opts.Layout, opts.NoBootstrap, opts.Stagger, opts.Workstream, opts.BinaryArgs)
+	return buildTmuxLaunchPlan(t, opts)
 }
 
-func buildTmuxLaunchPlan(t team.Team, squadBin, sessionName, target, layout string, noBootstrap bool, startDelay time.Duration, workstream string, extraBinaryArgs map[string][]string) tmuxLaunchPlan {
+func buildTmuxLaunchPlan(t team.Team, opts teamLaunchOptions) tmuxLaunchPlan {
 	return tmuxLaunchPlan{
-		Session:    sessionName,
-		Workstream: workstream,
-		Target:     target,
-		Layout:     layout,
-		Panes:      buildTeamLaunchPanes(t, squadBin, noBootstrap, workstream, extraBinaryArgs),
-		StartDelay: startDelay,
+		Session:    opts.TerminalSession,
+		Workstream: opts.Workstream,
+		Target:     opts.Target,
+		Layout:     opts.Layout,
+		Panes:      buildTeamLaunchPanes(t, opts),
+		StartDelay: opts.Stagger,
 	}
 }
 
