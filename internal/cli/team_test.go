@@ -14,6 +14,49 @@ import (
 	"github.com/omriariav/amq-squad/internal/team"
 )
 
+// Persisted team args that contradict the trust profile must be caught
+// before launch commands are emitted, not surface as per-pane errors after
+// tmux panes are open.
+func TestEmitTeamCommandsRejectsPersistedSandboxedBypass(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.Write(dir, team.Team{
+		Trust:      trustModeSandboxed,
+		BinaryArgs: map[string][]string{"codex": {"--dangerously-bypass-approvals-and-sandbox"}},
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := emitTeamCommands(dir, emitTeamOptions{})
+	if err == nil {
+		t.Fatal("sandboxed team with bypass in stored binary args should fail")
+	}
+	if !strings.Contains(err.Error(), "trusted") {
+		t.Fatalf("error should suggest trusted: %v", err)
+	}
+}
+
+func TestEmitTeamCommandsRejectsUnknownModelRoleKey(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := emitTeamCommands(dir, emitTeamOptions{
+		ModelOverrides: map[string]string{"ctoo": "gpt-5"},
+	})
+	if err == nil {
+		t.Fatal("unknown role key in --model should fail")
+	}
+	if !strings.Contains(err.Error(), "ctoo") {
+		t.Fatalf("error should name the bad key: %v", err)
+	}
+}
+
 func TestSplitCSV(t *testing.T) {
 	cases := map[string][]string{
 		"a,b,c":       {"a", "b", "c"},
@@ -73,7 +116,10 @@ func TestEmitTeamCommandShape(t *testing.T) {
 		Handle:  "designer",
 		Session: "designer",
 	}
-	cmd := emitTeamCommand("/home/u/proj", "amq-squad", "/home/u/proj", m, false, "proj", nil)
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/home/u/proj", SquadBin: "amq-squad", TeamHome: "/home/u/proj",
+		Member: m, Workstream: "proj", TrustMode: trustModeSandboxed,
+	})
 	for _, want := range []string{
 		"cd /home/u/proj",
 		"amq-squad launch",
@@ -91,18 +137,65 @@ func TestEmitTeamCommandShape(t *testing.T) {
 	}
 }
 
-func TestEmitTeamCommandAddsCodexDefaultArgs(t *testing.T) {
+func TestEmitTeamCommandSandboxedCodexOmitsBypass(t *testing.T) {
 	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
-	cmd := emitTeamCommand("/p", "amq-squad", "/p", m, false, "p", nil)
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p",
+		Member: m, Workstream: "p", TrustMode: trustModeSandboxed,
+	})
+	if strings.Contains(cmd, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Errorf("sandboxed codex should not include bypass arg in: %s", cmd)
+	}
+	if !strings.Contains(cmd, "--trust sandboxed") {
+		t.Errorf("expected --trust sandboxed in: %s", cmd)
+	}
+}
+
+func TestEmitTeamCommandTrustedCodexIncludesBypass(t *testing.T) {
+	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p",
+		Member: m, Workstream: "p", TrustMode: trustModeTrusted,
+	})
 	if !strings.Contains(cmd, "-- --dangerously-bypass-approvals-and-sandbox") {
-		t.Errorf("expected codex default args in: %s", cmd)
+		t.Errorf("trusted codex must include bypass arg in: %s", cmd)
+	}
+	if !strings.Contains(cmd, "--trust trusted") {
+		t.Errorf("expected --trust trusted in: %s", cmd)
+	}
+}
+
+func TestEmitTeamCommandIncludesModelOverride(t *testing.T) {
+	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto", Model: "gpt-5"}
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p",
+		Member: m, Workstream: "p", TrustMode: trustModeSandboxed, Model: m.Model,
+	})
+	if !strings.Contains(cmd, "--model gpt-5") {
+		t.Errorf("expected --model gpt-5 launch flag in: %s", cmd)
+	}
+	if !strings.Contains(cmd, "codex -- --model gpt-5") {
+		t.Errorf("expected codex native --model placement in: %s", cmd)
+	}
+}
+
+func TestEmitTeamCommandClaudeModelPlacement(t *testing.T) {
+	m := team.Member{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "fullstack", Model: "sonnet"}
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p",
+		Member: m, Workstream: "p", TrustMode: trustModeSandboxed, Model: m.Model,
+	})
+	if !strings.Contains(cmd, "claude -- --permission-mode auto --model sonnet") {
+		t.Errorf("expected claude default + model placement in: %s", cmd)
 	}
 }
 
 func TestEmitTeamCommandAddsConfiguredBinaryArgs(t *testing.T) {
 	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
-	cmd := emitTeamCommand("/p", "amq-squad", "/p", m, false, "p", map[string][]string{
-		"codex": {"--enable", "goals"},
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p",
+		Member: m, Workstream: "p", TrustMode: trustModeTrusted,
+		BinaryArgs: map[string][]string{"codex": {"--enable", "goals"}},
 	})
 	for _, want := range []string{
 		"--codex-args='--enable goals'",
@@ -116,7 +209,10 @@ func TestEmitTeamCommandAddsConfiguredBinaryArgs(t *testing.T) {
 
 func TestEmitTeamCommandQuotesPathsWithSpaces(t *testing.T) {
 	m := team.Member{Role: "cpo", Binary: "codex", Handle: "cpo", Session: "cpo"}
-	cmd := emitTeamCommand("/home/user/my project", "amq-squad", "/home/user/my project", m, false, "my-project", nil)
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/home/user/my project", SquadBin: "amq-squad", TeamHome: "/home/user/my project",
+		Member: m, Workstream: "my-project", TrustMode: trustModeSandboxed,
+	})
 	if !strings.Contains(cmd, "'/home/user/my project'") {
 		t.Errorf("project path not quoted: %s", cmd)
 	}
@@ -124,7 +220,10 @@ func TestEmitTeamCommandQuotesPathsWithSpaces(t *testing.T) {
 
 func TestEmitTeamCommandUsesBinaryPath(t *testing.T) {
 	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
-	cmd := emitTeamCommand("/p", "/usr/local/bin/amq-squad", "/p", m, false, "p", nil)
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "/usr/local/bin/amq-squad", TeamHome: "/p",
+		Member: m, Workstream: "p", TrustMode: trustModeSandboxed,
+	})
 	if !strings.Contains(cmd, "/usr/local/bin/amq-squad launch") {
 		t.Errorf("expected absolute binary path in: %s", cmd)
 	}
@@ -132,7 +231,10 @@ func TestEmitTeamCommandUsesBinaryPath(t *testing.T) {
 
 func TestEmitTeamCommandNoBootstrap(t *testing.T) {
 	m := team.Member{Role: "qa", Binary: "claude", Handle: "qa", Session: "qa"}
-	cmd := emitTeamCommand("/p", "amq-squad", "/team", m, true, "team", nil)
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/team",
+		Member: m, NoBootstrap: true, Workstream: "team", TrustMode: trustModeSandboxed,
+	})
 	if !strings.Contains(cmd, "--no-bootstrap") {
 		t.Errorf("expected --no-bootstrap in: %s", cmd)
 	}
@@ -170,7 +272,7 @@ func TestRunTeamShowUsesDefaultSharedWorkstream(t *testing.T) {
 	workstream := defaultWorkstreamName(dir)
 	for _, want := range []string{
 		"# workstream: " + workstream,
-		"--session " + workstream + " --team-workstream --team-home",
+		"--session " + workstream + " --team-workstream",
 		"--no-bootstrap --me cto codex",
 		"--no-bootstrap --me fullstack claude",
 	} {
@@ -212,7 +314,7 @@ func TestRunTeamShowUsesStoredSharedWorkstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runTeamShow: %v\nstderr:\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "# workstream: issue-96") || !strings.Contains(stdout, "--session issue-96 --team-workstream --team-home") {
+	if !strings.Contains(stdout, "# workstream: issue-96") || !strings.Contains(stdout, "--session issue-96 --team-workstream") {
 		t.Fatalf("team show did not use stored shared workstream:\n%s", stdout)
 	}
 }
@@ -232,6 +334,7 @@ func TestRunTeamShowMergesStoredAndRunBinaryArgs(t *testing.T) {
 		}
 	})
 	if err := team.Write(dir, team.Team{
+		Trust:      trustModeTrusted,
 		BinaryArgs: map[string][]string{"codex": {"--enable", "goals"}},
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
@@ -387,17 +490,19 @@ printf '{"root":"%s"}\n' "$root"
 }
 
 func TestShouldAppendBootstrapWithDefaultChildArgs(t *testing.T) {
+	// Sandboxed Codex has no built-in default args, so bootstrap should still
+	// be appended on empty input. Trusted Codex behaves like the legacy default.
 	cases := []struct {
 		name      string
 		binary    string
 		childArgs []string
 		want      bool
 	}{
-		{name: "empty args", binary: "codex", want: true},
-		{name: "codex defaults", binary: "codex", childArgs: []string{"--dangerously-bypass-approvals-and-sandbox"}, want: true},
+		{name: "empty args codex", binary: "codex", want: true},
+		{name: "empty args claude", binary: "claude", want: true},
 		{name: "claude defaults", binary: "claude", childArgs: []string{"--permission-mode", "auto"}, want: true},
 		{name: "non-default args", binary: "claude", childArgs: []string{"--resume", "abc"}, want: false},
-		{name: "defaults plus custom args", binary: "codex", childArgs: []string{"--dangerously-bypass-approvals-and-sandbox", "--foo"}, want: false},
+		{name: "codex sandboxed has no defaults so bypass alone is non-default", binary: "codex", childArgs: []string{"--dangerously-bypass-approvals-and-sandbox"}, want: false},
 	}
 	for _, tc := range cases {
 		if got := shouldAppendBootstrap(tc.binary, tc.childArgs); got != tc.want {
@@ -414,30 +519,27 @@ func TestShouldAppendBootstrapWithDefaultChildArgs(t *testing.T) {
 }
 
 func TestEnsureDefaultChildArgs(t *testing.T) {
+	// Sandboxed Codex (the new default) has no built-in defaults to ensure.
 	got := ensureDefaultChildArgs("codex", nil)
-	want := []string{"--dangerously-bypass-approvals-and-sandbox"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ensureDefaultChildArgs codex = %v, want %v", got, want)
+	if len(got) != 0 {
+		t.Errorf("ensureDefaultChildArgs sandboxed codex = %v, want []", got)
 	}
 	got = ensureDefaultChildArgs("claude", nil)
-	want = []string{"--permission-mode", "auto"}
+	want := []string{"--permission-mode", "auto"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ensureDefaultChildArgs claude = %v, want %v", got, want)
 	}
-	got = ensureDefaultChildArgs("codex", []string{"test-prompt"})
-	want = []string{"--dangerously-bypass-approvals-and-sandbox", "test-prompt"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ensureDefaultChildArgs should prepend defaults: got %v, want %v", got, want)
+	// Trusted codex still prepends the bypass arg.
+	trusted := defaultChildArgsForBinaryWithTrust("codex", trustModeTrusted)
+	if got := ensureLeadingChildArgs(trusted, nil); !reflect.DeepEqual(got, []string{"--dangerously-bypass-approvals-and-sandbox"}) {
+		t.Errorf("trusted codex defaults: got %v", got)
+	}
+	if got := ensureLeadingChildArgs(trusted, []string{"test-prompt"}); !reflect.DeepEqual(got, []string{"--dangerously-bypass-approvals-and-sandbox", "test-prompt"}) {
+		t.Errorf("trusted codex prepend: got %v", got)
 	}
 	explicit := []string{"--dangerously-bypass-approvals-and-sandbox", "--resume", "abc"}
-	got = ensureDefaultChildArgs("codex", explicit)
-	if !reflect.DeepEqual(got, explicit) {
-		t.Errorf("ensureDefaultChildArgs should not duplicate defaults: got %v, want %v", got, explicit)
-	}
-	got = ensureDefaultChildArgs("codex", []string{"test-prompt", "--dangerously-bypass-approvals-and-sandbox"})
-	want = []string{"--dangerously-bypass-approvals-and-sandbox", "test-prompt", "--dangerously-bypass-approvals-and-sandbox"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ensureDefaultChildArgs should keep defaults before prompts: got %v, want %v", got, want)
+	if got := ensureLeadingChildArgs(trusted, explicit); !reflect.DeepEqual(got, explicit) {
+		t.Errorf("trusted codex idempotent: got %v", got)
 	}
 	got = ensureLeadingChildArgs([]string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals"}, []string{"--dangerously-bypass-approvals-and-sandbox", "prompt"})
 	want = []string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals", "prompt"}

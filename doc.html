@@ -510,7 +510,7 @@
     <main>
       <header class="hero">
         <div class="hero-inner">
-          <p class="eyebrow">v0.6.0 guide</p>
+          <p class="eyebrow">v0.6.1 guide</p>
           <h1>How to use amq-squad</h1>
           <p class="lead">
             amq-squad is the project layer above AMQ. It records who is on the
@@ -542,7 +542,7 @@
             into <code class="inline-code">$GOBIN</code> or
             <code class="inline-code">$HOME/go/bin</code>.
           </p>
-          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.6.0
+          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.6.1
 amq-squad version</code></pre></div>
           <p>
             You also need Go 1.25 or newer, the <code class="inline-code">amq</code>
@@ -646,6 +646,101 @@ amq-squad team</code></pre></div>
             Binary args are stored in <code class="inline-code">team.json</code>
             and added to every matching Codex or Claude launch. They are treated
             as launch defaults, so bootstrap and conversation restore still work.
+          </p>
+
+          <h3>Codex trust profile</h3>
+          <div class="code"><pre><code>amq-squad team init --personas cto,fullstack --trust trusted
+amq-squad launch --trust sandboxed codex
+amq-squad launch --trust trusted codex</code></pre></div>
+          <p>
+            Codex launches default to <code class="inline-code">--trust sandboxed</code>:
+            no <code class="inline-code">--dangerously-bypass-approvals-and-sandbox</code>
+            is added. Choose <code class="inline-code">trusted</code> only for
+            local power-user setups; that profile prepends the bypass flag and
+            is persisted in <code class="inline-code">team.json</code>.
+          </p>
+          <p>
+            Trust is Codex-specific. Claude defaults are unaffected. Combining
+            <code class="inline-code">--trust trusted</code> with
+            <code class="inline-code">--no-default-args</code> is rejected, as
+            is sandboxed mode with the bypass flag smuggled through
+            <code class="inline-code">--codex-args</code>.
+          </p>
+
+          <h3>Model selection</h3>
+          <div class="code"><pre><code>amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
+amq-squad launch --model gpt-5 codex
+amq-squad team launch --model cto=gpt-5</code></pre></div>
+          <p>
+            Per-member model is persisted in
+            <code class="inline-code">team.json</code> and emitted as the
+            native <code class="inline-code">--model &lt;name&gt;</code> flag for
+            Codex and Claude. <code class="inline-code">team show</code> /
+            <code class="inline-code">team launch</code> accept run-time
+            overrides; restore replays the persisted model.
+          </p>
+
+          <h3>Duplicate-launch guard</h3>
+          <p>
+            <code class="inline-code">amq-squad launch</code> refuses by default
+            when a live agent for the same handle / workstream is detected
+            (live <code class="inline-code">amq wake</code> lock, an agent PID
+            still running, or fresh active presence). Stale artifacts are
+            removed automatically. <code class="inline-code">team launch</code>
+            preflights every member before opening any tmux pane so a
+            half-launched team never appears. Override with
+            <code class="inline-code">--force-duplicate</code> when intentional.
+          </p>
+
+          <h3>Wake health in list / restore</h3>
+          <p>
+            <code class="inline-code">amq-squad list</code> exposes a
+            <code class="inline-code">WAKE</code> column for active-looking
+            records (<code class="inline-code">pid:N</code>,
+            <code class="inline-code">missing</code>, or
+            <code class="inline-code">stale</code>).
+            <code class="inline-code">amq-squad restore</code> appends the same
+            tag to its metadata line so split-brain situations show up before
+            you launch into them.
+          </p>
+
+          <h3>Bringing the team back</h3>
+          <p>
+            After a reboot, terminal close, or Codex/Claude upgrade, run a
+            single command and let amq-squad pick the right path per member:
+          </p>
+          <div class="code"><pre><code>amq-squad team resume
+amq-squad team resume --session v0-6-0-review
+amq-squad team resume --restore-existing
+amq-squad team resume --fresh --session v0-6-1</code></pre></div>
+          <p>
+            <code class="inline-code">team resume</code> reads
+            <code class="inline-code">.amq-squad/team.json</code>, scans
+            local launch history, and inspects live-agent signals (wake
+            locks, agent PIDs, presence). It prints a per-member plan plus
+            copy-pasteable commands. Action labels:
+          </p>
+          <ul>
+            <li><strong>live</strong>: matching agent is running; command
+              suppressed unless <code class="inline-code">--force-duplicate</code>.</li>
+            <li><strong>restore</strong>: launch record exists for the
+              workstream; replay preserves trust, model, conversation,
+              role, handle, and binary args.</li>
+            <li><strong>launch fresh</strong>: no record; emitted command
+              matches <code class="inline-code">team launch</code> for the
+              member.</li>
+            <li><strong>blocked</strong>: ambiguous live state; pick
+              <code class="inline-code">--force-duplicate</code> or narrow
+              with <code class="inline-code">--session</code>.</li>
+          </ul>
+          <p>
+            <code class="inline-code">team resume</code> is plan-only and
+            does not mutate disk. Existing power-user commands remain:
+            <code class="inline-code">team launch</code> for tmux-pane
+            launches from team intent,
+            <code class="inline-code">restore</code> for explicit
+            launch-history replay, and
+            <code class="inline-code">list</code> for inspection.
           </p>
         </div>
       </section>
@@ -873,7 +968,7 @@ amq drain --include-body</code></pre></div>
               <p>Check which binary is running, then reinstall the desired tag.</p>
               <div class="code"><pre><code>which -a amq-squad
 amq-squad version
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.6.0</code></pre></div>
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.6.1</code></pre></div>
             </div>
             <div class="panel">
               <h3>Launch plan looks wrong</h3>

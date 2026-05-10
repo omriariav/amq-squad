@@ -18,7 +18,15 @@ func TestBuildTmuxLaunchPlanUsesCatalogOrderAndLaunchCommands(t *testing.T) {
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
 		},
 	}
-	plan := buildTmuxLaunchPlan(tm, "/bin/amq-squad", "amq-squad-repo", "new-session", "vertical", false, 750*time.Millisecond, "repo", nil)
+	plan := buildTmuxLaunchPlan(tm, teamLaunchOptions{
+		SquadBin:        "/bin/amq-squad",
+		TerminalSession: "amq-squad-repo",
+		Target:          "new-session",
+		Layout:          "vertical",
+		Stagger:         750 * time.Millisecond,
+		Workstream:      "repo",
+		Trust:           trustModeTrusted,
+	})
 	if plan.Session != "amq-squad-repo" {
 		t.Fatalf("Session = %q", plan.Session)
 	}
@@ -37,6 +45,20 @@ func TestBuildTmuxLaunchPlanUsesCatalogOrderAndLaunchCommands(t *testing.T) {
 	} {
 		if !strings.Contains(plan.Panes[0].Command, want) {
 			t.Errorf("cto command missing %q in %s", want, plan.Panes[0].Command)
+		}
+	}
+}
+
+func TestRunTeamLaunchHelpListsNewDXFlags(t *testing.T) {
+	_, stderr, err := captureOutput(t, func() error {
+		return runTeamLaunch([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamLaunch --help: %v", err)
+	}
+	for _, want := range []string{"--trust", "--model", "--force-duplicate"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("team launch --help missing %q in:\n%s", want, stderr)
 		}
 	}
 }
@@ -155,7 +177,7 @@ func TestRunTeamLaunchDryRunDefaultsToCurrentWindow(t *testing.T) {
 		"tmux split-window",
 		" -h -c ",
 		"tmux select-layout -t \"$window\" even-horizontal",
-		"--no-bootstrap --me cto codex -- --dangerously-bypass-approvals-and-sandbox",
+		"--no-bootstrap --me cto codex",
 		"--no-bootstrap --me fullstack claude -- --permission-mode auto",
 		"--session ",
 		"# using current tmux window; no attach needed",
@@ -200,7 +222,7 @@ func TestRunTeamLaunchDryRunUsesExplicitSharedWorkstream(t *testing.T) {
 	}
 	for _, want := range []string{
 		"# workstream: issue-96",
-		"--session issue-96 --team-workstream --team-home",
+		"--session issue-96 --team-workstream",
 		"--no-bootstrap --me cto codex",
 		"--no-bootstrap --me fullstack claude",
 	} {
@@ -237,7 +259,7 @@ func TestRunTeamLaunchDryRunUsesBinaryArgs(t *testing.T) {
 	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamLaunch([]string{"--dry-run", "--no-bootstrap", "--codex-args=--enable goals", "--claude-args=--chrome"})
+		return runTeamLaunch([]string{"--dry-run", "--no-bootstrap", "--trust", "trusted", "--codex-args=--enable goals", "--claude-args=--chrome"})
 	})
 	if err != nil {
 		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)

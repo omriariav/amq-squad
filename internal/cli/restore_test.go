@@ -81,7 +81,7 @@ func TestEmitCommandIncludesConversationWithoutDuplicatingResumeArgs(t *testing.
 	cmd := emitCommand(rec)
 	for _, want := range []string{
 		"--conversation cto-thread",
-		"-- --dangerously-bypass-approvals-and-sandbox",
+		"--trust trusted",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("emitCommand missing %q in: %s", want, cmd)
@@ -89,6 +89,9 @@ func TestEmitCommandIncludesConversationWithoutDuplicatingResumeArgs(t *testing.
 	}
 	if strings.Contains(cmd, " resume cto-thread") {
 		t.Errorf("emitCommand should strip generated resume args when --conversation is present: %s", cmd)
+	}
+	if strings.Contains(cmd, " -- --dangerously-bypass-approvals-and-sandbox") {
+		t.Errorf("emitCommand should not duplicate trusted defaults after --: %s", cmd)
 	}
 }
 
@@ -149,6 +152,8 @@ func TestLaunchArgsFromRecord(t *testing.T) {
 		Root:         "/p/.agent-mail/stream1",
 	}
 	got := launchArgsFromRecord(rec)
+	// Built-in claude defaults are stripped from the -- block on emission;
+	// they are re-prepended on replay.
 	want := []string{
 		"--no-bootstrap",
 		"--role", "fullstack",
@@ -156,8 +161,6 @@ func TestLaunchArgsFromRecord(t *testing.T) {
 		"--conversation", "abc",
 		"--me", "fullstack",
 		"claude",
-		"--",
-		"--permission-mode", "auto",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
@@ -173,7 +176,9 @@ func TestLaunchArgsFromRecordPreservesSharedWorkstream(t *testing.T) {
 		Role:             "cto",
 	}
 	got := launchArgsFromRecord(rec)
-	want := []string{"--no-bootstrap", "--role", "cto", "--session", "cto", "--team-workstream", "--me", "cto", "codex"}
+	// codex defaults to sandboxed; --trust sandboxed is emitted explicitly so
+	// the trust boundary is visible on replay.
+	want := []string{"--no-bootstrap", "--role", "cto", "--session", "cto", "--team-workstream", "--trust", "sandboxed", "--me", "cto", "codex"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
 	}
@@ -189,7 +194,7 @@ func TestLaunchArgsFromRecordUsesRootWithoutSession(t *testing.T) {
 		Root:   "/p/.agent-mail",
 	}
 	got := launchArgsFromRecord(rec)
-	want := []string{"--no-bootstrap", "--root", "/p/.agent-mail", "--me", "codex", "codex"}
+	want := []string{"--no-bootstrap", "--root", "/p/.agent-mail", "--trust", "sandboxed", "--me", "codex", "codex"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
 	}
@@ -226,16 +231,18 @@ func TestLaunchArgsFromRecordRoundTripsConversationWithCodexArgs(t *testing.T) {
 		CodexArgs:    []string{"--enable", "goals"},
 	}
 	got := launchArgsFromRecord(rec)
+	// Legacy record (Trust unset, bypass in argv) classifies as trusted; the
+	// trust default is re-prepended on replay so it is stripped from the
+	// emitted -- block.
 	want := []string{
 		"--no-bootstrap",
 		"--role", "cto",
 		"--session", "cto",
 		"--conversation", "X",
+		"--trust", "trusted",
 		"--codex-args=--enable goals",
 		"--me", "cto",
 		"codex",
-		"--",
-		"--dangerously-bypass-approvals-and-sandbox",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
@@ -256,6 +263,8 @@ func TestLaunchArgsFromRecordRoundTripsConversationWithClaudeArgs(t *testing.T) 
 		ClaudeArgs:   []string{"--chrome"},
 	}
 	got := launchArgsFromRecord(rec)
+	// Built-in claude defaults are stripped on emission; replay re-prepends.
+	// claude has no trust concept so no --trust flag is emitted.
 	want := []string{
 		"--no-bootstrap",
 		"--role", "fullstack",
@@ -264,8 +273,6 @@ func TestLaunchArgsFromRecordRoundTripsConversationWithClaudeArgs(t *testing.T) 
 		"--claude-args=--chrome",
 		"--me", "fullstack",
 		"claude",
-		"--",
-		"--permission-mode", "auto",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
@@ -274,7 +281,7 @@ func TestLaunchArgsFromRecordRoundTripsConversationWithClaudeArgs(t *testing.T) 
 }
 
 // joinedAgentArgs writes a value that parseAgentArgs must re-tokenize
-// identically — pin the round-trip for spaces, single quotes, double quotes,
+// identically; pin the round-trip for spaces, single quotes, double quotes,
 // and backslash escapes.
 func TestBinaryArgsJoinedRoundTripPreservesQuotingAndEscapes(t *testing.T) {
 	cases := [][]string{
@@ -297,7 +304,7 @@ func TestBinaryArgsJoinedRoundTripPreservesQuotingAndEscapes(t *testing.T) {
 	}
 }
 
-// --no-default-args must round-trip — without persistence the restore replay
+// --no-default-args must round-trip; without persistence the restore replay
 // silently re-injects the binary defaults the original launch opted out of.
 func TestLaunchArgsFromRecordPreservesNoDefaultArgs(t *testing.T) {
 	rec := launch.Record{
@@ -311,11 +318,14 @@ func TestLaunchArgsFromRecordPreservesNoDefaultArgs(t *testing.T) {
 		NoDefaultArgs: true,
 	}
 	got := launchArgsFromRecord(rec)
+	// NoDefaultArgs records have no bypass in argv, so trust classifies as
+	// sandboxed. --no-default-args is preserved.
 	want := []string{
 		"--no-bootstrap",
 		"--role", "cto",
 		"--session", "rt",
 		"--no-default-args",
+		"--trust", "sandboxed",
 		"--codex-args=--enable goals",
 		"--me", "cto",
 		"codex",
@@ -354,8 +364,10 @@ func TestLaunchArgsFromRecordEscapesLiteralDashDashInBinaryArgs(t *testing.T) {
 			t.Fatalf("--codex-args lost its value on replay: %#v", squadArgs)
 		}
 	}
-	if !reflect.DeepEqual(postDash, []string{"--dangerously-bypass-approvals-and-sandbox"}) {
-		t.Fatalf("postDash = %#v, want only the leftover default", postDash)
+	// Legacy record with bypass in argv classifies as trusted, so the bypass
+	// arg is stripped from the -- block (replay re-prepends via --trust).
+	if len(postDash) != 0 {
+		t.Fatalf("postDash = %#v, want empty for trusted-classified legacy record", postDash)
 	}
 	parsed, err := parseAgentArgs(extractFlagValue(squadArgs, "--codex-args"))
 	if err != nil {
@@ -398,12 +410,23 @@ func assertConversationReplayAccepted(t *testing.T, args []string) {
 	codexArgsRaw := fs.String("codex-args", "", "")
 	claudeArgsRaw := fs.String("claude-args", "", "")
 	conversation := fs.String("conversation", "", "")
+	trustRaw := fs.String("trust", "", "")
+	model := fs.String("model", "", "")
 	_ = fs.Bool("no-bootstrap", false, "")
+	_ = fs.Bool("no-default-args", false, "")
+	_ = fs.Bool("force-duplicate", false, "")
+	_ = fs.Bool("team-workstream", false, "")
 	_ = fs.String("role", "", "")
 	_ = fs.String("session", "", "")
+	_ = fs.String("root", "", "")
+	_ = fs.String("team-home", "", "")
 	_ = fs.String("me", "", "")
 	if err := fs.Parse(squadArgs); err != nil {
 		t.Fatalf("parse restore squadArgs: %v", err)
+	}
+	trustMode, err := normalizeTrustMode(*trustRaw)
+	if err != nil {
+		t.Fatalf("normalizeTrustMode: %v", err)
 	}
 	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
 	if err != nil {
@@ -416,7 +439,7 @@ func assertConversationReplayAccepted(t *testing.T, args []string) {
 	binary := remaining[0]
 	childArgs := append([]string(nil), remaining[1:]...)
 	childArgs = append(childArgs, postDash...)
-	defaultArgs := launchDefaultChildArgs(binary, true, binaryArgsFor(binary, binaryArgs))
+	defaultArgs := launchDefaultChildArgsWithTrust(binary, true, modelArgsForBinary(binary, *model), binaryArgsFor(binary, binaryArgs), trustMode)
 	childArgs = ensureLeadingChildArgs(defaultArgs, childArgs)
 	if _, err := applyConversationRestoreArgsWithDefaults(binary, childArgs, *conversation, defaultArgs); err != nil {
 		t.Fatalf("conversation restore rejected: %v", err)
