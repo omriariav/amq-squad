@@ -13,11 +13,27 @@ import (
 	"github.com/omriariav/amq-squad/internal/team"
 )
 
+// restoreFromAgentResume is set by runAgentResume so the legacy verb
+// warning fires only when the operator typed `amq-squad restore --exec ...`
+// directly, not when the modern `agent resume R` entry point delegates.
+var restoreFromAgentResume bool
+
 type restoreCandidate struct {
 	entry launch.Entry
 }
 
 func runRestore(args []string) error {
+	if !restoreFromAgentResume && !isHelpInvocation(args) {
+		// Restore print mode and `restore --exec --role R` are both legacy
+		// surfaces. Print mode maps to `history`; --exec --role to
+		// `agent resume R`. The replacement hint differs based on whether
+		// --exec is set, so callers see actionable next-step text.
+		if argsContains(args, "--exec") {
+			deprecationWarning("restore --exec --role R", "agent resume R")
+		} else {
+			deprecationWarning("restore", "history (records) or agent resume <role> (exec)")
+		}
+	}
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	projectDirs := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")
 	execRestore := fs.Bool("exec", false, "exec the selected launch in this terminal")

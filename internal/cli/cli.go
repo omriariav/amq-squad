@@ -117,6 +117,8 @@ func dispatch(args []string) error {
 		return runCompletion(args[1:])
 	case "doctor":
 		return runDoctor(args[1:])
+	case "agent":
+		return runAgent(args[1:])
 	default:
 		return usageErrorf("unknown command: %q. Run 'amq-squad --help' for usage.", args[0])
 	}
@@ -141,7 +143,11 @@ Commands:
   list      List registered agents across known projects
   completion Emit a shell completion script (bash, zsh, fish)
   doctor    Check this project's amq-squad / AMQ setup
+  agent     Launch or resume a single agent (modern names for launch / restore --exec)
   version   Print the amq-squad version
+
+Deprecated verbs (kept through 1.x with one-line deprecation warnings;
+removed in 2.0): team show, team launch, list, launch, restore.
 
 Global flags (accepted before or after the subcommand, until a literal "--"):
   --quiet              Suppress non-data success/progress notices.

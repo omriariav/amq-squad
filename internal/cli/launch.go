@@ -15,7 +15,20 @@ import (
 	"github.com/omriariav/amq-squad/internal/role"
 )
 
+// launchFromAgentUp is set by runAgentUp before delegating to runLaunch so
+// the deprecation warning fires only when the operator typed the legacy
+// `amq-squad launch` directly. It is restored on return.
+var launchFromAgentUp bool
+
 func runLaunch(args []string) error {
+	// Top-level `launch` is deprecated in favor of `agent up` for 1.x.
+	// The warning fires once, before any parsing, so misuse cases still
+	// surface it. agent up delegates to runLaunch (with launchFromAgentUp
+	// set), so the warning is skipped when the modern entry point invokes
+	// us internally. Help invocations stay quiet.
+	if !launchFromAgentUp && !isHelpInvocation(args) {
+		deprecationWarning("launch", "agent up")
+	}
 	// Split at "--" so launcher flags aren't consumed by amq-squad's parser.
 	squadArgs, childArgs := splitDashDash(args)
 

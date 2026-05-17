@@ -27,6 +27,9 @@ type listRecord struct {
 }
 
 func runList(args []string) error {
+	if !isHelpInvocation(args) {
+		deprecationWarning("list", "status (live agents) or history (restorable records)")
+	}
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	projectDirs := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned list envelope instead of the human table")
