@@ -9,12 +9,12 @@ Team members (see .amq-squad/team.json):
 - senior-dev (codex): reviews implementation shape, risk, and test strategy.
 - fullstack (claude): implements features end to end.
 
-## Active workstream
+## Active brief
 
-If `.amq-squad/ACTIVE-EPIC.md` exists, read it at session start. It points
-at the current GitHub epic / milestone driving this workstream. This is the
-manual stand-in for the brief convention spec'd in epic #31; replace with
-`.amq-squad/briefs/<session>.md` once that feature ships.
+Read `.amq-squad/briefs/<session>.md` for the current workstream at session
+start. The bootstrap prompt names the exact resolved path. Briefs capture
+the workstream's goal, scope, and pointers to source-of-truth issues / PRs;
+they live next to team-rules.md, not in CLAUDE.md / AGENTS.md.
 
 ## Skills
 

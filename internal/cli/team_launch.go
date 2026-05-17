@@ -168,6 +168,13 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if opts.DryRun {
 		return backend.DryRun(t, opts)
 	}
+	// Live launch: ensure the team-home active brief exists once before the
+	// backend opens panes. ensureBriefStub is idempotent and preserves any
+	// existing brief content, so this is safe across reruns and parallel
+	// member launches.
+	if _, _, err := ensureBriefStub(t.Project, opts.Workstream); err != nil {
+		return fmt.Errorf("ensure brief: %w", err)
+	}
 	return backend.Launch(t, opts)
 }
 

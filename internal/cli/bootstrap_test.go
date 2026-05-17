@@ -42,6 +42,50 @@ func TestBuildBootstrapPrompt(t *testing.T) {
 	}
 }
 
+func TestBuildBootstrapPromptIncludesBriefPath(t *testing.T) {
+	got, err := buildBootstrapPrompt(bootstrapContext{
+		Role:       "cto",
+		Handle:     "cto",
+		Binary:     "codex",
+		Session:    "issue-96",
+		CWD:        "/repo",
+		TeamHome:   "/repo",
+		LaunchPath: "/repo/.agent-mail/issue-96/agents/cto/launch.json",
+		BriefPath:  "/repo/.amq-squad/briefs/issue-96.md",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "Active brief: /repo/.amq-squad/briefs/issue-96.md") {
+		t.Errorf("bootstrap prompt missing resolved brief path:\n%s", got)
+	}
+}
+
+func TestBuildBootstrapPromptOmitsBriefWhenAbsent(t *testing.T) {
+	got, err := buildBootstrapPrompt(bootstrapContext{
+		Handle:     "cto",
+		Binary:     "codex",
+		LaunchPath: "/repo/launch.json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "Active brief:") {
+		t.Errorf("bootstrap prompt should omit Active brief when unresolved:\n%s", got)
+	}
+}
+
+func TestBootstrapContextForResolvesBriefPath(t *testing.T) {
+	teamHome := t.TempDir()
+	ctx := bootstrapContextFor(launch.Record{
+		Role: "cto", Handle: "cto", Binary: "codex", Session: "issue-96", CWD: teamHome,
+	}, teamHome+"/agents/cto", teamHome)
+	want := teamHome + "/.amq-squad/briefs/issue-96.md"
+	if ctx.BriefPath != want {
+		t.Errorf("BriefPath = %q, want %q", ctx.BriefPath, want)
+	}
+}
+
 func TestBuildBootstrapPromptWithoutRules(t *testing.T) {
 	got, err := buildBootstrapPrompt(bootstrapContext{
 		Handle: "claude",
