@@ -43,6 +43,10 @@ func dispatch(args []string) error {
 		return runUp(args[1:])
 	case "down":
 		return runDown(args[1:])
+	case "status":
+		return runStatus(args[1:])
+	case "history":
+		return runHistory(args[1:])
 	case "launch":
 		return runLaunch(args[1:])
 	case "restore":
@@ -64,6 +68,8 @@ Commands:
   team      Pick your team once, then show or launch it on demand
   up        Bring the team up (use --dry-run to print the launch plan)
   down      Stop configured team members (currently --force only)
+  status    Live state of this project's configured team
+  history   List restorable launch records
   launch    Launch a single agent with a role (called by 'team show' output)
   restore   Restore registered agents from local launch history
   list      List registered agents across known projects
