@@ -486,49 +486,63 @@
         <div class="mark">AQ</div>
         <div>
           <strong>amq-squad</strong>
-          <span>Team launcher guide</span>
+          <span>1.0 guide</span>
         </div>
       </div>
       <nav aria-label="Guide sections">
         <a href="#install">Install</a>
         <a href="#model">Core model</a>
         <a href="#quickstart">Quick start</a>
+        <a href="#context">Context model</a>
+        <a href="#briefs">Workstream briefs</a>
+        <a href="#profiles">Profiles</a>
+        <a href="#verbs">Verbs</a>
+        <a href="#json">JSON and exit codes</a>
+        <a href="#completion">Shell completions</a>
         <a href="#workstreams">Sessions and threads</a>
-        <a href="#rules">Team rules</a>
-        <a href="#launch">Launch options</a>
-        <a href="#messaging">Messaging</a>
+        <a href="#cross">Cross-project teams</a>
         <a href="#files">Files</a>
+        <a href="#deprecated">Deprecated 1.x verbs</a>
         <a href="#troubleshooting">Troubleshooting</a>
       </nav>
       <div class="side-note">
-        Use this guide when you want a repeatable agent team in one repo or
-        across several repos. AMQ still owns delivery. amq-squad owns team
-        shape, launch context, and role routing.
+        amq-squad is the project layer above AMQ. AMQ owns messaging.
+        amq-squad owns the team shape (roster, role docs, briefs), the
+        launch context, and the pointer stubs that route each agent to
+        its source-of-truth files.
       </div>
     </aside>
 
     <main>
       <header class="hero">
         <div class="hero-inner">
-          <p class="eyebrow">v0.6.1 guide</p>
+          <p class="eyebrow">1.0 guide</p>
           <h1>How to use amq-squad</h1>
           <p class="lead">
             amq-squad is the project layer above AMQ. It records who is on the
             team, what role each agent plays, which binary each role runs, and
-            how to launch the whole team back into the same AMQ workstream.
+            how to bring the whole team up, down, back, or into a new
+            workstream. The 1.0 verb model centers on
+            <code class="inline-code">up</code>,
+            <code class="inline-code">down</code>,
+            <code class="inline-code">resume</code>, and
+            <code class="inline-code">fork</code>, with
+            <code class="inline-code">status</code> /
+            <code class="inline-code">history</code> /
+            <code class="inline-code">doctor</code> for inspection.
           </p>
           <div class="hero-grid" aria-label="Key concepts">
             <div class="metric">
-              <b>1</b>
-              <span>shared AMQ session per issue, release, branch, or focused workstream</span>
+              <b>3</b>
+              <span>durable context layers: team-rules.md, role.md, briefs/&lt;session&gt;.md</span>
             </div>
             <div class="metric">
-              <b>n</b>
-              <span>threads inside that session for reviews, decisions, and role handoffs</span>
+              <b>1</b>
+              <span>shared AMQ session per workstream; many threads for reviews and decisions</span>
             </div>
             <div class="metric">
               <b>0</b>
-              <span>required AMQ changes. amq-squad launches through normal AMQ commands</span>
+              <span>required AMQ changes. amq-squad still launches through plain amq coop exec</span>
             </div>
           </div>
         </div>
@@ -542,12 +556,13 @@
             into <code class="inline-code">$GOBIN</code> or
             <code class="inline-code">$HOME/go/bin</code>.
           </p>
-          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.6.1
+          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/cmd/amq-squad@latest
 amq-squad version</code></pre></div>
           <p>
             You also need Go 1.25 or newer, the <code class="inline-code">amq</code>
-            binary in <code class="inline-code">PATH</code> at v0.34 or newer, and
-            <code class="inline-code">tmux</code> if you want automatic pane launch.
+            binary on <code class="inline-code">PATH</code> at v0.34 or newer, and
+            <code class="inline-code">tmux</code> on <code class="inline-code">PATH</code>
+            for <code class="inline-code">amq-squad up</code>.
           </p>
         </div>
       </section>
@@ -556,9 +571,12 @@ amq-squad version</code></pre></div>
         <div class="content">
           <h2>Core model</h2>
           <p>
-            AMQ is the message queue. amq-squad is the team operating layer.
-            It keeps durable team intent in the project and writes per-agent
-            launch records when each role starts.
+            AMQ is the message queue. amq-squad is the team operating
+            layer. It keeps durable team intent in the project (roster,
+            rules, briefs), writes per-agent launch records when each
+            role starts, and routes every agent at session start through
+            a small pointer stub in <code class="inline-code">CLAUDE.md</code>
+            and <code class="inline-code">AGENTS.md</code>.
           </p>
           <div class="model">
             <article class="model-panel">
@@ -576,11 +594,12 @@ amq-squad version</code></pre></div>
             <article class="model-panel">
               <header>amq-squad owns teams</header>
               <div class="body">
-                <p>amq-squad stores the roster, role docs, shared rules, member working directories, and exact launch commands needed to recreate the team.</p>
+                <p>amq-squad stores the roster, team rules, per-session briefs, member cwds, and saved launch records. It brings the team up, down, back, or into a new workstream.</p>
                 <div class="pill-row">
-                  <span class="pill">roles</span>
-                  <span class="pill">binaries</span>
+                  <span class="pill">team profiles</span>
                   <span class="pill">team rules</span>
+                  <span class="pill">briefs</span>
+                  <span class="pill">pointer stubs</span>
                   <span class="pill">launch records</span>
                 </div>
               </div>
@@ -594,38 +613,53 @@ amq-squad version</code></pre></div>
           <h2>Quick start</h2>
           <p>
             Start in the repository that should own the team. That directory
-            becomes the team-home and receives <code class="inline-code">.amq-squad/team.json</code>.
+            becomes the team-home and receives
+            <code class="inline-code">.amq-squad/team.json</code> and
+            <code class="inline-code">.amq-squad/team-rules.md</code>.
           </p>
           <div class="flow">
             <div class="step">
               <span class="num">1</span>
-              <b>Pick a team</b>
-              <span>Choose personas such as CTO, Fullstack, QA, PM, or Designer.</span>
+              <b>team init</b>
+              <span>Write the team profile and seed team-rules.md.</span>
             </div>
             <div class="step">
               <span class="num">2</span>
-              <b>Name the workstream</b>
-              <span>Use one shared AMQ session for the whole issue, release, or branch.</span>
+              <b>team sync --apply</b>
+              <span>Write the pointer stub into CLAUDE.md and AGENTS.md.</span>
             </div>
             <div class="step">
               <span class="num">3</span>
-              <b>Sync rules</b>
-              <span>Push shared team rules into CLAUDE.md and AGENTS.md.</span>
+              <b>up --dry-run</b>
+              <span>Preview the launch plan, one command per member.</span>
             </div>
             <div class="step">
               <span class="num">4</span>
-              <b>Launch agents</b>
-              <span>Paste generated commands or let tmux create panes.</span>
+              <b>up</b>
+              <span>Bring the team up live in tmux.</span>
             </div>
           </div>
 
-          <h3>Interactive setup</h3>
           <div class="code"><pre><code>cd ~/Code/my-project
-amq-squad team</code></pre></div>
+
+amq-squad team init                  # write .amq-squad/team.json + team-rules.md
+amq-squad team sync --apply          # sync pointer stub into CLAUDE.md / AGENTS.md
+amq-squad up --dry-run               # preview the launch plan
+amq-squad up                         # open the team live in tmux
+
+amq-squad status                     # live state of configured members
+amq-squad history                    # restorable launch records for this project
+amq-squad doctor                     # AMQ version / tmux / wake / markers
+
+amq-squad down --all --force         # SIGTERM the team
+amq-squad resume                     # plan recovery after reboot / upgrade / close
+amq-squad fork --from &lt;cur&gt; --as &lt;new&gt;  # branch a fresh workstream</code></pre></div>
+
           <p>
-            On first run, this asks which personas you want and which CLI each
-            one should run. Later runs print the same launch commands.
+            Single-agent primitives:
           </p>
+          <div class="code"><pre><code>amq-squad agent up codex --role cto --session issue-96
+amq-squad agent resume fullstack</code></pre></div>
 
           <h3>Non-interactive setup</h3>
           <div class="code"><pre><code>amq-squad team init \
@@ -633,90 +667,73 @@ amq-squad team</code></pre></div>
   --binary fullstack=claude,qa=claude \
   --session issue-96</code></pre></div>
           <p>
-            The <code class="inline-code">--session</code> value is the AMQ
-            workstream name. Use an explicit name when the work should be easy
-            to resume later.
-          </p>
-          <h3>Native binary flags</h3>
-          <div class="code"><pre><code>amq-squad team init \
-  --personas cto,fullstack \
-  --codex-args '--enable goals' \
-  --claude-args '--chrome'</code></pre></div>
-          <p>
-            Binary args are stored in <code class="inline-code">team.json</code>
-            and added to every matching Codex or Claude launch. They are treated
-            as launch defaults, so bootstrap and conversation restore still work.
+            <code class="inline-code">--session</code> is the AMQ workstream
+            name. Use an explicit name when the work should be easy to resume
+            later. Names are strict: lowercase letters, digits, hyphens,
+            underscores. Write release names as
+            <code class="inline-code">v0-5-0</code>, not
+            <code class="inline-code">v0.5.0</code>.
           </p>
 
           <h3>Codex trust profile</h3>
           <div class="code"><pre><code>amq-squad team init --personas cto,fullstack --trust trusted
-amq-squad launch --trust sandboxed codex
-amq-squad launch --trust trusted codex</code></pre></div>
+amq-squad agent up codex --trust sandboxed
+amq-squad agent up codex --trust trusted</code></pre></div>
           <p>
-            Codex launches default to <code class="inline-code">--trust sandboxed</code>:
-            no <code class="inline-code">--dangerously-bypass-approvals-and-sandbox</code>
+            Codex launches default to
+            <code class="inline-code">--trust sandboxed</code>: no
+            <code class="inline-code">--dangerously-bypass-approvals-and-sandbox</code>
             is added. Choose <code class="inline-code">trusted</code> only for
-            local power-user setups; that profile prepends the bypass flag and
-            is persisted in <code class="inline-code">team.json</code>.
+            local power-user setups; that profile prepends the bypass flag
+            and is persisted in the team profile.
           </p>
           <p>
-            Trust is Codex-specific. Claude defaults are unaffected. Combining
-            <code class="inline-code">--trust trusted</code> with
-            <code class="inline-code">--no-default-args</code> is rejected, as
-            is sandboxed mode with the bypass flag smuggled through
+            Trust is Codex-specific. Claude defaults
+            (<code class="inline-code">--permission-mode auto</code>) are
+            unaffected. Combining <code class="inline-code">--trust trusted</code>
+            with <code class="inline-code">--no-default-args</code> is rejected,
+            as is sandboxed mode with the bypass flag smuggled through
             <code class="inline-code">--codex-args</code>.
           </p>
 
           <h3>Model selection</h3>
           <div class="code"><pre><code>amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
-amq-squad launch --model gpt-5 codex
-amq-squad team launch --model cto=gpt-5</code></pre></div>
+amq-squad agent up codex --model gpt-5
+amq-squad up --model cto=gpt-5</code></pre></div>
           <p>
-            Per-member model is persisted in
-            <code class="inline-code">team.json</code> and emitted as the
-            native <code class="inline-code">--model &lt;name&gt;</code> flag for
-            Codex and Claude. <code class="inline-code">team show</code> /
-            <code class="inline-code">team launch</code> accept run-time
-            overrides; restore replays the persisted model.
+            Per-member model is persisted in the team profile and emitted as
+            the native <code class="inline-code">--model &lt;name&gt;</code>
+            flag for Codex or Claude.
+            <code class="inline-code">up</code> and
+            <code class="inline-code">agent up</code> accept run-time
+            overrides; <code class="inline-code">resume</code> replays the
+            persisted model.
           </p>
 
           <h3>Duplicate-launch guard</h3>
           <p>
-            <code class="inline-code">amq-squad launch</code> refuses by default
-            when a live agent for the same handle / workstream is detected
-            (live <code class="inline-code">amq wake</code> lock, an agent PID
+            <code class="inline-code">agent up</code> refuses by default when
+            a live agent for the same handle / workstream is detected (live
+            <code class="inline-code">amq wake</code> lock, an agent PID
             still running, or fresh active presence). Stale artifacts are
-            removed automatically. <code class="inline-code">team launch</code>
+            removed automatically. <code class="inline-code">up</code>
             preflights every member before opening any tmux pane so a
             half-launched team never appears. Override with
             <code class="inline-code">--force-duplicate</code> when intentional.
           </p>
 
-          <h3>Wake health in list / restore</h3>
-          <p>
-            <code class="inline-code">amq-squad list</code> exposes a
-            <code class="inline-code">WAKE</code> column for active-looking
-            records (<code class="inline-code">pid:N</code>,
-            <code class="inline-code">missing</code>, or
-            <code class="inline-code">stale</code>).
-            <code class="inline-code">amq-squad restore</code> appends the same
-            tag to its metadata line so split-brain situations show up before
-            you launch into them.
-          </p>
-
-          <h3>Bringing the team back</h3>
+          <h3>Recovery</h3>
           <p>
             After a reboot, terminal close, or Codex/Claude upgrade, run a
             single command and let amq-squad pick the right path per member:
           </p>
-          <div class="code"><pre><code>amq-squad team resume
-amq-squad team resume --session v0-6-0-review
-amq-squad team resume --restore-existing
-amq-squad team resume --fresh --session v0-6-1</code></pre></div>
+          <div class="code"><pre><code>amq-squad resume
+amq-squad resume --session v1-0-0-review
+amq-squad resume --restore-existing
+amq-squad fork --from v1-0-0 --as v1-0-1</code></pre></div>
           <p>
-            <code class="inline-code">team resume</code> reads
-            <code class="inline-code">.amq-squad/team.json</code>, scans
-            local launch history, and inspects live-agent signals (wake
+            <code class="inline-code">resume</code> reads the team profile,
+            scans local launch history, and inspects live-agent signals (wake
             locks, agent PIDs, presence). It prints a per-member plan plus
             copy-pasteable commands. Action labels:
           </p>
@@ -727,20 +744,272 @@ amq-squad team resume --fresh --session v0-6-1</code></pre></div>
               workstream; replay preserves trust, model, conversation,
               role, handle, and binary args.</li>
             <li><strong>launch fresh</strong>: no record; emitted command
-              matches <code class="inline-code">team launch</code> for the
-              member.</li>
+              matches <code class="inline-code">up</code> for the member.</li>
             <li><strong>blocked</strong>: ambiguous live state; pick
               <code class="inline-code">--force-duplicate</code> or narrow
               with <code class="inline-code">--session</code>.</li>
           </ul>
           <p>
-            <code class="inline-code">team resume</code> is plan-only and
-            does not mutate disk. Existing power-user commands remain:
-            <code class="inline-code">team launch</code> for tmux-pane
-            launches from team intent,
-            <code class="inline-code">restore</code> for explicit
-            launch-history replay, and
-            <code class="inline-code">list</code> for inspection.
+            <code class="inline-code">resume</code> is plan-only and does not
+            mutate disk.
+          </p>
+        </div>
+      </section>
+
+      <section id="context">
+        <div class="content">
+          <h2>Context model</h2>
+          <p>
+            The 1.0 context model has three durable layers. Each layer has
+            exactly one source of truth.
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Layer</th>
+                  <th>File</th>
+                  <th>Owner</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Team norms</td>
+                  <td><code>.amq-squad/team-rules.md</code></td>
+                  <td>shared, hand-edited</td>
+                </tr>
+                <tr>
+                  <td>Per-agent persona</td>
+                  <td><code>&lt;agent-dir&gt;/role.md</code></td>
+                  <td>seeded by launch, then user-editable</td>
+                </tr>
+                <tr>
+                  <td>Workstream brief</td>
+                  <td><code>.amq-squad/briefs/&lt;session&gt;.md</code></td>
+                  <td>one per AMQ session</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            <code class="inline-code">CLAUDE.md</code> and
+            <code class="inline-code">AGENTS.md</code> carry a small managed
+            pointer block that links to the three layers above. They never
+            duplicate team-rules content.
+            <code class="inline-code">amq-squad team sync --apply</code>
+            writes and refreshes the block. Anything outside the markers is
+            yours and stays untouched.
+          </p>
+          <div class="code"><pre><code>&lt;!-- amq-squad:managed:begin --&gt;
+This project uses amq-squad for agent team coordination.
+
+- **Team norms:** `.amq-squad/team-rules.md`
+- **Your role:** when launched via amq-squad, `&lt;your-agent-dir&gt;/role.md` carries your persona.
+- **Active brief:** read `.amq-squad/briefs/&lt;session&gt;.md` for the current workstream (bootstrap names the exact path).
+
+These files are the source of truth. Do not duplicate their content here.
+&lt;!-- amq-squad:managed:end --&gt;</code></pre></div>
+          <p>
+            On first <code class="inline-code">team sync --apply</code> with
+            an existing <code class="inline-code">CLAUDE.md</code>, your
+            content is adopted as the user region and the managed block is
+            appended. Subsequent syncs only refresh the managed block. Member
+            cwds outside the team-home require
+            <code class="inline-code">--allow-outside</code>, and every
+            configured cwd must already exist before sync writes there.
+          </p>
+          <div class="code"><pre><code>amq-squad team sync                 # preview (exit 1 on drift)
+amq-squad team sync --apply         # write the pointer stub
+amq-squad team sync --apply --allow-outside</code></pre></div>
+        </div>
+      </section>
+
+      <section id="briefs">
+        <div class="content">
+          <h2>Workstream briefs</h2>
+          <p>
+            A brief lives at
+            <code class="inline-code">.amq-squad/briefs/&lt;session&gt;.md</code>
+            and carries the goal, scope, and source-of-truth pointers for
+            one AMQ session. Every team member reads the same file.
+            <code class="inline-code">up --seed-from REF</code> seeds the
+            brief from a deterministic source.
+          </p>
+          <h3>Preview (dry-run, no write)</h3>
+          <div class="code"><pre><code>amq-squad up --dry-run --seed-from file:./brief.md
+amq-squad up --dry-run --seed-from issue:31
+amq-squad up --dry-run --seed-from gh:owner/repo#31
+amq-squad up --dry-run --json --seed-from issue:31 | jq .</code></pre></div>
+
+          <h3>Live (write brief, then launch)</h3>
+          <div class="code"><pre><code>amq-squad up --seed-from issue:31              # write brief + bring team up
+amq-squad up --seed-from issue:31 --force      # overwrite an existing brief
+amq-squad up                                    # preserve existing brief</code></pre></div>
+          <p>
+            Semantics:
+          </p>
+          <ul>
+            <li>With <code class="inline-code">--dry-run</code>: prints the
+              candidate brief envelope and writes nothing.</li>
+            <li>Without <code class="inline-code">--dry-run</code>: writes
+              <code class="inline-code">.amq-squad/briefs/&lt;session&gt;.md</code>
+              and brings the team up in the same call. An existing brief is
+              preserved unless <code class="inline-code">--force</code> is set.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="profiles">
+        <div class="content">
+          <h2>Profiles (schema 2)</h2>
+          <p>
+            Profiles let one team-home hold parallel team shapes, for
+            example a release team and a research team. The default profile
+            lives at <code class="inline-code">.amq-squad/team.json</code>;
+            named profiles live under
+            <code class="inline-code">.amq-squad/teams/&lt;name&gt;.json</code>.
+            Both use <code class="inline-code">schema_version: 2</code>.
+          </p>
+          <div class="code"><pre><code>amq-squad team init                       # default -> .amq-squad/team.json
+amq-squad team init --profile release     # named -> .amq-squad/teams/release.json
+amq-squad team profiles                   # list configured profiles
+amq-squad team profiles --json
+amq-squad up --profile release            # operate on a named profile</code></pre></div>
+          <p>
+            Omit <code class="inline-code">--profile</code> (or pass
+            <code class="inline-code">--profile default</code>) for the
+            default profile.
+          </p>
+        </div>
+      </section>
+
+      <section id="verbs">
+        <div class="content">
+          <h2>Verbs</h2>
+          <h3>Team-level</h3>
+          <div class="code"><pre><code>amq-squad team init [--profile NAME] [--personas a,b] [--binary role=bin,...]
+                     [--session ws] [--trust sandboxed|trusted]
+                     [--model role=model,...] [--codex-args ...] [--claude-args ...]
+                                  Write a team profile and seed .amq-squad/team-rules.md.
+amq-squad team rules init [--force]
+                                  Seed or refresh .amq-squad/team-rules.md.
+amq-squad team sync [--apply] [--allow-outside]
+                                  Sync the pointer stub into CLAUDE.md and AGENTS.md.
+                                  Exit 1 on drift when --apply is not set.
+amq-squad team profiles [--json]  List configured profiles (default + named).</code></pre></div>
+
+          <h3>Workstream lifecycle</h3>
+          <div class="code"><pre><code>amq-squad up [--profile NAME] [--session ws] [--dry-run] [--json]
+             [--seed-from file:|issue:|gh: [--force]]
+             [--terminal tmux] [--target current-window|new-session]
+             [--layout vertical|horizontal|tiled] [--terminal-session name]
+             [--stagger 750ms] [--no-bootstrap] [--force-duplicate]
+                                  Bring the team up live or print the plan with --dry-run.
+amq-squad down [--all | --role R] --force
+                                  SIGTERM members. Without --force the verb refuses.
+amq-squad resume [--profile NAME] [--session ws] [--restore-existing]
+                 [--force-duplicate]
+                                  Classify each member and emit copy-pasteable commands.
+                                  Plan-only. Use `fork --from &lt;current&gt; --as &lt;new&gt;`
+                                  to branch into a new workstream.
+amq-squad fork --from &lt;current&gt; --as &lt;new&gt; [--force-duplicate]
+                                  Plan fresh launches in a new workstream branched off
+                                  the current one. Plan-only; does not copy launch
+                                  records, briefs, conversations, or team.json. The
+                                  workstream brief at .amq-squad/briefs/&lt;new&gt;.md is
+                                  created or preserved by the subsequent
+                                  `up --session &lt;new&gt;` (or `agent up`) live launch.</code></pre></div>
+
+          <h3>Inspection</h3>
+          <div class="code"><pre><code>amq-squad status [--json]         Live state of configured team members.
+amq-squad history [--json] [--project a,b]
+                                  Restorable launch records across known projects.
+amq-squad doctor [--json]         AMQ version, team config, tmux, wake, markers.
+amq-squad version [--json]        Print the installed amq-squad version.</code></pre></div>
+
+          <h3>Single-agent primitives</h3>
+          <div class="code"><pre><code>amq-squad agent up &lt;binary&gt; [--role R] [--session ws] [--profile NAME]
+                            [--conversation ref] [--no-bootstrap]
+                            [--trust sandboxed|trusted] [--model NAME]
+                            [--codex-args ...] [--claude-args ...]
+                            [--force-duplicate] [-- &lt;native flags&gt;]
+amq-squad agent resume &lt;role&gt;
+                                  Replay one saved launch record.</code></pre></div>
+
+          <p>
+            Global output flags work before or after the subcommand:
+            <code class="inline-code">--quiet</code>,
+            <code class="inline-code">--verbose</code>,
+            <code class="inline-code">--color auto|always|never</code>.
+            <code class="inline-code">NO_COLOR</code> overrides
+            <code class="inline-code">--color=always</code>.
+            <code class="inline-code">--quiet</code> and
+            <code class="inline-code">--verbose</code> are mutually exclusive.
+            Deprecation warnings survive <code class="inline-code">--quiet</code>.
+          </p>
+        </div>
+      </section>
+
+      <section id="json">
+        <div class="content">
+          <h2>JSON envelopes and exit codes</h2>
+          <p>
+            Verbs that produce machine-readable output accept
+            <code class="inline-code">--json</code> and emit a
+            schema-versioned envelope on stdout. Diagnostics stay on stderr;
+            stdout under <code class="inline-code">--json</code> is pure JSON.
+          </p>
+          <div class="code"><pre><code>amq-squad status --json | jq .
+amq-squad history --json | jq .
+amq-squad doctor --json | jq .
+amq-squad team profiles --json | jq .
+amq-squad up --dry-run --json | jq .
+amq-squad version --json | jq .</code></pre></div>
+          <div class="code"><pre><code>{
+  "schema_version": 1,
+  "kind": "&lt;verb&gt;",
+  "data": { /* verb-specific payload */ }
+}</code></pre></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Meaning</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>0</code></td>
+                  <td>success</td>
+                </tr>
+                <tr>
+                  <td><code>1</code></td>
+                  <td>usage / user error (unknown flag, bad argument, missing required input)</td>
+                </tr>
+                <tr>
+                  <td><code>2</code></td>
+                  <td>system / runtime error (IO, process, config, environment)</td>
+                </tr>
+                <tr>
+                  <td><code>3</code></td>
+                  <td>partial success (some targets succeeded, some failed; e.g. <code>down</code> with mixed force-sent + failed)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="completion">
+        <div class="content">
+          <h2>Shell completions</h2>
+          <div class="code"><pre><code>amq-squad completion bash > /etc/bash_completion.d/amq-squad
+amq-squad completion zsh  > "${fpath[1]}/_amq-squad"
+amq-squad completion fish > ~/.config/fish/completions/amq-squad.fish</code></pre></div>
+          <p>
+            <code class="inline-code">completion zsh</code> is followed by a
+            <code class="inline-code">compinit</code> step on most shells.
           </p>
         </div>
       </section>
@@ -763,9 +1032,9 @@ amq-squad team resume --fresh --session v0-6-1</code></pre></div>
               </thead>
               <tbody>
                 <tr>
-                  <td>Session</td>
+                  <td>Session (workstream)</td>
                   <td>The shared AMQ workstream for a team run.</td>
-                  <td><code>issue-96</code>, <code>v0-5-0</code>, <code>auth-refactor</code></td>
+                  <td><code>issue-96</code>, <code>v1-0-0</code>, <code>auth-refactor</code></td>
                 </tr>
                 <tr>
                   <td>Thread</td>
@@ -773,9 +1042,9 @@ amq-squad team resume --fresh --session v0-6-1</code></pre></div>
                   <td><code>p2p/cto__fullstack</code>, <code>decision/session-model</code></td>
                 </tr>
                 <tr>
-                  <td>Team profile</td>
-                  <td>A future named roster for one folder. This is separate from AMQ sessions and is not implemented yet.</td>
-                  <td><code>core-team</code>, <code>release-team</code></td>
+                  <td>Profile</td>
+                  <td>A named roster under one team-home. Default profile lives at <code>.amq-squad/team.json</code>; named at <code>.amq-squad/teams/&lt;name&gt;.json</code>.</td>
+                  <td><code>default</code>, <code>release</code></td>
                 </tr>
               </tbody>
             </table>
@@ -783,141 +1052,55 @@ amq-squad team resume --fresh --session v0-6-1</code></pre></div>
           <div class="callout">
             <p>
               AMQ session names must use lowercase letters, digits, hyphens,
-              and underscores. Write release names as
-              <code class="inline-code">v0-5-0</code>, not
-              <code class="inline-code">v0.5.0</code>.
+              and underscores. Active workstream resolution: explicit
+              <code class="inline-code">--session</code> &gt; stored
+              <code class="inline-code">team.Workstream</code> &gt; sanitized
+              team-home directory name.
             </p>
           </div>
-          <div class="code"><pre><code>amq-squad team show --session issue-96
-amq-squad team launch --session issue-96
-amq-squad team launch --fresh --session issue-96</code></pre></div>
-          <p>
-            Use <code class="inline-code">--fresh</code> when accidental reuse
-            should fail if the workstream already exists.
-          </p>
+          <div class="code"><pre><code>amq-squad up --dry-run --session issue-96
+amq-squad up --session issue-96
+amq-squad fork --from issue-96 --as issue-96-review</code></pre></div>
         </div>
       </section>
 
-      <section id="rules">
+      <section id="cross">
         <div class="content">
-          <h2>Team rules</h2>
+          <h2>Cross-project teams</h2>
           <p>
-            Shared norms live in <code class="inline-code">.amq-squad/team-rules.md</code>.
-            amq-squad can sync those rules into the files each binary reads.
+            Members do not have to share a working directory. The dir where
+            you run <code class="inline-code">team init</code> becomes the
+            team-home; individual members can live in other repos.
           </p>
-          <div class="split">
-            <div class="panel">
-              <h3>Initialize rules</h3>
-              <div class="code"><pre><code>amq-squad team rules init</code></pre></div>
-              <p>Edit the generated file for workflow, approval, communication, and style rules.</p>
-            </div>
-            <div class="panel">
-              <h3>Sync rules</h3>
-              <div class="code"><pre><code>amq-squad team sync
-amq-squad team sync --apply
-amq-squad team sync --apply --allow-outside</code></pre></div>
-              <p>Preview first. Apply writes managed blocks into CLAUDE.md and AGENTS.md.</p>
-            </div>
-          </div>
+          <div class="code"><pre><code>cd ~/Code/project-a
+amq-squad team init --personas cto,fullstack,qa --cwd qa=~/Code/project-b</code></pre></div>
           <p>
-            Content outside the managed markers remains yours. Update
-            <code class="inline-code">team-rules.md</code> and sync again when
-            team norms change.
+            <code class="inline-code">up --dry-run</code> emits a
+            <code class="inline-code">cd &lt;member-cwd&gt;</code> per launch
+            command, and
+            <code class="inline-code">team sync --apply --allow-outside</code>
+            walks each unique member cwd and writes
+            <code class="inline-code">CLAUDE.md</code> /
+            <code class="inline-code">AGENTS.md</code> in each one. Cwds
+            outside the team-home need
+            <code class="inline-code">--allow-outside</code> so a hand-edited
+            team profile cannot write into unrelated folders by surprise.
           </p>
           <p>
-            Sync writes use same-directory temporary files, atomic rename, and
-            a stale-plan check. Member cwds outside the team-home require
-            <code class="inline-code">--allow-outside</code>, and every
-            configured cwd must already exist before sync writes there.
+            For cross-project AMQ routing, each project's
+            <code class="inline-code">.amqrc</code> needs a
+            <code class="inline-code">peers</code> entry pointing at the
+            other project's <code class="inline-code">.agent-mail/</code>.
+            <code class="inline-code">team sync</code> does not touch
+            <code class="inline-code">.amqrc</code>; that step is manual today.
           </p>
-        </div>
-      </section>
-
-      <section id="launch">
-        <div class="content">
-          <h2>Launch options</h2>
-          <h3>Print commands</h3>
-          <p>
-            Use this when you want to paste one command into each terminal tab
-            or pane yourself.
-          </p>
-          <div class="code"><pre><code>amq-squad team show --session issue-96</code></pre></div>
-
-          <h3>Launch in tmux</h3>
-          <p>
-            If you are already inside tmux, amq-squad can create panes and
-            start every role automatically.
-          </p>
-          <div class="code"><pre><code>amq-squad team launch --session issue-96
-amq-squad team launch --session issue-96 --layout tiled
-amq-squad team launch --session issue-96 --dry-run</code></pre></div>
-
-          <h3>One-off binary flags</h3>
-          <div class="code"><pre><code>amq-squad team show --codex-args '--enable goals'
-amq-squad team launch --claude-args '--chrome'</code></pre></div>
-          <p>
-            Use these when a single run needs extra native CLI flags without
-            changing the stored team config.
-          </p>
-
-          <h3>Launch into a named tmux session</h3>
-          <div class="code"><pre><code>amq-squad team launch \
-  --target new-session \
-  --terminal-session squad-issue-96 \
-  --session issue-96
-
-tmux attach -t squad-issue-96</code></pre></div>
-
-          <div class="callout warn">
-            <p>
-              Use <code class="inline-code">--terminal-session</code> for tmux
-              session names. Keep <code class="inline-code">--session</code>
-              reserved for AMQ workstream names.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section id="messaging">
-        <div class="content">
-          <h2>Messaging inside a squad</h2>
-          <p>
-            Once launched, agents normally use plain AMQ commands. amq-squad
-            injects role routing into each agent bootstrap prompt, so agents
-            know the current roster and canonical thread names.
-          </p>
-          <h3>Read incoming work</h3>
-          <div class="code"><pre><code>amq list --new
-amq read --id &lt;id&gt;
-amq drain --include-body</code></pre></div>
-
-          <h3>Send a review request</h3>
-          <div class="code"><pre><code>amq send \
-  --to fullstack \
-  --thread p2p/cto__fullstack \
-  --kind review_request \
-  --subject "Review: workstream session model" \
-  --body "Please review the branch, tests, and problem framing."</code></pre></div>
-
-          <h3>Wait for a peer to drain</h3>
-          <div class="code"><pre><code>amq send \
-  --to fullstack \
-  --thread p2p/cto__fullstack \
-  --kind review_request \
-  --subject "Review: PR" \
-  --body "Please review the current PR." \
-  --wait-for drained \
-  --wait-timeout 60s</code></pre></div>
-
-          <p>
-            Acknowledgements are normal messages. Use them when they reduce
-            ambiguity, and keep them short.
-          </p>
-          <div class="code"><pre><code>amq send \
-  --to cto \
-  --thread p2p/cto__fullstack \
-  --subject ack \
-  --body "Reviewed the update and will run final checks."</code></pre></div>
+          <div class="code"><pre><code>{
+  "root": ".agent-mail",
+  "project": "project-a",
+  "peers": {
+    "project-b": "/Users/you/Code/project-b/.agent-mail"
+  }
+}</code></pre></div>
         </div>
       </section>
 
@@ -935,19 +1118,27 @@ amq drain --include-body</code></pre></div>
               <tbody>
                 <tr>
                   <td><code>.amq-squad/team.json</code></td>
-                  <td>Team intent: roles, handles, binaries, binary args, member cwds, and shared workstream defaults.</td>
+                  <td>Default team profile (<code>schema_version: 2</code>).</td>
+                </tr>
+                <tr>
+                  <td><code>.amq-squad/teams/&lt;name&gt;.json</code></td>
+                  <td>Named team profiles (<code>schema_version: 2</code>).</td>
                 </tr>
                 <tr>
                   <td><code>.amq-squad/team-rules.md</code></td>
-                  <td>Human-edited team workflow, approval, quality, communication, and style rules.</td>
+                  <td>Durable team norms (user-edited).</td>
+                </tr>
+                <tr>
+                  <td><code>.amq-squad/briefs/&lt;session&gt;.md</code></td>
+                  <td>Workstream brief, one per AMQ session.</td>
                 </tr>
                 <tr>
                   <td><code>CLAUDE.md</code> and <code>AGENTS.md</code></td>
-                  <td>Managed blocks synced from team rules so each binary starts with the same team norms.</td>
+                  <td>Managed pointer block; user content outside markers preserved.</td>
                 </tr>
                 <tr>
                   <td><code>.agent-mail/&lt;session&gt;/agents/&lt;handle&gt;/extensions/io.github.omriariav.amq-squad/launch.json</code></td>
-                  <td>Durable launch record for one role in one AMQ workstream. Legacy direct-agent launch records remain readable.</td>
+                  <td>Per-agent launch record. Legacy direct-agent records remain readable.</td>
                 </tr>
                 <tr>
                   <td><code>.agent-mail/&lt;session&gt;/agents/&lt;handle&gt;/extensions/io.github.omriariav.amq-squad/role.md</code></td>
@@ -959,28 +1150,84 @@ amq drain --include-body</code></pre></div>
         </div>
       </section>
 
+      <section id="deprecated">
+        <div class="content">
+          <h2>Deprecated 1.x verbs</h2>
+          <p>
+            These verbs still work through the 1.x line and emit a one-line
+            <code class="inline-code">stderr</code> deprecation warning. They
+            will be removed in 2.0. Do not use them in new flows.
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Legacy</th>
+                  <th>Modern equivalent</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>amq-squad team show</code></td>
+                  <td><code>amq-squad up --dry-run</code></td>
+                </tr>
+                <tr>
+                  <td><code>amq-squad team launch</code></td>
+                  <td><code>amq-squad up</code></td>
+                </tr>
+                <tr>
+                  <td><code>amq-squad team launch --fresh --session X</code></td>
+                  <td><code>amq-squad fork --from &lt;current&gt; --as X</code></td>
+                </tr>
+                <tr>
+                  <td><code>amq-squad list</code></td>
+                  <td><code>amq-squad status</code> (live) or <code>amq-squad history</code> (records)</td>
+                </tr>
+                <tr>
+                  <td><code>amq-squad launch &lt;binary&gt;</code></td>
+                  <td><code>amq-squad agent up &lt;binary&gt;</code></td>
+                </tr>
+                <tr>
+                  <td><code>amq-squad restore</code> (print)</td>
+                  <td><code>amq-squad history</code></td>
+                </tr>
+                <tr>
+                  <td><code>amq-squad restore --exec --role R</code></td>
+                  <td><code>amq-squad agent resume R</code></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            Help paths on deprecated verbs do not emit the warning. JSON
+            callers on deprecated verbs still get pure JSON on stdout; the
+            warning goes to stderr.
+          </p>
+        </div>
+      </section>
+
       <section id="troubleshooting">
         <div class="content">
           <h2>Troubleshooting</h2>
           <div class="split">
             <div class="panel">
               <h3>Version looks old</h3>
-              <p>Check which binary is running, then reinstall the desired tag.</p>
+              <p>Check which binary is running, then reinstall.</p>
               <div class="code"><pre><code>which -a amq-squad
 amq-squad version
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v0.6.1</code></pre></div>
+go install github.com/omriariav/amq-squad/cmd/amq-squad@latest</code></pre></div>
             </div>
             <div class="panel">
               <h3>Launch plan looks wrong</h3>
-              <p>Inspect the team config and preview tmux commands before launching.</p>
-              <div class="code"><pre><code>amq-squad team show --session issue-96
-amq-squad team launch --session issue-96 --dry-run</code></pre></div>
+              <p>Inspect the team and preview commands before launching.</p>
+              <div class="code"><pre><code>amq-squad doctor
+amq-squad up --dry-run --session issue-96</code></pre></div>
             </div>
             <div class="panel">
-              <h3>Need old context</h3>
-              <p>List restorable history, but treat old workstreams as context unless you explicitly resume them.</p>
-              <div class="code"><pre><code>amq-squad list
-amq-squad restore</code></pre></div>
+              <h3>Pointer stub drift</h3>
+              <p>Run <code class="inline-code">team sync</code> as a read-only check; it exits 1 on drift.</p>
+              <div class="code"><pre><code>amq-squad team sync
+amq-squad team sync --apply</code></pre></div>
             </div>
             <div class="panel">
               <h3>Cross-project routing</h3>
@@ -995,8 +1242,8 @@ amq-squad team sync --apply --allow-outside</code></pre></div>
       </section>
 
       <div class="footer">
-        Generated as a standalone local guide. Open this file directly in a
-        browser from the repository root.
+        Hand-maintained alongside README.md. No generator. Open this file
+        directly in a browser from the repository root.
       </div>
     </main>
   </div>
