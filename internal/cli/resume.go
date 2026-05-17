@@ -36,6 +36,10 @@ plan plus copy-pasteable commands.
 
 Fresh / new-session behavior belongs to 'amq-squad fork --from S --as T'.
 Use 'amq-squad up' to open the planned team in tmux from team intent.
+
+Examples:
+  amq-squad resume
+  amq-squad resume --session issue-96 --restore-existing
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {

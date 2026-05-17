@@ -73,6 +73,10 @@ Disk state is untouched and no exec occurs.
 When --conversation generates resume args, do not pass additional child args
 after "--". Use --codex-args or --claude-args for native flags that should
 still combine with --conversation.
+
+Examples:
+  amq-squad launch --role cto --session issue-96 codex
+  amq-squad launch --dry-run --no-bootstrap codex
 `)
 	}
 

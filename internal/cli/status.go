@@ -77,6 +77,10 @@ Reports each configured team member's live state in the resolved session.
 Uses launch-record PID + binary match, wake-lock PID + handle/root match,
 and fresh presence as input signals. Historical/restorable records are
 not included here; use 'amq-squad history' for those.
+
+Examples:
+  amq-squad status
+  amq-squad status --session issue-96 --json
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {

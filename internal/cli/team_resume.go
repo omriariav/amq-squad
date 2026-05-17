@@ -94,6 +94,10 @@ Modes:
 
 team resume is plan-only. Run the printed commands in their own panes, or
 use 'amq-squad team launch' to open them in tmux from team intent.
+
+Examples:
+  amq-squad team resume
+  amq-squad team resume --fresh --session issue-99
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {

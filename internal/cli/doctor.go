@@ -85,6 +85,10 @@ Usage:
 Checks: AMQ version, default team config, tmux availability, configured
 members' wake health, and CLAUDE.md / AGENTS.md marker integrity.
 Read-only. Exits non-zero if any check is "fail".
+
+Examples:
+  amq-squad doctor
+  amq-squad doctor --json | jq '.data.checks[] | select(.status=="fail")'
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {

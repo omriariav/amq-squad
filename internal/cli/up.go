@@ -49,6 +49,11 @@ overwrites an existing brief; --force without --seed-from is an error.
 --force-duplicate remains the separate duplicate-agent flag.
 
 Supported terminal backends: %s
+
+Examples:
+  amq-squad up --dry-run --no-bootstrap
+  amq-squad up --target new-session --terminal-session squad
+  amq-squad up --dry-run --seed-from issue:31
 `, strings.Join(registeredTeamLaunchTerminals(), ", "))
 	}
 	if err := parseFlags(fs, args); err != nil {

@@ -45,6 +45,10 @@ Usage:
 Reports launch history and inferred legacy AMQ mailbox entries that can be
 restored. Live wake-health is intentionally not computed here; use
 'amq-squad status' for the current configured team's live state.
+
+Examples:
+  amq-squad history
+  amq-squad history --project ~/repos/foo,~/repos/bar --json
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {

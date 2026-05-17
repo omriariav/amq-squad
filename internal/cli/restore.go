@@ -46,6 +46,10 @@ For records that look active, the metadata line includes wake-health:
   wake: pid:N    - wake.lock present and the wake process is alive
   wake: missing  - agent looks active but no wake.lock was found
   wake: stale    - wake.lock present but the PID is dead or unrelated
+
+Examples:
+  amq-squad restore
+  amq-squad restore --role cto --exec
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
