@@ -76,7 +76,7 @@ still combine with --conversation.
 `)
 	}
 
-	if err := fs.Parse(squadArgs); err != nil {
+	if err := parseFlags(fs, squadArgs); err != nil {
 		return err
 	}
 	trustExplicit := flagWasSet(fs, "trust")

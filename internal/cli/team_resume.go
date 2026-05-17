@@ -96,7 +96,7 @@ team resume is plan-only. Run the printed commands in their own panes, or
 use 'amq-squad team launch' to open them in tmux from team intent.
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if *restoreExisting && *fresh {

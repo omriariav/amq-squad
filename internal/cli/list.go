@@ -41,7 +41,7 @@ Includes full amq-squad launch records and older AMQ-only mailbox history
 where the original binary can be inferred.
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 

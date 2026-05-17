@@ -51,7 +51,7 @@ overwrites an existing brief; --force without --seed-from is an error.
 Supported terminal backends: %s
 `, strings.Join(registeredTeamLaunchTerminals(), ", "))
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if *force && *seedFrom == "" {

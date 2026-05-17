@@ -98,7 +98,7 @@ duplicates before any tmux command runs; --force-duplicate overrides.
 		fs.Usage()
 		return nil
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	profile, err := resolveProfileFlag(*profileFlag)

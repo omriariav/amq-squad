@@ -99,7 +99,7 @@ Known personas:
 			fmt.Fprintf(os.Stderr, "  %-10s %s (default CLI: %s)\n", r.ID, r.Label, r.PreferredBinary)
 		}
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	profile, err := resolveProfileFlag(*profileFlag)
@@ -284,7 +284,7 @@ Usage:
   amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--json]
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	opts, err := pf.toEmitOptions(fs)
@@ -899,7 +899,7 @@ Usage:
 	case "init":
 		fs := flag.NewFlagSet("team rules init", flag.ContinueOnError)
 		force := fs.Bool("force", false, "overwrite an existing team-rules.md with the generated template")
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
 		cwd, err := os.Getwd()
@@ -960,7 +960,7 @@ in team.json and syncs CLAUDE.md + AGENTS.md in each. Use --allow-outside
 when a member cwd is outside the team-home directory.
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	profile, err := resolveProfileFlag(*profileFlag)
