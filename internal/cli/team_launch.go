@@ -27,6 +27,13 @@ type teamLaunchOptions struct {
 	Trust           string
 	ModelOverrides  map[string]string
 	ForceDuplicate  bool
+	// SeedBriefContent, when non-empty, is the rendered active brief that
+	// the live launch path should write to .amq-squad/briefs/<workstream>.md
+	// AFTER all team-launch validations and preflight pass. Empty means no
+	// seeded brief was requested for this run. SeedBriefForce permits
+	// overwriting an existing brief.
+	SeedBriefContent string
+	SeedBriefForce   bool
 }
 
 type teamLaunchPane struct {
@@ -168,10 +175,21 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if opts.DryRun {
 		return backend.DryRun(t, opts)
 	}
-	// Live launch: ensure the team-home active brief exists once before the
-	// backend opens panes. ensureBriefStub is idempotent and preserves any
-	// existing brief content, so this is safe across reruns and parallel
-	// member launches.
+	// Live launch. If the caller (up --seed-from) requested a seeded brief,
+	// write it now: all team-launch validations and preflight have passed,
+	// so we are committed to opening backend panes. Doing the write here
+	// (rather than upfront in runUp) means a fresh/existing-workstream
+	// rejection, model/trust validation failure, or duplicate-live
+	// preflight refusal does not mutate the brief.
+	if opts.SeedBriefContent != "" {
+		if _, err := writeSeedBrief(t.Project, opts.Workstream, opts.SeedBriefContent, opts.SeedBriefForce); err != nil {
+			return err
+		}
+	}
+	// Ensure the team-home active brief exists once before the backend
+	// opens panes. ensureBriefStub is idempotent and preserves any existing
+	// brief content (including the seed we may have just written), so this
+	// is safe across reruns and parallel member launches.
 	if _, _, err := ensureBriefStub(t.Project, opts.Workstream); err != nil {
 		return fmt.Errorf("ensure brief: %w", err)
 	}
