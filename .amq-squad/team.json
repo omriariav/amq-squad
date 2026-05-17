@@ -1,18 +1,25 @@
 {
   "schema": 1,
+  "workstream": "v1-0-0-reshape",
   "members": [
     {
       "role": "cto",
       "binary": "codex",
       "handle": "cto",
-      "session": "cto"
+      "session": "v1-0-0-reshape"
+    },
+    {
+      "role": "senior-dev",
+      "binary": "codex",
+      "handle": "senior-dev",
+      "session": "v1-0-0-reshape"
     },
     {
       "role": "fullstack",
       "binary": "claude",
       "handle": "fullstack",
-      "session": "fullstack"
+      "session": "v1-0-0-reshape"
     }
   ],
-  "created_at": "2026-04-23T11:11:38.671934Z"
+  "created_at": "2026-05-17T06:35:46.061265Z"
 }
