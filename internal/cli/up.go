@@ -4,32 +4,36 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/omriariav/amq-squad/internal/team"
 )
 
 func runUp(args []string) error {
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
-	dryRun := fs.Bool("dry-run", false, "print the launch plan instead of bringing the team up")
+	dryRun := fs.Bool("dry-run", false, "print the launch plan (one launch command per member) instead of bringing the team up")
 	pf := registerPreviewFlags(fs)
+	lf := registerLiveLaunchFlags(fs)
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad up - bring this project's team up (replacement for 'team show'/'team launch')
+		fmt.Fprintf(os.Stderr, `amq-squad up - bring this project's team up
 
 Usage:
-  amq-squad up --dry-run [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate]
+  amq-squad up [--session workstream] [--fresh] [--terminal tmux]
+    [--target current-window|new-session] [--layout vertical|horizontal|tiled]
+    [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
+    [--trust sandboxed|trusted] [--model role=model,...]
+    [--codex-args args] [--claude-args args]
+    [--force-duplicate] [--dry-run]
 
---dry-run prints one launch command per member, identical to 'amq-squad team show'.
-Bringing the team up live is not implemented in this slice; pass --dry-run.
-`)
+Without --dry-run, opens the configured team through the selected terminal
+backend (same path as 'team launch'). With --dry-run, prints one launch
+command per member (same output as 'team show'); the terminal backend is
+not invoked.
+
+Supported terminal backends: %s
+`, strings.Join(registeredTeamLaunchTerminals(), ", "))
 	}
 	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if !*dryRun {
-		return usageErrorf("amq-squad up currently requires --dry-run. Live up will land in a later step; for now use --dry-run or 'amq-squad team launch'.")
-	}
-	opts, err := pf.toEmitOptions(fs)
-	if err != nil {
 		return err
 	}
 	cwd, err := os.Getwd()
@@ -39,5 +43,16 @@ Bringing the team up live is not implemented in this slice; pass --dry-run.
 	if !team.Exists(cwd) {
 		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
 	}
-	return emitTeamCommands(cwd, opts)
+	if *dryRun {
+		opts, err := pf.toEmitOptions(fs)
+		if err != nil {
+			return err
+		}
+		return emitTeamCommands(cwd, opts)
+	}
+	opts, err := buildLiveLaunchOptions(fs, pf, lf)
+	if err != nil {
+		return err
+	}
+	return executeTeamLaunch(opts, flagWasSet(fs, "session"), flagWasSet(fs, "trust"))
 }

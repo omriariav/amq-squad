@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"time"
 )
 
 // previewFlags is the shared flag surface for printing a team's launch-command
@@ -56,5 +57,55 @@ func (p *previewFlags) toEmitOptions(fs *flag.FlagSet) (emitTeamOptions, error) 
 		ExplicitTrust:    flagWasSet(fs, "trust"),
 		ModelOverrides:   modelOverrides,
 		ForceDuplicate:   *p.forceDuplicate,
+	}, nil
+}
+
+// liveLaunchFlags is the backend-specific flag surface shared by `team launch`
+// and live `up`. It does not include --dry-run: each command owns its own
+// dry-run flag because the two semantics differ (terminal-plan dry-run for
+// team launch, launch-command preview for up).
+type liveLaunchFlags struct {
+	terminal        *string
+	target          *string
+	layout          *string
+	terminalSession *string
+	stagger         *time.Duration
+	// noAttach is parsed for compatibility but has no behavioral effect.
+	noAttach *bool
+}
+
+func registerLiveLaunchFlags(fs *flag.FlagSet) *liveLaunchFlags {
+	return &liveLaunchFlags{
+		terminal:        fs.String("terminal", "tmux", "terminal backend to use"),
+		target:          fs.String("target", "current-window", "terminal target, backend-specific"),
+		layout:          fs.String("layout", "vertical", "terminal layout, backend-specific"),
+		terminalSession: fs.String("terminal-session", "", "terminal session name when the backend creates one"),
+		stagger:         fs.Duration("stagger", 750*time.Millisecond, "delay between starting agent panes"),
+		noAttach:        fs.Bool("no-attach", false, "legacy no-op; new-session never attaches automatically"),
+	}
+}
+
+// buildLiveLaunchOptions composes a teamLaunchOptions from the shared preview
+// and live flag sets. The caller fills in DryRun separately so the two
+// callers can keep distinct dry-run semantics.
+func buildLiveLaunchOptions(fs *flag.FlagSet, pf *previewFlags, lf *liveLaunchFlags) (teamLaunchOptions, error) {
+	emit, err := pf.toEmitOptions(fs)
+	if err != nil {
+		return teamLaunchOptions{}, err
+	}
+	return teamLaunchOptions{
+		Terminal:        *lf.terminal,
+		Target:          *lf.target,
+		Layout:          *lf.layout,
+		Workstream:      emit.RequestedSession,
+		TerminalSession: *lf.terminalSession,
+		Fresh:           emit.Fresh,
+		NoBootstrap:     emit.NoBootstrap,
+		Stagger:         *lf.stagger,
+		SquadBin:        teamSquadBin(),
+		BinaryArgs:      emit.ExtraBinaryArgs,
+		Trust:           emit.RequestedTrust,
+		ModelOverrides:  emit.ModelOverrides,
+		ForceDuplicate:  emit.ForceDuplicate,
 	}, nil
 }
