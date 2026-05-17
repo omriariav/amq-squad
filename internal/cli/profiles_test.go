@@ -128,12 +128,12 @@ func TestRunUpProfileDryRunUsesNamedRoster(t *testing.T) {
 	if err != nil {
 		t.Fatalf("up --dry-run --profile review: %v", err)
 	}
-	for _, want := range []string{"--me fullstack claude", "--me qa claude", "--team-profile review"} {
+	for _, want := range []string{"agent up claude", "--me fullstack", "--me qa", "--team-profile review"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("output missing %q in:\n%s", want, stdout)
 		}
 	}
-	if strings.Contains(stdout, "--me cto codex") {
+	if strings.Contains(stdout, "--me cto") {
 		t.Errorf("named profile output leaked default roster:\n%s", stdout)
 	}
 }

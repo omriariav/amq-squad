@@ -76,30 +76,135 @@ Examples:
 // runLaunch's parser sees flags first. Inputs that do not start with a
 // binary positional (e.g. `--help`, empty) are passed through unchanged
 // so runLaunch reports the right error.
+//
+// When the caller omits the `--` boundary, this function preserves
+// behavior parity with legacy `launch [flags...] <binary> <child...>`:
+// only recognized launch flags (and their values) after `<binary>` are
+// kept as launch flags. The first unrecognized token (whether a non-flag
+// positional or an unknown `-...` flag) becomes the implicit child
+// boundary, and the synthesized `--` is inserted before it so native
+// child flags like `--foo` do not collide with runLaunch's flag parser.
 func translateAgentUpArgs(args []string) []string {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return args
 	}
 	binary := args[0]
 	rest := args[1:]
-	boundary := -1
+
+	// Explicit `--` boundary: keep child block verbatim.
 	for i, a := range rest {
 		if a == "--" {
-			boundary = i
-			break
+			flags := rest[:i]
+			child := rest[i:]
+			out := append([]string{}, flags...)
+			out = append(out, binary)
+			out = append(out, child...)
+			return out
 		}
 	}
-	if boundary < 0 {
-		out := append([]string{}, rest...)
-		out = append(out, binary)
-		return out
+
+	// No explicit `--`. Walk rest, consuming only recognized launch flags
+	// (and their values for string-valued flags). Stop at the first
+	// unrecognized token; everything from there is the child block.
+	flagsEnd := len(rest)
+walk:
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		if !strings.HasPrefix(a, "-") {
+			// Bare positional after the binary: child boundary.
+			flagsEnd = i
+			break walk
+		}
+		// `--flag=value` syntax: split and check name.
+		name := a
+		hasEq := strings.Contains(a, "=")
+		if hasEq {
+			name = a[:strings.IndexByte(a, '=')]
+		}
+		kind := launchKnownFlag(name)
+		switch kind {
+		case "string":
+			if hasEq {
+				continue
+			}
+			// Bare `--role` is only a complete launch flag if the next
+			// token is a non-flag value. If the next token is missing
+			// or dash-prefixed, that token is part of the child block
+			// (legacy `launch` parses it that way too because the
+			// binary positional came first). Match that parity.
+			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
+				flagsEnd = i
+				break walk
+			}
+			i++ // consume value token
+			continue
+		case "string-accepts-dash":
+			if hasEq {
+				continue
+			}
+			// `--codex-args` / `--claude-args` are documented to carry
+			// native child-flag strings that commonly start with `-`
+			// (e.g. `--enable goals`, `--chrome`). Always consume the
+			// next token as the value when present; only the trailing
+			// no-value case falls back to child boundary.
+			if i+1 >= len(rest) {
+				flagsEnd = i
+				break walk
+			}
+			i++ // consume value token (may start with `-`)
+			continue
+		case "bool":
+			continue
+		default:
+			// Unknown `-...` token: child block starts here.
+			flagsEnd = i
+			break walk
+		}
 	}
-	flags := rest[:boundary]
-	child := rest[boundary:]
+	flags := rest[:flagsEnd]
+	child := rest[flagsEnd:]
 	out := append([]string{}, flags...)
 	out = append(out, binary)
-	out = append(out, child...)
+	if len(child) > 0 {
+		out = append(out, "--")
+		out = append(out, child...)
+	}
 	return out
+}
+
+// launchKnownFlag classifies a token as a launch flag for translation.
+//
+//   - "string"              : value-consuming flag whose value is a normal
+//     (non-dash-prefixed) token. Bare or
+//     dash-followed forms terminate the launch
+//     region for child-arg parity with legacy
+//     launch.
+//   - "string-accepts-dash" : value-consuming flag documented to carry
+//     native child-arg strings (often starting
+//     with `-`), e.g. --codex-args / --claude-args.
+//   - "bool"                : flag-only.
+//   - ""                    : unknown.
+//
+// Mirrors the fs.String / fs.Bool registrations in launch.go so `agent up`
+// can split launch flags from native child flags when no `--` boundary is
+// given.
+func launchKnownFlag(name string) string {
+	switch name {
+	case "--codex-args", "--claude-args",
+		"-codex-args", "-claude-args":
+		return "string-accepts-dash"
+	case "--role", "--session", "--me", "--root", "--team-home", "--team-profile",
+		"--conversation", "--conversation-id", "--trust", "--model",
+		"-role", "-session", "-me", "-root", "-team-home", "-team-profile",
+		"-conversation", "-conversation-id", "-trust", "-model":
+		return "string"
+	case "--team-workstream", "--no-bootstrap", "--no-default-args",
+		"--force-duplicate", "--dry-run",
+		"-team-workstream", "-no-bootstrap", "-no-default-args",
+		"-force-duplicate", "-dry-run":
+		return "bool"
+	}
+	return ""
 }
 
 // runAgentResume turns `agent resume <role> [extras]` into

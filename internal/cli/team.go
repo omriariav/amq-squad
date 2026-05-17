@@ -612,7 +612,11 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 	b.WriteString(shellQuote(in.CWD))
 	b.WriteString(" && ")
 	b.WriteString(shellQuote(in.SquadBin))
-	b.WriteString(" launch")
+	// Emit the modern single-agent surface: `agent up <binary> [flags] [-- child]`.
+	// Legacy `launch <binary>` still works with a deprecation warning, but
+	// generated team commands recommend the 1.0 shape.
+	b.WriteString(" agent up ")
+	b.WriteString(shellQuote(m.Binary))
 	b.WriteString(" --role ")
 	b.WriteString(shellQuote(m.Role))
 	b.WriteString(" --session ")
@@ -657,8 +661,6 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 			b.WriteString(shellQuote(joinedAgentArgs(extraDefaultArgs)))
 		}
 	}
-	b.WriteString(" ")
-	b.WriteString(shellQuote(m.Binary))
 	modelArgs := modelArgsForBinary(m.Binary, in.Model)
 	if defaultArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, extraDefaultArgs, in.TrustMode); len(defaultArgs) > 0 {
 		b.WriteString(" --")

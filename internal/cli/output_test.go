@@ -432,7 +432,7 @@ func TestQuietDoesNotSuppressDryRunStdout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, "launch") {
+	if !strings.Contains(stdout, "agent up") {
 		t.Errorf("--quiet must not suppress dry-run command output on stdout:\n%s", stdout)
 	}
 }
