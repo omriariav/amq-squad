@@ -34,6 +34,9 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"team", "profiles", "--help"},
 		{"team", "rules", "--help"},
 		{"team", "rules", "init", "--help"},
+		{"agent", "--help"},
+		{"agent", "up", "--help"},
+		{"agent", "resume", "--help"},
 	}
 	for _, args := range cases {
 		stdout, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
@@ -77,6 +80,9 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		{name: "version --help", args: []string{"version", "--help"}, want: "amq-squad version"},
 		{name: "completion --help", args: []string{"completion", "--help"}, want: "amq-squad completion"},
 		{name: "doctor --help", args: []string{"doctor", "--help"}, want: "amq-squad doctor"},
+		{name: "agent --help", args: []string{"agent", "--help"}, want: "amq-squad agent"},
+		{name: "agent up --help", args: []string{"agent", "up", "--help"}, want: "amq-squad agent up"},
+		{name: "agent resume --help", args: []string{"agent", "resume", "--help"}, want: "amq-squad agent resume"},
 	}
 	for _, tc := range cases {
 		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })

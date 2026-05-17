@@ -76,6 +76,12 @@ func runTeamLaunch(args []string) error {
 	lf := registerLiveLaunchFlags(fs)
 	dryRun := fs.Bool("dry-run", false, "print terminal commands without executing them")
 	profileFlag := fs.String("profile", "", "team profile to launch (default: default profile)")
+
+	// Emit the deprecation warning before flag parsing so it appears even
+	// for the bare misuse case (no args). Help invocations stay quiet.
+	if !isHelpInvocation(args) {
+		teamLaunchDeprecationWarning(args)
+	}
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `amq-squad team launch - open the configured team in a terminal
 
@@ -116,6 +122,57 @@ Examples:
 	opts.DryRun = *dryRun
 	opts.Profile = profile
 	return executeTeamLaunch(opts, flagWasSet(fs, "session"), flagWasSet(fs, "trust"))
+}
+
+// teamLaunchDeprecationWarning emits one of two replacement hints based on
+// the raw argv: --fresh + --session NAME points at fork --from <current>
+// --as NAME (since fresh starts a new workstream branched off the current
+// one); everything else points at the modern `up` verb. The current
+// workstream is resolved through the same default-profile path `up` uses;
+// when no team is configured we fall back to a placeholder so the hint
+// still tells the user what to type.
+func teamLaunchDeprecationWarning(args []string) {
+	fresh := false
+	session := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--fresh":
+			fresh = true
+		case "--session":
+			if i+1 < len(args) {
+				session = args[i+1]
+			}
+		default:
+			if strings.HasPrefix(args[i], "--session=") {
+				session = strings.TrimPrefix(args[i], "--session=")
+			}
+		}
+	}
+	if fresh && session != "" {
+		current := resolveCurrentTeamWorkstreamForHint()
+		deprecationWarning("team launch --session ... --fresh", "fork --from "+current+" --as "+session)
+		return
+	}
+	deprecationWarning("team launch", "up")
+}
+
+func resolveCurrentTeamWorkstreamForHint() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "<current>"
+	}
+	if !team.Exists(cwd) {
+		return "<current>"
+	}
+	t, err := team.Read(cwd)
+	if err != nil {
+		return "<current>"
+	}
+	ws, err := resolveTeamWorkstreamName(t, "", false)
+	if err != nil || ws == "" {
+		return "<current>"
+	}
+	return ws
 }
 
 // executeTeamLaunch is the post-parse body shared by `team launch` and live

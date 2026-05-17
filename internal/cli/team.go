@@ -279,6 +279,9 @@ Examples:
 }
 
 func runTeamShow(args []string) error {
+	if !isHelpInvocation(args) {
+		deprecationWarning("team show", "up --dry-run")
+	}
 	fs := flag.NewFlagSet("team show", flag.ContinueOnError)
 	pf := registerPreviewFlags(fs)
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned team_plan envelope instead of the human preview")

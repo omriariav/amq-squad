@@ -222,6 +222,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"list":       true,
 		"completion": true,
 		"doctor":     true,
+		"agent":      true,
 		"version":    true,
 		"help":       true,
 	}
