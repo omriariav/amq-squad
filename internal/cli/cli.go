@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 )
 
 // UsageError signals a misuse of the CLI; main prints it and exits 2.
@@ -23,9 +24,17 @@ func Run(args []string, version string) error {
 		printUsage()
 		return nil
 	}
-	if args[0] == "--version" || args[0] == "-v" || args[0] == "version" {
+	if args[0] == "--version" || args[0] == "-v" {
+		// Bare -v / --version stay text-only for backwards compat.
 		fmt.Println("amq-squad", version)
 		return nil
+	}
+	if args[0] == "version" {
+		err := runVersion(version, args[1:])
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
 	}
 
 	err := dispatch(args)
@@ -33,6 +42,34 @@ func Run(args []string, version string) error {
 		return nil
 	}
 	return err
+}
+
+// runVersion prints the amq-squad version. With --json it emits a
+// schema-versioned envelope on stdout; without --json it keeps the legacy
+// human line so old scripts grep'ing for "amq-squad <version>" still work.
+func runVersion(version string, args []string) error {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned JSON envelope instead of the human version line")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad version - print the amq-squad version
+
+Usage:
+  amq-squad version [--json]
+`)
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSONEnvelope("version", versionEnvelopeData{Version: version})
+	}
+	fmt.Println("amq-squad", version)
+	return nil
+}
+
+// versionEnvelopeData is the kind="version" payload.
+type versionEnvelopeData struct {
+	Version string `json:"version"`
 }
 
 func dispatch(args []string) error {
