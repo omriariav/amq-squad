@@ -98,24 +98,15 @@ use 'amq-squad team launch' to open them in tmux from team intent.
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	trustMode, err := normalizeTrustMode(*trustRaw)
-	if err != nil {
-		return err
-	}
-	modelOverrides, err := parseKV(*modelFlag)
-	if err != nil {
-		return fmt.Errorf("parse --model: %w", err)
-	}
-	modelOverrides = lowercaseKeys(modelOverrides)
-	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
-	if err != nil {
-		return err
-	}
-
 	if *restoreExisting && *fresh {
 		return usageErrorf("--restore-existing and --fresh are mutually exclusive")
 	}
-
+	mode := resumeModeDefault
+	if *fresh {
+		mode = resumeModeFresh
+	} else if *restoreExisting {
+		mode = resumeModeRestoreExisting
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
@@ -123,23 +114,105 @@ use 'amq-squad team launch' to open them in tmux from team intent.
 	if !team.Exists(cwd) {
 		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
 	}
-	t, err := team.Read(cwd)
+	return executeResume(resumeExecution{
+		ProjectDir:       cwd,
+		RequestedSession: *sessionFlag,
+		ExplicitSession:  flagWasSet(fs, "session"),
+		Mode:             mode,
+		Force:            *forceDuplicate,
+		NoBootstrap:      *noBootstrap,
+		TrustRaw:         *trustRaw,
+		ExplicitTrust:    flagWasSet(fs, "trust"),
+		ModelRaw:         *modelFlag,
+		CodexArgsRaw:     *codexArgsRaw,
+		ClaudeArgsRaw:    *claudeArgsRaw,
+		DryRun:           *dryRun,
+	})
+}
+
+// resumeExecution is the shared input for the resume planner. team resume,
+// top-level resume, and fork all build one and call executeResume so the
+// planner stays the single source of truth.
+type resumeExecution struct {
+	ProjectDir       string
+	RequestedSession string
+	ExplicitSession  bool
+	Mode             resumeMode
+	Force            bool
+	NoBootstrap      bool
+	TrustRaw         string
+	ExplicitTrust    bool
+	ModelRaw         string
+	CodexArgsRaw     string
+	ClaudeArgsRaw    string
+	DryRun           bool
+	// Style controls the printer header label and footer verb so the same
+	// planner can present its output as team resume, resume, or fork without
+	// duplicating logic.
+	Style resumePrinterStyle
+}
+
+// resumePrinterStyle parameterizes the per-entry-point output surface. The
+// zero value is the legacy `team resume` shape (preserved for old tests and
+// existing scripts). Top-level resume and fork supply non-zero values.
+type resumePrinterStyle struct {
+	// Label is the verb that appears in the header and footer (e.g.
+	// "team resume", "resume", "fork"). Empty falls back to "team resume".
+	Label string
+	// FooterVerb is the suggested tmux-launch verb in the footer. Empty
+	// falls back to "team launch".
+	FooterVerb string
+	// ForkFrom and ForkTo, when non-empty, add the fork "# from / # to"
+	// lines to the header. Used only by `fork`.
+	ForkFrom string
+	ForkTo   string
+}
+
+func (s resumePrinterStyle) label() string {
+	if s.Label == "" {
+		return "team resume"
+	}
+	return s.Label
+}
+
+func (s resumePrinterStyle) footerVerb() string {
+	if s.FooterVerb == "" {
+		return "team launch"
+	}
+	return s.FooterVerb
+}
+
+func executeResume(r resumeExecution) error {
+	trustMode, err := normalizeTrustMode(r.TrustRaw)
+	if err != nil {
+		return err
+	}
+	modelOverrides, err := parseKV(r.ModelRaw)
+	if err != nil {
+		return fmt.Errorf("parse --model: %w", err)
+	}
+	modelOverrides = lowercaseKeys(modelOverrides)
+	binaryArgs, err := parseBinaryArgFlags(r.CodexArgsRaw, r.ClaudeArgsRaw)
+	if err != nil {
+		return err
+	}
+	t, err := team.Read(r.ProjectDir)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}
 	if len(t.Members) == 0 {
 		return fmt.Errorf("team has no members")
 	}
-	workstream, err := resolveTeamWorkstreamName(t, *sessionFlag, flagWasSet(fs, "session"))
+	workstream, err := resolveTeamWorkstreamName(t, r.RequestedSession, r.ExplicitSession)
 	if err != nil {
 		return err
 	}
 	mergedBinaryArgs := mergeBinaryArgs(t.BinaryArgs, binaryArgs)
-	resolvedTrust, err := resolveTeamTrustMode(t, trustMode, flagWasSet(fs, "trust"))
+	resolvedTrust, err := resolveTeamTrustMode(t, trustMode, r.ExplicitTrust)
 	if err != nil {
 		return err
 	}
-	if err := validateTrustCombination(resolvedTrust, flagWasSet(fs, "trust") || strings.TrimSpace(t.Trust) != "", false, mergedBinaryArgs); err != nil {
+	if err := validateTrustCombination(resolvedTrust, r.ExplicitTrust || strings.TrimSpace(t.Trust) != "", false, mergedBinaryArgs); err != nil {
 		return err
 	}
 	memberRoles := make(map[string]bool, len(t.Members))
@@ -150,14 +223,6 @@ use 'amq-squad team launch' to open them in tmux from team intent.
 		return err
 	}
 
-	mode := resumeModeDefault
-	if *fresh {
-		mode = resumeModeFresh
-	} else if *restoreExisting {
-		mode = resumeModeRestoreExisting
-	}
-
-	force := *forceDuplicate
 	squadBin := teamSquadBin()
 	plans := make([]resumePlan, 0, len(t.Members))
 	recordCount := 0
@@ -166,9 +231,9 @@ use 'amq-squad team launch' to open them in tmux from team intent.
 			Member:         m,
 			Team:           t,
 			Workstream:     workstream,
-			Mode:           mode,
-			Force:          force,
-			NoBootstrap:    *noBootstrap,
+			Mode:           r.Mode,
+			Force:          r.Force,
+			NoBootstrap:    r.NoBootstrap,
 			SquadBin:       squadBin,
 			BinaryArgs:     mergedBinaryArgs,
 			Trust:          resolvedTrust,
@@ -188,7 +253,7 @@ use 'amq-squad team launch' to open them in tmux from team intent.
 	// Members that match a record but are currently live still satisfy
 	// the contract: the records are present and would replay if the live
 	// instance went away.
-	if mode == resumeModeRestoreExisting && recordCount == 0 {
+	if r.Mode == resumeModeRestoreExisting && recordCount == 0 {
 		return fmt.Errorf("--restore-existing: no team members have restorable launch records for workstream %q", workstream)
 	}
 
@@ -198,7 +263,7 @@ use 'amq-squad team launch' to open them in tmux from team intent.
 	// AMQ root already contains mailbox state. Both shapes can be
 	// silently overwritten by emitting fresh launches; the second
 	// matches `team launch --fresh` semantics for parity.
-	if mode == resumeModeFresh && !force {
+	if r.Mode == resumeModeFresh && !r.Force {
 		if recordCount > 0 {
 			return fmt.Errorf("--fresh --session %q: %d member(s) already have launch records for this workstream; rerun with --force-duplicate to overwrite", workstream, recordCount)
 		}
@@ -211,7 +276,7 @@ use 'amq-squad team launch' to open them in tmux from team intent.
 		}
 	}
 
-	printResumePlan(t, workstream, mode, plans, *dryRun, force)
+	printResumePlan(t, workstream, r.Mode, plans, r.DryRun, r.Force, r.Style)
 	return nil
 }
 
@@ -460,10 +525,16 @@ func freshLaunchCommand(in memberPlanInput) string {
 	})
 }
 
-func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []resumePlan, dryRun, force bool) {
-	fmt.Println("# amq-squad team resume")
+func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []resumePlan, dryRun, force bool, style resumePrinterStyle) {
+	fmt.Printf("# amq-squad %s\n", style.label())
 	fmt.Println("#")
 	fmt.Printf("# team-home:  %s\n", t.Project)
+	if style.ForkFrom != "" {
+		fmt.Printf("# from:       %s\n", style.ForkFrom)
+	}
+	if style.ForkTo != "" {
+		fmt.Printf("# to:         %s\n", style.ForkTo)
+	}
 	fmt.Printf("# workstream: %s\n", workstream)
 	fmt.Printf("# mode:       %s\n", describeResumeMode(mode, dryRun))
 	fmt.Printf("# members:    %d\n", len(plans))
@@ -505,8 +576,9 @@ func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []re
 			break
 		}
 	}
+	verb := style.footerVerb()
 	if !allFresh {
-		fmt.Println("# Note: 'team launch' would re-emit fresh commands from team intent,")
+		fmt.Printf("# Note: '%s' would re-emit fresh commands from team intent,\n", verb)
 		fmt.Println("# which is not equivalent to the per-member plan above.")
 		return
 	}
@@ -516,9 +588,9 @@ func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []re
 		suffix = " --force-duplicate"
 	}
 	if mode == resumeModeFresh {
-		fmt.Printf("# %s team launch --fresh --session %s%s\n", filepath.Base(teamSquadBin()), shellQuote(workstream), suffix)
+		fmt.Printf("# %s %s --fresh --session %s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix)
 	} else {
-		fmt.Printf("# %s team launch --session %s%s\n", filepath.Base(teamSquadBin()), shellQuote(workstream), suffix)
+		fmt.Printf("# %s %s --session %s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix)
 	}
 }
 

@@ -25,6 +25,8 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		{name: "down --help", args: []string{"down", "--help"}, want: "amq-squad down"},
 		{name: "status --help", args: []string{"status", "--help"}, want: "amq-squad status"},
 		{name: "history --help", args: []string{"history", "--help"}, want: "amq-squad history"},
+		{name: "resume --help", args: []string{"resume", "--help"}, want: "amq-squad resume"},
+		{name: "fork --help", args: []string{"fork", "--help"}, want: "amq-squad fork"},
 	}
 	for _, tc := range cases {
 		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })
