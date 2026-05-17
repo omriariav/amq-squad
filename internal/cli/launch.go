@@ -194,7 +194,8 @@ still combine with --conversation.
 
 	if *dryRun {
 		fmt.Println(shellCommand("amq", coopArgs...))
-		fmt.Fprintln(os.Stderr, "(dry run - no files written, not execing)")
+		quietNotice("(dry run - no files written, not execing)\n")
+		verbosePolicyEcho()
 		return nil
 	}
 

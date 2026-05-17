@@ -21,7 +21,20 @@ func usageErrorf(format string, args ...any) error {
 
 // Run dispatches to a subcommand. flag.ErrHelp from any --help path is
 // swallowed so help output exits 0 across commands.
+//
+// Global output flags (--quiet, --verbose, --color) are peeled out of args
+// before subcommand dispatch and stored on the package-level policy so any
+// command can read them via outputPolicyCurrent. They may appear before or
+// after the subcommand but never past a literal "--" boundary.
 func Run(args []string, version string) error {
+	args, policy, err := parseGlobalFlags(args)
+	if err != nil {
+		return err
+	}
+	prev := currentOutputPolicy
+	currentOutputPolicy = policy
+	defer func() { currentOutputPolicy = prev }()
+
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		printUsage()
 		return nil
@@ -39,7 +52,7 @@ func Run(args []string, version string) error {
 		return err
 	}
 
-	err := dispatch(args)
+	err = dispatch(args)
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
 	}
@@ -125,6 +138,12 @@ Commands:
   completion Emit a shell completion script (bash, zsh, fish)
   doctor    Check this project's amq-squad / AMQ setup
   version   Print the amq-squad version
+
+Global flags (accepted before or after the subcommand, until a literal "--"):
+  --quiet              Suppress non-data success/progress notices.
+  --verbose            Print additional diagnostic detail.
+  --color auto|always|never
+                       Control ANSI color output (default auto; honors NO_COLOR).
 
 Exit codes:
   0  success

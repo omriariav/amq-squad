@@ -918,7 +918,7 @@ Usage:
 			if err := rules.Write(cwd, content); err != nil {
 				return fmt.Errorf("write team-rules.md: %w", err)
 			}
-			fmt.Fprintf(os.Stderr, "Wrote %s\n", rules.Path(cwd))
+			quietNotice("Wrote %s\n", rules.Path(cwd))
 			return nil
 		}
 		wrote, err := rules.Ensure(cwd, content)
@@ -926,9 +926,9 @@ Usage:
 			return fmt.Errorf("seed team-rules.md: %w", err)
 		}
 		if wrote {
-			fmt.Fprintf(os.Stderr, "Wrote %s\n", rules.Path(cwd))
+			quietNotice("Wrote %s\n", rules.Path(cwd))
 		} else {
-			fmt.Fprintf(os.Stderr, "%s already exists, leaving it alone.\n", rules.Path(cwd))
+			quietNotice("%s already exists, leaving it alone.\n", rules.Path(cwd))
 		}
 		return nil
 	default:
@@ -1044,7 +1044,7 @@ when a member cwd is outside the team-home directory.
 
 	if !*apply {
 		if drift {
-			fmt.Fprintln(os.Stderr, "\nPreview only. Re-run with --apply to write.")
+			quietNotice("\nPreview only. Re-run with --apply to write.\n")
 			return fmt.Errorf("drift detected")
 		}
 		return nil
@@ -1054,7 +1054,7 @@ when a member cwd is outside the team-home directory.
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Wrote %d file(s).\n", n)
+	quietNotice("Wrote %d file(s).\n", n)
 	return nil
 }
 
