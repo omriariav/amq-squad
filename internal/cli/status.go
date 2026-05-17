@@ -40,6 +40,15 @@ type statusSignals struct {
 	LastSeen    time.Time `json:"last_seen,omitempty"`
 }
 
+// statusEnvelopeData is the kind="status" payload: resolved team-home,
+// workstream, profile, and the per-member records.
+type statusEnvelopeData struct {
+	TeamHome   string         `json:"team_home"`
+	Workstream string         `json:"workstream"`
+	Profile    string         `json:"profile,omitempty"`
+	Records    []statusRecord `json:"records"`
+}
+
 type statusRecord struct {
 	Role     string        `json:"role"`
 	Handle   string        `json:"handle"`
@@ -56,7 +65,7 @@ type statusRecord struct {
 func runStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	sessionName := fs.String("session", "", "AMQ workstream session name (default: team workstream)")
-	jsonOut := fs.Bool("json", false, "emit records as JSON array")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned status envelope instead of the human table")
 	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad status - live state of this project's configured team
@@ -124,9 +133,12 @@ func executeStatus(s statusExecution) error {
 		rows = append(rows, classifyMemberStatus(t, m, workstream, s.Probe))
 	}
 	if s.JSON {
-		enc := json.NewEncoder(s.Out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(rows)
+		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
+			TeamHome:   t.Project,
+			Workstream: workstream,
+			Profile:    s.Profile,
+			Records:    rows,
+		})
 	}
 	w := tabwriter.NewWriter(s.Out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSTATUS\tDETAIL")

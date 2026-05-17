@@ -276,11 +276,12 @@ Known personas:
 func runTeamShow(args []string) error {
 	fs := flag.NewFlagSet("team show", flag.ContinueOnError)
 	pf := registerPreviewFlags(fs)
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned team_plan envelope instead of the human preview")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
 
 Usage:
-  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate]
+  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--json]
 `)
 	}
 	if err := fs.Parse(args); err != nil {
@@ -290,6 +291,7 @@ Usage:
 	if err != nil {
 		return err
 	}
+	opts.JSON = *jsonOut
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
@@ -311,6 +313,34 @@ type emitTeamOptions struct {
 	ModelOverrides   map[string]string
 	ForceDuplicate   bool
 	Profile          string
+	// JSON requests a structured "team_plan" envelope on stdout instead of
+	// the human launch-command preview. Diagnostics still go to stderr.
+	JSON bool
+}
+
+// teamPlanMember is the per-member entry inside a JSON team plan.
+type teamPlanMember struct {
+	Role    string `json:"role"`
+	Handle  string `json:"handle"`
+	Binary  string `json:"binary"`
+	Model   string `json:"model,omitempty"`
+	CWD     string `json:"cwd"`
+	Command string `json:"command"`
+}
+
+// teamPlan is the JSON-friendly representation of a launch-plan preview.
+// Fields name the inputs callers need to inspect, distribute, or run the
+// plan: project/team-home + workstream + trust + profile + binary args +
+// per-member command lines.
+type teamPlan struct {
+	TeamHome   string              `json:"team_home"`
+	Project    string              `json:"project"`
+	Workstream string              `json:"workstream"`
+	Profile    string              `json:"profile"`
+	Trust      string              `json:"trust"`
+	Members    int                 `json:"members"`
+	BinaryArgs map[string][]string `json:"binary_args,omitempty"`
+	Plan       []teamPlanMember    `json:"plan"`
 }
 
 func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
@@ -359,6 +389,58 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		return err
 	}
 
+	// Use the running amq-squad's absolute path so emitted commands work
+	// even when amq-squad isn't on PATH.
+	squadBin := "amq-squad"
+	if p, err := os.Executable(); err == nil {
+		squadBin = p
+	}
+
+	if opts.JSON {
+		// Canonicalize the profile field so both `team show --json` (no
+		// --profile flag) and `up --dry-run --json` (resolved to "default"
+		// when unset) emit the same value.
+		profileName := opts.Profile
+		if profileName == "" {
+			profileName = team.DefaultProfile
+		}
+		plan := teamPlan{
+			TeamHome:   t.Project,
+			Project:    t.Project,
+			Workstream: workstream,
+			Profile:    profileName,
+			Trust:      trustMode,
+			Members:    len(members),
+			BinaryArgs: binaryArgs,
+			Plan:       make([]teamPlanMember, 0, len(members)),
+		}
+		for _, m := range members {
+			effectiveModel := memberEffectiveModel(m, opts.ModelOverrides)
+			cwd := m.EffectiveCWD(t.Project)
+			plan.Plan = append(plan.Plan, teamPlanMember{
+				Role:   m.Role,
+				Handle: m.Handle,
+				Binary: m.Binary,
+				Model:  effectiveModel,
+				CWD:    cwd,
+				Command: emitTeamCommand(emitTeamCommandInput{
+					CWD:            cwd,
+					SquadBin:       squadBin,
+					TeamHome:       t.Project,
+					Member:         m,
+					NoBootstrap:    opts.NoBootstrap,
+					Workstream:     workstream,
+					BinaryArgs:     binaryArgs,
+					TrustMode:      trustMode,
+					Model:          effectiveModel,
+					ForceDuplicate: opts.ForceDuplicate,
+					Profile:        opts.Profile,
+				}),
+			})
+		}
+		return printJSONEnvelope("team_plan", plan)
+	}
+
 	fmt.Println("# amq-squad team - run each command in its own terminal tab")
 	fmt.Println("#")
 	fmt.Printf("# team-home: %s\n", t.Project)
@@ -380,12 +462,6 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		fmt.Printf("# rules:     (not set; run 'amq-squad team rules init')\n")
 	}
 	fmt.Println()
-	// Use the running amq-squad's absolute path so emitted commands work
-	// even when amq-squad isn't on PATH.
-	squadBin := "amq-squad"
-	if p, err := os.Executable(); err == nil {
-		squadBin = p
-	}
 
 	for i, m := range members {
 		label := m.Role

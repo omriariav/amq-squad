@@ -10,6 +10,21 @@ import (
 	"github.com/omriariav/amq-squad/internal/team"
 )
 
+// profileRow is one entry inside the team profiles list. Reused by both
+// the human tabwriter output and the team_profiles JSON envelope so the
+// two views can never drift.
+type profileRow struct {
+	Profile    string `json:"profile"`
+	Path       string `json:"path"`
+	Members    int    `json:"members"`
+	Workstream string `json:"workstream,omitempty"`
+}
+
+// teamProfilesEnvelopeData is the kind="team_profiles" payload.
+type teamProfilesEnvelopeData struct {
+	Profiles []profileRow `json:"profiles"`
+}
+
 // resolveProfileFlag normalizes a --profile value: empty or "default" maps
 // to the implicit default profile; non-default names are validated against
 // the slug rules. Returns the canonical profile name and any error.
@@ -26,11 +41,12 @@ func resolveProfileFlag(name string) (string, error) {
 
 func runTeamProfiles(args []string) error {
 	fs := flag.NewFlagSet("team profiles", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned team_profiles envelope instead of the human table")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team profiles - list configured team profiles
 
 Usage:
-  amq-squad team profiles
+  amq-squad team profiles [--json]
 
 Default first, then named profiles sorted alphabetically. Columns: PROFILE,
 PATH, MEMBERS, WORKSTREAM. Read-only; no create, delete, or rename here.
@@ -45,17 +61,16 @@ Use 'amq-squad team init --profile NAME' to add a profile.
 		return fmt.Errorf("getwd: %w", err)
 	}
 
-	type row struct {
-		Profile    string
-		Path       string
-		Members    int
-		Workstream string
-	}
-	var rows []row
+	var rows []profileRow
 	if team.Exists(cwd) {
 		t, err := team.Read(cwd)
-		if err == nil {
-			rows = append(rows, row{
+		if err != nil {
+			// Mirror the named-profile path: warn on stderr so the broken
+			// config is visible while stdout (especially under --json) stays
+			// a valid envelope of whatever was readable.
+			fmt.Fprintf(os.Stderr, "warning: read profile %s: %v\n", team.DefaultProfile, err)
+		} else {
+			rows = append(rows, profileRow{
 				Profile:    team.DefaultProfile,
 				Path:       team.Path(cwd),
 				Members:    len(t.Members),
@@ -70,16 +85,21 @@ Use 'amq-squad team init --profile NAME' to add a profile.
 	for _, name := range named {
 		t, err := team.ReadProfile(cwd, name)
 		if err != nil {
-			// Skip unreadable profile but warn so the user sees the breakage.
+			// Skip unreadable profile but warn so the user sees the
+			// breakage. JSON mode still emits a valid envelope on stdout;
+			// warnings only land on stderr.
 			fmt.Fprintf(os.Stderr, "warning: read profile %s: %v\n", name, err)
 			continue
 		}
-		rows = append(rows, row{
+		rows = append(rows, profileRow{
 			Profile:    name,
 			Path:       team.ProfilePath(cwd, name),
 			Members:    len(t.Members),
 			Workstream: t.Workstream,
 		})
+	}
+	if *jsonOut {
+		return printJSONEnvelope("team_profiles", teamProfilesEnvelopeData{Profiles: rows})
 	}
 	if len(rows) == 0 {
 		fmt.Fprintln(os.Stderr, "No team profiles configured. Run 'amq-squad team init' to create one.")

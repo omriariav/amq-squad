@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/internal/team"
 )
@@ -15,6 +16,7 @@ func runUp(args []string) error {
 	seedFrom := fs.String("seed-from", "", "seed the active brief from a deterministic source: file:<path>, issue:<n>, or gh:owner/repo#<n>")
 	force := fs.Bool("force", false, "overwrite an existing active brief when --seed-from is set (no effect otherwise)")
 	profileFlag := fs.String("profile", "", "team profile to bring up (default: default profile)")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned JSON envelope (requires --dry-run; the live up path stays human-only in 11A)")
 	pf := registerPreviewFlags(fs)
 	lf := registerLiveLaunchFlags(fs)
 	fs.Usage = func() {
@@ -55,6 +57,9 @@ Supported terminal backends: %s
 	if *force && *seedFrom == "" {
 		return usageErrorf("--force without --seed-from has no effect; pass --force-duplicate for live-duplicate handling")
 	}
+	if *jsonOut && !*dryRun {
+		return usageErrorf("--json requires --dry-run on `up`; the live launch path does not have a JSON contract in this release")
+	}
 	profile, err := resolveProfileFlag(*profileFlag)
 	if err != nil {
 		return err
@@ -73,16 +78,24 @@ Supported terminal backends: %s
 	// the write after preflight so a later launch-side rejection cannot
 	// mutate disk.
 	var seedContent string
+	var seedTimestamp time.Time
 	if *seedFrom != "" {
 		body, err := resolveSeed(*seedFrom)
 		if err != nil {
 			return err
 		}
-		seedContent = buildSeedBrief(*seedFrom, body, seedNow())
+		// Capture the timestamp once so the brief's frontmatter and the
+		// JSON envelope's generated_at field are always identical, even
+		// across an advancing clock.
+		seedTimestamp = seedNow()
+		seedContent = buildSeedBrief(*seedFrom, body, seedTimestamp)
 	}
 
 	if *dryRun {
 		if seedContent != "" {
+			if *jsonOut {
+				return printJSONEnvelope("brief_candidate", briefCandidateEnvelope(*seedFrom, seedContent, seedTimestamp))
+			}
 			fmt.Print(seedContent)
 			return nil
 		}
@@ -91,6 +104,7 @@ Supported terminal backends: %s
 			return err
 		}
 		opts.Profile = profile
+		opts.JSON = *jsonOut
 		return emitTeamCommands(cwd, opts)
 	}
 	opts, err := buildLiveLaunchOptions(fs, pf, lf)
@@ -110,4 +124,24 @@ func profileInitHint(profile string) string {
 		return ""
 	}
 	return " --profile " + profile
+}
+
+// briefCandidate is the kind="brief_candidate" payload emitted by
+// `up --dry-run --json --seed-from REF`. It carries the resolved provenance
+// fields the would-be brief frontmatter contains plus the rendered brief
+// body so callers can inspect or write it themselves.
+type briefCandidate struct {
+	Source      string `json:"source"`
+	GeneratedAt string `json:"generated_at"`
+	Generator   string `json:"generator"`
+	Content     string `json:"content"`
+}
+
+func briefCandidateEnvelope(source, content string, now time.Time) briefCandidate {
+	return briefCandidate{
+		Source:      source,
+		GeneratedAt: now.UTC().Format(time.RFC3339),
+		Generator:   "deterministic",
+		Content:     content,
+	}
 }

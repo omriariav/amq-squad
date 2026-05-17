@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -47,12 +46,15 @@ func TestRunHistoryJSONOmitsWakeField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("history --json: %v", err)
 	}
-	var rows []historyRecord
-	if err := json.Unmarshal([]byte(stdout), &rows); err != nil {
-		t.Fatalf("unmarshal: %v\nraw: %s", err, stdout)
+	env := decodeJSONEnvelope[historyEnvelopeData](t, stdout)
+	if env.Kind != "history" {
+		t.Errorf("envelope kind = %q, want history", env.Kind)
 	}
-	if len(rows) != 1 || rows[0].Role != "cto" {
-		t.Fatalf("rows = %+v, want one cto entry", rows)
+	if env.SchemaVersion != JSONSchemaVersion {
+		t.Errorf("schema_version = %d, want %d", env.SchemaVersion, JSONSchemaVersion)
+	}
+	if len(env.Data.Records) != 1 || env.Data.Records[0].Role != "cto" {
+		t.Fatalf("records = %+v, want one cto entry", env.Data.Records)
 	}
 	if strings.Contains(stdout, `"wake"`) {
 		t.Errorf("history JSON leaked wake field:\n%s", stdout)

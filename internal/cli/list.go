@@ -29,7 +29,7 @@ type listRecord struct {
 func runList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	projectDirs := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")
-	jsonOut := fs.Bool("json", false, "emit records as JSON array")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned list envelope instead of the human table")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad list - list restorable agents
@@ -84,7 +84,7 @@ where the original binary can be inferred.
 	rows := listRecordsFromEntries(all)
 
 	if *jsonOut {
-		return printJSON(rows)
+		return printJSONEnvelope("list", rows)
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)

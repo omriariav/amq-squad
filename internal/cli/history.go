@@ -11,6 +11,13 @@ import (
 	"github.com/omriariav/amq-squad/internal/launch"
 )
 
+// historyEnvelopeData is the kind="history" payload: the projects scanned
+// (resolved from --project flags or cwd) plus the restorable records.
+type historyEnvelopeData struct {
+	Projects []string        `json:"projects"`
+	Records  []historyRecord `json:"records"`
+}
+
 // historyRecord is the row shape emitted by `amq-squad history`. Unlike
 // listRecord, it does not carry a Wake field: history is restorable-launch
 // history only; live wake-health is reported by `status` after the split.
@@ -28,7 +35,7 @@ type historyRecord struct {
 func runHistory(args []string) error {
 	fs := flag.NewFlagSet("history", flag.ContinueOnError)
 	projectDirs := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")
-	jsonOut := fs.Bool("json", false, "emit records as JSON array")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned history envelope instead of the human table")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad history - list restorable launch records
 
@@ -53,7 +60,10 @@ restored. Live wake-health is intentionally not computed here; use
 	rows := historyRecordsFromEntries(all)
 
 	if *jsonOut {
-		return printJSON(rows)
+		return printJSONEnvelope("history", historyEnvelopeData{
+			Projects: dirs,
+			Records:  rows,
+		})
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tCONVERSATION\tSOURCE\tCWD\tSTARTED")

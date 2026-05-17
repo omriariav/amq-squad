@@ -165,10 +165,11 @@ func TestExecuteStatusLiveOnFreshActivePresence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v\n%s", err, out)
 	}
-	var rows []statusRecord
-	if err := json.Unmarshal([]byte(out), &rows); err != nil {
-		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Kind != "status" {
+		t.Errorf("envelope kind = %q, want status", env.Kind)
 	}
+	rows := env.Data.Records
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
@@ -315,10 +316,11 @@ func TestExecuteStatusJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v\n%s", err, out)
 	}
-	var rows []statusRecord
-	if err := json.Unmarshal([]byte(out), &rows); err != nil {
-		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Kind != "status" {
+		t.Errorf("envelope kind = %q, want status", env.Kind)
 	}
+	rows := env.Data.Records
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d: %v", len(rows), rows)
 	}

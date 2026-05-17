@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -233,10 +232,11 @@ func TestRunStatusProfileScopedToNamedRoster(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	var rows []statusRecord
-	if err := json.Unmarshal(buf.Bytes(), &rows); err != nil {
-		t.Fatalf("unmarshal: %v\n%s", err, buf.String())
+	env := decodeJSONEnvelope[statusEnvelopeData](t, buf.String())
+	if env.Kind != "status" {
+		t.Errorf("envelope kind = %q, want status", env.Kind)
 	}
+	rows := env.Data.Records
 	if len(rows) != 1 || rows[0].Role != "cto" {
 		t.Fatalf("status under --profile review should yield exactly cto; got %+v", rows)
 	}
