@@ -57,11 +57,12 @@ func runDown(args []string) error {
 	role := fs.String("role", "", "narrow to a single configured role")
 	all := fs.Bool("all", false, "target every configured member of the team")
 	force := fs.Bool("force", false, "hard-terminate verified live agent PIDs")
+	profileFlag := fs.String("profile", "", "team profile to target (default: default profile)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad down - stop configured team members
 
 Usage:
-  amq-squad down (--role R | --all) --force [--session NAME]
+  amq-squad down (--role R | --all) --force [--profile NAME] [--session NAME]
 
 Exactly one selector is required: --role R or --all. --all targets the
 configured members from this project's team.json in the resolved session
@@ -89,12 +90,16 @@ Mixed success/failure exits non-zero with a per-target report.
 		return fmt.Errorf("graceful down is unavailable: current AMQ has no one-shot /exit injection. Re-run with --force, or wait for the graceful-path decision.")
 	}
 
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	if !team.Exists(cwd) {
-		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
+	if !team.ExistsProfile(cwd, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
 	}
 	return executeDown(downExecution{
 		ProjectDir:       cwd,
@@ -102,6 +107,7 @@ Mixed success/failure exits non-zero with a per-target report.
 		ExplicitSession:  flagWasSet(fs, "session"),
 		Role:             *role,
 		All:              *all,
+		Profile:          profile,
 		Terminator:       signalTerminator{},
 		Probe:            defaultDuplicateLaunchProbe,
 		Out:              os.Stdout,
@@ -114,13 +120,14 @@ type downExecution struct {
 	ExplicitSession  bool
 	Role             string
 	All              bool
+	Profile          string
 	Terminator       processTerminator
 	Probe            duplicateLaunchProbe
 	Out              io.Writer
 }
 
 func executeDown(d downExecution) error {
-	t, err := team.Read(d.ProjectDir)
+	t, err := team.ReadProfile(d.ProjectDir, d.Profile)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}

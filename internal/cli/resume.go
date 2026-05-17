@@ -19,11 +19,12 @@ func runResume(args []string) error {
 	modelFlag := fs.String("model", "", "per-persona model overrides for fresh members, e.g. cto=gpt-5,fullstack=sonnet")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for fresh members, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for fresh members, e.g. '--chrome'")
+	profileFlag := fs.String("profile", "", "team profile to resume (default: default profile)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad resume - plan how to bring the team back
 
 Usage:
-  amq-squad resume [--session name] [--restore-existing]
+  amq-squad resume [--profile NAME] [--session name] [--restore-existing]
                    [--dry-run] [--force-duplicate]
                    [--no-bootstrap] [--trust sandboxed|trusted]
                    [--model role=model,...]
@@ -41,12 +42,16 @@ Use 'amq-squad up' to open the planned team in tmux from team intent.
 		return err
 	}
 
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	if !team.Exists(cwd) {
-		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
+	if !team.ExistsProfile(cwd, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
 	}
 	mode := resumeModeDefault
 	if *restoreExisting {
@@ -65,6 +70,7 @@ Use 'amq-squad up' to open the planned team in tmux from team intent.
 		CodexArgsRaw:     *codexArgsRaw,
 		ClaudeArgsRaw:    *claudeArgsRaw,
 		DryRun:           *dryRun,
+		Profile:          profile,
 		Style:            resumePrinterStyle{Label: "resume", FooterVerb: "up"},
 	})
 }

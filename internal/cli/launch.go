@@ -26,6 +26,7 @@ func runLaunch(args []string) error {
 	me := fs.String("me", "", "override the agent handle (defaults to binary basename)")
 	rootFlag := fs.String("root", "", "override AMQ root directory")
 	teamHome := fs.String("team-home", "", "team-home directory used to find .amq-squad/team-rules.md for bootstrap")
+	teamProfile := fs.String("team-profile", "", "team profile this launch belongs to (default: default profile)")
 	conversation := fs.String("conversation", "", "resume and store a Codex or Claude conversation name/id")
 	conversationID := fs.String("conversation-id", "", "alias for --conversation")
 	noBootstrap := fs.Bool("no-bootstrap", false, "do not pass the generated bootstrap prompt to the agent")
@@ -159,6 +160,7 @@ still combine with --conversation.
 		AgentPID:         os.Getpid(),
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
+		TeamProfile:      strings.TrimSpace(*teamProfile),
 	}
 
 	// Keep generated bootstrap out of launch.json so restore stays compact
