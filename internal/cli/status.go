@@ -140,10 +140,11 @@ func executeStatus(s statusExecution) error {
 			Records:    rows,
 		})
 	}
+	policy := outputPolicyCurrent()
 	w := tabwriter.NewWriter(s.Out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSTATUS\tDETAIL")
 	for _, r := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, r.Status, r.Detail)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), r.Detail)
 	}
 	return w.Flush()
 }

@@ -132,6 +132,7 @@ func countFails(checks []doctorCheck) int {
 }
 
 func writeDoctorTable(out io.Writer, checks []doctorCheck) {
+	policy := outputPolicyCurrent()
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "STATUS\tCHECK\tDETAIL")
 	for _, c := range checks {
@@ -139,9 +140,22 @@ func writeDoctorTable(out io.Writer, checks []doctorCheck) {
 		if detail == "" {
 			detail = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", c.Status, c.Name, detail)
+		fmt.Fprintf(w, "%s\t%s\t%s\n", colorStatus(policy, string(c.Status)), c.Name, detail)
 	}
 	w.Flush()
+	if policy.Verbose {
+		fmt.Fprintf(out, "\nverbose: %d checks total (%d fail / %d non-ok)\n", len(checks), countFails(checks), countNonOK(checks))
+	}
+}
+
+func countNonOK(checks []doctorCheck) int {
+	n := 0
+	for _, c := range checks {
+		if c.Status != doctorOK {
+			n++
+		}
+	}
+	return n
 }
 
 func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {

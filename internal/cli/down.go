@@ -224,9 +224,10 @@ func renderDownReports(out io.Writer, workstream string, reports []downReport) e
 	fmt.Fprintf(out, "# workstream: %s\n", workstream)
 	fmt.Fprintf(out, "# targets:    %d\n", len(reports))
 	fmt.Fprintln(out)
+	policy := outputPolicyCurrent()
 	var sent, notLive, failed int
 	for _, r := range reports {
-		fmt.Fprintf(out, "%-12s %-10s %s\n", r.Role, r.Status, r.Detail)
+		fmt.Fprintf(out, "%-12s %-10s %s\n", r.Role, colorStatus(policy, string(r.Status)), r.Detail)
 		switch r.Status {
 		case downStatusForceSent:
 			sent++

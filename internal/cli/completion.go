@@ -97,6 +97,9 @@ var completionCommonFlags = []string{
 	"-h",
 	"--version",
 	"-v",
+	"--quiet",
+	"--verbose",
+	"--color",
 	// Subcommand flags, sorted alphabetically.
 	"--all",
 	"--allow-outside",
