@@ -71,10 +71,15 @@ func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 	if len(env.Data.Plan) != 2 {
 		t.Fatalf("plan = %d entries, want 2", len(env.Data.Plan))
 	}
-	// Per-member commands must be present and runnable-looking.
+	// Per-member commands must be present and use the modern `agent up`
+	// surface (legacy `launch <binary>` is deprecated and must not appear
+	// in fresh team-plan output).
 	for _, m := range env.Data.Plan {
-		if !strings.Contains(m.Command, "amq-squad launch") && !strings.Contains(m.Command, "launch") {
-			t.Errorf("plan member %s has unexpected command: %q", m.Role, m.Command)
+		if !strings.Contains(m.Command, "agent up") {
+			t.Errorf("plan member %s missing 'agent up' surface: %q", m.Role, m.Command)
+		}
+		if strings.Contains(m.Command, " launch ") || strings.HasSuffix(m.Command, " launch") {
+			t.Errorf("plan member %s leaked deprecated 'launch' surface: %q", m.Role, m.Command)
 		}
 	}
 	// Trust default must be present so callers can inspect it.
