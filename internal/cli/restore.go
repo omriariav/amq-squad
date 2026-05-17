@@ -48,7 +48,7 @@ For records that look active, the metadata line includes wake-health:
   wake: stale    - wake.lock present but the PID is dead or unrelated
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 

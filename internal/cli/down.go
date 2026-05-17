@@ -76,7 +76,7 @@ verify alive AND match the expected agent binary.
 Mixed success/failure exits non-zero with a per-target report.
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -238,8 +238,16 @@ func renderDownReports(out io.Writer, workstream string, reports []downReport) e
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "# summary: %d force-sent, %d not-live, %d failed\n", sent, notLive, failed)
-	if failed > 0 {
-		return fmt.Errorf("down: %d of %d target(s) failed", failed, len(reports))
+	if failed == 0 {
+		return nil
 	}
-	return nil
+	msg := fmt.Sprintf("down: %d of %d target(s) failed", failed, len(reports))
+	// Partial success requires at least one target genuinely terminated AND
+	// at least one target failed. All-failed (or failed + not-live only)
+	// stays a system/runtime error so wrappers do not treat a wholesale
+	// breakage as "progress made".
+	if sent > 0 {
+		return &PartialError{Message: msg}
+	}
+	return errors.New(msg)
 }

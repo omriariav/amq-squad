@@ -34,7 +34,7 @@ Fork does not copy launch records, briefs, conversations, or team.json;
 it plans fresh launches into TARGET using the current team intent.
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 

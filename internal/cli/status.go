@@ -79,7 +79,7 @@ and fresh presence as input signals. Historical/restorable records are
 not included here; use 'amq-squad history' for those.
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	profile, err := resolveProfileFlag(*profileFlag)

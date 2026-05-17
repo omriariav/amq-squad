@@ -53,7 +53,7 @@ PATH, MEMBERS, WORKSTREAM. Read-only; no create, delete, or rename here.
 Use 'amq-squad team init --profile NAME' to add a profile.
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	cwd, err := os.Getwd()

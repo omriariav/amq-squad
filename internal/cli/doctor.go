@@ -87,14 +87,8 @@ members' wake health, and CLAUDE.md / AGENTS.md marker integrity.
 Read-only. Exits non-zero if any check is "fail".
 `)
 	}
-	if err := fs.Parse(args); err != nil {
-		// --help bubbles up; Run swallows flag.ErrHelp. Every other parse
-		// failure (unknown flag, malformed value) is misuse: surface it as
-		// a UsageError so main exits via the usage path.
-		if errors.Is(err, flag.ErrHelp) {
-			return err
-		}
-		return usageErrorf("doctor: %v", err)
+	if err := parseFlags(fs, args); err != nil {
+		return err
 	}
 	if fs.NArg() > 0 {
 		return usageErrorf("doctor takes no positional arguments; got %d", fs.NArg())

@@ -26,7 +26,7 @@ Pipe the output into the appropriate location for your shell, e.g.:
   amq-squad completion fish > ~/.config/fish/completions/amq-squad.fish
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() == 0 {

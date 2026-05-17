@@ -47,7 +47,7 @@ restored. Live wake-health is intentionally not computed here; use
 'amq-squad status' for the current configured team's live state.
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 

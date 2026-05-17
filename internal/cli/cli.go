@@ -8,7 +8,9 @@ import (
 	"os"
 )
 
-// UsageError signals a misuse of the CLI; main prints it and exits 2.
+// UsageError signals a misuse of the CLI (unknown command/flag, bad
+// argument shape, missing required selector). main maps it to ExitUser
+// (exit code 1) via cli.ExitCode.
 type UsageError string
 
 func (e UsageError) Error() string { return string(e) }
@@ -57,7 +59,7 @@ Usage:
   amq-squad version [--json]
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if *jsonOut {
@@ -123,6 +125,12 @@ Commands:
   completion Emit a shell completion script (bash, zsh, fish)
   doctor    Check this project's amq-squad / AMQ setup
   version   Print the amq-squad version
+
+Exit codes:
+  0  success
+  1  usage / user error (unknown flag, bad argument, missing required input)
+  2  system / runtime error (IO, process, config, environment)
+  3  partial success (some targets succeeded, some failed)
 
 Run 'amq-squad <command> --help' for command-specific options.
 `)
