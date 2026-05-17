@@ -51,6 +51,10 @@ Usage:
 Default first, then named profiles sorted alphabetically. Columns: PROFILE,
 PATH, MEMBERS, WORKSTREAM. Read-only; no create, delete, or rename here.
 Use 'amq-squad team init --profile NAME' to add a profile.
+
+Examples:
+  amq-squad team profiles
+  amq-squad team profiles --json
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {

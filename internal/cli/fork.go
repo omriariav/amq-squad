@@ -32,6 +32,10 @@ SOURCE must have local workstream state or restorable records for this
 team. TARGET must not already exist unless --force-duplicate is passed.
 Fork does not copy launch records, briefs, conversations, or team.json;
 it plans fresh launches into TARGET using the current team intent.
+
+Examples:
+  amq-squad fork --from issue-96 --as issue-96-review
+  amq-squad fork --from main --as experiment --no-bootstrap --trust trusted
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {

@@ -74,6 +74,10 @@ requires --force; --force sends SIGTERM only to launch-record PIDs that
 verify alive AND match the expected agent binary.
 
 Mixed success/failure exits non-zero with a per-target report.
+
+Examples:
+  amq-squad down --role cto --force
+  amq-squad down --all --force --session issue-96
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {

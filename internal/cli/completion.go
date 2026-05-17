@@ -24,6 +24,10 @@ Pipe the output into the appropriate location for your shell, e.g.:
   amq-squad completion bash > /etc/bash_completion.d/amq-squad
   amq-squad completion zsh  > "${fpath[1]}/_amq-squad"
   amq-squad completion fish > ~/.config/fish/completions/amq-squad.fish
+
+Examples:
+  amq-squad completion bash
+  amq-squad completion zsh > "${fpath[1]}/_amq-squad" && compinit
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {

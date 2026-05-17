@@ -92,6 +92,10 @@ Supported terminal backends: %s
 tmux defaults to splitting the current tmux window. Use --target new-session
 to create a detached squad session. The whole roster is preflighted for live
 duplicates before any tmux command runs; --force-duplicate overrides.
+
+Examples:
+  amq-squad team launch
+  amq-squad team launch --target new-session --terminal-session squad
 `, strings.Join(registeredTeamLaunchTerminals(), ", "))
 	}
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {

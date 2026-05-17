@@ -98,6 +98,11 @@ Known personas:
 		for _, r := range catalog.All() {
 			fmt.Fprintf(os.Stderr, "  %-10s %s (default CLI: %s)\n", r.ID, r.Label, r.PreferredBinary)
 		}
+		fmt.Fprint(os.Stderr, `
+Examples:
+  amq-squad team init --roles cto,fullstack --binary cto=codex
+  amq-squad team init --profile review --roles cto --session review
+`)
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -282,6 +287,10 @@ func runTeamShow(args []string) error {
 
 Usage:
   amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--json]
+
+Examples:
+  amq-squad team show
+  amq-squad team show --session issue-96 --json
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -889,6 +898,10 @@ func runTeamRules(args []string) error {
 
 Usage:
   amq-squad team rules init [--force]   Seed or refresh team-rules.md
+
+Examples:
+  amq-squad team rules init
+  amq-squad team rules init --force
 `)
 		if len(args) == 0 {
 			return usageErrorf("rules requires a subcommand (e.g. 'init')")
@@ -899,6 +912,17 @@ Usage:
 	case "init":
 		fs := flag.NewFlagSet("team rules init", flag.ContinueOnError)
 		force := fs.Bool("force", false, "overwrite an existing team-rules.md with the generated template")
+		fs.Usage = func() {
+			fmt.Fprint(os.Stderr, `amq-squad team rules init - seed or refresh .amq-squad/team-rules.md
+
+Usage:
+  amq-squad team rules init [--force]
+
+Examples:
+  amq-squad team rules init
+  amq-squad team rules init --force
+`)
+		}
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
@@ -958,6 +982,11 @@ appended between markers. Subsequent runs only refresh the managed block.
 When team members span multiple directories, sync walks every unique cwd
 in team.json and syncs CLAUDE.md + AGENTS.md in each. Use --allow-outside
 when a member cwd is outside the team-home directory.
+
+Examples:
+  amq-squad team sync
+  amq-squad team sync --apply
+  amq-squad team sync --profile review --apply
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -1177,5 +1206,10 @@ operate on .amq-squad/team.json.
 Personas come from the built-in catalog. Run 'amq-squad team init --help' to
 see them and the available flags. Use --binary fullstack=codex to run a
 persona with a different CLI.
+
+Examples:
+  amq-squad team init --roles cto,fullstack --binary cto=codex
+  amq-squad team show
+  amq-squad team sync --apply
 `)
 }

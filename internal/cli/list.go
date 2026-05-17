@@ -39,6 +39,10 @@ Usage:
 
 Includes full amq-squad launch records and older AMQ-only mailbox history
 where the original binary can be inferred.
+
+Examples:
+  amq-squad list
+  amq-squad list --project ~/repos/foo --json
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {

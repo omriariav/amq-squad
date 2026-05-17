@@ -5,6 +5,53 @@ import (
 	"testing"
 )
 
+// TestHelpSurfacesIncludeExamples is the Step 11F coverage guard: every
+// help surface (root + each subcommand + each nested help path) must
+// contain an "Examples:" block with at least one literal "amq-squad ..."
+// line so users get an executable hint without reading prose.
+func TestHelpSurfacesIncludeExamples(t *testing.T) {
+	cases := [][]string{
+		{"--help"},
+		{"help"},
+		{"version", "--help"},
+		{"completion", "--help"},
+		{"doctor", "--help"},
+		{"launch", "--help"},
+		{"restore", "--help"},
+		{"list", "--help"},
+		{"history", "--help"},
+		{"status", "--help"},
+		{"down", "--help"},
+		{"up", "--help"},
+		{"resume", "--help"},
+		{"fork", "--help"},
+		{"team", "--help"},
+		{"team", "init", "--help"},
+		{"team", "show", "--help"},
+		{"team", "launch", "--help"},
+		{"team", "resume", "--help"},
+		{"team", "sync", "--help"},
+		{"team", "profiles", "--help"},
+		{"team", "rules", "--help"},
+		{"team", "rules", "init", "--help"},
+	}
+	for _, args := range cases {
+		stdout, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
+		if err != nil {
+			t.Errorf("Run %v: returned %v, want nil", args, err)
+			continue
+		}
+		combined := stdout + stderr
+		if !strings.Contains(combined, "Examples:") {
+			t.Errorf("Run %v: missing 'Examples:' section in help output", args)
+		}
+		// At least one example line should look executable.
+		if !strings.Contains(combined, "amq-squad ") {
+			t.Errorf("Run %v: examples must reference 'amq-squad ...'", args)
+		}
+	}
+}
+
 // Each --help path must exit 0. flag.ContinueOnError returns flag.ErrHelp
 // from fs.Parse when --help is present; that error must be swallowed at the
 // dispatch boundary so users do not see a misleading "error: flag: help

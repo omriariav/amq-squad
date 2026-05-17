@@ -70,6 +70,10 @@ func runVersion(version string, args []string) error {
 
 Usage:
   amq-squad version [--json]
+
+Examples:
+  amq-squad version
+  amq-squad version --json
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -150,6 +154,11 @@ Exit codes:
   1  usage / user error (unknown flag, bad argument, missing required input)
   2  system / runtime error (IO, process, config, environment)
   3  partial success (some targets succeeded, some failed)
+
+Examples:
+  amq-squad team init --roles cto,fullstack --binary cto=codex
+  amq-squad up --dry-run --no-bootstrap
+  amq-squad doctor --json | jq .
 
 Run 'amq-squad <command> --help' for command-specific options.
 `)
