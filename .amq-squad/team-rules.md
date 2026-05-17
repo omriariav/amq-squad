@@ -8,6 +8,13 @@ Team members (see .amq-squad/team.json):
 - cto (codex): owns technical direction, architecture, sign-off.
 - fullstack (claude): implements features end to end.
 
+## Active workstream
+
+If `.amq-squad/ACTIVE-EPIC.md` exists, read it at session start. It points
+at the current GitHub epic / milestone driving this workstream. This is the
+manual stand-in for the brief convention spec'd in epic #31; replace with
+`.amq-squad/briefs/<session>.md` once that feature ships.
+
 ## Skills
 
 - Use the `amq-squad` skill for team setup, launch, AMQ routing, inbox drains,
