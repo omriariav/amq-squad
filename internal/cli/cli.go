@@ -47,6 +47,10 @@ func dispatch(args []string) error {
 		return runStatus(args[1:])
 	case "history":
 		return runHistory(args[1:])
+	case "resume":
+		return runResume(args[1:])
+	case "fork":
+		return runFork(args[1:])
 	case "launch":
 		return runLaunch(args[1:])
 	case "restore":
@@ -70,6 +74,8 @@ Commands:
   down      Stop configured team members (currently --force only)
   status    Live state of this project's configured team
   history   List restorable launch records
+  resume    Plan how to bring the team back into the resolved workstream
+  fork      Plan fresh launches in a new workstream branched off an existing one
   launch    Launch a single agent with a role (called by 'team show' output)
   restore   Restore registered agents from local launch history
   list      List registered agents across known projects
