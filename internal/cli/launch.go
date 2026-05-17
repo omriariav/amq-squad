@@ -210,6 +210,17 @@ still combine with --conversation.
 		return blocker
 	}
 
+	// Ensure the active brief stub exists for this workstream before the
+	// launch record is written, so a brief-creation failure does not leave
+	// a fresh launch.json for an agent that never started. resolveBriefHome
+	// applies the same skip rule bootstrap uses (explicit --team-home or
+	// cwd-with-team-rules-md only) so the two sources stay aligned.
+	if briefHome := resolveBriefHome(*teamHome, cwd); briefHome != "" {
+		if _, _, err := ensureBriefStub(briefHome, rec.Session); err != nil {
+			return fmt.Errorf("ensure brief: %w", err)
+		}
+	}
+
 	if err := launch.Write(agentDir, rec); err != nil {
 		return fmt.Errorf("write launch record: %w", err)
 	}

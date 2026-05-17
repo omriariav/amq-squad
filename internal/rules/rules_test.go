@@ -35,7 +35,7 @@ func TestPlanCreateWhenMissing(t *testing.T) {
 			"This project uses amq-squad for agent team coordination.",
 			"**Team norms:** `.amq-squad/team-rules.md`",
 			"**Your role:**",
-			"**Active workstream:** if `.amq-squad/ACTIVE-EPIC.md` exists",
+			"**Active brief:** read `.amq-squad/briefs/<session>.md`",
 			"These files are the source of truth.",
 		} {
 			if !strings.Contains(p.After, want) {
@@ -46,8 +46,9 @@ func TestPlanCreateWhenMissing(t *testing.T) {
 		if strings.Contains(p.After, "one rule") {
 			t.Errorf("%s: rules body leaked into managed block:\n%s", p.Basename, p.After)
 		}
-		if strings.Contains(p.After, ".amq-squad/briefs") {
-			t.Errorf("%s: step 6 pointer stub must not mention briefs yet:\n%s", p.Basename, p.After)
+		// Pointer stub moved off ACTIVE-EPIC in step 7.
+		if strings.Contains(p.After, "ACTIVE-EPIC") {
+			t.Errorf("%s: pointer stub still references ACTIVE-EPIC:\n%s", p.Basename, p.After)
 		}
 	}
 }

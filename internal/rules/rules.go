@@ -242,16 +242,16 @@ func syncDir(dir string) error {
 // buildManagedBlock returns the canonical pointer-stub managed block. The
 // block intentionally does not embed team-rules.md; agents follow the
 // pointer at runtime so the root instruction file stays small and the
-// source of truth for norms stays in one place. Pointers in this slice
-// reference only sources that exist today; the brief convention spec'd
-// in epic #31 lands in step 7 and will update this block.
+// source of truth for norms stays in one place. The brief line names the
+// per-session convention; bootstrap injects the exact resolved path at
+// launch time.
 func buildManagedBlock(_ string) string {
 	return BeginMarker + "\n" +
 		"This project uses amq-squad for agent team coordination.\n" +
 		"\n" +
 		"- **Team norms:** `.amq-squad/team-rules.md`\n" +
 		"- **Your role:** when launched via amq-squad, `<your-agent-dir>/role.md` carries your persona.\n" +
-		"- **Active workstream:** if `.amq-squad/ACTIVE-EPIC.md` exists, read it at session start.\n" +
+		"- **Active brief:** read `.amq-squad/briefs/<session>.md` for the current workstream (bootstrap names the exact path).\n" +
 		"\n" +
 		"These files are the source of truth. Do not duplicate their content here.\n" +
 		EndMarker

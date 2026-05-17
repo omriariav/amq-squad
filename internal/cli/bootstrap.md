@@ -15,6 +15,9 @@ Startup files:
 {{- end }}
 - Role file: {{.RolePath}}
 - Launch record: {{.LaunchPath}}
+{{- if .BriefPath }}
+- Active brief: {{.BriefPath}}
+{{- end }}
 
 {{- if .CurrentTeam }}
 Current team routing:
