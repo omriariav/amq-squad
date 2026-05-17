@@ -96,6 +96,8 @@ func dispatch(args []string) error {
 		return runList(args[1:])
 	case "completion":
 		return runCompletion(args[1:])
+	case "doctor":
+		return runDoctor(args[1:])
 	default:
 		return usageErrorf("unknown command: %q. Run 'amq-squad --help' for usage.", args[0])
 	}
@@ -119,6 +121,7 @@ Commands:
   restore   Restore registered agents from local launch history
   list      List registered agents across known projects
   completion Emit a shell completion script (bash, zsh, fish)
+  doctor    Check this project's amq-squad / AMQ setup
   version   Print the amq-squad version
 
 Run 'amq-squad <command> --help' for command-specific options.

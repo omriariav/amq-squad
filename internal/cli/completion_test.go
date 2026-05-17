@@ -221,6 +221,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"restore":    true,
 		"list":       true,
 		"completion": true,
+		"doctor":     true,
 		"version":    true,
 		"help":       true,
 	}

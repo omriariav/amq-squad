@@ -64,6 +64,7 @@ var completionTopCommands = []string{
 	"restore",
 	"list",
 	"completion",
+	"doctor",
 	"version",
 	"help",
 }
