@@ -14,14 +14,16 @@ func runUp(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "print the launch plan (one launch command per member) instead of bringing the team up")
 	seedFrom := fs.String("seed-from", "", "seed the active brief from a deterministic source: file:<path>, issue:<n>, or gh:owner/repo#<n>")
 	force := fs.Bool("force", false, "overwrite an existing active brief when --seed-from is set (no effect otherwise)")
+	profileFlag := fs.String("profile", "", "team profile to bring up (default: default profile)")
 	pf := registerPreviewFlags(fs)
 	lf := registerLiveLaunchFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `amq-squad up - bring this project's team up
 
 Usage:
-  amq-squad up [--session workstream] [--fresh] [--terminal tmux]
-    [--target current-window|new-session] [--layout vertical|horizontal|tiled]
+  amq-squad up [--profile NAME] [--session workstream] [--fresh]
+    [--terminal tmux] [--target current-window|new-session]
+    [--layout vertical|horizontal|tiled]
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
     [--trust sandboxed|trusted] [--model role=model,...]
     [--codex-args args] [--claude-args args]
@@ -53,12 +55,16 @@ Supported terminal backends: %s
 	if *force && *seedFrom == "" {
 		return usageErrorf("--force without --seed-from has no effect; pass --force-duplicate for live-duplicate handling")
 	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	if !team.Exists(cwd) {
-		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
+	if !team.ExistsProfile(cwd, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
 	}
 
 	// Resolve --seed-from up front so source-shape failures (bad ref,
@@ -84,6 +90,7 @@ Supported terminal backends: %s
 		if err != nil {
 			return err
 		}
+		opts.Profile = profile
 		return emitTeamCommands(cwd, opts)
 	}
 	opts, err := buildLiveLaunchOptions(fs, pf, lf)
@@ -92,5 +99,15 @@ Supported terminal backends: %s
 	}
 	opts.SeedBriefContent = seedContent
 	opts.SeedBriefForce = *force
+	opts.Profile = profile
 	return executeTeamLaunch(opts, flagWasSet(fs, "session"), flagWasSet(fs, "trust"))
+}
+
+// profileInitHint returns the suffix to suggest on a `team init` command
+// when reporting a missing-team error for a named profile.
+func profileInitHint(profile string) string {
+	if profile == "" || profile == team.DefaultProfile {
+		return ""
+	}
+	return " --profile " + profile
 }

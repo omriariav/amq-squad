@@ -48,6 +48,10 @@ type Record struct {
 	AgentPID         int       `json:"agent_pid,omitempty"`
 	AgentTTY         string    `json:"agent_tty,omitempty"`
 	StartedAt        time.Time `json:"started_at"`
+	// TeamProfile names the profile the launch was emitted from. Empty
+	// means the implicit default profile. Captured so status / bootstrap
+	// routing can reuse the same profile without rereading flags.
+	TeamProfile string `json:"team_profile,omitempty"`
 }
 
 // Entry is a launch record plus the mailbox directory it was discovered in.

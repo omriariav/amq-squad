@@ -13,6 +13,7 @@ func runFork(args []string) error {
 	from := fs.String("from", "", "source AMQ workstream session to fork from")
 	as := fs.String("as", "", "target AMQ workstream session for fresh launches")
 	forceDuplicate := fs.Bool("force-duplicate", false, "fork into an existing target workstream by overwriting its launch plan")
+	profileFlag := fs.String("profile", "", "team profile to fork (default: default profile)")
 	noBootstrap := fs.Bool("no-bootstrap", false, "emit fresh launch commands that skip the generated bootstrap prompt")
 	trustRaw := fs.String("trust", "", "Codex trust profile for fresh members: sandboxed (default) or trusted")
 	modelFlag := fs.String("model", "", "per-persona model overrides for fresh members, e.g. cto=gpt-5,fullstack=sonnet")
@@ -22,7 +23,7 @@ func runFork(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad fork - plan a fresh team in a new workstream branched off an existing one
 
 Usage:
-  amq-squad fork --from SOURCE --as TARGET
+  amq-squad fork --from SOURCE --as TARGET [--profile NAME]
                  [--force-duplicate] [--no-bootstrap]
                  [--trust sandboxed|trusted] [--model role=model,...]
                  [--codex-args args] [--claude-args args]
@@ -50,14 +51,18 @@ it plans fresh launches into TARGET using the current team intent.
 		return usageErrorf("--from and --as must differ; got %q for both", *from)
 	}
 
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	if !team.Exists(cwd) {
-		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
+	if !team.ExistsProfile(cwd, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
 	}
-	t, err := team.Read(cwd)
+	t, err := team.ReadProfile(cwd, profile)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}
@@ -80,6 +85,7 @@ it plans fresh launches into TARGET using the current team intent.
 		ModelRaw:         *modelFlag,
 		CodexArgsRaw:     *codexArgsRaw,
 		ClaudeArgsRaw:    *claudeArgsRaw,
+		Profile:          profile,
 		Style: resumePrinterStyle{
 			Label:      "fork",
 			FooterVerb: "up",

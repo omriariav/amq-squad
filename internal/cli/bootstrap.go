@@ -160,7 +160,7 @@ func bootstrapCurrentTeam(rec launch.Record, teamHome string) ([]bootstrapTeamMe
 	if home == "" {
 		home = rec.CWD
 	}
-	t, err := team.Read(home)
+	t, err := team.ReadProfile(home, rec.TeamProfile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

@@ -34,6 +34,11 @@ type teamLaunchOptions struct {
 	// overwriting an existing brief.
 	SeedBriefContent string
 	SeedBriefForce   bool
+	// Profile is the named team profile this launch represents. Empty means
+	// the implicit default profile. Propagated to emitted launch commands
+	// via --team-profile so each agent's launch record carries the same
+	// profile identity for bootstrap routing and status display.
+	Profile string
 }
 
 type teamLaunchPane struct {
@@ -70,11 +75,12 @@ func runTeamLaunch(args []string) error {
 	pf := registerPreviewFlags(fs)
 	lf := registerLiveLaunchFlags(fs)
 	dryRun := fs.Bool("dry-run", false, "print terminal commands without executing them")
+	profileFlag := fs.String("profile", "", "team profile to launch (default: default profile)")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `amq-squad team launch - open the configured team in a terminal
 
 Usage:
-  amq-squad team launch [--session workstream] [--fresh] [--terminal tmux]
+  amq-squad team launch [--profile NAME] [--session workstream] [--fresh] [--terminal tmux]
     [--target current-window|new-session] [--layout vertical|horizontal|tiled]
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
     [--trust sandboxed|trusted] [--model role=model,...]
@@ -95,11 +101,16 @@ duplicates before any tmux command runs; --force-duplicate overrides.
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
 	opts, err := buildLiveLaunchOptions(fs, pf, lf)
 	if err != nil {
 		return err
 	}
 	opts.DryRun = *dryRun
+	opts.Profile = profile
 	return executeTeamLaunch(opts, flagWasSet(fs, "session"), flagWasSet(fs, "trust"))
 }
 
@@ -120,7 +131,7 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	t, err := team.Read(cwd)
+	t, err := team.ReadProfile(cwd, opts.Profile)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}
@@ -257,6 +268,7 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 				TrustMode:      opts.Trust,
 				Model:          memberEffectiveModel(m, opts.ModelOverrides),
 				ForceDuplicate: opts.ForceDuplicate,
+				Profile:        opts.Profile,
 			}),
 		})
 	}

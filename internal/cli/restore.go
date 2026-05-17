@@ -10,6 +10,7 @@ import (
 
 	"github.com/omriariav/amq-squad/internal/launch"
 	"github.com/omriariav/amq-squad/internal/role"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 type restoreCandidate struct {
@@ -411,6 +412,10 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	if rec.Handle != "" && rec.Handle != defaultHandleFor(rec.Binary) {
 		b.WriteString(" --me ")
 		b.WriteString(shellQuote(rec.Handle))
+	}
+	if profile := strings.TrimSpace(rec.TeamProfile); profile != "" && profile != team.DefaultProfile {
+		b.WriteString(" --team-profile ")
+		b.WriteString(shellQuote(profile))
 	}
 	b.WriteString(" ")
 	b.WriteString(shellQuote(rec.Binary))

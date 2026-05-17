@@ -57,13 +57,14 @@ func runTeamResume(args []string) error {
 	modelFlag := fs.String("model", "", "per-persona model overrides for fresh members, e.g. cto=gpt-5,fullstack=sonnet")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for fresh members, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for fresh members, e.g. '--chrome'")
+	profileFlag := fs.String("profile", "", "team profile to plan (default: default profile)")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team resume - plan how to bring the team back
 
 Usage:
-  amq-squad team resume [--session name] [--fresh] [--restore-existing]
-                        [--dry-run] [--force-duplicate]
+  amq-squad team resume [--profile NAME] [--session name] [--fresh]
+                        [--restore-existing] [--dry-run] [--force-duplicate]
                         [--no-bootstrap] [--trust sandboxed|trusted]
                         [--model role=model,...]
                         [--codex-args args] [--claude-args args]
@@ -107,12 +108,16 @@ use 'amq-squad team launch' to open them in tmux from team intent.
 	} else if *restoreExisting {
 		mode = resumeModeRestoreExisting
 	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	if !team.Exists(cwd) {
-		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
+	if !team.ExistsProfile(cwd, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
 	}
 	return executeResume(resumeExecution{
 		ProjectDir:       cwd,
@@ -127,6 +132,7 @@ use 'amq-squad team launch' to open them in tmux from team intent.
 		CodexArgsRaw:     *codexArgsRaw,
 		ClaudeArgsRaw:    *claudeArgsRaw,
 		DryRun:           *dryRun,
+		Profile:          profile,
 	})
 }
 
@@ -146,6 +152,7 @@ type resumeExecution struct {
 	CodexArgsRaw     string
 	ClaudeArgsRaw    string
 	DryRun           bool
+	Profile          string
 	// Style controls the printer header label and footer verb so the same
 	// planner can present its output as team resume, resume, or fork without
 	// duplicating logic.
@@ -166,6 +173,11 @@ type resumePrinterStyle struct {
 	// lines to the header. Used only by `fork`.
 	ForkFrom string
 	ForkTo   string
+	// Profile is the team profile the plan was built from. When non-default
+	// the alternative-launch footer either suggests --profile NAME (when
+	// the footer verb supports it) or suppresses itself rather than
+	// printing a command that would silently fall back to default.
+	Profile string
 }
 
 func (s resumePrinterStyle) label() string {
@@ -196,7 +208,7 @@ func executeResume(r resumeExecution) error {
 	if err != nil {
 		return err
 	}
-	t, err := team.Read(r.ProjectDir)
+	t, err := team.ReadProfile(r.ProjectDir, r.Profile)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}
@@ -238,6 +250,7 @@ func executeResume(r resumeExecution) error {
 			BinaryArgs:     mergedBinaryArgs,
 			Trust:          resolvedTrust,
 			ModelOverrides: modelOverrides,
+			Profile:        r.Profile,
 		})
 		if err != nil {
 			return err
@@ -276,7 +289,9 @@ func executeResume(r resumeExecution) error {
 		}
 	}
 
-	printResumePlan(t, workstream, r.Mode, plans, r.DryRun, r.Force, r.Style)
+	style := r.Style
+	style.Profile = r.Profile
+	printResumePlan(t, workstream, r.Mode, plans, r.DryRun, r.Force, style)
 	return nil
 }
 
@@ -291,6 +306,7 @@ type memberPlanInput struct {
 	BinaryArgs     map[string][]string
 	Trust          string
 	ModelOverrides map[string]string
+	Profile        string
 }
 
 // planMemberResume classifies one team member and emits the appropriate
@@ -522,6 +538,7 @@ func freshLaunchCommand(in memberPlanInput) string {
 		TrustMode:      in.Trust,
 		Model:          memberEffectiveModel(in.Member, in.ModelOverrides),
 		ForceDuplicate: in.Force,
+		Profile:        in.Profile,
 	})
 }
 
@@ -582,15 +599,28 @@ func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []re
 		fmt.Println("# which is not equivalent to the per-member plan above.")
 		return
 	}
+	profileSuffix := ""
+	if style.Profile != "" && style.Profile != team.DefaultProfile {
+		// Only verbs that accept --profile can carry the selection into the
+		// suggested footer command. up and team launch both accept --profile
+		// in Step 9A. If a future verb does not, suppress the footer rather
+		// than print a command that would fall back to the default profile.
+		if verb == "up" || verb == "team launch" {
+			profileSuffix = " --profile " + shellQuote(style.Profile)
+		} else {
+			fmt.Printf("# Note: '%s' has no --profile flag yet; rerun the per-member commands above to bring up the %s profile.\n", verb, style.Profile)
+			return
+		}
+	}
 	fmt.Println("# Alternative: open the whole team in tmux from team intent")
 	suffix := ""
 	if force {
 		suffix = " --force-duplicate"
 	}
 	if mode == resumeModeFresh {
-		fmt.Printf("# %s %s --fresh --session %s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix)
+		fmt.Printf("# %s %s --fresh --session %s%s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix, profileSuffix)
 	} else {
-		fmt.Printf("# %s %s --session %s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix)
+		fmt.Printf("# %s %s --session %s%s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix, profileSuffix)
 	}
 }
 

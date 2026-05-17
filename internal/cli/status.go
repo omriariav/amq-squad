@@ -57,11 +57,12 @@ func runStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	sessionName := fs.String("session", "", "AMQ workstream session name (default: team workstream)")
 	jsonOut := fs.Bool("json", false, "emit records as JSON array")
+	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad status - live state of this project's configured team
 
 Usage:
-  amq-squad status [--session NAME] [--json]
+  amq-squad status [--profile NAME] [--session NAME] [--json]
 
 Reports each configured team member's live state in the resolved session.
 Uses launch-record PID + binary match, wake-lock PID + handle/root match,
@@ -72,17 +73,22 @@ not included here; use 'amq-squad history' for those.
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	if !team.Exists(cwd) {
-		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
+	if !team.ExistsProfile(cwd, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
 	}
 	return executeStatus(statusExecution{
 		ProjectDir:       cwd,
 		RequestedSession: *sessionName,
 		ExplicitSession:  flagWasSet(fs, "session"),
+		Profile:          profile,
 		Probe:            defaultDuplicateLaunchProbe,
 		Out:              os.Stdout,
 		JSON:             *jsonOut,
@@ -93,13 +99,14 @@ type statusExecution struct {
 	ProjectDir       string
 	RequestedSession string
 	ExplicitSession  bool
+	Profile          string
 	Probe            duplicateLaunchProbe
 	Out              io.Writer
 	JSON             bool
 }
 
 func executeStatus(s statusExecution) error {
-	t, err := team.Read(s.ProjectDir)
+	t, err := team.ReadProfile(s.ProjectDir, s.Profile)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}

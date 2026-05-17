@@ -7,14 +7,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
 
+func sortStrings(s []string) { sort.Strings(s) }
+
 const (
-	SchemaVersion = 1
+	SchemaVersion = 2
 	DirName       = ".amq-squad"
 	FileName      = "team.json"
+	TeamsDirName  = "teams"
+	// DefaultProfile names the implicit project-default profile. It maps to
+	// .amq-squad/team.json; a file at .amq-squad/teams/default.json is never
+	// created (the on-disk encoding is the project root, not the teams dir).
+	DefaultProfile = "default"
 )
 
 // Member is one row of the team: a role picked from the catalog plus the
@@ -65,15 +73,46 @@ type Team struct {
 	CreatedAt  time.Time           `json:"created_at"`
 }
 
-// Path returns the team.json path for the given project directory.
+// Path returns the team.json path for the default profile under projectDir.
+// It is preserved for compatibility with callers that don't care about
+// non-default profiles; use ProfilePath when a profile name is in play.
 func Path(projectDir string) string {
-	return filepath.Join(projectDir, DirName, FileName)
+	return ProfilePath(projectDir, DefaultProfile)
 }
 
-// Read loads the team config from projectDir. Returns os.ErrNotExist if
-// no team.json is present.
+// ProfilePath returns the team.json path for the given profile under
+// projectDir. The default profile (or empty string) maps to
+// <projectDir>/.amq-squad/team.json. Named profiles map to
+// <projectDir>/.amq-squad/teams/<profile>.json.
+func ProfilePath(projectDir, profile string) string {
+	if profile == "" || profile == DefaultProfile {
+		return filepath.Join(projectDir, DirName, FileName)
+	}
+	return filepath.Join(projectDir, DirName, TeamsDirName, profile+".json")
+}
+
+// ValidateProfileName enforces the profile-name slug rules: lowercase a-z,
+// 0-9, hyphen, and underscore. The implicit "default" profile name is
+// permitted by callers but does not need to match these rules; the on-disk
+// encoding for "default" lives outside the teams/ directory.
+func ValidateProfileName(s string) error {
+	return validateSlug("profile name", s, true)
+}
+
+// Read loads the default-profile team config from projectDir. Returns
+// os.ErrNotExist if no team.json is present.
 func Read(projectDir string) (Team, error) {
-	p := Path(projectDir)
+	return ReadProfile(projectDir, DefaultProfile)
+}
+
+// ReadProfile loads a named profile from projectDir.
+func ReadProfile(projectDir, profile string) (Team, error) {
+	if profile != "" && profile != DefaultProfile {
+		if err := ValidateProfileName(profile); err != nil {
+			return Team{}, err
+		}
+	}
+	p := ProfilePath(projectDir, profile)
 	b, err := os.ReadFile(p)
 	if err != nil {
 		return Team{}, err
@@ -89,14 +128,25 @@ func Read(projectDir string) (Team, error) {
 	return t, nil
 }
 
-// Write atomically persists the team config under projectDir.
+// Write atomically persists the default-profile team config under projectDir.
 func Write(projectDir string, t Team) error {
-	dir := filepath.Join(projectDir, DirName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("ensure %s: %w", dir, err)
+	return WriteProfile(projectDir, DefaultProfile, t)
+}
+
+// WriteProfile atomically persists a named profile under projectDir. The
+// schema field is unconditionally set to the current SchemaVersion so
+// reading a schema 1 file and writing it back upgrades the on-disk shape.
+func WriteProfile(projectDir, profile string, t Team) error {
+	if profile != "" && profile != DefaultProfile {
+		if err := ValidateProfileName(profile); err != nil {
+			return err
+		}
+	}
+	path := ProfilePath(projectDir, profile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("ensure %s: %w", filepath.Dir(path), err)
 	}
 	t.Schema = SchemaVersion
-	// Project is not serialized (json:"-") so nothing to set here.
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = time.Now().UTC()
 	}
@@ -107,7 +157,6 @@ func Write(projectDir string, t Team) error {
 	if err != nil {
 		return fmt.Errorf("marshal team: %w", err)
 	}
-	path := Path(projectDir)
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return fmt.Errorf("write tmp: %w", err)
@@ -118,10 +167,50 @@ func Write(projectDir string, t Team) error {
 	return nil
 }
 
-// Exists reports whether a team.json is present under projectDir.
+// Exists reports whether a default-profile team.json is present.
 func Exists(projectDir string) bool {
-	_, err := os.Stat(Path(projectDir))
+	return ExistsProfile(projectDir, DefaultProfile)
+}
+
+// ExistsProfile reports whether a named profile config exists.
+func ExistsProfile(projectDir, profile string) bool {
+	_, err := os.Stat(ProfilePath(projectDir, profile))
 	return err == nil
+}
+
+// ListProfiles returns the named profiles present under projectDir, sorted
+// alphabetically. The default profile is NOT included; callers prepend
+// "default" themselves when the default file exists. Returns nil with no
+// error when no teams/ directory exists.
+func ListProfiles(projectDir string) ([]string, error) {
+	dir := filepath.Join(projectDir, DirName, TeamsDirName)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", dir, err)
+	}
+	out := []string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		profile := strings.TrimSuffix(name, ".json")
+		if profile == "" || profile == DefaultProfile {
+			continue
+		}
+		if err := ValidateProfileName(profile); err != nil {
+			continue
+		}
+		out = append(out, profile)
+	}
+	sortStrings(out)
+	return out, nil
 }
 
 func Validate(t Team) error {
