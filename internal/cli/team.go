@@ -266,14 +266,7 @@ Known personas:
 
 func runTeamShow(args []string) error {
 	fs := flag.NewFlagSet("team show", flag.ContinueOnError)
-	noBootstrap := fs.Bool("no-bootstrap", false, "emit launch commands that skip the generated bootstrap prompt")
-	session := fs.String("session", "", "AMQ workstream session name (default: sanitized team-home directory name; lowercase a-z, 0-9, -, _)")
-	fresh := fs.Bool("fresh", false, "fail if the selected workstream session already exists")
-	trustRaw := fs.String("trust", "", "Codex trust profile for this run: sandboxed or trusted")
-	modelFlag := fs.String("model", "", "per-persona model overrides for this run, e.g. cto=gpt-5,fullstack=sonnet")
-	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for this run, e.g. '--enable goals'")
-	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'")
-	forceDuplicate := fs.Bool("force-duplicate", false, "include --force-duplicate in emitted launch commands")
+	pf := registerPreviewFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
 
@@ -284,16 +277,7 @@ Usage:
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	trustMode, err := normalizeTrustMode(*trustRaw)
-	if err != nil {
-		return err
-	}
-	modelOverrides, err := parseKV(*modelFlag)
-	if err != nil {
-		return fmt.Errorf("parse --model: %w", err)
-	}
-	modelOverrides = lowercaseKeys(modelOverrides)
-	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
+	opts, err := pf.toEmitOptions(fs)
 	if err != nil {
 		return err
 	}
@@ -304,17 +288,7 @@ Usage:
 	if !team.Exists(cwd) {
 		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
 	}
-	return emitTeamCommands(cwd, emitTeamOptions{
-		NoBootstrap:      *noBootstrap,
-		RequestedSession: *session,
-		ExplicitSession:  flagWasSet(fs, "session"),
-		Fresh:            *fresh,
-		ExtraBinaryArgs:  binaryArgs,
-		RequestedTrust:   trustMode,
-		ExplicitTrust:    flagWasSet(fs, "trust"),
-		ModelOverrides:   modelOverrides,
-		ForceDuplicate:   *forceDuplicate,
-	})
+	return emitTeamCommands(cwd, opts)
 }
 
 type emitTeamOptions struct {
