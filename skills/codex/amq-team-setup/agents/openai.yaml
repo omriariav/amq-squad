@@ -1,0 +1,4 @@
+interface:
+  display_name: "AMQ Team Setup"
+  short_description: "Design and initialize an amq-squad team before first launch"
+  default_prompt: "Use $amq-team-setup to design this amq-squad team: pick the team-home, draft personas, choose a profile, write team rules, sync pointer stubs, and seed the first workstream brief. Hand off to $amq-squad once `amq-squad up --dry-run` is clean."

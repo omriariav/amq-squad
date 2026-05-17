@@ -1,208 +1,187 @@
 ---
 name: amq-squad
-description: Project-aware skill for amq-squad managed teams. Prefer over amq-cli when .amq-squad/team.json exists or the user is doing team coordination, drains, reviews, handoffs, or launches. Covers team init/show/launch, AMQ workstreams, threads, role routing, inbox drains, acknowledgements, receipt waits, review requests, handoffs, decision threads, and team-rules generation. Use amq-cli only for raw AMQ debugging or non-squad AMQ usage.
+description: Project-aware skill for live amq-squad team coordination after `.amq-squad/team.json` exists. Covers inbox drains, routing, review/handoff, status/history, up/down/resume/fork, agent up/resume, doctor, workstream briefs, and ACTIVE-EPIC startup. For first-time team design (personas, profile choice, team rules, pointer stubs, brief authoring, sync), prefer the companion `amq-team-setup` skill. Use raw `amq-cli` only for AMQ debugging outside the squad.
 allowed-tools: Bash, Read, Write, Edit, MultiEdit, Glob, Grep
-argument-hint: "[team setup | live routing | drain | review | handoff]"
+argument-hint: "[drain | review | handoff | status | up | down | resume | fork | doctor]"
 user-invocable: true
 trigger: /amq-squad
 ---
 
-# AMQ Squad
+# amq-squad
 
-Use this skill for amq-squad team setup and live team communication. It is the project-specific layer on top of AMQ. Use generic `amq-cli` only for raw AMQ debugging or non-squad AMQ usage.
+Use this skill once a team is configured (`.amq-squad/team.json` exists) to run live coordination: drain inboxes, route handoffs, request reviews, bring members up and down, plan fresh forks, and check live state with `status`/`doctor`. For first-time setup work - choosing personas, writing team rules, syncing pointer stubs, authoring the workstream brief - switch to the companion `amq-team-setup` skill.
 
-Launch priming is automatic. Agents do not paste the bootstrap block by hand; `amq-squad launch` injects it.
+Launch priming is automatic. `up` / `agent up` inject the bootstrap prompt; agents do not paste it by hand.
 
-This skill is named `amq-squad`; the binary is also named `amq-squad`. The skill tells agents how to operate, while the binary changes files or launches agents.
+This skill is named `amq-squad`; the binary is also named `amq-squad`.
+
+## Context model
+
+The 1.0 context model has three durable layers. The skill never asks you to duplicate any of them into another file.
+
+- **Team rules (`.amq-squad/team-rules.md`)** - the project's durable norms (skills, workflow, approvals, communication, escalation, style). Source of truth for every member.
+- **Per-agent role (`<agent-dir>/role.md`)** - persona/system-prompt for one role. Seeded by `agent up` / `up`; the user can edit freely; later launches preserve user edits.
+- **Workstream brief (`.amq-squad/briefs/<session>.md`)** - the active workstream's goal, scope, and pointers to source-of-truth issues/PRs. Lives at team-home so every member points at the same file. Created on first live `up`; preserved on reruns. `up --seed-from REF` writes a fresh brief from `file:<path>`, `issue:<n>`, or `gh:<owner>/<repo>#<n>`.
+
+`CLAUDE.md` and `AGENTS.md` carry a small **pointer stub** that links to the three files above - never a copy of team-rules content. `amq-squad team sync --apply` writes/updates that stub.
+
+If `.amq-squad/ACTIVE-EPIC.md` is present, read it at session start (transitional pointer to the current GitHub epic / milestone).
+
+## Verbs you will use
+
+| Goal | Command |
+| --- | --- |
+| Bring the team up live (tmux) | `amq-squad up` |
+| Print the launch plan only | `amq-squad up --dry-run` |
+| Seed the workstream brief from a deterministic source | `amq-squad up --dry-run --seed-from file:./brief.md` or `--seed-from issue:31` or `--seed-from gh:owner/repo#31` |
+| Bring members down with SIGTERM | `amq-squad down --all --force` or `down --role R --force` |
+| Plan a recovery (live/restore/fresh/blocked) | `amq-squad resume` |
+| Plan a fresh new workstream branched off the current one | `amq-squad fork --from <current> --as <new>` |
+| Inspect live state of configured team members | `amq-squad status` |
+| Inspect restorable launch records (project history) | `amq-squad history` |
+| Launch a single agent (modern verb) | `amq-squad agent up <binary>` |
+| Resume a saved single agent by role | `amq-squad agent resume <role>` |
+| Diagnose AMQ/tmux/markers/wake health | `amq-squad doctor` |
+| List configured profiles | `amq-squad team profiles` |
+| Sync the pointer stub into `CLAUDE.md` / `AGENTS.md` | `amq-squad team sync --apply` |
+
+Pass `--profile NAME` to operate on a named profile under `.amq-squad/teams/<name>.json`. Omit (or pass `--profile default`) for `.amq-squad/team.json`.
+
+Every command accepts `--json` where machine-readable output makes sense (`status`, `history`, `doctor`, `team profiles`, `version`, and `up --dry-run`). JSON outputs are schema-versioned envelopes `{ schema_version, kind, data }`. Diagnostics stay on stderr; stdout under `--json` is pure JSON.
+
+Global output flags work before or after the subcommand: `--quiet`, `--verbose`, `--color auto|always|never`. `NO_COLOR` wins over `--color=always`. `--quiet` and `--verbose` are mutually exclusive.
 
 ## Rules
 
-- Project folder: the repository or folder that owns `.amq-squad/team.json`.
-- Team roster: the roles, handles, binaries, and cwd mappings in `.amq-squad/team.json`.
-- Workstream: the AMQ `--session` used for one issue, release, branch, or focused piece of work.
-- Thread: the focused conversation inside a workstream, for example `p2p/cto__fullstack` or `decision/<topic>`.
-- Team profile: future named rosters for one folder. This is tracked separately from AMQ sessions and is not implemented yet.
-- Prefer this `amq-squad` skill for team messaging, launch, handoff, and review workflows.
-- Fall back to `amq-cli` only when debugging raw AMQ behavior not specified here.
-- Launch all members of one team run into the same workstream.
-- Keep `--session` reserved for AMQ workstream names.
-- Use `--terminal-session` for tmux session names.
-- Do not use `--session-from branch|worktree|issue|release`; it is not implemented.
-- AMQ session names are strict: lowercase `a-z`, digits, `-`, and `_`. Use `v0-5-0`, not `v0.5.0`.
-- Explicit session names are rejected when unsafe. Do not silently rewrite user input.
-- Use canonical p2p thread names from sorted handles, for example `p2p/cto__fullstack`.
-- Treat sibling workstreams as history/context only. Do not load their message bodies unless the user asks.
-
-## Scope Defaults
-
-- Default team-home is the current working directory.
-- Default history scope is the current working directory only.
-- Do not inspect or configure other repositories just because they appeared in prior conversation.
-- Expand scope only when the user explicitly names folders, projects, member cwd mappings, or history sources.
-- If the requested team spans folders, treat the first named primary project as team-home unless the user says otherwise.
-- If scope is ambiguous and acting on the wrong repo could write files, ask for the team-home path before running `team init`.
-
-Supported user inputs:
-
-- `team-home`: one project directory that owns `.amq-squad/team.json` and `.amq-squad/team-rules.md`.
-- `member cwd`: per-role working directories, emitted as `--cwd role=/path`.
-- `workstream`: one shared AMQ session name, emitted as `--session <workstream>`.
-- `history folders`: one or more project directories to inspect with `amq-squad list`.
+- Team roster lives in `.amq-squad/team.json`. The active roster is the source of truth for routing; `amq-squad history` is record-only.
+- Workstream = the AMQ `--session` for one issue, release, or focused piece of work. All members of one team run share it.
+- AMQ session names are strict: lowercase `a-z`, digits, `-`, `_`. Use `v0-5-0`, not `v0.5.0`.
+- Threads are focused conversations inside a workstream: canonical p2p is sorted handles (`p2p/cto__fullstack`); decisions go under `decision/<topic>`.
+- Sibling workstreams are history/context only; do not load their message bodies unless the user asks.
+- Default scope is the current working directory. Do not inspect or modify other repos unless the user explicitly names them.
 
 ## Workflow
 
-1. Choose the team-home directory.
-   - Default to the current working directory.
-   - Prefer the project where most agents will work only when the user explicitly names several projects.
-   - Use `--cwd role=/path/to/project` for members that work elsewhere.
-   - Verify `.amqrc` peer config if members span projects.
+1. **Confirm the team-home and active workstream.**
+   - Default team-home is `cwd`. Default profile is `default` (maps to `.amq-squad/team.json`); pass `--profile NAME` to scope to a named profile.
+   - The active workstream is whatever `resolveTeamWorkstreamName` returns: explicit `--session` > stored `team.Workstream` > legacy per-role > sanitized team-home basename.
+   - Read `.amq-squad/ACTIVE-EPIC.md` if present.
 
-2. Discover local history.
-   - Run `amq-squad list` in the current directory by default.
-   - Also run it in explicitly named history folders.
-   - Treat `SOURCE=amq-squad` as exact launch history.
-   - Treat `SOURCE=amq` as legacy AMQ mailbox history. It can show session, handle, and inferred role, but may not know role, args, or persona.
-   - Do not run `amq-squad restore --exec` for a fresh team.
+2. **Read the workstream brief.**
+   - `.amq-squad/briefs/<session>.md` carries the workstream's goal, scope, and source-of-truth pointers. Skim it before drains.
+   - If it is a stub, seed it with `amq-squad up --dry-run --seed-from issue:<n>` (or `file:`/`gh:`), inspect the candidate envelope, then `up --seed-from issue:<n>` to write it live (use `--force` to overwrite an existing brief).
 
-3. Create or update the team.
-   - Use built-in persona IDs when possible: `cpo`, `cto`, `senior-dev`, `fullstack`, `frontend-dev`, `backend-dev`, `mobile-dev`, `junior-dev`, `qa`, `pm`, `designer`.
-   - Model "works fast but needs review" as `junior-dev`.
-   - Model web UI work as `frontend-dev`; model mobile app work as `mobile-dev`; model APIs/services work as `backend-dev`.
-   - Model backend/dev as `fullstack` unless the user wants a narrower persona.
-   - Use `--binary persona=cli` when the user wants a persona on a different CLI, for example `--binary fullstack=codex`.
-   - Use `--codex-args '<args>'` or `--claude-args '<args>'` when every matching binary should launch with native flags, for example `--codex-args '--enable goals'`.
-   - Use one shared workstream name with `--session <workstream>`. Do not use the removed comma-separated `role=name` session syntax.
-   - If the user does not name a workstream, let amq-squad default to the sanitized team-home directory name.
+3. **Discover live state and history.**
+   - `amq-squad status` for live agents in the configured roster.
+   - `amq-squad doctor` for AMQ version / tmux / wake / marker integrity.
+   - `amq-squad history` for restorable records in this project (use `--project a,b` to widen scope only when the user explicitly asks).
 
-4. Generate team rules.
-   - Run `amq-squad team rules init` if `.amq-squad/team-rules.md` does not exist.
-   - Write a concise rules file tailored to the requested team.
-   - Include exact active routes from `.amq-squad/team.json`: role, handle, workstream, project, member cwd, and canonical thread when relevant.
-   - Include a startup-context section that names old AMQ workstreams to inspect only when the user asked for old context.
-   - State that old AMQ history is context only and must not override the active roster.
-   - Preserve existing user rules unless the user asks to replace them.
-   - Use `references/team-rules-template.md` as the starting template.
+4. **Bring members up / down / back.**
+   - First time / fresh: `amq-squad up` opens the team in tmux (creates the workstream brief stub if missing).
+   - Preview-only: `amq-squad up --dry-run` prints one launch command per member; share or paste into separate panes.
+   - Restart someone: `amq-squad agent resume <role>` (delegates to the saved launch record). Use `agent up <binary> [flags]` for ad-hoc single-agent launches.
+   - Stop: `amq-squad down --role R --force` (graceful is not yet wired; only `--force` works).
+   - Recovery plan: `amq-squad resume` classifies each member as live/restore/launch fresh/blocked and emits copy-pasteable commands.
 
-5. Sync only if requested or clearly desired.
-   - `amq-squad team sync --apply` writes the managed block into `CLAUDE.md` and `AGENTS.md` in each member cwd.
-   - If the user does not want sync, tell them to paste the startup context manually into each fresh agent.
+5. **Fork into a new workstream.**
+   - `amq-squad fork --from <current> --as <new>` plans fresh launches in the new session, branched off the current workstream.
+   - The new workstream gets its own brief at `.amq-squad/briefs/<new>.md`.
+   - Existing target workstreams need `--force-duplicate` to overwrite.
 
-6. Print launch commands.
-   - Run `amq-squad team show --session <workstream>` when the user named a workstream.
-   - Run `amq-squad team launch --session <workstream>` from tmux when the user wants panes created automatically.
-   - Add one-off `--codex-args '<args>'` or `--claude-args '<args>'` to `team show` or `team launch` when the user wants native binary flags for only this run.
-   - Use `--fresh --session <workstream>` when accidental reuse should fail.
-   - Expect generated commands to include `--team-workstream`, Codex `--dangerously-bypass-approvals-and-sandbox`, and Claude `--permission-mode auto`.
-   - Tell the user to paste one command into each terminal pane or tab when not using `team launch`.
+6. **Route messages.**
+   - Same-project role handoffs use the shared workstream and a canonical p2p thread:
+     ```sh
+     amq send --to fullstack --thread p2p/cto__fullstack --kind review_request \
+       --subject "Review: X" --body "Please review."
+     ```
+   - Decisions: `--thread decision/<topic> --kind decision`.
+   - Synchronous wait: append `--wait-for drained --wait-timeout 60s`.
+   - Cross-session sends need explicit `--session` and `--thread`; avoid them in normal flow.
 
-## Command Pattern
+7. **Drain inbox.**
+   ```sh
+   amq list --new
+   amq read --id <id>
+   amq drain --include-body
+   ```
+   Acknowledge briefly on the same thread when useful - one factual line, not a status update.
 
-For a four-agent team with CPO, CTO, backend/dev, and QA in a second project:
-
-```sh
-cd /path/to/team-home
-
-amq-squad team init --force \
-  --personas cpo,cto,fullstack,qa \
-  --binary cpo=codex,cto=codex,fullstack=claude,qa=claude \
-  --session v0-5-0 \
-  --cwd qa=/path/to/qa-project
-
-amq-squad team rules init
-# edit .amq-squad/team-rules.md if needed
-
-amq-squad team show --session v0-5-0
-```
-
-## AMQ Usage Notes
-
-- Inside `amq coop exec`, prefer bare `amq` commands. Do not override `--me` or `--root` unless intentionally changing identity or mailbox.
-- `amq send` has `--body`, not `--body-file`. Omit `--body` to read the message body from stdin, or use `--body @file`.
-- Same-project role handoffs should use the shared workstream and a canonical p2p thread:
-
-```sh
-amq send --to fullstack --thread p2p/cto__fullstack --kind review_request
-```
-
-- Cross-session sends need an explicit `--session` and `--thread`. Avoid them in normal amq-squad team flow unless the user is intentionally contacting another workstream.
-- `.amq-squad/team.json` is authoritative for the current roster. `amq-squad restore` output is history until the user explicitly asks to resume it.
-
-## Live Ops
-
-Inbox triage:
-
-```sh
-amq list --new
-amq read --id <id>
-amq drain --include-body
-```
-
-For synchronous handoffs, wait for the peer to drain the message:
-
-```sh
-amq send --to fullstack --thread p2p/cto__fullstack --kind review_request --subject "Review: workstream session model" --body "Please review the branch, tests, and problem framing." --wait-for drained --wait-timeout 60s
-```
-
-The current AMQ CLI exposes receipt waits through `--wait-for drained` and does not expose an `amq ack` subcommand. Human acknowledgements are normal `amq send` or `amq reply` messages.
-
-After acting, acknowledge only when useful. Keep the acknowledgement one line and factual:
-
-```sh
-amq send --to fullstack --thread p2p/cto__fullstack --subject ack --body "Reviewed the update and will run final checks."
-```
-
-Common send patterns:
-
-```sh
-amq send --to cto --thread p2p/cto__fullstack --kind review_request --subject "Review: workstream session model" --body "Please review the branch, tests, and problem framing."
-# Swap --kind and --thread for task, decision, status, question, answer, or review_response.
-```
-
-When handling incoming messages:
+## Inbox handling
 
 - Read the message body before acting.
-- If it asks for review, use review stance: findings first, then questions, then summary.
-- If it asks for implementation, confirm scope against current user intent and code state.
-- If it is only a wake or FYI, acknowledge briefly after incorporating it.
+- If it asks for review: findings first, then questions, then a one-sentence summary.
+- If it asks for implementation: confirm scope against current user intent and code state.
+- If it is FYI/wake: acknowledge briefly after incorporating it.
 - If it conflicts with the latest user instruction, follow the user and tell the peer what changed.
 - If a new message arrives mid-task, finish or pause cleanly, then acknowledge before redirecting.
 
-## Team-Rules Content
+User escalations route through CTO. Agents do not ping the user directly during active work; surface questions, blockers, approval needs, and status requests to the CTO handle (or whichever owner the team rules name). CTO owns when to escalate to the user.
 
-Generate `.amq-squad/team-rules.md` with these sections:
-
-- Skill policy: use `amq-squad` for team coordination; use `amq-cli` only for raw AMQ debugging or non-squad AMQ usage
-- Team members, ownership, and exact active routes
-- Role scope and boundaries for each selected persona
-- Startup context from previous AMQ history, when requested
-- Workflow
-- Approvals
-- Communication
-- Quality gates
-- Style
-
-Keep the generated file concrete. Name exact workstreams and project paths when known. Use short bullets. Make role boundaries explicit: PM, CPO, Designer, QA, and CTO route implementation to developer roles by default instead of editing code themselves.
-
-## Fresh Team Rule
-
-For fresh teams, use old history for context, not execution:
-
-- Good: `amq-squad list`, `amq list`, `amq read`, `amq thread --include-body`
-- Good: `amq-squad restore` as a preview list
-- Avoid: `amq-squad restore --exec` unless the user asks to resume an old agent
-- Avoid: sending new work to a restorable legacy handle when `team.json` names a different current handle/session for that role
-- Avoid: loading sibling workstream message bodies by default
-
-## Validation
-
-After generating rules or team config:
+## Common command patterns
 
 ```sh
-amq-squad team show --session <workstream>
-amq-squad team launch --session <workstream> --dry-run
-amq-squad list
+# Live state + recent records
+amq-squad status
+amq-squad doctor
+
+# Bring up the configured team
+amq-squad up
+
+# Preview the launch plan
+amq-squad up --dry-run
+
+# Seed a brief from a GitHub issue and write it
+amq-squad up --dry-run --json --seed-from gh:owner/repo#31 | jq .
+amq-squad up --seed-from gh:owner/repo#31 --force
+
+# Recovery plan
+amq-squad resume
+
+# Branch a fresh workstream
+amq-squad fork --from issue-96 --as issue-96-review
+
+# Bring members down
+amq-squad down --role qa --force
+amq-squad down --all --force
+
+# Single-agent ops
+amq-squad agent up codex --role cto --session issue-96
+amq-squad agent resume fullstack
 ```
 
-`amq-squad list` has useful output only after at least one agent has launched.
+## Exit codes
 
-If repo files were edited, run the repo's normal checks if available.
+- `0` success
+- `1` usage / user error (unknown flag, bad argument, missing required input)
+- `2` system / runtime error (IO, process, config, environment)
+- `3` partial success (some targets succeeded, some failed; e.g. `down` with mixed force-sent + failed)
+
+## Deprecated verbs (legacy notes only)
+
+These verbs still work through 1.x but emit a one-line stderr deprecation warning. Do not recommend them.
+
+| Legacy | Recommend |
+| --- | --- |
+| `amq-squad team show` | `amq-squad up --dry-run` |
+| `amq-squad team launch` | `amq-squad up` |
+| `amq-squad team launch --fresh --session X` | `amq-squad fork --from <current> --as X` |
+| `amq-squad list` | `amq-squad status` (live) or `amq-squad history` (records) |
+| `amq-squad launch <binary>` | `amq-squad agent up <binary>` |
+| `amq-squad restore --exec --role R` | `amq-squad agent resume R` |
+
+## Team-rules content (generated by `team init`)
+
+Use `references/team-rules-template.md` as the starting template. Keep the generated file concrete: name exact workstreams and project paths when known, declare role boundaries explicitly, and route user escalations through CTO.
+
+## Validation hooks
+
+After live changes, useful checks:
+
+```sh
+amq-squad doctor                  # AMQ version, team config, tmux, wake, markers
+amq-squad status                  # live members
+amq-squad team sync               # pointer-stub drift preview (exit 1 if drift)
+amq-squad team sync --apply       # write pointer stub into CLAUDE.md/AGENTS.md
+```
+
+For first-time setup (no team yet, or designing one from scratch) use the companion `amq-team-setup` skill.
