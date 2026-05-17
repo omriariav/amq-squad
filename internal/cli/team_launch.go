@@ -60,20 +60,8 @@ func registerTeamLaunchBackend(backend teamLaunchBackend) {
 
 func runTeamLaunch(args []string) error {
 	fs := flag.NewFlagSet("team launch", flag.ContinueOnError)
-	terminal := fs.String("terminal", "tmux", "terminal backend to use")
-	target := fs.String("target", "current-window", "terminal target, backend-specific")
-	layout := fs.String("layout", "vertical", "terminal layout, backend-specific")
-	sessionName := fs.String("session", "", "AMQ workstream session name (default: sanitized team-home directory name; lowercase a-z, 0-9, -, _)")
-	terminalSession := fs.String("terminal-session", "", "terminal session name when the backend creates one")
-	fresh := fs.Bool("fresh", false, "fail if the selected workstream session already exists")
-	noBootstrap := fs.Bool("no-bootstrap", false, "launch agents without the generated bootstrap prompt")
-	trustRaw := fs.String("trust", "", "Codex trust profile for this run: sandboxed or trusted")
-	modelFlag := fs.String("model", "", "per-persona model overrides for this run, e.g. cto=gpt-5,fullstack=sonnet")
-	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for this run, e.g. '--enable goals'")
-	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'")
-	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent is detected for any member")
-	_ = fs.Bool("no-attach", false, "legacy no-op; new-session never attaches automatically")
-	stagger := fs.Duration("stagger", 750*time.Millisecond, "delay between starting agent panes")
+	pf := registerPreviewFlags(fs)
+	lf := registerLiveLaunchFlags(fs)
 	dryRun := fs.Bool("dry-run", false, "print terminal commands without executing them")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `amq-squad team launch - open the configured team in a terminal
@@ -100,35 +88,19 @@ duplicates before any tmux command runs; --force-duplicate overrides.
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	requestedTrust, err := normalizeTrustMode(*trustRaw)
+	opts, err := buildLiveLaunchOptions(fs, pf, lf)
 	if err != nil {
 		return err
 	}
-	modelOverrides, err := parseKV(*modelFlag)
-	if err != nil {
-		return fmt.Errorf("parse --model: %w", err)
-	}
-	modelOverrides = lowercaseKeys(modelOverrides)
-	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
-	if err != nil {
-		return err
-	}
-	opts := teamLaunchOptions{
-		Terminal:        *terminal,
-		Target:          *target,
-		Layout:          *layout,
-		Workstream:      *sessionName,
-		TerminalSession: *terminalSession,
-		Fresh:           *fresh,
-		NoBootstrap:     *noBootstrap,
-		Stagger:         *stagger,
-		DryRun:          *dryRun,
-		SquadBin:        teamSquadBin(),
-		BinaryArgs:      binaryArgs,
-		Trust:           requestedTrust,
-		ModelOverrides:  modelOverrides,
-		ForceDuplicate:  *forceDuplicate,
-	}
+	opts.DryRun = *dryRun
+	return executeTeamLaunch(opts, flagWasSet(fs, "session"), flagWasSet(fs, "trust"))
+}
+
+// executeTeamLaunch is the post-parse body shared by `team launch` and live
+// `up`. opts must already carry the resolved binary args, model overrides,
+// trust, and live backend fields; the explicit-* bools mirror flagWasSet so
+// trust/session resolution against team.json defaults stays correct.
+func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTrust bool) error {
 	backend, ok := teamLaunchBackends[opts.Terminal]
 	if !ok {
 		return fmt.Errorf("unsupported terminal %q: supported terminals: %s", opts.Terminal, strings.Join(registeredTeamLaunchTerminals(), ", "))
@@ -148,12 +120,12 @@ duplicates before any tmux command runs; --force-duplicate overrides.
 	if len(t.Members) == 0 {
 		return fmt.Errorf("team has no members")
 	}
-	workstream, err := resolveTeamWorkstreamName(t, opts.Workstream, flagWasSet(fs, "session"))
+	workstream, err := resolveTeamWorkstreamName(t, opts.Workstream, explicitSession)
 	if err != nil {
 		return err
 	}
 	opts.Workstream = workstream
-	trustMode, err := resolveTeamTrustMode(t, opts.Trust, flagWasSet(fs, "trust"))
+	trustMode, err := resolveTeamTrustMode(t, opts.Trust, explicitTrust)
 	if err != nil {
 		return err
 	}
@@ -162,7 +134,7 @@ duplicates before any tmux command runs; --force-duplicate overrides.
 	// pane, so a misconfigured team never partially launches into runLaunch
 	// errors per pane.
 	mergedBinaryArgs := mergeBinaryArgs(t.BinaryArgs, opts.BinaryArgs)
-	if err := validateTrustCombination(trustMode, flagWasSet(fs, "trust") || strings.TrimSpace(t.Trust) != "", false, mergedBinaryArgs); err != nil {
+	if err := validateTrustCombination(trustMode, explicitTrust || strings.TrimSpace(t.Trust) != "", false, mergedBinaryArgs); err != nil {
 		return err
 	}
 	// Reject --model role=model entries whose role is not on the team.
