@@ -9,6 +9,8 @@ import (
 
 func TestPlanCreateWhenMissing(t *testing.T) {
 	project := t.TempDir()
+	// Pass a populated rules body to prove it is intentionally not copied
+	// into the managed block.
 	plans, err := Plan(project, "# Team Rules\n\n- one rule\n")
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
@@ -26,11 +28,26 @@ func TestPlanCreateWhenMissing(t *testing.T) {
 		if p.Adopting {
 			t.Errorf("%s: Adopting = true, want false", p.Basename)
 		}
-		if !strings.Contains(p.After, "one rule") {
-			t.Errorf("%s: After missing rule body", p.Basename)
-		}
 		if !strings.Contains(p.After, BeginMarker) || !strings.Contains(p.After, EndMarker) {
 			t.Errorf("%s: After missing markers", p.Basename)
+		}
+		for _, want := range []string{
+			"This project uses amq-squad for agent team coordination.",
+			"**Team norms:** `.amq-squad/team-rules.md`",
+			"**Your role:**",
+			"**Active workstream:** if `.amq-squad/ACTIVE-EPIC.md` exists",
+			"These files are the source of truth.",
+		} {
+			if !strings.Contains(p.After, want) {
+				t.Errorf("%s: After missing canonical pointer text %q", p.Basename, want)
+			}
+		}
+		// Rules body must never leak into the managed block.
+		if strings.Contains(p.After, "one rule") {
+			t.Errorf("%s: rules body leaked into managed block:\n%s", p.Basename, p.After)
+		}
+		if strings.Contains(p.After, ".amq-squad/briefs") {
+			t.Errorf("%s: step 6 pointer stub must not mention briefs yet:\n%s", p.Basename, p.After)
 		}
 	}
 }
@@ -77,9 +94,10 @@ func TestPlanAdoptsExistingContent(t *testing.T) {
 
 func TestPlanRefreshesManagedBlockOnly(t *testing.T) {
 	project := t.TempDir()
-	// File already has markers with stale content.
+	// File already has markers with stale full-rules content (the pre-1.0
+	// behavior that copied team-rules.md into the managed block).
 	userPrefix := "# My Project\n\nUser docs.\n\n"
-	stale := userPrefix + BeginMarker + "\nOLD RULES\n" + EndMarker + "\n"
+	stale := userPrefix + BeginMarker + "\n# Team Rules\n\n- OLD RULE\n\nLots of body.\n" + EndMarker + "\n"
 	for _, name := range []string{ClaudeFile, AgentsFile} {
 		if err := os.WriteFile(filepath.Join(project, name), []byte(stale), 0o644); err != nil {
 			t.Fatal(err)
@@ -94,16 +112,61 @@ func TestPlanRefreshesManagedBlockOnly(t *testing.T) {
 			t.Errorf("%s: Adopting=%v Creating=%v, want both false", p.Basename, p.Adopting, p.Creating)
 		}
 		if p.Unchanged {
-			t.Errorf("%s: Unchanged = true when rules differ", p.Basename)
+			t.Errorf("%s: Unchanged = true when migrating from full-copy to stub", p.Basename)
 		}
-		if strings.Contains(p.After, "OLD RULES") {
-			t.Errorf("%s: stale content not removed", p.Basename)
+		if strings.Contains(p.After, "OLD RULE") || strings.Contains(p.After, "Lots of body.") {
+			t.Errorf("%s: stale full-copy content not removed:\n%s", p.Basename, p.After)
 		}
-		if !strings.Contains(p.After, "NEW RULE") {
-			t.Errorf("%s: new rule missing", p.Basename)
+		// The new rules body must NOT be copied into the stub.
+		if strings.Contains(p.After, "NEW RULE") {
+			t.Errorf("%s: rules body leaked into pointer stub:\n%s", p.Basename, p.After)
+		}
+		if !strings.Contains(p.After, "**Team norms:** `.amq-squad/team-rules.md`") {
+			t.Errorf("%s: canonical pointer text missing:\n%s", p.Basename, p.After)
 		}
 		if !strings.Contains(p.After, "User docs.") {
 			t.Errorf("%s: user content outside markers clobbered", p.Basename)
+		}
+	}
+}
+
+// TestPlanIdempotentOnceCanonical proves a second Plan call on an already-
+// canonical file produces Unchanged.
+func TestPlanIdempotentOnceCanonical(t *testing.T) {
+	project := t.TempDir()
+	plans, err := Plan(project, "# Team Rules\n")
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if _, err := Apply(plans); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	plans, err = Plan(project, "# Team Rules\n\n- a totally different rule\n")
+	if err != nil {
+		t.Fatalf("Plan second: %v", err)
+	}
+	for _, p := range plans {
+		if !p.Unchanged {
+			t.Errorf("%s: Unchanged = false on identical pointer stub; rules body should not perturb output:\n%s", p.Basename, p.After)
+		}
+	}
+}
+
+// TestPlanRulesBodyNeverCopied is a direct assertion of cto's contract: no
+// substring of the rules body should appear in the managed block.
+func TestPlanRulesBodyNeverCopied(t *testing.T) {
+	project := t.TempDir()
+	rules := "# Team Rules\n\nSECRET-RULES-BODY-MARKER-99fd0\n\n## Approvals\n\n- cto reviews everything\n"
+	plans, err := Plan(project, rules)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	for _, p := range plans {
+		if strings.Contains(p.After, "SECRET-RULES-BODY-MARKER-99fd0") {
+			t.Errorf("%s: rules body leaked into managed block:\n%s", p.Basename, p.After)
+		}
+		if strings.Contains(p.After, "## Approvals") {
+			t.Errorf("%s: rules body section heading leaked:\n%s", p.Basename, p.After)
 		}
 	}
 }
