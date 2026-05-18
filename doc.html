@@ -752,6 +752,11 @@ amq-squad fork --from v1-0-0 --as v1-0-1</code></pre></div>
           <p>
             <code class="inline-code">resume</code> is plan-only and does not
             mutate disk.
+            Restore and replay rows print modern
+            <code class="inline-code">agent up &lt;binary&gt;</code> commands,
+            preserving saved metadata and adding
+            <code class="inline-code">--force-duplicate</code> when a forced
+            live restore is planned.
           </p>
         </div>
       </section>
@@ -908,8 +913,13 @@ amq-squad team profiles [--json]  List configured profiles (default + named).</c
 amq-squad down [--all | --role R] --force
                                   SIGTERM members. Without --force the verb refuses.
 amq-squad resume [--profile NAME] [--session ws] [--restore-existing]
-                 [--force-duplicate]
+                 [--dry-run] [--force-duplicate]
+                 [--no-bootstrap] [--trust sandboxed|trusted]
+                 [--model role=model,...]
+                 [--codex-args args] [--claude-args args]
                                   Classify each member and emit copy-pasteable commands.
+                                  Restore/replay commands use agent up &lt;binary&gt; and
+                                  preserve saved metadata.
                                   Plan-only. Use `fork --from &lt;current&gt; --as &lt;new&gt;`
                                   to branch into a new workstream.
 amq-squad fork --from &lt;current&gt; --as &lt;new&gt; [--force-duplicate]
@@ -928,13 +938,35 @@ amq-squad doctor [--json]         AMQ version, team config, tmux, wake, markers.
 amq-squad version [--json]        Print the installed amq-squad version.</code></pre></div>
 
           <h3>Single-agent primitives</h3>
-          <div class="code"><pre><code>amq-squad agent up &lt;binary&gt; [--role R] [--session ws] [--profile NAME]
+          <div class="code"><pre><code>amq-squad agent up &lt;binary&gt; [--role R] [--session ws] [--team-profile NAME]
                             [--conversation ref] [--no-bootstrap]
                             [--trust sandboxed|trusted] [--model NAME]
                             [--codex-args ...] [--claude-args ...]
                             [--force-duplicate] [-- &lt;native flags&gt;]
 amq-squad agent resume &lt;role&gt;
                                   Replay one saved launch record.</code></pre></div>
+
+          <p>
+            For <code class="inline-code">agent up</code>, flags after
+            <code class="inline-code">&lt;binary&gt;</code> are launcher flags
+            only when recognized, such as
+            <code class="inline-code">--role</code>,
+            <code class="inline-code">--session</code>,
+            <code class="inline-code">--trust</code>,
+            <code class="inline-code">--model</code>,
+            <code class="inline-code">--codex-args</code>,
+            <code class="inline-code">--claude-args</code>, and
+            <code class="inline-code">--help</code>. Unrecognized flags and
+            the first non-flag positional are treated as child args. Use
+            <code class="inline-code">--</code> for an explicit child boundary.
+            <code class="inline-code">agent up codex --help</code> prints
+            launcher help; <code class="inline-code">agent up codex -- --help</code>
+            passes native help to the child.
+            <code class="inline-code">--codex-args</code> and
+            <code class="inline-code">--claude-args</code> accept dash-prefixed
+            values such as
+            <code class="inline-code">--codex-args '--enable goals'</code>.
+          </p>
 
           <p>
             Global output flags work before or after the subcommand:
@@ -1202,6 +1234,12 @@ amq-squad team init --personas cto,fullstack,qa --cwd qa=~/Code/project-b</code>
             Help paths on deprecated verbs do not emit the warning. JSON
             callers on deprecated verbs still get pure JSON on stdout; the
             warning goes to stderr.
+          </p>
+          <p>
+            Legacy print/replay paths that emit copy-paste commands use the
+            modern <code class="inline-code">agent up &lt;binary&gt;</code>
+            command shape. The legacy verb invocation is deprecated, not the
+            generated replay command.
           </p>
         </div>
       </section>
