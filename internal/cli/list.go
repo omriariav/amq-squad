@@ -27,9 +27,12 @@ type listRecord struct {
 }
 
 func runList(args []string) error {
+	if !isHelpInvocation(args) {
+		deprecationWarning("list", "status (live agents) or history (restorable records)")
+	}
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	projectDirs := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")
-	jsonOut := fs.Bool("json", false, "emit records as JSON array")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned list envelope instead of the human table")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad list - list restorable agents
@@ -39,9 +42,13 @@ Usage:
 
 Includes full amq-squad launch records and older AMQ-only mailbox history
 where the original binary can be inferred.
+
+Examples:
+  amq-squad list
+  amq-squad list --project ~/repos/foo --json
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -84,7 +91,7 @@ where the original binary can be inferred.
 	rows := listRecordsFromEntries(all)
 
 	if *jsonOut {
-		return printJSON(rows)
+		return printJSONEnvelope("list", rows)
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)

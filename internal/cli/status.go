@@ -1,0 +1,286 @@
+package cli
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/internal/team"
+)
+
+// statusState is the precise state vocabulary emitted by `amq-squad status`.
+// Definitions:
+//   - live:    launch-record PID alive AND binary matches; the agent is running.
+//   - stale:   live signals exist on disk (launch record, wake lock, or
+//     presence) but none verify as a running agent for this handle.
+//   - missing: no launch record, no wake lock, no presence file. The member
+//     is configured but has never run in the resolved session.
+type statusState string
+
+const (
+	statusStateLive    statusState = "live"
+	statusStateStale   statusState = "stale"
+	statusStateMissing statusState = "missing"
+)
+
+type statusSignals struct {
+	AgentPID    int       `json:"agent_pid,omitempty"`
+	AgentAlive  bool      `json:"agent_alive,omitempty"`
+	BinaryMatch bool      `json:"binary_match,omitempty"`
+	WakePID     int       `json:"wake_pid,omitempty"`
+	WakeAlive   bool      `json:"wake_alive,omitempty"`
+	Presence    string    `json:"presence,omitempty"`
+	LastSeen    time.Time `json:"last_seen,omitempty"`
+}
+
+// statusEnvelopeData is the kind="status" payload: resolved team-home,
+// workstream, profile, and the per-member records.
+type statusEnvelopeData struct {
+	TeamHome   string         `json:"team_home"`
+	Workstream string         `json:"workstream"`
+	Profile    string         `json:"profile,omitempty"`
+	Records    []statusRecord `json:"records"`
+}
+
+type statusRecord struct {
+	Role     string        `json:"role"`
+	Handle   string        `json:"handle"`
+	Binary   string        `json:"binary"`
+	Session  string        `json:"session"`
+	CWD      string        `json:"cwd"`
+	Root     string        `json:"root,omitempty"`
+	AgentDir string        `json:"agent_dir,omitempty"`
+	Status   statusState   `json:"status"`
+	Detail   string        `json:"detail,omitempty"`
+	Signals  statusSignals `json:"signals"`
+}
+
+func runStatus(args []string) error {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	sessionName := fs.String("session", "", "AMQ workstream session name (default: team workstream)")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned status envelope instead of the human table")
+	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad status - live state of this project's configured team
+
+Usage:
+  amq-squad status [--profile NAME] [--session NAME] [--json]
+
+Reports each configured team member's live state in the resolved session.
+Uses launch-record PID + binary match, wake-lock PID + handle/root match,
+and fresh presence as input signals. Historical/restorable records are
+not included here; use 'amq-squad history' for those.
+
+Examples:
+  amq-squad status
+  amq-squad status --session issue-96 --json
+`)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getwd: %w", err)
+	}
+	if !team.ExistsProfile(cwd, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
+	}
+	return executeStatus(statusExecution{
+		ProjectDir:       cwd,
+		RequestedSession: *sessionName,
+		ExplicitSession:  flagWasSet(fs, "session"),
+		Profile:          profile,
+		Probe:            defaultDuplicateLaunchProbe,
+		Out:              os.Stdout,
+		JSON:             *jsonOut,
+	})
+}
+
+type statusExecution struct {
+	ProjectDir       string
+	RequestedSession string
+	ExplicitSession  bool
+	Profile          string
+	Probe            duplicateLaunchProbe
+	Out              io.Writer
+	JSON             bool
+}
+
+func executeStatus(s statusExecution) error {
+	t, err := team.ReadProfile(s.ProjectDir, s.Profile)
+	if err != nil {
+		return fmt.Errorf("read team: %w", err)
+	}
+	if len(t.Members) == 0 {
+		return fmt.Errorf("team has no members")
+	}
+	workstream, err := resolveTeamWorkstreamName(t, s.RequestedSession, s.ExplicitSession)
+	if err != nil {
+		return err
+	}
+
+	members := orderedTeamMembers(t.Members)
+	rows := make([]statusRecord, 0, len(members))
+	for _, m := range members {
+		rows = append(rows, classifyMemberStatus(t, m, workstream, s.Probe))
+	}
+	if s.JSON {
+		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
+			TeamHome:   t.Project,
+			Workstream: workstream,
+			Profile:    s.Profile,
+			Records:    rows,
+		})
+	}
+	policy := outputPolicyCurrent()
+	w := tabwriter.NewWriter(s.Out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSTATUS\tDETAIL")
+	for _, r := range rows {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), r.Detail)
+	}
+	return w.Flush()
+}
+
+func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe duplicateLaunchProbe) statusRecord {
+	rec := statusRecord{
+		Role:    m.Role,
+		Handle:  m.Handle,
+		Binary:  m.Binary,
+		Session: workstream,
+		CWD:     m.EffectiveCWD(t.Project),
+	}
+	env, err := resolveAMQEnvInDir(rec.CWD, "", workstream, m.Handle)
+	if err != nil {
+		rec.Status = statusStateMissing
+		rec.Detail = "amq env unresolved: " + err.Error()
+		return rec
+	}
+	if env.Me != "" {
+		rec.Handle = env.Me
+	}
+	rec.Root = env.Root
+	rec.AgentDir = filepath.Join(env.Root, "agents", rec.Handle)
+
+	launchRec, launchErr := launch.Read(rec.AgentDir)
+	wakeLock, wakeErr := readWakeLock(rec.AgentDir)
+	presence, presenceErr := readPresenceForEntry(rec.AgentDir)
+
+	hasLaunchPID := launchErr == nil && launchRec.AgentPID > 0
+	hasWakePID := wakeErr == nil && wakeLock.PID > 0
+
+	if hasLaunchPID {
+		rec.Signals.AgentPID = launchRec.AgentPID
+		if probe.PIDAlive(launchRec.AgentPID) {
+			rec.Signals.AgentAlive = true
+			binary := strings.TrimSpace(launchRec.Binary)
+			if binary == "" {
+				binary = m.Binary
+			}
+			if binary != "" && probe.ProcessMatch(launchRec.AgentPID, agentProcessMatcher(binary)) {
+				rec.Signals.BinaryMatch = true
+			}
+		}
+	}
+	if hasWakePID {
+		rec.Signals.WakePID = wakeLock.PID
+		if probe.PIDAlive(wakeLock.PID) {
+			expectedRoot := rec.Root
+			if wakeLock.Root != "" {
+				expectedRoot = wakeLock.Root
+			}
+			if probe.ProcessMatch(wakeLock.PID, wakeProcessMatcher(rec.Handle, expectedRoot)) {
+				rec.Signals.WakeAlive = true
+			}
+		}
+	}
+	// Apply the same freshness/active/handle rules preflight and list use so
+	// status agrees with them about what counts as a live presence signal.
+	presenceLive := false
+	presenceMismatched := false
+	if presenceErr == nil {
+		rec.Signals.Presence = presence.Status
+		rec.Signals.LastSeen = presence.LastSeen
+		fresh := !presence.LastSeen.IsZero() && probe.Now().Sub(presence.LastSeen) <= presenceFreshness
+		active := strings.EqualFold(presence.Status, "active")
+		handleOK := presence.Handle == "" || presence.Handle == rec.Handle
+		switch {
+		case fresh && active && handleOK:
+			presenceLive = true
+		case fresh && active && !handleOK:
+			presenceMismatched = true
+		}
+	}
+
+	if rec.Signals.AgentAlive && rec.Signals.BinaryMatch {
+		rec.Status = statusStateLive
+		rec.Detail = fmt.Sprintf("agent pid %d alive (%s)", rec.Signals.AgentPID, m.Binary)
+		return rec
+	}
+	if presenceLive {
+		rec.Status = statusStateLive
+		rec.Detail = fmt.Sprintf("fresh active presence (last seen %s)", presence.LastSeen.UTC().Format(time.RFC3339))
+		return rec
+	}
+	// Not live. Stale requires a live-pointing disk signal for this handle.
+	// Lone stale/inactive/old presence does not count; it collapses to missing
+	// so old presence files don't lock a member into "stale" forever.
+	hasLiveSignal := hasLaunchPID || hasWakePID || presenceMismatched
+	if !hasLiveSignal {
+		rec.Status = statusStateMissing
+		rec.Detail = "no live signals for this handle"
+		return rec
+	}
+	rec.Status = statusStateStale
+	rec.Detail = staleDetail(rec.Signals, presenceMismatched)
+	return rec
+}
+
+func readWakeLock(agentDir string) (wakeLockFile, error) {
+	path := wakeLockPath(agentDir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return wakeLockFile{}, err
+	}
+	var lock wakeLockFile
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return wakeLockFile{}, err
+	}
+	return lock, nil
+}
+
+func staleDetail(s statusSignals, presenceMismatched bool) string {
+	var parts []string
+	if s.AgentPID > 0 {
+		switch {
+		case !s.AgentAlive:
+			parts = append(parts, fmt.Sprintf("agent pid %d not alive", s.AgentPID))
+		case !s.BinaryMatch:
+			parts = append(parts, fmt.Sprintf("agent pid %d binary mismatch", s.AgentPID))
+		}
+	}
+	if s.WakePID > 0 && !s.WakeAlive {
+		parts = append(parts, fmt.Sprintf("wake pid %d not alive or unrelated", s.WakePID))
+	}
+	if s.WakeAlive {
+		parts = append(parts, fmt.Sprintf("wake pid %d alive without verified agent", s.WakePID))
+	}
+	if presenceMismatched {
+		parts = append(parts, "fresh presence for unrelated handle")
+	}
+	if len(parts) == 0 {
+		return "stale signals on disk"
+	}
+	return strings.Join(parts, "; ")
+}

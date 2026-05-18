@@ -122,13 +122,12 @@ func TestEmitTeamCommandShape(t *testing.T) {
 	})
 	for _, want := range []string{
 		"cd /home/u/proj",
-		"amq-squad launch",
+		"amq-squad agent up claude",
 		"--role designer",
 		"--session proj",
 		"--team-workstream",
 		"--team-home /home/u/proj",
 		"--me designer",
-		" claude",
 		"-- --permission-mode auto",
 	} {
 		if !strings.Contains(cmd, want) {
@@ -174,8 +173,11 @@ func TestEmitTeamCommandIncludesModelOverride(t *testing.T) {
 	if !strings.Contains(cmd, "--model gpt-5") {
 		t.Errorf("expected --model gpt-5 launch flag in: %s", cmd)
 	}
-	if !strings.Contains(cmd, "codex -- --model gpt-5") {
-		t.Errorf("expected codex native --model placement in: %s", cmd)
+	if !strings.Contains(cmd, "agent up codex") {
+		t.Errorf("expected modern 'agent up codex' surface in: %s", cmd)
+	}
+	if !strings.Contains(cmd, "-- --model gpt-5") {
+		t.Errorf("expected codex native --model child arg in: %s", cmd)
 	}
 }
 
@@ -185,8 +187,11 @@ func TestEmitTeamCommandClaudeModelPlacement(t *testing.T) {
 		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p",
 		Member: m, Workstream: "p", TrustMode: trustModeSandboxed, Model: m.Model,
 	})
-	if !strings.Contains(cmd, "claude -- --permission-mode auto --model sonnet") {
-		t.Errorf("expected claude default + model placement in: %s", cmd)
+	if !strings.Contains(cmd, "agent up claude") {
+		t.Errorf("expected modern 'agent up claude' surface in: %s", cmd)
+	}
+	if !strings.Contains(cmd, "-- --permission-mode auto --model sonnet") {
+		t.Errorf("expected claude default + model child placement in: %s", cmd)
 	}
 }
 
@@ -198,8 +203,9 @@ func TestEmitTeamCommandAddsConfiguredBinaryArgs(t *testing.T) {
 		BinaryArgs: map[string][]string{"codex": {"--enable", "goals"}},
 	})
 	for _, want := range []string{
+		"agent up codex",
 		"--codex-args='--enable goals'",
-		"codex -- --dangerously-bypass-approvals-and-sandbox --enable goals",
+		"-- --dangerously-bypass-approvals-and-sandbox --enable goals",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("emitTeamCommand missing %q in: %s", want, cmd)
@@ -224,8 +230,8 @@ func TestEmitTeamCommandUsesBinaryPath(t *testing.T) {
 		CWD: "/p", SquadBin: "/usr/local/bin/amq-squad", TeamHome: "/p",
 		Member: m, Workstream: "p", TrustMode: trustModeSandboxed,
 	})
-	if !strings.Contains(cmd, "/usr/local/bin/amq-squad launch") {
-		t.Errorf("expected absolute binary path in: %s", cmd)
+	if !strings.Contains(cmd, "/usr/local/bin/amq-squad agent up") {
+		t.Errorf("expected absolute binary path with modern agent up surface in: %s", cmd)
 	}
 }
 
@@ -273,8 +279,10 @@ func TestRunTeamShowUsesDefaultSharedWorkstream(t *testing.T) {
 	for _, want := range []string{
 		"# workstream: " + workstream,
 		"--session " + workstream + " --team-workstream",
-		"--no-bootstrap --me cto codex",
-		"--no-bootstrap --me fullstack claude",
+		"agent up codex",
+		"agent up claude",
+		"--no-bootstrap --me cto",
+		"--no-bootstrap --me fullstack",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("team show output missing %q in:\n%s", want, stdout)
@@ -351,8 +359,9 @@ func TestRunTeamShowMergesStoredAndRunBinaryArgs(t *testing.T) {
 	}
 	for _, want := range []string{
 		"# binary args: codex: --enable goals --profile fast",
+		"agent up codex",
 		"--codex-args='--enable goals --profile fast'",
-		"codex -- --dangerously-bypass-approvals-and-sandbox --enable goals --profile fast",
+		"-- --dangerously-bypass-approvals-and-sandbox --enable goals --profile fast",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("team show output missing %q in:\n%s", want, stdout)

@@ -38,11 +38,10 @@ func TestEmitCommandIncludesRoleAndSession(t *testing.T) {
 	cmd := emitCommand(rec)
 	for _, want := range []string{
 		"cd /home/user/proj",
-		"amq-squad launch",
+		"amq-squad agent up claude",
 		"--no-bootstrap",
 		"--role qa",
 		"--session stream1",
-		"claude",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("emitCommand missing %q in: %s", want, cmd)

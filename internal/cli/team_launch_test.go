@@ -38,10 +38,10 @@ func TestBuildTmuxLaunchPlanUsesCatalogOrderAndLaunchCommands(t *testing.T) {
 	}
 	for _, want := range []string{
 		"cd /repo",
-		"/bin/amq-squad launch",
+		"/bin/amq-squad agent up codex",
 		"--role cto",
 		"--session repo",
-		"codex -- --dangerously-bypass-approvals-and-sandbox",
+		"-- --dangerously-bypass-approvals-and-sandbox",
 	} {
 		if !strings.Contains(plan.Panes[0].Command, want) {
 			t.Errorf("cto command missing %q in %s", want, plan.Panes[0].Command)
@@ -90,8 +90,8 @@ func TestTmuxDryRunLinesShowPaneFlow(t *testing.T) {
 		Target:  "new-session",
 		Layout:  "vertical",
 		Panes: []teamLaunchPane{
-			{Role: "cto", CWD: "/repo", Command: "cd /repo && amq-squad launch codex"},
-			{Role: "qa", CWD: "/repo", Command: "cd /repo && amq-squad launch claude"},
+			{Role: "cto", CWD: "/repo", Command: "cd /repo && amq-squad agent up codex"},
+			{Role: "qa", CWD: "/repo", Command: "cd /repo && amq-squad agent up claude"},
 		},
 		StartDelay: 750 * time.Millisecond,
 	}
@@ -119,8 +119,8 @@ func TestTmuxDryRunLinesCanTargetCurrentWindow(t *testing.T) {
 		Target:  "current-window",
 		Layout:  "vertical",
 		Panes: []teamLaunchPane{
-			{Role: "cto", CWD: "/repo", Command: "cd /repo && amq-squad launch codex"},
-			{Role: "qa", CWD: "/repo", Command: "cd /repo && amq-squad launch claude"},
+			{Role: "cto", CWD: "/repo", Command: "cd /repo && amq-squad agent up codex"},
+			{Role: "qa", CWD: "/repo", Command: "cd /repo && amq-squad agent up claude"},
 		},
 		StartDelay: 750 * time.Millisecond,
 	}
@@ -177,8 +177,11 @@ func TestRunTeamLaunchDryRunDefaultsToCurrentWindow(t *testing.T) {
 		"tmux split-window",
 		" -h -c ",
 		"tmux select-layout -t \"$window\" even-horizontal",
-		"--no-bootstrap --me cto codex",
-		"--no-bootstrap --me fullstack claude -- --permission-mode auto",
+		"agent up codex",
+		"agent up claude",
+		"--no-bootstrap --me cto",
+		"--no-bootstrap --me fullstack",
+		"-- --permission-mode auto",
 		"--session ",
 		"# using current tmux window; no attach needed",
 	} {
@@ -223,8 +226,10 @@ func TestRunTeamLaunchDryRunUsesExplicitSharedWorkstream(t *testing.T) {
 	for _, want := range []string{
 		"# workstream: issue-96",
 		"--session issue-96 --team-workstream",
-		"--no-bootstrap --me cto codex",
-		"--no-bootstrap --me fullstack claude",
+		"agent up codex",
+		"agent up claude",
+		"--no-bootstrap --me cto",
+		"--no-bootstrap --me fullstack",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("dry-run output missing %q in:\n%s", want, stdout)
@@ -265,10 +270,12 @@ func TestRunTeamLaunchDryRunUsesBinaryArgs(t *testing.T) {
 		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)
 	}
 	for _, want := range []string{
+		"agent up codex",
 		"--codex-args=",
-		"codex -- --dangerously-bypass-approvals-and-sandbox --enable goals",
+		"-- --dangerously-bypass-approvals-and-sandbox --enable goals",
+		"agent up claude",
 		"--claude-args=--chrome",
-		"claude -- --permission-mode auto --chrome",
+		"-- --permission-mode auto --chrome",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("dry-run output missing %q in:\n%s", want, stdout)

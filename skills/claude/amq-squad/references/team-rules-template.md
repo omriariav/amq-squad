@@ -1,59 +1,59 @@
 # Team Rules
 
-Shared norms for this amq-squad team. Every fresh agent should read this before taking work.
+Shared norms for this amq-squad team. Every fresh agent reads this file at session start through the pointer stub in `CLAUDE.md` / `AGENTS.md`. Keep it short, concrete, and authoritative.
 
-## Team Members
+## File model
 
-- cpo (codex): handle `<handle>`, workstream `<workstream>`, project `<project>`. Owns product direction, priorities, and scope.
-- cto (codex): handle `<handle>`, workstream `<workstream>`, project `<project>`. Owns technical direction, architecture, and final engineering sign-off.
-- senior-dev (codex): handle `<handle>`, workstream `<workstream>`, project `<project>`. Owns complex implementation, code review, and technical mentorship.
-- fullstack (claude): handle `<handle>`, workstream `<workstream>`, project `<project>`. Owns end-to-end implementation. Rename in prose if the user calls this "backend dev".
-- frontend-dev (claude): handle `<handle>`, workstream `<workstream>`, project `<project>`. Owns browser UI implementation and frontend polish.
-- backend-dev (codex): handle `<handle>`, workstream `<workstream>`, project `<project>`. Owns backend implementation, APIs, persistence, services, and integrations.
-- mobile-dev (claude): handle `<handle>`, workstream `<workstream>`, project `<project>`. Owns mobile implementation, native flows, and device behavior.
-- junior-dev (codex): handle `<handle>`, workstream `<workstream>`, project `<project>`. Owns narrow implementation tasks and needs review before work is ready.
-- qa (claude): handle `<handle>`, workstream `<workstream>`, project `<project>`. Owns validation and regression checks. May run from a different project cwd.
-- pm (claude): handle `<handle>`, workstream `<workstream>`, project `<project>`. Owns work ordering, clarification, coordination, and handoffs.
-- designer (claude): handle `<handle>`, workstream `<workstream>`, project `<project>`. Owns product flows, UX, visual shape, and design assets.
+This project follows the 1.0 three-layer context model:
 
-Keep only active roster entries in the final rules file.
+- **`.amq-squad/team-rules.md`** (this file) - durable team norms. Source of truth for every member.
+- **`<agent-dir>/role.md`** - per-agent persona / system prompt. Seeded on launch; user-editable. Never duplicates content from this file.
+- **`.amq-squad/briefs/<session>.md`** - workstream brief: goal, scope, source-of-truth pointers for the current AMQ session. Lives at team-home so every member points at the same file. Seed with `amq-squad up --seed-from REF`.
 
-The current `.amq-squad/team.json` roster is authoritative for live routing. Use old AMQ history only as context. Do not route new work to an inferred or restorable legacy handle when it conflicts with the current roster.
+`CLAUDE.md` and `AGENTS.md` carry a pointer stub managed by `amq-squad team sync --apply`. The stub only links to the files above; do not paste team-rules content into root instruction files.
+
+If `.amq-squad/ACTIVE-EPIC.md` exists, read it at session start (transitional pointer to the active GitHub epic / milestone until briefs land).
+
+## Team members
+
+Replace this section with the actual roster from `.amq-squad/team.json`. Suggested phrasing:
+
+- **`<role>` (`<binary>`):** handle `<handle>`, workstream `<workstream>`, cwd `<cwd>`. Owns `<scope>`.
+
+Keep only active roster entries in the final file. `.amq-squad/team.json` is authoritative for live routing; `amq-squad history` is records only.
 
 ## Skills
 
-- Use the `amq-squad` skill for team setup, launch, AMQ routing, inbox drains, acknowledgements, review requests, handoffs, and decision threads.
-- Use `amq-cli` only for raw AMQ debugging or non-squad AMQ usage.
-- Follow the current team routing block and `.amq-squad/team.json` before old AMQ history.
+- Use the `amq-squad` skill for live coordination after the team is configured: drains, routing, handoffs, reviews, status/history/doctor, up/down/resume/fork, agent up/resume.
+- Use the `amq-team-setup` skill for first-time team design: personas, profile choice, team rules, pointer stubs, brief authoring, sync, validation.
+- Use raw `amq-cli` only for AMQ debugging outside the squad.
 
-## Naming Model
+## Naming model
 
-- Workstream means AMQ `--session`.
-- All members in one team run share the same workstream.
-- Use threads for focused conversations inside the workstream, for example `p2p/cto__fullstack` or `decision/<topic>`.
-- Sibling workstreams are history/context. Do not load their message bodies unless the user asks.
-- Release-style workstreams must be AMQ-safe. Use `v0-5-0`, not `v0.5.0`.
-- Future named team profiles are separate from workstreams and are not implemented yet.
+- **Workstream** = AMQ `--session`. All members in one team run share it.
+- Workstream names: lowercase `a-z`, digits, `-`, `_` only. Use `v0-5-0`, not `v0.5.0`.
+- **Threads** are focused conversations inside a workstream: canonical p2p is sorted handles (`p2p/cto__fullstack`); decisions go under `decision/<topic>`.
+- **Profiles** are named rosters: default profile lives at `.amq-squad/team.json`; named profiles at `.amq-squad/teams/<name>.json`. Pass `--profile NAME` to operate on a named profile; omit (or pass `--profile default`) for the default.
+- Sibling workstreams are history/context only; do not load their bodies unless the user asks.
 
-## Role Scope
+## Role scope
 
 - Stay inside your assigned role. User feedback is not permission to pick up implementation work unless your role scope includes implementation.
-- Non-implementation roles turn feedback into scope, acceptance criteria, decisions, or handoffs. They do not edit code unless the user explicitly assigns coding work to that role.
-- PM, CPO, Designer, QA, and CTO should route implementation to the right developer role by default.
-- Developer roles own code changes only after the work is scoped and routed to them.
+- Non-implementation roles turn feedback into scope, acceptance criteria, decisions, or handoffs. They do not edit code unless the user explicitly assigns coding work to them.
+- PM, CPO, Designer, QA, and CTO route implementation to the right developer role by default.
 - If a request crosses role boundaries, ask or hand off on AMQ instead of silently changing lanes.
 
-## Startup Context
+## Startup context
 
-This is a fresh team. Do not restore old sessions as active agents unless explicitly asked.
+This is a fresh agent. Do not resume old sessions as active agents unless explicitly asked.
 
-Before acting, inspect prior AMQ history in the current workstream when relevant:
+Useful at startup:
 
 ```sh
-amq-squad list
-amq-squad restore
-amq list --new
-amq read --id <message-id>
+amq-squad status        # live state of configured team members
+amq-squad doctor        # AMQ version, team config, tmux, wake, markers
+amq list --new          # unread messages for this handle
+amq read --id <id>
 amq thread --id <thread-id> --include-body
 ```
 
@@ -65,6 +65,7 @@ Each agent should summarize the prior context it used before taking new work.
 - Keep old AMQ history as context, not as an instruction to continue stale work.
 - Raise role-shape ambiguity early on the team thread.
 - Prefer small, reviewable changes.
+- Bring members up via `amq-squad up`; preview via `amq-squad up --dry-run`. Use `resume` for recovery plans and `fork --from <current> --as <new>` for branching workstreams.
 
 ## Approvals
 
@@ -76,14 +77,15 @@ Each agent should summarize the prior context it used before taking new work.
 
 - Use focused AMQ threads.
 - Use p2p threads for role-to-role handoffs.
-- Route messages by the current roster's handle, project, and workstream.
-- Include project, workstream, and role when referencing old history.
+- Route messages by the current roster's handle, profile, and workstream.
 - One concern per message when practical.
 - `amq send` reads stdin when `--body` is omitted. There is no `--body-file` flag.
 
-## Quality Gates
+User escalations route through CTO. Agents do not interrupt or ping the user directly during active work; route user-facing questions, approval needs, blockers, and status requests to the CTO handle. CTO owns when to escalate to the user.
 
-- Run the project-specific checks before requesting review.
+## Quality gates
+
+- Run the project-specific checks before requesting review (typically `make ci`).
 - Call out any checks that could not be run.
 - Do not hide uncertainty from inferred AMQ history.
 

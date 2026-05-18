@@ -10,13 +10,30 @@ import (
 
 	"github.com/omriariav/amq-squad/internal/launch"
 	"github.com/omriariav/amq-squad/internal/role"
+	"github.com/omriariav/amq-squad/internal/team"
 )
+
+// restoreFromAgentResume is set by runAgentResume so the legacy verb
+// warning fires only when the operator typed `amq-squad restore --exec ...`
+// directly, not when the modern `agent resume R` entry point delegates.
+var restoreFromAgentResume bool
 
 type restoreCandidate struct {
 	entry launch.Entry
 }
 
 func runRestore(args []string) error {
+	if !restoreFromAgentResume && !isHelpInvocation(args) {
+		// Restore print mode and `restore --exec --role R` are both legacy
+		// surfaces. Print mode maps to `history`; --exec --role to
+		// `agent resume R`. The replacement hint differs based on whether
+		// --exec is set, so callers see actionable next-step text.
+		if argsContains(args, "--exec") {
+			deprecationWarning("restore --exec --role R", "agent resume R")
+		} else {
+			deprecationWarning("restore", "history (records) or agent resume <role> (exec)")
+		}
+	}
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	projectDirs := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")
 	execRestore := fs.Bool("exec", false, "exec the selected launch in this terminal")
@@ -45,9 +62,13 @@ For records that look active, the metadata line includes wake-health:
   wake: pid:N    - wake.lock present and the wake process is alive
   wake: missing  - agent looks active but no wake.lock was found
   wake: stale    - wake.lock present but the PID is dead or unrelated
+
+Examples:
+  amq-squad restore
+  amq-squad restore --role cto --exec
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -344,16 +365,17 @@ func removeContiguousSubsequence(args, sub []string) []string {
 }
 
 // emitCommand reconstructs the bash command for a launch record.
-// It prefers 'amq-squad launch' so role + metadata round-trip cleanly;
+// It emits the modern `agent up <binary>` surface so role + metadata
+// round-trip cleanly without recommending the deprecated `launch` verb;
 // callers who want the raw amq invocation can run with --dry-run to see it.
 func emitCommand(rec launch.Record) string {
 	return emitCommandWithOptions(rec, emitCommandOptions{})
 }
 
 // emitCommandOptions controls extra flags injected into the emitted
-// 'amq-squad launch' invocation. Force adds --force-duplicate so a planner
-// (e.g. team resume) can emit a command that matches the plan when a live
-// agent has been overridden.
+// 'amq-squad agent up' invocation. Force adds --force-duplicate so a
+// planner (e.g. resume) can emit a command that matches the plan when a
+// live agent has been overridden.
 type emitCommandOptions struct {
 	Force bool
 }
@@ -362,7 +384,11 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	var b strings.Builder
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(rec.CWD))
-	b.WriteString(" && amq-squad launch")
+	// Modern surface: `agent up <binary> [launch flags] [-- child args]`.
+	// Binary positional sits immediately after `agent up` so the printed
+	// command reads as the documented 1.0 shape.
+	b.WriteString(" && amq-squad agent up ")
+	b.WriteString(shellQuote(rec.Binary))
 	b.WriteString(" --no-bootstrap")
 	if opts.Force {
 		b.WriteString(" --force-duplicate")
@@ -412,8 +438,10 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 		b.WriteString(" --me ")
 		b.WriteString(shellQuote(rec.Handle))
 	}
-	b.WriteString(" ")
-	b.WriteString(shellQuote(rec.Binary))
+	if profile := strings.TrimSpace(rec.TeamProfile); profile != "" && profile != team.DefaultProfile {
+		b.WriteString(" --team-profile ")
+		b.WriteString(shellQuote(profile))
+	}
 	argv := restoreArgvFromRecord(rec)
 	if len(argv) > 0 {
 		b.WriteString(" --")

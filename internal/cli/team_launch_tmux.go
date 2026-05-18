@@ -266,10 +266,12 @@ func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
 		}
 	}
 	if plan.Target == "current-window" {
-		fmt.Fprintln(os.Stderr, "Added team panes to current tmux window.")
+		quietNotice("Added team panes to current tmux window.\n")
+		verbosePolicyEcho()
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "Created tmux session %s. Attach with: tmux attach -t %s\n", plan.Session, shellQuote(plan.Session))
+	quietNotice("Created tmux session %s. Attach with: tmux attach -t %s\n", plan.Session, shellQuote(plan.Session))
+	verbosePolicyEcho()
 	return nil
 }
 

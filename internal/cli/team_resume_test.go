@@ -575,8 +575,8 @@ func TestRunTeamResumeForceDuplicateRestoreCommandHasFlag(t *testing.T) {
 	}
 	// The forced restore command MUST carry --force-duplicate so its
 	// own preflight does not refuse on replay against the same live agent.
-	if !strings.Contains(stdout, "amq-squad launch --no-bootstrap --force-duplicate") {
-		t.Errorf("forced restore command must inject --force-duplicate, got:\n%s", stdout)
+	if !strings.Contains(stdout, "amq-squad agent up codex --no-bootstrap --force-duplicate") {
+		t.Errorf("forced restore command must inject --force-duplicate in modern agent up shape, got:\n%s", stdout)
 	}
 }
 
@@ -654,8 +654,8 @@ func TestRunTeamResumeFooterSuppressedForLiveForcedRestore(t *testing.T) {
 		t.Fatalf("runTeamResume --force-duplicate: %v", err)
 	}
 	// Sanity: the emitted command must be the forced restore.
-	if !strings.Contains(stdout, "amq-squad launch --no-bootstrap --force-duplicate") {
-		t.Errorf("forced live restore must include --force-duplicate, got:\n%s", stdout)
+	if !strings.Contains(stdout, "amq-squad agent up codex --no-bootstrap --force-duplicate") {
+		t.Errorf("forced live restore must include --force-duplicate in modern agent up shape, got:\n%s", stdout)
 	}
 	// Footer must be suppressed: 'team launch --session ...' would re-emit
 	// fresh from team intent and not reproduce the restore semantics.

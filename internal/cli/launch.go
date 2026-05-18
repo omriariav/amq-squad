@@ -15,7 +15,20 @@ import (
 	"github.com/omriariav/amq-squad/internal/role"
 )
 
+// launchFromAgentUp is set by runAgentUp before delegating to runLaunch so
+// the deprecation warning fires only when the operator typed the legacy
+// `amq-squad launch` directly. It is restored on return.
+var launchFromAgentUp bool
+
 func runLaunch(args []string) error {
+	// Top-level `launch` is deprecated in favor of `agent up` for 1.x.
+	// The warning fires once, before any parsing, so misuse cases still
+	// surface it. agent up delegates to runLaunch (with launchFromAgentUp
+	// set), so the warning is skipped when the modern entry point invokes
+	// us internally. Help invocations stay quiet.
+	if !launchFromAgentUp && !isHelpInvocation(args) {
+		deprecationWarning("launch", "agent up")
+	}
 	// Split at "--" so launcher flags aren't consumed by amq-squad's parser.
 	squadArgs, childArgs := splitDashDash(args)
 
@@ -26,6 +39,7 @@ func runLaunch(args []string) error {
 	me := fs.String("me", "", "override the agent handle (defaults to binary basename)")
 	rootFlag := fs.String("root", "", "override AMQ root directory")
 	teamHome := fs.String("team-home", "", "team-home directory used to find .amq-squad/team-rules.md for bootstrap")
+	teamProfile := fs.String("team-profile", "", "team profile this launch belongs to (default: default profile)")
 	conversation := fs.String("conversation", "", "resume and store a Codex or Claude conversation name/id")
 	conversationID := fs.String("conversation-id", "", "alias for --conversation")
 	noBootstrap := fs.Bool("no-bootstrap", false, "do not pass the generated bootstrap prompt to the agent")
@@ -72,10 +86,14 @@ Disk state is untouched and no exec occurs.
 When --conversation generates resume args, do not pass additional child args
 after "--". Use --codex-args or --claude-args for native flags that should
 still combine with --conversation.
+
+Examples:
+  amq-squad launch --role cto --session issue-96 codex
+  amq-squad launch --dry-run --no-bootstrap codex
 `)
 	}
 
-	if err := fs.Parse(squadArgs); err != nil {
+	if err := parseFlags(fs, squadArgs); err != nil {
 		return err
 	}
 	trustExplicit := flagWasSet(fs, "trust")
@@ -159,6 +177,7 @@ still combine with --conversation.
 		AgentPID:         os.Getpid(),
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
+		TeamProfile:      strings.TrimSpace(*teamProfile),
 	}
 
 	// Keep generated bootstrap out of launch.json so restore stays compact
@@ -192,7 +211,8 @@ still combine with --conversation.
 
 	if *dryRun {
 		fmt.Println(shellCommand("amq", coopArgs...))
-		fmt.Fprintln(os.Stderr, "(dry run - no files written, not execing)")
+		quietNotice("(dry run - no files written, not execing)\n")
+		verbosePolicyEcho()
 		return nil
 	}
 
@@ -208,6 +228,17 @@ still combine with --conversation.
 		return err
 	} else if blocker != nil {
 		return blocker
+	}
+
+	// Ensure the active brief stub exists for this workstream before the
+	// launch record is written, so a brief-creation failure does not leave
+	// a fresh launch.json for an agent that never started. resolveBriefHome
+	// applies the same skip rule bootstrap uses (explicit --team-home or
+	// cwd-with-team-rules-md only) so the two sources stay aligned.
+	if briefHome := resolveBriefHome(*teamHome, cwd); briefHome != "" {
+		if _, _, err := ensureBriefStub(briefHome, rec.Session); err != nil {
+			return fmt.Errorf("ensure brief: %w", err)
+		}
 	}
 
 	if err := launch.Write(agentDir, rec); err != nil {
