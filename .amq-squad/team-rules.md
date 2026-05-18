@@ -6,7 +6,15 @@ via their priming prompt regardless of binary. Edit this file and run
 
 Team members (see .amq-squad/team.json):
 - cto (codex): owns technical direction, architecture, sign-off.
+- senior-dev (codex): reviews implementation shape, risk, and test strategy.
 - fullstack (claude): implements features end to end.
+
+## Active brief
+
+Read `.amq-squad/briefs/<session>.md` for the current workstream at session
+start. The bootstrap prompt names the exact resolved path. Briefs capture
+the workstream's goal, scope, and pointers to source-of-truth issues / PRs;
+they live next to team-rules.md, not in CLAUDE.md / AGENTS.md.
 
 ## Skills
 
@@ -43,10 +51,14 @@ Team members (see .amq-squad/team.json):
 ## Communication
 
 - 1-on-1 threads: p2p/cto__fullstack.
+- 1-on-1 threads: p2p/cto__senior-dev.
 - Decisions that change the shape of the system go in a
   decision/<topic> thread (see AMQ decision protocol).
 - Fullstack pings cto early when a design decision feels bigger than the
   PR it sits in. Escalate the shape before writing a lot of code.
+- Agents do not interrupt or ask the user directly during active work. Route
+  user-facing questions, approval needs, blockers, and status requests to cto.
+  Cto owns deciding when and how to escalate to the user.
 - Keep messages focused. One concern per message when possible.
 
 ## Style

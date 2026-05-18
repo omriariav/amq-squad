@@ -36,10 +36,12 @@ func runTeam(args []string) error {
 		return runTeamRules(args[1:])
 	case "sync":
 		return runTeamSync(args[1:])
+	case "profiles":
+		return runTeamProfiles(args[1:])
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'show', 'launch', 'resume', 'rules', or 'sync'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'show', 'launch', 'resume', 'rules', 'sync', or 'profiles'.", args[0])
 	}
 }
 
@@ -74,27 +76,39 @@ func runTeamInit(args []string) error {
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
 	force := fs.Bool("force", false, "overwrite an existing team.json")
+	profileFlag := fs.String("profile", "", "team profile to initialize (default: default profile)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--personas id1,id2,...] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--codex-args args] [--claude-args args] [--force]
-  amq-squad team init [--roles id1,id2,...] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--codex-args args] [--claude-args args] [--force]
+  amq-squad team init [--profile NAME] [--personas id1,id2,...] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--codex-args args] [--claude-args args] [--force]
+  amq-squad team init [--profile NAME] [--roles id1,id2,...] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--codex-args args] [--claude-args args] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
-then choose the CLI for each persona. Writes <cwd>/.amq-squad/team.json and
-seeds <cwd>/.amq-squad/team-rules.md if it does not already exist. The
-directory where this runs becomes the team-home. Members can live in other
-directories via --cwd role=/path. Default AMQ workstream sessions are derived
-from the team-home directory name.
+then choose the CLI for each persona. Writes the team config under
+<cwd>/.amq-squad/: the default profile goes to team.json; --profile NAME
+writes to teams/<name>.json instead. Seeds <cwd>/.amq-squad/team-rules.md
+if it does not already exist (single source of truth across profiles).
+The directory where this runs becomes the team-home. Members can live in
+other directories via --cwd role=/path. Default AMQ workstream sessions
+are derived from the team-home directory name.
 
 Known personas:
 `)
 		for _, r := range catalog.All() {
 			fmt.Fprintf(os.Stderr, "  %-10s %s (default CLI: %s)\n", r.ID, r.Label, r.PreferredBinary)
 		}
+		fmt.Fprint(os.Stderr, `
+Examples:
+  amq-squad team init --roles cto,fullstack --binary cto=codex
+  amq-squad team init --profile review --roles cto --session review
+`)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
 		return err
 	}
 	trustMode, err := normalizeTrustMode(*trustRaw)
@@ -110,8 +124,8 @@ Known personas:
 		return fmt.Errorf("getwd: %w", err)
 	}
 
-	if team.Exists(cwd) && !*force {
-		return fmt.Errorf("team.json already exists at %s. Use --force to overwrite.", team.Path(cwd))
+	if team.ExistsProfile(cwd, profile) && !*force {
+		return fmt.Errorf("team config already exists at %s. Use --force to overwrite.", team.ProfilePath(cwd, profile))
 	}
 
 	binaryOverrides, err := parseKV(*binaryFlag)
@@ -240,10 +254,10 @@ Known personas:
 		BinaryArgs: binaryArgs,
 		Members:    members,
 	}
-	if err := team.Write(cwd, t); err != nil {
+	if err := team.WriteProfile(cwd, profile, t); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Wrote %s with %d members.\n", team.Path(cwd), len(members))
+	fmt.Fprintf(os.Stderr, "Wrote %s with %d members.\n", team.ProfilePath(cwd, profile), len(members))
 	rulesContent, err := renderTeamRules(t)
 	if err != nil {
 		return fmt.Errorf("render team-rules.md: %w", err)
@@ -265,38 +279,31 @@ Known personas:
 }
 
 func runTeamShow(args []string) error {
+	if !isHelpInvocation(args) {
+		deprecationWarning("team show", "up --dry-run")
+	}
 	fs := flag.NewFlagSet("team show", flag.ContinueOnError)
-	noBootstrap := fs.Bool("no-bootstrap", false, "emit launch commands that skip the generated bootstrap prompt")
-	session := fs.String("session", "", "AMQ workstream session name (default: sanitized team-home directory name; lowercase a-z, 0-9, -, _)")
-	fresh := fs.Bool("fresh", false, "fail if the selected workstream session already exists")
-	trustRaw := fs.String("trust", "", "Codex trust profile for this run: sandboxed or trusted")
-	modelFlag := fs.String("model", "", "per-persona model overrides for this run, e.g. cto=gpt-5,fullstack=sonnet")
-	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for this run, e.g. '--enable goals'")
-	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'")
-	forceDuplicate := fs.Bool("force-duplicate", false, "include --force-duplicate in emitted launch commands")
+	pf := registerPreviewFlags(fs)
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned team_plan envelope instead of the human preview")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
 
 Usage:
-  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate]
+  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--json]
+
+Examples:
+  amq-squad team show
+  amq-squad team show --session issue-96 --json
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	trustMode, err := normalizeTrustMode(*trustRaw)
+	opts, err := pf.toEmitOptions(fs)
 	if err != nil {
 		return err
 	}
-	modelOverrides, err := parseKV(*modelFlag)
-	if err != nil {
-		return fmt.Errorf("parse --model: %w", err)
-	}
-	modelOverrides = lowercaseKeys(modelOverrides)
-	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
-	if err != nil {
-		return err
-	}
+	opts.JSON = *jsonOut
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
@@ -304,17 +311,7 @@ Usage:
 	if !team.Exists(cwd) {
 		return fmt.Errorf("no team configured. Run 'amq-squad team init' first.")
 	}
-	return emitTeamCommands(cwd, emitTeamOptions{
-		NoBootstrap:      *noBootstrap,
-		RequestedSession: *session,
-		ExplicitSession:  flagWasSet(fs, "session"),
-		Fresh:            *fresh,
-		ExtraBinaryArgs:  binaryArgs,
-		RequestedTrust:   trustMode,
-		ExplicitTrust:    flagWasSet(fs, "trust"),
-		ModelOverrides:   modelOverrides,
-		ForceDuplicate:   *forceDuplicate,
-	})
+	return emitTeamCommands(cwd, opts)
 }
 
 type emitTeamOptions struct {
@@ -327,10 +324,39 @@ type emitTeamOptions struct {
 	ExplicitTrust    bool
 	ModelOverrides   map[string]string
 	ForceDuplicate   bool
+	Profile          string
+	// JSON requests a structured "team_plan" envelope on stdout instead of
+	// the human launch-command preview. Diagnostics still go to stderr.
+	JSON bool
+}
+
+// teamPlanMember is the per-member entry inside a JSON team plan.
+type teamPlanMember struct {
+	Role    string `json:"role"`
+	Handle  string `json:"handle"`
+	Binary  string `json:"binary"`
+	Model   string `json:"model,omitempty"`
+	CWD     string `json:"cwd"`
+	Command string `json:"command"`
+}
+
+// teamPlan is the JSON-friendly representation of a launch-plan preview.
+// Fields name the inputs callers need to inspect, distribute, or run the
+// plan: project/team-home + workstream + trust + profile + binary args +
+// per-member command lines.
+type teamPlan struct {
+	TeamHome   string              `json:"team_home"`
+	Project    string              `json:"project"`
+	Workstream string              `json:"workstream"`
+	Profile    string              `json:"profile"`
+	Trust      string              `json:"trust"`
+	Members    int                 `json:"members"`
+	BinaryArgs map[string][]string `json:"binary_args,omitempty"`
+	Plan       []teamPlanMember    `json:"plan"`
 }
 
 func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
-	t, err := team.Read(projectDir)
+	t, err := team.ReadProfile(projectDir, opts.Profile)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}
@@ -375,6 +401,58 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		return err
 	}
 
+	// Use the running amq-squad's absolute path so emitted commands work
+	// even when amq-squad isn't on PATH.
+	squadBin := "amq-squad"
+	if p, err := os.Executable(); err == nil {
+		squadBin = p
+	}
+
+	if opts.JSON {
+		// Canonicalize the profile field so both `team show --json` (no
+		// --profile flag) and `up --dry-run --json` (resolved to "default"
+		// when unset) emit the same value.
+		profileName := opts.Profile
+		if profileName == "" {
+			profileName = team.DefaultProfile
+		}
+		plan := teamPlan{
+			TeamHome:   t.Project,
+			Project:    t.Project,
+			Workstream: workstream,
+			Profile:    profileName,
+			Trust:      trustMode,
+			Members:    len(members),
+			BinaryArgs: binaryArgs,
+			Plan:       make([]teamPlanMember, 0, len(members)),
+		}
+		for _, m := range members {
+			effectiveModel := memberEffectiveModel(m, opts.ModelOverrides)
+			cwd := m.EffectiveCWD(t.Project)
+			plan.Plan = append(plan.Plan, teamPlanMember{
+				Role:   m.Role,
+				Handle: m.Handle,
+				Binary: m.Binary,
+				Model:  effectiveModel,
+				CWD:    cwd,
+				Command: emitTeamCommand(emitTeamCommandInput{
+					CWD:            cwd,
+					SquadBin:       squadBin,
+					TeamHome:       t.Project,
+					Member:         m,
+					NoBootstrap:    opts.NoBootstrap,
+					Workstream:     workstream,
+					BinaryArgs:     binaryArgs,
+					TrustMode:      trustMode,
+					Model:          effectiveModel,
+					ForceDuplicate: opts.ForceDuplicate,
+					Profile:        opts.Profile,
+				}),
+			})
+		}
+		return printJSONEnvelope("team_plan", plan)
+	}
+
 	fmt.Println("# amq-squad team - run each command in its own terminal tab")
 	fmt.Println("#")
 	fmt.Printf("# team-home: %s\n", t.Project)
@@ -396,12 +474,6 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		fmt.Printf("# rules:     (not set; run 'amq-squad team rules init')\n")
 	}
 	fmt.Println()
-	// Use the running amq-squad's absolute path so emitted commands work
-	// even when amq-squad isn't on PATH.
-	squadBin := "amq-squad"
-	if p, err := os.Executable(); err == nil {
-		squadBin = p
-	}
 
 	for i, m := range members {
 		label := m.Role
@@ -425,6 +497,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			BinaryArgs:     binaryArgs,
 			TrustMode:      trustMode,
 			Model:          effectiveModel,
+			Profile:        opts.Profile,
 			ForceDuplicate: opts.ForceDuplicate,
 		}))
 		fmt.Println()
@@ -529,6 +602,7 @@ type emitTeamCommandInput struct {
 	TrustMode      string
 	Model          string
 	ForceDuplicate bool
+	Profile        string
 }
 
 func emitTeamCommand(in emitTeamCommandInput) string {
@@ -538,7 +612,11 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 	b.WriteString(shellQuote(in.CWD))
 	b.WriteString(" && ")
 	b.WriteString(shellQuote(in.SquadBin))
-	b.WriteString(" launch")
+	// Emit the modern single-agent surface: `agent up <binary> [flags] [-- child]`.
+	// Legacy `launch <binary>` still works with a deprecation warning, but
+	// generated team commands recommend the 1.0 shape.
+	b.WriteString(" agent up ")
+	b.WriteString(shellQuote(m.Binary))
 	b.WriteString(" --role ")
 	b.WriteString(shellQuote(m.Role))
 	b.WriteString(" --session ")
@@ -555,6 +633,10 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 	if in.TeamHome != "" {
 		b.WriteString(" --team-home ")
 		b.WriteString(shellQuote(in.TeamHome))
+	}
+	if in.Profile != "" && in.Profile != team.DefaultProfile {
+		b.WriteString(" --team-profile ")
+		b.WriteString(shellQuote(in.Profile))
 	}
 	if in.NoBootstrap {
 		b.WriteString(" --no-bootstrap")
@@ -579,8 +661,6 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 			b.WriteString(shellQuote(joinedAgentArgs(extraDefaultArgs)))
 		}
 	}
-	b.WriteString(" ")
-	b.WriteString(shellQuote(m.Binary))
 	modelArgs := modelArgsForBinary(m.Binary, in.Model)
 	if defaultArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, extraDefaultArgs, in.TrustMode); len(defaultArgs) > 0 {
 		b.WriteString(" --")
@@ -823,6 +903,10 @@ func runTeamRules(args []string) error {
 
 Usage:
   amq-squad team rules init [--force]   Seed or refresh team-rules.md
+
+Examples:
+  amq-squad team rules init
+  amq-squad team rules init --force
 `)
 		if len(args) == 0 {
 			return usageErrorf("rules requires a subcommand (e.g. 'init')")
@@ -833,7 +917,18 @@ Usage:
 	case "init":
 		fs := flag.NewFlagSet("team rules init", flag.ContinueOnError)
 		force := fs.Bool("force", false, "overwrite an existing team-rules.md with the generated template")
-		if err := fs.Parse(args[1:]); err != nil {
+		fs.Usage = func() {
+			fmt.Fprint(os.Stderr, `amq-squad team rules init - seed or refresh .amq-squad/team-rules.md
+
+Usage:
+  amq-squad team rules init [--force]
+
+Examples:
+  amq-squad team rules init
+  amq-squad team rules init --force
+`)
+		}
+		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
 		cwd, err := os.Getwd()
@@ -852,7 +947,7 @@ Usage:
 			if err := rules.Write(cwd, content); err != nil {
 				return fmt.Errorf("write team-rules.md: %w", err)
 			}
-			fmt.Fprintf(os.Stderr, "Wrote %s\n", rules.Path(cwd))
+			quietNotice("Wrote %s\n", rules.Path(cwd))
 			return nil
 		}
 		wrote, err := rules.Ensure(cwd, content)
@@ -860,9 +955,9 @@ Usage:
 			return fmt.Errorf("seed team-rules.md: %w", err)
 		}
 		if wrote {
-			fmt.Fprintf(os.Stderr, "Wrote %s\n", rules.Path(cwd))
+			quietNotice("Wrote %s\n", rules.Path(cwd))
 		} else {
-			fmt.Fprintf(os.Stderr, "%s already exists, leaving it alone.\n", rules.Path(cwd))
+			quietNotice("%s already exists, leaving it alone.\n", rules.Path(cwd))
 		}
 		return nil
 	default:
@@ -874,14 +969,16 @@ func runTeamSync(args []string) error {
 	fs := flag.NewFlagSet("team sync", flag.ContinueOnError)
 	apply := fs.Bool("apply", false, "write the planned changes (default: preview only)")
 	allowOutside := fs.Bool("allow-outside", false, "allow sync writes outside the team-home directory")
+	profileFlag := fs.String("profile", "", "team profile whose member cwds to sync (default: default profile)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team sync - sync CLAUDE.md and AGENTS.md from team-rules.md
 
 Usage:
-  amq-squad team sync            Preview what would change (exit 1 if drift)
-  amq-squad team sync --apply    Write the managed block into both files
+  amq-squad team sync                       Preview what would change (exit 1 if drift)
+  amq-squad team sync --apply               Write the managed block into both files
+  amq-squad team sync --profile NAME ...    Sync the named profile's member cwds only
   amq-squad team sync --apply --allow-outside
-                                  Also write configured member cwds outside team-home
+                                            Also write configured member cwds outside team-home
 
 Existing content in CLAUDE.md / AGENTS.md is preserved. On first run,
 existing content is adopted as the user region and a managed block is
@@ -890,9 +987,18 @@ appended between markers. Subsequent runs only refresh the managed block.
 When team members span multiple directories, sync walks every unique cwd
 in team.json and syncs CLAUDE.md + AGENTS.md in each. Use --allow-outside
 when a member cwd is outside the team-home directory.
+
+Examples:
+  amq-squad team sync
+  amq-squad team sync --apply
+  amq-squad team sync --profile review --apply
 `)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
 		return err
 	}
 	cwd, err := os.Getwd()
@@ -908,11 +1014,21 @@ when a member cwd is outside the team-home directory.
 		return err
 	}
 
-	// Walk every unique cwd the team spans so each project's CLAUDE.md and
-	// AGENTS.md picks up the managed block.
+	// Walk every unique cwd the selected profile spans so each project's
+	// CLAUDE.md and AGENTS.md picks up the managed block. Sync is profile-
+	// scoped: --profile NAME walks that profile only; no flag walks the
+	// default profile only. There is no all-profiles sync. An explicit
+	// non-default --profile that does not resolve to an existing config is
+	// a hard error (matching up/status/down/resume/fork); a plain
+	// `team sync` without --profile preserves the legacy fallback of
+	// syncing just team-home when no team.json is configured.
+	explicitProfile := flagWasSet(fs, "profile") && profile != team.DefaultProfile
+	if explicitProfile && !team.ExistsProfile(cwd, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
+	}
 	targetDirs := []string{cwd}
-	if team.Exists(cwd) {
-		t, err := team.Read(cwd)
+	if team.ExistsProfile(cwd, profile) {
+		t, err := team.ReadProfile(cwd, profile)
 		if err != nil {
 			return fmt.Errorf("read team: %w", err)
 		}
@@ -920,9 +1036,16 @@ when a member cwd is outside the team-home directory.
 		if err != nil {
 			return err
 		}
-		targetDirs, err = ensureTeamHomeSyncTarget(targetDirs, cwd)
-		if err != nil {
-			return err
+		// Default-profile sync keeps the legacy "always include team-home"
+		// behavior so the project's root CLAUDE.md / AGENTS.md stay in
+		// sync even when no member lives there. For an explicit non-default
+		// profile, sync is scoped to that profile's member cwds exactly,
+		// matching the locked Step 9A semantics.
+		if !explicitProfile {
+			targetDirs, err = ensureTeamHomeSyncTarget(targetDirs, cwd)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -955,7 +1078,7 @@ when a member cwd is outside the team-home directory.
 
 	if !*apply {
 		if drift {
-			fmt.Fprintln(os.Stderr, "\nPreview only. Re-run with --apply to write.")
+			quietNotice("\nPreview only. Re-run with --apply to write.\n")
 			return fmt.Errorf("drift detected")
 		}
 		return nil
@@ -965,7 +1088,7 @@ when a member cwd is outside the team-home directory.
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Wrote %d file(s).\n", n)
+	quietNotice("Wrote %d file(s).\n", n)
 	return nil
 }
 
@@ -1075,11 +1198,23 @@ Usage:
                                       launch fresh/blocked and prints copy-
                                       pasteable commands. Plan-only by default.
   amq-squad team rules init [--force] Seed or refresh team-rules.md
-  amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md
-                                      (default: preview; --apply writes)
+  amq-squad team sync [--apply] [--profile NAME]
+                                      Sync CLAUDE.md and AGENTS.md from team-rules.md
+                                      (default: preview; --apply writes; --profile
+                                      scopes to that profile's member cwds)
+  amq-squad team profiles             List configured team profiles (read-only)
+
+Most subcommands accept --profile NAME to operate on a named profile under
+.amq-squad/teams/<name>.json; omit the flag (or pass --profile default) to
+operate on .amq-squad/team.json.
 
 Personas come from the built-in catalog. Run 'amq-squad team init --help' to
 see them and the available flags. Use --binary fullstack=codex to run a
 persona with a different CLI.
+
+Examples:
+  amq-squad team init --roles cto,fullstack --binary cto=codex
+  amq-squad team show
+  amq-squad team sync --apply
 `)
 }

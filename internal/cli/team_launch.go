@@ -27,6 +27,18 @@ type teamLaunchOptions struct {
 	Trust           string
 	ModelOverrides  map[string]string
 	ForceDuplicate  bool
+	// SeedBriefContent, when non-empty, is the rendered active brief that
+	// the live launch path should write to .amq-squad/briefs/<workstream>.md
+	// AFTER all team-launch validations and preflight pass. Empty means no
+	// seeded brief was requested for this run. SeedBriefForce permits
+	// overwriting an existing brief.
+	SeedBriefContent string
+	SeedBriefForce   bool
+	// Profile is the named team profile this launch represents. Empty means
+	// the implicit default profile. Propagated to emitted launch commands
+	// via --team-profile so each agent's launch record carries the same
+	// profile identity for bootstrap routing and status display.
+	Profile string
 }
 
 type teamLaunchPane struct {
@@ -60,26 +72,21 @@ func registerTeamLaunchBackend(backend teamLaunchBackend) {
 
 func runTeamLaunch(args []string) error {
 	fs := flag.NewFlagSet("team launch", flag.ContinueOnError)
-	terminal := fs.String("terminal", "tmux", "terminal backend to use")
-	target := fs.String("target", "current-window", "terminal target, backend-specific")
-	layout := fs.String("layout", "vertical", "terminal layout, backend-specific")
-	sessionName := fs.String("session", "", "AMQ workstream session name (default: sanitized team-home directory name; lowercase a-z, 0-9, -, _)")
-	terminalSession := fs.String("terminal-session", "", "terminal session name when the backend creates one")
-	fresh := fs.Bool("fresh", false, "fail if the selected workstream session already exists")
-	noBootstrap := fs.Bool("no-bootstrap", false, "launch agents without the generated bootstrap prompt")
-	trustRaw := fs.String("trust", "", "Codex trust profile for this run: sandboxed or trusted")
-	modelFlag := fs.String("model", "", "per-persona model overrides for this run, e.g. cto=gpt-5,fullstack=sonnet")
-	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for this run, e.g. '--enable goals'")
-	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'")
-	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent is detected for any member")
-	_ = fs.Bool("no-attach", false, "legacy no-op; new-session never attaches automatically")
-	stagger := fs.Duration("stagger", 750*time.Millisecond, "delay between starting agent panes")
+	pf := registerPreviewFlags(fs)
+	lf := registerLiveLaunchFlags(fs)
 	dryRun := fs.Bool("dry-run", false, "print terminal commands without executing them")
+	profileFlag := fs.String("profile", "", "team profile to launch (default: default profile)")
+
+	// Emit the deprecation warning before flag parsing so it appears even
+	// for the bare misuse case (no args). Help invocations stay quiet.
+	if !isHelpInvocation(args) {
+		teamLaunchDeprecationWarning(args)
+	}
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `amq-squad team launch - open the configured team in a terminal
 
 Usage:
-  amq-squad team launch [--session workstream] [--fresh] [--terminal tmux]
+  amq-squad team launch [--profile NAME] [--session workstream] [--fresh] [--terminal tmux]
     [--target current-window|new-session] [--layout vertical|horizontal|tiled]
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
     [--trust sandboxed|trusted] [--model role=model,...]
@@ -91,44 +98,88 @@ Supported terminal backends: %s
 tmux defaults to splitting the current tmux window. Use --target new-session
 to create a detached squad session. The whole roster is preflighted for live
 duplicates before any tmux command runs; --force-duplicate overrides.
+
+Examples:
+  amq-squad team launch
+  amq-squad team launch --target new-session --terminal-session squad
 `, strings.Join(registeredTeamLaunchTerminals(), ", "))
 	}
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		fs.Usage()
 		return nil
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	requestedTrust, err := normalizeTrustMode(*trustRaw)
+	profile, err := resolveProfileFlag(*profileFlag)
 	if err != nil {
 		return err
 	}
-	modelOverrides, err := parseKV(*modelFlag)
-	if err != nil {
-		return fmt.Errorf("parse --model: %w", err)
-	}
-	modelOverrides = lowercaseKeys(modelOverrides)
-	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
+	opts, err := buildLiveLaunchOptions(fs, pf, lf)
 	if err != nil {
 		return err
 	}
-	opts := teamLaunchOptions{
-		Terminal:        *terminal,
-		Target:          *target,
-		Layout:          *layout,
-		Workstream:      *sessionName,
-		TerminalSession: *terminalSession,
-		Fresh:           *fresh,
-		NoBootstrap:     *noBootstrap,
-		Stagger:         *stagger,
-		DryRun:          *dryRun,
-		SquadBin:        teamSquadBin(),
-		BinaryArgs:      binaryArgs,
-		Trust:           requestedTrust,
-		ModelOverrides:  modelOverrides,
-		ForceDuplicate:  *forceDuplicate,
+	opts.DryRun = *dryRun
+	opts.Profile = profile
+	return executeTeamLaunch(opts, flagWasSet(fs, "session"), flagWasSet(fs, "trust"))
+}
+
+// teamLaunchDeprecationWarning emits one of two replacement hints based on
+// the raw argv: --fresh + --session NAME points at fork --from <current>
+// --as NAME (since fresh starts a new workstream branched off the current
+// one); everything else points at the modern `up` verb. The current
+// workstream is resolved through the same default-profile path `up` uses;
+// when no team is configured we fall back to a placeholder so the hint
+// still tells the user what to type.
+func teamLaunchDeprecationWarning(args []string) {
+	fresh := false
+	session := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--fresh":
+			fresh = true
+		case "--session":
+			if i+1 < len(args) {
+				session = args[i+1]
+			}
+		default:
+			if strings.HasPrefix(args[i], "--session=") {
+				session = strings.TrimPrefix(args[i], "--session=")
+			}
+		}
 	}
+	if fresh && session != "" {
+		current := resolveCurrentTeamWorkstreamForHint()
+		deprecationWarning("team launch --session ... --fresh", "fork --from "+current+" --as "+session)
+		return
+	}
+	deprecationWarning("team launch", "up")
+}
+
+func resolveCurrentTeamWorkstreamForHint() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "<current>"
+	}
+	if !team.Exists(cwd) {
+		return "<current>"
+	}
+	t, err := team.Read(cwd)
+	if err != nil {
+		return "<current>"
+	}
+	ws, err := resolveTeamWorkstreamName(t, "", false)
+	if err != nil || ws == "" {
+		return "<current>"
+	}
+	return ws
+}
+
+// executeTeamLaunch is the post-parse body shared by `team launch` and live
+// `up`. opts must already carry the resolved binary args, model overrides,
+// trust, and live backend fields; the explicit-* bools mirror flagWasSet so
+// trust/session resolution against team.json defaults stays correct.
+func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTrust bool) error {
 	backend, ok := teamLaunchBackends[opts.Terminal]
 	if !ok {
 		return fmt.Errorf("unsupported terminal %q: supported terminals: %s", opts.Terminal, strings.Join(registeredTeamLaunchTerminals(), ", "))
@@ -141,19 +192,19 @@ duplicates before any tmux command runs; --force-duplicate overrides.
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	t, err := team.Read(cwd)
+	t, err := team.ReadProfile(cwd, opts.Profile)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}
 	if len(t.Members) == 0 {
 		return fmt.Errorf("team has no members")
 	}
-	workstream, err := resolveTeamWorkstreamName(t, opts.Workstream, flagWasSet(fs, "session"))
+	workstream, err := resolveTeamWorkstreamName(t, opts.Workstream, explicitSession)
 	if err != nil {
 		return err
 	}
 	opts.Workstream = workstream
-	trustMode, err := resolveTeamTrustMode(t, opts.Trust, flagWasSet(fs, "trust"))
+	trustMode, err := resolveTeamTrustMode(t, opts.Trust, explicitTrust)
 	if err != nil {
 		return err
 	}
@@ -162,7 +213,7 @@ duplicates before any tmux command runs; --force-duplicate overrides.
 	// pane, so a misconfigured team never partially launches into runLaunch
 	// errors per pane.
 	mergedBinaryArgs := mergeBinaryArgs(t.BinaryArgs, opts.BinaryArgs)
-	if err := validateTrustCombination(trustMode, flagWasSet(fs, "trust") || strings.TrimSpace(t.Trust) != "", false, mergedBinaryArgs); err != nil {
+	if err := validateTrustCombination(trustMode, explicitTrust || strings.TrimSpace(t.Trust) != "", false, mergedBinaryArgs); err != nil {
 		return err
 	}
 	// Reject --model role=model entries whose role is not on the team.
@@ -195,6 +246,24 @@ duplicates before any tmux command runs; --force-duplicate overrides.
 
 	if opts.DryRun {
 		return backend.DryRun(t, opts)
+	}
+	// Live launch. If the caller (up --seed-from) requested a seeded brief,
+	// write it now: all team-launch validations and preflight have passed,
+	// so we are committed to opening backend panes. Doing the write here
+	// (rather than upfront in runUp) means a fresh/existing-workstream
+	// rejection, model/trust validation failure, or duplicate-live
+	// preflight refusal does not mutate the brief.
+	if opts.SeedBriefContent != "" {
+		if _, err := writeSeedBrief(t.Project, opts.Workstream, opts.SeedBriefContent, opts.SeedBriefForce); err != nil {
+			return err
+		}
+	}
+	// Ensure the team-home active brief exists once before the backend
+	// opens panes. ensureBriefStub is idempotent and preserves any existing
+	// brief content (including the seed we may have just written), so this
+	// is safe across reruns and parallel member launches.
+	if _, _, err := ensureBriefStub(t.Project, opts.Workstream); err != nil {
+		return fmt.Errorf("ensure brief: %w", err)
 	}
 	return backend.Launch(t, opts)
 }
@@ -260,6 +329,7 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 				TrustMode:      opts.Trust,
 				Model:          memberEffectiveModel(m, opts.ModelOverrides),
 				ForceDuplicate: opts.ForceDuplicate,
+				Profile:        opts.Profile,
 			}),
 		})
 	}

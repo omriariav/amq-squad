@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"runtime/debug"
 
@@ -11,14 +12,19 @@ import (
 var version = "dev"
 
 func main() {
-	if err := cli.Run(os.Args[1:], effectiveVersion()); err != nil {
-		if _, ok := err.(cli.UsageError); ok {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(2)
-		}
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+	os.Exit(run(os.Args[1:], effectiveVersion(), os.Stderr))
+}
+
+// run executes cli.Run and maps the result through cli.ExitCode so the
+// exit-code taxonomy (0/1/2/3) lives in one place. Extracted from main so
+// tests can drive it without spawning a subprocess. stderr accepts any
+// io.Writer so tests can capture or discard the human error line.
+func run(args []string, version string, stderr io.Writer) int {
+	err := cli.Run(args, version)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
 	}
+	return cli.ExitCode(err)
 }
 
 func effectiveVersion() string {

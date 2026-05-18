@@ -32,6 +32,7 @@ type bootstrapContext struct {
 	TeamRulesPath string
 	RolePath      string
 	LaunchPath    string
+	BriefPath     string
 	CurrentTeam   []bootstrapTeamMember
 	Workstreams   []bootstrapWorkstream
 	Warnings      []string
@@ -81,6 +82,7 @@ func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
 	ctx.TeamRulesPath = promptText(ctx.TeamRulesPath)
 	ctx.RolePath = promptText(ctx.RolePath)
 	ctx.LaunchPath = promptText(ctx.LaunchPath)
+	ctx.BriefPath = promptText(ctx.BriefPath)
 	for i := range ctx.CurrentTeam {
 		m := &ctx.CurrentTeam[i]
 		m.Role = promptText(m.Role)
@@ -143,9 +145,13 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		TeamRulesPath: teamRulesPath,
 		RolePath:      role.ExistingPath(agentDir),
 		LaunchPath:    launch.ExistingPath(agentDir),
-		CurrentTeam:   currentTeam,
-		Workstreams:   siblingWorkstreamSummaries(rec.Root, rec.Session),
-		Warnings:      warnings,
+		// Brief resolution uses the same rule as the live-launch ensure
+		// step so bootstrap can never name a path that ensure skipped (or
+		// vice versa).
+		BriefPath:   briefPath(resolveBriefHome(teamHome, rec.CWD), rec.Session),
+		CurrentTeam: currentTeam,
+		Workstreams: siblingWorkstreamSummaries(rec.Root, rec.Session),
+		Warnings:    warnings,
 	}
 }
 
@@ -154,7 +160,7 @@ func bootstrapCurrentTeam(rec launch.Record, teamHome string) ([]bootstrapTeamMe
 	if home == "" {
 		home = rec.CWD
 	}
-	t, err := team.Read(home)
+	t, err := team.ReadProfile(home, rec.TeamProfile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

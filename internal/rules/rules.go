@@ -108,10 +108,14 @@ type SyncPlan struct {
 	Unchanged bool   // true = already in desired state
 }
 
-// Plan builds a SyncPlan for CLAUDE.md and AGENTS.md under projectDir,
-// using rulesBody as the content to place inside the managed block.
+// Plan builds a SyncPlan for CLAUDE.md and AGENTS.md under projectDir. The
+// managed block is a small pointer stub that references team-rules.md, the
+// agent's role.md, and the active workstream pointer; the rulesBody argument
+// is accepted for signature compatibility but never copied into root
+// instruction files.
 func Plan(projectDir, rulesBody string) ([]SyncPlan, error) {
-	managed := buildManagedBlock(rulesBody)
+	_ = rulesBody
+	managed := buildManagedBlock("")
 	plans := make([]SyncPlan, 0, 2)
 	for _, name := range []string{ClaudeFile, AgentsFile} {
 		p := filepath.Join(projectDir, name)
@@ -235,12 +239,21 @@ func syncDir(dir string) error {
 	return nil
 }
 
-func buildManagedBlock(rulesBody string) string {
-	body := strings.TrimSpace(rulesBody)
+// buildManagedBlock returns the canonical pointer-stub managed block. The
+// block intentionally does not embed team-rules.md; agents follow the
+// pointer at runtime so the root instruction file stays small and the
+// source of truth for norms stays in one place. The brief line names the
+// per-session convention; bootstrap injects the exact resolved path at
+// launch time.
+func buildManagedBlock(_ string) string {
 	return BeginMarker + "\n" +
-		"<!-- Managed by amq-squad. Edit .amq-squad/team-rules.md and run\n" +
-		"     `amq-squad team sync --apply` to refresh. -->\n\n" +
-		body + "\n\n" +
+		"This project uses amq-squad for agent team coordination.\n" +
+		"\n" +
+		"- **Team norms:** `.amq-squad/team-rules.md`\n" +
+		"- **Your role:** when launched via amq-squad, `<your-agent-dir>/role.md` carries your persona.\n" +
+		"- **Active brief:** read `.amq-squad/briefs/<session>.md` for the current workstream (bootstrap names the exact path).\n" +
+		"\n" +
+		"These files are the source of truth. Do not duplicate their content here.\n" +
 		EndMarker
 }
 
