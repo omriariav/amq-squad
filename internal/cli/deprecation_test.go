@@ -154,6 +154,9 @@ func TestTranslateAgentUpArgs(t *testing.T) {
 		{"codex-args consumes dash-prefixed value", []string{"codex", "--dry-run", "--no-bootstrap", "--codex-args", "--enable goals"}, []string{"--dry-run", "--no-bootstrap", "--codex-args", "--enable goals", "codex"}},
 		{"claude-args consumes dash-prefixed value", []string{"claude", "--dry-run", "--no-bootstrap", "--claude-args", "--chrome"}, []string{"--dry-run", "--no-bootstrap", "--claude-args", "--chrome", "claude"}},
 		{"trailing codex-args with no value is child", []string{"codex", "--dry-run", "--no-bootstrap", "--codex-args"}, []string{"--dry-run", "--no-bootstrap", "codex", "--", "--codex-args"}},
+		{"post-binary --help routes to runLaunch help", []string{"codex", "--dry-run", "--help"}, []string{"--dry-run", "--help", "codex"}},
+		{"post-binary -h routes to runLaunch help", []string{"codex", "--dry-run", "-h"}, []string{"--dry-run", "-h", "codex"}},
+		{"explicit -- --help is child", []string{"codex", "--dry-run", "--", "--help"}, []string{"--dry-run", "codex", "--", "--help"}},
 		{"help passthrough", []string{"--help"}, []string{"--help"}},
 		{"empty", nil, nil},
 	}
