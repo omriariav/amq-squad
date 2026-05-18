@@ -873,7 +873,10 @@ amq-squad up                                    # preserve existing brief</code>
             lives at <code class="inline-code">.amq-squad/team.json</code>;
             named profiles live under
             <code class="inline-code">.amq-squad/teams/&lt;name&gt;.json</code>.
-            Both use <code class="inline-code">schema_version: 2</code>.
+            Both use <code class="inline-code">schema: 2</code> (the JSON key
+            in persisted team profiles is <code class="inline-code">schema</code>;
+            <code class="inline-code">schema_version</code> is reserved for
+            the read-only JSON command envelopes below).
           </p>
           <div class="code"><pre><code>amq-squad team init                       # default -> .amq-squad/team.json
 amq-squad team init --profile release     # named -> .amq-squad/teams/release.json
@@ -1150,11 +1153,11 @@ amq-squad team init --personas cto,fullstack,qa --cwd qa=~/Code/project-b</code>
               <tbody>
                 <tr>
                   <td><code>.amq-squad/team.json</code></td>
-                  <td>Default team profile (<code>schema_version: 2</code>).</td>
+                  <td>Default team profile (<code>schema: 2</code>).</td>
                 </tr>
                 <tr>
                   <td><code>.amq-squad/teams/&lt;name&gt;.json</code></td>
-                  <td>Named team profiles (<code>schema_version: 2</code>).</td>
+                  <td>Named team profiles (<code>schema: 2</code>).</td>
                 </tr>
                 <tr>
                   <td><code>.amq-squad/team-rules.md</code></td>
