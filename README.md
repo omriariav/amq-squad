@@ -109,7 +109,7 @@ amq-squad team profiles --json
 amq-squad up --profile release               # operate on a named profile
 ```
 
-`team.json` files use `schema_version: 2`. Omit `--profile` (or pass `--profile default`) for the default profile.
+`team.json` files use `schema: 2` (the JSON key in persisted team profiles is `schema`; `schema_version` is reserved for the read-only JSON command envelopes documented below). Omit `--profile` (or pass `--profile default`) for the default profile.
 
 ## Verbs
 
@@ -296,8 +296,8 @@ amq send \
 ## Files amq-squad writes
 
 ```text
-<project>/.amq-squad/team.json           Default team profile (schema_version: 2).
-<project>/.amq-squad/teams/<name>.json   Named team profiles (schema_version: 2).
+<project>/.amq-squad/team.json           Default team profile (schema: 2).
+<project>/.amq-squad/teams/<name>.json   Named team profiles (schema: 2).
 <project>/.amq-squad/team-rules.md       Durable team norms (user-edited).
 <project>/.amq-squad/briefs/<session>.md Workstream brief, one per AMQ session.
 <project>/CLAUDE.md, AGENTS.md           Managed pointer block; user content outside markers preserved.
