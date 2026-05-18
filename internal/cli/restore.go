@@ -365,16 +365,17 @@ func removeContiguousSubsequence(args, sub []string) []string {
 }
 
 // emitCommand reconstructs the bash command for a launch record.
-// It prefers 'amq-squad launch' so role + metadata round-trip cleanly;
+// It emits the modern `agent up <binary>` surface so role + metadata
+// round-trip cleanly without recommending the deprecated `launch` verb;
 // callers who want the raw amq invocation can run with --dry-run to see it.
 func emitCommand(rec launch.Record) string {
 	return emitCommandWithOptions(rec, emitCommandOptions{})
 }
 
 // emitCommandOptions controls extra flags injected into the emitted
-// 'amq-squad launch' invocation. Force adds --force-duplicate so a planner
-// (e.g. team resume) can emit a command that matches the plan when a live
-// agent has been overridden.
+// 'amq-squad agent up' invocation. Force adds --force-duplicate so a
+// planner (e.g. resume) can emit a command that matches the plan when a
+// live agent has been overridden.
 type emitCommandOptions struct {
 	Force bool
 }
@@ -383,7 +384,11 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	var b strings.Builder
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(rec.CWD))
-	b.WriteString(" && amq-squad launch")
+	// Modern surface: `agent up <binary> [launch flags] [-- child args]`.
+	// Binary positional sits immediately after `agent up` so the printed
+	// command reads as the documented 1.0 shape.
+	b.WriteString(" && amq-squad agent up ")
+	b.WriteString(shellQuote(rec.Binary))
 	b.WriteString(" --no-bootstrap")
 	if opts.Force {
 		b.WriteString(" --force-duplicate")
@@ -437,8 +442,6 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 		b.WriteString(" --team-profile ")
 		b.WriteString(shellQuote(profile))
 	}
-	b.WriteString(" ")
-	b.WriteString(shellQuote(rec.Binary))
 	argv := restoreArgvFromRecord(rec)
 	if len(argv) > 0 {
 		b.WriteString(" --")

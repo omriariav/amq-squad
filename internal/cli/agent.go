@@ -201,7 +201,12 @@ func launchKnownFlag(name string) string {
 	case "--team-workstream", "--no-bootstrap", "--no-default-args",
 		"--force-duplicate", "--dry-run",
 		"-team-workstream", "-no-bootstrap", "-no-default-args",
-		"-force-duplicate", "-dry-run":
+		"-force-duplicate", "-dry-run",
+		// Help flags after the binary should fall through to runLaunch
+		// (which prints amq-squad launch help) rather than flow to the
+		// child binary as `-- --help`. Native child help is still
+		// reachable behind an explicit `--` boundary.
+		"--help", "-help", "-h":
 		return "bool"
 	}
 	return ""
