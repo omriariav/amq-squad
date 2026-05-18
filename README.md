@@ -138,9 +138,15 @@ amq-squad up [--profile NAME] [--session ws] [--dry-run] [--json]
 amq-squad down [--all | --role R] --force
                                   SIGTERM members. Without --force the verb refuses.
 amq-squad resume [--profile NAME] [--session ws] [--restore-existing]
-                 [--force-duplicate]
+                 [--dry-run] [--force-duplicate]
+                 [--no-bootstrap] [--trust sandboxed|trusted]
+                 [--model role=model,...]
+                 [--codex-args args] [--claude-args args]
                                   Classify each member as live / restore / launch fresh
                                   / blocked and print copy-pasteable commands.
+                                  Restore/replay commands use `agent up <binary>`
+                                  and preserve saved metadata. Forced live restores
+                                  include `--force-duplicate`.
                                   Plan-only. Use `fork --from <current> --as <new>`
                                   to branch into a new workstream.
 amq-squad fork --from <current> --as <new> [--force-duplicate]
@@ -162,7 +168,7 @@ amq-squad completion <bash|zsh|fish>
 Single-agent primitives:
 
 ```text
-amq-squad agent up <binary> [--role R] [--session ws] [--profile NAME]
+amq-squad agent up <binary> [--role R] [--session ws] [--team-profile NAME]
                             [--conversation ref] [--no-bootstrap]
                             [--trust sandboxed|trusted] [--model NAME]
                             [--codex-args ...] [--claude-args ...]
@@ -172,6 +178,8 @@ amq-squad agent up <binary> [--role R] [--session ws] [--profile NAME]
                                   amq coop exec.
 amq-squad agent resume <role>     Replay one saved launch record.
 ```
+
+For `agent up`, recognized launcher flags after `<binary>` (such as `--role`, `--session`, `--trust`, `--model`, `--codex-args`, `--claude-args`, `--help`) keep flowing into the launcher; unrecognized flags and the first non-flag positional are treated as child args. Use `--` for an explicit child boundary. `amq-squad agent up codex --help` prints launcher help; `amq-squad agent up codex -- --help` passes native help to the child. `--codex-args` and `--claude-args` accept dash-prefixed values such as `--codex-args '--enable goals'`.
 
 Global output flags work before or after the subcommand: `--quiet`, `--verbose`, `--color auto|always|never`. `NO_COLOR` overrides `--color=always`. `--quiet` and `--verbose` are mutually exclusive. Deprecation warnings survive `--quiet`.
 
@@ -316,6 +324,8 @@ These verbs still work through the 1.x line and emit a one-line `stderr` depreca
 | `amq-squad restore --exec --role R` | `amq-squad agent resume R` |
 
 Help paths on deprecated verbs do not emit the warning. JSON callers on deprecated verbs still get pure JSON on stdout; the warning goes to stderr.
+
+Legacy print/replay paths that emit copy-paste commands use the modern `agent up <binary>` command shape. The legacy verb invocation is deprecated, not the generated replay command.
 
 ## Known gaps
 
