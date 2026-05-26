@@ -37,9 +37,12 @@ func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
 	argvRec.NoDefaultArgs = true
 	argvRec.Argv = []string{"hello-prompt"}
 	ac := emitCommandWithOptions(argvRec, emitCommandOptions{})
-	li, di := strings.Index(ac, "--launcher /opt/launch.sh"), strings.Index(ac, " -- ")
+	li, di := strings.Index(ac, "--launcher /opt/launch.sh --launcher-args='--pull --workspace /x'"), strings.Index(ac, " -- ")
 	if li < 0 || di < 0 || li > di {
-		t.Errorf("launcher segment must precede the -- child boundary: %s", ac)
+		t.Errorf("full launcher segment must precede the -- child boundary: %s", ac)
+	}
+	if after := ac[di:]; strings.Contains(after, "--launcher") {
+		t.Errorf("launcher flags must not appear after the -- child boundary: %s", ac)
 	}
 
 	// A launcher with no args must not emit an empty --launcher-args=, in either
