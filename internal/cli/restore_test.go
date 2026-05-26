@@ -26,21 +26,32 @@ func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
 	if got := launchArgsFromRecord(rec); !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord(rec)\n got: %v\nwant: %v", got, want)
 	}
-	// emitCommandWithOptions: the launcher flag must be immediately followed by
-	// its args flag (ordering pinned; quoting of the value is left to shellQuote).
-	if cmd := emitCommandWithOptions(rec, emitCommandOptions{}); !strings.Contains(cmd, "--launcher /opt/launch.sh --launcher-args=") {
-		t.Errorf("emit command missing ordered launcher segment: %s", cmd)
+	// emitCommandWithOptions: pin the exact launcher segment, value included.
+	if cmd := emitCommandWithOptions(rec, emitCommandOptions{}); !strings.Contains(cmd, "--launcher /opt/launch.sh --launcher-args='--pull --workspace /x'") {
+		t.Errorf("emit command missing exact launcher segment: %s", cmd)
 	}
 
-	// A launcher with no args must not emit an empty --launcher-args=.
+	// With child argv present, the launcher flags must stay before the "--"
+	// passthrough boundary rather than leaking into the child args.
+	argvRec := rec
+	argvRec.NoDefaultArgs = true
+	argvRec.Argv = []string{"hello-prompt"}
+	ac := emitCommandWithOptions(argvRec, emitCommandOptions{})
+	li, di := strings.Index(ac, "--launcher /opt/launch.sh"), strings.Index(ac, " -- ")
+	if li < 0 || di < 0 || li > di {
+		t.Errorf("launcher segment must precede the -- child boundary: %s", ac)
+	}
+
+	// A launcher with no args must not emit an empty --launcher-args=, in either
+	// the replay arg slice or the emitted command.
 	noArgs := rec
 	noArgs.LauncherArgs = nil
 	jn := strings.Join(launchArgsFromRecord(noArgs), " ")
-	if !strings.Contains(jn, "--launcher /opt/launch.sh") {
-		t.Errorf("no-args case missing --launcher: %s", jn)
+	if !strings.Contains(jn, "--launcher /opt/launch.sh") || strings.Contains(jn, "--launcher-args") {
+		t.Errorf("no-args replay should have --launcher without --launcher-args: %s", jn)
 	}
-	if strings.Contains(jn, "--launcher-args") {
-		t.Errorf("no-args case should not emit --launcher-args: %s", jn)
+	if nc := emitCommandWithOptions(noArgs, emitCommandOptions{}); !strings.Contains(nc, "--launcher /opt/launch.sh") || strings.Contains(nc, "--launcher-args") {
+		t.Errorf("no-args emit should have --launcher without --launcher-args: %s", nc)
 	}
 }
 
