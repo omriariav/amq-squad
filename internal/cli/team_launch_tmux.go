@@ -137,8 +137,8 @@ func tmuxDryRunLines(plan tmuxLaunchPlan) []string {
 		windowTarget = "$window"
 		firstTarget = "$first_pane"
 		lines = append(lines,
-			"window=$(tmux display-message -p '#{session_name}:#{window_index}')",
-			"first_pane=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}')",
+			`window=$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}:#{window_index}')`,
+			`first_pane="$TMUX_PANE"`,
 		)
 	} else {
 		lines = append(lines, shellCommand("tmux", "new-session", "-d", "-s", plan.Session, "-n", "squad", "-c", plan.Panes[0].CWD))
@@ -210,20 +210,22 @@ func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
 	firstTarget := plan.Session + ":0.0"
 	switch plan.Target {
 	case "current-window":
-		if os.Getenv("TMUX") == "" {
-			return fmt.Errorf("--target current-window requires running inside tmux")
+		paneID := strings.TrimSpace(os.Getenv("TMUX_PANE"))
+		if os.Getenv("TMUX") == "" || paneID == "" {
+			return fmt.Errorf("--target current-window requires running inside tmux (TMUX_PANE unset); attach a tmux session and launch from one of its panes, or use --target new-session")
 		}
+		// Anchor on the launching shell's own pane ($TMUX_PANE), never tmux's
+		// focused pane. `tmux display-message -p` without -t reports whichever
+		// window is active *now*, so under iTerm2 -CC a focus change mid-launch
+		// rehomes the panes onto an unrelated tab (#40). Resolving the window
+		// from TMUX_PANE with -t makes targeting deterministic regardless of focus.
 		var err error
-		windowTarget, err = outputCommand("tmux", "display-message", "-p", "#{session_name}:#{window_index}")
-		if err != nil {
-			return err
-		}
-		firstTarget, err = outputCommand("tmux", "display-message", "-p", "#{session_name}:#{window_index}.#{pane_index}")
+		windowTarget, err = outputCommand("tmux", "display-message", "-p", "-t", paneID, "#{session_name}:#{window_index}")
 		if err != nil {
 			return err
 		}
 		windowTarget = strings.TrimSpace(windowTarget)
-		firstTarget = strings.TrimSpace(firstTarget)
+		firstTarget = paneID
 	case "new-session":
 		if err := tmuxEnsureSessionAbsent(plan.Session); err != nil {
 			return err

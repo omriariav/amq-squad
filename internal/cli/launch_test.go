@@ -26,6 +26,57 @@ func TestRunLaunchDryRunSandboxedCodexOmitsBypassDefault(t *testing.T) {
 	}
 }
 
+func TestRunLaunchDryRunCustomLauncherWrapsBinary(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{
+			"--dry-run", "--no-bootstrap", "--no-default-args",
+			"--launcher", "/opt/launch.sh",
+			"--launcher-args=--pull --workspace /x",
+			"claude", "test-prompt",
+		})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	// The launcher is exec'd in place of the binary; launcher args precede the
+	// agent's child args so the wrapper can forward the trailing ones to claude.
+	want := "amq coop exec /opt/launch.sh -- --pull --workspace /x test-prompt"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
+func TestEnsureLauncherExecutable(t *testing.T) {
+	dir := t.TempDir()
+
+	missing := filepath.Join(dir, "nope.sh")
+	if err := ensureLauncherExecutable(missing); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("missing launcher: want 'not found' error, got %v", err)
+	}
+
+	notExec := filepath.Join(dir, "plain.sh")
+	if err := os.WriteFile(notExec, []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureLauncherExecutable(notExec); err == nil || !strings.Contains(err.Error(), "not executable") {
+		t.Errorf("non-executable launcher: want 'not executable' error, got %v", err)
+	}
+
+	if err := ensureLauncherExecutable(dir); err == nil || !strings.Contains(err.Error(), "directory") {
+		t.Errorf("directory launcher: want 'directory' error, got %v", err)
+	}
+
+	okExec := filepath.Join(dir, "good.sh")
+	if err := os.WriteFile(okExec, []byte("#!/bin/sh\nexec claude \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureLauncherExecutable(okExec); err != nil {
+		t.Errorf("executable launcher: want nil, got %v", err)
+	}
+}
+
 func TestRunLaunchDryRunTrustedCodexPrependsBypass(t *testing.T) {
 	setupFakeAMQ(t)
 

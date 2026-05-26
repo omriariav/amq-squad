@@ -45,6 +45,34 @@ amq-squad resume                     # plan recovery after reboot / upgrade / cl
 amq-squad fork --from <cur> --as <new>  # branch a fresh workstream
 ```
 
+### tmux targets
+
+`amq-squad up` defaults to `--target current-window`, which splits the tmux
+window where you run the command. To bring a team up inside an existing tmux
+session such as `main`, switch or attach to the desired window first, then run
+`up` from that pane:
+
+```sh
+tmux switch-client -t main:6
+cd ~/Code/my-project
+amq-squad up --session v1-0-0-qa --terminal tmux --target current-window --layout tiled
+```
+
+Use `--target new-session --terminal-session NAME` only when you want
+amq-squad to create a separate tmux session. `--terminal-session` names the new
+session; it does not select an existing tmux session for `current-window`.
+
+Panes are anchored to the pane you launch from (`$TMUX_PANE`), not to whatever
+window happens to be focused, so a `current-window` launch is safe even under
+iTerm2's `tmux -CC` integration: changing tabs mid-launch will not rehome the
+panes onto an unrelated window. If you launch from outside tmux, `current-window`
+refuses with a hint rather than guessing a target.
+
+If the AMQ workstream already exists, omit `--fresh`. Stop the old team first
+with `amq-squad down --all --force --session <workstream>`, then run `up` again
+from the target tmux window. Add `--force-duplicate` only when stale live-agent
+signals remain after the old panes are stopped.
+
 Single-agent primitives:
 
 ```sh
@@ -53,6 +81,24 @@ amq-squad agent resume fullstack
 ```
 
 Legacy 1.x verbs still work and emit a one-line deprecation warning. See [Deprecated 1.x verbs](#deprecated-1x-verbs).
+
+### Custom launchers
+
+A managed member can be launched through a project-specific wrapper script while
+still receiving AMQ identity, bootstrap, a launch record, and status/resume. Pass
+`--launcher` (and optional `--launcher-args`) on `agent up`, or set `launcher` /
+`launcher_args` on the member in `team.json`:
+
+```sh
+amq-squad agent up claude --role qa --session beta --team-workstream \
+  --launcher /path/claude-pm-os-dev.sh --launcher-args "--pull --workspace /ws"
+```
+
+The launcher is exec'd in place of the binary. `--launcher-args` come first, then
+amq-squad appends the agent's normal child args (bootstrap + defaults), so **the
+launcher script must forward its trailing args to the agent** (e.g. end with
+`exec claude "$@"`). amq-squad refuses with a clear error if the launcher path is
+missing or not executable. `up --dry-run` prints the resolved launcher command.
 
 ## Context model
 

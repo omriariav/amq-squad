@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/omriariav/amq-squad/internal/launch"
 	"github.com/omriariav/amq-squad/internal/team"
@@ -19,6 +20,7 @@ type downStatus string
 const (
 	downStatusForceSent downStatus = "force-sent"
 	downStatusNotLive   downStatus = "not-live"
+	downStatusMaybeLive downStatus = "maybe-live"
 	downStatusFailed    downStatus = "failed"
 )
 
@@ -27,6 +29,7 @@ type downReport struct {
 	Handle   string
 	Binary   string
 	AgentDir string
+	Root     string
 	PID      int
 	Status   downStatus
 	Detail   string
@@ -186,6 +189,7 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 		handle = env.Me
 	}
 	report.Handle = handle
+	report.Root = env.Root
 	report.AgentDir = filepath.Join(env.Root, "agents", handle)
 	rec, err := launch.Read(report.AgentDir)
 	if err != nil {
@@ -199,7 +203,20 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 		return report
 	}
 	report.PID = rec.AgentPID
-	if rec.AgentPID <= 0 || !probe.PIDAlive(rec.AgentPID) {
+	if rec.AgentPID <= 0 {
+		// No pid was captured at launch (e.g. codex seats never recorded one).
+		// There is nothing to signal, so consult presence before implying the
+		// member is gone: a fresh heartbeat means it may well still be running.
+		if lastSeen, fresh := presenceFreshFor(report.AgentDir, probe); fresh {
+			report.Status = downStatusMaybeLive
+			report.Detail = fmt.Sprintf("no pid captured at launch — may still be live (fresh presence, last seen %s); cannot signal", lastSeen.UTC().Format(time.RFC3339))
+			return report
+		}
+		report.Status = downStatusNotLive
+		report.Detail = "no pid captured at launch and presence is not fresh — treating as not live"
+		return report
+	}
+	if !probe.PIDAlive(rec.AgentPID) {
 		report.Status = downStatusNotLive
 		report.Detail = fmt.Sprintf("recorded pid %d is not alive", rec.AgentPID)
 		return report
@@ -223,13 +240,30 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 	return report
 }
 
+// presenceFreshFor reports the agent's last heartbeat and whether it is recent
+// enough to treat the member as possibly still running. It mirrors the
+// freshness rule status and preflight use, so down agrees with them.
+func presenceFreshFor(agentDir string, probe duplicateLaunchProbe) (time.Time, bool) {
+	pres, err := readPresenceForEntry(agentDir)
+	if err != nil {
+		return time.Time{}, false
+	}
+	if !strings.EqualFold(pres.Status, "active") || pres.LastSeen.IsZero() {
+		return time.Time{}, false
+	}
+	return pres.LastSeen, probe.Now().Sub(pres.LastSeen) <= presenceFreshness
+}
+
 func renderDownReports(out io.Writer, workstream string, reports []downReport) error {
 	fmt.Fprintln(out, "# amq-squad down")
 	fmt.Fprintf(out, "# workstream: %s\n", workstream)
+	if root := firstDownRoot(reports); root != "" {
+		fmt.Fprintf(out, "# AM_ROOT:    %s\n", root)
+	}
 	fmt.Fprintf(out, "# targets:    %d\n", len(reports))
 	fmt.Fprintln(out)
 	policy := outputPolicyCurrent()
-	var sent, notLive, failed int
+	var sent, notLive, maybeLive, failed int
 	for _, r := range reports {
 		fmt.Fprintf(out, "%-12s %-10s %s\n", r.Role, colorStatus(policy, string(r.Status)), r.Detail)
 		switch r.Status {
@@ -237,22 +271,44 @@ func renderDownReports(out io.Writer, workstream string, reports []downReport) e
 			sent++
 		case downStatusNotLive:
 			notLive++
+		case downStatusMaybeLive:
+			maybeLive++
 		case downStatusFailed:
 			failed++
 		}
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "# summary: %d force-sent, %d not-live, %d failed\n", sent, notLive, failed)
-	if failed == 0 {
-		return nil
+	fmt.Fprintf(out, "# summary: %d force-sent, %d not-live, %d maybe-live, %d failed\n", sent, notLive, maybeLive, failed)
+	if maybeLive > 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintf(out, "WARN: %d member(s) had no pid to signal but still report fresh presence — they may still be running.\n", maybeLive)
+		fmt.Fprintln(out, "      down can only signal pids it recorded at launch. Stop the underlying tmux pane / terminal")
+		fmt.Fprintln(out, "      manually, then re-run 'amq-squad status' to confirm (AM_ROOT above shows where presence lives).")
 	}
-	msg := fmt.Sprintf("down: %d of %d target(s) failed", failed, len(reports))
-	// Partial success requires at least one target genuinely terminated AND
-	// at least one target failed. All-failed (or failed + not-live only)
-	// stays a system/runtime error so wrappers do not treat a wholesale
-	// breakage as "progress made".
-	if sent > 0 {
-		return &PartialError{Message: msg}
+	if failed > 0 {
+		msg := fmt.Sprintf("down: %d of %d target(s) failed", failed, len(reports))
+		// Partial success requires at least one target genuinely terminated AND
+		// at least one target failed. All-failed (or failed + not-live only)
+		// stays a system/runtime error so wrappers do not treat a wholesale
+		// breakage as "progress made".
+		if sent > 0 {
+			return &PartialError{Message: msg}
+		}
+		return errors.New(msg)
 	}
-	return errors.New(msg)
+	// Members we could not confirm stopped must not read as a clean success:
+	// surface them as partial so the exit code (3) signals "not fully down".
+	if maybeLive > 0 {
+		return &PartialError{Message: fmt.Sprintf("down: %d member(s) may still be live (no pid to signal)", maybeLive)}
+	}
+	return nil
+}
+
+func firstDownRoot(reports []downReport) string {
+	for _, r := range reports {
+		if r.Root != "" {
+			return r.Root
+		}
+	}
+	return ""
 }

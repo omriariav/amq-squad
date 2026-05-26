@@ -190,13 +190,13 @@ walk:
 // given.
 func launchKnownFlag(name string) string {
 	switch name {
-	case "--codex-args", "--claude-args",
-		"-codex-args", "-claude-args":
+	case "--codex-args", "--claude-args", "--launcher-args",
+		"-codex-args", "-claude-args", "-launcher-args":
 		return "string-accepts-dash"
 	case "--role", "--session", "--me", "--root", "--team-home", "--team-profile",
-		"--conversation", "--conversation-id", "--trust", "--model",
+		"--conversation", "--conversation-id", "--trust", "--model", "--launcher",
 		"-role", "-session", "-me", "-root", "-team-home", "-team-profile",
-		"-conversation", "-conversation-id", "-trust", "-model":
+		"-conversation", "-conversation-id", "-trust", "-model", "-launcher":
 		return "string"
 	case "--team-workstream", "--no-bootstrap", "--no-default-args",
 		"--force-duplicate", "--dry-run",

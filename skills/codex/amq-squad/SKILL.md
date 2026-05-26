@@ -92,6 +92,7 @@ Global output flags work before or after the subcommand: `--quiet`, `--verbose`,
        --subject "Review: X" --body "Please review."
      ```
    - Decisions: `--thread decision/<topic> --kind decision`.
+   - Valid `--kind` values (enforced by `amq`): `brainstorm, review_request, review_response, question, answer, decision, status, todo`. **There is no `handoff` kind** — send a role-to-role handoff as `--kind review_request` (work to take over) or `--kind todo` (a queued task). `amq` rejects `--kind handoff` before sending, so it silently degrades to `status`.
    - Synchronous wait: append `--wait-for drained --wait-timeout 60s`.
    - Cross-session sends need explicit `--session` and `--thread`; avoid them in normal flow.
 

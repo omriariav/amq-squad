@@ -42,6 +42,8 @@ type Record struct {
 	AMQVersion       string    `json:"amq_version,omitempty"`
 	CodexArgs        []string  `json:"codex_args,omitempty"`
 	ClaudeArgs       []string  `json:"claude_args,omitempty"`
+	Launcher         string    `json:"launcher,omitempty"`
+	LauncherArgs     []string  `json:"launcher_args,omitempty"`
 	Model            string    `json:"model,omitempty"`
 	Trust            string    `json:"trust,omitempty"`
 	NoDefaultArgs    bool      `json:"no_default_args,omitempty"`

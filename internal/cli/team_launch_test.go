@@ -126,8 +126,10 @@ func TestTmuxDryRunLinesCanTargetCurrentWindow(t *testing.T) {
 	}
 	got := strings.Join(tmuxDryRunLines(plan), "\n")
 	for _, want := range []string{
-		"window=$(tmux display-message -p '#{session_name}:#{window_index}')",
-		"first_pane=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}')",
+		// Anchored on the launching shell's own pane ($TMUX_PANE), not the
+		// focused window, so panes never hijack an unrelated tab (#40).
+		`window=$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}:#{window_index}')`,
+		`first_pane="$TMUX_PANE"`,
 		`tmux select-pane -t "$first_pane" -T cto`,
 		`pane_1=$(tmux split-window -P -F '#{pane_id}' -t "$window" -h -c /repo)`,
 		`tmux send-keys -t "$first_pane"`,
