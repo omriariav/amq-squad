@@ -14,16 +14,22 @@ func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
 		Binary: "claude", Handle: "qa", Role: "qa", Session: "beta",
 		Launcher: "/opt/launch.sh", LauncherArgs: []string{"--pull", "--workspace", "/x"},
 	}
-	// Resume/restore must reconstruct the wrapper, not relaunch the raw binary.
-	joined := strings.Join(launchArgsFromRecord(rec), " ")
-	if !strings.Contains(joined, "--launcher /opt/launch.sh") {
-		t.Errorf("resume args missing --launcher: %s", joined)
+	// Resume/restore must reconstruct the wrapper as pre-binary launch flags, in
+	// order — not relaunch the raw binary. Pin the exact arg slice so a reorder
+	// (e.g. a launcher flag leaking past the binary positional or the "--"
+	// child boundary) fails loudly rather than passing a substring check.
+	want := []string{
+		"--no-bootstrap", "--role", "qa", "--session", "beta",
+		"--launcher", "/opt/launch.sh", "--launcher-args=--pull --workspace /x",
+		"--me", "qa", "claude",
 	}
-	if !strings.Contains(joined, "--launcher-args=--pull --workspace /x") {
-		t.Errorf("resume args missing exact --launcher-args value: %s", joined)
+	if got := launchArgsFromRecord(rec); !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord(rec)\n got: %v\nwant: %v", got, want)
 	}
-	if cmd := emitCommandWithOptions(rec, emitCommandOptions{}); !strings.Contains(cmd, "--launcher /opt/launch.sh") || !strings.Contains(cmd, "--launcher-args=") {
-		t.Errorf("emit command missing launcher flags: %s", cmd)
+	// emitCommandWithOptions: the launcher flag must be immediately followed by
+	// its args flag (ordering pinned; quoting of the value is left to shellQuote).
+	if cmd := emitCommandWithOptions(rec, emitCommandOptions{}); !strings.Contains(cmd, "--launcher /opt/launch.sh --launcher-args=") {
+		t.Errorf("emit command missing ordered launcher segment: %s", cmd)
 	}
 
 	// A launcher with no args must not emit an empty --launcher-args=.
