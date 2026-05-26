@@ -19,11 +19,22 @@ func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
 	if !strings.Contains(joined, "--launcher /opt/launch.sh") {
 		t.Errorf("resume args missing --launcher: %s", joined)
 	}
-	if !strings.Contains(joined, "--launcher-args=") || !strings.Contains(joined, "--pull") {
-		t.Errorf("resume args missing --launcher-args: %s", joined)
+	if !strings.Contains(joined, "--launcher-args=--pull --workspace /x") {
+		t.Errorf("resume args missing exact --launcher-args value: %s", joined)
 	}
-	if cmd := emitCommandWithOptions(rec, emitCommandOptions{}); !strings.Contains(cmd, "--launcher /opt/launch.sh") {
-		t.Errorf("emit command missing --launcher: %s", cmd)
+	if cmd := emitCommandWithOptions(rec, emitCommandOptions{}); !strings.Contains(cmd, "--launcher /opt/launch.sh") || !strings.Contains(cmd, "--launcher-args=") {
+		t.Errorf("emit command missing launcher flags: %s", cmd)
+	}
+
+	// A launcher with no args must not emit an empty --launcher-args=.
+	noArgs := rec
+	noArgs.LauncherArgs = nil
+	jn := strings.Join(launchArgsFromRecord(noArgs), " ")
+	if !strings.Contains(jn, "--launcher /opt/launch.sh") {
+		t.Errorf("no-args case missing --launcher: %s", jn)
+	}
+	if strings.Contains(jn, "--launcher-args") {
+		t.Errorf("no-args case should not emit --launcher-args: %s", jn)
 	}
 }
 

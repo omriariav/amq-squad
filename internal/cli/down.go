@@ -207,7 +207,7 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 		// No pid was captured at launch (e.g. codex seats never recorded one).
 		// There is nothing to signal, so consult presence before implying the
 		// member is gone: a fresh heartbeat means it may well still be running.
-		if lastSeen, fresh := presenceFreshFor(report.AgentDir, probe); fresh {
+		if lastSeen, fresh := presenceFreshFor(report.AgentDir, handle, probe); fresh {
 			report.Status = downStatusMaybeLive
 			report.Detail = fmt.Sprintf("no pid captured at launch — may still be live (fresh presence, last seen %s); cannot signal", lastSeen.UTC().Format(time.RFC3339))
 			return report
@@ -243,9 +243,14 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 // presenceFreshFor reports the agent's last heartbeat and whether it is recent
 // enough to treat the member as possibly still running. It mirrors the
 // freshness rule status and preflight use, so down agrees with them.
-func presenceFreshFor(agentDir string, probe duplicateLaunchProbe) (time.Time, bool) {
+func presenceFreshFor(agentDir, handle string, probe duplicateLaunchProbe) (time.Time, bool) {
 	pres, err := readPresenceForEntry(agentDir)
 	if err != nil {
+		return time.Time{}, false
+	}
+	// Honor the same handle rule status and preflight use: a presence file
+	// written for a different handle is not evidence this member is live.
+	if pres.Handle != "" && pres.Handle != handle {
 		return time.Time{}, false
 	}
 	if !strings.EqualFold(pres.Status, "active") || pres.LastSeen.IsZero() {
