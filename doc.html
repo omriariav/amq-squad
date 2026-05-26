@@ -655,11 +655,80 @@ amq-squad down --all --force         # SIGTERM the team
 amq-squad resume                     # plan recovery after reboot / upgrade / close
 amq-squad fork --from &lt;cur&gt; --as &lt;new&gt;  # branch a fresh workstream</code></pre></div>
 
+          <h3>tmux targets</h3>
+          <p>
+            <code class="inline-code">amq-squad up</code> defaults to
+            <code class="inline-code">--target current-window</code>, which
+            splits the tmux window where you run the command. To bring a team
+            up inside an existing tmux session such as
+            <code class="inline-code">main</code>, switch or attach to the
+            desired window first, then run
+            <code class="inline-code">up</code> from that pane.
+          </p>
+          <div class="code"><pre><code>tmux switch-client -t main:6
+cd ~/Code/my-project
+amq-squad up --session v1-0-0-qa --terminal tmux --target current-window --layout tiled</code></pre></div>
+          <p>
+            Use
+            <code class="inline-code">--target new-session --terminal-session NAME</code>
+            only when you want amq-squad to create a separate tmux session.
+            <code class="inline-code">--terminal-session</code> names the new
+            session; it does not select an existing tmux session for
+            <code class="inline-code">current-window</code>.
+          </p>
+          <p>
+            Panes are anchored to the pane you launch from
+            (<code class="inline-code">$TMUX_PANE</code>), not to whatever window
+            happens to be focused, so a
+            <code class="inline-code">current-window</code> launch is safe even
+            under iTerm2's <code class="inline-code">tmux -CC</code> integration:
+            changing tabs mid-launch will not rehome the panes onto an unrelated
+            window. If you launch from outside tmux,
+            <code class="inline-code">current-window</code> refuses with a hint
+            rather than guessing a target.
+          </p>
+          <p>
+            If the AMQ workstream already exists, omit
+            <code class="inline-code">--fresh</code>. Stop the old team first
+            with
+            <code class="inline-code">amq-squad down --all --force --session &lt;workstream&gt;</code>,
+            then run <code class="inline-code">up</code> again from the target
+            tmux window. Add
+            <code class="inline-code">--force-duplicate</code> only when stale
+            live-agent signals remain after the old panes are stopped.
+          </p>
+
           <p>
             Single-agent primitives:
           </p>
           <div class="code"><pre><code>amq-squad agent up codex --role cto --session issue-96
 amq-squad agent resume fullstack</code></pre></div>
+
+          <h3>Custom launchers</h3>
+          <p>
+            A managed member can be launched through a project-specific wrapper
+            script while still receiving AMQ identity, bootstrap, a launch
+            record, and status/resume. Pass
+            <code class="inline-code">--launcher</code> (and optional
+            <code class="inline-code">--launcher-args</code>) on
+            <code class="inline-code">agent up</code>, or set
+            <code class="inline-code">launcher</code> /
+            <code class="inline-code">launcher_args</code> on the member in
+            <code class="inline-code">team.json</code>.
+          </p>
+          <div class="code"><pre><code>amq-squad agent up claude --role qa --session beta --team-workstream \
+  --launcher /path/claude-pm-os-dev.sh --launcher-args "--pull --workspace /ws"</code></pre></div>
+          <p>
+            The launcher is exec'd in place of the binary.
+            <code class="inline-code">--launcher-args</code> come first, then
+            amq-squad appends the agent's normal child args (bootstrap +
+            defaults), so <strong>the launcher script must forward its trailing
+            args to the agent</strong> (e.g. end with
+            <code class="inline-code">exec claude "$@"</code>). amq-squad refuses
+            with a clear error if the launcher path is missing or not
+            executable. <code class="inline-code">up --dry-run</code> prints the
+            resolved launcher command.
+          </p>
 
           <h3>Non-interactive setup</h3>
           <div class="code"><pre><code>amq-squad team init \

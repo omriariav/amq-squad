@@ -247,6 +247,17 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if opts.DryRun {
 		return backend.DryRun(t, opts)
 	}
+	// Validate every configured custom launcher up front so a missing or
+	// non-executable wrapper aborts the whole launch before any pane opens,
+	// rather than failing mid-roster after other members have already started.
+	for _, m := range t.Members {
+		if m.Launcher == "" {
+			continue
+		}
+		if err := ensureLauncherExecutable(m.Launcher); err != nil {
+			return fmt.Errorf("%s: %w", m.Role, err)
+		}
+	}
 	// Live launch. If the caller (up --seed-from) requested a seeded brief,
 	// write it now: all team-launch validations and preflight have passed,
 	// so we are committed to opening backend panes. Doing the write here

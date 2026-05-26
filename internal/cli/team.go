@@ -650,6 +650,14 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 		b.WriteString(" --me ")
 		b.WriteString(shellQuote(m.Handle))
 	}
+	if m.Launcher != "" {
+		b.WriteString(" --launcher ")
+		b.WriteString(shellQuote(m.Launcher))
+		if len(m.LauncherArgs) > 0 {
+			b.WriteString(" --launcher-args=")
+			b.WriteString(shellQuote(joinedAgentArgs(m.LauncherArgs)))
+		}
+	}
 	extraDefaultArgs := binaryArgsFor(m.Binary, in.BinaryArgs)
 	if len(extraDefaultArgs) > 0 {
 		switch normalizedAgentBinary(m.Binary) {

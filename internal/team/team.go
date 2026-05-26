@@ -41,6 +41,12 @@ type Member struct {
 	Session string `json:"session"` // AMQ workstream session name
 	Model   string `json:"model,omitempty"`
 	CWD     string `json:"cwd,omitempty"`
+	// Launcher is an optional wrapper command exec'd in place of Binary while
+	// the member still receives AMQ identity, bootstrap, and a launch record.
+	// LauncherArgs precede the agent's normal child args; the launcher is
+	// expected to forward the trailing args to Binary so bootstrap survives.
+	Launcher     string   `json:"launcher,omitempty"`
+	LauncherArgs []string `json:"launcher_args,omitempty"`
 }
 
 // EffectiveCWD returns the member's working directory, falling back to the
@@ -286,6 +292,22 @@ func validateMember(prefix string, m Member) error {
 		if !filepath.IsAbs(m.CWD) {
 			return fmt.Errorf("%s.cwd: must be absolute", prefix)
 		}
+	}
+	if m.Launcher != "" {
+		if err := ValidateDisplayValue("launcher", m.Launcher); err != nil {
+			return fmt.Errorf("%s.launcher: %w", prefix, err)
+		}
+		if !filepath.IsAbs(m.Launcher) {
+			return fmt.Errorf("%s.launcher: must be absolute", prefix)
+		}
+	}
+	for i, a := range m.LauncherArgs {
+		if err := ValidateDisplayValue("launcher_args", a); err != nil {
+			return fmt.Errorf("%s.launcher_args[%d]: %w", prefix, i, err)
+		}
+	}
+	if m.Launcher == "" && len(m.LauncherArgs) > 0 {
+		return fmt.Errorf("%s.launcher_args: set launcher before launcher_args", prefix)
 	}
 	return nil
 }

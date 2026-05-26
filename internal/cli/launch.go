@@ -50,6 +50,8 @@ func runLaunch(args []string) error {
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args to treat as launch defaults, e.g. '--chrome'")
 	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent for the same handle/workstream is detected")
 	dryRun := fs.Bool("dry-run", false, "print the coop exec command without executing")
+	launcherRaw := fs.String("launcher", "", "custom launcher to exec instead of <binary> (still receives AMQ env/identity, bootstrap, and a launch record)")
+	launcherArgsRaw := fs.String("launcher-args", "", "args passed to --launcher before the agent's child args; the launcher must forward trailing args to <binary>")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad launch - launch an agent with role metadata
@@ -112,6 +114,17 @@ Examples:
 	if err := validateTrustCombination(trustMode, trustExplicit, *noDefaultArgs, binaryArgs); err != nil {
 		return err
 	}
+	launcher := strings.TrimSpace(*launcherRaw)
+	var launcherArgs []string
+	if strings.TrimSpace(*launcherArgsRaw) != "" {
+		launcherArgs, err = parseAgentArgs(*launcherArgsRaw)
+		if err != nil {
+			return fmt.Errorf("parse --launcher-args: %w", err)
+		}
+	}
+	if launcher == "" && len(launcherArgs) > 0 {
+		return usageErrorf("--launcher-args requires --launcher")
+	}
 	remaining := fs.Args()
 	if len(remaining) == 0 {
 		return usageErrorf("launch requires a binary (e.g. 'amq-squad launch --role cpo codex')")
@@ -171,6 +184,8 @@ Examples:
 		AMQVersion:       env.AMQVersion,
 		CodexArgs:        binaryArgs["codex"],
 		ClaudeArgs:       binaryArgs["claude"],
+		Launcher:         launcher,
+		LauncherArgs:     launcherArgs,
 		Model:            strings.TrimSpace(*model),
 		Trust:            trustMode,
 		NoDefaultArgs:    *noDefaultArgs,
@@ -203,10 +218,19 @@ Examples:
 	if *me != "" {
 		coopArgs = append(coopArgs, "--me", *me)
 	}
-	coopArgs = append(coopArgs, binary)
-	if len(effectiveChildArgs) > 0 {
+	// A custom launcher is exec'd in place of the binary. Launcher args precede
+	// the agent's normal child args; the launcher is expected to forward the
+	// trailing args to the binary so bootstrap and default args still reach it.
+	target := binary
+	trailing := effectiveChildArgs
+	if launcher != "" {
+		target = launcher
+		trailing = append(append([]string(nil), launcherArgs...), effectiveChildArgs...)
+	}
+	coopArgs = append(coopArgs, target)
+	if len(trailing) > 0 {
 		coopArgs = append(coopArgs, "--")
-		coopArgs = append(coopArgs, effectiveChildArgs...)
+		coopArgs = append(coopArgs, trailing...)
 	}
 
 	if *dryRun {
@@ -214,6 +238,12 @@ Examples:
 		quietNotice("(dry run - no files written, not execing)\n")
 		verbosePolicyEcho()
 		return nil
+	}
+
+	if launcher != "" {
+		if err := ensureLauncherExecutable(launcher); err != nil {
+			return err
+		}
 	}
 
 	preflight := agentLaunchPreflight{
@@ -258,6 +288,26 @@ Examples:
 		return fmt.Errorf("amq not found in PATH: %w", err)
 	}
 	return syscall.Exec(amqBin, append([]string{"amq"}, coopArgs...), os.Environ())
+}
+
+// ensureLauncherExecutable verifies a custom --launcher path exists and is an
+// executable file before exec, so a missing or non-executable wrapper fails
+// with a clear message instead of an opaque coop exec error.
+func ensureLauncherExecutable(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("launcher %q not found", path)
+		}
+		return fmt.Errorf("launcher %q: %w", path, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("launcher %q is a directory, not an executable", path)
+	}
+	if info.Mode()&0o111 == 0 {
+		return fmt.Errorf("launcher %q is not executable (chmod +x it)", path)
+	}
+	return nil
 }
 
 func conversationRefFromFlags(conversation, conversationID string) (string, error) {

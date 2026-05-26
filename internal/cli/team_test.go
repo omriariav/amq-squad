@@ -136,6 +136,29 @@ func TestEmitTeamCommandShape(t *testing.T) {
 	}
 }
 
+func TestEmitTeamCommandIncludesCustomLauncher(t *testing.T) {
+	m := team.Member{
+		Role:         "qa",
+		Binary:       "claude",
+		Handle:       "qa",
+		Launcher:     "/opt/scripts/pm-os-dev.sh",
+		LauncherArgs: []string{"--pull", "--workspace", "/x"},
+	}
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/repo", SquadBin: "amq-squad", Member: m, Workstream: "issue-96", TrustMode: trustModeSandboxed,
+	})
+	for _, want := range []string{
+		"--launcher /opt/scripts/pm-os-dev.sh",
+		"--launcher-args=",
+		"--pull",
+		"--workspace",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("emitTeamCommand missing %q in: %s", want, cmd)
+		}
+	}
+}
+
 func TestEmitTeamCommandSandboxedCodexOmitsBypass(t *testing.T) {
 	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
 	cmd := emitTeamCommand(emitTeamCommandInput{

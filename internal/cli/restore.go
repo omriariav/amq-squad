@@ -274,6 +274,12 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if len(rec.ClaudeArgs) > 0 {
 		args = append(args, "--claude-args="+joinedAgentArgs(rec.ClaudeArgs))
 	}
+	if rec.Launcher != "" {
+		args = append(args, "--launcher", rec.Launcher)
+		if len(rec.LauncherArgs) > 0 {
+			args = append(args, "--launcher-args="+joinedAgentArgs(rec.LauncherArgs))
+		}
+	}
 	if rec.Handle != "" {
 		args = append(args, "--me", rec.Handle)
 	}
@@ -433,6 +439,14 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	if len(rec.ClaudeArgs) > 0 {
 		b.WriteString(" --claude-args=")
 		b.WriteString(shellQuote(joinedAgentArgs(rec.ClaudeArgs)))
+	}
+	if rec.Launcher != "" {
+		b.WriteString(" --launcher ")
+		b.WriteString(shellQuote(rec.Launcher))
+		if len(rec.LauncherArgs) > 0 {
+			b.WriteString(" --launcher-args=")
+			b.WriteString(shellQuote(joinedAgentArgs(rec.LauncherArgs)))
+		}
 	}
 	if rec.Handle != "" && rec.Handle != defaultHandleFor(rec.Binary) {
 		b.WriteString(" --me ")

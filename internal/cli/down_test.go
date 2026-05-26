@@ -196,6 +196,84 @@ func TestExecuteDownNotLiveForDeadPID(t *testing.T) {
 	}
 }
 
+func TestExecuteDownMaybeLiveForNoPIDWithFreshPresence(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	// Codex seats can finish launch without ever recording a pid; a fresh
+	// heartbeat means the agent may well still be running.
+	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 0,
+	})
+	writePresence(t, agentDir, presenceFile{Schema: 1, Handle: "cto", Status: "active", LastSeen: time.Now().Add(-5 * time.Second)})
+	term := &recordingTerminator{}
+	out, err := runDownExec(t, downExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Role:             "cto",
+		Terminator:       term,
+		Probe:            downFakeProbe(nil, nil),
+	})
+	if len(term.calls) != 0 {
+		t.Fatalf("terminator must not be called when no pid was captured; got %v", term.calls)
+	}
+	if _, ok := err.(*PartialError); !ok {
+		t.Fatalf("maybe-live member must not read as clean success; want *PartialError, got %T: %v", err, err)
+	}
+	for _, want := range []string{"maybe-live", "no pid captured", "WARN:", "# AM_ROOT:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderDownReportsMaybeLiveWithFailureStaysPartial(t *testing.T) {
+	var buf bytes.Buffer
+	reports := []downReport{
+		{Role: "cto", Root: "/tmp/root", Status: downStatusFailed, Detail: "terminate pid 5: boom"},
+		{Role: "qa", Root: "/tmp/root", Status: downStatusMaybeLive, Detail: "no pid captured at launch — may still be live"},
+	}
+	// failed + maybe-live with zero sent must still be partial (exit 3), not a
+	// plain error that hides the unconfirmed-stop members.
+	err := renderDownReports(&buf, "issue-96", reports)
+	pe, ok := err.(*PartialError)
+	if !ok {
+		t.Fatalf("want *PartialError, got %T: %v", err, err)
+	}
+	if !strings.Contains(pe.Message, "may still be live") {
+		t.Errorf("partial message should mention maybe-live members: %q", pe.Message)
+	}
+}
+
+func TestExecuteDownNotLiveForNoPIDStalePresence(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 0,
+	})
+	// Presence exists but is stale, so there is no reason to suspect liveness.
+	writePresence(t, agentDir, presenceFile{Schema: 1, Handle: "cto", Status: "active", LastSeen: time.Now().Add(-1 * time.Hour)})
+	term := &recordingTerminator{}
+	out, err := runDownExec(t, downExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Role:             "cto",
+		Terminator:       term,
+		Probe:            downFakeProbe(nil, nil),
+	})
+	if err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	if !strings.Contains(out, "not-live") || !strings.Contains(out, "no pid captured") {
+		t.Errorf("expected not-live with no-pid detail:\n%s", out)
+	}
+}
+
 func TestExecuteDownNotLiveForMissingRecord(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{

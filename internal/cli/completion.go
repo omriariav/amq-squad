@@ -130,6 +130,8 @@ var completionCommonFlags = []string{
 	"--from",
 	"--handle",
 	"--json",
+	"--launcher",
+	"--launcher-args",
 	"--layout",
 	"--me",
 	"--model",
