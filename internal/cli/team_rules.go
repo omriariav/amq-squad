@@ -53,7 +53,7 @@ func renderTeamRules(t team.Team) (string, error) {
 
 	b.WriteString("## Communication\n\n")
 	b.WriteString("- Use focused AMQ threads.\n")
-	b.WriteString("- Use p2p threads for role-to-role handoffs.\n")
+	b.WriteString("- Use p2p threads for role-to-role handoffs; send them as `--kind review_request` (or `--kind todo` for a queued task). There is no `handoff` message kind.\n")
 	b.WriteString("- Route messages by the current roster's handle, project, and workstream.\n")
 	b.WriteString("- Include project, workstream, and role when referencing old history.\n")
 	b.WriteString("- One concern per message when practical.\n\n")

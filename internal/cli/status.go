@@ -145,12 +145,26 @@ func executeStatus(s statusExecution) error {
 		})
 	}
 	policy := outputPolicyCurrent()
+	fmt.Fprintf(s.Out, "# workstream: %s\n", workstream)
+	if root := firstStatusRoot(rows); root != "" {
+		fmt.Fprintf(s.Out, "# AM_ROOT:    %s\n", root)
+	}
+	fmt.Fprintln(s.Out)
 	w := tabwriter.NewWriter(s.Out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSTATUS\tDETAIL")
 	for _, r := range rows {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), r.Detail)
 	}
 	return w.Flush()
+}
+
+func firstStatusRoot(rows []statusRecord) string {
+	for _, r := range rows {
+		if r.Root != "" {
+			return r.Root
+		}
+	}
+	return ""
 }
 
 func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe duplicateLaunchProbe) statusRecord {
@@ -230,7 +244,7 @@ func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe d
 	}
 	if presenceLive {
 		rec.Status = statusStateLive
-		rec.Detail = fmt.Sprintf("fresh active presence (last seen %s)", presence.LastSeen.UTC().Format(time.RFC3339))
+		rec.Detail = fmt.Sprintf("fresh active presence, no verified pid (last seen %s)", presence.LastSeen.UTC().Format(time.RFC3339))
 		return rec
 	}
 	// Not live. Stale requires a live-pointing disk signal for this handle.

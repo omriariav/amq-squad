@@ -9,6 +9,55 @@ import (
 	"github.com/omriariav/amq-squad/internal/launch"
 )
 
+func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
+	rec := launch.Record{
+		Binary: "claude", Handle: "qa", Role: "qa", Session: "beta",
+		Launcher: "/opt/launch.sh", LauncherArgs: []string{"--pull", "--workspace", "/x"},
+	}
+	// Resume/restore must reconstruct the wrapper as pre-binary launch flags, in
+	// order — not relaunch the raw binary. Pin the exact arg slice so a reorder
+	// (e.g. a launcher flag leaking past the binary positional or the "--"
+	// child boundary) fails loudly rather than passing a substring check.
+	want := []string{
+		"--no-bootstrap", "--role", "qa", "--session", "beta",
+		"--launcher", "/opt/launch.sh", "--launcher-args=--pull --workspace /x",
+		"--me", "qa", "claude",
+	}
+	if got := launchArgsFromRecord(rec); !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord(rec)\n got: %v\nwant: %v", got, want)
+	}
+	// emitCommandWithOptions: pin the exact launcher segment, value included.
+	if cmd := emitCommandWithOptions(rec, emitCommandOptions{}); !strings.Contains(cmd, "--launcher /opt/launch.sh --launcher-args='--pull --workspace /x'") {
+		t.Errorf("emit command missing exact launcher segment: %s", cmd)
+	}
+
+	// With child argv present, the launcher flags must stay before the "--"
+	// passthrough boundary rather than leaking into the child args.
+	argvRec := rec
+	argvRec.NoDefaultArgs = true
+	argvRec.Argv = []string{"hello-prompt"}
+	ac := emitCommandWithOptions(argvRec, emitCommandOptions{})
+	li, di := strings.Index(ac, "--launcher /opt/launch.sh --launcher-args='--pull --workspace /x'"), strings.Index(ac, " -- ")
+	if li < 0 || di < 0 || li > di {
+		t.Errorf("full launcher segment must precede the -- child boundary: %s", ac)
+	}
+	if after := ac[di:]; strings.Contains(after, "--launcher") {
+		t.Errorf("launcher flags must not appear after the -- child boundary: %s", ac)
+	}
+
+	// A launcher with no args must not emit an empty --launcher-args=, in either
+	// the replay arg slice or the emitted command.
+	noArgs := rec
+	noArgs.LauncherArgs = nil
+	jn := strings.Join(launchArgsFromRecord(noArgs), " ")
+	if !strings.Contains(jn, "--launcher /opt/launch.sh") || strings.Contains(jn, "--launcher-args") {
+		t.Errorf("no-args replay should have --launcher without --launcher-args: %s", jn)
+	}
+	if nc := emitCommandWithOptions(noArgs, emitCommandOptions{}); !strings.Contains(nc, "--launcher /opt/launch.sh") || strings.Contains(nc, "--launcher-args") {
+		t.Errorf("no-args emit should have --launcher without --launcher-args: %s", nc)
+	}
+}
+
 func TestShellQuoteSafeString(t *testing.T) {
 	cases := map[string]string{
 		"claude":          "claude",

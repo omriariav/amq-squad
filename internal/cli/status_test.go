@@ -181,6 +181,36 @@ func TestExecuteStatusLiveOnFreshActivePresence(t *testing.T) {
 	}
 }
 
+func TestExecuteStatusSurfacesRootAndPresenceOnlyDetail(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	now := time.Now()
+	writeStatusPresence(t, base, "issue-96", "cto", presenceFile{
+		Handle:   "cto",
+		Status:   "active",
+		LastSeen: now.Add(-10 * time.Second),
+	})
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             false,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	// AM_ROOT must be discoverable, and a presence-only live member must say so
+	// (no verified pid) so it reconciles with down's "no pid to signal".
+	for _, want := range []string{"# AM_ROOT:", "no verified pid"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestExecuteStatusStalePresenceCollapsesToMissing(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
