@@ -9,6 +9,24 @@ import (
 	"github.com/omriariav/amq-squad/internal/launch"
 )
 
+func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
+	rec := launch.Record{
+		Binary: "claude", Handle: "qa", Role: "qa", Session: "beta",
+		Launcher: "/opt/launch.sh", LauncherArgs: []string{"--pull", "--workspace", "/x"},
+	}
+	// Resume/restore must reconstruct the wrapper, not relaunch the raw binary.
+	joined := strings.Join(launchArgsFromRecord(rec), " ")
+	if !strings.Contains(joined, "--launcher /opt/launch.sh") {
+		t.Errorf("resume args missing --launcher: %s", joined)
+	}
+	if !strings.Contains(joined, "--launcher-args=") || !strings.Contains(joined, "--pull") {
+		t.Errorf("resume args missing --launcher-args: %s", joined)
+	}
+	if cmd := emitCommandWithOptions(rec, emitCommandOptions{}); !strings.Contains(cmd, "--launcher /opt/launch.sh") {
+		t.Errorf("emit command missing --launcher: %s", cmd)
+	}
+}
+
 func TestShellQuoteSafeString(t *testing.T) {
 	cases := map[string]string{
 		"claude":          "claude",

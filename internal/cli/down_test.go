@@ -229,6 +229,24 @@ func TestExecuteDownMaybeLiveForNoPIDWithFreshPresence(t *testing.T) {
 	}
 }
 
+func TestRenderDownReportsMaybeLiveWithFailureStaysPartial(t *testing.T) {
+	var buf bytes.Buffer
+	reports := []downReport{
+		{Role: "cto", Root: "/tmp/root", Status: downStatusFailed, Detail: "terminate pid 5: boom"},
+		{Role: "qa", Root: "/tmp/root", Status: downStatusMaybeLive, Detail: "no pid captured at launch — may still be live"},
+	}
+	// failed + maybe-live with zero sent must still be partial (exit 3), not a
+	// plain error that hides the unconfirmed-stop members.
+	err := renderDownReports(&buf, "issue-96", reports)
+	pe, ok := err.(*PartialError)
+	if !ok {
+		t.Fatalf("want *PartialError, got %T: %v", err, err)
+	}
+	if !strings.Contains(pe.Message, "may still be live") {
+		t.Errorf("partial message should mention maybe-live members: %q", pe.Message)
+	}
+}
+
 func TestExecuteDownNotLiveForNoPIDStalePresence(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{

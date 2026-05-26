@@ -287,11 +287,13 @@ func renderDownReports(out io.Writer, workstream string, reports []downReport) e
 	}
 	if failed > 0 {
 		msg := fmt.Sprintf("down: %d of %d target(s) failed", failed, len(reports))
-		// Partial success requires at least one target genuinely terminated AND
-		// at least one target failed. All-failed (or failed + not-live only)
-		// stays a system/runtime error so wrappers do not treat a wholesale
-		// breakage as "progress made".
-		if sent > 0 {
+		if maybeLive > 0 {
+			msg += fmt.Sprintf("; %d may still be live (no pid to signal)", maybeLive)
+		}
+		// Partial (exit 3) when there is either progress (a SIGTERM was sent) or
+		// an unconfirmed stop (maybe-live): neither is a clean success nor a
+		// wholesale breakage. Only a pure all-failed run stays a plain error.
+		if sent > 0 || maybeLive > 0 {
 			return &PartialError{Message: msg}
 		}
 		return errors.New(msg)
