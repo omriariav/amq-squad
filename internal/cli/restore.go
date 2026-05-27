@@ -243,11 +243,11 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if rec.Role != "" {
 		args = append(args, "--role", rec.Role)
 	}
+	// amq treats --session NAME as shorthand for --root .agent-mail/<name>,
+	// so passing both is a hard "mutually exclusive" rejection. Emit one or
+	// the other, never both. The same rule applies in emitCommandWithOptions.
 	if rec.Session != "" {
 		args = append(args, "--session", rec.Session)
-		if rec.BaseRoot != "" {
-			args = append(args, "--root", rec.BaseRoot)
-		}
 	} else if rec.Root != "" {
 		args = append(args, "--root", rec.Root)
 	}
@@ -403,13 +403,11 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 		b.WriteString(" --role ")
 		b.WriteString(shellQuote(rec.Role))
 	}
+	// amq treats --session NAME as shorthand for --root .agent-mail/<name>,
+	// so passing both is rejected by `amq env`. Emit one or the other.
 	if rec.Session != "" {
 		b.WriteString(" --session ")
 		b.WriteString(shellQuote(rec.Session))
-		if rec.BaseRoot != "" {
-			b.WriteString(" --root ")
-			b.WriteString(shellQuote(rec.BaseRoot))
-		}
 	} else if rec.Root != "" {
 		b.WriteString(" --root ")
 		b.WriteString(shellQuote(rec.Root))

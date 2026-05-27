@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,6 +71,77 @@ func TestResolveAMQEnvInDirClearsInheritedAMQIdentity(t *testing.T) {
 	if got.Root != "/target/session" || got.BaseRoot != "/target" ||
 		got.Me != "amq-squad" || got.Project != "target-project" {
 		t.Fatalf("resolveAMQEnvInDir = %+v", got)
+	}
+}
+
+// TestResolveAMQEnvDropsRootWhenSessionProvided covers the boundary fix
+// for the mutual-exclusion bug: amq treats --session NAME as shorthand
+// for --root .agent-mail/<name> and rejects the call when both are set.
+// resolveAMQEnvInDir must forward only --session in that case. The fake
+// amq exits 2 with a recognizable error when it sees --root, so a regress
+// would fail this test.
+func TestResolveAMQEnvDropsRootWhenSessionProvided(t *testing.T) {
+	// Fake amq: exit 2 if --root is seen, exit 2 if --session is missing,
+	// success otherwise. The two-sided check proves resolveAMQEnvInDir
+	// both drops --root AND forwards --session — dropping both would also
+	// fail without the missing-session guard.
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"env\" ] && [ \"$2\" = \"--json\" ]; then\n" +
+		"  saw_session=0\n" +
+		"  for arg in \"$@\"; do\n" +
+		"    if [ \"$arg\" = \"--root\" ]; then\n" +
+		"      echo 'fake amq: --session and --root are mutually exclusive' >&2\n" +
+		"      exit 2\n" +
+		"    fi\n" +
+		"    if [ \"$arg\" = \"--session\" ]; then\n" +
+		"      saw_session=1\n" +
+		"    fi\n" +
+		"  done\n" +
+		"  if [ \"$saw_session\" != \"1\" ]; then\n" +
+		"    echo 'fake amq: --session must be forwarded' >&2\n" +
+		"    exit 2\n" +
+		"  fi\n" +
+		"  printf '%s\\n' '{\"root\":\"/p/.agent-mail/stream1\",\"base_root\":\"/p/.agent-mail\",\"session_name\":\"stream1\",\"me\":\"cto\"}'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"echo \"unexpected amq command: $*\" >&2\n" +
+		"exit 1\n"
+	setupFakeAMQScript(t, script)
+
+	got, err := resolveAMQEnv("/p/.agent-mail", "stream1", "cto")
+	if err != nil {
+		t.Fatalf("resolveAMQEnv with both flags must drop --root and keep --session: %v", err)
+	}
+	if got.SessionName != "stream1" || got.Me != "cto" {
+		t.Fatalf("resolveAMQEnv = %+v", got)
+	}
+}
+
+// TestResolveAMQEnvWarnsWhenBothFlagsPresent: silent override of
+// operator-supplied --root would be worse than the prior failure, so the
+// boundary policy emits a stderr warning naming the dropped flag.
+func TestResolveAMQEnvWarnsWhenBothFlagsPresent(t *testing.T) {
+	setupFakeAMQEnv(t, `{"root":"/p/.agent-mail/stream1","session_name":"stream1","me":"cto"}`)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = origStderr }()
+
+	if _, err := resolveAMQEnv("/p/.agent-mail/some/override", "stream1", "cto"); err != nil {
+		t.Fatalf("resolveAMQEnv: %v", err)
+	}
+	w.Close()
+	out, _ := io.ReadAll(r)
+	got := string(out)
+	if !strings.Contains(got, "ignoring conflicting --root") {
+		t.Errorf("expected stderr warning when both --session and --root supplied; got: %q", got)
+	}
+	if !strings.Contains(got, "stream1") {
+		t.Errorf("warning should name the session: %q", got)
 	}
 }
 

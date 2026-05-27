@@ -428,3 +428,32 @@ func captureOutput(t *testing.T, fn func() error) (string, string, error) {
 	}
 	return string(stdout), string(stderr), runErr
 }
+
+// TestRunLaunchDryRunSessionAndRootDropsRoot covers the third call site of
+// the session+root mutual-exclusion fix: the coopArgs builder in
+// runLaunch must not pass --root to `amq coop exec` when --session is
+// already set, matching the boundary policy in resolveAMQEnvInDir. Without
+// this, even after restore.go stops emitting both, a caller who passes
+// both flags to `agent up` directly would still trip the same rejection
+// when launch.go re-builds the coop exec invocation.
+func TestRunLaunchDryRunSessionAndRootDropsRoot(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{
+			"--dry-run", "--no-bootstrap",
+			"--session", "stream1",
+			"--root", "/p/.agent-mail",
+			"codex",
+		})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "--session stream1") {
+		t.Fatalf("coop exec must keep --session stream1:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "--root") {
+		t.Fatalf("coop exec must not emit --root alongside --session (amq rejects the combo):\n%s", stdout)
+	}
+}
