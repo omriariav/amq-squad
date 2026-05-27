@@ -31,11 +31,15 @@ func resolveAMQEnvInDir(cwd, rootFlag, session, handle string) (amqEnv, error) {
 	if handle != "" {
 		args = append(args, "--me", handle)
 	}
-	if rootFlag != "" {
-		args = append(args, "--root", rootFlag)
-	}
+	// amq treats --session NAME as shorthand for --root .agent-mail/<name>
+	// and refuses both together. Prefer --session when both are supplied,
+	// since session is the more specific selector. Callers like restore
+	// historically passed both; we filter at the boundary so any other
+	// future caller cannot trip the same trap.
 	if session != "" {
 		args = append(args, "--session", session)
+	} else if rootFlag != "" {
+		args = append(args, "--root", rootFlag)
 	}
 	cmd := exec.Command("amq", args...)
 	// Strip AMQ identity vars unconditionally: the operator has already passed

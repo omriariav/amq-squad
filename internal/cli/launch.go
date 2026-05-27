@@ -207,12 +207,14 @@ Examples:
 	}
 
 	// Build the coop exec invocation. Done before any disk writes so
-	// --dry-run is a true preview with zero side effects.
+	// --dry-run is a true preview with zero side effects. --session NAME
+	// is amq shorthand for --root .agent-mail/<name>; passing both is
+	// rejected by amq, so prefer --session when callers supplied both
+	// (matching the resolveAMQEnvInDir boundary policy).
 	coopArgs := []string{"coop", "exec"}
 	if *session != "" {
 		coopArgs = append(coopArgs, "--session", *session)
-	}
-	if *rootFlag != "" {
+	} else if *rootFlag != "" {
 		coopArgs = append(coopArgs, "--root", *rootFlag)
 	}
 	if *me != "" {

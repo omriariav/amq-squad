@@ -171,7 +171,12 @@ func TestEmitCommandIncludesRootWhenSessionMissing(t *testing.T) {
 	}
 }
 
-func TestEmitCommandIncludesBaseRootWithSession(t *testing.T) {
+// TestEmitCommandOmitsRootWhenSessionPresent locks the fix for the
+// `--session and --root are mutually exclusive` regression: amq treats
+// --session NAME as shorthand for --root .agent-mail/<name>, so the
+// emitted plan must drop --root whenever --session is set, regardless of
+// what BaseRoot the record carries.
+func TestEmitCommandOmitsRootWhenSessionPresent(t *testing.T) {
 	rec := launch.Record{
 		CWD:      "/p",
 		Binary:   "claude",
@@ -181,10 +186,11 @@ func TestEmitCommandIncludesBaseRootWithSession(t *testing.T) {
 		BaseRoot: "/tmp/mail",
 	}
 	cmd := emitCommand(rec)
-	for _, want := range []string{"--root /tmp/mail", "--session stream1"} {
-		if !strings.Contains(cmd, want) {
-			t.Errorf("emitCommand missing %q in: %s", want, cmd)
-		}
+	if !strings.Contains(cmd, "--session stream1") {
+		t.Errorf("emitCommand should keep --session stream1 in: %s", cmd)
+	}
+	if strings.Contains(cmd, "--root") {
+		t.Errorf("emitCommand must not emit --root alongside --session (amq rejects the combo): %s", cmd)
 	}
 }
 
@@ -248,7 +254,11 @@ func TestLaunchArgsFromRecordUsesRootWithoutSession(t *testing.T) {
 	}
 }
 
-func TestLaunchArgsFromRecordPreservesBaseRootWithSession(t *testing.T) {
+// TestLaunchArgsFromRecordOmitsRootWhenSessionPresent locks the same
+// session/root mutual-exclusion fix on the --exec replay path. Without
+// this, `resume --exec` replays a saved record into amq env with both
+// flags and amq rejects the call before the agent can launch.
+func TestLaunchArgsFromRecordOmitsRootWhenSessionPresent(t *testing.T) {
 	rec := launch.Record{
 		Binary:   "claude",
 		Session:  "stream1",
@@ -257,7 +267,7 @@ func TestLaunchArgsFromRecordPreservesBaseRootWithSession(t *testing.T) {
 		BaseRoot: "/tmp/mail",
 	}
 	got := launchArgsFromRecord(rec)
-	want := []string{"--no-bootstrap", "--session", "stream1", "--root", "/tmp/mail", "--me", "claude", "claude"}
+	want := []string{"--no-bootstrap", "--session", "stream1", "--me", "claude", "claude"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
 	}
