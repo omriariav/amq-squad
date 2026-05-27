@@ -196,6 +196,94 @@ func walkFiles(root string, visit func(path string, mode os.FileMode, size int64
 	})
 }
 
+// TestRunResumeRejectsExecWithDryRun guards the mutually-exclusive surface
+// so the operator does not get a silent no-op when they pass both.
+func TestRunResumeRejectsExecWithDryRun(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := captureOutput(t, func() error { return runResume([]string{"--exec", "--dry-run"}) })
+	if err == nil {
+		t.Fatal("--exec --dry-run together should be a usage error")
+	}
+	if _, ok := err.(UsageError); !ok {
+		t.Fatalf("want UsageError, got %T: %v", err, err)
+	}
+}
+
+// TestExecResumePlanRefusesBlockedMembersUnlessForced covers the contract
+// that resume --exec is not a backdoor around live-agent protection: any
+// member in action=blocked aborts the run unless --force-duplicate.
+func TestExecResumePlanRefusesBlockedMembersUnlessForced(t *testing.T) {
+	t.Run("blocked aborts without force", func(t *testing.T) {
+		err := execResumePlan(
+			team.Team{Project: t.TempDir(), Members: []team.Member{{Role: "cto"}}},
+			"issue-96",
+			[]resumePlan{
+				{Role: "cto", Action: resumeBlocked, Note: "wake+presence", Command: ""},
+			},
+			resumeExecOptions{Enabled: true, Terminal: "tmux", Target: "current-window", Layout: "vertical"},
+			false,
+		)
+		if err == nil || !strings.Contains(err.Error(), "blocked") {
+			t.Fatalf("blocked member should abort: %v", err)
+		}
+		if !strings.Contains(err.Error(), "--force-duplicate") {
+			t.Errorf("error should mention escape hatch: %v", err)
+		}
+	})
+}
+
+// TestExecResumePlanNothingToLaunch covers the all-live scenario: every
+// member is already running, so there is nothing to send through the
+// terminal backend. Exit cleanly with a notice rather than opening an
+// empty pane.
+func TestExecResumePlanNothingToLaunch(t *testing.T) {
+	dir := t.TempDir()
+	stdout, _, err := captureOutput(t, func() error {
+		return execResumePlan(
+			team.Team{Project: dir, Members: []team.Member{{Role: "cto"}, {Role: "qa"}}},
+			"issue-96",
+			[]resumePlan{
+				{Role: "cto", Action: resumeLive, Note: "wake"},
+				{Role: "qa", Action: resumeLive, Note: "wake+presence"},
+			},
+			resumeExecOptions{Enabled: true, Terminal: "tmux", Target: "current-window", Layout: "vertical"},
+			false,
+		)
+	})
+	if err != nil {
+		t.Fatalf("all-live execResumePlan should succeed: %v", err)
+	}
+	for _, want := range []string{"resume --exec", "nothing to launch", "2 live"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+// TestExecResumePlanRejectsUnknownTerminal makes sure the operator gets a
+// clear error rather than a downstream nil-map panic when the terminal
+// flag value is wrong.
+func TestExecResumePlanRejectsUnknownTerminal(t *testing.T) {
+	err := execResumePlan(
+		team.Team{Project: t.TempDir(), Members: []team.Member{{Role: "cto"}}},
+		"issue-96",
+		[]resumePlan{{Role: "cto", Action: resumeRestore, Command: "echo hi"}},
+		resumeExecOptions{Enabled: true, Terminal: "screen", Target: "current-window", Layout: "vertical"},
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "unsupported terminal") {
+		t.Fatalf("expected unsupported-terminal error; got %v", err)
+	}
+}
+
 // walkDir is a tiny wrapper around filepath.Walk used by the disk-mutation
 // fingerprint test. Kept local so the existing helpers stay focused on the
 // planner inputs.

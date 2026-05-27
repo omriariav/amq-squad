@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -37,12 +38,20 @@ func resolveAMQEnvInDir(cwd, rootFlag, session, handle string) (amqEnv, error) {
 		args = append(args, "--session", session)
 	}
 	cmd := exec.Command("amq", args...)
+	// Strip AMQ identity vars unconditionally: the operator has already passed
+	// --root/--session/--me on the wire, and a stale AM_ROOT/AM_ME from a
+	// previous shell session must not silently override them.
+	cmd.Env = envWithoutAMQIdentity(os.Environ())
 	if cwd != "" {
 		cmd.Dir = cwd
-		cmd.Env = envWithoutAMQIdentity(os.Environ())
 	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return amqEnv{}, fmt.Errorf("amq env: %w: %s", err, msg)
+		}
 		return amqEnv{}, fmt.Errorf("amq env: %w", err)
 	}
 	var parsed amqEnv
