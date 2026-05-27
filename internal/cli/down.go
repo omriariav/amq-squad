@@ -218,6 +218,11 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 			return report
 		}
 		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
+		if cleaned.failed() {
+			report.Status = downStatusFailed
+			report.Detail = "no pid captured at launch; " + cleaned.summary()
+			return report
+		}
 		if cleaned.any() {
 			report.Status = downStatusCleaned
 			report.Detail = "no pid captured at launch; " + cleaned.summary()
@@ -229,6 +234,11 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 	}
 	if !probe.PIDAlive(rec.AgentPID) {
 		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
+		if cleaned.failed() {
+			report.Status = downStatusFailed
+			report.Detail = fmt.Sprintf("recorded pid %d is not alive; %s", rec.AgentPID, cleaned.summary())
+			return report
+		}
 		if cleaned.any() {
 			report.Status = downStatusCleaned
 			report.Detail = fmt.Sprintf("recorded pid %d is not alive; %s", rec.AgentPID, cleaned.summary())
@@ -244,6 +254,11 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 	}
 	if binary == "" || !probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(binary)) {
 		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
+		if cleaned.failed() {
+			report.Status = downStatusFailed
+			report.Detail = fmt.Sprintf("pid %d does not match expected binary %q (PID reuse); %s", rec.AgentPID, binary, cleaned.summary())
+			return report
+		}
 		if cleaned.any() {
 			report.Status = downStatusCleaned
 			report.Detail = fmt.Sprintf("pid %d does not match expected binary %q (PID reuse); %s", rec.AgentPID, binary, cleaned.summary())
@@ -260,32 +275,47 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 	}
 	// The agent itself just received SIGTERM. Reap the wake sidecar and
 	// flip presence offline up front so a racing `up` cannot collide on
-	// artifacts whose owner is in the process of exiting.
+	// artifacts whose owner is in the process of exiting. A reap-side
+	// failure does not retract the SIGTERM we just sent to the agent;
+	// surface it as a partial-progress detail line so the operator can see
+	// the wake survived without rolling back the agent kill.
 	cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
 	report.Status = downStatusForceSent
 	report.Detail = fmt.Sprintf("SIGTERM sent to pid %d", rec.AgentPID)
-	if cleaned.any() {
+	if cleaned.any() || cleaned.failed() {
 		report.Detail += "; " + cleaned.summary()
 	}
 	return report
 }
 
 // reapResult records which orphan artifacts were cleaned during teardown so
-// the per-member report can surface them.
+// the per-member report can surface them. WakeSignalFailed is set when a
+// matching live wake was found but Terminate returned an error; in that
+// case the lock and presence are preserved so the next preflight still sees
+// the live writer.
 type reapResult struct {
-	WakeKilled   int
-	LockRemoved  bool
-	PresenceFlip bool
+	WakeKilled       int
+	WakeSignalFailed int
+	WakeSignalError  string
+	LockRemoved      bool
+	PresenceFlip     bool
 }
 
 func (r reapResult) any() bool {
 	return r.WakeKilled > 0 || r.LockRemoved || r.PresenceFlip
 }
 
+func (r reapResult) failed() bool {
+	return r.WakeSignalFailed > 0
+}
+
 func (r reapResult) summary() string {
 	parts := make([]string, 0, 3)
 	if r.WakeKilled > 0 {
 		parts = append(parts, fmt.Sprintf("SIGTERM sent to wake pid %d", r.WakeKilled))
+	}
+	if r.WakeSignalFailed > 0 {
+		parts = append(parts, fmt.Sprintf("failed to signal wake pid %d (%s); lock and presence left intact", r.WakeSignalFailed, r.WakeSignalError))
 	}
 	if r.LockRemoved {
 		parts = append(parts, "removed stale .wake.lock")
@@ -312,26 +342,47 @@ func reapStaleArtifacts(agentDir, handle, root string, term processTerminator, p
 	}
 
 	lockPath := wakeLockPath(agentDir)
+	// canRemoveLock tracks whether we've confirmed the lock is safe to
+	// remove: confirmed stale (dead PID / PID-reused / corrupt), or we
+	// successfully signaled the live matching wake. If a matching wake is
+	// live and we FAIL to signal it, leaving the lock in place keeps the
+	// next preflight honest — operators must not be told the system is
+	// clean when a foreign-uid wake is still running.
+	canRemoveLock := false
 	if data, err := os.ReadFile(lockPath); err == nil {
 		var lock wakeLockFile
-		if jsonErr := json.Unmarshal(data, &lock); jsonErr == nil && lock.PID > 0 && probe.PIDAlive(lock.PID) {
+		switch jsonErr := json.Unmarshal(data, &lock); {
+		case jsonErr != nil:
+			// Corrupt lock: no PID to verify, safe to remove.
+			canRemoveLock = true
+		case lock.PID <= 0:
+			canRemoveLock = true
+		case !probe.PIDAlive(lock.PID):
+			canRemoveLock = true
+		default:
 			expectedRoot := root
 			if lock.Root != "" {
 				expectedRoot = lock.Root
 			}
-			if probe.ProcessMatch(lock.PID, wakeProcessMatcher(handle, expectedRoot)) {
-				if termErr := term.Terminate(lock.PID); termErr == nil {
-					result.WakeKilled = lock.PID
-				}
+			if !probe.ProcessMatch(lock.PID, wakeProcessMatcher(handle, expectedRoot)) {
+				// PID-reuse by an unrelated process: lock is stale.
+				canRemoveLock = true
+			} else if termErr := term.Terminate(lock.PID); termErr == nil {
+				result.WakeKilled = lock.PID
+				canRemoveLock = true
+			} else {
+				// Live matching wake we could not signal. Surface the
+				// failure and leave both lock and presence intact so
+				// preflight keeps blocking the next `up`.
+				result.WakeSignalFailed = lock.PID
+				result.WakeSignalError = termErr.Error()
+				return result
 			}
 		}
-		// Remove the lock unconditionally once we've made our SIGTERM decision:
-		// either it's a verified-stale lock (PID dead / unrelated process) and
-		// preflight would have stripped it anyway, or we just SIGTERMed the wake
-		// and the next `up` should not have to wait for the wake's own teardown
-		// to delete it.
-		if rmErr := os.Remove(lockPath); rmErr == nil {
-			result.LockRemoved = true
+		if canRemoveLock {
+			if rmErr := os.Remove(lockPath); rmErr == nil {
+				result.LockRemoved = true
+			}
 		}
 	}
 

@@ -343,6 +343,19 @@ func execResumePlan(t team.Team, workstream string, plans []resumePlan, exec res
 	for _, p := range plans {
 		switch p.Action {
 		case resumeLive:
+			// planMemberResume emits a non-empty Command for live members
+			// only when the operator passed --force-duplicate; otherwise the
+			// command is suppressed. Honor that distinction here: relaunch
+			// live+forced members through the backend (parity with the
+			// printed plan) and skip the others with a clear notice.
+			if p.Command != "" {
+				panes = append(panes, teamLaunchPane{
+					Role:    p.Role,
+					CWD:     planMemberCWD(t, p.Role),
+					Command: p.Command,
+				})
+				continue
+			}
 			skipped = append(skipped, p)
 		case resumeBlocked:
 			blocked = append(blocked, p)
@@ -401,10 +414,63 @@ func execResumePlan(t team.Team, workstream string, plans []resumePlan, exec res
 		plan.Session = defaultTmuxSessionName(t.Project)
 	}
 
+	// Roster-level preflight before any pane opens, mirroring `up`'s
+	// contract (team_launch.go:243). Without this, each per-pane `agent up`
+	// preflights at exec time — but the operator only sees the refusal
+	// AFTER tmux has split panes. Run the same aggregate check now so a
+	// blocked member aborts cleanly before any backend side effects, and
+	// honor --force-duplicate by stamping it into each plan.
+	preflights, err := buildResumeExecPreflights(t, panes, workstream, force)
+	if err != nil {
+		return err
+	}
+	if err := preflightTeam(preflights, defaultDuplicateLaunchProbe); err != nil {
+		return err
+	}
+
 	for _, p := range skipped {
 		fmt.Fprintf(os.Stderr, "skipping %s: %s\n", p.Role, p.Note)
 	}
 	return runTmuxLaunchPlan(plan)
+}
+
+// buildResumeExecPreflights resolves the AMQ identity for each runnable
+// pane and constructs an agentLaunchPreflight tuple that preflightTeam can
+// use to refuse a blocked roster before tmux opens any pane.
+func buildResumeExecPreflights(t team.Team, panes []teamLaunchPane, workstream string, force bool) ([]agentLaunchPreflight, error) {
+	byRole := make(map[string]team.Member, len(t.Members))
+	for _, m := range t.Members {
+		byRole[strings.ToLower(m.Role)] = m
+	}
+	out := make([]agentLaunchPreflight, 0, len(panes))
+	for _, pane := range panes {
+		m, ok := byRole[strings.ToLower(pane.Role)]
+		if !ok {
+			// Pane built from a role we cannot resolve back to team.json:
+			// preflight cannot inspect identity, so skip it rather than
+			// fabricate a tuple that would block on the wrong agent dir.
+			continue
+		}
+		cwd := m.EffectiveCWD(t.Project)
+		env, err := resolveAMQEnvInDir(cwd, "", workstream, m.Handle)
+		if err != nil {
+			return nil, fmt.Errorf("resolve amq env for %s: %w", m.Handle, err)
+		}
+		root := env.Root
+		handle := m.Handle
+		if env.Me != "" {
+			handle = env.Me
+		}
+		out = append(out, agentLaunchPreflight{
+			AgentDir:   filepath.Join(root, "agents", handle),
+			Handle:     handle,
+			Workstream: env.SessionName,
+			Root:       root,
+			Binary:     m.Binary,
+			Force:      force,
+		})
+	}
+	return out, nil
 }
 
 // planMemberCWD resolves the effective cwd for a planned role by looking up
