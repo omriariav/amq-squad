@@ -324,8 +324,12 @@ func (p agentLaunchPreflight) presenceWriterIsKnownDead(probe duplicateLaunchPro
 }
 
 // wakeWriterDead inspects .wake.lock. Returns (dead, known): "known" is true
-// when the file existed and parsed; "dead" is true when the PID is gone or
-// the live PID does not match an amq wake for this handle/root.
+// when the file existed, parsed, and carried a usable PID; "dead" is true
+// when the PID is gone or the live PID does not match an amq wake for this
+// handle/root. A corrupt or unparseable lock is reported as unknown (not
+// dead): we have no evidence either way and the conservative answer for
+// the zombie-presence guard is to keep blocking. The stale-cleanup path in
+// inspectWakeLock still removes the corrupt file on its own.
 func (p agentLaunchPreflight) wakeWriterDead(probe duplicateLaunchProbe) (dead, known bool) {
 	data, err := os.ReadFile(wakeLockPath(p.AgentDir))
 	if err != nil {
@@ -333,9 +337,12 @@ func (p agentLaunchPreflight) wakeWriterDead(probe duplicateLaunchProbe) (dead, 
 	}
 	var lock wakeLockFile
 	if err := json.Unmarshal(data, &lock); err != nil {
-		return true, true
+		return false, false
 	}
-	if lock.PID <= 0 || !probe.PIDAlive(lock.PID) {
+	if lock.PID <= 0 {
+		return false, false
+	}
+	if !probe.PIDAlive(lock.PID) {
 		return true, true
 	}
 	expectedRoot := p.Root

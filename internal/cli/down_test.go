@@ -586,3 +586,125 @@ func TestExecuteDownAllScopedToConfiguredMembers(t *testing.T) {
 		t.Fatalf("--all targeted unconfigured handles: calls = %v, want [11]", term.calls)
 	}
 }
+
+// TestExecuteDownReapKeepsLockOnSignalFailure covers the case where a
+// matching live wake exists but Terminate returns an error (e.g. EPERM on
+// a wake owned by another uid). The lock must NOT be removed and presence
+// must NOT flip — otherwise the next `up` would see clean state and
+// duplicate-launch on top of a still-running wake.
+func TestExecuteDownReapKeepsLockOnSignalFailure(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"}},
+	})
+	agentDir := seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
+		Binary: "claude", Handle: "qa", AgentPID: 1111,
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 3476, Root: filepath.Join(base, "issue-96")})
+	writePresence(t, agentDir, presenceFile{
+		Schema: 1, Handle: "qa", Status: "active",
+		LastSeen: time.Now().Add(-5 * time.Second),
+	})
+
+	term := &recordingTerminator{failOn: map[int]error{3476: errors.New("operation not permitted")}}
+	out, err := runDownExec(t, downExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Role:             "qa",
+		Terminator:       term,
+		// Agent dead, wake alive + matching.
+		Probe: downFakeProbe(
+			map[int]bool{1111: false, 3476: true},
+			map[int]bool{1111: false, 3476: true},
+		),
+	})
+	if err == nil {
+		t.Fatalf("signal failure should not return nil:\n%s", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(agentDir, ".wake.lock")); statErr != nil {
+		t.Errorf(".wake.lock must be preserved when SIGTERM fails: %v", statErr)
+	}
+	pres, err := readPresenceForEntry(agentDir)
+	if err != nil {
+		t.Fatalf("read presence: %v", err)
+	}
+	if !strings.EqualFold(pres.Status, "active") {
+		t.Errorf("presence must not flip to offline when wake signal failed; got %q", pres.Status)
+	}
+	for _, want := range []string{"failed", "failed to signal wake pid 3476", "operation not permitted"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestExecuteDownReapRejectsForeignRootWake covers PID reuse where the
+// live PID belongs to a wake for a different workstream root. The lock
+// must be removed (stale for this dir) and the foreign wake must NOT be
+// signaled.
+func TestExecuteDownReapRejectsForeignRootWake(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 7000,
+	})
+	// Lock claims our root; the live PID actually belongs to a wake for a
+	// sibling root. wakeProcessMatcher will reject; reap must classify the
+	// lock as stale and not signal.
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 9000, Root: filepath.Join(base, "issue-96")})
+
+	term := &recordingTerminator{}
+	_, err := runDownExec(t, downExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Role:             "cto",
+		Terminator:       term,
+		// PID alive but ProcessMatch returns false (foreign root).
+		Probe: downFakeProbe(
+			map[int]bool{7000: false, 9000: true},
+			map[int]bool{7000: false, 9000: false},
+		),
+	})
+	if err != nil {
+		t.Fatalf("foreign-root reap should be exit 0: %v", err)
+	}
+	if len(term.calls) != 0 {
+		t.Fatalf("foreign-root wake must not be signaled; got %v", term.calls)
+	}
+	if _, statErr := os.Stat(filepath.Join(agentDir, ".wake.lock")); !os.IsNotExist(statErr) {
+		t.Errorf("foreign-root lock should be removed as stale; stat err = %v", statErr)
+	}
+}
+
+// TestRenderDownReportsCleanedAndFailedStaysPartial covers the reporting
+// contract for the new cleaned status mixed with a failed teardown: the
+// combined exit must be partial so the operator sees both that work was
+// done AND that something needs attention.
+func TestRenderDownReportsCleanedAndFailedStaysPartial(t *testing.T) {
+	var buf bytes.Buffer
+	reports := []downReport{
+		{Role: "cto", Root: "/tmp/root", Status: downStatusCleaned, Detail: "recorded pid 1 is not alive; flipped presence to offline"},
+		{Role: "qa", Root: "/tmp/root", Status: downStatusFailed, Detail: "terminate pid 5: boom"},
+	}
+	err := renderDownReports(&buf, "issue-96", reports)
+	pe, ok := err.(*PartialError)
+	if !ok {
+		t.Fatalf("cleaned+failed must be *PartialError, got %T: %v", err, err)
+	}
+	for _, want := range []string{"1 of 2", "1 force-sent, 1 cleaned"} {
+		if want == "1 force-sent, 1 cleaned" {
+			// summary line literal: 0 force-sent, 1 cleaned, ...
+			if !strings.Contains(buf.String(), "0 force-sent, 1 cleaned") {
+				t.Errorf("summary line missing cleaned counter:\n%s", buf.String())
+			}
+			continue
+		}
+		if !strings.Contains(pe.Message, want) {
+			t.Errorf("partial message missing %q: %q", want, pe.Message)
+		}
+	}
+}
