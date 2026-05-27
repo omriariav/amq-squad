@@ -644,3 +644,214 @@ func TestWakeHealthForEntry(t *testing.T) {
 		t.Errorf("inactive: got %q, want empty", got)
 	}
 }
+
+// TestPreflightZombiePresenceDoesNotBlock covers #38/#44: a fresh active
+// presence file written by an orphan wake that has since died (and a
+// launch.json whose AgentPID is also dead) must not keep `up` from
+// relaunching. Before the fix, presence freshness alone blocked even
+// after both writers were gone.
+func TestPreflightZombiePresenceDoesNotBlock(t *testing.T) {
+	agentDir := t.TempDir()
+	writePresence(t, agentDir, presenceFile{
+		Schema: 1, Handle: "cto", Status: "active",
+		LastSeen: time.Now().Add(-5 * time.Second),
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 1111, Root: "/r"})
+	if err := launch.Write(agentDir, launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 2222, StartedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both writers dead. Presence is fresh purely because of a recently
+	// killed orphan that updated the file before exit.
+	probe := fakeProbe(map[int]bool{1111: false, 2222: false}, nil, time.Now())
+	pf := agentLaunchPreflight{
+		AgentDir: agentDir, Handle: "cto", Workstream: "w", Root: "/r", Binary: "codex",
+	}
+	blocker, err := pf.check(probe)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if blocker != nil {
+		t.Fatalf("zombie presence (both writers dead) should not block: %v", blocker)
+	}
+}
+
+// TestPreflightFreshPresenceWithLiveAgentStillBlocks ensures the guard does
+// not over-correct: a live launch.json PID means there's a real agent that
+// could legitimately be writing presence. Includes both .wake.lock and
+// launch.json so the both-record evaluation path is exercised, and asserts
+// the blocker reasons keep their stable wake → launch → presence order.
+func TestPreflightFreshPresenceWithLiveAgentStillBlocks(t *testing.T) {
+	agentDir := t.TempDir()
+	writePresence(t, agentDir, presenceFile{
+		Schema: 1, Handle: "cto", Status: "active",
+		LastSeen: time.Now().Add(-5 * time.Second),
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 1111, Root: "/r"})
+	if err := launch.Write(agentDir, launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 4242, StartedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wake dead but matching, launch alive: presenceWriterIsKnownDead must
+	// return false because the launch writer is alive.
+	probe := fakeProbe(
+		map[int]bool{1111: false, 4242: true},
+		map[int]string{4242: "codex"},
+		time.Now(),
+	)
+	pf := agentLaunchPreflight{
+		AgentDir: agentDir, Handle: "cto", Workstream: "w", Root: "/r", Binary: "codex",
+	}
+	blocker, err := pf.check(probe)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if blocker == nil {
+		t.Fatal("fresh presence with live agent must still block")
+	}
+	sources := make([]string, 0, len(blocker.Reasons))
+	for _, r := range blocker.Reasons {
+		sources = append(sources, r.Source)
+	}
+	// Wake is stale so inspectWakeLock won't emit a blocker, but launch is
+	// alive and presence is fresh: both must appear, launch before presence.
+	if got := strings.Join(sources, ","); got != "launch,presence" {
+		t.Errorf("blocker source order = %q, want launch,presence", got)
+	}
+}
+
+// TestPreflightLiveWakeAndDeadLaunchStillBlocks: wake is the writer, agent
+// is gone. Wake itself raises a blocker; presence must NOT short-circuit
+// to "writer dead" since the wake writer is alive.
+func TestPreflightLiveWakeAndDeadLaunchStillBlocks(t *testing.T) {
+	agentDir := t.TempDir()
+	writePresence(t, agentDir, presenceFile{
+		Schema: 1, Handle: "cto", Status: "active",
+		LastSeen: time.Now().Add(-5 * time.Second),
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 1111, Root: "/r"})
+	if err := launch.Write(agentDir, launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 4242, StartedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	probe := fakeProbe(
+		map[int]bool{1111: true, 4242: false},
+		map[int]string{1111: "amq wake --me cto --root /r"},
+		time.Now(),
+	)
+	pf := agentLaunchPreflight{
+		AgentDir: agentDir, Handle: "cto", Workstream: "w", Root: "/r", Binary: "codex",
+	}
+	blocker, err := pf.check(probe)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if blocker == nil {
+		t.Fatal("live wake + dead launch + fresh presence must still block")
+	}
+	sources := make([]string, 0, len(blocker.Reasons))
+	for _, r := range blocker.Reasons {
+		sources = append(sources, r.Source)
+	}
+	if got := strings.Join(sources, ","); got != "wake,presence" {
+		t.Errorf("blocker source order = %q, want wake,presence", got)
+	}
+}
+
+// TestPreflightCorruptWakeLockKeepsPresenceConservative: corrupt lock has
+// no usable PID, so wakeWriterDead must report unknown — and presence must
+// keep blocking rather than treat the corrupt file as "writer dead."
+func TestPreflightCorruptWakeLockKeepsPresenceConservative(t *testing.T) {
+	agentDir := t.TempDir()
+	writePresence(t, agentDir, presenceFile{
+		Schema: 1, Handle: "cto", Status: "active",
+		LastSeen: time.Now().Add(-5 * time.Second),
+	})
+	if err := os.WriteFile(wakeLockPath(agentDir), []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := launch.Write(agentDir, launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 4242, StartedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	probe := fakeProbe(map[int]bool{4242: false}, nil, time.Now())
+	pf := agentLaunchPreflight{
+		AgentDir: agentDir, Handle: "cto", Workstream: "w", Root: "/r", Binary: "codex",
+	}
+	blocker, err := pf.check(probe)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if blocker == nil {
+		t.Fatal("corrupt lock must not let presence pass: no proven dead writer")
+	}
+	sawPresence := false
+	for _, r := range blocker.Reasons {
+		if r.Source == "presence" {
+			sawPresence = true
+			break
+		}
+	}
+	if !sawPresence {
+		t.Errorf("expected presence in blocker reasons; got %+v", blocker.Reasons)
+	}
+}
+
+// TestPreflightFreshPresenceWithCodexSeatStillBlocks: codex seats often
+// have no captured AgentPID. The launch record exists but cannot prove the
+// writer dead, so presence still blocks (conservative).
+func TestPreflightFreshPresenceWithCodexSeatStillBlocks(t *testing.T) {
+	agentDir := t.TempDir()
+	writePresence(t, agentDir, presenceFile{
+		Schema: 1, Handle: "cpo", Status: "active",
+		LastSeen: time.Now().Add(-5 * time.Second),
+	})
+	if err := launch.Write(agentDir, launch.Record{
+		Binary: "codex", Handle: "cpo", AgentPID: 0, StartedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	probe := fakeProbe(map[int]bool{}, nil, time.Now())
+	pf := agentLaunchPreflight{
+		AgentDir: agentDir, Handle: "cpo", Workstream: "w", Root: "/r", Binary: "codex",
+	}
+	blocker, err := pf.check(probe)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if blocker == nil {
+		t.Fatal("no captured pid means we cannot prove writer dead; presence must still block")
+	}
+}
+
+// TestPreflightFreshPresenceWithoutLockOrRecordStillBlocks: when neither
+// .wake.lock nor launch.json exist on disk, we cannot prove the writer is
+// dead. Presence keeps the conservative block.
+func TestPreflightFreshPresenceWithoutLockOrRecordStillBlocks(t *testing.T) {
+	agentDir := t.TempDir()
+	writePresence(t, agentDir, presenceFile{
+		Schema: 1, Handle: "qa", Status: "active",
+		LastSeen: time.Now().Add(-5 * time.Second),
+	})
+
+	probe := fakeProbe(map[int]bool{}, nil, time.Now())
+	pf := agentLaunchPreflight{
+		AgentDir: agentDir, Handle: "qa", Workstream: "w", Root: "/r", Binary: "claude",
+	}
+	blocker, err := pf.check(probe)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if blocker == nil {
+		t.Fatal("with no on-disk writer records, presence must still block (cannot prove writer dead)")
+	}
+}

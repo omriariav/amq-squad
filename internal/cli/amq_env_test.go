@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -69,6 +70,27 @@ func TestResolveAMQEnvInDirClearsInheritedAMQIdentity(t *testing.T) {
 	if got.Root != "/target/session" || got.BaseRoot != "/target" ||
 		got.Me != "amq-squad" || got.Project != "target-project" {
 		t.Fatalf("resolveAMQEnvInDir = %+v", got)
+	}
+}
+
+// TestResolveAMQEnvIncludesStderrOnFailure covers #46: amq env failures
+// must surface stderr text in the wrapped error. Previously cmd.Output()
+// dropped stderr and operators only saw "amq env: exit status N".
+func TestResolveAMQEnvIncludesStderrOnFailure(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		"echo 'error: cannot resolve workstream \"ghost\" under .agent-mail/' >&2\n" +
+		"exit 2\n"
+	setupFakeAMQScript(t, script)
+
+	_, err := resolveAMQEnv("", "ghost", "cto")
+	if err == nil {
+		t.Fatal("expected error from amq env exit 2")
+	}
+	if !strings.Contains(err.Error(), "cannot resolve workstream") {
+		t.Errorf("error should include stderr text from amq; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "exit status 2") {
+		t.Errorf("error should still include exit status; got: %v", err)
 	}
 }
 

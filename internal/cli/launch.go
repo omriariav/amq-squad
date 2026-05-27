@@ -287,7 +287,11 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("amq not found in PATH: %w", err)
 	}
-	return syscall.Exec(amqBin, append([]string{"amq"}, coopArgs...), os.Environ())
+	// Strip inherited AMQ identity vars before exec'ing coop exec. We already
+	// resolved the right --root/--session/--me on the command line; passing a
+	// stale AM_ROOT/AM_ME from the launching shell along to the agent would
+	// re-create the identity-leak asymmetry #46 closed for env resolution.
+	return syscall.Exec(amqBin, append([]string{"amq"}, coopArgs...), envWithoutAMQIdentity(os.Environ()))
 }
 
 // ensureLauncherExecutable verifies a custom --launcher path exists and is an
