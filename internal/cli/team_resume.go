@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/omriariav/amq-squad/internal/launch"
 	"github.com/omriariav/amq-squad/internal/team"
@@ -161,6 +162,25 @@ type resumeExecution struct {
 	// planner can present its output as team resume, resume, or fork without
 	// duplicating logic.
 	Style resumePrinterStyle
+	// Exec opts in to the terminal-backend execution path: instead of
+	// printing the per-member plan, the planner converts restore/launch-fresh
+	// commands into a teamLaunchPlan and runs it through the chosen backend.
+	// Members with action=live are skipped; action=blocked aborts the run
+	// unless Force is also set.
+	Exec resumeExecOptions
+}
+
+// resumeExecOptions carries the live-launch backend flags surfaced by
+// `resume --exec`. They mirror the subset of liveLaunchFlags that resume
+// needs, which keeps the resume entry point free of preview-flag plumbing
+// that does not apply (no --fresh, no --json envelope).
+type resumeExecOptions struct {
+	Enabled         bool
+	Terminal        string
+	Target          string
+	Layout          string
+	TerminalSession string
+	Stagger         time.Duration
 }
 
 // resumePrinterStyle parameterizes the per-entry-point output surface. The
@@ -293,10 +313,178 @@ func executeResume(r resumeExecution) error {
 		}
 	}
 
+	if r.Exec.Enabled {
+		return execResumePlan(t, workstream, plans, r.Exec, r.Force)
+	}
+
 	style := r.Style
 	style.Profile = r.Profile
 	printResumePlan(t, workstream, r.Mode, plans, r.DryRun, r.Force, style)
 	return nil
+}
+
+// execResumePlan converts the per-member resume plan into a team launch
+// plan and runs it through the selected backend. Members already live are
+// skipped; members in the blocked action abort the run unless force was
+// requested. The contract matches operator expectation that `resume --exec`
+// is the inverse of `down`: it brings what is down back, leaves what is up
+// alone, and refuses to silently sidestep duplicate-launch protection.
+func execResumePlan(t team.Team, workstream string, plans []resumePlan, exec resumeExecOptions, force bool) error {
+	backend, ok := teamLaunchBackends[exec.Terminal]
+	if !ok {
+		return fmt.Errorf("unsupported terminal %q: supported terminals: %s", exec.Terminal, strings.Join(registeredTeamLaunchTerminals(), ", "))
+	}
+
+	var (
+		panes   []teamLaunchPane
+		skipped []resumePlan
+		blocked []resumePlan
+	)
+	for _, p := range plans {
+		switch p.Action {
+		case resumeLive:
+			// planMemberResume emits a non-empty Command for live members
+			// only when the operator passed --force-duplicate; otherwise the
+			// command is suppressed. Honor that distinction here: relaunch
+			// live+forced members through the backend (parity with the
+			// printed plan) and skip the others with a clear notice.
+			if p.Command != "" {
+				panes = append(panes, teamLaunchPane{
+					Role:    p.Role,
+					CWD:     planMemberCWD(t, p.Role),
+					Command: p.Command,
+				})
+				continue
+			}
+			skipped = append(skipped, p)
+		case resumeBlocked:
+			blocked = append(blocked, p)
+		case resumeRestore, resumeFresh:
+			if p.Command == "" {
+				// Defensive: planner emitted no command for a runnable
+				// action. Treat as blocked rather than silently dropping.
+				blocked = append(blocked, p)
+				continue
+			}
+			panes = append(panes, teamLaunchPane{
+				Role:    p.Role,
+				CWD:     planMemberCWD(t, p.Role),
+				Command: p.Command,
+			})
+		}
+	}
+
+	if len(blocked) > 0 && !force {
+		roles := make([]string, 0, len(blocked))
+		for _, p := range blocked {
+			roles = append(roles, fmt.Sprintf("%s (%s)", p.Role, p.Note))
+		}
+		return fmt.Errorf("refusing to exec resume: %d member(s) blocked: %s. Resolve manually or rerun with --force-duplicate.", len(blocked), strings.Join(roles, ", "))
+	}
+	if len(panes) == 0 {
+		// Nothing to do is success: all members are live or there is no
+		// recoverable plan. Tell the operator explicitly rather than
+		// silently opening an empty tmux window.
+		fmt.Printf("# amq-squad resume --exec\n# workstream: %s\n# nothing to launch (%d live, %d blocked)\n", workstream, len(skipped), len(blocked))
+		return nil
+	}
+
+	opts := teamLaunchOptions{
+		Terminal:        exec.Terminal,
+		Target:          exec.Target,
+		Layout:          exec.Layout,
+		Workstream:      workstream,
+		TerminalSession: exec.TerminalSession,
+		Stagger:         exec.Stagger,
+		SquadBin:        teamSquadBin(),
+	}
+	if err := backend.Validate(opts); err != nil {
+		return err
+	}
+
+	plan := tmuxLaunchPlan{
+		Session:    opts.TerminalSession,
+		Workstream: opts.Workstream,
+		Target:     opts.Target,
+		Layout:     opts.Layout,
+		Panes:      panes,
+		StartDelay: opts.Stagger,
+	}
+	if plan.Session == "" {
+		plan.Session = defaultTmuxSessionName(t.Project)
+	}
+
+	// Roster-level preflight before any pane opens, mirroring `up`'s
+	// contract (team_launch.go:243). Without this, each per-pane `agent up`
+	// preflights at exec time — but the operator only sees the refusal
+	// AFTER tmux has split panes. Run the same aggregate check now so a
+	// blocked member aborts cleanly before any backend side effects, and
+	// honor --force-duplicate by stamping it into each plan.
+	preflights, err := buildResumeExecPreflights(t, panes, workstream, force)
+	if err != nil {
+		return err
+	}
+	if err := preflightTeam(preflights, defaultDuplicateLaunchProbe); err != nil {
+		return err
+	}
+
+	for _, p := range skipped {
+		fmt.Fprintf(os.Stderr, "skipping %s: %s\n", p.Role, p.Note)
+	}
+	return runTmuxLaunchPlan(plan)
+}
+
+// buildResumeExecPreflights resolves the AMQ identity for each runnable
+// pane and constructs an agentLaunchPreflight tuple that preflightTeam can
+// use to refuse a blocked roster before tmux opens any pane.
+func buildResumeExecPreflights(t team.Team, panes []teamLaunchPane, workstream string, force bool) ([]agentLaunchPreflight, error) {
+	byRole := make(map[string]team.Member, len(t.Members))
+	for _, m := range t.Members {
+		byRole[strings.ToLower(m.Role)] = m
+	}
+	out := make([]agentLaunchPreflight, 0, len(panes))
+	for _, pane := range panes {
+		m, ok := byRole[strings.ToLower(pane.Role)]
+		if !ok {
+			// Pane built from a role we cannot resolve back to team.json:
+			// preflight cannot inspect identity, so skip it rather than
+			// fabricate a tuple that would block on the wrong agent dir.
+			continue
+		}
+		cwd := m.EffectiveCWD(t.Project)
+		env, err := resolveAMQEnvInDir(cwd, "", workstream, m.Handle)
+		if err != nil {
+			return nil, fmt.Errorf("resolve amq env for %s: %w", m.Handle, err)
+		}
+		root := env.Root
+		handle := m.Handle
+		if env.Me != "" {
+			handle = env.Me
+		}
+		out = append(out, agentLaunchPreflight{
+			AgentDir:   filepath.Join(root, "agents", handle),
+			Handle:     handle,
+			Workstream: env.SessionName,
+			Root:       root,
+			Binary:     m.Binary,
+			Force:      force,
+		})
+	}
+	return out, nil
+}
+
+// planMemberCWD resolves the effective cwd for a planned role by looking up
+// the team member. Falls back to the team project when the role is no
+// longer in team.json (which should not happen because the planner derives
+// its members from team.json, but it keeps execResumePlan robust against
+// future planner changes).
+func planMemberCWD(t team.Team, role string) string {
+	for _, m := range t.Members {
+		if strings.EqualFold(m.Role, role) {
+			return m.EffectiveCWD(t.Project)
+		}
+	}
+	return t.Project
 }
 
 type memberPlanInput struct {

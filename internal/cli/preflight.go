@@ -128,25 +128,36 @@ func (p agentLaunchPreflight) check(probe duplicateLaunchProbe) (*duplicateBlock
 		AgentDir:   p.AgentDir,
 	}
 
+	// Presence first, before wake-lock cleanup runs. inspectPresence consults
+	// the wake.lock and launch.json writer-liveness to decide whether the
+	// presence file is a zombie heartbeat; inspectWakeLock will rewrite the
+	// disk by removing stale locks, which would otherwise make wake writer
+	// status look "unknown" instead of "known dead" to the presence check.
+	if reason, err := p.inspectPresence(probe); err != nil {
+		return nil, err
+	} else if reason != nil {
+		blocker.Reasons = append(blocker.Reasons, *reason)
+	}
+
 	// Wake lock.
 	if reason, err := p.inspectWakeLock(probe); err != nil {
 		return nil, err
 	} else if reason != nil {
-		blocker.Reasons = append(blocker.Reasons, *reason)
+		// Wake comes first in the reported blocker list for stable
+		// ordering with prior versions.
+		blocker.Reasons = append([]blockerReason{*reason}, blocker.Reasons...)
 	}
 
 	// Prior launch record (PID alive + plausible command).
 	if reason, err := p.inspectLaunchRecord(probe); err != nil {
 		return nil, err
 	} else if reason != nil {
-		blocker.Reasons = append(blocker.Reasons, *reason)
-	}
-
-	// Presence (secondary signal).
-	if reason, err := p.inspectPresence(probe); err != nil {
-		return nil, err
-	} else if reason != nil {
-		blocker.Reasons = append(blocker.Reasons, *reason)
+		// Launch slots in between wake and presence.
+		idx := 0
+		if len(blocker.Reasons) > 0 && blocker.Reasons[0].Source == "wake" {
+			idx = 1
+		}
+		blocker.Reasons = append(blocker.Reasons[:idx], append([]blockerReason{*reason}, blocker.Reasons[idx:]...)...)
 	}
 
 	if len(blocker.Reasons) == 0 {
@@ -273,6 +284,18 @@ func (p agentLaunchPreflight) inspectPresence(probe duplicateLaunchProbe) (*bloc
 	if pres.Handle != "" && pres.Handle != p.Handle {
 		return nil, nil
 	}
+	// Zombie-heartbeat guard (#38, #44): presence "fresh" only means SOMETHING
+	// has written the file in the last 90s. If we have launch+wake records on
+	// disk and both their recorded PIDs are dead (or PID-reused by an unrelated
+	// process), the file is a leftover from a writer that has since died — not
+	// a live agent. inspectWakeLock and inspectLaunchRecord will (a) already
+	// surface a blocker themselves when a live writer is present, and (b)
+	// remove the stale lock/record so a subsequent up succeeds. We must not
+	// keep the presence-only block once both signals are confirmed dead, or
+	// the operator hits the same wall a clean down → up would otherwise clear.
+	if p.presenceWriterIsKnownDead(probe) {
+		return nil, nil
+	}
 	msg := fmt.Sprintf("active presence updated %s", pres.LastSeen.UTC().Format(time.RFC3339))
 	msg += "; presence " + path
 	return &blockerReason{
@@ -280,6 +303,83 @@ func (p agentLaunchPreflight) inspectPresence(probe duplicateLaunchProbe) (*bloc
 		Message: msg,
 		Hint:    "wait for presence to expire, stop the running agent, or use --force-duplicate",
 	}, nil
+}
+
+// presenceWriterIsKnownDead reports whether the on-disk wake.lock and
+// launch.json both point at processes that are gone (dead PID or PID-reuse
+// by an unrelated process). When either record is missing we cannot prove
+// the writer is dead, so we keep the conservative behavior (presence
+// blocks). Only when both records exist and both are confirmed dead do we
+// treat the presence file as a zombie heartbeat.
+func (p agentLaunchPreflight) presenceWriterIsKnownDead(probe duplicateLaunchProbe) bool {
+	lockDead, lockKnown := p.wakeWriterDead(probe)
+	if !lockKnown {
+		return false
+	}
+	launchDead, launchKnown := p.launchWriterDead(probe)
+	if !launchKnown {
+		return false
+	}
+	return lockDead && launchDead
+}
+
+// wakeWriterDead inspects .wake.lock. Returns (dead, known): "known" is true
+// when the file existed, parsed, and carried a usable PID; "dead" is true
+// when the PID is gone or the live PID does not match an amq wake for this
+// handle/root. A corrupt or unparseable lock is reported as unknown (not
+// dead): we have no evidence either way and the conservative answer for
+// the zombie-presence guard is to keep blocking. The stale-cleanup path in
+// inspectWakeLock still removes the corrupt file on its own.
+func (p agentLaunchPreflight) wakeWriterDead(probe duplicateLaunchProbe) (dead, known bool) {
+	data, err := os.ReadFile(wakeLockPath(p.AgentDir))
+	if err != nil {
+		return false, false
+	}
+	var lock wakeLockFile
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return false, false
+	}
+	if lock.PID <= 0 {
+		return false, false
+	}
+	if !probe.PIDAlive(lock.PID) {
+		return true, true
+	}
+	expectedRoot := p.Root
+	if lock.Root != "" {
+		expectedRoot = lock.Root
+	}
+	if !probe.ProcessMatch(lock.PID, wakeProcessMatcher(p.Handle, expectedRoot)) {
+		return true, true
+	}
+	return false, true
+}
+
+// launchWriterDead inspects launch.json. Returns (dead, known): "known" is
+// true when the record existed and parsed and carries a captured AgentPID;
+// "dead" is true when that PID is gone or the live PID does not match the
+// expected agent binary.
+func (p agentLaunchPreflight) launchWriterDead(probe duplicateLaunchProbe) (dead, known bool) {
+	rec, err := launch.Read(p.AgentDir)
+	if err != nil {
+		return false, false
+	}
+	if rec.AgentPID <= 0 {
+		// No pid was captured at launch (e.g. codex seats). We cannot prove
+		// the writer is dead from this record alone.
+		return false, false
+	}
+	if !probe.PIDAlive(rec.AgentPID) {
+		return true, true
+	}
+	binary := strings.TrimSpace(rec.Binary)
+	if binary == "" {
+		binary = p.Binary
+	}
+	if binary == "" || !probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(binary)) {
+		return true, true
+	}
+	return false, true
 }
 
 // wakeLockFile mirrors AMQ's wake.lock JSON shape.
