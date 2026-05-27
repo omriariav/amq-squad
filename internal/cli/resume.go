@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/omriariav/amq-squad/internal/team"
 )
@@ -20,8 +21,14 @@ func runResume(args []string) error {
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for fresh members, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for fresh members, e.g. '--chrome'")
 	profileFlag := fs.String("profile", "", "team profile to resume (default: default profile)")
+	execMode := fs.Bool("exec", false, "open the planned launch commands in the terminal backend (tmux) instead of printing them")
+	terminal := fs.String("terminal", "tmux", "terminal backend to use with --exec")
+	target := fs.String("target", "current-window", "terminal target with --exec (tmux: current-window or new-session)")
+	layout := fs.String("layout", "vertical", "terminal layout with --exec (tmux: vertical, horizontal, or tiled)")
+	terminalSession := fs.String("terminal-session", "", "terminal session name when --exec --target new-session")
+	stagger := fs.Duration("stagger", 750*time.Millisecond, "delay between starting agent panes with --exec")
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad resume - plan how to bring the team back
+		fmt.Fprint(os.Stderr, `amq-squad resume - bring the team back from launch records
 
 Usage:
   amq-squad resume [--profile NAME] [--session name] [--restore-existing]
@@ -29,21 +36,35 @@ Usage:
                    [--no-bootstrap] [--trust sandboxed|trusted]
                    [--model role=model,...]
                    [--codex-args args] [--claude-args args]
+                   [--exec [--terminal tmux] [--target current-window|new-session]
+                           [--layout vertical|horizontal|tiled]
+                           [--terminal-session name] [--stagger 750ms]]
 
 Inspects .amq-squad/team.json plus local launch history and live-agent
-signals (wake locks, agent PID liveness, presence) to print a per-member
-plan plus copy-pasteable commands.
+signals (wake locks, agent PID liveness, presence) to choose a per-member
+action: restore from launch.json, launch fresh from team intent, skip if
+live, or refuse if blocked.
+
+Default behavior is plan-only: prints the per-member action table plus
+copy-pasteable commands. With --exec, opens those commands through the
+selected terminal backend (same path as 'up'), skipping members that are
+already live and refusing to start if any member is in the 'blocked'
+action without --force-duplicate.
 
 Fresh / new-session behavior belongs to 'amq-squad fork --from S --as T'.
-Use 'amq-squad up' to open the planned team in tmux from team intent.
 
 Examples:
   amq-squad resume
   amq-squad resume --session issue-96 --restore-existing
+  amq-squad resume --exec
+  amq-squad resume --exec --target new-session --terminal-session squad
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	if *execMode && *dryRun {
+		return usageErrorf("--exec and --dry-run are mutually exclusive")
 	}
 
 	profile, err := resolveProfileFlag(*profileFlag)
@@ -61,6 +82,17 @@ Examples:
 	if *restoreExisting {
 		mode = resumeModeRestoreExisting
 	}
+	exec := resumeExecOptions{}
+	if *execMode {
+		exec = resumeExecOptions{
+			Enabled:         true,
+			Terminal:        *terminal,
+			Target:          *target,
+			Layout:          *layout,
+			TerminalSession: *terminalSession,
+			Stagger:         *stagger,
+		}
+	}
 	return executeResume(resumeExecution{
 		ProjectDir:       cwd,
 		RequestedSession: *sessionFlag,
@@ -76,5 +108,6 @@ Examples:
 		DryRun:           *dryRun,
 		Profile:          profile,
 		Style:            resumePrinterStyle{Label: "resume", FooterVerb: "up"},
+		Exec:             exec,
 	})
 }

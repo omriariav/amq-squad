@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,6 +23,10 @@ const (
 	downStatusNotLive   downStatus = "not-live"
 	downStatusMaybeLive downStatus = "maybe-live"
 	downStatusFailed    downStatus = "failed"
+	// downStatusCleaned means the agent PID was already dead but stale
+	// runtime artifacts (orphan wake process, wake.lock, active presence)
+	// were reaped so the next `up` cannot collide with them.
+	downStatusCleaned downStatus = "cleaned"
 )
 
 type downReport struct {
@@ -212,11 +217,23 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 			report.Detail = fmt.Sprintf("no pid captured at launch — may still be live (fresh presence, last seen %s); cannot signal", lastSeen.UTC().Format(time.RFC3339))
 			return report
 		}
+		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
+		if cleaned.any() {
+			report.Status = downStatusCleaned
+			report.Detail = "no pid captured at launch; " + cleaned.summary()
+			return report
+		}
 		report.Status = downStatusNotLive
 		report.Detail = "no pid captured at launch and presence is not fresh — treating as not live"
 		return report
 	}
 	if !probe.PIDAlive(rec.AgentPID) {
+		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
+		if cleaned.any() {
+			report.Status = downStatusCleaned
+			report.Detail = fmt.Sprintf("recorded pid %d is not alive; %s", rec.AgentPID, cleaned.summary())
+			return report
+		}
 		report.Status = downStatusNotLive
 		report.Detail = fmt.Sprintf("recorded pid %d is not alive", rec.AgentPID)
 		return report
@@ -226,6 +243,12 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 		binary = m.Binary
 	}
 	if binary == "" || !probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(binary)) {
+		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
+		if cleaned.any() {
+			report.Status = downStatusCleaned
+			report.Detail = fmt.Sprintf("pid %d does not match expected binary %q (PID reuse); %s", rec.AgentPID, binary, cleaned.summary())
+			return report
+		}
 		report.Status = downStatusNotLive
 		report.Detail = fmt.Sprintf("pid %d does not match expected binary %q (PID reuse)", rec.AgentPID, binary)
 		return report
@@ -235,9 +258,115 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 		report.Detail = fmt.Sprintf("terminate pid %d: %v", rec.AgentPID, err)
 		return report
 	}
+	// The agent itself just received SIGTERM. Reap the wake sidecar and
+	// flip presence offline up front so a racing `up` cannot collide on
+	// artifacts whose owner is in the process of exiting.
+	cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
 	report.Status = downStatusForceSent
 	report.Detail = fmt.Sprintf("SIGTERM sent to pid %d", rec.AgentPID)
+	if cleaned.any() {
+		report.Detail += "; " + cleaned.summary()
+	}
 	return report
+}
+
+// reapResult records which orphan artifacts were cleaned during teardown so
+// the per-member report can surface them.
+type reapResult struct {
+	WakeKilled   int
+	LockRemoved  bool
+	PresenceFlip bool
+}
+
+func (r reapResult) any() bool {
+	return r.WakeKilled > 0 || r.LockRemoved || r.PresenceFlip
+}
+
+func (r reapResult) summary() string {
+	parts := make([]string, 0, 3)
+	if r.WakeKilled > 0 {
+		parts = append(parts, fmt.Sprintf("SIGTERM sent to wake pid %d", r.WakeKilled))
+	}
+	if r.LockRemoved {
+		parts = append(parts, "removed stale .wake.lock")
+	}
+	if r.PresenceFlip {
+		parts = append(parts, "flipped presence to offline")
+	}
+	if len(parts) == 0 {
+		return "no orphan artifacts found"
+	}
+	return strings.Join(parts, "; ")
+}
+
+// reapStaleArtifacts cleans up the runtime side-effects an agent leaves
+// behind when its process dies but its wake sidecar and/or presence file
+// survive. Returns a reapResult describing what was done so the caller can
+// include it in user-visible reports. Errors during cleanup are best-effort
+// and do not propagate: the goal is to unblock the next launch, not to
+// guarantee atomicity.
+func reapStaleArtifacts(agentDir, handle, root string, term processTerminator, probe duplicateLaunchProbe) reapResult {
+	var result reapResult
+	if agentDir == "" {
+		return result
+	}
+
+	lockPath := wakeLockPath(agentDir)
+	if data, err := os.ReadFile(lockPath); err == nil {
+		var lock wakeLockFile
+		if jsonErr := json.Unmarshal(data, &lock); jsonErr == nil && lock.PID > 0 && probe.PIDAlive(lock.PID) {
+			expectedRoot := root
+			if lock.Root != "" {
+				expectedRoot = lock.Root
+			}
+			if probe.ProcessMatch(lock.PID, wakeProcessMatcher(handle, expectedRoot)) {
+				if termErr := term.Terminate(lock.PID); termErr == nil {
+					result.WakeKilled = lock.PID
+				}
+			}
+		}
+		// Remove the lock unconditionally once we've made our SIGTERM decision:
+		// either it's a verified-stale lock (PID dead / unrelated process) and
+		// preflight would have stripped it anyway, or we just SIGTERMed the wake
+		// and the next `up` should not have to wait for the wake's own teardown
+		// to delete it.
+		if rmErr := os.Remove(lockPath); rmErr == nil {
+			result.LockRemoved = true
+		}
+	}
+
+	presencePath := filepath.Join(agentDir, "presence.json")
+	if data, err := os.ReadFile(presencePath); err == nil {
+		var pres presenceFile
+		if jsonErr := json.Unmarshal(data, &pres); jsonErr == nil {
+			if pres.Handle != "" && pres.Handle != handle {
+				// Foreign handle wrote this file; leave it alone.
+				return result
+			}
+			// Only flip ACTIVE+FRESH presence: a stale "active" file is not
+			// blocking anyone (preflight ignores anything past the freshness
+			// window), so touching it is pure noise. A fresh active file with
+			// a dead agent/wake is the zombie-heartbeat case #38 / #44 — that
+			// is what needs flipping so the next `up` is not blocked.
+			if strings.EqualFold(pres.Status, "active") && !pres.LastSeen.IsZero() && probe.Now().Sub(pres.LastSeen) <= presenceFreshness {
+				pres.Status = "offline"
+				pres.LastSeen = probe.Now().UTC()
+				if pres.Schema == 0 {
+					pres.Schema = 1
+				}
+				if pres.Handle == "" {
+					pres.Handle = handle
+				}
+				if newData, marshErr := json.Marshal(pres); marshErr == nil {
+					if writeErr := os.WriteFile(presencePath, newData, 0o600); writeErr == nil {
+						result.PresenceFlip = true
+					}
+				}
+			}
+		}
+	}
+
+	return result
 }
 
 // presenceFreshFor reports the agent's last heartbeat and whether it is recent
@@ -268,7 +397,7 @@ func renderDownReports(out io.Writer, workstream string, reports []downReport) e
 	fmt.Fprintf(out, "# targets:    %d\n", len(reports))
 	fmt.Fprintln(out)
 	policy := outputPolicyCurrent()
-	var sent, notLive, maybeLive, failed int
+	var sent, notLive, maybeLive, failed, cleaned int
 	for _, r := range reports {
 		fmt.Fprintf(out, "%-12s %-10s %s\n", r.Role, colorStatus(policy, string(r.Status)), r.Detail)
 		switch r.Status {
@@ -280,10 +409,12 @@ func renderDownReports(out io.Writer, workstream string, reports []downReport) e
 			maybeLive++
 		case downStatusFailed:
 			failed++
+		case downStatusCleaned:
+			cleaned++
 		}
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "# summary: %d force-sent, %d not-live, %d maybe-live, %d failed\n", sent, notLive, maybeLive, failed)
+	fmt.Fprintf(out, "# summary: %d force-sent, %d cleaned, %d not-live, %d maybe-live, %d failed\n", sent, cleaned, notLive, maybeLive, failed)
 	if maybeLive > 0 {
 		fmt.Fprintln(out)
 		fmt.Fprintf(out, "WARN: %d member(s) had no pid to signal but still report fresh presence — they may still be running.\n", maybeLive)
@@ -295,10 +426,11 @@ func renderDownReports(out io.Writer, workstream string, reports []downReport) e
 		if maybeLive > 0 {
 			msg += fmt.Sprintf("; %d may still be live (no pid to signal)", maybeLive)
 		}
-		// Partial (exit 3) when there is either progress (a SIGTERM was sent) or
-		// an unconfirmed stop (maybe-live): neither is a clean success nor a
-		// wholesale breakage. Only a pure all-failed run stays a plain error.
-		if sent > 0 || maybeLive > 0 {
+		// Partial (exit 3) when there is either progress (a SIGTERM was sent,
+		// an orphan was reaped) or an unconfirmed stop (maybe-live): neither
+		// is a clean success nor a wholesale breakage. Only a pure all-failed
+		// run stays a plain error.
+		if sent > 0 || cleaned > 0 || maybeLive > 0 {
 			return &PartialError{Message: msg}
 		}
 		return errors.New(msg)
