@@ -42,6 +42,25 @@ func downFakeProbe(alive map[int]bool, match map[int]bool) duplicateLaunchProbe 
 	}
 }
 
+// downRealMatcherProbe returns a probe whose ProcessMatch actually invokes
+// the predicate against synthetic ps args, so reapStaleArtifacts is
+// exercised through wakeProcessMatcher rather than through a canned
+// pass/fail map. The pidArgs map maps each live PID to the string `ps`
+// would return for it.
+func downRealMatcherProbe(alive map[int]bool, pidArgs map[int]string) duplicateLaunchProbe {
+	return duplicateLaunchProbe{
+		PIDAlive: func(pid int) bool { return alive[pid] },
+		ProcessMatch: func(pid int, predicate func(args string) bool) bool {
+			args, ok := pidArgs[pid]
+			if !ok {
+				return false
+			}
+			return predicate(args)
+		},
+		Now: time.Now,
+	}
+}
+
 // seedAgentRecord writes a launch.json under the AMQ fake-root layout for a
 // given workstream and handle. Returns the agent dir so tests can assert on
 // resolution side effects.
@@ -642,7 +661,8 @@ func TestExecuteDownReapKeepsLockOnSignalFailure(t *testing.T) {
 // TestExecuteDownReapRejectsForeignRootWake covers PID reuse where the
 // live PID belongs to a wake for a different workstream root. The lock
 // must be removed (stale for this dir) and the foreign wake must NOT be
-// signaled.
+// signaled. Uses the real wakeProcessMatcher predicate via synthetic ps
+// args so a future refactor that calls the wrong matcher is caught here.
 func TestExecuteDownReapRejectsForeignRootWake(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
@@ -651,10 +671,11 @@ func TestExecuteDownReapRejectsForeignRootWake(t *testing.T) {
 	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
 		Binary: "codex", Handle: "cto", AgentPID: 7000,
 	})
+	ourRoot := filepath.Join(base, "issue-96")
 	// Lock claims our root; the live PID actually belongs to a wake for a
-	// sibling root. wakeProcessMatcher will reject; reap must classify the
-	// lock as stale and not signal.
-	writeWakeLock(t, agentDir, wakeLockFile{PID: 9000, Root: filepath.Join(base, "issue-96")})
+	// foreign root with the same handle. wakeProcessMatcher must reject on
+	// root mismatch; reap must classify the lock as stale and not signal.
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 9000, Root: ourRoot})
 
 	term := &recordingTerminator{}
 	_, err := runDownExec(t, downExecution{
@@ -663,10 +684,12 @@ func TestExecuteDownReapRejectsForeignRootWake(t *testing.T) {
 		ExplicitSession:  true,
 		Role:             "cto",
 		Terminator:       term,
-		// PID alive but ProcessMatch returns false (foreign root).
-		Probe: downFakeProbe(
+		Probe: downRealMatcherProbe(
 			map[int]bool{7000: false, 9000: true},
-			map[int]bool{7000: false, 9000: false},
+			map[int]string{
+				// Same --me cto, but --root points to a foreign workstream.
+				9000: "amq wake --me cto --root /tmp/foreign-root/other-session",
+			},
 		),
 	})
 	if err != nil {
@@ -677,6 +700,73 @@ func TestExecuteDownReapRejectsForeignRootWake(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(agentDir, ".wake.lock")); !os.IsNotExist(statErr) {
 		t.Errorf("foreign-root lock should be removed as stale; stat err = %v", statErr)
+	}
+}
+
+// TestExecuteDownAgentKilledButWakeReapFailsIsFailed covers the contract
+// surfaced in Codex pass 2: when the agent SIGTERM succeeds but the
+// matching live wake cannot be signaled, the per-member status must be
+// downStatusFailed so renderDownReports counts it as a failure. Without
+// this, the summary would read "1 force-sent" and exit 0 even though the
+// wake is still running and the lock is intentionally preserved.
+func TestExecuteDownAgentKilledButWakeReapFailsIsFailed(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"}},
+	})
+	agentDir := seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
+		Binary: "claude", Handle: "qa", AgentPID: 1111,
+	})
+	ourRoot := filepath.Join(base, "issue-96")
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 3476, Root: ourRoot})
+	writePresence(t, agentDir, presenceFile{
+		Schema: 1, Handle: "qa", Status: "active",
+		LastSeen: time.Now().Add(-5 * time.Second),
+	})
+
+	term := &recordingTerminator{
+		// Agent SIGTERM succeeds; wake SIGTERM fails (EPERM-shaped).
+		failOn: map[int]error{3476: errors.New("operation not permitted")},
+	}
+	out, err := runDownExec(t, downExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Role:             "qa",
+		Terminator:       term,
+		Probe: downRealMatcherProbe(
+			map[int]bool{1111: true, 3476: true},
+			map[int]string{
+				1111: "claude",
+				3476: "amq wake --me qa --root " + ourRoot,
+			},
+		),
+	})
+	if err == nil {
+		t.Fatalf("wake-reap failure on force-sent path must produce non-zero exit:\n%s", out)
+	}
+	if _, ok := err.(*PartialError); ok {
+		// Per current contract this returns a plain error (1 of 1 failed,
+		// no other sent). Either is acceptable as "not clean success", but
+		// guard against a future regression to nil.
+		t.Logf("note: returned PartialError (also acceptable): %v", err)
+	}
+	for _, want := range []string{"failed", "SIGTERM sent to pid 1111", "failed to signal wake pid 3476", "operation not permitted"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+	// The wake-lock and presence must remain so the next preflight still sees
+	// the live writer.
+	if _, statErr := os.Stat(filepath.Join(agentDir, ".wake.lock")); statErr != nil {
+		t.Errorf(".wake.lock must be preserved after wake signal failure: %v", statErr)
+	}
+	pres, err := readPresenceForEntry(agentDir)
+	if err != nil {
+		t.Fatalf("read presence: %v", err)
+	}
+	if !strings.EqualFold(pres.Status, "active") {
+		t.Errorf("presence must not flip when wake signal failed; got %q", pres.Status)
 	}
 }
 
