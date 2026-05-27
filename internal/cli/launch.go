@@ -156,9 +156,12 @@ Examples:
 		return fmt.Errorf("getwd: %w", err)
 	}
 
-	// Resolve the AMQ env via the amq CLI. This respects .amqrc, --session,
-	// --root, and AMQ's validated sender identity exactly as coop exec will, so
-	// launch.json and the actual mailbox agree.
+	// Resolve the AMQ env via the amq CLI so launch.json and the actual
+	// mailbox agree. resolveAMQEnv respects .amqrc and AMQ's validated
+	// sender identity exactly as coop exec will. If both --session and
+	// --root were passed, the boundary policy in amq_env.go drops --root
+	// (and warns), since amq treats --session NAME as shorthand for
+	// --root .agent-mail/<name> and rejects the pair.
 	env, err := resolveAMQEnv(*rootFlag, *session, handle)
 	if err != nil {
 		return fmt.Errorf("resolve amq env: %w", err)
@@ -210,7 +213,9 @@ Examples:
 	// --dry-run is a true preview with zero side effects. --session NAME
 	// is amq shorthand for --root .agent-mail/<name>; passing both is
 	// rejected by amq, so prefer --session when callers supplied both
-	// (matching the resolveAMQEnvInDir boundary policy).
+	// (matching the resolveAMQEnvInDir boundary policy). The same warning
+	// fires once at env resolution time, so this branch stays silent to
+	// avoid duplicating the message.
 	coopArgs := []string{"coop", "exec"}
 	if *session != "" {
 		coopArgs = append(coopArgs, "--session", *session)
