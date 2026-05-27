@@ -73,6 +73,37 @@ func TestResolveAMQEnvInDirClearsInheritedAMQIdentity(t *testing.T) {
 	}
 }
 
+// TestResolveAMQEnvDropsRootWhenSessionProvided covers the boundary fix
+// for the mutual-exclusion bug: amq treats --session NAME as shorthand
+// for --root .agent-mail/<name> and rejects the call when both are set.
+// resolveAMQEnvInDir must forward only --session in that case. The fake
+// amq exits 2 with a recognizable error when it sees --root, so a regress
+// would fail this test.
+func TestResolveAMQEnvDropsRootWhenSessionProvided(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"env\" ] && [ \"$2\" = \"--json\" ]; then\n" +
+		"  for arg in \"$@\"; do\n" +
+		"    if [ \"$arg\" = \"--root\" ]; then\n" +
+		"      echo 'fake amq: --session and --root are mutually exclusive' >&2\n" +
+		"      exit 2\n" +
+		"    fi\n" +
+		"  done\n" +
+		"  printf '%s\\n' '{\"root\":\"/p/.agent-mail/stream1\",\"base_root\":\"/p/.agent-mail\",\"session_name\":\"stream1\",\"me\":\"cto\"}'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"echo \"unexpected amq command: $*\" >&2\n" +
+		"exit 1\n"
+	setupFakeAMQScript(t, script)
+
+	got, err := resolveAMQEnv("/p/.agent-mail", "stream1", "cto")
+	if err != nil {
+		t.Fatalf("resolveAMQEnv with both flags must drop --root: %v", err)
+	}
+	if got.SessionName != "stream1" || got.Me != "cto" {
+		t.Fatalf("resolveAMQEnv = %+v", got)
+	}
+}
+
 // TestResolveAMQEnvIncludesStderrOnFailure covers #46: amq env failures
 // must surface stderr text in the wrapped error. Previously cmd.Output()
 // dropped stderr and operators only saw "amq env: exit status N".
