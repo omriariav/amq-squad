@@ -275,14 +275,22 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 	}
 	// The agent itself just received SIGTERM. Reap the wake sidecar and
 	// flip presence offline up front so a racing `up` cannot collide on
-	// artifacts whose owner is in the process of exiting. A reap-side
-	// failure does not retract the SIGTERM we just sent to the agent;
-	// surface it as a partial-progress detail line so the operator can see
-	// the wake survived without rolling back the agent kill.
+	// artifacts whose owner is in the process of exiting. A reap failure
+	// (live matching wake we could not signal) is itself a partial-down:
+	// the agent is dying but the wake is still running and the on-disk
+	// lock + presence are intentionally preserved. Surface that as
+	// downStatusFailed so renderDownReports counts it correctly; without
+	// this, the per-member detail says "wake survived" but the summary
+	// still reads as a clean success.
 	cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
+	if cleaned.failed() {
+		report.Status = downStatusFailed
+		report.Detail = fmt.Sprintf("SIGTERM sent to pid %d; %s", rec.AgentPID, cleaned.summary())
+		return report
+	}
 	report.Status = downStatusForceSent
 	report.Detail = fmt.Sprintf("SIGTERM sent to pid %d", rec.AgentPID)
-	if cleaned.any() || cleaned.failed() {
+	if cleaned.any() {
 		report.Detail += "; " + cleaned.summary()
 	}
 	return report
