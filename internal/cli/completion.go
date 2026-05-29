@@ -139,6 +139,7 @@ var completionCommonFlags = []string{
 	"--personas",
 	"--profile",
 	"--project",
+	"--reset",
 	"--restore-existing",
 	"--role",
 	"--roles",

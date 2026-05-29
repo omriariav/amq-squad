@@ -161,6 +161,32 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 	return seen
 }
 
+// teamWorkstreamExistsOrRestorable reports whether the named workstream is
+// already "taken" for this team — the condition `up` refuses by default and
+// fork treats as a valid source. Two signals count: the AMQ root for the
+// session already exists on disk (mailbox/agent state) OR at least one
+// configured member has a restorable launch record matching the session. The
+// returned root is the first existing AMQ root found (empty when the only
+// signal is a restorable record), purely for human-facing messages. No
+// message bodies are inspected.
+func teamWorkstreamExistsOrRestorable(t team.Team, workstream string) (bool, string, error) {
+	if exists, root, err := teamWorkstreamExists(t, workstream); err != nil {
+		return false, "", err
+	} else if exists {
+		return true, root, nil
+	}
+	for _, m := range t.Members {
+		baseRoot, err := scanBaseRootForProject(m.EffectiveCWD(t.Project))
+		if err != nil || baseRoot == "" {
+			continue
+		}
+		if _, found := findMemberRestoreRecord(baseRoot, t.Project, m.EffectiveCWD(t.Project), workstream, m.Role, m.Handle); found {
+			return true, "", nil
+		}
+	}
+	return false, "", nil
+}
+
 func teamWorkstreamExists(t team.Team, workstream string) (bool, string, error) {
 	seen := map[string]bool{}
 	for _, m := range t.Members {

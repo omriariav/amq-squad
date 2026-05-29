@@ -39,6 +39,12 @@ type teamLaunchOptions struct {
 	// via --team-profile so each agent's launch record carries the same
 	// profile identity for bootstrap routing and status display.
 	Profile string
+	// WarnStubBrief, when true, makes the live launch emit a warn-if-stub
+	// notice on stderr (silenced by --quiet) after a successful launch when
+	// the brief is an untouched generated stub. `up` sets this when no brief
+	// source (--seed-from) was supplied so CI / send-keys flows keep working
+	// without a hard error, while nudging the operator to fill in the goal.
+	WarnStubBrief bool
 }
 
 type teamLaunchPane struct {
@@ -224,7 +230,21 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if _, _, err := ensureBriefStub(t.Project, opts.Workstream); err != nil {
 		return fmt.Errorf("ensure brief: %w", err)
 	}
-	return backend.Launch(t, opts)
+	if err := backend.Launch(t, opts); err != nil {
+		return err
+	}
+	// Post-launch warn-if-stub nudge: `up` without a brief source auto-stubs
+	// the brief above and asks us to flag it so non-interactive automation
+	// keeps working while still being told to set the goal. Only fire when the
+	// brief on disk is genuinely an untouched stub (a --seed-from authored
+	// brief, or one the operator already edited, classifies as briefReal).
+	if opts.WarnStubBrief {
+		if _, kind := classifyBrief(t.Project, opts.Workstream); kind == briefStub {
+			quietNotice("notice: started %s with a stub brief — edit %s or pass --seed-from to set the goal.\n",
+				opts.Workstream, briefPath(t.Project, opts.Workstream))
+		}
+	}
+	return nil
 }
 
 // buildTeamPreflights computes the agent-identity tuples team launch would
