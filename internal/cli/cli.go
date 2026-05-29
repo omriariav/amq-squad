@@ -141,6 +141,8 @@ func dispatch(args []string) error {
 		return runDown(args[1:])
 	case "status":
 		return runStatus(args[1:])
+	case "console":
+		return runConsole(args[1:])
 	case "history":
 		return runHistory(args[1:])
 	case "resume":
@@ -187,6 +189,7 @@ Commands:
             preserved on disk, so the session stays resumable.
   down      Deprecated alias for 'stop' (works for one release)
   status    Live state of this project's configured team
+  console   Read-only Mission Control TUI over all sessions (--once for CI)
   history   List restorable launch records
   resume    Plan how to bring the team back into the resolved workstream
   fork      Plan fresh launches in a new workstream branched off an existing one
