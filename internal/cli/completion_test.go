@@ -62,9 +62,9 @@ func TestRunCompletionBashContainsRepresentativeTokens(t *testing.T) {
 		"complete -F _amq_squad_complete amq-squad",
 		// commands
 		"team", "up", "down", "status", "history", "resume", "fork",
-		"launch", "restore", "list", "completion", "version",
+		"agent", "completion", "version",
 		// team subcommands
-		"init", "show", "profiles", "sync", "rules",
+		"init", "profiles", "sync", "rules",
 		// high-traffic flags
 		"--profile", "--json", "--dry-run", "--force", "--force-duplicate", "--session",
 		// previously missing flags + root short/version forms
@@ -92,8 +92,8 @@ func TestRunCompletionZshContainsRepresentativeTokens(t *testing.T) {
 		"#compdef amq-squad",
 		"_amq_squad",
 		"compdef _amq_squad amq-squad",
-		"'team'", "'up'", "'completion'", "'version'",
-		"'init'", "'show'", "'profiles'",
+		"'team'", "'up'", "'completion'", "'version'", "'agent'",
+		"'init'", "'profiles'",
 		"'--profile'", "'--json'", "'--dry-run'", "'--force-duplicate'",
 		"'--fresh'", "'--exec'", "'--handle'", "'--root'", "'--conversation-id'",
 		"'--no-default-args'", "'--team-workstream'", "'--personas'", "'--roles'",
@@ -217,9 +217,6 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"history":    true,
 		"resume":     true,
 		"fork":       true,
-		"launch":     true,
-		"restore":    true,
-		"list":       true,
 		"completion": true,
 		"doctor":     true,
 		"agent":      true,

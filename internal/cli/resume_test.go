@@ -21,8 +21,8 @@ func TestRunResumeRequiresTeam(t *testing.T) {
 
 // TestRunResumeMatchesTeamResumePlannerRows proves the top-level verb shares
 // the planner with `team resume`: identical inputs produce the same per-member
-// plan rows. Header and footer differ on purpose (top-level says "resume" and
-// suggests "up", team resume says "team resume" and suggests "team launch").
+// plan rows. Headers differ on purpose (top-level says "resume", team resume
+// says "team resume"); both now suggest the modern "up" verb in the footer.
 func TestRunResumeMatchesTeamResumePlannerRows(t *testing.T) {
 	dir := t.TempDir()
 	base := setupFakeAMQSessionRoots(t)

@@ -16,9 +16,6 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"version", "--help"},
 		{"completion", "--help"},
 		{"doctor", "--help"},
-		{"launch", "--help"},
-		{"restore", "--help"},
-		{"list", "--help"},
 		{"history", "--help"},
 		{"status", "--help"},
 		{"down", "--help"},
@@ -27,8 +24,6 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"fork", "--help"},
 		{"team", "--help"},
 		{"team", "init", "--help"},
-		{"team", "show", "--help"},
-		{"team", "launch", "--help"},
 		{"team", "resume", "--help"},
 		{"team", "sync", "--help"},
 		{"team", "profiles", "--help"},
@@ -65,12 +60,7 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "launch --help", args: []string{"launch", "--help"}, want: "amq-squad launch"},
-		{name: "restore --help", args: []string{"restore", "--help"}, want: "amq-squad restore"},
-		{name: "list --help", args: []string{"list", "--help"}, want: "amq-squad list"},
 		{name: "team init --help", args: []string{"team", "init", "--help"}, want: "amq-squad team init"},
-		{name: "team show --help", args: []string{"team", "show", "--help"}, want: "amq-squad team show"},
-		{name: "team launch --help", args: []string{"team", "launch", "--help"}, want: "--force-duplicate"},
 		{name: "up --help", args: []string{"up", "--help"}, want: "amq-squad up"},
 		{name: "down --help", args: []string{"down", "--help"}, want: "amq-squad down"},
 		{name: "status --help", args: []string{"status", "--help"}, want: "amq-squad status"},

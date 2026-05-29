@@ -27,9 +27,12 @@ func runTeam(args []string) error {
 	case "init":
 		return runTeamInit(args[1:])
 	case "show":
-		return runTeamShow(args[1:])
+		// Removed in 2.0. Kept as an explicit hint (not unknown-command) for
+		// one release so muscle-memory invocations get a pointer.
+		return usageErrorf("'team show' was removed in 2.0; use 'up --dry-run' to preview the launch plan.")
 	case "launch":
-		return runTeamLaunch(args[1:])
+		// Removed in 2.0. Kept as an explicit hint for one release.
+		return usageErrorf("'team launch' was removed in 2.0; use 'up' to bring the team up.")
 	case "resume":
 		return runTeamResume(args[1:])
 	case "rules":
@@ -41,7 +44,7 @@ func runTeam(args []string) error {
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'show', 'launch', 'resume', 'rules', 'sync', or 'profiles'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'sync', or 'profiles'.", args[0])
 	}
 }
 
@@ -276,16 +279,18 @@ Examples:
 	if interactive {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Next:")
-		fmt.Fprintln(os.Stderr, "  amq-squad team launch          # open all members in the current tmux window")
-		fmt.Fprintln(os.Stderr, "  amq-squad team show            # print one launch command per member")
+		fmt.Fprintln(os.Stderr, "  amq-squad up                   # bring all members up in the current tmux window")
+		fmt.Fprintln(os.Stderr, "  amq-squad up --dry-run         # print one launch command per member")
 	}
 	return nil
 }
 
+// runTeamShow holds the launch-plan preview body. The `team show` subcommand
+// was removed in 2.0 in favor of `up --dry-run`; this body is retained
+// internal-only for the tests that exercise the preview/JSON-plan path. No
+// user-facing verb dispatches to it (live `up` and `up --dry-run` call
+// emitTeamCommands directly).
 func runTeamShow(args []string) error {
-	if !isHelpInvocation(args) {
-		deprecationWarning("team show", "up --dry-run")
-	}
 	fs := flag.NewFlagSet("team show", flag.ContinueOnError)
 	pf := registerPreviewFlags(fs)
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned team_plan envelope instead of the human preview")
@@ -1201,9 +1206,6 @@ func printTeamUsage() {
 Usage:
   amq-squad team                      Smart default: show commands, or init if none exists
   amq-squad team init [options]       Pick personas, choose CLIs, and seed rules
-  amq-squad team show [--session name] [--fresh] [--no-bootstrap]
-                                      Print launch commands for configured team
-  amq-squad team launch [options]     Open the configured team in a terminal
   amq-squad team resume [options]     Plan the safe path to bring the team back
                                       after reboot/upgrade/terminal close.
                                       Classifies each member as live/restore/
@@ -1216,6 +1218,10 @@ Usage:
                                       scopes to that profile's member cwds)
   amq-squad team profiles             List configured team profiles (read-only)
 
+To launch the team, use the top-level 'up' verb: 'amq-squad up' brings it up,
+'amq-squad up --dry-run' prints one launch command per member. ('team show'
+and 'team launch' were removed in 2.0.)
+
 Most subcommands accept --profile NAME to operate on a named profile under
 .amq-squad/teams/<name>.json; omit the flag (or pass --profile default) to
 operate on .amq-squad/team.json.
@@ -1226,7 +1232,7 @@ persona with a different CLI.
 
 Examples:
   amq-squad team init --roles cto,fullstack --binary cto=codex
-  amq-squad team show
+  amq-squad up --dry-run
   amq-squad team sync --apply
 `)
 }
