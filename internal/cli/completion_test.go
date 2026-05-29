@@ -61,7 +61,7 @@ func TestRunCompletionBashContainsRepresentativeTokens(t *testing.T) {
 		"_amq_squad_complete",
 		"complete -F _amq_squad_complete amq-squad",
 		// commands
-		"team", "up", "down", "status", "history", "resume", "fork",
+		"team", "up", "stop", "down", "status", "history", "resume", "fork",
 		"agent", "completion", "version",
 		// team subcommands
 		"init", "profiles", "sync", "rules",
@@ -212,6 +212,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 	expected := map[string]bool{
 		"team":       true,
 		"up":         true,
+		"stop":       true,
 		"down":       true,
 		"status":     true,
 		"history":    true,

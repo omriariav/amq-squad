@@ -133,7 +133,11 @@ func dispatch(args []string) error {
 		return runTeam(args[1:])
 	case "up":
 		return runUp(args[1:])
+	case "stop":
+		return runStop(args[1:])
 	case "down":
+		// Deprecated alias for `stop`, kept for one release. runDown prints a
+		// one-line stderr hint then runs the identical stop logic.
 		return runDown(args[1:])
 	case "status":
 		return runStatus(args[1:])
@@ -179,7 +183,9 @@ Usage:
 Commands:
   team      Set up and manage the team (init, rules, sync, profiles)
   up        Bring the team up (use --dry-run to print the launch plan)
-  down      Stop configured team members (currently --force only)
+  stop      Stop configured team members (SIGTERM; --force = SIGKILL). State is
+            preserved on disk, so the session stays resumable.
+  down      Deprecated alias for 'stop' (works for one release)
   status    Live state of this project's configured team
   history   List restorable launch records
   resume    Plan how to bring the team back into the resolved workstream
@@ -206,6 +212,9 @@ Exit codes:
   1  usage / user error (unknown flag, bad argument, missing required input)
   2  system / runtime error (IO, process, config, environment)
   3  partial success (some targets succeeded, some failed)
+
+Note: 'stop'/'down' without --force used to exit 2 ("graceful unavailable").
+They now perform the SIGTERM teardown and exit 0 (or 3 on a partial run).
 
 Examples:
   amq-squad team init --roles cto,fullstack --binary cto=codex
