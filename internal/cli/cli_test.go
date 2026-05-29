@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -81,6 +83,9 @@ func TestRunBareConfiguredRoutesToBoard(t *testing.T) {
 func TestRunBareUnconfiguredShowsGuidance(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
+	// Strip PATH so the footprint check's session probe can never resolve a real
+	// base root from a stray `amq` — a truly empty project must show guidance.
+	t.Setenv("PATH", "")
 	stdout, stderr, err := captureOutput(t, func() error {
 		return Run(nil, "v-test")
 	})
@@ -92,5 +97,128 @@ func TestRunBareUnconfiguredShowsGuidance(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "amq-squad team init") {
 		t.Errorf("guidance should point at team init, got:\n%s", stdout)
+	}
+}
+
+// TestRunBareNamedProfilesOnlyRoutesToBoard is the end-to-end PR12 regression:
+// bare `amq-squad` in a project that has ONLY named profiles (no default
+// team.json) must route to the board, NOT print the "no team configured"
+// guidance. PATH is stripped so the board degrades to its guidance line instead
+// of execing a real `amq`; the key assertion is the ROUTE taken.
+func TestRunBareNamedProfilesOnlyRoutesToBoard(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := team.WriteProfile(dir, "code-truth", team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if team.Exists(dir) {
+		t.Fatal("guard: no default team.json should exist for this case")
+	}
+	t.Setenv("PATH", "")
+	stdout, stderr, err := captureOutput(t, func() error {
+		return Run(nil, "v-test")
+	})
+	if err != nil {
+		t.Fatalf("bare run in named-profile-only project must not error: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stdout, "no team is configured") {
+		t.Errorf("named-profile-only project must route to the board, not setup guidance:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "amq-squad:") {
+		t.Errorf("expected board guidance on stdout, got:\n%s", stdout)
+	}
+}
+
+// TestProjectHasFootprintDefaultProfile proves a project with a default-profile
+// team.json is recognized as having a footprint without consulting the session
+// probe at all.
+func TestProjectHasFootprintDefaultProfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resolverCalled := false
+	resolve := func(string) (string, error) {
+		resolverCalled = true
+		return "", os.ErrNotExist
+	}
+	if !projectHasFootprint(dir, resolve) {
+		t.Errorf("default-profile team.json should count as a footprint")
+	}
+	if resolverCalled {
+		t.Errorf("default-profile shortcut must not consult the session probe")
+	}
+}
+
+// TestProjectHasFootprintNamedProfilesOnly is the core PR12 regression: a
+// project with ONLY named profiles (no default team.json) — like
+// taboola-sales-skills (.amq-squad/teams/code-truth.json + my-voice.json) — must
+// be treated as having a footprint and run the board, NOT the "no team
+// configured / run team init" guidance.
+func TestProjectHasFootprintNamedProfilesOnly(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.WriteProfile(dir, "code-truth", team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := team.WriteProfile(dir, "my-voice", team.Team{
+		Members: []team.Member{{Role: "fs", Binary: "claude", Handle: "fs", Session: "s"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if team.Exists(dir) {
+		t.Fatal("guard: no default team.json should exist for this case")
+	}
+	// Resolver fails -> proves named profiles ALONE flip the footprint decision.
+	resolve := func(string) (string, error) { return "", os.ErrNotExist }
+	if !projectHasFootprint(dir, resolve) {
+		t.Errorf("named-profile-only project should count as a footprint")
+	}
+}
+
+// TestProjectHasFootprintSessionsOnly proves a project with no team config at
+// all but with discoverable sessions under the resolved base root still runs the
+// board (the footprint is the live work on disk).
+func TestProjectHasFootprintSessionsOnly(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, ".agent-mail")
+	if err := os.MkdirAll(filepath.Join(base, "issue-96", "agents", "cto"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if team.Exists(dir) {
+		t.Fatal("guard: no default team.json should exist for this case")
+	}
+	if profiles, _ := team.ListProfiles(dir); len(profiles) != 0 {
+		t.Fatal("guard: no named profiles should exist for this case")
+	}
+	resolve := func(string) (string, error) { return base, nil }
+	if !projectHasFootprint(dir, resolve) {
+		t.Errorf("project with discoverable sessions should count as a footprint")
+	}
+}
+
+// TestProjectHasFootprintEmptyProject proves a truly empty project — no team
+// config, no named profiles, no discoverable sessions — has NO footprint, so the
+// bare command shows the setup guidance rather than the board.
+func TestProjectHasFootprintEmptyProject(t *testing.T) {
+	dir := t.TempDir()
+	// Resolver succeeds but the base root has no session/agents layout.
+	emptyBase := filepath.Join(dir, ".agent-mail")
+	if err := os.MkdirAll(emptyBase, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(string) (string, error) { return emptyBase, nil }
+	if projectHasFootprint(dir, resolve) {
+		t.Errorf("empty project should have no footprint")
+	}
+	// Also: an unresolvable base root must not crash and must report no footprint.
+	failResolve := func(string) (string, error) { return "", os.ErrNotExist }
+	if projectHasFootprint(dir, failResolve) {
+		t.Errorf("empty project with unresolvable base root should have no footprint")
 	}
 }

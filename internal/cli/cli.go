@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -100,10 +102,9 @@ type versionEnvelopeData struct {
 	Version string `json:"version"`
 }
 
-// runBareDefault handles `amq-squad` with no arguments. In a configured
-// project (a team.json exists for the default profile) it runs the status
-// board as the default command. In an unconfigured project it prints a short
-// guidance message pointing at setup — it never renders the board and never
+// runBareDefault handles `amq-squad` with no arguments. In a project with ANY
+// amq-squad footprint it runs the status board as the default command; only a
+// genuinely empty project gets the short setup-guidance message. It never
 // crashes, since bare invocation is now the most common front door.
 func runBareDefault() error {
 	cwd, err := os.Getwd()
@@ -113,7 +114,7 @@ func runBareDefault() error {
 		fmt.Println("amq-squad: could not determine the current directory; run 'amq-squad --help' for usage.")
 		return nil
 	}
-	if !team.Exists(cwd) {
+	if !projectHasFootprint(cwd, scanBaseRootForProject) {
 		fmt.Print(`amq-squad: no team is configured in this project.
 
 Get started:
@@ -125,6 +126,60 @@ Once a team exists, bare 'amq-squad' shows a live board of your sessions.
 		return nil
 	}
 	return runStatusBoard(cwd, false)
+}
+
+// projectHasFootprint reports whether a project carries ANY amq-squad presence
+// worth rendering the board for. The original gate ran the board only when the
+// DEFAULT profile (team.json) existed, which wrongly steered projects that have
+// ONLY named profiles (.amq-squad/teams/<name>.json, no team.json) into the
+// "no team configured / run team init" guidance even though they have teams AND
+// live sessions. A footprint is any of:
+//
+//   - a default-profile team.json (team.Exists), or
+//   - one or more named profiles (team.ListProfiles returns >0), or
+//   - discoverable sessions under the resolved AMQ base root.
+//
+// resolveBaseRoot is injected so this is unit-testable without a real `amq`; it
+// is best-effort and any failure simply means "no discoverable sessions" rather
+// than a hard error. The board itself degrades gracefully when empty, so a
+// false positive here is harmless; the goal is to avoid the false NEGATIVE that
+// hid real teams/sessions behind the setup guidance.
+func projectHasFootprint(projectDir string, resolveBaseRoot func(string) (string, error)) bool {
+	if team.Exists(projectDir) {
+		return true
+	}
+	if profiles, err := team.ListProfiles(projectDir); err == nil && len(profiles) > 0 {
+		return true
+	}
+	return projectHasDiscoverableSessions(projectDir, resolveBaseRoot)
+}
+
+// projectHasDiscoverableSessions reports whether the resolved AMQ base root has
+// at least one session directory containing an agents/ child (the layout the
+// board scans). It is best-effort: an unresolvable base root or an unreadable
+// directory means "no discoverable sessions", never an error.
+func projectHasDiscoverableSessions(projectDir string, resolveBaseRoot func(string) (string, error)) bool {
+	if resolveBaseRoot == nil {
+		return false
+	}
+	baseRoot, err := resolveBaseRoot(projectDir)
+	if err != nil || strings.TrimSpace(baseRoot) == "" {
+		return false
+	}
+	entries, err := os.ReadDir(baseRoot)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		agentsDir := filepath.Join(baseRoot, e.Name(), "agents")
+		if info, err := os.Stat(agentsDir); err == nil && info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 func dispatch(args []string) error {

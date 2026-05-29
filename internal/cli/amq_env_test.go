@@ -166,6 +166,145 @@ func TestResolveAMQEnvIncludesStderrOnFailure(t *testing.T) {
 	}
 }
 
+// TestChooseProjectBaseRootPrefersAgentMailContainer covers the real-bug fix:
+// `amq env` reports an unreliable base_root when it believes it is "in a
+// session" (base_root points at the project dir, or "."/".."), while the real
+// sessions container — the `.agent-mail` directory — is in `root`. The board
+// scans <baseRoot>/<session>/agents, so chooseProjectBaseRoot must return the
+// candidate whose basename is `.agent-mail` and which exists on disk, across all
+// three observed live layouts.
+func TestChooseProjectBaseRootPrefersAgentMailContainer(t *testing.T) {
+	projectDir := t.TempDir()
+	agentMail := filepath.Join(projectDir, ".agent-mail")
+	// Seed a real session dir so the chosen container exists as a directory.
+	if err := os.MkdirAll(filepath.Join(agentMail, "issue-96", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		env  amqEnv
+	}{
+		{
+			// omri-pm (in_session): base_root points at the PROJECT dir, the
+			// real container is in root=<project>/.agent-mail.
+			name: "in-session base_root is the project dir",
+			env: amqEnv{
+				BaseRoot:  projectDir,
+				Root:      agentMail,
+				InSession: true,
+			},
+		},
+		{
+			// taboola-sales-skills: base_root="." (relative to the project),
+			// root="<project>/.agent-mail" (here as a relative ".agent-mail").
+			name: "relative dot base_root, agent-mail root",
+			env: amqEnv{
+				BaseRoot:  ".",
+				Root:      ".agent-mail",
+				InSession: true,
+			},
+		},
+		{
+			// taboola-pm-os (working): base_root and root both ".agent-mail".
+			name: "working: both base_root and root are .agent-mail",
+			env: amqEnv{
+				BaseRoot: ".agent-mail",
+				Root:     ".agent-mail",
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := chooseProjectBaseRoot(projectDir, c.env)
+			want := agentMail
+			if resolved, err := filepath.EvalSymlinks(agentMail); err == nil {
+				// t.TempDir on darwin lives under /var -> /private/var symlink;
+				// accept either spelling since os.Stat resolves both.
+				if got == resolved {
+					return
+				}
+			}
+			if got != want {
+				t.Errorf("chooseProjectBaseRoot = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestChooseProjectBaseRootFallsBackWhenNoAgentMail proves graceful degradation:
+// when no `.agent-mail` container exists on disk (amq missing or a custom root),
+// chooseProjectBaseRoot returns the resolved base_root (or root when base_root
+// is empty) so downstream degradation is preserved rather than returning "".
+func TestChooseProjectBaseRootFallsBackWhenNoAgentMail(t *testing.T) {
+	projectDir := t.TempDir()
+
+	// No .agent-mail anywhere; a custom absolute root is reported.
+	custom := filepath.Join(projectDir, "custom-mail")
+	got := chooseProjectBaseRoot(projectDir, amqEnv{BaseRoot: custom, Root: custom})
+	if got != custom {
+		t.Errorf("custom-root fallback = %q, want %q", got, custom)
+	}
+
+	// base_root empty -> fall back to root (resolved absolute).
+	got = chooseProjectBaseRoot(projectDir, amqEnv{Root: "weird-root"})
+	want := filepath.Join(projectDir, "weird-root")
+	if got != want {
+		t.Errorf("empty base_root fallback = %q, want %q", got, want)
+	}
+
+	// A relative base_root with no .agent-mail resolves against projectDir.
+	got = chooseProjectBaseRoot(projectDir, amqEnv{BaseRoot: "."})
+	if got != filepath.Clean(projectDir) {
+		t.Errorf("relative dot fallback = %q, want %q", got, projectDir)
+	}
+}
+
+// TestScanBaseRootForProjectReturnsAbsoluteAgentMail proves the integration:
+// even when `amq env` reports the in-session base_root (the project dir) with
+// the real container only in root=<project>/.agent-mail, scanBaseRootForProject
+// returns the ABSOLUTE .agent-mail path the board can scan — not the misleading
+// relative/parent base_root it used to trust.
+func TestScanBaseRootForProjectReturnsAbsoluteAgentMail(t *testing.T) {
+	projectDir := t.TempDir()
+	resolvedProject := projectDir
+	if r, err := filepath.EvalSymlinks(projectDir); err == nil {
+		resolvedProject = r
+	}
+	agentMail := filepath.Join(resolvedProject, ".agent-mail")
+	if err := os.MkdirAll(filepath.Join(agentMail, "issue-96", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Fake amq: report the BROKEN in-session shape — base_root is the project
+	// dir, root is the real .agent-mail container.
+	body := `{"base_root":"` + resolvedProject + `","root":"` + agentMail + `","in_session":true,"session_name":".agent-mail"}`
+	setupFakeAMQEnv(t, body)
+
+	got, err := scanBaseRootForProject(resolvedProject)
+	if err != nil {
+		t.Fatalf("scanBaseRootForProject: %v", err)
+	}
+	if got != agentMail {
+		t.Errorf("scanBaseRootForProject = %q, want the .agent-mail container %q", got, agentMail)
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("scanBaseRootForProject must return an absolute path, got %q", got)
+	}
+}
+
+// TestScanBaseRootForProjectPropagatesAMQError proves the error path is intact:
+// when `amq env` fails the board must still receive the error so its
+// graceful-degradation guidance fires (rather than scanning a bogus root).
+func TestScanBaseRootForProjectPropagatesAMQError(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		"echo 'cannot determine root' >&2\n" +
+		"exit 2\n"
+	setupFakeAMQScript(t, script)
+	if _, err := scanBaseRootForProject(t.TempDir()); err == nil {
+		t.Fatal("expected scanBaseRootForProject to propagate the amq env failure")
+	}
+}
+
 func setupFakeAMQEnv(t *testing.T, body string) {
 	t.Helper()
 	script := "#!/bin/sh\n" +
