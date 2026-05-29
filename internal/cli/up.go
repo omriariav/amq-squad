@@ -33,9 +33,8 @@ Usage:
     [--seed-from REF [--force]] [--dry-run]
 
 Without --dry-run, opens the configured team through the selected terminal
-backend (same path as 'team launch'). With --dry-run, prints one launch
-command per member (same output as 'team show'); the terminal backend is
-not invoked.
+backend. With --dry-run, prints one launch command per member; the terminal
+backend is not invoked.
 
 --seed-from sources (deterministic only in 8A):
   file:<path>            literal file body

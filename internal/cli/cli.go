@@ -144,11 +144,17 @@ func dispatch(args []string) error {
 	case "fork":
 		return runFork(args[1:])
 	case "launch":
-		return runLaunch(args[1:])
+		// Removed in 2.0. Kept as an explicit hint (not unknown-command) for
+		// one release so muscle-memory invocations get a pointer.
+		return usageErrorf("'launch' was removed in 2.0; use 'agent up <binary>' to launch a single agent.")
 	case "restore":
-		return runRestore(args[1:])
+		// Removed in 2.0. Print mode mapped to 'history'; exec mode to
+		// 'agent resume <role>'. Surface both so either intent is covered.
+		return usageErrorf("'restore' was removed in 2.0; use 'history' to list restorable records or 'agent resume <role>' to re-launch one.")
 	case "list":
-		return runList(args[1:])
+		// Removed in 2.0 in favor of 'status' (live agents) / 'history'
+		// (restorable records).
+		return usageErrorf("'list' was removed in 2.0; use 'status' for live agents or 'history' for restorable records.")
 	case "completion":
 		return runCompletion(args[1:])
 	case "doctor":
@@ -167,23 +173,21 @@ Usage:
   amq-squad <command> [options]
 
 Commands:
-  team      Pick your team once, then show or launch it on demand
+  team      Set up and manage the team (init, rules, sync, profiles)
   up        Bring the team up (use --dry-run to print the launch plan)
   down      Stop configured team members (currently --force only)
   status    Live state of this project's configured team
   history   List restorable launch records
   resume    Plan how to bring the team back into the resolved workstream
   fork      Plan fresh launches in a new workstream branched off an existing one
-  launch    Launch a single agent with a role (called by 'team show' output)
-  restore   Restore registered agents from local launch history
-  list      List registered agents across known projects
   completion Emit a shell completion script (bash, zsh, fish)
   doctor    Check this project's amq-squad / AMQ setup
-  agent     Launch or resume a single agent (modern names for launch / restore --exec)
+  agent     Launch or resume a single agent (agent up / agent resume)
   version   Print the amq-squad version
 
-Deprecated verbs (kept through 1.x with one-line deprecation warnings;
-removed in 2.0): team show, team launch, list, launch, restore.
+Removed in 2.0 (each prints a one-line migration hint): launch (use 'agent up'),
+restore (use 'history' or 'agent resume'), list (use 'status' or 'history'),
+team show (use 'up --dry-run'), team launch (use 'up').
 
 Global flags (accepted before or after the subcommand, until a literal "--"):
   --quiet              Suppress non-data success/progress notices.

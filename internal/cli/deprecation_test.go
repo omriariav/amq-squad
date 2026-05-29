@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -8,127 +9,164 @@ import (
 	"github.com/omriariav/amq-squad/internal/team"
 )
 
-// TestDeprecationWarningFormat documents the exact one-line shape so
-// downstream scripts/parsers can rely on it.
-func TestDeprecationWarningFormat(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error {
-		deprecationWarning("team show", "up --dry-run")
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
+// The five legacy verbs (top-level launch/restore/list and team show/launch)
+// were removed in 2.0. Each must return a UsageError (exit 1) whose message
+// names the modern replacement -- a helpful migration hint, NOT a silent
+// unknown-command. These tests pin both the exit classification and the hint.
+
+// assertRemovedHint runs args through the public Run dispatcher and asserts it
+// returns a UsageError (exit 1) whose message contains each wanted substring.
+func assertRemovedHint(t *testing.T, args []string, wants ...string) {
+	t.Helper()
+	_, _, err := captureOutput(t, func() error { return Run(args, "test") })
+	if err == nil {
+		t.Fatalf("Run %v: want UsageError, got nil", args)
 	}
-	want := "warning: 'team show' is deprecated and will be removed in 2.0; use 'up --dry-run' instead\n"
-	if stderr != want {
-		t.Errorf("deprecation line = %q, want %q", stderr, want)
+	var ue UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("Run %v: want UsageError (exit 1), got %T: %v", args, err, err)
+	}
+	if code := ExitCode(err); code != ExitUser {
+		t.Errorf("Run %v: want exit %d, got %d", args, ExitUser, code)
+	}
+	for _, want := range wants {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Run %v: error %q missing hint %q", args, err.Error(), want)
+		}
 	}
 }
 
-func TestTeamShowEmitsDeprecationWarning(t *testing.T) {
-	seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
-		},
-	})
+func TestLaunchVerbRemovedWithHint(t *testing.T) {
+	assertRemovedHint(t, []string{"launch", "codex"}, "removed in 2.0", "agent up")
+}
+
+func TestRestoreVerbRemovedWithHint(t *testing.T) {
+	// The restore hint must name both the print-mode replacement (history)
+	// and the exec-mode replacement (agent resume).
+	assertRemovedHint(t, []string{"restore", "--exec", "--role", "cto"},
+		"removed in 2.0", "history", "agent resume")
+}
+
+func TestListVerbRemovedWithHint(t *testing.T) {
+	assertRemovedHint(t, []string{"list"}, "removed in 2.0", "status", "history")
+}
+
+func TestTeamShowRemovedWithHint(t *testing.T) {
+	assertRemovedHint(t, []string{"team", "show"}, "removed in 2.0", "up --dry-run")
+}
+
+func TestTeamLaunchRemovedWithHint(t *testing.T) {
+	assertRemovedHint(t, []string{"team", "launch"}, "removed in 2.0", "up")
+}
+
+// The removed verbs must not be silently swallowed as unknown-command: the
+// hint text proves we routed to the dedicated removal message, not the
+// generic "unknown command" branch.
+func TestRemovedVerbsAreNotUnknownCommand(t *testing.T) {
+	cases := [][]string{
+		{"launch"},
+		{"restore"},
+		{"list"},
+		{"team", "show"},
+		{"team", "launch"},
+	}
+	for _, args := range cases {
+		_, _, err := captureOutput(t, func() error { return Run(args, "test") })
+		if err == nil {
+			t.Errorf("Run %v: want UsageError, got nil", args)
+			continue
+		}
+		if strings.Contains(err.Error(), "unknown command") || strings.Contains(err.Error(), "unknown 'team' subcommand") {
+			t.Errorf("Run %v: removed verb should emit a migration hint, not unknown-command: %q", args, err.Error())
+		}
+	}
+}
+
+// MODERN verbs that depend on the relocated launcher/replay/preview bodies
+// must keep working unchanged. These guard against the silent-breakage trap:
+// removing the dispatch must not strip the logic the modern verbs call.
+
+// agent up still drives the real launcher body (runLaunch). --dry-run proves
+// the launch flags were parsed and the coop-exec command was built.
+func TestAgentUpDryRunStillWorks(t *testing.T) {
+	withOutputPolicy(t, outputPolicy{})
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamShow([]string{"--no-bootstrap"})
+		return runAgentUp([]string{"codex", "--dry-run", "--no-bootstrap"})
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("agent up --dry-run: %v\nstderr:\n%s", err, stderr)
 	}
-	if !strings.Contains(stderr, "'team show' is deprecated") || !strings.Contains(stderr, "use 'up --dry-run'") {
-		t.Errorf("team show stderr should carry the deprecation line, got:\n%s", stderr)
+	if !strings.Contains(stdout, "amq coop exec") {
+		t.Errorf("agent up --dry-run should print the coop exec command on stdout, got:\n%s", stdout)
 	}
-	// Warning must not leak onto stdout (the launch-plan output channel).
-	if strings.Contains(stdout, "deprecated") {
-		t.Errorf("team show stdout polluted with deprecation warning:\n%s", stdout)
+	if !strings.Contains(stderr, "(dry run - no files written, not execing)") {
+		t.Errorf("agent up --dry-run should honor the launch flag; got stderr:\n%s", stderr)
+	}
+	// The removed-verb warning machinery is gone: no deprecation line.
+	if strings.Contains(stderr, "deprecated") {
+		t.Errorf("agent up must not emit any deprecation line:\n%s", stderr)
 	}
 }
 
-func TestTeamLaunchEmitsDeprecationWarning(t *testing.T) {
-	seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
-		},
-	})
-	_, stderr, err := captureOutput(t, func() error {
-		return runTeamLaunch([]string{"--dry-run", "--no-bootstrap"})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stderr, "'team launch' is deprecated") || !strings.Contains(stderr, "use 'up'") {
-		t.Errorf("team launch stderr should carry the deprecation line, got:\n%s", stderr)
-	}
-}
-
-func TestTeamLaunchFreshSessionHintsAtFork(t *testing.T) {
-	dir := seedTeam(t, team.Team{
-		Workstream: "issue-96",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	_ = dir
-	setupFakeAMQSessionRoots(t)
-	_, stderr, err := captureOutput(t, func() error {
-		return runTeamLaunch([]string{"--dry-run", "--fresh", "--session", "issue-97", "--no-bootstrap"})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stderr, "fork --from issue-96 --as issue-97") {
-		t.Errorf("team launch --fresh --session X should hint at fork --from <current> --as X; got:\n%s", stderr)
-	}
-}
-
-func TestListEmitsDeprecationWarning(t *testing.T) {
+// agent resume still routes through the replay body (runRestore --exec --role).
+// In an empty dir it surfaces the "no matching records" scan error -- proving
+// the replay/scan body is reachable -- with no deprecation noise.
+func TestAgentResumeRoutingStillWorks(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
+	_, stderr, err := captureOutput(t, func() error {
+		return runAgentResume([]string{"cto"})
+	})
+	if err == nil {
+		t.Fatal("agent resume in an empty dir should surface a scan error")
+	}
+	if !strings.Contains(err.Error(), "no matching launch.json records") {
+		t.Errorf("agent resume should reach the replay/scan body; got: %v", err)
+	}
+	if strings.Contains(stderr, "deprecated") || strings.Contains(stderr, "'restore'") {
+		t.Errorf("agent resume must not surface any legacy restore warning:\n%s", stderr)
+	}
+}
+
+// Top-level resume still emits replay commands via emitCommand* / the restore
+// helpers. It must run without error and reference the modern agent up shape.
+func TestTopLevelResumeStillWorks(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+		},
+	})
+	setupFakeAMQSessionRoots(t)
+	stdout, _, err := captureOutput(t, func() error {
+		return runResume([]string{"--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if !strings.Contains(stdout, "agent up") {
+		t.Errorf("resume should emit modern 'agent up' replay commands, got:\n%s", stdout)
+	}
+}
+
+// up --dry-run still drives the team preview body (emitTeamCommands). It must
+// print one launch command per member with no deprecation noise.
+func TestUpDryRunStillWorks(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+		},
+	})
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runList(nil)
+		return runUp([]string{"--dry-run", "--no-bootstrap"})
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("up --dry-run: %v\nstderr:\n%s", err, stderr)
 	}
-	if !strings.Contains(stderr, "'list' is deprecated") {
-		t.Errorf("list stderr should carry the deprecation line, got:\n%s", stderr)
+	if !strings.Contains(stdout, "agent up") {
+		t.Errorf("up --dry-run should print modern 'agent up' launch commands, got:\n%s", stdout)
 	}
-	// JSON callers must see pure JSON on stdout.
-	_, stderrJSON, err := captureOutput(t, func() error {
-		return runList([]string{"--json"})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stderrJSON, "deprecated") {
-		t.Errorf("list --json should still emit deprecation on stderr:\n%s", stderrJSON)
-	}
-	_ = stdout
-}
-
-func TestLaunchEmitsDeprecationWarning(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error {
-		return runLaunch([]string{"--dry-run", "--no-bootstrap", "codex"})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stderr, "'launch' is deprecated") || !strings.Contains(stderr, "agent up") {
-		t.Errorf("launch stderr should carry deprecation -> agent up, got:\n%s", stderr)
-	}
-}
-
-// When agent up delegates to runLaunch, the legacy warning must NOT fire.
-func TestAgentUpDoesNotEmitDeprecationWarning(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error {
-		return runAgentUp([]string{"--dry-run", "--no-bootstrap", "codex"})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(stderr, "'launch' is deprecated") {
-		t.Errorf("agent up must not surface the legacy launch warning:\n%s", stderr)
+	if strings.Contains(stderr, "deprecated") {
+		t.Errorf("up --dry-run must not emit any deprecation line:\n%s", stderr)
 	}
 }
 
@@ -191,107 +229,29 @@ func TestAgentUpHonorsPostBinaryFlags(t *testing.T) {
 	}
 }
 
-func TestRestoreEmitsDeprecationWarning(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	t.Run("print mode -> history hint", func(t *testing.T) {
-		// In an empty dir restore returns a "no matching records" error;
-		// the deprecation warning is what we care about.
-		_, stderr, _ := captureOutput(t, func() error { return runRestore(nil) })
-		if !strings.Contains(stderr, "'restore' is deprecated") || !strings.Contains(stderr, "history") {
-			t.Errorf("restore stderr should hint history, got:\n%s", stderr)
-		}
-	})
-	t.Run("exec mode -> agent resume hint", func(t *testing.T) {
-		// --exec without a match returns a system error; we only care that the
-		// deprecation hint targets agent resume R.
-		_, stderr, _ := captureOutput(t, func() error {
-			return runRestore([]string{"--exec", "--role", "cto"})
-		})
-		if !strings.Contains(stderr, "agent resume R") {
-			t.Errorf("restore --exec --role R should hint agent resume R, got:\n%s", stderr)
-		}
-	})
-}
-
-// agent resume must NOT surface the legacy restore warning when it
-// delegates internally.
-func TestAgentResumeDoesNotEmitRestoreWarning(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	_, stderr, _ := captureOutput(t, func() error {
-		return runAgentResume([]string{"cto"})
-	})
-	if strings.Contains(stderr, "'restore'") {
-		t.Errorf("agent resume must not surface the legacy restore warning:\n%s", stderr)
-	}
-}
-
-// Help paths on every deprecated verb must NOT emit the deprecation line.
-func TestDeprecatedHelpPathsAreQuiet(t *testing.T) {
-	cases := [][]string{
-		{"team", "show", "--help"},
-		{"team", "launch", "--help"},
-		{"list", "--help"},
-		{"launch", "--help"},
-		{"restore", "--help"},
-	}
-	for _, args := range cases {
-		_, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
-		if err != nil {
-			t.Errorf("Run %v: %v", args, err)
-		}
-		if strings.Contains(stderr, "deprecated") {
-			t.Errorf("Run %v: help path should not emit deprecation warning, got:\n%s", args, stderr)
-		}
-	}
-}
-
-// JSON callers on deprecated verbs must still get pure JSON on stdout;
-// warning goes to stderr.
-func TestDeprecatedJSONStdoutPure(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	stdout, _, err := captureOutput(t, func() error {
-		return runList([]string{"--json"})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stdout, `"schema_version"`) {
-		t.Errorf("list --json stdout should be JSON envelope:\n%s", stdout)
-	}
-	if strings.Contains(stdout, "deprecated") {
-		t.Errorf("list --json stdout polluted with warning:\n%s", stdout)
-	}
-}
-
-// --quiet must NOT suppress the deprecation warning (warnings != notices).
-func TestDeprecationWarningSurvivesQuiet(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	withOutputPolicy(t, outputPolicy{Quiet: true})
-	_, stderr, err := captureOutput(t, func() error {
-		return runList(nil)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stderr, "'list' is deprecated") {
-		t.Errorf("--quiet should not suppress the deprecation line; got stderr:\n%s", stderr)
-	}
-}
-
-// Completion scripts include 'agent' (modern verb) without scaring the
-// legacy verbs off the list per Step 12 contract.
-func TestCompletionIncludesAgentAndKeepsLegacyVerbs(t *testing.T) {
+// Completion scripts must include the modern 'agent' verb and must NOT
+// complete the removed legacy verbs (launch, restore, list) or the removed
+// team subcommands (show, launch).
+func TestCompletionDropsRemovedVerbs(t *testing.T) {
 	stdout, _, err := captureOutput(t, func() error { return runCompletion([]string{"bash"}) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"agent", "team", "up", "down", "list", "launch", "restore"} {
+	for _, want := range []string{"agent", "team", "up", "down"} {
 		if !strings.Contains(stdout, want) {
-			t.Errorf("bash completion missing %q", want)
+			t.Errorf("bash completion missing modern verb %q", want)
+		}
+	}
+	// Top-level removed verbs must be gone from the top-command list.
+	for _, gone := range []string{"launch", "restore", "list"} {
+		if containsString(completionTopCommands, gone) {
+			t.Errorf("completionTopCommands should not list removed verb %q", gone)
+		}
+	}
+	// Removed team subcommands must be gone from the team-subcommand list.
+	for _, gone := range []string{"show", "launch"} {
+		if containsString(completionTeamSubcommands, gone) {
+			t.Errorf("completionTeamSubcommands should not list removed subcommand %q", gone)
 		}
 	}
 }

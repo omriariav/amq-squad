@@ -13,27 +13,15 @@ import (
 	"github.com/omriariav/amq-squad/internal/team"
 )
 
-// restoreFromAgentResume is set by runAgentResume so the legacy verb
-// warning fires only when the operator typed `amq-squad restore --exec ...`
-// directly, not when the modern `agent resume R` entry point delegates.
-var restoreFromAgentResume bool
-
 type restoreCandidate struct {
 	entry launch.Entry
 }
 
+// runRestore holds the real replay/scan logic. The top-level `restore` verb
+// was removed in 2.0; this body now backs `agent resume <role>` (via
+// runAgentResume, which forwards `--exec --role <role>`). It is internal-only
+// and carries no deprecation surface of its own.
 func runRestore(args []string) error {
-	if !restoreFromAgentResume && !isHelpInvocation(args) {
-		// Restore print mode and `restore --exec --role R` are both legacy
-		// surfaces. Print mode maps to `history`; --exec --role to
-		// `agent resume R`. The replacement hint differs based on whether
-		// --exec is set, so callers see actionable next-step text.
-		if argsContains(args, "--exec") {
-			deprecationWarning("restore --exec --role R", "agent resume R")
-		} else {
-			deprecationWarning("restore", "history (records) or agent resume <role> (exec)")
-		}
-	}
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	projectDirs := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")
 	execRestore := fs.Bool("exec", false, "exec the selected launch in this terminal")
@@ -43,20 +31,17 @@ func runRestore(args []string) error {
 	conversationFilter := fs.String("conversation", "", "only consider records with this conversation name/id")
 
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad restore - restore registered agents from local launch history
+		fmt.Fprint(os.Stderr, `amq-squad agent resume - re-launch a saved agent by role
 
 Usage:
-  amq-squad restore [--project dir1,dir2,...] [--role r] [--handle h] [--session s] [--conversation ref]
-  amq-squad restore --exec --role cto
+  amq-squad agent resume <role> [--handle h] [--session s] [--conversation ref] [--project dir1,dir2,...]
 
 Scans each project for amq-squad extension launch records, nearby role.md
 persona files, and older AMQ mailbox history when launch.json is missing and
 the original binary can be inferred. Default scope is the current working
-directory if --project is omitted. Without --exec, prints a bash command per
-matching agent.
-
-With --exec, exactly one record must match; amq-squad changes to that
-record's cwd and execs the saved launch through 'amq coop exec'.
+directory if --project is omitted. Exactly one record must match; amq-squad
+changes to that record's cwd and execs the saved launch through
+'amq coop exec'. Use 'amq-squad history' to list restorable records.
 
 For records that look active, the metadata line includes wake-health:
   wake: pid:N    - wake.lock present and the wake process is alive
@@ -64,8 +49,8 @@ For records that look active, the metadata line includes wake-health:
   wake: stale    - wake.lock present but the PID is dead or unrelated
 
 Examples:
-  amq-squad restore
-  amq-squad restore --role cto --exec
+  amq-squad agent resume cto
+  amq-squad agent resume fullstack --session issue-96
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {

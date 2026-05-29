@@ -64,9 +64,6 @@ var completionTopCommands = []string{
 	"history",
 	"resume",
 	"fork",
-	"launch",
-	"restore",
-	"list",
 	"agent",
 	"completion",
 	"doctor",
@@ -83,8 +80,6 @@ var completionAgentSubcommands = []string{
 // completionTeamSubcommands lists the `amq-squad team` subcommands.
 var completionTeamSubcommands = []string{
 	"init",
-	"show",
-	"launch",
 	"resume",
 	"rules",
 	"sync",

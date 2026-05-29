@@ -610,18 +610,18 @@ func TestRunTeamResumeFooterSuppressedWhenAnyRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runTeamResume: %v", err)
 	}
-	if strings.Contains(stdout, "team launch --session") {
+	if strings.Contains(stdout, "up --session") {
 		t.Errorf("footer alternative must be suppressed when any row is restore:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "not equivalent to the per-member plan") {
-		t.Errorf("footer should explain that team launch is not equivalent:\n%s", stdout)
+		t.Errorf("footer should explain that the up alternative is not equivalent:\n%s", stdout)
 	}
 }
 
 // Combined regression for the live+forced+recorded case: action stays
 // 'live' but the emitted command is a forced restore. The footer must
-// still be suppressed because 'team launch' would re-emit fresh commands
-// from team intent and not reproduce the restore semantics above.
+// still be suppressed because 'up' would re-emit fresh commands from team
+// intent and not reproduce the restore semantics above.
 func TestRunTeamResumeFooterSuppressedForLiveForcedRestore(t *testing.T) {
 	dir := t.TempDir()
 	base := setupFakeAMQSessionRoots(t)
@@ -667,9 +667,9 @@ func TestRunTeamResumeFooterSuppressedForLiveForcedRestore(t *testing.T) {
 	if strings.Contains(stdout, "--no-bootstrap") {
 		t.Errorf("re-orient live+forced restore (no saved conversation) must not emit --no-bootstrap, got:\n%s", stdout)
 	}
-	// Footer must be suppressed: 'team launch --session ...' would re-emit
-	// fresh from team intent and not reproduce the restore semantics.
-	if strings.Contains(stdout, "team launch --session") {
+	// Footer must be suppressed: 'up --session ...' would re-emit fresh from
+	// team intent and not reproduce the restore semantics.
+	if strings.Contains(stdout, "up --session") {
 		t.Errorf("footer must be suppressed for live+forced+recorded restore:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "not equivalent to the per-member plan") {
@@ -699,8 +699,8 @@ func TestRunTeamResumeFooterCarriesForceDuplicateOnAllFresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runTeamResume --force-duplicate: %v", err)
 	}
-	if !strings.Contains(stdout, "team launch --session 'issue-96' --force-duplicate") &&
-		!strings.Contains(stdout, "team launch --session issue-96 --force-duplicate") {
+	if !strings.Contains(stdout, "up --session 'issue-96' --force-duplicate") &&
+		!strings.Contains(stdout, "up --session issue-96 --force-duplicate") {
 		t.Errorf("footer should carry --force-duplicate, got:\n%s", stdout)
 	}
 }
