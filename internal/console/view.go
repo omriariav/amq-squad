@@ -793,15 +793,17 @@ func sortByTime(threads []state.ThreadSummary) {
 //
 // The triage numbers are THREAD counts, so the headline labels them as such
 // ("blocked threads") and separates each concept with " · " — a reader never
-// conflates the per-session agent liveness with the thread triage tallies.
+// conflates the per-session agent liveness with the thread triage tallies. Each
+// noun is pluralized on its own count, exactly like sessions, so a single one
+// reads "1 blocked thread" rather than "1 blocked threads".
 func rollupHeadline(snap state.Snapshot) string {
 	r := snap.Rollup
 	sessions := len(snap.Sessions)
 	parts := []string{
 		fmt.Sprintf("%d %s", sessions, plural(sessions, "session", "sessions")),
-		styleNeedsYou.Render(fmt.Sprintf("%d needs-you", r.NeedsYou)),
-		styleAtRisk.Render(fmt.Sprintf("%d at-risk", r.AtRisk)),
-		styleBlocked.Render(fmt.Sprintf("%d blocked threads", r.Blocked)),
+		styleNeedsYou.Render(fmt.Sprintf("%d needs-you %s", r.NeedsYou, plural(r.NeedsYou, "thread", "threads"))),
+		styleAtRisk.Render(fmt.Sprintf("%d at-risk %s", r.AtRisk, plural(r.AtRisk, "thread", "threads"))),
+		styleBlocked.Render(fmt.Sprintf("%d blocked %s", r.Blocked, plural(r.Blocked, "thread", "threads"))),
 	}
 	return "amq-squad mission control · " + strings.Join(parts, " · ")
 }

@@ -188,7 +188,7 @@ Commands:
   stop      Stop configured team members (SIGTERM; --force = SIGKILL). State is
             preserved on disk, so the session stays resumable.
   down      Deprecated alias for 'stop' (works for one release)
-  status    Live state of this project's configured team
+  status    Multi-session board (also the bare 'amq-squad'); --session for detail
   console   Read-only Mission Control TUI over all sessions (--once for CI)
   history   List restorable launch records
   resume    Plan how to bring the team back into the resolved workstream

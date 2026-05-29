@@ -17,14 +17,14 @@ This skill never replaces `amq-squad`. It targets the one-time decisions that su
 - **Member cwds.** Each role runs its agent process from a specific directory; QA may live in a different repo.
 - **Team rules.** Authoring `.amq-squad/team-rules.md` from the sibling `../amq-squad/references/team-rules-template.md`. Source of truth for the whole team.
 - **Pointer stubs.** Writing/refreshing the managed block in `CLAUDE.md` / `AGENTS.md` via `amq-squad team sync --apply`.
-- **Workstream brief.** Previewing candidate brief content with `amq-squad up --dry-run --seed-from file:` / `issue:` / `gh:` and, when staying read-only, hand-authoring `.amq-squad/briefs/<session>.md`. The live form (`up --seed-from REF`) writes the brief and brings the team up in one call, so it belongs to the first-launch handoff in step 8.
+- **Workstream brief.** Previewing candidate brief content with `amq-squad up --dry-run --seed-from file:` / `issue:` / `gh:` and, when staying read-only, hand-authoring `.amq-squad/briefs/<session>.md`. Decide the brief BEFORE `up`: with a `--seed-from` source the live `up` authors the brief; with no source `up` AUTO-STUBS the brief and prints a one-line notice (so CI/send-keys keep working) — fine, but hand-author or seed first if you want a real goal in place. The live form (`up --seed-from REF`) writes the brief and brings the team up in one call, so it belongs to the first-launch handoff in step 8.
 - **Pre-launch validation.** `amq-squad up --dry-run`, `amq-squad team sync`, `amq-squad doctor` before any live launch.
 
-After all of that, hand off to the `amq-squad` skill for drains, routing, status/history, resume, fork.
+After all of that, hand off to the `amq-squad` skill for drains, routing, status board/console/history, resume, fork.
 
 ## Context model
 
-The 1.0 model is three durable layers; setup creates and aligns them, ongoing coordination consumes them.
+The context model is three durable layers; setup creates and aligns them, ongoing coordination consumes them.
 
 - **`.amq-squad/team-rules.md`** - durable team norms. Single source of truth. Never duplicated into other files.
 - **`<agent-dir>/role.md`** - per-agent persona / system prompt. Seeded on first `up`; the user can edit freely; later launches preserve user edits.
@@ -97,8 +97,9 @@ Global output flags work before or after the subcommand: `--quiet`, `--verbose`,
    - `amq-squad doctor` - AMQ version / tmux / wake / markers.
 
 8. **Hand off to the `amq-squad` skill for first live launch.**
-   - Once dry-run looks right and the user explicitly approves going live, the first live launch belongs to the `amq-squad` skill. `amq-squad up --seed-from REF` writes `.amq-squad/briefs/<session>.md` and brings the team up in one call (use `--force` to overwrite an existing brief). If a brief was hand-authored in step 6, plain `amq-squad up` preserves it.
-   - Everything after first launch (drains, routing, status/history, down/resume/fork, agent up/resume, doctor) also lives in the `amq-squad` skill.
+   - Once dry-run looks right and the user explicitly approves going live, the first live launch belongs to the `amq-squad` skill. `amq-squad up [<session>] --seed-from REF` writes `.amq-squad/briefs/<session>.md` and brings the team up in one call (use `--force` to overwrite an existing brief). With no `--seed-from` the brief auto-stubs (one-line notice). If a brief was hand-authored in step 6, plain `amq-squad up` preserves it.
+   - `up` is NEW work and refuses a session that already exists — continuing or restarting an existing session (`resume`, `up --reset`) is the companion skill's job.
+   - Everything after first launch (drains, routing, status board/console/history, stop/resume/fork/rm/archive, agent up/resume, doctor) also lives in the `amq-squad` skill.
 
 ## Rules
 
@@ -126,4 +127,4 @@ Global output flags work before or after the subcommand: `--quiet`, `--verbose`,
 
 ## Companion skill
 
-Live coordination after setup - drains, routing, status/history, up/down/resume/fork, agent up/resume, doctor - belongs to the `amq-squad` skill. Switch to it as soon as `up --dry-run` is clean and the user is ready to launch.
+Live coordination after setup - drains, routing, status board/console/history, up/stop/resume/fork/rm/archive (down is a deprecated alias), agent up/resume, doctor - belongs to the `amq-squad` skill. Switch to it as soon as `up --dry-run` is clean and the user is ready to launch.

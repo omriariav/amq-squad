@@ -343,7 +343,7 @@ func TestStaticBoardHeadlineLabelsBlockedThreads(t *testing.T) {
 		Rollup:   state.TriageRollup{NeedsYou: 2, AtRisk: 1, Blocked: 3},
 	}
 	board := StaticBoard(snap, onceClock)
-	if !contains(board, "2 needs-you · 1 at-risk · 3 blocked threads") {
-		t.Errorf("headline should label triage as thread counts with ' · ' separators:\n%s", board)
+	if !contains(board, "2 needs-you threads · 1 at-risk thread · 3 blocked threads") {
+		t.Errorf("headline should label triage as thread counts with ' · ' separators, each noun pluralized on its own count:\n%s", board)
 	}
 }

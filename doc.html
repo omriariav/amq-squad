@@ -486,7 +486,7 @@
         <div class="mark">AQ</div>
         <div>
           <strong>amq-squad</strong>
-          <span>1.0 guide</span>
+          <span>2.0 guide</span>
         </div>
       </div>
       <nav aria-label="Guide sections">
@@ -497,12 +497,14 @@
         <a href="#briefs">Workstream briefs</a>
         <a href="#profiles">Profiles</a>
         <a href="#verbs">Verbs</a>
+        <a href="#console">Status board and console</a>
         <a href="#json">JSON and exit codes</a>
         <a href="#completion">Shell completions</a>
         <a href="#workstreams">Sessions and threads</a>
         <a href="#cross">Cross-project teams</a>
         <a href="#files">Files</a>
-        <a href="#deprecated">Deprecated 1.x verbs</a>
+        <a href="#removed">Removed in 2.0</a>
+        <a href="#migrating">Migrating from 1.x</a>
         <a href="#troubleshooting">Troubleshooting</a>
       </nav>
       <div class="side-note">
@@ -516,19 +518,23 @@
     <main>
       <header class="hero">
         <div class="hero-inner">
-          <p class="eyebrow">1.0 guide</p>
+          <p class="eyebrow">2.0 guide</p>
           <h1>How to use amq-squad</h1>
           <p class="lead">
             amq-squad is the project layer above AMQ. It records who is on the
             team, what role each agent plays, which binary each role runs, and
-            how to bring the whole team up, down, back, or into a new
-            workstream. The 1.0 verb model centers on
-            <code class="inline-code">up</code>,
-            <code class="inline-code">down</code>,
-            <code class="inline-code">resume</code>, and
-            <code class="inline-code">fork</code>, with
-            <code class="inline-code">status</code> /
-            <code class="inline-code">history</code> /
+            how to bring a workstream up, stop it, resume it, or fork it. The
+            2.0 verb model centers on a small lifecycle —
+            <code class="inline-code">up</code> (NEW work),
+            <code class="inline-code">stop</code> (the primary teardown;
+            <code class="inline-code">down</code> is a deprecated alias),
+            <code class="inline-code">resume</code>,
+            <code class="inline-code">rm</code> /
+            <code class="inline-code">archive</code>, and
+            <code class="inline-code">fork</code> — with
+            <code class="inline-code">status</code> (a multi-session board),
+            <code class="inline-code">console</code> (read-only Mission Control),
+            <code class="inline-code">history</code>, and
             <code class="inline-code">doctor</code> for inspection.
           </p>
           <div class="hero-grid" aria-label="Key concepts">
@@ -552,17 +558,22 @@
         <div class="content">
           <h2>Install</h2>
           <p>
-            Install the published binary with Go. The command below installs
+            2.0 moved the module to a <code class="inline-code">/v2</code> import
+            path (Go semantic import versioning), so the
+            <code class="inline-code">go install</code> path carries the
+            <code class="inline-code">/v2/</code> segment. The command installs
             into <code class="inline-code">$GOBIN</code> or
             <code class="inline-code">$HOME/go/bin</code>.
           </p>
-          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/cmd/amq-squad@latest
+          <div class="code"><pre><code>go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.0.0
 amq-squad version</code></pre></div>
           <p>
             You also need Go 1.25 or newer, the <code class="inline-code">amq</code>
             binary on <code class="inline-code">PATH</code> at v0.34 or newer, and
             <code class="inline-code">tmux</code> on <code class="inline-code">PATH</code>
-            for <code class="inline-code">amq-squad up</code>.
+            for <code class="inline-code">amq-squad up</code>. Upgrading from 1.x?
+            See <a href="#migrating">Migrating from 1.x</a> — the verb model and
+            the install path both changed.
           </p>
         </div>
       </section>
@@ -594,7 +605,7 @@ amq-squad version</code></pre></div>
             <article class="model-panel">
               <header>amq-squad owns teams</header>
               <div class="body">
-                <p>amq-squad stores the roster, team rules, per-session briefs, member cwds, and saved launch records. It brings the team up, down, back, or into a new workstream.</p>
+                <p>amq-squad stores the roster, team rules, per-session briefs, member cwds, and saved launch records. It brings a workstream up, stops it, resumes it, removes it, or forks it into a new one.</p>
                 <div class="pill-row">
                   <span class="pill">team profiles</span>
                   <span class="pill">team rules</span>
@@ -635,8 +646,8 @@ amq-squad version</code></pre></div>
             </div>
             <div class="step">
               <span class="num">4</span>
-              <b>up</b>
-              <span>Bring the team up live in tmux.</span>
+              <b>up &lt;name&gt;</b>
+              <span>NEW work: bring the team up live in tmux.</span>
             </div>
           </div>
 
@@ -644,16 +655,69 @@ amq-squad version</code></pre></div>
 
 amq-squad team init                  # write .amq-squad/team.json + team-rules.md
 amq-squad team sync --apply          # sync pointer stub into CLAUDE.md / AGENTS.md
-amq-squad up --dry-run               # preview the launch plan
-amq-squad up                         # open the team live in tmux
 
-amq-squad status                     # live state of configured members
-amq-squad history                    # restorable launch records for this project
+amq-squad up --dry-run               # preview the launch plan
+amq-squad up issue-96                # NEW work: bring the team up live in tmux
+
+amq-squad                            # bare command -> multi-session status board
+amq-squad status --session issue-96  # single-session detail
+amq-squad console                    # live read-only Mission Control TUI
 amq-squad doctor                     # AMQ version / tmux / wake / markers
 
-amq-squad down --all --force         # SIGTERM the team
-amq-squad resume                     # plan recovery after reboot / upgrade / close
-amq-squad fork --from &lt;cur&gt; --as &lt;new&gt;  # branch a fresh workstream</code></pre></div>
+amq-squad stop --all                 # SIGTERM the team (--force = SIGKILL); stays resumable
+amq-squad resume                     # re-orient / reattach the saved session
+amq-squad fork --from issue-96 --as issue-96-review  # branch a fresh workstream
+amq-squad rm issue-96                # the only destructive op (confirm-gated; or `archive`)</code></pre></div>
+
+          <h3>The 2.0 lifecycle</h3>
+          <p>
+            A session moves through one small state machine:
+            <code class="inline-code">(none) --up--&gt; running --stop--&gt; stopped --rm/archive--&gt; (none)</code>,
+            with <code class="inline-code">resume</code> returning a stopped
+            session to running.
+          </p>
+          <ul>
+            <li>
+              <strong>up [&lt;name&gt;]</strong> means NEW work. It REFUSES a
+              session that already exists — use
+              <code class="inline-code">resume</code> to continue it,
+              <code class="inline-code">up --reset</code> to start it over
+              (destructive; confirm-gated unless <code class="inline-code">--yes</code>),
+              or pick a new name. With no
+              <code class="inline-code">--seed-from</code>/<code class="inline-code">--brief</code>
+              the brief AUTO-STUBS and prints a one-line notice so CI and
+              send-keys flows keep working.
+            </li>
+            <li>
+              <strong>stop</strong> is the primary teardown: SIGTERM the live
+              agents (<code class="inline-code">--force</code> = SIGKILL) but
+              PRESERVE on-disk state, so the session stays resumable.
+              <code class="inline-code">down</code> is a deprecated alias for one
+              release.
+            </li>
+            <li>
+              <strong>resume</strong> re-orients a stopped session. If an agent
+              has a saved conversation, amq-squad reattaches it; otherwise it
+              re-runs bootstrap so the agent re-reads its brief and AMQ history.
+              It does NOT replay prior hidden reasoning.
+            </li>
+            <li>
+              <strong>rm / archive</strong> are the only destructive ops. Both
+              are confirm-gated (<code class="inline-code">--yes</code> to skip)
+              and refuse a session with live agents unless
+              <code class="inline-code">--force</code>.
+              <code class="inline-code">rm</code> deletes the session root +
+              brief; <code class="inline-code">archive</code> moves them aside,
+              recoverable.
+            </li>
+            <li>
+              A <strong>restart</strong> is just
+              <code class="inline-code">stop</code> then
+              <code class="inline-code">resume</code> (same session), or
+              <code class="inline-code">rm</code>/<code class="inline-code">archive</code>
+              then a fresh <code class="inline-code">up</code>.
+            </li>
+          </ul>
 
           <h3>tmux targets</h3>
           <p>
@@ -688,14 +752,15 @@ amq-squad up --session v1-0-0-qa --terminal tmux --target current-window --layou
             rather than guessing a target.
           </p>
           <p>
-            If the AMQ workstream already exists, omit
-            <code class="inline-code">--fresh</code>. Stop the old team first
-            with
-            <code class="inline-code">amq-squad down --all --force --session &lt;workstream&gt;</code>,
-            then run <code class="inline-code">up</code> again from the target
-            tmux window. Add
-            <code class="inline-code">--force-duplicate</code> only when stale
-            live-agent signals remain after the old panes are stopped.
+            <code class="inline-code">up</code> is for NEW work and refuses a
+            session that already exists. To continue an existing session use
+            <code class="inline-code">amq-squad resume</code>; to start it over
+            use <code class="inline-code">amq-squad up --reset</code>
+            (destructive: it tears down and removes the session first, with a
+            confirmation prompt unless <code class="inline-code">--yes</code>).
+            Add <code class="inline-code">--force-duplicate</code> only when stale
+            live-agent signals remain and you deliberately want a second agent
+            alongside.
           </p>
 
           <p>
@@ -799,12 +864,17 @@ amq-squad up --model cto=gpt-5</code></pre></div>
           <div class="code"><pre><code>amq-squad resume
 amq-squad resume --session v1-0-0-review
 amq-squad resume --restore-existing
+amq-squad resume --exec                # actually open the commands in tmux
 amq-squad fork --from v1-0-0 --as v1-0-1</code></pre></div>
           <p>
-            <code class="inline-code">resume</code> reads the team profile,
-            scans local launch history, and inspects live-agent signals (wake
-            locks, agent PIDs, presence). It prints a per-member plan plus
-            copy-pasteable commands. Action labels:
+            <code class="inline-code">resume</code> re-orients an existing
+            session. If an agent has a saved conversation, amq-squad reattaches
+            to it; otherwise it starts the agent fresh and re-runs bootstrap so
+            it re-reads its brief and AMQ history (it does NOT replay prior
+            hidden reasoning). It reads the team profile, scans local launch
+            history, and inspects live-agent signals (wake locks, agent PIDs,
+            presence), then prints a per-member plan plus copy-pasteable
+            commands. Action labels:
           </p>
           <ul>
             <li><strong>live</strong>: matching agent is running; command
@@ -819,13 +889,17 @@ amq-squad fork --from v1-0-0 --as v1-0-1</code></pre></div>
               with <code class="inline-code">--session</code>.</li>
           </ul>
           <p>
-            <code class="inline-code">resume</code> is plan-only and does not
-            mutate disk.
-            Restore and replay rows print modern
+            <code class="inline-code">resume</code> is plan-only by default and
+            does not mutate disk; pass <code class="inline-code">--exec</code> to
+            open the commands through the terminal backend (the same path as
+            <code class="inline-code">up</code>), skipping members that are
+            already live. Restore and replay rows print modern
             <code class="inline-code">agent up &lt;binary&gt;</code> commands,
             preserving saved metadata and adding
             <code class="inline-code">--force-duplicate</code> when a forced
-            live restore is planned.
+            live restore is planned. Use
+            <code class="inline-code">fork --from &lt;current&gt; --as &lt;new&gt;</code>
+            for a NEW workstream.
           </p>
         </div>
       </section>
@@ -834,7 +908,7 @@ amq-squad fork --from v1-0-0 --as v1-0-1</code></pre></div>
         <div class="content">
           <h2>Context model</h2>
           <p>
-            The 1.0 context model has three durable layers. Each layer has
+            The context model has three durable layers. Each layer has
             exactly one source of truth.
           </p>
           <div class="table-wrap">
@@ -976,34 +1050,61 @@ amq-squad team sync [--apply] [--allow-outside]
 amq-squad team profiles [--json]  List configured profiles (default + named).</code></pre></div>
 
           <h3>Workstream lifecycle</h3>
-          <div class="code"><pre><code>amq-squad up [--profile NAME] [--session ws] [--dry-run] [--json]
-             [--seed-from file:|issue:|gh: [--force]]
+          <div class="code"><pre><code>amq-squad up [&lt;session&gt;] [--profile NAME] [--session ws] [--reset [--yes] [--force]]
+             [--dry-run] [--json] [--seed-from file:|issue:|gh: [--force]]
              [--terminal tmux] [--target current-window|new-session]
              [--layout vertical|horizontal|tiled] [--terminal-session name]
              [--stagger 750ms] [--no-bootstrap] [--force-duplicate]
-                                  Bring the team up live or print the plan with --dry-run.
-amq-squad down [--all | --role R] --force
-                                  SIGTERM members. Without --force the verb refuses.
+                                  NEW work. Bring the team up live or print the plan with
+                                  --dry-run. REFUSES a session that already exists (use
+                                  `resume`, or `up --reset` to start over). Name comes from
+                                  the &lt;session&gt; positional or --session (both is an error);
+                                  inferred otherwise. With no --seed-from/--brief the brief
+                                  AUTO-STUBS (one-line notice) so CI/send-keys keep working.
+amq-squad stop [--all | --role R] [--force]
+                                  Stop members: SIGTERM the live, binary-matched agent PID
+                                  (--force = SIGKILL), reap the wake sidecar, flip presence
+                                  offline. On-disk state is PRESERVED, so the session stays
+                                  resumable. ('down' is a deprecated alias for one release.)
 amq-squad resume [--profile NAME] [--session ws] [--restore-existing]
-                 [--dry-run] [--force-duplicate]
+                 [--exec] [--dry-run] [--force-duplicate]
                  [--no-bootstrap] [--trust sandboxed|trusted]
                  [--model role=model,...]
                  [--codex-args args] [--claude-args args]
-                                  Classify each member and emit copy-pasteable commands.
-                                  Restore/replay commands use agent up &lt;binary&gt; and
-                                  preserve saved metadata.
-                                  Plan-only. Use `fork --from &lt;current&gt; --as &lt;new&gt;`
-                                  to branch into a new workstream.
+                                  Re-orient an existing session: reattach a saved
+                                  conversation if present, else re-run bootstrap so the
+                                  agent re-reads its brief + AMQ history (no replay of prior
+                                  hidden reasoning). Plan-only by default; --exec opens the
+                                  commands through the terminal backend, like `up`.
+                                  Use `fork --from &lt;current&gt; --as &lt;new&gt;` for a NEW workstream.
 amq-squad fork --from &lt;current&gt; --as &lt;new&gt; [--force-duplicate]
                                   Plan fresh launches in a new workstream branched off
                                   the current one. Plan-only; does not copy launch
                                   records, briefs, conversations, or team.json. The
                                   workstream brief at .amq-squad/briefs/&lt;new&gt;.md is
                                   created or preserved by the subsequent
-                                  `up --session &lt;new&gt;` (or `agent up`) live launch.</code></pre></div>
+                                  `up --session &lt;new&gt;` (or `agent up`) live launch.
+amq-squad rm &lt;session&gt; [--yes] [--force]
+                                  Permanently remove a finished session (AMQ root + brief).
+                                  The only destructive verb: previews + prompts (default No)
+                                  unless --yes; refuses a live session unless --force.
+amq-squad archive &lt;session&gt; [--yes] [--force]
+                                  Move a finished session aside instead of deleting it
+                                  (to &lt;baseRoot&gt;/.archive/&lt;session&gt;/, recoverable).
+                                  Confirm-gated; refuses a live session unless --force.</code></pre></div>
 
           <h3>Inspection</h3>
-          <div class="code"><pre><code>amq-squad status [--json]         Live state of configured team members.
+          <div class="code"><pre><code>amq-squad status [--json]         Multi-session BOARD over every discovered session
+amq-squad status --session NAME [--json]
+                                  (state, agent health, brief, last-activity). With
+                                  --session: the single-session detail table. The bare
+                                  `amq-squad` runs the board too.
+amq-squad console [--session NAME] [--refresh 2s] [--at-risk-wait 5m]
+                  [--review-age 15m] [--once]
+                                  Live read-only Mission Control TUI over all sessions
+                                  (board / detail / collapsed-thread bus / peek / triage
+                                  rollup). Renders to /dev/tty; --once prints one static
+                                  board to stdout for CI / non-TTY.
 amq-squad history [--json] [--project a,b]
                                   Restorable launch records across known projects.
 amq-squad doctor [--json]         AMQ version, team config, tmux, wake, markers.
@@ -1054,6 +1155,60 @@ amq-squad agent resume &lt;role&gt;
         </div>
       </section>
 
+      <section id="console">
+        <div class="content">
+          <h2>Status board and Mission Control console</h2>
+          <p>
+            <code class="inline-code">amq-squad status</code> (and the bare
+            <code class="inline-code">amq-squad</code>) prints a
+            <strong>multi-session board</strong> over every discovered session —
+            docker-ps / <code class="inline-code">git branch -v</code> style:
+            session name, rolled-up state (running / stopped / degraded), agent
+            health (N/M alive + at-risk), a one-line brief, and last-activity.
+            Add <code class="inline-code">--session NAME</code> for the
+            single-session detail table.
+          </p>
+          <p>
+            <code class="inline-code">amq-squad console</code> is a full-screen,
+            <strong>read-only Mission Control TUI</strong> over the same
+            sessions. It never launches, stops, or mutates anything — it only
+            observes.
+          </p>
+          <div class="code"><pre><code>amq-squad console                    # interactive TUI on /dev/tty
+amq-squad console --once             # single static board to stdout (CI / no TTY)
+amq-squad console --session issue-96 --at-risk-wait 5m</code></pre></div>
+          <p>The console gives you:</p>
+          <ul>
+            <li>a <strong>board</strong> of all sessions, grouped attention-first
+              (needs-you &rarr; blocked &rarr; at-risk &rarr; running &rarr;
+              stopped);</li>
+            <li>per-session <strong>detail</strong> with each agent's liveness
+              and a <strong>collapsed-thread bus</strong>
+              ("qa &harr; cto  blocked &middot; subject  N msgs &middot; 7m");</li>
+            <li><strong>peek</strong> (<code class="inline-code">space</code>) for
+              a read-only view of an agent's recent output, unread inbox, and
+              what it is blocked on;</li>
+            <li>a <strong>triage rollup</strong> headline
+              (<code class="inline-code">N needs-you threads &middot; N at-risk threads &middot; N blocked threads</code>)
+              and <code class="inline-code">/</code>-filters
+              (<code class="inline-code">needs-you</code>,
+              <code class="inline-code">at-risk</code>,
+              <code class="inline-code">blocked</code>,
+              <code class="inline-code">unread</code>,
+              <code class="inline-code">agent:&lt;h&gt;</code>,
+              <code class="inline-code">model:&lt;m&gt;</code>,
+              <code class="inline-code">session:&lt;n&gt;</code>).</li>
+          </ul>
+          <p>
+            It renders to <code class="inline-code">/dev/tty</code>, so
+            <code class="inline-code">stdout</code> stays clean for the other
+            verbs. With <code class="inline-code">--once</code> it emits one
+            static board to stdout and exits — use this when there is no terminal
+            attached.
+          </p>
+        </div>
+      </section>
+
       <section id="json">
         <div class="content">
           <h2>JSON envelopes and exit codes</h2>
@@ -1097,7 +1252,7 @@ amq-squad version --json | jq .</code></pre></div>
                 </tr>
                 <tr>
                   <td><code>3</code></td>
-                  <td>partial success (some targets succeeded, some failed; e.g. <code>down</code> with mixed force-sent + failed)</td>
+                  <td>partial success (some targets succeeded, some failed; e.g. <code>stop</code> with mixed stopped + failed)</td>
                 </tr>
               </tbody>
             </table>
@@ -1156,10 +1311,16 @@ amq-squad completion fish > ~/.config/fish/completions/amq-squad.fish</code></pr
           <div class="callout">
             <p>
               AMQ session names must use lowercase letters, digits, hyphens,
-              and underscores. Active workstream resolution: explicit
-              <code class="inline-code">--session</code> &gt; stored
-              <code class="inline-code">team.Workstream</code> &gt; sanitized
-              team-home directory name.
+              and underscores. Session resolution: the
+              <code class="inline-code">&lt;session&gt;</code> positional or
+              <code class="inline-code">--session</code> &gt; inference from team
+              members and the sanitized team-home directory name. The pinned
+              <code class="inline-code">team.json</code>
+              <code class="inline-code">workstream</code> default was dropped in
+              2.0 — a profile that still carries it gets a one-line deprecation
+              warning (removal in 2.1); pass
+              <code class="inline-code">--session</code> (or the positional) or
+              rely on inference.
             </p>
           </div>
           <div class="code"><pre><code>amq-squad up --dry-run --session issue-96
@@ -1254,39 +1415,26 @@ amq-squad team init --personas cto,fullstack,qa --cwd qa=~/Code/project-b</code>
         </div>
       </section>
 
-      <section id="deprecated">
+      <section id="removed">
         <div class="content">
-          <h2>Deprecated 1.x verbs</h2>
+          <h2>Removed in 2.0</h2>
           <p>
-            These verbs still work through the 1.x line and emit a one-line
-            <code class="inline-code">stderr</code> deprecation warning. They
-            will be removed in 2.0. Do not use them in new flows.
+            The 1.x top-level verbs below were <strong>removed in 2.0</strong>.
+            Each is still recognized for one release as an explicit pointer:
+            running it prints a one-line
+            <code class="inline-code">stderr</code> migration hint (not an
+            "unknown command") and exits with a usage error. Use the
+            replacement.
           </p>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Legacy</th>
-                  <th>Modern equivalent</th>
+                  <th>Removed verb</th>
+                  <th>Replacement</th>
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td><code>amq-squad team show</code></td>
-                  <td><code>amq-squad up --dry-run</code></td>
-                </tr>
-                <tr>
-                  <td><code>amq-squad team launch</code></td>
-                  <td><code>amq-squad up</code></td>
-                </tr>
-                <tr>
-                  <td><code>amq-squad team launch --fresh --session X</code></td>
-                  <td><code>amq-squad fork --from &lt;current&gt; --as X</code></td>
-                </tr>
-                <tr>
-                  <td><code>amq-squad list</code></td>
-                  <td><code>amq-squad status</code> (live) or <code>amq-squad history</code> (records)</td>
-                </tr>
                 <tr>
                   <td><code>amq-squad launch &lt;binary&gt;</code></td>
                   <td><code>amq-squad agent up &lt;binary&gt;</code></td>
@@ -1299,19 +1447,96 @@ amq-squad team init --personas cto,fullstack,qa --cwd qa=~/Code/project-b</code>
                   <td><code>amq-squad restore --exec --role R</code></td>
                   <td><code>amq-squad agent resume R</code></td>
                 </tr>
+                <tr>
+                  <td><code>amq-squad list</code></td>
+                  <td><code>amq-squad status</code> (live) or <code>amq-squad history</code> (records)</td>
+                </tr>
+                <tr>
+                  <td><code>amq-squad team show</code></td>
+                  <td><code>amq-squad up --dry-run</code></td>
+                </tr>
+                <tr>
+                  <td><code>amq-squad team launch</code></td>
+                  <td><code>amq-squad up</code></td>
+                </tr>
+                <tr>
+                  <td><code>amq-squad team launch --fresh --session X</code></td>
+                  <td><code>amq-squad fork --from &lt;current&gt; --as X</code></td>
+                </tr>
               </tbody>
             </table>
           </div>
           <p>
-            Help paths on deprecated verbs do not emit the warning. JSON
-            callers on deprecated verbs still get pure JSON on stdout; the
-            warning goes to stderr.
+            <code class="inline-code">down</code> is <strong>deprecated</strong>
+            (not removed): it is an alias for
+            <code class="inline-code">stop</code> that keeps working for one
+            release and runs the identical logic. Prefer
+            <code class="inline-code">stop</code>. JSON callers on the
+            <code class="inline-code">down</code> alias still get pure JSON on
+            stdout; the warning goes to stderr. Replay paths that emit
+            copy-paste commands use the modern
+            <code class="inline-code">agent up &lt;binary&gt;</code> shape.
           </p>
+        </div>
+      </section>
+
+      <section id="migrating">
+        <div class="content">
+          <h2>Migrating from 1.x to 2.0</h2>
           <p>
-            Legacy print/replay paths that emit copy-paste commands use the
-            modern <code class="inline-code">agent up &lt;binary&gt;</code>
-            command shape. The legacy verb invocation is deprecated, not the
-            generated replay command.
+            2.0 is a breaking release. The major changes and what to do:
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>1.x</th>
+                  <th>2.0</th>
+                  <th>Migration</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Module <code>github.com/omriariav/amq-squad/...</code></td>
+                  <td><code>/v2</code> import path</td>
+                  <td><code>go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.0.0</code></td>
+                </tr>
+                <tr>
+                  <td>Pinned <code>team.json</code> <code>workstream</code> default</td>
+                  <td>dropped (deprecation shim)</td>
+                  <td>Pass <code>--session &lt;name&gt;</code> (or the <code>up &lt;name&gt;</code> positional), or rely on inference. A pinned profile still works but warns (removed in 2.1).</td>
+                </tr>
+                <tr>
+                  <td><code>up</code> (re)used an existing session</td>
+                  <td><code>up</code> is NEW work and refuses an existing session</td>
+                  <td>Use <code>amq-squad resume</code> to continue, or <code>amq-squad up --reset</code> to start over.</td>
+                </tr>
+                <tr>
+                  <td><code>down</code></td>
+                  <td><code>stop</code> (primary)</td>
+                  <td>Use <code>amq-squad stop</code>. <code>down</code> still works for one release as a deprecated alias.</td>
+                </tr>
+                <tr>
+                  <td><code>up</code> required a brief or <code>--fresh</code> juggling</td>
+                  <td>brief auto-stubs when no <code>--seed-from</code>/<code>--brief</code></td>
+                  <td>Nothing — <code>up</code> writes a stub brief and prints a one-line notice; edit it or pass <code>--seed-from</code>.</td>
+                </tr>
+                <tr>
+                  <td><code>launch</code> / <code>restore</code> / <code>list</code> / <code>team show</code> / <code>team launch</code></td>
+                  <td>removed</td>
+                  <td>See <a href="#removed">Removed in 2.0</a> for each replacement.</td>
+                </tr>
+                <tr>
+                  <td>—</td>
+                  <td>new: <code>amq-squad console</code></td>
+                  <td>Read-only Mission Control TUI; the bare <code>amq-squad</code> now shows a multi-session board.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            Each removed verb prints a migration hint when invoked, so
+            muscle-memory commands get a pointer rather than a crash.
           </p>
         </div>
       </section>
@@ -1325,7 +1550,7 @@ amq-squad team init --personas cto,fullstack,qa --cwd qa=~/Code/project-b</code>
               <p>Check which binary is running, then reinstall.</p>
               <div class="code"><pre><code>which -a amq-squad
 amq-squad version
-go install github.com/omriariav/amq-squad/cmd/amq-squad@latest</code></pre></div>
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.0.0</code></pre></div>
             </div>
             <div class="panel">
               <h3>Launch plan looks wrong</h3>

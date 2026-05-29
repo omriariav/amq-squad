@@ -121,17 +121,21 @@ func runOnce(cfg Config, rebuild rebuildConfig) error {
 // body; a nil clock falls back to the real wall-clock.
 //
 // The headline separates concepts and labels the triage numbers as the THREAD
-// counts they are: "<N> sessions · <X> needs-you · <Y> at-risk · <Z> blocked
-// threads", " · "-separated.
+// counts they are: "<N> sessions · <X> needs-you threads · <Y> at-risk threads ·
+// <Z> blocked threads", " · "-separated, with each noun pluralized on its own
+// count (so a single one reads "1 blocked thread").
 func StaticBoard(snap state.Snapshot, now func() time.Time) string {
 	if now == nil {
 		now = time.Now
 	}
 	r := snap.Rollup
+	sessions := len(snap.Sessions)
 	headline := "amq-squad mission control · " +
-		fmt.Sprintf("%d %s · %d needs-you · %d at-risk · %d blocked threads",
-			len(snap.Sessions), plural(len(snap.Sessions), "session", "sessions"),
-			r.NeedsYou, r.AtRisk, r.Blocked)
+		fmt.Sprintf("%d %s · %d needs-you %s · %d at-risk %s · %d blocked %s",
+			sessions, plural(sessions, "session", "sessions"),
+			r.NeedsYou, plural(r.NeedsYou, "thread", "threads"),
+			r.AtRisk, plural(r.AtRisk, "thread", "threads"),
+			r.Blocked, plural(r.Blocked, "thread", "threads"))
 	return headline + "\n\n" + staticBoardBody(snap, now)
 }
 
