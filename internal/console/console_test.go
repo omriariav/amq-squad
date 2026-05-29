@@ -263,8 +263,9 @@ func TestStaticBoardRendersRollupAndSessions(t *testing.T) {
 		"mission control",
 		"2 sessions",
 		// The headline separates concepts with " · " and labels the triage
-		// numbers as the THREAD counts they are ("blocked threads").
-		"1 needs-you · 2 at-risk · 1 blocked threads",
+		// numbers as the THREAD counts they are, pluralizing each noun on its
+		// own count (so "1 needs-you thread" / "1 blocked thread").
+		"1 needs-you thread · 2 at-risk threads · 1 blocked thread",
 		"issue-96",
 		"drive-fix",
 		"cto",

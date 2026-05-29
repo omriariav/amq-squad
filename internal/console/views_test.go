@@ -677,6 +677,65 @@ func TestInteractiveRunningSessionStateAwareLabelsWithAge(t *testing.T) {
 	}
 }
 
+// TestAgentStateLabelDeadMailboxLiveKeepsDistinctLabel is the regression guard
+// for the dead-process / live-mailbox zombie-heartbeat signal: in a LIVE (not
+// stopped) session that agent must keep its own "dead-mailbox-live" label and
+// MUST NOT collapse into the alarming "process-dead" or the teardown "stopped".
+// This protects the labels.go branch that returns the liveness verbatim.
+func TestAgentStateLabelDeadMailboxLiveKeepsDistinctLabel(t *testing.T) {
+	a := state.Agent{
+		Handle:   "cto",
+		Engine:   "codex",
+		Liveness: state.LivenessDeadMailboxLive,
+		LastSeen: viewNow.Add(-2 * time.Hour),
+	}
+	// stopped=false: the session is still live, so the distinct label stands.
+	got := agentStateLabel(a, false, viewClock)
+	if got != "dead-mailbox-live" {
+		t.Fatalf("dead-mailbox-live agent in a live session should read 'dead-mailbox-live', got %q", got)
+	}
+	if strings.Contains(got, "stopped") || strings.Contains(got, "process-dead") {
+		t.Errorf("dead-mailbox-live label must not collapse into 'stopped'/'process-dead': %q", got)
+	}
+}
+
+// TestInteractiveRunningSessionKeepsDeadMailboxLiveLabel is the end-to-end
+// companion: a still-running session whose agent is dead-mailbox-live must
+// render that distinct label in the detail view, not "stopped"/"process-dead".
+func TestInteractiveRunningSessionKeepsDeadMailboxLiveLabel(t *testing.T) {
+	running := state.Session{
+		Name: "wedged",
+		Agents: []state.Agent{
+			{Handle: "cto", Engine: "codex", Liveness: state.LivenessAlive, LastSeen: viewNow.Add(-20 * time.Second)},
+			{Handle: "qa", Engine: "claude", Liveness: state.LivenessDeadMailboxLive, LastSeen: viewNow.Add(-2 * time.Hour)},
+		},
+		// A blocked thread keeps the session OUT of the stopped bucket, so the
+		// stopped short-circuit can't mask the distinct label.
+		Coordination: state.Coordination{Threads: []state.ThreadSummary{{
+			ID: "p2p/qa__cto", Participants: []string{"qa", "cto"}, Subject: "deploy",
+			Triage: state.TriageBlocked, Status: state.ThreadBlocked, MessageCount: 2,
+			LastEventAt: viewNow.Add(-10 * time.Minute),
+			Freshness:   state.Freshness{Source: state.SourceEmbedded, Age: 10 * time.Minute},
+		}}},
+		Rollup: state.TriageRollup{Blocked: 1},
+	}
+	snap := state.Snapshot{BaseRoot: "/base", Sessions: []state.Session{running}, Rollup: state.TriageRollup{Blocked: 1}}
+	m := clockedModel(snap)
+	m.selectedID = "wedged"
+	m = m.reselect()
+	m = press(t, m, "enter")
+	out := m.renderDetail()
+	if !strings.Contains(out, "dead-mailbox-live") {
+		t.Errorf("running session's dead-mailbox-live agent should keep its distinct label:\n%s", out)
+	}
+	if strings.Contains(out, "stopped") {
+		t.Errorf("a running (blocked) session must NOT label its dead-mailbox-live agent 'stopped':\n%s", out)
+	}
+	if strings.Contains(out, "process-dead") {
+		t.Errorf("dead-mailbox-live must NOT collapse into 'process-dead':\n%s", out)
+	}
+}
+
 // TestInteractiveHeadlineLabelsBlockedThreads proves the interactive board
 // headline labels the triage numbers as THREAD counts with " · " separators.
 func TestInteractiveHeadlineLabelsBlockedThreads(t *testing.T) {
