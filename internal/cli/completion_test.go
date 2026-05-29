@@ -217,6 +217,8 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"history":    true,
 		"resume":     true,
 		"fork":       true,
+		"rm":         true,
+		"archive":    true,
 		"completion": true,
 		"doctor":     true,
 		"agent":      true,

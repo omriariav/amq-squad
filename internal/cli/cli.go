@@ -143,6 +143,10 @@ func dispatch(args []string) error {
 		return runResume(args[1:])
 	case "fork":
 		return runFork(args[1:])
+	case "rm":
+		return runRm(args[1:], rmModeDelete)
+	case "archive":
+		return runRm(args[1:], rmModeArchive)
 	case "launch":
 		// Removed in 2.0. Kept as an explicit hint (not unknown-command) for
 		// one release so muscle-memory invocations get a pointer.
@@ -180,6 +184,8 @@ Commands:
   history   List restorable launch records
   resume    Plan how to bring the team back into the resolved workstream
   fork      Plan fresh launches in a new workstream branched off an existing one
+  rm        Permanently remove a finished session (root dir + brief; confirm-gated)
+  archive   Move a finished session aside instead of deleting (confirm-gated)
   completion Emit a shell completion script (bash, zsh, fish)
   doctor    Check this project's amq-squad / AMQ setup
   agent     Launch or resume a single agent (agent up / agent resume)
@@ -204,6 +210,7 @@ Exit codes:
 Examples:
   amq-squad team init --roles cto,fullstack --binary cto=codex
   amq-squad up --dry-run --no-bootstrap
+  amq-squad rm issue-96 --yes
   amq-squad doctor --json | jq .
 
 Run 'amq-squad <command> --help' for command-specific options.
