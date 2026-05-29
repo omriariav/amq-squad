@@ -64,35 +64,47 @@ type statusRecord struct {
 
 func runStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	sessionName := fs.String("session", "", "AMQ workstream session name (default: team workstream)")
+	sessionName := fs.String("session", "", "AMQ workstream session name (default: a board over all discovered sessions)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned status envelope instead of the human table")
 	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad status - live state of this project's configured team
+		fmt.Fprint(os.Stderr, `amq-squad status - live state of this project's sessions and team
 
 Usage:
-  amq-squad status [--profile NAME] [--session NAME] [--json]
+  amq-squad status [--json]
+  amq-squad status --session NAME [--profile NAME] [--json]
 
-Reports each configured team member's live state in the resolved session.
-Uses launch-record PID + binary match, wake-lock PID + handle/root match,
-and fresh presence as input signals. Historical/restorable records are
-not included here; use 'amq-squad history' for those.
+With no --session, prints a multi-session BOARD over every discovered
+session (docker-ps / git branch -v style): session name, rolled-up state
+(running/stopped/degraded), agent health (N/M alive + at-risk), a one-line
+brief, and last-activity. This is also the bare 'amq-squad' default.
+
+With --session NAME, prints the single-session detail table: each
+configured team member's live state in that session, using launch-record
+PID + binary match, wake-lock PID + handle/root match, and fresh presence.
 
 Examples:
   amq-squad status
+  amq-squad status --json
   amq-squad status --session issue-96 --json
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
-	if err != nil {
-		return err
-	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
+	}
+	// No --session: the multi-session board over ALL discovered sessions.
+	// This is the front-door default, so it degrades gracefully rather than
+	// hard-erroring when `amq` is missing or there are no sessions.
+	if !flagWasSet(fs, "session") {
+		return runStatusBoard(cwd, *jsonOut)
+	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
 	}
 	if !team.ExistsProfile(cwd, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
