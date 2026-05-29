@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // The five legacy verbs (top-level launch/restore/list and team show/launch)
