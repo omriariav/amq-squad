@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func runFork(args []string) error {

@@ -3,7 +3,7 @@ package console
 import (
 	"strings"
 
-	"github.com/omriariav/amq-squad/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
 // Filtering is a PURE, read-only narrowing of the snapshot. A Filter never reads

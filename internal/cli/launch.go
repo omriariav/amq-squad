@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/catalog"
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/role"
+	"github.com/omriariav/amq-squad/v2/internal/catalog"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/role"
 )
 
 // runLaunch is the real single-agent launcher. The top-level `launch` verb

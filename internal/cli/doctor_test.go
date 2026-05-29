@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/rules"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/rules"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func newDoctorExec(t *testing.T, dir string) doctorExecution {

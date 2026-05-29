@@ -12,8 +12,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/omriariav/amq-squad/internal/rules"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/rules"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // doctorMinAMQVersion is the lowest AMQ release this build of amq-squad

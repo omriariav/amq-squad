@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func TestBuildBootstrapPrompt(t *testing.T) {

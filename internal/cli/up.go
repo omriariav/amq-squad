@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/state"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func runUp(args []string) error {

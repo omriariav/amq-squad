@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
 // runNow is the deterministic clock anchoring the runner tests.
