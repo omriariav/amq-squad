@@ -166,6 +166,16 @@ type rmTarget struct {
 }
 
 func executeRm(e rmExecution) error {
+	_, err := executeRmReportDeclined(e)
+	return err
+}
+
+// executeRmReportDeclined is executeRm's body, additionally reporting whether
+// the operator declined the confirmation gate (which, like executeRm, makes
+// ZERO filesystem changes and returns a nil error). `up --reset` reuses this
+// so it can cancel the whole launch on a decline rather than proceeding to
+// launch into the session the operator just refused to clear.
+func executeRmReportDeclined(e rmExecution) (bool, error) {
 	verb := e.Mode.verb()
 	out := e.Out
 	if out == nil {
@@ -177,7 +187,7 @@ func executeRm(e rmExecution) error {
 	// rejected outright and can never escape the base root.
 	session := strings.TrimSpace(e.Session)
 	if err := validateWorkstreamName(session); err != nil {
-		return err
+		return false, err
 	}
 
 	resolve := e.ResolveBaseRoot
@@ -189,11 +199,11 @@ func executeRm(e rmExecution) error {
 		var err error
 		baseRoot, err = resolve(e.ProjectDir)
 		if err != nil {
-			return fmt.Errorf("resolve AMQ base root: %w", err)
+			return false, fmt.Errorf("resolve AMQ base root: %w", err)
 		}
 	}
 	if strings.TrimSpace(baseRoot) == "" {
-		return fmt.Errorf("resolved AMQ base root is empty; nothing to %s", verb)
+		return false, fmt.Errorf("resolved AMQ base root is empty; nothing to %s", verb)
 	}
 	baseRoot = filepath.Clean(baseRoot)
 
@@ -205,7 +215,7 @@ func executeRm(e rmExecution) error {
 	// must be provably incapable of touching session Y or anything outside
 	// <baseRoot>/<session>/.
 	if filepath.Dir(root) != baseRoot || filepath.Base(root) != session {
-		return fmt.Errorf("refusing to %s: resolved path %q is not a direct child of base root %q", verb, root, baseRoot)
+		return false, fmt.Errorf("refusing to %s: resolved path %q is not a direct child of base root %q", verb, root, baseRoot)
 	}
 
 	target := rmTarget{
@@ -218,7 +228,7 @@ func executeRm(e rmExecution) error {
 		target.RootExists = true
 		target.Agents = countAgentMailboxes(root)
 	} else if err == nil && !fi.IsDir() {
-		return fmt.Errorf("refusing to %s: %q exists but is not a directory", verb, root)
+		return false, fmt.Errorf("refusing to %s: %q exists but is not a directory", verb, root)
 	}
 	if target.Brief != "" {
 		if _, err := os.Stat(target.Brief); err == nil {
@@ -228,7 +238,7 @@ func executeRm(e rmExecution) error {
 
 	// SAFETY 5: nothing to remove is a clean error, never a panic.
 	if !target.RootExists && !target.BriefHas {
-		return fmt.Errorf("%s: session %q has no AMQ root or brief under %s; nothing to remove", verb, session, baseRoot)
+		return false, fmt.Errorf("%s: session %q has no AMQ root or brief under %s; nothing to remove", verb, session, baseRoot)
 	}
 
 	// SAFETY 3: refuse a running session unless --force. Reuse the repo's
@@ -236,10 +246,10 @@ func executeRm(e rmExecution) error {
 	if target.RootExists {
 		live, err := liveAgentsInSession(e.ProjectDir, baseRoot, session, e.Probe)
 		if err != nil {
-			return fmt.Errorf("check liveness for session %q: %w", session, err)
+			return false, fmt.Errorf("check liveness for session %q: %w", session, err)
 		}
 		if len(live) > 0 && !e.Force {
-			return fmt.Errorf("session %q has live agents (%s); stop it first with 'amq-squad down --all --force', or pass --force to %s anyway",
+			return false, fmt.Errorf("session %q has live agents (%s); stop it first with 'amq-squad down --all --force', or pass --force to %s anyway",
 				session, strings.Join(live, ", "), verb)
 		}
 	}
@@ -251,14 +261,14 @@ func executeRm(e rmExecution) error {
 	if !e.Yes {
 		if !confirmRm(out, e.Confirm, session) {
 			fmt.Fprintf(out, "%s: aborted; no changes made.\n", verb)
-			return nil
+			return true, nil
 		}
 	}
 
 	if e.Mode == rmModeArchive {
-		return archiveSession(out, target)
+		return false, archiveSession(out, target)
 	}
-	return deleteSession(out, target)
+	return false, deleteSession(out, target)
 }
 
 // liveAgentsInSession returns the handles of agents the repo's liveness
