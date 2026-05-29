@@ -381,8 +381,9 @@ func TestExecuteDownPartialFailureReturnsAggregateError(t *testing.T) {
 func TestExecuteDownResolvesDefaultWorkstream(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		// Legacy-style per-role session so defaultTeamWorkstreamName falls
-		// through to defaultWorkstreamName(projectDir).
+		// Legacy-style per-role session so member-session inference yields
+		// nothing and (with no pin) resolution falls through to the
+		// defaultWorkstreamName(projectDir) basename.
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}},
 	})
 	workstream := defaultWorkstreamName(dir)

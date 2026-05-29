@@ -63,15 +63,22 @@ func (m Member) EffectiveCWD(projectDir string) string {
 // Project is not serialized: it's always the directory that contains
 // .amq-squad/team.json, derived at Read time. Persisting an absolute path
 // would leak local paths into shared repos and break when the repo moves.
-// Workstream is the team's default shared AMQ session. CreatedAt is
-// informational. Member sessions are legacy/default workstream hints; the live
-// workstream can be overridden at launch time. Trust controls Codex trust
-// defaults for generated launch commands ("sandboxed" or "trusted"; empty
-// means sandboxed). BinaryArgs stores extra native CLI args by binary name,
-// for example codex or claude.
+// CreatedAt is informational. Member sessions are legacy/default workstream
+// hints; the live workstream can be overridden at launch time. Trust controls
+// Codex trust defaults for generated launch commands ("sandboxed" or
+// "trusted"; empty means sandboxed). BinaryArgs stores extra native CLI args
+// by binary name, for example codex or claude.
+//
+// Workstream is a DEPRECATED SHIM (scheduled for removal in 2.1). It once
+// pinned the team's default shared AMQ session, but it is no longer
+// auto-stamped on init and member-session inference now wins over it. The
+// field is still read so old team.json files keep loading; when it is the
+// resolved source the CLI emits a deprecation notice steering operators to
+// pass --session explicitly or re-init.
 type Team struct {
-	Schema     int                 `json:"schema"`
-	Project    string              `json:"-"`
+	Schema  int    `json:"schema"`
+	Project string `json:"-"`
+	// Workstream: deprecated shim, see the Team doc comment. Removal in 2.1.
 	Workstream string              `json:"workstream,omitempty"`
 	Trust      string              `json:"trust,omitempty"`
 	BinaryArgs map[string][]string `json:"binary_args,omitempty"`
