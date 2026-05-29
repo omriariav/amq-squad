@@ -40,10 +40,16 @@ Usage:
                            [--layout vertical|horizontal|tiled]
                            [--terminal-session name] [--stagger 750ms]]
 
-Inspects .amq-squad/team.json plus local launch history and live-agent
-signals (wake locks, agent PID liveness, presence) to choose a per-member
-action: restore from launch.json, launch fresh from team intent, skip if
-live, or refuse if blocked.
+Continues an existing session. Inspects .amq-squad/team.json plus local
+launch history and live-agent signals (wake locks, agent PID liveness,
+presence) to choose a per-member action: restore from launch.json, launch
+fresh from team intent, skip if live, or refuse if blocked.
+
+A restored seat with a saved conversation truly reattaches that thread and
+skips bootstrap. A seat WITHOUT a saved conversation (the common case)
+RE-ORIENTS instead: it re-runs bootstrap so the agent re-reads its brief
+and drains AMQ history rather than replaying prior reasoning or coming up
+blank.
 
 Default behavior is plan-only: prints the per-member action table plus
 copy-pasteable commands. With --exec, opens those commands through the

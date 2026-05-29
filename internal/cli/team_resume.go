@@ -563,7 +563,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 			} else {
 				// Forced restore on preflight error path: same reason
 				// to inject --force-duplicate as the live+forced path.
-				plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true})
+				plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true, NoBootstrap: in.NoBootstrap})
 			}
 			plan.Note = "force-duplicate: " + plan.Note
 		}
@@ -580,7 +580,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 			} else {
 				// Forced restore must carry --force-duplicate so the
 				// printed command bypasses launch-time preflight.
-				plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true})
+				plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true, NoBootstrap: in.NoBootstrap})
 			}
 			return plan, nil
 		}
@@ -599,7 +599,16 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	}
 	if recFound {
 		plan.Action = resumeRestore
-		plan.Command = emitCommand(rec)
+		plan.Command = emitCommandWithOptions(rec, emitCommandOptions{NoBootstrap: in.NoBootstrap})
+		// Be honest about what restore will do: a record with a saved
+		// conversation truly reattaches the prior thread and skips bootstrap;
+		// a record without one re-runs bootstrap so the agent re-orients from
+		// its brief and drains AMQ history rather than coming up blank.
+		if rec.Conversation != "" {
+			plan.Note = "reattach conversation " + rec.Conversation
+		} else {
+			plan.Note = "re-orient: no saved conversation, re-reads brief + AMQ history"
+		}
 		return plan, nil
 	}
 	plan.Action = resumeFresh

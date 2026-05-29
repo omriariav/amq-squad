@@ -239,7 +239,15 @@ func execRestoreRecord(rec launch.Record) error {
 }
 
 func launchArgsFromRecord(rec launch.Record) []string {
-	args := []string{"--no-bootstrap"}
+	var args []string
+	// Only a record with a saved conversation is a true reattach that must
+	// skip bootstrap; a seat with no saved conversation re-runs bootstrap so
+	// the agent re-orients from its brief and drains AMQ history rather than
+	// coming up blank. This path has no operator opts, so it gates on the
+	// conversation alone.
+	if rec.Conversation != "" {
+		args = append(args, "--no-bootstrap")
+	}
 	if rec.Role != "" {
 		args = append(args, "--role", rec.Role)
 	}
@@ -381,9 +389,12 @@ func emitCommand(rec launch.Record) string {
 // emitCommandOptions controls extra flags injected into the emitted
 // 'amq-squad agent up' invocation. Force adds --force-duplicate so a
 // planner (e.g. resume) can emit a command that matches the plan when a
-// live agent has been overridden.
+// live agent has been overridden. NoBootstrap lets an operator force the
+// emitted command to skip bootstrap even for a seat that would otherwise
+// re-orient (a record with no saved conversation).
 type emitCommandOptions struct {
-	Force bool
+	Force       bool
+	NoBootstrap bool
 }
 
 func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
@@ -395,7 +406,15 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	// command reads as the documented 1.0 shape.
 	b.WriteString(" && amq-squad agent up ")
 	b.WriteString(shellQuote(rec.Binary))
-	b.WriteString(" --no-bootstrap")
+	// --no-bootstrap is emitted only for a true reattach (a record carries a
+	// saved conversation, so re-running bootstrap would clobber the resumed
+	// thread) or when the operator explicitly asked to skip bootstrap. A seat
+	// with no saved conversation -- the common resume case -- must RE-RUN
+	// bootstrap so the agent re-orients from its brief and drains AMQ history
+	// instead of coming up blank.
+	if opts.NoBootstrap || rec.Conversation != "" {
+		b.WriteString(" --no-bootstrap")
+	}
 	if opts.Force {
 		b.WriteString(" --force-duplicate")
 	}
