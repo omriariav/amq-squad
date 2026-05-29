@@ -59,6 +59,7 @@ Examples:
 var completionTopCommands = []string{
 	"team",
 	"up",
+	"stop",
 	"down",
 	"status",
 	"history",

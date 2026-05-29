@@ -40,7 +40,7 @@ amq-squad status                     # live state of configured members
 amq-squad history                    # restorable launch records for this project
 amq-squad doctor                     # AMQ version / tmux / wake / markers
 
-amq-squad down --all --force         # SIGTERM the team
+amq-squad stop --all                 # SIGTERM the team (--force = SIGKILL); stays resumable
 amq-squad resume                     # plan recovery after reboot / upgrade / close
 amq-squad fork --from <cur> --as <new>  # branch a fresh workstream
 ```
@@ -69,9 +69,9 @@ panes onto an unrelated window. If you launch from outside tmux, `current-window
 refuses with a hint rather than guessing a target.
 
 If the AMQ workstream already exists, omit `--fresh`. Stop the old team first
-with `amq-squad down --all --force --session <workstream>`, then run `up` again
-from the target tmux window. Add `--force-duplicate` only when stale live-agent
-signals remain after the old panes are stopped.
+with `amq-squad stop --all --session <workstream>`, then run `up` again from the
+target tmux window. Add `--force-duplicate` only when stale live-agent signals
+remain after the old panes are stopped.
 
 Single-agent primitives:
 
@@ -181,8 +181,12 @@ amq-squad up [--profile NAME] [--session ws] [--dry-run] [--json]
                                   Bring the configured team up live (tmux) or print the
                                   plan with --dry-run. Optionally seed/refresh the
                                   workstream brief from a deterministic source.
-amq-squad down [--all | --role R] --force
-                                  SIGTERM members. Without --force the verb refuses.
+amq-squad stop [--all | --role R] [--force]
+                                  Stop members: SIGTERM the live, binary-matched
+                                  agent PID (--force = SIGKILL), reap the wake
+                                  sidecar, flip presence offline. On-disk state is
+                                  preserved, so the session stays resumable.
+                                  ('down' is a deprecated alias for one release.)
 amq-squad resume [--profile NAME] [--session ws] [--restore-existing]
                  [--dry-run] [--force-duplicate]
                  [--no-bootstrap] [--trust sandboxed|trusted]
@@ -259,7 +263,7 @@ Envelope shape:
 | `0` | success |
 | `1` | usage / user error (unknown flag, bad argument, missing required input) |
 | `2` | system / runtime error (IO, process, config, environment) |
-| `3` | partial success (some targets succeeded, some failed; e.g. `down` with mixed force-sent + failed) |
+| `3` | partial success (some targets succeeded, some failed; e.g. `stop` with mixed stopped + failed) |
 
 ## Shell completions
 

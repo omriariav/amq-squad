@@ -269,13 +269,13 @@ func TestStatusHumanOutputColorMatrix(t *testing.T) {
 // down table. Calls renderDownReports directly with a curated report set.
 func TestDownHumanOutputColorMatrix(t *testing.T) {
 	reports := []downReport{
-		{Role: "cto", Status: downStatusForceSent, Detail: "SIGTERM sent to pid 1"},
+		{Role: "cto", Status: downStatusStopped, Detail: "SIGTERM sent to pid 1"},
 		{Role: "fullstack", Status: downStatusFailed, Detail: "boom"},
 	}
 	t.Run("color on emits ANSI", func(t *testing.T) {
 		withOutputPolicy(t, outputPolicy{Color: true})
 		var b strings.Builder
-		_ = renderDownReports(&b, "issue-96", reports)
+		_ = renderDownReports(&b, "stop", "issue-96", reports)
 		if !strings.Contains(b.String(), "\x1b[") {
 			t.Errorf("expected ANSI in colored down output:\n%s", b.String())
 		}
@@ -283,7 +283,7 @@ func TestDownHumanOutputColorMatrix(t *testing.T) {
 	t.Run("color off emits plain", func(t *testing.T) {
 		withOutputPolicy(t, outputPolicy{Color: false})
 		var b strings.Builder
-		_ = renderDownReports(&b, "issue-96", reports)
+		_ = renderDownReports(&b, "stop", "issue-96", reports)
 		if strings.Contains(b.String(), "\x1b[") {
 			t.Errorf("plain down output should not contain ANSI:\n%s", b.String())
 		}
