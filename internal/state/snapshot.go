@@ -1,0 +1,247 @@
+package state
+
+import (
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/omriariav/amq-squad/internal/launch"
+)
+
+// Build constructs a Snapshot by scanning the filesystem under baseRoot. It
+// resolves NOTHING via subprocess: the caller is responsible for resolving the
+// AMQ base root once (e.g. a single `amq env` call) and passing it in. Per
+// agent, liveness and wake-health are computed using the injected probe and the
+// probe's clock; `amq` is never invoked.
+//
+// projectRoot is the directory the agents were launched from; it is only used
+// by the launch scanners to infer legacy records and is otherwise opaque here.
+func Build(projectRoot, baseRoot string, probe Probe) (Snapshot, error) {
+	probe = withDefaults(probe)
+
+	entries, err := launch.ScanRestorableEntriesInRoot(projectRoot, baseRoot)
+	if err != nil {
+		return Snapshot{}, err
+	}
+
+	// Group entries by session, preserving a stable session root per name.
+	type bucket struct {
+		root   string
+		agents []Agent
+	}
+	bySession := map[string]*bucket{}
+	var order []string
+	for _, e := range entries {
+		name := e.Record.Session
+		root := sessionRoot(baseRoot, e.Record)
+		b, ok := bySession[name]
+		if !ok {
+			b = &bucket{root: root}
+			bySession[name] = b
+			order = append(order, name)
+		}
+		b.agents = append(b.agents, classifyAgent(e, probe))
+	}
+
+	sort.Strings(order)
+	sessions := make([]Session, 0, len(order))
+	for _, name := range order {
+		b := bySession[name]
+		sortAgents(b.agents)
+		sessions = append(sessions, Session{
+			Name:   name,
+			Root:   b.root,
+			Agents: b.agents,
+		})
+	}
+
+	return Snapshot{BaseRoot: baseRoot, Sessions: sessions}, nil
+}
+
+// sessionRoot derives the directory that anchors a session. It prefers the
+// record's own Root (which the launcher captured); when absent it derives it
+// from baseRoot + session name, matching the AMQ layouts the scanners walk.
+func sessionRoot(baseRoot string, rec launch.Record) string {
+	if rec.Root != "" {
+		return rec.Root
+	}
+	if rec.Session == "" {
+		return baseRoot
+	}
+	return filepath.Join(baseRoot, rec.Session)
+}
+
+func sortAgents(agents []Agent) {
+	sort.Slice(agents, func(i, j int) bool {
+		if agents[i].Role != agents[j].Role {
+			return agents[i].Role < agents[j].Role
+		}
+		if agents[i].Handle != agents[j].Handle {
+			return agents[i].Handle < agents[j].Handle
+		}
+		return agents[i].Source < agents[j].Source
+	})
+}
+
+// classifyAgent computes the run-state for a single discovered launch entry.
+// It reads launch.json (already in the entry), presence.json, and .wake.lock
+// from the agent dir, then derives Liveness + WakeHealth via the probe. It
+// performs NO subprocess calls beyond the probe (which the caller controls).
+func classifyAgent(e launch.Entry, probe Probe) Agent {
+	rec := e.Record
+	a := Agent{
+		Handle:       rec.Handle,
+		Engine:       rec.Binary,
+		Role:         rec.Role,
+		AgentPID:     rec.AgentPID,
+		Conversation: rec.Conversation,
+		AgentDir:     e.AgentDir,
+		Source:       e.Source,
+	}
+
+	pres, presErr := readPresence(e.AgentDir)
+	if presErr == nil {
+		a.Presence = pres.Status
+		a.LastSeen = pres.LastSeen
+	}
+
+	// --- Agent PID liveness (the authoritative live signal). ---
+	agentPIDLive := false
+	if rec.AgentPID > 0 && probe.PIDAlive(rec.AgentPID) {
+		if rec.Binary == "" || probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(rec.Binary)) {
+			agentPIDLive = true
+		}
+	}
+
+	// --- Presence freshness (a recently-touched mailbox heartbeat). ---
+	presenceActiveFresh := false
+	mailboxRecentlyTouched := false
+	if presErr == nil && !pres.LastSeen.IsZero() {
+		recent := probe.Now().Sub(pres.LastSeen) <= PresenceFreshness
+		handleOK := pres.Handle == "" || pres.Handle == rec.Handle
+		if recent && handleOK {
+			mailboxRecentlyTouched = true
+			if strings.EqualFold(pres.Status, "active") {
+				presenceActiveFresh = true
+			}
+		}
+	}
+
+	// --- Wake state (PID is the WAKE pid, not the agent pid). ---
+	wakePID, wakeAlive := wakeState(e.AgentDir, rec, probe)
+	a.WakePID = wakePID
+
+	// --- Derive Liveness. ---
+	hasAnyDiskSignal := rec.AgentPID > 0 || wakePID > 0 || presErr == nil
+	switch {
+	case agentPIDLive:
+		a.Liveness = LivenessAlive
+	case presenceActiveFresh:
+		// Presence says active and fresh, but the agent PID is NOT verified
+		// alive. If we have a recorded agent PID and it is confirmed dead, this
+		// is the explicit dead-process / live-mailbox case — surface it as its
+		// own status, never as plain "alive" or "stale".
+		if rec.AgentPID > 0 && !agentPIDLive {
+			a.Liveness = LivenessDeadMailboxLive
+		} else {
+			a.Liveness = LivenessAlive
+		}
+	case mailboxRecentlyTouched && rec.AgentPID > 0:
+		// Mailbox touched recently (presence not "active", e.g. "offline"/"idle")
+		// yet the recorded agent PID is dead: something is still writing while
+		// the agent is gone. Distinct dead-mailbox-live signal.
+		a.Liveness = LivenessDeadMailboxLive
+	case !hasAnyDiskSignal:
+		a.Liveness = LivenessMissing
+	case hasLiveLeaningSignal(rec, wakePID, wakeAlive):
+		// A live-pointing disk signal exists (recorded agent PID, a wake lock,
+		// or an alive wake) but nothing verifies a running agent: stale.
+		a.Liveness = LivenessStale
+	default:
+		a.Liveness = LivenessDead
+	}
+
+	// --- Derive WakeHealth (only when the agent looks active enough). ---
+	a.WakeHealth = wakeHealth(a.Liveness, wakePID, wakeAlive)
+
+	return a
+}
+
+// hasLiveLeaningSignal reports whether disk carries a signal that, by itself,
+// suggests an agent MAY have been live (a recorded agent PID, a wake lock PID,
+// or a verified-alive wake). Used to distinguish "stale" (had a live-pointing
+// signal that failed verification) from "dead" (signals expired entirely).
+func hasLiveLeaningSignal(rec launch.Record, wakePID int, wakeAlive bool) bool {
+	return rec.AgentPID > 0 || wakePID > 0 || wakeAlive
+}
+
+// wakeState reads .wake.lock and returns the wake PID (0 when absent/corrupt)
+// and whether that PID verifies as a live amq wake for this handle/root.
+func wakeState(agentDir string, rec launch.Record, probe Probe) (pid int, alive bool) {
+	lock, err := readWakeLock(agentDir)
+	if err != nil {
+		return 0, false
+	}
+	if lock.PID <= 0 {
+		return 0, false
+	}
+	if !probe.PIDAlive(lock.PID) {
+		return lock.PID, false
+	}
+	expectedRoot := rec.Root
+	if lock.Root != "" {
+		expectedRoot = lock.Root
+	}
+	if !probe.ProcessMatch(lock.PID, wakeProcessMatcher(rec.Handle, expectedRoot)) {
+		return lock.PID, false
+	}
+	return lock.PID, true
+}
+
+// wakeHealth maps the raw wake state into a WakeHealth label, mirroring
+// list.go's wakeHealthForEntry: only meaningful when the agent looks active.
+//   - WakePID/"pid:N" when a live wake verified
+//   - "missing" when active but no usable wake lock
+//   - "stale"   when a wake lock exists but its PID is dead/unrelated
+//   - "" (none) when the agent does not look active enough to investigate
+func wakeHealth(live Liveness, wakePID int, wakeAlive bool) WakeHealth {
+	if !looksActiveForWake(live) {
+		return WakeHealthNone
+	}
+	if wakeAlive && wakePID > 0 {
+		return WakeHealth("pid:" + itoa(wakePID))
+	}
+	if wakePID > 0 {
+		return WakeHealthStale
+	}
+	return WakeHealthMissing
+}
+
+// looksActiveForWake reports whether a liveness state is fresh enough that wake
+// health is worth reporting. Mirrors list.go's looksActive gate: we only chase
+// wake state for agents that are alive or whose mailbox is being touched while
+// the process is gone.
+func looksActiveForWake(live Liveness) bool {
+	switch live {
+	case LivenessAlive, LivenessDeadMailboxLive:
+		return true
+	default:
+		return false
+	}
+}
+
+// withDefaults fills any nil probe seam with the production implementation so
+// callers may pass a partially-specified probe (and tests may override only the
+// seams they care about).
+func withDefaults(p Probe) Probe {
+	if p.PIDAlive == nil {
+		p.PIDAlive = defaultPIDAlive
+	}
+	if p.ProcessMatch == nil {
+		p.ProcessMatch = defaultProcessMatch
+	}
+	if p.Now == nil {
+		p.Now = DefaultProbe.Now
+	}
+	return p
+}
