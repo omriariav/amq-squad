@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // UsageError signals a misuse of the CLI (unknown command/flag, bad
@@ -35,9 +37,16 @@ func Run(args []string, version string) error {
 	currentOutputPolicy = policy
 	defer func() { currentOutputPolicy = prev }()
 
-	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
 		printUsage()
 		return nil
+	}
+	// BARE invocation (no args): in a configured project, run the status board
+	// as the default command (docker-ps style). In an unconfigured project,
+	// show a short guidance message — never the board, never a crash. Explicit
+	// help paths above are unaffected.
+	if len(args) == 0 {
+		return runBareDefault()
 	}
 	if args[0] == "--version" || args[0] == "-v" {
 		// Bare -v / --version stay text-only for backwards compat.
@@ -89,6 +98,33 @@ Examples:
 // versionEnvelopeData is the kind="version" payload.
 type versionEnvelopeData struct {
 	Version string `json:"version"`
+}
+
+// runBareDefault handles `amq-squad` with no arguments. In a configured
+// project (a team.json exists for the default profile) it runs the status
+// board as the default command. In an unconfigured project it prints a short
+// guidance message pointing at setup — it never renders the board and never
+// crashes, since bare invocation is now the most common front door.
+func runBareDefault() error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		// Even getwd failing should not crash the bare front door with a stack
+		// trace; surface guidance and exit cleanly.
+		fmt.Println("amq-squad: could not determine the current directory; run 'amq-squad --help' for usage.")
+		return nil
+	}
+	if !team.Exists(cwd) {
+		fmt.Print(`amq-squad: no team is configured in this project.
+
+Get started:
+  amq-squad team init     Pick roles and create .amq-squad/team.json
+  amq-squad --help        Show all commands
+
+Once a team exists, bare 'amq-squad' shows a live board of your sessions.
+`)
+		return nil
+	}
+	return runStatusBoard(cwd, false)
 }
 
 func dispatch(args []string) error {
