@@ -64,6 +64,8 @@ var completionTopCommands = []string{
 	"history",
 	"resume",
 	"fork",
+	"rm",
+	"archive",
 	"agent",
 	"completion",
 	"doctor",
@@ -106,6 +108,7 @@ var completionCommonFlags = []string{
 	"--quiet",
 	"--verbose",
 	"--color",
+	"-y",
 	// Subcommand flags, sorted alphabetically.
 	"--all",
 	"--allow-outside",
@@ -150,6 +153,7 @@ var completionCommonFlags = []string{
 	"--terminal",
 	"--terminal-session",
 	"--trust",
+	"--yes",
 }
 
 var (
