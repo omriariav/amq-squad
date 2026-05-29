@@ -95,6 +95,62 @@ func extractPlanRows(out string) string {
 	return rest[:end]
 }
 
+// TestRunResumeReorientsSeatWithoutConversation pins the PR2 contract at the
+// top-level resume verb: a restorable seat with no saved conversation comes
+// back as a re-orient (bootstrap re-runs, so no --no-bootstrap in the emitted
+// command), while a seat carrying a saved conversation reattaches and keeps
+// --no-bootstrap.
+func TestRunResumeReorientsSeatWithoutConversation(t *testing.T) {
+	t.Run("no conversation re-orients", func(t *testing.T) {
+		dir := t.TempDir()
+		base := setupFakeAMQSessionRoots(t)
+		resumeChdir(t, dir)
+		if err := team.Write(dir, team.Team{
+			Workstream: "issue-96",
+			Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+			CWD: dir, Binary: "codex", Role: "cto", StartedAt: time.Now(),
+		})
+		stdout, _, err := captureOutput(t, func() error { return runResume(nil) })
+		if err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+		if strings.Contains(stdout, "--no-bootstrap") {
+			t.Errorf("seat without saved conversation must re-orient (no --no-bootstrap):\n%s", stdout)
+		}
+		if !strings.Contains(stdout, "re-orient") {
+			t.Errorf("plan should describe the restore as a re-orient:\n%s", stdout)
+		}
+	})
+	t.Run("with conversation reattaches", func(t *testing.T) {
+		dir := t.TempDir()
+		base := setupFakeAMQSessionRoots(t)
+		resumeChdir(t, dir)
+		if err := team.Write(dir, team.Team{
+			Workstream: "issue-96",
+			Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+			CWD: dir, Binary: "codex", Role: "cto", Conversation: "cto-thread", StartedAt: time.Now(),
+		})
+		stdout, _, err := captureOutput(t, func() error { return runResume(nil) })
+		if err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+		if !strings.Contains(stdout, "--no-bootstrap") {
+			t.Errorf("seat with saved conversation must reattach (keep --no-bootstrap):\n%s", stdout)
+		}
+		if !strings.Contains(stdout, "reattach conversation cto-thread") {
+			t.Errorf("plan should name the reattached conversation:\n%s", stdout)
+		}
+	})
+}
+
 func TestRunResumeRejectsFreshFlag(t *testing.T) {
 	dir := t.TempDir()
 	resumeChdir(t, dir)
