@@ -179,6 +179,11 @@ func newModel(cfg rebuildConfig, initial state.Snapshot, noTeamNotice string) Mo
 	return m
 }
 
+// now is the render-layer clock: the SAME probe clock state.Build used, so the
+// interactive views age agent/thread signals deterministically in tests and
+// honestly in production. A nil probe clock falls back to the real wall-clock.
+func (m Model) now() func() time.Time { return clockOrDefault(m.rebuild.Probe) }
+
 // Snapshot exposes the currently-held immutable snapshot. Tests use it to assert
 // the Update flow replaced the snapshot; production views read it for rendering.
 func (m Model) Snapshot() state.Snapshot { return m.snapshot }

@@ -591,6 +591,138 @@ func TestRefreshNowIssuesRebuild(t *testing.T) {
 	}
 }
 
+// --- Slice-C DX: interactive views (state-aware labels, headline, attach) ----
+
+// viewClock is the deterministic render clock for the interactive DX tests.
+func viewClock() time.Time { return viewNow }
+
+// clockedModel builds a board model over snap with the injected viewClock, so
+// the interactive views age agent signals deterministically.
+func clockedModel(snap state.Snapshot) Model {
+	m := newModel(rebuildConfig{BaseRoot: "/base", Probe: state.Probe{Now: viewClock}}, snap, "")
+	return m.reselect()
+}
+
+// stoppedVsRunningFixture builds two sessions: "wrapped" rolled up to STOPPED
+// (clear triage, all agents dead/missing) and "wedged" still running with a
+// blocked thread and stale/dead agents that must read as problems (with age).
+func stoppedVsRunningFixture() state.Snapshot {
+	stopped := state.Session{
+		Name: "wrapped",
+		Agents: []state.Agent{
+			{Handle: "cto", Engine: "codex", Liveness: state.LivenessDead, LastSeen: viewNow.Add(-3 * 24 * time.Hour)},
+			{Handle: "qa", Engine: "claude", Liveness: state.LivenessMissing},
+		},
+	}
+	running := state.Session{
+		Name: "wedged",
+		Agents: []state.Agent{
+			{Handle: "cto", Engine: "codex", Liveness: state.LivenessAlive, LastSeen: viewNow.Add(-20 * time.Second)},
+			{Handle: "qa", Engine: "claude", Liveness: state.LivenessStale, LastSeen: viewNow.Add(-3 * 24 * time.Hour)},
+			{Handle: "dev", Engine: "claude", Liveness: state.LivenessDead, LastSeen: viewNow.Add(-2 * time.Hour)},
+		},
+		Coordination: state.Coordination{Threads: []state.ThreadSummary{{
+			ID: "p2p/qa__cto", Participants: []string{"qa", "cto"}, Subject: "deploy",
+			Triage: state.TriageBlocked, Status: state.ThreadBlocked, MessageCount: 2,
+			LastEventAt: viewNow.Add(-10 * time.Minute),
+			Freshness:   state.Freshness{Source: state.SourceEmbedded, Age: 10 * time.Minute},
+		}}},
+		Rollup: state.TriageRollup{Blocked: 1},
+	}
+	var roll state.TriageRollup
+	roll.Add(running.Rollup)
+	return state.Snapshot{BaseRoot: "/base", Sessions: []state.Session{stopped, running}, Rollup: roll}
+}
+
+// TestInteractiveStoppedSessionLabelsAgentsStopped proves the detail view of a
+// STOPPED session renders agents as "stopped" — not "process-dead"/"stale".
+func TestInteractiveStoppedSessionLabelsAgentsStopped(t *testing.T) {
+	m := clockedModel(stoppedVsRunningFixture())
+	// Drill into the stopped session by stable id.
+	m.selectedID = "wrapped"
+	m = m.reselect()
+	m = press(t, m, "enter")
+	if m.SessionName() != "wrapped" {
+		t.Fatalf("precondition: should be in the wrapped detail, got %q", m.SessionName())
+	}
+	out := m.renderDetail()
+	if !strings.Contains(out, "stopped") {
+		t.Errorf("a stopped session's agents should read 'stopped':\n%s", out)
+	}
+	if strings.Contains(out, "process-dead") || strings.Contains(out, "stale-heartbeat") {
+		t.Errorf("a stopped session must not read 'process-dead'/'stale-heartbeat':\n%s", out)
+	}
+}
+
+// TestInteractiveRunningSessionStateAwareLabelsWithAge proves the detail view of
+// a still-running (blocked) session reads stale/dead agents with the clearer
+// vocabulary AND an age suffix from LastSeen against the injected clock.
+func TestInteractiveRunningSessionStateAwareLabelsWithAge(t *testing.T) {
+	m := clockedModel(stoppedVsRunningFixture())
+	m.selectedID = "wedged"
+	m = m.reselect()
+	m = press(t, m, "enter")
+	out := m.renderDetail()
+	if !strings.Contains(out, "stale-heartbeat (3d)") {
+		t.Errorf("running session's stale agent should read 'stale-heartbeat (3d)':\n%s", out)
+	}
+	if !strings.Contains(out, "process-dead (2h)") {
+		t.Errorf("running session's dead agent should read 'process-dead (2h)':\n%s", out)
+	}
+	if !strings.Contains(out, "alive") {
+		t.Errorf("an alive agent should still read 'alive':\n%s", out)
+	}
+	if strings.Contains(out, "stopped") {
+		t.Errorf("a running (blocked) session must NOT label agents 'stopped':\n%s", out)
+	}
+}
+
+// TestInteractiveHeadlineLabelsBlockedThreads proves the interactive board
+// headline labels the triage numbers as THREAD counts with " · " separators.
+func TestInteractiveHeadlineLabelsBlockedThreads(t *testing.T) {
+	snap := state.Snapshot{
+		BaseRoot: "/base",
+		Sessions: []state.Session{{Name: "a"}, {Name: "b"}},
+		Rollup:   state.TriageRollup{NeedsYou: 2, AtRisk: 1, Blocked: 3},
+	}
+	m := clockedModel(snap)
+	head := m.renderHeader()
+	if !strings.Contains(head, "3 blocked threads") {
+		t.Errorf("interactive headline should say 'blocked threads':\n%s", head)
+	}
+	if !strings.Contains(head, " · ") {
+		t.Errorf("interactive headline should separate concepts with ' · ':\n%s", head)
+	}
+}
+
+// TestAttachOverlayStartsWithReadOnlyNotice proves the inert attach overlay text
+// STARTS with "Read-only mode: not attaching" before showing the command.
+func TestAttachOverlayStartsWithReadOnlyNotice(t *testing.T) {
+	m := boardModel()
+	m = press(t, m, "a")
+	overlay := m.renderAttach()
+	if !strings.HasPrefix(strings.TrimSpace(overlay), "Read-only mode: not attaching") {
+		t.Errorf("attach overlay must START with 'Read-only mode: not attaching':\n%s", overlay)
+	}
+	// The suggested command still follows.
+	if !strings.Contains(overlay, "amq-squad attach") {
+		t.Errorf("attach overlay should still show the suggested command:\n%s", overlay)
+	}
+}
+
+// TestFooterAttachNotBarePlainAttach proves the footer labels `a` as a command
+// to copy, never the bare "attach" (which would imply it attaches).
+func TestFooterAttachNotBarePlainAttach(t *testing.T) {
+	m := boardModel()
+	footer := m.keyHints()
+	if !strings.Contains(footer, "a copy attach cmd") {
+		t.Errorf("footer should label `a` as 'copy attach cmd':\n%s", footer)
+	}
+	if strings.Contains(footer, "a attach ") || strings.HasSuffix(footer, "a attach") {
+		t.Errorf("footer must NOT call `a` a bare 'attach':\n%s", footer)
+	}
+}
+
 // equalStrings compares two string slices (nil == empty).
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
