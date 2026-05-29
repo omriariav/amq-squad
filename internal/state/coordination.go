@@ -1,0 +1,208 @@
+package state
+
+import (
+	"strings"
+	"time"
+)
+
+// DefaultOperatorHandle is the mailbox handle that represents the human
+// operator. In real data the agents are cpo/cto/senior-dev/qa AND `user`;
+// `user` is the concrete signal for the "needs-you" triage tier. It is
+// configurable via Thresholds.OperatorHandle.
+const DefaultOperatorHandle = "user"
+
+// ThreadStatus is the derived lifecycle state of a thread, computed from the
+// LATEST message kind plus unread/block markers — never read from disk.
+type ThreadStatus string
+
+const (
+	// ThreadOpen: an ordinary in-progress thread with nothing outstanding.
+	ThreadOpen ThreadStatus = "open"
+	// ThreadAwaitingReply: the latest message is an unanswered question /
+	// review_request / decision — someone owes a response.
+	ThreadAwaitingReply ThreadStatus = "awaiting-reply"
+	// ThreadBlocked: a block has been explicitly declared in the thread and not
+	// yet cleared.
+	ThreadBlocked ThreadStatus = "blocked"
+	// ThreadResolved: the latest message is a terminal answer/review_response,
+	// closing out the outstanding ask.
+	ThreadResolved ThreadStatus = "resolved"
+)
+
+// Triage is one of the three computed headline tiers (plus Clear). Order of
+// severity: NeedsYou > Blocked > AtRisk > Clear.
+type Triage string
+
+const (
+	// TriageNeedsYou: an unanswered message addressed TO the operator handle of
+	// kind question/review_request/decision, or a declared block awaiting the
+	// human. The concrete "the human must act" signal.
+	TriageNeedsYou Triage = "needs-you"
+	// TriageBlocked: an agent has explicitly declared a block (kind/marker); the
+	// owner may be another agent.
+	TriageBlocked Triage = "blocked"
+	// TriageAtRisk: an agent<->agent unanswered review/question aging past
+	// ReviewAge, or a heartbeat gone quiet past Heartbeat, or the
+	// dead-mailbox-live case. Aging, not yet a hard block.
+	TriageAtRisk Triage = "at-risk"
+	// TriageClear: nothing outstanding.
+	TriageClear Triage = "clear"
+)
+
+// FreshnessSource records WHERE a derived time came from, so the console can be
+// honest about how much to trust an age. embedded-time is most trustworthy;
+// mtime is a filesystem fallback; observed is the snapshot clock.
+type FreshnessSource string
+
+const (
+	SourceEmbedded FreshnessSource = "embedded-time"
+	SourceMtime    FreshnessSource = "mtime"
+	SourceObserved FreshnessSource = "observed"
+)
+
+// Freshness annotates a derived field with how old its underlying signal is and
+// whether that age has crossed the relevant staleness threshold.
+type Freshness struct {
+	Source   FreshnessSource
+	Observed time.Time     // the timestamp the age is measured from
+	Age      time.Duration // now - Observed (>=0)
+	Stale    bool          // Age exceeded the governing threshold
+}
+
+// Thresholds tune the time-based triage/freshness math. Zero values fall back
+// to the documented defaults via withThresholdDefaults, so callers may set only
+// the fields they care about.
+type Thresholds struct {
+	// AtRiskWait: an awaiting-reply thread older than this is at risk.
+	AtRiskWait time.Duration
+	// Heartbeat: presence/last-activity older than this is a quiet agent.
+	Heartbeat time.Duration
+	// ReviewAge: an unanswered review/question older than this is at risk.
+	ReviewAge time.Duration
+	// OperatorHandle is the human's mailbox handle (default "user").
+	OperatorHandle string
+}
+
+// Default threshold values.
+const (
+	DefaultAtRiskWait = 30 * time.Minute
+	DefaultHeartbeat  = 90 * time.Second
+	DefaultReviewAge  = 45 * time.Minute
+)
+
+func withThresholdDefaults(t Thresholds) Thresholds {
+	if t.AtRiskWait <= 0 {
+		t.AtRiskWait = DefaultAtRiskWait
+	}
+	if t.Heartbeat <= 0 {
+		t.Heartbeat = DefaultHeartbeat
+	}
+	if t.ReviewAge <= 0 {
+		t.ReviewAge = DefaultReviewAge
+	}
+	if strings.TrimSpace(t.OperatorHandle) == "" {
+		t.OperatorHandle = DefaultOperatorHandle
+	}
+	return t
+}
+
+// ThreadSummary collapses every message sharing a canonical thread id into one
+// derived row. Participants are the union of from+to across the thread.
+type ThreadSummary struct {
+	ID           string
+	Participants []string // union of from + to, sorted
+	Subject      string   // latest non-empty subject
+	Kind         Kind     // latest recognized kind
+	Status       ThreadStatus
+	LastEventAt  time.Time
+	MessageCount int
+	UnreadBy     []string // recipients still holding a copy in inbox/new
+	Triage       Triage
+	Freshness    Freshness
+}
+
+// Edge is a directed from->to message count across a session.
+type Edge struct {
+	From  string
+	To    string
+	Count int
+}
+
+// TimelineEvent is a DERIVED, human-readable state transition (not a raw
+// message dump). Summary reads like "qa blocked on cto".
+type TimelineEvent struct {
+	At      time.Time
+	Kind    Kind
+	Summary string
+	Source  string // thread id the transition came from
+}
+
+// TriageRollup is the per-session / per-snapshot headline count the console and
+// board render: "N needs-you, M at-risk, K blocked".
+type TriageRollup struct {
+	NeedsYou int
+	AtRisk   int
+	Blocked  int
+	Clear    int
+}
+
+// Add folds another rollup into this one.
+func (r *TriageRollup) Add(o TriageRollup) {
+	r.NeedsYou += o.NeedsYou
+	r.AtRisk += o.AtRisk
+	r.Blocked += o.Blocked
+	r.Clear += o.Clear
+}
+
+// countTriage tallies a triage tier into the rollup.
+func (r *TriageRollup) countTriage(t Triage) {
+	switch t {
+	case TriageNeedsYou:
+		r.NeedsYou++
+	case TriageAtRisk:
+		r.AtRisk++
+	case TriageBlocked:
+		r.Blocked++
+	default:
+		r.Clear++
+	}
+}
+
+// String renders the rollup the way the board/console label it.
+func (r TriageRollup) String() string {
+	return itoa(r.NeedsYou) + " needs-you, " + itoa(r.AtRisk) + " at-risk, " + itoa(r.Blocked) + " blocked"
+}
+
+// blockMarkers are case-insensitive substrings in a message body that declare a
+// block when the kind itself is not block-bearing. Defensive: real data uses
+// "NO-GO" / "blocked" / "blocker" prose to declare blocks.
+var blockMarkers = []string{"no-go", "blocked on", "blocker:", "i am blocked", "we are blocked", "blocking:"}
+
+// declaresBlock reports whether a message declares a block, via an explicit
+// marker in the body. (There is no dedicated block kind on disk; blocks are
+// declared in review_response/status prose, which is why this is defensive.)
+func declaresBlock(m Message) bool {
+	body := strings.ToLower(m.Body)
+	subj := strings.ToLower(m.Subject)
+	for _, mk := range blockMarkers {
+		if strings.Contains(body, mk) || strings.Contains(subj, mk) {
+			return true
+		}
+	}
+	return false
+}
+
+// clearsBlock reports whether a message clears a previously-declared block.
+// "GO" / "unblocked" / "resolved" signal forward progress.
+func clearsBlock(m Message) bool {
+	if m.Kind == KindReviewResponse || m.Kind == KindAnswer {
+		body := strings.ToLower(m.Body)
+		// A bare "GO" decision (not "NO-GO") clears.
+		if (strings.Contains(body, "\ngo ") || strings.HasPrefix(body, "go ") ||
+			strings.Contains(body, "go for") || strings.Contains(body, "unblocked") ||
+			strings.Contains(body, "resolved")) && !declaresBlock(m) {
+			return true
+		}
+	}
+	return false
+}

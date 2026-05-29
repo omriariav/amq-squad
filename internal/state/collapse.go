@@ -1,0 +1,472 @@
+package state
+
+import (
+	"sort"
+	"strings"
+	"time"
+)
+
+// Coordination is the derived read-only coordination model for a session: its
+// threads, edges, timeline, triage rollup, and any scan warnings. It is built
+// purely from scanned mailbox messages plus the injected clock + thresholds.
+type Coordination struct {
+	Threads  []ThreadSummary
+	Edges    []Edge
+	Timeline []TimelineEvent
+	Rollup   TriageRollup
+	Warnings []Warning
+}
+
+// collapseInput is the raw material for building a session's coordination view:
+// every message observed across every agent inbox in the session, deduplicated
+// by (msgid, owner, state) at scan time, plus the agents' liveness for the
+// heartbeat/at-risk signals.
+type collapseInput struct {
+	messages []Message
+	agents   []Agent
+	warnings []Warning
+}
+
+// buildCoordination collapses messages into threads, builds the edge list and a
+// human-readable timeline, then computes triage per thread and rolls it up. now
+// and thresholds are injected; the function reads no clock and no disk itself.
+func buildCoordination(in collapseInput, now time.Time, th Thresholds) Coordination {
+	th = withThresholdDefaults(th)
+
+	threads := collapseThreads(in.messages, now, th, in.agents)
+	edges := buildEdges(in.messages)
+	timeline := buildTimeline(threads, in.messages)
+
+	var rollup TriageRollup
+	for _, t := range threads {
+		rollup.countTriage(t.Triage)
+	}
+
+	return Coordination{
+		Threads:  threads,
+		Edges:    edges,
+		Timeline: timeline,
+		Rollup:   rollup,
+		Warnings: in.warnings,
+	}
+}
+
+// threadAccumulator gathers everything about one canonical thread as messages
+// stream in, so the final summary is a single pass.
+type threadAccumulator struct {
+	id           string
+	participants map[string]bool
+	subject      string
+	lastKind     Kind
+	lastEventAt  time.Time
+	count        int
+	// unreadBy: recipient handle -> still has an unread copy (inbox/new).
+	unreadBy map[string]bool
+	// readBy: recipient handle -> has a read copy (inbox/cur). Used so a later
+	// read supersedes an earlier unread for the same recipient.
+	readBy      map[string]bool
+	latest      Message
+	hasLatest   bool
+	blockActive bool
+	blockOwner  string
+}
+
+// collapseThreads groups messages by canonical thread id and derives a summary
+// per thread: union participants, latest subject/kind, status, unread-by, and
+// triage+freshness.
+func collapseThreads(msgs []Message, now time.Time, th Thresholds, agents []Agent) []ThreadSummary {
+	accs := map[string]*threadAccumulator{}
+	var order []string
+
+	for _, m := range msgs {
+		acc, ok := accs[m.Thread]
+		if !ok {
+			acc = &threadAccumulator{
+				id:           m.Thread,
+				participants: map[string]bool{},
+				unreadBy:     map[string]bool{},
+				readBy:       map[string]bool{},
+			}
+			accs[m.Thread] = acc
+			order = append(order, m.Thread)
+		}
+		acc.observe(m)
+	}
+
+	sort.Strings(order)
+	out := make([]ThreadSummary, 0, len(order))
+	for _, id := range order {
+		out = append(out, accs[id].summarize(now, th, agents))
+	}
+	return out
+}
+
+func (a *threadAccumulator) observe(m Message) {
+	a.count++
+	if m.From != "" {
+		a.participants[m.From] = true
+	}
+	for _, r := range m.To {
+		a.participants[r] = true
+	}
+
+	// unread-by is per RECIPIENT, decided by where the recipient's own copy
+	// sits. A copy in inbox/new => that owner has it unread; a copy in inbox/cur
+	// => read. Only the OWNER of an inbox is informative about that owner.
+	if m.Owner != "" {
+		switch m.State {
+		case MailboxNew:
+			if !a.readBy[m.Owner] {
+				a.unreadBy[m.Owner] = true
+			}
+		case MailboxCur:
+			a.readBy[m.Owner] = true
+			delete(a.unreadBy, m.Owner)
+		}
+	}
+
+	// Track latest by created time (messages arrive sorted, but be defensive).
+	if !a.hasLatest || !m.Created.Before(a.lastEventAt) {
+		a.latest = m
+		a.hasLatest = true
+		a.lastEventAt = m.Created
+		a.lastKind = m.Kind
+		if m.Subject != "" {
+			a.subject = m.Subject
+		}
+	} else if a.subject == "" && m.Subject != "" {
+		a.subject = m.Subject
+	}
+
+	// Block tracking: a declared block stays active until a later message
+	// clears it.
+	if declaresBlock(m) {
+		a.blockActive = true
+		a.blockOwner = primaryRecipient(m)
+	} else if a.blockActive && clearsBlock(m) {
+		a.blockActive = false
+	}
+}
+
+func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Agent) ThreadSummary {
+	parts := keysSorted(a.participants)
+	unread := keysSorted(a.unreadBy)
+
+	status := deriveStatus(a)
+	fresh := computeFreshness(a.lastEventAt, a.latest, now, governingThreshold(status, th))
+	triage := computeTriage(a, status, fresh, now, th, agents)
+
+	return ThreadSummary{
+		ID:           a.id,
+		Participants: parts,
+		Subject:      a.subject,
+		Kind:         a.lastKind,
+		Status:       status,
+		LastEventAt:  a.lastEventAt,
+		MessageCount: a.count,
+		UnreadBy:     unread,
+		Triage:       triage,
+		Freshness:    fresh,
+	}
+}
+
+// deriveStatus computes the thread lifecycle status from the LATEST message
+// kind plus the active-block flag.
+func deriveStatus(a *threadAccumulator) ThreadStatus {
+	if a.blockActive {
+		return ThreadBlocked
+	}
+	switch a.lastKind {
+	case KindQuestion, KindReviewRequest:
+		return ThreadAwaitingReply
+	case KindDecision:
+		// A decision addressed to someone (awaiting their ack/action) reads as
+		// awaiting-reply; otherwise it is an open record.
+		if len(a.latest.To) > 0 {
+			return ThreadAwaitingReply
+		}
+		return ThreadOpen
+	case KindAnswer, KindReviewResponse:
+		return ThreadResolved
+	default:
+		return ThreadOpen
+	}
+}
+
+// governingThreshold picks which staleness threshold applies to a thread's
+// freshness, by status.
+func governingThreshold(status ThreadStatus, th Thresholds) time.Duration {
+	switch status {
+	case ThreadAwaitingReply:
+		return th.ReviewAge
+	case ThreadBlocked:
+		return th.AtRiskWait
+	default:
+		return th.AtRiskWait
+	}
+}
+
+// computeFreshness measures the thread's age from its last event and flags
+// staleness against the governing threshold.
+func computeFreshness(at time.Time, latest Message, now time.Time, threshold time.Duration) Freshness {
+	src := SourceObserved
+	if !at.IsZero() {
+		src = createdSource(latestHeaderCreated(latest))
+	}
+	age := time.Duration(0)
+	if !at.IsZero() {
+		age = now.Sub(at)
+		if age < 0 {
+			age = 0
+		}
+	}
+	return Freshness{
+		Source:   src,
+		Observed: at,
+		Age:      age,
+		Stale:    threshold > 0 && age > threshold,
+	}
+}
+
+// latestHeaderCreated reconstructs whether the latest message had an embedded
+// created time (vs a filesystem-mtime fallback). We re-derive from the parsed
+// time being non-zero and matching an embedded format is not recoverable post
+// hoc, so we conservatively report embedded when Created is set and the message
+// was schema-OK; mtime otherwise. (The raw header string is not retained on the
+// Message, so this is the available signal.)
+func latestHeaderCreated(m Message) string {
+	if !m.Created.IsZero() && m.SchemaOK {
+		return m.Created.UTC().Format(time.RFC3339Nano)
+	}
+	return ""
+}
+
+// computeTriage classifies a thread into a triage tier. Severity order is
+// enforced by checking NeedsYou first, then Blocked, then AtRisk.
+func computeTriage(a *threadAccumulator, status ThreadStatus, fresh Freshness, now time.Time, th Thresholds, agents []Agent) Triage {
+	op := th.OperatorHandle
+
+	// --- NeedsYou: an unanswered ask addressed TO the operator, or a block
+	// awaiting the human. ---
+	if status == ThreadAwaitingReply || status == ThreadBlocked {
+		if addressedTo(a.latest, op) {
+			switch a.latest.Kind {
+			case KindQuestion, KindReviewRequest, KindDecision:
+				if operatorStillUnread(a, op) || a.latest.From != op {
+					return TriageNeedsYou
+				}
+			}
+		}
+		if a.blockActive && a.blockOwner == op {
+			return TriageNeedsYou
+		}
+	}
+
+	// --- Blocked: an explicitly declared, still-active block (owner may be
+	// another agent). ---
+	if a.blockActive {
+		return TriageBlocked
+	}
+
+	// --- AtRisk: agent<->agent unanswered review/question aging past
+	// thresholds, or a quiet heartbeat on a participant. ---
+	if status == ThreadAwaitingReply && fresh.Stale {
+		return TriageAtRisk
+	}
+	if heartbeatQuiet(a.participants, agents, now, th) && status == ThreadAwaitingReply {
+		return TriageAtRisk
+	}
+	if deadMailboxLiveParticipant(a.participants, agents) {
+		return TriageAtRisk
+	}
+
+	return TriageClear
+}
+
+// addressedTo reports whether handle is among the message recipients.
+func addressedTo(m Message, handle string) bool {
+	for _, r := range m.To {
+		if r == handle {
+			return true
+		}
+	}
+	return false
+}
+
+// operatorStillUnread reports whether the operator still holds the latest copy
+// unread (true also when we have no inbox observation for the operator, since
+// absence of a read receipt cannot be treated as "answered").
+func operatorStillUnread(a *threadAccumulator, op string) bool {
+	if a.readBy[op] {
+		return false
+	}
+	return true
+}
+
+// primaryRecipient returns the first recipient of a message (the block owner),
+// or "" when none.
+func primaryRecipient(m Message) string {
+	if len(m.To) > 0 {
+		return m.To[0]
+	}
+	return ""
+}
+
+// heartbeatQuiet reports whether any thread participant that is a discovered
+// agent has gone quiet past the heartbeat threshold (last_seen too old), which
+// makes an outstanding ask at-risk.
+func heartbeatQuiet(participants map[string]bool, agents []Agent, now time.Time, th Thresholds) bool {
+	for _, ag := range agents {
+		if !participants[ag.Handle] {
+			continue
+		}
+		if ag.LastSeen.IsZero() {
+			continue
+		}
+		if now.Sub(ag.LastSeen) > th.Heartbeat {
+			return true
+		}
+	}
+	return false
+}
+
+// deadMailboxLiveParticipant reports whether any thread participant is in the
+// dead-mailbox-live state from PR1's liveness — a concrete at-risk signal.
+func deadMailboxLiveParticipant(participants map[string]bool, agents []Agent) bool {
+	for _, ag := range agents {
+		if participants[ag.Handle] && ag.Liveness == LivenessDeadMailboxLive {
+			return true
+		}
+	}
+	return false
+}
+
+// buildEdges tallies directed from->to message counts across the session.
+// Self-edges (from==to) are dropped. Edges are sorted for determinism.
+func buildEdges(msgs []Message) []Edge {
+	type key struct{ from, to string }
+	counts := map[key]int{}
+	for _, m := range msgs {
+		// Edges are computed from the SENT direction once per message. A message
+		// is observed in multiple recipient inboxes; count it once per
+		// (from,to) by only counting the copy in the recipient's own inbox.
+		for _, to := range m.To {
+			if m.From == "" || to == "" || m.From == to {
+				continue
+			}
+			// Count once per recipient copy: only when this is the recipient's
+			// own inbox copy (m.Owner == to) OR the sender's outbox is not
+			// scanned. To avoid double counting across multiple inbox copies of
+			// the same message, count only the recipient-owned copy.
+			if m.Owner != "" && m.Owner != to {
+				continue
+			}
+			counts[key{m.From, to}]++
+		}
+	}
+	edges := make([]Edge, 0, len(counts))
+	for k, c := range counts {
+		edges = append(edges, Edge{From: k.from, To: k.to, Count: c})
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].From != edges[j].From {
+			return edges[i].From < edges[j].From
+		}
+		return edges[i].To < edges[j].To
+	})
+	return edges
+}
+
+// buildTimeline derives human-readable state-transition events. It emits one
+// event per thread for its current derived state (not a raw message dump),
+// sorted by time. The phrasing reads like "qa blocked on cto".
+func buildTimeline(threads []ThreadSummary, msgs []Message) []TimelineEvent {
+	// Index latest message per thread for actor/owner phrasing.
+	latest := map[string]Message{}
+	for _, m := range msgs {
+		cur, ok := latest[m.Thread]
+		if !ok || !m.Created.Before(cur.Created) {
+			latest[m.Thread] = m
+		}
+	}
+
+	var events []TimelineEvent
+	for _, t := range threads {
+		m := latest[t.ID]
+		summary := phraseTransition(t, m)
+		if summary == "" {
+			continue
+		}
+		events = append(events, TimelineEvent{
+			At:      t.LastEventAt,
+			Kind:    t.Kind,
+			Summary: summary,
+			Source:  t.ID,
+		})
+	}
+	sort.SliceStable(events, func(i, j int) bool {
+		if !events[i].At.Equal(events[j].At) {
+			return events[i].At.Before(events[j].At)
+		}
+		return events[i].Source < events[j].Source
+	})
+	return events
+}
+
+// phraseTransition renders a human sentence for a thread's current state.
+func phraseTransition(t ThreadSummary, m Message) string {
+	from := m.From
+	owner := primaryRecipient(m)
+	switch t.Status {
+	case ThreadBlocked:
+		if from != "" && owner != "" {
+			return from + " blocked on " + owner
+		}
+		if from != "" {
+			return from + " declared a block"
+		}
+		return "block declared in " + t.ID
+	case ThreadAwaitingReply:
+		verb := "awaiting reply"
+		switch m.Kind {
+		case KindReviewRequest:
+			verb = "awaiting review"
+		case KindQuestion:
+			verb = "asked a question"
+		case KindDecision:
+			verb = "awaiting decision ack"
+		}
+		if from != "" && owner != "" {
+			return from + " -> " + owner + ": " + verb
+		}
+		if from != "" {
+			return from + " " + verb
+		}
+		return verb + " in " + t.ID
+	case ThreadResolved:
+		if from != "" {
+			return from + " resolved " + shortThread(t.ID)
+		}
+		return shortThread(t.ID) + " resolved"
+	default:
+		return ""
+	}
+}
+
+// shortThread trims a namespace prefix for compact timeline phrasing.
+func shortThread(id string) string {
+	if i := strings.IndexByte(id, '/'); i >= 0 && i+1 < len(id) {
+		return id[i+1:]
+	}
+	return id
+}
+
+// keysSorted returns the sorted keys of a string-set map.
+func keysSorted(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}

@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/internal/launch"
 )
@@ -16,8 +17,21 @@ import (
 //
 // projectRoot is the directory the agents were launched from; it is only used
 // by the launch scanners to infer legacy records and is otherwise opaque here.
+//
+// Build uses the default triage thresholds and operator handle. To tune those
+// (the at-risk/heartbeat/review windows or a non-"user" operator handle), use
+// BuildWithThresholds.
 func Build(projectRoot, baseRoot string, probe Probe) (Snapshot, error) {
+	return BuildWithThresholds(projectRoot, baseRoot, probe, Thresholds{})
+}
+
+// BuildWithThresholds is Build with explicit triage thresholds. Zero-valued
+// fields fall back to the documented defaults, so callers may override only the
+// windows or operator handle they care about. The probe's clock is the single
+// source of "now" for both liveness and the coordination model.
+func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Thresholds) (Snapshot, error) {
 	probe = withDefaults(probe)
+	th = withThresholdDefaults(th)
 
 	entries, err := launch.ScanRestorableEntriesInRoot(projectRoot, baseRoot)
 	if err != nil {
@@ -44,18 +58,44 @@ func Build(projectRoot, baseRoot string, probe Probe) (Snapshot, error) {
 	}
 
 	sort.Strings(order)
+	now := probe.Now()
 	sessions := make([]Session, 0, len(order))
+	var snapRollup TriageRollup
 	for _, name := range order {
 		b := bySession[name]
 		sortAgents(b.agents)
+
+		coord := coordinateSession(b.agents, now, th)
 		sessions = append(sessions, Session{
-			Name:   name,
-			Root:   b.root,
-			Agents: b.agents,
+			Name:         name,
+			Root:         b.root,
+			Agents:       b.agents,
+			Coordination: coord,
+			Rollup:       coord.Rollup,
 		})
+		snapRollup.Add(coord.Rollup)
 	}
 
-	return Snapshot{BaseRoot: baseRoot, Sessions: sessions}, nil
+	return Snapshot{BaseRoot: baseRoot, Sessions: sessions, Rollup: snapRollup}, nil
+}
+
+// coordinateSession scans every agent's mailbox in a session, then collapses the
+// observed messages into the derived coordination model (threads, edges,
+// timeline, triage). The scan reads only the filesystem under each agent dir;
+// no subprocess is spawned. Warnings (torn files, schema mismatches) are
+// aggregated onto the returned Coordination.
+func coordinateSession(agents []Agent, now time.Time, th Thresholds) Coordination {
+	var msgs []Message
+	var warns []Warning
+	for _, a := range agents {
+		if a.AgentDir == "" {
+			continue
+		}
+		m, w := scanMailbox(a.AgentDir, a.Handle, func() time.Time { return now })
+		msgs = append(msgs, m...)
+		warns = append(warns, w...)
+	}
+	return buildCoordination(collapseInput{messages: msgs, agents: agents, warnings: warns}, now, th)
 }
 
 // sessionRoot derives the directory that anchors a session. It prefers the
