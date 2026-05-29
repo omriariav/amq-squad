@@ -605,9 +605,9 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		// a record without one re-runs bootstrap so the agent re-orients from
 		// its brief and drains AMQ history rather than coming up blank.
 		if rec.Conversation != "" {
-			plan.Note = "reattach conversation " + rec.Conversation
+			plan.Note = "reattach: saved conversation " + rec.Conversation
 		} else {
-			plan.Note = "re-orient: no saved conversation, re-reads brief + AMQ history"
+			plan.Note = "fresh agent: re-orient from brief + AMQ history (no saved conversation)"
 		}
 		return plan, nil
 	}
