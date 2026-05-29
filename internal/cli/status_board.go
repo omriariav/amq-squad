@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -40,10 +41,29 @@ type sessionsEnvelopeData struct {
 	Notice   string            `json:"notice,omitempty"`
 }
 
+// briefKind classifies a session's workstream brief for the BRIEF column so the
+// board never passes off an auto-generated stub as a real brief (a lie the DX
+// review flagged). It is a human-rendering concern only: it is NOT part of the
+// JSON sessions envelope, whose `brief` field stays the literal one-liner.
+type briefKind int
+
+const (
+	// briefNone: no brief file exists for the session.
+	briefNone briefKind = iota
+	// briefStub: the brief file exists but is the untouched generated stub.
+	briefStub
+	// briefReal: the brief file has real, operator-authored content.
+	briefReal
+)
+
 // sessionBoardRow is one session's board line in both the human table and the
 // JSON envelope. AgentsTotal/AgentsAlive back the "N/M alive" health column;
 // AtRisk flags the dead-mailbox-live (zombie heartbeat) case so an operator
 // sees a live session that is actually unhealthy.
+//
+// briefKind is an unexported, human-only field (no JSON tag): it drives the
+// distinct "(stub brief)" / "(no brief)" labels in the table without changing
+// the JSON `brief` contract.
 type sessionBoardRow struct {
 	Name         string     `json:"name"`
 	Root         string     `json:"root"`
@@ -53,6 +73,7 @@ type sessionBoardRow struct {
 	AtRisk       int        `json:"at_risk"`
 	Brief        string     `json:"brief,omitempty"`
 	LastActivity time.Time  `json:"last_activity,omitempty"`
+	briefKind    briefKind
 }
 
 // statusBoardExecution carries the inputs for the multi-session board so tests
@@ -172,7 +193,7 @@ func boardRowFor(projectDir string, sess state.Session) sessionBoardRow {
 	}
 	row.LastActivity = latest
 	row.State = rollupBoardState(row.AgentsAlive, row.AtRisk, row.AgentsTotal)
-	row.Brief = briefOneLiner(projectDir, sess.Name)
+	row.Brief, row.briefKind = classifyBrief(projectDir, sess.Name)
 	return row
 }
 
@@ -193,18 +214,26 @@ func rollupBoardState(alive, atRisk, total int) boardState {
 	}
 }
 
-// briefOneLiner reads the first meaningful (non-blank, non-heading) line of the
-// workstream brief for session, returning "" when there is no brief or no
-// meaningful content. Headings ("# ...") and HTML comments are skipped so the
-// stub template's "# <session>" title never becomes the one-liner.
-func briefOneLiner(projectDir, session string) string {
+// classifyBrief reads the workstream brief for session and reports both its
+// first meaningful one-liner and its kind (none / stub / real). The one-liner
+// is the first non-blank, non-heading, non-HTML-comment line; headings
+// ("# ...") and comments are skipped so the stub's "# <session>" title is never
+// the one-liner.
+//
+// STUB HONESTY: an untouched generated brief leads with the fixed stub prose
+// (briefStubFirstLine). When the first meaningful line matches that marker we
+// classify the file as briefStub rather than parroting its placeholder text as
+// if it were an operator-authored brief. A missing file is briefNone; any other
+// meaningful first line is briefReal.
+func classifyBrief(projectDir, session string) (string, briefKind) {
 	path := briefPath(projectDir, session)
 	if path == "" {
-		return ""
+		return "", briefNone
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		// No readable brief file at all -> "(no brief)".
+		return "", briefNone
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
@@ -219,9 +248,17 @@ func briefOneLiner(projectDir, session string) string {
 		if strings.HasPrefix(line, "<!--") {
 			continue
 		}
-		return line
+		if line == briefStubFirstLine {
+			// The file exists but its first meaningful line is the generated
+			// stub's fixed prose: it has not been filled in. Label it honestly.
+			return "", briefStub
+		}
+		return line, briefReal
 	}
-	return ""
+	// File present but no meaningful content (e.g. only a heading): treat as a
+	// real-but-empty brief rather than inventing stub/none. The cell will show
+	// "-" for an empty real brief.
+	return "", briefReal
 }
 
 // boardUnresolvedNotice composes the guidance line shown when the AMQ base
@@ -236,21 +273,44 @@ func boardUnresolvedNotice(err error) string {
 		"Run 'amq-squad up' to launch your team, or 'amq-squad doctor' to check setup."
 }
 
-// renderBoardTable writes the human-facing, TEXT-led session board. Columns:
-// SESSION, STATE, AGENTS (N/M alive + at-risk note), BRIEF, LAST-ACTIVITY.
+// defaultBaseRootName is the basename of the conventional AMQ base root
+// (<project>/.agent-mail). When the resolved root ends in this name it is the
+// default location and the summary line stays quiet about it; a non-default
+// root is folded compactly into the summary so the operator notices.
+const defaultBaseRootName = ".agent-mail"
+
+// renderBoardTable writes the human-facing, TEXT-led session board:
+//
+//	a SUMMARY line (sessions / running / degraded / at-risk counts),
+//	then columns SESSION, STATE, AGENTS, BRIEF, LAST-ACTIVITY.
+//
 // State is the literal token first; color (when enabled) is layered on top so
-// the table is never glyph- or color-dependent.
+// the table is never glyph- or color-dependent. The old "# AM_BASE_ROOT:"
+// debug header is gone from the default render (it read like stray debug output
+// on the front-door command): the root is shown ONLY under --verbose, or folded
+// compactly into the summary line when it is non-default.
 func renderBoardTable(out io.Writer, baseRoot string, rows []sessionBoardRow, now time.Time) error {
 	if len(rows) == 0 {
 		fmt.Fprintf(out, "amq-squad: no sessions found under %s.\n", baseRoot)
 		fmt.Fprintln(out, "Run 'amq-squad up' to launch your team, or 'amq-squad doctor' to check setup.")
 		return nil
 	}
-	// Stable order: by session name so the board is reproducible.
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 
 	policy := outputPolicyCurrent()
-	fmt.Fprintf(out, "# AM_BASE_ROOT: %s\n\n", baseRoot)
+
+	// Verbose keeps the full root visible without the debug-looking header.
+	if policy.Verbose {
+		fmt.Fprintf(out, "verbose: AMQ base root %s\n", baseRoot)
+	}
+
+	// SUMMARY line first so the operator gets the rollup before the rows.
+	fmt.Fprintln(out, boardSummaryLine(baseRoot, rows))
+
+	// ATTENTION-FIRST ORDER: degraded above running above stopped, and within a
+	// state the most recently active session first. Live/degraded work floats to
+	// the top instead of being buried under stopped squads.
+	sortBoardRows(rows)
+
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "SESSION\tSTATE\tAGENTS\tBRIEF\tLAST-ACTIVITY")
 	for _, r := range rows {
@@ -258,11 +318,97 @@ func renderBoardTable(out io.Writer, baseRoot string, rows []sessionBoardRow, no
 			boardSessionName(r.Name),
 			colorBoardState(policy, r.State),
 			boardAgentsCell(r),
-			boardBriefCell(r.Brief),
+			boardBriefCell(r),
 			boardLastActivity(r.LastActivity, now),
 		)
 	}
 	return w.Flush()
+}
+
+// boardSummaryLine composes the one-line rollup shown above the table, e.g.:
+//
+//	amq-squad · 4 sessions · 1 running · 2 degraded · 1 at-risk
+//
+// The at-risk count is the sum of per-session dead-mailbox-live agents that
+// internal/state already computes; it is always shown (even when zero) so the
+// number is honest rather than conditionally hidden. When the base root is
+// non-default it is appended compactly (· root: <path>) instead of leading with
+// the old debug header.
+//
+// NOTE: a "needs you" human-action triage count joins this line in PR10, once
+// the triage signal is actually defined. It is intentionally omitted now — a
+// perpetually-0 "needs you" would be a dishonest number.
+func boardSummaryLine(baseRoot string, rows []sessionBoardRow) string {
+	var running, degraded, atRisk int
+	for _, r := range rows {
+		switch r.State {
+		case boardStateRunning:
+			running++
+		case boardStateDegraded:
+			degraded++
+		}
+		atRisk += r.AtRisk
+	}
+	summary := fmt.Sprintf("amq-squad · %d %s · %d running · %d degraded · %d at-risk",
+		len(rows), pluralize(len(rows), "session", "sessions"),
+		running, degraded, atRisk)
+	if !isDefaultBaseRoot(baseRoot) {
+		summary += " · root: " + baseRoot
+	}
+	return summary
+}
+
+// isDefaultBaseRoot reports whether root is the conventional <project>/.agent-mail
+// location, so the summary line stays quiet about a default root and only calls
+// out a non-default one.
+func isDefaultBaseRoot(root string) bool {
+	root = strings.TrimRight(strings.TrimSpace(root), "/")
+	if root == "" {
+		return true
+	}
+	return filepath.Base(root) == defaultBaseRootName
+}
+
+// pluralize returns one or many depending on n, keeping the summary line's
+// noun grammatical for a single session.
+func pluralize(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// boardStateOrder ranks states for the attention-first sort: degraded (needs
+// attention) first, then running (live), then stopped (idle) last.
+func boardStateOrder(st boardState) int {
+	switch st {
+	case boardStateDegraded:
+		return 0
+	case boardStateRunning:
+		return 1
+	case boardStateStopped:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// sortBoardRows orders rows attention-first: by state priority (degraded,
+// running, stopped), then within a state by last activity DESCENDING (most
+// recent first), with the session name as a final stable tiebreaker so the
+// board is deterministic.
+func sortBoardRows(rows []sessionBoardRow) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		oi, oj := boardStateOrder(rows[i].State), boardStateOrder(rows[j].State)
+		if oi != oj {
+			return oi < oj
+		}
+		if !rows[i].LastActivity.Equal(rows[j].LastActivity) {
+			// Most recent activity first.
+			return rows[i].LastActivity.After(rows[j].LastActivity)
+		}
+		return rows[i].Name < rows[j].Name
+	})
 }
 
 // boardSessionName renders the session name, substituting a visible token for
@@ -274,10 +420,24 @@ func boardSessionName(name string) string {
 	return name
 }
 
-// boardAgentsCell renders the agent-health column: "N/M alive" plus an explicit
-// at-risk note when any agent is dead-mailbox-live (a zombie heartbeat behind a
-// dead process). The text is stable; callers do not depend on color here.
+// boardAgentsCell renders the STATE-AWARE agent-health column. "0/N alive" is
+// the wrong word for a stopped squad — no process is expected — so the wording
+// follows the rolled-up state:
+//
+//   - running:  "N/N alive"
+//   - degraded: "N/M alive" plus a "(k at-risk)" note when any agent is
+//     dead-mailbox-live (a zombie heartbeat behind a dead process)
+//   - stopped:  "stopped" when there are no agents to count, else "M agents"
+//     (idle on disk) — never "0/M alive"
+//
+// The text is stable; callers do not depend on color here.
 func boardAgentsCell(r sessionBoardRow) string {
+	if r.State == boardStateStopped {
+		if r.AgentsTotal == 0 {
+			return "stopped"
+		}
+		return fmt.Sprintf("%d %s", r.AgentsTotal, pluralize(r.AgentsTotal, "agent", "agents"))
+	}
 	cell := fmt.Sprintf("%d/%d alive", r.AgentsAlive, r.AgentsTotal)
 	if r.AtRisk > 0 {
 		cell += fmt.Sprintf(" (%d at-risk)", r.AtRisk)
@@ -285,12 +445,21 @@ func boardAgentsCell(r sessionBoardRow) string {
 	return cell
 }
 
-// boardBriefCell renders the brief one-liner, substituting an em-dash for an
-// absent brief and truncating overly long lines so the table stays scannable.
-func boardBriefCell(brief string) string {
-	brief = strings.TrimSpace(brief)
+// boardBriefCell renders the BRIEF column with stub honesty: a real brief shows
+// its truncated one-liner; an untouched generated stub shows "(stub brief)"
+// rather than parroting the placeholder prose; a missing brief shows
+// "(no brief)". An empty-but-real brief falls through to "(no brief)" too.
+func boardBriefCell(r sessionBoardRow) string {
+	switch r.briefKind {
+	case briefStub:
+		return "(stub brief)"
+	case briefNone:
+		return "(no brief)"
+	}
+	brief := strings.TrimSpace(r.Brief)
 	if brief == "" {
-		return "-"
+		// A real brief file with no meaningful one-liner reads like no brief.
+		return "(no brief)"
 	}
 	const max = 60
 	if len(brief) > max {
