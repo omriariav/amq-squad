@@ -104,17 +104,24 @@ type Agent struct {
 	Source       string // launch source label, e.g. "launch.json" or "amq history"
 }
 
-// Session groups the agents discovered under one AMQ session root.
+// Session groups the agents discovered under one AMQ session root, plus the
+// derived read-only coordination model (threads/edges/timeline/triage) the
+// Mission Control console renders. Coordination is computed by collapsing the
+// per-agent mailboxes; PR1's discovery + liveness fields are unchanged.
 type Session struct {
-	Name   string // workstream/session name; "" for the rootless layout
-	Root   string // the session root directory (base root or base root/<name>)
-	Agents []Agent
+	Name         string // workstream/session name; "" for the rootless layout
+	Root         string // the session root directory (base root or base root/<name>)
+	Agents       []Agent
+	Coordination Coordination // derived threads/edges/timeline/triage for this session
+	Rollup       TriageRollup // triage headline for this session
 }
 
-// Snapshot is the full read-only view of all discovered sessions and agents.
+// Snapshot is the full read-only view of all discovered sessions and agents,
+// plus a snapshot-wide triage rollup aggregating every session.
 type Snapshot struct {
 	BaseRoot string
 	Sessions []Session
+	Rollup   TriageRollup // snapshot-wide triage headline across all sessions
 }
 
 // Probe abstracts PID liveness and process-args inspection so tests can supply
