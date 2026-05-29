@@ -225,9 +225,9 @@ func (m Model) keyHints() string {
 	}
 	switch m.route {
 	case routeBoard:
-		return "↑/↓ move · enter drill · space peek · a attach · / filter · g refresh · ? help · q quit"
+		return "↑/↓ move · enter drill · space peek · a copy attach cmd · / filter · g refresh · ? help · q quit"
 	case routeSession:
-		return "↑/↓ move · enter expand · space peek · l logs · a attach · t timeline · / filter · esc back · g refresh · q quit"
+		return "↑/↓ move · enter expand · space peek · l logs · a copy attach cmd · t timeline · / filter · esc back · g refresh · q quit"
 	case routeThread:
 		return "↑/↓ scroll · esc back · g refresh · q quit"
 	default:
@@ -317,21 +317,24 @@ func (m Model) boardRow(s state.Session, selected bool) string {
 	glyph := triageStyle(tier).Render(triageGlyph(tier))
 	name := sessionKey(s)
 	counts := s.Rollup.String()
-	live := agentLivenessSummary(s)
+	live := agentLivenessSummary(s, m.now())
 	line := fmt.Sprintf("%s %-20s  [%s]  %s", glyph, name, counts, live)
 	return selectRow(line, selected)
 }
 
-// agentLivenessSummary renders a compact per-session agent run-state column:
-// "cto●alive qa○stale", with decorative glyphs and a no-color fallback.
-func agentLivenessSummary(s state.Session) string {
+// agentLivenessSummary renders a compact per-session agent run-state column with
+// the session-aware vocabulary ("cto alive  qa stale-heartbeat (3d)"); a stopped
+// session reads "stopped" for every agent. Decorative glyphs/color layer on top
+// of the literal label; the label is the source of truth.
+func agentLivenessSummary(s state.Session, now func() time.Time) string {
 	if len(s.Agents) == 0 {
 		return styleFaint.Render("(no agents)")
 	}
+	stopped := sessionStopped(s)
 	parts := make([]string, 0, len(s.Agents))
 	for _, a := range detailAgents(s, Filter{}) {
 		g := livenessStyle(a.Liveness).Render(livenessGlyph(a.Liveness))
-		parts = append(parts, fmt.Sprintf("%s %s %s", a.Handle, g, a.Liveness))
+		parts = append(parts, fmt.Sprintf("%s %s %s", a.Handle, g, agentStateLabel(a, stopped, now)))
 	}
 	return strings.Join(parts, "  ")
 }
@@ -353,6 +356,8 @@ func (m Model) renderDetail() string {
 	if len(agents) == 0 {
 		b.WriteString(styleFaint.Render("  (no agents match)") + "\n")
 	}
+	stopped := sessionStopped(s)
+	now := m.now()
 	for _, a := range agents {
 		id := "agent:" + a.Handle
 		g := livenessStyle(a.Liveness).Render(livenessGlyph(a.Liveness))
@@ -360,7 +365,7 @@ func (m Model) renderDetail() string {
 		if a.WakeHealth != "" {
 			wake = "  wake:" + string(a.WakeHealth)
 		}
-		line := fmt.Sprintf("  %s %-12s %-7s %-8s%s", g, a.Handle, a.Engine, a.Liveness, wake)
+		line := fmt.Sprintf("  %s %-12s %-7s %-18s%s", g, a.Handle, a.Engine, agentStateLabel(a, stopped, now), wake)
 		b.WriteString(selectRow(line, id == m.selectedID) + "\n")
 	}
 	b.WriteString("\n")
@@ -518,7 +523,7 @@ func (m Model) renderPeek() string {
 		b.WriteString(m.peekSession(sel.ID))
 	case sel.kind == rowAgent:
 		handle := strings.TrimPrefix(sel.ID, "agent:")
-		b.WriteString(peekAgent(s, sok, handle))
+		b.WriteString(peekAgent(s, sok, handle, m.now()))
 	case sel.kind == rowThread:
 		tid := strings.TrimPrefix(sel.ID, "thread:")
 		b.WriteString(peekThread(s, sok, tid))
@@ -530,15 +535,20 @@ func (m Model) renderPeek() string {
 	return b.String()
 }
 
-// peekSession summarizes a selected board session (its triage + agents).
+// peekSession summarizes a selected board session (its triage + agents). The
+// agent run-states use the session-aware vocabulary and the "agents: N/M alive"
+// reconciliation line so the peek agrees with the board.
 func (m Model) peekSession(name string) string {
 	for _, s := range m.snapshot.Sessions {
 		if sessionKey(s) == name {
 			var b strings.Builder
-			fmt.Fprintf(&b, "session %s  [%s]\n\n", name, s.Rollup.String())
+			fmt.Fprintf(&b, "session %s  [%s]\n", name, s.Rollup.String())
+			fmt.Fprintf(&b, "%s\n\n", agentsAliveLine(s))
+			stopped := sessionStopped(s)
+			now := m.now()
 			b.WriteString("agents:\n")
 			for _, a := range detailAgents(s, Filter{}) {
-				fmt.Fprintf(&b, "  %s %s (%s): %s\n", livenessGlyph(a.Liveness), a.Handle, a.Engine, a.Liveness)
+				fmt.Fprintf(&b, "  %s %s (%s): %s\n", livenessGlyph(a.Liveness), a.Handle, a.Engine, agentStateLabel(a, stopped, now))
 			}
 			return b.String()
 		}
@@ -546,16 +556,17 @@ func (m Model) peekSession(name string) string {
 	return "session " + name + " not found.\n"
 }
 
-// peekAgent renders the read-only agent peek: run-state, freshness/source, what
-// it is blocked on (derived from its threads), and unread inbox count.
-func peekAgent(s state.Session, ok bool, handle string) string {
+// peekAgent renders the read-only agent peek: run-state (session-aware label),
+// freshness/source, what it is blocked on (derived from its threads), and unread
+// inbox count.
+func peekAgent(s state.Session, ok bool, handle string, now func() time.Time) string {
 	if !ok {
 		return "agent " + handle + " unavailable.\n"
 	}
 	a := agentByHandle(s, true, handle)
 	var b strings.Builder
 	fmt.Fprintf(&b, "agent %s (%s)\n", handle, a.Engine)
-	fmt.Fprintf(&b, "  run-state: %s\n", a.Liveness)
+	fmt.Fprintf(&b, "  run-state: %s\n", agentStateLabel(a, sessionStopped(s), now))
 	if a.WakeHealth != "" {
 		fmt.Fprintf(&b, "  wake: %s\n", a.WakeHealth)
 	}
@@ -622,17 +633,19 @@ func peekThread(s state.Session, ok bool, tid string) string {
 	return "thread " + tid + " not found.\n"
 }
 
-// renderAttach renders the INERT attach overlay: it shows the suggested command
-// to jump to the pane and does NOTHING else. v0 never attaches.
+// renderAttach renders the INERT attach overlay. Its text STARTS with the plain
+// "Read-only mode: not attaching" disclaimer — so the operator can never mistake
+// this pane for an action — BEFORE showing the suggested command to copy. v0
+// never attaches.
 func (m Model) renderAttach() string {
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("attach (read-only — nothing was attached)") + "\n\n")
+	b.WriteString(styleHeader.Render("Read-only mode: not attaching") + "\n")
+	b.WriteString(styleFaint.Render("nothing was attached — copy the command below to jump yourself") + "\n\n")
 	hint := m.attachHint
 	if hint == "" {
 		hint = m.suggestAttach()
 	}
 	b.WriteString(hint + "\n")
-	b.WriteString("\n" + styleFaint.Render("the console does not attach for you; copy the command above to jump"))
 	return b.String()
 }
 
@@ -645,7 +658,7 @@ func renderHelp() string {
 		"  enter        expand / drill (board → detail, thread → expand)",
 		"  space        peek (read-only output, unread, blocked-on, freshness)",
 		"  l            logs / tail (raw chronological messages)",
-		"  a            attach (shows the suggested command — does NOT attach)",
+		"  a            copy attach cmd (shows the suggested command — does NOT attach)",
 		"  t            timeline pane (state transitions)",
 		"  /            filter (needs-you · at-risk · blocked · unread · agent:<h> · model:<m> · session:<n>)",
 		"  esc          back / close overlay / cancel filter",
@@ -777,6 +790,10 @@ func sortByTime(threads []state.ThreadSummary) {
 // rollupHeadline composes the snapshot-wide triage headline with color layered
 // on the literal counts. It mirrors state.TriageRollup.String so the console
 // and the board agree, but adds per-tier coloring for the live surface.
+//
+// The triage numbers are THREAD counts, so the headline labels them as such
+// ("blocked threads") and separates each concept with " · " — a reader never
+// conflates the per-session agent liveness with the thread triage tallies.
 func rollupHeadline(snap state.Snapshot) string {
 	r := snap.Rollup
 	sessions := len(snap.Sessions)
@@ -784,15 +801,16 @@ func rollupHeadline(snap state.Snapshot) string {
 		fmt.Sprintf("%d %s", sessions, plural(sessions, "session", "sessions")),
 		styleNeedsYou.Render(fmt.Sprintf("%d needs-you", r.NeedsYou)),
 		styleAtRisk.Render(fmt.Sprintf("%d at-risk", r.AtRisk)),
-		styleBlocked.Render(fmt.Sprintf("%d blocked", r.Blocked)),
+		styleBlocked.Render(fmt.Sprintf("%d blocked threads", r.Blocked)),
 	}
 	return "amq-squad mission control · " + strings.Join(parts, " · ")
 }
 
 // staticBoardBody renders the plain-text body shared by the TUI viewport and the
 // --once static board. It is deliberately color-free so it is byte-stable for CI
-// assertions; the interactive header layers color separately.
-func staticBoardBody(snap state.Snapshot) string {
+// assertions; the interactive header layers color separately. now ages the
+// agent/thread signals.
+func staticBoardBody(snap state.Snapshot, now func() time.Time) string {
 	if len(snap.Sessions) == 0 {
 		return "no sessions found under " + snap.BaseRoot + ".\n" +
 			"Run 'amq-squad up' to launch your team, or 'amq-squad doctor' to check setup."
@@ -802,21 +820,38 @@ func staticBoardBody(snap state.Snapshot) string {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(sessionBlock(s))
+		b.WriteString(sessionBlock(s, now))
 	}
 	return b.String()
 }
 
-// sessionBlock renders one session's heading, triage rollup, and agent roster.
-func sessionBlock(s state.Session) string {
+// sessionBlock renders one session's heading, the per-session THREAD-triage
+// rollup ("[... blocked]"), an "agents: N/M alive" line (a SEPARATE concept from
+// the thread counts), the state-aware agent roster, and — for a still-running
+// session — the top unresolved coordination threads so "who is blocked on whom"
+// is answerable straight from --once.
+//
+// The "[... blocked]" rollup and the headline both count THREADS; the
+// "agents: N/M alive" line counts PROCESSES. Keeping them on distinct labeled
+// lines means a reader never conflates "2 blocked (threads)" with "3 stale
+// agents".
+func sessionBlock(s state.Session, now func() time.Time) string {
 	var b strings.Builder
 	name := s.Name
 	if strings.TrimSpace(name) == "" {
 		name = "(root)"
 	}
+	stopped := sessionStopped(s)
 	fmt.Fprintf(&b, "%s  [%s]\n", name, s.Rollup.String())
+	// Agent liveness is its own labeled line so it never reads as a thread count.
+	fmt.Fprintf(&b, "  %s\n", agentsAliveLine(s))
 	for _, a := range s.Agents {
-		fmt.Fprintf(&b, "  - %s (%s): %s\n", a.Handle, a.Engine, a.Liveness)
+		fmt.Fprintf(&b, "  - %s (%s): %s\n", a.Handle, a.Engine, agentStateLabel(a, stopped, now))
+	}
+	// Unresolved coordination threads (at-risk / blocked), urgency-sorted. Omitted
+	// entirely when there is nothing unresolved to surface.
+	if sec := unresolvedSection(s, now); sec != "" {
+		b.WriteString(sec)
 	}
 	return b.String()
 }

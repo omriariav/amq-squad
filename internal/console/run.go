@@ -106,19 +106,33 @@ func runOnce(cfg Config, rebuild rebuildConfig) error {
 	if f := parseFilter(cfg.InitialFilter); f.active() {
 		snap = filterSnapshot(snap, f)
 	}
-	fmt.Fprintln(cfg.Out, StaticBoard(snap))
+	// The render layer ages agent/thread signals against the SAME clock the
+	// snapshot was built with (the probe's Now), so --once ages are deterministic
+	// in tests and honest in production.
+	fmt.Fprintln(cfg.Out, StaticBoard(snap, clockOrDefault(cfg.Probe)))
 	return nil
 }
 
 // StaticBoard renders the full non-interactive board for a snapshot: the triage
 // rollup headline followed by the per-session body. It is exported so the CLI
 // verb (and tests) can render the same board the --once path emits.
-func StaticBoard(snap state.Snapshot) string {
+//
+// now is the injected clock used to age agent LastSeen / thread events in the
+// body; a nil clock falls back to the real wall-clock.
+//
+// The headline separates concepts and labels the triage numbers as the THREAD
+// counts they are: "<N> sessions · <X> needs-you · <Y> at-risk · <Z> blocked
+// threads", " · "-separated.
+func StaticBoard(snap state.Snapshot, now func() time.Time) string {
+	if now == nil {
+		now = time.Now
+	}
+	r := snap.Rollup
 	headline := "amq-squad mission control · " +
-		fmt.Sprintf("%d %s · %s",
+		fmt.Sprintf("%d %s · %d needs-you · %d at-risk · %d blocked threads",
 			len(snap.Sessions), plural(len(snap.Sessions), "session", "sessions"),
-			snap.Rollup.String())
-	return headline + "\n\n" + staticBoardBody(snap)
+			r.NeedsYou, r.AtRisk, r.Blocked)
+	return headline + "\n\n" + staticBoardBody(snap, now)
 }
 
 // runInteractive opens /dev/tty, builds the initial snapshot, starts the

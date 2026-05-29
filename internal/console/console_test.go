@@ -11,6 +11,10 @@ import (
 	"github.com/omriariav/amq-squad/internal/state"
 )
 
+// fixedClock is the deterministic render-layer clock for the static-board tests
+// (same anchor as the view/run fixtures), so age suffixes are byte-stable.
+func fixedClock() time.Time { return viewNow }
+
 // fixtureSnapshot builds an immutable multi-session snapshot without touching
 // the filesystem, so the Update / render tests stay pure and deterministic.
 func fixtureSnapshot() state.Snapshot {
@@ -254,17 +258,23 @@ func TestWatchTargetsAreDirsNotLeaves(t *testing.T) {
 // surface) includes the triage rollup line and one block per session with its
 // agents — over the multi-session fixture.
 func TestStaticBoardRendersRollupAndSessions(t *testing.T) {
-	board := StaticBoard(fixtureSnapshot())
+	board := StaticBoard(fixtureSnapshot(), fixedClock)
 	for _, want := range []string{
 		"mission control",
 		"2 sessions",
-		"1 needs-you, 2 at-risk, 1 blocked", // the snapshot-wide TriageRollup line
+		// The headline separates concepts with " · " and labels the triage
+		// numbers as the THREAD counts they are ("blocked threads").
+		"1 needs-you · 2 at-risk · 1 blocked threads",
 		"issue-96",
 		"drive-fix",
 		"cto",
 		"qa",
-		string(state.LivenessAlive),
-		string(state.LivenessStale),
+		"alive",
+		// drive-fix is at-risk (not stopped), so its stale agent reads
+		// "stale-heartbeat" rather than the bare/alarming "stale".
+		"stale-heartbeat",
+		// agents are a SEPARATE labeled line from the thread triage counts.
+		"agents:",
 	} {
 		if !strings.Contains(board, want) {
 			t.Errorf("static board missing %q:\n%s", want, board)
@@ -275,7 +285,7 @@ func TestStaticBoardRendersRollupAndSessions(t *testing.T) {
 // TestStaticBoardEmptyDiscovery proves an empty snapshot renders guidance, not a
 // blank board or a crash.
 func TestStaticBoardEmptyDiscovery(t *testing.T) {
-	board := StaticBoard(state.Snapshot{BaseRoot: "/base"})
+	board := StaticBoard(state.Snapshot{BaseRoot: "/base"}, fixedClock)
 	if !strings.Contains(board, "no sessions found") {
 		t.Errorf("empty board should show guidance:\n%s", board)
 	}
