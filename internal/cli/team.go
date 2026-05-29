@@ -248,8 +248,12 @@ Examples:
 	}
 
 	t := team.Team{
-		Project:    cwd,
-		Workstream: workstream,
+		Project: cwd,
+		// Intentionally do NOT stamp t.Workstream here. The pinned workstream
+		// default is a deprecated shim (removal in 2.1); new teams must not pin
+		// one. Live session resolution infers a shared member session or falls
+		// back to the project basename. The field remains readable for old
+		// team.json files. Member sessions still carry the chosen workstream.
 		Trust:      trustMode,
 		BinaryArgs: binaryArgs,
 		Members:    members,

@@ -758,8 +758,11 @@ func TestRunTeamInitUsesExplicitSharedWorkstream(t *testing.T) {
 	if len(got.Members) != 2 {
 		t.Fatalf("members = %v, want two", got.Members)
 	}
-	if got.Workstream != "issue-96" {
-		t.Fatalf("team workstream = %q, want issue-96", got.Workstream)
+	// init no longer pins the deprecated workstream default; the chosen
+	// session lives on the members and is recovered via inference at resolve
+	// time.
+	if got.Workstream != "" {
+		t.Fatalf("team workstream = %q, want empty (init must not pin the deprecated default)", got.Workstream)
 	}
 	for _, m := range got.Members {
 		if m.Session != "issue-96" {
@@ -783,8 +786,17 @@ func TestRunTeamInitStoresSingleMemberSharedWorkstream(t *testing.T) {
 		}
 	})
 
-	if err := runTeamInit([]string{"--personas", "cto", "--session", "cto"}); err != nil {
+	// A non-legacy session name (distinct from the role) is recovered via
+	// single-member inference at resolve time; init no longer pins it.
+	if err := runTeamInit([]string{"--personas", "cto", "--session", "issue-96"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
+	}
+	got, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Workstream != "" {
+		t.Fatalf("team workstream = %q, want empty (init must not pin the deprecated default)", got.Workstream)
 	}
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runTeamShow([]string{"--no-bootstrap"})
@@ -792,8 +804,8 @@ func TestRunTeamInitStoresSingleMemberSharedWorkstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runTeamShow: %v\nstderr:\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "# workstream: cto") || !strings.Contains(stdout, "--session cto --team-workstream") {
-		t.Fatalf("single-member stored workstream was not honored:\n%s", stdout)
+	if !strings.Contains(stdout, "# workstream: issue-96") || !strings.Contains(stdout, "--session issue-96 --team-workstream") {
+		t.Fatalf("single-member shared workstream was not inferred:\n%s", stdout)
 	}
 }
 
@@ -1030,6 +1042,9 @@ func TestRunTeamRulesInitUsesStoredWorkstreamEvenWhenItMatchesRole(t *testing.T)
 		}
 	})
 
+	// Legacy member session ("cto" == role) is not inferable, so the deprecated
+	// pin shim ("cto") is the resolved source: the rules still render it AND the
+	// deprecation notice fires on stderr.
 	if err := team.Write(dir, team.Team{
 		Project:    dir,
 		Workstream: "cto",
@@ -1040,8 +1055,14 @@ func TestRunTeamRulesInitUsesStoredWorkstreamEvenWhenItMatchesRole(t *testing.T)
 		t.Fatal(err)
 	}
 
-	if err := runTeamRules([]string{"init", "--force"}); err != nil {
-		t.Fatalf("runTeamRules init --force: %v", err)
+	_, stderr, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"init", "--force"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamRules init --force: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, "deprecated") || !strings.Contains(stderr, "cto") {
+		t.Fatalf("pin shim path must emit the deprecation notice; stderr:\n%s", stderr)
 	}
 	got, err := os.ReadFile(rules.Path(dir))
 	if err != nil {
