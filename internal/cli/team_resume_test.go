@@ -770,7 +770,7 @@ func TestRunTeamResumeReattachWhenSavedConversation(t *testing.T) {
 	if !strings.Contains(stdout, "--no-bootstrap") {
 		t.Errorf("reattach restore (saved conversation) must keep --no-bootstrap:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "reattach conversation cto-thread") {
+	if !strings.Contains(stdout, "reattach: saved conversation cto-thread") {
 		t.Errorf("plan Note should name the reattached conversation:\n%s", stdout)
 	}
 }

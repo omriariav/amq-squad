@@ -145,7 +145,7 @@ func TestRunResumeReorientsSeatWithoutConversation(t *testing.T) {
 		if !strings.Contains(stdout, "--no-bootstrap") {
 			t.Errorf("seat with saved conversation must reattach (keep --no-bootstrap):\n%s", stdout)
 		}
-		if !strings.Contains(stdout, "reattach conversation cto-thread") {
+		if !strings.Contains(stdout, "reattach: saved conversation cto-thread") {
 			t.Errorf("plan should name the reattached conversation:\n%s", stdout)
 		}
 	})
