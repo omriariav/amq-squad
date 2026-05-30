@@ -54,13 +54,14 @@ func runNOC(args []string) error {
 	tree := fs.Bool("tree", false, "with --once: render the full root->project->session->agent tree instead of the rollup digest")
 	all := fs.Bool("all", false, "alias for --tree (full expansion under --once)")
 	hideStale := fs.Bool("hide-stale", false, "hide stopped/archived (stale) squads — focus on what is alive")
+	noBell := fs.Bool("no-bell", false, "mute needs-you alerts: no terminal bell + no banner when a session first needs you (default: alerts ON; toggle with 'A' in the TUI)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad noc - live read-only NOC command center across all your squads
 
 Usage:
   amq-squad noc [--root DIR ...] [--depth N] [--refresh 2s]
                 [--at-risk-wait 5m] [--review-age 15m] [--stale-after 72h]
-                [--once] [--tree|--all] [--hide-stale]
+                [--once] [--tree|--all] [--hide-stale] [--no-bell]
 
 A full-screen, read-only TUI ("network operations center") over EVERY discovered
 amq-squad project under the given roots. It shows a header pulse (squads / live /
@@ -75,6 +76,13 @@ a stopped squad whose only blocked threads are days old (older than --stale-afte
 is age-decayed to the bottom and rendered dim. Press h (or --hide-stale) to hide
 stale squads entirely.
 
+Press p for the COMMAND PALETTE: a fuzzy "jump to any agent or team across all
+your squads" overlay (type project/session/role; enter jumps a running agent or
+focuses a team window). When a session FIRST needs you (its needs-you count goes
+0->N) the NOC rings the terminal bell once and shows a banner; press A to mute,
+or start muted with --no-bell. Both are read-only (the only side effect is the
+same gated tmux view-switch).
+
 --root is repeatable and defaults to the project's parent (so sibling squads
 appear) or the current directory. The TUI renders to /dev/tty; stdout stays
 clean. With --once it renders a rollup digest (needs-attention + project
@@ -86,6 +94,7 @@ Examples:
   amq-squad noc --once | less -R
   amq-squad noc --once --tree
   amq-squad noc --hide-stale --stale-after 24h
+  amq-squad noc --no-bell
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -108,6 +117,7 @@ Examples:
 		Once:        *once,
 		Tree:        *tree || *all,
 		HideStale:   *hideStale,
+		NoBell:      *noBell,
 		Out:         os.Stdout,
 		StdoutIsTTY: outputIsTTY(),
 		RunNOC:      console.RunNOC,
@@ -128,6 +138,7 @@ type nocExecution struct {
 	Once       bool
 	Tree       bool
 	HideStale  bool
+	NoBell     bool
 	Out        io.Writer
 
 	// Seams.
@@ -162,6 +173,7 @@ func executeNOC(s nocExecution) error {
 		Once:      s.Once,
 		Tree:      s.Tree,
 		HideStale: s.HideStale,
+		NoBell:    s.NoBell,
 		Out:       s.Out,
 	}
 
