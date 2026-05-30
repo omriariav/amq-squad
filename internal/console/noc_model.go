@@ -114,8 +114,9 @@ func newNOCModel(rebuild NOCRebuildConfig) NOCModel {
 	}
 }
 
-// Init implements tea.Model: start the refresh + rediscover tickers.
-func (m NOCModel) Init() tea.Cmd {
+// Init implements tea.Model: start the refresh + rediscover tickers. Pointer
+// receiver to match Update / View: the program is driven as *NOCModel.
+func (m *NOCModel) Init() tea.Cmd {
 	return tea.Batch(nocTickCmd(m.rebuild.refreshCadence()), nocRediscoverTickCmd())
 }
 
@@ -187,5 +188,7 @@ func (m NOCModel) hasProjects() bool {
 	return len(m.ms.Projects) > 0
 }
 
-// Compile-time assurance NOCModel satisfies the Bubble Tea interface.
-var _ tea.Model = NOCModel{}
+// Compile-time assurance *NOCModel satisfies the Bubble Tea interface. The
+// program is driven as a POINTER (tea.NewProgram(&m)) so a key handler's cursor
+// / collapse / filter mutation lands on the model the event loop renders next.
+var _ tea.Model = (*NOCModel)(nil)

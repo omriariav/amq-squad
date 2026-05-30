@@ -10,7 +10,16 @@ import (
 
 // Update implements tea.Model. It folds immutable messages into new model state
 // and never blocks; data feeds deliver snapshots / ticks / watch events.
-func (m NOCModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+//
+// POINTER receiver: the program is driven as *NOCModel (tea.NewProgram(&m)), so
+// every key handler's cursor / collapse / filter mutation lands on the SAME
+// model the Bubble Tea event loop re-binds and renders on the next frame
+// (tea.go: `model, cmd = model.Update(msg)` then `model.View()`). The movement
+// helpers (moveCursor / clampCursor / preserveSelection / rememberSelection) are
+// pointer-receiver; a VALUE Update would mutate a throwaway copy of the model
+// and the live surface would look frozen (arrows / j / k dead), so Update / Init
+// / View are all pointer-receiver to keep one consistent model.
+func (m *NOCModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -68,7 +77,7 @@ func (m *NOCModel) refreshGuidance() {
 //	esc            clear filter / collapse / back
 //	q              quit
 //	?              help
-func (m NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.filterEditing {
 		return m.handleFilterKey(msg)
 	}
@@ -133,7 +142,7 @@ func (m NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleFilterKey edits the filter string while the editor is open.
-func (m NOCModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *NOCModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		m.filterEditing = false
@@ -179,7 +188,7 @@ func (m *NOCModel) moveCursor(delta int) {
 
 // expandOrDrill expands a collapsed parent or, when already expanded, moves into
 // its first child. On a running agent it does nothing (use enter/J to jump).
-func (m NOCModel) expandOrDrill() (tea.Model, tea.Cmd) {
+func (m *NOCModel) expandOrDrill() (tea.Model, tea.Cmd) {
 	n, ok := m.selectedNode()
 	if !ok {
 		return m, nil
@@ -205,7 +214,7 @@ func (m NOCModel) expandOrDrill() (tea.Model, tea.Cmd) {
 //   - running agent (nodeAgent && canJump): jump (the only tmux side effect).
 //   - stopped agent (nodeAgent && !canJump): a note, no jump.
 //   - project / session / root: expand or drill — never a jump.
-func (m NOCModel) enter() (tea.Model, tea.Cmd) {
+func (m *NOCModel) enter() (tea.Model, tea.Cmd) {
 	n, ok := m.selectedNode()
 	if !ok {
 		return m, nil
@@ -222,7 +231,7 @@ func (m NOCModel) enter() (tea.Model, tea.Cmd) {
 
 // collapseOrAscend collapses an expanded parent, or moves selection to the
 // parent node when the current node is a leaf / already collapsed.
-func (m NOCModel) collapseOrAscend() (tea.Model, tea.Cmd) {
+func (m *NOCModel) collapseOrAscend() (tea.Model, tea.Cmd) {
 	n, ok := m.selectedNode()
 	if !ok {
 		return m, nil
@@ -249,7 +258,7 @@ func (m NOCModel) collapseOrAscend() (tea.Model, tea.Cmd) {
 // resolves the live pane (rotation-proof via cwd+engine, PID-tree bonus), then
 // calls the injected switcher. If no pane resolves, or the switch reports a
 // not-in-tmux condition, it surfaces SuggestJump text rather than erroring out.
-func (m NOCModel) jump() (tea.Model, tea.Cmd) {
+func (m *NOCModel) jump() (tea.Model, tea.Cmd) {
 	n, ok := m.selectedNode()
 	if !ok || n.kind != nodeAgent {
 		return m, nil

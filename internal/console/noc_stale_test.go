@@ -251,12 +251,12 @@ func TestNOC_HideStaleTogglesStaleSquads(t *testing.T) {
 	m.colorMode = ColorNone
 	m.th = newNOCTheme(ColorNone)
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = mm.(NOCModel)
-	mm, _ = m.Update(nocSnapshotMsg{ms: ms})
-	m = mm.(NOCModel)
+	m2 := mm.(*NOCModel)
+	mm, _ = m2.Update(nocSnapshotMsg{ms: ms})
+	mp := mm.(*NOCModel)
 
 	// Before: the stale "old" squad has a project node in the tree.
-	hasOld := func(mm NOCModel) bool {
+	hasOld := func(mm *NOCModel) bool {
 		for _, n := range mm.nodes() {
 			if n.kind == nodeProject && n.label == "old" {
 				return true
@@ -264,20 +264,20 @@ func TestNOC_HideStaleTogglesStaleSquads(t *testing.T) {
 		}
 		return false
 	}
-	if !hasOld(m) {
-		t.Fatalf("expected stale squad 'old' visible before toggle; nodes=%d", len(m.nodes()))
+	if !hasOld(mp) {
+		t.Fatalf("expected stale squad 'old' visible before toggle; nodes=%d", len(mp.nodes()))
 	}
 
 	// Press 'h': stale squads hide; "old" disappears, "live" remains.
-	m, _ = nocPress(m, "h")
-	if !m.hideStale {
+	mp, _ = nocPress(mp, "h")
+	if !mp.hideStale {
 		t.Fatal("'h' should set hideStale")
 	}
-	if hasOld(m) {
-		t.Errorf("after 'h', the stopped-stale squad 'old' should be hidden:\n%v", m.nodes())
+	if hasOld(mp) {
+		t.Errorf("after 'h', the stopped-stale squad 'old' should be hidden:\n%v", mp.nodes())
 	}
 	hasLive := false
-	for _, n := range m.nodes() {
+	for _, n := range mp.nodes() {
 		if n.kind == nodeProject && n.label == "live" {
 			hasLive = true
 		}
@@ -287,11 +287,11 @@ func TestNOC_HideStaleTogglesStaleSquads(t *testing.T) {
 	}
 
 	// Press 'h' again: stale squads return.
-	m, _ = nocPress(m, "h")
-	if m.hideStale {
+	mp, _ = nocPress(mp, "h")
+	if mp.hideStale {
 		t.Fatal("a second 'h' should clear hideStale")
 	}
-	if !hasOld(m) {
+	if !hasOld(mp) {
 		t.Error("a second 'h' should restore the stale squad 'old'")
 	}
 }

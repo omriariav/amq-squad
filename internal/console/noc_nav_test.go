@@ -1,0 +1,243 @@
+package console
+
+import (
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/omriariav/amq-squad/v2/internal/noc"
+)
+
+// These are the REGRESSION tests for the interactive-navigation-dead bug:
+// `amq2 noc` rendered, but arrows / j / k never moved the cursor on the live
+// surface. The pre-existing unit tests missed it because they poked the
+// movement helpers (moveCursor) directly; the real defect lived in the seam
+// between Bubble Tea's event loop and the model — the program was driven as a
+// VALUE while the helpers were pointer-receiver, so a keypress mutated a copy
+// the loop discarded. The fix made Update / Init / View pointer-receiver and
+// drives the program as *NOCModel.
+//
+// Every test here drives a REAL tea.KeyMsg (or nocSnapshotMsg) through the
+// PUBLIC Update and asserts the cursor in the model Update RETURNS — the one
+// Bubble Tea renders next. That is the only level at which the bug is visible.
+
+// requireAgentRows fails the test unless the seeded tree has at least n visible
+// rows, so the cursor has somewhere to move (a guard the bug also implicated:
+// nav looks dead when there are no rows to move through).
+func requireRows(t *testing.T, m *NOCModel, n int) {
+	t.Helper()
+	if got := len(m.nodes()); got < n {
+		t.Fatalf("fixture must seed >= %d visible rows, got %d", n, got)
+	}
+}
+
+// TestNOCNav_DownArrowMovesCursor drives the bare arrow-key path (KeyDown /
+// KeyUp) through Update and asserts the RETURNED model's cursor advances, then
+// retreats. With the value-receiver-copy bug a KeyDown returned a model whose
+// cursor was still 0, so the live surface never moved.
+func TestNOCNav_DownArrowMovesCursor(t *testing.T) {
+	m := newSeededNOCModel(t)
+	requireRows(t, m, 3)
+	if m.cursor != 0 {
+		t.Fatalf("initial cursor = %d, want 0", m.cursor)
+	}
+
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = m2.(*NOCModel)
+	if m.cursor != 1 {
+		t.Fatalf("after KeyDown, returned cursor = %d, want 1", m.cursor)
+	}
+
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = m2.(*NOCModel)
+	if m.cursor != 2 {
+		t.Fatalf("after second KeyDown, returned cursor = %d, want 2", m.cursor)
+	}
+
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = m2.(*NOCModel)
+	if m.cursor != 1 {
+		t.Fatalf("after KeyUp, returned cursor = %d, want 1", m.cursor)
+	}
+}
+
+// TestNOCNav_JKRunesMoveCursor drives the j / k rune path (KeyRunes) — the same
+// keymap entry, but exercised as runes rather than named keys — and asserts the
+// returned cursor moves down then up.
+func TestNOCNav_JKRunesMoveCursor(t *testing.T) {
+	m := newSeededNOCModel(t)
+	requireRows(t, m, 3)
+
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	m = m2.(*NOCModel)
+	if m.cursor != 1 {
+		t.Fatalf("after 'j', returned cursor = %d, want 1", m.cursor)
+	}
+
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	m = m2.(*NOCModel)
+	if m.cursor != 2 {
+		t.Fatalf("after second 'j', returned cursor = %d, want 2", m.cursor)
+	}
+
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	m = m2.(*NOCModel)
+	if m.cursor != 1 {
+		t.Fatalf("after 'k', returned cursor = %d, want 1", m.cursor)
+	}
+}
+
+// TestNOCNav_CursorClampsAtEnds proves the returned cursor never escapes the
+// visible-row bounds: 'k'/up at the top stays at 0, and 'j'/down past the last
+// row stays on the last row.
+func TestNOCNav_CursorClampsAtEnds(t *testing.T) {
+	m := newSeededNOCModel(t)
+	rows := len(m.nodes())
+	requireRows(t, m, 3)
+
+	// Up at the very top clamps to 0 (never negative).
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = m2.(*NOCModel)
+	if m.cursor != 0 {
+		t.Fatalf("KeyUp at top must clamp to 0, got %d", m.cursor)
+	}
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	m = m2.(*NOCModel)
+	if m.cursor != 0 {
+		t.Fatalf("'k' at top must clamp to 0, got %d", m.cursor)
+	}
+
+	// Drive down well past the end; it must clamp to the last row, not overflow.
+	for i := 0; i < rows+5; i++ {
+		m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = m2.(*NOCModel)
+	}
+	if m.cursor != rows-1 {
+		t.Fatalf("KeyDown past the end must clamp to last row %d, got %d", rows-1, m.cursor)
+	}
+	// One more 'j' stays put.
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	m = m2.(*NOCModel)
+	if m.cursor != rows-1 {
+		t.Fatalf("'j' at the last row must stay at %d, got %d", rows-1, m.cursor)
+	}
+}
+
+// TestNOCNav_SnapshotRefreshPreservesCursor moves the cursor, then delivers a
+// nocSnapshotMsg (the exact message the 2s refresh tick produces) and asserts
+// the RETURNED model still points at the same row — the refresh clamps /
+// re-locates the selection, it does NOT reset the cursor to 0. A refresh that
+// reset the cursor every poll would also make navigation look dead.
+func TestNOCNav_SnapshotRefreshPreservesCursor(t *testing.T) {
+	m := newSeededNOCModel(t)
+	requireRows(t, m, 3)
+
+	// Move down twice so we are on a non-zero, identifiable row.
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = m2.(*NOCModel)
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = m2.(*NOCModel)
+	if m.cursor != 2 {
+		t.Fatalf("setup: cursor should be 2 before refresh, got %d", m.cursor)
+	}
+	want, ok := m.selectedNode()
+	if !ok {
+		t.Fatal("setup: expected a selected node before refresh")
+	}
+
+	// Re-collect an identical snapshot and feed it as the refresh tick would.
+	root := m.rebuild.Roots[0]
+	ms2 := noc.Collect([]string{root}, noc.DefaultDepth, m.rebuild.Probe, m.rebuild.Thresholds)
+	m2, _ = m.Update(nocSnapshotMsg{ms: ms2})
+	m = m2.(*NOCModel)
+
+	if m.cursor == 0 {
+		t.Fatalf("refresh reset the cursor to 0 — selection must be preserved across a snapshot")
+	}
+	got, ok := m.selectedNode()
+	if !ok {
+		t.Fatal("no selection after refresh")
+	}
+	if got.id != want.id {
+		t.Fatalf("refresh moved the selection: before %q, after %q", want.id, got.id)
+	}
+}
+
+// TestNOCNav_KeypressThenRefreshCycle simulates the live loop's steady state: a
+// keypress moves the cursor, then the periodic tick fires a snapshot, repeated.
+// The cursor must keep advancing — it must not be silently rewound by each
+// refresh (the compound symptom the operator saw: keys appear to do nothing
+// because every 2s tick yanked the cursor back).
+func TestNOCNav_KeypressThenRefreshCycle(t *testing.T) {
+	m := newSeededNOCModel(t)
+	requireRows(t, m, 3)
+	root := m.rebuild.Roots[0]
+
+	for step := 1; step <= 2; step++ {
+		m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = m2.(*NOCModel)
+		if m.cursor != step {
+			t.Fatalf("step %d: cursor should be %d after KeyDown, got %d", step, step, m.cursor)
+		}
+		// Refresh tick lands.
+		ms := noc.Collect([]string{root}, noc.DefaultDepth, m.rebuild.Probe, m.rebuild.Thresholds)
+		m2, _ = m.Update(nocSnapshotMsg{ms: ms})
+		m = m2.(*NOCModel)
+		if m.cursor != step {
+			t.Fatalf("step %d: refresh rewound the cursor to %d, want %d", step, m.cursor, step)
+		}
+	}
+}
+
+// TestNOCNav_ViewMarksSelectedRow proves View actually READS m.cursor and marks
+// the selected row, so a cursor move is visible to the operator. It renders the
+// full-tree board (so the left tree pane is present) and checks that the
+// selection marker moves to a different line after a KeyDown.
+func TestNOCNav_ViewMarksSelectedRow(t *testing.T) {
+	m := newSeededNOCModel(t)
+	requireRows(t, m, 3)
+	m.fullTree = true // render the expandable tree, where the selection bar lives
+
+	tree0 := m.treeView()
+	selLine0 := selectedLineIndex(tree0)
+	if selLine0 < 0 {
+		t.Fatalf("treeView must mark a selected row at cursor 0:\n%s", tree0)
+	}
+
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = m2.(*NOCModel)
+	tree1 := m.treeView()
+	selLine1 := selectedLineIndex(tree1)
+	if selLine1 < 0 {
+		t.Fatalf("treeView must still mark a selected row after KeyDown:\n%s", tree1)
+	}
+	if selLine1 == selLine0 {
+		t.Fatalf("KeyDown must move the rendered selection marker: stayed on line %d", selLine0)
+	}
+}
+
+// selectedLineIndex returns the index of the first rendered tree line carrying
+// the selection marker glyph, or -1 if none. The marker is nocGlyphSelect; in
+// ColorNone its ascii form leads the selected row (see renderNode).
+func selectedLineIndex(tree string) int {
+	marker := nocGlyphSelect.glyph(ColorNone)
+	for i, line := range splitLines(tree) {
+		if len(line) >= len(marker) && line[:len(marker)] == marker {
+			return i
+		}
+	}
+	return -1
+}
+
+func splitLines(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	out = append(out, s[start:])
+	return out
+}
