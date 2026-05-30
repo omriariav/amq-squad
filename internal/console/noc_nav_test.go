@@ -1,6 +1,7 @@
 package console
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -227,6 +228,93 @@ func selectedLineIndex(tree string) int {
 		}
 	}
 	return -1
+}
+
+// selectedLineIndexInView returns the index of the first FULL-VIEW line carrying
+// the selection marker. Unlike selectedLineIndex (which scans treeView, where the
+// marker leads the line) the live View composes a two-pane layout, so the marker
+// leads the LEFT column of a row — i.e. the line STARTS with it. Returns -1 when
+// no rendered row is marked (which is exactly what the old staticView digest did:
+// it never reads m.cursor, so View carried no selection marker at all).
+func selectedLineIndexInView(view string) int {
+	marker := nocGlyphSelect.glyph(ColorNone)
+	for i, line := range splitLines(view) {
+		if strings.HasPrefix(line, marker) {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestNOCNav_LiveViewRendersMovingSelection is the REGRESSION test that closes
+// the test-vs-live gap which let the "live nav does nothing" bug ship: the older
+// nav tests poked treeView() (an interactive sub-view) or m.cursor directly, but
+// the LIVE program's View() returned staticView() — the cursor-LESS rollup digest
+// — so a real keypress changed model state that the rendered frame NEVER reflected.
+//
+// This drives a real tea.KeyMsg{KeyDown} through the PUBLIC Update on the LIVE
+// model (the pointer the event loop renders next) and asserts on View() itself:
+//  1. the rendered View string CHANGES after the keypress, and
+//  2. the selection marker sits on a LATER rendered row than before.
+//
+// It FAILS against the old View()->staticView(): the digest carries no selection
+// marker (selectedLineIndexInView == -1) and does not change on a cursor move, so
+// both assertions trip. (Verified by temporarily restoring View->staticView.)
+func TestNOCNav_LiveViewRendersMovingSelection(t *testing.T) {
+	m := newSeededNOCModel(t) // colorMode ColorNone, width 120 / height 40 via WindowSizeMsg
+	requireRows(t, m, 3)
+
+	view0 := m.View()
+	sel0 := selectedLineIndexInView(view0)
+	if sel0 < 0 {
+		t.Fatalf("live View() must mark the selected row at cursor 0 (the digest never did):\n%s", view0)
+	}
+
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = m2.(*NOCModel)
+
+	view1 := m.View()
+	if view1 == view0 {
+		t.Fatalf("KeyDown must change the rendered live View() — the live program renders this string, and an unchanged frame is exactly the dead-nav bug")
+	}
+	sel1 := selectedLineIndexInView(view1)
+	if sel1 < 0 {
+		t.Fatalf("live View() must still mark a selected row after KeyDown:\n%s", view1)
+	}
+	if sel1 <= sel0 {
+		t.Fatalf("KeyDown must move the rendered selection marker to a LATER row: before line %d, after line %d", sel0, sel1)
+	}
+}
+
+// TestNOCNav_LiveViewTimelineToggle proves 't' produces a VISIBLE change in the
+// LIVE View() (not just in treeView/detailView called directly): toggling the
+// timeline must alter the rendered frame. Against the old staticView digest 't'
+// flipped m.showTimeline, which the digest never reads, so View() was identical.
+func TestNOCNav_LiveViewTimelineToggle(t *testing.T) {
+	m := newSeededNOCModel(t)
+	requireRows(t, m, 3)
+
+	// Land the cursor on a session node so the detail pane is sessionDetail, which
+	// is the pane that honors m.showTimeline.
+	target := -1
+	for i, n := range m.nodes() {
+		if n.kind == nodeSession {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
+		t.Fatal("fixture must seed at least one session node")
+	}
+	m.cursor = target
+
+	before := m.View()
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	m = m2.(*NOCModel)
+	after := m.View()
+	if after == before {
+		t.Fatalf("'t' must change the live View() (toggle the timeline in the detail pane); an unchanged frame means the live render ignores m.showTimeline")
+	}
 }
 
 func splitLines(s string) []string {

@@ -26,6 +26,16 @@ import (
 
 // View implements tea.Model. Pointer receiver to match Update / Init: *NOCModel
 // is the type the program is driven as (tea.NewProgram(&m)).
+//
+// The LIVE program renders liveView() — the INTERACTIVE, cursor-aware frame
+// (header pulse + a tree whose row at m.cursor carries the selection bar +
+// a detail pane that reads m.showTimeline) — so every nav / collapse / drill /
+// timeline / refresh / filter key produces a VISIBLE change on the next frame.
+// staticView() (the cursor-LESS rollup digest) is NOT used here; it is the
+// --once / non-TTY render only (runNOCOnce). Rendering the digest in the live
+// path is exactly the bug that made arrows / j / k / enter / left / t / g / esc
+// look dead: those keys mutate m.cursor / m.tree / m.showTimeline, which the
+// digest reads none of.
 func (m *NOCModel) View() string {
 	if !m.ready {
 		return "loading…"
@@ -33,13 +43,48 @@ func (m *NOCModel) View() string {
 	if m.showHelp {
 		return m.helpView()
 	}
-	return m.staticView()
+	return m.liveView()
 }
 
-// staticView is the static board for the live View and the --once path. Default
+// liveView is the INTERACTIVE frame for the live TUI: the header pulse, then a
+// cursor-aware two-pane main area (LEFT a collapsible attention-first tree with
+// the selection bar on m.cursor, RIGHT the detail pane for the selected node —
+// which reads m.showTimeline so 't' toggles a visible timeline), then the
+// footer (keys / filter editor / hide-stale + jumpNote). It is laid out within
+// m.width/m.height (set via WindowSizeMsg under AltScreen).
+//
+// Unlike staticView()'s rollup digest, EVERY interactive key lands here:
+//   - down/up/j/k move the selection bar (treeView marks i == m.cursor),
+//   - left collapses (fewer rows) / right / enter expands (more rows) or, on a
+//     running agent, jumps — all via the same m.tree expand-state the tree honors,
+//   - t toggles the timeline in the detail pane (sessionDetail reads showTimeline),
+//   - g refreshes (a fresh snapshot re-renders), esc clears the filter / collapses.
+func (m NOCModel) liveView() string {
+	var b strings.Builder
+	b.WriteString(m.headerView())
+	b.WriteString("\n")
+	if m.guidance != "" {
+		b.WriteString(m.guidance)
+		b.WriteString("\n")
+		b.WriteString(m.footerView())
+		return b.String()
+	}
+	// mainView is the cursor-aware tree + detail pane (the machinery that already
+	// renders the selection bar and reads m.showTimeline); it lays the two panes
+	// out side by side within m.width, stacking when narrow.
+	b.WriteString(m.mainView())
+	b.WriteString("\n")
+	b.WriteString(m.footerView())
+	return b.String()
+}
+
+// staticView is the static board for the --once / non-TTY path ONLY (runNOCOnce);
+// the LIVE View renders liveView() (the interactive, cursor-aware frame). Default
 // --once leads with a NEEDS-ATTENTION section + PROJECT ROLLUPS (the digest, not
 // the firehose); --tree/--all (fullTree) renders the full expandable tree so the
-// existing full board is still one flag away.
+// existing full board is still one flag away. The digest is cursor-LESS by design
+// (it never reads m.cursor / m.tree / m.showTimeline), which is why it must not be
+// the live render.
 func (m NOCModel) staticView() string {
 	var b strings.Builder
 	b.WriteString(m.headerView())
@@ -457,6 +502,15 @@ func (m NOCModel) rule() string {
 // mainView lays out the LEFT tree and the RIGHT detail pane side by side. When
 // the terminal is narrow (or width unknown, e.g. --once) it stacks the tree
 // above the detail.
+//
+// Every composed row is bounded to m.width: the right detail pane is truncated
+// to the columns left of the gutter, and the whole row is clamped as a backstop.
+// Without this clamp a row ran ~219 cols wide in a 200-col live pane (leftW pad
+// + gutter + an un-truncated detail line), so each tree row WRAPPED and the
+// interactive tree rendered as one corrupted line under AltScreen — the moving
+// selection bar was there but hidden in the wrap. The visible row count is also
+// capped to the body height (m.height minus the header/footer chrome) so the
+// frame never overruns the AltScreen viewport.
 func (m NOCModel) mainView() string {
 	left := m.treeView()
 	right := m.detailView()
@@ -481,10 +535,16 @@ func (m NOCModel) mainView() string {
 	if len(rightLines) > n {
 		n = len(rightLines)
 	}
+	if bh := m.bodyHeight(); bh > 0 && n > bh {
+		n = bh
+	}
 	gutter := m.th.paint(m.th.dim, " │ ")
+	gutterW := 3 // " │ " / " | " are both 3 visible columns
 	if m.colorMode == ColorAscii {
 		gutter = " | "
 	}
+	// Columns available to the right (detail) pane after the left column + gutter.
+	rightW := m.width - leftW - gutterW
 	var b strings.Builder
 	for i := 0; i < n; i++ {
 		l := ""
@@ -495,14 +555,35 @@ func (m NOCModel) mainView() string {
 		if i < len(rightLines) {
 			rr = rightLines[i]
 		}
-		b.WriteString(padVisible(l, leftW))
-		b.WriteString(gutter)
-		b.WriteString(rr)
+		// Truncate the detail line to its column budget so the composed row never
+		// exceeds m.width and wraps (the wrap is what collapsed the live tree).
+		rr = truncateVisible(rr, rightW)
+		row := padVisible(l, leftW) + gutter + rr
+		// Backstop: clamp the whole row to m.width in case the left column itself
+		// overflows its budget.
+		row = truncateVisible(row, m.width)
+		b.WriteString(row)
 		if i < n-1 {
 			b.WriteString("\n")
 		}
 	}
 	return b.String()
+}
+
+// bodyHeight is the number of rows the two-pane main area may use: the AltScreen
+// viewport (m.height) minus the header (4 lines: brand, rule, pulse, last-
+// activity) and the footer (up to 3: rule, optional notes, keys). Returns 0 when
+// the height is unknown (--once / CI / tests), which leaves the layout uncapped.
+func (m NOCModel) bodyHeight() int {
+	if m.height <= 0 {
+		return 0
+	}
+	const chrome = 8 // header (~4) + blank + footer (~3)
+	bh := m.height - chrome
+	if bh < 1 {
+		bh = 1
+	}
+	return bh
 }
 
 // leftWidth is the tree pane width (about 55% of the terminal, bounded).
@@ -980,6 +1061,50 @@ func visibleWidth(s string) int {
 		n++
 	}
 	return n
+}
+
+// truncateVisible clamps s to at most w VISIBLE columns, preserving ANSI escape
+// sequences (which cost zero columns) and always appending a reset so a cut mid-
+// style never bleeds color into the rest of the frame. This is what keeps a live
+// two-pane row inside m.width: an un-truncated detail pane made each composed row
+// ~219 cols wide in a 200-col pane, so every tree row WRAPPED and the live tree
+// rendered as one corrupted line (arrows/enter/t still mutated state, but the
+// over-wide wrap hid the moving selection bar). w <= 0 yields "".
+func truncateVisible(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if visibleWidth(s) <= w {
+		return s
+	}
+	var b strings.Builder
+	cols := 0
+	inEsc := false
+	wrote := false
+	for _, r := range s {
+		if inEsc {
+			b.WriteRune(r)
+			if r == 'm' {
+				inEsc = false
+			}
+			continue
+		}
+		if r == '\x1b' {
+			inEsc = true
+			b.WriteRune(r)
+			continue
+		}
+		if cols >= w {
+			wrote = true
+			break
+		}
+		b.WriteRune(r)
+		cols++
+	}
+	if wrote {
+		b.WriteString("\x1b[0m")
+	}
+	return b.String()
 }
 
 // nocNoProjectsGuidance is the clear, never-a-crash empty state.
