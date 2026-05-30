@@ -71,6 +71,16 @@ type NOCModel struct {
 	showHelp      bool
 	showTimeline  bool
 
+	// hideStale hides STOPPED / stale (archived) squads so the operator can focus
+	// on what is alive. Toggled by 'h'. Off by default.
+	hideStale bool
+
+	// fullTree forces the full root→project→session→agent expansion in the static
+	// (--once) render. Off by default: --once leads with project rollups + a
+	// needs-attention section, not the firehose. The interactive TUI always
+	// drills via the tree regardless of this flag.
+	fullTree bool
+
 	// jumpNote is a transient status line (e.g. SuggestJump text when a jump
 	// could not resolve a live pane). Cleared on the next navigation.
 	jumpNote string
@@ -123,9 +133,10 @@ type nocRediscoverMsg struct{}
 // nocWatchMsg signals a filesystem change under a watched .agent-mail tree.
 type nocWatchMsg struct{}
 
-// nodes returns the flattened visible tree for the current snapshot + state.
+// nodes returns the flattened visible tree for the current snapshot + state,
+// honoring the hide-stale toggle.
 func (m NOCModel) nodes() []nocNode {
-	return buildNOCTree(m.ms, m.tree, m.filter)
+	return buildNOCTree(m.ms, m.tree, m.filter, m.hideStale)
 }
 
 // selectedNode returns the node at the cursor.

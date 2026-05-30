@@ -28,6 +28,13 @@ type MultiSnapshot struct {
 	Projects   []ProjectSnapshot
 	Rollup     state.TriageRollup // global headline across all projects
 	ObservedAt time.Time
+	// LiveProjects is the count of projects that are RUNNING (>=1 alive agent).
+	// It leads the headline: "what is alive" before "what has the most noise".
+	LiveProjects int
+	// LastActivity is the freshest last-event time across every thread in every
+	// project — the "last activity across all squads" summary. Zero when no
+	// project recorded any thread activity.
+	LastActivity time.Time
 }
 
 // Collect discovers every amq-squad project under roots (bounded by depth) and
@@ -40,10 +47,12 @@ type MultiSnapshot struct {
 // than aborting the whole collection. ObservedAt is taken from the probe clock
 // so the result is deterministic under an injected probe.
 //
-// Projects are returned attention-first: projects with needs-you items sort
-// before at-risk/blocked, which sort before merely-running, which sort before
-// fully-stopped; ties break by project name. This ordering is what lets a
-// command center put the project that needs the operator at the top.
+// Projects are returned attention-first by the COMPOSITE tier sort
+// (sortProjectsAttentionFirst): needs-you, then RUNNING-with-live-at-risk/blocked,
+// then running-healthy, then recently-active-but-stopped, then stale/archived;
+// within a tier, freshest last-activity first. This rewards LIVENESS — a running
+// squad active just now leads; a stopped squad whose only blocks are days old
+// (past the stale window) sinks to the bottom rather than outranking live work.
 func Collect(roots []string, depth int, probe state.Probe, th state.Thresholds) MultiSnapshot {
 	probe = withProbeDefaults(probe)
 	observedAt := probe.Now()
@@ -76,36 +85,109 @@ func Collect(roots []string, depth int, probe state.Probe, th state.Thresholds) 
 		} else {
 			ps.Snap = snap
 			ms.Rollup.Add(snap.Rollup)
+			if hasRunningAgent(snap) {
+				ms.LiveProjects++
+			}
+			if la := projectLastActivity(snap); la.After(ms.LastActivity) {
+				ms.LastActivity = la
+			}
 		}
 		ms.Projects = append(ms.Projects, ps)
 	}
 
-	sortProjectsAttentionFirst(ms.Projects)
+	sortProjectsAttentionFirst(ms.Projects, observedAt, staleWindow(th))
 	return ms
 }
 
-// attentionTier ranks a project by how urgently it wants the operator, lowest
-// (most urgent) first. The tiers, in order:
+// staleWindow resolves the configured stale-after duration, defaulted. The NOC
+// attention sort + recently-active check key off the SAME window the per-thread
+// staleness used in state.BuildWithThresholds, so the ranking and the rendered
+// stale markers agree.
+func staleWindow(th state.Thresholds) time.Duration {
+	if th.StaleAfter > 0 {
+		return th.StaleAfter
+	}
+	return state.DefaultStaleAfter
+}
+
+// projectLastActivity returns the freshest thread last-event time across all of
+// a project's sessions (zero when the project has no thread activity).
+func projectLastActivity(snap state.Snapshot) time.Time {
+	var last time.Time
+	for _, sess := range snap.Sessions {
+		for _, th := range sess.Coordination.Threads {
+			if th.LastEventAt.After(last) {
+				last = th.LastEventAt
+			}
+		}
+	}
+	return last
+}
+
+// Attention tiers, most urgent (lowest) first. This is the composite sort that
+// makes the NOC reward LIVENESS, not ancient noise: a RUNNING squad with live
+// at-risk threads outranks a long-STOPPED squad whose only "blocked" threads are
+// stale. The tiers (mirroring PR13b's spec, lowest = most urgent):
 //
-//	0 needs-you : at least one needs-you triage item
-//	1 at-risk/blocked : at-risk or blocked items, but nothing needs-you
-//	2 running : at least one live/active agent, nothing outstanding
-//	3 stopped : discovered agents but none live (and nothing outstanding)
-//	4 empty : no agents at all (or a failed/warning project)
-func attentionTier(ps ProjectSnapshot) int {
+//	tierNeedsYou      T1: a human action is required (never decays).
+//	tierRunningAtRisk T2: RUNNING (>=1 alive) AND carries LIVE at-risk/blocked.
+//	tierRunningHealthy T3: running, nothing outstanding (or only stale noise).
+//	tierRecentlyActive T4: stopped but recently active (< staleWindow) with open
+//	                       threads — worth a glance, not yet ancient.
+//	tierStale         T5: stopped / stale / archived (only stale or no threads).
+const (
+	tierNeedsYou = iota
+	tierRunningAtRisk
+	tierRunningHealthy
+	tierRecentlyActive
+	tierStale
+)
+
+// attentionTier ranks a project into one of the composite tiers above. now is
+// the observation clock (injected) used to decide "recently active".
+func attentionTier(ps ProjectSnapshot, now time.Time, staleWindow time.Duration) int {
 	r := ps.Snap.Rollup
+	running := hasRunningAgent(ps.Snap)
+
 	switch {
 	case r.NeedsYou > 0:
-		return 0
-	case r.AtRisk > 0 || r.Blocked > 0:
-		return 1
-	case hasRunningAgent(ps.Snap):
-		return 2
-	case hasAnyAgent(ps.Snap):
-		return 3
+		return tierNeedsYou
+	case running && (r.AtRisk > 0 || r.Blocked > 0):
+		// LIVE at-risk/blocked on a running squad — the live-attention case.
+		return tierRunningAtRisk
+	case running:
+		// Running but nothing LIVE outstanding (stale at-risk/blocked don't count).
+		return tierRunningHealthy
+	case projectRecentlyActive(ps.Snap, now, staleWindow):
+		// Stopped, but its freshest thread is within the stale window and it still
+		// has open (non-resolved) threads — recently put down, still worth a look.
+		return tierRecentlyActive
 	default:
-		return 4
+		// Stopped + stale/archived (or no threads at all): the bottom tier where
+		// 30-day-old blocked threads belong.
+		return tierStale
 	}
+}
+
+// projectRecentlyActive reports whether a stopped project was active within the
+// stale window AND still has an open (non-resolved) thread. Such a project is
+// "recently put down" rather than ancient.
+func projectRecentlyActive(snap state.Snapshot, now time.Time, staleWindow time.Duration) bool {
+	la := projectLastActivity(snap)
+	if la.IsZero() || staleWindow <= 0 {
+		return false
+	}
+	if now.Sub(la) > staleWindow {
+		return false
+	}
+	for _, sess := range snap.Sessions {
+		for _, th := range sess.Coordination.Threads {
+			if th.Status != state.ThreadResolved {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // hasRunningAgent reports whether any agent in the snapshot is currently live
@@ -121,22 +203,23 @@ func hasRunningAgent(snap state.Snapshot) bool {
 	return false
 }
 
-// hasAnyAgent reports whether the snapshot discovered any agent at all.
-func hasAnyAgent(snap state.Snapshot) bool {
-	for _, sess := range snap.Sessions {
-		if len(sess.Agents) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// sortProjectsAttentionFirst orders projects by attention tier, then by name.
-func sortProjectsAttentionFirst(projects []ProjectSnapshot) {
+// sortProjectsAttentionFirst orders projects by composite attention tier, then
+// WITHIN a tier by last-activity DESC (freshest first), then by name. This is
+// the net effect the brief demands on real data: a running squad active "just
+// now" ranks at/near the top; a stopped squad whose only blocks are 30 days old
+// drops to the bottom tier.
+func sortProjectsAttentionFirst(projects []ProjectSnapshot, now time.Time, staleWindow time.Duration) {
 	sort.SliceStable(projects, func(i, j int) bool {
-		ti, tj := attentionTier(projects[i]), attentionTier(projects[j])
+		ti := attentionTier(projects[i], now, staleWindow)
+		tj := attentionTier(projects[j], now, staleWindow)
 		if ti != tj {
 			return ti < tj
+		}
+		// Freshest activity first within a tier.
+		ai := projectLastActivity(projects[i].Snap)
+		aj := projectLastActivity(projects[j].Snap)
+		if !ai.Equal(aj) {
+			return ai.After(aj)
 		}
 		return projects[i].Project < projects[j].Project
 	})

@@ -39,7 +39,7 @@ func buildCoordination(in collapseInput, now time.Time, th Thresholds) Coordinat
 
 	var rollup TriageRollup
 	for _, t := range threads {
-		rollup.countTriage(t.Triage)
+		rollup.countThread(t)
 	}
 
 	return Coordination{
@@ -155,6 +155,7 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 	status := deriveStatus(a)
 	fresh := computeFreshness(a.lastEventAt, a.latest, now, governingThreshold(status, th))
 	triage := computeTriage(a, status, fresh, now, th, agents)
+	stale := isStale(a.lastEventAt, now, th.StaleAfter, triage)
 
 	return ThreadSummary{
 		ID:           a.id,
@@ -167,7 +168,22 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 		UnreadBy:     unread,
 		Triage:       triage,
 		Freshness:    fresh,
+		Stale:        stale,
 	}
+}
+
+// isStale reports whether a thread is age-decayed: its last event is older than
+// staleAfter. A needs-you thread is NEVER stale — human action does not decay,
+// it just keeps waiting. A thread with no recorded last-event time (zero) is not
+// considered stale (we have no age to decay against).
+func isStale(lastEventAt, now time.Time, staleAfter time.Duration, triage Triage) bool {
+	if triage == TriageNeedsYou {
+		return false
+	}
+	if lastEventAt.IsZero() || staleAfter <= 0 {
+		return false
+	}
+	return now.Sub(lastEventAt) > staleAfter
 }
 
 // deriveStatus computes the thread lifecycle status from the LATEST message

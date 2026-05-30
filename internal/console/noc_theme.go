@@ -12,6 +12,7 @@ package console
 
 import (
 	"io"
+	"strconv"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -257,4 +258,50 @@ func sessionRollupState(sess state.Session) nocState {
 		}
 	}
 	return rollupState(sess.Rollup, hasRunning, hasAny)
+}
+
+// hasRunningAgentSnap reports whether any agent in the snapshot is live
+// (alive or dead-mailbox-live). Console-side mirror of noc.hasRunningAgent so the
+// digest can decide liveness without re-exporting the noc helper.
+func hasRunningAgentSnap(snap state.Snapshot) bool {
+	for _, sess := range snap.Sessions {
+		for _, ag := range sess.Agents {
+			if ag.Liveness == state.LivenessAlive || ag.Liveness == state.LivenessDeadMailboxLive {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// projectIsStaleOnly reports whether a project is stopped (no live agent) and
+// carries NO live attention (no needs-you, no live at-risk/blocked). Such a
+// project is the "stale / archived" bottom tier the operator may want to hide.
+// A warning project is NOT stale-only (it wants the operator's eye).
+func projectIsStaleOnly(ps noc.ProjectSnapshot) bool {
+	if ps.Warning != "" {
+		return false
+	}
+	if hasRunningAgentSnap(ps.Snap) {
+		return false
+	}
+	return !ps.Snap.Rollup.HasLiveAttention()
+}
+
+// projectLivenessPhrase renders a squad's liveness in words: "running N/M" when
+// any agent is alive, else "stopped". N is the live count, M the total.
+func projectLivenessPhrase(ps noc.ProjectSnapshot) string {
+	live, total := 0, 0
+	for _, sess := range ps.Snap.Sessions {
+		for _, ag := range sess.Agents {
+			total++
+			if ag.Liveness == state.LivenessAlive || ag.Liveness == state.LivenessDeadMailboxLive {
+				live++
+			}
+		}
+	}
+	if live > 0 {
+		return "running " + strconv.Itoa(live) + "/" + strconv.Itoa(total)
+	}
+	return "stopped"
 }

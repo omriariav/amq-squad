@@ -85,9 +85,11 @@ func sessionNodeID(dir, sess string) string       { return "sess|" + dir + "|" +
 func agentNodeID(dir, sess, handle string) string { return "agent|" + dir + "|" + sess + "|" + handle }
 
 // buildNOCTree flattens a MultiSnapshot into the visible node slice honoring the
-// collapse set and the typed filter. Projects keep noc.Collect's attention-first
-// order; sessions and agents are sorted attention-first here.
-func buildNOCTree(ms noc.MultiSnapshot, ts nocTreeState, filter string) []nocNode {
+// collapse set, the typed filter, and the hide-stale toggle. Projects keep
+// noc.Collect's attention-first order; sessions and agents are sorted
+// attention-first here. When hideStale is set, stopped squads carrying no live
+// attention are dropped so the operator can focus on what is alive.
+func buildNOCTree(ms noc.MultiSnapshot, ts nocTreeState, filter string, hideStale bool) []nocNode {
 	var nodes []nocNode
 
 	// Roots are headers only when there is more than one (a single root is
@@ -137,9 +139,13 @@ func buildNOCTree(ms noc.MultiSnapshot, ts nocTreeState, filter string) []nocNod
 		}
 
 		// Apply the filter at the project level: a project is kept if it (or any
-		// of its sessions/agents) matches.
+		// of its sessions/agents) matches. The hide-stale toggle additionally
+		// drops stopped squads with no live attention.
 		visProjects := make([]noc.ProjectSnapshot, 0, len(projects))
 		for _, ps := range projects {
+			if hideStale && projectIsStaleOnly(ps) {
+				continue
+			}
 			if projectMatchesNOCFilter(ps, filter) {
 				visProjects = append(visProjects, ps)
 			}
@@ -181,7 +187,7 @@ func buildNOCTree(ms noc.MultiSnapshot, ts nocTreeState, filter string) []nocNod
 					kind:     nodeSession,
 					id:       sid,
 					depth:    projDepth + 1,
-					label:    sess.Name,
+					label:    sessionLabel(sess),
 					state:    sessionRollupState(sess),
 					rollup:   sess.Rollup,
 					recent:   sessionRecent(sess),
@@ -335,6 +341,32 @@ func agentLabel(ag state.Agent) string {
 		return ag.Handle
 	}
 	return "(agent)"
+}
+
+// sessionLabel is the NEVER-BLANK display label for a session. The base-root
+// (rootless) layout has an empty session name; rendering an empty cell reads
+// like a bug, so we substitute an explicit placeholder. "(root)" marks the
+// base-root layout; "(default-session)" is the generic empty-name fallback.
+func sessionLabel(sess state.Session) string {
+	if name := strings.TrimSpace(sess.Name); name != "" {
+		return name
+	}
+	// A session anchored directly at the base root (its Root has no extra
+	// path segment under the container) is the base-root layout: call it "(root)".
+	if isBaseRootSession(sess) {
+		return "(root)"
+	}
+	return "(default-session)"
+}
+
+// isBaseRootSession reports whether a session is the base-root (rootless)
+// layout: its Root path basename is the .agent-mail container itself, i.e. the
+// session sits directly at the base root with no named sub-directory.
+func isBaseRootSession(sess state.Session) bool {
+	if sess.Root == "" {
+		return false
+	}
+	return strings.HasSuffix(strings.TrimRight(sess.Root, "/"), noc.AgentMailDirName)
 }
 
 // displayRoot abbreviates a root path for the header (home-relative when long).
