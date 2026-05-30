@@ -98,12 +98,13 @@ func TestTmuxDryRunLinesShowPaneFlow(t *testing.T) {
 	got := strings.Join(tmuxDryRunLines(plan), "\n")
 	for _, want := range []string{
 		"tmux new-session -d -s amq-squad-repo -n squad -c /repo",
-		"tmux select-pane -t 'amq-squad-repo:0.0' -T cto",
+		// Pane titles carry the deterministic name-first jump token amq:<session>:<role>.
+		"tmux select-pane -t 'amq-squad-repo:0.0' -T 'amq:amq-squad-repo:cto'",
 		"tmux send-keys -t 'amq-squad-repo:0.0'",
 		"sleep 0.75",
 		"pane_1=$(tmux split-window -P -F '#{pane_id}' -t 'amq-squad-repo:0' -h -c /repo)",
 		"tmux select-layout -t 'amq-squad-repo:0' even-horizontal",
-		`tmux select-pane -t "$pane_1" -T qa`,
+		`tmux select-pane -t "$pane_1" -T 'amq:amq-squad-repo:qa'`,
 		`tmux send-keys -t "$pane_1"`,
 		"# attach later with: tmux attach-session -t amq-squad-repo",
 	} {
@@ -130,7 +131,8 @@ func TestTmuxDryRunLinesCanTargetCurrentWindow(t *testing.T) {
 		// focused window, so panes never hijack an unrelated tab (#40).
 		`window=$(tmux display-message -p -t "${TMUX_PANE:?run amq-squad up from inside a tmux pane}" '#{session_name}:#{window_index}')`,
 		`first_pane="$TMUX_PANE"`,
-		`tmux select-pane -t "$first_pane" -T cto`,
+		// Pane titles carry the deterministic name-first jump token amq:<session>:<role>.
+		`tmux select-pane -t "$first_pane" -T 'amq:ignored:cto'`,
 		`pane_1=$(tmux split-window -P -F '#{pane_id}' -t "$window" -h -c /repo)`,
 		`tmux send-keys -t "$first_pane"`,
 		`tmux send-keys -t "$pane_1"`,

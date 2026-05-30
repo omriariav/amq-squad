@@ -121,6 +121,84 @@ func TestResolveTmuxTargetForSession_SessionNameBonus(t *testing.T) {
 	}
 }
 
+// Core bug fix: two panes share the same cwd (projectDir) AND engine (codex).
+// Under cwd+engine scoring alone both score identically and resolution collapses
+// onto whichever codex pane is first, so cpo and cto would jump to the SAME pane.
+// The name-first title pass must send cpo -> amq:beta:cpo and cto -> amq:beta:cto
+// — DIFFERENT panes. This test is non-vacuous: delete the name-first pass in
+// ResolveTmuxTargetForSession and both agents resolve to pane 0 (the first codex).
+func TestResolveTmuxTargetForSession_TitleDisambiguatesSameCwdEngine(t *testing.T) {
+	projectDir := t.TempDir()
+	panes := []TmuxPane{
+		{Session: "beta", Window: "0", Pane: "0", PID: 100, Command: "codex", CWD: projectDir, Title: "amq:beta:cpo"},
+		{Session: "beta", Window: "0", Pane: "1", PID: 200, Command: "codex", CWD: projectDir, Title: "amq:beta:cto"},
+	}
+
+	cpoAgent := state.Agent{Role: "cpo", Handle: "cpo", Engine: "codex"}
+	gotCPO, ok := ResolveTmuxTargetForSession(cpoAgent, "beta", projectDir, panes, nil)
+	if !ok {
+		t.Fatal("cpo: expected a title match")
+	}
+	wantCPO := TmuxTarget{Session: "beta", Window: "0", Pane: "0"}
+	if gotCPO != wantCPO {
+		t.Fatalf("cpo resolved to %+v, want %+v (amq:beta:cpo pane)", gotCPO, wantCPO)
+	}
+
+	ctoAgent := state.Agent{Role: "cto", Handle: "cto", Engine: "codex"}
+	gotCTO, ok := ResolveTmuxTargetForSession(ctoAgent, "beta", projectDir, panes, nil)
+	if !ok {
+		t.Fatal("cto: expected a title match")
+	}
+	wantCTO := TmuxTarget{Session: "beta", Window: "0", Pane: "1"}
+	if gotCTO != wantCTO {
+		t.Fatalf("cto resolved to %+v, want %+v (amq:beta:cto pane)", gotCTO, wantCTO)
+	}
+
+	if gotCPO == gotCTO {
+		t.Fatalf("cpo and cto resolved to the SAME pane %+v; name-first disambiguation failed", gotCPO)
+	}
+}
+
+// Back-compat: panes carrying NO title (launched before titling existed) must
+// still resolve via the unchanged cwd+engine fallback.
+func TestResolveTmuxTargetForSession_FallsBackWhenNoTitles(t *testing.T) {
+	projectDir := t.TempDir()
+	panes := []TmuxPane{
+		{Session: "beta", Window: "0", Pane: "0", PID: 100, Command: "zsh", CWD: "/elsewhere"},
+		{Session: "beta", Window: "1", Pane: "2", PID: 200, Command: "codex", CWD: projectDir}, // no Title
+	}
+	agent := state.Agent{Role: "cpo", Handle: "cpo", Engine: "codex"}
+
+	got, ok := ResolveTmuxTargetForSession(agent, "beta", projectDir, panes, nil)
+	if !ok {
+		t.Fatal("expected cwd+engine fallback match when no titles present")
+	}
+	want := TmuxTarget{Session: "beta", Window: "1", Pane: "2"}
+	if got != want {
+		t.Fatalf("fallback resolved to %+v, want %+v", got, want)
+	}
+}
+
+func TestParsePanes_ParsesPaneTitle(t *testing.T) {
+	// 7-field rows: one with a title token, one with an empty title (trailing tab).
+	out := "" +
+		"beta\t0\t0\t100\tcodex\t/repo\tamq:beta:cpo\n" +
+		"beta\t0\t1\t200\tcodex\t/repo\t\n"
+	panes := parsePanes(out)
+	if len(panes) != 2 {
+		t.Fatalf("expected 2 panes, got %d: %+v", len(panes), panes)
+	}
+	if panes[0].Title != "amq:beta:cpo" {
+		t.Fatalf("pane[0].Title = %q, want amq:beta:cpo", panes[0].Title)
+	}
+	if panes[1].Title != "" {
+		t.Fatalf("pane[1].Title = %q, want empty", panes[1].Title)
+	}
+	if panes[1].Command != "codex" || panes[1].CWD != "/repo" {
+		t.Fatalf("pane[1] command/cwd mangled by empty title: %+v", panes[1])
+	}
+}
+
 func TestSuggestJump_FormatsTarget(t *testing.T) {
 	got := SuggestJump(TmuxTarget{Session: "squad", Window: "1", Pane: "2"})
 	want := "tmux switch-client -t squad:1.2"
