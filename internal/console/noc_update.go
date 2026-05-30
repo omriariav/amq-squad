@@ -79,6 +79,7 @@ func (m *NOCModel) refreshGuidance() {
 //	h              toggle hiding stopped/archived (stale) squads
 //	/              filter (needs-you/at-risk/blocked/agent:/model:/project:/session:)
 //	t              toggle the timeline in the detail pane
+//	f              toggle the inter-agent flow graph in the detail pane
 //	g              refresh now
 //	esc            clear filter / collapse / back
 //	q              quit
@@ -154,6 +155,13 @@ func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "t":
 		m.showTimeline = !m.showTimeline
+		return m, nil
+	case "f":
+		// Toggle the inter-agent FLOW GRAPH in the detail pane (2.3). Read-only:
+		// it renders the snapshot's already-derived edges (who-messages-whom) with
+		// volume + blocked/awaiting markers; no new computation, no side effects.
+		// Independent of the timeline toggle ('t') — both sub-panels may be open.
+		m.showFlow = !m.showFlow
 		return m, nil
 	case "h":
 		// Toggle hiding stopped/archived (stale) squads so the operator can focus
