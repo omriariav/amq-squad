@@ -31,6 +31,10 @@ type NOCConfig struct {
 	Tree bool
 	// HideStale starts the surface with stopped/archived (stale) squads hidden.
 	HideStale bool
+	// NoBell starts the surface with needs-you alerts MUTED (no terminal bell, no
+	// banner) — the --no-bell flag. Default false: alerts are ON. The interactive
+	// 'A' key toggles the same mute at runtime.
+	NoBell bool
 	// Lifecycle is the cli-injected stop/resume seam (PR15). cli owns the
 	// executeDown/executeResume verbs; passing a closure here lets the live NOC
 	// drive them WITHOUT a console→cli import cycle. nil means stop/resume
@@ -125,6 +129,12 @@ func runNOCLive(cfg NOCConfig) error {
 	// lifecycle verbs onto the model's internal seam. Both are reached only after
 	// the operator confirms the preview overlay.
 	m.lifecycle = adaptLifecycle(cfg.Lifecycle)
+	// Wire the needs-you ALERT bell (PR18). It writes a bare BEL ("\a") to the
+	// SAME tty the program renders on, so the operator hears it without corrupting
+	// the AltScreen frame. --no-bell starts muted; the interactive 'A' key toggles
+	// the same mute. Read-only: the bell never touches squad state.
+	m.alertsMuted = cfg.NoBell
+	m.bell = func() { _, _ = tty.WriteString("\a") }
 	// Seed an initial snapshot synchronously so the first frame is populated.
 	m.ms = noc.Collect(rebuild.Roots, rebuild.Depth, rebuild.Probe, rebuild.Thresholds)
 	m.ready = true

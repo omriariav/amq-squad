@@ -140,6 +140,7 @@ var completionCommonFlags = []string{
 	"--me",
 	"--model",
 	"--no-attach",
+	"--no-bell",
 	"--no-bootstrap",
 	"--no-default-args",
 	"--once",

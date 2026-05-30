@@ -112,10 +112,47 @@ type NOCModel struct {
 	// jumpNote for the read-only jump.
 	actNote string
 
+	// --- Awareness layer (PR18 / 2.3). Both the command palette and the
+	// needs-you alerts are READ-ONLY: the palette only performs the existing gated
+	// tmux jump/focus, and the alerts only ring a bell + set a banner. Neither
+	// mutates squad state. ---
+
+	// palette is the command-palette overlay: non-nil means the fuzzy "jump to any
+	// agent / team" overlay is open (a query + a live-filtered candidate list).
+	// Selecting performs ONLY the gated tmux switch (jump for a running agent,
+	// focus-if-present for a team / stopped agent).
+	palette *paletteState
+
+	// priorNeedsYou is the per-session needs-you count from the LAST snapshot,
+	// keyed by sessionAlertKey(projectDir, session). It is the transition-only
+	// bookkeeping for needs-you alerts: a session alerts only when its count goes
+	// 0 → >0 between snapshots (not on every 2s refresh while it stays needs-you).
+	priorNeedsYou map[string]int
+
+	// priorSeeded is false until the FIRST snapshot has established the needs-you
+	// baseline. The first snapshot never alerts (it only records state) so a
+	// freshly-opened NOC over an already-needs-you board neither rings a bell for
+	// pre-existing state nor shifts the frame layout on frame zero.
+	priorSeeded bool
+
+	// alertBanner is the visible needs-you alert ("🔔 <project>/<session> needs
+	// you") set on a 0→N transition; cleared on the next navigation like jumpNote.
+	alertBanner string
+
+	// alertsMuted suppresses BOTH the bell and the banner. Set by --no-bell at
+	// startup and toggled interactively by 'A'. Default false (alerts ON).
+	alertsMuted bool
+
 	// Seams.
 	switchTo nocSwitcher
 	panes    nocPaneLister
 	pidTree  func(pid int) []int
+
+	// bell is the injected terminal-bell seam for needs-you alerts. Production
+	// writes "\a" to the tty (wired by RunNOC); tests inject a counter so they can
+	// assert the bell fired exactly once on a 0→N transition without a real tty. A
+	// nil bell degrades to "banner only" (no panic).
+	bell func()
 
 	// Control seams (PR15). Both are MUTATING and are reached ONLY after the
 	// operator confirms the preview overlay; tests swap them for fakes so no

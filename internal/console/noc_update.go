@@ -39,8 +39,14 @@ func (m *NOCModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nocRebuildCmd(m.rebuild)
 
 	case nocSnapshotMsg:
+		// Detect needs-you transitions (0 → >0 per session) against the PRIOR
+		// snapshot BEFORE replacing m.ms, then ring the bell + set the banner once
+		// (read-only; suppressed when muted). This is the only place alerts fire so
+		// they key off real snapshot deltas, not every keypress.
+		alerts := m.detectNeedsYouTransitions(msg.ms)
 		m.ms = msg.ms
 		m.ready = true
+		m.fireNeedsYouAlerts(alerts)
 		m.refreshGuidance()
 		m.clampCursor()
 		m.preserveSelection()
@@ -89,6 +95,12 @@ func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.input != nil {
 		return m.handleInputKey(msg)
 	}
+	// The command palette (PR18) is a read-only overlay; like the control overlays
+	// it takes the key first so typing/selection never leaks into the nav keymap.
+	// Its only side effect is the existing gated tmux jump/focus.
+	if m.palette != nil {
+		return m.handlePaletteKey(msg)
+	}
 	if m.filterEditing {
 		return m.handleFilterKey(msg)
 	}
@@ -105,6 +117,10 @@ func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	m.jumpNote = ""
 	m.actNote = ""
+	// The needs-you alert banner is acknowledged by any keypress (it persists
+	// across silent 2s refreshes but clears once the operator acts), mirroring
+	// jumpNote/actNote. It re-appears on the next 0→N transition.
+	m.alertBanner = ""
 
 	// Control keys are ADDITIVE and checked before the read-only keymap: a key
 	// the control layer owns (a/x/m/b/S/R/o) opens a preview/confirm flow (or,
@@ -121,6 +137,20 @@ func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.showHelp = true
+		return m, nil
+	case "p", "ctrl+p":
+		// Open the command palette: fuzzy-jump to any agent / team across all
+		// discovered projects in ~2 keystrokes. Read-only (gated tmux jump/focus).
+		return m, m.openPalette()
+	case "A":
+		// Toggle needs-you alerts (bell + banner). Mirrors the --no-bell flag.
+		m.alertsMuted = !m.alertsMuted
+		if m.alertsMuted {
+			m.actNote = "alerts muted (A to unmute)"
+			m.alertBanner = ""
+		} else {
+			m.actNote = "alerts on (A to mute)"
+		}
 		return m, nil
 	case "t":
 		m.showTimeline = !m.showTimeline

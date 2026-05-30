@@ -52,6 +52,11 @@ func (m *NOCModel) View() string {
 	if m.input != nil {
 		return m.overlayFrame(m.inputOverlayView())
 	}
+	// The command palette (PR18) renders OVER the live frame like the control
+	// overlays so the fuzzy-jump list is unmissable while the chrome stays put.
+	if m.palette != nil {
+		return m.overlayFrame(m.paletteOverlayView())
+	}
 	return m.liveView()
 }
 
@@ -429,6 +434,11 @@ func (m NOCModel) headerView() string {
 	b.WriteString(m.pulseLine())
 	if la := m.lastActivityLine(); la != "" {
 		b.WriteString("\n" + la)
+	}
+	// Needs-you alert banner (PR18): shown when a session just transitioned into
+	// needs-you, painted hot so it is unmissable. Cleared on the next keypress.
+	if banner := m.alertBannerView(); banner != "" {
+		b.WriteString("\n" + banner)
 	}
 	return b.String()
 }
@@ -956,9 +966,9 @@ func (m NOCModel) footerView() string {
 		prompt := "/filter: " + m.filter + cursor
 		return m.th.paint(m.th.rule, m.thinRule()) + "\n" + m.th.paint(m.th.atRisk, prompt)
 	}
-	keys := "↑↓/jk move · →/l/⏎ expand/drill · ← collapse · ⏎/J jump · / filter · h hide-stale · t timeline · g refresh · esc back · ? help · q quit"
+	keys := "↑↓/jk move · →/l/⏎ expand/drill · ← collapse · ⏎/J jump · p palette · A alerts · / filter · h hide-stale · t timeline · g refresh · esc back · ? help · q quit"
 	if m.colorMode == ColorAscii {
-		keys = "up/down move | right/l/enter expand | left collapse | enter/J jump | / filter | h hide-stale | t timeline | g refresh | esc back | ? help | q quit"
+		keys = "up/down move | right/l/enter expand | left collapse | enter/J jump | p palette | A alerts | / filter | h hide-stale | t timeline | g refresh | esc back | ? help | q quit"
 	}
 	var b strings.Builder
 	b.WriteString(m.th.paint(m.th.rule, m.thinRule()) + "\n")
@@ -1002,6 +1012,8 @@ func (m NOCModel) helpView() string {
 		"  J                 jump to the selected running agent's tmux window",
 		"",
 		"VIEW",
+		"  p                 command palette: fuzzy-jump to any agent / team in ~2 keystrokes",
+		"  A                 toggle needs-you alerts (terminal bell + banner)",
 		"  /                 filter (needs-you / at-risk / blocked / agent: / model: / project: / session:)",
 		"  h                 toggle hiding stopped/archived (stale) squads — focus on what is alive",
 		"  t                 toggle the timeline in the detail pane",
@@ -1009,6 +1021,16 @@ func (m NOCModel) helpView() string {
 		"  esc               clear filter / collapse / back",
 		"  ?                 toggle this help",
 		"  q                 quit",
+		"",
+		"COMMAND PALETTE (p): type to fuzzy-filter EVERY agent + team across all your",
+		"squads (project/session/role). ↑↓ or ctrl+n/ctrl+p move; enter JUMPS a running",
+		"agent (the same gated tmux switch) or focuses a team's window if present; esc",
+		"closes. It is READ-ONLY — only the existing tmux view-switch can fire.",
+		"",
+		"ALERTS (A / --no-bell): when a session first NEEDS YOU (its needs-you count goes",
+		"0→N) the NOC rings the terminal bell once and shows a 🔔 banner. It fires only on",
+		"the transition, never repeatedly while it stays needs-you. A mutes; --no-bell",
+		"starts muted. Read-only — the bell + banner never touch squad state.",
 		"",
 		"NAV IS READ-ONLY: the only nav side effect is the tmux jump (it moves your",
 		"view, never squad state). Control actions below are SEPARATE, deliberate,",
