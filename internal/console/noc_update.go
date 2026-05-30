@@ -60,7 +60,8 @@ func (m *NOCModel) refreshGuidance() {
 //	↑/↓ or j/k     move selection
 //	→/l or enter   expand a collapsed parent / drill in; on a RUNNING agent,
 //	               enter JUMPS (tmux switch). A dedicated 'J' also jumps.
-//	←/h            collapse the current node (or ascend to its parent)
+//	←              collapse the current node (or ascend to its parent)
+//	h              toggle hiding stopped/archived (stale) squads
 //	/              filter (needs-you/at-risk/blocked/agent:/model:/project:/session:)
 //	t              toggle the timeline in the detail pane
 //	g              refresh now
@@ -92,6 +93,14 @@ func (m NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "t":
 		m.showTimeline = !m.showTimeline
 		return m, nil
+	case "h":
+		// Toggle hiding stopped/archived (stale) squads so the operator can focus
+		// on what is alive. (Collapse is left/←/esc; 'h' is no longer overloaded
+		// onto collapse — see footer/help.) Re-anchor the selection afterward.
+		m.hideStale = !m.hideStale
+		m.clampCursor()
+		m.preserveSelection()
+		return m, nil
 	case "g":
 		return m, nocRebuildCmd(m.rebuild)
 	case "/":
@@ -109,7 +118,7 @@ func (m NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.enter()
 	case "J":
 		return m.jump()
-	case "left", "h":
+	case "left":
 		return m.collapseOrAscend()
 	case "esc":
 		if m.filter != "" {

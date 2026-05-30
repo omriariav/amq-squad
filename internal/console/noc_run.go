@@ -24,6 +24,13 @@ type NOCConfig struct {
 	Once          bool
 	Out           io.Writer
 	InitialFilter string
+	// Tree forces the full root→project→session→agent expansion in the --once
+	// static render (the old full board). Default --once leads with project
+	// rollups + a needs-attention section. Ignored by the interactive TUI, which
+	// always drills via the tree.
+	Tree bool
+	// HideStale starts the surface with stopped/archived (stale) squads hidden.
+	HideStale bool
 }
 
 // RunNOC is the NOC entrypoint. With cfg.Once it renders a single static board
@@ -51,6 +58,8 @@ func runNOCOnce(cfg NOCConfig) error {
 	if cfg.InitialFilter != "" {
 		m.filter = cfg.InitialFilter
 	}
+	m.fullTree = cfg.Tree
+	m.hideStale = cfg.HideStale
 	m.ms = ms
 	m.ready = true
 	m.refreshGuidance()
@@ -74,6 +83,7 @@ func runNOCLive(cfg NOCConfig) error {
 	if cfg.InitialFilter != "" {
 		m.filter = cfg.InitialFilter
 	}
+	m.hideStale = cfg.HideStale
 	// Seed an initial snapshot synchronously so the first frame is populated.
 	m.ms = noc.Collect(rebuild.Roots, rebuild.Depth, rebuild.Probe, rebuild.Thresholds)
 	m.ready = true

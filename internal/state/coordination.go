@@ -79,6 +79,12 @@ type Thresholds struct {
 	Heartbeat time.Duration
 	// ReviewAge: an unanswered review/question older than this is at risk.
 	ReviewAge time.Duration
+	// StaleAfter: a thread whose last event is older than this is STALE. Stale
+	// threads (and the at-risk/blocked triage they carry) are age-decayed: they
+	// weight ~0 for attention ranking and render dim/parenthesized rather than as
+	// live attention. This is the window that separates "what is alive / what
+	// needs me now" from ancient noise on long-stopped squads.
+	StaleAfter time.Duration
 	// OperatorHandle is the human's mailbox handle (default "user").
 	OperatorHandle string
 }
@@ -88,6 +94,9 @@ const (
 	DefaultAtRiskWait = 30 * time.Minute
 	DefaultHeartbeat  = 90 * time.Second
 	DefaultReviewAge  = 45 * time.Minute
+	// DefaultStaleAfter: 72h. A thread untouched for three days is treated as
+	// stale — its triage no longer counts as LIVE attention.
+	DefaultStaleAfter = 72 * time.Hour
 )
 
 func withThresholdDefaults(t Thresholds) Thresholds {
@@ -99,6 +108,9 @@ func withThresholdDefaults(t Thresholds) Thresholds {
 	}
 	if t.ReviewAge <= 0 {
 		t.ReviewAge = DefaultReviewAge
+	}
+	if t.StaleAfter <= 0 {
+		t.StaleAfter = DefaultStaleAfter
 	}
 	if strings.TrimSpace(t.OperatorHandle) == "" {
 		t.OperatorHandle = DefaultOperatorHandle
@@ -119,6 +131,11 @@ type ThreadSummary struct {
 	UnreadBy     []string // recipients still holding a copy in inbox/new
 	Triage       Triage
 	Freshness    Freshness
+	// Stale is true when now - LastEventAt exceeds Thresholds.StaleAfter. A stale
+	// thread's triage is age-decayed: it is NOT counted as LIVE attention and is
+	// rendered dim/parenthesized. A needs-you thread is never marked stale —
+	// human action does not decay.
+	Stale bool
 }
 
 // Edge is a directed from->to message count across a session.
@@ -138,12 +155,17 @@ type TimelineEvent struct {
 }
 
 // TriageRollup is the per-session / per-snapshot headline count the console and
-// board render: "N needs-you, M at-risk, K blocked".
+// board render: "N needs-you, M at-risk, K blocked". The at-risk/blocked counts
+// are split into LIVE (recent, non-stale) and STALE (age-decayed) so a surface
+// can lead with what is alive and demote ancient noise. NeedsYou is always live
+// — human action does not decay.
 type TriageRollup struct {
-	NeedsYou int
-	AtRisk   int
-	Blocked  int
-	Clear    int
+	NeedsYou     int
+	AtRisk       int // LIVE at-risk (non-stale)
+	Blocked      int // LIVE blocked (non-stale)
+	AtRiskStale  int // age-decayed at-risk
+	BlockedStale int // age-decayed blocked
+	Clear        int
 }
 
 // Add folds another rollup into this one.
@@ -151,10 +173,22 @@ func (r *TriageRollup) Add(o TriageRollup) {
 	r.NeedsYou += o.NeedsYou
 	r.AtRisk += o.AtRisk
 	r.Blocked += o.Blocked
+	r.AtRiskStale += o.AtRiskStale
+	r.BlockedStale += o.BlockedStale
 	r.Clear += o.Clear
 }
 
-// countTriage tallies a triage tier into the rollup.
+// HasLiveAttention reports whether the rollup carries any LIVE (non-stale)
+// outstanding item: needs-you, live at-risk, or live blocked.
+func (r TriageRollup) HasLiveAttention() bool {
+	return r.NeedsYou > 0 || r.AtRisk > 0 || r.Blocked > 0
+}
+
+// countTriage tallies a bare triage tier into the rollup's LIVE buckets. It is
+// retained for callers that recompute a rollup from a triage value alone (e.g.
+// the status board's filtered re-rollup) and have no per-thread staleness in
+// hand; such callers treat every counted item as live. Prefer countThread when
+// a ThreadSummary (with its Stale flag) is available.
 func (r *TriageRollup) countTriage(t Triage) {
 	switch t {
 	case TriageNeedsYou:
@@ -168,9 +202,38 @@ func (r *TriageRollup) countTriage(t Triage) {
 	}
 }
 
-// String renders the rollup the way the board/console label it.
+// countThread tallies one thread's triage into the rollup, routing at-risk and
+// blocked into the LIVE or STALE bucket by the thread's Stale flag. NeedsYou is
+// always live.
+func (r *TriageRollup) countThread(t ThreadSummary) {
+	switch t.Triage {
+	case TriageNeedsYou:
+		r.NeedsYou++
+	case TriageAtRisk:
+		if t.Stale {
+			r.AtRiskStale++
+		} else {
+			r.AtRisk++
+		}
+	case TriageBlocked:
+		if t.Stale {
+			r.BlockedStale++
+		} else {
+			r.Blocked++
+		}
+	default:
+		r.Clear++
+	}
+}
+
+// String renders the rollup the way the board/console label it. Stale counts are
+// shown in parentheses only when present, keeping the live counts primary.
 func (r TriageRollup) String() string {
-	return itoa(r.NeedsYou) + " needs-you, " + itoa(r.AtRisk) + " at-risk, " + itoa(r.Blocked) + " blocked"
+	s := itoa(r.NeedsYou) + " needs-you, " + itoa(r.AtRisk) + " at-risk, " + itoa(r.Blocked) + " blocked"
+	if r.AtRiskStale > 0 || r.BlockedStale > 0 {
+		s += " (" + itoa(r.AtRiskStale) + " at-risk, " + itoa(r.BlockedStale) + " blocked stale)"
+	}
+	return s
 }
 
 // blockMarkers are case-insensitive substrings in a message body that declare a

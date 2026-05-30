@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v2/internal/noc"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
@@ -31,8 +32,10 @@ func (m NOCModel) View() string {
 	return m.staticView()
 }
 
-// staticView is the full board — shared by the live View and the --once path so
-// they render identically.
+// staticView is the static board for the live View and the --once path. Default
+// --once leads with a NEEDS-ATTENTION section + PROJECT ROLLUPS (the digest, not
+// the firehose); --tree/--all (fullTree) renders the full expandable tree so the
+// existing full board is still one flag away.
 func (m NOCModel) staticView() string {
 	var b strings.Builder
 	b.WriteString(m.headerView())
@@ -43,13 +46,107 @@ func (m NOCModel) staticView() string {
 		b.WriteString(m.footerView())
 		return b.String()
 	}
-	b.WriteString(m.mainView())
+	if m.fullTree {
+		b.WriteString(m.mainView())
+	} else {
+		b.WriteString(m.rollupView())
+	}
 	b.WriteString("\n")
 	b.WriteString(m.footerView())
 	return b.String()
 }
 
-// headerView renders the brand rule + the rollup pulse line.
+// rollupView is the --once digest: a NEEDS ATTENTION section (running squads
+// that carry live at-risk/blocked, or needs-you) on top, then a compact
+// PROJECT ROLLUPS list (one line per squad, attention-first). Stale-only squads
+// render dim with their stale counts parenthesized, never as live attention.
+func (m NOCModel) rollupView() string {
+	var b strings.Builder
+
+	projects := m.visibleProjects()
+
+	// --- NEEDS ATTENTION: live squads with something outstanding now. ---
+	var attn []noc.ProjectSnapshot
+	for _, ps := range projects {
+		if ps.Warning != "" {
+			continue
+		}
+		r := ps.Snap.Rollup
+		if r.NeedsYou > 0 || (hasRunningAgentSnap(ps.Snap) && (r.AtRisk > 0 || r.Blocked > 0)) {
+			attn = append(attn, ps)
+		}
+	}
+	b.WriteString(m.th.paint(m.th.brand, "NEEDS ATTENTION"))
+	b.WriteString("\n")
+	if len(attn) == 0 {
+		b.WriteString(m.th.paint(m.th.dim, "  (nothing live needs you right now)") + "\n")
+	}
+	for _, ps := range attn {
+		b.WriteString("  " + m.projectRollupLine(ps, true) + "\n")
+	}
+
+	// --- PROJECT ROLLUPS: every (visible) squad, one calm line each. ---
+	b.WriteString("\n")
+	b.WriteString(m.th.paint(m.th.brand, nocCount(len(projects), "PROJECT", "PROJECTS")))
+	b.WriteString(m.th.paint(m.th.dim, fmt.Sprintf(" (%d)", len(projects))))
+	b.WriteString("\n")
+	if len(projects) == 0 {
+		b.WriteString(m.th.paint(m.th.dim, "  (no matching squads)") + "\n")
+	}
+	for _, ps := range projects {
+		b.WriteString("  " + m.projectRollupLine(ps, false) + "\n")
+	}
+	return b.String()
+}
+
+// projectRollupLine renders one squad as a single rollup row: state glyph,
+// project label, a liveness phrase ("running N/M" / "stopped"), and the triage
+// tally (live leading, stale dim/parenthesized). When attn is true the live
+// counts are emphasized (it heads the NEEDS ATTENTION section).
+func (m NOCModel) projectRollupLine(ps noc.ProjectSnapshot, attn bool) string {
+	var b strings.Builder
+	st := projectRollupState(ps)
+	b.WriteString(m.th.paint(m.th.nocStateStyle(st), nocStateGlyph(st, m.colorMode)+" "))
+
+	nameStyle := m.th.brand
+	if st == nocNeedsYou {
+		nameStyle = m.th.needsYou
+	} else if projectIsStaleOnly(ps) {
+		nameStyle = m.th.dim
+	}
+	b.WriteString(m.th.paint(nameStyle, ps.Project))
+
+	if ps.Warning != "" {
+		b.WriteString(" " + m.th.paint(m.th.atRisk, "warning: "+firstLine(ps.Warning)))
+		return b.String()
+	}
+
+	b.WriteString(" " + m.th.paint(m.th.dim, projectLivenessPhrase(ps)))
+
+	if tally := m.tallyText(ps.Snap.Rollup); tally != "" {
+		b.WriteString(" " + tally)
+	}
+	return b.String()
+}
+
+// visibleProjects returns the projects to render, honoring the hideStale toggle
+// (which drops stopped/stale/archived squads so the operator can focus on live).
+func (m NOCModel) visibleProjects() []noc.ProjectSnapshot {
+	if !m.hideStale {
+		return m.ms.Projects
+	}
+	out := make([]noc.ProjectSnapshot, 0, len(m.ms.Projects))
+	for _, ps := range m.ms.Projects {
+		if projectIsStaleOnly(ps) {
+			continue
+		}
+		out = append(out, ps)
+	}
+	return out
+}
+
+// headerView renders the brand rule + the rollup pulse line + a last-activity
+// summary line.
 func (m NOCModel) headerView() string {
 	var b strings.Builder
 
@@ -58,45 +155,77 @@ func (m NOCModel) headerView() string {
 	b.WriteString(brand + "  " + sub + "\n")
 	b.WriteString(m.th.paint(m.th.rule, m.rule()) + "\n")
 	b.WriteString(m.pulseLine())
+	if la := m.lastActivityLine(); la != "" {
+		b.WriteString("\n" + la)
+	}
 	return b.String()
 }
 
-// pulseLine is the single rollup headline. needs-you is hot when >0, calm dim
-// when 0; the rest is calm chrome.
+// pulseLine is the rollup headline. It LEADS with what is alive — squads / live
+// squads / needs-you / LIVE at-risk / LIVE blocked — all primary; the
+// age-decayed STALE at-risk/blocked counts trail, dim and parenthesized, so a
+// 38-blocked pile of 30-day-old threads never masquerades as live attention.
+//
+//	"14 squads · 1 live · 0 needs-you · 3 at-risk(live) · 0 blocked(live) · 38 blocked(stale) · <clock>"
 func (m NOCModel) pulseLine() string {
 	r := m.ms.Rollup
 	squads := len(m.ms.Projects)
-	running := m.runningAgentCount()
+	live := m.ms.LiveProjects
 
 	dim := func(s string) string { return m.th.paint(m.th.dim, s) }
 	sep := dim(" " + m.dot() + " ")
 
 	segs := []string{
 		dim(nocCount(squads, "squad", "squads")),
-		dim(strconv.Itoa(running) + " running"),
+		dim(strconv.Itoa(live) + " live"),
 	}
 
-	// needs-you: the single eye-grab.
-	nyText := strconv.Itoa(r.NeedsYou) + " needs you"
+	// needs-you: the single eye-grab (always live — human action never decays).
+	nyText := strconv.Itoa(r.NeedsYou) + " needs-you"
 	if r.NeedsYou > 0 {
 		segs = append(segs, m.th.paint(m.th.needsYou, nocStateGlyph(nocNeedsYou, m.colorMode)+" "+nyText))
 	} else {
 		segs = append(segs, dim(nyText))
 	}
 
+	// LIVE at-risk / blocked lead (primary; colored when >0).
 	if r.AtRisk > 0 {
-		segs = append(segs, m.th.paint(m.th.atRisk, strconv.Itoa(r.AtRisk)+" at-risk"))
+		segs = append(segs, m.th.paint(m.th.atRisk, strconv.Itoa(r.AtRisk)+" at-risk(live)"))
 	} else {
-		segs = append(segs, dim("0 at-risk"))
+		segs = append(segs, dim("0 at-risk(live)"))
 	}
 	if r.Blocked > 0 {
-		segs = append(segs, m.th.paint(m.th.blocked, strconv.Itoa(r.Blocked)+" blocked"))
+		segs = append(segs, m.th.paint(m.th.blocked, strconv.Itoa(r.Blocked)+" blocked(live)"))
 	} else {
-		segs = append(segs, dim("0 blocked"))
+		segs = append(segs, dim("0 blocked(live)"))
+	}
+
+	// STALE at-risk / blocked trail, dim + parenthesized — secondary signal only,
+	// shown only when present so the calm case stays calm.
+	if r.AtRiskStale > 0 {
+		segs = append(segs, dim(strconv.Itoa(r.AtRiskStale)+" at-risk(stale)"))
+	}
+	if r.BlockedStale > 0 {
+		segs = append(segs, dim(strconv.Itoa(r.BlockedStale)+" blocked(stale)"))
 	}
 
 	segs = append(segs, dim(m.clock()))
 	return strings.Join(segs, sep)
+}
+
+// lastActivityLine is the top-level "last activity across all squads" summary,
+// always dim. Empty when no project recorded any activity.
+func (m NOCModel) lastActivityLine() string {
+	if m.ms.LastActivity.IsZero() {
+		return ""
+	}
+	age := ""
+	if !m.ms.ObservedAt.IsZero() {
+		if d := m.ms.ObservedAt.Sub(m.ms.LastActivity); d > 0 {
+			age = " (" + ageLabel(d) + " ago)"
+		}
+	}
+	return m.th.paint(m.th.dim, "last activity across all squads: "+m.ms.LastActivity.Format("15:04:05")+age)
 }
 
 // clock formats the observation time.
@@ -105,21 +234,6 @@ func (m NOCModel) clock() string {
 		return ""
 	}
 	return m.ms.ObservedAt.Format("15:04:05")
-}
-
-// runningAgentCount counts live agents across all projects.
-func (m NOCModel) runningAgentCount() int {
-	n := 0
-	for _, ps := range m.ms.Projects {
-		for _, sess := range ps.Snap.Sessions {
-			for _, ag := range sess.Agents {
-				if ag.Liveness == state.LivenessAlive || ag.Liveness == state.LivenessDeadMailboxLive {
-					n++
-				}
-			}
-		}
-	}
-	return n
 }
 
 // rule returns the header rule string sized to the width.
@@ -301,25 +415,46 @@ func (m NOCModel) renderNode(n nocNode, selected bool) string {
 	return b.String()
 }
 
-// tallyText is a compact per-parent triage tally, e.g. "(2 needs-you, 1 at-risk)".
+// tallyText is a compact per-parent triage tally. LIVE classes lead, colored;
+// STALE classes trail, dim and labeled "(stale)" so a stopped squad's ancient
+// blocks read as decayed noise, not live attention, e.g.
+// "(2 needs-you, 1 at-risk · 38 blocked stale)".
 func (m NOCModel) tallyText(r state.TriageRollup) string {
-	var parts []string
+	var live []string
 	if r.NeedsYou > 0 {
-		parts = append(parts, m.th.paint(m.th.needsYou, strconv.Itoa(r.NeedsYou)+" needs-you"))
+		live = append(live, m.th.paint(m.th.needsYou, strconv.Itoa(r.NeedsYou)+" needs-you"))
 	}
 	if r.Blocked > 0 {
-		parts = append(parts, m.th.paint(m.th.blocked, strconv.Itoa(r.Blocked)+" blocked"))
+		live = append(live, m.th.paint(m.th.blocked, strconv.Itoa(r.Blocked)+" blocked"))
 	}
 	if r.AtRisk > 0 {
-		parts = append(parts, m.th.paint(m.th.atRisk, strconv.Itoa(r.AtRisk)+" at-risk"))
+		live = append(live, m.th.paint(m.th.atRisk, strconv.Itoa(r.AtRisk)+" at-risk"))
 	}
-	if len(parts) == 0 {
+
+	var stale []string
+	if r.BlockedStale > 0 {
+		stale = append(stale, strconv.Itoa(r.BlockedStale)+" blocked stale")
+	}
+	if r.AtRiskStale > 0 {
+		stale = append(stale, strconv.Itoa(r.AtRiskStale)+" at-risk stale")
+	}
+
+	if len(live) == 0 && len(stale) == 0 {
 		return ""
+	}
+	sep := m.th.paint(m.th.dim, ", ")
+	inner := strings.Join(live, sep)
+	if len(stale) > 0 {
+		staleText := m.th.paint(m.th.dim, strings.Join(stale, ", "))
+		if inner != "" {
+			inner += m.th.paint(m.th.dim, " "+m.dot()+" ") + staleText
+		} else {
+			inner = staleText
+		}
 	}
 	open := m.th.paint(m.th.dim, "(")
 	closep := m.th.paint(m.th.dim, ")")
-	sep := m.th.paint(m.th.dim, ", ")
-	return open + strings.Join(parts, sep) + closep
+	return open + inner + closep
 }
 
 // detailView renders the right pane for the selected node.
@@ -355,7 +490,7 @@ func (m NOCModel) projectDetail(n nocNode) string {
 	for _, sess := range sortedSessions(n.project.Snap.Sessions) {
 		ss := sessionRollupState(sess)
 		b.WriteString("  " + m.th.paint(m.th.nocStateStyle(ss), nocStateGlyph(ss, m.colorMode)+" "+nocStateText(ss)))
-		b.WriteString(" " + m.th.paint(m.th.brand, sess.Name))
+		b.WriteString(" " + m.th.paint(m.th.brand, sessionLabel(sess)))
 		b.WriteString(m.th.paint(m.th.dim, fmt.Sprintf("  (%d agents)", len(sess.Agents))))
 		b.WriteString("\n")
 	}
@@ -436,7 +571,7 @@ func (m NOCModel) agentDetail(n nocNode) string {
 	if n.agent.Engine != "" {
 		meta = append(meta, "engine "+n.agent.Engine)
 	}
-	meta = append(meta, "session "+n.session.Name)
+	meta = append(meta, "session "+sessionLabel(n.session))
 	b.WriteString(m.th.paint(m.th.dim, strings.Join(meta, " "+m.dot()+" ")) + "\n")
 	b.WriteString(m.detailRule() + "\n")
 
@@ -505,14 +640,21 @@ func (m NOCModel) footerView() string {
 		prompt := "/filter: " + m.filter + cursor
 		return m.th.paint(m.th.rule, m.thinRule()) + "\n" + m.th.paint(m.th.atRisk, prompt)
 	}
-	keys := "↑↓/jk move · →/l/⏎ expand/drill · ←/h collapse · ⏎/J jump · / filter · t timeline · g refresh · esc back · ? help · q quit"
+	keys := "↑↓/jk move · →/l/⏎ expand/drill · ← collapse · ⏎/J jump · / filter · h hide-stale · t timeline · g refresh · esc back · ? help · q quit"
 	if m.colorMode == ColorAscii {
-		keys = "up/down move | right/l/enter expand | left/h collapse | enter/J jump | / filter | t timeline | g refresh | esc back | ? help | q quit"
+		keys = "up/down move | right/l/enter expand | left collapse | enter/J jump | / filter | h hide-stale | t timeline | g refresh | esc back | ? help | q quit"
 	}
 	var b strings.Builder
 	b.WriteString(m.th.paint(m.th.rule, m.thinRule()) + "\n")
+	notes := []string{}
 	if m.filter != "" {
-		b.WriteString(m.th.paint(m.th.atRisk, "filter: "+m.filter) + m.th.paint(m.th.dim, "  (esc clears)") + "\n")
+		notes = append(notes, m.th.paint(m.th.atRisk, "filter: "+m.filter))
+	}
+	if m.hideStale {
+		notes = append(notes, m.th.paint(m.th.dim, "hiding stale squads (h shows all)"))
+	}
+	if len(notes) > 0 {
+		b.WriteString(strings.Join(notes, m.th.paint(m.th.dim, "  "+m.dot()+"  ")) + "\n")
 	}
 	b.WriteString(m.th.paint(m.th.dim, keys))
 	return b.String()
@@ -527,12 +669,13 @@ func (m NOCModel) helpView() string {
 		"NAVIGATION",
 		"  ↑ / k, ↓ / j      move selection",
 		"  → / l             expand a collapsed node, or drill into it",
-		"  ← / h             collapse the node, or ascend to its parent",
+		"  ←                 collapse the node, or ascend to its parent",
 		"  enter             expand/drill; on a RUNNING agent: JUMP",
 		"  J                 jump to the selected running agent's tmux window",
 		"",
 		"VIEW",
 		"  /                 filter (needs-you / at-risk / blocked / agent: / model: / project: / session:)",
+		"  h                 toggle hiding stopped/archived (stale) squads — focus on what is alive",
 		"  t                 toggle the timeline in the detail pane",
 		"  g                 refresh now",
 		"  esc               clear filter / collapse / back",

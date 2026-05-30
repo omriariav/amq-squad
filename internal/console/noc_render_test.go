@@ -123,15 +123,15 @@ func TestNOCOnce_MultiProjectBoard(t *testing.T) {
 	root, probe := seedNOCFixture(t)
 	out := renderNOCOnce(t, root, probe, ColorNone)
 
-	// Header pulse counts: 3 squads, 2 running, 1 needs you.
+	// Header pulse counts: 3 squads, 2 live (alpha+beta running), 1 needs-you.
 	if !strings.Contains(out, "3 squads") {
 		t.Errorf("header pulse missing '3 squads':\n%s", out)
 	}
-	if !strings.Contains(out, "2 running") {
-		t.Errorf("header pulse missing '2 running':\n%s", out)
+	if !strings.Contains(out, "2 live") {
+		t.Errorf("header pulse missing '2 live':\n%s", out)
 	}
-	if !strings.Contains(out, "1 needs you") {
-		t.Errorf("header pulse missing '1 needs you':\n%s", out)
+	if !strings.Contains(out, "1 needs-you") {
+		t.Errorf("header pulse missing '1 needs-you':\n%s", out)
 	}
 
 	// Project grouping: every project label appears.
@@ -144,6 +144,14 @@ func TestNOCOnce_MultiProjectBoard(t *testing.T) {
 	// A needs-you row's TEXT label is present (color-independent).
 	if !strings.Contains(out, "needs-you") {
 		t.Errorf("expected a 'needs-you' text label in the board:\n%s", out)
+	}
+
+	// The --once default leads with the rollup digest sections.
+	if !strings.Contains(out, "NEEDS ATTENTION") {
+		t.Errorf("--once default should render a NEEDS ATTENTION section:\n%s", out)
+	}
+	if !strings.Contains(out, "PROJECTS") {
+		t.Errorf("--once default should render a PROJECTS rollup section:\n%s", out)
 	}
 }
 

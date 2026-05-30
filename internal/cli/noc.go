@@ -46,29 +46,43 @@ func runNOC(args []string) error {
 	refresh := fs.Duration("refresh", console.NOCDefaultRefresh, "periodic resync cadence (e.g. 2s)")
 	atRiskWait := fs.Duration("at-risk-wait", state.DefaultAtRiskWait, "an awaiting-reply thread older than this is at risk")
 	reviewAge := fs.Duration("review-age", state.DefaultReviewAge, "an unanswered review/question older than this is at risk")
+	staleAfter := fs.Duration("stale-after", state.DefaultStaleAfter, "a thread untouched longer than this is STALE: age-decayed, demoted below live squads, rendered dim")
 	once := fs.Bool("once", false, "render one static board to stdout and exit (non-TTY / CI)")
+	tree := fs.Bool("tree", false, "with --once: render the full root->project->session->agent tree instead of the rollup digest")
+	all := fs.Bool("all", false, "alias for --tree (full expansion under --once)")
+	hideStale := fs.Bool("hide-stale", false, "hide stopped/archived (stale) squads — focus on what is alive")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad noc - live read-only NOC command center across all your squads
 
 Usage:
   amq-squad noc [--root DIR ...] [--depth N] [--refresh 2s]
-                [--at-risk-wait 5m] [--review-age 15m] [--once]
+                [--at-risk-wait 5m] [--review-age 15m] [--stale-after 72h]
+                [--once] [--tree|--all] [--hide-stale]
 
 A full-screen, read-only TUI ("network operations center") over EVERY discovered
-amq-squad project under the given roots. It shows a header pulse (squads /
-running / needs-you / at-risk / blocked), a collapsible attention-first tree
-(root -> project -> session -> agent), and a detail pane for the selection. On a
-running agent, enter (or J) JUMPS your terminal to that agent's tmux window — the
-only side effect; nothing here can stop/start/message/delete an agent.
+amq-squad project under the given roots. It shows a header pulse (squads / live /
+needs-you / at-risk(live) / blocked(live) / stale counts), a collapsible
+attention-first tree (root -> project -> session -> agent), and a detail pane for
+the selection. On a running agent, enter (or J) JUMPS your terminal to that
+agent's tmux window — the only side effect; nothing here can stop/start/message/
+delete an agent.
+
+The NOC rewards LIVENESS: a running squad active just now sorts to the top, while
+a stopped squad whose only blocked threads are days old (older than --stale-after)
+is age-decayed to the bottom and rendered dim. Press h (or --hide-stale) to hide
+stale squads entirely.
 
 --root is repeatable and defaults to the project's parent (so sibling squads
 appear) or the current directory. The TUI renders to /dev/tty; stdout stays
-clean. With --once it renders one static board to STDOUT and exits.
+clean. With --once it renders a rollup digest (needs-attention + project
+rollups) to STDOUT; add --tree (or --all) for the full expansion.
 
 Examples:
   amq-squad noc
   amq-squad noc --root ~/Code --depth 5
   amq-squad noc --once | less -R
+  amq-squad noc --once --tree
+  amq-squad noc --hide-stale --stale-after 24h
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -87,7 +101,10 @@ Examples:
 		Refresh:     *refresh,
 		AtRiskWait:  *atRiskWait,
 		ReviewAge:   *reviewAge,
+		StaleAfter:  *staleAfter,
 		Once:        *once,
+		Tree:        *tree || *all,
+		HideStale:   *hideStale,
 		Out:         os.Stdout,
 		StdoutIsTTY: outputIsTTY(),
 		RunNOC:      console.RunNOC,
@@ -104,7 +121,10 @@ type nocExecution struct {
 	Refresh    time.Duration
 	AtRiskWait time.Duration
 	ReviewAge  time.Duration
+	StaleAfter time.Duration
 	Once       bool
+	Tree       bool
+	HideStale  bool
 	Out        io.Writer
 
 	// Seams.
@@ -133,10 +153,13 @@ func executeNOC(s nocExecution) error {
 		Thresholds: state.Thresholds{
 			AtRiskWait: s.AtRiskWait,
 			ReviewAge:  s.ReviewAge,
+			StaleAfter: s.StaleAfter,
 		},
-		Refresh: s.Refresh,
-		Once:    s.Once,
-		Out:     s.Out,
+		Refresh:   s.Refresh,
+		Once:      s.Once,
+		Tree:      s.Tree,
+		HideStale: s.HideStale,
+		Out:       s.Out,
 	}
 
 	// Interactive requested but no TTY: render a single static board to stdout.
