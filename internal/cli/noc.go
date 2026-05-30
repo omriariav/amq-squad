@@ -1,0 +1,176 @@
+package cli
+
+import (
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/omriariav/amq-squad/v2/internal/console"
+	"github.com/omriariav/amq-squad/v2/internal/noc"
+	"github.com/omriariav/amq-squad/v2/internal/state"
+)
+
+// rootList is a repeatable string flag: each --root DIR appends one root. The
+// stdlib flag package has no built-in slice flag, so this implements flag.Value.
+type rootList []string
+
+func (r *rootList) String() string {
+	if r == nil {
+		return ""
+	}
+	return fmt.Sprint([]string(*r))
+}
+
+func (r *rootList) Set(v string) error {
+	*r = append(*r, v)
+	return nil
+}
+
+// runNOC is the `amq-squad noc` verb: the read-only, full-screen NOC command
+// center over EVERY discovered amq-squad project under one or more roots. With
+// --once it renders a single static multi-root board to stdout (CI / no-TTY).
+//
+// READ-ONLY: the only side effect the surface can cause is a tmux view switch
+// (it moves the operator's terminal to an agent's window, never squad state).
+//
+// It degrades gracefully: no projects found under the roots renders a clear
+// guidance state, never a crash.
+func runNOC(args []string) error {
+	fs := flag.NewFlagSet("noc", flag.ContinueOnError)
+	var roots rootList
+	fs.Var(&roots, "root", "directory to scan for amq-squad projects (repeatable; default: the project's parent, or cwd)")
+	depth := fs.Int("depth", noc.DefaultDepth, "how deep to scan under each root for .agent-mail projects")
+	refresh := fs.Duration("refresh", console.NOCDefaultRefresh, "periodic resync cadence (e.g. 2s)")
+	atRiskWait := fs.Duration("at-risk-wait", state.DefaultAtRiskWait, "an awaiting-reply thread older than this is at risk")
+	reviewAge := fs.Duration("review-age", state.DefaultReviewAge, "an unanswered review/question older than this is at risk")
+	once := fs.Bool("once", false, "render one static board to stdout and exit (non-TTY / CI)")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad noc - live read-only NOC command center across all your squads
+
+Usage:
+  amq-squad noc [--root DIR ...] [--depth N] [--refresh 2s]
+                [--at-risk-wait 5m] [--review-age 15m] [--once]
+
+A full-screen, read-only TUI ("network operations center") over EVERY discovered
+amq-squad project under the given roots. It shows a header pulse (squads /
+running / needs-you / at-risk / blocked), a collapsible attention-first tree
+(root -> project -> session -> agent), and a detail pane for the selection. On a
+running agent, enter (or J) JUMPS your terminal to that agent's tmux window — the
+only side effect; nothing here can stop/start/message/delete an agent.
+
+--root is repeatable and defaults to the project's parent (so sibling squads
+appear) or the current directory. The TUI renders to /dev/tty; stdout stays
+clean. With --once it renders one static board to STDOUT and exits.
+
+Examples:
+  amq-squad noc
+  amq-squad noc --root ~/Code --depth 5
+  amq-squad noc --once | less -R
+`)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getwd: %w", err)
+	}
+
+	return executeNOC(nocExecution{
+		Cwd:         cwd,
+		Roots:       []string(roots),
+		Depth:       *depth,
+		Refresh:     *refresh,
+		AtRiskWait:  *atRiskWait,
+		ReviewAge:   *reviewAge,
+		Once:        *once,
+		Out:         os.Stdout,
+		StdoutIsTTY: outputIsTTY(),
+		RunNOC:      console.RunNOC,
+	})
+}
+
+// nocExecution carries the resolved inputs for the noc verb so tests can drive
+// dispatch with seams (no real TTY, a captured RunNOC) without starting a
+// Bubble Tea program.
+type nocExecution struct {
+	Cwd        string
+	Roots      []string
+	Depth      int
+	Refresh    time.Duration
+	AtRiskWait time.Duration
+	ReviewAge  time.Duration
+	Once       bool
+	Out        io.Writer
+
+	// Seams.
+	StdoutIsTTY bool
+	// RunNOC runs the NOC surface. Injected so tests assert the assembled config
+	// without launching a real program; production passes console.RunNOC.
+	RunNOC func(console.NOCConfig) error
+}
+
+// executeNOC resolves the roots and the TTY gating, then hands an assembled
+// console.NOCConfig to RunNOC.
+//
+//   - No explicit --root: default to defaultNOCRoots(cwd).
+//   - Interactive requested but no TTY: fall back to a single static board on
+//     stdout (so a piped invocation still works) rather than failing to open
+//     /dev/tty.
+func executeNOC(s nocExecution) error {
+	roots := s.Roots
+	if len(roots) == 0 {
+		roots = defaultNOCRoots(s.Cwd)
+	}
+
+	cfg := console.NOCConfig{
+		Roots: roots,
+		Depth: s.Depth,
+		Thresholds: state.Thresholds{
+			AtRiskWait: s.AtRiskWait,
+			ReviewAge:  s.ReviewAge,
+		},
+		Refresh: s.Refresh,
+		Once:    s.Once,
+		Out:     s.Out,
+	}
+
+	// Interactive requested but no TTY: render a single static board to stdout.
+	if !s.Once && !s.StdoutIsTTY {
+		cfg.Once = true
+	}
+
+	return s.RunNOC(cfg)
+}
+
+// defaultNOCRoots picks the default scan roots for a starting directory:
+//
+//   - If cwd is itself an amq-squad project (it has a .agent-mail child), scan
+//     its PARENT so sibling squads under the same workspace appear too.
+//   - Otherwise scan cwd itself.
+//
+// This matches the brief's "default to the project's parent if a single project,
+// else cwd" intent while staying a pure function of cwd (no filesystem walk
+// beyond the single stat).
+func defaultNOCRoots(cwd string) []string {
+	if cwd == "" {
+		return nil
+	}
+	if isAMQProject(cwd) {
+		parent := filepath.Dir(cwd)
+		if parent != "" && parent != cwd {
+			return []string{parent}
+		}
+	}
+	return []string{cwd}
+}
+
+// isAMQProject reports whether dir contains a .agent-mail child directory.
+func isAMQProject(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, noc.AgentMailDirName))
+	return err == nil && info.IsDir()
+}

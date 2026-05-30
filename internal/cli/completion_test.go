@@ -216,6 +216,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"down":       true,
 		"status":     true,
 		"console":    true,
+		"noc":        true,
 		"history":    true,
 		"resume":     true,
 		"fork":       true,

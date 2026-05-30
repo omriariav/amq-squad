@@ -1,0 +1,353 @@
+// Package console — noc_tree.go: flatten a noc.MultiSnapshot into a collapsible,
+// attention-first tree of selectable nodes (root → project → session → agent).
+//
+// The tree is rebuilt from the immutable snapshot + the collapse set on every
+// render; nothing here mutates the snapshot. Node identity (id) is STABLE across
+// snapshot replacement so selection survives a refresh (project dir, then
+// dir|session, then dir|session|handle).
+package console
+
+import (
+	"sort"
+	"strings"
+
+	"github.com/omriariav/amq-squad/v2/internal/noc"
+	"github.com/omriariav/amq-squad/v2/internal/state"
+)
+
+// nocNodeKind distinguishes the four tree levels.
+type nocNodeKind int
+
+const (
+	nodeRoot nocNodeKind = iota
+	nodeProject
+	nodeSession
+	nodeAgent
+)
+
+// nocNode is one flattened, visible tree row.
+type nocNode struct {
+	kind  nocNodeKind
+	id    string // stable identity across snapshots
+	depth int    // 0 root, 1 project, 2 session, 3 agent
+	label string // human label (root path / project / session / handle)
+
+	state    nocState
+	rollup   state.TriageRollup // for project/session: the triage tally
+	age      string             // right-aligned dim age (agent/thread)
+	recent   string             // dim recent action / title / detail
+	expanded bool               // for parents: whether children are shown
+	hasKids  bool               // whether this node can expand
+	last     bool               // last child of its parent (tree elbow)
+
+	// Carried data for the detail pane / jump action.
+	project noc.ProjectSnapshot
+	session state.Session
+	agent   state.Agent
+	canJump bool // running agent → jump affordance
+	warning string
+}
+
+// nocTreeState holds the collapse set. Absent id ⇒ default-expanded for
+// root/project/session; agents are leaves. Collapsing inserts the id here.
+type nocTreeState struct {
+	collapsed map[string]bool
+}
+
+func newNOCTreeState() nocTreeState {
+	return nocTreeState{collapsed: map[string]bool{}}
+}
+
+func (s nocTreeState) isCollapsed(id string) bool {
+	return s.collapsed[id]
+}
+
+func (s *nocTreeState) toggle(id string) {
+	if s.collapsed[id] {
+		delete(s.collapsed, id)
+	} else {
+		s.collapsed[id] = true
+	}
+}
+
+func (s *nocTreeState) setCollapsed(id string, v bool) {
+	if v {
+		s.collapsed[id] = true
+	} else {
+		delete(s.collapsed, id)
+	}
+}
+
+// Stable node ids.
+func rootNodeID(root string) string               { return "root|" + root }
+func projectNodeID(dir string) string             { return "proj|" + dir }
+func sessionNodeID(dir, sess string) string       { return "sess|" + dir + "|" + sess }
+func agentNodeID(dir, sess, handle string) string { return "agent|" + dir + "|" + sess + "|" + handle }
+
+// buildNOCTree flattens a MultiSnapshot into the visible node slice honoring the
+// collapse set and the typed filter. Projects keep noc.Collect's attention-first
+// order; sessions and agents are sorted attention-first here.
+func buildNOCTree(ms noc.MultiSnapshot, ts nocTreeState, filter string) []nocNode {
+	var nodes []nocNode
+
+	// Roots are headers only when there is more than one (a single root is
+	// implicit — its projects render at the top level). This keeps the common
+	// single-root case calm and flat.
+	multiRoot := len(ms.Roots) > 1
+
+	// Group projects by which root contains them (longest-prefix match), so the
+	// tree mirrors the on-disk roots the operator passed.
+	byRoot := groupProjectsByRoot(ms)
+
+	roots := append([]string(nil), ms.Roots...)
+	if len(roots) == 0 {
+		roots = []string{""}
+	}
+
+	for ri, root := range roots {
+		projects := byRoot[root]
+		if len(projects) == 0 && multiRoot {
+			// Show an empty root header so a configured-but-empty root is visible.
+		} else if len(projects) == 0 {
+			continue
+		}
+
+		rid := rootNodeID(root)
+		rootExpanded := !ts.isCollapsed(rid)
+
+		if multiRoot {
+			nodes = append(nodes, nocNode{
+				kind:     nodeRoot,
+				id:       rid,
+				depth:    0,
+				label:    displayRoot(root),
+				state:    rootState(projects),
+				expanded: rootExpanded,
+				hasKids:  len(projects) > 0,
+				last:     ri == len(roots)-1,
+			})
+			if !rootExpanded {
+				continue
+			}
+		}
+
+		projDepth := 0
+		if multiRoot {
+			projDepth = 1
+		}
+
+		// Apply the filter at the project level: a project is kept if it (or any
+		// of its sessions/agents) matches.
+		visProjects := make([]noc.ProjectSnapshot, 0, len(projects))
+		for _, ps := range projects {
+			if projectMatchesNOCFilter(ps, filter) {
+				visProjects = append(visProjects, ps)
+			}
+		}
+
+		for pi, ps := range visProjects {
+			pid := projectNodeID(ps.Dir)
+			pExpanded := !ts.isCollapsed(pid)
+			pState := projectRollupState(ps)
+			nodes = append(nodes, nocNode{
+				kind:     nodeProject,
+				id:       pid,
+				depth:    projDepth,
+				label:    ps.Project,
+				state:    pState,
+				rollup:   ps.Snap.Rollup,
+				recent:   projectRecent(ps),
+				expanded: pExpanded,
+				hasKids:  len(ps.Snap.Sessions) > 0 || ps.Warning != "",
+				last:     pi == len(visProjects)-1,
+				project:  ps,
+				warning:  ps.Warning,
+			})
+			if !pExpanded {
+				continue
+			}
+
+			sessions := sortedSessions(ps.Snap.Sessions)
+			visSessions := make([]state.Session, 0, len(sessions))
+			for _, sess := range sessions {
+				if sessionMatchesNOCFilter(sess, filter) {
+					visSessions = append(visSessions, sess)
+				}
+			}
+			for si, sess := range visSessions {
+				sid := sessionNodeID(ps.Dir, sess.Name)
+				sExpanded := !ts.isCollapsed(sid)
+				nodes = append(nodes, nocNode{
+					kind:     nodeSession,
+					id:       sid,
+					depth:    projDepth + 1,
+					label:    sess.Name,
+					state:    sessionRollupState(sess),
+					rollup:   sess.Rollup,
+					recent:   sessionRecent(sess),
+					expanded: sExpanded,
+					hasKids:  len(sess.Agents) > 0,
+					last:     si == len(visSessions)-1,
+					project:  ps,
+					session:  sess,
+				})
+				if !sExpanded {
+					continue
+				}
+				agents := sortedAgents(sess.Agents)
+				visAgents := make([]state.Agent, 0, len(agents))
+				for _, ag := range agents {
+					if agentMatchesNOCFilter(ag, filter) {
+						visAgents = append(visAgents, ag)
+					}
+				}
+				for ai, ag := range visAgents {
+					nodes = append(nodes, nocNode{
+						kind:    nodeAgent,
+						id:      agentNodeID(ps.Dir, sess.Name, ag.Handle),
+						depth:   projDepth + 2,
+						label:   agentLabel(ag),
+						state:   agentState(ag),
+						age:     "",
+						recent:  agentRecent(ag),
+						hasKids: false,
+						last:    ai == len(visAgents)-1,
+						project: ps,
+						session: sess,
+						agent:   ag,
+						canJump: ag.Liveness == state.LivenessAlive,
+					})
+				}
+			}
+		}
+	}
+	return nodes
+}
+
+// groupProjectsByRoot assigns each project to the longest matching root prefix.
+func groupProjectsByRoot(ms noc.MultiSnapshot) map[string][]noc.ProjectSnapshot {
+	out := map[string][]noc.ProjectSnapshot{}
+	roots := ms.Roots
+	for _, ps := range ms.Projects {
+		best := ""
+		bestLen := -1
+		for _, r := range roots {
+			if r != "" && strings.HasPrefix(ps.Dir, r) && len(r) > bestLen {
+				best = r
+				bestLen = len(r)
+			}
+		}
+		if bestLen < 0 && len(roots) > 0 {
+			best = roots[0]
+		}
+		out[best] = append(out[best], ps)
+	}
+	return out
+}
+
+// rootState rolls a root's projects up to one display state (the most urgent).
+func rootState(projects []noc.ProjectSnapshot) nocState {
+	best := nocEmpty
+	for _, ps := range projects {
+		s := projectRollupState(ps)
+		if s < best {
+			best = s
+		}
+	}
+	return best
+}
+
+// sortedSessions / sortedAgents return attention-first orderings (needs-you →
+// blocked → at-risk → running → stopped), ties by name/handle.
+func sortedSessions(in []state.Session) []state.Session {
+	out := append([]state.Session(nil), in...)
+	sort.SliceStable(out, func(i, j int) bool {
+		si, sj := sessionRollupState(out[i]), sessionRollupState(out[j])
+		if si != sj {
+			return si < sj
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func sortedAgents(in []state.Agent) []state.Agent {
+	out := append([]state.Agent(nil), in...)
+	sort.SliceStable(out, func(i, j int) bool {
+		si, sj := agentState(out[i]), agentState(out[j])
+		if si != sj {
+			return si < sj
+		}
+		return out[i].Handle < out[j].Handle
+	})
+	return out
+}
+
+// projectRecent / sessionRecent / agentRecent derive the dim "recent action /
+// title" trailing text shown on a tree row.
+func projectRecent(ps noc.ProjectSnapshot) string {
+	if ps.Warning != "" {
+		return "warning: " + firstLine(ps.Warning)
+	}
+	// Surface the freshest session signal as the project's recent action.
+	for _, sess := range ps.Snap.Sessions {
+		if r := sessionRecent(sess); r != "" {
+			return r
+		}
+	}
+	return ""
+}
+
+func sessionRecent(sess state.Session) string {
+	if t, ok := topThread(sess); ok {
+		return t.Subject
+	}
+	if len(sess.Coordination.Timeline) > 0 {
+		return sess.Coordination.Timeline[0].Summary
+	}
+	return ""
+}
+
+// topThread returns the most urgent thread of a session (sorted needs-you →
+// blocked → at-risk → newest), ok=false when the session has no threads.
+func topThread(sess state.Session) (state.ThreadSummary, bool) {
+	ts := sortThreads(sess, Filter{})
+	if len(ts) == 0 {
+		return state.ThreadSummary{}, false
+	}
+	return ts[0], true
+}
+
+func agentRecent(ag state.Agent) string {
+	parts := []string{}
+	if ag.Role != "" {
+		parts = append(parts, ag.Role)
+	}
+	if ag.Engine != "" {
+		parts = append(parts, ag.Engine)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// agentLabel is the handle, the human-facing identity of an agent row.
+func agentLabel(ag state.Agent) string {
+	if ag.Handle != "" {
+		return ag.Handle
+	}
+	return "(agent)"
+}
+
+// displayRoot abbreviates a root path for the header (home-relative when long).
+func displayRoot(root string) string {
+	if root == "" {
+		return "(cwd)"
+	}
+	return root
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}

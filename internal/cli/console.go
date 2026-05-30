@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/console"
+	"github.com/omriariav/amq-squad/v2/internal/noc"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -31,16 +32,25 @@ func runConsole(args []string) error {
 	atRiskWait := fs.Duration("at-risk-wait", state.DefaultAtRiskWait, "an awaiting-reply thread older than this is at risk")
 	reviewAge := fs.Duration("review-age", state.DefaultReviewAge, "an unanswered review/question older than this is at risk")
 	once := fs.Bool("once", false, "render one static board to stdout and exit (non-TTY / CI)")
+	// --root makes console reach the SAME multi-root NOC command center the `noc`
+	// verb drives. It is repeatable; given one or more, console hands off to NOC.
+	var roots rootList
+	fs.Var(&roots, "root", "scan this directory for amq-squad projects via the multi-root NOC view (repeatable)")
+	depth := fs.Int("depth", noc.DefaultDepth, "NOC scan depth under each --root")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad console - live read-only Mission Control over your sessions
 
 Usage:
   amq-squad console [--profile NAME] [--session NAME] [--refresh 2s]
                     [--at-risk-wait 5m] [--review-age 15m] [--once]
+  amq-squad console --root DIR [--root DIR ...] [--depth N] [--once]
 
 A full-screen, read-only TUI showing every discovered session, its triage
 rollup (needs-you / at-risk / blocked), and per-agent liveness. The TUI
 renders to your terminal (/dev/tty); stdout stays clean.
+
+With one or more --root it reaches the multi-root NOC command center across
+EVERY discovered project under those roots (the same surface as 'amq-squad noc').
 
 With --once it renders a single static board to STDOUT and exits — use this
 in CI or when there is no terminal attached.
@@ -48,6 +58,7 @@ in CI or when there is no terminal attached.
 Examples:
   amq-squad console
   amq-squad console --once
+  amq-squad console --root ~/Code --once
   amq-squad console --session issue-96 --at-risk-wait 5m
 `)
 	}
@@ -58,6 +69,23 @@ Examples:
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
+	}
+
+	// --root routes console to the multi-root NOC command center, so both verbs
+	// reach the same surface.
+	if len(roots) > 0 {
+		return executeNOC(nocExecution{
+			Cwd:         cwd,
+			Roots:       []string(roots),
+			Depth:       *depth,
+			Refresh:     *refresh,
+			AtRiskWait:  *atRiskWait,
+			ReviewAge:   *reviewAge,
+			Once:        *once,
+			Out:         os.Stdout,
+			StdoutIsTTY: outputIsTTY(),
+			RunNOC:      console.RunNOC,
+		})
 	}
 
 	return executeConsole(consoleExecution{

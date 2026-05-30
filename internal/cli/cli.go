@@ -198,6 +198,8 @@ func dispatch(args []string) error {
 		return runStatus(args[1:])
 	case "console":
 		return runConsole(args[1:])
+	case "noc":
+		return runNOC(args[1:])
 	case "history":
 		return runHistory(args[1:])
 	case "resume":
@@ -245,6 +247,7 @@ Commands:
   down      Deprecated alias for 'stop' (works for one release)
   status    Multi-session board (also the bare 'amq-squad'); --session for detail
   console   Read-only Mission Control TUI over all sessions (--once for CI)
+  noc       Read-only NOC command center across ALL squads under --root (--once for CI)
   history   List restorable launch records
   resume    Plan how to bring the team back into the resolved workstream
   fork      Plan fresh launches in a new workstream branched off an existing one
