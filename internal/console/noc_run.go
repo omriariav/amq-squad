@@ -94,7 +94,12 @@ func runNOCLive(cfg NOCConfig) error {
 		tea.WithOutput(tty),
 		tea.WithAltScreen(),
 	}
-	p := tea.NewProgram(m, opts...)
+	// Drive the program as a POINTER so each key handler's cursor / collapse /
+	// filter mutation lands on the SAME model the event loop re-binds and renders
+	// on the next frame. With a value model + pointer-receiver movement helpers,
+	// a keypress would mutate a throwaway copy and the live surface would look
+	// frozen (arrows / j / k dead).
+	p := tea.NewProgram(&m, opts...)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

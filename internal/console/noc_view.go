@@ -24,8 +24,9 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
-// View implements tea.Model.
-func (m NOCModel) View() string {
+// View implements tea.Model. Pointer receiver to match Update / Init: *NOCModel
+// is the type the program is driven as (tea.NewProgram(&m)).
+func (m *NOCModel) View() string {
 	if !m.ready {
 		return "loading…"
 	}

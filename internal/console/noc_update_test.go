@@ -10,8 +10,13 @@ import (
 )
 
 // newSeededNOCModel builds a model over the three-project fixture, drives a
-// window-size + snapshot message into it, and returns the ready model.
-func newSeededNOCModel(t *testing.T) NOCModel {
+// window-size + snapshot message into it, and returns the ready model. It
+// returns a *NOCModel: the program (and these tests) drive the model as a
+// pointer so a key handler's cursor / collapse / filter mutation lands on the
+// SAME model the event loop renders next (Update / Init / View are
+// pointer-receiver). Driving a value here would mutate a copy and never reflect
+// a keypress — the exact live-nav-dead bug these tests guard against.
+func newSeededNOCModel(t *testing.T) *NOCModel {
 	t.Helper()
 	root, probe := seedNOCFixture(t)
 	rebuild := NOCRebuildConfig{Roots: []string{root}, Depth: noc.DefaultDepth, Probe: probe}
@@ -22,9 +27,9 @@ func newSeededNOCModel(t *testing.T) NOCModel {
 	m.th = newNOCTheme(ColorNone)
 
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = mm.(NOCModel)
-	mm, _ = m.Update(nocSnapshotMsg{ms: ms})
-	return mm.(NOCModel)
+	m2 := mm.(*NOCModel)
+	mm, _ = m2.Update(nocSnapshotMsg{ms: ms})
+	return mm.(*NOCModel)
 }
 
 func nocKey(s string) tea.KeyMsg {
@@ -48,9 +53,15 @@ func nocKey(s string) tea.KeyMsg {
 	}
 }
 
-func nocPress(m NOCModel, s string) (NOCModel, tea.Cmd) {
+// nocPress drives one real key message through the PUBLIC Update and returns the
+// model Update RETURNS — the one Bubble Tea renders next. It deliberately does
+// NOT call moveCursor / handleKey directly: a test that pokes the helpers would
+// pass even with the value-receiver-copy bug, where Update mutates a throwaway
+// copy. Threading the returned *NOCModel is what makes these tests catch a dead
+// arrow / j / k key.
+func nocPress(m *NOCModel, s string) (*NOCModel, tea.Cmd) {
 	mm, cmd := m.Update(nocKey(s))
-	return mm.(NOCModel), cmd
+	return mm.(*NOCModel), cmd
 }
 
 func TestNOCUpdate_MoveCursor(t *testing.T) {
@@ -421,7 +432,7 @@ func TestNOCUpdate_SelectionStableAcrossSnapshotReplacement(t *testing.T) {
 	root := m.rebuild.Roots[0]
 	ms2 := noc.Collect([]string{root}, noc.DefaultDepth, m.rebuild.Probe, m.rebuild.Thresholds)
 	mm, _ := m.Update(nocSnapshotMsg{ms: ms2})
-	m = mm.(NOCModel)
+	m = mm.(*NOCModel)
 
 	sel, ok := m.selectedNode()
 	if !ok {
