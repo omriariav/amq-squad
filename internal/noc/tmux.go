@@ -21,6 +21,11 @@ type TmuxPane struct {
 	PID     int
 	Command string
 	CWD     string
+	// Title is the pane's #{pane_title}. The launcher stamps a deterministic
+	// token here (amq:<session>:<role>) so the jump can resolve name-first,
+	// engine-agnostic and rotation-proof. Empty for panes launched before
+	// titling existed (or non-amq panes); those fall back to cwd+engine scoring.
+	Title string
 }
 
 // TmuxTarget identifies a single pane for the jump action.
@@ -48,7 +53,9 @@ func defaultExecRunner(name string, args ...string) error {
 // parses each row into a TmuxPane. It is strictly READ-ONLY. A missing tmux
 // binary or no server is reported as an error so callers can degrade.
 func DefaultPaneLister() ([]TmuxPane, error) {
-	const format = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}"
+	// pane_title is appended last so an empty title (older/non-amq panes) leaves a
+	// trailing tab the parser tolerates; it carries the name-first resolution token.
+	const format = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}"
 	out, err := exec.Command("tmux", "list-panes", "-a", "-F", format).Output()
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-panes: %w", err)
@@ -70,14 +77,20 @@ func parsePanes(out string) []TmuxPane {
 			continue
 		}
 		pid, _ := strconv.Atoi(strings.TrimSpace(fields[3]))
-		panes = append(panes, TmuxPane{
+		pane := TmuxPane{
 			Session: fields[0],
 			Window:  fields[1],
 			Pane:    fields[2],
 			PID:     pid,
 			Command: fields[4],
 			CWD:     fields[5],
-		})
+		}
+		// pane_title is the optional 7th field; tolerate panes captured without
+		// it (older tmux output, or rows that simply have no title).
+		if len(fields) >= 7 {
+			pane.Title = fields[6]
+		}
+		panes = append(panes, pane)
 	}
 	return panes
 }
@@ -114,6 +127,21 @@ func ResolveTmuxTarget(a state.Agent, projectDir string, panes []TmuxPane, pidTr
 // name so the (c) tmux-session-name bonus can be applied. ResolveTmuxTarget
 // delegates to this with an empty session hint.
 func ResolveTmuxTargetForSession(a state.Agent, sessionName, projectDir string, panes []TmuxPane, pidTree func(pid int) []int) (TmuxTarget, bool) {
+	// Name-first pass (highest confidence, engine-agnostic, rotation-proof): if the
+	// launcher stamped a deterministic token on a pane title, resolve by an exact
+	// title match. This disambiguates agents that share the same cwd AND engine —
+	// the bug where cpo·codex and cto·codex in one repo both match the same panes
+	// under the cwd+engine scoring below and resolve to whichever pane comes first.
+	if want := expectedPaneToken(sessionName, a); want != "" {
+		for _, p := range panes {
+			if p.Title == want {
+				return TmuxTarget{Session: p.Session, Window: p.Window, Pane: p.Pane}, true
+			}
+		}
+	}
+
+	// Fallback: cwd+engine+pid scoring for panes launched before titles existed
+	// (or non-amq panes). Unchanged from the original resolver.
 	wantCWD := cleanDir(projectDir)
 	engine := strings.ToLower(strings.TrimSpace(a.Engine))
 
@@ -151,6 +179,26 @@ func ResolveTmuxTargetForSession(a state.Agent, sessionName, projectDir string, 
 		return TmuxTarget{}, false
 	}
 	return TmuxTarget{Session: best.Session, Window: best.Window, Pane: best.Pane}, true
+}
+
+// expectedPaneToken derives the deterministic pane-title token the launcher
+// stamps for an agent: "amq:<sessionName>:<role>". It MUST mirror the launcher's
+// paneTitleToken (internal/cli/team_launch_tmux.go), which keys on the member
+// role. We fall back to the agent Handle only when Role is empty, so the
+// name-first pass still has a chance for older/role-less records. Returns ""
+// (skip the name-first pass) when there is no session name or no role/handle.
+func expectedPaneToken(sessionName string, a state.Agent) string {
+	if strings.TrimSpace(sessionName) == "" {
+		return ""
+	}
+	key := strings.TrimSpace(a.Role)
+	if key == "" {
+		key = strings.TrimSpace(a.Handle)
+	}
+	if key == "" {
+		return ""
+	}
+	return "amq:" + sessionName + ":" + key
 }
 
 // commandMatchesEngine reports whether a pane command corresponds to the agent
