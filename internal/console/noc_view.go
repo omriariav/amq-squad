@@ -43,7 +43,29 @@ func (m *NOCModel) View() string {
 	if m.showHelp {
 		return m.helpView()
 	}
+	// Control overlays render OVER the live frame so the operator's confirm /
+	// type step is unmissable: the EXACT command (confirm) or the body editor
+	// (input) replaces the body while the header/footer keep their bearings.
+	if m.pending != nil {
+		return m.overlayFrame(m.confirmOverlayView())
+	}
+	if m.input != nil {
+		return m.overlayFrame(m.inputOverlayView())
+	}
 	return m.liveView()
+}
+
+// overlayFrame wraps a control overlay in the standard header + footer so the
+// confirm/input step stays anchored in the NOC chrome (and the footer's
+// control-key legend + actNote stay visible).
+func (m NOCModel) overlayFrame(body string) string {
+	var b strings.Builder
+	b.WriteString(m.headerView())
+	b.WriteString("\n")
+	b.WriteString(body)
+	b.WriteString("\n")
+	b.WriteString(m.footerView())
+	return b.String()
 }
 
 // liveView is the INTERACTIVE frame for the live TUI: the header pulse, then a
@@ -947,10 +969,22 @@ func (m NOCModel) footerView() string {
 	if m.hideStale {
 		notes = append(notes, m.th.paint(m.th.dim, "hiding stale squads (h shows all)"))
 	}
+	// actNote surfaces the result/decline of the last control action (mirrors
+	// jumpNote for the read-only jump) so a confirm / cancel / failure is legible.
+	if m.actNote != "" {
+		notes = append(notes, m.th.paint(m.th.dim, m.actNote))
+	}
+	if m.jumpNote != "" {
+		notes = append(notes, m.th.paint(m.th.dim, m.jumpNote))
+	}
 	if len(notes) > 0 {
 		b.WriteString(strings.Join(notes, m.th.paint(m.th.dim, "  "+m.dot()+"  ")) + "\n")
 	}
 	b.WriteString(m.th.paint(m.th.dim, keys))
+	b.WriteString("\n")
+	// The control-key legend is a second footer row so the read-only nav legend
+	// above stays intact (the control keys are additive, not a replacement).
+	b.WriteString(m.th.paint(m.th.dim, controlFooterKeys(m.colorMode == ColorAscii)))
 	return b.String()
 }
 
@@ -976,9 +1010,12 @@ func (m NOCModel) helpView() string {
 		"  ?                 toggle this help",
 		"  q                 quit",
 		"",
-		"READ-ONLY: the only side effect is the tmux jump (it moves your view,",
-		"not squad state). No key can stop / start / message / delete an agent.",
+		"NAV IS READ-ONLY: the only nav side effect is the tmux jump (it moves your",
+		"view, never squad state). Control actions below are SEPARATE, deliberate,",
+		"and every one previews + confirms before it touches a squad.",
+		"",
 	}
+	lines = append(lines, controlHelpLines()...)
 	for _, l := range lines {
 		b.WriteString(m.th.paint(m.th.dim, l) + "\n")
 	}

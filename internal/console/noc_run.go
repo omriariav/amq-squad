@@ -31,6 +31,42 @@ type NOCConfig struct {
 	Tree bool
 	// HideStale starts the surface with stopped/archived (stale) squads hidden.
 	HideStale bool
+	// Lifecycle is the cli-injected stop/resume seam (PR15). cli owns the
+	// executeDown/executeResume verbs; passing a closure here lets the live NOC
+	// drive them WITHOUT a console→cli import cycle. nil means stop/resume
+	// degrade to a "no lifecycle backend" note rather than a panic. It is reached
+	// ONLY after the operator confirms the preview overlay, and only on the live
+	// (interactive) path — --once is non-interactive so nothing can confirm.
+	Lifecycle func(LifecycleRequest) error
+}
+
+// LifecycleRequest is the public, cli-facing shape of a confirmed stop/resume.
+// It carries the exact scope the NOC previewed (verb + project dir + session +
+// affected agents) so the cli closure can call the right verb on the right
+// squad. Verb is "stop" or "resume". Keeping this type free of console
+// internals is what lets cli inject the seam without importing unexported types.
+type LifecycleRequest struct {
+	Verb       string
+	ProjectDir string
+	Session    string
+	Agents     []string
+}
+
+// adaptLifecycle bridges the public, cli-facing LifecycleRequest seam to the
+// model's internal lifecycleOp seam. nil in → nil out (stop/resume then degrade
+// to a note).
+func adaptLifecycle(fn func(LifecycleRequest) error) func(lifecycleOp) error {
+	if fn == nil {
+		return nil
+	}
+	return func(op lifecycleOp) error {
+		return fn(LifecycleRequest{
+			Verb:       string(op.Verb),
+			ProjectDir: op.ProjectDir,
+			Session:    op.Session,
+			Agents:     op.Agents,
+		})
+	}
 }
 
 // RunNOC is the NOC entrypoint. With cfg.Once it renders a single static board
@@ -84,6 +120,11 @@ func runNOCLive(cfg NOCConfig) error {
 		m.filter = cfg.InitialFilter
 	}
 	m.hideStale = cfg.HideStale
+	// Wire the confirmed stop/resume seam (PR15). The AMQ-write seam (sendOp)
+	// already defaults to act.Send in newNOCModel; here we bridge the cli-owned
+	// lifecycle verbs onto the model's internal seam. Both are reached only after
+	// the operator confirms the preview overlay.
+	m.lifecycle = adaptLifecycle(cfg.Lifecycle)
 	// Seed an initial snapshot synchronously so the first frame is populated.
 	m.ms = noc.Collect(rebuild.Roots, rebuild.Depth, rebuild.Probe, rebuild.Thresholds)
 	m.ready = true

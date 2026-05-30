@@ -1,16 +1,19 @@
 package cli
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/console"
 	"github.com/omriariav/amq-squad/v2/internal/noc"
 	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // rootList is a repeatable string flag: each --root DIR appends one root. The
@@ -167,7 +170,52 @@ func executeNOC(s nocExecution) error {
 		cfg.Once = true
 	}
 
+	// Inject the stop/resume lifecycle seam (PR15). cli owns these verbs
+	// (executeDown/executeResume); the NOC reaches them ONLY after the operator
+	// confirms the preview overlay. The --once path is non-interactive, so the
+	// seam is never invoked there even though it is set.
+	cfg.Lifecycle = consoleLifecycle
 	return s.RunNOC(cfg)
+}
+
+// consoleLifecycle is the cli-side stop/resume seam handed to the NOC. It is
+// invoked ONLY for a confirmed Stop/Resume from the TUI. It drives the SAME
+// verbs the CLI exposes (executeDown / executeResume) against the squad the NOC
+// previewed, so a NOC stop is byte-identical to `amq-squad stop --all` and a NOC
+// resume to `amq-squad resume`. The verb report is captured to a buffer so it
+// never corrupts the AltScreen frame; the NOC surfaces a one-line note instead.
+func consoleLifecycle(req console.LifecycleRequest) error {
+	dir := req.ProjectDir
+	if strings.TrimSpace(dir) == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			dir = cwd
+		}
+	}
+	var sink bytes.Buffer
+	switch req.Verb {
+	case "stop":
+		return executeDown(downExecution{
+			Verb:             "stop",
+			ProjectDir:       dir,
+			RequestedSession: req.Session,
+			ExplicitSession:  req.Session != "",
+			All:              true,
+			Profile:          team.DefaultProfile,
+			Terminator:       newSignalTerminator(false),
+			Probe:            defaultDuplicateLaunchProbe,
+			Out:              &sink,
+		})
+	case "resume":
+		return executeResume(resumeExecution{
+			ProjectDir:       dir,
+			RequestedSession: req.Session,
+			ExplicitSession:  req.Session != "",
+			Mode:             resumeModeDefault,
+			Profile:          team.DefaultProfile,
+		})
+	default:
+		return fmt.Errorf("unknown lifecycle verb %q", req.Verb)
+	}
 }
 
 // defaultNOCRoots picks the default scan roots for a starting directory:
