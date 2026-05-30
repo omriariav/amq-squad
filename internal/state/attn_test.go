@@ -1,6 +1,7 @@
 package state
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -141,5 +142,76 @@ func TestNeedsYouThreads_SortedByReasonThenAge(t *testing.T) {
 	// TopAttnReason leads with the most urgent reason (APPROVE here).
 	if top := snap.Sessions[0].Coordination.TopAttnReason(); top != AttnApprove {
 		t.Errorf("TopAttnReason = %q, want %q", top, AttnApprove)
+	}
+}
+
+// TestAttnReason_TaughtPrefixes proves the agent-side convention taught in
+// bootstrap.md + team-rules end-to-end: a thread addressed to the operator
+// handle "user" with the literal `APPROVAL:` subject prefix classifies
+// AttnApprove, the `DONE:` prefix classifies AttnGoalReached, and a normal
+// status subject that merely embeds the substring "done" ("abandoned") does NOT
+// classify goal-reached — guarding the bare-"done" false positive. This is the
+// signal the NOC needs-you tier (APPROVE / GOAL-REACHED) lights up on for real
+// squads. Runs through the SAME parser + collapse path real data uses.
+func TestAttnReason_TaughtPrefixes(t *testing.T) {
+	cases := []struct {
+		name    string
+		kind    string
+		subject string
+		want    AttnReason
+	}{
+		// Taught APPROVAL: prefix -> approve.
+		{"approval-prefix", "question", "APPROVAL: run X?", AttnApprove},
+		// Taught DONE: prefix (kind=decision, as taught) -> goal-reached.
+		{"done-prefix", "decision", "DONE: epic complete", AttnGoalReached},
+		// False-positive guard: "abandoned" embeds "done" but is NOT goal-reached.
+		{"abandoned-not-goal", "question", "status: abandoned the retry", AttnGeneric},
+		// Standalone "done" word still classifies goal-reached (word match kept).
+		{"standalone-done", "decision", "all done, ready for review", AttnGoalReached},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			proj := t.TempDir()
+			userDir := seedAgent(t, base, "s", "user", launch.Record{Binary: "claude", Handle: "user", Session: "s", AgentPID: 9})
+			_ = seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+			seedMessage(t, userDir, "new", msgSpec{
+				id: "m1", from: "cto", to: []string{"user"}, thread: "decision/x",
+				kind: tc.kind, subject: tc.subject, createdAt: coordNow.Add(-1 * time.Minute),
+			})
+			snap, err := Build(proj, base, coordProbe())
+			if err != nil {
+				t.Fatal(err)
+			}
+			th := findThread(t, snap.Sessions[0].Coordination, "decision/x")
+			if th.Triage != TriageNeedsYou {
+				t.Fatalf("expected NeedsYou triage for an operator-addressed ask, got %s", th.Triage)
+			}
+			if th.AttnReason != tc.want {
+				t.Errorf("AttnReason = %q, want %q (subject %q)", th.AttnReason, tc.want, tc.subject)
+			}
+			// Explicit anti-false-positive assertion for the "abandoned" case.
+			if tc.name == "abandoned-not-goal" && th.AttnReason == AttnGoalReached {
+				t.Errorf("'abandoned' must NOT classify goal-reached (subject %q)", tc.subject)
+			}
+		})
+	}
+}
+
+// TestHasGoalWord unit-guards the word-boundary "done" matcher: it matches the
+// taught DONE: prefix and standalone "done" tokens, and rejects substring-only
+// embeds that previously false-positived under a bare "done" substring marker.
+func TestHasGoalWord(t *testing.T) {
+	hit := []string{"done:", "done: epic complete", "all done", "we are done", "done"}
+	miss := []string{"abandoned", "condoned the change", "abandoned the retry", "redone task", ""}
+	for _, s := range hit {
+		if !hasGoalWord(strings.ToLower(s)) {
+			t.Errorf("hasGoalWord(%q) = false, want true", s)
+		}
+	}
+	for _, s := range miss {
+		if hasGoalWord(strings.ToLower(s)) {
+			t.Errorf("hasGoalWord(%q) = true, want false", s)
+		}
 	}
 }
