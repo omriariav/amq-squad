@@ -1,6 +1,7 @@
 package state
 
 import (
+	"sort"
 	"strings"
 	"time"
 )
@@ -48,6 +49,49 @@ const (
 	// TriageClear: nothing outstanding.
 	TriageClear Triage = "clear"
 )
+
+// AttnReason classifies WHY a needs-you thread needs the human, derived from the
+// message addressed to the operator handle. It is meaningful ONLY on a needs-you
+// thread (Triage == TriageNeedsYou); on every other thread it is AttnNone.
+//
+// The classification is detection-only here: the agent-side emit convention that
+// would make these fire reliably on real data is deferred plumbing. On the
+// current live board no thread is addressed to "user", so AttnReason is
+// AttnNone in practice — that is correct, not a bug. Tests inject a
+// user-addressed approve/done thread to exercise the classify + render path.
+type AttnReason string
+
+const (
+	// AttnNone: not a needs-you thread (or no reason classified).
+	AttnNone AttnReason = ""
+	// AttnApprove: the agent is paused awaiting a human to approve an action / a
+	// command run / a permission grant. The hot, act-now reason — sorted first.
+	AttnApprove AttnReason = "approve"
+	// AttnGoalReached: the team signalled done / goal reached — the human is asked
+	// to review and close. A distinct REVIEW reason; it must NOT read as a bare
+	// "healthy / nothing to do" green check, so it stays inside NEEDS YOU below
+	// approve.
+	AttnGoalReached AttnReason = "goal-reached"
+	// AttnGeneric: a plain question to the human with no approve/done markers.
+	AttnGeneric AttnReason = "generic"
+)
+
+// Rank orders reasons for the NEEDS YOU block: approve (act now) above
+// goal-reached (review) above generic above none. Lower sorts first. Exported so
+// a render layer can sort needs-you items across sessions/projects by the SAME
+// precedence the state layer uses.
+func (a AttnReason) Rank() int {
+	switch a {
+	case AttnApprove:
+		return 0
+	case AttnGoalReached:
+		return 1
+	case AttnGeneric:
+		return 2
+	default:
+		return 3
+	}
+}
 
 // FreshnessSource records WHERE a derived time came from, so the console can be
 // honest about how much to trust an age. embedded-time is most trustworthy;
@@ -136,6 +180,10 @@ type ThreadSummary struct {
 	// rendered dim/parenthesized. A needs-you thread is never marked stale —
 	// human action does not decay.
 	Stale bool
+	// AttnReason classifies WHY a needs-you thread needs the human (approve vs
+	// goal-reached vs a plain question). It is AttnNone on every non-needs-you
+	// thread. See AttnReason.
+	AttnReason AttnReason
 }
 
 // Edge is a directed from->to message count across a session.
@@ -182,6 +230,47 @@ func (r *TriageRollup) Add(o TriageRollup) {
 // outstanding item: needs-you, live at-risk, or live blocked.
 func (r TriageRollup) HasLiveAttention() bool {
 	return r.NeedsYou > 0 || r.AtRisk > 0 || r.Blocked > 0
+}
+
+// TopAttnReason returns the most urgent needs-you reason across a session's
+// threads (approve > goal-reached > generic), or AttnNone when the session has
+// no needs-you thread. Surfaces the single reason a session-level summary should
+// lead with.
+func (c Coordination) TopAttnReason() AttnReason {
+	best := AttnNone
+	for _, t := range c.Threads {
+		if t.Triage != TriageNeedsYou || t.AttnReason == AttnNone {
+			continue
+		}
+		if best == AttnNone || t.AttnReason.Rank() < best.Rank() {
+			best = t.AttnReason
+		}
+	}
+	return best
+}
+
+// NeedsYouThreads returns the needs-you threads carried by a coordination view,
+// sorted for a NEEDS YOU listing: by reason rank (approve, then goal-reached,
+// then generic), then oldest-first within a reason (the longest-waiting human
+// ask leads), then by id for determinism.
+func (c Coordination) NeedsYouThreads() []ThreadSummary {
+	var out []ThreadSummary
+	for _, t := range c.Threads {
+		if t.Triage == TriageNeedsYou {
+			out = append(out, t)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, rj := out[i].AttnReason.Rank(), out[j].AttnReason.Rank()
+		if ri != rj {
+			return ri < rj
+		}
+		if !out[i].LastEventAt.Equal(out[j].LastEventAt) {
+			return out[i].LastEventAt.Before(out[j].LastEventAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
 }
 
 // countTriage tallies a bare triage tier into the rollup's LIVE buckets. It is
