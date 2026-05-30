@@ -71,6 +71,12 @@ type NOCModel struct {
 	filterEditing bool
 	showHelp      bool
 	showTimeline  bool
+	// showFlow toggles the inter-agent FLOW GRAPH in the detail pane (2.3): an
+	// ASCII edge list of who-messages-whom for the selected session/project,
+	// built from the snapshot's already-derived edges + thread status. Toggled by
+	// 'f'. It is INDEPENDENT of showTimeline — both sub-panels can be open at once
+	// (flow first, then timeline). Read-only: it only formats existing state.
+	showFlow bool
 
 	// hideStale hides STOPPED / stale (archived) squads so the operator can focus
 	// on what is alive. Toggled by 'h'. Off by default.

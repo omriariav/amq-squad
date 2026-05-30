@@ -275,3 +275,71 @@ func TestPalette_ReadOnlyNoMutatingSeam(t *testing.T) {
 		t.Error("palette selection must NEVER call the lifecycle seam")
 	}
 }
+
+// TestPalette_RunningAgentJumpsToAgentPaneNotTeamFocus independently PINS the
+// running-agent JUMP branch of paletteSelect AGAINST the team-FOCUS branch.
+//
+// The panes are constructed so the two resolvers DIVERGE on purpose:
+//   - ResolveTmuxTargetForSession (the agent jump) name-first-matches the cto's
+//     own pane "amq:beta:cto" at beta:0.1.
+//   - resolveSquadWindow (the team focus) returns the FIRST pane whose title has
+//     the "amq:beta:" prefix, which here is a DIFFERENT squad pane "amq:beta:qa"
+//     at beta:9.0 (listed first).
+//
+// A RUNNING-agent select MUST switch to the AGENT pane (beta:0.1). The test
+// asserts both that the switch fires AND that it lands on beta:0.1 — and the
+// companion guard below proves the focus window is a DIFFERENT pane (beta:9.0),
+// so the assertion genuinely discriminates the two branches. If paletteSelect's
+// running branch were gated off (collapsing to the focus path), the switch would
+// land on beta:9.0 and this test FAILS.
+func TestPalette_RunningAgentJumpsToAgentPaneNotTeamFocus(t *testing.T) {
+	m := newPaletteModel(t)
+
+	var gotTarget noc.TmuxTarget
+	called := false
+	m.switchTo = func(tt noc.TmuxTarget) error { called = true; gotTarget = tt; return nil }
+	m.panes = func() ([]noc.TmuxPane, error) {
+		return []noc.TmuxPane{
+			// A DIFFERENT squad pane FIRST: resolveSquadWindow (team focus) returns
+			// this one (beta:9.0) because its title carries the amq:beta: prefix.
+			{Session: "beta", Window: "9", Pane: "0", Command: "claude", CWD: "/fake/proj/beta", Title: "amq:beta:qa"},
+			// The cto's own name-first pane: ResolveTmuxTargetForSession (agent jump)
+			// exact-matches amq:beta:cto and returns this one (beta:0.1).
+			{Session: "beta", Window: "0", Pane: "1", Command: "codex", CWD: "/fake/proj/beta", Title: "amq:beta:cto"},
+		}, nil
+	}
+
+	m, _ = nocPress(m, "p")
+	for _, ch := range "betacto" {
+		m, _ = nocPress(m, string(ch))
+	}
+	// Confirm the selection really is the RUNNING cto agent (so we exercise the
+	// jump branch, not the focus branch).
+	sel, ok := m.palette.selected()
+	if !ok || sel.kind != palAgent || !sel.running || sel.label != "beta/beta/cto" {
+		t.Fatalf("expected the running beta/beta/cto AGENT selected, got %+v ok=%v", sel, ok)
+	}
+	m, _ = nocPress(m, "enter")
+
+	if !called {
+		t.Fatal("running-agent select must call the switch seam (the gated jump)")
+	}
+	// MUST be the AGENT pane (beta:0.1), NOT the team-focus window (beta:9.0).
+	if gotTarget.Session != "beta" || gotTarget.Window != "0" || gotTarget.Pane != "1" {
+		t.Fatalf("running-agent select must JUMP to the agent pane beta:0.1, got %+v "+
+			"(beta:9.0 is the team-focus window — landing there means the jump branch collapsed to focus)", gotTarget)
+	}
+
+	// Companion guard: the team-FOCUS resolver returns the OTHER pane (beta:9.0),
+	// so the assertion above is genuinely discriminating, not a coincidence of a
+	// single shared pane.
+	panes, _ := m.panes()
+	focus, found := resolveSquadWindow("beta", "/fake/proj/beta", panes)
+	if !found {
+		t.Fatalf("expected a squad-focus window to resolve")
+	}
+	if focus.Window == gotTarget.Window && focus.Pane == gotTarget.Pane {
+		t.Fatalf("focus window (%s:%s.%s) must DIFFER from the agent pane (beta:0.1) for this test to discriminate",
+			focus.Session, focus.Window, focus.Pane)
+	}
+}

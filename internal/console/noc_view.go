@@ -820,10 +820,91 @@ func (m NOCModel) projectDetail(n nocNode) string {
 		b.WriteString(m.th.paint(m.th.dim, fmt.Sprintf("  (%d agents)", len(sess.Agents))))
 		b.WriteString("\n")
 	}
+	// Flow graph (toggled by 'f'): the inter-agent who-messages-whom for the
+	// project's first/primary session. Independent of the timeline toggle.
+	if m.showFlow {
+		b.WriteString(m.flowSection(projectCoordination(n)))
+	}
 	if m.jumpNote != "" {
 		b.WriteString(m.detailRule() + "\n" + m.th.paint(m.th.dim, m.jumpNote) + "\n")
 	}
 	return b.String()
+}
+
+// projectCoordination returns the coordination view used for a project node's
+// flow graph: the first session's coordination (the team's edge list lives per
+// session; a project node leads with its primary session). An empty project
+// yields a zero Coordination, which renders the no-messages line.
+func projectCoordination(n nocNode) state.Coordination {
+	sessions := sortedSessions(n.project.Snap.Sessions)
+	if len(sessions) == 0 {
+		return state.Coordination{}
+	}
+	return sessions[0].Coordination
+}
+
+// flowArrow returns the directed-edge glyph: "→" normally, "->" in the ascii /
+// NO_COLOR fallback so the graph stays legible without unicode.
+func (m NOCModel) flowArrow() string {
+	if m.colorMode == ColorAscii {
+		return "->"
+	}
+	return "→"
+}
+
+// flowSection renders the inter-agent FLOW GRAPH sub-panel for a team-level
+// (session / project) node: a divider, a header, then an adjacency listing of
+// who-messages-whom built from the snapshot's already-derived edges
+// (state.FlowGraph), sorted blocked-first then by descending volume. Each row
+// reads "from → to  Nmsgs" with a TEXT status marker ([blocked] / [awaiting])
+// so the state survives the ascii / NO_COLOR fallback (color is decoration). It
+// is formatting ONLY — no new computation, no side effects. An edgeless view
+// renders the "(no inter-agent messages yet)" line.
+func (m NOCModel) flowSection(c state.Coordination) string {
+	var b strings.Builder
+	b.WriteString(m.detailRule() + "\n")
+	b.WriteString(m.th.paint(m.th.dim, "flow graph") + "\n")
+
+	edges := state.FlowGraph(c)
+	if len(edges) == 0 {
+		b.WriteString(m.th.paint(m.th.dim, "  (no inter-agent messages yet)") + "\n")
+		return b.String()
+	}
+
+	arrow := m.flowArrow()
+	// Cap so a busy session keeps the detail pane compact; the sort already put
+	// the blocked / highest-volume links first, so the cap drops only the quiet
+	// tail.
+	const maxEdges = 8
+	shown := edges
+	if len(shown) > maxEdges {
+		shown = shown[:maxEdges]
+	}
+	for _, e := range shown {
+		flow := truncate(e.From+" "+arrow+" "+e.To, 30)
+		b.WriteString("  " + m.th.paint(m.th.brand, flow))
+		b.WriteString(m.th.paint(m.th.dim, "  "+strconv.Itoa(e.Count)+" msgs"))
+		if label := e.Label(); label != "" {
+			b.WriteString("  " + m.flowStatusTag(e, label))
+		}
+		b.WriteString("\n")
+	}
+	if len(edges) > maxEdges {
+		b.WriteString(m.th.paint(m.th.dim, "  +"+strconv.Itoa(len(edges)-maxEdges)+" more") + "\n")
+	}
+	return b.String()
+}
+
+// flowStatusTag renders the per-edge outstanding marker as a colored TEXT tag so
+// the meaning survives the ascii / NO_COLOR fallback (the tag text is always
+// present; color is decoration). Blocked is the red/critical tier;
+// awaiting-reply is the amber/warning tier.
+func (m NOCModel) flowStatusTag(e state.FlowEdge, label string) string {
+	tag := "[" + label + "]"
+	if e.Blocked {
+		return m.th.paint(m.th.blocked, tag)
+	}
+	return m.th.paint(m.th.atRisk, tag)
 }
 
 // sessionDetail shows the unresolved threads (the collapsed-thread bus), an
@@ -861,6 +942,12 @@ func (m NOCModel) sessionDetail(n nocNode) string {
 			b.WriteString(m.th.paint(m.th.dim, "  "+ag.Engine))
 		}
 		b.WriteString("\n")
+	}
+
+	// Flow graph (toggled by 'f'): the inter-agent who-messages-whom for this
+	// session. Independent of the timeline toggle — both sub-panels may be open.
+	if m.showFlow {
+		b.WriteString(m.flowSection(n.session.Coordination))
 	}
 
 	// Recent actions / timeline.
@@ -1017,6 +1104,7 @@ func (m NOCModel) helpView() string {
 		"  /                 filter (needs-you / at-risk / blocked / agent: / model: / project: / session:)",
 		"  h                 toggle hiding stopped/archived (stale) squads — focus on what is alive",
 		"  t                 toggle the timeline in the detail pane",
+		"  f                 toggle the inter-agent flow graph in the detail pane",
 		"  g                 refresh now",
 		"  esc               clear filter / collapse / back",
 		"  ?                 toggle this help",
