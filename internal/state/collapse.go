@@ -156,6 +156,7 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 	fresh := computeFreshness(a.lastEventAt, a.latest, now, governingThreshold(status, th))
 	triage := computeTriage(a, status, fresh, now, th, agents)
 	stale := isStale(a.lastEventAt, now, th.StaleAfter, triage)
+	reason := classifyAttnReason(a, triage)
 
 	return ThreadSummary{
 		ID:           a.id,
@@ -169,7 +170,51 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 		Triage:       triage,
 		Freshness:    fresh,
 		Stale:        stale,
+		AttnReason:   reason,
 	}
+}
+
+// approveMarkers are case-insensitive substrings in a needs-you thread's subject
+// (or kind) that mean the agent is PAUSED awaiting a human approval / permission
+// / confirmation before it can proceed. The act-now reason.
+var approveMarkers = []string{
+	"approve", "approval", "permission", "allow", "proceed",
+	"confirm", "[y/n]", "(y/n)", "y/n", "run this", "ok to",
+}
+
+// goalMarkers are case-insensitive substrings that mean the team signalled the
+// work is DONE / the goal is reached and the human should review and close.
+var goalMarkers = []string{
+	"done", "complete", "completed", "shipped", "goal reached",
+	"finished", "ready to close", "✅",
+}
+
+// classifyAttnReason derives WHY a needs-you thread needs the human from the
+// subject of the message addressed to the operator. It returns AttnNone for any
+// non-needs-you thread (the field is meaningful only on needs-you).
+//
+// Precedence: APPROVE (paused awaiting permission, act now) wins over
+// GOAL-REACHED (review + close); a plain question with neither marker is
+// AttnGeneric. The team's "done"/goal signal arrives in the subject prose
+// (there is no dedicated done message kind on disk), so the goal markers below
+// cover it. Detection-only — see AttnReason's doc on the deferred emit
+// convention.
+func classifyAttnReason(a *threadAccumulator, triage Triage) AttnReason {
+	if triage != TriageNeedsYou {
+		return AttnNone
+	}
+	subj := strings.ToLower(a.subject)
+	for _, mk := range approveMarkers {
+		if strings.Contains(subj, mk) {
+			return AttnApprove
+		}
+	}
+	for _, mk := range goalMarkers {
+		if strings.Contains(subj, mk) {
+			return AttnGoalReached
+		}
+	}
+	return AttnGeneric
 }
 
 // isStale reports whether a thread is age-decayed: its last event is older than

@@ -197,14 +197,25 @@ func (m NOCModel) expandOrDrill() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// enter expands/drills a parent, or JUMPS a running agent.
+// enter JUMPS only on a RUNNING-AGENT row; on every other row it DRILLS/EXPANDS
+// and never teleports into tmux (the jump guard). A STOPPED agent row leaves a
+// note explaining there is nothing live to jump to, rather than silently doing
+// nothing.
+//
+//   - running agent (nodeAgent && canJump): jump (the only tmux side effect).
+//   - stopped agent (nodeAgent && !canJump): a note, no jump.
+//   - project / session / root: expand or drill — never a jump.
 func (m NOCModel) enter() (tea.Model, tea.Cmd) {
 	n, ok := m.selectedNode()
 	if !ok {
 		return m, nil
 	}
-	if n.kind == nodeAgent && n.canJump {
-		return m.jump()
+	if n.kind == nodeAgent {
+		if n.canJump {
+			return m.jump()
+		}
+		m.jumpNote = "agent not running — nothing to jump to (enter jumps only on a running agent)"
+		return m, nil
 	}
 	return m.expandOrDrill()
 }

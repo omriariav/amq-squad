@@ -14,8 +14,11 @@ package console
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/omriariav/amq-squad/v2/internal/noc"
 	"github.com/omriariav/amq-squad/v2/internal/state"
@@ -56,14 +59,182 @@ func (m NOCModel) staticView() string {
 	return b.String()
 }
 
-// rollupView is the --once digest: a NEEDS ATTENTION section (running squads
-// that carry live at-risk/blocked, or needs-you) on top, then a compact
-// PROJECT ROLLUPS list (one line per squad, attention-first). Stale-only squads
-// render dim with their stale counts parenthesized, never as live attention.
+// nocNeedsYouItem is one needs-you thread plus the project/session it lives in,
+// the unit the NEEDS YOU block lists. Carries the typed reason so the block can
+// sort + label it (approve above goal-reached above generic).
+type nocNeedsYouItem struct {
+	project string
+	session string
+	thread  state.ThreadSummary
+}
+
+// collectNeedsYou gathers every needs-you thread across the in-view squads,
+// sorted for the NEEDS YOU block: APPROVE first, then GOAL-REACHED, then
+// generic; within a reason oldest-first (longest-waiting human ask leads), then
+// by project/session/id for determinism. Returns nil when nothing needs the
+// human — the caller renders the block ONLY when this is non-empty (never
+// fabricate a NEEDS YOU section on a calm board).
+func collectNeedsYou(projects []noc.ProjectSnapshot) []nocNeedsYouItem {
+	var items []nocNeedsYouItem
+	for _, ps := range projects {
+		if ps.Warning != "" {
+			continue
+		}
+		for _, sess := range ps.Snap.Sessions {
+			for _, th := range sess.Coordination.NeedsYouThreads() {
+				items = append(items, nocNeedsYouItem{
+					project: ps.Project,
+					session: sessionLabel(sess),
+					thread:  th,
+				})
+			}
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		ri, rj := items[i].thread.AttnReason.Rank(), items[j].thread.AttnReason.Rank()
+		if ri != rj {
+			return ri < rj
+		}
+		if !items[i].thread.LastEventAt.Equal(items[j].thread.LastEventAt) {
+			return items[i].thread.LastEventAt.Before(items[j].thread.LastEventAt)
+		}
+		if items[i].project != items[j].project {
+			return items[i].project < items[j].project
+		}
+		if items[i].session != items[j].session {
+			return items[i].session < items[j].session
+		}
+		return items[i].thread.ID < items[j].thread.ID
+	})
+	return items
+}
+
+// needsYouSection renders the "NEEDS YOU" block: needs-you items text-first,
+// glyph-second, APPROVE sorted ABOVE GOAL-REACHED above generic. APPROVE uses
+// the hot/act-now accent; GOAL-REACHED a distinct cyan REVIEW accent — both with
+// TEXT labels that survive NO_COLOR. GOAL-REACHED is never a bare green check: it
+// stays inside NEEDS YOU below APPROVE so it never reads as "healthy / no
+// action". Returns "" when nothing needs the human (the block is then omitted).
+func (m NOCModel) needsYouSection(projects []noc.ProjectSnapshot) string {
+	items := collectNeedsYou(projects)
+	if len(items) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(m.th.paint(m.th.needsYou, "NEEDS YOU"))
+	b.WriteString(m.th.paint(m.th.dim, fmt.Sprintf(" (%d)", len(items))))
+	b.WriteString("\n")
+	for _, it := range items {
+		b.WriteString("  " + m.needsYouRow(it) + "\n")
+	}
+	return b.String()
+}
+
+// needsYouRow renders one NEEDS YOU line:
+//
+//	⏸ APPROVE       <project>/<session>  <who> paused · <subject> · <age>
+//	✓ GOAL-REACHED  <project>/<session>  team done · review and close · <age>
+//
+// The reason label + glyph lead (text always present); the squad path, a short
+// human phrase, the subject, and the age follow, all dim. APPROVE is painted hot;
+// GOAL-REACHED cyan (review); generic stays in the needs-you accent.
+func (m NOCModel) needsYouRow(it nocNeedsYouItem) string {
+	glyph, label, style := m.attnReasonChrome(it.thread.AttnReason)
+	var b strings.Builder
+	b.WriteString(m.th.paint(style, glyph+" "+padRight(label, 13)))
+
+	loc := it.project + "/" + it.session
+	b.WriteString(" " + m.th.paint(m.th.brand, loc))
+
+	dot := " " + m.dot() + " "
+	parts := []string{attnReasonPhrase(it.thread)}
+	if subj := strings.TrimSpace(threadTitle(it.thread)); subj != "" {
+		parts = append(parts, truncate(subj, 40))
+	}
+	if age := nocThreadAge(it.thread); age != "" {
+		parts = append(parts, age)
+	}
+	b.WriteString(" " + m.th.paint(m.th.dim, strings.Join(parts, dot)))
+	return b.String()
+}
+
+// padRight pads s with spaces to at least width w (visible runes), so the reason
+// labels in the NEEDS YOU block left-align into a column.
+func padRight(s string, w int) string {
+	if n := len([]rune(s)); n < w {
+		return s + strings.Repeat(" ", w-n)
+	}
+	return s
+}
+
+// attnReasonChrome maps a needs-you reason to its (glyph, TEXT label, style).
+// APPROVE is the hot act-now accent; GOAL-REACHED the distinct cyan review
+// accent; generic falls back to the needs-you accent. The text label is always
+// returned so a NO_COLOR terminal still distinguishes the reasons.
+func (m NOCModel) attnReasonChrome(r state.AttnReason) (glyph, label string, style lipgloss.Style) {
+	switch r {
+	case state.AttnApprove:
+		return nocGlyphApprove.glyph(m.colorMode), "APPROVE", m.th.needsYou
+	case state.AttnGoalReached:
+		return nocGlyphGoal.glyph(m.colorMode), "GOAL-REACHED", m.th.review
+	default:
+		return nocGlyphNeedsYou.glyph(m.colorMode), "NEEDS-YOU", m.th.needsYou
+	}
+}
+
+// attnReasonInline renders the compact inline reason chip shown on a needs-you
+// session tree row: glyph + TEXT label in the reason's accent (hot for approve,
+// cyan review for goal-reached, hot for a plain ask). Returns "" for AttnNone.
+func (m NOCModel) attnReasonInline(r state.AttnReason) string {
+	if r == state.AttnNone {
+		return ""
+	}
+	glyph, label, style := m.attnReasonChrome(r)
+	return m.th.paint(style, glyph+" "+label)
+}
+
+// attnReasonPhrase is the short human phrase that follows the reason label:
+// "<who> paused" for approve, "team done · review and close" for goal-reached,
+// "<who> asks" for a plain question.
+func attnReasonPhrase(th state.ThreadSummary) string {
+	who := threadAsker(th)
+	switch th.AttnReason {
+	case state.AttnApprove:
+		return who + " paused"
+	case state.AttnGoalReached:
+		return "team done · review and close"
+	default:
+		return who + " asks"
+	}
+}
+
+// threadAsker is the non-operator participant a needs-you thread is waiting on
+// (the agent that addressed the human), or "an agent" when none is recoverable.
+func threadAsker(th state.ThreadSummary) string {
+	for _, p := range th.Participants {
+		if p != "" && p != state.DefaultOperatorHandle {
+			return p
+		}
+	}
+	return "an agent"
+}
+
+// rollupView is the --once digest: a NEEDS YOU block (operator action required)
+// and a NEEDS ATTENTION section (running squads that carry live at-risk/blocked,
+// or needs-you) on top, then a compact PROJECT ROLLUPS list (one line per squad,
+// attention-first). Stale-only squads render dim with their stale counts
+// parenthesized, never as live attention.
 func (m NOCModel) rollupView() string {
 	var b strings.Builder
 
 	projects := m.visibleProjects()
+
+	// --- NEEDS YOU: operator action required, reason-first. Rendered only when
+	// something actually needs the human (never fabricated). ---
+	if ny := m.needsYouSection(projects); ny != "" {
+		b.WriteString(ny)
+		b.WriteString("\n")
+	}
 
 	// --- NEEDS ATTENTION: live squads with something outstanding now. ---
 	var attn []noc.ProjectSnapshot
@@ -100,9 +271,9 @@ func (m NOCModel) rollupView() string {
 }
 
 // projectRollupLine renders one squad as a single rollup row: state glyph,
-// project label, a liveness phrase ("running N/M" / "stopped"), and the triage
-// tally (live leading, stale dim/parenthesized). When attn is true the live
-// counts are emphasized (it heads the NEEDS ATTENTION section).
+// project label, a liveness phrase ("running N/M agents alive" / "stopped"), and
+// the triage tally (live leading, stale dim/parenthesized). When attn is true the
+// live counts are emphasized (it heads the NEEDS ATTENTION section).
 func (m NOCModel) projectRollupLine(ps noc.ProjectSnapshot, attn bool) string {
 	var b strings.Builder
 	st := projectRollupState(ps)
@@ -129,20 +300,53 @@ func (m NOCModel) projectRollupLine(ps noc.ProjectSnapshot, attn bool) string {
 	return b.String()
 }
 
-// visibleProjects returns the projects to render, honoring the hideStale toggle
-// (which drops stopped/stale/archived squads so the operator can focus on live).
+// visibleProjects returns the projects to render in the digest, honoring the
+// SAME scope the headline counts: the hideStale toggle (drop stopped/stale
+// squads) AND the active filter. Keeping the digest and the headline on one
+// scope is what makes the headline live-blocked total reconcile with the sum of
+// the per-project rows (the count-leak the reviewer caught: a hidden/filtered
+// squad's live blocks were counted in the headline but shown in no row).
 func (m NOCModel) visibleProjects() []noc.ProjectSnapshot {
-	if !m.hideStale {
-		return m.ms.Projects
-	}
+	return m.scopedProjects()
+}
+
+// scopedProjects is the single source of truth for "which squads are in view":
+// it applies the hide-stale toggle and the typed filter, in the order the tree
+// uses them, so the headline rollup, the --once digest, and the interactive
+// tree all agree on the visible set. The headline is summed over THIS slice
+// (scopedRollup), guaranteeing headline counts == sum(visible per-project).
+func (m NOCModel) scopedProjects() []noc.ProjectSnapshot {
 	out := make([]noc.ProjectSnapshot, 0, len(m.ms.Projects))
 	for _, ps := range m.ms.Projects {
-		if projectIsStaleOnly(ps) {
+		if m.hideStale && projectIsStaleOnly(ps) {
+			continue
+		}
+		if !projectMatchesNOCFilter(ps, m.filter) {
 			continue
 		}
 		out = append(out, ps)
 	}
 	return out
+}
+
+// scopedRollup sums the per-project triage rollups over the in-view squads and
+// counts how many of them are squads / running. This is the EXACT arithmetic the
+// per-project rows perform, so the headline it feeds reconciles with their sum:
+// headline live-blocked == sum(project live-blocked), and likewise for at-risk,
+// needs-you, and the stale variants.
+func scopedRollup(projects []noc.ProjectSnapshot) (r state.TriageRollup, squads, live int) {
+	for _, ps := range projects {
+		if ps.Warning != "" {
+			squads++
+			continue
+		}
+		r.Add(ps.Snap.Rollup)
+		squads++
+		if hasRunningAgentSnap(ps.Snap) {
+			live++
+		}
+	}
+	return r, squads, live
 }
 
 // headerView renders the brand rule + the rollup pulse line + a last-activity
@@ -168,9 +372,9 @@ func (m NOCModel) headerView() string {
 //
 //	"14 squads · 1 live · 0 needs-you · 3 at-risk(live) · 0 blocked(live) · 38 blocked(stale) · <clock>"
 func (m NOCModel) pulseLine() string {
-	r := m.ms.Rollup
-	squads := len(m.ms.Projects)
-	live := m.ms.LiveProjects
+	// Sum the headline over the SAME in-view squads the body renders, so the
+	// live/stale blocked+at-risk totals reconcile with the per-project rows.
+	r, squads, live := scopedRollup(m.scopedProjects())
 
 	dim := func(s string) string { return m.th.paint(m.th.dim, s) }
 	sep := dim(" " + m.dot() + " ")
@@ -399,6 +603,14 @@ func (m NOCModel) renderNode(n nocNode, selected bool) string {
 		tally := m.tallyText(n.rollup)
 		if tally != "" {
 			b.WriteString(" " + tally)
+		}
+	}
+
+	// Needs-you reason inline on a session node: a needs-you session shows WHY
+	// the human is needed (approve / goal-reached / a plain ask) right on the row.
+	if n.kind == nodeSession && n.rollup.NeedsYou > 0 {
+		if rl := m.attnReasonInline(n.session.Coordination.TopAttnReason()); rl != "" {
+			b.WriteString(" " + rl)
 		}
 	}
 

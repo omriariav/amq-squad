@@ -193,8 +193,8 @@ func TestNOC_OnceRendersRollupsAndNeedsAttention(t *testing.T) {
 	}
 	// The running at-risk squad heads the needs-attention section; the stale
 	// squad's block is shown dim/parenthesized, never as live attention.
-	if !strings.Contains(digest, "running 2/2") {
-		t.Errorf("rollup should show the live squad's liveness phrase 'running 2/2':\n%s", digest)
+	if !strings.Contains(digest, "running 2/2 agents alive") {
+		t.Errorf("rollup should show the unambiguous liveness phrase 'running 2/2 agents alive':\n%s", digest)
 	}
 	if !strings.Contains(digest, "blocked stale") {
 		t.Errorf("stale squad's block should read as 'blocked stale':\n%s", digest)

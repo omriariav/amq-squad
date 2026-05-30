@@ -220,6 +220,133 @@ func TestNOCUpdate_JumpNotInTmuxShowsSuggestion(t *testing.T) {
 	}
 }
 
+// TestNOCUpdate_EnterJumpGuard proves the jump guard (Codex): enter JUMPS only
+// on a RUNNING-AGENT row. On a project row it expands/drills and never calls the
+// injected switcher; on a running-agent row it calls the switcher with the right
+// target; on a STOPPED agent it does NOT jump and leaves a note.
+func TestNOCUpdate_EnterJumpGuard(t *testing.T) {
+	t.Run("project row expands, never jumps", func(t *testing.T) {
+		m := newSeededNOCModel(t)
+		switched := false
+		m.switchTo = func(noc.TmuxTarget) error { switched = true; return nil }
+		m.panes = func() ([]noc.TmuxPane, error) { return nil, nil }
+		m.pidTree = func(int) []int { return nil }
+
+		// Cursor 0 is a project node (beta, the most-urgent squad).
+		top, ok := m.selectedNode()
+		if !ok || top.kind != nodeProject {
+			t.Fatalf("expected a project at cursor 0, got %+v ok=%v", top, ok)
+		}
+		// Collapse it first so enter has a visible expand effect to assert.
+		m.tree.setCollapsed(top.id, true)
+		before := len(m.nodes())
+
+		m, _ = nocPress(m, "enter")
+		if switched {
+			t.Error("enter on a project row must NOT call the switcher (no teleport into tmux)")
+		}
+		if m.tree.isCollapsed(top.id) {
+			t.Error("enter on a collapsed project row should expand it")
+		}
+		if got := len(m.nodes()); got <= before {
+			t.Errorf("enter on a project row should expand (more visible nodes): before=%d after=%d", before, got)
+		}
+	})
+
+	t.Run("running-agent row jumps to resolved target", func(t *testing.T) {
+		m := newSeededNOCModel(t)
+		var beta noc.ProjectSnapshot
+		for _, n := range m.nodes() {
+			if n.kind == nodeProject && n.label == "beta" {
+				beta = n.project
+				break
+			}
+		}
+		if beta.Dir == "" {
+			t.Fatal("beta project not found")
+		}
+		var gotTarget noc.TmuxTarget
+		called := false
+		m.switchTo = func(tt noc.TmuxTarget) error { called = true; gotTarget = tt; return nil }
+		m.panes = func() ([]noc.TmuxPane, error) {
+			return []noc.TmuxPane{{
+				Session: "beta", Window: "0", Pane: "1", PID: 5001,
+				Command: "claude", CWD: beta.Dir,
+			}}, nil
+		}
+		m.pidTree = func(int) []int { return nil }
+
+		// beta/qa is the alive claude agent (canJump).
+		for i, n := range m.nodes() {
+			if n.kind == nodeAgent && n.agent.Handle == "qa" {
+				if !n.canJump {
+					t.Fatal("beta/qa should be a running (canJump) agent")
+				}
+				m.cursor = i
+				break
+			}
+		}
+		m, _ = nocPress(m, "enter")
+		if !called {
+			t.Fatal("enter on a running-agent row must call the switcher")
+		}
+		if gotTarget.Session != "beta" || gotTarget.Window != "0" || gotTarget.Pane != "1" {
+			t.Errorf("switcher got wrong target: %+v", gotTarget)
+		}
+	})
+
+	t.Run("stopped-agent row does not jump, shows a note", func(t *testing.T) {
+		m := newSeededNOCModel(t)
+		switched := false
+		m.switchTo = func(noc.TmuxTarget) error { switched = true; return nil }
+		m.panes = func() ([]noc.TmuxPane, error) {
+			return nil, nil
+		}
+		m.pidTree = func(int) []int { return nil }
+
+		// gamma/dev is the dead agent (stopped, !canJump). Find it (expanding
+		// gamma if the tree collapsed it).
+		stoppedIdx := -1
+		for i, n := range m.nodes() {
+			if n.kind == nodeAgent && n.agent.Handle == "dev" {
+				stoppedIdx = i
+				break
+			}
+		}
+		if stoppedIdx < 0 {
+			// gamma may be collapsed by default order; select + expand it.
+			for i, n := range m.nodes() {
+				if n.kind == nodeProject && n.label == "gamma" {
+					m.cursor = i
+					m.tree.setCollapsed(n.id, false)
+					break
+				}
+			}
+			for i, n := range m.nodes() {
+				if n.kind == nodeAgent && n.agent.Handle == "dev" {
+					stoppedIdx = i
+					break
+				}
+			}
+		}
+		if stoppedIdx < 0 {
+			t.Fatalf("gamma/dev stopped agent node not found in %d nodes", len(m.nodes()))
+		}
+		sel := m.nodes()[stoppedIdx]
+		if sel.canJump {
+			t.Fatal("gamma/dev should be a stopped (!canJump) agent")
+		}
+		m.cursor = stoppedIdx
+		m, _ = nocPress(m, "enter")
+		if switched {
+			t.Error("enter on a STOPPED agent row must NOT jump")
+		}
+		if m.jumpNote == "" {
+			t.Error("enter on a STOPPED agent row should leave a note explaining nothing is live to jump to")
+		}
+	})
+}
+
 func TestNOCUpdate_FilterRouting(t *testing.T) {
 	m := newSeededNOCModel(t)
 	// Open the filter editor and type "needs-you".

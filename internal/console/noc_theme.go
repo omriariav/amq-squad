@@ -42,6 +42,12 @@ var (
 	nocGlyphCollapsed = nocGlyph{unicode: "▸", ascii: "+"}
 	nocGlyphSelect    = nocGlyph{unicode: "►", ascii: ">"}
 	nocGlyphJump      = nocGlyph{unicode: "⏎ jump", ascii: "[jump]"}
+
+	// NEEDS YOU reason glyphs. The TEXT label (APPROVE / GOAL-REACHED) always
+	// accompanies these so they survive NO_COLOR; goal-reached deliberately is
+	// NOT a bare green check — it carries its own glyph + label inside NEEDS YOU.
+	nocGlyphApprove = nocGlyph{unicode: "⏸", ascii: "[approve]"}
+	nocGlyphGoal    = nocGlyph{unicode: "✓", ascii: "[goal]"}
 )
 
 // glyph returns the active form for a mode (unicode for full/none, ascii for
@@ -68,6 +74,7 @@ type nocTheme struct {
 	blocked  lipgloss.Style // red
 	running  lipgloss.Style // green alive
 	stopped  lipgloss.Style // dim grey stopped
+	review   lipgloss.Style // cyan — GOAL-REACHED "review and close" accent
 }
 
 // newNOCTheme builds the styles for a mode.
@@ -94,6 +101,7 @@ func newNOCTheme(mode ColorMode) nocTheme {
 	magenta := lipgloss.AdaptiveColor{Light: "#A2007A", Dark: "#FF5FFF"}
 	red := lipgloss.AdaptiveColor{Light: "#C62828", Dark: "#FF5F5F"}
 	grey := lipgloss.AdaptiveColor{Light: "#9E9E9E", Dark: "#6C6C6C"}
+	cyan := lipgloss.AdaptiveColor{Light: "#00838F", Dark: "#5FD7D7"}
 	selBG := lipgloss.AdaptiveColor{Light: "#FFF3D6", Dark: "#3A2E12"}
 
 	t.brand = r.NewStyle().Bold(true).Foreground(amber)
@@ -105,6 +113,7 @@ func newNOCTheme(mode ColorMode) nocTheme {
 	t.blocked = r.NewStyle().Foreground(red)
 	t.running = r.NewStyle().Foreground(green)
 	t.stopped = r.NewStyle().Foreground(grey)
+	t.review = r.NewStyle().Foreground(cyan)
 	return t
 }
 
@@ -288,10 +297,24 @@ func projectIsStaleOnly(ps noc.ProjectSnapshot) bool {
 	return !ps.Snap.Rollup.HasLiveAttention()
 }
 
-// projectLivenessPhrase renders a squad's liveness in words: "running N/M" when
-// any agent is alive, else "stopped". N is the live count, M the total.
+// projectLivenessPhrase renders a squad's liveness UNAMBIGUOUSLY. The N/M counts
+// AGENTS (alive-or-mailbox-live of total discovered agents), not sessions, so it
+// is labeled "N/M agents alive" — the reviewer flagged a bare "running 4/10" as
+// ambiguous (4 alive of 10 agents? 4 sessions of 10?). A squad with no live
+// agent reads "stopped". The agent count is what drives the phrase everywhere it
+// appears (digest + tree project rows).
 func projectLivenessPhrase(ps noc.ProjectSnapshot) string {
-	live, total := 0, 0
+	live, total := projectAgentLiveness(ps)
+	if live > 0 {
+		return "running " + strconv.Itoa(live) + "/" + strconv.Itoa(total) + " agents alive"
+	}
+	return "stopped"
+}
+
+// projectAgentLiveness returns the count of live agents (alive or
+// dead-mailbox-live) and the total discovered agents across a project's
+// sessions. It is the single counter behind the unambiguous liveness phrase.
+func projectAgentLiveness(ps noc.ProjectSnapshot) (live, total int) {
 	for _, sess := range ps.Snap.Sessions {
 		for _, ag := range sess.Agents {
 			total++
@@ -300,8 +323,5 @@ func projectLivenessPhrase(ps noc.ProjectSnapshot) string {
 			}
 		}
 	}
-	if live > 0 {
-		return "running " + strconv.Itoa(live) + "/" + strconv.Itoa(total)
-	}
-	return "stopped"
+	return live, total
 }
