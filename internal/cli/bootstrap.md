@@ -47,6 +47,11 @@ Startup warnings:
 {{- end }}
 
 {{- end }}
+Asking the human:
+- Need a human to approve an action you cannot take autonomously (a destructive/irreversible command, spend, deploy, or anything needing sign-off): send AMQ to `user` with a subject beginning `APPROVAL:` — e.g. `amq send --to user --subject "APPROVAL: run destructive vault migration?" --kind question --body "..."`.
+- Reached the team goal / finished the epic: send AMQ to `user`, `--kind decision`, subject beginning `DONE:` — e.g. `amq send --to user --subject "DONE: vault-context epic complete — review & close" --kind decision --body "..."`.
+- These exact `APPROVAL:` / `DONE:` prefixes light up the human's needs-you board. Do not invent other prefixes for these two signals.
+
 First steps:
 1. Read the startup files that exist.
 2. Use the current team routing above for live messages and handoffs.

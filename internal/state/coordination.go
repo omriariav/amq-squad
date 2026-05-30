@@ -54,11 +54,12 @@ const (
 // message addressed to the operator handle. It is meaningful ONLY on a needs-you
 // thread (Triage == TriageNeedsYou); on every other thread it is AttnNone.
 //
-// The classification is detection-only here: the agent-side emit convention that
-// would make these fire reliably on real data is deferred plumbing. On the
-// current live board no thread is addressed to "user", so AttnReason is
-// AttnNone in practice — that is correct, not a bug. Tests inject a
-// user-addressed approve/done thread to exercise the classify + render path.
+// Agents are taught (bootstrap + team-rules) the emit convention that makes
+// these fire on real data: a thread to "user" with subject `APPROVAL: ...`
+// classifies AttnApprove, and `DONE: ...` classifies AttnGoalReached. When no
+// thread is addressed to "user" the board simply shows AttnNone — that is
+// correct, not a bug. Tests seed user-addressed approve/done threads to exercise
+// the classify + render path end-to-end against the taught prefixes.
 type AttnReason string
 
 const (

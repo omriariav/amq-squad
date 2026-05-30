@@ -184,9 +184,43 @@ var approveMarkers = []string{
 
 // goalMarkers are case-insensitive substrings that mean the team signalled the
 // work is DONE / the goal is reached and the human should review and close.
+// "done" is deliberately NOT a bare substring here: it false-positives on
+// ordinary words that embed it ("abandoned", "condoned", "redone"). The "done"
+// signal — including the taught `DONE:` subject prefix — is matched as a whole
+// word by hasGoalWord instead, while the broader goal phrases below stay
+// substring matches.
 var goalMarkers = []string{
-	"done", "complete", "completed", "shipped", "goal reached",
+	"complete", "completed", "shipped", "goal reached",
 	"finished", "ready to close", "✅",
+}
+
+// hasGoalWord reports whether a lowercased subject carries a "done" goal signal
+// as a whole word, WITHOUT the substring false positives of bare "done" (e.g.
+// "abandoned", "condoned", "redone"). It matches the taught `done:` subject
+// prefix and a standalone "done" token (bounded by non-letters), so
+// "DONE: epic complete" / "all done" / "we are done" classify goal-reached
+// while "abandoned the retry" does not.
+func hasGoalWord(subjLower string) bool {
+	const w = "done"
+	for i := 0; i+len(w) <= len(subjLower); i++ {
+		if subjLower[i:i+len(w)] != w {
+			continue
+		}
+		if i > 0 && isASCIILetter(subjLower[i-1]) {
+			continue
+		}
+		if j := i + len(w); j < len(subjLower) && isASCIILetter(subjLower[j]) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// isASCIILetter reports whether b is an ASCII letter, used for word-boundary
+// checks in hasGoalWord.
+func isASCIILetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 // classifyAttnReason derives WHY a needs-you thread needs the human from the
@@ -195,10 +229,10 @@ var goalMarkers = []string{
 //
 // Precedence: APPROVE (paused awaiting permission, act now) wins over
 // GOAL-REACHED (review + close); a plain question with neither marker is
-// AttnGeneric. The team's "done"/goal signal arrives in the subject prose
-// (there is no dedicated done message kind on disk), so the goal markers below
-// cover it. Detection-only — see AttnReason's doc on the deferred emit
-// convention.
+// AttnGeneric. Agents are taught (bootstrap + team-rules) to emit the goal
+// signal as a `DONE:` subject prefix; that prefix and a standalone "done" word
+// are matched by hasGoalWord (word-bounded, so "abandoned" does not trip it),
+// while the broader goal phrases stay substring matches in goalMarkers.
 func classifyAttnReason(a *threadAccumulator, triage Triage) AttnReason {
 	if triage != TriageNeedsYou {
 		return AttnNone
@@ -208,6 +242,9 @@ func classifyAttnReason(a *threadAccumulator, triage Triage) AttnReason {
 		if strings.Contains(subj, mk) {
 			return AttnApprove
 		}
+	}
+	if hasGoalWord(subj) {
+		return AttnGoalReached
 	}
 	for _, mk := range goalMarkers {
 		if strings.Contains(subj, mk) {

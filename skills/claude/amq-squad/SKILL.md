@@ -106,6 +106,7 @@ Global output flags work before or after the subcommand: `--quiet`, `--verbose`,
      ```
    - Decisions: `--thread decision/<topic> --kind decision`.
    - Valid `--kind` values (enforced by `amq`): `brainstorm, review_request, review_response, question, answer, decision, status, todo`. **There is no `handoff` kind** — send a role-to-role handoff as `--kind review_request` (work to take over) or `--kind todo` (a queued task). Emitting `--kind handoff` fails validation and falls back to `status`, losing the intended label.
+   - **Surfacing to the human (the escalation owner, normally CTO, does this):** need human approval -> `amq send --to user --subject "APPROVAL: ..." --kind question`. Team goal reached -> `amq send --to user --subject "DONE: ..." --kind decision`. These exact `APPROVAL:` / `DONE:` subject prefixes light up the human's needs-you board (⏸ APPROVE / ✓ GOAL-REACHED).
    - Synchronous wait: append `--wait-for drained --wait-timeout 60s`.
    - Cross-session sends need explicit `--session` and `--thread`; avoid them in normal flow.
 
