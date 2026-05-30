@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/omriariav/amq-squad/v2/internal/act"
 	"github.com/omriariav/amq-squad/v2/internal/noc"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 )
@@ -94,13 +95,43 @@ type NOCModel struct {
 	// guidance is shown when no projects were found under the roots.
 	guidance string
 
+	// --- Control layer (PR15). All MUTATING control state lives here; the
+	// read-only fields above are untouched. ---
+
+	// pending is the confirm overlay: non-nil means a MUTATING action has been
+	// previewed and is awaiting an explicit y/enter (any other key cancels with
+	// zero effect). It is the single gate between a keypress and a seam call.
+	pending *pendingAction
+
+	// input is the (non-mutating) body/subject editor for message/broadcast/deny:
+	// the operator types here, then the action transitions to the pending overlay
+	// so the EXACT command is previewed before any confirm.
+	input *inputAction
+
+	// actNote surfaces the result/decline of the last control action, mirroring
+	// jumpNote for the read-only jump.
+	actNote string
+
 	// Seams.
 	switchTo nocSwitcher
 	panes    nocPaneLister
 	pidTree  func(pid int) []int
+
+	// Control seams (PR15). Both are MUTATING and are reached ONLY after the
+	// operator confirms the preview overlay; tests swap them for fakes so no
+	// `make ci` run ever writes a real squad. sendOp writes an OpMessage into
+	// AMQ (defaults to act.Send when nil). lifecycle stops/resumes a squad and is
+	// injected from cli (it owns the executeDown/executeResume verbs) so there is
+	// no console→cli import cycle; nil lifecycle degrades to a clear note rather
+	// than a nil-call panic.
+	sendOp    func(act.OpMessage) error
+	lifecycle func(lifecycleOp) error
 }
 
-// newNOCModel builds a model from an immutable rebuild config.
+// newNOCModel builds a model from an immutable rebuild config. The control
+// AMQ-write seam defaults to act.Send; the lifecycle seam stays nil here and is
+// wired by RunNOC from cli (stop/resume verbs) so a nil lifecycle degrades to a
+// note rather than panicking, and unit tests can leave it nil or inject a fake.
 func newNOCModel(rebuild NOCRebuildConfig) NOCModel {
 	mode := resolveColorMode(true)
 	return NOCModel{
@@ -111,6 +142,7 @@ func newNOCModel(rebuild NOCRebuildConfig) NOCModel {
 		switchTo:  noc.SwitchTo,
 		panes:     noc.DefaultPaneLister,
 		pidTree:   defaultPidTree,
+		sendOp:    act.Send,
 	}
 }
 

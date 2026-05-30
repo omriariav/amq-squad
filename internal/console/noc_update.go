@@ -78,6 +78,17 @@ func (m *NOCModel) refreshGuidance() {
 //	q              quit
 //	?              help
 func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Control overlays take the key first so a mutating action is always two-step
+	// and self-contained: while the confirm overlay is open ONLY y/esc/other are
+	// meaningful (handleConfirmKey gates the single seam call); while the body
+	// editor is open keys feed the buffer. Both are checked before nav so a
+	// control flow never leaks a keystroke into the read-only keymap.
+	if m.pending != nil {
+		return m.handleConfirmKey(msg.String())
+	}
+	if m.input != nil {
+		return m.handleInputKey(msg)
+	}
 	if m.filterEditing {
 		return m.handleFilterKey(msg)
 	}
@@ -93,6 +104,18 @@ func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	m.jumpNote = ""
+	m.actNote = ""
+
+	// Control keys are ADDITIVE and checked before the read-only keymap: a key
+	// the control layer owns (a/x/m/b/S/R/o) opens a preview/confirm flow (or,
+	// for 'o', a read-only focus) and is consumed here; any other key falls
+	// through to the unchanged nav/peek/filter/jump keymap below.
+	if m.controlEnabled() {
+		if cmd, handled := m.handleControlKey(msg.String()); handled {
+			return m, cmd
+		}
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
