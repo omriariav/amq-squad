@@ -10,7 +10,7 @@ import (
 // (otherwise the note would flash every 2s on its own). The note also clears on
 // the next keypress, like jumpNote/actNote/alertBanner.
 func TestRefreshNote_GSetsItSilentTickDoesNot(t *testing.T) {
-	m := nocTestModel(t)
+	m := newSeededNOCModel(t)
 
 	// Precondition: no refresh note at rest.
 	if m.refreshNote != "" {
