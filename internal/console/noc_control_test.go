@@ -407,15 +407,25 @@ func TestControl_FocusRunningCallsSwitch(t *testing.T) {
 		return []noc.TmuxPane{{Session: "beta", Window: "0", Pane: "1", Command: "claude", CWD: "/fake/proj/beta"}}, nil
 	}
 
+	// 'o' is now confirm-gated (QA-2/QA-4b): it opens a READ-ONLY focus confirm
+	// overlay (jumpPending, NOT the mutating pending) and does not focus yet.
 	m, _ = nocPress(m, "o")
+	if m.jumpPending == nil {
+		t.Fatal("o should open the read-only focus confirm overlay")
+	}
+	if m.pending != nil {
+		t.Error("focus is read-only: it must never open the MUTATING confirm overlay")
+	}
+	if called {
+		t.Fatal("o must NOT call the switch seam before confirm")
+	}
+	// y confirms: the switch seam fires with the right session.
+	m, _ = nocPress(m, "y")
 	if !called {
-		t.Fatal("o on a running squad should call the switch seam")
+		t.Fatal("y on the focus confirm should call the switch seam")
 	}
 	if gotTarget.Session != "beta" {
 		t.Errorf("focus targeted the wrong session: %+v", gotTarget)
-	}
-	if m.pending != nil {
-		t.Error("focus is read-only: it must never open a confirm overlay")
 	}
 }
 
@@ -431,15 +441,21 @@ func TestControl_FocusStoppedSuggestsUpCallsNothing(t *testing.T) {
 	// No tmux windows: the squad is not running.
 	m.panes = func() ([]noc.TmuxPane, error) { return nil, nil }
 
+	// 'o' opens the read-only focus confirm overlay; confirming with y then finds
+	// no running window and sets the suggest-up note (still NOTHING is called).
 	m, _ = nocPress(m, "o")
+	if m.pending != nil {
+		t.Error("focus is read-only: it must never open the MUTATING confirm overlay")
+	}
+	if m.jumpPending == nil {
+		t.Fatal("o should open the read-only focus confirm overlay")
+	}
+	m, _ = nocPress(m, "y")
 	if switched || lifecycleCalled || sent {
 		t.Error("o on a stopped squad must call NOTHING (no switch, no lifecycle, no send)")
 	}
 	if !strings.Contains(m.actNote, "team not running") || !strings.Contains(m.actNote, "amq-squad up") {
 		t.Errorf("o on a stopped squad should set the suggest-up note, got %q", m.actNote)
-	}
-	if m.pending != nil {
-		t.Error("focus is read-only: it must never open a confirm overlay")
 	}
 }
 

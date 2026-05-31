@@ -118,6 +118,20 @@ type NOCModel struct {
 	// jumpNote for the read-only jump.
 	actNote string
 
+	// jumpPending is the confirm overlay for a READ-ONLY focus action (jump on a
+	// running agent, J, or o/focus-team). Non-nil means a focus has been previewed
+	// and is awaiting an explicit y/Y/enter; any other key (esc included) cancels
+	// with zero effect. It mirrors pending (the mutating confirm overlay) but its
+	// only effect is terminal focus — never a squad mutation, never a spawn. It is
+	// a SEPARATE field from pending so the read-only focus guard and the mutating
+	// control guard never alias each other.
+	jumpPending *pendingFocus
+
+	// refreshNote is a brief visible flash ("refreshed (just now)") set ONLY by an
+	// explicit g refresh so the operator sees g worked (the silent 2s ticker never
+	// sets it). It clears on the next keypress like jumpNote/actNote/alertBanner.
+	refreshNote string
+
 	// --- Awareness layer (PR18 / 2.3). Both the command palette and the
 	// needs-you alerts are READ-ONLY: the palette only performs the existing gated
 	// tmux jump/focus, and the alerts only ring a bell + set a banner. Neither

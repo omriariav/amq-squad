@@ -49,6 +49,11 @@ func (m *NOCModel) View() string {
 	if m.pending != nil {
 		return m.overlayFrame(m.confirmOverlayView())
 	}
+	// The READ-ONLY focus confirm overlay (jump / J / o) renders OVER the live
+	// frame like the mutating confirm so the operator's y/esc step is unmissable.
+	if m.jumpPending != nil {
+		return m.overlayFrame(m.focusConfirmOverlayView())
+	}
 	if m.input != nil {
 		return m.overlayFrame(m.inputOverlayView())
 	}
@@ -1080,6 +1085,12 @@ func (m NOCModel) footerView() string {
 	}
 	if m.jumpNote != "" {
 		notes = append(notes, m.th.paint(m.th.dim, m.jumpNote))
+	}
+	// refreshNote flashes "refreshed (just now)" after an explicit g press so the
+	// operator sees g worked; it clears on the next keypress (set only by g, never
+	// by the silent 2s tick).
+	if m.refreshNote != "" {
+		notes = append(notes, m.th.paint(m.th.dim, m.refreshNote))
 	}
 	if len(notes) > 0 {
 		b.WriteString(strings.Join(notes, m.th.paint(m.th.dim, "  "+m.dot()+"  ")) + "\n")

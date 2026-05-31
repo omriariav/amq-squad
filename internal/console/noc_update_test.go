@@ -166,10 +166,19 @@ func TestNOCUpdate_JumpCallsSwitcherWithResolvedTarget(t *testing.T) {
 		t.Fatalf("qa agent node not found; nodes=%d", len(m.nodes()))
 	}
 	m.cursor = agentIdx
+	// J is now confirm-gated (QA-2/QA-4b): it opens the read-only focus confirm
+	// overlay; the switcher fires only after y/enter.
 	m, _ = nocPress(m, "J")
+	if m.jumpPending == nil {
+		t.Fatal("J on a running agent should open the focus confirm overlay")
+	}
+	if called {
+		t.Fatal("J must NOT call the switcher before confirm")
+	}
+	m, _ = nocPress(m, "y")
 
 	if !called {
-		t.Fatal("J on a running agent should call the injected switcher")
+		t.Fatal("y on the focus confirm should call the injected switcher")
 	}
 	if gotTarget.Session != "beta" || gotTarget.Window != "0" || gotTarget.Pane != "1" {
 		t.Errorf("switcher got wrong target: %+v", gotTarget)
@@ -194,7 +203,13 @@ func TestNOCUpdate_JumpNoPaneShowsSuggestionNotError(t *testing.T) {
 		t.Fatal("qa agent node not found")
 	}
 	m.cursor = agentIdx
+	// J opens the confirm overlay; confirm with y, then the unresolved jump sets a
+	// guidance note (and the switcher stays uncalled).
 	m, _ = nocPress(m, "J")
+	if m.jumpPending == nil {
+		t.Fatal("J should open the focus confirm overlay")
+	}
+	m, _ = nocPress(m, "y")
 
 	if called {
 		t.Error("switcher must NOT be called when no pane resolves")
@@ -225,7 +240,13 @@ func TestNOCUpdate_JumpNotInTmuxShowsSuggestion(t *testing.T) {
 			m.cursor = i
 		}
 	}
+	// J opens the confirm overlay; confirm with y, then the not-in-tmux switch
+	// surfaces the suggested command.
 	m, _ = nocPress(m, "J")
+	if m.jumpPending == nil {
+		t.Fatal("J should open the focus confirm overlay")
+	}
+	m, _ = nocPress(m, "y")
 	if m.jumpNote == "" || !strings.Contains(m.jumpNote, "tmux switch-client") {
 		t.Errorf("not-in-tmux jump should surface the suggested command, got %q", m.jumpNote)
 	}
@@ -297,9 +318,18 @@ func TestNOCUpdate_EnterJumpGuard(t *testing.T) {
 				break
 			}
 		}
+		// enter on a running-agent row now opens the focus confirm overlay
+		// (QA-2/QA-4b); the switcher fires only after y/enter confirms.
 		m, _ = nocPress(m, "enter")
+		if m.jumpPending == nil {
+			t.Fatal("enter on a running-agent row should open the focus confirm overlay")
+		}
+		if called {
+			t.Fatal("enter on a running-agent row must NOT call the switcher before confirm")
+		}
+		m, _ = nocPress(m, "y")
 		if !called {
-			t.Fatal("enter on a running-agent row must call the switcher")
+			t.Fatal("y on the focus confirm must call the switcher")
 		}
 		if gotTarget.Session != "beta" || gotTarget.Window != "0" || gotTarget.Pane != "1" {
 			t.Errorf("switcher got wrong target: %+v", gotTarget)

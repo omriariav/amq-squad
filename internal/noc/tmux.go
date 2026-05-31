@@ -26,13 +26,28 @@ type TmuxPane struct {
 	// engine-agnostic and rotation-proof. Empty for panes launched before
 	// titling existed (or non-amq panes); those fall back to cwd+engine scoring.
 	Title string
+	// WindowName is the pane's #{window_name}. It is carried so the cross-session
+	// iTerm2 -CC focus can fall back to matching the native window/tab by window
+	// name when no pane-title token is present. Optional (older tmux output may
+	// omit it; the parser tolerates its absence).
+	WindowName string
 }
 
-// TmuxTarget identifies a single pane for the jump action.
+// TmuxTarget identifies a single pane for the jump action. Title carries the
+// pane's deterministic token (amq:<session>:<role>) when known so the
+// cross-session iTerm2 -CC focus can match the native window/tab by title
+// without re-walking the pane list. It is best-effort: an empty Title falls
+// back to the tmux window name for the osascript match.
 type TmuxTarget struct {
 	Session string
 	Window  string
 	Pane    string
+	// Title is the pane title token (amq:<session>:<role>) used to match the
+	// iTerm2 native window/tab on the cross-session focus path. Optional.
+	Title string
+	// WindowName is the tmux window's name (#{window_name}); the cross-session
+	// osascript falls back to matching it when Title is empty. Optional.
+	WindowName string
 }
 
 // PaneLister is the seam for enumerating tmux panes. The default implementation
@@ -53,9 +68,11 @@ func defaultExecRunner(name string, args ...string) error {
 // parses each row into a TmuxPane. It is strictly READ-ONLY. A missing tmux
 // binary or no server is reported as an error so callers can degrade.
 func DefaultPaneLister() ([]TmuxPane, error) {
-	// pane_title is appended last so an empty title (older/non-amq panes) leaves a
-	// trailing tab the parser tolerates; it carries the name-first resolution token.
-	const format = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}"
+	// pane_title + window_name are appended last so an empty title (older/non-amq
+	// panes) leaves a trailing tab the parser tolerates; pane_title carries the
+	// name-first resolution token and window_name the cross-session focus
+	// fallback.
+	const format = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{window_name}"
 	out, err := exec.Command("tmux", "list-panes", "-a", "-F", format).Output()
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-panes: %w", err)
@@ -89,6 +106,10 @@ func parsePanes(out string) []TmuxPane {
 		// it (older tmux output, or rows that simply have no title).
 		if len(fields) >= 7 {
 			pane.Title = fields[6]
+		}
+		// window_name is the optional 8th field; tolerate its absence too.
+		if len(fields) >= 8 {
+			pane.WindowName = fields[7]
 		}
 		panes = append(panes, pane)
 	}
@@ -135,7 +156,7 @@ func ResolveTmuxTargetForSession(a state.Agent, sessionName, projectDir string, 
 	if want := expectedPaneToken(sessionName, a); want != "" {
 		for _, p := range panes {
 			if p.Title == want {
-				return TmuxTarget{Session: p.Session, Window: p.Window, Pane: p.Pane}, true
+				return targetFromPane(p), true
 			}
 		}
 	}
@@ -178,7 +199,20 @@ func ResolveTmuxTargetForSession(a state.Agent, sessionName, projectDir string, 
 	if !ok {
 		return TmuxTarget{}, false
 	}
-	return TmuxTarget{Session: best.Session, Window: best.Window, Pane: best.Pane}, true
+	return targetFromPane(best), true
+}
+
+// targetFromPane builds a TmuxTarget from a resolved pane, carrying its title
+// token + window name so the cross-session iTerm2 -CC focus can match the native
+// window without re-walking the pane list.
+func targetFromPane(p TmuxPane) TmuxTarget {
+	return TmuxTarget{
+		Session:    p.Session,
+		Window:     p.Window,
+		Pane:       p.Pane,
+		Title:      p.Title,
+		WindowName: p.WindowName,
+	}
 }
 
 // expectedPaneToken derives the deterministic pane-title token the launcher
@@ -273,41 +307,148 @@ func (e *NotInTmuxError) Error() string {
 	return "not inside tmux; run: " + e.Command
 }
 
-// switchExec is the injectable subprocess seam for SwitchTo. Production points
-// it at the real tmux binary; tests swap it for a recorder. It is package-level
-// so tests can override it without changing the SwitchTo signature.
+// switchExec is the injectable subprocess seam for the tmux side of SwitchTo.
+// Production points it at the real tmux binary; tests swap it for a recorder. It
+// is package-level so tests can override it without changing the SwitchTo
+// signature.
 var switchExec execRunner = defaultExecRunner
+
+// osascriptExec is the injectable subprocess seam for the iTerm2 native-window
+// raise on the CROSS-SESSION focus path (macOS osascript — always present, no
+// new dependency, no python). Production runs the real osascript; tests swap it
+// for a recorder so they assert the EXACT argv without spawning anything. When
+// osascript fails (or is absent — non-macOS / not iTerm2) SwitchTo degrades to a
+// tmux select-window + a NotInTmuxError-style note carrying the manual command.
+var osascriptExec execRunner = defaultExecRunner
 
 // inTmux reports whether the current process is inside a tmux client. Overridable
 // in tests via tmuxEnv.
 var tmuxEnv = func() string { return os.Getenv("TMUX") }
 
-// SwitchTo performs the explicit jump to a resolved target.
+// currentTmuxSession reports the tmux session name the operator's client is
+// attached to (`tmux display-message -p "#{session_name}"`), used to choose the
+// same-session vs cross-session focus branch. It is a package-level seam so a
+// test can fix the "current session" without a live tmux. Returns "" when not
+// resolvable (no server / not in tmux), which forces the cross-session branch
+// (the safe default: never switch-client across sessions).
+var currentTmuxSession = func() string {
+	out, err := exec.Command("tmux", "display-message", "-p", "#{session_name}").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// SwitchTo moves the OPERATOR'S terminal focus to a resolved target pane. It is
+// read-only w.r.t. squad state — its only effect is terminal focus. The whole
+// product runs iTerm2 in tmux CONTROL MODE (-CC), where each tmux WINDOW is its
+// own native iTerm2 window/tab, so the focus strategy is split to avoid the
+// window-explosion bug:
 //
-//   - Inside tmux ($TMUX set): `tmux switch-client -t <session>:<window>.<pane>`
-//     moves the attached client to the target pane and returns nil.
-//   - Inside an iTerm2 -CC control session (tmux running but not the current
-//     client's server view) we still emit a `tmux select-window` so the -CC
-//     window raises; this path returns a non-nil note (an *NotInTmuxError is
-//     NOT used here — see below) only when the select fails.
-//   - Not in tmux at all: no subprocess is run; a *NotInTmuxError carrying the
-//     suggested command is returned so the UI can surface it.
+//   - SAME tmux session (target session == the client's current session): focus
+//     the window IN-SESSION via `tmux select-window` (+ `tmux select-pane`),
+//     NEVER `switch-client`. Same-session select-window under -CC raises the
+//     right native tab with NO window explosion.
+//   - DIFFERENT tmux session: do NOT use switch-client (that moves the client to
+//     the other session and makes -CC spawn a native window per tmux window —
+//     the "jumping separates all tabs into their own windows" bug). Instead raise
+//     the iTerm2 native window/tab for the pane via osascript, matched by the
+//     pane title token (amq:<session>:<role>) or the tmux window name. If
+//     osascript fails (not macOS / not iTerm2 / no match) fall back to a
+//     best-effort `tmux select-window` and return a *NotInTmuxError-style note
+//     carrying the suggested manual command.
+//   - Not in tmux at all ($TMUX unset): no switch is run; a best-effort
+//     select-window is attempted and a *NotInTmuxError carrying the suggested
+//     command is returned so the UI can surface it.
 func SwitchTo(t TmuxTarget) error {
+	return switchToWithSession(t, currentTmuxSession)
+}
+
+// switchToWithSession is SwitchTo with the current-session resolver injected, so
+// the same-session vs cross-session branch is testable without a live tmux.
+func switchToWithSession(t TmuxTarget, curSession func() string) error {
 	spec := targetSpec(t)
-	if tmuxEnv() != "" {
-		if err := switchExec("tmux", "switch-client", "-t", spec); err != nil {
-			return fmt.Errorf("tmux switch-client -t %s: %w", spec, err)
+	if tmuxEnv() == "" {
+		// Not in a tmux client at all: best-effort select-window so an iTerm2 -CC
+		// attached window raises, then report the suggested command.
+		_ = switchExec("tmux", "select-window", "-t", spec)
+		return &NotInTmuxError{Target: t, Command: SuggestJump(t)}
+	}
+
+	cur := ""
+	if curSession != nil {
+		cur = curSession()
+	}
+	if cur != "" && cur == t.Session {
+		// SAME session: select the window (and pane) in place. No switch-client,
+		// so iTerm2 -CC does NOT explode the layout.
+		if err := switchExec("tmux", "select-window", "-t", spec); err != nil {
+			return fmt.Errorf("tmux select-window -t %s: %w", spec, err)
 		}
+		// Best-effort pane focus within the window (ignore failure: a 1-pane
+		// window has nothing to select and tmux errors harmlessly).
+		_ = switchExec("tmux", "select-pane", "-t", spec)
 		return nil
 	}
-	// Not in a tmux client: best-effort select-window so an iTerm2 -CC attached
-	// window raises the target, then report the suggested command so a UI can
-	// guide the operator if select-window did nothing useful.
+
+	// DIFFERENT session (or current session unknown): raise the iTerm2 native
+	// window via osascript — NEVER switch-client across sessions.
+	if err := osascriptExec("osascript", iTermActivateArgs(t)...); err == nil {
+		return nil
+	}
+	// osascript failed (not macOS / not iTerm2 / no matching window): degrade to a
+	// best-effort tmux select-window and surface the manual command.
 	_ = switchExec("tmux", "select-window", "-t", spec)
 	return &NotInTmuxError{Target: t, Command: SuggestJump(t)}
 }
 
-// SuggestJump returns the human "run this to jump" command for a target.
+// iTermFocusToken is the string the cross-session osascript matches an iTerm2
+// tab/window by: the pane title token (amq:<session>:<role>) when present, else
+// the tmux window name, else the "session:window" spec. Exported-shaped as a
+// helper so the argv is unit-testable.
+func iTermFocusToken(t TmuxTarget) string {
+	if s := strings.TrimSpace(t.Title); s != "" {
+		return s
+	}
+	if s := strings.TrimSpace(t.WindowName); s != "" {
+		return s
+	}
+	return targetSpec(t)
+}
+
+// iTermActivateArgs builds the osascript argv that activates iTerm2 and raises
+// the window whose current session's name (the tab title, which iTerm2 -CC sets
+// from the tmux pane title) contains the focus token. It is split out so tests
+// assert the EXACT argv without spawning osascript. The AppleScript is passed via
+// repeated -e lines (no shell, no interpolation surprises): the token is a
+// separate -e-quoted literal so a title with spaces stays intact.
+func iTermActivateArgs(t TmuxTarget) []string {
+	token := iTermFocusToken(t)
+	script := `on run argv
+set tok to item 1 of argv
+tell application "iTerm2"
+	activate
+	repeat with w in windows
+		repeat with tb in tabs of w
+			repeat with sess in sessions of tb
+				if (name of sess) contains tok then
+					select tb
+					tell w to select
+					return
+				end if
+			end repeat
+		end repeat
+	end repeat
+end tell
+end run`
+	return []string{"-e", script, token}
+}
+
+// SuggestJump returns the human "run this to jump" command for a target. It
+// still renders the tmux switch-client form because that is the universally
+// recognized manual command an operator can paste, even though SwitchTo itself
+// no longer runs switch-client (it uses select-window / osascript to avoid the
+// iTerm2 -CC window explosion).
 func SuggestJump(t TmuxTarget) string {
 	return "tmux switch-client -t " + targetSpec(t)
 }
