@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // chdir switches into dir for the duration of the test, restoring the
@@ -265,8 +265,11 @@ func TestRunUpLiveHonorsBackendFlags(t *testing.T) {
 	if opts.Workstream != "issue-97" {
 		t.Errorf("Workstream = %q, want issue-97", opts.Workstream)
 	}
-	if !opts.Fresh {
-		t.Error("--fresh not propagated")
+	// --fresh is reconciled to a no-op on `up`: refuse-existing is now the
+	// default gate, so opts.Fresh must never be set from the up path even when
+	// --fresh is passed.
+	if opts.Fresh {
+		t.Error("--fresh must be a no-op on up; opts.Fresh should stay false")
 	}
 	if !opts.NoBootstrap {
 		t.Error("--no-bootstrap not propagated")
@@ -306,10 +309,12 @@ func TestRunUpDryRunDoesNotCallBackend(t *testing.T) {
 	}
 }
 
-// TestRunUpLiveRejectsExistingFreshWorkstream verifies the fresh + preflight
-// guards stay engaged on the live path (no bypass via the up entry point).
-func TestRunUpLiveRejectsExistingFreshWorkstream(t *testing.T) {
-	useFakeBackend(t)
+// TestRunUpLiveRefusesExistingSessionByDefault proves the new default: plain
+// `up` against a session whose AMQ root already exists is REFUSED (no --fresh
+// needed) with the state-aware resume/--reset next-step hint, and the backend
+// is never invoked.
+func TestRunUpLiveRefusesExistingSessionByDefault(t *testing.T) {
+	backend := useFakeBackend(t)
 	base := setupFakeAMQSessionRoots(t)
 	if err := os.MkdirAll(base+"/issue-97", 0o755); err != nil {
 		t.Fatal(err)
@@ -319,10 +324,46 @@ func TestRunUpLiveRejectsExistingFreshWorkstream(t *testing.T) {
 	})
 
 	_, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--terminal", "fake", "--session", "issue-97", "--fresh", "--no-bootstrap"})
+		return runUp([]string{"--terminal", "fake", "--session", "issue-97", "--no-bootstrap"})
 	})
-	if err == nil || !strings.Contains(err.Error(), `workstream session "issue-97" already exists`) {
-		t.Fatalf("up --fresh with existing workstream: got %v, want existing-workstream rejection", err)
+	if err == nil {
+		t.Fatalf("plain up against an existing session must be refused")
+	}
+	for _, want := range []string{
+		`session "issue-97" already exists`,
+		"amq-squad resume",
+		"amq-squad up --reset",
+		"pick a new name",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal missing %q in: %v", want, err)
+		}
+	}
+	if len(backend.launches) != 0 {
+		t.Errorf("refused up must not launch; got %d", len(backend.launches))
+	}
+}
+
+// TestRunUpLiveFreshIsNoOp proves --fresh is reconciled to an accepted no-op:
+// it prints a one-line hint and does not change the refuse-existing behavior.
+func TestRunUpLiveFreshIsNoOp(t *testing.T) {
+	backend := useFakeBackend(t)
+	setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runUp([]string{"--terminal", "fake", "--session", "issue-101", "--fresh", "--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("up --fresh on a new session: %v", err)
+	}
+	if len(backend.launches) != 1 {
+		t.Fatalf("up --fresh on a new session should launch once; got %d", len(backend.launches))
+	}
+	if !strings.Contains(stderr, "--fresh is now the default") {
+		t.Errorf("expected --fresh no-op hint on stderr:\n%s", stderr)
 	}
 }
 

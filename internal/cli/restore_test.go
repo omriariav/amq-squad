@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 )
 
 func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
@@ -18,8 +18,10 @@ func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
 	// order — not relaunch the raw binary. Pin the exact arg slice so a reorder
 	// (e.g. a launcher flag leaking past the binary positional or the "--"
 	// child boundary) fails loudly rather than passing a substring check.
+	// rec carries no Conversation, so this is a re-orient resume: bootstrap
+	// must re-run, hence no --no-bootstrap in the replayed args.
 	want := []string{
-		"--no-bootstrap", "--role", "qa", "--session", "beta",
+		"--role", "qa", "--session", "beta",
 		"--launcher", "/opt/launch.sh", "--launcher-args=--pull --workspace /x",
 		"--me", "qa", "claude",
 	}
@@ -58,6 +60,56 @@ func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
 	}
 }
 
+// TestNoBootstrapIsConditionalOnConversation pins the PR2 contract on both
+// the emitted (printed) path and the --exec replay path: a record WITH a
+// saved conversation is a true reattach and still skips bootstrap; a record
+// WITHOUT one is a re-orient resume that must RE-RUN bootstrap (so the agent
+// re-reads its brief and drains AMQ history) and therefore must NOT carry
+// --no-bootstrap. An explicit operator --no-bootstrap is still honored on
+// the printed path even for a re-orient record.
+func TestNoBootstrapIsConditionalOnConversation(t *testing.T) {
+	withConv := launch.Record{
+		CWD: "/p", Binary: "claude", Session: "s", Handle: "claude",
+		Role: "qa", Conversation: "thread-1",
+	}
+	noConv := launch.Record{
+		CWD: "/p", Binary: "claude", Session: "s", Handle: "claude",
+		Role: "qa",
+	}
+
+	// emitCommandWithOptions: reattach keeps --no-bootstrap.
+	if cmd := emitCommandWithOptions(withConv, emitCommandOptions{}); !strings.Contains(cmd, "--no-bootstrap") {
+		t.Errorf("emit with conversation must keep --no-bootstrap (true reattach): %s", cmd)
+	}
+	// emitCommandWithOptions: re-orient drops --no-bootstrap.
+	if cmd := emitCommandWithOptions(noConv, emitCommandOptions{}); strings.Contains(cmd, "--no-bootstrap") {
+		t.Errorf("emit without conversation must drop --no-bootstrap (re-orient): %s", cmd)
+	}
+	// emitCommandWithOptions: explicit operator --no-bootstrap is honored
+	// even for a re-orient record.
+	if cmd := emitCommandWithOptions(noConv, emitCommandOptions{NoBootstrap: true}); !strings.Contains(cmd, "--no-bootstrap") {
+		t.Errorf("explicit operator --no-bootstrap must be honored on the printed path: %s", cmd)
+	}
+
+	// launchArgsFromRecord: reattach keeps --no-bootstrap.
+	if args := launchArgsFromRecord(withConv); !containsArg(args, "--no-bootstrap") {
+		t.Errorf("replay with conversation must keep --no-bootstrap (true reattach): %v", args)
+	}
+	// launchArgsFromRecord: re-orient drops --no-bootstrap.
+	if args := launchArgsFromRecord(noConv); containsArg(args, "--no-bootstrap") {
+		t.Errorf("replay without conversation must drop --no-bootstrap (re-orient): %v", args)
+	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestShellQuoteSafeString(t *testing.T) {
 	cases := map[string]string{
 		"claude":          "claude",
@@ -88,13 +140,17 @@ func TestEmitCommandIncludesRoleAndSession(t *testing.T) {
 	for _, want := range []string{
 		"cd /home/user/proj",
 		"amq-squad agent up claude",
-		"--no-bootstrap",
 		"--role qa",
 		"--session stream1",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("emitCommand missing %q in: %s", want, cmd)
 		}
+	}
+	// rec has no Conversation: this is a re-orient resume, so bootstrap must
+	// re-run and --no-bootstrap must be absent.
+	if strings.Contains(cmd, "--no-bootstrap") {
+		t.Errorf("emitCommand must omit --no-bootstrap when record has no conversation; got: %s", cmd)
 	}
 	// Handle equals defaultHandleFor(binary), so --me should be omitted.
 	if strings.Contains(cmd, "--me") {
@@ -231,8 +287,9 @@ func TestLaunchArgsFromRecordPreservesSharedWorkstream(t *testing.T) {
 	}
 	got := launchArgsFromRecord(rec)
 	// codex defaults to sandboxed; --trust sandboxed is emitted explicitly so
-	// the trust boundary is visible on replay.
-	want := []string{"--no-bootstrap", "--role", "cto", "--session", "cto", "--team-workstream", "--trust", "sandboxed", "--me", "cto", "codex"}
+	// the trust boundary is visible on replay. No Conversation -> re-orient
+	// resume, so --no-bootstrap is absent.
+	want := []string{"--role", "cto", "--session", "cto", "--team-workstream", "--trust", "sandboxed", "--me", "cto", "codex"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
 	}
@@ -248,7 +305,8 @@ func TestLaunchArgsFromRecordUsesRootWithoutSession(t *testing.T) {
 		Root:   "/p/.agent-mail",
 	}
 	got := launchArgsFromRecord(rec)
-	want := []string{"--no-bootstrap", "--root", "/p/.agent-mail", "--trust", "sandboxed", "--me", "codex", "codex"}
+	// No Conversation -> re-orient resume, so --no-bootstrap is absent.
+	want := []string{"--root", "/p/.agent-mail", "--trust", "sandboxed", "--me", "codex", "codex"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
 	}
@@ -267,7 +325,8 @@ func TestLaunchArgsFromRecordOmitsRootWhenSessionPresent(t *testing.T) {
 		BaseRoot: "/tmp/mail",
 	}
 	got := launchArgsFromRecord(rec)
-	want := []string{"--no-bootstrap", "--session", "stream1", "--me", "claude", "claude"}
+	// No Conversation -> re-orient resume, so --no-bootstrap is absent.
+	want := []string{"--session", "stream1", "--me", "claude", "claude"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
 	}
@@ -377,9 +436,9 @@ func TestLaunchArgsFromRecordPreservesNoDefaultArgs(t *testing.T) {
 	}
 	got := launchArgsFromRecord(rec)
 	// NoDefaultArgs records have no bypass in argv, so trust classifies as
-	// sandboxed. --no-default-args is preserved.
+	// sandboxed. --no-default-args is preserved. No Conversation -> re-orient
+	// resume, so --no-bootstrap is absent.
 	want := []string{
-		"--no-bootstrap",
 		"--role", "cto",
 		"--session", "rt",
 		"--no-default-args",

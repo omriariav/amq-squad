@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // writeMemberLaunchRecord drops a v0.6 launch.json under the fake AMQ base
@@ -575,8 +575,13 @@ func TestRunTeamResumeForceDuplicateRestoreCommandHasFlag(t *testing.T) {
 	}
 	// The forced restore command MUST carry --force-duplicate so its
 	// own preflight does not refuse on replay against the same live agent.
-	if !strings.Contains(stdout, "amq-squad agent up codex --no-bootstrap --force-duplicate") {
+	// The record has no saved conversation, so this is a re-orient resume:
+	// --no-bootstrap must be ABSENT and the agent re-runs bootstrap.
+	if !strings.Contains(stdout, "amq-squad agent up codex --force-duplicate") {
 		t.Errorf("forced restore command must inject --force-duplicate in modern agent up shape, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "--no-bootstrap") {
+		t.Errorf("re-orient restore (no saved conversation) must not emit --no-bootstrap, got:\n%s", stdout)
 	}
 }
 
@@ -605,18 +610,18 @@ func TestRunTeamResumeFooterSuppressedWhenAnyRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runTeamResume: %v", err)
 	}
-	if strings.Contains(stdout, "team launch --session") {
+	if strings.Contains(stdout, "up --session") {
 		t.Errorf("footer alternative must be suppressed when any row is restore:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "not equivalent to the per-member plan") {
-		t.Errorf("footer should explain that team launch is not equivalent:\n%s", stdout)
+		t.Errorf("footer should explain that the up alternative is not equivalent:\n%s", stdout)
 	}
 }
 
 // Combined regression for the live+forced+recorded case: action stays
 // 'live' but the emitted command is a forced restore. The footer must
-// still be suppressed because 'team launch' would re-emit fresh commands
-// from team intent and not reproduce the restore semantics above.
+// still be suppressed because 'up' would re-emit fresh commands from team
+// intent and not reproduce the restore semantics above.
 func TestRunTeamResumeFooterSuppressedForLiveForcedRestore(t *testing.T) {
 	dir := t.TempDir()
 	base := setupFakeAMQSessionRoots(t)
@@ -653,13 +658,18 @@ func TestRunTeamResumeFooterSuppressedForLiveForcedRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runTeamResume --force-duplicate: %v", err)
 	}
-	// Sanity: the emitted command must be the forced restore.
-	if !strings.Contains(stdout, "amq-squad agent up codex --no-bootstrap --force-duplicate") {
+	// Sanity: the emitted command must be the forced restore. The record has
+	// no saved conversation, so this is a re-orient resume: --no-bootstrap is
+	// absent and bootstrap re-runs.
+	if !strings.Contains(stdout, "amq-squad agent up codex --force-duplicate") {
 		t.Errorf("forced live restore must include --force-duplicate in modern agent up shape, got:\n%s", stdout)
 	}
-	// Footer must be suppressed: 'team launch --session ...' would re-emit
-	// fresh from team intent and not reproduce the restore semantics.
-	if strings.Contains(stdout, "team launch --session") {
+	if strings.Contains(stdout, "--no-bootstrap") {
+		t.Errorf("re-orient live+forced restore (no saved conversation) must not emit --no-bootstrap, got:\n%s", stdout)
+	}
+	// Footer must be suppressed: 'up --session ...' would re-emit fresh from
+	// team intent and not reproduce the restore semantics.
+	if strings.Contains(stdout, "up --session") {
 		t.Errorf("footer must be suppressed for live+forced+recorded restore:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "not equivalent to the per-member plan") {
@@ -689,9 +699,79 @@ func TestRunTeamResumeFooterCarriesForceDuplicateOnAllFresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runTeamResume --force-duplicate: %v", err)
 	}
-	if !strings.Contains(stdout, "team launch --session 'issue-96' --force-duplicate") &&
-		!strings.Contains(stdout, "team launch --session issue-96 --force-duplicate") {
+	if !strings.Contains(stdout, "up --session 'issue-96' --force-duplicate") &&
+		!strings.Contains(stdout, "up --session issue-96 --force-duplicate") {
 		t.Errorf("footer should carry --force-duplicate, got:\n%s", stdout)
+	}
+}
+
+// TestRunTeamResumeReorientWhenNoSavedConversation pins the PR2 planner
+// contract: a restorable record with NO saved conversation produces a
+// re-orient restore -- the emitted command re-runs bootstrap (no
+// --no-bootstrap) and the plan Note explains the agent re-reads its brief
+// and drains AMQ history rather than coming up blank.
+func TestRunTeamResumeReorientWhenNoSavedConversation(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", StartedAt: time.Now(),
+	})
+
+	stdout, _, err := captureOutput(t, func() error { return runTeamResume(nil) })
+	if err != nil {
+		t.Fatalf("runTeamResume: %v", err)
+	}
+	if !strings.Contains(stdout, "restore") {
+		t.Errorf("recorded member should classify as restore:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "--no-bootstrap") {
+		t.Errorf("re-orient restore (no saved conversation) must not emit --no-bootstrap:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "re-orient") {
+		t.Errorf("plan Note should mark the restore as a re-orient:\n%s", stdout)
+	}
+}
+
+// TestRunTeamResumeReattachWhenSavedConversation pins the other direction:
+// a restorable record WITH a saved conversation truly reattaches -- the
+// emitted command keeps --no-bootstrap and the plan Note names the thread.
+func TestRunTeamResumeReattachWhenSavedConversation(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", Conversation: "cto-thread",
+		StartedAt: time.Now(),
+	})
+
+	stdout, _, err := captureOutput(t, func() error { return runTeamResume(nil) })
+	if err != nil {
+		t.Fatalf("runTeamResume: %v", err)
+	}
+	if !strings.Contains(stdout, "--no-bootstrap") {
+		t.Errorf("reattach restore (saved conversation) must keep --no-bootstrap:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "reattach: saved conversation cto-thread") {
+		t.Errorf("plan Note should name the reattached conversation:\n%s", stdout)
 	}
 }
 

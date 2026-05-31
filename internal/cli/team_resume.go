@@ -10,8 +10,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // resumeAction labels what `team resume` would do for one member.
@@ -78,9 +78,9 @@ Per-member action labels:
   live          Matching agent appears live; command suppressed unless
                 --force-duplicate is set.
   restore       Restorable launch.json exists for this workstream; emits
-                'amq-squad launch ...' that replays the saved record.
+                'amq-squad agent up ...' that replays the saved record.
   launch fresh  No matching launch history; emits the same command shape
-                'amq-squad team launch' would use for this member.
+                'amq-squad up' would use for this member.
   blocked       Live signals present but no clear safe action; user must
                 pick --force-duplicate or narrow the workstream.
 
@@ -94,7 +94,7 @@ Modes:
                        --force-duplicate is set.
 
 team resume is plan-only. Run the printed commands in their own panes, or
-use 'amq-squad team launch' to open them in tmux from team intent.
+use 'amq-squad up' to open them in tmux from team intent.
 
 Examples:
   amq-squad team resume
@@ -191,7 +191,8 @@ type resumePrinterStyle struct {
 	// "team resume", "resume", "fork"). Empty falls back to "team resume".
 	Label string
 	// FooterVerb is the suggested tmux-launch verb in the footer. Empty
-	// falls back to "team launch".
+	// falls back to "up" (the modern team launcher; the legacy "team launch"
+	// verb was removed in 2.0).
 	FooterVerb string
 	// ForkFrom and ForkTo, when non-empty, add the fork "# from / # to"
 	// lines to the header. Used only by `fork`.
@@ -213,7 +214,7 @@ func (s resumePrinterStyle) label() string {
 
 func (s resumePrinterStyle) footerVerb() string {
 	if s.FooterVerb == "" {
-		return "team launch"
+		return "up"
 	}
 	return s.FooterVerb
 }
@@ -563,7 +564,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 			} else {
 				// Forced restore on preflight error path: same reason
 				// to inject --force-duplicate as the live+forced path.
-				plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true})
+				plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true, NoBootstrap: in.NoBootstrap})
 			}
 			plan.Note = "force-duplicate: " + plan.Note
 		}
@@ -580,7 +581,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 			} else {
 				// Forced restore must carry --force-duplicate so the
 				// printed command bypasses launch-time preflight.
-				plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true})
+				plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true, NoBootstrap: in.NoBootstrap})
 			}
 			return plan, nil
 		}
@@ -599,7 +600,16 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	}
 	if recFound {
 		plan.Action = resumeRestore
-		plan.Command = emitCommand(rec)
+		plan.Command = emitCommandWithOptions(rec, emitCommandOptions{NoBootstrap: in.NoBootstrap})
+		// Be honest about what restore will do: a record with a saved
+		// conversation truly reattaches the prior thread and skips bootstrap;
+		// a record without one re-runs bootstrap so the agent re-orients from
+		// its brief and drains AMQ history rather than coming up blank.
+		if rec.Conversation != "" {
+			plan.Note = "reattach: saved conversation " + rec.Conversation
+		} else {
+			plan.Note = "fresh agent: re-orient from brief + AMQ history (no saved conversation)"
+		}
 		return plan, nil
 	}
 	plan.Action = resumeFresh
@@ -794,10 +804,10 @@ func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []re
 	profileSuffix := ""
 	if style.Profile != "" && style.Profile != team.DefaultProfile {
 		// Only verbs that accept --profile can carry the selection into the
-		// suggested footer command. up and team launch both accept --profile
-		// in Step 9A. If a future verb does not, suppress the footer rather
-		// than print a command that would fall back to the default profile.
-		if verb == "up" || verb == "team launch" {
+		// suggested footer command. up accepts --profile. If a future verb
+		// does not, suppress the footer rather than print a command that
+		// would fall back to the default profile.
+		if verb == "up" {
 			profileSuffix = " --profile " + shellQuote(style.Profile)
 		} else {
 			fmt.Printf("# Note: '%s' has no --profile flag yet; rerun the per-member commands above to bring up the %s profile.\n", verb, style.Profile)

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 )
 
 func TestDefaultChildArgsForBinaryWithTrust(t *testing.T) {
@@ -107,8 +107,8 @@ func TestLaunchArgsFromRecordModelRoundTrips(t *testing.T) {
 		Trust:   trustModeSandboxed,
 	}
 	got := launchArgsFromRecord(rec)
+	// No Conversation -> re-orient resume, so --no-bootstrap is absent.
 	want := []string{
-		"--no-bootstrap",
 		"--role", "cto",
 		"--session", "s",
 		"--trust", "sandboxed",

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 type bootstrapWorkstream struct {
@@ -40,6 +40,18 @@ func resolveWorkstreamName(projectDir, requested string, explicit bool) (string,
 	return name, nil
 }
 
+// resolveTeamWorkstreamName resolves the live workstream session for a team
+// invocation. With no explicit flag and no request, the resolution order is:
+//
+//  1. a shared, non-legacy session inferred across members -> use it silently.
+//  2. else the pinned t.Workstream, when set -> use it AND emit a deprecation
+//     notice. This pin is a DEPRECATED SHIM (removal in 2.1): it is still read
+//     here, clearly marked, but member-session inference now wins over it.
+//  3. else the sanitized project basename.
+//
+// The shim notice is emitted via quietNotice (silenced by --quiet) ONLY when
+// tier 2 is the actual resolved source; explicit/request/inference paths never
+// print it.
 func resolveTeamWorkstreamName(t team.Team, requested string, explicit bool) (string, error) {
 	name := strings.TrimSpace(requested)
 	if explicit {
@@ -48,13 +60,31 @@ func resolveTeamWorkstreamName(t team.Team, requested string, explicit bool) (st
 	if name != "" {
 		return resolveWorkstreamName(t.Project, name, false)
 	}
-	if strings.TrimSpace(t.Workstream) != "" {
-		return resolveWorkstreamName(t.Project, t.Workstream, false)
+	// Tier 1: member-session inference wins over the pin. No notice.
+	if inferred := inferredSharedMemberSession(t); inferred != "" {
+		return resolveWorkstreamName(t.Project, inferred, false)
 	}
-	return resolveWorkstreamName(t.Project, defaultTeamWorkstreamName(t), false)
+	// Tier 2: the deprecated pin shim. Still read, but emit a notice.
+	if pinned := strings.TrimSpace(t.Workstream); pinned != "" {
+		resolved, err := resolveWorkstreamName(t.Project, pinned, false)
+		if err != nil {
+			return "", err
+		}
+		quietNotice("notice: using session %q from the deprecated 'workstream' default pinned in team.json. "+
+			"This pin is deprecated and will be removed in 2.1; pass --session %s explicitly (or re-init the team) instead.\n",
+			resolved, resolved)
+		return resolved, nil
+	}
+	// Tier 3: sanitized project basename.
+	return resolveWorkstreamName(t.Project, defaultWorkstreamName(t.Project), false)
 }
 
-func defaultTeamWorkstreamName(t team.Team) string {
+// inferredSharedMemberSession returns the workstream session shared by every
+// member when that session is non-legacy (i.e. not merely a copy of a member's
+// role or handle), or "" when no such shared session exists. Unlike the former
+// defaultTeamWorkstreamName, it does NOT fall back to the project basename, so
+// callers can order the inference, pin, and basename tiers explicitly.
+func inferredSharedMemberSession(t team.Team) string {
 	unique := ""
 	shared := true
 	hasNonLegacyMember := false
@@ -77,7 +107,7 @@ func defaultTeamWorkstreamName(t team.Team) string {
 	if shared && unique != "" && hasNonLegacyMember {
 		return unique
 	}
-	return defaultWorkstreamName(t.Project)
+	return ""
 }
 
 func validateWorkstreamName(name string) error {
@@ -129,6 +159,32 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 		}
 	})
 	return seen
+}
+
+// teamWorkstreamExistsOrRestorable reports whether the named workstream is
+// already "taken" for this team — the condition `up` refuses by default and
+// fork treats as a valid source. Two signals count: the AMQ root for the
+// session already exists on disk (mailbox/agent state) OR at least one
+// configured member has a restorable launch record matching the session. The
+// returned root is the first existing AMQ root found (empty when the only
+// signal is a restorable record), purely for human-facing messages. No
+// message bodies are inspected.
+func teamWorkstreamExistsOrRestorable(t team.Team, workstream string) (bool, string, error) {
+	if exists, root, err := teamWorkstreamExists(t, workstream); err != nil {
+		return false, "", err
+	} else if exists {
+		return true, root, nil
+	}
+	for _, m := range t.Members {
+		baseRoot, err := scanBaseRootForProject(m.EffectiveCWD(t.Project))
+		if err != nil || baseRoot == "" {
+			continue
+		}
+		if _, found := findMemberRestoreRecord(baseRoot, t.Project, m.EffectiveCWD(t.Project), workstream, m.Role, m.Handle); found {
+			return true, "", nil
+		}
+	}
+	return false, "", nil
 }
 
 func teamWorkstreamExists(t team.Team, workstream string) (bool, string, error) {

@@ -10,25 +10,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/catalog"
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/role"
+	"github.com/omriariav/amq-squad/v2/internal/catalog"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/role"
 )
 
-// launchFromAgentUp is set by runAgentUp before delegating to runLaunch so
-// the deprecation warning fires only when the operator typed the legacy
-// `amq-squad launch` directly. It is restored on return.
-var launchFromAgentUp bool
-
+// runLaunch is the real single-agent launcher. The top-level `launch` verb
+// was removed in 2.0; this body now backs `agent up` (via runAgentUp ->
+// translateAgentUpArgs) and the replay path (execRestoreRecord). It is
+// internal-only and carries no deprecation surface of its own.
 func runLaunch(args []string) error {
-	// Top-level `launch` is deprecated in favor of `agent up` for 1.x.
-	// The warning fires once, before any parsing, so misuse cases still
-	// surface it. agent up delegates to runLaunch (with launchFromAgentUp
-	// set), so the warning is skipped when the modern entry point invokes
-	// us internally. Help invocations stay quiet.
-	if !launchFromAgentUp && !isHelpInvocation(args) {
-		deprecationWarning("launch", "agent up")
-	}
 	// Split at "--" so launcher flags aren't consumed by amq-squad's parser.
 	squadArgs, childArgs := splitDashDash(args)
 
@@ -54,10 +45,10 @@ func runLaunch(args []string) error {
 	launcherArgsRaw := fs.String("launcher-args", "", "args passed to --launcher before the agent's child args; the launcher must forward trailing args to <binary>")
 
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad launch - launch an agent with role metadata
+		fmt.Fprint(os.Stderr, `amq-squad agent up - launch an agent with role metadata
 
 Usage:
-  amq-squad launch [options] <binary> [-- <binary-flags>]
+  amq-squad agent up <binary> [options] [-- <binary-flags>]
 
 Options:
 `)
@@ -90,8 +81,8 @@ after "--". Use --codex-args or --claude-args for native flags that should
 still combine with --conversation.
 
 Examples:
-  amq-squad launch --role cto --session issue-96 codex
-  amq-squad launch --dry-run --no-bootstrap codex
+  amq-squad agent up codex --role cto --session issue-96
+  amq-squad agent up codex --dry-run --no-bootstrap
 `)
 	}
 
@@ -127,7 +118,7 @@ Examples:
 	}
 	remaining := fs.Args()
 	if len(remaining) == 0 {
-		return usageErrorf("launch requires a binary (e.g. 'amq-squad launch --role cpo codex')")
+		return usageErrorf("agent up requires a binary (e.g. 'amq-squad agent up codex --role cpo')")
 	}
 	binary := remaining[0]
 	// Positional args before "--" get folded into childArgs.

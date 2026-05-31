@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func runFork(args []string) error {
@@ -102,19 +102,10 @@ Examples:
 // forkSourceHasState reports whether SOURCE looks like a workstream worth
 // forking from. Either the AMQ root for SOURCE already exists, or at least
 // one configured member has a restorable launch record matching SOURCE. No
-// message bodies are inspected.
+// message bodies are inspected. This is the same "exists-or-restorable"
+// condition `up` refuses by default; both share
+// teamWorkstreamExistsOrRestorable so the two can never drift.
 func forkSourceHasState(t team.Team, source string) bool {
-	if exists, _, err := teamWorkstreamExists(t, source); err == nil && exists {
-		return true
-	}
-	for _, m := range t.Members {
-		baseRoot, err := scanBaseRootForProject(m.EffectiveCWD(t.Project))
-		if err != nil || baseRoot == "" {
-			continue
-		}
-		if _, found := findMemberRestoreRecord(baseRoot, t.Project, m.EffectiveCWD(t.Project), source, m.Role, m.Handle); found {
-			return true
-		}
-	}
-	return false
+	exists, _, err := teamWorkstreamExistsOrRestorable(t, source)
+	return err == nil && exists
 }

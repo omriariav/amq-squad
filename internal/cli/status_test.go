@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func statusProbe(alive map[int]bool, match map[int]bool, now time.Time) duplicateLaunchProbe {
@@ -29,14 +29,38 @@ func runStatusExec(t *testing.T, s statusExecution) (string, error) {
 	return buf.String(), err
 }
 
-func TestRunStatusRequiresTeam(t *testing.T) {
+// TestRunStatusSessionRequiresTeam covers the single-session DETAIL path:
+// status --session NAME still hard-requires a configured team, because it
+// classifies that team's members. The no-selector BOARD path is the one that
+// degrades gracefully (see TestRunStatusBoardNoTeamDegradesGracefully).
+func TestRunStatusSessionRequiresTeam(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	_, _, err := captureOutput(t, func() error {
-		return runStatus(nil)
+		return runStatus([]string{"--session", "issue-96"})
 	})
 	if err == nil || !strings.Contains(err.Error(), "no team configured") {
 		t.Fatalf("want 'no team configured' error, got %v", err)
+	}
+}
+
+// TestRunStatusBoardNoTeamDegradesGracefully proves the new front-door
+// contract: bare `status` (no --session) routes to the board, which must NOT
+// hard-error when there is no team / no sessions / amq is unresolvable. With
+// PATH stripped of `amq`, base-root resolution fails and the board renders a
+// non-fatal guidance line, returning nil.
+func TestRunStatusBoardNoTeamDegradesGracefully(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	t.Setenv("PATH", "")
+	stdout, _, err := captureOutput(t, func() error {
+		return runStatus(nil)
+	})
+	if err != nil {
+		t.Fatalf("board front-door must not hard-error, got %v", err)
+	}
+	if !strings.Contains(stdout, "amq-squad:") {
+		t.Fatalf("expected a guidance notice on stdout, got:\n%s", stdout)
 	}
 }
 

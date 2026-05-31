@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func runResume(args []string) error {
@@ -40,10 +40,15 @@ Usage:
                            [--layout vertical|horizontal|tiled]
                            [--terminal-session name] [--stagger 750ms]]
 
-Inspects .amq-squad/team.json plus local launch history and live-agent
-signals (wake locks, agent PID liveness, presence) to choose a per-member
-action: restore from launch.json, launch fresh from team intent, skip if
-live, or refuse if blocked.
+Resume an existing session. Inspects .amq-squad/team.json plus local launch
+history and live-agent signals (wake locks, agent PID liveness, presence) to
+choose a per-member action: restore from launch.json, launch fresh from team
+intent, skip if live, or refuse if blocked.
+
+If an agent has a saved conversation, amq-squad reattaches to it. Otherwise it
+starts the agent fresh and re-orients it: bootstrap is re-run so the agent
+re-reads its session brief and AMQ history. In the re-orient case prior hidden
+reasoning is not replayed -- only persisted session files and messages are used.
 
 Default behavior is plan-only: prints the per-member action table plus
 copy-pasteable commands. With --exec, opens those commands through the
