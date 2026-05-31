@@ -303,12 +303,34 @@ func (m *NOCModel) enter() (tea.Model, tea.Cmd) {
 		if n.canJump {
 			return m.jump()
 		}
-		m.jumpNote = "agent not running — nothing to jump to (enter jumps only on a running agent)"
+		// Not jumpable: explain WHY from the agent's real computed liveness rather
+		// than a flat "not running" (which misleads when the row shows an
+		// active-looking state like dead-mailbox-live).
+		m.jumpNote = noJumpReason(n.agent.Liveness)
 		return m, nil
 	}
 	// PARENT row (project / session / root): expand/drill WITHOUT a confirm. The
 	// focus guard applies only to the actual jump/focus on a running-agent row.
 	return m.expandOrDrill()
+}
+
+// noJumpReason returns a state-accurate explanation for why a non-jumpable agent
+// cannot be jumped to, keyed off its computed liveness. Only a verified-alive
+// agent is jumpable (there is a live process + pane to attach to); every other
+// state explains its own situation instead of the misleading flat "not running".
+func noJumpReason(l state.Liveness) string {
+	switch l {
+	case state.LivenessDeadMailboxLive:
+		return "agent process is gone but its mailbox is still active (dead-mailbox-live) — nothing live to attach to"
+	case state.LivenessStale:
+		return "agent looks stale (no recent heartbeat) — nothing live to attach to"
+	case state.LivenessDead:
+		return "agent process is dead — resume the session to bring it back"
+	case state.LivenessMissing:
+		return "no live process for this agent — resume the session to launch it"
+	default:
+		return "agent is not running — nothing to jump to (enter jumps only on a running agent)"
+	}
 }
 
 // collapseOrAscend collapses an expanded parent, or moves selection to the
