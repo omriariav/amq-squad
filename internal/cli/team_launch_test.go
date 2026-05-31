@@ -64,9 +64,18 @@ func TestRunTeamLaunchHelpListsNewDXFlags(t *testing.T) {
 }
 
 func TestRegisteredTeamLaunchTerminalsIncludesTmux(t *testing.T) {
-	got := strings.Join(registeredTeamLaunchTerminals(), ",")
-	if got != "tmux" {
-		t.Fatalf("registeredTeamLaunchTerminals = %q, want tmux", got)
+	// tmux is the baseline/default backend and must always be present. Opt-in
+	// backends (e.g. tmux-session) may also be registered, so assert membership
+	// rather than exact equality.
+	found := false
+	for _, name := range registeredTeamLaunchTerminals() {
+		if name == "tmux" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("registeredTeamLaunchTerminals = %v, want it to include tmux", registeredTeamLaunchTerminals())
 	}
 }
 
