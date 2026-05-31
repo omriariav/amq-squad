@@ -418,6 +418,15 @@ func heartbeatQuiet(participants map[string]bool, agents []Agent, now time.Time,
 		if !participants[ag.Handle] {
 			continue
 		}
+		// A genuinely ALIVE agent (its process verified live by signal-0 + binary
+		// match) is NOT "quiet" just because its presence heartbeat FILE is stale.
+		// Presence and process liveness can disagree (e.g. an agent that does not
+		// rewrite presence.json on every turn); trusting a stale presence file
+		// here flips every awaiting-reply thread the live agent participates in to
+		// at-risk, inflating the count. Only a NOT-alive participant can be quiet.
+		if ag.Liveness == LivenessAlive {
+			continue
+		}
 		if ag.LastSeen.IsZero() {
 			continue
 		}
