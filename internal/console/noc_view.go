@@ -587,6 +587,13 @@ func (m NOCModel) mainView() string {
 		if i < len(rightLines) {
 			rr = rightLines[i]
 		}
+		// Clamp the LEFT tree row to the left column FIRST, ending in an ellipsis
+		// when it overruns: padVisible only pads short rows, so without this a long
+		// row (e.g. a project with a long brief) pushed past leftW into the gutter,
+		// shoving the │ divider and the whole right pane out of alignment. Clamping
+		// here pins the divider at exactly leftW on every row; the trailing free
+		// text is what gets ellipsized, the leading glyphs/labels survive.
+		l = truncateVisibleEllipsis(l, leftW, m.colorMode == ColorAscii)
 		// Truncate the detail line to its column budget so the composed row never
 		// exceeds m.width and wraps (the wrap is what collapsed the live tree).
 		rr = truncateVisible(rr, rightW)
@@ -1251,6 +1258,63 @@ func truncateVisible(s string, w int) string {
 	if wrote {
 		b.WriteString("\x1b[0m")
 	}
+	return b.String()
+}
+
+// truncateVisibleEllipsis clamps s to at most w VISIBLE columns like
+// truncateVisible, but appends an ellipsis ("…", or "..." in ascii mode) when s
+// is actually shortened so a clipped row reads as truncated rather than as a
+// hard cut. ANSI escape sequences cost zero columns and are preserved, and a
+// trailing reset is appended whenever any escape was emitted so a cut mid-style
+// never bleeds color. This is what pins the left tree column at leftW: a long
+// brief is ellipsized at the column edge instead of overrunning the divider.
+// w <= 0 yields "".
+func truncateVisibleEllipsis(s string, w int, ascii bool) string {
+	if w <= 0 {
+		return ""
+	}
+	if visibleWidth(s) <= w {
+		return s
+	}
+	ell := "…"
+	if ascii {
+		ell = "..."
+	}
+	ellW := len([]rune(ell))
+	// Not even room for the ellipsis: fall back to a plain hard clip.
+	if w <= ellW {
+		return truncateVisible(s, w)
+	}
+	// Reserve columns for the ellipsis, copy up to that budget preserving ANSI.
+	budget := w - ellW
+	var b strings.Builder
+	cols := 0
+	inEsc := false
+	sawEsc := false
+	for _, r := range s {
+		if inEsc {
+			b.WriteRune(r)
+			if r == 'm' {
+				inEsc = false
+			}
+			continue
+		}
+		if r == '\x1b' {
+			inEsc = true
+			sawEsc = true
+			b.WriteRune(r)
+			continue
+		}
+		if cols >= budget {
+			break
+		}
+		b.WriteRune(r)
+		cols++
+	}
+	if sawEsc {
+		b.WriteString("\x1b[0m")
+	}
+	b.WriteString(ell)
 	return b.String()
 }
 
