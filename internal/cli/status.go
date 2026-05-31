@@ -12,8 +12,17 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/noc"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
+
+// statusPaneLister lists live tmux panes so status can detect a live agent that
+// was relaunched OUTSIDE amq-squad (its recorded PID is dead, but a replacement
+// process is running). Injected as a package var so tests supply a fake and the
+// classifier never shells real tmux. Defaults to the same read-only lister the
+// NOC jump resolver uses, keeping detection consistent across surfaces.
+var statusPaneLister = noc.DefaultPaneLister
 
 // statusState is the precise state vocabulary emitted by `amq-squad status`.
 // Definitions:
@@ -268,9 +277,45 @@ func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe d
 		rec.Detail = "no live signals for this handle"
 		return rec
 	}
+	// Before settling on stale: the recorded PID may be dead because the agent
+	// was relaunched OUTSIDE amq-squad (e.g. "relaunching as dogfood QA"), leaving
+	// a live replacement process the launch record never learned about. Look for a
+	// live tmux pane that resolves to this member (same engine + cwd, title-first,
+	// via the SAME resolver the NOC jump uses). If found, report live with a
+	// re-register hint rather than a misleading stale.
+	if target, ok := liveReplacementPane(m, rec, workstream); ok {
+		rec.Status = statusStateLive
+		rec.Detail = fmt.Sprintf("recorded pid dead; live %s at %s — relaunch via amq-squad to re-register", m.Binary, target)
+		return rec
+	}
+
 	rec.Status = statusStateStale
-	rec.Detail = staleDetail(rec.Signals, presenceMismatched)
+	rec.Detail = staleDetail(rec.Signals, presenceMismatched) + "; relaunch via amq-squad to re-register"
 	return rec
+}
+
+// liveReplacementPane reports a live tmux pane that resolves to this member when
+// its recorded PID is dead — the case where the agent was relaunched outside
+// amq-squad. It reuses the NOC jump resolver (title-first amq:<session>:<role>,
+// then engine+cwd) so detection is consistent and conservative: only a
+// SAME-ENGINE match is attributed, never a bare differently-engined pane. The
+// pane lister is injectable (statusPaneLister) so tests never shell real tmux;
+// any tmux/lister error degrades to "not found" (the caller stays stale).
+func liveReplacementPane(m team.Member, rec statusRecord, workstream string) (string, bool) {
+	panes, err := statusPaneLister()
+	if err != nil || len(panes) == 0 {
+		return "", false
+	}
+	ag := state.Agent{
+		Handle: rec.Handle,
+		Role:   m.Role,
+		Engine: m.Binary,
+	}
+	target, ok := noc.ResolveTmuxTargetForSession(ag, workstream, rec.CWD, panes, nil)
+	if !ok {
+		return "", false
+	}
+	return noc.SuggestJump(target), true
 }
 
 func readWakeLock(agentDir string) (wakeLockFile, error) {
