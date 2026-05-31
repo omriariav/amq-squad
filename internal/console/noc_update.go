@@ -3,9 +3,12 @@
 package console
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/omriariav/amq-squad/v2/internal/noc"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
 // Update implements tea.Model. It folds immutable messages into new model state
@@ -93,6 +96,13 @@ func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.pending != nil {
 		return m.handleConfirmKey(msg.String())
 	}
+	// The read-only FOCUS confirm overlay (jump / J / o) is gated the same way the
+	// mutating confirm is: while it is open ONLY y/Y/enter performs the focus; any
+	// other key (esc included) cancels with zero effect. It is checked before the
+	// input editor and nav so a confirm flow never leaks a keystroke.
+	if m.jumpPending != nil {
+		return m.handleFocusConfirmKey(msg.String())
+	}
 	if m.input != nil {
 		return m.handleInputKey(msg)
 	}
@@ -118,6 +128,10 @@ func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	m.jumpNote = ""
 	m.actNote = ""
+	// The refresh flash ("refreshed (just now)") is acknowledged by any keypress,
+	// mirroring jumpNote/actNote/alertBanner. It is set ONLY by an explicit g
+	// refresh below; the silent 2s ticker never sets it.
+	m.refreshNote = ""
 	// The needs-you alert banner is acknowledged by any keypress (it persists
 	// across silent 2s refreshes but clears once the operator acts), mirroring
 	// jumpNote/actNote. It re-appears on the next 0→N transition.
@@ -172,6 +186,11 @@ func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.preserveSelection()
 		return m, nil
 	case "g":
+		// Explicit refresh: kick a fresh snapshot AND flash a visible note so the
+		// operator sees g worked (the rebuild is otherwise indistinguishable from
+		// the silent 2s tick). The note is set here, on the explicit g press only —
+		// never on nocTickMsg — and clears on the next keypress (block above).
+		m.refreshNote = "refreshed (just now)"
 		return m, nocRebuildCmd(m.rebuild)
 	case "/":
 		m.filterEditing = true
@@ -287,6 +306,8 @@ func (m *NOCModel) enter() (tea.Model, tea.Cmd) {
 		m.jumpNote = "agent not running — nothing to jump to (enter jumps only on a running agent)"
 		return m, nil
 	}
+	// PARENT row (project / session / root): expand/drill WITHOUT a confirm. The
+	// focus guard applies only to the actual jump/focus on a running-agent row.
 	return m.expandOrDrill()
 }
 
@@ -315,10 +336,11 @@ func (m *NOCModel) collapseOrAscend() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// jump performs the READ-ONLY tmux switch to the selected running agent. It
-// resolves the live pane (rotation-proof via cwd+engine, PID-tree bonus), then
-// calls the injected switcher. If no pane resolves, or the switch reports a
-// not-in-tmux condition, it surfaces SuggestJump text rather than erroring out.
+// jump opens the READ-ONLY focus CONFIRM overlay for the selected running agent
+// (QA-2 / QA-4b). It does NOT focus immediately: it previews "Jump to <role> in
+// <session>? (focus its iTerm2 window)" and only a confirmed y/Y/enter runs the
+// focus (performAgentJump). Any other key / esc cancels with zero effect. The
+// jump is read-only — the only effect is terminal focus, never squad state.
 func (m *NOCModel) jump() (tea.Model, tea.Cmd) {
 	n, ok := m.selectedNode()
 	if !ok || n.kind != nodeAgent {
@@ -328,27 +350,75 @@ func (m *NOCModel) jump() (tea.Model, tea.Cmd) {
 		m.jumpNote = "agent is not running — cannot jump"
 		return m, nil
 	}
+	who := strings.TrimSpace(n.agent.Role)
+	if who == "" {
+		who = strings.TrimSpace(n.agent.Handle)
+	}
+	m.jumpPending = &pendingFocus{
+		prompt: "Jump to " + who + " in " + n.session.Name + "? (focus its iTerm2 window)",
+		run:    func(m *NOCModel) { m.performAgentJump(n.agent, n.session.Name, n.project.Dir, n.agent.Handle) },
+	}
+	return m, nil
+}
 
+// performAgentJump performs the READ-ONLY tmux focus to a running agent: resolve
+// the live pane (rotation-proof via cwd+engine name-first, PID-tree bonus), then
+// call the injected switcher. If no pane resolves, or the switch reports a
+// not-in-tmux condition, it surfaces SuggestJump text rather than erroring out.
+// It is reached ONLY from the focus-confirm gate (handleFocusConfirmKey), so a
+// switchTo call here always corresponds to an operator confirm.
+func (m *NOCModel) performAgentJump(agent state.Agent, session, projectDir, handle string) {
 	panes, err := m.panes()
 	if err != nil {
 		m.jumpNote = "tmux not available: " + err.Error()
-		return m, nil
+		return
 	}
-	target, resolved := noc.ResolveTmuxTargetForSession(n.agent, n.session.Name, n.project.Dir, panes, m.pidTree)
+	target, resolved := noc.ResolveTmuxTargetForSession(agent, session, projectDir, panes, m.pidTree)
 	if !resolved {
-		m.jumpNote = "no live tmux pane found for " + n.agent.Handle + " (resume it, or attach manually)"
-		return m, nil
+		m.jumpNote = "no live tmux pane found for " + handle + " (resume it, or attach manually)"
+		return
 	}
 	if err := m.switchTo(target); err != nil {
 		if nit, isNIT := err.(*noc.NotInTmuxError); isNIT {
 			m.jumpNote = "not inside tmux — run: " + nit.Command
-			return m, nil
+			return
 		}
 		m.jumpNote = "jump: " + err.Error() + " (try: " + noc.SuggestJump(target) + ")"
+		return
+	}
+	// A successful focus raises the agent's pane/window; leave a note so a
+	// returning operator sees what happened.
+	m.jumpNote = "jumped to " + noc.SuggestJump(target)
+}
+
+// pendingFocus is the confirm overlay's state for a READ-ONLY focus action
+// (jump on a running agent / J / o). prompt is what the overlay shows; run is
+// the focus to perform on a confirmed y/Y/enter. It is the read-only analogue of
+// pendingAction: the only effect of run is terminal focus — never a squad
+// mutation, never a spawn. The closure captures the node context at key-press
+// time so a refresh that lands while the overlay is open never re-targets it.
+type pendingFocus struct {
+	prompt string
+	run    func(m *NOCModel)
+}
+
+// handleFocusConfirmKey gates a previewed focus on an explicit y/Y/enter. ANY
+// other key (esc included) cancels with zero effect — the focus seam is never
+// reached on a decline. This is the single gate between a jump/J/o keypress and
+// the read-only terminal focus.
+func (m *NOCModel) handleFocusConfirmKey(key string) (tea.Model, tea.Cmd) {
+	p := m.jumpPending
+	switch key {
+	case "y", "Y", "enter":
+		m.jumpPending = nil
+		if p != nil && p.run != nil {
+			p.run(m)
+		}
+		return m, nil
+	default:
+		// Decline: clear the overlay, focus NOTHING.
+		m.jumpPending = nil
+		m.jumpNote = "cancelled — nothing focused"
 		return m, nil
 	}
-	// A successful switch-client detaches our view to the agent's pane; leave a
-	// note so a returning operator sees what happened.
-	m.jumpNote = "jumped to " + noc.SuggestJump(target)
-	return m, nil
 }

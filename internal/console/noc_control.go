@@ -314,37 +314,50 @@ func (m *NOCModel) beginLifecycle(kind controlKind) tea.Cmd {
 
 // --- focus / open ('o') ---------------------------------------------------
 
-// focusTeam is the ONLY non-confirmed control action: it is READ-ONLY view
-// movement, never a mutation and never a spawn. It looks for an EXISTING tmux
-// window whose tmux-session matches the selected squad's session and, if found,
-// focuses it through the same switchTo seam jump uses. If nothing is running it
-// sets a suggest-up note. It NEVER launches a team.
+// focusTeam opens the READ-ONLY focus CONFIRM overlay for the selected squad
+// (QA-2 / QA-4b): it does NOT focus immediately. It previews "Open/focus squad
+// <session>?" and only a confirmed y/Y/enter runs the focus (performFocusTeam);
+// any other key / esc cancels with zero effect. It is read-only view movement —
+// never a mutation and never a spawn. (Validity / not-running notes are still
+// surfaced eagerly so the operator is not asked to confirm a no-op.)
 func (m *NOCModel) focusTeam() tea.Cmd {
 	_, _, session, ok := m.selectedSquad()
 	if !ok {
 		m.actNote = "open applies to a session or project (a squad) — select one first"
 		return nil
 	}
+	projectDir := m.selectedProjectDir()
+	m.jumpPending = &pendingFocus{
+		prompt: "Open/focus squad " + session + "? (focus its iTerm2 window)",
+		run:    func(m *NOCModel) { m.performFocusTeam(session, projectDir) },
+	}
+	return nil
+}
+
+// performFocusTeam focuses an EXISTING tmux window for the squad: resolveSquadWindow
+// (read-only) then the switchTo seam, or a suggest-up note when nothing is
+// running. It NEVER spawns. It is reached ONLY from the focus-confirm gate, so a
+// switchTo call here always corresponds to an operator confirm.
+func (m *NOCModel) performFocusTeam(session, projectDir string) {
 	panes, err := m.panes()
 	if err != nil {
 		m.actNote = "tmux not available: " + err.Error()
-		return nil
+		return
 	}
-	target, found := resolveSquadWindow(session, m.selectedProjectDir(), panes)
+	target, found := resolveSquadWindow(session, projectDir, panes)
 	if !found {
 		m.actNote = "team not running — press R to resume or run amq-squad up " + session
-		return nil
+		return
 	}
 	if err := m.switchTo(target); err != nil {
 		if nit, isNIT := err.(*noc.NotInTmuxError); isNIT {
 			m.actNote = "not inside tmux — run: " + nit.Command
-			return nil
+			return
 		}
 		m.actNote = "open: " + err.Error() + " (try: " + noc.SuggestJump(target) + ")"
-		return nil
+		return
 	}
 	m.actNote = "focused " + noc.SuggestJump(target)
-	return nil
 }
 
 // resolveSquadWindow finds an existing tmux window for the squad: a pane whose
@@ -356,7 +369,7 @@ func resolveSquadWindow(session, projectDir string, panes []noc.TmuxPane) (noc.T
 	// Prefer an exact tmux-session==amq-session match.
 	for _, p := range panes {
 		if session != "" && p.Session == session {
-			return noc.TmuxTarget{Session: p.Session, Window: p.Window, Pane: p.Pane}, true
+			return squadTargetFromPane(p), true
 		}
 	}
 	// Fallback: any pane rooted in the project dir (a current-window launch puts
@@ -365,11 +378,24 @@ func resolveSquadWindow(session, projectDir string, panes []noc.TmuxPane) (noc.T
 	if want != "" {
 		for _, p := range panes {
 			if cleanDirForFocus(p.CWD) == want {
-				return noc.TmuxTarget{Session: p.Session, Window: p.Window, Pane: p.Pane}, true
+				return squadTargetFromPane(p), true
 			}
 		}
 	}
 	return noc.TmuxTarget{}, false
+}
+
+// squadTargetFromPane builds a focus target from a squad pane, carrying its
+// title token + window name so the cross-session iTerm2 -CC focus (SwitchTo) can
+// raise the right native window without switch-client exploding the layout.
+func squadTargetFromPane(p noc.TmuxPane) noc.TmuxTarget {
+	return noc.TmuxTarget{
+		Session:    p.Session,
+		Window:     p.Window,
+		Pane:       p.Pane,
+		Title:      p.Title,
+		WindowName: p.WindowName,
+	}
 }
 
 // --- confirm / input key routing -----------------------------------------
@@ -624,6 +650,32 @@ func (m NOCModel) confirmOverlayView() string {
 		hint = "y confirm | esc cancel"
 	}
 	b.WriteString(m.th.paint(m.th.needsYou, hint))
+	return b.String()
+}
+
+// focusConfirmOverlayView renders the READ-ONLY focus confirm overlay (jump / J
+// / o): the action header, the prompt ("Jump to … (focus its iTerm2 window)" /
+// "Open/focus squad …"), and the y/esc affordance. Unlike the mutating confirm
+// it carries no `amq send` / lifecycle command — its only effect is terminal
+// focus, so the prompt states the focus, not a squad-changing command.
+func (m NOCModel) focusConfirmOverlayView() string {
+	p := m.jumpPending
+	var b strings.Builder
+	b.WriteString(m.th.paint(m.th.running, "CONFIRM FOCUS"))
+	b.WriteString("\n")
+	b.WriteString(m.th.paint(m.th.rule, m.thinRule()))
+	b.WriteString("\n")
+	b.WriteString(m.th.paint(m.th.brand, p.prompt))
+	b.WriteString("\n")
+	b.WriteString(m.th.paint(m.th.dim, "read-only — moves your terminal view only, never squad state"))
+	b.WriteString("\n")
+	b.WriteString(m.th.paint(m.th.rule, m.thinRule()))
+	b.WriteString("\n")
+	hint := "y focus · esc cancel"
+	if m.colorMode == ColorAscii {
+		hint = "y focus | esc cancel"
+	}
+	b.WriteString(m.th.paint(m.th.running, hint))
 	return b.String()
 }
 

@@ -139,7 +139,9 @@ func TestResolveTmuxTargetForSession_TitleDisambiguatesSameCwdEngine(t *testing.
 	if !ok {
 		t.Fatal("cpo: expected a title match")
 	}
-	wantCPO := TmuxTarget{Session: "beta", Window: "0", Pane: "0"}
+	// The resolved target now carries the pane title token so the cross-session
+	// iTerm2 -CC focus can match the native window without re-walking the panes.
+	wantCPO := TmuxTarget{Session: "beta", Window: "0", Pane: "0", Title: "amq:beta:cpo"}
 	if gotCPO != wantCPO {
 		t.Fatalf("cpo resolved to %+v, want %+v (amq:beta:cpo pane)", gotCPO, wantCPO)
 	}
@@ -149,7 +151,7 @@ func TestResolveTmuxTargetForSession_TitleDisambiguatesSameCwdEngine(t *testing.
 	if !ok {
 		t.Fatal("cto: expected a title match")
 	}
-	wantCTO := TmuxTarget{Session: "beta", Window: "0", Pane: "1"}
+	wantCTO := TmuxTarget{Session: "beta", Window: "0", Pane: "1", Title: "amq:beta:cto"}
 	if gotCTO != wantCTO {
 		t.Fatalf("cto resolved to %+v, want %+v (amq:beta:cto pane)", gotCTO, wantCTO)
 	}
@@ -207,25 +209,37 @@ func TestSuggestJump_FormatsTarget(t *testing.T) {
 	}
 }
 
-func TestSwitchTo_InsideTmuxRunsSwitchClient(t *testing.T) {
+// TestSwitchTo_InsideTmuxSameSessionSelectsWindow pins the public SwitchTo entry
+// point on the same-session branch: with the current tmux session injected to
+// equal the target's, SwitchTo emits `tmux select-window` (NOT switch-client),
+// which under iTerm2 -CC raises the right native tab with no window explosion.
+// (Replaces the old TestSwitchTo_InsideTmuxRunsSwitchClient: switch-client is the
+// exact behavior that exploded the -CC layout, so it is no longer emitted.)
+func TestSwitchTo_InsideTmuxSameSessionSelectsWindow(t *testing.T) {
 	var gotName string
 	var gotArgs []string
 	restoreExec := swapSwitchExec(func(name string, args ...string) error {
-		gotName = name
-		gotArgs = args
+		// Record the FIRST call (select-window); the trailing select-pane is best
+		// effort and may also fire.
+		if gotName == "" {
+			gotName = name
+			gotArgs = args
+		}
 		return nil
 	})
 	defer restoreExec()
 	restoreEnv := swapTmuxEnv(func() string { return "/tmp/tmux-1000/default,1234,0" })
 	defer restoreEnv()
+	restoreCur := swapCurrentTmuxSession(func() string { return "squad" }) // SAME session
+	defer restoreCur()
 
 	if err := SwitchTo(TmuxTarget{Session: "squad", Window: "1", Pane: "2"}); err != nil {
-		t.Fatalf("SwitchTo inside tmux: %v", err)
+		t.Fatalf("SwitchTo same-session: %v", err)
 	}
 	if gotName != "tmux" {
 		t.Fatalf("exec name = %q, want tmux", gotName)
 	}
-	wantArgs := []string{"switch-client", "-t", "squad:1.2"}
+	wantArgs := []string{"select-window", "-t", "squad:1.2"}
 	if len(gotArgs) != len(wantArgs) {
 		t.Fatalf("args = %v, want %v", gotArgs, wantArgs)
 	}
