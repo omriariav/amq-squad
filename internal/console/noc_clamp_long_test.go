@@ -67,9 +67,11 @@ func TestLiveView_LongRowClampedToDivider(t *testing.T) {
 			continue
 		}
 		cols = append(cols, c)
-		// No left segment may reach or cross the divider.
+		// No left segment may reach or cross the divider. Trim the trailing gutter
+		// space (the clamp pads to leftW then the " │ " gutter follows), measuring
+		// the same way the alignment test does.
 		idx := strings.IndexAny(ln, "│|")
-		if seg := ln[:idx]; visibleWidth(seg) > leftW {
+		if seg := strings.TrimRight(ln[:idx], " "); visibleWidth(seg) > leftW {
 			t.Fatalf("left segment exceeds left width %d (overran the divider): %q", leftW, seg)
 		}
 		if strings.Contains(ln[:idx], "…") {
