@@ -1026,7 +1026,7 @@ func (m NOCModel) agentDetail(n nocNode) string {
 		hint := nocGlyphJump.glyph(m.colorMode) + "  enter / J to jump to this agent's tmux window"
 		b.WriteString(m.th.paint(m.th.running, hint) + "\n")
 	} else {
-		b.WriteString(m.th.paint(m.th.dim, "agent not running — nothing to jump to") + "\n")
+		b.WriteString(m.th.paint(m.th.dim, noJumpReason(n.agent.Liveness)) + "\n")
 	}
 	if m.jumpNote != "" {
 		b.WriteString(m.th.paint(m.th.dim, m.jumpNote) + "\n")
