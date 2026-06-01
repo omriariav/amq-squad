@@ -31,6 +31,45 @@ func TestRunHelpIncludesVersionCommand(t *testing.T) {
 	if !strings.Contains(stdout, "version   Print the amq-squad version") {
 		t.Fatalf("help missing version command:\n%s", stdout)
 	}
+	if !strings.Contains(stdout, "roles     List built-in role IDs") {
+		t.Fatalf("help missing roles command:\n%s", stdout)
+	}
+}
+
+func TestRunRolesListsMarketNumbers(t *testing.T) {
+	stdout, stderr, err := captureOutput(t, func() error {
+		return Run([]string{"roles"}, "v-test")
+	})
+	if err != nil {
+		t.Fatalf("Run roles: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"NUM",
+		"ROLE",
+		"DEFAULT CLI",
+		"1",
+		"cpo",
+		"2",
+		"cto",
+		"9",
+		"qa",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("roles output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestRunRolesRejectsPositionalArgs(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return Run([]string{"roles", "cto"}, "v-test")
+	})
+	if err == nil {
+		t.Fatal("roles with a positional argument should fail")
+	}
+	if !strings.Contains(err.Error(), "no positional arguments") {
+		t.Fatalf("roles positional error = %v", err)
+	}
 }
 
 // TestRunHelpVerbsStillPrintUsage proves the explicit help paths are
@@ -95,8 +134,11 @@ func TestRunBareUnconfiguredShowsGuidance(t *testing.T) {
 	if !strings.Contains(stdout, "no team is configured") {
 		t.Errorf("expected setup guidance, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "amq-squad team init") {
-		t.Errorf("guidance should point at team init, got:\n%s", stdout)
+	if !strings.Contains(stdout, "amq-squad new team") {
+		t.Errorf("guidance should point at new team, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "amq-squad roles") {
+		t.Errorf("guidance should point at roles, got:\n%s", stdout)
 	}
 }
 

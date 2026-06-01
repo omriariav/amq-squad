@@ -1,11 +1,11 @@
-// Package console — noc_model.go: the Bubble Tea model for the NOC command
-// center, a READ-ONLY, beautified multi-project TUI over noc.MultiSnapshot.
+// Package console: noc_model.go is the Bubble Tea model for the NOC command
+// center, a visibility-first multi-project TUI over noc.MultiSnapshot.
 //
-// READ-ONLY contract: no key may stop / start / message / delete an agent. The
-// ONLY side effect permitted anywhere in the NOC surface is the tmux switch
-// (noc.SwitchTo), which moves the OPERATOR'S VIEW, never squad state. The model
-// itself is a pure view: data feeds deliver immutable nocSnapshotMsg values and
-// no goroutine mutates the model.
+// Safety contract: ordinary navigation and inspection keys are read-only.
+// Mutating control keys use preview-first confirm overlays, and all process
+// effects go through injected seams so tests can prove a declined overlay
+// mutates nothing. Data feeds deliver immutable nocSnapshotMsg values and no
+// goroutine mutates the model.
 package console
 
 import (
@@ -109,7 +109,81 @@ type NOCModel struct {
 	// zero effect). It is the single gate between a keypress and a seam call.
 	pending *pendingAction
 
-	// input is the (non-mutating) body/subject editor for message/broadcast/deny:
+	// readResult is a post-confirm result overlay for a needs-you read. The read
+	// itself has already run through the confirmed seam; this field only displays
+	// the returned body until the operator dismisses it.
+	readResult *readResultOverlay
+	// drainResult is a post-confirm result overlay for an agent inbox drain. The
+	// drain itself has already run through the confirmed seam; this field only
+	// displays the returned drain output until the operator dismisses it.
+	drainResult *drainResultOverlay
+	// inboxResult is a read-only result overlay for an agent inbox list. The AMQ
+	// list itself has already run through the injected seam; this field only
+	// displays stdout until the operator dismisses it.
+	inboxResult *inboxResultOverlay
+	// dlqResult is a read-only result overlay for an agent DLQ list. It inspects
+	// failed/corrupt AMQ messages without retrying or purging.
+	dlqResult *dlqResultOverlay
+	// dlqReadResult is a post-confirm result overlay for reading one DLQ item.
+	dlqReadResult *dlqReadResultOverlay
+	// dlqRetryResult is a post-confirm result overlay for retrying one DLQ item.
+	dlqRetryResult *dlqRetryResultOverlay
+	// dlqPurgeResult is a post-confirm result overlay for purging old DLQ items.
+	dlqPurgeResult *dlqPurgeResultOverlay
+	// dlqRetryAllResult is a post-confirm result overlay for retrying every new
+	// DLQ item for one agent.
+	dlqRetryAllResult *dlqRetryAllResultOverlay
+	// receiptsResult is a read-only result overlay for an agent receipts list.
+	receiptsResult *receiptsResultOverlay
+	// receiptsWaitResult is a post-confirm result overlay for one receipt wait.
+	receiptsWaitResult *receiptsWaitResultOverlay
+	// messageWaitResult is a post-confirm result overlay for send --wait-for.
+	messageWaitResult *messageWaitResultOverlay
+	// amqCleanupResult is a post-confirm result overlay for AMQ tmp cleanup.
+	amqCleanupResult *amqCleanupResultOverlay
+	// threadContextResult is a read-only result overlay for a needs-you thread
+	// transcript. It uses AMQ thread and does not move mail between boxes.
+	threadContextResult *threadContextResultOverlay
+	// amqOpsResult is a read-only result overlay for AMQ doctor --ops output.
+	amqOpsResult *amqOpsResultOverlay
+	// amqWhoResult is a read-only result overlay for AMQ who project inventory.
+	amqWhoResult *amqWhoResultOverlay
+	// amqEnvResult is a read-only result overlay for AMQ env project routing.
+	amqEnvResult *amqEnvResultOverlay
+	// presenceResult is a read-only result overlay for AMQ presence list output.
+	presenceResult *presenceResultOverlay
+	// roleMarket is a read-only overlay for the built-in role catalog, opened
+	// from project/action/roles so team creation stays inside the NOC.
+	roleMarket *roleMarketOverlay
+	// teamProfiles is a read-only overlay for the configured profiles on a
+	// team-home, opened from project/action/team-profiles.
+	teamProfiles *teamProfilesOverlay
+	// projectDoctorResult is a read-only result overlay for project doctor
+	// output, opened from project/action/doctor.
+	projectDoctorResult *projectDoctorResultOverlay
+	// projectHistoryResult is a read-only result overlay for project launch
+	// history, opened from project/action/history.
+	projectHistoryResult *projectHistoryResultOverlay
+	// teamRulesResult is a read-only result overlay for durable team norms,
+	// opened from project/action/team-rules.
+	teamRulesResult *teamRulesResultOverlay
+	// projectResumePlanResult is a read-only result overlay for project recovery
+	// planning, opened from project/action/resume-plan.
+	projectResumePlanResult *projectResumePlanResultOverlay
+	// forkPlanResult is a read-only result overlay for branching a workstream,
+	// opened from session/action/fork-plan.
+	forkPlanResult *forkPlanResultOverlay
+	// briefResult is a read-only result overlay for a workstream brief, opened
+	// from session/action/brief.
+	briefResult *briefResultOverlay
+	// statusResult is a read-only result overlay for project/session status
+	// output, opened from status palette rows.
+	statusResult *statusResultOverlay
+	// threadsResult is a read-only result overlay for session AMQ thread
+	// summaries, opened from session/action/threads.
+	threadsResult *threadsResultOverlay
+
+	// input is the (non-mutating) body/subject editor for reply/message/broadcast/deny:
 	// the operator types here, then the action transitions to the pending overlay
 	// so the EXACT command is previewed before any confirm.
 	input *inputAction
@@ -132,15 +206,14 @@ type NOCModel struct {
 	// sets it). It clears on the next keypress like jumpNote/actNote/alertBanner.
 	refreshNote string
 
-	// --- Awareness layer (PR18 / 2.3). Both the command palette and the
-	// needs-you alerts are READ-ONLY: the palette only performs the existing gated
-	// tmux jump/focus, and the alerts only ring a bell + set a banner. Neither
-	// mutates squad state. ---
+	// --- Awareness layer (PR18 / 2.3). The command palette is a locator and
+	// launcher: jump/focus selections perform only the existing gated tmux
+	// movement, while creation selections open the same preview-gated T/N flows.
+	// Needs-you alerts only ring a bell + set a banner.
 
-	// palette is the command-palette overlay: non-nil means the fuzzy "jump to any
-	// agent / team" overlay is open (a query + a live-filtered candidate list).
-	// Selecting performs ONLY the gated tmux switch (jump for a running agent,
-	// focus-if-present for a team / stopped agent).
+	// palette is the command-palette overlay: non-nil means the fuzzy
+	// project/action/team/agent overlay is open. Selecting a creation action opens
+	// an input editor; the backend seam is still reached only after confirm.
 	palette *paletteState
 
 	// priorNeedsYou is the per-session needs-you count from the LAST snapshot,
@@ -177,17 +250,52 @@ type NOCModel struct {
 	// Control seams (PR15). Both are MUTATING and are reached ONLY after the
 	// operator confirms the preview overlay; tests swap them for fakes so no
 	// `make ci` run ever writes a real squad. sendOp writes an OpMessage into
-	// AMQ (defaults to act.Send when nil). lifecycle stops/resumes a squad and is
-	// injected from cli (it owns the executeDown/executeResume verbs) so there is
-	// no console→cli import cycle; nil lifecycle degrades to a clear note rather
-	// than a nil-call panic.
-	sendOp    func(act.OpMessage) error
-	lifecycle func(lifecycleOp) error
+	// AMQ (defaults to act.Send when nil). lifecycle stops/resumes/restarts a squad,
+	// newSession starts a detached workstream, newTeam creates a team profile,
+	// teamDelete removes a team profile config, sessionCleanup archives/removes
+	// one workstream, and readNeedsYou runs AMQ
+	// read for the operator mailbox, drainAgent drains an agent mailbox, and
+	// agentResume starts one saved launch record. These are injected from cli so
+	// there is no console import cycle.
+	sendOp            func(act.OpMessage) error
+	lifecycle         func(lifecycleOp) error
+	agentResume       func(agentResumeOp) error
+	sessionCleanup    func(sessionCleanupOp) error
+	newSession        func(newSessionOp) error
+	newTeam           func(newTeamOp) error
+	teamDelete        func(teamDeleteOp) error
+	pointerSync       func(pointerSyncOp) error
+	readNeedsYou      func(readNeedsYouOp) (readNeedsYouResult, error)
+	drainAgent        func(drainAgentOp) (drainAgentResult, error)
+	inboxAgent        func(inboxAgentOp) (inboxAgentResult, error)
+	dlqAgent          func(dlqAgentOp) (dlqAgentResult, error)
+	dlqRead           func(dlqReadOp) (dlqReadResult, error)
+	dlqRetry          func(dlqRetryOp) (dlqRetryResult, error)
+	dlqPurge          func(dlqPurgeOp) (dlqPurgeResult, error)
+	dlqRetryAll       func(dlqRetryAllOp) (dlqRetryAllResult, error)
+	receiptsAgent     func(receiptsAgentOp) (receiptsAgentResult, error)
+	receiptsWait      func(receiptsWaitOp) (receiptsWaitResult, error)
+	messageWait       func(messageWaitOp) (messageWaitResult, error)
+	amqCleanup        func(amqCleanupOp) (amqCleanupResult, error)
+	threadContext     func(threadContextOp) (threadContextResult, error)
+	amqOps            func(amqOpsOp) (amqOpsResult, error)
+	amqWho            func(amqWhoOp) (amqWhoResult, error)
+	amqEnv            func(amqEnvOp) (amqEnvResult, error)
+	presence          func(presenceOp) (presenceResult, error)
+	projectDoctor     func(projectDoctorOp) (projectDoctorResult, error)
+	projectHistory    func(projectHistoryOp) (projectHistoryResult, error)
+	teamRules         func(teamRulesOp) (teamRulesResult, error)
+	projectResumePlan func(projectResumePlanOp) (projectResumePlanResult, error)
+	forkPlan          func(forkPlanOp) (forkPlanResult, error)
+	brief             func(briefOp) (briefResult, error)
+	briefSeed         func(briefSeedOp) error
+	status            func(statusOp) (statusResult, error)
+	threads           func(threadsOp) (threadsResult, error)
 }
 
 // newNOCModel builds a model from an immutable rebuild config. The control
 // AMQ-write seam defaults to act.Send; the lifecycle seam stays nil here and is
-// wired by RunNOC from cli (stop/resume verbs) so a nil lifecycle degrades to a
+// wired by RunNOC from cli (lifecycle verbs) so a nil lifecycle degrades to a
 // note rather than panicking, and unit tests can leave it nil or inject a fake.
 func newNOCModel(rebuild NOCRebuildConfig) NOCModel {
 	mode := resolveColorMode(true)
@@ -247,6 +355,35 @@ func (m *NOCModel) clampCursor() {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
+	m.ensureCursorVisibleFor(ns)
+}
+
+// ensureCursorVisibleFor keeps the tree window anchored around the selected row.
+func (m *NOCModel) ensureCursorVisibleFor(ns []nocNode) {
+	rows := m.bodyHeight()
+	if len(ns) == 0 || rows <= 0 || rows >= len(ns) {
+		m.scroll = 0
+		return
+	}
+	maxScroll := len(ns) - rows
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+	if m.scroll > maxScroll {
+		m.scroll = maxScroll
+	}
+	if m.cursor < m.scroll {
+		m.scroll = m.cursor
+	}
+	if m.cursor >= m.scroll+rows {
+		m.scroll = m.cursor - rows + 1
+	}
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+	if m.scroll > maxScroll {
+		m.scroll = maxScroll
+	}
 }
 
 // rememberSelection records the id at the cursor for cross-snapshot stability.
@@ -259,12 +396,15 @@ func (m *NOCModel) rememberSelection() {
 // preserveSelection re-locates the previously selected id after a snapshot or
 // collapse change so a refresh never yanks the selection.
 func (m *NOCModel) preserveSelection() {
+	ns := m.nodes()
 	if m.selectedID == "" {
+		m.ensureCursorVisibleFor(ns)
 		return
 	}
-	for i, n := range m.nodes() {
+	for i, n := range ns {
 		if n.id == m.selectedID {
 			m.cursor = i
+			m.ensureCursorVisibleFor(ns)
 			return
 		}
 	}

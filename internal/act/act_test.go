@@ -66,7 +66,6 @@ func TestReplyArgv(t *testing.T) {
 		"--body", "looks good, proceed",
 		"--thread", "t-42",
 		"--kind", "answer",
-		"--reply-to", "user@sess",
 	}
 	if got := m.argv(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Reply.argv()\n got: %#v\nwant: %#v", got, want)
@@ -84,7 +83,6 @@ func TestApproveArgv(t *testing.T) {
 		"--body", "APPROVED",
 		"--thread", "t-42",
 		"--kind", "answer",
-		"--reply-to", "user@sess",
 	}
 	if got := m.argv(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Approve.argv()\n got: %#v\nwant: %#v", got, want)
@@ -102,7 +100,6 @@ func TestDenyArgv(t *testing.T) {
 		"--body", "DENIED: needs a rollback plan first",
 		"--thread", "t-42",
 		"--kind", "answer",
-		"--reply-to", "user@sess",
 	}
 	if got := m.argv(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Deny.argv()\n got: %#v\nwant: %#v", got, want)
@@ -128,7 +125,6 @@ func TestBroadcastArgv(t *testing.T) {
 		"--subject", "Standup in 5",
 		"--body", "join the bridge",
 		"--kind", "status",
-		"--reply-to", "user@sess",
 	}
 	if got := m.argv(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Broadcast.argv()\n got: %#v\nwant: %#v", got, want)
@@ -178,7 +174,7 @@ func TestMeDefaultsToOperatorHandle(t *testing.T) {
 }
 
 func TestArgvOmitsEmptyOptionalFlags(t *testing.T) {
-	// Only the required trio + always-on --me; no root/thread/kind/reply-to/prio.
+	// Only the required trio + always-on --me; no root/thread/kind/prio.
 	m := OpMessage{To: "cto", Subject: "s", Body: "b"}
 	want := []string{"send", "--me", "user", "--to", "cto", "--subject", "s", "--body", "b"}
 	if got := m.argv(); !reflect.DeepEqual(got, want) {
@@ -239,12 +235,17 @@ func TestEnvWithoutAMQIdentity(t *testing.T) {
 	}
 }
 
-// TestReplyToDegradesWithoutSession ensures reply-to never becomes a dangling
-// "user@" when no session is known.
-func TestReplyToDegradesWithoutSession(t *testing.T) {
-	m := Reply(testRoot, "", sampleThread(), "x")
-	if got := bodyAfter(m.argv(), "--reply-to"); got != "user" {
-		t.Fatalf("empty session reply-to = %q, want %q", got, "user")
+func TestArgvDoesNotEmitUnsupportedReplyToFlag(t *testing.T) {
+	cases := []OpMessage{
+		Reply(testRoot, testSession, sampleThread(), "x"),
+		Approve(testRoot, testSession, sampleThread()),
+		Deny(testRoot, testSession, sampleThread(), "no"),
+		Broadcast(testRoot, testSession, []string{"qa"}, "s", "b"),
+	}
+	for i, m := range cases {
+		if containsArg(m.argv(), "--reply-to") {
+			t.Fatalf("case %d emitted unsupported parent AMQ flag --reply-to: %#v", i, m.argv())
+		}
 	}
 }
 
@@ -337,6 +338,15 @@ func bodyAfter(argv []string, flag string) string {
 		}
 	}
 	return ""
+}
+
+func containsArg(argv []string, want string) bool {
+	for _, arg := range argv {
+		if arg == want {
+			return true
+		}
+	}
+	return false
 }
 
 // anyMessageFileUnder walks the throwaway root and reports whether any regular

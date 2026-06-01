@@ -1,9 +1,9 @@
 // Package noc is the NOC ("network operations center") data + jump layer: a
 // UI-free, testable foundation for a multi-project command center over
-// amq-squad sessions. It discovers every amq-squad project under a set of
-// roots, collects a per-project state.Snapshot, rolls the triage headlines up
-// across projects, and resolves a running agent to a concrete tmux pane so the
-// operator can jump straight to it.
+// amq-squad sessions. It discovers every amq-squad project or candidate
+// team-home under a set of roots, collects a per-project state.Snapshot, rolls
+// the triage headlines up across projects, and resolves a running agent to a
+// concrete tmux pane so the operator can jump straight to it.
 //
 // Design rules (mirrored from internal/state):
 //
@@ -30,6 +30,13 @@ import (
 // (chooseProjectBaseRoot recognizes the real container by this basename).
 const AgentMailDirName = ".agent-mail"
 
+// SquadDirName is the amq-squad control directory. A team profile here is
+// enough to make a project visible even before any session has created
+// .agent-mail.
+const SquadDirName = ".amq-squad"
+
+const gitDirName = ".git"
+
 // DefaultDepth bounds how deep Discover descends from each root before giving
 // up. Four levels comfortably covers ~/Code/<org>/<repo> style layouts while
 // keeping the walk cheap.
@@ -50,10 +57,14 @@ var prunedDirs = map[string]bool{
 	"Library":      true,
 }
 
-// Discover recursively walks each root and returns the PROJECT directories: the
-// parent of every directory named ".agent-mail" found within depth levels of a
-// root. The walk prunes heavy/uninteresting directories (see prunedDirs) and
-// never descends into a matched .agent-mail container.
+// Discover recursively walks each root and returns the PROJECT directories. A
+// project is anchored by any of:
+//   - a .agent-mail/ session container,
+//   - a configured .amq-squad team profile,
+//   - a git repository marker, which is a candidate team-home for NOC new-team.
+//
+// The walk prunes heavy/uninteresting directories (see prunedDirs) and never
+// descends into matched .agent-mail, .amq-squad, or .git containers.
 //
 // depth <= 0 falls back to DefaultDepth. depth is measured relative to each
 // root: the root itself is depth 0, its immediate children depth 1, and so on;
@@ -108,10 +119,6 @@ func walkRoot(absRoot string, depth int, found map[string]bool) error {
 			}
 			return nil
 		}
-		if !d.IsDir() {
-			return nil
-		}
-
 		rel, relErr := filepath.Rel(absRoot, path)
 		if relErr != nil {
 			return fs.SkipDir
@@ -119,9 +126,30 @@ func walkRoot(absRoot string, depth int, found map[string]bool) error {
 		curDepth := relDepth(rel)
 
 		name := d.Name()
+		if !d.IsDir() {
+			// Git worktrees and submodules often store .git as a file that points
+			// to the real control dir. Treat it as the same candidate marker.
+			if name == gitDirName && curDepth <= depth {
+				found[filepath.Dir(path)] = true
+			}
+			return nil
+		}
+
 		if name == AgentMailDirName {
 			// Record the PARENT (the project dir) when within the depth bound,
 			// then never descend into the container's children.
+			if curDepth <= depth {
+				found[filepath.Dir(path)] = true
+			}
+			return fs.SkipDir
+		}
+		if name == SquadDirName {
+			if curDepth <= depth && hasTeamProfileMarker(path) {
+				found[filepath.Dir(path)] = true
+			}
+			return fs.SkipDir
+		}
+		if name == gitDirName {
 			if curDepth <= depth {
 				found[filepath.Dir(path)] = true
 			}
@@ -141,6 +169,14 @@ func walkRoot(absRoot string, depth int, found map[string]bool) error {
 		}
 		return nil
 	})
+}
+
+func hasTeamProfileMarker(squadDir string) bool {
+	if info, err := os.Stat(filepath.Join(squadDir, "team.json")); err == nil && !info.IsDir() {
+		return true
+	}
+	matches, err := filepath.Glob(filepath.Join(squadDir, "teams", "*.json"))
+	return err == nil && len(matches) > 0
 }
 
 // relDepth returns the directory depth of a filepath.Rel result relative to its

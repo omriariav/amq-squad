@@ -64,6 +64,22 @@ func defaultExecRunner(name string, args ...string) error {
 	return exec.Command(name, args...).Run()
 }
 
+// osaRunner is the seam for the cross-session iTerm2 focus subprocess. Unlike
+// execRunner it returns the command's stdout so the caller can read the
+// AppleScript's OK/MISS sentinel. The crux of QA-8's fix: osascript exits 0
+// whether it raised a tab OR fell off the end finding nothing, so the exit code
+// alone cannot tell a real focus from a silent no-match. Production captures
+// stdout; tests inject a recorder.
+type osaRunner func(name string, args ...string) (string, error)
+
+// defaultOsaRunner runs osascript and returns its trimmed stdout plus error. A
+// non-nil error means osascript itself could not run (not macOS / not iTerm2 /
+// scripting error); stdout carries the OK/MISS sentinel when it ran.
+func defaultOsaRunner(name string, args ...string) (string, error) {
+	out, err := exec.Command(name, args...).Output()
+	return strings.TrimSpace(string(out)), err
+}
+
 // DefaultPaneLister shells `tmux list-panes -a` with a tab-separated format and
 // parses each row into a TmuxPane. It is strictly READ-ONLY. A missing tmux
 // binary or no server is reported as an error so callers can degrade.
@@ -127,7 +143,7 @@ func parsePanes(out string) []TmuxPane {
 //	(a) REQUIRED: pane.CWD == projectDir AND the pane command matches the
 //	    agent engine (codex/claude). This is the durable, rotation-proof signal.
 //	(b) PREFERRED: the pane's process subtree (pidTree(pane.PID)) contains the
-//	    agent's recorded AgentPID — strongest confirmation when the PID is still
+//	    agent's recorded AgentPID: strongest confirmation when the PID is still
 //	    valid, but optional so a stale PID never disqualifies a pane.
 //	(c) PREFERRED: the pane's tmux session name equals the amq session name.
 //
@@ -150,7 +166,7 @@ func ResolveTmuxTarget(a state.Agent, projectDir string, panes []TmuxPane, pidTr
 func ResolveTmuxTargetForSession(a state.Agent, sessionName, projectDir string, panes []TmuxPane, pidTree func(pid int) []int) (TmuxTarget, bool) {
 	// Name-first pass (highest confidence, engine-agnostic, rotation-proof): if the
 	// launcher stamped a deterministic token on a pane title, resolve by an exact
-	// title match. This disambiguates agents that share the same cwd AND engine —
+	// title match. This disambiguates agents that share the same cwd AND engine:
 	// the bug where cpo·codex and cto·codex in one repo both match the same panes
 	// under the cwd+engine scoring below and resolve to whichever pane comes first.
 	if want := expectedPaneToken(sessionName, a); want != "" {
@@ -307,6 +323,33 @@ func (e *NotInTmuxError) Error() string {
 	return "not inside tmux; run: " + e.Command
 }
 
+// FocusMissError is returned by the cross-session focus path when osascript ran
+// cleanly (iTerm2 is scriptable) but found NO native tab whose session name
+// matched the token, i.e. the agent's tmux session is not attached to this
+// iTerm2, or its tab title no longer carries the token. This is the QA-8 case
+// the old code reported as a false "jumped": osascript exits 0 on a no-match, so
+// without the sentinel the miss was invisible. Command carries the manual
+// `tmux attach`/`switch-client` an operator can run to reach it.
+type FocusMissError struct {
+	Target  TmuxTarget
+	Command string
+}
+
+func (e *FocusMissError) Error() string {
+	return "could not raise the agent's iTerm2 tab (its tmux session may not be attached here); run: " + e.Command
+}
+
+// AttachCommand renders the manual command to reach a target session that is not
+// currently a tab in this iTerm2: attach the session in a fresh client. It is
+// the actionable companion to a FocusMiss (whereas SuggestJump's switch-client
+// assumes the session is already attached somewhere).
+func AttachCommand(t TmuxTarget) string {
+	if t.Session == "" {
+		return SuggestJump(t)
+	}
+	return "tmux attach -t " + t.Session
+}
+
 // switchExec is the injectable subprocess seam for the tmux side of SwitchTo.
 // Production points it at the real tmux binary; tests swap it for a recorder. It
 // is package-level so tests can override it without changing the SwitchTo
@@ -314,12 +357,15 @@ func (e *NotInTmuxError) Error() string {
 var switchExec execRunner = defaultExecRunner
 
 // osascriptExec is the injectable subprocess seam for the iTerm2 native-window
-// raise on the CROSS-SESSION focus path (macOS osascript — always present, no
-// new dependency, no python). Production runs the real osascript; tests swap it
-// for a recorder so they assert the EXACT argv without spawning anything. When
-// osascript fails (or is absent — non-macOS / not iTerm2) SwitchTo degrades to a
-// tmux select-window + a NotInTmuxError-style note carrying the manual command.
-var osascriptExec execRunner = defaultExecRunner
+// raise on the CROSS-SESSION focus path (macOS osascript, always present, no
+// new dependency, no python). Production runs the real osascript and reads its
+// OK/MISS stdout sentinel; tests swap it for a recorder so they assert the EXACT
+// argv AND drive the sentinel without spawning anything. When osascript fails
+// (or is absent: non-macOS / not iTerm2) SwitchTo degrades to a tmux
+// select-window + a NotInTmuxError-style note; when it runs but reports MISS the
+// path returns a FocusMissError so the operator sees an honest "couldn't raise
+// the tab" instead of a false "jumped".
+var osascriptExec osaRunner = defaultOsaRunner
 
 // inTmux reports whether the current process is inside a tmux client. Overridable
 // in tests via tmuxEnv.
@@ -340,7 +386,7 @@ var currentTmuxSession = func() string {
 }
 
 // SwitchTo moves the OPERATOR'S terminal focus to a resolved target pane. It is
-// read-only w.r.t. squad state — its only effect is terminal focus. The whole
+// read-only w.r.t. squad state. Its only effect is terminal focus. The whole
 // product runs iTerm2 in tmux CONTROL MODE (-CC), where each tmux WINDOW is its
 // own native iTerm2 window/tab, so the focus strategy is split to avoid the
 // window-explosion bug:
@@ -350,7 +396,7 @@ var currentTmuxSession = func() string {
 //     NEVER `switch-client`. Same-session select-window under -CC raises the
 //     right native tab with NO window explosion.
 //   - DIFFERENT tmux session: do NOT use switch-client (that moves the client to
-//     the other session and makes -CC spawn a native window per tmux window —
+//     the other session and makes -CC spawn a native window per tmux window,
 //     the "jumping separates all tabs into their own windows" bug). Instead raise
 //     the iTerm2 native window/tab for the pane via osascript, matched by the
 //     pane title token (amq:<session>:<role>) or the tmux window name. If
@@ -392,15 +438,33 @@ func switchToWithSession(t TmuxTarget, curSession func() string) error {
 	}
 
 	// DIFFERENT session (or current session unknown): raise the iTerm2 native
-	// window via osascript — NEVER switch-client across sessions.
-	if err := osascriptExec("osascript", iTermActivateArgs(t)...); err == nil {
+	// window via osascript. NEVER switch-client across sessions. The script
+	// prints "OK" when it selected a tab and "MISS" when it scanned every window
+	// and matched nothing; the exit code is 0 for BOTH, so we must read stdout.
+	out, err := osascriptExec("osascript", iTermActivateArgs(t)...)
+	if err == nil && out == focusOK {
 		return nil
 	}
-	// osascript failed (not macOS / not iTerm2 / no matching window): degrade to a
-	// best-effort tmux select-window and surface the manual command.
+	if err == nil {
+		// osascript ran cleanly but found no matching tab (out == "MISS" or, defensively,
+		// any non-OK output). The target session is not attached to this iTerm2: no
+		// select-window here can raise a tab that doesn't exist, so do NOT pretend.
+		return &FocusMissError{Target: t, Command: AttachCommand(t)}
+	}
+	// osascript itself failed (not macOS / not iTerm2): degrade to a best-effort
+	// tmux select-window and surface the manual command.
 	_ = switchExec("tmux", "select-window", "-t", spec)
 	return &NotInTmuxError{Target: t, Command: SuggestJump(t)}
 }
+
+// focusOK / focusMiss are the stdout sentinels the cross-session AppleScript
+// prints so the Go caller can tell a real tab raise from a silent no-match
+// (osascript exits 0 for both). They are package constants so the production
+// script builder and the tests agree on the exact strings.
+const (
+	focusOK   = "OK"
+	focusMiss = "MISS"
+)
 
 // iTermFocusToken is the string the cross-session osascript matches an iTerm2
 // tab/window by: the pane title token (amq:<session>:<role>) when present, else
@@ -434,12 +498,13 @@ tell application "iTerm2"
 				if (name of sess) contains tok then
 					select tb
 					tell w to select
-					return
+					return "` + focusOK + `"
 				end if
 			end repeat
 		end repeat
 	end repeat
 end tell
+return "` + focusMiss + `"
 end run`
 	return []string{"-e", script, token}
 }

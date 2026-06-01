@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -109,6 +110,57 @@ func TestUpDryRunMatchesTeamShowCore(t *testing.T) {
 	}
 	if showOut != upOut {
 		t.Fatalf("up --dry-run output differs from team show.\nteam show:\n%s\nup --dry-run:\n%s", showOut, upOut)
+	}
+}
+
+func TestRunUpProjectDryRunTargetsOtherDir(t *testing.T) {
+	project := t.TempDir()
+	other := t.TempDir()
+	if err := team.Write(project, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, other)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runUp([]string{"--project", project, "--dry-run", "--no-bootstrap", "issue-102"})
+	})
+	if err != nil {
+		t.Fatalf("up --project --dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	wantProject, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"# team-home: " + wantProject, "# workstream: issue-102", "agent up codex"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("up --project output missing %q in:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestRunUpProjectSeedFromFileResolvesInsideProject(t *testing.T) {
+	project := t.TempDir()
+	other := t.TempDir()
+	if err := team.Write(project, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "brief-source.md"), []byte("# Project Brief\n\nseeded from project cwd\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, other)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runUp([]string{"--project", project, "--dry-run", "--seed-from", "file:brief-source.md", "issue-103"})
+	})
+	if err != nil {
+		t.Fatalf("up --project --seed-from file: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "seeded from project cwd") {
+		t.Fatalf("up --project should resolve file: seed paths inside the target project:\n%s", stdout)
 	}
 }
 

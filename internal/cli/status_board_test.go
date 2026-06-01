@@ -171,6 +171,43 @@ func TestStatusBoardMultiSession(t *testing.T) {
 	}
 }
 
+func TestStatusBoardWakeLiveSessionIsDegradedNotStopped(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	agentDir := filepath.Join(base, "wake-ws", "agents", "cto")
+	seedAgentRecord(t, base, "wake-ws", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", Session: "wake-ws", Root: filepath.Join(base, "wake-ws"),
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4444, Root: filepath.Join(base, "wake-ws"), Started: boardNow.Add(-time.Minute)})
+
+	probe := boardProbe(map[int]bool{4444: true}, map[int]bool{4444: true})
+	out, err := runBoardExec(t, base, proj, probe, false)
+	if err != nil {
+		t.Fatalf("board: %v\n%s", err, out)
+	}
+	for _, want := range []string{"wake-ws", "degraded", "0/1 alive (1 wake-live)", "1 wake-live"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("wake-live board missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "wake-ws  stopped") {
+		t.Errorf("wake-live session must not render stopped:\n%s", out)
+	}
+
+	jsonOut, err := runBoardExec(t, base, proj, probe, true)
+	if err != nil {
+		t.Fatalf("board json: %v\n%s", err, jsonOut)
+	}
+	env := decodeJSONEnvelope[sessionsEnvelopeData](t, jsonOut)
+	if len(env.Data.Sessions) != 1 {
+		t.Fatalf("sessions = %+v, want one wake-live session", env.Data.Sessions)
+	}
+	row := env.Data.Sessions[0]
+	if row.State != boardStateDegraded || row.WakeLive != 1 || row.AgentsAlive != 0 {
+		t.Fatalf("wake-live json row = %+v, want degraded wake_live=1 agents_alive=0", row)
+	}
+}
+
 func TestStatusBoardSessionsJSONEnvelope(t *testing.T) {
 	base := seedMultiSessionBoard(t)
 	proj := t.TempDir()

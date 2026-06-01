@@ -57,19 +57,9 @@ Examples:
 		return err
 	}
 
-	var dirs []string
-	if *projectDirs == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getwd: %w", err)
-		}
-		dirs = []string{cwd}
-	} else {
-		for _, d := range strings.Split(*projectDirs, ",") {
-			if d = strings.TrimSpace(d); d != "" {
-				dirs = append(dirs, d)
-			}
-		}
+	dirs, err := historyProjectDirs(*projectDirs)
+	if err != nil {
+		return err
 	}
 
 	var records []restoreCandidate
@@ -389,7 +379,9 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	// Modern surface: `agent up <binary> [launch flags] [-- child args]`.
 	// Binary positional sits immediately after `agent up` so the printed
 	// command reads as the documented 1.0 shape.
-	b.WriteString(" && amq-squad agent up ")
+	b.WriteString(" && ")
+	b.WriteString(shellQuote(generatedSquadCommand()))
+	b.WriteString(" agent up ")
 	b.WriteString(shellQuote(rec.Binary))
 	// --no-bootstrap is emitted only for a true reattach (a record carries a
 	// saved conversation, so re-running bootstrap would clobber the resumed
@@ -494,10 +486,30 @@ func shellQuote(s string) string {
 }
 
 func shellCommand(bin string, args ...string) string {
+	if bin == "amq-squad" {
+		bin = generatedSquadCommand()
+	}
 	parts := make([]string, 0, len(args)+1)
 	parts = append(parts, shellQuote(bin))
 	for _, arg := range args {
 		parts = append(parts, shellQuote(arg))
 	}
 	return strings.Join(parts, " ")
+}
+
+var generatedSquadCommandOverride string
+
+func generatedSquadCommand() string {
+	if generatedSquadCommandOverride != "" {
+		return generatedSquadCommandOverride
+	}
+	p, err := os.Executable()
+	if err != nil {
+		return "amq-squad"
+	}
+	base := filepath.Base(p)
+	if base == "" || strings.HasSuffix(base, ".test") {
+		return "amq-squad"
+	}
+	return p
 }

@@ -771,6 +771,178 @@ func TestRunTeamInitUsesExplicitSharedWorkstream(t *testing.T) {
 	}
 }
 
+func TestRunTeamInitDryRunPrintsProfilePreviewWithoutWriting(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{"--roles", "cto,qa", "--session", "issue-96", "--dry-run"})
+	})
+	if err != nil {
+		t.Fatalf("team init --dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"# amq-squad team init --dry-run",
+		"# writes: none",
+		"# profile: default",
+		"# workstream: issue-96",
+		"ROLE",
+		"cto",
+		"qa",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, stdout)
+		}
+	}
+	if team.Exists(dir) {
+		t.Fatal("team init --dry-run must not write team.json")
+	}
+	if _, err := os.Stat(rules.Path(dir)); !os.IsNotExist(err) {
+		t.Fatalf("team init --dry-run must not write team-rules.md; stat err = %v", err)
+	}
+}
+
+func TestRunTeamInitDryRunJSONEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	wantDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--roles", "cto,qa",
+			"--session", "issue-96",
+			"--model", "cto=gpt-5",
+			"--codex-args", "--enable goals",
+			"--dry-run",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("team init --dry-run --json: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	if env.Kind != "team_profile_plan" {
+		t.Errorf("kind = %q, want team_profile_plan", env.Kind)
+	}
+	if env.Data.TeamHome != wantDir || env.Data.Project != wantDir {
+		t.Errorf("team home/project = %q/%q, want %q", env.Data.TeamHome, env.Data.Project, wantDir)
+	}
+	if env.Data.Profile != team.DefaultProfile {
+		t.Errorf("profile = %q, want default", env.Data.Profile)
+	}
+	if env.Data.Workstream != "issue-96" {
+		t.Errorf("workstream = %q, want issue-96", env.Data.Workstream)
+	}
+	if env.Data.ExistingProfile {
+		t.Errorf("existing_profile = true, want false")
+	}
+	if env.Data.Members != 2 || len(env.Data.Plan) != 2 {
+		t.Fatalf("members/plan = %d/%d, want 2/2", env.Data.Members, len(env.Data.Plan))
+	}
+	var sawCTO bool
+	for _, m := range env.Data.Plan {
+		if m.Role == "cto" {
+			sawCTO = true
+			if m.Model != "gpt-5" {
+				t.Errorf("cto model = %q, want gpt-5", m.Model)
+			}
+			if m.CWD != wantDir || m.Session != "issue-96" {
+				t.Errorf("cto cwd/session = %q/%q, want %q/issue-96", m.CWD, m.Session, wantDir)
+			}
+		}
+	}
+	if !sawCTO {
+		t.Fatalf("plan missing cto: %+v", env.Data.Plan)
+	}
+	if got := env.Data.BinaryArgs["codex"]; !reflect.DeepEqual(got, []string{"--enable", "goals"}) {
+		t.Errorf("codex binary args = %#v, want --enable goals", got)
+	}
+	if team.Exists(dir) {
+		t.Fatal("team init --dry-run --json must not write team.json")
+	}
+	if _, err := os.Stat(rules.Path(dir)); !os.IsNotExist(err) {
+		t.Fatalf("team init --dry-run --json must not write team-rules.md; stat err = %v", err)
+	}
+}
+
+func TestRunTeamInitJSONRequiresDryRun(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return runTeamInit([]string{"--roles", "cto", "--json"})
+	})
+	if err == nil {
+		t.Fatal("team init --json without --dry-run must error")
+	}
+	if _, ok := err.(UsageError); !ok {
+		t.Fatalf("want UsageError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "--dry-run") {
+		t.Errorf("error should mention --dry-run: %v", err)
+	}
+}
+
+func TestRunTeamInitDryRunCanPreviewExistingProfileWithoutForce(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "old"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{"--roles", "qa", "--session", "issue-97", "--dry-run"})
+	})
+	if err != nil {
+		t.Fatalf("team init --dry-run existing profile: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "existing-profile: yes") {
+		t.Fatalf("dry-run should flag existing profile:\n%s", stdout)
+	}
+	got, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Members) != 1 || got.Members[0].Role != "cto" {
+		t.Fatalf("dry-run should not overwrite existing profile, got %+v", got.Members)
+	}
+}
+
 func TestRunTeamInitStoresSingleMemberSharedWorkstream(t *testing.T) {
 	dir := t.TempDir()
 	old, err := os.Getwd()
@@ -1023,6 +1195,43 @@ func TestRunTeamRulesInitForceRefreshesScopedRules(t *testing.T) {
 	} {
 		if strings.Contains(body, legacy) {
 			t.Errorf("team-rules.md contains legacy role session %q in:\n%s", legacy, body)
+		}
+	}
+}
+
+func TestRunTeamRulesShowPrintsScopedRules(t *testing.T) {
+	dir := t.TempDir()
+	body := "# Team Rules\n\ncustom rules\n"
+	if err := rules.Write(dir, body); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"show", "--project", dir})
+	})
+	if err != nil {
+		t.Fatalf("runTeamRules show: %v\nstderr:\n%s", err, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("runTeamRules show should be silent on stderr, got:\n%s", stderr)
+	}
+	if stdout != body {
+		t.Fatalf("stdout = %q, want %q", stdout, body)
+	}
+}
+
+func TestRunTeamRulesShowReportsMissingRules(t *testing.T) {
+	dir := t.TempDir()
+
+	_, _, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"show", "--project", dir})
+	})
+	if err == nil {
+		t.Fatal("runTeamRules show without team-rules.md should fail")
+	}
+	for _, want := range []string{"no team-rules.md", rules.Path(dir), "amq-squad team rules init"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
 		}
 	}
 }

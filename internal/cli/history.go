@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -69,7 +70,11 @@ Examples:
 			Records:  rows,
 		})
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	return writeHistoryTable(os.Stdout, rows)
+}
+
+func writeHistoryTable(out io.Writer, rows []historyRecord) error {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tCONVERSATION\tSOURCE\tCWD\tSTARTED")
 	for _, r := range rows {
 		role := r.Role
@@ -92,9 +97,18 @@ func historyProjectDirs(projectFlag string) ([]string, error) {
 	}
 	var out []string
 	for _, d := range strings.Split(projectFlag, ",") {
-		if d = strings.TrimSpace(d); d != "" {
-			out = append(out, d)
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
 		}
+		dir, err := resolveProjectDirFlag("", d, true)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, dir)
+	}
+	if len(out) == 0 {
+		return nil, usageErrorf("--project requires at least one directory")
 	}
 	return out, nil
 }

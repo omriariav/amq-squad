@@ -191,6 +191,25 @@ func ExistsProfile(projectDir, profile string) bool {
 	return err == nil
 }
 
+// DeleteProfile removes one persisted team profile. It only deletes the profile
+// JSON file: AMQ sessions, briefs, team-rules.md, and managed pointer stubs are
+// intentionally left for their own explicit commands.
+func DeleteProfile(projectDir, profile string) error {
+	if profile != "" && profile != DefaultProfile {
+		if err := ValidateProfileName(profile); err != nil {
+			return err
+		}
+	}
+	path := ProfilePath(projectDir, profile)
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	if profile != "" && profile != DefaultProfile {
+		_ = os.Remove(filepath.Dir(path))
+	}
+	return nil
+}
+
 // ListProfiles returns the named profiles present under projectDir, sorted
 // alphabetically. The default profile is NOT included; callers prepend
 // "default" themselves when the default file exists. Returns nil with no

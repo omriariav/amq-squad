@@ -2,6 +2,7 @@ package noc
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -15,10 +16,21 @@ func recordExec(calls *[][]string, ret error) execRunner {
 	}
 }
 
+// recordOsa is recordExec for the osaRunner seam: it records each call AND drives
+// the stdout sentinel (out) + error the cross-session focus path reads. out=="OK"
+// simulates a tab raised; out=="MISS" simulates osascript running cleanly but
+// matching no tab; a non-nil ret simulates osascript itself failing.
+func recordOsa(calls *[][]string, out string, ret error) osaRunner {
+	return func(name string, args ...string) (string, error) {
+		*calls = append(*calls, append([]string{name}, args...))
+		return out, ret
+	}
+}
+
 // TestSwitchTo_SameSessionSelectsWindowNotSwitchClient proves QA-4a's
 // same-session branch: when the target tmux session equals the client's current
 // session, SwitchTo emits `tmux select-window` (and select-pane) and NEVER
-// `switch-client` — same-session select-window under iTerm2 -CC raises the right
+// `switch-client`: same-session select-window under iTerm2 -CC raises the right
 // native tab with no window explosion. Non-vacuous: a switch-client argv would
 // fail the assertion below.
 func TestSwitchTo_SameSessionSelectsWindowNotSwitchClient(t *testing.T) {
@@ -26,7 +38,7 @@ func TestSwitchTo_SameSessionSelectsWindowNotSwitchClient(t *testing.T) {
 	var osaCalls [][]string
 	restoreExec := swapSwitchExec(recordExec(&tmuxCalls, nil))
 	defer restoreExec()
-	restoreOsa := swapOsascriptExec(recordExec(&osaCalls, nil))
+	restoreOsa := swapOsascriptExec(recordOsa(&osaCalls, focusOK, nil))
 	defer restoreOsa()
 	restoreEnv := swapTmuxEnv(func() string { return "/tmp/tmux-1000/default,1234,0" })
 	defer restoreEnv()
@@ -66,7 +78,7 @@ func TestSwitchTo_DifferentSessionActivatesITermNoSwitchClient(t *testing.T) {
 	var osaCalls [][]string
 	restoreExec := swapSwitchExec(recordExec(&tmuxCalls, nil))
 	defer restoreExec()
-	restoreOsa := swapOsascriptExec(recordExec(&osaCalls, nil)) // osascript SUCCEEDS
+	restoreOsa := swapOsascriptExec(recordOsa(&osaCalls, focusOK, nil)) // osascript SUCCEEDS (raised a tab)
 	defer restoreOsa()
 	restoreEnv := swapTmuxEnv(func() string { return "/tmp/tmux-1000/default,1234,0" })
 	defer restoreEnv()
@@ -102,14 +114,14 @@ func TestSwitchTo_DifferentSessionActivatesITermNoSwitchClient(t *testing.T) {
 // TestSwitchTo_DifferentSessionOsascriptFailsFallsBack proves the documented
 // graceful degradation: when osascript fails (not macOS / not iTerm2 / no match)
 // the cross-session focus falls back to a best-effort `tmux select-window` and
-// returns a NotInTmuxError-style note carrying the suggested manual command — and
+// returns a NotInTmuxError-style note carrying the suggested manual command, and
 // STILL never emits switch-client.
 func TestSwitchTo_DifferentSessionOsascriptFailsFallsBack(t *testing.T) {
 	var tmuxCalls [][]string
 	var osaCalls [][]string
 	restoreExec := swapSwitchExec(recordExec(&tmuxCalls, nil))
 	defer restoreExec()
-	restoreOsa := swapOsascriptExec(recordExec(&osaCalls, errors.New("osascript: no iTerm2")))
+	restoreOsa := swapOsascriptExec(recordOsa(&osaCalls, "", errors.New("osascript: no iTerm2")))
 	defer restoreOsa()
 	restoreEnv := swapTmuxEnv(func() string { return "/tmp/tmux-1000/default,1234,0" })
 	defer restoreEnv()
@@ -137,6 +149,65 @@ func TestSwitchTo_DifferentSessionOsascriptFailsFallsBack(t *testing.T) {
 	}
 }
 
+// TestSwitchTo_DifferentSessionOsascriptMissReturnsFocusMiss is the QA-8
+// regression: osascript runs cleanly (iTerm2 IS scriptable, exit 0) but scans
+// every tab and matches NO session name. The agent's tmux session is not
+// attached to this iTerm2. The OLD code read only the exit code, saw 0, and
+// reported a false "jumped". The fix reads the MISS stdout sentinel and returns
+// a typed FocusMissError carrying the manual attach command and must NOT fall
+// back to a tmux select-window (there is no tab to raise; that would be another
+// silent no-op pretending to work).
+func TestSwitchTo_DifferentSessionOsascriptMissReturnsFocusMiss(t *testing.T) {
+	var tmuxCalls [][]string
+	var osaCalls [][]string
+	restoreExec := swapSwitchExec(recordExec(&tmuxCalls, nil))
+	defer restoreExec()
+	restoreOsa := swapOsascriptExec(recordOsa(&osaCalls, focusMiss, nil)) // ran, matched nothing
+	defer restoreOsa()
+	restoreEnv := swapTmuxEnv(func() string { return "/tmp/tmux-1000/default,1234,0" })
+	defer restoreEnv()
+
+	target := TmuxTarget{Session: "beta", Window: "0", Pane: "1", Title: "amq:beta:cto"}
+	err := switchToWithSession(target, func() string { return "alpha" }) // DIFFERENT session
+
+	var fm *FocusMissError
+	if !errors.As(err, &fm) {
+		t.Fatalf("a MISS must return *FocusMissError (the QA-8 honest-failure fix), got %T (%v)", err, err)
+	}
+	if fm.Command != AttachCommand(target) {
+		t.Errorf("FocusMissError.Command = %q, want the attach hint %q", fm.Command, AttachCommand(target))
+	}
+	if len(osaCalls) != 1 {
+		t.Fatalf("osascript should be attempted exactly once, got %v", osaCalls)
+	}
+	// A miss has no tab to raise: do NOT fall back to a tmux select-window (that
+	// would be the same silent no-op the fix exists to kill).
+	if len(tmuxCalls) != 0 {
+		t.Fatalf("a MISS must NOT run any tmux command (no tab exists to raise), got %v", tmuxCalls)
+	}
+}
+
+// TestITermActivateArgs_CarriesSentinels proves the AppleScript the cross-session
+// path runs actually emits the OK/MISS sentinels the Go side keys on. Without
+// them the stdout read is meaningless and the fix is vacuous.
+func TestITermActivateArgs_CarriesSentinels(t *testing.T) {
+	args := iTermActivateArgs(TmuxTarget{Session: "beta", Window: "0", Pane: "1", Title: "amq:beta:cto"})
+	if len(args) < 2 || args[0] != "-e" {
+		t.Fatalf("activate argv should start with -e <script>, got %v", args)
+	}
+	script := args[1]
+	if !strings.Contains(script, `return "`+focusOK+`"`) {
+		t.Errorf("script must return the OK sentinel on a match; script:\n%s", script)
+	}
+	if !strings.Contains(script, `return "`+focusMiss+`"`) {
+		t.Errorf("script must return the MISS sentinel when nothing matches; script:\n%s", script)
+	}
+	// The token must still be the trailing argv the script reads as item 1.
+	if args[len(args)-1] != "amq:beta:cto" {
+		t.Errorf("token argv = %q, want amq:beta:cto", args[len(args)-1])
+	}
+}
+
 // TestSwitchTo_NeverSwitchClientAcrossSessions is the explicit non-vacuous guard
 // the brief demands: a target in another session (osascript ok OR failing,
 // current session known OR unknown) must NEVER produce a switch-client argv on
@@ -158,7 +229,7 @@ func TestSwitchTo_NeverSwitchClientAcrossSessions(t *testing.T) {
 			var osaCalls [][]string
 			restoreExec := swapSwitchExec(recordExec(&tmuxCalls, nil))
 			defer restoreExec()
-			restoreOsa := swapOsascriptExec(recordExec(&osaCalls, tc.osaErr))
+			restoreOsa := swapOsascriptExec(recordOsa(&osaCalls, focusOK, tc.osaErr))
 			defer restoreOsa()
 			restoreEnv := swapTmuxEnv(func() string { return "in-tmux" })
 			defer restoreEnv()
@@ -236,7 +307,7 @@ func TestParsePanes_ParsesWindowName(t *testing.T) {
 
 // swapOsascriptExec replaces the package-level osascriptExec seam for a test and
 // returns a restore func.
-func swapOsascriptExec(fn execRunner) func() {
+func swapOsascriptExec(fn osaRunner) func() {
 	prev := osascriptExec
 	osascriptExec = fn
 	return func() { osascriptExec = prev }

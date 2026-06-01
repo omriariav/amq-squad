@@ -26,17 +26,20 @@ var statusPaneLister = noc.DefaultPaneLister
 
 // statusState is the precise state vocabulary emitted by `amq-squad status`.
 // Definitions:
-//   - live:    launch-record PID alive AND binary matches; the agent is running.
-//   - stale:   live signals exist on disk (launch record, wake lock, or
-//     presence) but none verify as a running agent for this handle.
-//   - missing: no launch record, no wake lock, no presence file. The member
+//   - live:      launch-record PID alive AND binary matches; the agent is running.
+//   - wake-live: wake helper is verified live for this handle/root, but the
+//     agent PID itself is not verified.
+//   - stale:     live signals exist on disk (launch record, wake lock, or
+//     presence) but none verify as usable for this handle.
+//   - missing:   no launch record, no wake lock, no presence file. The member
 //     is configured but has never run in the resolved session.
 type statusState string
 
 const (
-	statusStateLive    statusState = "live"
-	statusStateStale   statusState = "stale"
-	statusStateMissing statusState = "missing"
+	statusStateLive     statusState = "live"
+	statusStateWakeLive statusState = "wake-live"
+	statusStateStale    statusState = "stale"
+	statusStateMissing  statusState = "missing"
 )
 
 type statusSignals struct {
@@ -75,13 +78,14 @@ func runStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	sessionName := fs.String("session", "", "AMQ workstream session name (default: a board over all discovered sessions)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned status envelope instead of the human table")
+	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad status - live state of this project's sessions and team
 
 Usage:
-  amq-squad status [--json]
-  amq-squad status --session NAME [--profile NAME] [--json]
+  amq-squad status [--project DIR] [--json]
+  amq-squad status --session NAME [--project DIR] [--profile NAME] [--json]
 
 With no --session, prints a multi-session BOARD over every discovered
 session (docker-ps / git branch -v style): session name, rolled-up state
@@ -94,6 +98,7 @@ PID + binary match, wake-lock PID + handle/root match, and fresh presence.
 
 Examples:
   amq-squad status
+  amq-squad status --project ~/Code/app
   amq-squad status --json
   amq-squad status --session issue-96 --json
 `)
@@ -105,21 +110,25 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
+	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
 	// No --session: the multi-session board over ALL discovered sessions.
 	// This is the front-door default, so it degrades gracefully rather than
 	// hard-erroring when `amq` is missing or there are no sessions.
 	if !flagWasSet(fs, "session") {
-		return runStatusBoard(cwd, *jsonOut)
+		return runStatusBoard(projectDir, *jsonOut)
 	}
 	profile, err := resolveProfileFlag(*profileFlag)
 	if err != nil {
 		return err
 	}
-	if !team.ExistsProfile(cwd, profile) {
-		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
+	if !team.ExistsProfile(projectDir, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
 	return executeStatus(statusExecution{
-		ProjectDir:       cwd,
+		ProjectDir:       projectDir,
 		RequestedSession: *sessionName,
 		ExplicitSession:  flagWasSet(fs, "session"),
 		Profile:          profile,
@@ -268,6 +277,11 @@ func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe d
 		rec.Detail = fmt.Sprintf("fresh active presence, no verified pid (last seen %s)", presence.LastSeen.UTC().Format(time.RFC3339))
 		return rec
 	}
+	if rec.Signals.WakeAlive {
+		rec.Status = statusStateWakeLive
+		rec.Detail = wakeLiveDetail(rec.Signals)
+		return rec
+	}
 	// Not live. Stale requires a live-pointing disk signal for this handle.
 	// Lone stale/inactive/old presence does not count; it collapses to missing
 	// so old presence files don't lock a member into "stale" forever.
@@ -352,6 +366,21 @@ func staleDetail(s statusSignals, presenceMismatched bool) string {
 	}
 	if len(parts) == 0 {
 		return "stale signals on disk"
+	}
+	return strings.Join(parts, "; ")
+}
+
+func wakeLiveDetail(s statusSignals) string {
+	parts := []string{fmt.Sprintf("wake pid %d alive", s.WakePID)}
+	if s.AgentPID > 0 {
+		switch {
+		case !s.AgentAlive:
+			parts = append(parts, fmt.Sprintf("agent pid %d not alive", s.AgentPID))
+		case !s.BinaryMatch:
+			parts = append(parts, fmt.Sprintf("agent pid %d binary mismatch", s.AgentPID))
+		}
+	} else {
+		parts = append(parts, "no verified agent pid")
 	}
 	return strings.Join(parts, "; ")
 }

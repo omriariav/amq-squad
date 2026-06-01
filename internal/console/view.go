@@ -68,6 +68,8 @@ func triageGlyph(t state.Triage) string {
 			return "!"
 		case state.TriageBlocked:
 			return "x"
+		case state.TriageGated:
+			return "g"
 		case state.TriageAtRisk:
 			return "~"
 		default:
@@ -79,6 +81,8 @@ func triageGlyph(t state.Triage) string {
 		return "●"
 	case state.TriageBlocked:
 		return "■"
+	case state.TriageGated:
+		return "◆"
 	case state.TriageAtRisk:
 		return "▲"
 	default:
@@ -92,6 +96,8 @@ func livenessGlyph(l state.Liveness) string {
 		switch l {
 		case state.LivenessAlive:
 			return "+"
+		case state.LivenessWakeLive:
+			return "w"
 		case state.LivenessDeadMailboxLive:
 			return "*"
 		case state.LivenessStale:
@@ -103,6 +109,8 @@ func livenessGlyph(l state.Liveness) string {
 	switch l {
 	case state.LivenessAlive:
 		return "●"
+	case state.LivenessWakeLive:
+		return "◆"
 	case state.LivenessDeadMailboxLive:
 		return "◐"
 	case state.LivenessStale:
@@ -119,6 +127,8 @@ func triageStyle(t state.Triage) lipgloss.Style {
 		return styleNeedsYou
 	case state.TriageBlocked:
 		return styleBlocked
+	case state.TriageGated:
+		return styleHeader
 	case state.TriageAtRisk:
 		return styleAtRisk
 	default:
@@ -131,6 +141,8 @@ func livenessStyle(l state.Liveness) lipgloss.Style {
 	switch l {
 	case state.LivenessAlive:
 		return styleAlive
+	case state.LivenessWakeLive:
+		return styleAtRisk
 	case state.LivenessDeadMailboxLive:
 		return styleAtRisk
 	case state.LivenessStale:

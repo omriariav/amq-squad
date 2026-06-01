@@ -332,6 +332,41 @@ func TestTriageNeedsYouViaOperatorHandle(t *testing.T) {
 	}
 }
 
+func TestTriageNeedsYouScansOperatorMailboxWithoutLaunchRecord(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	_ = seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+	userDir := filepath.Join(base, "s", "agents", "user")
+
+	seedMessage(t, userDir, "new", msgSpec{
+		id: "approval1", from: "cto", to: []string{"user"},
+		thread: "decision/ship", subject: "APPROVAL: ship now?", kind: "question",
+		createdAt: coordNow.Add(-2 * time.Minute),
+	})
+
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(snap.Sessions))
+	}
+	sess := snap.Sessions[0]
+	if len(sess.Agents) != 1 || sess.Agents[0].Handle != "cto" {
+		t.Fatalf("operator mailbox should not become a squad agent: %+v", sess.Agents)
+	}
+	th := findThread(t, sess.Coordination, "decision/ship")
+	if th.Triage != TriageNeedsYou || th.LatestID != "approval1" {
+		t.Fatalf("thread triage/latest = %q/%q, want needs-you approval1", th.Triage, th.LatestID)
+	}
+	if len(th.UnreadBy) != 1 || th.UnreadBy[0] != "user" {
+		t.Fatalf("UnreadBy = %v, want [user]", th.UnreadBy)
+	}
+	if sess.Rollup.NeedsYou != 1 || snap.Rollup.NeedsYou != 1 {
+		t.Fatalf("needs-you rollups session/snapshot = %d/%d, want 1/1", sess.Rollup.NeedsYou, snap.Rollup.NeedsYou)
+	}
+}
+
 func TestTriageNeedsYouCustomOperatorHandle(t *testing.T) {
 	base := t.TempDir()
 	proj := t.TempDir()
@@ -434,6 +469,52 @@ func TestTriageBlockedDeclared(t *testing.T) {
 	}
 	if snap.Sessions[0].Rollup.Blocked != 1 {
 		t.Fatalf("rollup Blocked = %d, want 1", snap.Sessions[0].Rollup.Blocked)
+	}
+}
+
+func TestTriageNeedsYouViaWaitingForInstructions(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	ctoDir := seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+
+	seedMessage(t, ctoDir, "cur", msgSpec{
+		id: "wait-user", from: "cto",
+		thread: "status/cto", subject: "Waiting for instructions", kind: "status",
+		body: "CTO is waiting for instructions before proceeding.", createdAt: coordNow.Add(-time.Minute),
+	})
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	th := findThread(t, snap.Sessions[0].Coordination, "status/cto")
+	if th.Triage != TriageNeedsYou {
+		t.Fatalf("Triage = %q, want needs-you", th.Triage)
+	}
+	if snap.Sessions[0].Rollup.NeedsYou != 1 {
+		t.Fatalf("rollup NeedsYou = %d, want 1", snap.Sessions[0].Rollup.NeedsYou)
+	}
+}
+
+func TestTriageGatedDeclared(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	devDir := seedAgent(t, base, "s", "senior-dev", launch.Record{Binary: "codex", Handle: "senior-dev", Session: "s", AgentPID: 1})
+
+	seedMessage(t, devDir, "cur", msgSpec{
+		id: "gate", from: "senior-dev",
+		thread: "status/senior-dev", subject: "Paused on OBS-048", kind: "status",
+		body: "Paused on OBS-048 until CTO release and QA gates are authorized.", createdAt: coordNow.Add(-time.Minute),
+	})
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	th := findThread(t, snap.Sessions[0].Coordination, "status/senior-dev")
+	if th.Triage != TriageGated {
+		t.Fatalf("Triage = %q, want gated", th.Triage)
+	}
+	if snap.Sessions[0].Rollup.Gated != 1 || snap.Sessions[0].Rollup.Blocked != 0 {
+		t.Fatalf("rollup gated/blocked = %d/%d, want 1/0", snap.Sessions[0].Rollup.Gated, snap.Sessions[0].Rollup.Blocked)
 	}
 }
 
@@ -636,8 +717,8 @@ func TestTimelineDerivedHumanReadable(t *testing.T) {
 // --- rollup string -------------------------------------------------------
 
 func TestTriageRollupString(t *testing.T) {
-	r := TriageRollup{NeedsYou: 2, AtRisk: 1, Blocked: 3, Clear: 5}
-	if got := r.String(); got != "2 needs-you, 1 at-risk, 3 blocked" {
+	r := TriageRollup{NeedsYou: 2, AtRisk: 1, Blocked: 3, Gated: 4, Clear: 5}
+	if got := r.String(); got != "2 needs-you, 1 at-risk, 3 blocked, 4 gated" {
 		t.Fatalf("rollup string = %q", got)
 	}
 }

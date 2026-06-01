@@ -36,6 +36,9 @@ var (
 	nocGlyphStopped  = nocGlyph{unicode: "○", ascii: "[stop]"}
 	nocGlyphNeedsYou = nocGlyph{unicode: "⚠", ascii: "[!]"}
 	nocGlyphBlocked  = nocGlyph{unicode: "✕", ascii: "[x]"}
+	nocGlyphGated    = nocGlyph{unicode: "◆", ascii: "[gate]"}
+	nocGlyphWaiting  = nocGlyph{unicode: "◌", ascii: "[wait]"}
+	nocGlyphStale    = nocGlyph{unicode: "×", ascii: "[old]"}
 
 	// Tree drawing glyphs degrade to ascii box-art.
 	nocGlyphExpanded  = nocGlyph{unicode: "▾", ascii: "-"}
@@ -130,12 +133,15 @@ func (t nocTheme) paint(style lipgloss.Style, s string) string {
 type nocState int
 
 const (
-	nocNeedsYou nocState = iota // hot — operator action required
-	nocBlocked                  // red — blocked
-	nocAtRisk                   // amber — at-risk / degraded
-	nocRunning                  // green — at least one live agent
-	nocStopped                  // dim — discovered but nothing live
-	nocEmpty                    // dim — scaffolding / no agents
+	nocNeedsYou     nocState = iota // hot - operator action required
+	nocBlocked                      // red - blocked
+	nocGated                        // cyan - intentionally gated
+	nocAtRisk                       // amber - at-risk / degraded
+	nocWaiting                      // live but no actionable work
+	nocRunning                      // green - at least one live agent
+	nocStaleBlocked                 // stopped with stale blocked history
+	nocStopped                      // dim - discovered but nothing live
+	nocEmpty                        // dim - scaffolding / no agents
 )
 
 // nocStateText is the ALWAYS-PRESENT text label for a state. Glyph + color are
@@ -146,10 +152,16 @@ func nocStateText(s nocState) string {
 		return "needs-you"
 	case nocBlocked:
 		return "blocked"
+	case nocGated:
+		return "gated"
 	case nocAtRisk:
 		return "at-risk"
+	case nocWaiting:
+		return "waiting"
 	case nocRunning:
 		return "running"
+	case nocStaleBlocked:
+		return "stale-blocked"
 	case nocStopped:
 		return "stopped"
 	default:
@@ -164,10 +176,16 @@ func nocStateGlyph(s nocState, mode ColorMode) string {
 		return nocGlyphNeedsYou.glyph(mode)
 	case nocBlocked:
 		return nocGlyphBlocked.glyph(mode)
+	case nocGated:
+		return nocGlyphGated.glyph(mode)
 	case nocAtRisk:
 		return nocGlyphDegraded.glyph(mode)
+	case nocWaiting:
+		return nocGlyphWaiting.glyph(mode)
 	case nocRunning:
 		return nocGlyphRunning.glyph(mode)
+	case nocStaleBlocked:
+		return nocGlyphStale.glyph(mode)
 	default:
 		return nocGlyphStopped.glyph(mode)
 	}
@@ -181,10 +199,16 @@ func (t nocTheme) nocStateStyle(s nocState) lipgloss.Style {
 		return t.needsYou
 	case nocBlocked:
 		return t.blocked
+	case nocGated:
+		return t.review
 	case nocAtRisk:
 		return t.atRisk
+	case nocWaiting:
+		return t.dim
 	case nocRunning:
 		return t.running
+	case nocStaleBlocked:
+		return t.dim
 	default:
 		return t.stopped
 	}
@@ -197,10 +221,14 @@ func rollupState(r state.TriageRollup, hasRunning, hasAny bool) nocState {
 		return nocNeedsYou
 	case r.Blocked > 0:
 		return nocBlocked
+	case r.Gated > 0:
+		return nocGated
 	case r.AtRisk > 0:
 		return nocAtRisk
 	case hasRunning:
-		return nocRunning
+		return nocWaiting
+	case r.BlockedStale > 0:
+		return nocStaleBlocked
 	case hasAny:
 		return nocStopped
 	default:
@@ -215,6 +243,8 @@ func agentState(a state.Agent) nocState {
 	switch a.Liveness {
 	case state.LivenessAlive:
 		return nocRunning
+	case state.LivenessWakeLive:
+		return nocAtRisk
 	case state.LivenessDeadMailboxLive:
 		return nocAtRisk
 	case state.LivenessDead:
@@ -231,6 +261,8 @@ func triageState(tr state.Triage) nocState {
 		return nocNeedsYou
 	case state.TriageBlocked:
 		return nocBlocked
+	case state.TriageGated:
+		return nocGated
 	case state.TriageAtRisk:
 		return nocAtRisk
 	default:
@@ -248,7 +280,7 @@ func projectRollupState(ps noc.ProjectSnapshot) nocState {
 	for _, sess := range ps.Snap.Sessions {
 		for _, ag := range sess.Agents {
 			hasAny = true
-			if ag.Liveness == state.LivenessAlive || ag.Liveness == state.LivenessDeadMailboxLive {
+			if agentOperational(ag) {
 				hasRunning = true
 			}
 		}
@@ -262,7 +294,7 @@ func sessionRollupState(sess state.Session) nocState {
 	hasAny := false
 	for _, ag := range sess.Agents {
 		hasAny = true
-		if ag.Liveness == state.LivenessAlive || ag.Liveness == state.LivenessDeadMailboxLive {
+		if agentOperational(ag) {
 			hasRunning = true
 		}
 	}
@@ -275,7 +307,7 @@ func sessionRollupState(sess state.Session) nocState {
 func hasRunningAgentSnap(snap state.Snapshot) bool {
 	for _, sess := range snap.Sessions {
 		for _, ag := range sess.Agents {
-			if ag.Liveness == state.LivenessAlive || ag.Liveness == state.LivenessDeadMailboxLive {
+			if agentOperational(ag) {
 				return true
 			}
 		}
@@ -304,24 +336,41 @@ func projectIsStaleOnly(ps noc.ProjectSnapshot) bool {
 // agent reads "stopped". The agent count is what drives the phrase everywhere it
 // appears (digest + tree project rows).
 func projectLivenessPhrase(ps noc.ProjectSnapshot) string {
-	live, total := projectAgentLiveness(ps)
-	if live > 0 {
-		return "running " + strconv.Itoa(live) + "/" + strconv.Itoa(total) + " agents alive"
+	live, wakeLive, total := projectAgentLiveness(ps)
+	operational := live + wakeLive
+	if operational > 0 {
+		label := " agents alive"
+		if wakeLive > 0 {
+			label = " agents reachable"
+		}
+		return "running " + strconv.Itoa(operational) + "/" + strconv.Itoa(total) + label
 	}
 	return "stopped"
 }
 
-// projectAgentLiveness returns the count of live agents (alive or
-// dead-mailbox-live) and the total discovered agents across a project's
-// sessions. It is the single counter behind the unambiguous liveness phrase.
-func projectAgentLiveness(ps noc.ProjectSnapshot) (live, total int) {
+// projectAgentLiveness returns verified-live, wake-live, and total discovered
+// agents across a project's sessions. It is the counter behind the liveness
+// phrase.
+func projectAgentLiveness(ps noc.ProjectSnapshot) (live, wakeLive, total int) {
 	for _, sess := range ps.Snap.Sessions {
 		for _, ag := range sess.Agents {
 			total++
-			if ag.Liveness == state.LivenessAlive || ag.Liveness == state.LivenessDeadMailboxLive {
+			switch ag.Liveness {
+			case state.LivenessAlive, state.LivenessDeadMailboxLive:
 				live++
+			case state.LivenessWakeLive:
+				wakeLive++
 			}
 		}
 	}
-	return live, total
+	return live, wakeLive, total
+}
+
+func agentOperational(ag state.Agent) bool {
+	switch ag.Liveness {
+	case state.LivenessAlive, state.LivenessWakeLive, state.LivenessDeadMailboxLive:
+		return true
+	default:
+		return false
+	}
 }

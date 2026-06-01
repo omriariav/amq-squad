@@ -29,6 +29,7 @@ func runLaunch(args []string) error {
 	sharedWorkstream := fs.Bool("team-workstream", false, "mark --session as the shared amq-squad team workstream")
 	me := fs.String("me", "", "override the agent handle (defaults to binary basename)")
 	rootFlag := fs.String("root", "", "override AMQ root directory")
+	_ = fs.String("project", "", "project/team-home directory to launch from (default: cwd)")
 	teamHome := fs.String("team-home", "", "team-home directory used to find .amq-squad/team-rules.md for bootstrap")
 	teamProfile := fs.String("team-profile", "", "team profile this launch belongs to (default: default profile)")
 	conversation := fs.String("conversation", "", "resume and store a Codex or Claude conversation name/id")
@@ -48,7 +49,7 @@ func runLaunch(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad agent up - launch an agent with role metadata
 
 Usage:
-  amq-squad agent up <binary> [options] [-- <binary-flags>]
+  amq-squad agent up <binary> [--project DIR] [options] [-- <binary-flags>]
 
 Options:
 `)
@@ -75,6 +76,8 @@ Side effects before exec:
 
 With --dry-run, the resolved coop exec command is printed and amq-squad exits.
 Disk state is untouched and no exec occurs.
+--project targets another team-home without changing directories; launch records
+and relative AMQ config resolution behave as if the command ran from DIR.
 
 When --conversation generates resume args, do not pass additional child args
 after "--". Use --codex-args or --claude-args for native flags that should
@@ -82,12 +85,20 @@ still combine with --conversation.
 
 Examples:
   amq-squad agent up codex --role cto --session issue-96
+  amq-squad agent up codex --project ~/Code/app --session issue-96
   amq-squad agent up codex --dry-run --no-bootstrap
 `)
 	}
 
 	if err := parseFlags(fs, squadArgs); err != nil {
 		return err
+	}
+	if flagWasSet(fs, "project") {
+		project, rest, err := peelProjectFlag(args)
+		if err != nil {
+			return err
+		}
+		return runInProject(project, func() error { return runLaunch(rest) })
 	}
 	trustExplicit := flagWasSet(fs, "trust")
 	trustMode, err := normalizeTrustMode(*trustRaw)

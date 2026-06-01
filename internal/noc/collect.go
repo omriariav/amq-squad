@@ -1,6 +1,7 @@
 package noc
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
 	"time"
@@ -14,10 +15,16 @@ import (
 // NEVER drops a discovered project — a failed one is surfaced with its warning
 // so the operator sees it instead of it silently vanishing.
 type ProjectSnapshot struct {
-	Project string         // basename of Dir, the human-facing project label
-	Dir     string         // absolute project directory (parent of .agent-mail)
-	Snap    state.Snapshot // per-project discovery + coordination snapshot
-	Warning string         // non-empty when collection failed for this project
+	Project        string         // basename of Dir, the human-facing project label
+	Dir            string         // absolute project directory
+	TeamConfigured bool           // true when .amq-squad contains any team profile
+	DefaultTeam    bool           // true when .amq-squad/team.json exists
+	Profiles       []string       // valid team profiles, with "default" first when present
+	SessionStore   bool           // true when .agent-mail exists
+	SessionNames   []string       // existing AMQ session directories under .agent-mail
+	Candidate      bool           // true when this is an unconfigured team-home candidate
+	Snap           state.Snapshot // per-project discovery + coordination snapshot
+	Warning        string         // non-empty when collection failed for this project
 }
 
 // MultiSnapshot is the full NOC view across every discovered project, plus a
@@ -37,10 +44,11 @@ type MultiSnapshot struct {
 	LastActivity time.Time
 }
 
-// Collect discovers every amq-squad project under roots (bounded by depth) and
-// builds a per-project state.Snapshot via state.BuildWithThresholds, scanning
-// each project's <projectDir>/.agent-mail container. The per-project triage
-// rollups are summed into the global MultiSnapshot.Rollup.
+// Collect discovers every amq-squad project or candidate team-home under roots
+// (bounded by depth) and builds a per-project state.Snapshot via
+// state.BuildWithThresholds, scanning each project's <projectDir>/.agent-mail
+// container when one exists. The per-project triage rollups are summed into the
+// global MultiSnapshot.Rollup.
 //
 // Collect is NEVER fatal: discovery failures and per-project build failures are
 // recorded (a failed project becomes a ProjectSnapshot with a Warning) rather
@@ -75,10 +83,17 @@ func Collect(roots []string, depth int, probe state.Probe, th state.Thresholds) 
 
 	for _, dir := range dirs {
 		baseRoot := filepath.Join(dir, AgentMailDirName)
+		defaultTeam := hasDefaultTeamProfile(dir)
 		ps := ProjectSnapshot{
-			Project: filepath.Base(dir),
-			Dir:     dir,
+			Project:        filepath.Base(dir),
+			Dir:            dir,
+			TeamConfigured: hasTeamProfile(dir),
+			DefaultTeam:    defaultTeam,
+			Profiles:       listTeamProfiles(dir, defaultTeam),
+			SessionStore:   dirExists(filepath.Join(dir, AgentMailDirName)),
+			SessionNames:   listAMQSessionNames(dir),
 		}
+		ps.Candidate = !ps.TeamConfigured && !ps.SessionStore
 		snap, buildErr := state.BuildWithThresholds(dir, baseRoot, probe, th)
 		if buildErr != nil {
 			ps.Warning = buildErr.Error()
@@ -97,6 +112,86 @@ func Collect(roots []string, depth int, probe state.Probe, th state.Thresholds) 
 
 	sortProjectsAttentionFirst(ms.Projects, observedAt, staleWindow(th))
 	return ms
+}
+
+func hasTeamProfile(projectDir string) bool {
+	return hasTeamProfileMarker(filepath.Join(projectDir, SquadDirName))
+}
+
+func hasDefaultTeamProfile(projectDir string) bool {
+	info, err := os.Stat(filepath.Join(projectDir, SquadDirName, "team.json"))
+	return err == nil && !info.IsDir()
+}
+
+func listTeamProfiles(projectDir string, defaultTeam bool) []string {
+	out := []string{}
+	if defaultTeam {
+		out = append(out, "default")
+	}
+	dir := filepath.Join(projectDir, SquadDirName, "teams")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	named := []string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if filepath.Ext(name) != ".json" {
+			continue
+		}
+		profile := name[:len(name)-len(".json")]
+		if !validNamedTeamProfile(profile) {
+			continue
+		}
+		named = append(named, profile)
+	}
+	sort.Strings(named)
+	return append(out, named...)
+}
+
+func listAMQSessionNames(projectDir string) []string {
+	dir := filepath.Join(projectDir, AgentMailDirName)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	out := []string{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name == "" || name == ".archive" {
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func validNamedTeamProfile(s string) bool {
+	if s == "" || s == "default" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // staleWindow resolves the configured stale-after duration, defaulted. The NOC
@@ -152,7 +247,7 @@ func attentionTier(ps ProjectSnapshot, now time.Time, staleWindow time.Duration)
 	switch {
 	case r.NeedsYou > 0:
 		return tierNeedsYou
-	case running && (r.AtRisk > 0 || r.Blocked > 0):
+	case running && (r.AtRisk > 0 || r.Blocked > 0 || r.Gated > 0):
 		// LIVE at-risk/blocked on a running squad — the live-attention case.
 		return tierRunningAtRisk
 	case running:
@@ -190,12 +285,12 @@ func projectRecentlyActive(snap state.Snapshot, now time.Time, staleWindow time.
 	return false
 }
 
-// hasRunningAgent reports whether any agent in the snapshot is currently live
-// (alive or dead-mailbox-live — both indicate active mailbox traffic).
+// hasRunningAgent reports whether any agent in the snapshot is currently
+// operational (alive, wake-live, or dead-mailbox-live).
 func hasRunningAgent(snap state.Snapshot) bool {
 	for _, sess := range snap.Sessions {
 		for _, ag := range sess.Agents {
-			if ag.Liveness == state.LivenessAlive || ag.Liveness == state.LivenessDeadMailboxLive {
+			if ag.Liveness == state.LivenessAlive || ag.Liveness == state.LivenessWakeLive || ag.Liveness == state.LivenessDeadMailboxLive {
 				return true
 			}
 		}

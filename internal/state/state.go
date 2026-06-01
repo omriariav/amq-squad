@@ -46,6 +46,11 @@ const (
 	// no contradicting dead PID. The agent is running.
 	LivenessAlive Liveness = "alive"
 
+	// LivenessWakeLive: the AMQ wake helper PID is verified alive for this
+	// handle/root, but the agent PID itself is not verified. The agent is
+	// reachable enough to surface AMQ messages, but should be re-registered.
+	LivenessWakeLive Liveness = "wake-live"
+
 	// LivenessStale: a presence/launch/wake signal exists on disk but none of
 	// them verify as a running agent for this handle, and there is no evidence
 	// the mailbox is being actively touched. The disk record is leftover.
@@ -102,6 +107,7 @@ type Agent struct {
 	Conversation string
 	AgentDir     string
 	Source       string // launch source label, e.g. "launch.json" or "amq history"
+	TeamProfile  string // launch team profile; empty means the default profile
 }
 
 // Session groups the agents discovered under one AMQ session root, plus the

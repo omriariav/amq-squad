@@ -1,4 +1,4 @@
-// Package console — noc_view.go: the beautified, read-only NOC render.
+// Package console: noc_view.go renders the beautified NOC visibility surface.
 //
 // Layout:
 //  1. HEADER "pulse": a brand rule + a single rollup line
@@ -42,6 +42,87 @@ func (m *NOCModel) View() string {
 	}
 	if m.showHelp {
 		return m.helpView()
+	}
+	if m.readResult != nil {
+		return m.overlayFrame(m.readResultOverlayView())
+	}
+	if m.drainResult != nil {
+		return m.overlayFrame(m.drainResultOverlayView())
+	}
+	if m.inboxResult != nil {
+		return m.overlayFrame(m.inboxResultOverlayView())
+	}
+	if m.dlqResult != nil {
+		return m.overlayFrame(m.dlqResultOverlayView())
+	}
+	if m.dlqReadResult != nil {
+		return m.overlayFrame(m.dlqReadResultOverlayView())
+	}
+	if m.dlqRetryResult != nil {
+		return m.overlayFrame(m.dlqRetryResultOverlayView())
+	}
+	if m.dlqPurgeResult != nil {
+		return m.overlayFrame(m.dlqPurgeResultOverlayView())
+	}
+	if m.dlqRetryAllResult != nil {
+		return m.overlayFrame(m.dlqRetryAllResultOverlayView())
+	}
+	if m.receiptsResult != nil {
+		return m.overlayFrame(m.receiptsResultOverlayView())
+	}
+	if m.receiptsWaitResult != nil {
+		return m.overlayFrame(m.receiptsWaitResultOverlayView())
+	}
+	if m.messageWaitResult != nil {
+		return m.overlayFrame(m.messageWaitResultOverlayView())
+	}
+	if m.amqCleanupResult != nil {
+		return m.overlayFrame(m.amqCleanupResultOverlayView())
+	}
+	if m.threadContextResult != nil {
+		return m.overlayFrame(m.threadContextResultOverlayView())
+	}
+	if m.amqOpsResult != nil {
+		return m.overlayFrame(m.amqOpsResultOverlayView())
+	}
+	if m.amqWhoResult != nil {
+		return m.overlayFrame(m.amqWhoResultOverlayView())
+	}
+	if m.amqEnvResult != nil {
+		return m.overlayFrame(m.amqEnvResultOverlayView())
+	}
+	if m.presenceResult != nil {
+		return m.overlayFrame(m.presenceResultOverlayView())
+	}
+	if m.projectDoctorResult != nil {
+		return m.overlayFrame(m.projectDoctorResultOverlayView())
+	}
+	if m.projectHistoryResult != nil {
+		return m.overlayFrame(m.projectHistoryResultOverlayView())
+	}
+	if m.teamRulesResult != nil {
+		return m.overlayFrame(m.teamRulesResultOverlayView())
+	}
+	if m.projectResumePlanResult != nil {
+		return m.overlayFrame(m.projectResumePlanResultOverlayView())
+	}
+	if m.forkPlanResult != nil {
+		return m.overlayFrame(m.forkPlanResultOverlayView())
+	}
+	if m.briefResult != nil {
+		return m.overlayFrame(m.briefResultOverlayView())
+	}
+	if m.statusResult != nil {
+		return m.overlayFrame(m.statusResultOverlayView())
+	}
+	if m.threadsResult != nil {
+		return m.overlayFrame(m.threadsResultOverlayView())
+	}
+	if m.roleMarket != nil {
+		return m.overlayFrame(m.roleMarketOverlayView())
+	}
+	if m.teamProfiles != nil {
+		return m.overlayFrame(m.teamProfilesOverlayView())
 	}
 	// Control overlays render OVER the live frame so the operator's confirm /
 	// type step is unmissable: the EXACT command (confirm) or the body editor
@@ -321,7 +402,7 @@ func (m NOCModel) rollupView() string {
 			continue
 		}
 		r := ps.Snap.Rollup
-		if r.NeedsYou > 0 || (hasRunningAgentSnap(ps.Snap) && (r.AtRisk > 0 || r.Blocked > 0)) {
+		if r.NeedsYou > 0 || (hasRunningAgentSnap(ps.Snap) && (r.AtRisk > 0 || r.Blocked > 0 || r.Gated > 0)) {
 			attn = append(attn, ps)
 		}
 	}
@@ -369,6 +450,18 @@ func (m NOCModel) projectRollupLine(ps noc.ProjectSnapshot, attn bool) string {
 		b.WriteString(" " + m.th.paint(m.th.atRisk, "warning: "+firstLine(ps.Warning)))
 		return b.String()
 	}
+	if ps.Candidate {
+		b.WriteString(" " + m.th.paint(m.th.dim, "candidate team-home"))
+		return b.String()
+	}
+	if ps.TeamConfigured && !ps.DefaultTeam {
+		b.WriteString(" " + m.th.paint(m.th.dim, namedProfileSummary(ps)))
+		return b.String()
+	}
+	if ps.DefaultTeam && len(ps.Snap.Sessions) == 0 {
+		b.WriteString(" " + m.th.paint(m.th.dim, "configured, no sessions"))
+		return b.String()
+	}
 
 	b.WriteString(" " + m.th.paint(m.th.dim, projectLivenessPhrase(ps)))
 
@@ -376,6 +469,38 @@ func (m NOCModel) projectRollupLine(ps noc.ProjectSnapshot, attn bool) string {
 		b.WriteString(" " + tally)
 	}
 	return b.String()
+}
+
+func namedProfileSummary(ps noc.ProjectSnapshot) string {
+	named := namedTeamProfiles(ps)
+	switch len(named) {
+	case 0:
+		return "profile marker only"
+	case 1:
+		return "named profile " + named[0]
+	default:
+		return fmt.Sprintf("%d named profiles", len(named))
+	}
+}
+
+func namedProfileDetail(ps noc.ProjectSnapshot) string {
+	named := namedTeamProfiles(ps)
+	switch len(named) {
+	case 0:
+		return "profile marker found"
+	case 1:
+		return "named profile: " + named[0]
+	default:
+		return "named profiles: " + strings.Join(named, ", ")
+	}
+}
+
+func singleNamedProfile(ps noc.ProjectSnapshot) string {
+	named := namedTeamProfiles(ps)
+	if len(named) == 1 {
+		return named[0]
+	}
+	return ""
 }
 
 // visibleProjects returns the projects to render in the digest, honoring the
@@ -399,7 +524,7 @@ func (m NOCModel) scopedProjects() []noc.ProjectSnapshot {
 		if m.hideStale && projectIsStaleOnly(ps) {
 			continue
 		}
-		if !projectMatchesNOCFilter(ps, m.filter) {
+		if !ProjectMatchesNOCFilter(ps, m.filter) {
 			continue
 		}
 		out = append(out, ps)
@@ -486,6 +611,9 @@ func (m NOCModel) pulseLine() string {
 	} else {
 		segs = append(segs, dim("0 blocked(live)"))
 	}
+	if r.Gated > 0 {
+		segs = append(segs, m.th.paint(m.th.review, strconv.Itoa(r.Gated)+" gated(live)"))
+	}
 
 	// STALE at-risk / blocked trail, dim + parenthesized — secondary signal only,
 	// shown only when present so the calm case stays calm.
@@ -494,6 +622,9 @@ func (m NOCModel) pulseLine() string {
 	}
 	if r.BlockedStale > 0 {
 		segs = append(segs, dim(strconv.Itoa(r.BlockedStale)+" blocked(stale)"))
+	}
+	if r.GatedStale > 0 {
+		segs = append(segs, dim(strconv.Itoa(r.GatedStale)+" gated(stale)"))
 	}
 
 	segs = append(segs, dim(m.clock()))
@@ -667,15 +798,48 @@ func (m NOCModel) treeView() string {
 	if len(ns) == 0 {
 		return m.th.paint(m.th.dim, "(no matching nodes)")
 	}
+	start, end := m.treeWindow(len(ns))
 	var b strings.Builder
-	for i, n := range ns {
+	for i := start; i < end; i++ {
+		n := ns[i]
 		line := m.renderNode(n, i == m.cursor)
 		b.WriteString(line)
-		if i < len(ns)-1 {
+		if i < end-1 {
 			b.WriteString("\n")
 		}
 	}
 	return b.String()
+}
+
+func (m NOCModel) treeWindow(total int) (int, int) {
+	rows := m.bodyHeight()
+	if total <= 0 {
+		return 0, 0
+	}
+	if rows <= 0 || rows >= total {
+		return 0, total
+	}
+	start := m.scroll
+	maxScroll := total - rows
+	if start < 0 {
+		start = 0
+	}
+	if start > maxScroll {
+		start = maxScroll
+	}
+	if m.cursor < start {
+		start = m.cursor
+	}
+	if m.cursor >= start+rows {
+		start = m.cursor - rows + 1
+	}
+	if start < 0 {
+		start = 0
+	}
+	if start > maxScroll {
+		start = maxScroll
+	}
+	return start, start + rows
 }
 
 // renderNode renders one tree row: selection marker, indent + tree glyph, state
@@ -765,6 +929,9 @@ func (m NOCModel) tallyText(r state.TriageRollup) string {
 	if r.Blocked > 0 {
 		live = append(live, m.th.paint(m.th.blocked, strconv.Itoa(r.Blocked)+" blocked"))
 	}
+	if r.Gated > 0 {
+		live = append(live, m.th.paint(m.th.review, strconv.Itoa(r.Gated)+" gated"))
+	}
 	if r.AtRisk > 0 {
 		live = append(live, m.th.paint(m.th.atRisk, strconv.Itoa(r.AtRisk)+" at-risk"))
 	}
@@ -775,6 +942,9 @@ func (m NOCModel) tallyText(r state.TriageRollup) string {
 	}
 	if r.AtRiskStale > 0 {
 		stale = append(stale, strconv.Itoa(r.AtRiskStale)+" at-risk stale")
+	}
+	if r.GatedStale > 0 {
+		stale = append(stale, strconv.Itoa(r.GatedStale)+" gated stale")
 	}
 
 	if len(live) == 0 && len(stale) == 0 {
@@ -824,8 +994,32 @@ func (m NOCModel) projectDetail(n nocNode) string {
 		return b.String()
 	}
 	b.WriteString(m.detailRule() + "\n")
+	if root := projectDetailAMQRoot(n.project); root != "" {
+		b.WriteString(m.th.paint(m.th.dim, "amq base root") + "\n")
+		b.WriteString(m.th.paint(m.th.dim, "  "+root) + "\n")
+		b.WriteString(m.detailRule() + "\n")
+	}
+	if !n.project.DefaultTeam {
+		b.WriteString(m.th.paint(m.th.dim, "team profile") + "\n")
+		if n.project.TeamConfigured {
+			b.WriteString(m.th.paint(m.th.dim, "  "+namedProfileDetail(n.project)+"; default profile missing") + "\n")
+		} else {
+			b.WriteString(m.th.paint(m.th.dim, "  not configured; press T to create a team profile") + "\n")
+		}
+		b.WriteString(m.detailRule() + "\n")
+	}
 	b.WriteString(m.th.paint(m.th.dim, "sessions") + "\n")
-	for _, sess := range sortedSessions(n.project.Snap.Sessions) {
+	sessions := sortedSessions(n.project.Snap.Sessions)
+	if len(sessions) == 0 {
+		if n.project.DefaultTeam || singleNamedProfile(n.project) != "" {
+			b.WriteString(m.th.paint(m.th.dim, "  none yet; press N to start a new workstream") + "\n")
+		} else if n.project.TeamConfigured {
+			b.WriteString(m.th.paint(m.th.dim, "  none yet; press N and choose a profile") + "\n")
+		} else {
+			b.WriteString(m.th.paint(m.th.dim, "  none yet") + "\n")
+		}
+	}
+	for _, sess := range sessions {
 		ss := sessionRollupState(sess)
 		b.WriteString("  " + m.th.paint(m.th.nocStateStyle(ss), nocStateGlyph(ss, m.colorMode)+" "+nocStateText(ss)))
 		b.WriteString(" " + m.th.paint(m.th.brand, sessionLabel(sess)))
@@ -841,6 +1035,10 @@ func (m NOCModel) projectDetail(n nocNode) string {
 		b.WriteString(m.detailRule() + "\n" + m.th.paint(m.th.dim, m.jumpNote) + "\n")
 	}
 	return b.String()
+}
+
+func projectDetailAMQRoot(ps noc.ProjectSnapshot) string {
+	return projectAMQRoot(ps)
 }
 
 // projectCoordination returns the coordination view used for a project node's
@@ -1117,7 +1315,7 @@ func (m NOCModel) helpView() string {
 		"  J                 jump to the selected running agent's tmux window",
 		"",
 		"VIEW",
-		"  p                 command palette: fuzzy-jump to any agent / team in ~2 keystrokes",
+		"  p                 command palette: find projects, actions, teams, and agents",
 		"  A                 toggle needs-you alerts (terminal bell + banner)",
 		"  /                 filter (needs-you / at-risk / blocked / agent: / model: / project: / session:)",
 		"  h                 toggle hiding stopped/archived (stale) squads — focus on what is alive",
@@ -1128,15 +1326,22 @@ func (m NOCModel) helpView() string {
 		"  ?                 toggle this help",
 		"  q                 quit",
 		"",
-		"COMMAND PALETTE (p): type to fuzzy-filter EVERY agent + team across all your",
-		"squads (project/session/role). ↑↓ or ctrl+n/ctrl+p move; enter JUMPS a running",
-		"agent (the same gated tmux switch) or focuses a team's window if present; esc",
-		"closes. It is READ-ONLY — only the existing tmux view-switch can fire.",
+		"COMMAND PALETTE (p): type to fuzzy-filter projects, actions, teams, and",
+		"agents. project/action/status opens the project board; project/action/amq-env shows AMQ env JSON; project/action/amq-who lists AMQ sessions and agents; project/action/doctor opens all-profile project health; project/action/history opens launch records; project/action/resume-plan opens a recovery plan; project/action/team-rules shows durable team rules; project/action/roles opens",
+		"the in-NOC role market; project/action/team-profiles lists configured profiles.",
+		"Creation and repair rows include project/action/new-team, project/action/new-profile, project/action/new-session, project/action/delete-team, and project/action/sync-pointers.",
+		"New-team input accepts role specs plus optional session refs like cto,qa,session=issue-96.",
+		"New-session input accepts session names alone or session seed refs like issue-97 seed-from=issue:31 and rejects existing names.",
+		"Session/action rows include status, threads, thread-context-any, brief, brief-seed, fork-plan, stop, resume, restart, presence, in-NOC thread-context, read-needs-you, reply, approve, deny, broadcast, amq-ops, amq-cleanup, archive, and remove;",
+		"agent/action rows include in-NOC thread-context, read-needs-you, reply, approve, deny, dlq, dlq-read, dlq-retry, dlq-purge, dlq-retry-all, receipts, receipts-wait, inbox, message, message-wait, drain, and agent-resume flows. up/down or ctrl+n/ctrl+p move;",
+		"enter selects. Running agents jump, team rows focus if present, and creation",
+		"actions open preview-gated T/N editors. Aliases like doctor, create team,",
+		"sync pointers, delete team, role market, team rules, team profiles, history, resume plan, fork plan, amq env, amq who, project status, session status, threads, thread context by id, brief, seed brief, presence, stop session, resume session, restart session, start session, context, read needs-you, reply, approve, deny, broadcast, dlq, read DLQ, retry DLQ, purge DLQ, retry all DLQ, receipts, wait receipts, inbox, message, wait message, drain, resume agent, archive session, remove session, amq cleanup, and amq ops also match action rows. esc closes.",
 		"",
 		"ALERTS (A / --no-bell): when a session first NEEDS YOU (its needs-you count goes",
 		"0→N) the NOC rings the terminal bell once and shows a 🔔 banner. It fires only on",
 		"the transition, never repeatedly while it stays needs-you. A mutes; --no-bell",
-		"starts muted. Read-only — the bell + banner never touch squad state.",
+		"starts muted. Read-only: the bell + banner never touch squad state.",
 		"",
 		"NAV IS READ-ONLY: the only nav side effect is the tmux jump (it moves your",
 		"view, never squad state). Control actions below are SEPARATE, deliberate,",
@@ -1339,7 +1544,7 @@ func nocNoProjectsGuidance(roots []string) string {
 	for _, r := range roots {
 		b.WriteString("  " + displayRoot(r) + "\n")
 	}
-	b.WriteString("\nA project is any directory containing a .agent-mail/ folder.\n")
-	b.WriteString("Try a different --root, increase --depth, or run 'amq-squad up' to start a team.\n")
+	b.WriteString("\nA project is any directory containing .agent-mail/, .amq-squad/team.json, or a .git marker.\n")
+	b.WriteString("Try a different --root, increase --depth, or run 'amq-squad new team --project <team-home>' then 'amq-squad new session --project <team-home> <name>'.\n")
 	return b.String()
 }

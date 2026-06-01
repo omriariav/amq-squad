@@ -2,9 +2,12 @@ package cli
 
 import (
 	"flag"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 )
@@ -57,6 +60,31 @@ func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
 	}
 	if nc := emitCommandWithOptions(noArgs, emitCommandOptions{}); !strings.Contains(nc, "--launcher /opt/launch.sh") || strings.Contains(nc, "--launcher-args") {
 		t.Errorf("no-args emit should have --launcher without --launcher-args: %s", nc)
+	}
+}
+
+func TestRunRestoreProjectFlagExpandsHome(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	home := t.TempDir()
+	dir := filepath.Join(home, "repos", "app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96",
+		CWD: dir, StartedAt: time.Now().Add(-1 * time.Hour),
+	})
+	empty := t.TempDir()
+	chdir(t, empty)
+	stdout, _, err := captureOutput(t, func() error {
+		return runRestore([]string{"--project", "~/repos/app", "--role", "cto"})
+	})
+	if err != nil {
+		t.Fatalf("restore --project ~/repos/app: %v", err)
+	}
+	if !strings.Contains(stdout, "agent up codex") || !strings.Contains(stdout, "cd "+shellQuote(dir)) {
+		t.Fatalf("restore --project should scan expanded dir, got:\n%s", stdout)
 	}
 }
 

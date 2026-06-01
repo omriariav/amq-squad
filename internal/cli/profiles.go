@@ -42,18 +42,20 @@ func resolveProfileFlag(name string) (string, error) {
 func runTeamProfiles(args []string) error {
 	fs := flag.NewFlagSet("team profiles", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned team_profiles envelope instead of the human table")
+	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team profiles - list configured team profiles
 
 Usage:
-  amq-squad team profiles [--json]
+  amq-squad team profiles [--project DIR] [--json]
 
 Default first, then named profiles sorted alphabetically. Columns: PROFILE,
-PATH, MEMBERS, WORKSTREAM. Read-only; no create, delete, or rename here.
-Use 'amq-squad team init --profile NAME' to add a profile.
+PATH, MEMBERS, WORKSTREAM. Read-only. Use 'amq-squad new profile NAME' to add
+a profile and 'amq-squad team rm --profile NAME' to delete one.
 
 Examples:
   amq-squad team profiles
+  amq-squad team profiles --project ~/Code/app
   amq-squad team profiles --json
 `)
 	}
@@ -64,10 +66,14 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
+	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
 
 	var rows []profileRow
-	if team.Exists(cwd) {
-		t, err := team.Read(cwd)
+	if team.Exists(projectDir) {
+		t, err := team.Read(projectDir)
 		if err != nil {
 			// Mirror the named-profile path: warn on stderr so the broken
 			// config is visible while stdout (especially under --json) stays
@@ -76,18 +82,18 @@ Examples:
 		} else {
 			rows = append(rows, profileRow{
 				Profile:    team.DefaultProfile,
-				Path:       team.Path(cwd),
+				Path:       team.Path(projectDir),
 				Members:    len(t.Members),
 				Workstream: t.Workstream,
 			})
 		}
 	}
-	named, err := team.ListProfiles(cwd)
+	named, err := team.ListProfiles(projectDir)
 	if err != nil {
 		return fmt.Errorf("list profiles: %w", err)
 	}
 	for _, name := range named {
-		t, err := team.ReadProfile(cwd, name)
+		t, err := team.ReadProfile(projectDir, name)
 		if err != nil {
 			// Skip unreadable profile but warn so the user sees the
 			// breakage. JSON mode still emits a valid envelope on stdout;
@@ -97,7 +103,7 @@ Examples:
 		}
 		rows = append(rows, profileRow{
 			Profile:    name,
-			Path:       team.ProfilePath(cwd, name),
+			Path:       team.ProfilePath(projectDir, name),
 			Members:    len(t.Members),
 			Workstream: t.Workstream,
 		})
@@ -106,7 +112,7 @@ Examples:
 		return printJSONEnvelope("team_profiles", teamProfilesEnvelopeData{Profiles: rows})
 	}
 	if len(rows) == 0 {
-		fmt.Fprintln(os.Stderr, "No team profiles configured. Run 'amq-squad team init' to create one.")
+		fmt.Fprintln(os.Stderr, "No team profiles configured. Run 'amq-squad new team' to create one.")
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)

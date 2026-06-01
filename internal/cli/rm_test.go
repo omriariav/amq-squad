@@ -147,6 +147,53 @@ func TestRmYesRemovesRootAndBrief(t *testing.T) {
 	}
 }
 
+func TestRunRmProjectTargetsOtherDir(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	project := t.TempDir()
+	other := t.TempDir()
+	root := filepath.Join(base, "issue-99")
+	if err := os.MkdirAll(filepath.Join(root, "agents", "cto"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	brief := seedBrief(t, project, "issue-99")
+	chdir(t, other)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runRm([]string{"issue-99", "--project", project, "--yes"}, rmModeDelete)
+	})
+	if err != nil {
+		t.Fatalf("rm --project: %v\nstderr:\n%s", err, stderr)
+	}
+	if _, statErr := os.Stat(root); !os.IsNotExist(statErr) {
+		t.Fatalf("rm --project should remove target root; stat err = %v\nstdout:\n%s", statErr, stdout)
+	}
+	if _, statErr := os.Stat(brief); !os.IsNotExist(statErr) {
+		t.Fatalf("rm --project should remove target brief; stat err = %v\nstdout:\n%s", statErr, stdout)
+	}
+}
+
+func TestRunArchiveAcceptsFlagsAfterSession(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	project := t.TempDir()
+	other := t.TempDir()
+	root := filepath.Join(base, "issue-100")
+	if err := os.MkdirAll(filepath.Join(root, "agents", "cto"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, other)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runRm([]string{"issue-100", "--project", project, "--yes"}, rmModeArchive)
+	})
+	if err != nil {
+		t.Fatalf("archive flags after session: %v\nstderr:\n%s", err, stderr)
+	}
+	dest := filepath.Join(base, archiveDirName, "issue-100")
+	if _, statErr := os.Stat(dest); statErr != nil {
+		t.Fatalf("archive flags after session should move target root: %v\nstdout:\n%s", statErr, stdout)
+	}
+}
+
 // TestArchiveMovesNotDeletes: archive MOVES the root into .archive/<session>
 // (gone from the original, present in the archive) and moves the brief
 // alongside. Nothing is deleted.

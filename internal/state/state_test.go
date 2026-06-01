@@ -90,7 +90,7 @@ func TestBuildDiscoversSessionsAndAgents(t *testing.T) {
 	proj := t.TempDir()
 
 	seedAgent(t, base, "issue-96", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96", AgentPID: 1111,
+		Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96", AgentPID: 1111, TeamProfile: "review",
 	})
 	seedAgent(t, base, "issue-96", "fullstack", launch.Record{
 		Binary: "claude", Handle: "fullstack", Role: "fullstack", Session: "issue-96", AgentPID: 2222,
@@ -118,6 +118,9 @@ func TestBuildDiscoversSessionsAndAgents(t *testing.T) {
 	}
 	if got := len(snap.Sessions[1].Agents); got != 2 {
 		t.Fatalf("issue-96 want 2 agents, got %d", got)
+	}
+	if got := findAgent(t, snap, "cto").TeamProfile; got != "review" {
+		t.Fatalf("TeamProfile = %q, want review", got)
 	}
 	// Agents sorted by role: cto before fullstack.
 	if snap.Sessions[1].Agents[0].Handle != "cto" || snap.Sessions[1].Agents[1].Handle != "fullstack" {
@@ -263,6 +266,27 @@ func TestClassifyAlivePresenceOnlyNoPID(t *testing.T) {
 	a := findAgent(t, snap, "cto")
 	if a.Liveness != LivenessAlive {
 		t.Fatalf("Liveness = %q, want alive (fresh active presence, no recorded pid)", a.Liveness)
+	}
+}
+
+func TestClassifyWakeLiveFromVerifiedWake(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	agentDir := seedAgent(t, base, "s", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Session: "s", Root: filepath.Join(base, "s"),
+	})
+	seedWakeLock(t, agentDir, 9001, filepath.Join(base, "s"))
+
+	snap, err := Build(proj, base, fakeProbe(map[int]bool{9001: true}, map[int]bool{9001: true}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := findAgent(t, snap, "cto")
+	if a.Liveness != LivenessWakeLive {
+		t.Fatalf("Liveness = %q, want wake-live", a.Liveness)
+	}
+	if a.WakeHealth != WakeHealth("pid:9001") {
+		t.Fatalf("WakeHealth = %q, want pid:9001", a.WakeHealth)
 	}
 }
 

@@ -133,6 +133,30 @@ func TestProjectDetailFlowToggle(t *testing.T) {
 	}
 }
 
+func TestProjectDetailShowsAMQBaseRoot(t *testing.T) {
+	m := newNOCModel(NOCRebuildConfig{})
+	m.colorMode = ColorNone
+	m.th = newNOCTheme(ColorNone)
+	ps := noc.ProjectSnapshot{
+		Project:      "proj",
+		Dir:          "/proj",
+		SessionStore: true,
+		Snap: state.Snapshot{
+			BaseRoot: "/proj/.agent-mail",
+			Sessions: []state.Session{{
+				Name: "alpha",
+			}},
+		},
+	}
+
+	got := m.projectDetail(nocNode{kind: nodeProject, label: "proj", project: ps})
+	for _, want := range []string{"amq base root", "/proj/.agent-mail"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("project detail missing %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestFlowGraphAsciiArrow: in the ascii color mode the directed edge renders as
 // "->" (not "→"), and the status marker stays TEXT.
 func TestFlowGraphAsciiArrow(t *testing.T) {

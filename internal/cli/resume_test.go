@@ -77,6 +77,30 @@ func TestRunResumeOutputUsesTopLevelLabels(t *testing.T) {
 	}
 }
 
+func TestRunResumeProjectTargetsOtherDir(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	project := t.TempDir()
+	other := t.TempDir()
+	if err := team.Write(project, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-99"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resumeChdir(t, other)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runResume([]string{"--project", project, "--session", "issue-99"})
+	})
+	if err != nil {
+		t.Fatalf("resume --project: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{"# amq-squad resume", "# team-home:  " + project, "# workstream: issue-99"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("resume --project output missing %q in:\n%s", want, stdout)
+		}
+	}
+}
+
 // extractPlanRows pulls the ROLE/ACTION/WAKE/NOTE table out of resume output
 // so parity tests can compare the planner's classification without coupling
 // to header/footer wording.

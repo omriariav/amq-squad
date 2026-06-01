@@ -118,7 +118,8 @@ func runBareDefault() error {
 		fmt.Print(`amq-squad: no team is configured in this project.
 
 Get started:
-  amq-squad team init     Pick roles and create .amq-squad/team.json
+  amq-squad roles         List role IDs and market numbers
+  amq-squad new team      Pick roles and create .amq-squad/team.json
   amq-squad --help        Show all commands
 
 Once a team exists, bare 'amq-squad' shows a live board of your sessions.
@@ -132,7 +133,7 @@ Once a team exists, bare 'amq-squad' shows a live board of your sessions.
 // worth rendering the board for. The original gate ran the board only when the
 // DEFAULT profile (team.json) existed, which wrongly steered projects that have
 // ONLY named profiles (.amq-squad/teams/<name>.json, no team.json) into the
-// "no team configured / run team init" guidance even though they have teams AND
+// "no team configured / run new team" guidance even though they have teams AND
 // live sessions. A footprint is any of:
 //
 //   - a default-profile team.json (team.Exists), or
@@ -186,6 +187,10 @@ func dispatch(args []string) error {
 	switch args[0] {
 	case "team":
 		return runTeam(args[1:])
+	case "new":
+		return runNew(args[1:])
+	case "roles":
+		return runRoles(args[1:])
 	case "up":
 		return runUp(args[1:])
 	case "stop":
@@ -194,6 +199,12 @@ func dispatch(args []string) error {
 		// Deprecated alias for `stop`, kept for one release. runDown prints a
 		// one-line stderr hint then runs the identical stop logic.
 		return runDown(args[1:])
+	case "brief":
+		return runBrief(args[1:])
+	case "threads":
+		return runThreads(args[1:])
+	case "thread":
+		return runThread(args[1:])
 	case "status":
 		return runStatus(args[1:])
 	case "console":
@@ -240,21 +251,26 @@ Usage:
   amq-squad <command> [options]
 
 Commands:
+  new       Create a team, named profile, or workstream session
+  roles     List built-in role IDs and market numbers for team creation
   team      Set up and manage the team (init, rules, sync, profiles)
   up        Bring the team up (use --dry-run to print the launch plan)
   stop      Stop configured team members (SIGTERM; --force = SIGKILL). State is
             preserved on disk, so the session stays resumable.
   down      Deprecated alias for 'stop' (works for one release)
-  status    Multi-session board (also the bare 'amq-squad'); --session for detail
+  brief     Print a workstream brief and classify it as none, stub, or real
+  threads   List collapsed AMQ thread summaries for one workstream
+  thread    Read one AMQ thread transcript by project and session
+  status    Multi-session board (also bare 'amq-squad'); --project and --session for detail
   console   Read-only Mission Control TUI over all sessions (--once for CI)
-  noc       Read-only NOC command center across ALL squads under --root (--once for CI)
+  noc       Visibility-first NOC command center across ALL squads under --root (--once/--json for CI)
   history   List restorable launch records
   resume    Plan how to bring the team back into the resolved workstream
   fork      Plan fresh launches in a new workstream branched off an existing one
   rm        Permanently remove a finished session (root dir + brief; confirm-gated)
   archive   Move a finished session aside instead of deleting (confirm-gated)
   completion Emit a shell completion script (bash, zsh, fish)
-  doctor    Check this project's amq-squad / AMQ setup
+  doctor    Check amq-squad / AMQ setup (use --project and --profile for other teams)
   agent     Launch or resume a single agent (agent up / agent resume)
   version   Print the amq-squad version
 
@@ -278,10 +294,17 @@ Note: 'stop'/'down' without --force used to exit 2 ("graceful unavailable").
 They now perform the SIGTERM teardown and exit 0 (or 3 on a partial run).
 
 Examples:
+  amq-squad new team --roles cto,fullstack --binary cto=codex
+  amq-squad new profile review --roles cto,qa
+  amq-squad roles
+  amq-squad new session issue-96
+  amq-squad brief --session issue-96
   amq-squad team init --roles cto,fullstack --binary cto=codex
   amq-squad up --dry-run --no-bootstrap
+  amq-squad noc --json | jq .
+  amq-squad stop --project ~/Code/app --all --session issue-96
   amq-squad rm issue-96 --yes
-  amq-squad doctor --json | jq .
+  amq-squad doctor --project ~/Code/app --profile review --json | jq .
 
 Run 'amq-squad <command> --help' for command-specific options.
 `)

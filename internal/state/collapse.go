@@ -160,6 +160,7 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 
 	return ThreadSummary{
 		ID:           a.id,
+		LatestID:     a.latest.ID,
 		Participants: parts,
 		Subject:      a.subject,
 		Kind:         a.lastKind,
@@ -340,12 +341,13 @@ func latestHeaderCreated(m Message) string {
 }
 
 // computeTriage classifies a thread into a triage tier. Severity order is
-// enforced by checking NeedsYou first, then Blocked, then AtRisk.
+// enforced by checking NeedsYou first, then Blocked, then Gated, then AtRisk.
 func computeTriage(a *threadAccumulator, status ThreadStatus, fresh Freshness, now time.Time, th Thresholds, agents []Agent) Triage {
 	op := th.OperatorHandle
 
-	// --- NeedsYou: an unanswered ask addressed TO the operator, or a block
-	// awaiting the human. ---
+	// NeedsYou: an unanswered ask addressed TO the operator, a block awaiting
+	// the human, or explicit prose that says the thread is waiting for the
+	// operator/user.
 	if status == ThreadAwaitingReply || status == ThreadBlocked {
 		if addressedTo(a.latest, op) {
 			switch a.latest.Kind {
@@ -359,15 +361,24 @@ func computeTriage(a *threadAccumulator, status ThreadStatus, fresh Freshness, n
 			return TriageNeedsYou
 		}
 	}
+	if declaresUserWait(a.latest) {
+		return TriageNeedsYou
+	}
 
-	// --- Blocked: an explicitly declared, still-active block (owner may be
-	// another agent). ---
+	// Blocked: an explicitly declared, still-active block (owner may be another
+	// agent).
 	if a.blockActive {
 		return TriageBlocked
 	}
 
-	// --- AtRisk: agent<->agent unanswered review/question aging past
-	// thresholds, or a quiet heartbeat on a participant. ---
+	// Gated: intentionally paused on release, QA, policy, or approval gates. A
+	// user-waiting gate has already been classified as NeedsYou above.
+	if declaresGate(a.latest) {
+		return TriageGated
+	}
+
+	// AtRisk: agent<->agent unanswered review/question aging past thresholds, or
+	// a quiet heartbeat on a participant.
 	if status == ThreadAwaitingReply && fresh.Stale {
 		return TriageAtRisk
 	}
