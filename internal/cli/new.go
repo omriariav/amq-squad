@@ -58,7 +58,7 @@ Examples:
   amq-squad new team --sync --roles cto,fullstack --binary cto=codex
   amq-squad new team --roles 2,9
   amq-squad new team --roles all
-  amq-squad new team --project ~/Code/app --profile review --roles cto
+  amq-squad new profile review --project ~/Code/app --roles cto
   amq-squad new profile review --roles cto,qa --sync
   amq-squad new session issue-96
   amq-squad new session issue-98 --seed-from issue:31
@@ -72,10 +72,11 @@ func runNewTeam(args []string) error {
 Usage:
   amq-squad new team [--project DIR] [--sync] [--dry-run [--json]] [team init options]
 
-This delegates to 'amq-squad team init', including --profile for named teams
-and interactive persona selection when --roles/--personas is omitted. --roles
-and --personas accept IDs, 1-based market numbers, or all. With --project, the
-team profile is written in DIR without changing your shell.
+This delegates to 'amq-squad team init' for the default profile, including
+interactive persona selection when --roles/--personas is omitted. For named
+profiles, prefer 'amq-squad new profile NAME'. --roles and --personas accept
+IDs, 1-based market numbers, or all. With --project, the team profile is written
+in DIR without changing your shell.
 
 Pass --sync to run 'amq-squad team sync --apply' after the profile is written.
 For named profiles, the same --profile is passed through to team sync. If member

@@ -529,4 +529,10 @@ func TestRunDispatchesNew(t *testing.T) {
 	if !strings.Contains(stderr, "amq-squad new") {
 		t.Errorf("new --help missing usage:\n%s", stderr)
 	}
+	if strings.Contains(stderr, "new team --project ~/Code/app --profile") {
+		t.Errorf("new --help should steer named profiles to 'new profile', got:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "amq-squad new profile review --project ~/Code/app --roles cto") {
+		t.Errorf("new --help missing named-profile example:\n%s", stderr)
+	}
 }
