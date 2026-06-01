@@ -199,7 +199,7 @@ func (f Filter) matchAgent(a state.Agent) bool {
 	case filterModel:
 		return strings.Contains(strings.ToLower(a.Engine), strings.ToLower(f.arg))
 	default:
-		// needs-you / at-risk / blocked / unread / session / none: not an
+		// needs-you / gated / at-risk / blocked / unread / session / none: not an
 		// agent-level predicate, so every agent in a matched session passes.
 		return true
 	}

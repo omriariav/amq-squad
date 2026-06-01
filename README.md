@@ -407,15 +407,17 @@ amq-squad console --filter needs-you
 amq-squad console --root ~/Code --filter needs-you --json
 amq-squad noc --root ~/Code          # multi-project NOC
 amq-squad noc --filter needs-you
+amq-squad noc --filter gated
+amq-squad noc --filter stale-blocked
 amq-squad noc --json | jq .          # machine-readable snapshot
 ```
 
 The console gives you:
 
-- a **board** of all sessions, grouped attention-first (needs-you → blocked → at-risk → running → stopped),
+- a **board** of all sessions, grouped attention-first (needs-you > blocked > gated > at-risk > running > stopped),
 - per-session **detail** with each agent's liveness and a **collapsed-thread bus** ("qa ↔ cto  blocked · subject  N msgs · 7m"),
 - **peek** (`space`) for a read-only view of an agent's recent output, unread inbox, and what it is blocked on,
-- a **triage rollup** headline (`N needs-you threads · N at-risk threads · N blocked threads`) and `/`-filters (`needs-you`, `at-risk`, `blocked`, `unread`, `agent:<h>`, `model:<m>`, `session:<n>`).
+- a **triage rollup** headline (`N needs-you threads · N blocked threads · N gated threads · N at-risk threads`) and `/`-filters (`needs-you`, `needs-user`, `gated`, `at-risk`, `blocked`, `stale-blocked`, `unread`, `agent:<h>`, `model:<m>`, `session:<n>`).
 
 It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--once` it emits one static board to stdout and exits — use this when there is no terminal attached.
 

@@ -138,7 +138,7 @@ A full-screen TUI ("network operations center") over EVERY discovered amq-squad
 project or candidate team-home under the given roots. Discovery includes
 .agent-mail session stores, .amq-squad team profiles, and git repos that can be
 turned into teams. It shows a header pulse (squads / live / needs-you /
-at-risk(live) / blocked(live) / stale counts), a collapsible attention-first tree
+at-risk(live) / blocked(live) / gated(live) / stale counts), a collapsible attention-first tree
 (root -> project -> session -> agent), and a detail pane for the selection. On a
 running agent, enter (or J) JUMPS your terminal to that agent's tmux window; view
 movement never stops, starts, messages, or deletes an agent.
@@ -172,8 +172,9 @@ empty AMQ session directories, so you can resume or restart instead. Press S/R/X
 to stop/resume/restart; mixed-profile sessions ask which profile to operate on.
 Press c/D/i/v/d/a/r/x/m/b for AMQ context/DLQ/inbox/read/drain/approve/reply/deny/message/broadcast.
 
---filter accepts the same typed filter as the TUI: needs-you, at-risk, blocked,
-agent:<handle>, model:<engine>, project:<name>, session:<name>, or bare text.
+--filter accepts the same typed filter as the TUI: needs-you, needs-user, gated,
+at-risk, blocked, stale-blocked, agent:<handle>, model:<engine>,
+project:<name>, session:<name>, or bare text.
 It scopes the live TUI, --once render, and --json snapshot.
 
 --root is repeatable and defaults to the project's parent (so sibling squads

@@ -80,7 +80,7 @@ func (m *NOCModel) refreshGuidance() {
 //	               enter JUMPS (tmux switch). A dedicated 'J' also jumps.
 //	←              collapse the current node (or ascend to its parent)
 //	h              toggle hiding stopped/archived (stale) squads
-//	/              filter (needs-you/at-risk/blocked/agent:/model:/project:/session:)
+//	/              filter (needs-you/gated/at-risk/blocked/agent:/model:/project:/session:)
 //	t              toggle the timeline in the detail pane
 //	f              toggle the inter-agent flow graph in the detail pane
 //	g              refresh now
