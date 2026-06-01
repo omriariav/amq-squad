@@ -3264,13 +3264,30 @@ func resolvedNOCProfile(profile string) string {
 }
 
 func consoleNewSession(req console.NewSessionRequest) error {
-	session := strings.TrimSpace(req.Session)
-	if session == "" {
-		return fmt.Errorf("session name cannot be empty")
-	}
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve amq-squad executable: %w", err)
+	}
+	args, err := consoleNewSessionArgs(req)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(exe, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail != "" {
+			return fmt.Errorf("%w: %s", err, detail)
+		}
+		return err
+	}
+	return nil
+}
+
+func consoleNewSessionArgs(req console.NewSessionRequest) ([]string, error) {
+	session := strings.TrimSpace(req.Session)
+	if session == "" {
+		return nil, fmt.Errorf("session name cannot be empty")
 	}
 	args := []string{"new", "session"}
 	if dir := strings.TrimSpace(req.ProjectDir); dir != "" {
@@ -3283,16 +3300,7 @@ func consoleNewSession(req console.NewSessionRequest) error {
 		args = append(args, "--seed-from", seedFrom)
 	}
 	args = append(args, "--target", "new-session", "--terminal-session", nocTerminalSessionName(req.ProjectDir, session), session)
-	cmd := exec.Command(exe, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		detail := strings.TrimSpace(string(out))
-		if detail != "" {
-			return fmt.Errorf("%w: %s", err, detail)
-		}
-		return err
-	}
-	return nil
+	return args, nil
 }
 
 func consoleNewTeam(req console.NewTeamRequest) error {
