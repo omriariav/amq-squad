@@ -245,6 +245,60 @@ func TestConsoleResumeArgsProjectScoped(t *testing.T) {
 	}
 }
 
+func TestConsoleNewSessionArgsDefaultProfile(t *testing.T) {
+	got, err := consoleNewSessionArgs(console.NewSessionRequest{
+		ProjectDir: "/tmp/team home",
+		Session:    "issue-1",
+	})
+	if err != nil {
+		t.Fatalf("consoleNewSessionArgs: %v", err)
+	}
+	want := []string{
+		"new", "session",
+		"--project", "/tmp/team home",
+		"--target", "new-session",
+		"--terminal-session", "amq-squad-team-home-issue-1",
+		"issue-1",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("consoleNewSessionArgs = %#v, want %#v", got, want)
+	}
+}
+
+func TestConsoleNewSessionArgsNamedProfileAndSeed(t *testing.T) {
+	got, err := consoleNewSessionArgs(console.NewSessionRequest{
+		ProjectDir: "/tmp/team home",
+		Profile:    "review",
+		Session:    "issue-2",
+		SeedFrom:   "issue:31",
+	})
+	if err != nil {
+		t.Fatalf("consoleNewSessionArgs: %v", err)
+	}
+	want := []string{
+		"new", "session",
+		"--project", "/tmp/team home",
+		"--profile", "review",
+		"--seed-from", "issue:31",
+		"--target", "new-session",
+		"--terminal-session", "amq-squad-team-home-issue-2",
+		"issue-2",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("consoleNewSessionArgs = %#v, want %#v", got, want)
+	}
+}
+
+func TestConsoleNewSessionArgsRejectsEmptySession(t *testing.T) {
+	_, err := consoleNewSessionArgs(console.NewSessionRequest{Session: " "})
+	if err == nil {
+		t.Fatal("consoleNewSessionArgs should reject empty session")
+	}
+	if !strings.Contains(err.Error(), "session name cannot be empty") {
+		t.Fatalf("consoleNewSessionArgs error = %v", err)
+	}
+}
+
 func TestConsoleStatusArgs(t *testing.T) {
 	for _, tc := range []struct {
 		name string
