@@ -138,6 +138,30 @@ func TestBuildDiscoversSessionsAndAgents(t *testing.T) {
 	}
 }
 
+func TestBuildNormalizesRelativeLaunchRoot(t *testing.T) {
+	proj := t.TempDir()
+	base := filepath.Join(proj, ".agent-mail")
+	seedAgent(t, base, "live-1", "cto", launch.Record{
+		CWD:     proj,
+		Binary:  "sleep",
+		Handle:  "cto",
+		Session: "live-1",
+		Root:    ".agent-mail/live-1",
+	})
+
+	snap, err := Build(proj, base, fakeProbe(nil, nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(snap.Sessions))
+	}
+	want := filepath.Join(proj, ".agent-mail", "live-1")
+	if got := snap.Sessions[0].Root; got != want {
+		t.Fatalf("session root = %q, want %q", got, want)
+	}
+}
+
 func TestClassifyAlive(t *testing.T) {
 	base := t.TempDir()
 	proj := t.TempDir()
