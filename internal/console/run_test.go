@@ -340,10 +340,10 @@ func TestStaticBoardHeadlineLabelsBlockedThreads(t *testing.T) {
 	snap := state.Snapshot{
 		BaseRoot: "/base",
 		Sessions: []state.Session{{Name: "a"}, {Name: "b"}},
-		Rollup:   state.TriageRollup{NeedsYou: 2, AtRisk: 1, Blocked: 3},
+		Rollup:   state.TriageRollup{NeedsYou: 2, AtRisk: 1, Blocked: 3, Gated: 4},
 	}
 	board := StaticBoard(snap, onceClock)
-	if !contains(board, "2 needs-you threads · 1 at-risk thread · 3 blocked threads") {
+	if !contains(board, "2 needs-you threads · 3 blocked threads · 4 gated threads · 1 at-risk thread") {
 		t.Errorf("headline should label triage as thread counts with ' · ' separators, each noun pluralized on its own count:\n%s", board)
 	}
 }

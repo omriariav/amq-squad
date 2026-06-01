@@ -573,12 +573,12 @@ func (m NOCModel) headerView() string {
 	return b.String()
 }
 
-// pulseLine is the rollup headline. It LEADS with what is alive — squads / live
-// squads / needs-you / LIVE at-risk / LIVE blocked — all primary; the
-// age-decayed STALE at-risk/blocked counts trail, dim and parenthesized, so a
+// pulseLine is the rollup headline. It leads with what is alive: squads / live
+// squads / needs-you / live at-risk / live blocked / live gated, all primary.
+// The age-decayed stale at-risk/blocked/gated counts trail dim, so a
 // 38-blocked pile of 30-day-old threads never masquerades as live attention.
 //
-//	"14 squads · 1 live · 0 needs-you · 3 at-risk(live) · 0 blocked(live) · 38 blocked(stale) · <clock>"
+//	"14 squads | 1 live | 0 needs-you | 3 at-risk(live) | 0 blocked(live) | 1 gated(live) | 38 blocked(stale) | <clock>"
 func (m NOCModel) pulseLine() string {
 	// Sum the headline over the SAME in-view squads the body renders, so the
 	// live/stale blocked+at-risk totals reconcile with the per-project rows.
@@ -1317,7 +1317,7 @@ func (m NOCModel) helpView() string {
 		"VIEW",
 		"  p                 command palette: find projects, actions, teams, and agents",
 		"  A                 toggle needs-you alerts (terminal bell + banner)",
-		"  /                 filter (needs-you / at-risk / blocked / agent: / model: / project: / session:)",
+		"  /                 filter (needs-you / needs-user / gated / at-risk / blocked / stale-blocked / agent: / model: / project: / session:)",
 		"  h                 toggle hiding stopped/archived (stale) squads — focus on what is alive",
 		"  t                 toggle the timeline in the detail pane",
 		"  f                 toggle the inter-agent flow graph in the detail pane",

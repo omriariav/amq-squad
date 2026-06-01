@@ -218,7 +218,7 @@ func (m Model) breadcrumb() string {
 // live filter-input line.
 func (m Model) renderFooter() string {
 	if m.filtering {
-		return styleHeader.Render("/"+m.filterInput) + styleFooter.Render("   (needs-you · at-risk · blocked · unread · agent:<h> · model:<m> · session:<n>;  enter apply · esc cancel)")
+		return styleHeader.Render("/"+m.filterInput) + styleFooter.Render("   (needs-you · gated · at-risk · blocked · unread · agent:<h> · model:<m> · session:<n>;  enter apply · esc cancel)")
 	}
 	hint := styleFooter.Render(m.keyHints())
 	if m.err != nil {
@@ -672,7 +672,7 @@ func renderHelp() string {
 		"  l            logs / tail (raw chronological messages)",
 		"  a            copy attach cmd (shows the suggested command — does NOT attach)",
 		"  t            timeline pane (state transitions)",
-		"  /            filter (needs-you · at-risk · blocked · unread · agent:<h> · model:<m> · session:<n>)",
+		"  /            filter (needs-you · gated · at-risk · blocked · unread · agent:<h> · model:<m> · session:<n>)",
 		"  esc          back / close overlay / cancel filter",
 		"  g            refresh now (force resync)",
 		"  ?            this help",
@@ -814,8 +814,9 @@ func rollupHeadline(snap state.Snapshot) string {
 	parts := []string{
 		fmt.Sprintf("%d %s", sessions, plural(sessions, "session", "sessions")),
 		styleNeedsYou.Render(fmt.Sprintf("%d needs-you %s", r.NeedsYou, plural(r.NeedsYou, "thread", "threads"))),
-		styleAtRisk.Render(fmt.Sprintf("%d at-risk %s", r.AtRisk, plural(r.AtRisk, "thread", "threads"))),
 		styleBlocked.Render(fmt.Sprintf("%d blocked %s", r.Blocked, plural(r.Blocked, "thread", "threads"))),
+		styleHeader.Render(fmt.Sprintf("%d gated %s", r.Gated, plural(r.Gated, "thread", "threads"))),
+		styleAtRisk.Render(fmt.Sprintf("%d at-risk %s", r.AtRisk, plural(r.AtRisk, "thread", "threads"))),
 	}
 	return "amq-squad mission control · " + strings.Join(parts, " · ")
 }

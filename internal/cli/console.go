@@ -74,11 +74,11 @@ Usage:
   amq-squad console --root DIR --run-action ID_OR_NAME [--set key=value ...] [--dry-run] [--yes|-y]
 
 A full-screen, read-only TUI showing every discovered session, its triage
-rollup (needs-you / at-risk / blocked), and per-agent liveness. The TUI
+rollup (needs-you / blocked / gated / at-risk), and per-agent liveness. The TUI
 renders to your terminal (/dev/tty); stdout stays clean.
 --project targets another team-home without changing directories.
 --session is shorthand for --filter session:<name>; use --filter for broader
-typed filters such as needs-you, agent:<handle>, model:<engine>, or bare text.
+typed filters such as needs-you, gated, agent:<handle>, model:<engine>, or bare text.
 
 With one or more --root it reaches the multi-root NOC command center across
 EVERY discovered project under those roots (the same surface as 'amq-squad noc').
