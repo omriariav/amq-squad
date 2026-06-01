@@ -15,6 +15,9 @@
 //     the child environment (mirroring cli.envWithoutAMQIdentity) so a stale
 //     shell identity cannot silently redirect the write away from the explicit
 //     --root/--me passed on the wire.
+//   - Parent-AMQ compatible. Send emits only flags supported by the upstream
+//     `amq send` command. Reply metadata is stamped by AMQ itself when --root is
+//     a session root.
 //
 // Nothing in this package runs at import or construction time. Building an
 // OpMessage (directly or via the Reply/Approve/Deny/Broadcast convenience
@@ -59,10 +62,6 @@ type OpMessage struct {
 	Thread string
 	// Kind is the AMQ message kind (--kind): answer, status, etc. Optional.
 	Kind string
-	// ReplyTo is the reply-to address (--reply-to), conventionally
-	// "user@<session>" so agents route their response back to the operator's
-	// session mailbox. Optional.
-	ReplyTo string
 	// Priority is the message priority (--priority). Optional.
 	Priority string
 }
@@ -108,12 +107,12 @@ func (m OpMessage) me() string {
 // order is fixed and deterministic so Preview output and tests are stable:
 //
 //	send --root R --me M --to T --subject S --body B --thread T --kind K
-//	     --reply-to RT --priority P
+//	     --priority P
 //
 // Only --to/--subject/--body and --me are always present (--me is always
 // emitted because the operator identity is load-bearing and must never be left
 // to a stale environment). The optional flags (--root/--thread/--kind/
-// --reply-to/--priority) are emitted only when their field is non-empty.
+// --priority) are emitted only when their field is non-empty.
 func (m OpMessage) argv() []string {
 	args := []string{"send"}
 	if r := strings.TrimSpace(m.Root); r != "" {
@@ -130,9 +129,6 @@ func (m OpMessage) argv() []string {
 	}
 	if k := strings.TrimSpace(m.Kind); k != "" {
 		args = append(args, "--kind", k)
-	}
-	if rt := strings.TrimSpace(m.ReplyTo); rt != "" {
-		args = append(args, "--reply-to", rt)
 	}
 	if p := strings.TrimSpace(m.Priority); p != "" {
 		args = append(args, "--priority", p)
@@ -234,9 +230,9 @@ func isShellSafe(s string) bool {
 
 // Reply builds a reply into an existing thread. It addresses the thread's
 // non-operator participants, sets kind=answer, pins --thread to the thread id,
-// and sets reply-to=user@<session> so agents route their response back to the
-// operator's session mailbox. Subject is "Re: <thread subject>".
-func Reply(root, session string, th state.ThreadSummary, body string) OpMessage {
+// and relies on AMQ to stamp reply_to from --me and the session --root. Subject
+// is "Re: <thread subject>".
+func Reply(root, _ string, th state.ThreadSummary, body string) OpMessage {
 	return OpMessage{
 		Root:    root,
 		Me:      state.DefaultOperatorHandle,
@@ -245,14 +241,13 @@ func Reply(root, session string, th state.ThreadSummary, body string) OpMessage 
 		Body:    body,
 		Thread:  th.ID,
 		Kind:    string(state.KindAnswer),
-		ReplyTo: operatorReplyTo(session),
 	}
 }
 
 // Approve builds an approval answer into a thread: an "APPROVED" body addressed
 // to the thread's non-operator participants, kind=answer, pinned to the thread.
 // This is the operator side of the ⏸ APPROVE needs-you tier.
-func Approve(root, session string, th state.ThreadSummary) OpMessage {
+func Approve(root, _ string, th state.ThreadSummary) OpMessage {
 	return OpMessage{
 		Root:    root,
 		Me:      state.DefaultOperatorHandle,
@@ -261,14 +256,13 @@ func Approve(root, session string, th state.ThreadSummary) OpMessage {
 		Body:    "APPROVED",
 		Thread:  th.ID,
 		Kind:    string(state.KindAnswer),
-		ReplyTo: operatorReplyTo(session),
 	}
 }
 
 // Deny builds a denial answer into a thread: a "DENIED" body carrying the
 // operator's reason, addressed to the thread's non-operator participants,
 // kind=answer, pinned to the thread. An empty reason yields a bare "DENIED".
-func Deny(root, session string, th state.ThreadSummary, reason string) OpMessage {
+func Deny(root, _ string, th state.ThreadSummary, reason string) OpMessage {
 	body := "DENIED"
 	if r := strings.TrimSpace(reason); r != "" {
 		body = "DENIED: " + r
@@ -281,15 +275,15 @@ func Deny(root, session string, th state.ThreadSummary, reason string) OpMessage
 		Body:    body,
 		Thread:  th.ID,
 		Kind:    string(state.KindAnswer),
-		ReplyTo: operatorReplyTo(session),
 	}
 }
 
 // Broadcast builds a status broadcast to a set of squad handles. The operator
 // handle is filtered out (you do not broadcast to yourself) and the remaining
 // handles are sorted+deduped for a deterministic --to. Kind=status, no thread
-// (a broadcast opens its own), reply-to=user@<session>.
-func Broadcast(root, session string, handles []string, subject, body string) OpMessage {
+// (a broadcast opens its own). AMQ stamps reply_to from --me and the session
+// --root.
+func Broadcast(root, _ string, handles []string, subject, body string) OpMessage {
 	return OpMessage{
 		Root:    root,
 		Me:      state.DefaultOperatorHandle,
@@ -297,19 +291,7 @@ func Broadcast(root, session string, handles []string, subject, body string) OpM
 		Subject: subject,
 		Body:    body,
 		Kind:    string(state.KindStatus),
-		ReplyTo: operatorReplyTo(session),
 	}
-}
-
-// operatorReplyTo renders the conventional operator reply-to address
-// "user@<session>". With an empty session it degrades to the bare operator
-// handle so the field is never a dangling "user@".
-func operatorReplyTo(session string) string {
-	s := strings.TrimSpace(session)
-	if s == "" {
-		return state.DefaultOperatorHandle
-	}
-	return state.DefaultOperatorHandle + "@" + s
 }
 
 // replySubject prefixes "Re: " to a subject unless it already carries one

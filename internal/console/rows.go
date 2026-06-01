@@ -34,18 +34,20 @@ const (
 )
 
 // triageRank orders triage tiers by attention (lower = more urgent). It drives
-// the attention-first grouping the brief mandates (needs-you > blocked > at-risk
-// > clear).
+// the attention-first grouping the brief mandates (needs-you > blocked > gated
+// > at-risk > clear).
 func triageRank(t state.Triage) int {
 	switch t {
 	case state.TriageNeedsYou:
 		return 0
 	case state.TriageBlocked:
 		return 1
-	case state.TriageAtRisk:
+	case state.TriageGated:
 		return 2
-	default:
+	case state.TriageAtRisk:
 		return 3
+	default:
+		return 4
 	}
 }
 
@@ -57,6 +59,8 @@ func sessionTier(s state.Session) state.Triage {
 		return state.TriageNeedsYou
 	case s.Rollup.Blocked > 0:
 		return state.TriageBlocked
+	case s.Rollup.Gated > 0:
+		return state.TriageGated
 	case s.Rollup.AtRisk > 0:
 		return state.TriageAtRisk
 	default:
@@ -74,7 +78,7 @@ func livenessRank(s state.Session) int {
 		switch a.Liveness {
 		case state.LivenessAlive:
 			hasAlive = true
-		case state.LivenessDeadMailboxLive, state.LivenessStale:
+		case state.LivenessWakeLive, state.LivenessDeadMailboxLive, state.LivenessStale:
 			hasDegraded = true
 		}
 	}
@@ -204,7 +208,7 @@ func agentRank(l state.Liveness) int {
 	switch l {
 	case state.LivenessAlive:
 		return 0
-	case state.LivenessDeadMailboxLive:
+	case state.LivenessWakeLive, state.LivenessDeadMailboxLive:
 		return 1
 	case state.LivenessStale:
 		return 2

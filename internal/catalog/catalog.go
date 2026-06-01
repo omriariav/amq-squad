@@ -3,6 +3,12 @@
 // plus a rebuild, not a config file users have to discover.
 package catalog
 
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
 // Role is one persona entry in the catalog. Field semantics:
 //
 //	ID               short slug, also used as default handle
@@ -140,4 +146,43 @@ func IDs() []string {
 		out[i] = r.ID
 	}
 	return out
+}
+
+// ResolveSelection converts the user-facing persona picker syntax into role
+// IDs. It accepts catalog IDs, 1-based market numbers, and "all".
+func ResolveSelection(line string) ([]string, error) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil, fmt.Errorf("no selection provided")
+	}
+	if strings.EqualFold(line, "all") {
+		return IDs(), nil
+	}
+	picked := strings.Split(line, ",")
+	out := make([]string, 0, len(picked))
+	for _, p := range picked {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		if p == "all" {
+			out = append(out, IDs()...)
+			continue
+		}
+		if n, err := strconv.Atoi(p); err == nil {
+			if n < 1 || n > len(roles) {
+				return nil, fmt.Errorf("persona number %d is out of range", n)
+			}
+			out = append(out, roles[n-1].ID)
+			continue
+		}
+		if Lookup(p) == nil {
+			return nil, fmt.Errorf("unknown persona/role %q. Known personas: %s", p, strings.Join(IDs(), ", "))
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no selection provided")
+	}
+	return out, nil
 }

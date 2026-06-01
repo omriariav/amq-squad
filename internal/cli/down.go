@@ -126,6 +126,7 @@ func runStopOrDown(verb string, deprecated bool, args []string) error {
 	role := fs.String("role", "", "narrow to a single configured role")
 	all := fs.Bool("all", false, "target every configured member of the team")
 	force := fs.Bool("force", false, "escalate to SIGKILL for agents that ignore SIGTERM")
+	projectFlag := fs.String("project", "", "project/team-home directory to target (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to target (default: default profile)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, stopUsage(verb, deprecated))
@@ -154,12 +155,16 @@ func runStopOrDown(verb string, deprecated bool, args []string) error {
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	if !team.ExistsProfile(cwd, profile) {
-		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
+	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
+	if !team.ExistsProfile(projectDir, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
 	return executeDown(downExecution{
 		Verb:             verb,
-		ProjectDir:       cwd,
+		ProjectDir:       projectDir,
 		RequestedSession: *sessionName,
 		ExplicitSession:  flagWasSet(fs, "session"),
 		Role:             *role,
@@ -181,13 +186,14 @@ func stopUsage(verb string, deprecated bool) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n", header)
-	fmt.Fprintf(&b, "Usage:\n  amq-squad %s (--role R | --all) [--force] [--profile NAME] [--session NAME]\n\n", verb)
+	fmt.Fprintf(&b, "Usage:\n  amq-squad %s (--role R | --all) [--project DIR] [--force] [--profile NAME] [--session NAME]\n\n", verb)
 	if deprecated {
 		b.WriteString("'down' is now 'stop'. This alias keeps working for one release and runs\nthe identical logic; prefer 'amq-squad stop'.\n\n")
 	}
 	b.WriteString(`Exactly one selector is required: --role R or --all. --all targets the
 configured members from this project's team.json in the resolved session
-(default: the team's workstream).
+(default: the team's workstream). --project targets another team-home without
+changing directories.
 
 stop GENUINELY TERMINATES each live, binary-matched agent: it sends SIGTERM to
 the launch-record PID, reaps the wake sidecar, and flips presence offline. It
@@ -206,6 +212,7 @@ or unconfirmed) exits 3. NOTE: prior releases made 'down' without --force exit
 Examples:
 `)
 	fmt.Fprintf(&b, "  amq-squad %s --role cto\n", verb)
+	fmt.Fprintf(&b, "  amq-squad %s --project ~/Code/app --all --session issue-96\n", verb)
 	fmt.Fprintf(&b, "  amq-squad %s --all --session issue-96\n", verb)
 	fmt.Fprintf(&b, "  amq-squad %s --role cto --force   # SIGKILL an agent that ignores SIGTERM\n", verb)
 	return b.String()

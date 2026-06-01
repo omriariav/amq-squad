@@ -41,6 +41,62 @@ func TestDiscover_FindsAgentMailParents(t *testing.T) {
 	}
 }
 
+func TestDiscover_FindsTeamProfilesWithoutAgentMail(t *testing.T) {
+	root := t.TempDir()
+	defaultProfile := filepath.Join(root, "configured", SquadDirName)
+	if err := os.MkdirAll(defaultProfile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(defaultProfile, "team.json"), []byte(`{"schema":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	namedProfile := filepath.Join(root, "named-only", SquadDirName, "teams")
+	if err := os.MkdirAll(namedProfile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(namedProfile, "release.json"), []byte(`{"schema":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Discover([]string{root}, DefaultDepth)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	want := []string{
+		filepath.Join(root, "configured"),
+		filepath.Join(root, "named-only"),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("team-profile discovery mismatch\n got: %v\nwant: %v", got, want)
+	}
+}
+
+func TestDiscover_FindsGitCandidateProjects(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root, "repo-a/.git", "org/repo-b/.git")
+	worktree := filepath.Join(root, "worktree")
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: ../.git/worktrees/worktree\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Discover([]string{root}, DefaultDepth)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	want := []string{
+		filepath.Join(root, "org", "repo-b"),
+		filepath.Join(root, "repo-a"),
+		filepath.Join(root, "worktree"),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("git candidate discovery mismatch\n got: %v\nwant: %v", got, want)
+	}
+}
+
 func TestDiscover_PrunesHeavyDirs(t *testing.T) {
 	root := t.TempDir()
 	// A real project, plus .agent-mail-looking dirs buried inside pruned trees

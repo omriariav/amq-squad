@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,13 +59,14 @@ func runTeamResume(args []string) error {
 	modelFlag := fs.String("model", "", "per-persona model overrides for fresh members, e.g. cto=gpt-5,fullstack=sonnet")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for fresh members, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for fresh members, e.g. '--chrome'")
+	projectFlag := fs.String("project", "", "project/team-home directory to plan (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to plan (default: default profile)")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team resume - plan how to bring the team back
 
 Usage:
-  amq-squad team resume [--profile NAME] [--session name] [--fresh]
+  amq-squad team resume [--project DIR] [--profile NAME] [--session name] [--fresh]
                         [--restore-existing] [--dry-run] [--force-duplicate]
                         [--no-bootstrap] [--trust sandboxed|trusted]
                         [--model role=model,...]
@@ -73,6 +75,7 @@ Usage:
 Inspects .amq-squad/team.json plus local launch history and live-agent
 signals (wake locks, agent PID liveness, presence) to print a per-member
 plan plus copy-pasteable commands.
+--project targets another team-home without changing directories.
 
 Per-member action labels:
   live          Matching agent appears live; command suppressed unless
@@ -98,6 +101,7 @@ use 'amq-squad up' to open them in tmux from team intent.
 
 Examples:
   amq-squad team resume
+  amq-squad team resume --project ~/Code/app --session issue-96
   amq-squad team resume --fresh --session issue-99
 `)
 	}
@@ -121,11 +125,15 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	if !team.ExistsProfile(cwd, profile) {
-		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
+	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
+	if !team.ExistsProfile(projectDir, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
 	return executeResume(resumeExecution{
-		ProjectDir:       cwd,
+		ProjectDir:       projectDir,
 		RequestedSession: *sessionFlag,
 		ExplicitSession:  flagWasSet(fs, "session"),
 		Mode:             mode,
@@ -162,6 +170,8 @@ type resumeExecution struct {
 	// planner can present its output as team resume, resume, or fork without
 	// duplicating logic.
 	Style resumePrinterStyle
+	// Out receives the plan when Exec is disabled. Nil falls back to stdout.
+	Out io.Writer
 	// Exec opts in to the terminal-backend execution path: instead of
 	// printing the per-member plan, the planner converts restore/launch-fresh
 	// commands into a teamLaunchPlan and runs it through the chosen backend.
@@ -320,7 +330,11 @@ func executeResume(r resumeExecution) error {
 
 	style := r.Style
 	style.Profile = r.Profile
-	printResumePlan(t, workstream, r.Mode, plans, r.DryRun, r.Force, style)
+	out := r.Out
+	if out == nil {
+		out = os.Stdout
+	}
+	writeResumePlan(out, t, workstream, r.Mode, plans, r.DryRun, r.Force, style)
 	return nil
 }
 
@@ -745,21 +759,25 @@ func freshLaunchCommand(in memberPlanInput) string {
 }
 
 func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []resumePlan, dryRun, force bool, style resumePrinterStyle) {
-	fmt.Printf("# amq-squad %s\n", style.label())
-	fmt.Println("#")
-	fmt.Printf("# team-home:  %s\n", t.Project)
+	writeResumePlan(os.Stdout, t, workstream, mode, plans, dryRun, force, style)
+}
+
+func writeResumePlan(out io.Writer, t team.Team, workstream string, mode resumeMode, plans []resumePlan, dryRun, force bool, style resumePrinterStyle) {
+	fmt.Fprintf(out, "# amq-squad %s\n", style.label())
+	fmt.Fprintln(out, "#")
+	fmt.Fprintf(out, "# team-home:  %s\n", t.Project)
 	if style.ForkFrom != "" {
-		fmt.Printf("# from:       %s\n", style.ForkFrom)
+		fmt.Fprintf(out, "# from:       %s\n", style.ForkFrom)
 	}
 	if style.ForkTo != "" {
-		fmt.Printf("# to:         %s\n", style.ForkTo)
+		fmt.Fprintf(out, "# to:         %s\n", style.ForkTo)
 	}
-	fmt.Printf("# workstream: %s\n", workstream)
-	fmt.Printf("# mode:       %s\n", describeResumeMode(mode, dryRun))
-	fmt.Printf("# members:    %d\n", len(plans))
-	fmt.Println()
+	fmt.Fprintf(out, "# workstream: %s\n", workstream)
+	fmt.Fprintf(out, "# mode:       %s\n", describeResumeMode(mode, dryRun))
+	fmt.Fprintf(out, "# members:    %d\n", len(plans))
+	fmt.Fprintln(out)
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROLE\tACTION\tWAKE\tNOTE")
 	for _, p := range plans {
 		note := p.Note
@@ -769,16 +787,16 @@ func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []re
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.Role, p.Action, p.Wake, note)
 	}
 	w.Flush()
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	for _, p := range plans {
 		if p.Command == "" {
-			fmt.Printf("# %s (%s) - no command (use --force-duplicate to override)\n", p.Role, p.Action)
+			fmt.Fprintf(out, "# %s (%s) - no command (use --force-duplicate to override)\n", p.Role, p.Action)
 			continue
 		}
-		fmt.Printf("# %s (%s)\n", p.Role, p.Action)
-		fmt.Println(p.Command)
-		fmt.Println()
+		fmt.Fprintf(out, "# %s (%s)\n", p.Role, p.Action)
+		fmt.Fprintln(out, p.Command)
+		fmt.Fprintln(out)
 	}
 
 	// The team-launch alternative replays from team intent (always fresh
@@ -797,8 +815,8 @@ func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []re
 	}
 	verb := style.footerVerb()
 	if !allFresh {
-		fmt.Printf("# Note: '%s' would re-emit fresh commands from team intent,\n", verb)
-		fmt.Println("# which is not equivalent to the per-member plan above.")
+		fmt.Fprintf(out, "# Note: '%s' would re-emit fresh commands from team intent,\n", verb)
+		fmt.Fprintln(out, "# which is not equivalent to the per-member plan above.")
 		return
 	}
 	profileSuffix := ""
@@ -810,19 +828,19 @@ func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []re
 		if verb == "up" {
 			profileSuffix = " --profile " + shellQuote(style.Profile)
 		} else {
-			fmt.Printf("# Note: '%s' has no --profile flag yet; rerun the per-member commands above to bring up the %s profile.\n", verb, style.Profile)
+			fmt.Fprintf(out, "# Note: '%s' has no --profile flag yet; rerun the per-member commands above to bring up the %s profile.\n", verb, style.Profile)
 			return
 		}
 	}
-	fmt.Println("# Alternative: open the whole team in tmux from team intent")
+	fmt.Fprintln(out, "# Alternative: open the whole team in tmux from team intent")
 	suffix := ""
 	if force {
 		suffix = " --force-duplicate"
 	}
 	if mode == resumeModeFresh {
-		fmt.Printf("# %s %s --fresh --session %s%s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix, profileSuffix)
+		fmt.Fprintf(out, "# %s %s --fresh --session %s%s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix, profileSuffix)
 	} else {
-		fmt.Printf("# %s %s --session %s%s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix, profileSuffix)
+		fmt.Fprintf(out, "# %s %s --session %s%s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix, profileSuffix)
 	}
 }
 

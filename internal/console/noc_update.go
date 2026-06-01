@@ -106,9 +106,10 @@ func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.input != nil {
 		return m.handleInputKey(msg)
 	}
-	// The command palette (PR18) is a read-only overlay; like the control overlays
-	// it takes the key first so typing/selection never leaks into the nav keymap.
-	// Its only side effect is the existing gated tmux jump/focus.
+	// The command palette (PR18) is an overlay; like the control overlays it takes
+	// the key first so typing/selection never leaks into the nav keymap. Jump and
+	// focus choices use the existing gated tmux movement; create choices open the
+	// same preview-gated T/N editors.
 	if m.palette != nil {
 		return m.handlePaletteKey(msg)
 	}
@@ -125,6 +126,9 @@ func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	if m.readResult != nil || m.drainResult != nil || m.inboxResult != nil || m.dlqResult != nil || m.dlqReadResult != nil || m.dlqRetryResult != nil || m.dlqPurgeResult != nil || m.dlqRetryAllResult != nil || m.receiptsResult != nil || m.receiptsWaitResult != nil || m.messageWaitResult != nil || m.amqCleanupResult != nil || m.threadContextResult != nil || m.amqOpsResult != nil || m.amqWhoResult != nil || m.amqEnvResult != nil || m.presenceResult != nil || m.projectDoctorResult != nil || m.projectHistoryResult != nil || m.teamRulesResult != nil || m.projectResumePlanResult != nil || m.forkPlanResult != nil || m.briefResult != nil || m.statusResult != nil || m.threadsResult != nil || m.roleMarket != nil || m.teamProfiles != nil {
+		return m.handleResultKey(msg.String())
+	}
 
 	m.jumpNote = ""
 	m.actNote = ""
@@ -138,9 +142,9 @@ func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.alertBanner = ""
 
 	// Control keys are ADDITIVE and checked before the read-only keymap: a key
-	// the control layer owns (a/x/m/b/S/R/o) opens a preview/confirm flow (or,
-	// for 'o', a read-only focus) and is consumed here; any other key falls
-	// through to the unchanged nav/peek/filter/jump keymap below.
+	// the control layer owns (i/v/d/a/r/x/m/b/S/R/X/N/T/o) opens a read or
+	// preview/confirm flow. For 'o' it opens a read-only focus. Any other key
+	// falls through to the unchanged nav/peek/filter/jump keymap below.
 	if m.controlEnabled() {
 		if cmd, handled := m.handleControlKey(msg.String()); handled {
 			return m, cmd
@@ -154,8 +158,8 @@ func (m *NOCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = true
 		return m, nil
 	case "p", "ctrl+p":
-		// Open the command palette: fuzzy-jump to any agent / team across all
-		// discovered projects in ~2 keystrokes. Read-only (gated tmux jump/focus).
+		// Open the command palette: fuzzy-find projects, actions, teams, and
+		// agents across all discovered projects.
 		return m, m.openPalette()
 	case "A":
 		// Toggle needs-you alerts (bell + banner). Mirrors the --no-bell flag.
@@ -254,6 +258,7 @@ func (m *NOCModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *NOCModel) moveCursor(delta int) {
 	ns := m.nodes()
 	if len(ns) == 0 {
+		m.scroll = 0
 		return
 	}
 	m.cursor += delta
@@ -263,6 +268,7 @@ func (m *NOCModel) moveCursor(delta int) {
 	if m.cursor >= len(ns) {
 		m.cursor = len(ns) - 1
 	}
+	m.ensureCursorVisibleFor(ns)
 	m.rememberSelection()
 }
 
@@ -320,6 +326,8 @@ func (m *NOCModel) enter() (tea.Model, tea.Cmd) {
 // state explains its own situation instead of the misleading flat "not running".
 func noJumpReason(l state.Liveness) string {
 	switch l {
+	case state.LivenessWakeLive:
+		return "wake helper is live, but no verified agent process or pane is available to jump to"
 	case state.LivenessDeadMailboxLive:
 		return "agent process is gone but its mailbox is still active (dead-mailbox-live) — nothing live to attach to"
 	case state.LivenessStale:
@@ -351,6 +359,7 @@ func (m *NOCModel) collapseOrAscend() (tea.Model, tea.Cmd) {
 	for i := m.cursor - 1; i >= 0; i-- {
 		if ns[i].depth < n.depth {
 			m.cursor = i
+			m.ensureCursorVisibleFor(ns)
 			m.rememberSelection()
 			return m, nil
 		}
@@ -402,7 +411,7 @@ func (m *NOCModel) performAgentJump(agent state.Agent, session, projectDir, hand
 	}
 	if err := m.switchTo(target); err != nil {
 		if nit, isNIT := err.(*noc.NotInTmuxError); isNIT {
-			m.jumpNote = "not inside tmux — run: " + nit.Command
+			m.jumpNote = "not inside tmux - run: " + nit.Command
 			return
 		}
 		m.jumpNote = "jump: " + err.Error() + " (try: " + noc.SuggestJump(target) + ")"
@@ -440,7 +449,7 @@ func (m *NOCModel) handleFocusConfirmKey(key string) (tea.Model, tea.Cmd) {
 	default:
 		// Decline: clear the overlay, focus NOTHING.
 		m.jumpPending = nil
-		m.jumpNote = "cancelled — nothing focused"
+		m.jumpNote = "cancelled - nothing focused"
 		return m, nil
 	}
 }

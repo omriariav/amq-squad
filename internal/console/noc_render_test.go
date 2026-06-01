@@ -42,6 +42,17 @@ func nocSeedPresence(t *testing.T, agentDir, handle, status string, lastSeen tim
 	}
 }
 
+func nocSeedTeamProfile(t *testing.T, projectDir string) {
+	t.Helper()
+	dir := filepath.Join(projectDir, noc.SquadDirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir squad dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "team.json"), []byte(`{"schema":2}`), 0o600); err != nil {
+		t.Fatalf("write team profile: %v", err)
+	}
+}
+
 // nocSeedQuestionToOperator drops a needs-you question (addressed to "user") into
 // a discovered agent's inbox/new, so the coordination model flags the thread.
 func nocSeedQuestionToOperator(t *testing.T, agentDir, from string, created time.Time) {
@@ -73,14 +84,17 @@ func seedNOCFixture(t *testing.T) (root string, probe state.Probe) {
 	root = t.TempDir()
 
 	alpha := filepath.Join(root, "alpha")
+	nocSeedTeamProfile(t, alpha)
 	aDir := nocSeedAgent(t, alpha, "main", "cto", launch.Record{Binary: "codex", AgentPID: 4001})
 	nocSeedPresence(t, aDir, "cto", "active", nocTestNow.Add(-10*time.Second))
 
 	beta := filepath.Join(root, "beta")
+	nocSeedTeamProfile(t, beta)
 	bDir := nocSeedAgent(t, beta, "main", "qa", launch.Record{Binary: "claude", AgentPID: 5001})
 	nocSeedQuestionToOperator(t, bDir, "qa", nocTestNow)
 
 	gamma := filepath.Join(root, "gamma")
+	nocSeedTeamProfile(t, gamma)
 	gDir := nocSeedAgent(t, gamma, "main", "dev", launch.Record{Binary: "codex", AgentPID: 6001})
 	nocSeedPresence(t, gDir, "dev", "offline", nocTestNow.Add(-48*time.Hour))
 
@@ -241,8 +255,25 @@ func TestNOCOnce_NoProjectsGuidance(t *testing.T) {
 	if !strings.Contains(out, "No amq-squad projects found") {
 		t.Errorf("empty roots should render guidance, got:\n%s", out)
 	}
+	if !strings.Contains(out, "amq-squad new team --project <team-home>") ||
+		!strings.Contains(out, "amq-squad new session --project <team-home> <name>") {
+		t.Errorf("empty roots guidance should point at create verbs, got:\n%s", out)
+	}
 	if strings.Contains(out, "panic") {
 		t.Errorf("guidance must never look like a crash:\n%s", out)
+	}
+}
+
+func TestNOCOnce_GitCandidateTeamHome(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "candidate")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out := renderNOCOnce(t, root, deterministicNOCProbe(nocTestNow), ColorNone)
+	if !strings.Contains(out, "candidate team-home") {
+		t.Fatalf("git candidate should render as a team-home candidate, got:\n%s", out)
 	}
 }
 

@@ -4,7 +4,7 @@
 //
 // Syntax (case-insensitive), evaluated against a project / session / agent:
 //
-//	needs-you | at-risk | blocked   -> triage class (matches the rolled-up state)
+//	needs-you | gated | at-risk | blocked -> triage class (matches the rolled-up state)
 //	agent:<h>                       -> agent handle prefix/substring
 //	model:<e>                       -> agent engine (claude/codex/...)
 //	project:<p>                     -> project name
@@ -35,14 +35,20 @@ func parseNOCFilter(filter string) []nocFilterClause {
 	for _, tok := range strings.Fields(filter) {
 		low := strings.ToLower(tok)
 		switch low {
-		case "needs-you", "needsyou":
+		case "needs-you", "needsyou", "needs-user", "needsuser", "needs_user":
 			clauses = append(clauses, nocFilterClause{key: "triage", val: "needs-you"})
+			continue
+		case "gated":
+			clauses = append(clauses, nocFilterClause{key: "triage", val: "gated"})
 			continue
 		case "at-risk", "atrisk":
 			clauses = append(clauses, nocFilterClause{key: "triage", val: "at-risk"})
 			continue
 		case "blocked":
 			clauses = append(clauses, nocFilterClause{key: "triage", val: "blocked"})
+			continue
+		case "stale-blocked", "staleblocked", "stale_blocked":
+			clauses = append(clauses, nocFilterClause{key: "triage", val: "stale-blocked"})
 			continue
 		}
 		if i := strings.IndexByte(tok, ':'); i >= 0 {
@@ -59,9 +65,9 @@ func parseNOCFilter(filter string) []nocFilterClause {
 	return clauses
 }
 
-// projectMatchesNOCFilter keeps a project if it (or any of its sessions/agents)
+// ProjectMatchesNOCFilter keeps a project if it (or any of its sessions/agents)
 // satisfies every clause. An empty filter keeps everything.
-func projectMatchesNOCFilter(ps noc.ProjectSnapshot, filter string) bool {
+func ProjectMatchesNOCFilter(ps noc.ProjectSnapshot, filter string) bool {
 	clauses := parseNOCFilter(filter)
 	if len(clauses) == 0 {
 		return true
@@ -93,9 +99,9 @@ func projectSatisfies(ps noc.ProjectSnapshot, c nocFilterClause) bool {
 	}
 }
 
-// sessionMatchesNOCFilter keeps a session if it (or any agent) satisfies every
+// SessionMatchesNOCFilter keeps a session if it (or any agent) satisfies every
 // clause.
-func sessionMatchesNOCFilter(sess state.Session, filter string) bool {
+func SessionMatchesNOCFilter(sess state.Session, filter string) bool {
 	clauses := parseNOCFilter(filter)
 	if len(clauses) == 0 {
 		return true
@@ -106,6 +112,29 @@ func sessionMatchesNOCFilter(sess state.Session, filter string) bool {
 		}
 	}
 	return true
+}
+
+// SessionMatchesNOCProjectFilter keeps a session when it satisfies every clause
+// in the context of its parent project. Bare project-name matches scope the
+// project and should not hide all of its child sessions.
+func SessionMatchesNOCProjectFilter(ps noc.ProjectSnapshot, sess state.Session, filter string) bool {
+	clauses := parseNOCFilter(filter)
+	if len(clauses) == 0 {
+		return true
+	}
+	for _, c := range clauses {
+		if !sessionSatisfiesInProject(ps, sess, c) {
+			return false
+		}
+	}
+	return true
+}
+
+func sessionSatisfiesInProject(ps noc.ProjectSnapshot, sess state.Session, c nocFilterClause) bool {
+	if c.key == "" && strings.Contains(strings.ToLower(ps.Project), c.val) {
+		return true
+	}
+	return sessionSatisfies(sess, c)
 }
 
 func sessionSatisfies(sess state.Session, c nocFilterClause) bool {
@@ -137,8 +166,8 @@ func sessionSatisfies(sess state.Session, c nocFilterClause) bool {
 	}
 }
 
-// agentMatchesNOCFilter keeps an agent if it satisfies every clause.
-func agentMatchesNOCFilter(ag state.Agent, filter string) bool {
+// AgentMatchesNOCFilter keeps an agent if it satisfies every clause.
+func AgentMatchesNOCFilter(ag state.Agent, filter string) bool {
 	clauses := parseNOCFilter(filter)
 	if len(clauses) == 0 {
 		return true
@@ -149,6 +178,34 @@ func agentMatchesNOCFilter(ag state.Agent, filter string) bool {
 		}
 	}
 	return true
+}
+
+// AgentMatchesNOCProjectFilter keeps an agent when it satisfies every clause in
+// the context of its project and session. Bare project/session matches scope the
+// parent row and should pass all children underneath that parent.
+func AgentMatchesNOCProjectFilter(ps noc.ProjectSnapshot, sess state.Session, ag state.Agent, filter string) bool {
+	clauses := parseNOCFilter(filter)
+	if len(clauses) == 0 {
+		return true
+	}
+	for _, c := range clauses {
+		if !agentSatisfiesInProjectSession(ps, sess, ag, c) {
+			return false
+		}
+	}
+	return true
+}
+
+func agentSatisfiesInProjectSession(ps noc.ProjectSnapshot, sess state.Session, ag state.Agent, c nocFilterClause) bool {
+	if c.key == "" {
+		if strings.Contains(strings.ToLower(ps.Project), c.val) {
+			return true
+		}
+		if strings.Contains(strings.ToLower(sess.Name), c.val) {
+			return true
+		}
+	}
+	return agentSatisfies(ag, c)
 }
 
 func agentSatisfies(ag state.Agent, c nocFilterClause) bool {
@@ -179,6 +236,10 @@ func triageMatchesRollup(class string, r state.TriageRollup) bool {
 		return r.AtRisk > 0
 	case "blocked":
 		return r.Blocked > 0
+	case "gated":
+		return r.Gated > 0
+	case "stale-blocked":
+		return r.BlockedStale > 0
 	}
 	return false
 }

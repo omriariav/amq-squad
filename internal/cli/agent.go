@@ -32,7 +32,7 @@ const agentUsage = `amq-squad agent - launch or resume a single agent
 
 Usage:
   amq-squad agent up <binary> [launch options]
-  amq-squad agent resume <role> [restore options]
+  amq-squad agent resume <role> [--project dir1,dir2,...] [restore options]
 
 agent up launches a single agent with role metadata.
 agent resume re-launches a saved agent by role from local launch history.
@@ -50,12 +50,13 @@ func runAgentUp(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad agent up - launch a single agent with role metadata
 
 Usage:
-  amq-squad agent up <binary> [launch options] [-- <binary-flags>]
+  amq-squad agent up <binary> [--project DIR] [launch options] [-- <binary-flags>]
 
 Run 'amq-squad agent up <binary> --help' for the full flag surface.
 
 Examples:
   amq-squad agent up codex --role cto --session issue-96
+  amq-squad agent up codex --project ~/Code/app --session issue-96
   amq-squad agent up claude --no-bootstrap
 `)
 		return nil
@@ -191,9 +192,9 @@ func launchKnownFlag(name string) string {
 	case "--codex-args", "--claude-args", "--launcher-args",
 		"-codex-args", "-claude-args", "-launcher-args":
 		return "string-accepts-dash"
-	case "--role", "--session", "--me", "--root", "--team-home", "--team-profile",
+	case "--role", "--session", "--me", "--root", "--project", "--team-home", "--team-profile",
 		"--conversation", "--conversation-id", "--trust", "--model", "--launcher",
-		"-role", "-session", "-me", "-root", "-team-home", "-team-profile",
+		"-role", "-session", "-me", "-root", "-project", "-team-home", "-team-profile",
 		"-conversation", "-conversation-id", "-trust", "-model", "-launcher":
 		return "string"
 	case "--team-workstream", "--no-bootstrap", "--no-default-args",
@@ -219,14 +220,17 @@ func runAgentResume(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad agent resume - re-launch a saved agent by role
 
 Usage:
-  amq-squad agent resume <role> [restore options]
+  amq-squad agent resume <role> [--project dir1,dir2,...] [restore options]
 
 Re-launches a saved agent from local launch history. Exactly one saved
 record must match; on match, amq-squad changes to that record's cwd and
 execs the saved launch through 'amq coop exec'.
+Default scope is the current working directory. Pass --project to scan one
+or more other team-homes without changing directories.
 
 Examples:
   amq-squad agent resume cto
+  amq-squad agent resume cto --project ~/Code/app
   amq-squad agent resume fullstack --session issue-96
 `)
 		if len(args) == 0 {

@@ -126,6 +126,35 @@ func TestRunTeamResumeAllFreshWhenNoRecords(t *testing.T) {
 	}
 }
 
+func TestRunTeamResumeProjectTargetsOtherDir(t *testing.T) {
+	project := t.TempDir()
+	other := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, other)
+
+	if err := team.Write(project, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runTeamResume([]string{"--project", project})
+	})
+	if err != nil {
+		t.Fatalf("team resume --project: %v", err)
+	}
+	if !strings.Contains(stdout, "cd "+shellQuote(project)) {
+		t.Errorf("team resume --project should emit commands for requested project:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "cd "+shellQuote(other)) {
+		t.Errorf("team resume --project should not emit commands for current cwd:\n%s", stdout)
+	}
+}
+
 func TestRunTeamResumeMixedTeam(t *testing.T) {
 	dir := t.TempDir()
 	base := setupFakeAMQSessionRoots(t)
@@ -788,6 +817,8 @@ func TestRunTeamResumeHelpListsActions(t *testing.T) {
 		"blocked",
 		"--restore-existing",
 		"--fresh",
+		"--project DIR",
+		"amq-squad team resume --project ~/Code/app",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("team resume --help missing %q in:\n%s", want, stderr)

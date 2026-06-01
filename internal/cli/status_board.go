@@ -20,9 +20,9 @@ import (
 // the other way around.
 //
 //   - running:  at least one agent is alive and none are at risk.
-//   - degraded: at least one agent is alive but another is dead-mailbox-live
-//     (zombie heartbeat) or stale — the session is up but unhealthy.
-//   - stopped:  no agent is alive (all dead / stale / missing).
+//   - degraded: at least one agent is alive, wake-live, or dead-mailbox-live
+//     while another signal is incomplete; the session is up but unhealthy.
+//   - stopped:  no agent is alive or wake-live (all dead / stale / missing).
 type boardState string
 
 const (
@@ -58,8 +58,9 @@ const (
 
 // sessionBoardRow is one session's board line in both the human table and the
 // JSON envelope. AgentsTotal/AgentsAlive back the "N/M alive" health column;
-// AtRisk flags the dead-mailbox-live (zombie heartbeat) case so an operator
-// sees a live session that is actually unhealthy.
+// WakeLive flags verified wake helpers without verified agent PIDs. AtRisk
+// flags the dead-mailbox-live case so an operator sees a live session that is
+// actually unhealthy.
 //
 // briefKind is an unexported, human-only field (no JSON tag): it drives the
 // distinct "(stub brief)" / "(no brief)" labels in the table without changing
@@ -70,6 +71,7 @@ type sessionBoardRow struct {
 	State        boardState `json:"state"`
 	AgentsTotal  int        `json:"agents_total"`
 	AgentsAlive  int        `json:"agents_alive"`
+	WakeLive     int        `json:"wake_live,omitempty"`
 	AtRisk       int        `json:"at_risk"`
 	Brief        string     `json:"brief,omitempty"`
 	LastActivity time.Time  `json:"last_activity,omitempty"`
@@ -184,6 +186,8 @@ func boardRowFor(projectDir string, sess state.Session) sessionBoardRow {
 		switch a.Liveness {
 		case state.LivenessAlive:
 			row.AgentsAlive++
+		case state.LivenessWakeLive:
+			row.WakeLive++
 		case state.LivenessDeadMailboxLive:
 			row.AtRisk++
 		}
@@ -192,7 +196,7 @@ func boardRowFor(projectDir string, sess state.Session) sessionBoardRow {
 		}
 	}
 	row.LastActivity = latest
-	row.State = rollupBoardState(row.AgentsAlive, row.AtRisk, row.AgentsTotal)
+	row.State = rollupBoardState(row.AgentsAlive, row.WakeLive, row.AtRisk, row.AgentsTotal)
 	row.Brief, row.briefKind = classifyBrief(projectDir, sess.Name)
 	return row
 }
@@ -200,9 +204,9 @@ func boardRowFor(projectDir string, sess state.Session) sessionBoardRow {
 // rollupBoardState maps an alive/at-risk/total triple to the session state.
 // at-risk (dead-mailbox-live) outranks a clean running roll-up: a session with
 // a zombie heartbeat is degraded even if some agents are genuinely alive.
-func rollupBoardState(alive, atRisk, total int) boardState {
+func rollupBoardState(alive, wakeLive, atRisk, total int) boardState {
 	switch {
-	case atRisk > 0:
+	case atRisk > 0 || wakeLive > 0:
 		return boardStateDegraded
 	case alive == 0:
 		return boardStateStopped
@@ -339,7 +343,7 @@ func renderBoardTable(out io.Writer, baseRoot string, rows []sessionBoardRow, no
 // the triage signal is actually defined. It is intentionally omitted now — a
 // perpetually-0 "needs you" would be a dishonest number.
 func boardSummaryLine(baseRoot string, rows []sessionBoardRow) string {
-	var running, degraded, atRisk int
+	var running, degraded, wakeLive, atRisk int
 	for _, r := range rows {
 		switch r.State {
 		case boardStateRunning:
@@ -347,11 +351,15 @@ func boardSummaryLine(baseRoot string, rows []sessionBoardRow) string {
 		case boardStateDegraded:
 			degraded++
 		}
+		wakeLive += r.WakeLive
 		atRisk += r.AtRisk
 	}
 	summary := fmt.Sprintf("amq-squad · %d %s · %d running · %d degraded · %d at-risk",
 		len(rows), pluralize(len(rows), "session", "sessions"),
 		running, degraded, atRisk)
+	if wakeLive > 0 {
+		summary += fmt.Sprintf(" · %d wake-live", wakeLive)
+	}
 	if !isDefaultBaseRoot(baseRoot) {
 		summary += " · root: " + baseRoot
 	}
@@ -425,8 +433,7 @@ func boardSessionName(name string) string {
 // follows the rolled-up state:
 //
 //   - running:  "N/N alive"
-//   - degraded: "N/M alive" plus a "(k at-risk)" note when any agent is
-//     dead-mailbox-live (a zombie heartbeat behind a dead process)
+//   - degraded: "N/M alive" plus notes for wake-live and dead-mailbox-live
 //   - stopped:  "stopped" when there are no agents to count, else "M agents"
 //     (idle on disk) — never "0/M alive"
 //
@@ -441,6 +448,9 @@ func boardAgentsCell(r sessionBoardRow) string {
 	cell := fmt.Sprintf("%d/%d alive", r.AgentsAlive, r.AgentsTotal)
 	if r.AtRisk > 0 {
 		cell += fmt.Sprintf(" (%d at-risk)", r.AtRisk)
+	}
+	if r.WakeLive > 0 {
+		cell += fmt.Sprintf(" (%d wake-live)", r.WakeLive)
 	}
 	return cell
 }

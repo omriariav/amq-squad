@@ -61,12 +61,16 @@ func TestRunCompletionBashContainsRepresentativeTokens(t *testing.T) {
 		"_amq_squad_complete",
 		"complete -F _amq_squad_complete amq-squad",
 		// commands
-		"team", "up", "stop", "down", "status", "history", "resume", "fork",
+		"new", "team", "up", "stop", "down", "status", "history", "resume", "fork",
 		"agent", "completion", "version",
+		// new subcommands
+		"new_subcommands", "profile", "session",
 		// team subcommands
-		"init", "profiles", "sync", "rules",
+		"init", "profiles", "sync", "rules", "delete",
+		// team rules subcommands
+		"show",
 		// high-traffic flags
-		"--profile", "--json", "--dry-run", "--force", "--force-duplicate", "--session",
+		"--profile", "--json", "--actions", "--action", "--action-id", "--target-id", "--scope", "--run-action", "--set", "--commands", "--mutating", "--dry-run", "--force", "--force-duplicate", "--session",
 		// previously missing flags + root short/version forms
 		"--fresh", "--exec", "--handle", "--root", "--conversation-id",
 		"--no-default-args", "--team-workstream", "--personas", "--roles",
@@ -92,9 +96,10 @@ func TestRunCompletionZshContainsRepresentativeTokens(t *testing.T) {
 		"#compdef amq-squad",
 		"_amq_squad",
 		"compdef _amq_squad amq-squad",
-		"'team'", "'up'", "'completion'", "'version'", "'agent'",
-		"'init'", "'profiles'",
-		"'--profile'", "'--json'", "'--dry-run'", "'--force-duplicate'",
+		"'new'", "'team'", "'up'", "'completion'", "'version'", "'agent'",
+		"'profile'", "'session'",
+		"'init'", "'profiles'", "'delete'", "'show'",
+		"'--profile'", "'--json'", "'--actions'", "'--action'", "'--action-id'", "'--target-id'", "'--scope'", "'--run-action'", "'--set'", "'--commands'", "'--mutating'", "'--dry-run'", "'--force-duplicate'",
 		"'--fresh'", "'--exec'", "'--handle'", "'--root'", "'--conversation-id'",
 		"'--no-default-args'", "'--team-workstream'", "'--personas'", "'--roles'",
 		"'--binary'", "'--cwd'", "'-h'", "'--version'", "'-v'",
@@ -117,11 +122,14 @@ func TestRunCompletionFishContainsRepresentativeTokens(t *testing.T) {
 	}
 	for _, want := range []string{
 		"complete -c amq-squad",
-		"-a 'team'", "-a 'up'", "-a 'completion'", "-a 'version'",
+		"-a 'new'", "-a 'team'", "-a 'up'", "-a 'completion'", "-a 'version'",
+		"__fish_seen_subcommand_from new",
+		"-a 'profile'", "-a 'session'",
 		"__fish_seen_subcommand_from team",
-		"-a 'init'", "-a 'profiles'", "-a 'rules'",
+		"-a 'init'", "-a 'profiles'", "-a 'rules'", "-a 'delete'",
 		"__fish_seen_subcommand_from rules",
-		"-l 'profile'", "-l 'json'", "-l 'dry-run'", "-l 'force-duplicate'",
+		"-a 'show'",
+		"-l 'profile'", "-l 'json'", "-l 'actions'", "-l 'action'", "-l 'action-id'", "-l 'target-id'", "-l 'scope'", "-l 'run-action'", "-l 'set'", "-l 'commands'", "-l 'mutating'", "-l 'dry-run'", "-l 'force-duplicate'",
 		"-l 'fresh'", "-l 'exec'", "-l 'handle'", "-l 'root'", "-l 'conversation-id'",
 		"-l 'no-default-args'", "-l 'team-workstream'", "-l 'personas'", "-l 'roles'",
 		"-l 'binary'", "-l 'cwd'", "-l 'version'",
@@ -210,10 +218,15 @@ func TestCompletionRootFlagsOfferedAsFirstToken(t *testing.T) {
 // no longer exists).
 func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 	expected := map[string]bool{
+		"new":        true,
+		"roles":      true,
 		"team":       true,
 		"up":         true,
 		"stop":       true,
 		"down":       true,
+		"brief":      true,
+		"threads":    true,
+		"thread":     true,
 		"status":     true,
 		"console":    true,
 		"noc":        true,

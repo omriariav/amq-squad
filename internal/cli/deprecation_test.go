@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -105,6 +106,44 @@ func TestAgentUpDryRunStillWorks(t *testing.T) {
 	// The removed-verb warning machinery is gone: no deprecation line.
 	if strings.Contains(stderr, "deprecated") {
 		t.Errorf("agent up must not emit any deprecation line:\n%s", stderr)
+	}
+}
+
+func TestAgentUpProjectDryRunTargetsOtherDir(t *testing.T) {
+	withOutputPolicy(t, outputPolicy{})
+	project := t.TempDir()
+	other := t.TempDir()
+	chdir(t, other)
+	expectedCWD, err := canonicalDir(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".agent-mail")
+	script := `#!/bin/sh
+if [ "$1" = "env" ]; then
+  actual=$(pwd)
+  if [ "$actual" != "$AMQ_EXPECT_CWD" ]; then
+    echo "unexpected cwd: $actual" >&2
+    exit 17
+  fi
+  printf '{"root":"%s"}\n' "$AMQ_FAKE_ROOT"
+  exit 0
+fi
+echo "unexpected amq command: $*" >&2
+exit 1
+`
+	setupFakeAMQScript(t, script)
+	t.Setenv("AMQ_EXPECT_CWD", expectedCWD)
+	t.Setenv("AMQ_FAKE_ROOT", root)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runAgentUp([]string{"codex", "--project", project, "--dry-run", "--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("agent up --project --dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "amq coop exec") {
+		t.Errorf("agent up --project --dry-run should print coop exec command, got:\n%s", stdout)
 	}
 }
 

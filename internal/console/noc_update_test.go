@@ -1,6 +1,7 @@
 package console
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -84,6 +85,37 @@ func TestNOCUpdate_MoveCursor(t *testing.T) {
 	}
 }
 
+func TestNOCUpdate_DownKeepsCursorVisibleInTreeWindow(t *testing.T) {
+	m := newLongTreeNOCModel(t, 12, 12)
+	if got := m.bodyHeight(); got != 4 {
+		t.Fatalf("test expects a four-row tree window, got %d", got)
+	}
+	if strings.Contains(m.treeView(), "proj-08") {
+		t.Fatal("test setup should start above proj-08")
+	}
+
+	for i := 0; i < 8; i++ {
+		m, _ = nocPress(m, "down")
+	}
+
+	if m.cursor != 8 {
+		t.Fatalf("cursor = %d, want 8", m.cursor)
+	}
+	if m.scroll != 5 {
+		t.Fatalf("scroll = %d, want 5", m.scroll)
+	}
+	view := m.treeView()
+	if !strings.Contains(view, "proj-08") {
+		t.Fatalf("selected row should be visible after scrolling down:\n%s", view)
+	}
+	if strings.Contains(view, "proj-00") {
+		t.Fatalf("top rows should scroll out of view:\n%s", view)
+	}
+	if got := len(strings.Split(view, "\n")); got != 4 {
+		t.Fatalf("tree window rendered %d rows, want 4:\n%s", got, view)
+	}
+}
+
 func TestNOCUpdate_CollapseAndExpand(t *testing.T) {
 	m := newSeededNOCModel(t)
 	// Cursor 0 is the most-urgent project (beta, needs-you), expanded by default,
@@ -111,6 +143,28 @@ func TestNOCUpdate_CollapseAndExpand(t *testing.T) {
 	if got := len(m.nodes()); got != before {
 		t.Errorf("re-expand should restore node count: before=%d after=%d", before, got)
 	}
+}
+
+func newLongTreeNOCModel(t *testing.T, count, height int) *NOCModel {
+	t.Helper()
+	root := "/fake/root"
+	projects := make([]noc.ProjectSnapshot, 0, count)
+	for i := 0; i < count; i++ {
+		name := fmt.Sprintf("proj-%02d", i)
+		projects = append(projects, noc.ProjectSnapshot{
+			Project:   name,
+			Dir:       root + "/" + name,
+			Candidate: true,
+		})
+	}
+	ms := noc.MultiSnapshot{Roots: []string{root}, Projects: projects}
+	m := newNOCModel(NOCRebuildConfig{Roots: []string{root}, Depth: noc.DefaultDepth})
+	m.colorMode = ColorNone
+	m.th = newNOCTheme(ColorNone)
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: height})
+	m2 := mm.(*NOCModel)
+	mm, _ = m2.Update(nocSnapshotMsg{ms: ms})
+	return mm.(*NOCModel)
 }
 
 func TestNOCUpdate_DrillIntoChild(t *testing.T) {
@@ -415,6 +469,32 @@ func TestNOCUpdate_FilterRouting(t *testing.T) {
 	m, _ = nocPress(m, "esc")
 	if m.filter != "" {
 		t.Errorf("esc should clear the filter, got %q", m.filter)
+	}
+}
+
+func TestNOCFilterBareProjectKeepsChildRows(t *testing.T) {
+	m := newSeededNOCModel(t)
+	m.filter = "beta"
+
+	var projects, sessions, agents []string
+	for _, n := range m.nodes() {
+		switch n.kind {
+		case nodeProject:
+			projects = append(projects, n.label)
+		case nodeSession:
+			sessions = append(sessions, n.session.Name)
+		case nodeAgent:
+			agents = append(agents, n.agent.Handle)
+		}
+	}
+	if strings.Join(projects, ",") != "beta" {
+		t.Fatalf("project rows = %v, want beta", projects)
+	}
+	if len(sessions) != 1 || sessions[0] != "main" {
+		t.Fatalf("bare project filter should keep beta session, got %v", sessions)
+	}
+	if len(agents) != 1 || agents[0] != "qa" {
+		t.Fatalf("bare project filter should keep beta agent, got %v", agents)
 	}
 }
 

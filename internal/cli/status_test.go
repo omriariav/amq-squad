@@ -64,6 +64,49 @@ func TestRunStatusBoardNoTeamDegradesGracefully(t *testing.T) {
 	}
 }
 
+func TestRunStatusProjectTargetsSessionOtherDir(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	project := t.TempDir()
+	other := t.TempDir()
+	if err := team.Write(project, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-99"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, other)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runStatus([]string{"--project", project, "--session", "issue-99", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("status --project --session: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, stdout)
+	if env.Data.TeamHome != project {
+		t.Fatalf("status --project team_home = %q, want %s", env.Data.TeamHome, project)
+	}
+	if env.Data.Workstream != "issue-99" {
+		t.Fatalf("status --project workstream = %q, want issue-99", env.Data.Workstream)
+	}
+}
+
+func TestRunStatusProjectValidation(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	_, _, err := captureOutput(t, func() error {
+		return runStatus([]string{"--project", missing})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--project") {
+		t.Fatalf("status --project missing error = %v, want --project error", err)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runStatus([]string{"--project", ""})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--project requires a directory") {
+		t.Fatalf("status empty --project error = %v, want directory guidance", err)
+	}
+}
+
 func TestExecuteStatusLiveAgent(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
@@ -313,14 +356,14 @@ func TestExecuteStatusPresenceHandleMismatchIsStaleNotLive(t *testing.T) {
 	}
 }
 
-func TestExecuteStatusWakeLockOnlyStale(t *testing.T) {
+func TestExecuteStatusWakeLockOnlyWakeLive(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
 	})
-	// Seed a wake.lock with a live PID but no launch record. Status must
-	// classify this as stale (live signal present but no verified agent),
-	// never as live.
+	// Seed a wake.lock with a live PID but no launch record. Status must not
+	// flatten this into stale; the wake helper is usable enough for resume and
+	// AMQ delivery.
 	agentDir := filepath.Join(base, "issue-96", "agents", "cto")
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -343,8 +386,30 @@ func TestExecuteStatusWakeLockOnlyStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !strings.Contains(out, "stale") {
-		t.Errorf("wake-only must be stale, never live:\n%s", out)
+	if !strings.Contains(out, "wake-live") {
+		t.Errorf("wake-only should report wake-live:\n%s", out)
+	}
+	if strings.Contains(out, "\tstale\t") || strings.Contains(out, " stale ") {
+		t.Errorf("verified wake must not render as stale:\n%s", out)
+	}
+
+	jsonOut, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{4321: true}, map[int]bool{4321: true}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status json: %v\n%s", err, jsonOut)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, jsonOut)
+	if len(env.Data.Records) != 1 {
+		t.Fatalf("records = %+v, want one", env.Data.Records)
+	}
+	row := env.Data.Records[0]
+	if row.Status != statusStateWakeLive || !row.Signals.WakeAlive {
+		t.Fatalf("wake-live json row = %+v, want status wake-live with wake_alive", row)
 	}
 }
 

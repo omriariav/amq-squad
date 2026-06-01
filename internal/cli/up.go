@@ -13,6 +13,14 @@ import (
 )
 
 func runUp(args []string) error {
+	project, rest, err := peelProjectFlag(args)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(project) != "" {
+		return runInProject(project, func() error { return runUp(rest) })
+	}
+
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	dryRun := fs.Bool("dry-run", false, "print the launch plan (one launch command per member) instead of bringing the team up")
 	seedFrom := fs.String("seed-from", "", "seed the active brief from a deterministic source: file:<path>, issue:<n>, or gh:owner/repo#<n>")
@@ -28,7 +36,7 @@ func runUp(args []string) error {
 		fmt.Fprintf(os.Stderr, `amq-squad up - bring this project's team up on a NEW workstream
 
 Usage:
-  amq-squad up [<session>] [--profile NAME] [--session workstream]
+  amq-squad up [<session>] [--project DIR] [--profile NAME] [--session workstream]
     [--reset [--yes|-y] [--force]]
     [--terminal tmux] [--target current-window|new-session]
     [--layout vertical|horizontal|tiled]
@@ -42,6 +50,7 @@ up means NEW work. It REFUSES by default when the target session already
 exists (its AMQ root holds mailbox/agent state, or a member has a restorable
 launch record). To continue an existing session use 'amq-squad resume'; to
 start it over use 'amq-squad up --reset'; or pick a new name.
+--project targets another team-home without changing directories.
 
 The session name comes from the <session> positional or --session (passing
 both is an error). With neither, it is inferred from team members, the
@@ -72,11 +81,13 @@ Supported terminal backends: %s
 
 Examples:
   amq-squad up issue-101
+  amq-squad up --project ~/Code/app issue-101
   amq-squad up --reset issue-101 --yes
   amq-squad up --dry-run --no-bootstrap
   amq-squad up --dry-run --seed-from issue:31
 `, strings.Join(registeredTeamLaunchTerminals(), ", "))
 	}
+	args = allowInterspersedFlags(fs, args)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -128,7 +139,7 @@ Examples:
 		return fmt.Errorf("getwd: %w", err)
 	}
 	if !team.ExistsProfile(cwd, profile) {
-		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
 
 	// Resolve --seed-from up front so source-shape failures (bad ref,
@@ -279,13 +290,13 @@ var (
 	resetConfirmOverride io.Reader
 )
 
-// profileInitHint returns the suffix to suggest on a `team init` command
-// when reporting a missing-team error for a named profile.
-func profileInitHint(profile string) string {
+// profileInitCommand returns the creation command to suggest when reporting a
+// missing team profile.
+func profileInitCommand(profile string) string {
 	if profile == "" || profile == team.DefaultProfile {
-		return ""
+		return "amq-squad new team"
 	}
-	return " --profile " + profile
+	return "amq-squad new profile " + profile
 }
 
 // briefCandidate is the kind="brief_candidate" payload emitted by

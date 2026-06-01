@@ -9,6 +9,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/console"
 	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // captureConsole drives executeConsole with a captured RunConsole seam so the
@@ -86,6 +87,47 @@ func TestConsoleSessionFlagPresetsFilter(t *testing.T) {
 	}
 	if cfg.InitialFilter != "session:issue-96" {
 		t.Errorf("--session should preset InitialFilter to session:issue-96, got %q", cfg.InitialFilter)
+	}
+}
+
+func TestConsoleFilterFlagPresetsFilter(t *testing.T) {
+	cfg, called, _, err := captureConsole(t, consoleExecution{
+		ProjectDir:  "/proj",
+		Filter:      "needs-you",
+		Once:        true,
+		StdoutIsTTY: false,
+		TeamExists:  func(string, string) bool { return true },
+		ResolveBase: func(string) (string, error) { return "/base", nil },
+	})
+	if err != nil {
+		t.Fatalf("executeConsole: %v", err)
+	}
+	if !called {
+		t.Fatal("RunConsole should have been called")
+	}
+	if cfg.InitialFilter != "needs-you" {
+		t.Errorf("--filter should preset InitialFilter to needs-you, got %q", cfg.InitialFilter)
+	}
+}
+
+func TestConsoleRejectsSessionWithFilter(t *testing.T) {
+	_, _, _, err := captureConsole(t, consoleExecution{
+		ProjectDir:  "/proj",
+		Session:     "issue-96",
+		Filter:      "needs-you",
+		Once:        true,
+		StdoutIsTTY: false,
+		TeamExists:  func(string, string) bool { return true },
+		ResolveBase: func(string) (string, error) { return "/base", nil },
+	})
+	if err == nil {
+		t.Fatal("executeConsole should reject --session with --filter")
+	}
+	if _, ok := err.(UsageError); !ok {
+		t.Fatalf("want UsageError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "--session cannot be used with --filter") {
+		t.Fatalf("unexpected conflict error: %v", err)
 	}
 }
 
@@ -190,6 +232,65 @@ func TestRunConsoleFlagParsing(t *testing.T) {
 	}
 	if _, ok := err.(UsageError); !ok {
 		t.Fatalf("want UsageError, got %T: %v", err, err)
+	}
+}
+
+func TestRunConsoleProjectTargetsOtherDir(t *testing.T) {
+	project := t.TempDir()
+	other := t.TempDir()
+	chdir(t, other)
+	if err := team.Write(project, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", "")
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runConsole([]string{"--project", project, "--once"})
+	})
+	if err != nil {
+		t.Fatalf("console --project --once: %v", err)
+	}
+	if strings.Contains(stdout, "no team configured") {
+		t.Fatalf("console --project inspected current cwd instead of requested project:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "could not resolve the AMQ base root") {
+		t.Fatalf("console --project should reach requested project and then degrade on missing amq:\n%s", stdout)
+	}
+}
+
+func TestRunConsoleRejectsProjectWithRoot(t *testing.T) {
+	project := t.TempDir()
+	root := t.TempDir()
+	_, _, err := captureOutput(t, func() error {
+		return runConsole([]string{"--project", project, "--root", root, "--once"})
+	})
+	if err == nil {
+		t.Fatal("console should reject --project with --root")
+	}
+	if _, ok := err.(UsageError); !ok {
+		t.Fatalf("want UsageError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "--project cannot be used with --root") {
+		t.Fatalf("unexpected conflict error: %v", err)
+	}
+}
+
+func TestRunConsoleRejectsRootOnlyFlagsWithoutRoot(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return runConsole([]string{"--json", "--once"})
+	})
+	if err == nil {
+		t.Fatal("console should reject --json without --root")
+	}
+	if _, ok := err.(UsageError); !ok {
+		t.Fatalf("want UsageError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "--json requires --root") {
+		t.Fatalf("unexpected root-only error: %v", err)
 	}
 }
 

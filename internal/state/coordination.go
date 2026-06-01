@@ -30,8 +30,8 @@ const (
 	ThreadResolved ThreadStatus = "resolved"
 )
 
-// Triage is one of the three computed headline tiers (plus Clear). Order of
-// severity: NeedsYou > Blocked > AtRisk > Clear.
+// Triage is one of the computed headline tiers (plus Clear). Order of
+// severity: NeedsYou > Blocked > Gated > AtRisk > Clear.
 type Triage string
 
 const (
@@ -42,6 +42,9 @@ const (
 	// TriageBlocked: an agent has explicitly declared a block (kind/marker); the
 	// owner may be another agent.
 	TriageBlocked Triage = "blocked"
+	// TriageGated: work is intentionally paused by a policy, release, QA, or
+	// authorization gate. It is visible attention, but not a peer blocker.
+	TriageGated Triage = "gated"
 	// TriageAtRisk: an agent<->agent unanswered review/question aging past
 	// ReviewAge, or a heartbeat gone quiet past Heartbeat, or the
 	// dead-mailbox-live case. Aging, not yet a hard block.
@@ -167,6 +170,7 @@ func withThresholdDefaults(t Thresholds) Thresholds {
 // derived row. Participants are the union of from+to across the thread.
 type ThreadSummary struct {
 	ID           string
+	LatestID     string
 	Participants []string // union of from + to, sorted
 	Subject      string   // latest non-empty subject
 	Kind         Kind     // latest recognized kind
@@ -212,8 +216,10 @@ type TriageRollup struct {
 	NeedsYou     int
 	AtRisk       int // LIVE at-risk (non-stale)
 	Blocked      int // LIVE blocked (non-stale)
+	Gated        int // LIVE intentionally gated (non-stale)
 	AtRiskStale  int // age-decayed at-risk
 	BlockedStale int // age-decayed blocked
+	GatedStale   int // age-decayed gated
 	Clear        int
 }
 
@@ -222,15 +228,17 @@ func (r *TriageRollup) Add(o TriageRollup) {
 	r.NeedsYou += o.NeedsYou
 	r.AtRisk += o.AtRisk
 	r.Blocked += o.Blocked
+	r.Gated += o.Gated
 	r.AtRiskStale += o.AtRiskStale
 	r.BlockedStale += o.BlockedStale
+	r.GatedStale += o.GatedStale
 	r.Clear += o.Clear
 }
 
 // HasLiveAttention reports whether the rollup carries any LIVE (non-stale)
-// outstanding item: needs-you, live at-risk, or live blocked.
+// outstanding item: needs-you, live at-risk, live blocked, or live gated.
 func (r TriageRollup) HasLiveAttention() bool {
-	return r.NeedsYou > 0 || r.AtRisk > 0 || r.Blocked > 0
+	return r.NeedsYou > 0 || r.AtRisk > 0 || r.Blocked > 0 || r.Gated > 0
 }
 
 // TopAttnReason returns the most urgent needs-you reason across a session's
@@ -287,14 +295,16 @@ func (r *TriageRollup) countTriage(t Triage) {
 		r.AtRisk++
 	case TriageBlocked:
 		r.Blocked++
+	case TriageGated:
+		r.Gated++
 	default:
 		r.Clear++
 	}
 }
 
 // countThread tallies one thread's triage into the rollup, routing at-risk and
-// blocked into the LIVE or STALE bucket by the thread's Stale flag. NeedsYou is
-// always live.
+// blocked/gated into the LIVE or STALE bucket by the thread's Stale flag.
+// NeedsYou is always live.
 func (r *TriageRollup) countThread(t ThreadSummary) {
 	switch t.Triage {
 	case TriageNeedsYou:
@@ -311,6 +321,12 @@ func (r *TriageRollup) countThread(t ThreadSummary) {
 		} else {
 			r.Blocked++
 		}
+	case TriageGated:
+		if t.Stale {
+			r.GatedStale++
+		} else {
+			r.Gated++
+		}
 	default:
 		r.Clear++
 	}
@@ -320,8 +336,15 @@ func (r *TriageRollup) countThread(t ThreadSummary) {
 // shown in parentheses only when present, keeping the live counts primary.
 func (r TriageRollup) String() string {
 	s := itoa(r.NeedsYou) + " needs-you, " + itoa(r.AtRisk) + " at-risk, " + itoa(r.Blocked) + " blocked"
-	if r.AtRiskStale > 0 || r.BlockedStale > 0 {
-		s += " (" + itoa(r.AtRiskStale) + " at-risk, " + itoa(r.BlockedStale) + " blocked stale)"
+	if r.Gated > 0 {
+		s += ", " + itoa(r.Gated) + " gated"
+	}
+	if r.AtRiskStale > 0 || r.BlockedStale > 0 || r.GatedStale > 0 {
+		stale := itoa(r.AtRiskStale) + " at-risk, " + itoa(r.BlockedStale) + " blocked stale"
+		if r.GatedStale > 0 {
+			stale += ", " + itoa(r.GatedStale) + " gated stale"
+		}
+		s += " (" + stale + ")"
 	}
 	return s
 }
@@ -343,6 +366,95 @@ func declaresBlock(m Message) bool {
 		}
 	}
 	return false
+}
+
+// userWaitMarkers are conservative prose signals that the latest thread event
+// is waiting for the human/operator, even when it was emitted as a status note
+// instead of a message addressed to the operator mailbox.
+var userWaitMarkers = []string{
+	"waiting for instructions",
+	"awaiting instructions",
+	"need instructions",
+	"needs instructions",
+	"waiting for direction",
+	"awaiting direction",
+	"need direction",
+	"needs direction",
+	"waiting on user",
+	"waiting for user",
+	"awaiting user",
+	"need user",
+	"needs user",
+	"user action",
+	"user approval",
+	"user decision",
+	"waiting on operator",
+	"waiting for operator",
+	"awaiting operator",
+	"operator action",
+	"operator approval",
+	"operator decision",
+	"human action",
+	"human approval",
+	"human decision",
+	"waiting for scope",
+	"awaiting scope",
+	"need scope",
+	"needs scope",
+	"release scope",
+	"choose next action",
+	"action needed",
+}
+
+func declaresUserWait(m Message) bool {
+	text := messageSignalText(m)
+	for _, mk := range userWaitMarkers {
+		if strings.Contains(text, mk) {
+			return true
+		}
+	}
+	return false
+}
+
+// gateMarkers are prose signals for intentional governance/approval pauses.
+// They render as gated unless a more explicit user-wait marker above says the
+// operator must act now.
+var gateMarkers = []string{
+	"approval gate",
+	"policy gate",
+	"qa gate",
+	"qa gates",
+	"release gate",
+	"governance gate",
+	"authorization gate",
+	"waiting for approval",
+	"awaiting approval",
+	"pending approval",
+	"paused on",
+	"paused until",
+	"until cto release",
+	"cto release",
+	"qa approval",
+	"release authorized",
+	"gates are authorized",
+	"authorization required",
+	"governance-gated",
+	"approval-gated",
+	"policy-gated",
+}
+
+func declaresGate(m Message) bool {
+	text := messageSignalText(m)
+	for _, mk := range gateMarkers {
+		if strings.Contains(text, mk) {
+			return true
+		}
+	}
+	return false
+}
+
+func messageSignalText(m Message) string {
+	return strings.ToLower(m.Subject + "\n" + m.Body)
 }
 
 // clearsBlock reports whether a message clears a previously-declared block.

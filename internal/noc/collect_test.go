@@ -127,6 +127,112 @@ func TestCollect_NeverFatalOnEmptyRoot(t *testing.T) {
 	}
 }
 
+func TestCollect_IncludesConfiguredTeamWithoutSessions(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "configured")
+	squadDir := filepath.Join(project, SquadDirName)
+	if err := os.MkdirAll(squadDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(squadDir, "team.json"), []byte(`{"schema":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ms := Collect([]string{root}, DefaultDepth, deterministicProbe(time.Unix(0, 0)), state.Thresholds{})
+	if len(ms.Projects) != 1 {
+		t.Fatalf("expected configured team project, got %d: %+v", len(ms.Projects), ms.Projects)
+	}
+	ps := ms.Projects[0]
+	if !ps.TeamConfigured || !ps.DefaultTeam || ps.Candidate {
+		t.Fatalf("configured team flags mismatch: %+v", ps)
+	}
+	if len(ps.Profiles) != 1 || ps.Profiles[0] != "default" {
+		t.Fatalf("configured team profiles mismatch: %+v", ps.Profiles)
+	}
+	if len(ps.Snap.Sessions) != 0 || ps.Warning != "" {
+		t.Fatalf("configured team without sessions should be quiet, got sessions=%d warning=%q", len(ps.Snap.Sessions), ps.Warning)
+	}
+}
+
+func TestCollect_RecordsExistingAMQSessionDirs(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "configured")
+	for _, dir := range []string{
+		filepath.Join(project, AgentMailDirName, "zeta"),
+		filepath.Join(project, AgentMailDirName, "alpha"),
+		filepath.Join(project, AgentMailDirName, ".archive"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(project, SquadDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, SquadDirName, "team.json"), []byte(`{"schema":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ms := Collect([]string{root}, DefaultDepth, deterministicProbe(time.Unix(0, 0)), state.Thresholds{})
+	if len(ms.Projects) != 1 {
+		t.Fatalf("expected configured project, got %d: %+v", len(ms.Projects), ms.Projects)
+	}
+	got := ms.Projects[0].SessionNames
+	want := []string{"alpha", "zeta"}
+	if len(got) != len(want) {
+		t.Fatalf("SessionNames = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SessionNames = %+v, want %+v", got, want)
+		}
+	}
+	if len(ms.Projects[0].Snap.Sessions) != 0 {
+		t.Fatalf("empty AMQ session dirs should not fabricate agent sessions: %+v", ms.Projects[0].Snap.Sessions)
+	}
+}
+
+func TestCollect_IncludesNamedProfileWithoutSessions(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "configured")
+	teamsDir := filepath.Join(project, SquadDirName, "teams")
+	if err := os.MkdirAll(teamsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(teamsDir, "review.json"), []byte(`{"schema":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ms := Collect([]string{root}, DefaultDepth, deterministicProbe(time.Unix(0, 0)), state.Thresholds{})
+	if len(ms.Projects) != 1 {
+		t.Fatalf("expected named team project, got %d: %+v", len(ms.Projects), ms.Projects)
+	}
+	ps := ms.Projects[0]
+	if !ps.TeamConfigured || ps.DefaultTeam || ps.Candidate {
+		t.Fatalf("named team flags mismatch: %+v", ps)
+	}
+	if len(ps.Profiles) != 1 || ps.Profiles[0] != "review" {
+		t.Fatalf("named team profiles mismatch: %+v", ps.Profiles)
+	}
+	if len(ps.Snap.Sessions) != 0 || ps.Warning != "" {
+		t.Fatalf("named team without sessions should be quiet, got sessions=%d warning=%q", len(ps.Snap.Sessions), ps.Warning)
+	}
+}
+
+func TestCollect_IncludesGitCandidateProject(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root, "repo/.git")
+
+	ms := Collect([]string{root}, DefaultDepth, deterministicProbe(time.Unix(0, 0)), state.Thresholds{})
+	if len(ms.Projects) != 1 {
+		t.Fatalf("expected candidate project, got %d: %+v", len(ms.Projects), ms.Projects)
+	}
+	ps := ms.Projects[0]
+	if ps.Project != "repo" || !ps.Candidate || ps.TeamConfigured || ps.DefaultTeam || ps.SessionStore {
+		t.Fatalf("candidate flags mismatch: %+v", ps)
+	}
+}
+
 func TestCollect_ZeroProbeFillsClock(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root, "p/.agent-mail/main/agents")

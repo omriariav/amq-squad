@@ -1,6 +1,7 @@
 package state
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -65,7 +66,7 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 		b := bySession[name]
 		sortAgents(b.agents)
 
-		coord := coordinateSession(b.agents, now, th)
+		coord := coordinateSession(b.root, b.agents, now, th)
 		sessions = append(sessions, Session{
 			Name:         name,
 			Root:         b.root,
@@ -84,18 +85,33 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 // timeline, triage). The scan reads only the filesystem under each agent dir;
 // no subprocess is spawned. Warnings (torn files, schema mismatches) are
 // aggregated onto the returned Coordination.
-func coordinateSession(agents []Agent, now time.Time, th Thresholds) Coordination {
+func coordinateSession(sessionRoot string, agents []Agent, now time.Time, th Thresholds) Coordination {
 	var msgs []Message
 	var warns []Warning
+	scanned := map[string]bool{}
 	for _, a := range agents {
 		if a.AgentDir == "" {
 			continue
 		}
+		scanned[filepath.Clean(a.AgentDir)] = true
 		m, w := scanMailbox(a.AgentDir, a.Handle, func() time.Time { return now })
 		msgs = append(msgs, m...)
 		warns = append(warns, w...)
 	}
+	if op := strings.TrimSpace(th.OperatorHandle); op != "" && strings.TrimSpace(sessionRoot) != "" {
+		dir := filepath.Join(sessionRoot, "agents", op)
+		if !scanned[filepath.Clean(dir)] && dirExists(dir) {
+			m, w := scanMailbox(dir, op, func() time.Time { return now })
+			msgs = append(msgs, m...)
+			warns = append(warns, w...)
+		}
+	}
 	return buildCoordination(collapseInput{messages: msgs, agents: agents, warnings: warns}, now, th)
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // sessionRoot derives the directory that anchors a session. It prefers the
@@ -137,6 +153,7 @@ func classifyAgent(e launch.Entry, probe Probe) Agent {
 		Conversation: rec.Conversation,
 		AgentDir:     e.AgentDir,
 		Source:       e.Source,
+		TeamProfile:  rec.TeamProfile,
 	}
 
 	pres, presErr := readPresence(e.AgentDir)
@@ -176,6 +193,8 @@ func classifyAgent(e launch.Entry, probe Probe) Agent {
 	switch {
 	case agentPIDLive:
 		a.Liveness = LivenessAlive
+	case wakeAlive:
+		a.Liveness = LivenessWakeLive
 	case presenceActiveFresh:
 		// Presence says active and fresh, but the agent PID is NOT verified
 		// alive. If we have a recorded agent PID and it is confirmed dead, this
@@ -208,9 +227,9 @@ func classifyAgent(e launch.Entry, probe Probe) Agent {
 }
 
 // hasLiveLeaningSignal reports whether disk carries a signal that, by itself,
-// suggests an agent MAY have been live (a recorded agent PID, a wake lock PID,
-// or a verified-alive wake). Used to distinguish "stale" (had a live-pointing
-// signal that failed verification) from "dead" (signals expired entirely).
+// suggests an agent MAY have been live (a recorded agent PID or a wake lock
+// PID). Used to distinguish "stale" (had a live-pointing signal that failed
+// verification) from "dead" (signals expired entirely).
 func hasLiveLeaningSignal(rec launch.Record, wakePID int, wakeAlive bool) bool {
 	return rec.AgentPID > 0 || wakePID > 0 || wakeAlive
 }
@@ -263,7 +282,7 @@ func wakeHealth(live Liveness, wakePID int, wakeAlive bool) WakeHealth {
 // the process is gone.
 func looksActiveForWake(live Liveness) bool {
 	switch live {
-	case LivenessAlive, LivenessDeadMailboxLive:
+	case LivenessAlive, LivenessWakeLive, LivenessDeadMailboxLive:
 		return true
 	default:
 		return false

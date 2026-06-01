@@ -122,6 +122,30 @@ func TestRunDownRequiresSelector(t *testing.T) {
 	}
 }
 
+func TestRunStopProjectTargetsOtherDir(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	project := t.TempDir()
+	other := t.TempDir()
+	if err := team.Write(project, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-99"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, other)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runStop([]string{"--project", project, "--all", "--session", "issue-99"})
+	})
+	if err != nil {
+		t.Fatalf("stop --project: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{"# amq-squad stop", "# workstream: issue-99", "no launch record"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stop --project output missing %q in:\n%s", want, stdout)
+		}
+	}
+}
+
 func TestExecuteDownRejectsUnknownRole(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},

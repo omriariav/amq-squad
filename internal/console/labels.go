@@ -40,6 +40,7 @@ func sessionStopped(s state.Session) bool {
 //     teardown — never the alarming "dead"/"stale" which read like a problem),
 //   - otherwise the agent Liveness maps to clearer words:
 //     alive             -> "alive"
+//     wake-live         -> "wake-live"
 //     stale (presence)  -> "stale-heartbeat"
 //     dead (process)    -> "process-dead"
 //     dead-mailbox-live -> its distinct at-risk label (kept verbatim — it is its
@@ -55,6 +56,8 @@ func agentStateLabel(a state.Agent, stopped bool, now func() time.Time) string {
 	switch a.Liveness {
 	case state.LivenessAlive:
 		return "alive"
+	case state.LivenessWakeLive:
+		return string(state.LivenessWakeLive)
 	case state.LivenessDeadMailboxLive:
 		// The explicit dead-process / live-mailbox case keeps its own distinct
 		// at-risk label: something is still writing the mailbox while the process
@@ -108,13 +111,14 @@ func agentsAliveLine(s state.Session) string {
 }
 
 // unresolvedThreads returns a session's coordination threads that are still
-// UNRESOLVED (Triage at-risk or blocked), urgency-sorted most-stale-first by
+// UNRESOLVED (Triage at-risk, blocked, or gated), urgency-sorted
+// most-stale-first by
 // LastEventAt (oldest event = most stale = highest urgency), then by id for a
 // stable tie-break. This answers "who is blocked on whom" straight from --once.
 func unresolvedThreads(s state.Session) []state.ThreadSummary {
 	out := make([]state.ThreadSummary, 0, len(s.Coordination.Threads))
 	for _, t := range s.Coordination.Threads {
-		if t.Triage == state.TriageBlocked || t.Triage == state.TriageAtRisk {
+		if t.Triage == state.TriageBlocked || t.Triage == state.TriageGated || t.Triage == state.TriageAtRisk {
 			out = append(out, t)
 		}
 	}
@@ -133,6 +137,8 @@ func threadTier(t state.ThreadSummary) string {
 	switch t.Triage {
 	case state.TriageBlocked:
 		return "blocked"
+	case state.TriageGated:
+		return "gated"
 	case state.TriageAtRisk:
 		return "at-risk"
 	default:

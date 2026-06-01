@@ -44,6 +44,27 @@ func decodeDoctorJSON(t *testing.T, buf *bytes.Buffer) doctorEnvelopeData {
 	return env.Data
 }
 
+func writeDoctorManagedMarkers(t *testing.T, dir string) {
+	t.Helper()
+	body := []byte(rules.BeginMarker + "\nmanaged\n" + rules.EndMarker + "\n")
+	for _, name := range []string{rules.ClaudeFile, rules.AgentsFile} {
+		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func syncDoctorPointers(t *testing.T, dir, rulesBody string) {
+	t.Helper()
+	plans, err := rules.Plan(dir, rulesBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rules.Apply(plans); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunDoctorRejectsPositionalArgs(t *testing.T) {
 	_, _, err := captureOutput(t, func() error { return runDoctor([]string{"foo"}) })
 	if err == nil {
@@ -61,6 +82,50 @@ func TestRunDoctorRejectsUnknownFlag(t *testing.T) {
 	}
 	if _, ok := err.(UsageError); !ok {
 		t.Fatalf("unknown flag should be UsageError, got %T: %v", err, err)
+	}
+}
+
+func TestRunDoctorRejectsAllProfilesWithProfile(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return runDoctor([]string{"--all-profiles", "--profile", "review"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--all-profiles cannot be combined with --profile") {
+		t.Fatalf("all-profiles/profile error = %v", err)
+	}
+}
+
+func TestRunDoctorProjectTargetsOtherDir(t *testing.T) {
+	project := t.TempDir()
+	other := t.TempDir()
+	chdir(t, other)
+	t.Setenv("PATH", "")
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDoctor([]string{"--project", project, "--json"})
+	})
+	if err == nil {
+		t.Fatal("doctor with PATH stripped should fail health checks, preserving JSON output")
+	}
+	env := decodeJSONEnvelope[doctorEnvelopeData](t, stdout)
+	if env.Data.TeamHome != project {
+		t.Fatalf("doctor --project team_home = %q, want %s", env.Data.TeamHome, project)
+	}
+}
+
+func TestRunDoctorProjectValidation(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	_, _, err := captureOutput(t, func() error {
+		return runDoctor([]string{"--project", missing, "--json"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--project") {
+		t.Fatalf("doctor --project missing error = %v, want --project error", err)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runDoctor([]string{"--project", "", "--json"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--project requires a directory") {
+		t.Fatalf("doctor empty --project error = %v, want directory guidance", err)
 	}
 }
 
@@ -170,6 +235,148 @@ func TestExecuteDoctorTeamConfigMissingWarn(t *testing.T) {
 	}
 }
 
+func TestExecuteDoctorDefaultMissingButNamedProfilesGuideProfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.WriteProfile(dir, "review", team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := newDoctorExec(t, dir)
+	var buf bytes.Buffer
+	d.Out = &buf
+	if err := executeDoctor(d); err != nil {
+		t.Fatalf("named-profile-only project should warn, not fail: %v", err)
+	}
+	row := firstLineWith(buf.String(), "team config")
+	for _, want := range []string{"warn", "no default team profile", "review", "--profile <name>"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("team config row missing %q: %q", want, row)
+		}
+	}
+}
+
+func TestExecuteDoctorNamedProfile(t *testing.T) {
+	dir := t.TempDir()
+	writeDoctorManagedMarkers(t, dir)
+	if err := team.WriteProfile(dir, "review", team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := newDoctorExec(t, dir)
+	d.Profile = "review"
+	d.JSON = true
+	var buf bytes.Buffer
+	d.Out = &buf
+	if err := executeDoctor(d); err != nil {
+		t.Fatalf("doctor --profile review failed: %v\n%s", err, buf.String())
+	}
+	data := decodeDoctorJSON(t, &buf)
+	if data.Profile != "review" {
+		t.Fatalf("profile = %q, want review", data.Profile)
+	}
+	if data.Workstream != "review" {
+		t.Fatalf("workstream = %q, want review", data.Workstream)
+	}
+	got := findCheck(data.Checks, "team config")
+	if got == nil || got.Status != doctorOK || got.Detail != team.ProfilePath(dir, "review") {
+		t.Fatalf("team config check = %+v, want named profile path", got)
+	}
+}
+
+func TestExecuteDoctorAllProfilesChecksDefaultAndNamed(t *testing.T) {
+	dir := t.TempDir()
+	writeDoctorManagedMarkers(t, dir)
+	if err := team.Write(dir, team.Team{
+		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
+		Workstream: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := team.WriteProfile(dir, "review", team.Team{
+		Members:    []team.Member{{Role: "qa", Binary: "claude", Handle: "qa", Session: "review"}},
+		Workstream: "review",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := newDoctorExec(t, dir)
+	d.AllProfiles = true
+	var buf bytes.Buffer
+	d.Out = &buf
+	if err := executeDoctor(d); err != nil {
+		t.Fatalf("doctor --all-profiles failed: %v\n%s", err, buf.String())
+	}
+	out := buf.String()
+	for _, want := range []string{"PROFILE default", "WORKSTREAM main", "PROFILE review", "WORKSTREAM review"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("all-profiles output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "no default team profile") {
+		t.Fatalf("all-profiles output should check configured profiles, not warn about missing default:\n%s", out)
+	}
+}
+
+func TestExecuteDoctorAllProfilesJSONNamedOnly(t *testing.T) {
+	dir := t.TempDir()
+	writeDoctorManagedMarkers(t, dir)
+	if err := team.WriteProfile(dir, "review", team.Team{
+		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"}},
+		Workstream: "review",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := newDoctorExec(t, dir)
+	d.AllProfiles = true
+	d.JSON = true
+	var buf bytes.Buffer
+	d.Out = &buf
+	if err := executeDoctor(d); err != nil {
+		t.Fatalf("doctor --all-profiles --json failed: %v\n%s", err, buf.String())
+	}
+	data := decodeDoctorJSON(t, &buf)
+	if data.Profile != "all" {
+		t.Fatalf("profile = %q, want all", data.Profile)
+	}
+	if len(data.Profiles) != 1 || data.Profiles[0].Profile != "review" {
+		t.Fatalf("profiles = %+v, want only review", data.Profiles)
+	}
+	if got := findCheck(data.Checks, "profile review"); got == nil || got.Status == doctorFail {
+		t.Fatalf("summary check = %+v, want non-failing profile review", got)
+	}
+	for _, c := range data.Checks {
+		if strings.Contains(c.Name, "default") {
+			t.Fatalf("named-only all-profiles summary should not include default: %+v", data.Checks)
+		}
+	}
+}
+
+func TestExecuteDoctorNamedProfileMarkersUseMemberCWD(t *testing.T) {
+	dir := t.TempDir()
+	memberDir := t.TempDir()
+	writeDoctorManagedMarkers(t, memberDir)
+	if err := team.WriteProfile(dir, "review", team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review", CWD: memberDir}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := newDoctorExec(t, dir)
+	d.Profile = "review"
+	var buf bytes.Buffer
+	d.Out = &buf
+	if err := executeDoctor(d); err != nil {
+		t.Fatalf("doctor --profile review failed: %v\n%s", err, buf.String())
+	}
+	out := buf.String()
+	if strings.Contains(out, "not found") {
+		t.Fatalf("named profile doctor should not inspect missing team-home markers:\n%s", out)
+	}
+	if !strings.Contains(out, filepath.Join(memberDir, rules.AgentsFile)) {
+		t.Fatalf("named profile marker check should inspect member cwd:\n%s", out)
+	}
+}
+
 func TestExecuteDoctorTeamConfigCorruptFails(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".amq-squad"), 0o755); err != nil {
@@ -242,6 +449,87 @@ func TestExecuteDoctorMarkerIntegrityMissingWarn(t *testing.T) {
 	row := firstLineWith(buf.String(), "markers "+rules.ClaudeFile)
 	if !strings.Contains(row, "warn") {
 		t.Errorf("missing CLAUDE.md should warn, got: %q", row)
+	}
+}
+
+func TestExecuteDoctorPointerSyncOKWhenApplied(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := "# Team Rules\n"
+	if err := rules.Write(dir, body); err != nil {
+		t.Fatal(err)
+	}
+	syncDoctorPointers(t, dir, body)
+
+	d := newDoctorExec(t, dir)
+	var buf bytes.Buffer
+	d.Out = &buf
+	if err := executeDoctor(d); err != nil {
+		t.Fatalf("doctor failed: %v\n%s", err, buf.String())
+	}
+	row := firstLineWith(buf.String(), "pointer sync "+rules.ClaudeFile)
+	if !strings.Contains(row, "ok") {
+		t.Fatalf("synced pointer should be ok, got: %q", row)
+	}
+}
+
+func TestExecuteDoctorPointerSyncWarnsOnDrift(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rules.Write(dir, "# Team Rules\n"); err != nil {
+		t.Fatal(err)
+	}
+	writeDoctorManagedMarkers(t, dir)
+
+	d := newDoctorExec(t, dir)
+	var buf bytes.Buffer
+	d.Out = &buf
+	if err := executeDoctor(d); err != nil {
+		t.Fatalf("doctor drift warning should not fail: %v\n%s", err, buf.String())
+	}
+	row := firstLineWith(buf.String(), "pointer sync "+rules.ClaudeFile)
+	for _, want := range []string{"warn", "out of date", "amq-squad team sync --apply"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("pointer drift row missing %q: %q", want, row)
+		}
+	}
+}
+
+func TestExecuteDoctorPointerSyncNamedProfileOutsideHint(t *testing.T) {
+	dir := t.TempDir()
+	memberDir := t.TempDir()
+	if err := team.WriteProfile(dir, "review", team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review", CWD: memberDir}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rules.Write(dir, "# Team Rules\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	d := newDoctorExec(t, dir)
+	d.Profile = "review"
+	var buf bytes.Buffer
+	d.Out = &buf
+	if err := executeDoctor(d); err != nil {
+		t.Fatalf("doctor named-profile pointer warning should not fail: %v\n%s", err, buf.String())
+	}
+	row := firstLineWith(buf.String(), "pointer sync "+rules.ClaudeFile)
+	if row == "" {
+		row = firstLineWith(buf.String(), "pointer sync "+filepath.Base(memberDir)+"/"+rules.ClaudeFile)
+	}
+	for _, want := range []string{"warn", "missing", "amq-squad team sync --profile review --apply --allow-outside"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("named pointer sync row missing %q: %q\nfull output:\n%s", want, row, buf.String())
+		}
 	}
 }
 

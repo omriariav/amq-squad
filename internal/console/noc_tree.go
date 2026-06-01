@@ -146,7 +146,7 @@ func buildNOCTree(ms noc.MultiSnapshot, ts nocTreeState, filter string, hideStal
 			if hideStale && projectIsStaleOnly(ps) {
 				continue
 			}
-			if projectMatchesNOCFilter(ps, filter) {
+			if ProjectMatchesNOCFilter(ps, filter) {
 				visProjects = append(visProjects, ps)
 			}
 		}
@@ -176,7 +176,7 @@ func buildNOCTree(ms noc.MultiSnapshot, ts nocTreeState, filter string, hideStal
 			sessions := sortedSessions(ps.Snap.Sessions)
 			visSessions := make([]state.Session, 0, len(sessions))
 			for _, sess := range sessions {
-				if sessionMatchesNOCFilter(sess, filter) {
+				if SessionMatchesNOCProjectFilter(ps, sess, filter) {
 					visSessions = append(visSessions, sess)
 				}
 			}
@@ -203,7 +203,7 @@ func buildNOCTree(ms noc.MultiSnapshot, ts nocTreeState, filter string, hideStal
 				agents := sortedAgents(sess.Agents)
 				visAgents := make([]state.Agent, 0, len(agents))
 				for _, ag := range agents {
-					if agentMatchesNOCFilter(ag, filter) {
+					if AgentMatchesNOCProjectFilter(ps, sess, ag, filter) {
 						visAgents = append(visAgents, ag)
 					}
 				}
@@ -294,6 +294,21 @@ func sortedAgents(in []state.Agent) []state.Agent {
 func projectRecent(ps noc.ProjectSnapshot) string {
 	if ps.Warning != "" {
 		return "warning: " + firstLine(ps.Warning)
+	}
+	if ps.Candidate {
+		return "candidate team-home; press T to create team"
+	}
+	if !ps.DefaultTeam {
+		if ps.TeamConfigured {
+			if profile := singleNamedProfile(ps); profile != "" {
+				return "named profile " + profile + "; press N for new session"
+			}
+			return "named profiles; press N and choose profile"
+		}
+		return "no team profile; press T to create team"
+	}
+	if len(ps.Snap.Sessions) == 0 {
+		return "team configured; press N for new session"
 	}
 	// Surface the freshest session signal as the project's recent action.
 	for _, sess := range ps.Snap.Sessions {

@@ -14,6 +14,7 @@ import (
 // The typed-filter grammar (entered after `/`):
 //
 //	needs-you        -> only sessions/threads at the needs-you tier
+//	gated           -> only gated sessions/threads
 //	at-risk          -> only at-risk
 //	blocked          -> only blocked
 //	unread           -> only threads with an unread recipient (and the sessions
@@ -32,6 +33,7 @@ type filterKind int
 const (
 	filterNone filterKind = iota
 	filterNeedsYou
+	filterGated
 	filterAtRisk
 	filterBlocked
 	filterUnread
@@ -51,9 +53,12 @@ func parseFilter(raw string) Filter {
 	}
 	lower := strings.ToLower(t)
 	switch {
-	case lower == "needs-you", lower == "needsyou", lower == "needs":
+	case lower == "needs-you", lower == "needsyou", lower == "needs", lower == "needs-user", lower == "needsuser", lower == "needs_user":
 		f.kind = filterNeedsYou
 		f.Triage = state.TriageNeedsYou
+	case lower == "gated", lower == "gate":
+		f.kind = filterGated
+		f.Triage = state.TriageGated
 	case lower == "at-risk", lower == "atrisk", lower == "risk":
 		f.kind = filterAtRisk
 		f.Triage = state.TriageAtRisk
@@ -116,6 +121,8 @@ func (f Filter) matchSession(s state.Session) bool {
 		return true
 	case filterNeedsYou:
 		return s.Rollup.NeedsYou > 0
+	case filterGated:
+		return s.Rollup.Gated > 0
 	case filterAtRisk:
 		return s.Rollup.AtRisk > 0
 	case filterBlocked:
@@ -159,6 +166,8 @@ func (f Filter) matchThread(t state.ThreadSummary) bool {
 		return true
 	case filterNeedsYou:
 		return t.Triage == state.TriageNeedsYou
+	case filterGated:
+		return t.Triage == state.TriageGated
 	case filterAtRisk:
 		return t.Triage == state.TriageAtRisk
 	case filterBlocked:

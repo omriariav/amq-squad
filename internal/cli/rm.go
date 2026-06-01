@@ -76,7 +76,9 @@ func runRm(args []string, mode rmMode) error {
 	yes := fs.Bool("yes", false, "skip the confirmation prompt (for automation)")
 	fs.BoolVar(yes, "y", false, "shorthand for --yes")
 	force := fs.Bool("force", false, "proceed even when the session has live agents (does NOT stop them)")
+	projectFlag := fs.String("project", "", "project/team-home directory to target (default: cwd)")
 	fs.Usage = rmUsage(fs, mode)
+	args = allowInterspersedFlags(fs, args)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -90,8 +92,12 @@ func runRm(args []string, mode rmMode) error {
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
+	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
 	return executeRm(rmExecution{
-		ProjectDir: cwd,
+		ProjectDir: projectDir,
 		Session:    fs.Arg(0),
 		Mode:       mode,
 		Yes:        *yes,
@@ -108,11 +114,12 @@ func rmUsage(fs *flag.FlagSet, mode rmMode) func() {
 			fmt.Fprint(os.Stderr, `amq-squad archive - move a finished session aside (non-destructive)
 
 Usage:
-  amq-squad archive <session> [--yes|-y] [--force]
+  amq-squad archive <session> [--project DIR] [--yes|-y] [--force]
 
 Moves the session's AMQ root dir to <baseRoot>/.archive/<session>/ and moves
 its brief alongside it as .archive/<session>/<session>.md. Nothing is deleted.
 The session leaves the board but its mailboxes and brief are recoverable.
+--project targets another team-home without changing directories.
 
 By default archive PREVIEWS exactly what will move and prompts for confirmation
 (default: No). Declining makes zero filesystem changes. Pass --yes/-y to skip
@@ -123,6 +130,7 @@ running agents. Stop the team first with 'amq-squad down --all --force'.
 
 Examples:
   amq-squad archive issue-96
+  amq-squad archive issue-96 --project ~/Code/app --yes
   amq-squad archive issue-96 --yes
   amq-squad archive issue-96 --force --yes
 `)
@@ -131,12 +139,13 @@ Examples:
 		fmt.Fprint(os.Stderr, `amq-squad rm - permanently remove a finished session
 
 Usage:
-  amq-squad rm <session> [--yes|-y] [--force]
+  amq-squad rm <session> [--project DIR] [--yes|-y] [--force]
 
 Deletes the session's AMQ root dir (<baseRoot>/<session>/) and its brief
-(.amq-squad/briefs/<session>.md). This is the only destructive verb and it is
-confined to the session: it never touches a sibling session or anything outside
-that one root and brief.
+(.amq-squad/briefs/<session>.md). This session-destructive verb is confined to
+the session: it never touches a sibling session or anything outside that one
+root and brief.
+--project targets another team-home without changing directories.
 
 By default rm PREVIEWS exactly what will be removed (the resolved paths + agent
 count) and prompts for confirmation (default: No). Declining makes zero
@@ -148,10 +157,64 @@ agents. Stop the team first with 'amq-squad down --all --force'.
 
 Examples:
   amq-squad rm issue-96
+  amq-squad rm issue-96 --project ~/Code/app --yes
   amq-squad rm issue-96 --yes
   amq-squad rm issue-96 --force --yes
 `)
 	}
+}
+
+// allowInterspersedFlags moves flags before positional arguments so small
+// imperative commands like `amq-squad rm issue-96 --yes` work the way operators
+// naturally type them while still using the stdlib flag parser for validation.
+func allowInterspersedFlags(fs *flag.FlagSet, args []string) []string {
+	var flags []string
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positional = append(positional, args[i:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positional = append(positional, arg)
+			continue
+		}
+		flags = append(flags, arg)
+		name := flagName(arg)
+		if name == "" || strings.Contains(arg, "=") {
+			continue
+		}
+		f := fs.Lookup(name)
+		if f == nil || isBoolFlag(f) {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	return append(flags, positional...)
+}
+
+func flagName(arg string) string {
+	arg = strings.TrimLeft(arg, "-")
+	if arg == "" {
+		return ""
+	}
+	if name, _, ok := strings.Cut(arg, "="); ok {
+		return name
+	}
+	return arg
+}
+
+type boolFlag interface {
+	IsBoolFlag() bool
+}
+
+func isBoolFlag(f *flag.Flag) bool {
+	bf, ok := f.Value.(boolFlag)
+	return ok && bf.IsBoolFlag()
 }
 
 // rmTarget is the fully resolved, safety-checked footprint of one session.
@@ -272,9 +335,8 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 }
 
 // liveAgentsInSession returns the handles of agents the repo's liveness
-// classifier considers live (alive OR dead-mailbox-live, i.e. a zombie
-// heartbeat behind a dead process) in the named session. An empty slice means
-// the session is safe to tear down.
+// classifier considers operational (alive, wake-live, or dead-mailbox-live) in
+// the named session. An empty slice means the session is safe to tear down.
 func liveAgentsInSession(projectDir, baseRoot, session string, probe state.Probe) ([]string, error) {
 	snap, err := state.Build(projectDir, baseRoot, probe)
 	if err != nil {
@@ -287,7 +349,7 @@ func liveAgentsInSession(projectDir, baseRoot, session string, probe state.Probe
 		}
 		for _, a := range sess.Agents {
 			switch a.Liveness {
-			case state.LivenessAlive, state.LivenessDeadMailboxLive:
+			case state.LivenessAlive, state.LivenessWakeLive, state.LivenessDeadMailboxLive:
 				live = append(live, a.Handle)
 			}
 		}
