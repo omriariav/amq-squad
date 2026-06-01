@@ -234,7 +234,7 @@ amq-squad new profile NAME [--project DIR] [--sync] [--dry-run [--json]] [team i
 amq-squad roles [--json]
                                   List built-in role IDs, market numbers, default
                                   CLIs, and short profile copy for team creation.
-amq-squad new session [--project DIR] [<session>] [up options]
+amq-squad new session [--project DIR] [--profile NAME] [<session>] [up options]
                                   Create NEW work. Alias for up, with the same
                                   refusal when the session already exists.
                                   Supports --profile and --seed-from for named
