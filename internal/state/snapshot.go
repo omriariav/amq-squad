@@ -48,7 +48,7 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 	var order []string
 	for _, e := range entries {
 		name := e.Record.Session
-		root := sessionRoot(baseRoot, e.Record)
+		root := sessionRoot(projectRoot, baseRoot, e.Record)
 		b, ok := bySession[name]
 		if !ok {
 			b = &bucket{root: root}
@@ -117,14 +117,29 @@ func dirExists(path string) bool {
 // sessionRoot derives the directory that anchors a session. It prefers the
 // record's own Root (which the launcher captured); when absent it derives it
 // from baseRoot + session name, matching the AMQ layouts the scanners walk.
-func sessionRoot(baseRoot string, rec launch.Record) string {
+func sessionRoot(projectRoot, baseRoot string, rec launch.Record) string {
 	if rec.Root != "" {
-		return rec.Root
+		return absoluteLaunchRoot(projectRoot, rec.CWD, rec.Root)
 	}
 	if rec.Session == "" {
 		return baseRoot
 	}
 	return filepath.Join(baseRoot, rec.Session)
+}
+
+func absoluteLaunchRoot(projectRoot, launchCWD, root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" || filepath.IsAbs(root) {
+		return root
+	}
+	base := strings.TrimSpace(launchCWD)
+	if base == "" {
+		base = strings.TrimSpace(projectRoot)
+	}
+	if base == "" {
+		return root
+	}
+	return filepath.Clean(filepath.Join(base, root))
 }
 
 func sortAgents(agents []Agent) {
