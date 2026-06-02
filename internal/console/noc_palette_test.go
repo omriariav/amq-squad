@@ -203,6 +203,36 @@ func TestPalette_FuzzyFilterNarrows(t *testing.T) {
 	}
 }
 
+func TestPalette_PastedQueryNarrows(t *testing.T) {
+	m := newControlModel(t)
+	addCandidateProject(m, "delta", "/fake/proj/delta")
+	m, _ = nocPress(m, "p")
+	m, _ = nocPress(m, "team")
+	if m.palette == nil {
+		t.Fatal("palette should remain open")
+	}
+	if m.palette.query != "team" {
+		t.Fatalf("palette query = %q, want team", m.palette.query)
+	}
+	res := m.palette.filtered()
+	if len(res) == 0 {
+		t.Fatalf("pasted query should match create-team row")
+	}
+	found := false
+	for _, it := range res {
+		if it.label == "delta/action/new-team" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("pasted query should keep create-team row, got %+v", res)
+	}
+	if !strings.Contains(m.View(), "find: team") {
+		t.Fatalf("palette view should render pasted query:\n%s", m.View())
+	}
+}
+
 // TestPalette_EnterRunningAgentJumps proves enter on a RUNNING agent calls the
 // switchTo seam with the NAME-FIRST-resolved target (the pane whose title token
 // is amq:<session>:<role>), exactly like the tree's gated jump. The palette must
