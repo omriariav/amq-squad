@@ -129,20 +129,10 @@ func (p *paletteState) filtered() []paletteItem {
 	scored := make([]scoredItem, 0, len(p.items))
 	for _, it := range p.items {
 		text := strings.ToLower(it.searchText())
-		if fuzzySubsequence(text, q) {
-			score := 0
-			words := strings.Fields(text)
-			for _, token := range tokens {
-				if stringSliceContains(words, token) {
-					score += 2
-					continue
-				}
-				if strings.Contains(text, token) {
-					score++
-				}
-			}
-			scored = append(scored, scoredItem{item: it, score: score})
+		if !paletteQueryMatches(text, tokens, q) {
+			continue
 		}
+		scored = append(scored, scoredItem{item: it, score: paletteQueryScore(it, text, tokens)})
 	}
 	sort.SliceStable(scored, func(i, j int) bool {
 		return scored[i].score > scored[j].score
@@ -152,6 +142,48 @@ func (p *paletteState) filtered() []paletteItem {
 		out = append(out, it.item)
 	}
 	return out
+}
+
+func paletteQueryMatches(text string, tokens []string, raw string) bool {
+	if strings.TrimSpace(raw) == "" {
+		return true
+	}
+	if len(tokens) <= 1 {
+		return fuzzySubsequence(text, raw)
+	}
+	for _, token := range tokens {
+		if strings.Contains(text, token) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func paletteQueryScore(it paletteItem, text string, tokens []string) int {
+	score := 0
+	words := strings.Fields(text)
+	actionLabel := strings.ToLower(paletteActionLabel(it))
+	actionWords := strings.Fields(actionLabel)
+	project := strings.ToLower(it.project)
+	session := strings.ToLower(it.session)
+	for _, token := range tokens {
+		if stringSliceContains(words, token) {
+			score += 2
+		} else if strings.Contains(text, token) {
+			score++
+		}
+		if it.kind == palAction && stringSliceContains(actionWords, token) {
+			score += 5
+		}
+		if project != "" && strings.Contains(project, token) {
+			score += 4
+		}
+		if session != "" && strings.Contains(session, token) {
+			score += 3
+		}
+	}
+	return score
 }
 
 func (it paletteItem) searchText() string {
@@ -1171,27 +1203,36 @@ func (m *NOCModel) selectPaletteProject(it paletteItem) {
 		m.actNote = "project has no directory"
 		return
 	}
-	if m.filter != "" {
+	if m.selectVisiblePaletteProject(it) {
+		return
+	}
+	if m.filter != "" || m.hideStale {
 		m.filter = ""
-	}
-	if m.hideStale {
 		m.hideStale = false
-	}
-	ns := m.nodes()
-	for i, n := range ns {
-		if n.kind == nodeProject && n.project.Dir == it.projectDir {
-			m.cursor = i
-			m.ensureCursorVisibleFor(ns)
-			m.rememberSelection()
-			if it.snapshot.TeamConfigured {
-				m.actNote = "selected " + it.project + "; press N for a new session or T for a profile"
-			} else {
-				m.actNote = "selected " + it.project + "; press T to create a team"
-			}
+		if m.selectVisiblePaletteProject(it) {
 			return
 		}
 	}
 	m.actNote = "project not visible: " + it.project
+}
+
+func (m *NOCModel) selectVisiblePaletteProject(it paletteItem) bool {
+	ns := m.nodes()
+	for i, n := range ns {
+		if n.kind != nodeProject || n.project.Dir != it.projectDir {
+			continue
+		}
+		m.cursor = i
+		m.ensureCursorVisibleFor(ns)
+		m.rememberSelection()
+		if it.snapshot.TeamConfigured {
+			m.actNote = "selected " + it.project + "; press N for a new session or T for a profile"
+		} else {
+			m.actNote = "selected " + it.project + "; press T to create a team"
+		}
+		return true
+	}
+	return false
 }
 
 // jumpToPaletteAgent performs the read-only tmux jump to a running agent chosen
