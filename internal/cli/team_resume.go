@@ -607,6 +607,34 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		return plan, nil
 	}
 
+	if recFound && rec.AgentPID > 0 {
+		statusRec := statusRecord{
+			Role:     m.Role,
+			Handle:   handle,
+			Binary:   m.Binary,
+			Session:  env.SessionName,
+			CWD:      cwd,
+			Root:     root,
+			AgentDir: agentDir,
+		}
+		if target, ok := liveReplacementPane(m, statusRec, env.SessionName); ok {
+			note := fmt.Sprintf("recorded pid dead; live %s at %s; relaunch via amq-squad to re-register", m.Binary, target)
+			plan.Action = resumeLive
+			if in.Force {
+				plan.Note = "force-duplicate: " + note
+				if in.Mode == resumeModeFresh {
+					plan.Command = freshLaunchCommand(in)
+				} else {
+					plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true, NoBootstrap: in.NoBootstrap})
+				}
+				return plan, nil
+			}
+			plan.Note = note
+			plan.Command = ""
+			return plan, nil
+		}
+	}
+
 	// No live signal. Choose restore vs fresh based on mode + record presence.
 	if in.Mode == resumeModeFresh {
 		plan.Action = resumeFresh
