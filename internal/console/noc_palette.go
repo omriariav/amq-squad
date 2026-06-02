@@ -990,8 +990,11 @@ func (m *NOCModel) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	default:
-		if len(msg.String()) == 1 {
-			p.query += msg.String()
+		if len(msg.Runes) > 0 {
+			p.query += string(msg.Runes)
+			p.cursor = 0
+		} else if s := msg.String(); len(s) == 1 {
+			p.query += s
 			p.cursor = 0
 		}
 		return m, nil
