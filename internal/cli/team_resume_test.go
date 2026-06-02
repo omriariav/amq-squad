@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/noc"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -276,6 +277,93 @@ func TestRunTeamResumeLiveMemberWithRelativeAMQRootFromOtherCWD(t *testing.T) {
 	}
 	if strings.Contains(stdout, "launch fresh") {
 		t.Errorf("live relative-root member must not classify as launch fresh:\n%s", stdout)
+	}
+}
+
+func TestRunTeamResumeLiveReplacementPaneSuppressesCommand(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 4242, StartedAt: time.Now(),
+	})
+	paneCWD := canonicalPath(dir)
+	withStubPaneLister(t, []noc.TmuxPane{
+		{Session: "main", Window: "0", Pane: "3", Command: "codex", CWD: paneCWD},
+	}, nil)
+
+	original := defaultDuplicateLaunchProbe
+	defaultDuplicateLaunchProbe = duplicateLaunchProbe{
+		PIDAlive:     func(pid int) bool { return false },
+		ProcessMatch: func(pid int, predicate func(args string) bool) bool { return false },
+		Now:          time.Now,
+	}
+	t.Cleanup(func() { defaultDuplicateLaunchProbe = original })
+
+	stdout, _, err := captureOutput(t, func() error { return runTeamResume(nil) })
+	if err != nil {
+		t.Fatalf("runTeamResume: %v", err)
+	}
+	if !strings.Contains(stdout, "live") || !strings.Contains(stdout, "recorded pid dead") {
+		t.Errorf("replacement pane should classify as live with re-register note:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "no command") {
+		t.Errorf("replacement pane should suppress restore command:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "agent up codex") {
+		t.Errorf("replacement pane must not emit a restore command without force:\n%s", stdout)
+	}
+}
+
+func TestRunTeamResumeForceDuplicateReplacementPaneEmitsRestoreCommand(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 4242, StartedAt: time.Now(),
+	})
+	paneCWD := canonicalPath(dir)
+	withStubPaneLister(t, []noc.TmuxPane{
+		{Session: "main", Window: "0", Pane: "3", Command: "codex", CWD: paneCWD},
+	}, nil)
+
+	original := defaultDuplicateLaunchProbe
+	defaultDuplicateLaunchProbe = duplicateLaunchProbe{
+		PIDAlive:     func(pid int) bool { return false },
+		ProcessMatch: func(pid int, predicate func(args string) bool) bool { return false },
+		Now:          time.Now,
+	}
+	t.Cleanup(func() { defaultDuplicateLaunchProbe = original })
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runTeamResume([]string{"--force-duplicate"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamResume --force-duplicate: %v", err)
+	}
+	if !strings.Contains(stdout, "force-duplicate: recorded pid dead") {
+		t.Errorf("forced replacement pane should preserve warning note:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "amq-squad agent up codex --force-duplicate") {
+		t.Errorf("forced replacement pane should emit forced restore command:\n%s", stdout)
 	}
 }
 
