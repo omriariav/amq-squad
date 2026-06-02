@@ -234,6 +234,51 @@ func TestRunTeamResumeLiveMemberSuppressesCommand(t *testing.T) {
 	}
 }
 
+func TestRunTeamResumeLiveMemberWithRelativeAMQRootFromOtherCWD(t *testing.T) {
+	project := t.TempDir()
+	other := t.TempDir()
+	setupFakeAMQRelativeSessionRoots(t)
+	resumeChdir(t, other)
+
+	if err := team.Write(project, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(project, ".agent-mail", "issue-96", "agents", "cto")
+	myPID := os.Getpid()
+	writeWakeLock(t, agentDir, wakeLockFile{PID: myPID, Root: ".agent-mail/issue-96"})
+
+	original := defaultDuplicateLaunchProbe
+	defaultDuplicateLaunchProbe = duplicateLaunchProbe{
+		PIDAlive: func(pid int) bool { return pid == myPID },
+		ProcessMatch: func(pid int, predicate func(args string) bool) bool {
+			return pid == myPID && predicate("amq wake --me cto --root .agent-mail/issue-96")
+		},
+		Now: time.Now,
+	}
+	t.Cleanup(func() { defaultDuplicateLaunchProbe = original })
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runTeamResume([]string{"--project", project})
+	})
+	if err != nil {
+		t.Fatalf("runTeamResume --project: %v", err)
+	}
+	if !strings.Contains(stdout, "live") {
+		t.Errorf("relative-root live wake should mark member as live:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "no command") {
+		t.Errorf("live relative-root member should suppress its launch command:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "launch fresh") {
+		t.Errorf("live relative-root member must not classify as launch fresh:\n%s", stdout)
+	}
+}
+
 func TestRunTeamResumeFreshIgnoresRestoreRecords(t *testing.T) {
 	dir := t.TempDir()
 	base := setupFakeAMQSessionRoots(t)

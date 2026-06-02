@@ -291,8 +291,9 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 		handle = env.Me
 	}
 	report.Handle = handle
-	report.Root = env.Root
-	report.AgentDir = filepath.Join(env.Root, "agents", handle)
+	root := absoluteAMQRoot(cwd, env.Root)
+	report.Root = root
+	report.AgentDir = filepath.Join(root, "agents", handle)
 	rec, err := launch.Read(report.AgentDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

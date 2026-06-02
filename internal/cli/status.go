@@ -214,8 +214,9 @@ func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe d
 	if env.Me != "" {
 		rec.Handle = env.Me
 	}
-	rec.Root = env.Root
-	rec.AgentDir = filepath.Join(env.Root, "agents", rec.Handle)
+	root := absoluteAMQRoot(rec.CWD, env.Root)
+	rec.Root = root
+	rec.AgentDir = filepath.Join(root, "agents", rec.Handle)
 
 	launchRec, launchErr := launch.Read(rec.AgentDir)
 	wakeLock, wakeErr := readWakeLock(rec.AgentDir)

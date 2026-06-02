@@ -413,6 +413,45 @@ func TestExecuteStatusWakeLockOnlyWakeLive(t *testing.T) {
 	}
 }
 
+func TestExecuteStatusWakeLiveWithRelativeAMQRootFromOtherCWD(t *testing.T) {
+	setupFakeAMQRelativeSessionRoots(t)
+	project := t.TempDir()
+	other := t.TempDir()
+	chdir(t, other)
+	if err := team.Write(project, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(project, ".agent-mail", "issue-96", "agents", "cto")
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4321, Root: ".agent-mail/issue-96", Started: time.Now()})
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       project,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe: duplicateLaunchProbe{
+			PIDAlive: func(pid int) bool { return pid == 4321 },
+			ProcessMatch: func(pid int, predicate func(args string) bool) bool {
+				return pid == 4321 && predicate("amq wake --me cto --root .agent-mail/issue-96")
+			},
+			Now: time.Now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	row := env.Data.Records[0]
+	if row.Status != statusStateWakeLive || !row.Signals.WakeAlive {
+		t.Fatalf("relative-root status row = %+v, want wake-live", row)
+	}
+	if row.AgentDir != agentDir {
+		t.Fatalf("agent_dir = %q, want %q", row.AgentDir, agentDir)
+	}
+}
+
 func TestExecuteStatusJSON(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{

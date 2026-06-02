@@ -260,7 +260,7 @@ func buildTeamPreflights(t team.Team, opts teamLaunchOptions) ([]agentLaunchPref
 		if err != nil {
 			return nil, fmt.Errorf("resolve amq env for %s: %w", m.Handle, err)
 		}
-		root := env.Root
+		root := absoluteAMQRoot(cwd, env.Root)
 		handle := m.Handle
 		if env.Me != "" {
 			handle = env.Me

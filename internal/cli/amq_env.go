@@ -86,6 +86,25 @@ func resolveAMQEnvInDir(cwd, rootFlag, session, handle string) (amqEnv, error) {
 	return parsed, nil
 }
 
+func absoluteAMQRoot(cwd, root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return ""
+	}
+	if filepath.IsAbs(root) {
+		return filepath.Clean(root)
+	}
+	base := strings.TrimSpace(cwd)
+	if base == "" {
+		abs, err := filepath.Abs(root)
+		if err == nil {
+			return abs
+		}
+		return filepath.Clean(root)
+	}
+	return filepath.Clean(filepath.Join(base, root))
+}
+
 func envWithoutAMQIdentity(env []string) []string {
 	remove := map[string]bool{
 		"AM_ROOT":      true,
