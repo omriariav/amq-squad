@@ -91,6 +91,28 @@ func TestRunTeamProfilesListsDefaultFirstThenNamedSorted(t *testing.T) {
 	}
 }
 
+func TestRunTeamProfilesInfersSharedMemberSession(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	seedProfile(t, dir, team.DefaultProfile, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "sleep", Handle: "cto", Session: "operator-smoke"},
+			{Role: "qa", Binary: "sleep", Handle: "qa", Session: "operator-smoke"},
+		},
+	})
+
+	stdout, _, err := captureOutput(t, func() error { return runTeamProfiles(nil) })
+	if err != nil {
+		t.Fatalf("team profiles: %v", err)
+	}
+	if !strings.Contains(stdout, "operator-smoke") {
+		t.Fatalf("team profiles should show inferred shared member session:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "(default)") {
+		t.Fatalf("team profiles should not fall back to default when members share a session:\n%s", stdout)
+	}
+}
+
 func TestRunTeamProfilesProjectTargetsOtherDir(t *testing.T) {
 	project := t.TempDir()
 	other := t.TempDir()

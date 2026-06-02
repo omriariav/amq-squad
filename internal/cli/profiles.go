@@ -84,7 +84,7 @@ Examples:
 				Profile:    team.DefaultProfile,
 				Path:       team.Path(projectDir),
 				Members:    len(t.Members),
-				Workstream: t.Workstream,
+				Workstream: profileDisplayWorkstream(t),
 			})
 		}
 	}
@@ -105,7 +105,7 @@ Examples:
 			Profile:    name,
 			Path:       team.ProfilePath(projectDir, name),
 			Members:    len(t.Members),
-			Workstream: t.Workstream,
+			Workstream: profileDisplayWorkstream(t),
 		})
 	}
 	if *jsonOut {
@@ -125,4 +125,14 @@ Examples:
 		fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", r.Profile, r.Path, r.Members, ws)
 	}
 	return w.Flush()
+}
+
+func profileDisplayWorkstream(t team.Team) string {
+	if inferred := inferredSharedMemberSession(t); inferred != "" {
+		return inferred
+	}
+	if pinned := strings.TrimSpace(t.Workstream); pinned != "" {
+		return pinned
+	}
+	return defaultWorkstreamName(t.Project)
 }
