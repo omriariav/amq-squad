@@ -2554,6 +2554,32 @@ func TestPalette_TeamProfilesActionShowsProfilesWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestPalette_ReadOnlyProjectActionPreservesVisibleProjectFilter(t *testing.T) {
+	m := newControlModel(t)
+	addNamedConfiguredProject(m, "many-profiles", "/fake/proj/many-profiles", "review", "release")
+	m.filter = "project:many-profiles"
+	m.clampCursor()
+
+	m, _ = nocPress(m, "p")
+	for _, ch := range "many profiles team profiles" {
+		m, _ = nocPress(m, string(ch))
+	}
+	sel, ok := m.palette.selected()
+	if !ok || sel.kind != palAction || sel.action != palTeamProfiles {
+		t.Fatalf("expected team-profiles action selected, got %+v ok=%v", sel, ok)
+	}
+	m, _ = nocPress(m, "enter")
+
+	if m.filter != "project:many-profiles" {
+		t.Fatalf("palette action should preserve visible project filter, got %q", m.filter)
+	}
+	for _, n := range m.nodes() {
+		if n.project.Project != "many-profiles" {
+			t.Fatalf("filtered tree leaked project %q after palette action", n.project.Project)
+		}
+	}
+}
+
 func TestPalette_TeamRulesActionShowsResultWithoutMutation(t *testing.T) {
 	m := newControlModel(t)
 	addNamedConfiguredProject(m, "many-profiles", "/fake/proj/many-profiles", "review", "release")
@@ -2897,6 +2923,20 @@ func TestPalette_DeleteTeamActionOpensPreviewGatedFlow(t *testing.T) {
 	}
 	if ops[0].ProjectDir != "/fake/proj/many-profiles" || ops[0].Profile != "release" {
 		t.Fatalf("delete-team op mismatch: %+v", ops[0])
+	}
+}
+
+func TestPalette_MultiTokenQueryMatchesActionOutOfOrder(t *testing.T) {
+	m := newControlModel(t)
+	addNamedConfiguredProject(m, "amq-squad", "/fake/proj/amq-squad", "default")
+
+	m, _ = nocPress(m, "p")
+	for _, ch := range "delete team amq-squad" {
+		m, _ = nocPress(m, string(ch))
+	}
+	sel, ok := m.palette.selected()
+	if !ok || sel.kind != palAction || sel.action != palDeleteTeam || sel.project != "amq-squad" {
+		t.Fatalf("expected amq-squad delete-team action selected, got %+v ok=%v", sel, ok)
 	}
 }
 
