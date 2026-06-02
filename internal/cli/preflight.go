@@ -567,6 +567,23 @@ func rootsMatch(actual, expected string) bool {
 		return true
 	}
 	if filepath.IsAbs(a) && filepath.IsAbs(b) {
+		return canonicalRootForMatch(a) == canonicalRootForMatch(b)
+	}
+	return relativeRootMatchesAbsolute(a, b)
+}
+
+func canonicalRootForMatch(root string) string {
+	if root == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		return resolved
+	}
+	return filepath.Clean(root)
+}
+
+func relativeRootMatchesAbsolute(a, b string) bool {
+	if filepath.IsAbs(a) && filepath.IsAbs(b) {
 		// Different absolute paths: not the same root.
 		return false
 	}

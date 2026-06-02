@@ -314,6 +314,23 @@ func TestClassifyWakeLiveFromVerifiedWake(t *testing.T) {
 	}
 }
 
+func TestWakeProcessMatcherAcceptsSymlinkedAbsoluteRoot(t *testing.T) {
+	realBase := t.TempDir()
+	linkBase := filepath.Join(t.TempDir(), "linked")
+	if err := os.Symlink(realBase, linkBase); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	expected := filepath.Join(realBase, ".agent-mail", "issue-96")
+	actual := filepath.Join(linkBase, ".agent-mail", "issue-96")
+	if err := os.MkdirAll(expected, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	args := "amq wake --me cto --root " + actual
+	if !wakeProcessMatcher("cto", expected)(args) {
+		t.Fatalf("wake matcher should accept symlink-equivalent root: args=%q expected=%q", args, expected)
+	}
+}
+
 func TestWakeHealthLabels(t *testing.T) {
 	base := t.TempDir()
 	proj := t.TempDir()

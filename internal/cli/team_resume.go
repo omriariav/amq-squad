@@ -471,7 +471,7 @@ func buildResumeExecPreflights(t team.Team, panes []teamLaunchPane, workstream s
 		if err != nil {
 			return nil, fmt.Errorf("resolve amq env for %s: %w", m.Handle, err)
 		}
-		root := env.Root
+		root := absoluteAMQRoot(cwd, env.Root)
 		handle := m.Handle
 		if env.Me != "" {
 			handle = env.Me
@@ -539,7 +539,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		}
 		return plan, nil
 	}
-	root := env.Root
+	root := absoluteAMQRoot(cwd, env.Root)
 	handle := m.Handle
 	if env.Me != "" {
 		handle = env.Me
@@ -550,7 +550,8 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	// and current cwd. Without the cwd anchor a sibling repo with the
 	// same role/handle/session would let team resume emit the wrong
 	// repo's restore command.
-	rec, recFound := findMemberRestoreRecord(env.BaseRoot, in.Team.Project, cwd, env.SessionName, m.Role, handle)
+	baseRoot := absoluteAMQRoot(cwd, env.BaseRoot)
+	rec, recFound := findMemberRestoreRecord(baseRoot, in.Team.Project, cwd, env.SessionName, m.Role, handle)
 	plan.HasRestoreRecord = recFound
 	wakeLabel := wakeHealthForMember(agentDir, root, handle, rec, recFound)
 	plan.Wake = wakeLabel

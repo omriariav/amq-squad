@@ -521,6 +521,32 @@ printf '{"root":"%s"}\n' "$root"
 	return base
 }
 
+func setupFakeAMQRelativeSessionRoots(t *testing.T) {
+	t.Helper()
+	script := `#!/bin/sh
+if [ "$1" != "env" ]; then
+  echo "unexpected amq command: $*" >&2
+  exit 1
+fi
+session=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --session)
+      shift
+      session="$1"
+      ;;
+  esac
+  shift
+done
+root=".agent-mail"
+if [ "$session" != "" ]; then
+  root="$root/$session"
+fi
+printf '{"root":"%s","base_root":".agent-mail"}\n' "$root"
+`
+	setupFakeAMQScript(t, script)
+}
+
 func TestShouldAppendBootstrapWithDefaultChildArgs(t *testing.T) {
 	// Sandboxed Codex has no built-in default args, so bootstrap should still
 	// be appended on empty input. Trusted Codex behaves like the legacy default.
