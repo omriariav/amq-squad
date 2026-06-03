@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 func init() {
@@ -85,7 +85,7 @@ func tmuxSessionCreateArgv(workstream, role, cwd string) []string {
 
 // tmuxSessionRenameArgv is the PURE per-agent argv that stamps the window with
 // the deterministic name-first jump token (amq:<session>:<role>) by renaming
-// the just-created <role> window. Reusing paneTitleToken keeps the NOC
+// the just-created <role> window. Reusing paneTitleToken keeps tmux pane
 // resolver's expectedPaneToken in lockstep across both backends.
 //
 //	tmux-session --session <workstream> --rename <role> amq:<session>:<role>

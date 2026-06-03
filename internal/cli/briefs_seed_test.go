@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // frozenClock returns a fixed timestamp so provenance assertions are

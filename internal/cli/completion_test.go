@@ -229,7 +229,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"thread":     true,
 		"status":     true,
 		"console":    true,
-		"noc":        true,
+		"amq":        true,
 		"history":    true,
 		"resume":     true,
 		"fork":       true,

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // UsageError signals a misuse of the CLI (unknown command/flag, bad
@@ -209,8 +209,8 @@ func dispatch(args []string) error {
 		return runStatus(args[1:])
 	case "console":
 		return runConsole(args[1:])
-	case "noc":
-		return runNOC(args[1:])
+	case "amq":
+		return runAMQ(args[1:])
 	case "history":
 		return runHistory(args[1:])
 	case "resume":
@@ -222,17 +222,17 @@ func dispatch(args []string) error {
 	case "archive":
 		return runRm(args[1:], rmModeArchive)
 	case "launch":
-		// Removed in 2.0. Kept as an explicit hint (not unknown-command) for
-		// one release so muscle-memory invocations get a pointer.
-		return usageErrorf("'launch' was removed in 2.0; use 'agent up <binary>' to launch a single agent.")
+		// Legacy verb. Kept as an explicit hint (not unknown-command) for one
+		// release so muscle-memory invocations get a pointer.
+		return usageErrorf("'launch' is a legacy verb; use 'agent up <binary>' to launch a single agent.")
 	case "restore":
-		// Removed in 2.0. Print mode mapped to 'history'; exec mode to
+		// Legacy verb. Print mode maps to 'history'; exec mode maps to
 		// 'agent resume <role>'. Surface both so either intent is covered.
-		return usageErrorf("'restore' was removed in 2.0; use 'history' to list restorable records or 'agent resume <role>' to re-launch one.")
+		return usageErrorf("'restore' is a legacy verb; use 'history' to list restorable records or 'agent resume <role>' to re-launch one.")
 	case "list":
-		// Removed in 2.0 in favor of 'status' (live agents) / 'history'
+		// Legacy verb in favor of 'status' (live agents) / 'history'
 		// (restorable records).
-		return usageErrorf("'list' was removed in 2.0; use 'status' for live agents or 'history' for restorable records.")
+		return usageErrorf("'list' is a legacy verb; use 'status' for live agents or 'history' for restorable records.")
 	case "completion":
 		return runCompletion(args[1:])
 	case "doctor":
@@ -263,7 +263,7 @@ Commands:
   thread    Read one AMQ thread transcript by project and session
   status    Multi-session board (also bare 'amq-squad'); --project and --session for detail
   console   Read-only Mission Control TUI over all sessions (--once for CI)
-  noc       Visibility-first NOC command center across ALL squads under --root (--once/--json for CI)
+  amq       Project-aware AMQ diagnostics and confirm-gated maintenance
   history   List restorable launch records
   resume    Plan how to bring the team back into the resolved workstream
   fork      Plan fresh launches in a new workstream branched off an existing one
@@ -274,7 +274,7 @@ Commands:
   agent     Launch or resume a single agent (agent up / agent resume)
   version   Print the amq-squad version
 
-Removed in 2.0 (each prints a one-line migration hint): launch (use 'agent up'),
+Removed legacy verbs (each prints a one-line migration hint): launch (use 'agent up'),
 restore (use 'history' or 'agent resume'), list (use 'status' or 'history'),
 team show (use 'up --dry-run'), team launch (use 'up').
 
@@ -301,8 +301,8 @@ Examples:
   amq-squad brief --session issue-96
   amq-squad team init --roles cto,fullstack --binary cto=codex
   amq-squad up --dry-run --no-bootstrap
-  amq-squad noc --json | jq .
   amq-squad stop --project ~/Code/app --all --session issue-96
+  amq-squad amq route --session issue-96 --me cto --to fullstack
   amq-squad rm issue-96 --yes
   amq-squad doctor --project ~/Code/app --profile review --json | jq .
 

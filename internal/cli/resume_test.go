@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 func TestRunResumeRequiresTeam(t *testing.T) {
@@ -74,6 +74,9 @@ func TestRunResumeOutputUsesTopLevelLabels(t *testing.T) {
 	}
 	if strings.Contains(stdout, "team launch") {
 		t.Errorf("top-level resume must not suggest 'team launch':\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "plan-only") || !strings.Contains(stdout, "amq-squad resume --exec --session issue-96") {
+		t.Errorf("top-level resume should show the exec follow-up:\n%s", stdout)
 	}
 }
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/internal/launch"
 )
 
 // coordNow is the deterministic clock for coordination tests. All seeded
@@ -155,6 +155,33 @@ func TestParseMessageFileRealFrontmatter(t *testing.T) {
 	}
 	if m.State != MailboxNew || m.Owner != "cto" {
 		t.Fatalf("owner/state wrong: %+v", m)
+	}
+}
+
+func TestParseMessageFileAMQIntegrationMetadata(t *testing.T) {
+	dir := t.TempDir()
+	seedMessage(t, dir, "new", msgSpec{
+		id: "m1", from: "cto", to: []string{"qa"},
+		thread: "handoff/test", subject: "handoff", kind: "decision",
+		createdAt: coordNow,
+		body:      "body",
+	})
+	path := filepath.Join(dir, "inbox", "new", "m1.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Replace(string(raw), "\"kind\": \"decision\"", "\"kind\": \"decision\",\n  \"labels\": [\"handoff\", \"blocking\", \"handoff\"],\n  \"orchestrator\": \"kanban\",\n  \"from_project\": \"api\",\n  \"reply_project\": \"web\"", 1)
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m, ok, err := parseMessageFile(path, "qa", MailboxNew, func() time.Time { return coordNow })
+	if err != nil || !ok {
+		t.Fatalf("parseMessageFile metadata: ok=%v err=%v", ok, err)
+	}
+	if strings.Join(m.Labels, ",") != "handoff,blocking" || m.Orchestrator != "kanban" || m.FromProject != "api" || m.ReplyProject != "web" {
+		t.Fatalf("metadata mismatch: %+v", m)
 	}
 }
 
@@ -332,6 +359,131 @@ func TestTriageNeedsYouViaOperatorHandle(t *testing.T) {
 	}
 }
 
+func TestTriageOperatorAddressedAckOnRunningTeamDoesNotNeedUser(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	userDir := seedAgent(t, base, "s", "user", launch.Record{Binary: "claude", Handle: "user", Session: "s", AgentPID: 9})
+	_ = seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+	_ = seedAgent(t, base, "s", "qa", launch.Record{Binary: "claude", Handle: "qa", Session: "s", AgentPID: 2})
+
+	seedMessage(t, userDir, "new", msgSpec{
+		id: "ack1", from: "cto", to: []string{"user"},
+		thread: "status/ack", subject: "Ack: Phase 2 accepted, no apply release", kind: "question",
+		body:      "Acknowledged. No operator action requested.",
+		createdAt: coordNow.Add(-2 * time.Minute),
+	})
+
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := snap.Sessions[0]
+	th := findThread(t, sess.Coordination, "status/ack")
+	if th.Triage == TriageNeedsYou {
+		t.Fatalf("ack/status thread triage = needs-you, want non-actionable: %+v", th)
+	}
+	if sess.Rollup.NeedsYou != 0 || snap.Rollup.NeedsYou != 0 {
+		t.Fatalf("needs-you rollups session/snapshot = %d/%d, want 0/0", sess.Rollup.NeedsYou, snap.Rollup.NeedsYou)
+	}
+}
+
+func TestTriageOldNeedsYouOnLiveTeamCountsAsHistorical(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	userDir := filepath.Join(base, "s", "agents", "user")
+	_ = seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+	_ = seedAgent(t, base, "s", "qa", launch.Record{Binary: "claude", Handle: "qa", Session: "s", AgentPID: 2})
+
+	seedMessage(t, userDir, "new", msgSpec{
+		id: "old-ask", from: "cto", to: []string{"user"},
+		thread: "decision/ship", subject: "APPROVAL: ship now?", kind: "question",
+		createdAt: coordNow.Add(-26 * time.Hour),
+	})
+
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := snap.Sessions[0]
+	th := findThread(t, sess.Coordination, "decision/ship")
+	if th.Triage != TriageNeedsYou || !th.Historical {
+		t.Fatalf("thread triage/historical = %q/%v, want needs-you historical", th.Triage, th.Historical)
+	}
+	if sess.Rollup.NeedsYou != 0 || sess.Rollup.NeedsYouHistorical != 1 {
+		t.Fatalf("session rollup = %+v, want historical needs-you only", sess.Rollup)
+	}
+	if snap.Rollup.NeedsYou != 0 || snap.Rollup.NeedsYouHistorical != 1 {
+		t.Fatalf("snapshot rollup = %+v, want historical needs-you only", snap.Rollup)
+	}
+}
+
+func TestTriageOldNeedsYouOnDeadMailboxLiveTeamCountsAsHistorical(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	userDir := filepath.Join(base, "s", "agents", "user")
+	ctoDir := seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+	qaDir := seedAgent(t, base, "s", "qa", launch.Record{Binary: "claude", Handle: "qa", Session: "s", AgentPID: 2})
+	seedPresence(t, ctoDir, "cto", "active", coordNow.Add(-5*time.Second))
+	seedPresence(t, qaDir, "qa", "active", coordNow.Add(-5*time.Second))
+
+	seedMessage(t, userDir, "new", msgSpec{
+		id: "old-ask", from: "cto", to: []string{"user"},
+		thread: "decision/ship", subject: "APPROVAL: ship now?", kind: "question",
+		createdAt: coordNow.Add(-26 * time.Hour),
+	})
+
+	probe := coordProbe()
+	probe.PIDAlive = func(pid int) bool { return false }
+	probe.ProcessMatch = func(pid int, _ func(args string) bool) bool { return false }
+	snap, err := Build(proj, base, probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := snap.Sessions[0]
+	th := findThread(t, sess.Coordination, "decision/ship")
+	if th.Triage != TriageNeedsYou || !th.Historical {
+		t.Fatalf("thread triage/historical = %q/%v, want needs-you historical", th.Triage, th.Historical)
+	}
+	if sess.Rollup.NeedsYou != 0 || sess.Rollup.NeedsYouHistorical != 1 {
+		t.Fatalf("session rollup = %+v, want historical needs-you only", sess.Rollup)
+	}
+}
+
+func TestTriageNeedsYouFromStoppedAgentCountsAsHistorical(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	userDir := filepath.Join(base, "s", "agents", "user")
+	_ = seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+
+	seedMessage(t, userDir, "new", msgSpec{
+		id: "fresh-ask", from: "cto", to: []string{"user"},
+		thread: "decision/scope", subject: "APPROVAL: scope check?", kind: "question",
+		createdAt: coordNow.Add(-2 * time.Minute),
+	})
+
+	probe := coordProbe()
+	probe.PIDAlive = func(pid int) bool { return false }
+	probe.ProcessMatch = func(pid int, _ func(args string) bool) bool { return false }
+	snap, err := Build(proj, base, probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := snap.Sessions[0]
+	if len(sess.Agents) != 1 || agentCanCurrentlyNeedOperator(sess.Agents[0].Liveness) {
+		t.Fatalf("precondition agents = %+v, want one inactive agent", sess.Agents)
+	}
+	th := findThread(t, sess.Coordination, "decision/scope")
+	if th.Triage != TriageNeedsYou || !th.Historical {
+		t.Fatalf("thread triage/historical = %q/%v, want needs-you history", th.Triage, th.Historical)
+	}
+	if sess.Rollup.NeedsYou != 0 || sess.Rollup.NeedsYouHistorical != 1 {
+		t.Fatalf("session rollup = %+v, want historical needs-you only", sess.Rollup)
+	}
+	if snap.Rollup.NeedsYou != 0 || snap.Rollup.NeedsYouHistorical != 1 {
+		t.Fatalf("snapshot rollup = %+v, want historical needs-you only", snap.Rollup)
+	}
+}
+
 func TestTriageNeedsYouScansOperatorMailboxWithoutLaunchRecord(t *testing.T) {
 	base := t.TempDir()
 	proj := t.TempDir()
@@ -385,6 +537,35 @@ func TestTriageNeedsYouCustomOperatorHandle(t *testing.T) {
 	th := findThread(t, snap.Sessions[0].Coordination, "p2p/cto__operator")
 	if th.Triage != TriageNeedsYou {
 		t.Fatalf("Triage = %q, want needs-you via custom operator handle", th.Triage)
+	}
+}
+
+func TestThreadSummaryCarriesAMQIntegrationMetadata(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	qaDir := seedAgent(t, base, "s", "qa", launch.Record{Binary: "claude", Handle: "qa", Session: "s", AgentPID: 2})
+	seedMessage(t, qaDir, "new", msgSpec{
+		id: "handoff1", from: "cto", to: []string{"qa"},
+		thread: "handoff/test", subject: "handoff", kind: "decision",
+		createdAt: coordNow,
+	})
+	path := filepath.Join(qaDir, "inbox", "new", "handoff1.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Replace(string(raw), "\"kind\": \"decision\"", "\"kind\": \"decision\",\n  \"labels\": [\"handoff\", \"blocking\"],\n  \"orchestrator\": \"kanban\",\n  \"from_project\": \"api\",\n  \"reply_project\": \"web\"", 1)
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	th := findThread(t, snap.Sessions[0].Coordination, "handoff/test")
+	if strings.Join(th.Labels, ",") != "blocking,handoff" || th.Orchestrator != "kanban" || th.FromProject != "api" || th.ReplyProject != "web" {
+		t.Fatalf("thread metadata mismatch: %+v", th)
 	}
 }
 

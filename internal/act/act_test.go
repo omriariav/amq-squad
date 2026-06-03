@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/internal/state"
 )
 
 // sampleThread is the thread context the builder tests reply/approve/deny into.

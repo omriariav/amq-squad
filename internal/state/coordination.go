@@ -35,9 +35,9 @@ const (
 type Triage string
 
 const (
-	// TriageNeedsYou: an unanswered message addressed TO the operator handle of
-	// kind question/review_request/decision, or a declared block awaiting the
-	// human. The concrete "the human must act" signal.
+	// TriageNeedsYou: an actionable unanswered message addressed TO the operator
+	// handle, explicit waiting-for-operator prose, or a declared block awaiting
+	// the human. The concrete "the human must act" signal.
 	TriageNeedsYou Triage = "needs-you"
 	// TriageBlocked: an agent has explicitly declared a block (kind/marker); the
 	// owner may be another agent.
@@ -139,9 +139,10 @@ type Thresholds struct {
 
 // Default threshold values.
 const (
-	DefaultAtRiskWait = 30 * time.Minute
-	DefaultHeartbeat  = 90 * time.Second
-	DefaultReviewAge  = 45 * time.Minute
+	DefaultAtRiskWait              = 30 * time.Minute
+	DefaultHeartbeat               = 90 * time.Second
+	DefaultReviewAge               = 45 * time.Minute
+	DefaultNeedsYouHistoricalAfter = 24 * time.Hour
 	// DefaultStaleAfter: 72h. A thread untouched for three days is treated as
 	// stale — its triage no longer counts as LIVE attention.
 	DefaultStaleAfter = 72 * time.Hour
@@ -174,6 +175,10 @@ type ThreadSummary struct {
 	Participants []string // union of from + to, sorted
 	Subject      string   // latest non-empty subject
 	Kind         Kind     // latest recognized kind
+	Labels       []string // union of AMQ labels observed on messages in the thread
+	Orchestrator string   // latest orchestrator metadata, when present
+	FromProject  string   // latest cross-project sender metadata, when present
+	ReplyProject string   // latest cross-project reply metadata, when present
 	Status       ThreadStatus
 	LastEventAt  time.Time
 	MessageCount int
@@ -182,9 +187,13 @@ type ThreadSummary struct {
 	Freshness    Freshness
 	// Stale is true when now - LastEventAt exceeds Thresholds.StaleAfter. A stale
 	// thread's triage is age-decayed: it is NOT counted as LIVE attention and is
-	// rendered dim/parenthesized. A needs-you thread is never marked stale —
-	// human action does not decay.
+	// rendered dim/parenthesized. Needs-you uses Historical instead of Stale when
+	// the ask is old or no active agent is present to be waiting on the operator.
 	Stale bool
+	// Historical is true for a needs-you ask retained for context when it is not
+	// current operator action, such as an old ask or a stopped session with no
+	// active non-operator agent.
+	Historical bool
 	// AttnReason classifies WHY a needs-you thread needs the human (approve vs
 	// goal-reached vs a plain question). It is AttnNone on every non-needs-you
 	// thread. See AttnReason.
@@ -210,22 +219,25 @@ type TimelineEvent struct {
 // TriageRollup is the per-session / per-snapshot headline count the console and
 // board render: "N needs-you, M at-risk, K blocked". The at-risk/blocked counts
 // are split into LIVE (recent, non-stale) and STALE (age-decayed) so a surface
-// can lead with what is alive and demote ancient noise. NeedsYou is always live
-// — human action does not decay.
+// can lead with what is alive and demote ancient noise. NeedsYou is live only
+// when it represents current operator action; historical needs-you is counted
+// separately.
 type TriageRollup struct {
-	NeedsYou     int
-	AtRisk       int // LIVE at-risk (non-stale)
-	Blocked      int // LIVE blocked (non-stale)
-	Gated        int // LIVE intentionally gated (non-stale)
-	AtRiskStale  int // age-decayed at-risk
-	BlockedStale int // age-decayed blocked
-	GatedStale   int // age-decayed gated
-	Clear        int
+	NeedsYou           int
+	NeedsYouHistorical int // old retained needs-you asks, not current operator action
+	AtRisk             int // LIVE at-risk (non-stale)
+	Blocked            int // LIVE blocked (non-stale)
+	Gated              int // LIVE intentionally gated (non-stale)
+	AtRiskStale        int // age-decayed at-risk
+	BlockedStale       int // age-decayed blocked
+	GatedStale         int // age-decayed gated
+	Clear              int
 }
 
 // Add folds another rollup into this one.
 func (r *TriageRollup) Add(o TriageRollup) {
 	r.NeedsYou += o.NeedsYou
+	r.NeedsYouHistorical += o.NeedsYouHistorical
 	r.AtRisk += o.AtRisk
 	r.Blocked += o.Blocked
 	r.Gated += o.Gated
@@ -248,7 +260,7 @@ func (r TriageRollup) HasLiveAttention() bool {
 func (c Coordination) TopAttnReason() AttnReason {
 	best := AttnNone
 	for _, t := range c.Threads {
-		if t.Triage != TriageNeedsYou || t.AttnReason == AttnNone {
+		if t.Triage != TriageNeedsYou || t.Historical || t.AttnReason == AttnNone {
 			continue
 		}
 		if best == AttnNone || t.AttnReason.Rank() < best.Rank() {
@@ -303,12 +315,16 @@ func (r *TriageRollup) countTriage(t Triage) {
 }
 
 // countThread tallies one thread's triage into the rollup, routing at-risk and
-// blocked/gated into the LIVE or STALE bucket by the thread's Stale flag.
-// NeedsYou is always live.
+// blocked/gated into the LIVE or STALE bucket by the thread's Stale flag, and
+// routing historical needs-you away from the live operator-action bucket.
 func (r *TriageRollup) countThread(t ThreadSummary) {
 	switch t.Triage {
 	case TriageNeedsYou:
-		r.NeedsYou++
+		if t.Historical {
+			r.NeedsYouHistorical++
+		} else {
+			r.NeedsYou++
+		}
 	case TriageAtRisk:
 		if t.Stale {
 			r.AtRiskStale++
@@ -339,8 +355,11 @@ func (r TriageRollup) String() string {
 	if r.Gated > 0 {
 		s += ", " + itoa(r.Gated) + " gated"
 	}
-	if r.AtRiskStale > 0 || r.BlockedStale > 0 || r.GatedStale > 0 {
+	if r.NeedsYouHistorical > 0 || r.AtRiskStale > 0 || r.BlockedStale > 0 || r.GatedStale > 0 {
 		stale := itoa(r.AtRiskStale) + " at-risk, " + itoa(r.BlockedStale) + " blocked stale"
+		if r.NeedsYouHistorical > 0 {
+			stale = itoa(r.NeedsYouHistorical) + " needs-you historical, " + stale
+		}
 		if r.GatedStale > 0 {
 			stale += ", " + itoa(r.GatedStale) + " gated stale"
 		}
@@ -406,8 +425,24 @@ var userWaitMarkers = []string{
 	"action needed",
 }
 
+var userWaitNegationMarkers = []string{
+	"no operator action",
+	"no user action",
+	"no human action",
+	"no action requested",
+	"no action needed",
+	"not waiting for operator",
+	"not waiting for user",
+	"not waiting for human",
+}
+
 func declaresUserWait(m Message) bool {
 	text := messageSignalText(m)
+	for _, mk := range userWaitNegationMarkers {
+		if strings.Contains(text, mk) {
+			return false
+		}
+	}
 	for _, mk := range userWaitMarkers {
 		if strings.Contains(text, mk) {
 			return true

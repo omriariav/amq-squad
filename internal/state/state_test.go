@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/internal/launch"
 )
 
 // fixedNow returns a deterministic clock anchored at a known instant so

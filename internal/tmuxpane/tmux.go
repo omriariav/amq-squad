@@ -1,4 +1,4 @@
-package noc
+package tmuxpane
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/internal/state"
 )
 
 // TmuxPane is one row from `tmux list-panes -a`: a pane plus its running

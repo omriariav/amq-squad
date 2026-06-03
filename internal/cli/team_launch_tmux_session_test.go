@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // withStubTmuxSessionBinary makes Validate believe (or disbelieve) the

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/noc"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/internal/tmuxpane"
 )
 
 // writeMemberLaunchRecord drops a v0.6 launch.json under the fake AMQ base
@@ -297,7 +297,7 @@ func TestRunTeamResumeLiveReplacementPaneSuppressesCommand(t *testing.T) {
 		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 4242, StartedAt: time.Now(),
 	})
 	paneCWD := canonicalPath(dir)
-	withStubPaneLister(t, []noc.TmuxPane{
+	withStubPaneLister(t, []tmuxpane.TmuxPane{
 		{Session: "main", Window: "0", Pane: "3", Command: "codex", CWD: paneCWD},
 	}, nil)
 
@@ -341,7 +341,7 @@ func TestRunTeamResumeForceDuplicateReplacementPaneEmitsRestoreCommand(t *testin
 		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 4242, StartedAt: time.Now(),
 	})
 	paneCWD := canonicalPath(dir)
-	withStubPaneLister(t, []noc.TmuxPane{
+	withStubPaneLister(t, []tmuxpane.TmuxPane{
 		{Session: "main", Window: "0", Pane: "3", Command: "codex", CWD: paneCWD},
 	}, nil)
 

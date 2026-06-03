@@ -3,7 +3,7 @@ package console
 import (
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/internal/state"
 )
 
 // TestFilterSnapshotRecomputesRollup pins the consistency fix: a filtered
@@ -30,5 +30,65 @@ func TestFilterSnapshotRecomputesRollup(t *testing.T) {
 	}
 	if snap.Rollup != (state.TriageRollup{NeedsYou: 1, AtRisk: 1, Blocked: 3}) {
 		t.Errorf("filterSnapshot mutated the input rollup: %+v", snap.Rollup)
+	}
+}
+
+func TestFilterAMQMetadata(t *testing.T) {
+	snap := state.Snapshot{
+		Sessions: []state.Session{
+			{
+				Name: "alpha",
+				Coordination: state.Coordination{
+					Threads: []state.ThreadSummary{{
+						ID:           "p2p/cto__qa",
+						Labels:       []string{"blocking", "handoff"},
+						Orchestrator: "kanban",
+					}},
+				},
+			},
+			{
+				Name: "beta",
+				Coordination: state.Coordination{
+					Threads: []state.ThreadSummary{{ID: "p2p/cto__dev", Labels: []string{"FYI"}}},
+				},
+			},
+		},
+	}
+
+	byLabel := filterSnapshot(snap, parseFilter("label:handoff"))
+	if len(byLabel.Sessions) != 1 || byLabel.Sessions[0].Name != "alpha" {
+		t.Fatalf("label filter sessions = %+v, want alpha only", byLabel.Sessions)
+	}
+	if !parseFilter("label:BLOCKING").matchThread(snap.Sessions[0].Coordination.Threads[0]) {
+		t.Fatal("label filter should match case-insensitively")
+	}
+
+	byOrchestrator := filterSnapshot(snap, parseFilter("orchestrator:kan"))
+	if len(byOrchestrator.Sessions) != 1 || byOrchestrator.Sessions[0].Name != "alpha" {
+		t.Fatalf("orchestrator filter sessions = %+v, want alpha only", byOrchestrator.Sessions)
+	}
+}
+
+func TestFilterStaleBlocked(t *testing.T) {
+	thread := state.ThreadSummary{
+		ID:     "p2p/cto__qa",
+		Status: state.ThreadBlocked,
+		Triage: state.TriageBlocked,
+		Stale:  true,
+	}
+	snap := state.Snapshot{
+		Sessions: []state.Session{{
+			Name:         "alpha",
+			Rollup:       state.TriageRollup{BlockedStale: 1},
+			Coordination: state.Coordination{Threads: []state.ThreadSummary{thread}},
+		}},
+	}
+
+	out := filterSnapshot(snap, parseFilter("stale-blocked"))
+	if len(out.Sessions) != 1 || out.Sessions[0].Name != "alpha" {
+		t.Fatalf("stale-blocked sessions = %+v, want alpha", out.Sessions)
+	}
+	if !parseFilter("stale-blocked").matchThread(thread) {
+		t.Fatal("stale-blocked should match stale blocked threads")
 	}
 }

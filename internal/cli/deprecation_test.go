@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // The five legacy verbs (top-level launch/restore/list and team show/launch)
-// were removed in 2.0. Each must return a UsageError (exit 1) whose message
+// are legacy commands. Each must return a UsageError (exit 1) whose message
 // names the modern replacement -- a helpful migration hint, NOT a silent
 // unknown-command. These tests pin both the exit classification and the hint.
 
@@ -38,26 +38,26 @@ func assertRemovedHint(t *testing.T, args []string, wants ...string) {
 }
 
 func TestLaunchVerbRemovedWithHint(t *testing.T) {
-	assertRemovedHint(t, []string{"launch", "codex"}, "removed in 2.0", "agent up")
+	assertRemovedHint(t, []string{"launch", "codex"}, "legacy verb", "agent up")
 }
 
 func TestRestoreVerbRemovedWithHint(t *testing.T) {
 	// The restore hint must name both the print-mode replacement (history)
 	// and the exec-mode replacement (agent resume).
 	assertRemovedHint(t, []string{"restore", "--exec", "--role", "cto"},
-		"removed in 2.0", "history", "agent resume")
+		"legacy verb", "history", "agent resume")
 }
 
 func TestListVerbRemovedWithHint(t *testing.T) {
-	assertRemovedHint(t, []string{"list"}, "removed in 2.0", "status", "history")
+	assertRemovedHint(t, []string{"list"}, "legacy verb", "status", "history")
 }
 
 func TestTeamShowRemovedWithHint(t *testing.T) {
-	assertRemovedHint(t, []string{"team", "show"}, "removed in 2.0", "up --dry-run")
+	assertRemovedHint(t, []string{"team", "show"}, "legacy verb", "up --dry-run")
 }
 
 func TestTeamLaunchRemovedWithHint(t *testing.T) {
-	assertRemovedHint(t, []string{"team", "launch"}, "removed in 2.0", "up")
+	assertRemovedHint(t, []string{"team", "launch"}, "legacy verb", "up")
 }
 
 // The removed verbs must not be silently swallowed as unknown-command: the

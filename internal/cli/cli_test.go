@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 func TestRunVersionCommand(t *testing.T) {
@@ -69,6 +69,30 @@ func TestRunRolesRejectsPositionalArgs(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no positional arguments") {
 		t.Fatalf("roles positional error = %v", err)
+	}
+}
+
+func TestRunNOCIsUnknownCommand(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return Run([]string{"noc"}, "v-test")
+	})
+	if err == nil {
+		t.Fatal("noc should be unsupported")
+	}
+	if !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("noc error = %v", err)
+	}
+}
+
+func TestRunConsoleRootIsUnsupportedFlag(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return Run([]string{"console", "--root", t.TempDir()}, "v-test")
+	})
+	if err == nil {
+		t.Fatal("console --root should be unsupported")
+	}
+	if !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("console --root error = %v", err)
 	}
 }
 

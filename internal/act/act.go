@@ -9,7 +9,7 @@
 //     Preview, without executing anything. What Preview shows is byte-for-byte
 //     what Send runs (Preview is shellQuote(m.argv()), Send runs m.argv()).
 //   - Inject-the-seam. Send shells `amq` only through the package-level sendExec
-//     seam (mirroring noc.switchExec). Tests swap the seam so they NEVER touch
+//     seam (mirroring the tmuxpane switch seam). Tests swap the seam so they NEVER touch
 //     the real amq binary or the live bus.
 //   - Identity-stripped. Send clears inherited AM_ROOT/AM_BASE_ROOT/AM_ME from
 //     the child environment (mirroring cli.envWithoutAMQIdentity) so a stale
@@ -32,7 +32,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/internal/state"
 )
 
 // OpMessage is a single operator-authored AMQ write. The zero value is not
@@ -68,7 +68,7 @@ type OpMessage struct {
 
 // sender is the injectable subprocess seam for Send. The default runs the real
 // amq binary with AMQ identity stripped from its environment; tests swap it for
-// a recorder so they never shell real amq. It mirrors noc.switchExec: a
+// a recorder so they never shell real amq. It mirrors the tmuxpane switch seam: a
 // package-level var so the Send signature stays clean.
 //
 // name is the binary ("amq"), args is the full argv tail, and env is the child
@@ -221,7 +221,7 @@ func isShellSafe(s string) bool {
 	return true
 }
 
-// --- Convenience builders: produce an OpMessage from NOC context ---
+// --- Convenience builders: produce an OpMessage from selected session context ---
 //
 // Each builder takes the project's .agent-mail root and the amq session name
 // plus (where relevant) a state.ThreadSummary, and returns a fully-pinned

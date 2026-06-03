@@ -12,8 +12,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/omriariav/amq-squad/v2/internal/rules"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/rules"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // doctorMinAMQVersion is the lowest AMQ release this build of amq-squad
@@ -66,6 +66,7 @@ type doctorExecution struct {
 	JSON           bool
 	AllProfiles    bool
 	ResolveAMQEnv  func(projectDir string) (amqEnv, error)
+	RunAMQOps      func(projectDir string, env amqEnv) ([]byte, error)
 	LookPath       func(name string) (string, error)
 	Probe          duplicateLaunchProbe
 	WakeOverride   func(t team.Team, workstream string) []doctorCheck
@@ -80,8 +81,9 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		ResolveAMQEnv: func(projectDir string) (amqEnv, error) {
 			return resolveAMQEnvInDir(projectDir, "", "", "amq-squad")
 		},
-		LookPath: exec.LookPath,
-		Probe:    defaultDuplicateLaunchProbe,
+		RunAMQOps: defaultDoctorAMQOps,
+		LookPath:  exec.LookPath,
+		Probe:     defaultDuplicateLaunchProbe,
 	}
 }
 
@@ -97,10 +99,10 @@ func runDoctor(args []string) error {
 Usage:
   amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
 
-Checks: AMQ version, selected team profile, tmux availability, configured
-members' wake health, and CLAUDE.md / AGENTS.md marker integrity plus
-pointer-sync drift for the selected profile's sync targets. Use
---all-profiles for NOC-style project health across every configured profile.
+Checks: AMQ version and ops diagnostics, selected team profile, tmux
+availability, configured members' wake health, and CLAUDE.md / AGENTS.md
+marker integrity plus pointer-sync drift for the selected profile's sync
+targets. Use --all-profiles for project health across every configured profile.
 Read-only. Exits non-zero if any check is "fail".
 
 Examples:
@@ -312,6 +314,7 @@ func countNonOK(checks []doctorCheck) int {
 func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks := []doctorCheck{}
 	checks = append(checks, doctorCheckAMQVersion(d))
+	checks = append(checks, doctorCheckAMQOps(d))
 	checks = append(checks, doctorCheckTeamConfig(d))
 	checks = append(checks, doctorCheckTmux(d))
 	checks = append(checks, doctorCheckMarkerIntegrity(d)...)
@@ -319,6 +322,21 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	wakeChecks, workstream := doctorCheckWake(d)
 	checks = append(checks, wakeChecks...)
 	return checks, workstream
+}
+
+func defaultDoctorAMQOps(projectDir string, env amqEnv) ([]byte, error) {
+	root := absoluteAMQRoot(projectDir, env.Root)
+	ctx := amqContext{
+		ProjectDir: projectDir,
+		Env:        env,
+		Root:       root,
+		Me:         env.Me,
+	}
+	return runAMQCommand(amqCommandRequest{
+		Dir: projectDir,
+		Env: amqCommandEnv(ctx),
+		Arg: []string{"doctor", "--ops", "--json"},
+	})
 }
 
 func doctorProfile(d doctorExecution) string {
@@ -365,6 +383,36 @@ func doctorCheckAMQVersion(d doctorExecution) doctorCheck {
 		Name:   "amq version",
 		Status: doctorOK,
 		Detail: fmt.Sprintf("amq %s (min %s)", got, doctorMinAMQVersion),
+	}
+}
+
+func doctorCheckAMQOps(d doctorExecution) doctorCheck {
+	if d.RunAMQOps == nil {
+		return doctorCheck{
+			Name:   "amq ops",
+			Status: doctorWarn,
+			Detail: "amq doctor --ops check unavailable",
+		}
+	}
+	env, err := d.ResolveAMQEnv(d.ProjectDir)
+	if err != nil {
+		return doctorCheck{
+			Name:   "amq ops",
+			Status: doctorFail,
+			Detail: fmt.Sprintf("amq env failed: %v", err),
+		}
+	}
+	if _, err := d.RunAMQOps(d.ProjectDir, env); err != nil {
+		return doctorCheck{
+			Name:   "amq ops",
+			Status: doctorFail,
+			Detail: fmt.Sprintf("amq doctor --ops failed: %v", err),
+		}
+	}
+	return doctorCheck{
+		Name:   "amq ops",
+		Status: doctorOK,
+		Detail: "amq doctor --ops ok",
 	}
 }
 

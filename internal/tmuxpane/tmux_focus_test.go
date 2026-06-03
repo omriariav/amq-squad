@@ -1,4 +1,4 @@
-package noc
+package tmuxpane
 
 import (
 	"errors"

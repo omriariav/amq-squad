@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/rules"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/internal/rules"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 func newDoctorExec(t *testing.T, dir string) doctorExecution {
@@ -21,6 +21,9 @@ func newDoctorExec(t *testing.T, dir string) doctorExecution {
 		Out:        &bytes.Buffer{},
 		ResolveAMQEnv: func(string) (amqEnv, error) {
 			return amqEnv{AMQVersion: "0.34.1", Root: filepath.Join(dir, ".agent-mail")}, nil
+		},
+		RunAMQOps: func(string, amqEnv) ([]byte, error) {
+			return []byte(`{"status":"ok"}`), nil
 		},
 		LookPath: func(name string) (string, error) {
 			if name == "tmux" {
@@ -32,6 +35,29 @@ func newDoctorExec(t *testing.T, dir string) doctorExecution {
 		WakeOverride: func(team.Team, string) []doctorCheck {
 			return []doctorCheck{{Name: "wake cto", Status: doctorOK, Detail: "no live signals"}}
 		},
+	}
+}
+
+func TestExecuteDoctorAMQOpsFailure(t *testing.T) {
+	dir := t.TempDir()
+	d := newDoctorExec(t, dir)
+	d.RunAMQOps = func(string, amqEnv) ([]byte, error) {
+		return nil, errors.New("stale tmp lock")
+	}
+	var buf bytes.Buffer
+	d.Out = &buf
+	d.JSON = true
+	err := executeDoctor(d)
+	if err == nil || !strings.Contains(err.Error(), "doctor:") {
+		t.Fatalf("want doctor fail error, got %v", err)
+	}
+	data := decodeDoctorJSON(t, &buf)
+	got := findCheck(data.Checks, "amq ops")
+	if got == nil || got.Status != doctorFail {
+		t.Fatalf("amq ops check = %+v, want fail", got)
+	}
+	if !strings.Contains(got.Detail, "amq doctor --ops failed") || !strings.Contains(got.Detail, "stale tmp lock") {
+		t.Errorf("detail should name AMQ ops failure: %q", got.Detail)
 	}
 }
 
