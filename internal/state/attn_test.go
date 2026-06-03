@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/internal/launch"
 )
 
 // TestClassifyAttnReason_FromOperatorAddressedSubject proves PR13c part C
@@ -151,23 +151,25 @@ func TestNeedsYouThreads_SortedByReasonThenAge(t *testing.T) {
 // AttnApprove, the `DONE:` prefix classifies AttnGoalReached, and a normal
 // status subject that merely embeds the substring "done" ("abandoned") does NOT
 // classify goal-reached — guarding the bare-"done" false positive. This is the
-// signal the NOC needs-you tier (APPROVE / GOAL-REACHED) lights up on for real
+// signal the needs-you tier (APPROVE / GOAL-REACHED) lights up on for real
 // squads. Runs through the SAME parser + collapse path real data uses.
 func TestAttnReason_TaughtPrefixes(t *testing.T) {
 	cases := []struct {
-		name    string
-		kind    string
-		subject string
-		want    AttnReason
+		name       string
+		kind       string
+		subject    string
+		wantTriage Triage
+		wantReason AttnReason
 	}{
 		// Taught APPROVAL: prefix -> approve.
-		{"approval-prefix", "question", "APPROVAL: run X?", AttnApprove},
+		{"approval-prefix", "question", "APPROVAL: run X?", TriageNeedsYou, AttnApprove},
 		// Taught DONE: prefix (kind=decision, as taught) -> goal-reached.
-		{"done-prefix", "decision", "DONE: epic complete", AttnGoalReached},
-		// False-positive guard: "abandoned" embeds "done" but is NOT goal-reached.
-		{"abandoned-not-goal", "question", "status: abandoned the retry", AttnGeneric},
+		{"done-prefix", "decision", "DONE: epic complete", TriageNeedsYou, AttnGoalReached},
+		// False-positive guard: "abandoned" embeds "done" but is NOT goal-reached,
+		// and status prose is not live needs-you without an action signal.
+		{"abandoned-not-goal", "question", "status: abandoned the retry", TriageClear, AttnNone},
 		// Standalone "done" word still classifies goal-reached (word match kept).
-		{"standalone-done", "decision", "all done, ready for review", AttnGoalReached},
+		{"standalone-done", "decision", "all done, ready for review", TriageNeedsYou, AttnGoalReached},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -184,11 +186,11 @@ func TestAttnReason_TaughtPrefixes(t *testing.T) {
 				t.Fatal(err)
 			}
 			th := findThread(t, snap.Sessions[0].Coordination, "decision/x")
-			if th.Triage != TriageNeedsYou {
-				t.Fatalf("expected NeedsYou triage for an operator-addressed ask, got %s", th.Triage)
+			if th.Triage != tc.wantTriage {
+				t.Fatalf("Triage = %q, want %q", th.Triage, tc.wantTriage)
 			}
-			if th.AttnReason != tc.want {
-				t.Errorf("AttnReason = %q, want %q (subject %q)", th.AttnReason, tc.want, tc.subject)
+			if th.AttnReason != tc.wantReason {
+				t.Errorf("AttnReason = %q, want %q (subject %q)", th.AttnReason, tc.wantReason, tc.subject)
 			}
 			// Explicit anti-false-positive assertion for the "abandoned" case.
 			if tc.name == "abandoned-not-goal" && th.AttnReason == AttnGoalReached {

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/internal/state"
 )
 
 // archiveDirName is the base-root subdirectory that `archive` MOVES sessions

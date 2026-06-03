@@ -1,10 +1,10 @@
-package noc
+package tmuxpane
 
 import (
 	"errors"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/internal/state"
 )
 
 func TestResolveTmuxTarget_MatchesByCWDAndEngine(t *testing.T) {

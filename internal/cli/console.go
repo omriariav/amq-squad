@@ -8,10 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/console"
-	"github.com/omriariav/amq-squad/v2/internal/noc"
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/console"
+	"github.com/omriariav/amq-squad/internal/state"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // runConsole is the `amq-squad console` verb: a read-only, full-screen Mission
@@ -36,29 +35,6 @@ func runConsole(args []string) error {
 	staleAfter := fs.Duration("stale-after", state.DefaultStaleAfter, "a thread untouched longer than this is stale")
 	filter := fs.String("filter", "", "start with this filter (e.g. needs-you, agent:cto, session:issue-96)")
 	once := fs.Bool("once", false, "render one static board to stdout and exit (non-TTY / CI)")
-	// --root makes console reach the SAME multi-root NOC command center the `noc`
-	// verb drives. It is repeatable; given one or more, console hands off to NOC.
-	var roots rootList
-	fs.Var(&roots, "root", "scan this directory for amq-squad projects via the multi-root NOC view (repeatable)")
-	depth := fs.Int("depth", noc.DefaultDepth, "NOC scan depth under each --root")
-	tree := fs.Bool("tree", false, "with --root --once: render the full NOC tree instead of the rollup digest")
-	all := fs.Bool("all", false, "alias for --tree when using --root")
-	hideStale := fs.Bool("hide-stale", false, "with --root: hide stopped/archived (stale) squads")
-	noBell := fs.Bool("no-bell", false, "with --root: mute needs-you alerts")
-	jsonOut := fs.Bool("json", false, "with --root: emit a schema-versioned noc_snapshot envelope and exit")
-	actionsOut := fs.Bool("actions", false, "with --root: emit the flat NOC action queue and exit")
-	actionFilter := fs.String("action", "", "with --root --actions: only include action names matching this comma-separated list")
-	actionIDFilter := fs.String("action-id", "", "with --root --actions: only include exact action IDs matching this comma-separated list")
-	targetIDFilter := fs.String("target-id", "", "with --root --actions: only include exact target row IDs matching this comma-separated list")
-	scopeFilter := fs.String("scope", "", "with --root --actions: only include scopes matching this comma-separated list (project,session,agent)")
-	runActionID := fs.String("run-action", "", "with --root: execute one NOC action by exact action ID or unique action name")
-	var actionVars nocTemplateVars
-	fs.Var(&actionVars, "set", "with --root --run-action: fill template variable key=value")
-	actionDryRun := fs.Bool("dry-run", false, "with --root --run-action: resolve and preview the action without executing it")
-	yes := fs.Bool("yes", false, "with --root --run-action: skip mutating action confirmation")
-	fs.BoolVar(yes, "y", false, "shorthand for --yes")
-	mutatingOnly := fs.Bool("mutating", false, "with --root --actions: only include mutating actions")
-	commandsOnly := fs.Bool("commands", false, "with --root --actions: print selected action commands only")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad console - live read-only Mission Control over your sessions
 
@@ -66,12 +42,6 @@ Usage:
   amq-squad console [--project DIR] [--profile NAME] [--session NAME] [--refresh 2s]
                     [--at-risk-wait 5m] [--review-age 15m] [--stale-after 72h]
                     [--filter EXPR] [--once]
-  amq-squad console --root DIR [--root DIR ...] [--depth N] [--filter EXPR]
-                    [--hide-stale] [--stale-after 72h] [--once|--json|--actions]
-                    [--action NAME[,NAME]] [--action-id ID[,ID]]
-                    [--target-id ID[,ID]] [--scope project,session,agent]
-                    [--mutating] [--commands]
-  amq-squad console --root DIR --run-action ID_OR_NAME [--set key=value ...] [--dry-run] [--yes|-y]
 
 A full-screen, read-only TUI showing every discovered session, its triage
 rollup (needs-you / blocked / gated / at-risk), and per-agent liveness. The TUI
@@ -80,10 +50,6 @@ renders to your terminal (/dev/tty); stdout stays clean.
 --session is shorthand for --filter session:<name>; use --filter for broader
 typed filters such as needs-you, gated, agent:<handle>, model:<engine>, or bare text.
 
-With one or more --root it reaches the multi-root NOC command center across
-EVERY discovered project under those roots (the same surface as 'amq-squad noc').
---project and --root are mutually exclusive.
-
 With --once it renders a single static board to STDOUT and exits — use this
 in CI or when there is no terminal attached.
 
@@ -91,13 +57,6 @@ Examples:
   amq-squad console
   amq-squad console --project ~/Code/app --once
   amq-squad console --once
-  amq-squad console --root ~/Code --once
-  amq-squad console --root ~/Code --filter needs-you --json
-  amq-squad console --root ~/Code --actions --filter needs-you
-  amq-squad console --root ~/Code --actions --action resume --mutating
-  amq-squad console --root ~/Code --actions --scope session --mutating
-  amq-squad console --root ~/Code --actions --action resume --commands
-  amq-squad console --root ~/Code --filter project:app --run-action new_session --set session=issue-97 --dry-run
   amq-squad console --session issue-96 --at-risk-wait 5m
 `)
 	}
@@ -109,41 +68,6 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	if len(roots) > 0 && flagWasSet(fs, "project") {
-		return usageErrorf("--project cannot be used with --root; --root selects the multi-root NOC surface")
-	}
-	if len(roots) == 0 {
-		for _, name := range []string{"tree", "all", "hide-stale", "no-bell", "json", "actions", "action", "action-id", "target-id", "scope", "run-action", "set", "dry-run", "yes", "y", "mutating", "commands"} {
-			if flagWasSet(fs, name) {
-				return usageErrorf("--%s requires --root; use 'amq-squad noc --%s' for the multi-root surface", name, name)
-			}
-		}
-	}
-	runActionSet := strings.TrimSpace(*runActionID) != ""
-	if !*actionsOut && !runActionSet && nocActionSelectorFlagWasSet(fs) {
-		return usageErrorf("--action, --action-id, --target-id, --scope, --mutating, and --commands require --actions")
-	}
-	if runActionSet && *actionsOut {
-		return usageErrorf("--run-action cannot be combined with --actions")
-	}
-	if runActionSet && nocActionSelectorFlagWasSet(fs) {
-		return usageErrorf("--run-action cannot be combined with --action, --action-id, --target-id, --scope, --mutating, or --commands")
-	}
-	if *commandsOnly && *jsonOut {
-		return usageErrorf("--commands cannot be used with --json; use --actions --json for a noc_actions envelope")
-	}
-	if runActionSet && *jsonOut && !*actionDryRun {
-		return usageErrorf("--run-action --json requires --dry-run; use --actions --json to inspect actions")
-	}
-	if !runActionSet && flagWasSet(fs, "dry-run") {
-		return usageErrorf("--dry-run requires --run-action")
-	}
-	if !runActionSet && flagWasSet(fs, "set") {
-		return usageErrorf("--set requires --run-action")
-	}
-	if !runActionSet && (flagWasSet(fs, "yes") || flagWasSet(fs, "y")) {
-		return usageErrorf("--yes/-y requires --run-action")
-	}
 	effectiveFilter := strings.TrimSpace(*filter)
 	if *sessionFlag != "" && effectiveFilter != "" {
 		return usageErrorf("--session cannot be used with --filter; use --filter session:%s", *sessionFlag)
@@ -152,41 +76,6 @@ Examples:
 		effectiveFilter = "session:" + *sessionFlag
 	}
 
-	// --root routes console to the multi-root NOC command center, so both verbs
-	// reach the same surface.
-	if len(roots) > 0 {
-		return executeNOC(nocExecution{
-			Cwd:              cwd,
-			Roots:            []string(roots),
-			Depth:            *depth,
-			Refresh:          *refresh,
-			AtRiskWait:       *atRiskWait,
-			ReviewAge:        *reviewAge,
-			StaleAfter:       *staleAfter,
-			Filter:           effectiveFilter,
-			Once:             *once,
-			Tree:             *tree || *all,
-			HideStale:        *hideStale,
-			NoBell:           *noBell,
-			JSON:             *jsonOut,
-			Actions:          *actionsOut,
-			ActionFilter:     *actionFilter,
-			ActionIDFilter:   *actionIDFilter,
-			TargetIDFilter:   *targetIDFilter,
-			ScopeFilter:      *scopeFilter,
-			RunActionID:      *runActionID,
-			ActionVars:       map[string]string(actionVars),
-			DryRun:           *actionDryRun,
-			Yes:              *yes,
-			MutatingOnly:     *mutatingOnly,
-			CommandsOnly:     *commandsOnly,
-			Out:              os.Stdout,
-			Confirm:          nocActionConfirmOverride,
-			StdoutIsTTY:      outputIsTTY(),
-			RunActionCommand: nocActionRunnerOverride,
-			RunNOC:           console.RunNOC,
-		})
-	}
 	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
 	if err != nil {
 		return err

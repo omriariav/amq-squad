@@ -3,7 +3,7 @@ package console
 import (
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/internal/state"
 )
 
 // Filtering is a PURE, read-only narrowing of the snapshot. A Filter never reads
@@ -17,12 +17,15 @@ import (
 //	gated           -> only gated sessions/threads
 //	at-risk          -> only at-risk
 //	blocked          -> only blocked
+//	stale-blocked    -> only stale blocked threads
 //	unread           -> only threads with an unread recipient (and the sessions
 //	                    that contain one)
 //	agent:<handle>   -> only sessions containing that agent handle / threads it
 //	                    participates in
 //	model:<model>    -> only sessions containing an agent on that engine/model
 //	session:<name>   -> only the named session (substring, case-insensitive)
+//	label:<label>    -> only threads carrying an AMQ label
+//	orchestrator:<o> -> only threads carrying matching orchestrator metadata
 //
 // An empty/zero Filter matches everything.
 
@@ -40,6 +43,9 @@ const (
 	filterAgent
 	filterModel
 	filterSession
+	filterLabel
+	filterOrchestrator
+	filterStaleBlocked
 )
 
 // parseFilter turns a typed filter expression into a Filter. Unknown text leaves
@@ -65,6 +71,8 @@ func parseFilter(raw string) Filter {
 	case lower == "blocked", lower == "block":
 		f.kind = filterBlocked
 		f.Triage = state.TriageBlocked
+	case lower == "stale-blocked", lower == "staleblocked", lower == "blocked-stale":
+		f.kind = filterStaleBlocked
 	case lower == "unread":
 		f.kind = filterUnread
 	case strings.HasPrefix(lower, "agent:"):
@@ -77,6 +85,12 @@ func parseFilter(raw string) Filter {
 		f.kind = filterSession
 		f.arg = strings.TrimSpace(t[len("session:"):])
 		f.Session = f.arg
+	case strings.HasPrefix(lower, "label:"):
+		f.kind = filterLabel
+		f.arg = strings.TrimSpace(t[len("label:"):])
+	case strings.HasPrefix(lower, "orchestrator:"):
+		f.kind = filterOrchestrator
+		f.arg = strings.TrimSpace(t[len("orchestrator:"):])
 	default:
 		// Unknown expression: leave kind=filterNone (matches everything) but keep
 		// Raw so the view can flag it as unrecognized.
@@ -127,6 +141,8 @@ func (f Filter) matchSession(s state.Session) bool {
 		return s.Rollup.AtRisk > 0
 	case filterBlocked:
 		return s.Rollup.Blocked > 0
+	case filterStaleBlocked:
+		return s.Rollup.BlockedStale > 0
 	case filterUnread:
 		for _, t := range s.Coordination.Threads {
 			if len(t.UnreadBy) > 0 {
@@ -150,6 +166,20 @@ func (f Filter) matchSession(s state.Session) bool {
 		return false
 	case filterSession:
 		return strings.Contains(strings.ToLower(s.Name), strings.ToLower(f.arg))
+	case filterLabel:
+		for _, t := range s.Coordination.Threads {
+			if threadHasLabel(t, f.arg) {
+				return true
+			}
+		}
+		return false
+	case filterOrchestrator:
+		for _, t := range s.Coordination.Threads {
+			if threadMatchesOrchestrator(t, f.arg) {
+				return true
+			}
+		}
+		return false
 	default:
 		return true
 	}
@@ -172,6 +202,8 @@ func (f Filter) matchThread(t state.ThreadSummary) bool {
 		return t.Triage == state.TriageAtRisk
 	case filterBlocked:
 		return t.Triage == state.TriageBlocked
+	case filterStaleBlocked:
+		return t.Status == state.ThreadBlocked && t.Stale
 	case filterUnread:
 		return len(t.UnreadBy) > 0
 	case filterAgent:
@@ -184,9 +216,31 @@ func (f Filter) matchThread(t state.ThreadSummary) bool {
 	case filterModel, filterSession:
 		// Session-scoped filters do not narrow individual threads.
 		return true
+	case filterLabel:
+		return threadHasLabel(t, f.arg)
+	case filterOrchestrator:
+		return threadMatchesOrchestrator(t, f.arg)
 	default:
 		return true
 	}
+}
+
+func threadMatchesOrchestrator(t state.ThreadSummary, want string) bool {
+	want = strings.ToLower(strings.TrimSpace(want))
+	if want == "" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(t.Orchestrator), want)
+}
+
+func threadHasLabel(t state.ThreadSummary, want string) bool {
+	want = strings.ToLower(strings.TrimSpace(want))
+	for _, label := range t.Labels {
+		if strings.EqualFold(label, want) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchAgent reports whether an agent passes the filter (used in the detail

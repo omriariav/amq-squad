@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/internal/launch"
 )
 
 // staleProbe is a deterministic probe pinned to `now` with no live PIDs.
@@ -105,9 +105,10 @@ func TestStaleness_BlockedThreadDecaysPastWindow(t *testing.T) {
 	}
 }
 
-// TestStaleness_NeedsYouNeverDecays asserts a needs-you thread is never marked
-// stale, even when ancient — human action does not age out.
-func TestStaleness_NeedsYouNeverDecays(t *testing.T) {
+// TestStaleness_NeedsYouUsesHistoryNotStale asserts a needs-you thread is not
+// marked stale, even when ancient, but inactive-agent asks count as historical
+// rather than live operator action.
+func TestStaleness_NeedsYouUsesHistoryNotStale(t *testing.T) {
 	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	root := t.TempDir()
 	dir := writeStaleAgent(t, root, "main", "dev")
@@ -116,7 +117,8 @@ func TestStaleness_NeedsYouNeverDecays(t *testing.T) {
 	if err := os.MkdirAll(inbox, 0o755); err != nil {
 		t.Fatalf("mkdir inbox: %v", err)
 	}
-	// A 30-day-old question addressed to the operator: needs-you, never stale.
+	// A 30-day-old question addressed to the operator remains a needs-you thread,
+	// but the inactive agent means it is only history in the rollup.
 	msg := "---json\n" +
 		`{"schema":1,"id":"q","thread":"decision/ship","from":"dev","to":["user"],` +
 		`"kind":"question","subject":"ship?",` +
@@ -132,11 +134,11 @@ func TestStaleness_NeedsYouNeverDecays(t *testing.T) {
 	}
 	for _, th := range snap.Sessions[0].Coordination.Threads {
 		if th.Triage == TriageNeedsYou && th.Stale {
-			t.Errorf("needs-you thread must never be stale (age does not decay human action)")
+			t.Errorf("needs-you history must not be marked stale")
 		}
 	}
-	if snap.Rollup.NeedsYou != 1 {
-		t.Errorf("expected 1 needs-you, got %d", snap.Rollup.NeedsYou)
+	if snap.Rollup.NeedsYou != 0 || snap.Rollup.NeedsYouHistorical != 1 {
+		t.Errorf("rollup = %+v, want one historical needs-you", snap.Rollup)
 	}
 }
 

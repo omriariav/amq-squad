@@ -6,7 +6,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/omriariav/amq-squad/v2/internal/catalog"
+	"github.com/omriariav/amq-squad/internal/catalog"
 )
 
 type rolesEnvelopeData struct {

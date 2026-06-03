@@ -24,7 +24,6 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"thread", "--help"},
 		{"status", "--help"},
 		{"console", "--help"},
-		{"noc", "--help"},
 		{"down", "--help"},
 		{"up", "--help"},
 		{"resume", "--help"},
@@ -79,7 +78,6 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		{name: "down --help", args: []string{"down", "--help"}, want: "amq-squad down"},
 		{name: "status --help", args: []string{"status", "--help"}, want: "amq-squad status"},
 		{name: "console --help", args: []string{"console", "--help"}, want: "amq-squad console"},
-		{name: "noc --help", args: []string{"noc", "--help"}, want: "amq-squad noc"},
 		{name: "history --help", args: []string{"history", "--help"}, want: "amq-squad history"},
 		{name: "brief --help", args: []string{"brief", "--help"}, want: "amq-squad brief"},
 		{name: "brief seed --help", args: []string{"brief", "seed", "--help"}, want: "amq-squad brief seed"},
@@ -107,126 +105,6 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		}
 		if !strings.Contains(stderr, tc.want) {
 			t.Errorf("%s: stderr missing %q in:\n%s", tc.name, tc.want, stderr)
-		}
-	}
-}
-
-func TestNOCHelpDocumentsPaletteActions(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error { return Run([]string{"noc", "--help"}, "test") })
-	if err != nil {
-		t.Fatalf("noc --help: %v", err)
-	}
-	for _, want := range []string{
-		"COMMAND PALETTE",
-		"project/action/new-team",
-		"project/action/new-profile",
-		"project/action/new-session",
-		"sync_pointers",
-		"all-profile project health",
-		"preview-gated T/N editors",
-		"create team",
-		"start session",
-		"market numbers",
-		"role=binary",
-		"session=<name>",
-		"cto,qa,session=issue-96",
-		"resume agent",
-		"read DLQ",
-		"retry DLQ",
-		"purge DLQ",
-		"retry all DLQ",
-		"wait receipts",
-		"wait message",
-		"agent_resume",
-		"allow-outside",
-		"--sync",
-		"--json",
-		"--actions",
-		"--action",
-		"--action-id",
-		"--target-id",
-		"--scope",
-		"--run-action",
-		"--set",
-		"seed-from",
-		"--dry-run",
-		"--yes",
-		"--commands",
-		"--mutating",
-		"--filter",
-		"noc_snapshot",
-		"top thread summaries",
-		"doctor",
-		"roles",
-		"team_rules",
-		"team rules",
-		"team_profiles",
-		"new_team",
-		"new_profile",
-		"status",
-		"threads",
-		"thread_context",
-		"thread_context_any",
-		"read-needs-you",
-		"read needs-you",
-		"reply",
-		"approve",
-		"deny",
-		"broadcast",
-		"amq_ops",
-		"amq_env",
-		"amq env",
-		"amq_who",
-		"amq who",
-		"amq_cleanup",
-		"amq cleanup",
-		"tmp-older-than",
-		"context",
-		"dlq",
-		"dlq_read",
-		"dlq_retry",
-		"dlq_retry_all",
-		"dlq_purge",
-		"older-than",
-		"receipts",
-		"receipts_wait",
-		"inbox",
-		"message_wait",
-		"msg-id",
-		"stage",
-		"timeout",
-		"drain",
-		"archive",
-		"remove",
-		"archive session",
-		"remove session",
-		"history",
-		"project/action/history",
-		"resume_plan",
-		"project/action/resume-plan",
-		"resume plan",
-		"project/action/team-rules",
-		"project/action/amq-env",
-		"fork_plan",
-		"fork plan",
-		"brief",
-		"brief_seed",
-		"seed brief",
-		"presence",
-		"project status",
-		"session status",
-		"session/action/threads",
-		"thread_context_any",
-		"stop session",
-		"resume session",
-		"restart session",
-		"AMQ doctor --ops",
-		"agent:<handle>",
-		"existing names",
-		"rejected",
-	} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("noc --help should mention %q, got:\n%s", want, stderr)
 		}
 	}
 }
@@ -280,10 +158,13 @@ func TestConsoleHelpDocumentsProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("console --help: %v", err)
 	}
-	for _, want := range []string{"--project DIR", "--filter EXPR", "--project and --root are mutually exclusive", "amq-squad console --project ~/Code/app --once"} {
+	for _, want := range []string{"--project DIR", "--filter EXPR", "amq-squad console --project ~/Code/app --once"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("console --help should mention %q, got:\n%s", want, stderr)
 		}
+	}
+	if strings.Contains(stderr, "amq-noc") || strings.Contains(stderr, "NOC") {
+		t.Fatalf("console --help should not mention NOC, got:\n%s", stderr)
 	}
 }
 

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/internal/state"
 )
 
 // row is one navigable line in a view. Every view projects the (filtered)
@@ -164,6 +164,33 @@ func sortThreads(s state.Session, f Filter) []state.ThreadSummary {
 		}
 		if !out[i].LastEventAt.Equal(out[j].LastEventAt) {
 			return out[i].LastEventAt.After(out[j].LastEventAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// sortThreadsNewest returns the filtered threads of a session sorted for console
+// live-detail pane: newest activity first, then attention labels for ties. The
+// shared collapsed-thread bus keeps urgency-first ordering in sortThreads.
+func sortThreadsNewest(s state.Session, f Filter) []state.ThreadSummary {
+	out := make([]state.ThreadSummary, 0, len(s.Coordination.Threads))
+	for _, t := range s.Coordination.Threads {
+		if f.matchThread(t) {
+			out = append(out, t)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].LastEventAt.Equal(out[j].LastEventAt) {
+			return out[i].LastEventAt.After(out[j].LastEventAt)
+		}
+		ri, rj := triageRank(out[i].Triage), triageRank(out[j].Triage)
+		if ri != rj {
+			return ri < rj
+		}
+		si, sj := statusRank(out[i].Status), statusRank(out[j].Status)
+		if si != sj {
+			return si < sj
 		}
 		return out[i].ID < out[j].ID
 	})

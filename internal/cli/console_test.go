@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/console"
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/console"
+	"github.com/omriariav/amq-squad/internal/state"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // captureConsole drives executeConsole with a captured RunConsole seam so the
@@ -262,7 +262,7 @@ func TestRunConsoleProjectTargetsOtherDir(t *testing.T) {
 	}
 }
 
-func TestRunConsoleRejectsProjectWithRoot(t *testing.T) {
+func TestRunConsoleRootFlagUnsupportedWithProject(t *testing.T) {
 	project := t.TempDir()
 	root := t.TempDir()
 	_, _, err := captureOutput(t, func() error {
@@ -274,23 +274,24 @@ func TestRunConsoleRejectsProjectWithRoot(t *testing.T) {
 	if _, ok := err.(UsageError); !ok {
 		t.Fatalf("want UsageError, got %T: %v", err, err)
 	}
-	if !strings.Contains(err.Error(), "--project cannot be used with --root") {
-		t.Fatalf("unexpected conflict error: %v", err)
+	if !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("unexpected root flag error: %v", err)
 	}
 }
 
-func TestRunConsoleRejectsRootOnlyFlagsWithoutRoot(t *testing.T) {
+func TestRunConsoleRootFlagUnsupported(t *testing.T) {
+	root := t.TempDir()
 	_, _, err := captureOutput(t, func() error {
-		return runConsole([]string{"--json", "--once"})
+		return runConsole([]string{"--root", root, "--once"})
 	})
 	if err == nil {
-		t.Fatal("console should reject --json without --root")
+		t.Fatal("console should reject --root")
 	}
 	if _, ok := err.(UsageError); !ok {
 		t.Fatalf("want UsageError, got %T: %v", err, err)
 	}
-	if !strings.Contains(err.Error(), "--json requires --root") {
-		t.Fatalf("unexpected root-only error: %v", err)
+	if !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("unexpected root flag error: %v", err)
 	}
 }
 

@@ -55,16 +55,20 @@ const (
 // fields are decoded leniently: `to` is always an array on disk but we tolerate
 // a bare string too; priority/kind may be absent.
 type messageHeader struct {
-	Schema   int      `json:"schema"`
-	ID       string   `json:"id"`
-	From     string   `json:"from"`
-	To       []string `json:"to"`
-	Thread   string   `json:"thread"`
-	Subject  string   `json:"subject"`
-	Created  string   `json:"created"`
-	Priority string   `json:"priority"`
-	Kind     string   `json:"kind"`
-	ReplyTo  string   `json:"reply_to"`
+	Schema       int      `json:"schema"`
+	ID           string   `json:"id"`
+	From         string   `json:"from"`
+	To           []string `json:"to"`
+	Thread       string   `json:"thread"`
+	Subject      string   `json:"subject"`
+	Created      string   `json:"created"`
+	Priority     string   `json:"priority"`
+	Kind         string   `json:"kind"`
+	ReplyTo      string   `json:"reply_to"`
+	Labels       []string `json:"labels"`
+	Orchestrator string   `json:"orchestrator"`
+	FromProject  string   `json:"from_project"`
+	ReplyProject string   `json:"reply_project"`
 }
 
 // Message is one parsed maildir message: its decoded header fields plus the
@@ -81,7 +85,13 @@ type Message struct {
 	Priority  Priority
 	Kind      Kind
 	ReplyTo   string
-	Body      string
+	Labels    []string
+	// Integration/routing metadata is optional AMQ context for federated or
+	// orchestrator-originated traffic.
+	Orchestrator string
+	FromProject  string
+	ReplyProject string
+	Body         string
 
 	// Owner is the handle whose inbox this copy was found in.
 	Owner string
@@ -172,20 +182,24 @@ func parseMessageFile(path, owner string, state MailboxState, now func() time.Ti
 	}
 
 	m := Message{
-		ID:        strings.TrimSpace(h.ID),
-		From:      strings.TrimSpace(h.From),
-		To:        cleanRecipients(h.To),
-		RawThread: h.Thread,
-		Thread:    canonicalThreadID(h.Thread),
-		Subject:   strings.TrimSpace(h.Subject),
-		Priority:  normalizePriority(h.Priority),
-		Kind:      normalizeKind(h.Kind),
-		ReplyTo:   strings.TrimSpace(h.ReplyTo),
-		Body:      body,
-		Owner:     owner,
-		State:     state,
-		Path:      path,
-		SchemaOK:  h.Schema == MessageSchema,
+		ID:           strings.TrimSpace(h.ID),
+		From:         strings.TrimSpace(h.From),
+		To:           cleanRecipients(h.To),
+		RawThread:    h.Thread,
+		Thread:       canonicalThreadID(h.Thread),
+		Subject:      strings.TrimSpace(h.Subject),
+		Priority:     normalizePriority(h.Priority),
+		Kind:         normalizeKind(h.Kind),
+		ReplyTo:      strings.TrimSpace(h.ReplyTo),
+		Labels:       cleanLabels(h.Labels),
+		Orchestrator: strings.TrimSpace(h.Orchestrator),
+		FromProject:  strings.TrimSpace(h.FromProject),
+		ReplyProject: strings.TrimSpace(h.ReplyProject),
+		Body:         body,
+		Owner:        owner,
+		State:        state,
+		Path:         path,
+		SchemaOK:     h.Schema == MessageSchema,
 	}
 	m.Created = parseCreated(h.Created, path, now)
 
@@ -255,16 +269,20 @@ func splitFrontmatter(data []byte) (header, body string, err error) {
 // string recipient (`"to":"cto"`) survives. Returns ok=false if it still fails.
 func tryLenientHeader(header string) (messageHeader, bool) {
 	var raw struct {
-		Schema   int             `json:"schema"`
-		ID       string          `json:"id"`
-		From     string          `json:"from"`
-		To       json.RawMessage `json:"to"`
-		Thread   string          `json:"thread"`
-		Subject  string          `json:"subject"`
-		Created  string          `json:"created"`
-		Priority string          `json:"priority"`
-		Kind     string          `json:"kind"`
-		ReplyTo  string          `json:"reply_to"`
+		Schema       int             `json:"schema"`
+		ID           string          `json:"id"`
+		From         string          `json:"from"`
+		To           json.RawMessage `json:"to"`
+		Thread       string          `json:"thread"`
+		Subject      string          `json:"subject"`
+		Created      string          `json:"created"`
+		Priority     string          `json:"priority"`
+		Kind         string          `json:"kind"`
+		ReplyTo      string          `json:"reply_to"`
+		Labels       []string        `json:"labels"`
+		Orchestrator string          `json:"orchestrator"`
+		FromProject  string          `json:"from_project"`
+		ReplyProject string          `json:"reply_project"`
 	}
 	if err := json.Unmarshal([]byte(header), &raw); err != nil {
 		return messageHeader{}, false
@@ -272,7 +290,8 @@ func tryLenientHeader(header string) (messageHeader, bool) {
 	h := messageHeader{
 		Schema: raw.Schema, ID: raw.ID, From: raw.From, Thread: raw.Thread,
 		Subject: raw.Subject, Created: raw.Created, Priority: raw.Priority,
-		Kind: raw.Kind, ReplyTo: raw.ReplyTo,
+		Kind: raw.Kind, ReplyTo: raw.ReplyTo, Labels: raw.Labels,
+		Orchestrator: raw.Orchestrator, FromProject: raw.FromProject, ReplyProject: raw.ReplyProject,
 	}
 	if len(raw.To) > 0 {
 		var arr []string
@@ -296,6 +315,20 @@ func cleanRecipients(to []string) []string {
 		if r != "" {
 			out = append(out, r)
 		}
+	}
+	return out
+}
+
+func cleanLabels(labels []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, label := range labels {
+		label = strings.TrimSpace(label)
+		if label == "" || seen[label] {
+			continue
+		}
+		seen[label] = true
+		out = append(out, label)
 	}
 	return out
 }

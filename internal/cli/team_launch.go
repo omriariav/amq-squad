@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 type teamLaunchOptions struct {
@@ -77,9 +77,9 @@ func registerTeamLaunchBackend(backend teamLaunchBackend) {
 }
 
 // runTeamLaunch is the parser/setup wrapper for the live team launcher. The
-// `team launch` subcommand was removed in 2.0 in favor of `up`; this body is
-// retained internal-only so the live-launch backend path stays exercised by
-// tests. User-facing live launch flows through runUp -> executeTeamLaunch.
+// `team launch` subcommand is legacy in favor of `up`; this body is retained
+// internal-only so the live-launch backend path stays exercised by tests.
+// User-facing live launch flows through runUp -> executeTeamLaunch.
 func runTeamLaunch(args []string) error {
 	fs := flag.NewFlagSet("team launch", flag.ContinueOnError)
 	pf := registerPreviewFlags(fs)
@@ -233,6 +233,12 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if err := backend.Launch(t, opts); err != nil {
 		return err
 	}
+	quietNotice("started %s using profile %s in %s\n", opts.Workstream, opts.Profile, t.Project)
+	if len(preflights) > 0 && preflights[0].Root != "" {
+		quietNotice("AM_ROOT: %s\n", preflights[0].Root)
+	}
+	quietNotice("next: amq-squad status --session %s | amq-squad console --session %s | amq-squad stop --all --session %s\n",
+		shellQuote(opts.Workstream), shellQuote(opts.Workstream), shellQuote(opts.Workstream))
 	// Post-launch warn-if-stub nudge: `up` without a brief source auto-stubs
 	// the brief above and asks us to flag it so non-interactive automation
 	// keeps working while still being told to set the goal. Only fire when the

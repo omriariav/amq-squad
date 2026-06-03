@@ -8,19 +8,19 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/role"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/internal/role"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 type restoreCandidate struct {
 	entry launch.Entry
 }
 
-// runRestore holds the real replay/scan logic. The top-level `restore` verb
-// was removed in 2.0; this body now backs `agent resume <role>` (via
-// runAgentResume, which forwards `--exec --role <role>`). It is internal-only
-// and carries no deprecation surface of its own.
+// runRestore holds the real replay/scan logic. The top-level `restore` verb is
+// legacy; this body now backs `agent resume <role>` (via runAgentResume, which
+// forwards `--exec --role <role>`). It is internal-only and carries no
+// deprecation surface of its own.
 func runRestore(args []string) error {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	projectDirs := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")

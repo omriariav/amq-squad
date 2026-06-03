@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 func init() {
@@ -199,13 +199,13 @@ func tmuxSelectPaneDryRunLine(target, title string) string {
 }
 
 // paneTitleToken builds the deterministic, machine-parseable pane title that the
-// NOC jump resolves name-first: "amq:<session>:<role>". The role is unique per
+// Tmux pane resolution is name-first: "amq:<session>:<role>". The role is unique per
 // agent within a session, so two agents that share a repo AND an engine (the
 // bug: cpo·codex + cto·codex in the same dir) still get distinct titles. The
 // token doubles as a human-facing label since it carries the role. When the role
 // is empty it is omitted, leaving "amq:<session>:" — callers always pass a role
 // for real members, but this stays parseable. MUST stay in lockstep with the
-// resolver's expectedPaneToken in internal/noc/tmux.go.
+// resolver's expectedPaneToken in internal/tmuxpane/tmux.go.
 func paneTitleToken(session, role string) string {
 	return "amq:" + session + ":" + role
 }

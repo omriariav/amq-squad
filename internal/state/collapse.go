@@ -58,6 +58,10 @@ type threadAccumulator struct {
 	participants map[string]bool
 	subject      string
 	lastKind     Kind
+	labels       map[string]bool
+	orchestrator string
+	fromProject  string
+	replyProject string
 	lastEventAt  time.Time
 	count        int
 	// unreadBy: recipient handle -> still has an unread copy (inbox/new).
@@ -84,6 +88,7 @@ func collapseThreads(msgs []Message, now time.Time, th Thresholds, agents []Agen
 			acc = &threadAccumulator{
 				id:           m.Thread,
 				participants: map[string]bool{},
+				labels:       map[string]bool{},
 				unreadBy:     map[string]bool{},
 				readBy:       map[string]bool{},
 			}
@@ -108,6 +113,11 @@ func (a *threadAccumulator) observe(m Message) {
 	}
 	for _, r := range m.To {
 		a.participants[r] = true
+	}
+	for _, label := range m.Labels {
+		if label != "" {
+			a.labels[label] = true
+		}
 	}
 
 	// unread-by is per RECIPIENT, decided by where the recipient's own copy
@@ -134,6 +144,9 @@ func (a *threadAccumulator) observe(m Message) {
 		if m.Subject != "" {
 			a.subject = m.Subject
 		}
+		a.orchestrator = m.Orchestrator
+		a.fromProject = m.FromProject
+		a.replyProject = m.ReplyProject
 	} else if a.subject == "" && m.Subject != "" {
 		a.subject = m.Subject
 	}
@@ -150,6 +163,7 @@ func (a *threadAccumulator) observe(m Message) {
 
 func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Agent) ThreadSummary {
 	parts := keysSorted(a.participants)
+	labels := keysSorted(a.labels)
 	unread := keysSorted(a.unreadBy)
 
 	status := deriveStatus(a)
@@ -157,6 +171,7 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 	triage := computeTriage(a, status, fresh, now, th, agents)
 	stale := isStale(a.lastEventAt, now, th.StaleAfter, triage)
 	reason := classifyAttnReason(a, triage)
+	historical := isHistoricalNeedsYou(triage, fresh, agents, th.OperatorHandle)
 
 	return ThreadSummary{
 		ID:           a.id,
@@ -164,6 +179,10 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 		Participants: parts,
 		Subject:      a.subject,
 		Kind:         a.lastKind,
+		Labels:       labels,
+		Orchestrator: a.orchestrator,
+		FromProject:  a.fromProject,
+		ReplyProject: a.replyProject,
 		Status:       status,
 		LastEventAt:  a.lastEventAt,
 		MessageCount: a.count,
@@ -171,7 +190,49 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 		Triage:       triage,
 		Freshness:    fresh,
 		Stale:        stale,
+		Historical:   historical,
 		AttnReason:   reason,
+	}
+}
+
+func isHistoricalNeedsYou(triage Triage, fresh Freshness, agents []Agent, operatorHandle string) bool {
+	if triage != TriageNeedsYou {
+		return false
+	}
+	seenAgent := false
+	hasActiveAgent := false
+	for _, ag := range agents {
+		if ag.Handle == operatorHandle {
+			continue
+		}
+		seenAgent = true
+		if agentCanCurrentlyNeedOperator(ag.Liveness) {
+			hasActiveAgent = true
+		}
+	}
+	if seenAgent && !hasActiveAgent {
+		return true
+	}
+	if fresh.Age <= DefaultNeedsYouHistoricalAfter {
+		return false
+	}
+	for _, ag := range agents {
+		if ag.Handle == operatorHandle {
+			continue
+		}
+		if !agentCanCurrentlyNeedOperator(ag.Liveness) {
+			return false
+		}
+	}
+	return seenAgent
+}
+
+func agentCanCurrentlyNeedOperator(l Liveness) bool {
+	switch l {
+	case LivenessAlive, LivenessWakeLive, LivenessDeadMailboxLive:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -256,9 +317,9 @@ func classifyAttnReason(a *threadAccumulator, triage Triage) AttnReason {
 }
 
 // isStale reports whether a thread is age-decayed: its last event is older than
-// staleAfter. A needs-you thread is NEVER stale — human action does not decay,
-// it just keeps waiting. A thread with no recorded last-event time (zero) is not
-// considered stale (we have no age to decay against).
+// staleAfter. Needs-you uses the Historical flag instead of Stale when it is not
+// current operator action. A thread with no recorded last-event time (zero) is
+// not considered stale because there is no age to decay against.
 func isStale(lastEventAt, now time.Time, staleAfter time.Duration, triage Triage) bool {
 	if triage == TriageNeedsYou {
 		return false
@@ -352,7 +413,7 @@ func computeTriage(a *threadAccumulator, status ThreadStatus, fresh Freshness, n
 		if addressedTo(a.latest, op) {
 			switch a.latest.Kind {
 			case KindQuestion, KindReviewRequest, KindDecision:
-				if operatorStillUnread(a, op) || a.latest.From != op {
+				if operatorMessageNeedsAction(a.latest) && (operatorStillUnread(a, op) || a.latest.From != op) {
 					return TriageNeedsYou
 				}
 			}
@@ -396,6 +457,64 @@ func computeTriage(a *threadAccumulator, status ThreadStatus, fresh Freshness, n
 func addressedTo(m Message, handle string) bool {
 	for _, r := range m.To {
 		if r == handle {
+			return true
+		}
+	}
+	return false
+}
+
+var operatorActionMarkers = []string{
+	"?", "please", "need ", "needs ", "scope-check", "scope check",
+	"please review", "review this", "review needed", "needs review",
+	"approve", "approval", "confirm", "decide", "need decision", "decision needed",
+	"choose", "answer", "reply", "input", "permission", "ok to",
+	"can you", "should we", "action needed",
+}
+
+var operatorNoticePrefixes = []string{
+	"ack", "ack:", "re:", "fyi", "status", "qa confirms", "correction",
+	"closeout", "main promotion complete",
+}
+
+func operatorMessageNeedsAction(m Message) bool {
+	if declaresUserWait(m) {
+		return true
+	}
+	text := messageSignalText(m)
+	if looksLikeOperatorNotice(text) && !hasDirectOperatorActionMarker(text) {
+		return false
+	}
+	if hasOperatorActionMarker(text) {
+		return true
+	}
+	return m.Kind == KindReviewRequest
+}
+
+func hasOperatorActionMarker(text string) bool {
+	if hasDirectOperatorActionMarker(text) {
+		return true
+	}
+	for _, mk := range goalMarkers {
+		if strings.Contains(text, mk) {
+			return true
+		}
+	}
+	return hasGoalWord(text)
+}
+
+func hasDirectOperatorActionMarker(text string) bool {
+	for _, mk := range operatorActionMarkers {
+		if strings.Contains(text, mk) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeOperatorNotice(text string) bool {
+	text = strings.TrimSpace(text)
+	for _, prefix := range operatorNoticePrefixes {
+		if strings.HasPrefix(text, prefix) {
 			return true
 		}
 	}

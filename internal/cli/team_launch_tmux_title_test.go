@@ -8,7 +8,7 @@ import (
 // The emitted (dry-run) tmux launch plan must stamp a deterministic, parseable
 // pane title token "amq:<session>:<role>" for EACH agent pane via select-pane -T.
 // This is the launch half of the name-first jump fix: the resolver in
-// internal/noc/tmux.go matches panes by exactly this token, so cpo and cto in the
+// internal/tmuxpane/tmux.go matches panes by exactly this token, so cpo and cto in the
 // same repo+engine still resolve to distinct panes.
 func TestTmuxDryRunLines_StampsDeterministicPaneTitles(t *testing.T) {
 	plan := tmuxLaunchPlan{

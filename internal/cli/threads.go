@@ -10,7 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/internal/state"
 )
 
 const defaultThreadsLimit = 20
@@ -34,10 +34,15 @@ type threadRow struct {
 	Participants []string        `json:"participants,omitempty"`
 	Subject      string          `json:"subject,omitempty"`
 	Kind         string          `json:"kind,omitempty"`
+	Labels       []string        `json:"labels,omitempty"`
+	Orchestrator string          `json:"orchestrator,omitempty"`
+	FromProject  string          `json:"from_project,omitempty"`
+	ReplyProject string          `json:"reply_project,omitempty"`
 	Status       string          `json:"status"`
 	Triage       string          `json:"triage"`
 	AttnReason   string          `json:"attn_reason,omitempty"`
 	Stale        bool            `json:"stale,omitempty"`
+	Historical   bool            `json:"historical,omitempty"`
 	LastEventAt  time.Time       `json:"last_event_at,omitempty"`
 	MessageCount int             `json:"message_count"`
 	UnreadBy     []string        `json:"unread_by,omitempty"`
@@ -222,10 +227,15 @@ func threadRows(threads []state.ThreadSummary) []threadRow {
 			Participants: append([]string(nil), th.Participants...),
 			Subject:      th.Subject,
 			Kind:         string(th.Kind),
+			Labels:       append([]string(nil), th.Labels...),
+			Orchestrator: th.Orchestrator,
+			FromProject:  th.FromProject,
+			ReplyProject: th.ReplyProject,
 			Status:       string(th.Status),
 			Triage:       string(th.Triage),
 			AttnReason:   string(th.AttnReason),
 			Stale:        th.Stale,
+			Historical:   th.Historical,
 			LastEventAt:  th.LastEventAt,
 			MessageCount: th.MessageCount,
 			UnreadBy:     append([]string(nil), th.UnreadBy...),

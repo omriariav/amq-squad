@@ -17,22 +17,20 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 
 ## Install
 
-2.0 moved the module to a `/v2` import path (Go semantic import versioning). Install the v2 line with the `/v2/` segment:
+Install the 1.3 line:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.0.0
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v1.3.0
 amq-squad version
 ```
 
-For the latest v2 build, `@latest` resolves against the `/v2` path too:
+For the latest 1.x build:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest
+go install github.com/omriariav/amq-squad/cmd/amq-squad@latest
 ```
 
 Requires Go 1.25+, the `amq` binary on `PATH` (v0.34+), and `tmux` on `PATH` for `amq-squad up`.
-
-> Upgrading from 1.x? See [Migrating from 1.x to 2.0](#migrating-from-1x-to-20). The verb model and the install path both changed.
 
 ## Quick start
 
@@ -56,10 +54,12 @@ amq-squad status --session issue-96  # single-session detail
 amq-squad status --project ~/Code/other-app --session issue-97
 amq-squad console                    # live read-only Mission Control TUI
 amq-squad console --project ~/Code/other-app --once
-amq-squad noc --json | jq .          # machine-readable multi-root NOC snapshot
 amq-squad doctor                     # AMQ version / tmux / wake / pointer sync
 amq-squad doctor --project ~/Code/other-app --profile release
 amq-squad doctor --project ~/Code/other-app --all-profiles
+amq-squad amq env --session issue-96 # resolved AMQ root/session/handle
+amq-squad amq ops --session issue-96 # AMQ operational diagnostics
+amq-squad amq route --session issue-96 --me cto --to fullstack
 
 amq-squad stop --all                 # SIGTERM the team (--force = SIGKILL); stays resumable
 amq-squad stop --project ~/Code/other-app --all --session issue-97
@@ -70,7 +70,7 @@ amq-squad fork --project ~/Code/other-app --from issue-96 --as issue-96-review
 amq-squad rm issue-96                # remove a finished session (confirm-gated; or `archive`)
 ```
 
-### The 2.0 lifecycle
+### The 1.3 lifecycle
 
 A session moves through one small state machine:
 
@@ -125,7 +125,7 @@ amq-squad agent up codex --role cto --session issue-96
 amq-squad agent resume fullstack
 ```
 
-The old 1.x verbs (`launch`, `restore`, `list`, `team show`, `team launch`) were **removed in 2.0**; each prints a one-line migration hint pointing at its replacement. See [Removed in 2.0](#removed-in-20) and [Migrating from 1.x to 2.0](#migrating-from-1x-to-20).
+The old legacy verbs (`launch`, `restore`, `list`, `team show`, `team launch`) are removed from the primary command model; each prints a one-line migration hint pointing at its replacement. See [Removed legacy verbs](#removed-legacy-verbs) and [Migrating to 1.3.0](#migrating-to-130).
 
 ### Custom launchers
 
@@ -331,29 +331,6 @@ amq-squad brief seed --session NAME --seed-from REF [--project DIR] [--force]
                                   Write a workstream brief from file:<path>,
                                   issue:<n>, or gh:owner/repo#<n> without
                                   launching the team. Use --dry-run to preview.
-amq-squad noc [--root DIR ...] [--filter EXPR] [--once] [--tree] [--hide-stale] [--json]
-                                  Multi-root NOC over discovered squads and
-                                  candidate git team-homes. In the live TUI,
-                                  control keys preview and confirm before they
-                                  mutate: T creates a team profile (roles accept
-                                  IDs, market numbers, all, and role=binary,
-                                  and writes pointer stubs via --sync),
-                                  N chooses a profile when needed and starts a
-                                  new detached workstream
-                                  session (rejecting existing names, including
-                                  empty AMQ session dirs, before preview),
-                                  S/R/X stop/resume/restart (asking for profile
-                                  on mixed sessions), i lists unread inboxes
-                                  read-only, and v/d/a/r/x/m/b
-                                  read/drain/approve/reply/deny/message/broadcast via AMQ. The
-                                  p palette finds project/action rows too, so
-                                  new-team/new-profile/new-session are one fuzzy
-                                  search away, including create team and start
-                                  session aliases. Session action rows include
-                                  brief for the full workstream brief and
-                                  brief-seed to write one after confirmation.
-                                  Add --json for a one-shot noc_snapshot
-                                  envelope for automation.
 amq-squad console [--project DIR] [--session NAME] [--refresh 2s] [--at-risk-wait 5m]
                   [--review-age 15m] [--once]
                                   Mission Control TUI over this project. Renders
@@ -363,8 +340,31 @@ amq-squad console [--project DIR] [--session NAME] [--refresh 2s] [--at-risk-wai
 amq-squad history [--json] [--project a,b]
                                   Restorable launch records across known projects.
 amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
-                                  AMQ version, profile config, tmux, wake,
-                                  marker integrity, and pointer-sync drift.
+                                  AMQ version, AMQ ops diagnostics, profile
+                                  config, tmux, wake, marker integrity, and
+                                  pointer-sync drift.
+amq-squad amq env [--project DIR] [--session NAME] [--me HANDLE] [--json]
+                                  Show the AMQ context amq-squad resolved for
+                                  this project/session.
+amq-squad amq ops [--project DIR] [--session NAME] [--me HANDLE] [--json]
+                                  Run `amq doctor --ops` under the resolved
+                                  squad AMQ environment.
+amq-squad amq route --to HANDLE [--project DIR] [--session NAME] [--me HANDLE]
+                    [--target-project NAME] [--target-session NAME] [--json]
+                                  Explain an AMQ route before sending,
+                                  including cross-project/session context.
+amq-squad amq who|presence [--project DIR] [--session NAME] [--me HANDLE] [--json]
+                                  Inspect AMQ sessions, agents, and presence.
+amq-squad amq receipts list --me HANDLE [--project DIR] [--session NAME] [--msg-id ID] [--json]
+amq-squad amq receipts wait --me HANDLE --msg-id ID [--stage drained|dlq] [--timeout 60s]
+                                  Inspect or wait for AMQ delivery receipts.
+amq-squad amq dlq list|read --me HANDLE [--project DIR] [--session NAME] [--json]
+amq-squad amq dlq retry|retry-all|purge --me HANDLE [--project DIR] [--session NAME]
+                                  Inspect DLQ state. Mutating retry/purge
+                                  commands preview and prompt by default.
+amq-squad amq cleanup --session NAME --tmp-older-than 36h [--project DIR]
+                                  Confirm-gated AMQ tmp cleanup for one
+                                  session.
 amq-squad version [--json]        Print the installed amq-squad version.
 amq-squad completion <bash|zsh|fish>
                                   Print a shell completion script to stdout.
@@ -394,9 +394,7 @@ Global output flags work before or after the subcommand: `--quiet`, `--verbose`,
 
 `amq-squad status` (and the bare `amq-squad`) prints a **multi-session board** over every discovered session — docker-ps / `git branch -v` style: session name, rolled-up state (running / stopped / degraded), agent health (N/M alive + at-risk), a one-line brief, and last-activity. Add `--session NAME` for the single-session detail table.
 
-`amq-squad console` is the project-scoped Mission Control TUI. `amq-squad noc` is the multi-root command center for discovered squads and candidate git team-homes. Discovery includes `.agent-mail/`, `.amq-squad/team.json`, and `.git` markers. NOC control keys are deliberate: every mutating action opens a preview/confirm overlay first. `T` creates a team profile for the selected team-home (roles accept IDs, market numbers, `all`, `role=binary` overrides, and optional `session=issue-96`) and includes `--sync` so the managed `CLAUDE.md` / `AGENTS.md` pointer stubs are written too, `N` chooses a profile when needed and starts a new detached workstream session, rejecting existing names and empty AMQ session dirs before preview, `S` / `R` / `X` stop, resume, and restart, `c` opens the selected needs-you thread transcript read-only, `D` lists a selected agent's DLQ read-only, `i` lists a selected agent's unread inbox read-only, and `v` / `d` / `a` / `r` / `x` / `m` / `b` act through AMQ. Press `p` for a command palette over projects, actions, teams, and agents; action rows such as `project/action/status`, `project/action/amq-env`, `project/action/amq-who`, `project/action/history`, `project/action/resume-plan`, `project/action/team-rules`, `project/action/new-team`, `project/action/new-profile`, `project/action/new-session`, `project/action/delete-team`, and `project/action/sync-pointers` open read-only status plus preview-gated creation, deletion, and repair flows, `project/action/doctor` opens all-profile project health, `project/action/amq-env` shows AMQ root, project, and peer routing JSON, `project/action/amq-who` lists AMQ sessions and agents, `project/action/history` opens restorable launch records, `project/action/resume-plan` opens the per-member recovery plan, `project/action/team-rules` shows durable `.amq-squad/team-rules.md`, `project/action/roles` opens the role market, `project/action/team-profiles` lists configured profiles, session/action rows expose status, fork-plan, stop, resume, restart, presence, in-NOC thread context, read-needs-you, reply, approve, deny, broadcast, AMQ ops, AMQ cleanup, archive, and remove, agent/action rows expose in-NOC thread context, read-needs-you, reply, approve, deny, DLQ, DLQ read, DLQ retry, DLQ purge, DLQ retry-all, receipts, receipts wait, inbox, message, message wait, drain, and single-agent resume flows, and aliases like `doctor`, `create team`, `delete team`, `sync pointers`, `role market`, `team rules`, `team profiles`, `history`, `resume plan`, `fork plan`, `amq env`, `amq who`, `project status`, `session status`, `presence`, `stop session`, `resume session`, `restart session`, `start session`, `context`, `read needs-you`, `reply`, `approve`, `deny`, `broadcast`, `dlq`, `read DLQ`, `retry DLQ`, `purge DLQ`, `retry all DLQ`, `receipts`, `wait receipts`, `inbox`, `message`, `wait message`, `drain`, `resume agent`, `archive session`, `remove session`, `amq cleanup`, or `amq ops` find those rows.
-
-The live `N` editor and palette new-session action also accept an inline brief seed, for example `issue-97 seed-from=issue:31`, before opening the confirm preview.
+`amq-squad console` is the project-scoped Mission Control TUI for the current team-home.
 
 ```sh
 amq-squad console                    # interactive TUI on /dev/tty
@@ -404,12 +402,6 @@ amq-squad console --once             # single static board to stdout (CI / no TT
 amq-squad console --project ~/Code/app --once
 amq-squad console --session issue-96 --at-risk-wait 5m
 amq-squad console --filter needs-you
-amq-squad console --root ~/Code --filter needs-you --json
-amq-squad noc --root ~/Code          # multi-project NOC
-amq-squad noc --filter needs-you
-amq-squad noc --filter gated
-amq-squad noc --filter stale-blocked
-amq-squad noc --json | jq .          # machine-readable snapshot
 ```
 
 The console gives you:
@@ -417,9 +409,35 @@ The console gives you:
 - a **board** of all sessions, grouped attention-first (needs-you > blocked > gated > at-risk > running > stopped),
 - per-session **detail** with each agent's liveness and a **collapsed-thread bus** ("qa ↔ cto  blocked · subject  N msgs · 7m"),
 - **peek** (`space`) for a read-only view of an agent's recent output, unread inbox, and what it is blocked on,
-- a **triage rollup** headline (`N needs-you threads · N blocked threads · N gated threads · N at-risk threads`) and `/`-filters (`needs-you`, `needs-user`, `gated`, `at-risk`, `blocked`, `stale-blocked`, `unread`, `agent:<h>`, `model:<m>`, `session:<n>`).
+- a **triage rollup** headline (`N needs-you threads · N blocked threads · N gated threads · N at-risk threads`) and `/`-filters (`needs-you`, `needs-user`, `gated`, `at-risk`, `blocked`, `stale-blocked`, `unread`, `agent:<h>`, `model:<m>`, `session:<n>`, `label:<l>`, `orchestrator:<o>`).
 
 It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--once` it emits one static board to stdout and exits — use this when there is no terminal attached.
+
+## AMQ diagnostics
+
+`amq-squad amq ...` is a project-aware wrapper around AMQ diagnostics. It resolves the same AMQ root, base root, session, and handle that the squad launcher uses, then delegates to AMQ.
+
+Read-only diagnostics run directly:
+
+```sh
+amq-squad amq env --session issue-96
+amq-squad amq ops --session issue-96 --json
+amq-squad amq route --session issue-96 --me cto --to fullstack
+amq-squad amq who --session issue-96
+amq-squad amq presence --session issue-96
+amq-squad amq receipts list --session issue-96 --me cto
+```
+
+Mutating maintenance stays preview-first and confirm-gated:
+
+```sh
+amq-squad amq dlq retry --session issue-96 --me qa --id dlq_123
+amq-squad amq dlq retry-all --session issue-96 --me qa --dry-run
+amq-squad amq dlq purge --session issue-96 --me qa --older-than 168h
+amq-squad amq cleanup --session issue-96 --tmp-older-than 36h
+```
+
+Use route diagnostics before uncertain cross-project sends, receipt waits for important handoffs, and DLQ/cleanup only when debugging stuck delivery or stale temporary files.
 
 ## JSON envelopes
 
@@ -434,97 +452,8 @@ amq-squad roles --json | jq .
 amq-squad team init --dry-run --json --roles cto,qa | jq .
 amq-squad new team --sync --dry-run --json --roles cto,qa | jq .
 amq-squad up --dry-run --json | jq .
-amq-squad noc --json --filter needs-you | jq .
-amq-squad noc --actions --filter needs-you
-amq-squad noc --actions --filter needs-you --action thread_context,read_needs_you,reply,approve,deny
-amq-squad noc --actions --action resume --mutating
-amq-squad noc --actions --action message,broadcast
-amq-squad noc --filter session:issue-96 --run-action amq_cleanup --set tmp-older-than=36h --yes
-amq-squad noc --actions --action dlq --commands
-amq-squad noc --actions --action team_rules --commands
-amq-squad noc --actions --action amq_env --commands
-amq-squad noc --actions --action amq_who --commands
-amq-squad noc --actions --action presence --commands
-amq-squad noc --filter agent:cto --run-action dlq_retry --set dlq-id=dlq_123 --yes
-amq-squad noc --filter agent:cto --run-action dlq_purge --set older-than=168h --yes
-amq-squad noc --actions --action receipts --commands
-amq-squad noc --filter agent:cto --run-action receipts_wait --set msg-id=msg_123 --set stage=drained --set timeout=60s
-amq-squad noc --actions --action inbox --commands
-amq-squad noc --filter agent:cto --run-action message_wait --set body='Please check status' --set timeout=60s --yes
-amq-squad noc --actions --target-id 'session|/repo/app|issue-96' --scope session
-amq-squad noc --actions --action archive,remove --commands
-amq-squad noc --actions --action resume --commands
-amq-squad noc --run-action sync_pointers --set profile=review --set allow-outside=true --yes
-amq-squad noc --actions --json --filter needs-you | jq .
-amq-squad noc --filter project:app --run-action new_session --set session=issue-97 --dry-run --json
-amq-squad noc --filter project:app --run-action new_session --set session=issue-97 --set seed-from=issue:31 --yes
-amq-squad noc --run-action 'project|/repo/app|action|new_team' --set roles=cto,qa --set session=issue-96 --yes
-amq-squad noc --run-action 'agent|/repo/app|issue-96|cto|action|message' --set body='Please check status' --yes
 amq-squad version --json | jq .
 ```
-
-`noc --json` is the automation-oriented command-center snapshot. Each project,
-session, and agent row has a stable `id` and can include an `actions` array with
-read-only commands and confirm-required mutating commands such as `history`, `resume_plan`, `fork_plan`, `brief`, `brief_seed`, `new_team`,
-`new_session`, `delete_team`, `sync_pointers`, `roles`, `team_rules`, `amq_env`, `amq_who`, `amq_ops`, `amq_cleanup`, `presence`, `thread_context`, `read_needs_you`, `reply`, `approve`, `deny`,
-`dlq`, `dlq_read`, `dlq_retry`, `dlq_retry_all`, `dlq_purge`, `receipts`, `receipts_wait`, `inbox`, `message`, `message_wait`, `broadcast`, `drain`, `resume`, `stop`, `restart`, `archive`, `remove`, and `agent_resume`. Each
-action has its own `id`, `scope`, and `target_id`. Project rows expose
-`base_root` when an AMQ session store exists. The snapshot also includes a
-top-level flat `actions` index plus `action_count` and `mutating_action_count`,
-already scoped by `--filter` and `--hide-stale`. Team/create-capable project
-rows include a read-only `roles` action so the role market is discoverable from
-the same queue. Configured team project rows include read-only `team_rules` for `.amq-squad/team-rules.md`. Project rows with AMQ sessions include read-only `amq_env` for AMQ root, project, and peer routing JSON, plus `amq_who` for AMQ session and agent inventory. Session rows include read-only `brief`, confirm-required `brief_seed`, `presence` for AMQ `presence list`, `amq_ops` for AMQ `doctor --ops`, and `amq_cleanup` for stale AMQ tmp-file cleanup;
-session rows also include `thread_count`, `threads_returned`, and a capped
-`threads` array with collapsed thread IDs, subjects, triage, status, latest
-message IDs, and message counts, so automation can decide when to call
-`amq-squad thread` for the full transcript;
-needs-you session and agent rows include read-only `thread_context` plus
-confirm-required `read_needs_you`, `reply`, `approve`, and `deny` actions for
-the top human-needed thread.
-`read_needs_you` uses `amq read --json`, so it moves unread mail to `cur` like AMQ read does.
-Session rows also include confirm-required `broadcast` actions, and agent rows
-include read-only `dlq`, `receipts`, `receipts_wait`, and `inbox`, confirm-required `dlq_read`, `dlq_retry`,
-`dlq_retry_all`, `dlq_purge`, `message`, `message_wait`, and `drain` over that agent's AMQ mailbox.
-`dlq_read` marks the DLQ item inspected, `dlq_retry` moves the original message
-back to the agent inbox, `dlq_retry_all` retries all new DLQ items for that
-agent, and `dlq_purge` requires an `older-than` duration and passes `--yes` to
-AMQ only after the NOC action itself has been confirmed. `receipts` lists AMQ
-delivery receipts for the agent, `receipts_wait` waits for a specific `msg-id`
-and receipt `stage`, and `message_wait` sends a direct message with
-`--wait-for drained` plus a required `timeout` value. Template actions carry placeholders like `<roles>` or
-`<session>`, set `"template": true`, and include a `vars`
-array that names required values, optional values, derived values such as
-`tmux-session` from `session`, and `choices` when valid profile options are
-known. Open-ended values include `examples`, for instance role selections like
-`cto,qa`, `2,9`, `all`, or `cto=codex,qa`.
-When a variable includes `choices`, `--run-action --set` accepts only those
-values.
-Use `noc --actions` when you only need the flat action queue; add `--json` for a
-`noc_actions` envelope. The human table includes a `VARS` column for required
-and derived template values, including known choices and compact examples for
-open-ended required values. Add `--action doctor,history,resume_plan,fork_plan,status,amq_env,amq_who,roles,team_rules,team_profiles,delete_team,threads,thread_context_any,brief,brief_seed,presence,amq_ops,amq_cleanup,stop,resume,restart,new_team,new_profile,new_session,sync_pointers,thread_context,read_needs_you,reply,approve,deny,dlq,dlq_read,dlq_retry,dlq_retry_all,dlq_purge,receipts,receipts_wait,inbox,message,message_wait,broadcast,archive,remove,agent_resume`
-and/or `--mutating` to narrow that queue further. Add `--action-id`, `--target-id`, and
-`--scope` when a script already has stable row or action IDs. Add `--commands`
-for one selected command per line. Add `--run-action ACTION_ID_OR_NAME` to execute one
-action from the queue, or pass a unique action name after narrowing with
-`--filter`; mutating actions preview and prompt unless `--yes` is set. Template
-actions accept `--set key=value` for placeholders such as `session`, `seed-from`, `roles`,
-`profile`, `allow-outside`, `subject`, `body`, `reason`, `msg-id`, `stage`, `dlq-id`, `older-than`, `tmp-older-than`, and `timeout`; `new_team` / `new_profile` can use optional `session=<name>` for the initial workstream and also accept `role=binary` inside
-`roles` or optional `binary=role=cli,...`; `--session` and `--binary` are omitted when those values
-are not set. `delete_team` removes one selected team profile config and leaves AMQ sessions, briefs, team-rules.md, and pointer stubs in place. `sync_pointers` repairs managed CLAUDE.md / AGENTS.md pointer blocks for a selected profile, and requires `allow-outside=true` before writing member cwds outside the team-home. `tmux-session` is derived from `session` when possible. Unknown
-`--set` keys are rejected before execution.
-Add `--dry-run` to resolve and render without executing, and combine it with
-`--json` for a `noc_action_plan` envelope. Creation actions run local preflight
-checks for invalid session/profile names, unknown profiles, missing team-rules.md, unsafe pointer-sync target directories, invalid role
-seed reference shapes, invalid role selections, invalid binary overrides, invalid DLQ IDs, invalid DLQ purge
-durations, invalid AMQ cleanup ages, invalid receipt/message wait timeouts, and duplicate sessions across the selected profile's team-home and
-member AMQ roots before execution.
-Session cleanup actions use the existing hardened `archive` and `rm` verbs with
-`--yes` inside the rendered command after the NOC confirmation gate. `archive`
-moves the session root and brief to `.archive/`; `remove` permanently deletes
-the session root and brief. Both still inherit the underlying liveness guard and
-refuse live sessions unless the lower-level command is run with force outside the
-NOC action queue.
 
 Envelope shape:
 
@@ -578,7 +507,7 @@ amq-squad agent up codex --model gpt-5
 - AMQ session names are strict: lowercase `a-z`, digits, `-`, `_`. Use `v0-5-0`, not `v0.5.0`.
 - **Threads** are focused conversations inside a workstream. Canonical p2p threads use sorted handles (`p2p/cto__fullstack`); decisions go under `decision/<topic>`.
 
-Session (workstream) resolution: the `<session>` positional or `--session` > inference from team members and the sanitized team-home directory name. The pinned `team.json` `workstream` default was **dropped in 2.0** — a profile that still carries it gets a one-line deprecation warning (removal in 2.1); pass `--session` (or the positional) or rely on inference instead.
+Session (workstream) resolution: the `<session>` positional or `--session` > inference from team members and the sanitized team-home directory name. A pinned `team.json` `workstream` default still gets a one-line deprecation warning; pass `--session` (or the positional) or rely on inference instead.
 
 ## Cross-project teams
 
@@ -623,6 +552,8 @@ amq send \
 
 `amq send` reads stdin when `--body` is omitted. There is no `--body-file` flag.
 
+Inside an amq-squad-launched shell, use bare `amq` commands. The launcher already injected `AM_ROOT`, `AM_BASE_ROOT`, and `AM_ME`; override them only when intentionally inspecting a different project or handle. For important handoffs, use `--wait-for drained --wait-timeout 60s` and keep the AMQ message id. If routing is unclear, run `amq route explain` or `amq-squad amq route --to <handle>` first.
+
 ## Files amq-squad writes
 
 ```text
@@ -639,9 +570,9 @@ amq send \
 
 `<AM_ROOT>` is resolved via AMQ's JSON env contract (`amq env --json`).
 
-## Removed in 2.0
+## Removed legacy verbs
 
-The 1.x top-level verbs below were **removed in 2.0**. Each is still recognized for one release as an explicit pointer: running it prints a one-line `stderr` migration hint (not an "unknown command") and exits with a usage error. Use the replacement.
+The legacy top-level verbs below are still recognized as explicit pointers: running one prints a one-line `stderr` migration hint (not an "unknown command") and exits with a usage error. Use the replacement.
 
 | Removed verb | Replacement |
 | --- | --- |
@@ -657,22 +588,17 @@ The 1.x top-level verbs below were **removed in 2.0**. Each is still recognized 
 
 Replay paths that emit copy-paste commands use the modern `agent up <binary>` command shape.
 
-## Migrating from 1.x to 2.0
+## Migrating to 1.3.0
 
-2.0 is a breaking release. The major changes and what to do:
+1.3.0 keeps amq-squad focused on team setup, lifecycle, status, AMQ diagnostics, and the project-scoped console.
 
-| 1.x | 2.0 | Migration |
+| Before | 1.3.0 | Migration |
 | --- | --- | --- |
-| Module `github.com/omriariav/amq-squad/...` | `/v2` import path | `go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.0.0` |
-| Pinned `team.json` `workstream` default | dropped (deprecation shim) | Pass `--session <name>` (or the `up <name>` positional), or rely on inference. A pinned profile still works but warns (removed in 2.1). |
-| `up` (re)used an existing session | `up` is NEW work and **refuses** an existing session | Use `amq-squad resume` to continue, or `amq-squad up --reset` to start over. |
 | `down` | `stop` (primary) | Use `amq-squad stop`. `down` still works for one release as a deprecated alias. |
-| `up` required a brief or `--fresh` juggling | brief **auto-stubs** when no `--seed-from`/`--brief` | Nothing — `up` writes a stub brief and prints a one-line notice; edit it or pass `--seed-from`. |
 | `launch <binary>` | removed | `amq-squad agent up <binary>` |
 | `restore` (print) / `restore --exec --role R` | removed | `amq-squad history` / `amq-squad agent resume R` |
 | `list` | removed | `amq-squad status` (live) or `amq-squad history` (records) |
 | `team show` / `team launch` | removed | `amq-squad up --dry-run` / `amq-squad up` |
-| — | new: `amq-squad console` | Read-only Mission Control TUI; the bare `amq-squad` now shows a multi-session board. |
 
 Each removed verb prints a migration hint when invoked, so muscle-memory commands get a pointer rather than a crash. JSON callers on the deprecated `down` alias still get pure JSON on stdout; the warning goes to stderr.
 

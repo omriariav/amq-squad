@@ -29,7 +29,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/internal/state"
 )
 
 // route is the top-level pane the console is focused on. The scaffold only ever

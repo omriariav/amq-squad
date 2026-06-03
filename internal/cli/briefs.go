@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/rules"
+	"github.com/omriariav/amq-squad/internal/rules"
 )
 
 // briefsDirName is the per-team-home directory holding workstream briefs.

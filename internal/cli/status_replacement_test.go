@@ -4,15 +4,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/noc"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/internal/tmuxpane"
 )
 
 // withStubPaneLister swaps statusPaneLister for the test and restores it.
-func withStubPaneLister(t *testing.T, panes []noc.TmuxPane, err error) {
+func withStubPaneLister(t *testing.T, panes []tmuxpane.TmuxPane, err error) {
 	t.Helper()
 	prev := statusPaneLister
-	statusPaneLister = func() ([]noc.TmuxPane, error) { return panes, err }
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) { return panes, err }
 	t.Cleanup(func() { statusPaneLister = prev })
 }
 
@@ -22,7 +22,7 @@ func withStubPaneLister(t *testing.T, panes []noc.TmuxPane, err error) {
 func TestLiveReplacementPane_SameEngineFound(t *testing.T) {
 	m := team.Member{Role: "qa", Handle: "qa", Binary: "codex", Session: "beta"}
 	rec := statusRecord{Role: "qa", Handle: "qa", Binary: "codex", CWD: "/proj"}
-	withStubPaneLister(t, []noc.TmuxPane{
+	withStubPaneLister(t, []tmuxpane.TmuxPane{
 		{Session: "main", Window: "0", Pane: "3", Command: "codex", CWD: "/proj"},
 	}, nil)
 
@@ -41,7 +41,7 @@ func TestLiveReplacementPane_SameEngineFound(t *testing.T) {
 func TestLiveReplacementPane_CrossEngineRejected(t *testing.T) {
 	m := team.Member{Role: "qa", Handle: "qa", Binary: "claude", Session: "beta"}
 	rec := statusRecord{Role: "qa", Handle: "qa", Binary: "claude", CWD: "/proj"}
-	withStubPaneLister(t, []noc.TmuxPane{
+	withStubPaneLister(t, []tmuxpane.TmuxPane{
 		{Session: "main", Window: "0", Pane: "3", Command: "codex", CWD: "/proj"},
 	}, nil)
 
@@ -56,7 +56,7 @@ func TestLiveReplacementPane_CrossEngineRejected(t *testing.T) {
 func TestLiveReplacementPane_TitleTokenWins(t *testing.T) {
 	m := team.Member{Role: "qa", Handle: "qa", Binary: "claude", Session: "beta"}
 	rec := statusRecord{Role: "qa", Handle: "qa", Binary: "claude", CWD: "/proj"}
-	withStubPaneLister(t, []noc.TmuxPane{
+	withStubPaneLister(t, []tmuxpane.TmuxPane{
 		{Session: "beta", Window: "0", Pane: "1", Command: "codex", CWD: "/proj", Title: "amq:beta:qa"},
 	}, nil)
 

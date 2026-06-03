@@ -11,8 +11,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // resumeAction labels what `team resume` would do for one member.
@@ -201,8 +201,8 @@ type resumePrinterStyle struct {
 	// "team resume", "resume", "fork"). Empty falls back to "team resume".
 	Label string
 	// FooterVerb is the suggested tmux-launch verb in the footer. Empty
-	// falls back to "up" (the modern team launcher; the legacy "team launch"
-	// verb was removed in 2.0).
+	// falls back to "up" (the modern team launcher; "team launch" is a
+	// legacy verb).
 	FooterVerb string
 	// ForkFrom and ForkTo, when non-empty, add the fork "# from / # to"
 	// lines to the header. Used only by `fork`.
@@ -803,6 +803,9 @@ func writeResumePlan(out io.Writer, t team.Team, workstream string, mode resumeM
 	}
 	fmt.Fprintf(out, "# workstream: %s\n", workstream)
 	fmt.Fprintf(out, "# mode:       %s\n", describeResumeMode(mode, dryRun))
+	if style.label() == "resume" {
+		fmt.Fprintf(out, "# preview:    plan-only; run 'amq-squad resume --exec --session %s' to open panes\n", shellQuote(workstream))
+	}
 	fmt.Fprintf(out, "# members:    %d\n", len(plans))
 	fmt.Fprintln(out)
 

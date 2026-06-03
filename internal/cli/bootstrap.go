@@ -11,10 +11,10 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/role"
-	"github.com/omriariav/amq-squad/v2/internal/rules"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/internal/role"
+	"github.com/omriariav/amq-squad/internal/rules"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 //go:embed bootstrap.md

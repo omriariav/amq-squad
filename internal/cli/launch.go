@@ -10,15 +10,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/catalog"
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/role"
+	"github.com/omriariav/amq-squad/internal/catalog"
+	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/internal/role"
 )
 
-// runLaunch is the real single-agent launcher. The top-level `launch` verb
-// was removed in 2.0; this body now backs `agent up` (via runAgentUp ->
-// translateAgentUpArgs) and the replay path (execRestoreRecord). It is
-// internal-only and carries no deprecation surface of its own.
+// runLaunch is the real single-agent launcher. The top-level `launch` verb is
+// legacy; this body now backs `agent up` (via runAgentUp -> translateAgentUpArgs)
+// and the replay path (execRestoreRecord). It is internal-only and carries no
+// deprecation surface of its own.
 func runLaunch(args []string) error {
 	// Split at "--" so launcher flags aren't consumed by amq-squad's parser.
 	squadArgs, childArgs := splitDashDash(args)

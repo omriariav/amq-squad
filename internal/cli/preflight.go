@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/internal/launch"
 )
 
 // presenceFreshness defines how recently a presence.json must have been

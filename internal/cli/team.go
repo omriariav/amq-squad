@@ -11,9 +11,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/omriariav/amq-squad/v2/internal/catalog"
-	"github.com/omriariav/amq-squad/v2/internal/rules"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/catalog"
+	"github.com/omriariav/amq-squad/internal/rules"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 func runTeam(args []string) error {
@@ -27,12 +27,12 @@ func runTeam(args []string) error {
 	case "init":
 		return runTeamInit(args[1:])
 	case "show":
-		// Removed in 2.0. Kept as an explicit hint (not unknown-command) for
-		// one release so muscle-memory invocations get a pointer.
-		return usageErrorf("'team show' was removed in 2.0; use 'up --dry-run' to preview the launch plan.")
+		// Legacy verb. Kept as an explicit hint (not unknown-command) for one
+		// release so muscle-memory invocations get a pointer.
+		return usageErrorf("'team show' is a legacy verb; use 'up --dry-run' to preview the launch plan.")
 	case "launch":
-		// Removed in 2.0. Kept as an explicit hint for one release.
-		return usageErrorf("'team launch' was removed in 2.0; use 'up' to bring the team up.")
+		// Legacy verb. Kept as an explicit hint for one release.
+		return usageErrorf("'team launch' is a legacy verb; use 'up' to bring the team up.")
 	case "resume":
 		return runTeamResume(args[1:])
 	case "rules":
@@ -449,11 +449,10 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 	}
 }
 
-// runTeamShow holds the launch-plan preview body. The `team show` subcommand
-// was removed in 2.0 in favor of `up --dry-run`; this body is retained
-// internal-only for the tests that exercise the preview/JSON-plan path. No
-// user-facing verb dispatches to it (live `up` and `up --dry-run` call
-// emitTeamCommands directly).
+// runTeamShow holds the launch-plan preview body. The `team show` subcommand is
+// legacy in favor of `up --dry-run`; this body is retained internal-only for the
+// tests that exercise the preview/JSON-plan path. No user-facing verb dispatches
+// to it (live `up` and `up --dry-run` call emitTeamCommands directly).
 func runTeamShow(args []string) error {
 	fs := flag.NewFlagSet("team show", flag.ContinueOnError)
 	pf := registerPreviewFlags(fs)
@@ -1427,7 +1426,7 @@ Usage:
 
 To launch the team, use the top-level 'up' verb: 'amq-squad up' brings it up,
 'amq-squad up --dry-run' prints one launch command per member. ('team show'
-and 'team launch' were removed in 2.0.)
+and 'team launch' are legacy verbs.)
 
 Most subcommands accept --profile NAME to operate on a named profile under
 .amq-squad/teams/<name>.json; omit the flag (or pass --profile default) to

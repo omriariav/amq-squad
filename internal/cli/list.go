@@ -11,7 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/internal/launch"
 )
 
 type listRecord struct {
@@ -26,11 +26,10 @@ type listRecord struct {
 	StartedAt    time.Time `json:"started_at,omitempty"`
 }
 
-// runList is the legacy registered-agent scanner. The top-level `list` verb
-// was removed in 2.0 in favor of `status` (live agents) and `history`
-// (restorable records). The body is retained internal-only for the tests
-// that still exercise the scan/JSON-envelope helpers; no user-facing verb
-// dispatches to it.
+// runList is the legacy registered-agent scanner. The top-level `list` verb is
+// legacy in favor of `status` (live agents) and `history` (restorable records).
+// The body is retained internal-only for the tests that still exercise the
+// scan/JSON-envelope helpers; no user-facing verb dispatches to it.
 func runList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	projectDirs := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")

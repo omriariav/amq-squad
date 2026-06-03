@@ -2,7 +2,7 @@ package state
 
 import "sort"
 
-// FlowEdge is one directed inter-agent message flow row for the NOC flow graph:
+// FlowEdge is one directed inter-agent message flow row for the console flow graph:
 // the existing Edge (from->to message count) ENRICHED with the outstanding
 // status of the work on that link, derived purely from the session's already
 // collapsed threads. It answers "where is work piling up / who owes whom" at a

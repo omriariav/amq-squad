@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // runNew is the operator-facing creation group. It is intentionally a thin
