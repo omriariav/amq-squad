@@ -42,6 +42,12 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	if out.Workstream != in.Workstream {
 		t.Errorf("Workstream = %q, want %q", out.Workstream, in.Workstream)
 	}
+	if out.Operator == nil || !out.Operator.Enabled || out.Operator.Handle != DefaultOperatorHandle {
+		t.Errorf("Operator = %+v, want enabled default %q", out.Operator, DefaultOperatorHandle)
+	}
+	if !SupportsOperatorGates(out) {
+		t.Errorf("SupportsOperatorGates = false, want true for schema %d", SchemaVersion)
+	}
 	if len(out.Members) != len(in.Members) {
 		t.Fatalf("Members len = %d, want %d", len(out.Members), len(in.Members))
 	}
@@ -88,6 +94,60 @@ func TestWriteDoesNotLeakProjectPath(t *testing.T) {
 	}
 	if bytes.Contains(b, []byte(`"project"`)) {
 		t.Errorf("team.json serializes 'project' field; should be json:\"-\"")
+	}
+	if bytes.Contains(b, []byte(`"capabilities"`)) {
+		t.Errorf("team.json serializes derived capabilities; should stay JSON-output only:\n%s", b)
+	}
+}
+
+func TestReadSchema2AdvertisesImplicitOperatorGates(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{
+  "schema": 2,
+  "members": [
+    {"role": "cto", "binary": "codex", "handle": "cto", "session": "issue-96"}
+  ]
+}`
+	if err := os.WriteFile(Path(dir), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Read(dir)
+	if err != nil {
+		t.Fatalf("Read schema 2: %v", err)
+	}
+	if got.Schema != 2 {
+		t.Fatalf("Schema = %d, want 2", got.Schema)
+	}
+	op := EffectiveOperator(got)
+	if !op.Enabled || op.Handle != DefaultOperatorHandle || op.Runnable {
+		t.Fatalf("EffectiveOperator = %+v, want enabled compatibility handle %q", op, DefaultOperatorHandle)
+	}
+	if !SupportsOperatorGates(got) {
+		t.Fatal("legacy schema 2 team must advertise implicit operator gates")
+	}
+}
+
+func TestWriteDisabledOperator(t *testing.T) {
+	dir := t.TempDir()
+	op := DisabledOperator()
+	if err := Write(dir, Team{
+		Operator: &op,
+		Members:  []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := Read(dir)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.Operator == nil || got.Operator.Enabled {
+		t.Fatalf("Operator = %+v, want disabled", got.Operator)
+	}
+	if SupportsOperatorGates(got) {
+		t.Fatal("disabled operator must not advertise operator gates")
 	}
 }
 
@@ -140,6 +200,27 @@ func TestValidateRejectsDuplicateHandles(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "duplicate handle") {
 		t.Fatalf("Validate error = %v, want duplicate handle", err)
+	}
+}
+
+func TestValidateRejectsRunnableOperatorHandles(t *testing.T) {
+	op := DefaultOperator()
+	for _, tc := range []Team{
+		{Operator: &op, Members: []Member{{Role: "cto", Binary: "codex", Handle: DefaultOperatorHandle, Session: "issue-96"}}},
+		{Operator: &op, Members: []Member{{Role: DefaultOperatorHandle, Binary: "codex", Session: "issue-96"}}},
+	} {
+		err := Validate(tc)
+		if err == nil || !strings.Contains(err.Error(), "conflicts with non-runnable operator") {
+			t.Fatalf("Validate(%+v) error = %v, want operator conflict", tc, err)
+		}
+	}
+
+	custom := OperatorConfig{Enabled: true, Handle: "omri"}
+	if err := Validate(Team{
+		Operator: &custom,
+		Members:  []Member{{Role: "support", Binary: "codex", Handle: DefaultOperatorHandle, Session: "issue-96"}},
+	}); err != nil {
+		t.Fatalf("Validate with custom operator and runnable user handle: %v", err)
 	}
 }
 

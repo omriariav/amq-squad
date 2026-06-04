@@ -1009,23 +1009,35 @@ amq-squad up                                    # preserve existing brief</code>
 
       <section id="profiles">
         <div class="content">
-          <h2>Profiles (schema 2)</h2>
+          <h2>Profiles (schema 3)</h2>
           <p>
             Profiles let one team-home hold parallel team shapes, for
             example a release team and a research team. The default profile
             lives at <code class="inline-code">.amq-squad/team.json</code>;
             named profiles live under
             <code class="inline-code">.amq-squad/teams/&lt;name&gt;.json</code>.
-            Both use <code class="inline-code">schema: 2</code> (the JSON key
+            New writes use <code class="inline-code">schema: 3</code> (the JSON key
             in persisted team profiles is <code class="inline-code">schema</code>;
             <code class="inline-code">schema_version</code> is reserved for
-            the read-only JSON command envelopes below).
+            the read-only JSON command envelopes below). Schema 1/2 profiles
+            without an <code class="inline-code">operator</code> field remain
+            compatible and are treated as implicit non-runnable
+            <code class="inline-code">user</code> operator-gate teams until
+            rewritten.
           </p>
           <div class="code"><pre><code>amq-squad team init                       # default -> .amq-squad/team.json
 amq-squad team init --profile release     # named -> .amq-squad/teams/release.json
+amq-squad team init --operator operator   # custom virtual operator handle
+amq-squad team init --no-operator         # explicit operator-gate opt-out
 amq-squad team profiles                   # list configured profiles
 amq-squad team profiles --json
 amq-squad up --profile release            # operate on a named profile</code></pre></div>
+          <p>
+            The operator is a virtual mailbox participant only, not a runnable
+            member. JSON discovery derives <code class="inline-code">operator</code>
+            and <code class="inline-code">capabilities.operator_gates</code>;
+            capabilities are not persisted in <code class="inline-code">team.json</code>.
+          </p>
           <p>
             Omit <code class="inline-code">--profile</code> (or pass
             <code class="inline-code">--profile default</code>) for the
@@ -1383,11 +1395,11 @@ amq-squad team init --personas cto,fullstack,qa --cwd qa=~/Code/project-b</code>
               <tbody>
                 <tr>
                   <td><code>.amq-squad/team.json</code></td>
-                  <td>Default team profile (<code>schema: 2</code>).</td>
+                  <td>Default team profile (<code>schema: 3</code> on new writes).</td>
                 </tr>
                 <tr>
                   <td><code>.amq-squad/teams/&lt;name&gt;.json</code></td>
-                  <td>Named team profiles (<code>schema: 2</code>).</td>
+                  <td>Named team profiles (<code>schema: 3</code> on new writes).</td>
                 </tr>
                 <tr>
                   <td><code>.amq-squad/team-rules.md</code></td>

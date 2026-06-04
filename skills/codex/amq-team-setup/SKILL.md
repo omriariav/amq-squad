@@ -106,10 +106,11 @@ Global output flags work before or after the subcommand: `--quiet`, `--verbose`,
 - One source of truth per layer. Team rules live only in `.amq-squad/team-rules.md`. Pointer stubs link, never copy.
 - Workstream = AMQ `--session`. Session names are strict: lowercase `a-z`, digits, `-`, `_`. Use `v0-5-0`, not `v0.5.0`.
 - Default profile is `default` (`.amq-squad/team.json`); named profiles live under `.amq-squad/teams/<name>.json` and are addressed with `--profile NAME`.
+- New profiles default to an enabled virtual operator handle `user`. Use `--operator HANDLE` for a custom human-gate mailbox or `--no-operator` for teams that should not expose operator gates. Schema 1/2 profiles keep implicit `user` gates until rewritten.
 - Setup never executes a live launch. Use `--dry-run` until the user explicitly approves going live; live launches happen via the `amq-squad` skill's `up` flow.
 - Do not touch `README.md`, `doc.html`, or unrelated repo files during setup. Stay inside `.amq-squad/`, `CLAUDE.md`, and `AGENTS.md`.
 - Codex trusted mode (`--trust trusted`) is the only path that prepends `--dangerously-bypass-approvals-and-sandbox`. The default `sandboxed` mode emits no implicit bypass; pick the mode deliberately during setup if non-default.
-- User escalations route through the role the team rules name (default: `cto`). Setup-time decisions that need user input also flow through CTO; do not ping the user directly during multi-agent setup.
+- Human escalations route through the operator handle when gates are enabled; otherwise use the role named by team rules.
 
 ## References
 
