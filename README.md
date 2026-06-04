@@ -17,10 +17,10 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 
 ## Install
 
-Install the 1.3 line:
+Install the 1.4 line:
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v1.3.0
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v1.4.1
 amq-squad version
 ```
 
