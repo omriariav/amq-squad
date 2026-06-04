@@ -55,10 +55,12 @@ type statusSignals struct {
 // statusEnvelopeData is the kind="status" payload: resolved team-home,
 // workstream, profile, and the per-member records.
 type statusEnvelopeData struct {
-	TeamHome   string         `json:"team_home"`
-	Workstream string         `json:"workstream"`
-	Profile    string         `json:"profile,omitempty"`
-	Records    []statusRecord `json:"records"`
+	TeamHome     string            `json:"team_home"`
+	Workstream   string            `json:"workstream"`
+	Profile      string            `json:"profile,omitempty"`
+	Operator     team.OperatorView `json:"operator"`
+	Capabilities team.Capabilities `json:"capabilities"`
+	Records      []statusRecord    `json:"records"`
 }
 
 type statusRecord struct {
@@ -168,10 +170,12 @@ func executeStatus(s statusExecution) error {
 	}
 	if s.JSON {
 		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
-			TeamHome:   t.Project,
-			Workstream: workstream,
-			Profile:    s.Profile,
-			Records:    rows,
+			TeamHome:     t.Project,
+			Workstream:   workstream,
+			Profile:      s.Profile,
+			Operator:     team.EffectiveOperator(t),
+			Capabilities: team.EffectiveCapabilities(t),
+			Records:      rows,
 		})
 	}
 	policy := outputPolicyCurrent()

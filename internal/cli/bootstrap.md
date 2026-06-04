@@ -32,6 +32,20 @@ These entries come from the current `.amq-squad/team.json` and are authoritative
 {{- end }}
 
 {{- end }}
+{{- if .OperatorGates }}
+Operator gate routing:
+The human/operator is mailbox handle {{.Operator.Handle}}. This participant is not a runnable agent. Use it only for human-only decisions or manual actions, not ordinary peer coordination.
+
+- ask: `amq send --to {{.Operator.Handle}} --thread gate/<topic> --kind question --subject "APPROVAL: <decision>"`
+- reply path: the operator replies on the same thread with `amq send --me {{.Operator.Handle}} --to <agent-handle> --thread gate/<topic> --kind answer --subject "APPROVED: <decision>"` (or `DENIED:` / `ANSWER:`).
+- reuse the same stable `gate/<topic>` thread for updates to the same decision.
+- p2p prose such as "operator-held", "manual RC", or "pending operator" is evidence only; it is not an operator gate.
+
+{{- else }}
+Operator gate routing:
+Operator gates are disabled for this profile. Route human-facing questions through the team lead/CTO rules instead of sending to the default `user` mailbox.
+
+{{- end }}
 {{- if .Workstreams }}
 Other workstreams in this project:
 These are sibling AMQ sessions for orientation only. Do not load their message bodies unless the user asks.
@@ -47,11 +61,6 @@ Startup warnings:
 {{- end }}
 
 {{- end }}
-Asking the human:
-- Need a human to approve an action you cannot take autonomously (a destructive/irreversible command, spend, deploy, or anything needing sign-off): send AMQ to `user` with a subject beginning `APPROVAL:` — e.g. `amq send --to user --subject "APPROVAL: run destructive vault migration?" --kind question --body "..."`.
-- Reached the team goal / finished the epic: send AMQ to `user`, `--kind decision`, subject beginning `DONE:` — e.g. `amq send --to user --subject "DONE: vault-context epic complete — review & close" --kind decision --body "..."`.
-- These exact `APPROVAL:` / `DONE:` prefixes light up the human's needs-you board. Do not invent other prefixes for these two signals.
-
 First steps:
 1. Read the startup files that exist.
 2. Use the current team routing above for live messages and handoffs.

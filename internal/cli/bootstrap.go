@@ -33,6 +33,8 @@ type bootstrapContext struct {
 	RolePath      string
 	LaunchPath    string
 	BriefPath     string
+	Operator      team.OperatorView
+	OperatorGates bool
 	CurrentTeam   []bootstrapTeamMember
 	Workstreams   []bootstrapWorkstream
 	Warnings      []string
@@ -83,6 +85,7 @@ func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
 	ctx.RolePath = promptText(ctx.RolePath)
 	ctx.LaunchPath = promptText(ctx.LaunchPath)
 	ctx.BriefPath = promptText(ctx.BriefPath)
+	ctx.Operator.Handle = promptText(ctx.Operator.Handle)
 	for i := range ctx.CurrentTeam {
 		m := &ctx.CurrentTeam[i]
 		m.Role = promptText(m.Role)
@@ -132,6 +135,7 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 	} else if _, err := os.Stat(rules.Path(rec.CWD)); err == nil {
 		teamRulesPath = rules.Path(rec.CWD)
 	}
+	operator, operatorGates := bootstrapOperator(rec, teamHome)
 	currentTeam, warnings := bootstrapCurrentTeam(rec, teamHome)
 	return bootstrapContext{
 		Role:          rec.Role,
@@ -148,11 +152,25 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		// Brief resolution uses the same rule as the live-launch ensure
 		// step so bootstrap can never name a path that ensure skipped (or
 		// vice versa).
-		BriefPath:   briefPath(resolveBriefHome(teamHome, rec.CWD), rec.Session),
-		CurrentTeam: currentTeam,
-		Workstreams: siblingWorkstreamSummaries(rec.Root, rec.Session),
-		Warnings:    warnings,
+		BriefPath:     briefPath(resolveBriefHome(teamHome, rec.CWD), rec.Session),
+		Operator:      operator,
+		OperatorGates: operatorGates,
+		CurrentTeam:   currentTeam,
+		Workstreams:   siblingWorkstreamSummaries(rec.Root, rec.Session),
+		Warnings:      warnings,
 	}
+}
+
+func bootstrapOperator(rec launch.Record, teamHome string) (team.OperatorView, bool) {
+	home := teamHome
+	if home == "" {
+		home = rec.CWD
+	}
+	t, err := team.ReadProfile(home, rec.TeamProfile)
+	if err != nil {
+		return team.OperatorView{}, false
+	}
+	return team.EffectiveOperator(t), team.SupportsOperatorGates(t)
 }
 
 func bootstrapCurrentTeam(rec launch.Record, teamHome string) ([]bootstrapTeamMember, []string) {

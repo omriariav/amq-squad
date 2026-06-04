@@ -88,6 +88,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	trustRaw := fs.String("trust", "", "Codex trust profile for generated commands: sandboxed (default) or trusted")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
+	operatorFlag := fs.String("operator", team.DefaultOperatorHandle, "virtual operator mailbox handle for human gates (default: user)")
+	noOperator := fs.Bool("no-operator", false, "disable the virtual operator participant for this profile")
 	dryRun := fs.Bool("dry-run", false, "preview the team profile and rules paths without writing files")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned team_profile_plan envelope instead of the human dry-run preview")
 	force := fs.Bool("force", false, "overwrite an existing team.json")
@@ -97,8 +99,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
-  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--operator HANDLE|--no-operator] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--operator HANDLE|--no-operator] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes the team config under
@@ -118,6 +120,9 @@ Known personas:
 		fmt.Fprint(os.Stderr, `
 Examples:
   amq-squad team init --roles cto,fullstack --binary cto=codex
+  amq-squad team init --roles cto,fullstack --operator user
+  amq-squad team init --roles cto,fullstack --operator operator
+  amq-squad team init --roles cto,fullstack --no-operator
   amq-squad team init --project ~/Code/app --roles cto,qa
   amq-squad team init --roles 2,9
   amq-squad team init --roles all
@@ -149,6 +154,22 @@ Examples:
 	}
 	if *rolesFlag != "" && *personasFlag != "" {
 		return fmt.Errorf("use either --personas or --roles, not both")
+	}
+	if *noOperator && flagWasSet(fs, "operator") {
+		return fmt.Errorf("use either --operator or --no-operator, not both")
+	}
+	operator := team.DefaultOperator()
+	if *noOperator {
+		operator = team.DisabledOperator()
+	} else {
+		handle := strings.TrimSpace(*operatorFlag)
+		if handle == "" {
+			return fmt.Errorf("--operator: handle cannot be empty")
+		}
+		if err := team.ValidateHandle(handle); err != nil {
+			return fmt.Errorf("--operator: %w", err)
+		}
+		operator.Handle = handle
 	}
 
 	cwd, err := os.Getwd()
@@ -294,6 +315,7 @@ Examples:
 		// back to the project basename. The field remains readable for old
 		// team.json files. Member sessions still carry the chosen workstream.
 		Trust:      trustMode,
+		Operator:   &operator,
 		BinaryArgs: binaryArgs,
 		Members:    members,
 	}
@@ -368,6 +390,8 @@ type teamProfilePlan struct {
 	ExistingProfile bool                    `json:"existing_profile"`
 	Members         int                     `json:"members"`
 	BinaryArgs      map[string][]string     `json:"binary_args,omitempty"`
+	Operator        team.OperatorView       `json:"operator"`
+	Capabilities    team.Capabilities       `json:"capabilities"`
 	SyncCommand     string                  `json:"sync_command,omitempty"`
 	Plan            []teamProfilePlanMember `json:"plan"`
 }
@@ -444,6 +468,8 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 		ExistingProfile: p.Exists,
 		Members:         len(rows),
 		BinaryArgs:      p.Team.BinaryArgs,
+		Operator:        team.EffectiveOperator(p.Team),
+		Capabilities:    team.EffectiveCapabilities(p.Team),
 		SyncCommand:     p.SyncCommand,
 		Plan:            rows,
 	}
@@ -517,14 +543,16 @@ type teamPlanMember struct {
 // plan: project/team-home + workstream + trust + profile + binary args +
 // per-member command lines.
 type teamPlan struct {
-	TeamHome   string              `json:"team_home"`
-	Project    string              `json:"project"`
-	Workstream string              `json:"workstream"`
-	Profile    string              `json:"profile"`
-	Trust      string              `json:"trust"`
-	Members    int                 `json:"members"`
-	BinaryArgs map[string][]string `json:"binary_args,omitempty"`
-	Plan       []teamPlanMember    `json:"plan"`
+	TeamHome     string              `json:"team_home"`
+	Project      string              `json:"project"`
+	Workstream   string              `json:"workstream"`
+	Profile      string              `json:"profile"`
+	Trust        string              `json:"trust"`
+	Members      int                 `json:"members"`
+	BinaryArgs   map[string][]string `json:"binary_args,omitempty"`
+	Operator     team.OperatorView   `json:"operator"`
+	Capabilities team.Capabilities   `json:"capabilities"`
+	Plan         []teamPlanMember    `json:"plan"`
 }
 
 func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
@@ -589,14 +617,16 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			profileName = team.DefaultProfile
 		}
 		plan := teamPlan{
-			TeamHome:   t.Project,
-			Project:    t.Project,
-			Workstream: workstream,
-			Profile:    profileName,
-			Trust:      trustMode,
-			Members:    len(members),
-			BinaryArgs: binaryArgs,
-			Plan:       make([]teamPlanMember, 0, len(members)),
+			TeamHome:     t.Project,
+			Project:      t.Project,
+			Workstream:   workstream,
+			Profile:      profileName,
+			Trust:        trustMode,
+			Members:      len(members),
+			BinaryArgs:   binaryArgs,
+			Operator:     team.EffectiveOperator(t),
+			Capabilities: team.EffectiveCapabilities(t),
+			Plan:         make([]teamPlanMember, 0, len(members)),
 		}
 		for _, m := range members {
 			effectiveModel := memberEffectiveModel(m, opts.ModelOverrides)

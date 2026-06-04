@@ -81,7 +81,15 @@ Each agent should summarize the prior context it used before taking new work.
 - One concern per message when practical.
 - `amq send` reads stdin when `--body` is omitted. There is no `--body-file` flag.
 
-User escalations route through CTO. Agents do not interrupt or ping the user directly during active work; route user-facing questions, approval needs, blockers, and status requests to the CTO handle. CTO owns when to escalate to the user.
+## Operator Gates
+
+If this profile enables operator gates, the human/operator is a virtual AMQ mailbox participant, not a runnable peer. Use the configured operator handle for human-only decisions or manual actions:
+
+- ask: `amq send --to <operator-handle> --thread gate/<topic> --kind question --subject "APPROVAL: <decision>"`
+- reply path: the operator replies on the same thread with `amq send --me <operator-handle> --to <agent-handle> --thread gate/<topic> --kind answer --subject "APPROVED: <decision>"` (or `DENIED:` / `ANSWER:`).
+- do not send ordinary peer coordination to the operator; reviews, handoffs, status ACKs, and agent-owned blockers stay agent-to-agent.
+
+If operator gates are disabled for the profile, route human-facing asks through the role named by the team rules instead of sending to the default `user` mailbox.
 
 ## Quality gates
 

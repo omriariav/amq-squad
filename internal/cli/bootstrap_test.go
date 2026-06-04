@@ -149,11 +149,55 @@ func TestBootstrapPromptIncludesCurrentTeamRouting(t *testing.T) {
 		"- qa: handle qa, binary claude, workstream fresh-cpo, project omri-pm",
 		"--project omri-pm",
 		"--thread p2p/cpo__qa`",
+		"Operator gate routing:",
+		"The human/operator is mailbox handle user",
+		"amq send --to user --thread gate/<topic> --kind question",
+		"amq send --me user --to <agent-handle> --thread gate/<topic> --kind answer",
+		"operator-held",
 		"Do not resume old sessions or route work to historical agents unless the user explicitly asks.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("bootstrap prompt missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+func TestBootstrapPromptUsesCustomOperatorHandle(t *testing.T) {
+	teamHome := t.TempDir()
+	op := team.OperatorConfig{Enabled: true, Handle: "operator"}
+	if err := team.Write(teamHome, team.Team{
+		Operator: &op,
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(teamHome, ".agent-mail", "issue-96")
+	rec := launch.Record{
+		Role:    "cto",
+		Handle:  "cto",
+		Binary:  "codex",
+		Session: "issue-96",
+		CWD:     teamHome,
+		Root:    root,
+	}
+	ctx := bootstrapContextFor(rec, filepath.Join(root, "agents", "cto"), teamHome)
+	got, err := buildBootstrapPrompt(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"The human/operator is mailbox handle operator",
+		"amq send --to operator --thread gate/<topic> --kind question",
+		"amq send --me operator --to <agent-handle> --thread gate/<topic> --kind answer",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("custom operator bootstrap missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "amq send --to user --thread gate/<topic>") {
+		t.Errorf("custom operator bootstrap hard-coded user:\n%s", got)
 	}
 }
 

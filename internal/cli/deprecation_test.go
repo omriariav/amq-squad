@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -90,6 +91,11 @@ func TestRemovedVerbsAreNotUnknownCommand(t *testing.T) {
 // agent up still drives the real launcher body (runLaunch). --dry-run proves
 // the launch flags were parsed and the coop-exec command was built.
 func TestAgentUpDryRunStillWorks(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".agent-mail"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
 	withOutputPolicy(t, outputPolicy{})
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runAgentUp([]string{"codex", "--dry-run", "--no-bootstrap"})
@@ -256,6 +262,11 @@ func TestTranslateAgentUpArgs(t *testing.T) {
 // flagged: a user typing `agent up codex --dry-run ...` should see the
 // dry-run note on stderr, proving the launch flag was actually parsed.
 func TestAgentUpHonorsPostBinaryFlags(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".agent-mail"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
 	withOutputPolicy(t, outputPolicy{})
 	_, stderr, err := captureOutput(t, func() error {
 		return runAgentUp([]string{"codex", "--dry-run", "--no-bootstrap"})

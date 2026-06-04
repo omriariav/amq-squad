@@ -83,10 +83,14 @@ For named profiles, the same --profile is passed through to team sync. If member
 cwds are outside the team-home, pass --allow-outside with --sync.
 Pass --dry-run to preview the profile and rules paths without writing files.
 Add --json to emit a team_profile_plan envelope on stdout.
+Operator gates default to virtual non-runnable handle 'user'. Pass
+--operator HANDLE to customize it or --no-operator to opt out.
 
 Examples:
   amq-squad roles
   amq-squad new team --dry-run --roles cto,qa
+  amq-squad new team --roles cto,qa --operator operator
+  amq-squad new team --roles cto,qa --no-operator
   amq-squad new team --sync --dry-run --json --roles cto,qa
   amq-squad new team --sync --roles cto,fullstack --binary cto=codex
   amq-squad new team --roles 2,9
@@ -232,6 +236,7 @@ func newProfileTeamArgs(args []string) ([]string, error) {
 		"--codex-args":  true,
 		"--cwd":         true,
 		"--model":       true,
+		"--operator":    true,
 		"--personas":    true,
 		"--project":     true,
 		"--roles":       true,

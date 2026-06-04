@@ -135,8 +135,8 @@ func TestReadProfileAcceptsSchema1ThenWriteEmitsSchema2(t *testing.T) {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Schema != 2 {
-		t.Errorf("on-disk schema after Write = %d, want 2", decoded.Schema)
+	if decoded.Schema != SchemaVersion {
+		t.Errorf("on-disk schema after Write = %d, want %d", decoded.Schema, SchemaVersion)
 	}
 }
 
