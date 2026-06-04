@@ -16,6 +16,7 @@ import (
 
 type recordingTerminator struct {
 	mu     sync.Mutex
+	name   string // signal label this fake reports via SignalName; defaults to SIGTERM
 	calls  []int
 	failOn map[int]error
 }
@@ -28,6 +29,13 @@ func (r *recordingTerminator) Terminate(pid int) error {
 		return err
 	}
 	return nil
+}
+
+func (r *recordingTerminator) SignalName() string {
+	if r.name == "" {
+		return "SIGTERM"
+	}
+	return r.name
 }
 
 // downFakeProbe implements duplicateLaunchProbe with explicit per-PID liveness and
@@ -89,7 +97,7 @@ func TestRunDownRejectsRoleAndAll(t *testing.T) {
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
 	})
 	_, _, err := captureOutput(t, func() error {
-		return runDown([]string{"--role", "cto", "--all", "--force"})
+		return runDown([]string{"--role", "cto", "--all"})
 	})
 	if err == nil {
 		t.Fatal("--role and --all together should be a usage error")
@@ -104,7 +112,7 @@ func TestRunDownRequiresSelector(t *testing.T) {
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
 	})
 	_, _, err := captureOutput(t, func() error {
-		return runDown([]string{"--force"})
+		return runDown([]string{})
 	})
 	if err == nil {
 		t.Fatal("missing selector should be a usage error")
@@ -114,15 +122,27 @@ func TestRunDownRequiresSelector(t *testing.T) {
 	}
 }
 
-func TestRunDownGracefulReturnsUnavailable(t *testing.T) {
-	seedTeam(t, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
+func TestRunStopProjectTargetsOtherDir(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	project := t.TempDir()
+	other := t.TempDir()
+	if err := team.Write(project, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-99"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, other)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runStop([]string{"--project", project, "--all", "--session", "issue-99"})
 	})
-	_, _, err := captureOutput(t, func() error {
-		return runDown([]string{"--role", "cto"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "graceful down is unavailable") {
-		t.Fatalf("graceful path should fail with unavailable: got %v", err)
+	if err != nil {
+		t.Fatalf("stop --project: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{"# amq-squad stop", "# workstream: issue-99", "no launch record"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stop --project output missing %q in:\n%s", want, stdout)
+		}
 	}
 }
 
@@ -141,7 +161,10 @@ func TestExecuteDownRejectsUnknownRole(t *testing.T) {
 	}
 }
 
-func TestExecuteDownForceSendsTermToVerifiedPID(t *testing.T) {
+// TestExecuteStopSendsTermToVerifiedPID inverts the old force-required test:
+// stop with NO --force now SIGTERMs every live, binary-matched agent, and the
+// summary surfaces the resumable hint because on-disk state is preserved.
+func TestExecuteStopSendsTermToVerifiedPID(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{
@@ -162,8 +185,9 @@ func TestExecuteDownForceSendsTermToVerifiedPID(t *testing.T) {
 		Root:     filepath.Join(base, "issue-96"),
 	})
 
-	term := &recordingTerminator{}
+	term := &recordingTerminator{name: "SIGTERM"}
 	out, err := runDownExec(t, downExecution{
+		Verb:             "stop",
 		ProjectDir:       dir,
 		RequestedSession: "issue-96",
 		ExplicitSession:  true,
@@ -172,7 +196,7 @@ func TestExecuteDownForceSendsTermToVerifiedPID(t *testing.T) {
 		Probe:            downFakeProbe(map[int]bool{1111: true, 2222: true}, map[int]bool{1111: true, 2222: true}),
 	})
 	if err != nil {
-		t.Fatalf("down: %v\noutput:\n%s", err, out)
+		t.Fatalf("stop: %v\noutput:\n%s", err, out)
 	}
 	term.mu.Lock()
 	got := append([]int(nil), term.calls...)
@@ -180,9 +204,21 @@ func TestExecuteDownForceSendsTermToVerifiedPID(t *testing.T) {
 	if len(got) != 2 || got[0] != 1111 || got[1] != 2222 {
 		t.Fatalf("terminator calls = %v, want [1111 2222]", got)
 	}
-	for _, want := range []string{"# workstream: issue-96", "cto", "fullstack", "force-sent", "SIGTERM sent to pid 1111", "SIGTERM sent to pid 2222"} {
+	for _, want := range []string{
+		"# amq-squad stop", "# workstream: issue-96", "cto", "fullstack",
+		"stopped", "SIGTERM sent to pid 1111", "SIGTERM sent to pid 2222",
+		"bring it back with 'amq-squad resume'",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q in:\n%s", want, out)
+		}
+	}
+	// State on disk must be PRESERVED (recoverable via resume): the launch
+	// record stays readable after a stop.
+	for _, handle := range []string{"cto", "fullstack"} {
+		agentDir := filepath.Join(base, "issue-96", "agents", handle)
+		if _, readErr := launch.Read(agentDir); readErr != nil {
+			t.Errorf("launch record for %q must be preserved after stop: %v", handle, readErr)
 		}
 	}
 }
@@ -256,7 +292,7 @@ func TestRenderDownReportsMaybeLiveWithFailureStaysPartial(t *testing.T) {
 	}
 	// failed + maybe-live with zero sent must still be partial (exit 3), not a
 	// plain error that hides the unconfirmed-stop members.
-	err := renderDownReports(&buf, "issue-96", reports)
+	err := renderDownReports(&buf, "stop", "issue-96", reports)
 	pe, ok := err.(*PartialError)
 	if !ok {
 		t.Fatalf("want *PartialError, got %T: %v", err, err)
@@ -371,7 +407,7 @@ func TestExecuteDownPartialFailureReturnsAggregateError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "1 of 2") {
 		t.Fatalf("partial failure should aggregate: got %v", err)
 	}
-	for _, want := range []string{"force-sent", "failed", "SIGTERM sent to pid 100", "terminate pid 200: operation not permitted"} {
+	for _, want := range []string{"stopped", "failed", "SIGTERM sent to pid 100", "terminate pid 200: operation not permitted"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q in:\n%s", want, out)
 		}
@@ -381,8 +417,9 @@ func TestExecuteDownPartialFailureReturnsAggregateError(t *testing.T) {
 func TestExecuteDownResolvesDefaultWorkstream(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		// Legacy-style per-role session so defaultTeamWorkstreamName falls
-		// through to defaultWorkstreamName(projectDir).
+		// Legacy-style per-role session so member-session inference yields
+		// nothing and (with no pin) resolution falls through to the
+		// defaultWorkstreamName(projectDir) basename.
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}},
 	})
 	workstream := defaultWorkstreamName(dir)
@@ -780,21 +817,16 @@ func TestRenderDownReportsCleanedAndFailedStaysPartial(t *testing.T) {
 		{Role: "cto", Root: "/tmp/root", Status: downStatusCleaned, Detail: "recorded pid 1 is not alive; flipped presence to offline"},
 		{Role: "qa", Root: "/tmp/root", Status: downStatusFailed, Detail: "terminate pid 5: boom"},
 	}
-	err := renderDownReports(&buf, "issue-96", reports)
+	err := renderDownReports(&buf, "stop", "issue-96", reports)
 	pe, ok := err.(*PartialError)
 	if !ok {
 		t.Fatalf("cleaned+failed must be *PartialError, got %T: %v", err, err)
 	}
-	for _, want := range []string{"1 of 2", "1 force-sent, 1 cleaned"} {
-		if want == "1 force-sent, 1 cleaned" {
-			// summary line literal: 0 force-sent, 1 cleaned, ...
-			if !strings.Contains(buf.String(), "0 force-sent, 1 cleaned") {
-				t.Errorf("summary line missing cleaned counter:\n%s", buf.String())
-			}
-			continue
-		}
-		if !strings.Contains(pe.Message, want) {
-			t.Errorf("partial message missing %q: %q", want, pe.Message)
-		}
+	// summary line literal: 0 stopped, 1 cleaned, ...
+	if !strings.Contains(buf.String(), "0 stopped, 1 cleaned") {
+		t.Errorf("summary line missing cleaned counter:\n%s", buf.String())
+	}
+	if !strings.Contains(pe.Message, "1 of 2") {
+		t.Errorf("partial message missing %q: %q", "1 of 2", pe.Message)
 	}
 }

@@ -150,7 +150,7 @@ func statusANSI(policy outputPolicy, status string) string {
 		return ""
 	}
 	switch status {
-	case "ok", "live", "force-sent":
+	case "ok", "live", "wake-live", "stopped":
 		return ansiGreen
 	case "warn", "stale", "missing", "not-live":
 		return ansiYellow
