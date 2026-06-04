@@ -91,6 +91,53 @@ func TestRunTeamProfilesListsDefaultFirstThenNamedSorted(t *testing.T) {
 	}
 }
 
+func TestRunTeamProfilesInfersSharedMemberSession(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	seedProfile(t, dir, team.DefaultProfile, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "sleep", Handle: "cto", Session: "operator-smoke"},
+			{Role: "qa", Binary: "sleep", Handle: "qa", Session: "operator-smoke"},
+		},
+	})
+
+	stdout, _, err := captureOutput(t, func() error { return runTeamProfiles(nil) })
+	if err != nil {
+		t.Fatalf("team profiles: %v", err)
+	}
+	if !strings.Contains(stdout, "operator-smoke") {
+		t.Fatalf("team profiles should show inferred shared member session:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "(default)") {
+		t.Fatalf("team profiles should not fall back to default when members share a session:\n%s", stdout)
+	}
+}
+
+func TestRunTeamProfilesProjectTargetsOtherDir(t *testing.T) {
+	project := t.TempDir()
+	other := t.TempDir()
+	chdir(t, other)
+	seedProfile(t, project, team.DefaultProfile, team.Team{
+		Workstream: "remote",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "remote"},
+		},
+	})
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runTeamProfiles([]string{"--project", project})
+	})
+	if err != nil {
+		t.Fatalf("team profiles --project: %v", err)
+	}
+	if !strings.Contains(stdout, team.ProfilePath(project, team.DefaultProfile)) {
+		t.Errorf("profiles output should point at requested project:\n%s", stdout)
+	}
+	if strings.Contains(stdout, other) {
+		t.Errorf("profiles output should not inspect current cwd:\n%s", stdout)
+	}
+}
+
 func TestRunTeamProfilesEmptyDirSilent(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -258,6 +305,53 @@ func TestTeamInitProfileWritesToTeamsDir(t *testing.T) {
 	// Default profile must NOT have been written.
 	if _, err := os.Stat(filepath.Join(dir, ".amq-squad", "team.json")); err == nil {
 		t.Errorf("named --profile init unexpectedly created default team.json")
+	}
+}
+
+func TestTeamInitProjectTargetsOtherDir(t *testing.T) {
+	parent := t.TempDir()
+	project := filepath.Join(parent, "project")
+	member := filepath.Join(parent, "member")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(member, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	chdir(t, other)
+
+	_, _, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--project", project,
+			"--roles", "qa",
+			"--cwd", "qa=../member",
+			"--session", "remote",
+		})
+	})
+	if err != nil {
+		t.Fatalf("team init --project: %v", err)
+	}
+	cfg, err := team.Read(project)
+	if err != nil {
+		t.Fatalf("read requested project team: %v", err)
+	}
+	gotCWD := ""
+	if len(cfg.Members) == 1 {
+		gotCWD, err = filepath.EvalSymlinks(cfg.Members[0].CWD)
+		if err != nil {
+			t.Fatalf("resolve member cwd: %v", err)
+		}
+	}
+	wantCWD, err := filepath.EvalSymlinks(member)
+	if err != nil {
+		t.Fatalf("resolve wanted member cwd: %v", err)
+	}
+	if len(cfg.Members) != 1 || gotCWD != wantCWD {
+		t.Fatalf("relative --cwd should resolve from --project dir; members = %+v", cfg.Members)
+	}
+	if _, err := os.Stat(filepath.Join(other, ".amq-squad", "team.json")); err == nil {
+		t.Errorf("team init --project wrote team.json in current cwd")
 	}
 }
 
@@ -494,5 +588,54 @@ func TestTeamSyncProfileScopedToSelectedCWDs(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(defaultCWD, "CLAUDE.md")); err == nil {
 		t.Errorf("default profile cwd should NOT be touched by --profile review sync")
+	}
+}
+
+func TestTeamSyncProjectWritesRequestedTeamHome(t *testing.T) {
+	project := t.TempDir()
+	other := t.TempDir()
+	chdir(t, other)
+	if err := os.MkdirAll(filepath.Join(project, ".amq-squad"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".amq-squad", "team-rules.md"), []byte("# Team Rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedProfile(t, project, team.DefaultProfile, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "remote"},
+		},
+	})
+
+	_, _, err := captureOutput(t, func() error {
+		return runTeamSync([]string{"--project", project, "--apply"})
+	})
+	if err != nil {
+		t.Fatalf("team sync --project --apply: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, "CLAUDE.md")); err != nil {
+		t.Errorf("requested project should receive CLAUDE.md: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(other, "CLAUDE.md")); err == nil {
+		t.Errorf("current cwd should not be touched by team sync --project")
+	}
+}
+
+func TestTeamRulesInitProjectWritesRequestedTeamHome(t *testing.T) {
+	project := t.TempDir()
+	other := t.TempDir()
+	chdir(t, other)
+
+	_, _, err := captureOutput(t, func() error {
+		return runTeam([]string{"rules", "init", "--project", project})
+	})
+	if err != nil {
+		t.Fatalf("team rules init --project: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".amq-squad", "team-rules.md")); err != nil {
+		t.Errorf("requested project should receive team-rules.md: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(other, ".amq-squad", "team-rules.md")); err == nil {
+		t.Errorf("current cwd should not be touched by team rules init --project")
 	}
 }

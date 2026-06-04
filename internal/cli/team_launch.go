@@ -39,6 +39,12 @@ type teamLaunchOptions struct {
 	// via --team-profile so each agent's launch record carries the same
 	// profile identity for bootstrap routing and status display.
 	Profile string
+	// WarnStubBrief, when true, makes the live launch emit a warn-if-stub
+	// notice on stderr (silenced by --quiet) after a successful launch when
+	// the brief is an untouched generated stub. `up` sets this when no brief
+	// source (--seed-from) was supplied so CI / send-keys flows keep working
+	// without a hard error, while nudging the operator to fill in the goal.
+	WarnStubBrief bool
 }
 
 type teamLaunchPane struct {
@@ -70,6 +76,10 @@ func registerTeamLaunchBackend(backend teamLaunchBackend) {
 	teamLaunchBackends[name] = backend
 }
 
+// runTeamLaunch is the parser/setup wrapper for the live team launcher. The
+// `team launch` subcommand is legacy in favor of `up`; this body is retained
+// internal-only so the live-launch backend path stays exercised by tests.
+// User-facing live launch flows through runUp -> executeTeamLaunch.
 func runTeamLaunch(args []string) error {
 	fs := flag.NewFlagSet("team launch", flag.ContinueOnError)
 	pf := registerPreviewFlags(fs)
@@ -77,11 +87,6 @@ func runTeamLaunch(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "print terminal commands without executing them")
 	profileFlag := fs.String("profile", "", "team profile to launch (default: default profile)")
 
-	// Emit the deprecation warning before flag parsing so it appears even
-	// for the bare misuse case (no args). Help invocations stay quiet.
-	if !isHelpInvocation(args) {
-		teamLaunchDeprecationWarning(args)
-	}
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `amq-squad team launch - open the configured team in a terminal
 
@@ -124,58 +129,7 @@ Examples:
 	return executeTeamLaunch(opts, flagWasSet(fs, "session"), flagWasSet(fs, "trust"))
 }
 
-// teamLaunchDeprecationWarning emits one of two replacement hints based on
-// the raw argv: --fresh + --session NAME points at fork --from <current>
-// --as NAME (since fresh starts a new workstream branched off the current
-// one); everything else points at the modern `up` verb. The current
-// workstream is resolved through the same default-profile path `up` uses;
-// when no team is configured we fall back to a placeholder so the hint
-// still tells the user what to type.
-func teamLaunchDeprecationWarning(args []string) {
-	fresh := false
-	session := ""
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--fresh":
-			fresh = true
-		case "--session":
-			if i+1 < len(args) {
-				session = args[i+1]
-			}
-		default:
-			if strings.HasPrefix(args[i], "--session=") {
-				session = strings.TrimPrefix(args[i], "--session=")
-			}
-		}
-	}
-	if fresh && session != "" {
-		current := resolveCurrentTeamWorkstreamForHint()
-		deprecationWarning("team launch --session ... --fresh", "fork --from "+current+" --as "+session)
-		return
-	}
-	deprecationWarning("team launch", "up")
-}
-
-func resolveCurrentTeamWorkstreamForHint() string {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "<current>"
-	}
-	if !team.Exists(cwd) {
-		return "<current>"
-	}
-	t, err := team.Read(cwd)
-	if err != nil {
-		return "<current>"
-	}
-	ws, err := resolveTeamWorkstreamName(t, "", false)
-	if err != nil || ws == "" {
-		return "<current>"
-	}
-	return ws
-}
-
-// executeTeamLaunch is the post-parse body shared by `team launch` and live
+// executeTeamLaunch is the post-parse body shared by the live team launcher and live
 // `up`. opts must already carry the resolved binary args, model overrides,
 // trust, and live backend fields; the explicit-* bools mirror flagWasSet so
 // trust/session resolution against team.json defaults stays correct.
@@ -276,7 +230,27 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if _, _, err := ensureBriefStub(t.Project, opts.Workstream); err != nil {
 		return fmt.Errorf("ensure brief: %w", err)
 	}
-	return backend.Launch(t, opts)
+	if err := backend.Launch(t, opts); err != nil {
+		return err
+	}
+	quietNotice("started %s using profile %s in %s\n", opts.Workstream, opts.Profile, t.Project)
+	if len(preflights) > 0 && preflights[0].Root != "" {
+		quietNotice("AM_ROOT: %s\n", preflights[0].Root)
+	}
+	quietNotice("next: amq-squad status --session %s | amq-squad console --session %s | amq-squad stop --all --session %s\n",
+		shellQuote(opts.Workstream), shellQuote(opts.Workstream), shellQuote(opts.Workstream))
+	// Post-launch warn-if-stub nudge: `up` without a brief source auto-stubs
+	// the brief above and asks us to flag it so non-interactive automation
+	// keeps working while still being told to set the goal. Only fire when the
+	// brief on disk is genuinely an untouched stub (a --seed-from authored
+	// brief, or one the operator already edited, classifies as briefReal).
+	if opts.WarnStubBrief {
+		if _, kind := classifyBrief(t.Project, opts.Workstream); kind == briefStub {
+			quietNotice("notice: started %s with a stub brief — edit %s or pass --seed-from to set the goal.\n",
+				opts.Workstream, briefPath(t.Project, opts.Workstream))
+		}
+	}
+	return nil
 }
 
 // buildTeamPreflights computes the agent-identity tuples team launch would
@@ -292,7 +266,7 @@ func buildTeamPreflights(t team.Team, opts teamLaunchOptions) ([]agentLaunchPref
 		if err != nil {
 			return nil, fmt.Errorf("resolve amq env for %s: %w", m.Handle, err)
 		}
-		root := env.Root
+		root := absoluteAMQRoot(cwd, env.Root)
 		handle := m.Handle
 		if env.Me != "" {
 			handle = env.Me

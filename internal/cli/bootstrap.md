@@ -47,10 +47,18 @@ Startup warnings:
 {{- end }}
 
 {{- end }}
+Asking the human:
+- Need a human to approve an action you cannot take autonomously (a destructive/irreversible command, spend, deploy, or anything needing sign-off): send AMQ to `user` with a subject beginning `APPROVAL:` — e.g. `amq send --to user --subject "APPROVAL: run destructive vault migration?" --kind question --body "..."`.
+- Reached the team goal / finished the epic: send AMQ to `user`, `--kind decision`, subject beginning `DONE:` — e.g. `amq send --to user --subject "DONE: vault-context epic complete — review & close" --kind decision --body "..."`.
+- These exact `APPROVAL:` / `DONE:` prefixes light up the human's needs-you board. Do not invent other prefixes for these two signals.
+
 First steps:
 1. Read the startup files that exist.
 2. Use the current team routing above for live messages and handoffs.
-3. Inspect prior AMQ history in this workstream relevant to your role using `amq-squad status`, `amq-squad history`, `amq list`, `amq read`, and `amq thread --include-body` as needed.
-4. Do not resume old sessions or route work to historical agents unless the user explicitly asks.
-5. Start your first response by stating your role and handle, then summarize relevant prior context and what you are waiting for.
-6. Stop and wait for instructions.
+3. Run `amq drain --include-body` before acting on inbox state. Use bare `amq` commands in this shell; amq-squad already injected AM_ROOT, AM_BASE_ROOT, and AM_ME.
+4. Inspect prior AMQ history in this workstream relevant to your role using `amq-squad status`, `amq-squad history`, `amq list`, `amq read`, and `amq thread --include-body` as needed.
+5. If routing is ambiguous, use `amq route explain` or the printed `amq-squad amq route --to <handle>` diagnostics before sending.
+6. For important review requests or queued handoffs, send with `--wait-for drained --wait-timeout 60s` and keep the message id.
+7. Do not resume old sessions or route work to historical agents unless the user explicitly asks.
+8. Start your first response by stating your role and handle, then summarize relevant prior context and what you are waiting for.
+9. Stop and wait for instructions.

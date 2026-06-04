@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -79,5 +81,46 @@ func TestRunHistoryHonorsProjectFlag(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "cto") {
 		t.Errorf("history --project did not scan target dir:\n%s", stdout)
+	}
+}
+
+func TestRunHistoryProjectFlagExpandsHome(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	home := t.TempDir()
+	dir := filepath.Join(home, "repos", "app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96",
+		CWD: dir, StartedAt: time.Now().Add(-1 * time.Hour),
+	})
+	empty := t.TempDir()
+	chdir(t, empty)
+	stdout, _, err := captureOutput(t, func() error {
+		return runHistory([]string{"--project", "~/repos/app", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("history --project ~/repos/app: %v", err)
+	}
+	env := decodeJSONEnvelope[historyEnvelopeData](t, stdout)
+	if len(env.Data.Projects) != 1 || env.Data.Projects[0] != dir {
+		t.Fatalf("history projects = %+v, want %q", env.Data.Projects, dir)
+	}
+	if len(env.Data.Records) != 1 || env.Data.Records[0].Role != "cto" {
+		t.Fatalf("records = %+v, want one cto entry", env.Data.Records)
+	}
+}
+
+func TestRunHistoryProjectFlagValidatesDirectories(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return runHistory([]string{"--project", filepath.Join(t.TempDir(), "missing")})
+	})
+	if err == nil {
+		t.Fatal("history --project missing dir should fail")
+	}
+	if !strings.Contains(err.Error(), "--project") {
+		t.Fatalf("error should reference --project, got %v", err)
 	}
 }
