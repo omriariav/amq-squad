@@ -191,7 +191,7 @@ amq-squad brief seed --session issue-96 --seed-from issue:31
 - With `--dry-run`: prints the candidate brief envelope and writes nothing.
 - Without `--dry-run`: writes `.amq-squad/briefs/<session>.md` and brings the team up in the same call. An existing brief is preserved unless `--force` is set.
 
-### Profiles (schema 2)
+### Profiles (schema 3)
 
 Profiles let one team-home hold parallel team shapes (for example a release team and a research team).
 
@@ -206,7 +206,17 @@ amq-squad up --profile release               # operate on a named profile
 amq-squad doctor --profile release           # check that profile's config, wake, and pointer sync
 ```
 
-`team.json` files use `schema: 2` (the JSON key in persisted team profiles is `schema`; `schema_version` is reserved for the read-only JSON command envelopes documented below). Omit `--profile` (or pass `--profile default`) for the default profile.
+New `team.json` writes use `schema: 3` (the JSON key in persisted team profiles is `schema`; `schema_version` is reserved for the read-only JSON command envelopes documented below). Schema 1/2 profiles without an `operator` field are still supported and treated as implicit non-runnable `user` operator-gate teams until they are rewritten. Omit `--profile` (or pass `--profile default`) for the default profile.
+
+Schema 3 adds an optional virtual operator participant for human gates:
+
+```sh
+amq-squad new team --roles cto,qa                 # default operator handle: user
+amq-squad new team --roles cto,qa --operator ops  # custom operator handle
+amq-squad new team --roles cto,qa --no-operator   # explicit opt-out
+```
+
+The operator is not a runnable team member. JSON discovery derives `operator` and `capabilities.operator_gates`; `capabilities` is not persisted in `team.json`.
 
 ## Verbs
 
@@ -223,7 +233,9 @@ amq-squad new team [--project DIR] [--sync] [--dry-run [--json]] [team init opti
                                   Add --sync to also write CLAUDE.md / AGENTS.md
                                   managed pointer stubs. --roles accepts IDs,
                                   market numbers, or all; --session sets the
-                                  initial shared workstream;
+                                  initial shared workstream; --operator sets
+                                  the virtual operator handle; --no-operator
+                                  disables operator gates;
                                   --project targets a team-home without cd.
 amq-squad new profile NAME [--project DIR] [--sync] [--dry-run [--json]] [team init options]
                                   Create a named team profile. Alias for
@@ -443,6 +455,8 @@ Use route diagnostics before uncertain cross-project sends, receipt waits for im
 
 Verbs that produce machine-readable output accept `--json` and emit a schema-versioned envelope on stdout. Diagnostics stay on stderr; stdout under `--json` is pure JSON.
 
+Team discovery payloads include derived operator metadata for external clients: `operator.enabled`, `operator.handle` when enabled, `operator.runnable=false`, and `capabilities.operator_gates`.
+
 ```sh
 amq-squad status --json | jq .
 amq-squad history --json | jq .
@@ -557,8 +571,8 @@ Inside an amq-squad-launched shell, use bare `amq` commands. The launcher alread
 ## Files amq-squad writes
 
 ```text
-<project>/.amq-squad/team.json           Default team profile (schema: 2).
-<project>/.amq-squad/teams/<name>.json   Named team profiles (schema: 2).
+<project>/.amq-squad/team.json           Default team profile (schema: 3 on new writes).
+<project>/.amq-squad/teams/<name>.json   Named team profiles (schema: 3 on new writes).
 <project>/.amq-squad/team-rules.md       Durable team norms (user-edited).
 <project>/.amq-squad/briefs/<session>.md Workstream brief, one per AMQ session.
 <project>/CLAUDE.md, AGENTS.md           Managed pointer block; user content outside markers preserved.

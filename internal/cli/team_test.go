@@ -723,6 +723,55 @@ func TestRunTeamInitPersonasAliasAndBinaryOverride(t *testing.T) {
 	if m.Role != "fullstack" || m.Binary != "codex" {
 		t.Fatalf("member = %+v, want fullstack on codex", m)
 	}
+	if got.Operator == nil || !got.Operator.Enabled || got.Operator.Handle != team.DefaultOperatorHandle {
+		t.Fatalf("operator = %+v, want default enabled %q", got.Operator, team.DefaultOperatorHandle)
+	}
+}
+
+func TestRunTeamInitOperatorFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		wantEnable bool
+		wantHandle string
+	}{
+		{name: "custom", args: []string{"--roles", "cto", "--operator", "omri"}, wantEnable: true, wantHandle: "omri"},
+		{name: "disabled", args: []string{"--roles", "cto", "--no-operator"}, wantEnable: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			chdir(t, dir)
+			if err := runTeamInit(tc.args); err != nil {
+				t.Fatalf("runTeamInit: %v", err)
+			}
+			got, err := team.Read(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Operator == nil {
+				t.Fatal("operator not persisted")
+			}
+			if got.Operator.Enabled != tc.wantEnable || got.Operator.Handle != tc.wantHandle {
+				t.Fatalf("operator = %+v, want enabled=%v handle=%q", got.Operator, tc.wantEnable, tc.wantHandle)
+			}
+			if team.SupportsOperatorGates(got) != tc.wantEnable {
+				t.Fatalf("SupportsOperatorGates = %v, want %v", team.SupportsOperatorGates(got), tc.wantEnable)
+			}
+		})
+	}
+}
+
+func TestRunTeamInitRejectsOperatorConflicts(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	err := runTeamInit([]string{"--roles", "cto", "--operator", "Bad/Name"})
+	if err == nil || !strings.Contains(err.Error(), "--operator") {
+		t.Fatalf("runTeamInit invalid operator error = %v, want --operator validation", err)
+	}
+	err = runTeamInit([]string{"--roles", "cto", "--operator", "omri", "--no-operator"})
+	if err == nil || !strings.Contains(err.Error(), "either --operator or --no-operator") {
+		t.Fatalf("runTeamInit conflicting operator flags error = %v", err)
+	}
 }
 
 func TestRunTeamInitStoresBinaryArgs(t *testing.T) {
@@ -889,6 +938,12 @@ func TestRunTeamInitDryRunJSONEnvelope(t *testing.T) {
 	}
 	if env.Data.Members != 2 || len(env.Data.Plan) != 2 {
 		t.Fatalf("members/plan = %d/%d, want 2/2", env.Data.Members, len(env.Data.Plan))
+	}
+	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != team.DefaultOperatorHandle || env.Data.Operator.Runnable {
+		t.Fatalf("operator = %+v, want default non-runnable user", env.Data.Operator)
+	}
+	if !env.Data.Capabilities.OperatorGates {
+		t.Fatal("team_profile_plan should advertise operator_gates")
 	}
 	var sawCTO bool
 	for _, m := range env.Data.Plan {
@@ -1117,6 +1172,10 @@ func TestRunTeamInitSeedsTeamRules(t *testing.T) {
 	body := string(got)
 	for _, want := range []string{
 		"## Role Scope",
+		"## Operator Gates",
+		"amq send --to user --thread gate/<topic> --kind question",
+		"amq send --me user --to <agent-handle> --thread gate/<topic> --kind answer",
+		"operator-held",
 		"On first session run, start the first response by stating your role and handle",
 		"pm (Project Manager / Product Owner)",
 		"Turns feedback into scoped tasks for the right owner. Does not implement code unless explicitly assigned by the user.",
@@ -1126,6 +1185,31 @@ func TestRunTeamInitSeedsTeamRules(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("team-rules.md missing %q in:\n%s", want, body)
 		}
+	}
+}
+
+func TestRunTeamInitCustomOperatorInTeamRules(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := runTeamInit([]string{"--roles", "cto", "--operator", "operator"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	got, err := os.ReadFile(rules.Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	for _, want := range []string{
+		"operator: handle `operator`",
+		"amq send --to operator --thread gate/<topic> --kind question",
+		"amq send --me operator --to <agent-handle> --thread gate/<topic> --kind answer",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("custom operator team-rules.md missing %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "amq send --to user --thread gate/<topic>") {
+		t.Errorf("custom operator team-rules.md hard-coded user:\n%s", body)
 	}
 }
 
@@ -1210,6 +1294,8 @@ func TestRunTeamRulesInitForceRefreshesScopedRules(t *testing.T) {
 		"On first session run, start the first response by stating your role and handle",
 		"Use the `amq-squad` skill for team setup",
 		"Use `amq-cli` only for raw AMQ debugging",
+		"## Operator Gates",
+		"amq send --to user --thread gate/<topic> --kind question",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("team-rules.md missing %q in:\n%s", want, body)

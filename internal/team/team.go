@@ -15,10 +15,11 @@ import (
 func sortStrings(s []string) { sort.Strings(s) }
 
 const (
-	SchemaVersion = 2
-	DirName       = ".amq-squad"
-	FileName      = "team.json"
-	TeamsDirName  = "teams"
+	SchemaVersion         = 3
+	DirName               = ".amq-squad"
+	FileName              = "team.json"
+	TeamsDirName          = "teams"
+	DefaultOperatorHandle = "user"
 	// DefaultProfile names the implicit project-default profile. It maps to
 	// .amq-squad/team.json; a file at .amq-squad/teams/default.json is never
 	// created (the on-disk encoding is the project root, not the teams dir).
@@ -47,6 +48,27 @@ type Member struct {
 	// expected to forward the trailing args to Binary so bootstrap survives.
 	Launcher     string   `json:"launcher,omitempty"`
 	LauncherArgs []string `json:"launcher_args,omitempty"`
+}
+
+// OperatorConfig describes the optional human/operator participant for a
+// profile. The operator is a mailbox participant only, never a runnable member.
+type OperatorConfig struct {
+	Enabled bool   `json:"enabled"`
+	Handle  string `json:"handle,omitempty"`
+}
+
+// OperatorView is the JSON/output shape used by callers that need the
+// effective operator contract without interpreting on-disk schema details.
+type OperatorView struct {
+	Enabled  bool   `json:"enabled"`
+	Handle   string `json:"handle,omitempty"`
+	Runnable bool   `json:"runnable"`
+}
+
+// Capabilities is derived client metadata. It is intentionally not persisted
+// in team.json so hand-edited configs cannot drift.
+type Capabilities struct {
+	OperatorGates bool `json:"operator_gates"`
 }
 
 // EffectiveCWD returns the member's working directory, falling back to the
@@ -81,9 +103,49 @@ type Team struct {
 	// Workstream: deprecated shim, see the Team doc comment. Removal in 2.1.
 	Workstream string              `json:"workstream,omitempty"`
 	Trust      string              `json:"trust,omitempty"`
+	Operator   *OperatorConfig     `json:"operator,omitempty"`
 	BinaryArgs map[string][]string `json:"binary_args,omitempty"`
 	Members    []Member            `json:"members"`
 	CreatedAt  time.Time           `json:"created_at"`
+}
+
+func DefaultOperator() OperatorConfig {
+	return OperatorConfig{Enabled: true, Handle: DefaultOperatorHandle}
+}
+
+func DisabledOperator() OperatorConfig {
+	return OperatorConfig{Enabled: false}
+}
+
+// EffectiveOperator returns the handle users should expect when a profile has
+// no explicit operator config. Missing operator means the compatibility
+// default: an implicit non-runnable "user" mailbox. Schema-3 profiles opt out
+// explicitly with operator.enabled=false.
+func EffectiveOperator(t Team) OperatorView {
+	if t.Operator == nil {
+		return OperatorView{Enabled: true, Handle: DefaultOperatorHandle, Runnable: false}
+	}
+	op := *t.Operator
+	if !op.Enabled {
+		return OperatorView{Enabled: false, Runnable: false}
+	}
+	handle := strings.TrimSpace(op.Handle)
+	if handle == "" {
+		handle = DefaultOperatorHandle
+	}
+	return OperatorView{Enabled: true, Handle: handle, Runnable: false}
+}
+
+// SupportsOperatorGates reports whether this profile speaks the operator-gate
+// protocol. Legacy schema-1/2 files have no operator field, so they keep the
+// implicit "user" gate until rewritten. Schema-3 profiles use
+// operator.enabled=false as the explicit opt-out.
+func SupportsOperatorGates(t Team) bool {
+	return t.Operator == nil || t.Operator.Enabled
+}
+
+func EffectiveCapabilities(t Team) Capabilities {
+	return Capabilities{OperatorGates: SupportsOperatorGates(t)}
 }
 
 // Path returns the team.json path for the default profile under projectDir.
@@ -146,25 +208,43 @@ func Write(projectDir string, t Team) error {
 	return WriteProfile(projectDir, DefaultProfile, t)
 }
 
-// WriteProfile atomically persists a named profile under projectDir. The
-// schema field is unconditionally set to the current SchemaVersion so
-// reading a schema 1 file and writing it back upgrades the on-disk shape.
-func WriteProfile(projectDir, profile string, t Team) error {
+// NormalizeForWrite returns the exact profile shape amq-squad persists:
+// current schema, default operator filled in, created_at set, and validated.
+func NormalizeForWrite(projectDir, profile string, t Team) (Team, error) {
 	if profile != "" && profile != DefaultProfile {
 		if err := ValidateProfileName(profile); err != nil {
-			return err
+			return Team{}, err
 		}
 	}
-	path := ProfilePath(projectDir, profile)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("ensure %s: %w", filepath.Dir(path), err)
-	}
 	t.Schema = SchemaVersion
+	t.Project = projectDir
+	if t.Operator == nil {
+		op := DefaultOperator()
+		t.Operator = &op
+	} else if t.Operator.Enabled && strings.TrimSpace(t.Operator.Handle) == "" {
+		t.Operator.Handle = DefaultOperatorHandle
+	}
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = time.Now().UTC()
 	}
 	if err := Validate(t); err != nil {
-		return fmt.Errorf("validate team: %w", err)
+		return Team{}, fmt.Errorf("validate team: %w", err)
+	}
+	return t, nil
+}
+
+// WriteProfile atomically persists a named profile under projectDir. The
+// schema field is unconditionally set to the current SchemaVersion so
+// reading a schema 1 file and writing it back upgrades the on-disk shape.
+func WriteProfile(projectDir, profile string, t Team) error {
+	path := ProfilePath(projectDir, profile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("ensure %s: %w", filepath.Dir(path), err)
+	}
+	var err error
+	t, err = NormalizeForWrite(projectDir, profile, t)
+	if err != nil {
+		return err
 	}
 	b, err := json.MarshalIndent(t, "", "  ")
 	if err != nil {
@@ -254,6 +334,20 @@ func Validate(t Team) error {
 	if t.Trust != "" && t.Trust != "sandboxed" && t.Trust != "trusted" {
 		return fmt.Errorf("trust: invalid trust mode %q: use sandboxed or trusted", t.Trust)
 	}
+	operatorHandle := ""
+	if t.Operator != nil {
+		if t.Operator.Enabled {
+			operatorHandle = strings.TrimSpace(t.Operator.Handle)
+			if operatorHandle == "" {
+				operatorHandle = DefaultOperatorHandle
+			}
+			if err := ValidateHandle(operatorHandle); err != nil {
+				return fmt.Errorf("operator.handle: %w", err)
+			}
+		} else if strings.TrimSpace(t.Operator.Handle) != "" {
+			return fmt.Errorf("operator.handle: set enabled=true before handle")
+		}
+	}
 	for binary, args := range t.BinaryArgs {
 		if err := ValidateDisplayValue("binary_args key", binary); err != nil {
 			return fmt.Errorf("binary_args[%q]: %w", binary, err)
@@ -275,6 +369,15 @@ func Validate(t Team) error {
 			handle = m.Role
 		}
 		if handle != "" {
+			if operatorHandle != "" {
+				conflictsOperator := handle == operatorHandle
+				if operatorHandle == DefaultOperatorHandle && m.Role == DefaultOperatorHandle {
+					conflictsOperator = true
+				}
+				if conflictsOperator {
+					return fmt.Errorf("%s: runnable member %q conflicts with non-runnable operator handle %q", prefix, handle, operatorHandle)
+				}
+			}
 			if seenHandles[handle] {
 				return fmt.Errorf("%s: duplicate handle %q", prefix, handle)
 			}

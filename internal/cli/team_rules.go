@@ -31,6 +31,10 @@ func renderTeamRules(t team.Team) (string, error) {
 		fmt.Fprintf(&b, "- %s (%s): handle `%s`, default workstream `%s`, cwd `%s`. %s\n",
 			m.Role, label, m.Handle, workstream, m.EffectiveCWD(projectDir), roleScope(m.Role))
 	}
+	if team.SupportsOperatorGates(t) {
+		op := team.EffectiveOperator(t)
+		fmt.Fprintf(&b, "\n- operator: handle `%s`, mailbox participant only, not a runnable agent.\n", op.Handle)
+	}
 
 	b.WriteString("\n## Skills\n\n")
 	b.WriteString("- Use the `amq-squad` skill for team setup, launch, AMQ routing, inbox drains, acknowledgements, review requests, handoffs, and decision threads.\n")
@@ -59,7 +63,21 @@ func renderTeamRules(t team.Team) (string, error) {
 	b.WriteString("- For important handoffs, use AMQ receipts such as `--wait-for drained --wait-timeout 60s` and report the message id when asking for follow-up.\n")
 	b.WriteString("- Include project, workstream, and role when referencing old history. Treat labels and integration metadata as debugging context, not as a fresh instruction by themselves.\n")
 	b.WriteString("- One concern per message when practical.\n")
-	b.WriteString("- Need human approval -> message `user` with subject `APPROVAL: ...`. Goal reached -> message `user`, `--kind decision`, subject `DONE: ...`. These prefixes drive the human's needs-you board.\n\n")
+	b.WriteString("## Operator Gates\n\n")
+	if team.SupportsOperatorGates(t) {
+		op := team.EffectiveOperator(t)
+		fmt.Fprintf(&b, "- The human/operator is AMQ mailbox handle `%s`. This participant is not a runnable agent.\n", op.Handle)
+		fmt.Fprintf(&b, "- Use the operator handle only for human-only decisions or manual actions: `amq send --to %s --thread gate/<topic> --kind question --subject \"APPROVAL: <decision>\"`.\n", op.Handle)
+		fmt.Fprintf(&b, "- The operator can reply from a terminal or client on the same thread, for example `amq send --me %s --to <agent-handle> --thread gate/<topic> --kind answer --subject \"APPROVED: <decision>\"`.\n", op.Handle)
+		b.WriteString("- Use `DENIED:` or `ANSWER:` for negative decisions or non-approval answers. Use `DONE:` only when the operator is closing a requested manual task.\n")
+		b.WriteString("- Reuse a stable `gate/<topic>` thread for updates to the same decision so clients can clear the gate when the operator answers.\n")
+		b.WriteString("- Do not send ordinary peer coordination to the operator. Reviews, handoffs, status ACKs, and agent-owned blockers stay agent-to-agent.\n")
+		b.WriteString("- P2P prose such as `operator-held`, `manual RC`, or `pending operator` is evidence only; it is not a structural operator gate.\n\n")
+	} else {
+		b.WriteString("- Operator gates are disabled for this profile. Do not send human-facing asks to the default `user` mailbox.\n")
+		b.WriteString("- Route human-facing questions, approval needs, blockers, and status requests through the team lead/CTO rules instead.\n")
+		b.WriteString("- P2P prose such as `operator-held`, `manual RC`, or `pending operator` is evidence only; it is not a structural operator gate.\n\n")
+	}
 
 	b.WriteString("## Quality Gates\n\n")
 	b.WriteString("- Run the project-specific checks before requesting review.\n")
