@@ -130,6 +130,26 @@ func TestReadSchema2AdvertisesImplicitOperatorGates(t *testing.T) {
 	}
 }
 
+func TestReadSchema2RejectsRunnableImplicitOperatorHandle(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{
+  "schema": 2,
+  "members": [
+    {"role": "cto", "binary": "codex", "handle": "user", "session": "issue-96"}
+  ]
+}`
+	if err := os.WriteFile(Path(dir), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Read(dir)
+	if err == nil || !strings.Contains(err.Error(), "conflicts with non-runnable operator") {
+		t.Fatalf("Read schema 2 runnable user error = %v, want implicit operator conflict", err)
+	}
+}
+
 func TestWriteDisabledOperator(t *testing.T) {
 	dir := t.TempDir()
 	op := DisabledOperator()
