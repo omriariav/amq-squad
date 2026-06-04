@@ -335,7 +335,9 @@ func Validate(t Team) error {
 		return fmt.Errorf("trust: invalid trust mode %q: use sandboxed or trusted", t.Trust)
 	}
 	operatorHandle := ""
-	if t.Operator != nil {
+	if t.Operator == nil {
+		operatorHandle = DefaultOperatorHandle
+	} else {
 		if t.Operator.Enabled {
 			operatorHandle = strings.TrimSpace(t.Operator.Handle)
 			if operatorHandle == "" {
