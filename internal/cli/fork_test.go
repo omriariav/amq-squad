@@ -130,6 +130,30 @@ func TestRunForkPlansFreshIntoTargetWithSourceRecord(t *testing.T) {
 	}
 }
 
+func TestRunForkProjectTargetsOtherDir(t *testing.T) {
+	project := t.TempDir()
+	other := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	resumeChdir(t, other)
+	seedForkTeam(t, project)
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: project, Binary: "codex", Role: "cto", StartedAt: time.Now(),
+	})
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runFork([]string{"--project", project, "--from", "issue-96", "--as", "issue-97", "--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("fork --project: %v", err)
+	}
+	if !strings.Contains(stdout, "cd "+shellQuote(project)) {
+		t.Errorf("fork --project should emit commands for requested project:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "cd "+shellQuote(other)) {
+		t.Errorf("fork --project should not emit commands for current cwd:\n%s", stdout)
+	}
+}
+
 func TestRunForkRefusesExistingTargetUnlessForced(t *testing.T) {
 	dir := t.TempDir()
 	base := setupFakeAMQSessionRoots(t)

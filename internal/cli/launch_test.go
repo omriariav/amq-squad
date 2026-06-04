@@ -408,6 +408,20 @@ func captureOutput(t *testing.T, fn func() error) (string, string, error) {
 
 	os.Stdout = stdoutW
 	os.Stderr = stderrW
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	stdoutCh := make(chan readResult, 1)
+	stderrCh := make(chan readResult, 1)
+	go func() {
+		data, err := io.ReadAll(stdoutR)
+		stdoutCh <- readResult{data: data, err: err}
+	}()
+	go func() {
+		data, err := io.ReadAll(stderrR)
+		stderrCh <- readResult{data: data, err: err}
+	}()
 	runErr := fn()
 	if err := stdoutW.Close(); err != nil {
 		t.Fatal(err)
@@ -418,15 +432,15 @@ func captureOutput(t *testing.T, fn func() error) (string, string, error) {
 	os.Stdout = oldStdout
 	os.Stderr = oldStderr
 
-	stdout, err := io.ReadAll(stdoutR)
-	if err != nil {
-		t.Fatal(err)
+	stdout := <-stdoutCh
+	if stdout.err != nil {
+		t.Fatal(stdout.err)
 	}
-	stderr, err := io.ReadAll(stderrR)
-	if err != nil {
-		t.Fatal(err)
+	stderr := <-stderrCh
+	if stderr.err != nil {
+		t.Fatal(stderr.err)
 	}
-	return string(stdout), string(stderr), runErr
+	return string(stdout.data), string(stderr.data), runErr
 }
 
 // TestRunLaunchDryRunSessionAndRootDropsRoot covers the third call site of

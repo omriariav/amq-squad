@@ -38,10 +38,20 @@ type doctorCheck struct {
 }
 
 // doctorEnvelopeData is the kind="doctor" payload. team_home is the project
-// root the report was scoped to. workstream is set only when a valid
-// default team resolves one.
+// root the report was scoped to. profile is the selected team profile.
+// workstream is set only when that profile resolves one.
 type doctorEnvelopeData struct {
-	TeamHome   string        `json:"team_home"`
+	TeamHome   string                      `json:"team_home"`
+	Profile    string                      `json:"profile,omitempty"`
+	Workstream string                      `json:"workstream,omitempty"`
+	Checks     []doctorCheck               `json:"checks"`
+	Profiles   []doctorProfileEnvelopeData `json:"profiles,omitempty"`
+}
+
+// doctorProfileEnvelopeData is one per-profile doctor result when
+// `doctor --all-profiles --json` is requested.
+type doctorProfileEnvelopeData struct {
+	Profile    string        `json:"profile"`
 	Workstream string        `json:"workstream,omitempty"`
 	Checks     []doctorCheck `json:"checks"`
 }
@@ -54,11 +64,14 @@ type doctorExecution struct {
 	ProjectDir     string
 	Out            io.Writer
 	JSON           bool
+	AllProfiles    bool
 	ResolveAMQEnv  func(projectDir string) (amqEnv, error)
+	RunAMQOps      func(projectDir string, env amqEnv) ([]byte, error)
 	LookPath       func(name string) (string, error)
 	Probe          duplicateLaunchProbe
 	WakeOverride   func(t team.Team, workstream string) []doctorCheck
 	WorkstreamHint string
+	Profile        string
 }
 
 func defaultDoctorExecution(projectDir string) doctorExecution {
@@ -68,26 +81,35 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		ResolveAMQEnv: func(projectDir string) (amqEnv, error) {
 			return resolveAMQEnvInDir(projectDir, "", "", "amq-squad")
 		},
-		LookPath: exec.LookPath,
-		Probe:    defaultDuplicateLaunchProbe,
+		RunAMQOps: defaultDoctorAMQOps,
+		LookPath:  exec.LookPath,
+		Probe:     defaultDuplicateLaunchProbe,
 	}
 }
 
 func runDoctor(args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned doctor envelope instead of the human table")
+	projectFlag := fs.String("project", "", "project/team-home directory to check (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile to check (default: default profile)")
+	allProfiles := fs.Bool("all-profiles", false, "check every configured team profile instead of one selected profile")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad doctor - check this project's amq-squad / AMQ setup
 
 Usage:
-  amq-squad doctor [--json]
+  amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
 
-Checks: AMQ version, default team config, tmux availability, configured
-members' wake health, and CLAUDE.md / AGENTS.md marker integrity.
+Checks: AMQ version and ops diagnostics, selected team profile, tmux
+availability, configured members' wake health, and CLAUDE.md / AGENTS.md
+marker integrity plus pointer-sync drift for the selected profile's sync
+targets. Use --all-profiles for project health across every configured profile.
 Read-only. Exits non-zero if any check is "fail".
 
 Examples:
   amq-squad doctor
+  amq-squad doctor --project ~/Code/app
+  amq-squad doctor --profile review
+  amq-squad doctor --all-profiles
   amq-squad doctor --json | jq '.data.checks[] | select(.status=="fail")'
 `)
 	}
@@ -97,20 +119,59 @@ Examples:
 	if fs.NArg() > 0 {
 		return usageErrorf("doctor takes no positional arguments; got %d", fs.NArg())
 	}
+	if *allProfiles && flagWasSet(fs, "profile") {
+		return usageErrorf("--all-profiles cannot be combined with --profile")
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	d := defaultDoctorExecution(cwd)
+	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
+	d := defaultDoctorExecution(projectDir)
 	d.JSON = *jsonOut
+	d.Profile = profile
+	d.AllProfiles = *allProfiles
 	return executeDoctor(d)
 }
 
+func resolveProjectDirFlag(cwd, project string, explicit bool) (string, error) {
+	if !explicit {
+		return cwd, nil
+	}
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return "", usageErrorf("--project requires a directory")
+	}
+	dir, err := expandPath(project)
+	if err != nil {
+		return "", fmt.Errorf("resolve --project: %w", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", fmt.Errorf("--project %s: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("--project %s is not a directory", dir)
+	}
+	return dir, nil
+}
+
 func executeDoctor(d doctorExecution) error {
+	if d.AllProfiles {
+		return executeDoctorAllProfiles(d)
+	}
 	checks, workstream := runDoctorChecks(d)
 	if d.JSON {
 		if err := writeJSONEnvelope(d.Out, "doctor", doctorEnvelopeData{
 			TeamHome:   d.ProjectDir,
+			Profile:    doctorProfile(d),
 			Workstream: workstream,
 			Checks:     checks,
 		}); err != nil {
@@ -123,6 +184,94 @@ func executeDoctor(d doctorExecution) error {
 		return fmt.Errorf("doctor: %d check(s) failed", fails)
 	}
 	return nil
+}
+
+func executeDoctorAllProfiles(d doctorExecution) error {
+	profiles, err := doctorProfilesToCheck(d.ProjectDir)
+	if err != nil {
+		return fmt.Errorf("list profiles: %w", err)
+	}
+	results := make([]doctorProfileEnvelopeData, 0, len(profiles))
+	summaries := make([]doctorCheck, 0, len(profiles))
+	totalFails := 0
+	for _, profile := range profiles {
+		profileExec := d
+		profileExec.Profile = profile
+		profileExec.AllProfiles = false
+		checks, workstream := runDoctorChecks(profileExec)
+		fails := countFails(checks)
+		totalFails += fails
+		nonOK := countNonOK(checks)
+		summaries = append(summaries, doctorCheck{
+			Name:   "profile " + profile,
+			Status: doctorProfileSummaryStatus(fails, nonOK),
+			Detail: doctorProfileSummaryDetail(workstream, len(checks), fails, nonOK),
+		})
+		results = append(results, doctorProfileEnvelopeData{
+			Profile:    profile,
+			Workstream: workstream,
+			Checks:     checks,
+		})
+	}
+	if d.JSON {
+		if err := writeJSONEnvelope(d.Out, "doctor", doctorEnvelopeData{
+			TeamHome: d.ProjectDir,
+			Profile:  "all",
+			Checks:   summaries,
+			Profiles: results,
+		}); err != nil {
+			return err
+		}
+	} else {
+		for i, result := range results {
+			if i > 0 {
+				fmt.Fprintln(d.Out)
+			}
+			workstream := result.Workstream
+			if workstream == "" {
+				workstream = "(default)"
+			}
+			fmt.Fprintf(d.Out, "PROFILE %s  WORKSTREAM %s\n", result.Profile, workstream)
+			writeDoctorTable(d.Out, result.Checks)
+		}
+	}
+	if totalFails > 0 {
+		return fmt.Errorf("doctor: %d check(s) failed", totalFails)
+	}
+	return nil
+}
+
+func doctorProfilesToCheck(projectDir string) ([]string, error) {
+	var profiles []string
+	if team.Exists(projectDir) {
+		profiles = append(profiles, team.DefaultProfile)
+	}
+	named, err := team.ListProfiles(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	profiles = append(profiles, named...)
+	if len(profiles) == 0 {
+		return []string{team.DefaultProfile}, nil
+	}
+	return profiles, nil
+}
+
+func doctorProfileSummaryStatus(fails, nonOK int) doctorStatus {
+	if fails > 0 {
+		return doctorFail
+	}
+	if nonOK > 0 {
+		return doctorWarn
+	}
+	return doctorOK
+}
+
+func doctorProfileSummaryDetail(workstream string, checks, fails, nonOK int) string {
+	if workstream == "" {
+		workstream = "(default)"
+	}
+	return fmt.Sprintf("workstream %s; %d checks, %d failed, %d non-ok", workstream, checks, fails, nonOK)
 }
 
 func countFails(checks []doctorCheck) int {
@@ -165,12 +314,36 @@ func countNonOK(checks []doctorCheck) int {
 func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks := []doctorCheck{}
 	checks = append(checks, doctorCheckAMQVersion(d))
+	checks = append(checks, doctorCheckAMQOps(d))
 	checks = append(checks, doctorCheckTeamConfig(d))
 	checks = append(checks, doctorCheckTmux(d))
 	checks = append(checks, doctorCheckMarkerIntegrity(d)...)
+	checks = append(checks, doctorCheckPointerSync(d)...)
 	wakeChecks, workstream := doctorCheckWake(d)
 	checks = append(checks, wakeChecks...)
 	return checks, workstream
+}
+
+func defaultDoctorAMQOps(projectDir string, env amqEnv) ([]byte, error) {
+	root := absoluteAMQRoot(projectDir, env.Root)
+	ctx := amqContext{
+		ProjectDir: projectDir,
+		Env:        env,
+		Root:       root,
+		Me:         env.Me,
+	}
+	return runAMQCommand(amqCommandRequest{
+		Dir: projectDir,
+		Env: amqCommandEnv(ctx),
+		Arg: []string{"doctor", "--ops", "--json"},
+	})
+}
+
+func doctorProfile(d doctorExecution) string {
+	if strings.TrimSpace(d.Profile) == "" {
+		return team.DefaultProfile
+	}
+	return strings.TrimSpace(d.Profile)
 }
 
 func doctorCheckAMQVersion(d doctorExecution) doctorCheck {
@@ -213,25 +386,66 @@ func doctorCheckAMQVersion(d doctorExecution) doctorCheck {
 	}
 }
 
+func doctorCheckAMQOps(d doctorExecution) doctorCheck {
+	if d.RunAMQOps == nil {
+		return doctorCheck{
+			Name:   "amq ops",
+			Status: doctorWarn,
+			Detail: "amq doctor --ops check unavailable",
+		}
+	}
+	env, err := d.ResolveAMQEnv(d.ProjectDir)
+	if err != nil {
+		return doctorCheck{
+			Name:   "amq ops",
+			Status: doctorFail,
+			Detail: fmt.Sprintf("amq env failed: %v", err),
+		}
+	}
+	if _, err := d.RunAMQOps(d.ProjectDir, env); err != nil {
+		return doctorCheck{
+			Name:   "amq ops",
+			Status: doctorFail,
+			Detail: fmt.Sprintf("amq doctor --ops failed: %v", err),
+		}
+	}
+	return doctorCheck{
+		Name:   "amq ops",
+		Status: doctorOK,
+		Detail: "amq doctor --ops ok",
+	}
+}
+
 func doctorCheckTeamConfig(d doctorExecution) doctorCheck {
-	if !team.Exists(d.ProjectDir) {
+	profile := doctorProfile(d)
+	path := team.ProfilePath(d.ProjectDir, profile)
+	if !team.ExistsProfile(d.ProjectDir, profile) {
+		if profile == team.DefaultProfile {
+			if profiles, err := team.ListProfiles(d.ProjectDir); err == nil && len(profiles) > 0 {
+				return doctorCheck{
+					Name:   "team config",
+					Status: doctorWarn,
+					Detail: "no default team profile; configured profiles: " + strings.Join(profiles, ", ") + " (run 'amq-squad doctor --profile <name>')",
+				}
+			}
+		}
 		return doctorCheck{
 			Name:   "team config",
 			Status: doctorWarn,
-			Detail: "no .amq-squad/team.json (run 'amq-squad team init')",
+			Detail: fmt.Sprintf("no team profile %q (run '%s')", profile, profileInitCommand(profile)),
 		}
 	}
-	if _, err := team.Read(d.ProjectDir); err != nil {
+	if _, err := team.ReadProfile(d.ProjectDir, profile); err != nil {
 		return doctorCheck{
 			Name:   "team config",
 			Status: doctorFail,
-			Detail: fmt.Sprintf("invalid team.json: %v", err),
+			Detail: fmt.Sprintf("invalid %s: %v", filepath.Base(path), err),
 		}
 	}
 	return doctorCheck{
 		Name:   "team config",
 		Status: doctorOK,
-		Detail: team.Path(d.ProjectDir),
+		Detail: path,
 	}
 }
 
@@ -248,12 +462,55 @@ func doctorCheckTmux(d doctorExecution) doctorCheck {
 }
 
 func doctorCheckMarkerIntegrity(d doctorExecution) []doctorCheck {
+	dirs, err := doctorMarkerDirs(d)
+	if err != nil {
+		return []doctorCheck{{
+			Name:   "markers",
+			Status: doctorWarn,
+			Detail: err.Error(),
+		}}
+	}
 	files := []string{rules.ClaudeFile, rules.AgentsFile}
-	out := make([]doctorCheck, 0, len(files))
-	for _, name := range files {
-		out = append(out, inspectMarkerIntegrity(d.ProjectDir, name))
+	out := make([]doctorCheck, 0, len(files)*len(dirs))
+	for _, dir := range dirs {
+		for _, name := range files {
+			check := inspectMarkerIntegrity(dir, name)
+			if len(dirs) > 1 {
+				check.Name = "markers " + filepath.Base(dir) + "/" + name
+			}
+			out = append(out, check)
+		}
 	}
 	return out
+}
+
+func doctorMarkerDirs(d doctorExecution) ([]string, error) {
+	profile := doctorProfile(d)
+	if !team.ExistsProfile(d.ProjectDir, profile) {
+		return []string{d.ProjectDir}, nil
+	}
+	t, err := team.ReadProfile(d.ProjectDir, profile)
+	if err != nil {
+		return nil, fmt.Errorf("read team profile %q for marker targets: %w", profile, err)
+	}
+	projectDir := t.Project
+	if strings.TrimSpace(projectDir) == "" {
+		projectDir = d.ProjectDir
+	}
+	dirs, err := syncTargetDirs(projectDir, t.Members, true)
+	if err != nil {
+		return nil, err
+	}
+	if profile == team.DefaultProfile {
+		dirs, err = ensureTeamHomeSyncTarget(dirs, d.ProjectDir)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(dirs) == 0 {
+		return []string{d.ProjectDir}, nil
+	}
+	return dirs, nil
 }
 
 func inspectMarkerIntegrity(dir, name string) doctorCheck {
@@ -306,15 +563,112 @@ func inspectMarkerIntegrity(dir, name string) doctorCheck {
 	}
 }
 
-// doctorCheckWake reuses classifyMemberStatus to classify the default
+func doctorCheckPointerSync(d doctorExecution) []doctorCheck {
+	body, err := rules.Read(d.ProjectDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []doctorCheck{{
+				Name:   "pointer sync",
+				Status: doctorWarn,
+				Detail: "no team-rules.md at " + rules.Path(d.ProjectDir) + " (run 'amq-squad team rules init')",
+			}}
+		}
+		return []doctorCheck{{
+			Name:   "pointer sync",
+			Status: doctorFail,
+			Detail: fmt.Sprintf("read %s: %v", rules.Path(d.ProjectDir), err),
+		}}
+	}
+	dirs, err := doctorMarkerDirs(d)
+	if err != nil {
+		return []doctorCheck{{
+			Name:   "pointer sync",
+			Status: doctorWarn,
+			Detail: err.Error(),
+		}}
+	}
+	hint := doctorSyncCommandHint(d, dirs)
+	out := []doctorCheck{}
+	for _, dir := range dirs {
+		plans, err := rules.Plan(dir, body)
+		if err != nil {
+			out = append(out, doctorCheck{
+				Name:   "pointer sync " + filepath.Base(dir),
+				Status: doctorFail,
+				Detail: fmt.Sprintf("plan %s: %v", dir, err),
+			})
+			continue
+		}
+		for _, p := range plans {
+			name := "pointer sync " + p.Basename
+			if len(dirs) > 1 {
+				name = "pointer sync " + filepath.Base(dir) + "/" + p.Basename
+			}
+			if p.Unchanged {
+				out = append(out, doctorCheck{Name: name, Status: doctorOK, Detail: p.Target})
+				continue
+			}
+			out = append(out, doctorCheck{
+				Name:   name,
+				Status: doctorWarn,
+				Detail: describePointerSyncDrift(p) + " (run '" + hint + "')",
+			})
+		}
+	}
+	return out
+}
+
+func describePointerSyncDrift(p rules.SyncPlan) string {
+	switch {
+	case p.Creating:
+		return p.Basename + " missing"
+	case p.Adopting:
+		return p.Basename + " has no managed block"
+	default:
+		return p.Basename + " managed block out of date"
+	}
+}
+
+func doctorSyncCommandHint(d doctorExecution, dirs []string) string {
+	args := []string{"amq-squad", "team", "sync"}
+	profile := doctorProfile(d)
+	if profile != team.DefaultProfile {
+		args = append(args, "--profile", profile)
+	}
+	args = append(args, "--apply")
+	if doctorSyncNeedsAllowOutside(d.ProjectDir, dirs) {
+		args = append(args, "--allow-outside")
+	}
+	return strings.Join(args, " ")
+}
+
+func doctorSyncNeedsAllowOutside(projectDir string, dirs []string) bool {
+	home, err := canonicalDir(projectDir)
+	if err != nil {
+		return false
+	}
+	for _, dir := range dirs {
+		clean, err := canonicalDir(dir)
+		if err != nil {
+			continue
+		}
+		if !pathWithin(home, clean) {
+			return true
+		}
+	}
+	return false
+}
+
+// doctorCheckWake reuses classifyMemberStatus to classify the selected
 // profile's configured members. Returns the resolved workstream alongside
 // the checks so the JSON envelope can include it. No live signals or
 // "missing" map to ok; "stale" maps to warn. AMQ env resolution failures
 // surface as warn with the underlying error in detail.
 func doctorCheckWake(d doctorExecution) ([]doctorCheck, string) {
+	profile := doctorProfile(d)
 	if d.WakeOverride != nil {
 		// Tests can inject a deterministic wake-check builder.
-		t, err := team.Read(d.ProjectDir)
+		t, err := team.ReadProfile(d.ProjectDir, profile)
 		if err != nil {
 			return nil, ""
 		}
@@ -324,14 +678,14 @@ func doctorCheckWake(d doctorExecution) ([]doctorCheck, string) {
 		}
 		return d.WakeOverride(t, workstream), workstream
 	}
-	if !team.Exists(d.ProjectDir) {
+	if !team.ExistsProfile(d.ProjectDir, profile) {
 		return []doctorCheck{{
 			Name:   "wake",
 			Status: doctorWarn,
-			Detail: "no team configured; skipping wake checks",
+			Detail: fmt.Sprintf("no team configured for profile %q; skipping wake checks", profile),
 		}}, ""
 	}
-	t, err := team.Read(d.ProjectDir)
+	t, err := team.ReadProfile(d.ProjectDir, profile)
 	if err != nil {
 		return []doctorCheck{{
 			Name:   "wake",

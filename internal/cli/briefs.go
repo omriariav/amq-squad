@@ -50,6 +50,14 @@ func resolveBriefHome(teamHome, cwd string) string {
 	return ""
 }
 
+// briefStubFirstLine is the first meaningful (non-heading, non-blank) line of
+// the generated stub template. It is session-independent prose, so the status
+// board can recognize an untouched stub by matching the brief's first
+// meaningful line against it. Kept beside briefStubContent so the two never
+// drift: briefStubContent emits this exact line right after the "# <session>"
+// heading.
+const briefStubFirstLine = "Use this brief to capture the active workstream's goal, scope, and"
+
 // briefStubContent returns the markdown body used when seeding a new brief
 // for session under teamHome. Existing brief files are preserved by
 // ensureBriefStub and never re-templated through this content.
@@ -59,7 +67,7 @@ func briefStubContent(session string) string {
 	}
 	return "# " + session + "\n" +
 		"\n" +
-		"Use this brief to capture the active workstream's goal, scope, and\n" +
+		briefStubFirstLine + "\n" +
 		"pointers to source-of-truth issues, PRs, or docs. Agents read it at\n" +
 		"session start; team-rules.md links to this convention.\n" +
 		"\n" +

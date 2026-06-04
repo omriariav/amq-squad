@@ -13,7 +13,7 @@ import (
 //	                surfaced as errors, anything the user cannot fix by
 //	                changing arguments).
 //	3 ExitPartial - partial success (PartialError: some targets succeeded,
-//	                some failed; e.g. `down` with mixed force-sent + failed).
+//	                some failed; e.g. `stop` with mixed stopped + failed).
 //
 // Bump only on a breaking change; callers (CI scripts, dashboards) should
 // be able to rely on these constants across 1.x.

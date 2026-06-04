@@ -13,27 +13,15 @@ import (
 	"github.com/omriariav/amq-squad/internal/team"
 )
 
-// restoreFromAgentResume is set by runAgentResume so the legacy verb
-// warning fires only when the operator typed `amq-squad restore --exec ...`
-// directly, not when the modern `agent resume R` entry point delegates.
-var restoreFromAgentResume bool
-
 type restoreCandidate struct {
 	entry launch.Entry
 }
 
+// runRestore holds the real replay/scan logic. The top-level `restore` verb is
+// legacy; this body now backs `agent resume <role>` (via runAgentResume, which
+// forwards `--exec --role <role>`). It is internal-only and carries no
+// deprecation surface of its own.
 func runRestore(args []string) error {
-	if !restoreFromAgentResume && !isHelpInvocation(args) {
-		// Restore print mode and `restore --exec --role R` are both legacy
-		// surfaces. Print mode maps to `history`; --exec --role to
-		// `agent resume R`. The replacement hint differs based on whether
-		// --exec is set, so callers see actionable next-step text.
-		if argsContains(args, "--exec") {
-			deprecationWarning("restore --exec --role R", "agent resume R")
-		} else {
-			deprecationWarning("restore", "history (records) or agent resume <role> (exec)")
-		}
-	}
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	projectDirs := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")
 	execRestore := fs.Bool("exec", false, "exec the selected launch in this terminal")
@@ -43,20 +31,17 @@ func runRestore(args []string) error {
 	conversationFilter := fs.String("conversation", "", "only consider records with this conversation name/id")
 
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad restore - restore registered agents from local launch history
+		fmt.Fprint(os.Stderr, `amq-squad agent resume - re-launch a saved agent by role
 
 Usage:
-  amq-squad restore [--project dir1,dir2,...] [--role r] [--handle h] [--session s] [--conversation ref]
-  amq-squad restore --exec --role cto
+  amq-squad agent resume <role> [--handle h] [--session s] [--conversation ref] [--project dir1,dir2,...]
 
 Scans each project for amq-squad extension launch records, nearby role.md
 persona files, and older AMQ mailbox history when launch.json is missing and
 the original binary can be inferred. Default scope is the current working
-directory if --project is omitted. Without --exec, prints a bash command per
-matching agent.
-
-With --exec, exactly one record must match; amq-squad changes to that
-record's cwd and execs the saved launch through 'amq coop exec'.
+directory if --project is omitted. Exactly one record must match; amq-squad
+changes to that record's cwd and execs the saved launch through
+'amq coop exec'. Use 'amq-squad history' to list restorable records.
 
 For records that look active, the metadata line includes wake-health:
   wake: pid:N    - wake.lock present and the wake process is alive
@@ -64,27 +49,17 @@ For records that look active, the metadata line includes wake-health:
   wake: stale    - wake.lock present but the PID is dead or unrelated
 
 Examples:
-  amq-squad restore
-  amq-squad restore --role cto --exec
+  amq-squad agent resume cto
+  amq-squad agent resume fullstack --session issue-96
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
-	var dirs []string
-	if *projectDirs == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getwd: %w", err)
-		}
-		dirs = []string{cwd}
-	} else {
-		for _, d := range strings.Split(*projectDirs, ",") {
-			if d = strings.TrimSpace(d); d != "" {
-				dirs = append(dirs, d)
-			}
-		}
+	dirs, err := historyProjectDirs(*projectDirs)
+	if err != nil {
+		return err
 	}
 
 	var records []restoreCandidate
@@ -239,7 +214,15 @@ func execRestoreRecord(rec launch.Record) error {
 }
 
 func launchArgsFromRecord(rec launch.Record) []string {
-	args := []string{"--no-bootstrap"}
+	var args []string
+	// Only a record with a saved conversation is a true reattach that must
+	// skip bootstrap; a seat with no saved conversation re-runs bootstrap so
+	// the agent re-orients from its brief and drains AMQ history rather than
+	// coming up blank. This path has no operator opts, so it gates on the
+	// conversation alone.
+	if rec.Conversation != "" {
+		args = append(args, "--no-bootstrap")
+	}
 	if rec.Role != "" {
 		args = append(args, "--role", rec.Role)
 	}
@@ -381,9 +364,12 @@ func emitCommand(rec launch.Record) string {
 // emitCommandOptions controls extra flags injected into the emitted
 // 'amq-squad agent up' invocation. Force adds --force-duplicate so a
 // planner (e.g. resume) can emit a command that matches the plan when a
-// live agent has been overridden.
+// live agent has been overridden. NoBootstrap lets an operator force the
+// emitted command to skip bootstrap even for a seat that would otherwise
+// re-orient (a record with no saved conversation).
 type emitCommandOptions struct {
-	Force bool
+	Force       bool
+	NoBootstrap bool
 }
 
 func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
@@ -393,9 +379,19 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	// Modern surface: `agent up <binary> [launch flags] [-- child args]`.
 	// Binary positional sits immediately after `agent up` so the printed
 	// command reads as the documented 1.0 shape.
-	b.WriteString(" && amq-squad agent up ")
+	b.WriteString(" && ")
+	b.WriteString(shellQuote(generatedSquadCommand()))
+	b.WriteString(" agent up ")
 	b.WriteString(shellQuote(rec.Binary))
-	b.WriteString(" --no-bootstrap")
+	// --no-bootstrap is emitted only for a true reattach (a record carries a
+	// saved conversation, so re-running bootstrap would clobber the resumed
+	// thread) or when the operator explicitly asked to skip bootstrap. A seat
+	// with no saved conversation -- the common resume case -- must RE-RUN
+	// bootstrap so the agent re-orients from its brief and drains AMQ history
+	// instead of coming up blank.
+	if opts.NoBootstrap || rec.Conversation != "" {
+		b.WriteString(" --no-bootstrap")
+	}
 	if opts.Force {
 		b.WriteString(" --force-duplicate")
 	}
@@ -490,10 +486,30 @@ func shellQuote(s string) string {
 }
 
 func shellCommand(bin string, args ...string) string {
+	if bin == "amq-squad" {
+		bin = generatedSquadCommand()
+	}
 	parts := make([]string, 0, len(args)+1)
 	parts = append(parts, shellQuote(bin))
 	for _, arg := range args {
 		parts = append(parts, shellQuote(arg))
 	}
 	return strings.Join(parts, " ")
+}
+
+var generatedSquadCommandOverride string
+
+func generatedSquadCommand() string {
+	if generatedSquadCommandOverride != "" {
+		return generatedSquadCommandOverride
+	}
+	p, err := os.Executable()
+	if err != nil {
+		return "amq-squad"
+	}
+	base := filepath.Base(p)
+	if base == "" || strings.HasSuffix(base, ".test") {
+		return "amq-squad"
+	}
+	return p
 }

@@ -521,6 +521,32 @@ printf '{"root":"%s"}\n' "$root"
 	return base
 }
 
+func setupFakeAMQRelativeSessionRoots(t *testing.T) {
+	t.Helper()
+	script := `#!/bin/sh
+if [ "$1" != "env" ]; then
+  echo "unexpected amq command: $*" >&2
+  exit 1
+fi
+session=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --session)
+      shift
+      session="$1"
+      ;;
+  esac
+  shift
+done
+root=".agent-mail"
+if [ "$session" != "" ]; then
+  root="$root/$session"
+fi
+printf '{"root":"%s","base_root":".agent-mail"}\n' "$root"
+`
+	setupFakeAMQScript(t, script)
+}
+
 func TestShouldAppendBootstrapWithDefaultChildArgs(t *testing.T) {
 	// Sandboxed Codex has no built-in default args, so bootstrap should still
 	// be appended on empty input. Trusted Codex behaves like the legacy default.
@@ -758,13 +784,188 @@ func TestRunTeamInitUsesExplicitSharedWorkstream(t *testing.T) {
 	if len(got.Members) != 2 {
 		t.Fatalf("members = %v, want two", got.Members)
 	}
-	if got.Workstream != "issue-96" {
-		t.Fatalf("team workstream = %q, want issue-96", got.Workstream)
+	// init no longer pins the deprecated workstream default; the chosen
+	// session lives on the members and is recovered via inference at resolve
+	// time.
+	if got.Workstream != "" {
+		t.Fatalf("team workstream = %q, want empty (init must not pin the deprecated default)", got.Workstream)
 	}
 	for _, m := range got.Members {
 		if m.Session != "issue-96" {
 			t.Fatalf("member %s session = %q, want issue-96", m.Role, m.Session)
 		}
+	}
+}
+
+func TestRunTeamInitDryRunPrintsProfilePreviewWithoutWriting(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{"--roles", "cto,qa", "--session", "issue-96", "--dry-run"})
+	})
+	if err != nil {
+		t.Fatalf("team init --dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"# amq-squad team init --dry-run",
+		"# writes: none",
+		"# profile: default",
+		"# workstream: issue-96",
+		"ROLE",
+		"cto",
+		"qa",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, stdout)
+		}
+	}
+	if team.Exists(dir) {
+		t.Fatal("team init --dry-run must not write team.json")
+	}
+	if _, err := os.Stat(rules.Path(dir)); !os.IsNotExist(err) {
+		t.Fatalf("team init --dry-run must not write team-rules.md; stat err = %v", err)
+	}
+}
+
+func TestRunTeamInitDryRunJSONEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	wantDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--roles", "cto,qa",
+			"--session", "issue-96",
+			"--model", "cto=gpt-5",
+			"--codex-args", "--enable goals",
+			"--dry-run",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("team init --dry-run --json: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	if env.Kind != "team_profile_plan" {
+		t.Errorf("kind = %q, want team_profile_plan", env.Kind)
+	}
+	if env.Data.TeamHome != wantDir || env.Data.Project != wantDir {
+		t.Errorf("team home/project = %q/%q, want %q", env.Data.TeamHome, env.Data.Project, wantDir)
+	}
+	if env.Data.Profile != team.DefaultProfile {
+		t.Errorf("profile = %q, want default", env.Data.Profile)
+	}
+	if env.Data.Workstream != "issue-96" {
+		t.Errorf("workstream = %q, want issue-96", env.Data.Workstream)
+	}
+	if env.Data.ExistingProfile {
+		t.Errorf("existing_profile = true, want false")
+	}
+	if env.Data.Members != 2 || len(env.Data.Plan) != 2 {
+		t.Fatalf("members/plan = %d/%d, want 2/2", env.Data.Members, len(env.Data.Plan))
+	}
+	var sawCTO bool
+	for _, m := range env.Data.Plan {
+		if m.Role == "cto" {
+			sawCTO = true
+			if m.Model != "gpt-5" {
+				t.Errorf("cto model = %q, want gpt-5", m.Model)
+			}
+			if m.CWD != wantDir || m.Session != "issue-96" {
+				t.Errorf("cto cwd/session = %q/%q, want %q/issue-96", m.CWD, m.Session, wantDir)
+			}
+		}
+	}
+	if !sawCTO {
+		t.Fatalf("plan missing cto: %+v", env.Data.Plan)
+	}
+	if got := env.Data.BinaryArgs["codex"]; !reflect.DeepEqual(got, []string{"--enable", "goals"}) {
+		t.Errorf("codex binary args = %#v, want --enable goals", got)
+	}
+	if team.Exists(dir) {
+		t.Fatal("team init --dry-run --json must not write team.json")
+	}
+	if _, err := os.Stat(rules.Path(dir)); !os.IsNotExist(err) {
+		t.Fatalf("team init --dry-run --json must not write team-rules.md; stat err = %v", err)
+	}
+}
+
+func TestRunTeamInitJSONRequiresDryRun(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return runTeamInit([]string{"--roles", "cto", "--json"})
+	})
+	if err == nil {
+		t.Fatal("team init --json without --dry-run must error")
+	}
+	if _, ok := err.(UsageError); !ok {
+		t.Fatalf("want UsageError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "--dry-run") {
+		t.Errorf("error should mention --dry-run: %v", err)
+	}
+}
+
+func TestRunTeamInitDryRunCanPreviewExistingProfileWithoutForce(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "old"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{"--roles", "qa", "--session", "issue-97", "--dry-run"})
+	})
+	if err != nil {
+		t.Fatalf("team init --dry-run existing profile: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "existing-profile: yes") {
+		t.Fatalf("dry-run should flag existing profile:\n%s", stdout)
+	}
+	got, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Members) != 1 || got.Members[0].Role != "cto" {
+		t.Fatalf("dry-run should not overwrite existing profile, got %+v", got.Members)
 	}
 }
 
@@ -783,8 +984,17 @@ func TestRunTeamInitStoresSingleMemberSharedWorkstream(t *testing.T) {
 		}
 	})
 
-	if err := runTeamInit([]string{"--personas", "cto", "--session", "cto"}); err != nil {
+	// A non-legacy session name (distinct from the role) is recovered via
+	// single-member inference at resolve time; init no longer pins it.
+	if err := runTeamInit([]string{"--personas", "cto", "--session", "issue-96"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
+	}
+	got, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Workstream != "" {
+		t.Fatalf("team workstream = %q, want empty (init must not pin the deprecated default)", got.Workstream)
 	}
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runTeamShow([]string{"--no-bootstrap"})
@@ -792,8 +1002,8 @@ func TestRunTeamInitStoresSingleMemberSharedWorkstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runTeamShow: %v\nstderr:\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "# workstream: cto") || !strings.Contains(stdout, "--session cto --team-workstream") {
-		t.Fatalf("single-member stored workstream was not honored:\n%s", stdout)
+	if !strings.Contains(stdout, "# workstream: issue-96") || !strings.Contains(stdout, "--session issue-96 --team-workstream") {
+		t.Fatalf("single-member shared workstream was not inferred:\n%s", stdout)
 	}
 }
 
@@ -1015,6 +1225,43 @@ func TestRunTeamRulesInitForceRefreshesScopedRules(t *testing.T) {
 	}
 }
 
+func TestRunTeamRulesShowPrintsScopedRules(t *testing.T) {
+	dir := t.TempDir()
+	body := "# Team Rules\n\ncustom rules\n"
+	if err := rules.Write(dir, body); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"show", "--project", dir})
+	})
+	if err != nil {
+		t.Fatalf("runTeamRules show: %v\nstderr:\n%s", err, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("runTeamRules show should be silent on stderr, got:\n%s", stderr)
+	}
+	if stdout != body {
+		t.Fatalf("stdout = %q, want %q", stdout, body)
+	}
+}
+
+func TestRunTeamRulesShowReportsMissingRules(t *testing.T) {
+	dir := t.TempDir()
+
+	_, _, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"show", "--project", dir})
+	})
+	if err == nil {
+		t.Fatal("runTeamRules show without team-rules.md should fail")
+	}
+	for _, want := range []string{"no team-rules.md", rules.Path(dir), "amq-squad team rules init"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
+	}
+}
+
 func TestRunTeamRulesInitUsesStoredWorkstreamEvenWhenItMatchesRole(t *testing.T) {
 	dir := t.TempDir()
 	old, err := os.Getwd()
@@ -1030,6 +1277,9 @@ func TestRunTeamRulesInitUsesStoredWorkstreamEvenWhenItMatchesRole(t *testing.T)
 		}
 	})
 
+	// Legacy member session ("cto" == role) is not inferable, so the deprecated
+	// pin shim ("cto") is the resolved source: the rules still render it AND the
+	// deprecation notice fires on stderr.
 	if err := team.Write(dir, team.Team{
 		Project:    dir,
 		Workstream: "cto",
@@ -1040,8 +1290,14 @@ func TestRunTeamRulesInitUsesStoredWorkstreamEvenWhenItMatchesRole(t *testing.T)
 		t.Fatal(err)
 	}
 
-	if err := runTeamRules([]string{"init", "--force"}); err != nil {
-		t.Fatalf("runTeamRules init --force: %v", err)
+	_, stderr, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"init", "--force"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamRules init --force: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, "deprecated") || !strings.Contains(stderr, "cto") {
+		t.Fatalf("pin shim path must emit the deprecation notice; stderr:\n%s", stderr)
 	}
 	got, err := os.ReadFile(rules.Path(dir))
 	if err != nil {

@@ -7,3 +7,6 @@ coverage.txt
 .vscode/
 .agent-mail/
 .amqrc
+
+# Claude Code local runtime state
+.claude/scheduled_tasks.lock

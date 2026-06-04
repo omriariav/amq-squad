@@ -15,20 +15,11 @@ import (
 	"github.com/omriariav/amq-squad/internal/role"
 )
 
-// launchFromAgentUp is set by runAgentUp before delegating to runLaunch so
-// the deprecation warning fires only when the operator typed the legacy
-// `amq-squad launch` directly. It is restored on return.
-var launchFromAgentUp bool
-
+// runLaunch is the real single-agent launcher. The top-level `launch` verb is
+// legacy; this body now backs `agent up` (via runAgentUp -> translateAgentUpArgs)
+// and the replay path (execRestoreRecord). It is internal-only and carries no
+// deprecation surface of its own.
 func runLaunch(args []string) error {
-	// Top-level `launch` is deprecated in favor of `agent up` for 1.x.
-	// The warning fires once, before any parsing, so misuse cases still
-	// surface it. agent up delegates to runLaunch (with launchFromAgentUp
-	// set), so the warning is skipped when the modern entry point invokes
-	// us internally. Help invocations stay quiet.
-	if !launchFromAgentUp && !isHelpInvocation(args) {
-		deprecationWarning("launch", "agent up")
-	}
 	// Split at "--" so launcher flags aren't consumed by amq-squad's parser.
 	squadArgs, childArgs := splitDashDash(args)
 
@@ -38,6 +29,7 @@ func runLaunch(args []string) error {
 	sharedWorkstream := fs.Bool("team-workstream", false, "mark --session as the shared amq-squad team workstream")
 	me := fs.String("me", "", "override the agent handle (defaults to binary basename)")
 	rootFlag := fs.String("root", "", "override AMQ root directory")
+	_ = fs.String("project", "", "project/team-home directory to launch from (default: cwd)")
 	teamHome := fs.String("team-home", "", "team-home directory used to find .amq-squad/team-rules.md for bootstrap")
 	teamProfile := fs.String("team-profile", "", "team profile this launch belongs to (default: default profile)")
 	conversation := fs.String("conversation", "", "resume and store a Codex or Claude conversation name/id")
@@ -54,10 +46,10 @@ func runLaunch(args []string) error {
 	launcherArgsRaw := fs.String("launcher-args", "", "args passed to --launcher before the agent's child args; the launcher must forward trailing args to <binary>")
 
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad launch - launch an agent with role metadata
+		fmt.Fprint(os.Stderr, `amq-squad agent up - launch an agent with role metadata
 
 Usage:
-  amq-squad launch [options] <binary> [-- <binary-flags>]
+  amq-squad agent up <binary> [--project DIR] [options] [-- <binary-flags>]
 
 Options:
 `)
@@ -84,19 +76,29 @@ Side effects before exec:
 
 With --dry-run, the resolved coop exec command is printed and amq-squad exits.
 Disk state is untouched and no exec occurs.
+--project targets another team-home without changing directories; launch records
+and relative AMQ config resolution behave as if the command ran from DIR.
 
 When --conversation generates resume args, do not pass additional child args
 after "--". Use --codex-args or --claude-args for native flags that should
 still combine with --conversation.
 
 Examples:
-  amq-squad launch --role cto --session issue-96 codex
-  amq-squad launch --dry-run --no-bootstrap codex
+  amq-squad agent up codex --role cto --session issue-96
+  amq-squad agent up codex --project ~/Code/app --session issue-96
+  amq-squad agent up codex --dry-run --no-bootstrap
 `)
 	}
 
 	if err := parseFlags(fs, squadArgs); err != nil {
 		return err
+	}
+	if flagWasSet(fs, "project") {
+		project, rest, err := peelProjectFlag(args)
+		if err != nil {
+			return err
+		}
+		return runInProject(project, func() error { return runLaunch(rest) })
 	}
 	trustExplicit := flagWasSet(fs, "trust")
 	trustMode, err := normalizeTrustMode(*trustRaw)
@@ -127,7 +129,7 @@ Examples:
 	}
 	remaining := fs.Args()
 	if len(remaining) == 0 {
-		return usageErrorf("launch requires a binary (e.g. 'amq-squad launch --role cpo codex')")
+		return usageErrorf("agent up requires a binary (e.g. 'amq-squad agent up codex --role cpo')")
 	}
 	binary := remaining[0]
 	// Positional args before "--" get folded into childArgs.

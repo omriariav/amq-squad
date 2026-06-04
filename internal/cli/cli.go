@@ -6,6 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // UsageError signals a misuse of the CLI (unknown command/flag, bad
@@ -35,9 +39,16 @@ func Run(args []string, version string) error {
 	currentOutputPolicy = policy
 	defer func() { currentOutputPolicy = prev }()
 
-	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
 		printUsage()
 		return nil
+	}
+	// BARE invocation (no args): in a configured project, run the status board
+	// as the default command (docker-ps style). In an unconfigured project,
+	// show a short guidance message — never the board, never a crash. Explicit
+	// help paths above are unaffected.
+	if len(args) == 0 {
+		return runBareDefault()
 	}
 	if args[0] == "--version" || args[0] == "-v" {
 		// Bare -v / --version stay text-only for backwards compat.
@@ -91,28 +102,137 @@ type versionEnvelopeData struct {
 	Version string `json:"version"`
 }
 
+// runBareDefault handles `amq-squad` with no arguments. In a project with ANY
+// amq-squad footprint it runs the status board as the default command; only a
+// genuinely empty project gets the short setup-guidance message. It never
+// crashes, since bare invocation is now the most common front door.
+func runBareDefault() error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		// Even getwd failing should not crash the bare front door with a stack
+		// trace; surface guidance and exit cleanly.
+		fmt.Println("amq-squad: could not determine the current directory; run 'amq-squad --help' for usage.")
+		return nil
+	}
+	if !projectHasFootprint(cwd, scanBaseRootForProject) {
+		fmt.Print(`amq-squad: no team is configured in this project.
+
+Get started:
+  amq-squad roles         List role IDs and market numbers
+  amq-squad new team      Pick roles and create .amq-squad/team.json
+  amq-squad --help        Show all commands
+
+Once a team exists, bare 'amq-squad' shows a live board of your sessions.
+`)
+		return nil
+	}
+	return runStatusBoard(cwd, false)
+}
+
+// projectHasFootprint reports whether a project carries ANY amq-squad presence
+// worth rendering the board for. The original gate ran the board only when the
+// DEFAULT profile (team.json) existed, which wrongly steered projects that have
+// ONLY named profiles (.amq-squad/teams/<name>.json, no team.json) into the
+// "no team configured / run new team" guidance even though they have teams AND
+// live sessions. A footprint is any of:
+//
+//   - a default-profile team.json (team.Exists), or
+//   - one or more named profiles (team.ListProfiles returns >0), or
+//   - discoverable sessions under the resolved AMQ base root.
+//
+// resolveBaseRoot is injected so this is unit-testable without a real `amq`; it
+// is best-effort and any failure simply means "no discoverable sessions" rather
+// than a hard error. The board itself degrades gracefully when empty, so a
+// false positive here is harmless; the goal is to avoid the false NEGATIVE that
+// hid real teams/sessions behind the setup guidance.
+func projectHasFootprint(projectDir string, resolveBaseRoot func(string) (string, error)) bool {
+	if team.Exists(projectDir) {
+		return true
+	}
+	if profiles, err := team.ListProfiles(projectDir); err == nil && len(profiles) > 0 {
+		return true
+	}
+	return projectHasDiscoverableSessions(projectDir, resolveBaseRoot)
+}
+
+// projectHasDiscoverableSessions reports whether the resolved AMQ base root has
+// at least one session directory containing an agents/ child (the layout the
+// board scans). It is best-effort: an unresolvable base root or an unreadable
+// directory means "no discoverable sessions", never an error.
+func projectHasDiscoverableSessions(projectDir string, resolveBaseRoot func(string) (string, error)) bool {
+	if resolveBaseRoot == nil {
+		return false
+	}
+	baseRoot, err := resolveBaseRoot(projectDir)
+	if err != nil || strings.TrimSpace(baseRoot) == "" {
+		return false
+	}
+	entries, err := os.ReadDir(baseRoot)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		agentsDir := filepath.Join(baseRoot, e.Name(), "agents")
+		if info, err := os.Stat(agentsDir); err == nil && info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 func dispatch(args []string) error {
 	switch args[0] {
 	case "team":
 		return runTeam(args[1:])
+	case "new":
+		return runNew(args[1:])
+	case "roles":
+		return runRoles(args[1:])
 	case "up":
 		return runUp(args[1:])
+	case "stop":
+		return runStop(args[1:])
 	case "down":
+		// Deprecated alias for `stop`, kept for one release. runDown prints a
+		// one-line stderr hint then runs the identical stop logic.
 		return runDown(args[1:])
+	case "brief":
+		return runBrief(args[1:])
+	case "threads":
+		return runThreads(args[1:])
+	case "thread":
+		return runThread(args[1:])
 	case "status":
 		return runStatus(args[1:])
+	case "console":
+		return runConsole(args[1:])
+	case "amq":
+		return runAMQ(args[1:])
 	case "history":
 		return runHistory(args[1:])
 	case "resume":
 		return runResume(args[1:])
 	case "fork":
 		return runFork(args[1:])
+	case "rm":
+		return runRm(args[1:], rmModeDelete)
+	case "archive":
+		return runRm(args[1:], rmModeArchive)
 	case "launch":
-		return runLaunch(args[1:])
+		// Legacy verb. Kept as an explicit hint (not unknown-command) for one
+		// release so muscle-memory invocations get a pointer.
+		return usageErrorf("'launch' is a legacy verb; use 'agent up <binary>' to launch a single agent.")
 	case "restore":
-		return runRestore(args[1:])
+		// Legacy verb. Print mode maps to 'history'; exec mode maps to
+		// 'agent resume <role>'. Surface both so either intent is covered.
+		return usageErrorf("'restore' is a legacy verb; use 'history' to list restorable records or 'agent resume <role>' to re-launch one.")
 	case "list":
-		return runList(args[1:])
+		// Legacy verb in favor of 'status' (live agents) / 'history'
+		// (restorable records).
+		return usageErrorf("'list' is a legacy verb; use 'status' for live agents or 'history' for restorable records.")
 	case "completion":
 		return runCompletion(args[1:])
 	case "doctor":
@@ -131,23 +251,32 @@ Usage:
   amq-squad <command> [options]
 
 Commands:
-  team      Pick your team once, then show or launch it on demand
+  new       Create a team, named profile, or workstream session
+  roles     List built-in role IDs and market numbers for team creation
+  team      Set up and manage the team (init, rules, sync, profiles)
   up        Bring the team up (use --dry-run to print the launch plan)
-  down      Stop configured team members (currently --force only)
-  status    Live state of this project's configured team
+  stop      Stop configured team members (SIGTERM; --force = SIGKILL). State is
+            preserved on disk, so the session stays resumable.
+  down      Deprecated alias for 'stop' (works for one release)
+  brief     Print a workstream brief and classify it as none, stub, or real
+  threads   List collapsed AMQ thread summaries for one workstream
+  thread    Read one AMQ thread transcript by project and session
+  status    Multi-session board (also bare 'amq-squad'); --project and --session for detail
+  console   Read-only Mission Control TUI over all sessions (--once for CI)
+  amq       Project-aware AMQ diagnostics and confirm-gated maintenance
   history   List restorable launch records
   resume    Plan how to bring the team back into the resolved workstream
   fork      Plan fresh launches in a new workstream branched off an existing one
-  launch    Launch a single agent with a role (called by 'team show' output)
-  restore   Restore registered agents from local launch history
-  list      List registered agents across known projects
+  rm        Permanently remove a finished session (root dir + brief; confirm-gated)
+  archive   Move a finished session aside instead of deleting (confirm-gated)
   completion Emit a shell completion script (bash, zsh, fish)
-  doctor    Check this project's amq-squad / AMQ setup
-  agent     Launch or resume a single agent (modern names for launch / restore --exec)
+  doctor    Check amq-squad / AMQ setup (use --project and --profile for other teams)
+  agent     Launch or resume a single agent (agent up / agent resume)
   version   Print the amq-squad version
 
-Deprecated verbs (kept through 1.x with one-line deprecation warnings;
-removed in 2.0): team show, team launch, list, launch, restore.
+Removed legacy verbs (each prints a one-line migration hint): launch (use 'agent up'),
+restore (use 'history' or 'agent resume'), list (use 'status' or 'history'),
+team show (use 'up --dry-run'), team launch (use 'up').
 
 Global flags (accepted before or after the subcommand, until a literal "--"):
   --quiet              Suppress non-data success/progress notices.
@@ -161,10 +290,21 @@ Exit codes:
   2  system / runtime error (IO, process, config, environment)
   3  partial success (some targets succeeded, some failed)
 
+Note: 'stop'/'down' without --force used to exit 2 ("graceful unavailable").
+They now perform the SIGTERM teardown and exit 0 (or 3 on a partial run).
+
 Examples:
+  amq-squad new team --roles cto,fullstack --binary cto=codex
+  amq-squad new profile review --roles cto,qa
+  amq-squad roles
+  amq-squad new session issue-96
+  amq-squad brief --session issue-96
   amq-squad team init --roles cto,fullstack --binary cto=codex
   amq-squad up --dry-run --no-bootstrap
-  amq-squad doctor --json | jq .
+  amq-squad stop --project ~/Code/app --all --session issue-96
+  amq-squad amq route --session issue-96 --me cto --to fullstack
+  amq-squad rm issue-96 --yes
+  amq-squad doctor --project ~/Code/app --profile review --json | jq .
 
 Run 'amq-squad <command> --help' for command-specific options.
 `)

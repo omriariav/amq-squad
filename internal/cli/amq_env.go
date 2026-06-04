@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -85,6 +86,25 @@ func resolveAMQEnvInDir(cwd, rootFlag, session, handle string) (amqEnv, error) {
 	return parsed, nil
 }
 
+func absoluteAMQRoot(cwd, root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return ""
+	}
+	if filepath.IsAbs(root) {
+		return filepath.Clean(root)
+	}
+	base := strings.TrimSpace(cwd)
+	if base == "" {
+		abs, err := filepath.Abs(root)
+		if err == nil {
+			return abs
+		}
+		return filepath.Clean(root)
+	}
+	return filepath.Clean(filepath.Join(base, root))
+}
+
 func envWithoutAMQIdentity(env []string) []string {
 	remove := map[string]bool{
 		"AM_ROOT":      true,
@@ -106,8 +126,59 @@ func scanBaseRootForProject(projectDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if env.BaseRoot != "" {
-		return env.BaseRoot, nil
+	return chooseProjectBaseRoot(projectDir, env), nil
+}
+
+// chooseProjectBaseRoot picks the directory the board/console should scan for
+// sessions (it walks <chosen>/<session>/agents). It exists because `amq env`
+// reports an UNRELIABLE base_root when amq believes it is "in a session": in
+// that mode base_root points at the PARENT (the project dir, or "."/".."),
+// while the real sessions container — the conventional `.agent-mail` directory
+// — is reported in `root`. Trusting base_root then makes the board scan the
+// wrong directory and falsely report "no sessions" when sessions exist.
+//
+// The fix is to recognize the real container by its name: in every observed
+// layout the correct directory is the candidate whose final path element is
+// `.agent-mail`. We try base_root, then root, then the conventional
+// <projectDir>/.agent-mail, resolving each to an absolute path (relative ones
+// joined against projectDir), and return the FIRST whose basename is
+// `.agent-mail` AND which is an existing directory.
+//
+// When none qualifies (amq missing, a custom non-.agent-mail root, or nothing
+// on disk yet) we fall back to abs(base_root) — or abs(root) when base_root is
+// empty — so graceful degradation downstream is preserved exactly as before.
+func chooseProjectBaseRoot(projectDir string, env amqEnv) string {
+	abs := func(p string) string {
+		if p == "" {
+			return ""
+		}
+		if filepath.IsAbs(p) {
+			return filepath.Clean(p)
+		}
+		return filepath.Join(projectDir, p)
 	}
-	return env.Root, nil
+
+	candidates := []string{
+		abs(env.BaseRoot),
+		abs(env.Root),
+		abs(filepath.Join(projectDir, defaultBaseRootName)),
+	}
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if filepath.Base(c) != defaultBaseRootName {
+			continue
+		}
+		if info, err := os.Stat(c); err == nil && info.IsDir() {
+			return c
+		}
+	}
+
+	// No `.agent-mail` container found: preserve graceful degradation by
+	// returning the resolved base_root (or root when base_root is empty).
+	if fallback := abs(env.BaseRoot); fallback != "" {
+		return fallback
+	}
+	return abs(env.Root)
 }
