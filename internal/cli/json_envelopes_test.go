@@ -44,6 +44,31 @@ func TestRunVersionTextStillWorks(t *testing.T) {
 	}
 }
 
+func TestRunRolesJSONEnvelope(t *testing.T) {
+	stdout, _, err := captureOutput(t, func() error {
+		return Run([]string{"roles", "--json"}, "v-test")
+	})
+	if err != nil {
+		t.Fatalf("roles --json: %v", err)
+	}
+	env := decodeJSONEnvelope[rolesEnvelopeData](t, stdout)
+	if env.Kind != "roles" {
+		t.Errorf("kind = %q, want roles", env.Kind)
+	}
+	if len(env.Data.Roles) < 2 {
+		t.Fatalf("roles = %d, want catalog entries", len(env.Data.Roles))
+	}
+	if env.Data.Roles[0].Number != 1 || env.Data.Roles[0].ID != "cpo" {
+		t.Fatalf("roles[0] = %+v, want number 1 cpo", env.Data.Roles[0])
+	}
+	if env.Data.Roles[1].Number != 2 || env.Data.Roles[1].ID != "cto" {
+		t.Fatalf("roles[1] = %+v, want number 2 cto", env.Data.Roles[1])
+	}
+	if env.Data.Roles[1].PreferredBinary == "" || env.Data.Roles[1].Profile == "" {
+		t.Fatalf("roles[1] should include default CLI and profile copy: %+v", env.Data.Roles[1])
+	}
+}
+
 func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 	seedTeam(t, team.Team{
 		Workstream: "issue-96",

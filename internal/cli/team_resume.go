@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,13 +59,14 @@ func runTeamResume(args []string) error {
 	modelFlag := fs.String("model", "", "per-persona model overrides for fresh members, e.g. cto=gpt-5,fullstack=sonnet")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for fresh members, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for fresh members, e.g. '--chrome'")
+	projectFlag := fs.String("project", "", "project/team-home directory to plan (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to plan (default: default profile)")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team resume - plan how to bring the team back
 
 Usage:
-  amq-squad team resume [--profile NAME] [--session name] [--fresh]
+  amq-squad team resume [--project DIR] [--profile NAME] [--session name] [--fresh]
                         [--restore-existing] [--dry-run] [--force-duplicate]
                         [--no-bootstrap] [--trust sandboxed|trusted]
                         [--model role=model,...]
@@ -73,14 +75,15 @@ Usage:
 Inspects .amq-squad/team.json plus local launch history and live-agent
 signals (wake locks, agent PID liveness, presence) to print a per-member
 plan plus copy-pasteable commands.
+--project targets another team-home without changing directories.
 
 Per-member action labels:
   live          Matching agent appears live; command suppressed unless
                 --force-duplicate is set.
   restore       Restorable launch.json exists for this workstream; emits
-                'amq-squad launch ...' that replays the saved record.
+                'amq-squad agent up ...' that replays the saved record.
   launch fresh  No matching launch history; emits the same command shape
-                'amq-squad team launch' would use for this member.
+                'amq-squad up' would use for this member.
   blocked       Live signals present but no clear safe action; user must
                 pick --force-duplicate or narrow the workstream.
 
@@ -94,10 +97,11 @@ Modes:
                        --force-duplicate is set.
 
 team resume is plan-only. Run the printed commands in their own panes, or
-use 'amq-squad team launch' to open them in tmux from team intent.
+use 'amq-squad up' to open them in tmux from team intent.
 
 Examples:
   amq-squad team resume
+  amq-squad team resume --project ~/Code/app --session issue-96
   amq-squad team resume --fresh --session issue-99
 `)
 	}
@@ -121,11 +125,15 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
-	if !team.ExistsProfile(cwd, profile) {
-		return fmt.Errorf("no team configured for profile %q. Run 'amq-squad team init%s' first.", profile, profileInitHint(profile))
+	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
+	if !team.ExistsProfile(projectDir, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
 	return executeResume(resumeExecution{
-		ProjectDir:       cwd,
+		ProjectDir:       projectDir,
 		RequestedSession: *sessionFlag,
 		ExplicitSession:  flagWasSet(fs, "session"),
 		Mode:             mode,
@@ -162,6 +170,8 @@ type resumeExecution struct {
 	// planner can present its output as team resume, resume, or fork without
 	// duplicating logic.
 	Style resumePrinterStyle
+	// Out receives the plan when Exec is disabled. Nil falls back to stdout.
+	Out io.Writer
 	// Exec opts in to the terminal-backend execution path: instead of
 	// printing the per-member plan, the planner converts restore/launch-fresh
 	// commands into a teamLaunchPlan and runs it through the chosen backend.
@@ -191,7 +201,8 @@ type resumePrinterStyle struct {
 	// "team resume", "resume", "fork"). Empty falls back to "team resume".
 	Label string
 	// FooterVerb is the suggested tmux-launch verb in the footer. Empty
-	// falls back to "team launch".
+	// falls back to "up" (the modern team launcher; "team launch" is a
+	// legacy verb).
 	FooterVerb string
 	// ForkFrom and ForkTo, when non-empty, add the fork "# from / # to"
 	// lines to the header. Used only by `fork`.
@@ -213,7 +224,7 @@ func (s resumePrinterStyle) label() string {
 
 func (s resumePrinterStyle) footerVerb() string {
 	if s.FooterVerb == "" {
-		return "team launch"
+		return "up"
 	}
 	return s.FooterVerb
 }
@@ -319,7 +330,11 @@ func executeResume(r resumeExecution) error {
 
 	style := r.Style
 	style.Profile = r.Profile
-	printResumePlan(t, workstream, r.Mode, plans, r.DryRun, r.Force, style)
+	out := r.Out
+	if out == nil {
+		out = os.Stdout
+	}
+	writeResumePlan(out, t, workstream, r.Mode, plans, r.DryRun, r.Force, style)
 	return nil
 }
 
@@ -456,7 +471,7 @@ func buildResumeExecPreflights(t team.Team, panes []teamLaunchPane, workstream s
 		if err != nil {
 			return nil, fmt.Errorf("resolve amq env for %s: %w", m.Handle, err)
 		}
-		root := env.Root
+		root := absoluteAMQRoot(cwd, env.Root)
 		handle := m.Handle
 		if env.Me != "" {
 			handle = env.Me
@@ -524,7 +539,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		}
 		return plan, nil
 	}
-	root := env.Root
+	root := absoluteAMQRoot(cwd, env.Root)
 	handle := m.Handle
 	if env.Me != "" {
 		handle = env.Me
@@ -535,7 +550,8 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	// and current cwd. Without the cwd anchor a sibling repo with the
 	// same role/handle/session would let team resume emit the wrong
 	// repo's restore command.
-	rec, recFound := findMemberRestoreRecord(env.BaseRoot, in.Team.Project, cwd, env.SessionName, m.Role, handle)
+	baseRoot := absoluteAMQRoot(cwd, env.BaseRoot)
+	rec, recFound := findMemberRestoreRecord(baseRoot, in.Team.Project, cwd, env.SessionName, m.Role, handle)
 	plan.HasRestoreRecord = recFound
 	wakeLabel := wakeHealthForMember(agentDir, root, handle, rec, recFound)
 	plan.Wake = wakeLabel
@@ -563,7 +579,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 			} else {
 				// Forced restore on preflight error path: same reason
 				// to inject --force-duplicate as the live+forced path.
-				plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true})
+				plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true, NoBootstrap: in.NoBootstrap})
 			}
 			plan.Note = "force-duplicate: " + plan.Note
 		}
@@ -580,7 +596,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 			} else {
 				// Forced restore must carry --force-duplicate so the
 				// printed command bypasses launch-time preflight.
-				plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true})
+				plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true, NoBootstrap: in.NoBootstrap})
 			}
 			return plan, nil
 		}
@@ -591,6 +607,34 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		return plan, nil
 	}
 
+	if recFound && rec.AgentPID > 0 {
+		statusRec := statusRecord{
+			Role:     m.Role,
+			Handle:   handle,
+			Binary:   m.Binary,
+			Session:  env.SessionName,
+			CWD:      cwd,
+			Root:     root,
+			AgentDir: agentDir,
+		}
+		if target, ok := liveReplacementPane(m, statusRec, env.SessionName); ok {
+			note := fmt.Sprintf("recorded pid dead; live %s at %s; relaunch via amq-squad to re-register", m.Binary, target)
+			plan.Action = resumeLive
+			if in.Force {
+				plan.Note = "force-duplicate: " + note
+				if in.Mode == resumeModeFresh {
+					plan.Command = freshLaunchCommand(in)
+				} else {
+					plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true, NoBootstrap: in.NoBootstrap})
+				}
+				return plan, nil
+			}
+			plan.Note = note
+			plan.Command = ""
+			return plan, nil
+		}
+	}
+
 	// No live signal. Choose restore vs fresh based on mode + record presence.
 	if in.Mode == resumeModeFresh {
 		plan.Action = resumeFresh
@@ -599,7 +643,16 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	}
 	if recFound {
 		plan.Action = resumeRestore
-		plan.Command = emitCommand(rec)
+		plan.Command = emitCommandWithOptions(rec, emitCommandOptions{NoBootstrap: in.NoBootstrap})
+		// Be honest about what restore will do: a record with a saved
+		// conversation truly reattaches the prior thread and skips bootstrap;
+		// a record without one re-runs bootstrap so the agent re-orients from
+		// its brief and drains AMQ history rather than coming up blank.
+		if rec.Conversation != "" {
+			plan.Note = "reattach: saved conversation " + rec.Conversation
+		} else {
+			plan.Note = "fresh agent: re-orient from brief + AMQ history (no saved conversation)"
+		}
 		return plan, nil
 	}
 	plan.Action = resumeFresh
@@ -735,21 +788,28 @@ func freshLaunchCommand(in memberPlanInput) string {
 }
 
 func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []resumePlan, dryRun, force bool, style resumePrinterStyle) {
-	fmt.Printf("# amq-squad %s\n", style.label())
-	fmt.Println("#")
-	fmt.Printf("# team-home:  %s\n", t.Project)
+	writeResumePlan(os.Stdout, t, workstream, mode, plans, dryRun, force, style)
+}
+
+func writeResumePlan(out io.Writer, t team.Team, workstream string, mode resumeMode, plans []resumePlan, dryRun, force bool, style resumePrinterStyle) {
+	fmt.Fprintf(out, "# amq-squad %s\n", style.label())
+	fmt.Fprintln(out, "#")
+	fmt.Fprintf(out, "# team-home:  %s\n", t.Project)
 	if style.ForkFrom != "" {
-		fmt.Printf("# from:       %s\n", style.ForkFrom)
+		fmt.Fprintf(out, "# from:       %s\n", style.ForkFrom)
 	}
 	if style.ForkTo != "" {
-		fmt.Printf("# to:         %s\n", style.ForkTo)
+		fmt.Fprintf(out, "# to:         %s\n", style.ForkTo)
 	}
-	fmt.Printf("# workstream: %s\n", workstream)
-	fmt.Printf("# mode:       %s\n", describeResumeMode(mode, dryRun))
-	fmt.Printf("# members:    %d\n", len(plans))
-	fmt.Println()
+	fmt.Fprintf(out, "# workstream: %s\n", workstream)
+	fmt.Fprintf(out, "# mode:       %s\n", describeResumeMode(mode, dryRun))
+	if style.label() == "resume" {
+		fmt.Fprintf(out, "# preview:    plan-only; run 'amq-squad resume --exec --session %s' to open panes\n", shellQuote(workstream))
+	}
+	fmt.Fprintf(out, "# members:    %d\n", len(plans))
+	fmt.Fprintln(out)
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROLE\tACTION\tWAKE\tNOTE")
 	for _, p := range plans {
 		note := p.Note
@@ -759,16 +819,16 @@ func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []re
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.Role, p.Action, p.Wake, note)
 	}
 	w.Flush()
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	for _, p := range plans {
 		if p.Command == "" {
-			fmt.Printf("# %s (%s) - no command (use --force-duplicate to override)\n", p.Role, p.Action)
+			fmt.Fprintf(out, "# %s (%s) - no command (use --force-duplicate to override)\n", p.Role, p.Action)
 			continue
 		}
-		fmt.Printf("# %s (%s)\n", p.Role, p.Action)
-		fmt.Println(p.Command)
-		fmt.Println()
+		fmt.Fprintf(out, "# %s (%s)\n", p.Role, p.Action)
+		fmt.Fprintln(out, p.Command)
+		fmt.Fprintln(out)
 	}
 
 	// The team-launch alternative replays from team intent (always fresh
@@ -787,32 +847,32 @@ func printResumePlan(t team.Team, workstream string, mode resumeMode, plans []re
 	}
 	verb := style.footerVerb()
 	if !allFresh {
-		fmt.Printf("# Note: '%s' would re-emit fresh commands from team intent,\n", verb)
-		fmt.Println("# which is not equivalent to the per-member plan above.")
+		fmt.Fprintf(out, "# Note: '%s' would re-emit fresh commands from team intent,\n", verb)
+		fmt.Fprintln(out, "# which is not equivalent to the per-member plan above.")
 		return
 	}
 	profileSuffix := ""
 	if style.Profile != "" && style.Profile != team.DefaultProfile {
 		// Only verbs that accept --profile can carry the selection into the
-		// suggested footer command. up and team launch both accept --profile
-		// in Step 9A. If a future verb does not, suppress the footer rather
-		// than print a command that would fall back to the default profile.
-		if verb == "up" || verb == "team launch" {
+		// suggested footer command. up accepts --profile. If a future verb
+		// does not, suppress the footer rather than print a command that
+		// would fall back to the default profile.
+		if verb == "up" {
 			profileSuffix = " --profile " + shellQuote(style.Profile)
 		} else {
-			fmt.Printf("# Note: '%s' has no --profile flag yet; rerun the per-member commands above to bring up the %s profile.\n", verb, style.Profile)
+			fmt.Fprintf(out, "# Note: '%s' has no --profile flag yet; rerun the per-member commands above to bring up the %s profile.\n", verb, style.Profile)
 			return
 		}
 	}
-	fmt.Println("# Alternative: open the whole team in tmux from team intent")
+	fmt.Fprintln(out, "# Alternative: open the whole team in tmux from team intent")
 	suffix := ""
 	if force {
 		suffix = " --force-duplicate"
 	}
 	if mode == resumeModeFresh {
-		fmt.Printf("# %s %s --fresh --session %s%s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix, profileSuffix)
+		fmt.Fprintf(out, "# %s %s --fresh --session %s%s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix, profileSuffix)
 	} else {
-		fmt.Printf("# %s %s --session %s%s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix, profileSuffix)
+		fmt.Fprintf(out, "# %s %s --session %s%s%s\n", filepath.Base(teamSquadBin()), verb, shellQuote(workstream), suffix, profileSuffix)
 	}
 }
 

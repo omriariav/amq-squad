@@ -1,6 +1,10 @@
 package catalog
 
-import "testing"
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
 
 func TestAllReturnsCopy(t *testing.T) {
 	a := All()
@@ -87,5 +91,39 @@ func TestIDsMatchAllOrder(t *testing.T) {
 		if ids[i] != all[i].ID {
 			t.Errorf("IDs[%d] = %q, All[%d].ID = %q", i, ids[i], i, all[i].ID)
 		}
+	}
+}
+
+func TestResolveSelection(t *testing.T) {
+	got, err := ResolveSelection("junior-dev,2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"junior-dev", "cto"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ResolveSelection = %v, want %v", got, want)
+	}
+
+	got, err = ResolveSelection("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, IDs()) {
+		t.Fatalf("ResolveSelection all = %v, want catalog IDs", got)
+	}
+
+	got, err = ResolveSelection("all,qa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(IDs())+1 || got[len(got)-1] != "qa" {
+		t.Fatalf("ResolveSelection all,qa = %v, want all IDs plus qa", got)
+	}
+
+	if _, err := ResolveSelection("999"); err == nil || !strings.Contains(err.Error(), "out of range") {
+		t.Fatalf("ResolveSelection 999 error = %v, want out of range", err)
+	}
+	if _, err := ResolveSelection("banana"); err == nil || !strings.Contains(err.Error(), "banana") {
+		t.Fatalf("ResolveSelection banana error = %v, want unknown persona", err)
 	}
 }

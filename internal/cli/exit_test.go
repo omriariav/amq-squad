@@ -99,9 +99,9 @@ func TestPartialErrorUnwrap(t *testing.T) {
 //   - failed > 0 + sent > 0: PartialError -> ExitPartial.
 //   - failed > 0 + sent == 0: generic error -> ExitSystem.
 func TestDownPartialExitMapping(t *testing.T) {
-	t.Run("mixed force-sent and failed -> partial", func(t *testing.T) {
-		err := renderDownReports(&discardWriter{}, "issue-96", []downReport{
-			{Role: "cto", Status: downStatusForceSent, Detail: "sent"},
+	t.Run("mixed stopped and failed -> partial", func(t *testing.T) {
+		err := renderDownReports(&discardWriter{}, "stop", "issue-96", []downReport{
+			{Role: "cto", Status: downStatusStopped, Detail: "sent"},
 			{Role: "fullstack", Status: downStatusFailed, Detail: "boom"},
 		})
 		if err == nil {
@@ -112,7 +112,7 @@ func TestDownPartialExitMapping(t *testing.T) {
 		}
 	})
 	t.Run("all failed, none sent -> system error", func(t *testing.T) {
-		err := renderDownReports(&discardWriter{}, "issue-96", []downReport{
+		err := renderDownReports(&discardWriter{}, "stop", "issue-96", []downReport{
 			{Role: "cto", Status: downStatusFailed, Detail: "boom"},
 			{Role: "fullstack", Status: downStatusFailed, Detail: "boom"},
 		})
@@ -124,7 +124,7 @@ func TestDownPartialExitMapping(t *testing.T) {
 		}
 	})
 	t.Run("only not-live -> success", func(t *testing.T) {
-		err := renderDownReports(&discardWriter{}, "issue-96", []downReport{
+		err := renderDownReports(&discardWriter{}, "stop", "issue-96", []downReport{
 			{Role: "cto", Status: downStatusNotLive, Detail: "no record"},
 		})
 		if err != nil {

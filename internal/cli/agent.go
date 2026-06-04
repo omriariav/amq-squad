@@ -6,9 +6,10 @@ import (
 	"strings"
 )
 
-// runAgent dispatches the `agent` subgroup. In 1.0 it hosts the
-// modern names for `launch <binary>` and `restore --exec --role R`,
-// which keep working as deprecated aliases until 2.0.
+// runAgent dispatches the `agent` subgroup: `agent up <binary>` launches a
+// single agent and `agent resume <role>` re-launches a saved one. These are
+// the canonical single-agent verbs in 2.0 (the legacy top-level `launch` and
+// `restore` verbs were removed).
 func runAgent(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Fprint(os.Stderr, agentUsage)
@@ -31,43 +32,41 @@ const agentUsage = `amq-squad agent - launch or resume a single agent
 
 Usage:
   amq-squad agent up <binary> [launch options]
-  amq-squad agent resume <role> [restore options]
+  amq-squad agent resume <role> [--project dir1,dir2,...] [restore options]
 
-agent up is the modern name for 'amq-squad launch <binary>'.
-agent resume is the modern name for 'amq-squad restore --exec --role <role>'.
+agent up launches a single agent with role metadata.
+agent resume re-launches a saved agent by role from local launch history.
 
 Examples:
   amq-squad agent up codex --role cto --session issue-96
   amq-squad agent resume cto
 `
 
-// runAgentUp delegates to runLaunch verbatim. The binary positional and
-// all launch flags are accepted; the modern verb is structural sugar.
+// runAgentUp is the single-agent launcher front door. The binary positional
+// and all launch flags are accepted; it translates the modern flags-after-
+// binary shape and delegates to the shared launcher body (runLaunch).
 func runAgentUp(args []string) error {
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		fmt.Fprint(os.Stderr, `amq-squad agent up - launch a single agent with role metadata
 
 Usage:
-  amq-squad agent up <binary> [launch options] [-- <binary-flags>]
+  amq-squad agent up <binary> [--project DIR] [launch options] [-- <binary-flags>]
 
-Equivalent to 'amq-squad launch <binary> ...'. See 'amq-squad launch --help'
-for the full flag surface.
+Run 'amq-squad agent up <binary> --help' for the full flag surface.
 
 Examples:
   amq-squad agent up codex --role cto --session issue-96
+  amq-squad agent up codex --project ~/Code/app --session issue-96
   amq-squad agent up claude --no-bootstrap
 `)
 		return nil
 	}
 	// agent up syntax is `agent up <binary> [launch flags] [-- child args]`.
-	// runLaunch's parser is still `launch [flags] <binary> [-- child]`, so
-	// translate before delegating: lift the binary to after the launch
-	// flags. This keeps the legacy launch parser untouched while letting
-	// modern callers type flags after the binary.
+	// runLaunch's parser expects `[flags] <binary> [-- child]`, so translate
+	// before delegating: lift the binary to after the launch flags. This lets
+	// modern callers type flags after the binary while runLaunch's flag
+	// parser still sees flags first.
 	translated := translateAgentUpArgs(args)
-	prev := launchFromAgentUp
-	launchFromAgentUp = true
-	defer func() { launchFromAgentUp = prev }()
 	return runLaunch(translated)
 }
 
@@ -193,9 +192,9 @@ func launchKnownFlag(name string) string {
 	case "--codex-args", "--claude-args", "--launcher-args",
 		"-codex-args", "-claude-args", "-launcher-args":
 		return "string-accepts-dash"
-	case "--role", "--session", "--me", "--root", "--team-home", "--team-profile",
+	case "--role", "--session", "--me", "--root", "--project", "--team-home", "--team-profile",
 		"--conversation", "--conversation-id", "--trust", "--model", "--launcher",
-		"-role", "-session", "-me", "-root", "-team-home", "-team-profile",
+		"-role", "-session", "-me", "-root", "-project", "-team-home", "-team-profile",
 		"-conversation", "-conversation-id", "-trust", "-model", "-launcher":
 		return "string"
 	case "--team-workstream", "--no-bootstrap", "--no-default-args",
@@ -212,23 +211,26 @@ func launchKnownFlag(name string) string {
 	return ""
 }
 
-// runAgentResume turns `agent resume <role> [extras]` into
-// `restore --exec --role <role> [extras]`. The role is the only required
-// positional; extras flow into restore unchanged so callers can still
+// runAgentResume turns `agent resume <role> [extras]` into the shared replay
+// body's `--exec --role <role> [extras]` call. The role is the only required
+// positional; extras flow into the replay body unchanged so callers can still
 // filter by --handle / --session / --conversation / --project.
 func runAgentResume(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(os.Stderr, `amq-squad agent resume - re-launch a saved agent by role
 
 Usage:
-  amq-squad agent resume <role> [restore options]
+  amq-squad agent resume <role> [--project dir1,dir2,...] [restore options]
 
-Equivalent to 'amq-squad restore --exec --role <role> ...'. Exactly one
-saved record must match; on match, amq-squad changes to that record's cwd
-and execs the saved launch through 'amq coop exec'.
+Re-launches a saved agent from local launch history. Exactly one saved
+record must match; on match, amq-squad changes to that record's cwd and
+execs the saved launch through 'amq coop exec'.
+Default scope is the current working directory. Pass --project to scan one
+or more other team-homes without changing directories.
 
 Examples:
   amq-squad agent resume cto
+  amq-squad agent resume cto --project ~/Code/app
   amq-squad agent resume fullstack --session issue-96
 `)
 		if len(args) == 0 {
@@ -239,8 +241,5 @@ Examples:
 	role := args[0]
 	rest := args[1:]
 	forwarded := append([]string{"--exec", "--role", role}, rest...)
-	prev := restoreFromAgentResume
-	restoreFromAgentResume = true
-	defer func() { restoreFromAgentResume = prev }()
 	return runRestore(forwarded)
 }

@@ -26,10 +26,11 @@ type listRecord struct {
 	StartedAt    time.Time `json:"started_at,omitempty"`
 }
 
+// runList is the legacy registered-agent scanner. The top-level `list` verb is
+// legacy in favor of `status` (live agents) and `history` (restorable records).
+// The body is retained internal-only for the tests that still exercise the
+// scan/JSON-envelope helpers; no user-facing verb dispatches to it.
 func runList(args []string) error {
-	if !isHelpInvocation(args) {
-		deprecationWarning("list", "status (live agents) or history (restorable records)")
-	}
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	projectDirs := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned list envelope instead of the human table")
