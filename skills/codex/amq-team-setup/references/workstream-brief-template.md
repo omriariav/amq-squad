@@ -49,5 +49,5 @@ Do not duplicate the source-of-truth content here. Point at it.
 
 ## Escalation
 
-- User escalations route through the role the team rules name (default `cto`).
+- Human escalations follow the team rules/profile operator policy.
 - Agents do not interrupt the user directly during active work.

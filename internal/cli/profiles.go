@@ -14,10 +14,12 @@ import (
 // the human tabwriter output and the team_profiles JSON envelope so the
 // two views can never drift.
 type profileRow struct {
-	Profile    string `json:"profile"`
-	Path       string `json:"path"`
-	Members    int    `json:"members"`
-	Workstream string `json:"workstream,omitempty"`
+	Profile      string            `json:"profile"`
+	Path         string            `json:"path"`
+	Members      int               `json:"members"`
+	Workstream   string            `json:"workstream,omitempty"`
+	Operator     team.OperatorView `json:"operator"`
+	Capabilities team.Capabilities `json:"capabilities"`
 }
 
 // teamProfilesEnvelopeData is the kind="team_profiles" payload.
@@ -81,10 +83,12 @@ Examples:
 			fmt.Fprintf(os.Stderr, "warning: read profile %s: %v\n", team.DefaultProfile, err)
 		} else {
 			rows = append(rows, profileRow{
-				Profile:    team.DefaultProfile,
-				Path:       team.Path(projectDir),
-				Members:    len(t.Members),
-				Workstream: profileDisplayWorkstream(t),
+				Profile:      team.DefaultProfile,
+				Path:         team.Path(projectDir),
+				Members:      len(t.Members),
+				Workstream:   profileDisplayWorkstream(t),
+				Operator:     team.EffectiveOperator(t),
+				Capabilities: team.EffectiveCapabilities(t),
 			})
 		}
 	}
@@ -102,10 +106,12 @@ Examples:
 			continue
 		}
 		rows = append(rows, profileRow{
-			Profile:    name,
-			Path:       team.ProfilePath(projectDir, name),
-			Members:    len(t.Members),
-			Workstream: profileDisplayWorkstream(t),
+			Profile:      name,
+			Path:         team.ProfilePath(projectDir, name),
+			Members:      len(t.Members),
+			Workstream:   profileDisplayWorkstream(t),
+			Operator:     team.EffectiveOperator(t),
+			Capabilities: team.EffectiveCapabilities(t),
 		})
 	}
 	if *jsonOut {

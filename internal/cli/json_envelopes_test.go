@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +95,12 @@ func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 	if env.Data.Members != 2 {
 		t.Errorf("members = %d, want 2", env.Data.Members)
 	}
+	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != team.DefaultOperatorHandle || env.Data.Operator.Runnable {
+		t.Errorf("operator metadata = %+v, want enabled non-runnable %q", env.Data.Operator, team.DefaultOperatorHandle)
+	}
+	if !env.Data.Capabilities.OperatorGates {
+		t.Errorf("operator_gates capability missing from team_plan: %+v", env.Data.Capabilities)
+	}
 	if len(env.Data.Plan) != 2 {
 		t.Fatalf("plan = %d entries, want 2", len(env.Data.Plan))
 	}
@@ -110,6 +118,34 @@ func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 	// Trust default must be present so callers can inspect it.
 	if env.Data.Trust == "" {
 		t.Errorf("trust missing from team_plan: %+v", env.Data)
+	}
+}
+
+func TestRunUpDryRunJSONUsesCustomOperator(t *testing.T) {
+	dir := t.TempDir()
+	op := team.OperatorConfig{Enabled: true, Handle: "operator"}
+	if err := team.Write(dir, team.Team{
+		Operator:   &op,
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	stdout, _, err := captureOutput(t, func() error {
+		return runUp([]string{"--dry-run", "--json", "--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --json: %v", err)
+	}
+	env := decodeJSONEnvelope[teamPlan](t, stdout)
+	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != "operator" || env.Data.Operator.Runnable {
+		t.Fatalf("operator metadata = %+v, want enabled non-runnable operator", env.Data.Operator)
+	}
+	if !env.Data.Capabilities.OperatorGates {
+		t.Fatal("custom operator should advertise operator_gates")
 	}
 }
 
@@ -266,6 +302,46 @@ func TestRunTeamProfilesJSONEnvelope(t *testing.T) {
 	if env.Data.Profiles[0].Profile != team.DefaultProfile {
 		t.Errorf("profiles[0] = %q, want default first", env.Data.Profiles[0].Profile)
 	}
+	for _, p := range env.Data.Profiles {
+		if !p.Operator.Enabled || p.Operator.Handle != team.DefaultOperatorHandle || p.Operator.Runnable {
+			t.Errorf("profile %s operator = %+v, want default non-runnable user", p.Profile, p.Operator)
+		}
+		if !p.Capabilities.OperatorGates {
+			t.Errorf("profile %s missing operator_gates capability", p.Profile)
+		}
+	}
+}
+
+func TestRunTeamProfilesJSONLegacySchema2AdvertisesImplicitOperatorGates(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := os.MkdirAll(filepath.Dir(team.Path(dir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{
+  "schema": 2,
+  "members": [{"role":"cto","binary":"codex","handle":"cto","session":"main"}]
+}`
+	if err := writeStringFile(team.Path(dir), legacy); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return runTeamProfiles([]string{"--json"})
+	})
+	if err != nil {
+		t.Fatalf("team profiles --json: %v", err)
+	}
+	env := decodeJSONEnvelope[teamProfilesEnvelopeData](t, stdout)
+	if len(env.Data.Profiles) != 1 {
+		t.Fatalf("profiles = %+v, want one", env.Data.Profiles)
+	}
+	p := env.Data.Profiles[0]
+	if !p.Operator.Enabled || p.Operator.Handle != team.DefaultOperatorHandle || p.Operator.Runnable {
+		t.Fatalf("legacy operator = %+v, want enabled compatibility handle user", p.Operator)
+	}
+	if !p.Capabilities.OperatorGates {
+		t.Fatal("legacy schema 2 profile must advertise implicit operator_gates")
+	}
 }
 
 // Regression: a corrupt default profile (`.amq-squad/team.json`) must
@@ -377,6 +453,12 @@ func TestRunStatusJSONHasNoHumanComments(t *testing.T) {
 	}
 	if env.Data.Workstream != "issue-96" {
 		t.Errorf("status envelope workstream = %q, want issue-96", env.Data.Workstream)
+	}
+	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != team.DefaultOperatorHandle {
+		t.Errorf("status operator = %+v, want default enabled user", env.Data.Operator)
+	}
+	if !env.Data.Capabilities.OperatorGates {
+		t.Errorf("status capabilities = %+v, want operator_gates", env.Data.Capabilities)
 	}
 }
 
