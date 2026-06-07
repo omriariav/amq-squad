@@ -315,6 +315,30 @@ func TestRoleFileInlinePathStagesVerbatimDoc(t *testing.T) {
 	}
 }
 
+// TestRoleFileCatalogIDCollisionFails: a role file whose id matches a built-in
+// persona is rejected, since the built-in would win at launch and silently drop
+// the file's binary and authored document.
+func TestRoleFileCatalogIDCollisionFails(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	rf := writeRoleFile(t, dir, "cto.md", `---
+id: cto
+binary: claude
+---
+# Role: My Custom CTO
+`)
+
+	_, _, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--role-file", rf, "--dry-run"})
+	})
+	if err == nil {
+		t.Fatal("role file with a built-in id should be rejected")
+	}
+	if !strings.Contains(err.Error(), "built-in persona") {
+		t.Fatalf("error = %v, want built-in collision guidance", err)
+	}
+}
+
 // TestRoleFileMissingBinaryFails: a role file with neither a binary frontmatter
 // field nor a --binary override is rejected.
 func TestRoleFileMissingBinaryFails(t *testing.T) {

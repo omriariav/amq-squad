@@ -1136,6 +1136,12 @@ func loadRoleFileDef(path string, defs map[string]role.Definition) (string, erro
 	if err := team.ValidateRoleID(def.ID); err != nil {
 		return "", fmt.Errorf("role file %s: %w", path, err)
 	}
+	// A role file is for a custom role. If its id collides with a built-in
+	// persona, the built-in wins at launch and the file's binary + authored
+	// document would be silently ignored, so reject it outright.
+	if catalog.Lookup(def.ID) != nil {
+		return "", fmt.Errorf("role file %s: id %q is a built-in persona; choose a different id for a custom role", path, def.ID)
+	}
 	if existing, ok := defs[def.ID]; ok && existing.Source != def.Source {
 		return "", fmt.Errorf("custom role id %q is defined by two files: %s and %s", def.ID, existing.Source, def.Source)
 	}

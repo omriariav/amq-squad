@@ -128,6 +128,49 @@ func TestParseJSON(t *testing.T) {
 	}
 }
 
+func TestParseJSONIDFromFilename(t *testing.T) {
+	// JSON without an explicit id falls back to the filename, like yaml/md.
+	p := writeTemp(t, "data-analyst.json", `{"label":"Data Analyst","binary":"codex"}`)
+	d, err := ParseFile(p)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	if d.ID != "data-analyst" {
+		t.Errorf("id = %q, want data-analyst (from filename)", d.ID)
+	}
+}
+
+func TestParseBOMMarkdownHeading(t *testing.T) {
+	// A BOM-prefixed plain Markdown file still derives its id from the heading.
+	p := writeTemp(t, "x.md", "\ufeff# Role: Researcher\n\n## Description\nDoes research.\n")
+	d, err := ParseFile(p)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	if d.ID != "researcher" {
+		t.Errorf("id = %q, want researcher (from heading, BOM stripped)", d.ID)
+	}
+	if strings.HasPrefix(d.Body, "\ufeff") {
+		t.Errorf("body should not retain the BOM: %q", d.Body[:1])
+	}
+}
+
+func TestSlugifyCollapsesPunctuation(t *testing.T) {
+	cases := map[string]string{
+		"Data/ML Engineer":  "data-ml-engineer",
+		"Site  Reliability": "site-reliability",
+		"  Trim Me  ":       "trim-me",
+		"Already-Hyphen":    "already-hyphen",
+		"weird::colons":     "weird-colons",
+		"keep_underscore":   "keep_underscore",
+	}
+	for in, want := range cases {
+		if got := slugify(in); got != want {
+			t.Errorf("slugify(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestLooksLikeRoleFile(t *testing.T) {
 	files := []string{"./researcher.md", "roles/sre.yaml", "~/x.json", "a.markdown", "x.yml"}
 	for _, f := range files {
