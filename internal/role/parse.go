@@ -93,7 +93,14 @@ func parse(content, path string) (Definition, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".json":
-		return parseJSON(content)
+		d, err := parseJSON(content)
+		if err != nil {
+			return Definition{}, err
+		}
+		if d.ID == "" {
+			d.ID = slugify(baseName(path))
+		}
+		return d, nil
 	case ".yaml", ".yml":
 		fields, err := parseYAMLish(content)
 		if err != nil {
@@ -179,12 +186,12 @@ func definitionFromFields(f map[string][]string) Definition {
 func splitFrontmatter(content string) (front, body string) {
 	s := strings.TrimPrefix(content, "\ufeff") // tolerate a UTF-8 BOM
 	if !strings.HasPrefix(s, "---") {
-		return "", content
+		return "", s
 	}
 	// First line must be exactly the opening fence.
 	nl := strings.IndexByte(s, '\n')
 	if nl < 0 || strings.TrimSpace(s[:nl]) != "---" {
-		return "", content
+		return "", s
 	}
 	rest := s[nl+1:]
 	// Find the closing fence on its own line.
@@ -197,7 +204,7 @@ func splitFrontmatter(content string) (front, body string) {
 		}
 	}
 	// Unterminated frontmatter: treat the whole thing as body.
-	return "", content
+	return "", s
 }
 
 // parseYAMLish parses the flat subset of YAML amq-squad role files use:
@@ -338,13 +345,13 @@ func slugify(s string) string {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
 			b.WriteRune(r)
 			prevHyphen = false
-		case r == '-' || r == ' ' || r == '\t':
+		default:
+			// Any other character (hyphen, spaces, punctuation, symbols)
+			// collapses to a single hyphen separator.
 			if !prevHyphen && b.Len() > 0 {
 				b.WriteByte('-')
 				prevHyphen = true
 			}
-		default:
-			// drop other characters
 		}
 	}
 	return strings.Trim(b.String(), "-")
