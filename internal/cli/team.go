@@ -12,6 +12,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/omriariav/amq-squad/internal/catalog"
+	"github.com/omriariav/amq-squad/internal/role"
 	"github.com/omriariav/amq-squad/internal/rules"
 	"github.com/omriariav/amq-squad/internal/team"
 )
@@ -81,6 +82,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	fs := flag.NewFlagSet("team init", flag.ContinueOnError)
 	personasFlag := fs.String("personas", "", "comma-separated persona IDs to include (alias for --roles)")
 	rolesFlag := fs.String("roles", "", "comma-separated role/persona IDs to include (skips interactive prompt)")
+	roleFileFlag := fs.String("role-file", "", "comma-separated custom role files (.md/.yaml/.json) to include as team members")
 	binaryFlag := fs.String("binary", "", "per-persona CLI overrides, e.g. fullstack=codex,qa=claude")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name for all members (lowercase a-z, 0-9, -, _)")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
@@ -112,6 +114,19 @@ Members can live in other directories via --cwd role=/path. Relative --cwd
 values under --project resolve from DIR. Default AMQ workstream sessions are
 derived from the team-home directory name.
 
+Custom roles: a --roles/--personas entry that is not a built-in persona is
+treated as a custom role. Each custom role must be a valid slug (lowercase
+a-z, 0-9, -, _) and must carry an explicit --binary role=<cli> entry, e.g.
+--roles researcher --binary researcher=codex. Built-in personas keep their
+catalog defaults unless overridden.
+
+Custom roles from a file: --role-file PATH (comma-separated) loads roles from
+.md (optionally with YAML frontmatter), .yaml, or .json files. A role file may
+also be referenced inline, e.g. --roles cto,./roles/researcher.md. The file's
+'binary:' field satisfies the binary requirement (and --binary overrides it).
+The authored document is staged under .amq-squad/roles/<id>.md and seeds that
+agent's role.md at launch.
+
 Known personas:
 `)
 		for _, r := range catalog.All() {
@@ -120,6 +135,8 @@ Known personas:
 		fmt.Fprint(os.Stderr, `
 Examples:
   amq-squad team init --roles cto,fullstack --binary cto=codex
+  amq-squad team init --roles researcher --binary researcher=codex
+  amq-squad team init --role-file ./roles/researcher.md --roles cto
   amq-squad team init --roles cto,fullstack --operator user
   amq-squad team init --roles cto,fullstack --operator operator
   amq-squad team init --roles cto,fullstack --no-operator
@@ -213,19 +230,39 @@ Examples:
 	// Normalize override keys to lowercase so we can match them against the
 	// chosen persona IDs without surprises.
 	modelOverrides = lowercaseKeys(modelOverrides)
+	binaryOverrides = lowercaseKeys(binaryOverrides)
+
+	// customDefs holds custom roles loaded from files (via --role-file or an
+	// inline path token in --roles/--personas), keyed by resolved role id.
+	customDefs := map[string]role.Definition{}
+	roleFilePaths := splitCSV(*roleFileFlag)
+	fileSelected := make([]string, 0, len(roleFilePaths))
+	for _, p := range roleFilePaths {
+		id, err := loadRoleFileDef(p, customDefs)
+		if err != nil {
+			return err
+		}
+		fileSelected = append(fileSelected, id)
+	}
 
 	var picked []string
-	interactive := *rolesFlag == "" && *personasFlag == ""
+	interactive := *rolesFlag == "" && *personasFlag == "" && len(roleFilePaths) == 0
+	// The non-interactive flag paths accept custom role slugs (resolved by the
+	// member loop below, which requires a --binary or a role file for each) and
+	// inline role-file paths. The interactive prompt stays catalog-only.
 	if *personasFlag != "" {
-		picked, err = parsePersonaSelection(*personasFlag)
+		picked, err = resolveTeamSelection(*personasFlag, customDefs)
 		if err != nil {
 			return err
 		}
 	} else if *rolesFlag != "" {
-		picked, err = parsePersonaSelection(*rolesFlag)
+		picked, err = resolveTeamSelection(*rolesFlag, customDefs)
 		if err != nil {
 			return err
 		}
+	} else if len(roleFilePaths) > 0 {
+		// Role files only: the selection is exactly the file-defined roles.
+		picked = nil
 	} else {
 		reader := bufio.NewReader(os.Stdin)
 		picked, err = promptPersonaSelection(reader, os.Stderr)
@@ -253,6 +290,10 @@ Examples:
 			workstream = chosen
 		}
 	}
+	// Roles named via --role-file are always part of the team, even when they
+	// are not also listed in --roles/--personas. Duplicates are dropped by the
+	// member loop's seen-set below.
+	picked = append(picked, fileSelected...)
 	if len(picked) == 0 {
 		return fmt.Errorf("no personas selected, aborting")
 	}
@@ -275,16 +316,33 @@ Examples:
 			continue
 		}
 		seen[id] = true
-		r := catalog.Lookup(id)
-		if r == nil {
-			return fmt.Errorf("unknown persona %q. Known personas: %s", id, strings.Join(catalog.IDs(), ", "))
-		}
-		binary := r.PreferredBinary
-		if b, ok := binaryOverrides[id]; ok {
-			binary = b
-		}
-		if interactive && binary == "" {
+		var binary string
+		if r := catalog.Lookup(id); r != nil {
 			binary = r.PreferredBinary
+			if b, ok := binaryOverrides[id]; ok {
+				binary = b
+			}
+			if interactive && binary == "" {
+				binary = r.PreferredBinary
+			}
+		} else {
+			// Custom role: not in the built-in catalog. It must be a valid role
+			// slug and must carry an explicit --binary entry, since there is no
+			// catalog default to fall back to. Everything downstream (team.json,
+			// team-rules, bootstrap, status/history, launch) already treats
+			// non-catalog roles as first-class members.
+			if err := team.ValidateRoleID(id); err != nil {
+				return fmt.Errorf("custom role %q: %w", id, err)
+			}
+			binary = strings.TrimSpace(binaryOverrides[id])
+			if binary == "" {
+				if def, ok := customDefs[id]; ok {
+					binary = strings.TrimSpace(def.Binary)
+				}
+			}
+			if binary == "" {
+				return fmt.Errorf("custom role %q requires --binary %s=<cli> (or a 'binary:' field in its role file)", id, id)
+			}
 		}
 		m := team.Member{
 			Role:    id,
@@ -341,6 +399,21 @@ Examples:
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Wrote %s with %d members.\n", team.ProfilePath(cwd, profile), len(members))
+	// Stage authored documents for file-defined custom roles so `up` seeds each
+	// agent's role.md from the file instead of the minimal fallback.
+	for _, m := range members {
+		def, ok := customDefs[m.Role]
+		if !ok {
+			continue
+		}
+		wrote, err := stageCustomRoleDoc(cwd, def)
+		if err != nil {
+			return fmt.Errorf("stage role doc for %s: %w", m.Role, err)
+		}
+		if wrote {
+			fmt.Fprintf(os.Stderr, "Wrote %s.\n", team.CustomRolePath(cwd, m.Role))
+		}
+	}
 	wroteRules, err := rules.Ensure(cwd, rulesContent)
 	if err != nil {
 		return fmt.Errorf("seed team-rules.md: %w", err)
@@ -1016,6 +1089,80 @@ func printPersonaMarket(out io.Writer) {
 
 func parsePersonaSelection(line string) ([]string, error) {
 	return catalog.ResolveSelection(line)
+}
+
+// resolveTeamSelection resolves a --roles/--personas CSV that may mix catalog
+// IDs, market numbers, "all", custom slugs, and inline role-file paths. File
+// tokens are parsed into customDefs and contribute their resolved role id.
+func resolveTeamSelection(line string, customDefs map[string]role.Definition) ([]string, error) {
+	var out []string
+	for _, tok := range strings.Split(line, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		if role.LooksLikeRoleFile(tok) {
+			id, err := loadRoleFileDef(tok, customDefs)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, id)
+			continue
+		}
+		ids, err := catalog.ResolveSelectionAllowingCustom(tok)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ids...)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no selection provided")
+	}
+	return out, nil
+}
+
+// loadRoleFileDef parses a custom role file, validates its id, registers it in
+// defs, and returns the resolved role id. Two files resolving to the same id
+// are rejected so a typo can't silently shadow another role.
+func loadRoleFileDef(path string, defs map[string]role.Definition) (string, error) {
+	abs, err := expandPath(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve role file %q: %w", path, err)
+	}
+	def, err := role.ParseFile(abs)
+	if err != nil {
+		return "", err
+	}
+	if err := team.ValidateRoleID(def.ID); err != nil {
+		return "", fmt.Errorf("role file %s: %w", path, err)
+	}
+	if existing, ok := defs[def.ID]; ok && existing.Source != def.Source {
+		return "", fmt.Errorf("custom role id %q is defined by two files: %s and %s", def.ID, existing.Source, def.Source)
+	}
+	defs[def.ID] = def
+	return def.ID, nil
+}
+
+// stageCustomRoleDoc writes a custom role's authored document under
+// <projectDir>/.amq-squad/roles/<id>.md. It is idempotent: identical content
+// is left untouched. Returns true when it wrote (or rewrote) the file.
+func stageCustomRoleDoc(projectDir string, def role.Definition) (bool, error) {
+	path := team.CustomRolePath(projectDir, def.ID)
+	body := def.Document()
+	if existing, err := os.ReadFile(path); err == nil && string(existing) == body {
+		return false, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return false, fmt.Errorf("ensure roles dir: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+		return false, fmt.Errorf("write role doc: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return false, fmt.Errorf("rename role doc: %w", err)
+	}
+	return true, nil
 }
 
 func printSquadPlan(out io.Writer, personas []string, overrides map[string]string) {
