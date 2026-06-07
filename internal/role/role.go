@@ -100,6 +100,25 @@ func EnsureStub(agentDir string, s Stub) (bool, error) {
 	return true, nil
 }
 
+// EnsureContent writes the given role.md body for an agent if neither the
+// extension nor legacy role file already exists. Unlike EnsureStub it persists
+// caller-supplied content verbatim (used for custom roles authored in an
+// external file). It never overwrites existing user edits. Returns true if it
+// wrote a file.
+func EnsureContent(agentDir, body string) (bool, error) {
+	if Exists(agentDir) {
+		return false, nil
+	}
+	p := Path(agentDir)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return false, fmt.Errorf("ensure extension dir: %w", err)
+	}
+	if err := writeFile(p, body); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func writeFile(path, body string) error {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/internal/catalog"
 	"github.com/omriariav/amq-squad/internal/launch"
 	"github.com/omriariav/amq-squad/internal/role"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // runLaunch is the real single-agent launcher. The top-level `launch` verb is
@@ -284,10 +285,11 @@ Examples:
 		return fmt.Errorf("write launch record: %w", err)
 	}
 
-	// Seed role.md from the catalog when the role is known. Never
-	// overwrites existing user edits.
+	// Seed role.md from the catalog when the role is known, or from a staged
+	// custom-role document under the team-home. Never overwrites user edits.
 	if *roleFlag != "" {
-		if err := seedRoleStub(agentDir, *roleFlag); err != nil {
+		roleHome := resolveBriefHome(*teamHome, cwd)
+		if err := seedRoleStub(agentDir, *roleFlag, roleHome); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: seed role.md: %v\n", err)
 		}
 	}
@@ -493,10 +495,25 @@ func resolveAMQRootInDir(cwd, rootFlag, session, handle string) (string, error) 
 	return env.Root, nil
 }
 
-// seedRoleStub writes a role.md stub for the given agent directory based on
-// the catalog entry for roleID. If the role isn't in the catalog, it still
-// writes a minimal stub with the label = roleID.
-func seedRoleStub(agentDir, roleID string) error {
+// seedRoleStub writes a role.md for the given agent directory. Precedence:
+//  1. a custom role authored in a file and staged at
+//     <teamHome>/.amq-squad/roles/<id>.md during team init (verbatim),
+//  2. the built-in catalog entry for roleID,
+//  3. a minimal fallback stub with label = roleID.
+//
+// It never overwrites existing user edits.
+func seedRoleStub(agentDir, roleID, teamHome string) error {
+	if catalog.Lookup(roleID) == nil && strings.TrimSpace(teamHome) != "" {
+		docPath := team.CustomRolePath(teamHome, roleID)
+		body, err := os.ReadFile(docPath)
+		if err == nil {
+			_, werr := role.EnsureContent(agentDir, string(body))
+			return werr
+		}
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("read custom role doc %s: %w", docPath, err)
+		}
+	}
 	stub := role.Stub{RoleID: roleID, Label: roleID}
 	if r := catalog.Lookup(roleID); r != nil {
 		stub.Label = r.Label
