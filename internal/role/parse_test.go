@@ -163,6 +163,10 @@ func TestSlugifyCollapsesPunctuation(t *testing.T) {
 		"Already-Hyphen":    "already-hyphen",
 		"weird::colons":     "weird-colons",
 		"keep_underscore":   "keep_underscore",
+		"/leading":          "leading",
+		"trailing/":         "trailing",
+		"---":               "", // all-separator input slugifies to empty (then rejected upstream)
+		"!!!":               "",
 	}
 	for in, want := range cases {
 		if got := slugify(in); got != want {
