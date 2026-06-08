@@ -78,6 +78,9 @@ type statusRecord struct {
 	// a computed pane_alive, so clients can target follow-up control. Omitted
 	// when the agent's launch record carried no tmux identity.
 	Tmux *tmuxRuntimeJSON `json:"tmux,omitempty"`
+	// Actions are the stable, project-scoped commands a client can render/copy
+	// for this member (focus/send/resume/status). Populated for --json only.
+	Actions []runtimeActionJSON `json:"actions,omitempty"`
 }
 
 func runStatus(args []string) error {
@@ -194,6 +197,11 @@ func executeStatus(s statusExecution) error {
 		}
 	}
 	if s.JSON {
+		// Attach the stable action commands a client can render/copy per member.
+		for i := range rows {
+			alive := rows[i].Tmux != nil && rows[i].Tmux.PaneAlive
+			rows[i].Actions = memberActions(t.Project, s.Profile, workstream, rows[i].Role, alive)
+		}
 		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
 			TeamHome:     t.Project,
 			Workstream:   workstream,
