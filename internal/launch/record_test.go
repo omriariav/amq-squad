@@ -68,6 +68,74 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWriteReadTmuxMetadata(t *testing.T) {
+	dir := t.TempDir()
+	in := Record{
+		CWD:       "/some/project",
+		Binary:    "codex",
+		Handle:    "cto",
+		Role:      "cto",
+		Root:      dir,
+		StartedAt: time.Now().UTC().Truncate(time.Second),
+		Tmux: &TmuxInfo{
+			Session:    "main",
+			WindowID:   "@42",
+			WindowName: "amq-squad-issue-96",
+			PaneID:     "%265",
+			Target:     "current-window",
+		},
+	}
+	if err := Write(dir, in); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	out, err := Read(dir)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if out.Tmux == nil {
+		t.Fatal("tmux metadata lost on round-trip")
+	}
+	if *out.Tmux != *in.Tmux {
+		t.Fatalf("tmux round-trip mismatch: got %+v, want %+v", *out.Tmux, *in.Tmux)
+	}
+
+	// The on-disk JSON must nest the runtime identity under "tmux" with the
+	// exact field names the NOC contract depends on.
+	raw, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var probe struct {
+		Tmux *TmuxInfo `json:"tmux"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if probe.Tmux == nil || probe.Tmux.PaneID != "%265" {
+		t.Fatalf("json tmux block missing/wrong: %s", raw)
+	}
+}
+
+func TestReadLegacyRecordHasNilTmux(t *testing.T) {
+	// A pre-1.5 record (no "tmux" key) must read back with a nil Tmux pointer,
+	// so clients detect runtime-control availability by presence, not schema.
+	dir := t.TempDir()
+	legacy := `{"schema":1,"cwd":"/p","binary":"codex","handle":"cto","root":"` + dir + `","started_at":"2026-01-01T00:00:00Z"}`
+	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Path(dir), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Read(dir)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if out.Tmux != nil {
+		t.Fatalf("legacy record should have nil Tmux, got %+v", out.Tmux)
+	}
+}
+
 func TestReadMissing(t *testing.T) {
 	dir := t.TempDir()
 	_, err := Read(dir)

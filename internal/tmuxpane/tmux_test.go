@@ -182,10 +182,12 @@ func TestResolveTmuxTargetForSession_FallsBackWhenNoTitles(t *testing.T) {
 }
 
 func TestParsePanes_ParsesPaneTitle(t *testing.T) {
-	// 7-field rows: one with a title token, one with an empty title (trailing tab).
+	// Field order: session,window,pane,pid,command,cwd,pane_id,window_id,
+	// pane_title,window_name. One row with a title token, one with an empty
+	// title (trailing tabs).
 	out := "" +
-		"beta\t0\t0\t100\tcodex\t/repo\tamq:beta:cpo\n" +
-		"beta\t0\t1\t200\tcodex\t/repo\t\n"
+		"beta\t0\t0\t100\tcodex\t/repo\t%0\t@0\tamq:beta:cpo\n" +
+		"beta\t0\t1\t200\tcodex\t/repo\t%1\t@0\t\n"
 	panes := parsePanes(out)
 	if len(panes) != 2 {
 		t.Fatalf("expected 2 panes, got %d: %+v", len(panes), panes)
