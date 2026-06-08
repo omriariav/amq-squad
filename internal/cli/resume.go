@@ -25,7 +25,7 @@ func runResume(args []string) error {
 	execMode := fs.Bool("exec", false, "open the planned launch commands in the terminal backend (tmux) instead of printing them")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (with tmux runtime metadata) instead of the human plan")
 	terminal := fs.String("terminal", "tmux", "terminal backend to use with --exec")
-	target := fs.String("target", "current-window", "terminal target with --exec (tmux: current-window or new-session)")
+	target := fs.String("target", "current-window", "terminal target with --exec (tmux: current-window, new-window, or new-session)")
 	layout := fs.String("layout", "vertical", "terminal layout with --exec (tmux: vertical, horizontal, or tiled)")
 	terminalSession := fs.String("terminal-session", "", "terminal session name when --exec --target new-session")
 	stagger := fs.Duration("stagger", 750*time.Millisecond, "delay between starting agent panes with --exec")
@@ -38,7 +38,7 @@ Usage:
                    [--no-bootstrap] [--trust sandboxed|trusted]
                    [--model role=model,...]
                    [--codex-args args] [--claude-args args]
-                   [--exec [--terminal tmux] [--target current-window|new-session]
+                   [--exec [--terminal tmux] [--target current-window|new-window|new-session]
                            [--layout vertical|horizontal|tiled]
                            [--terminal-session name] [--stagger 750ms]]
 
