@@ -133,11 +133,14 @@ func memberActions(projectDir, profile, session, role string, paneAlive bool) []
 	if !paneAlive {
 		deadReason = "agent pane is not live"
 	}
+	// focus/send carry --role (agent scope); resume/status as commanded here act
+	// on the whole session (no --role), so their scope is "session". A per-agent
+	// dedicated catalog with agent-scoped resume/restart is a follow-up.
 	return []runtimeActionJSON{
 		{Kind: "focus", Label: "focus pane", Scope: "agent", Mutates: false, NeedsConfirmation: false, Available: paneAlive, Reason: deadReason, Command: base + " focus" + scope + roleArg},
 		{Kind: "send", Label: "send a prompt", Scope: "agent", Mutates: true, NeedsConfirmation: true, Available: paneAlive, Reason: deadReason, Command: base + " send" + scope + roleArg + " --body-file -"},
-		{Kind: "resume", Label: "resume agent", Scope: "agent", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " resume" + scope + " --exec"},
-		{Kind: "status", Label: "show status", Scope: "agent", Mutates: false, NeedsConfirmation: false, Available: true, Command: base + " status" + scope + " --json"},
+		{Kind: "resume", Label: "resume session", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " resume" + scope + " --exec"},
+		{Kind: "status", Label: "show session status", Scope: "session", Mutates: false, NeedsConfirmation: false, Available: true, Command: base + " status" + scope + " --json"},
 	}
 }
 
