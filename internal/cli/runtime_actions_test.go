@@ -129,6 +129,23 @@ func TestMemberActions(t *testing.T) {
 	if !byKind["resume"].Available || !byKind["status"].Available {
 		t.Errorf("resume/status should always be available")
 	}
+	// #7 schema: each action carries a label, an agent scope, and mutate/confirm
+	// metadata so a client can render a confirm-gated executable action.
+	wantMeta := map[string]struct{ mutates, confirm bool }{
+		"focus":  {false, false},
+		"send":   {true, true},
+		"resume": {true, true},
+		"status": {false, false},
+	}
+	for k, want := range wantMeta {
+		a := byKind[k]
+		if a.Label == "" || a.Scope != "agent" {
+			t.Errorf("%s action missing label/scope: %+v", k, a)
+		}
+		if a.Mutates != want.mutates || a.NeedsConfirmation != want.confirm {
+			t.Errorf("%s mutates/needs_confirmation = %v/%v, want %v/%v", k, a.Mutates, a.NeedsConfirmation, want.mutates, want.confirm)
+		}
+	}
 	for _, k := range []string{"focus", "send", "resume", "status"} {
 		cmd := byKind[k].Command
 		if !strings.HasPrefix(cmd, "amq-squad "+k) {
@@ -146,11 +163,22 @@ func TestMemberActions(t *testing.T) {
 	if !strings.Contains(named[0].Command, "--profile review") {
 		t.Errorf("named profile not in command: %q", named[0].Command)
 	}
-	// Dead pane -> focus/send unavailable.
+	// Dead pane -> focus/send unavailable WITH a reason; resume/status stay
+	// available with no reason.
 	dead := memberActions("/Code/app", team.DefaultProfile, "issue-96", "cto", false)
 	for _, a := range dead {
-		if (a.Kind == "focus" || a.Kind == "send") && a.Available {
-			t.Errorf("%s should be unavailable for a dead pane", a.Kind)
+		switch a.Kind {
+		case "focus", "send":
+			if a.Available {
+				t.Errorf("%s should be unavailable for a dead pane", a.Kind)
+			}
+			if a.Reason == "" {
+				t.Errorf("%s should carry a reason when unavailable", a.Kind)
+			}
+		default:
+			if !a.Available || a.Reason != "" {
+				t.Errorf("%s should stay available with no reason: %+v", a.Kind, a)
+			}
 		}
 	}
 }
