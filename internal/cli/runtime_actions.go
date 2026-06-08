@@ -248,17 +248,22 @@ func runSend(args []string) error {
 	body := fs.String("body", "", "prompt text (alternative to --body-file)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	forceFlag := fs.Bool("force", false, "deliver even if the agent appears busy (mid-turn)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad send - deliver a prompt to an agent's tmux pane and submit it
 
 Usage:
   amq-squad send [--project DIR] [--profile NAME] --session S --role ROLE
-                 (--body TEXT | --body-file FILE | --body-file -)
+                 (--body TEXT | --body-file FILE | --body-file -) [--force]
 
 Stages the prompt in a tmux paste buffer (via stdin, never a shell string) and
 pastes it into the agent's exact pane, then submits a single Enter. Multi-line
 prompts and text with quotes or shell metacharacters are delivered verbatim.
 Errors clearly if the target pane is gone.
+
+By default it REFUSES to deliver into a pane whose agent looks busy (mid-turn),
+since a prompt pushed over a working agent lands in a tool-result buffer and is
+lost; pass --force to deliver anyway.
 
 Examples:
   amq-squad send --session issue-96 --role cto --body "please review PR #64"
@@ -294,6 +299,15 @@ Examples:
 	paneID, _, ok := resolveControlTarget(mr, workstream, panes)
 	if !ok || strings.TrimSpace(paneID) == "" {
 		return fmt.Errorf("no live tmux pane found for role %q; the agent may not be running", *roleFlag)
+	}
+	// Don't talk over a working agent: a prompt pushed into a pane whose agent is
+	// mid-turn lands in a tool-result buffer and is silently lost. Refuse unless
+	// --force. A capture error is not treated as busy (never block on a failed
+	// check) — only a positive busy signal refuses.
+	if !*forceFlag {
+		if busy, berr := tmuxpane.PaneBusy(paneID); berr == nil && busy {
+			return fmt.Errorf("agent %q at pane %s appears busy (mid-turn); retry when idle, or pass --force to deliver anyway", *roleFlag, paneID)
+		}
 	}
 	if err := tmuxpane.SendPromptToPane(paneID, prompt); err != nil {
 		return err
