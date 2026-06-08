@@ -239,6 +239,7 @@ func newProfileTeamArgs(args []string) ([]string, error) {
 		"--operator":    true,
 		"--personas":    true,
 		"--project":     true,
+		"--role-file":   true,
 		"--roles":       true,
 		"--session":     true,
 		"--trust":       true,

@@ -20,7 +20,7 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 Install the 1.4 line:
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v1.4.1
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v1.4.2
 amq-squad version
 ```
 
@@ -497,6 +497,55 @@ amq-squad completion fish > ~/.config/fish/completions/amq-squad.fish
 ```
 
 `completion zsh` is followed by a `compinit` step on most shells.
+
+## Custom roles
+
+`--roles`/`--personas` accept built-in personas (`cpo, cto, senior-dev,
+fullstack, frontend-dev, backend-dev, mobile-dev, junior-dev, qa, pm,
+designer`) and **custom roles** that are not in the catalog. A custom role is
+any valid slug (lowercase `a-z`, `0-9`, `-`, `_`) and must carry an explicit
+`--binary` because there is no catalog default to fall back to. Built-in roles
+keep their catalog defaults unless overridden. Custom roles are first-class
+team members in `team.json`, `team-rules.md`, the bootstrap prompt,
+status/history, and launch/resume.
+
+```sh
+# inline: id + CLI, minimal role.md (generic custom-role fallback text)
+amq-squad new team --roles researcher --binary researcher=codex
+amq-squad new team --roles researcher,reviewer --binary researcher=codex,reviewer=claude
+amq-squad new profile discovery --roles researcher --binary researcher=codex
+```
+
+Missing a binary fails clearly: `custom role "researcher" requires --binary researcher=<cli>`.
+
+For a richer persona, author a **role file** and pass it with `--role-file`
+(comma-separated) or inline in `--roles`. Supported formats: Markdown with
+optional YAML frontmatter, `.yaml`, or `.json`. The `binary:` field satisfies
+the binary requirement (`--binary` overrides it). The authored document is
+staged at `.amq-squad/roles/<id>.md` and seeds that agent's `role.md` at launch
+(later user edits are preserved). A role file whose id matches a built-in
+persona is rejected — pick a different id for a custom role.
+
+```sh
+amq-squad new team --role-file ./roles/researcher.md --roles cto
+amq-squad team init --roles "cto,./roles/researcher.md"
+```
+
+```markdown
+---
+id: researcher
+label: Research Engineer
+binary: codex
+peers: [cto, qa]
+---
+# Role: Research Engineer
+
+## Description
+Owns deep technical investigation, prototypes, and written findings.
+```
+
+The `/amq-squad-role-creator` skill walks through authoring role files and
+wiring them into a team.
 
 ## Trust and binary defaults
 

@@ -127,3 +127,24 @@ func TestResolveSelection(t *testing.T) {
 		t.Fatalf("ResolveSelection banana error = %v, want unknown persona", err)
 	}
 }
+
+func TestResolveSelectionAllowingCustom(t *testing.T) {
+	// Unknown slugs pass through verbatim (lowercased) as custom roles.
+	got, err := ResolveSelectionAllowingCustom("cto,Researcher,2")
+	if err != nil {
+		t.Fatalf("ResolveSelectionAllowingCustom error = %v", err)
+	}
+	want := []string{"cto", "researcher", "cto"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ResolveSelectionAllowingCustom = %v, want %v", got, want)
+	}
+	// "all" still expands to the catalog, not treated as a custom role.
+	got, err = ResolveSelectionAllowingCustom("all")
+	if err != nil || !reflect.DeepEqual(got, IDs()) {
+		t.Fatalf("ResolveSelectionAllowingCustom all = %v (err %v), want catalog IDs", got, err)
+	}
+	// Out-of-range numbers still error; only non-numeric unknowns are custom.
+	if _, err := ResolveSelectionAllowingCustom("999"); err == nil || !strings.Contains(err.Error(), "out of range") {
+		t.Fatalf("ResolveSelectionAllowingCustom 999 error = %v, want out of range", err)
+	}
+}

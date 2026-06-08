@@ -19,6 +19,7 @@ const (
 	DirName               = ".amq-squad"
 	FileName              = "team.json"
 	TeamsDirName          = "teams"
+	RolesDirName          = "roles"
 	DefaultOperatorHandle = "user"
 	// DefaultProfile names the implicit project-default profile. It maps to
 	// .amq-squad/team.json; a file at .amq-squad/teams/default.json is never
@@ -164,6 +165,18 @@ func ProfilePath(projectDir, profile string) string {
 		return filepath.Join(projectDir, DirName, FileName)
 	}
 	return filepath.Join(projectDir, DirName, TeamsDirName, profile+".json")
+}
+
+// RolesDir returns the directory that holds authored custom-role documents,
+// <projectDir>/.amq-squad/roles. Each custom role staged from a file lands at
+// <RolesDir>/<id>.md and is consulted when seeding an agent's role.md.
+func RolesDir(projectDir string) string {
+	return filepath.Join(projectDir, DirName, RolesDirName)
+}
+
+// CustomRolePath returns the staged role.md path for a custom role id.
+func CustomRolePath(projectDir, id string) string {
+	return filepath.Join(RolesDir(projectDir), id+".md")
 }
 
 // ValidateProfileName enforces the profile-name slug rules: lowercase a-z,
