@@ -38,7 +38,7 @@ func runUp(args []string) error {
 Usage:
   amq-squad up [<session>] [--project DIR] [--profile NAME] [--session workstream]
     [--reset [--yes|-y] [--force]]
-    [--terminal tmux] [--target current-window|new-session]
+    [--terminal tmux] [--target current-window|new-window|new-session]
     [--layout vertical|horizontal|tiled]
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
     [--trust sandboxed|trusted] [--model role=model,...]

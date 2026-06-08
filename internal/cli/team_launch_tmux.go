@@ -38,8 +38,8 @@ func (tmuxTeamLaunchBackend) Name() string {
 }
 
 func (tmuxTeamLaunchBackend) Validate(opts teamLaunchOptions) error {
-	if opts.Target != "new-session" && opts.Target != "current-window" {
-		return fmt.Errorf("unsupported tmux target %q: use new-session or current-window", opts.Target)
+	if opts.Target != "new-session" && opts.Target != "current-window" && opts.Target != "new-window" {
+		return fmt.Errorf("unsupported tmux target %q: use current-window, new-window, or new-session", opts.Target)
 	}
 	if opts.Layout != "vertical" && opts.Layout != "horizontal" && opts.Layout != "tiled" {
 		return fmt.Errorf("unsupported tmux layout %q: use vertical, horizontal, or tiled", opts.Layout)
@@ -130,6 +130,9 @@ func tmuxDryRunLines(plan tmuxLaunchPlan) []string {
 	if len(plan.Panes) == 0 {
 		return nil
 	}
+	if plan.Target == "new-window" {
+		return tmuxWindowsDryRunLines(plan)
+	}
 	windowTarget := plan.Session + ":0"
 	firstTarget := plan.Session + ":0.0"
 	lines := []string{}
@@ -167,6 +170,33 @@ func tmuxDryRunLines(plan tmuxLaunchPlan) []string {
 	} else {
 		lines = append(lines, "# attach later with: "+shellCommand("tmux", "attach-session", "-t", plan.Session))
 	}
+	return lines
+}
+
+// tmuxWindowsDryRunLines previews the window-per-agent launch: each agent goes
+// into its own tmux window (in the current session when run from inside tmux,
+// otherwise a new session). Control still targets exact pane ids.
+func tmuxWindowsDryRunLines(plan tmuxLaunchPlan) []string {
+	lines := []string{
+		`session=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{session_name}' 2>/dev/null || echo ` + shellQuote(plan.Session) + `)`,
+		"# one tmux window per agent in $session (a new '" + plan.Session + "' session is created when launched outside tmux)",
+	}
+	targets := make([]string, 0, len(plan.Panes))
+	for i, pane := range plan.Panes {
+		v := fmt.Sprintf("win_%d", i)
+		targets = append(targets, "$"+v)
+		lines = append(lines,
+			v+`=$(tmux new-window -d -P -F '#{pane_id}' -t "$session:" -n `+shellQuote(tmuxWindowName(pane.Role))+" -c "+shellQuote(pane.CWD)+")",
+			tmuxSelectPaneDryRunLine("$"+v, paneTitleToken(plan.Session, pane.Role)),
+		)
+	}
+	for i, pane := range plan.Panes {
+		lines = append(lines, tmuxSendKeysDryRunLine(targets[i], pane.Command))
+		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {
+			lines = append(lines, sleepDryRunLine(plan.StartDelay))
+		}
+	}
+	lines = append(lines, "# switch between agents with: tmux select-window -t \"$session:<role>\" (or click the iTerm2 tab under -CC)")
 	return lines
 }
 
@@ -217,6 +247,9 @@ func tmuxSendKeysDryRunLine(target, command string) string {
 func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
 	if len(plan.Panes) == 0 {
 		return fmt.Errorf("tmux plan has no panes")
+	}
+	if plan.Target == "new-window" {
+		return runTmuxWindowsPlan(plan)
 	}
 	windowTarget := plan.Session + ":0"
 	firstTarget := plan.Session + ":0.0"
@@ -287,6 +320,94 @@ func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
 	quietNotice("Created tmux session %s. Attach with: tmux attach -t %s\n", plan.Session, shellQuote(plan.Session))
 	verbosePolicyEcho()
 	return nil
+}
+
+// runTmuxWindowsPlan launches one tmux WINDOW per agent (Sagi-style window-per-
+// agent), so each agent gets a full-size terminal instead of a cramped split
+// pane. The host session is the current tmux session when launched from inside
+// tmux, otherwise a new detached session whose first window hosts the first
+// agent. Each agent's pane carries the same amq pane-title token and is driven
+// by send-keys exactly like the pane backends, so the runtime metadata/control
+// layer (pane-id capture, status, focus, send) works unchanged.
+func runTmuxWindowsPlan(plan tmuxLaunchPlan) error {
+	session, firstPaneID, err := tmuxWindowsHostSession(plan)
+	if err != nil {
+		return err
+	}
+	targets := make([]string, 0, len(plan.Panes))
+	for i, pane := range plan.Panes {
+		paneID := ""
+		if i == 0 && firstPaneID != "" {
+			// First agent reuses the window the new session was created with.
+			paneID = firstPaneID
+		} else {
+			out, werr := outputCommand("tmux", "new-window", "-d", "-P", "-F", "#{pane_id}",
+				"-t", session+":", "-n", tmuxWindowName(pane.Role), "-c", pane.CWD)
+			if werr != nil {
+				return werr
+			}
+			paneID = strings.TrimSpace(out)
+		}
+		if paneID == "" {
+			return fmt.Errorf("tmux returned an empty pane id for window %q", pane.Role)
+		}
+		if err := runCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Session, pane.Role)); err != nil {
+			return err
+		}
+		targets = append(targets, paneID)
+	}
+	for i, pane := range plan.Panes {
+		if err := runCommand("tmux", "send-keys", "-t", targets[i], withTmuxTargetEnv("new-window", pane.Command), "C-m"); err != nil {
+			return err
+		}
+		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {
+			time.Sleep(plan.StartDelay)
+		}
+	}
+	if firstPaneID != "" {
+		quietNotice("Created tmux session %s with one window per agent. Attach with: tmux attach -t %s\n", plan.Session, shellQuote(plan.Session))
+	} else {
+		quietNotice("Added %d agent window(s) to the current tmux session.\n", len(plan.Panes))
+	}
+	verbosePolicyEcho()
+	return nil
+}
+
+// tmuxWindowsHostSession resolves the session to add agent windows to. Inside
+// tmux it is the current session (firstPaneID empty: every agent gets a fresh
+// window). Outside tmux it creates a new detached session whose initial window
+// hosts the first agent (firstPaneID is that window's pane).
+func tmuxWindowsHostSession(plan tmuxLaunchPlan) (session, firstPaneID string, err error) {
+	if os.Getenv("TMUX") != "" {
+		pane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
+		if pane == "" {
+			return "", "", fmt.Errorf("--target new-window inside tmux requires TMUX_PANE; launch from a tmux pane, or use --target new-session")
+		}
+		s, derr := outputCommand("tmux", "display-message", "-p", "-t", pane, "#{session_name}")
+		if derr != nil {
+			return "", "", derr
+		}
+		return strings.TrimSpace(s), "", nil
+	}
+	if err := tmuxEnsureSessionAbsent(plan.Session); err != nil {
+		return "", "", err
+	}
+	out, err := outputCommand("tmux", "new-session", "-d", "-P", "-F", "#{pane_id}",
+		"-s", plan.Session, "-n", tmuxWindowName(plan.Panes[0].Role), "-c", plan.Panes[0].CWD)
+	if err != nil {
+		return "", "", err
+	}
+	return plan.Session, strings.TrimSpace(out), nil
+}
+
+// tmuxWindowName is the human-facing window label for an agent (the role).
+// Window names are labels only — control always targets the exact pane id — so
+// duplicates across the user's session are harmless.
+func tmuxWindowName(role string) string {
+	if strings.TrimSpace(role) == "" {
+		return "agent"
+	}
+	return sanitizeTmuxSessionName(role)
 }
 
 func tmuxSplitDirection(layout string) string {
