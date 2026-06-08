@@ -3,6 +3,7 @@ package tmuxpane
 import (
 	"os/exec"
 	"regexp"
+	"strings"
 )
 
 // busy.go implements the "don't talk over a working agent" guard: before a
@@ -26,23 +27,38 @@ func defaultPaneCapturer(paneID string) (string, error) {
 	return string(out), nil
 }
 
-// busyMarkerRE matches the on-screen indicators an agent shows while it is
-// generating or running a tool — the moment a pushed prompt would be lost. The
-// markers are intentionally conservative (strong, engine-shown phrases) to avoid
-// false positives that would block a legitimate send into an idle agent:
-//   - Claude Code / Codex show "esc to interrupt" (and a "· N tokens" meter)
-//     only while a turn is in flight.
-//   - "esc to cancel" / "Running…" cover tool-run and prompt states.
-var busyMarkerRE = regexp.MustCompile(`(?i)esc to interrupt|esc to cancel|· \d+[.,]?\d*[km]? tokens|Running…|Running\.\.\.`)
+// busyMarkerRE matches the live status-footer indicators an agent shows while a
+// turn is in flight — the moment a pushed prompt would be lost. The set is
+// intentionally TIGHT (strong, engine-shown footer phrases) to avoid false
+// positives that would block a legitimate send into an idle agent: Claude Code
+// and Codex show "esc to interrupt" plus a "· N tokens" meter only while
+// generating, and "esc to cancel" while awaiting a prompt choice. Generic words
+// like "Running…" are deliberately excluded — they appear in ordinary output.
+var busyMarkerRE = regexp.MustCompile(`(?i)esc to interrupt|esc to cancel|· \d+[.,]?\d*[km]? tokens`)
+
+// footerLines is how many trailing lines of the capture to inspect: the live
+// status footer sits at the bottom of a full-screen TUI, so scanning only the
+// tail keeps scrollback content (an assistant response, help text, or test
+// output that merely mentions a marker) from reading as busy.
+const footerLines = 8
 
 // PaneBusy reports whether the agent on paneID appears to be mid-turn. It is
 // best-effort: a capture error returns (false, err) so the caller can choose to
 // proceed (a capture failure must never block delivery on its own); an empty or
-// marker-free capture is treated as idle.
+// marker-free footer is treated as idle.
 func PaneBusy(paneID string) (bool, error) {
 	out, err := paneCapturer(paneID)
 	if err != nil {
 		return false, err
 	}
-	return busyMarkerRE.MatchString(out), nil
+	return busyMarkerRE.MatchString(tailLines(out, footerLines)), nil
+}
+
+// tailLines returns the last n non-trailing-blank lines of s.
+func tailLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
