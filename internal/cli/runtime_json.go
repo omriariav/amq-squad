@@ -95,19 +95,32 @@ func fillPaneAlive(rt *tmuxRuntimeJSON, live map[string]bool) {
 	rt.PaneAlive = rt.PaneID != "" && live[rt.PaneID]
 }
 
-// runtimeActionJSON is one stable, project-scoped command a client (amq-noc)
-// can render or copy for a member. Emitting the exact command keeps the control
-// contract in amq-squad: clients call/copy these instead of assembling tmux or
-// amq-squad invocations themselves.
+// runtimeActionJSON is one stable, project-scoped operator action a client
+// (amq-noc) can render, copy, or execute for a member. Emitting the exact
+// command keeps the control contract in amq-squad: clients call/copy these
+// instead of assembling tmux or amq-squad invocations themselves. The structured
+// metadata (mutates / needs_confirmation / available / reason) lets a client
+// gate an EXECUTABLE action deterministically without hard-coding policy.
 type runtimeActionJSON struct {
-	Kind      string `json:"kind"` // focus | send | resume | status
-	Command   string `json:"command"`
-	Available bool   `json:"available"`
+	// Kind is the stable id of the action (focus | send | resume | status).
+	Kind string `json:"kind"`
+	// Label is a short human-facing name for the action.
+	Label string `json:"label"`
+	// Scope is the action's target granularity (currently always "agent").
+	Scope             string `json:"scope"`
+	Command           string `json:"command"`
+	Mutates           bool   `json:"mutates"`            // changes squad/agent state
+	NeedsConfirmation bool   `json:"needs_confirmation"` // a client should confirm first
+	Available         bool   `json:"available"`
+	// Reason explains why an action is unavailable in the current context;
+	// empty when available.
+	Reason string `json:"reason,omitempty"`
 }
 
-// memberActions builds the per-member action commands. focus/send require a
-// live pane (paneAlive); resume and status are always available. The project
-// flag is included so the command is runnable from anywhere.
+// memberActions builds the per-member action catalog. focus/send require a live
+// pane (paneAlive); resume and status are always available. Each action carries
+// the metadata a client needs to render a confirm-gated executable action. The
+// project flag is included so the command is runnable from anywhere.
 func memberActions(projectDir, profile, session, role string, paneAlive bool) []runtimeActionJSON {
 	base := "amq-squad"
 	scope := " --project " + shellQuote(projectDir)
@@ -116,11 +129,15 @@ func memberActions(projectDir, profile, session, role string, paneAlive bool) []
 	}
 	scope += " --session " + shellQuote(session)
 	roleArg := " --role " + shellQuote(role)
+	deadReason := ""
+	if !paneAlive {
+		deadReason = "agent pane is not live"
+	}
 	return []runtimeActionJSON{
-		{Kind: "focus", Available: paneAlive, Command: base + " focus" + scope + roleArg},
-		{Kind: "send", Available: paneAlive, Command: base + " send" + scope + roleArg + " --body-file -"},
-		{Kind: "resume", Available: true, Command: base + " resume" + scope + " --exec"},
-		{Kind: "status", Available: true, Command: base + " status" + scope + " --json"},
+		{Kind: "focus", Label: "focus pane", Scope: "agent", Mutates: false, NeedsConfirmation: false, Available: paneAlive, Reason: deadReason, Command: base + " focus" + scope + roleArg},
+		{Kind: "send", Label: "send a prompt", Scope: "agent", Mutates: true, NeedsConfirmation: true, Available: paneAlive, Reason: deadReason, Command: base + " send" + scope + roleArg + " --body-file -"},
+		{Kind: "resume", Label: "resume agent", Scope: "agent", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " resume" + scope + " --exec"},
+		{Kind: "status", Label: "show status", Scope: "agent", Mutates: false, NeedsConfirmation: false, Available: true, Command: base + " status" + scope + " --json"},
 	}
 }
 
