@@ -34,12 +34,38 @@ func tmuxRuntimeFromInfo(info *launch.TmuxInfo) *tmuxRuntimeJSON {
 	if info == nil {
 		return nil
 	}
+	// Defensive: a record with an empty tmux object (malformed or externally
+	// written) carries no identity, so omit the block rather than emitting
+	// {"pane_alive": false} with no ids.
+	if info.PaneID == "" && info.WindowID == "" && info.Session == "" && info.WindowName == "" && info.Target == "" {
+		return nil
+	}
 	return &tmuxRuntimeJSON{
 		Session:    info.Session,
 		WindowID:   info.WindowID,
 		WindowName: info.WindowName,
 		PaneID:     info.PaneID,
 		Target:     info.Target,
+	}
+}
+
+// memoizePaneLister wraps a pane lister so the underlying `tmux list-panes`
+// runs at most once; the cached (panes, error) is returned on every call. A
+// command installs this for its duration so independent readers (e.g. status's
+// live-replacement detection and pane_alive resolution) share one snapshot and
+// one tmux call instead of re-listing per member.
+func memoizePaneLister(list tmuxpane.PaneLister) tmuxpane.PaneLister {
+	var (
+		done  bool
+		panes []tmuxpane.TmuxPane
+		err   error
+	)
+	return func() ([]tmuxpane.TmuxPane, error) {
+		if !done {
+			panes, err = list()
+			done = true
+		}
+		return panes, err
 	}
 }
 

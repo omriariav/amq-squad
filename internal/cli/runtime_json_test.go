@@ -28,6 +28,30 @@ func TestTmuxRuntimeFromInfo(t *testing.T) {
 	}
 }
 
+func TestTmuxRuntimeFromEmptyInfoIsNil(t *testing.T) {
+	// A record with an empty tmux object carries no identity -> omit the block.
+	if rt := tmuxRuntimeFromInfo(&launch.TmuxInfo{}); rt != nil {
+		t.Fatalf("empty tmux info should map to nil, got %+v", rt)
+	}
+}
+
+func TestMemoizePaneListerCallsUnderlyingOnce(t *testing.T) {
+	calls := 0
+	memo := memoizePaneLister(func() ([]tmuxpane.TmuxPane, error) {
+		calls++
+		return []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil
+	})
+	for i := 0; i < 3; i++ {
+		panes, _ := memo()
+		if len(panes) != 1 || panes[0].PaneID != "%1" {
+			t.Fatalf("memoized lister returned wrong snapshot: %+v", panes)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("underlying lister called %d times, want exactly 1", calls)
+	}
+}
+
 func TestFillPaneAlive(t *testing.T) {
 	live := map[string]bool{"%5": true}
 	rt := &tmuxRuntimeJSON{PaneID: "%5"}

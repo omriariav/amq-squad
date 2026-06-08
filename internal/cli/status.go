@@ -167,13 +167,23 @@ func executeStatus(s statusExecution) error {
 		return err
 	}
 
+	// Share one tmux pane snapshot across this whole command: live-replacement
+	// detection inside classifyMemberStatus and pane_alive resolution below
+	// both read statusPaneLister, so memoize it for the command's duration —
+	// `tmux list-panes` runs at most once and both readings see the same
+	// snapshot (avoiding N+1 calls and snapshot skew).
+	restoreLister := statusPaneLister
+	statusPaneLister = memoizePaneLister(restoreLister)
+	defer func() { statusPaneLister = restoreLister }()
+
 	members := orderedTeamMembers(t.Members)
 	rows := make([]statusRecord, 0, len(members))
 	for _, m := range members {
 		rows = append(rows, classifyMemberStatus(t, m, workstream, s.Probe))
 	}
-	// Resolve pane liveness once for every member that recorded a tmux pane, so
-	// clients can tell a still-valid pane from a stale launch record.
+	// Resolve pane liveness for every member that recorded a tmux pane, so
+	// clients can tell a still-valid pane from a stale launch record. Uses the
+	// same memoized snapshot as classification above.
 	var livePanes map[string]bool
 	for i := range rows {
 		if rows[i].Tmux != nil {
