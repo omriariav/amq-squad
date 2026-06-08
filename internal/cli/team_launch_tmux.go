@@ -177,9 +177,16 @@ func tmuxDryRunLines(plan tmuxLaunchPlan) []string {
 // into its own tmux window (in the current session when run from inside tmux,
 // otherwise a new session). Control still targets exact pane ids.
 func tmuxWindowsDryRunLines(plan tmuxLaunchPlan) []string {
+	// This preview shows the inside-tmux path (add a window per agent to the
+	// current session) — the common way to use --target new-window. Launched
+	// LIVE outside tmux, the backend instead creates a new detached
+	// '<session>' session whose first window hosts the first agent; that path
+	// isn't copy-pasteable as a one-liner, so the `:?` guard fails loudly here
+	// rather than emitting a command against a session that doesn't exist.
 	lines := []string{
-		`session=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{session_name}' 2>/dev/null || echo ` + shellQuote(plan.Session) + `)`,
-		"# one tmux window per agent in $session (a new '" + plan.Session + "' session is created when launched outside tmux)",
+		"# one tmux window per agent, added to your current tmux session",
+		"# (launched live outside tmux, a new detached '" + plan.Session + "' session is created instead)",
+		`session=$(tmux display-message -p -t "${TMUX_PANE:?run from inside tmux, or launch live with: amq-squad up --target new-window}" '#{session_name}')`,
 	}
 	targets := make([]string, 0, len(plan.Panes))
 	for i, pane := range plan.Panes {
@@ -196,7 +203,11 @@ func tmuxWindowsDryRunLines(plan tmuxLaunchPlan) []string {
 			lines = append(lines, sleepDryRunLine(plan.StartDelay))
 		}
 	}
-	lines = append(lines, "# switch between agents with: tmux select-window -t \"$session:<role>\" (or click the iTerm2 tab under -CC)")
+	if plan.Workstream != "" {
+		// Switch to an agent by pane id, not window name (names can collide):
+		// amq-squad focus resolves the exact pane.
+		lines = append(lines, "# focus an agent with: "+shellCommand("amq-squad", "focus", "--session", plan.Workstream, "--role", "<role>"))
+	}
 	return lines
 }
 
