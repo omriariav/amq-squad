@@ -92,7 +92,7 @@ func runTeamLaunch(args []string) error {
 
 Usage:
   amq-squad team launch [--profile NAME] [--session workstream] [--fresh] [--terminal tmux]
-    [--target current-window|new-session] [--layout vertical|horizontal|tiled]
+    [--target current-window|new-window|new-session] [--layout vertical|horizontal|tiled]
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
     [--trust sandboxed|trusted] [--model role=model,...]
     [--codex-args args] [--claude-args args]
@@ -100,8 +100,10 @@ Usage:
 
 Supported terminal backends: %s
 
-tmux defaults to splitting the current tmux window. Use --target new-session
-to create a detached squad session. The whole roster is preflighted for live
+tmux defaults to splitting the current tmux window into one pane per agent. Use
+--target new-window for one tmux window (iTerm2 tab under -CC) per agent — a
+full-size terminal each, better for many agents. Use --target new-session to
+create a detached squad session. The whole roster is preflighted for live
 duplicates before any tmux command runs; --force-duplicate overrides.
 
 Examples:
