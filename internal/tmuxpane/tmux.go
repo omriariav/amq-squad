@@ -131,7 +131,11 @@ func CurrentPaneIdentity() (*PaneIdentity, error) {
 // active one) is deliberate: control must not depend on which client/window is
 // currently focused.
 func PaneIdentityFor(paneID string) (*PaneIdentity, error) {
-	const format = "#{session_name}\t#{window_id}\t#{window_name}\t#{pane_id}"
+	// Stable ids (pane_id, window_id, session_name) come first because they can
+	// never contain a tab; window_name is a user-settable label that can, so it
+	// is parsed last as the joined remainder. This guarantees a weird window
+	// name can corrupt only the label, never the control addresses.
+	const format = "#{pane_id}\t#{window_id}\t#{session_name}\t#{window_name}"
 	out, err := captureExec("display-message", "-p", "-t", paneID, format)
 	if err != nil {
 		return nil, fmt.Errorf("tmux display-message -t %s: %w", paneID, err)
@@ -141,10 +145,10 @@ func PaneIdentityFor(paneID string) (*PaneIdentity, error) {
 		return nil, fmt.Errorf("unexpected tmux display-message output %q", out)
 	}
 	return &PaneIdentity{
-		Session:    fields[0],
+		PaneID:     fields[0],
 		WindowID:   fields[1],
-		WindowName: fields[2],
-		PaneID:     fields[3],
+		Session:    fields[2],
+		WindowName: strings.Join(fields[3:], "\t"),
 	}, nil
 }
 
@@ -156,7 +160,11 @@ func DefaultPaneLister() ([]TmuxPane, error) {
 	// panes) leaves a trailing tab the parser tolerates; pane_title carries the
 	// name-first resolution token and window_name the cross-session focus
 	// fallback.
-	const format = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{window_name}\t#{pane_id}\t#{window_id}"
+	// pane_id + window_id (exact control addresses, tab-free) are placed before
+	// the trailing human labels pane_title + window_name so a label containing a
+	// tab can never shift the ids. window_name remains the last field so the
+	// parser can absorb any embedded tabs into it.
+	const format = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_id}\t#{window_id}\t#{pane_title}\t#{window_name}"
 	out, err := exec.Command("tmux", "list-panes", "-a", "-F", format).Output()
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-panes: %w", err)
@@ -186,23 +194,23 @@ func parsePanes(out string) []TmuxPane {
 			Command: fields[4],
 			CWD:     fields[5],
 		}
-		// pane_title is the optional 7th field; tolerate panes captured without
-		// it (older tmux output, or rows that simply have no title).
+		// Field order is: session, window_index, pane_index, pane_pid,
+		// pane_current_command, pane_current_path, pane_id, window_id,
+		// pane_title, window_name. The exact ids (6,7) precede the human labels
+		// (8,9) so a tab in a label cannot shift them. All four trailing fields
+		// are optional; rows shorter than the current format still parse.
 		if len(fields) >= 7 {
-			pane.Title = fields[6]
+			pane.PaneID = strings.TrimSpace(fields[6])
 		}
-		// window_name is the optional 8th field; tolerate its absence too.
 		if len(fields) >= 8 {
-			pane.WindowName = fields[7]
+			pane.WindowID = strings.TrimSpace(fields[7])
 		}
-		// pane_id (#{pane_id}) and window_id (#{window_id}) are the optional 9th
-		// and 10th fields — the exact tmux control addresses. Tolerate absence
-		// for callers/tests still on the older 8-field format.
 		if len(fields) >= 9 {
-			pane.PaneID = strings.TrimSpace(fields[8])
+			pane.Title = fields[8]
 		}
+		// window_name is last; absorb any embedded tabs into it.
 		if len(fields) >= 10 {
-			pane.WindowID = strings.TrimSpace(fields[9])
+			pane.WindowName = strings.Join(fields[9:], "\t")
 		}
 		panes = append(panes, pane)
 	}

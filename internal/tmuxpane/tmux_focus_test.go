@@ -284,12 +284,13 @@ func TestITermFocusToken_PrefersTitleThenWindowName(t *testing.T) {
 	}
 }
 
-// TestParsePanes_ParsesWindowName proves the 8th field (window_name) is parsed
-// and carried, and that older 7-field rows still parse (window name empty).
+// TestParsePanes_ParsesWindowName proves the trailing window_name field is
+// parsed and carried, and that shorter rows without it still parse (window name
+// empty). Field order: ...,cwd,pane_id,window_id,pane_title,window_name.
 func TestParsePanes_ParsesWindowName(t *testing.T) {
 	out := "" +
-		"beta\t0\t0\t100\tcodex\t/repo\tamq:beta:cpo\tcpo-win\n" + // 8 fields
-		"beta\t0\t1\t200\tcodex\t/repo\tamq:beta:cto\n" // 7 fields (no window name)
+		"beta\t0\t0\t100\tcodex\t/repo\t%0\t@0\tamq:beta:cpo\tcpo-win\n" + // 10 fields
+		"beta\t0\t1\t200\tcodex\t/repo\t%1\t@0\tamq:beta:cto\n" // 9 fields (no window name)
 	panes := parsePanes(out)
 	if len(panes) != 2 {
 		t.Fatalf("expected 2 panes, got %d: %+v", len(panes), panes)
