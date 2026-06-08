@@ -1,0 +1,4 @@
+interface:
+  display_name: "AMQ Squad Role Creator"
+  short_description: "Author custom amq-squad roles and wire them into a team"
+  default_prompt: "Use $amq-squad-role-creator to add a custom amq-squad role that is not in the built-in persona catalog: write a role file (Markdown with optional YAML frontmatter, .yaml, or .json) or use the inline `--roles X --binary X=<cli>` shortcut, then add it via `team init` / `new team` / `new profile`."
