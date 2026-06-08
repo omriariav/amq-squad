@@ -1,8 +1,8 @@
 ---
 name: amq-squad
-description: Project-aware skill for live amq-squad team coordination after `.amq-squad/team.json` exists. Covers inbox drains, routing, review/handoff, status board/console/history, up/stop/resume/fork/rm/archive (down is a deprecated alias), agent up/resume, doctor, workstream briefs, and ACTIVE-EPIC startup. For first-time team design (personas, profile choice, team rules, pointer stubs, brief authoring, sync), prefer the companion `amq-team-setup` skill. Use raw `amq-cli` only for AMQ debugging outside the squad.
+description: Project-aware skill for live amq-squad team coordination after `.amq-squad/team.json` exists. Covers inbox drains, routing, review/handoff, status board/console/history, up/stop/resume/fork/rm/archive (down is a deprecated alias), agent up/resume, doctor, workstream briefs, ACTIVE-EPIC startup, and tmux runtime control — focus/open/send to exact panes, deterministic prompt delivery, --target new-window window-per-agent, and tmux runtime metadata (pane ids, pane_alive, action commands) in status/history/resume --json for clients like amq-noc. For first-time team design (personas, profile choice, team rules, pointer stubs, brief authoring, sync), prefer the companion `amq-team-setup` skill. Use raw `amq-cli` only for AMQ debugging outside the squad.
 allowed-tools: Bash, Read, Write, Edit, MultiEdit, Glob, Grep
-argument-hint: "[drain | review | handoff | status | console | up | stop | resume | fork | rm | doctor]"
+argument-hint: "[drain | review | handoff | status | console | up | focus | send | resume | fork | rm | doctor]"
 user-invocable: true
 trigger: /amq-squad
 ---
@@ -43,6 +43,8 @@ The lifecycle is one small state machine: `(none) --up--> running --stop--> stop
 | Move a finished session aside (non-destructive) | `amq-squad archive <session>` |
 | Multi-session board (also the bare command) | `amq-squad status` / `amq-squad` |
 | Single-session detail | `amq-squad status --session <name>` |
+| Focus an agent's pane (or the session) | `amq-squad focus --session <name> [--role R]` (`open` = session alias) |
+| Deliver a prompt to an agent's pane + submit | `amq-squad send --session <name> --role R --body "..."` |
 | Live read-only Mission Control TUI | `amq-squad console` (`--once` for CI) |
 | Inspect restorable launch records (project history) | `amq-squad history` |
 | Launch a single agent (modern verb) | `amq-squad agent up <binary>` |
@@ -51,13 +53,32 @@ The lifecycle is one small state machine: `(none) --up--> running --stop--> stop
 | List configured profiles | `amq-squad team profiles` |
 | Sync the pointer stub into `CLAUDE.md` / `AGENTS.md` | `amq-squad team sync --apply` |
 
-`up` means NEW work and **refuses** a session that already exists — use `resume` to continue it, or `up --reset` to start over. `stop` is the primary teardown (`down` is a deprecated alias for one release). With no `--seed-from`/`--brief`, `up` AUTO-STUBS the brief and prints a one-line notice — so before `up`, decide whether to author the brief first (`up --dry-run --seed-from ...`) or let `up` stub it and edit afterward. `rm`/`archive` are the only destructive ops; both confirm-gate (default No, `--yes` to skip) and refuse a live session unless `--force`.
+`up` means NEW work and **refuses** a session that already exists — use `resume` to continue it, or `up --reset` to start over. `stop` is the primary teardown (`down` is a deprecated alias for one release). With no `--seed-from`, `up` AUTO-STUBS the brief and prints a one-line notice — so before `up`, decide whether to author the brief first (`up --dry-run --seed-from ...`) or let `up` stub it and edit afterward. `rm`/`archive` are the only destructive ops; both confirm-gate (default No, `--yes` to skip) and refuse a live session unless `--force`.
 
 Pass `--profile NAME` to operate on a named profile under `.amq-squad/teams/<name>.json`. Omit (or pass `--profile default`) for `.amq-squad/team.json`.
 
-Every command accepts `--json` where machine-readable output makes sense (`status`, `history`, `doctor`, `team profiles`, `version`, and `up --dry-run`). JSON outputs are schema-versioned envelopes `{ schema_version, kind, data }`. Diagnostics stay on stderr; stdout under `--json` is pure JSON.
+Every command accepts `--json` where machine-readable output makes sense (`status`, `history`, `resume`, `doctor`, `team profiles`, `version`, and `up --dry-run`). JSON outputs are schema-versioned envelopes `{ schema_version, kind, data }`. Diagnostics stay on stderr; stdout under `--json` is pure JSON. For machine clients, the per-member records in `status --session <name> --json` (kind `status`), `history --json`, and `resume --json` (kind `resume_plan`) carry a `tmux` runtime block (`session`, `window_id`, `window_name`, `pane_id`, `target`) plus a computed `pane_alive` — **present only for agents launched in tmux**, so detect by presence. `status --session <name> --json` records additionally carry an `actions` array (`focus`/`send`/`resume`/`status`) with the exact runnable command and an `available` flag, so a client (e.g. amq-noc) renders/copies stable commands instead of inferring tmux state. (The bare `amq-squad status --json` is the multi-session board envelope `kind: sessions` — it has no per-member records or actions; use `--session <name>` for member detail.)
 
 Global output flags work before or after the subcommand: `--quiet`, `--verbose`, `--color auto|always|never`. `NO_COLOR` wins over `--color=always`. `--quiet` and `--verbose` are mutually exclusive.
+
+## Runtime control (tmux)
+
+amq-squad owns the tmux execution/control contract, so drive agents by stable command — never raw `tmux send-keys`/`select-window`. Control targets the exact recorded **pane id**, never window names.
+
+- **`amq-squad focus --session S [--role R]`** — bring an agent's pane into view (with `--role`), or the session's first live pane (no role). `open` is the session alias.
+- **`amq-squad send --session S --role R --body "..."`** (or `--body-file F`, or `--body-file -` for stdin) — deliver a prompt into an agent's exact pane and submit it with one Enter. Text is staged in a tmux paste buffer (not a shell string), so **multi-line prompts and text with quotes or shell metacharacters arrive verbatim**. It errors clearly if the pane is gone. (Note: it does not yet check whether the agent is mid-turn — avoid sending into a visibly busy agent.)
+  - This is **pane delivery, not an AMQ message**: `amq-squad send` takes `--body`/`--body-file` and has **no `--kind`/`--thread`**. To post an inter-agent AMQ message, use `amq send ... --kind <valid kind>` (see *Route messages*) — never put a `--kind` on `amq-squad send`.
+- Each agent launched in tmux persists its exact tmux identity in its launch record; `status --session <name> --json`, `history --json`, and `resume --json` expose it plus `pane_alive`, and the single-session `status --json` `actions[]` give the exact focus/send/resume commands. Prefer those over hand-built tmux.
+
+**Launch topology** — `amq-squad up --target ...`:
+
+| `--target` | topology | best for |
+| --- | --- | --- |
+| `current-window` (default) | one **pane** per agent, split in your current tmux window | 2 agents, in-context |
+| `new-window` | one **window** per agent (an iTerm2 tab under `-CC`) — full-size terminal each | many agents |
+| `new-session` | a detached squad session you `tmux attach` to | background squads |
+
+All three share the same pane-id control contract, so `focus`/`send`/`status` work identically regardless of topology.
 
 ## Rules
 
@@ -105,7 +126,7 @@ Global output flags work before or after the subcommand: `--quiet`, `--verbose`,
        --subject "Review: X" --body "Please review."
      ```
    - Decisions: `--thread decision/<topic> --kind decision`.
-   - Valid `--kind` values (enforced by `amq`): `brainstorm, review_request, review_response, question, answer, decision, status, todo`. **There is no `handoff` kind** — send a role-to-role handoff as `--kind review_request` (work to take over) or `--kind todo` (a queued task). Emitting `--kind handoff` fails validation and falls back to `status`, losing the intended label.
+   - Valid `--kind` values (enforced by `amq`): `brainstorm, review_request, review_response, question, answer, decision, status, todo`. **There is no `handoff` kind** — send a role-to-role handoff as `--kind review_request` (work to take over) or `--kind todo` (a queued task). An unknown kind (e.g. `--kind handoff`) is **rejected** with a validation error (`--kind must be one of: ...`) and the message is **not sent** — always pass a valid kind.
    - **Surfacing to the human:** use the operator handle declared in the current team rules/profile. Default schema-3 teams use non-runnable handle `user`; custom `--operator HANDLE` teams use that handle; `--no-operator` teams route human-facing asks through the lead/CTO rule instead. Human gates use stable `gate/<topic>` threads, for example `amq send --to <operator> --thread gate/<topic> --subject "APPROVAL: ..." --kind question`.
    - Synchronous wait: append `--wait-for drained --wait-timeout 60s`.
    - Cross-session sends need explicit `--session` and `--thread`; avoid them in normal flow.
@@ -140,9 +161,17 @@ amq-squad doctor
 
 # Bring up the configured team on NEW work
 amq-squad up issue-96
+amq-squad up issue-96 --target new-window   # one window/tab per agent (full screen each)
 
 # Preview the launch plan
 amq-squad up --dry-run
+
+# Runtime control: focus a pane, deliver a prompt, read the action contract
+amq-squad focus --session issue-96 --role cto
+amq-squad send  --session issue-96 --role cto --body "please review PR #69"
+cat prompt.md | amq-squad send --session issue-96 --role qa --body-file -
+amq-squad status --session issue-96 --json | jq '.data.records[] | {role, tmux, actions}'
+amq-squad resume --session issue-96 --json | jq '.kind, .data.plan'
 
 # Seed a brief from a GitHub issue and write it
 amq-squad up --dry-run --json --seed-from gh:owner/repo#31 | jq .
