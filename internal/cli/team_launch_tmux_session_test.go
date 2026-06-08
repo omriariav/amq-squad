@@ -189,9 +189,10 @@ func TestTmuxSessionBackendRegistered(t *testing.T) {
 // backend did not perturb the default path.
 func TestDefaultTmuxBackendStillEmitsSplitPanePlan(t *testing.T) {
 	plan := tmuxLaunchPlan{
-		Session: "amq-squad-repo",
-		Target:  "new-session",
-		Layout:  "vertical",
+		Session:    "amq-squad-repo",
+		Workstream: "repo",
+		Target:     "new-session",
+		Layout:     "vertical",
 		Panes: []teamLaunchPane{
 			{Role: "cto", CWD: "/repo", Command: "cd /repo && amq-squad agent up codex"},
 			{Role: "qa", CWD: "/repo", Command: "cd /repo && amq-squad agent up claude"},
@@ -203,7 +204,7 @@ func TestDefaultTmuxBackendStillEmitsSplitPanePlan(t *testing.T) {
 		"tmux new-session -d -s amq-squad-repo -n squad -c /repo",
 		"pane_1=$(tmux split-window -P -F '#{pane_id}' -t 'amq-squad-repo:0' -h -c /repo)",
 		"tmux select-layout -t 'amq-squad-repo:0' even-horizontal",
-		"tmux select-pane -t 'amq-squad-repo:0.0' -T 'amq:amq-squad-repo:cto'",
+		"tmux select-pane -t 'amq-squad-repo:0.0' -T 'amq:repo:cto'",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("default tmux plan regressed, missing %q in:\n%s", want, got)

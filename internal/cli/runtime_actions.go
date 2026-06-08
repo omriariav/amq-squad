@@ -88,7 +88,9 @@ func resolveControlTarget(mr memberRuntime, workstream string, panes []tmuxpane.
 	// wrong agent (a same-cwd/engine peer whose pane is still alive). Report
 	// not-found so the verb errors clearly instead of guessing.
 	if id := mr.recordedPaneID(); id != "" {
-		if p, found := tmuxpane.FindPaneByID(id, panes); found && sameResolvedDir(p.CWD, mr.CWD) {
+		if p, found := tmuxpane.FindPaneByID(id, panes); found &&
+			sameResolvedDir(p.CWD, mr.CWD) &&
+			!paneTitledForDifferentAgent(p.Title, workstream, mr.Member.Role) {
 			return id, tmuxpane.TargetFromPane(p), true
 		}
 		return "", tmuxpane.TmuxTarget{}, false
@@ -130,6 +132,21 @@ func resolveDir(dir string) string {
 		return resolved
 	}
 	return filepath.Clean(abs)
+}
+
+// paneTitledForDifferentAgent reports whether a pane carries an amq title token
+// (amq:<workstream>:<role>) for a role OTHER than the expected one — i.e. the
+// recorded pane id was reused by a sibling agent (e.g. after a tmux server
+// restart) in the same repo. Such a pane must not be trusted for the recorded
+// agent even when its cwd matches, or `send` could deliver to the wrong agent.
+// An untitled or clobbered (non-amq) title is not second-guessed: the recorded
+// pane id + cwd match stand.
+func paneTitledForDifferentAgent(title, workstream, role string) bool {
+	title = strings.TrimSpace(title)
+	if !strings.HasPrefix(title, "amq:") {
+		return false
+	}
+	return title != paneTitleToken(workstream, role)
 }
 
 // paneIDForTarget returns the #{pane_id} of the live pane the resolver selected,

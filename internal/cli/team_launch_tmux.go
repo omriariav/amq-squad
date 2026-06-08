@@ -147,13 +147,13 @@ func tmuxDryRunLines(plan tmuxLaunchPlan) []string {
 		lines = append(lines, shellCommand("tmux", "new-session", "-d", "-s", plan.Session, "-n", "squad", "-c", plan.Panes[0].CWD))
 	}
 	targets := []string{firstTarget}
-	lines = append(lines, tmuxSelectPaneDryRunLine(firstTarget, paneTitleToken(plan.Session, plan.Panes[0].Role)))
+	lines = append(lines, tmuxSelectPaneDryRunLine(firstTarget, paneTitleToken(plan.Workstream, plan.Panes[0].Role)))
 	for i, pane := range plan.Panes[1:] {
 		paneVar := fmt.Sprintf("pane_%d", i+1)
 		targets = append(targets, "$"+paneVar)
 		lines = append(lines,
 			tmuxSplitDryRunLine(paneVar, windowTarget, pane.CWD, plan.Layout),
-			tmuxSelectPaneDryRunLine("$"+paneVar, paneTitleToken(plan.Session, pane.Role)),
+			tmuxSelectPaneDryRunLine("$"+paneVar, paneTitleToken(plan.Workstream, pane.Role)),
 		)
 	}
 	if len(plan.Panes) > 1 {
@@ -194,7 +194,7 @@ func tmuxWindowsDryRunLines(plan tmuxLaunchPlan) []string {
 		targets = append(targets, "$"+v)
 		lines = append(lines,
 			v+`=$(tmux new-window -d -P -F '#{pane_id}' -t "$session:" -n `+shellQuote(tmuxWindowName(pane.Role))+" -c "+shellQuote(pane.CWD)+")",
-			tmuxSelectPaneDryRunLine("$"+v, paneTitleToken(plan.Session, pane.Role)),
+			tmuxSelectPaneDryRunLine("$"+v, paneTitleToken(plan.Workstream, pane.Role)),
 		)
 	}
 	for i, pane := range plan.Panes {
@@ -240,15 +240,17 @@ func tmuxSelectPaneDryRunLine(target, title string) string {
 }
 
 // paneTitleToken builds the deterministic, machine-parseable pane title that the
-// Tmux pane resolution is name-first: "amq:<session>:<role>". The role is unique per
-// agent within a session, so two agents that share a repo AND an engine (the
-// bug: cpo·codex + cto·codex in the same dir) still get distinct titles. The
-// token doubles as a human-facing label since it carries the role. When the role
-// is empty it is omitted, leaving "amq:<session>:" — callers always pass a role
-// for real members, but this stays parseable. MUST stay in lockstep with the
-// resolver's expectedPaneToken in internal/tmuxpane/tmux.go.
-func paneTitleToken(session, role string) string {
-	return "amq:" + session + ":" + role
+// name-first tmux pane resolution matches: "amq:<workstream>:<role>". The
+// session component is the AMQ WORKSTREAM (not the tmux/terminal session name),
+// because that is the agent identity every resolver caller (status, focus, send)
+// keys off — stamping the terminal-session name here would make the title never
+// match the resolver's expectedPaneToken and break name-first/exclusion. The
+// role is unique per agent within a workstream, so two agents that share a repo
+// AND an engine (cpo·codex + cto·codex in one dir) still get distinct titles.
+// MUST stay in lockstep with expectedPaneToken in internal/tmuxpane/tmux.go,
+// which is called with the workstream.
+func paneTitleToken(workstream, role string) string {
+	return "amq:" + workstream + ":" + role
 }
 
 func tmuxSendKeysDryRunLine(target, command string) string {
@@ -292,7 +294,7 @@ func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
 	default:
 		return fmt.Errorf("unsupported tmux target %q", plan.Target)
 	}
-	if err := runCommand("tmux", "select-pane", "-t", firstTarget, "-T", paneTitleToken(plan.Session, plan.Panes[0].Role)); err != nil {
+	if err := runCommand("tmux", "select-pane", "-t", firstTarget, "-T", paneTitleToken(plan.Workstream, plan.Panes[0].Role)); err != nil {
 		return err
 	}
 	targets := []string{firstTarget}
@@ -306,7 +308,7 @@ func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
 			return fmt.Errorf("tmux split-window returned empty pane id")
 		}
 		targets = append(targets, paneID)
-		if err := runCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Session, pane.Role)); err != nil {
+		if err := runCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Workstream, pane.Role)); err != nil {
 			return err
 		}
 	}
@@ -362,7 +364,7 @@ func runTmuxWindowsPlan(plan tmuxLaunchPlan) error {
 		if paneID == "" {
 			return fmt.Errorf("tmux returned an empty pane id for window %q", pane.Role)
 		}
-		if err := runCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Session, pane.Role)); err != nil {
+		if err := runCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Workstream, pane.Role)); err != nil {
 			return err
 		}
 		targets = append(targets, paneID)
