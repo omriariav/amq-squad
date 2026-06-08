@@ -254,7 +254,8 @@ func ResolveTmuxTargetForSession(a state.Agent, sessionName, projectDir string, 
 	// title match. This disambiguates agents that share the same cwd AND engine:
 	// the bug where cpo·codex and cto·codex in one repo both match the same panes
 	// under the cwd+engine scoring below and resolve to whichever pane comes first.
-	if want := expectedPaneToken(sessionName, a); want != "" {
+	want := expectedPaneToken(sessionName, a)
+	if want != "" {
 		for _, p := range panes {
 			if p.Title == want {
 				return targetFromPane(p), true
@@ -263,7 +264,7 @@ func ResolveTmuxTargetForSession(a state.Agent, sessionName, projectDir string, 
 	}
 
 	// Fallback: cwd+engine+pid scoring for panes launched before titles existed
-	// (or non-amq panes). Unchanged from the original resolver.
+	// (or non-amq panes).
 	wantCWD := cleanDir(projectDir)
 	engine := strings.ToLower(strings.TrimSpace(a.Engine))
 
@@ -272,6 +273,13 @@ func ResolveTmuxTargetForSession(a state.Agent, sessionName, projectDir string, 
 	ok := false
 
 	for _, p := range panes {
+		// A pane explicitly stamped for a DIFFERENT amq agent belongs to that
+		// agent's role only. The exact-token match already ran above; in the
+		// fallback, skip any other amq-tokened pane so a dead agent's request
+		// never resolves onto a live sibling that merely shares cwd+engine.
+		if want != "" && isAmqPaneToken(p.Title) && p.Title != want {
+			continue
+		}
 		if cleanDir(p.CWD) != wantCWD {
 			continue
 		}
@@ -301,6 +309,12 @@ func ResolveTmuxTargetForSession(a state.Agent, sessionName, projectDir string, 
 		return TmuxTarget{}, false
 	}
 	return targetFromPane(best), true
+}
+
+// isAmqPaneToken reports whether a pane title is a launcher-stamped amq token
+// ("amq:<session>:<role>"), i.e. the pane is explicitly owned by a known agent.
+func isAmqPaneToken(title string) bool {
+	return strings.HasPrefix(title, "amq:")
 }
 
 // targetFromPane builds a TmuxTarget from a resolved pane, carrying its title
@@ -391,10 +405,20 @@ func cleanDir(dir string) string {
 	if dir == "" {
 		return ""
 	}
-	if abs, err := filepath.Abs(dir); err == nil {
-		return filepath.Clean(abs)
+	// Absolutize first, then resolve symlinks, so a member cwd like macOS
+	// /var/folders/... (a symlink to /private/var/folders/...) matches what tmux
+	// reports for the pane via #{pane_current_path} (the resolved real path).
+	// Without this, panes in a symlinked project dir never match and
+	// focus/jump/send silently miss. Falls back to Abs+Clean when the path can't
+	// be resolved (e.g. it does not exist, as in fake test fixtures).
+	abs := dir
+	if a, err := filepath.Abs(dir); err == nil {
+		abs = a
 	}
-	return filepath.Clean(dir)
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return filepath.Clean(abs)
 }
 
 // NotInTmuxError is returned by SwitchTo when invoked outside any tmux client
