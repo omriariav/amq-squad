@@ -54,6 +54,27 @@ type Record struct {
 	// means the implicit default profile. Captured so status / bootstrap
 	// routing can reuse the same profile without rereading flags.
 	TeamProfile string `json:"team_profile,omitempty"`
+	// Tmux is the tmux runtime identity captured at launch time when
+	// amq-squad runs inside tmux. nil when launched outside tmux (or when
+	// tmux metadata could not be resolved). Clients detect runtime-control
+	// availability by the presence of this object, not by Schema.
+	Tmux *TmuxInfo `json:"tmux,omitempty"`
+}
+
+// TmuxInfo is the exact tmux identity of the pane an agent was launched into.
+// Pane and window ids (e.g. "%265", "@42") are stable tmux control addresses
+// and are the only values that should be used to target follow-up control.
+// WindowName is a human label that can collide and must never be treated as an
+// address.
+type TmuxInfo struct {
+	Session    string `json:"session,omitempty"`
+	WindowID   string `json:"window_id,omitempty"`
+	WindowName string `json:"window_name,omitempty"`
+	PaneID     string `json:"pane_id,omitempty"`
+	// Target records how the pane was created relative to the launching
+	// environment: "current-window", "new-window", or "new-session". Empty
+	// when not known to the launcher.
+	Target string `json:"target,omitempty"`
 }
 
 // Entry is a launch record plus the mailbox directory it was discovered in.

@@ -152,7 +152,7 @@ func runTmuxSessionLaunchPlan(plan tmuxSessionLaunchPlan) error {
 		if err := runCommand(tmuxSessionBinary, tmuxSessionCreateArgv(plan.Workstream, pane.Role, pane.CWD)...); err != nil {
 			return err
 		}
-		if err := runCommand("tmux", "send-keys", "-t", plan.Workstream+":"+pane.Role, pane.Command, "C-m"); err != nil {
+		if err := runCommand("tmux", "send-keys", "-t", plan.Workstream+":"+pane.Role, withTmuxTargetEnv("new-window", pane.Command), "C-m"); err != nil {
 			return err
 		}
 		if err := runCommand(tmuxSessionBinary, tmuxSessionRenameArgv(plan.Workstream, pane.Role)...); err != nil {
