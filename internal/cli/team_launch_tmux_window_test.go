@@ -37,10 +37,10 @@ func TestTmuxDryRunNewWindowOneWindowPerAgent(t *testing.T) {
 	if strings.Contains(joined, "select-layout") {
 		t.Errorf("new-window has no pane-layout step:\n%s", joined)
 	}
-	if c := strings.Count(joined, "new-window"); c != 2 {
-		t.Errorf("expected 2 new-window invocations (one per agent), got %d:\n%s", c, joined)
+	if c := strings.Count(joined, "tmux new-window"); c != 2 {
+		t.Errorf("expected 2 tmux new-window invocations (one per agent), got %d:\n%s", c, joined)
 	}
-	if c := strings.Count(joined, "send-keys"); c != 2 {
+	if c := strings.Count(joined, "tmux send-keys"); c != 2 {
 		t.Errorf("expected one send-keys per agent, got %d:\n%s", c, joined)
 	}
 	// Each agent still gets its deterministic pane-title token (so focus/send
