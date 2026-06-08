@@ -14,7 +14,15 @@ import (
 	"github.com/omriariav/amq-squad/internal/launch"
 	"github.com/omriariav/amq-squad/internal/role"
 	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/internal/tmuxpane"
 )
+
+// envTmuxTarget carries the tmux launch target (current-window / new-window /
+// new-session) from a team-launch backend into each agent's launcher process,
+// so the per-agent launch record can persist how its pane was created. It is
+// set only on the live tmux launch paths; manual `agent up` launches leave it
+// unset and record an empty target.
+const envTmuxTarget = "AMQ_SQUAD_TMUX_TARGET"
 
 // runLaunch is the real single-agent launcher. The top-level `launch` verb is
 // legacy; this body now backs `agent up` (via runAgentUp -> translateAgentUpArgs)
@@ -199,6 +207,21 @@ Examples:
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
 		TeamProfile:      strings.TrimSpace(*teamProfile),
+	}
+
+	// Capture exact tmux identity (session/window/pane ids) when launched
+	// inside tmux, so clients can target follow-up control by stable pane id
+	// instead of re-inferring from window names. Best-effort: a capture failure
+	// must never block the launch. This runs before exec while $TMUX/$TMUX_PANE
+	// still describe this agent's pane.
+	if id, err := tmuxpane.CurrentPaneIdentity(); err == nil && id != nil {
+		rec.Tmux = &launch.TmuxInfo{
+			Session:    id.Session,
+			WindowID:   id.WindowID,
+			WindowName: id.WindowName,
+			PaneID:     id.PaneID,
+			Target:     strings.TrimSpace(os.Getenv(envTmuxTarget)),
+		}
 	}
 
 	// Keep generated bootstrap out of launch.json so restore stays compact
