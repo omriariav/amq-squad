@@ -191,6 +191,22 @@ func TestReadPromptBody(t *testing.T) {
 	}
 }
 
+func TestResumeExecRejectsNonTmuxTerminal(t *testing.T) {
+	// resume --exec runs the built-in tmux plan; it must reject --terminal
+	// tmux-session (rather than validating it and silently running the default
+	// tmux backend). Window-per-agent on resume is via --target new-window.
+	tm := team.Team{Project: "/p", Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto"}}}
+	plans := []resumePlan{{Role: "cto", Action: resumeRestore, Command: "cd /p && amq-squad agent up codex --role cto"}}
+	err := execResumePlan(tm, "issue-96", plans,
+		resumeExecOptions{Enabled: true, Terminal: "tmux-session", Target: "current-window", Layout: "vertical"}, false)
+	if err == nil || !strings.Contains(err.Error(), "not supported on resume") {
+		t.Fatalf("want rejection of tmux-session terminal on resume --exec, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "new-window") {
+		t.Errorf("error should point to --target new-window: %v", err)
+	}
+}
+
 func TestSendRequiresRole(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runSend([]string{"--session", "issue-96", "--body", "hi"})

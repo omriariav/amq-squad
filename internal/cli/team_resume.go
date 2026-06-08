@@ -367,6 +367,14 @@ func execResumePlan(t team.Team, workstream string, plans []resumePlan, exec res
 	if !ok {
 		return fmt.Errorf("unsupported terminal %q: supported terminals: %s", exec.Terminal, strings.Join(registeredTeamLaunchTerminals(), ", "))
 	}
+	// resume --exec runs the built-in tmux plan (runTmuxLaunchPlan) directly from
+	// restore records; it does not drive the external window-per-agent
+	// `tmux-session` backend. Reject any non-tmux terminal here rather than
+	// validating it and silently running the tmux backend instead. Window-per-
+	// agent on resume is available natively via `--target new-window`.
+	if exec.Terminal != "tmux" {
+		return fmt.Errorf("resume --exec runs the built-in tmux backend; --terminal %q is not supported on resume. For one window per agent, use --target new-window.", exec.Terminal)
+	}
 
 	var (
 		panes   []teamLaunchPane
