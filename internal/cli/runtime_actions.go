@@ -88,9 +88,29 @@ func resolveControlTarget(mr memberRuntime, workstream string, panes []tmuxpane.
 	}
 	ag := state.Agent{Handle: mr.Handle, Role: mr.Member.Role, Engine: mr.Member.Binary}
 	if tgt, found := tmuxpane.ResolveTmuxTargetForSession(ag, workstream, mr.CWD, panes, nil); found {
-		return tgt.Pane, tgt, true
+		// tgt.Pane is the pane INDEX; tmux would resolve a bare index relative
+		// to the current client/window, not the agent's pane. Resolve to the
+		// exact pane_id, falling back to a fully-qualified session:window.pane
+		// spec (also unambiguous) when the id is unavailable.
+		paneTarget := paneIDForTarget(tgt, panes)
+		if paneTarget == "" {
+			paneTarget = tgt.Session + ":" + tgt.Window + "." + tgt.Pane
+		}
+		return paneTarget, tgt, true
 	}
 	return "", tmuxpane.TmuxTarget{}, false
+}
+
+// paneIDForTarget returns the #{pane_id} of the live pane the resolver selected,
+// matched by session+window+pane index. Empty when no live pane matches (e.g.
+// older tmux output without ids).
+func paneIDForTarget(tgt tmuxpane.TmuxTarget, panes []tmuxpane.TmuxPane) string {
+	for _, p := range panes {
+		if p.Session == tgt.Session && p.Window == tgt.Window && p.Pane == tgt.Pane {
+			return p.PaneID
+		}
+	}
+	return ""
 }
 
 // --- focus / open ---
