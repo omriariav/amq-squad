@@ -31,6 +31,10 @@ type historyRecord struct {
 	Source       string    `json:"source"`
 	CWD          string    `json:"cwd"`
 	StartedAt    time.Time `json:"started_at,omitempty"`
+	// Tmux is the persisted tmux runtime identity for the launch, plus a
+	// computed pane_alive, so clients can tell which historical launches still
+	// have a live pane to focus/resume. Omitted for records without tmux.
+	Tmux *tmuxRuntimeJSON `json:"tmux,omitempty"`
 }
 
 func runHistory(args []string) error {
@@ -149,7 +153,18 @@ func historyRecordsFromEntries(entries []launch.Entry) []historyRecord {
 			Source:       sourceLabel(e.Source),
 			CWD:          r.CWD,
 			StartedAt:    r.StartedAt,
+			Tmux:         tmuxRuntimeFromInfo(r.Tmux),
 		})
+	}
+	// Resolve pane liveness once across all rows that recorded a tmux pane.
+	var livePanes map[string]bool
+	for i := range rows {
+		if rows[i].Tmux != nil {
+			if livePanes == nil {
+				livePanes = livePaneIDSet(statusPaneLister)
+			}
+			fillPaneAlive(rows[i].Tmux, livePanes)
+		}
 	}
 	return rows
 }

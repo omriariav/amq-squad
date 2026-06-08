@@ -36,6 +36,7 @@ const (
 // resumePlan is the per-member output row.
 type resumePlan struct {
 	Role    string
+	Handle  string
 	Action  resumeAction
 	Wake    string
 	Note    string
@@ -45,6 +46,10 @@ type resumePlan struct {
 	// --restore-existing can verify record existence even when the final
 	// action came out as live.
 	HasRestoreRecord bool
+	// Tmux is the persisted tmux identity of the matched restore record, when
+	// any. Surfaced for `resume --json` so clients know which pane a restore
+	// targets and whether that pane is still alive.
+	Tmux *launch.TmuxInfo
 }
 
 func runTeamResume(args []string) error {
@@ -61,13 +66,14 @@ func runTeamResume(args []string) error {
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for fresh members, e.g. '--chrome'")
 	projectFlag := fs.String("project", "", "project/team-home directory to plan (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to plan (default: default profile)")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (with tmux runtime metadata) instead of the human plan")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team resume - plan how to bring the team back
 
 Usage:
   amq-squad team resume [--project DIR] [--profile NAME] [--session name] [--fresh]
-                        [--restore-existing] [--dry-run] [--force-duplicate]
+                        [--restore-existing] [--dry-run] [--json] [--force-duplicate]
                         [--no-bootstrap] [--trust sandboxed|trusted]
                         [--model role=model,...]
                         [--codex-args args] [--claude-args args]
@@ -146,6 +152,7 @@ Examples:
 		ClaudeArgsRaw:    *claudeArgsRaw,
 		DryRun:           *dryRun,
 		Profile:          profile,
+		JSON:             *jsonOut,
 	})
 }
 
@@ -166,6 +173,9 @@ type resumeExecution struct {
 	ClaudeArgsRaw    string
 	DryRun           bool
 	Profile          string
+	// JSON emits a schema-versioned resume_plan envelope instead of the human
+	// plan. It is a read-only preview, so it is mutually exclusive with Exec.
+	JSON bool
 	// Style controls the printer header label and footer verb so the same
 	// planner can present its output as team resume, resume, or fork without
 	// duplicating logic.
@@ -322,6 +332,14 @@ func executeResume(r resumeExecution) error {
 		if exists {
 			return fmt.Errorf("--fresh --session %q: workstream root %s already exists; rerun with --force-duplicate to reuse", workstream, root)
 		}
+	}
+
+	if r.JSON {
+		out := r.Out
+		if out == nil {
+			out = os.Stdout
+		}
+		return writeResumeJSON(out, t, workstream, r.Mode, r.Profile, plans)
 	}
 
 	if r.Exec.Enabled {
@@ -553,6 +571,10 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	baseRoot := absoluteAMQRoot(cwd, env.BaseRoot)
 	rec, recFound := findMemberRestoreRecord(baseRoot, in.Team.Project, cwd, env.SessionName, m.Role, handle)
 	plan.HasRestoreRecord = recFound
+	plan.Handle = handle
+	if recFound {
+		plan.Tmux = rec.Tmux
+	}
 	wakeLabel := wakeHealthForMember(agentDir, root, handle, rec, recFound)
 	plan.Wake = wakeLabel
 
