@@ -523,7 +523,8 @@ For a richer persona, author a **role file** and pass it with `--role-file`
 optional YAML frontmatter, `.yaml`, or `.json`. The `binary:` field satisfies
 the binary requirement (`--binary` overrides it). The authored document is
 staged at `.amq-squad/roles/<id>.md` and seeds that agent's `role.md` at launch
-(later user edits are preserved).
+(later user edits are preserved). A role file whose id matches a built-in
+persona is rejected — pick a different id for a custom role.
 
 ```sh
 amq-squad new team --role-file ./roles/researcher.md --roles cto
