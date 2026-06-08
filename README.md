@@ -54,8 +54,10 @@ codex plugin add amq-squad@amq-squad
 
 The Claude marketplace manifest lives at `.claude-plugin/marketplace.json` and
 the Codex one at `.agents/plugins/marketplace.json`; each points at the
-binary-specific plugin under `plugins/claude` and `plugins/codex`. Skills are
-namespaced by plugin, e.g. `/amq-squad:amq-squad-role-creator`.
+binary-specific plugin under `plugins/claude` and `plugins/codex`. In Claude
+Code, skills are namespaced by plugin, e.g.
+`/amq-squad:amq-squad-role-creator`. In Codex, invoke them by skill name, e.g.
+`$amq-squad-role-creator`.
 
 ## Quick start
 
