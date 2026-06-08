@@ -70,6 +70,12 @@ type OperatorView struct {
 // in team.json so hand-edited configs cannot drift.
 type Capabilities struct {
 	OperatorGates bool `json:"operator_gates"`
+	// RuntimeActions advertises that this amq-squad build exposes the tmux
+	// runtime contract clients (amq-noc) consume: per-member tmux identity +
+	// pane_alive in status/history/resume --json, the status `actions` array,
+	// and the focus/open/send control verbs. Always true since v1.5.0; a client
+	// can gate its runtime-action UI on it instead of sniffing for fields.
+	RuntimeActions bool `json:"runtime_actions"`
 }
 
 // EffectiveCWD returns the member's working directory, falling back to the
@@ -146,7 +152,10 @@ func SupportsOperatorGates(t Team) bool {
 }
 
 func EffectiveCapabilities(t Team) Capabilities {
-	return Capabilities{OperatorGates: SupportsOperatorGates(t)}
+	return Capabilities{
+		OperatorGates:  SupportsOperatorGates(t),
+		RuntimeActions: true, // every v1.5.0+ build exposes the runtime contract
+	}
 }
 
 // Path returns the team.json path for the default profile under projectDir.
