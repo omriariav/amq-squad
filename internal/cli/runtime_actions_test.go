@@ -131,19 +131,31 @@ func TestMemberActions(t *testing.T) {
 	}
 	// #7 schema: each action carries a label, an agent scope, and mutate/confirm
 	// metadata so a client can render a confirm-gated executable action.
-	wantMeta := map[string]struct{ mutates, confirm bool }{
-		"focus":  {false, false},
-		"send":   {true, true},
-		"resume": {true, true},
-		"status": {false, false},
+	wantMeta := map[string]struct {
+		mutates, confirm bool
+		scope            string
+	}{
+		"focus":  {false, false, "agent"},   // has --role
+		"send":   {true, true, "agent"},     // has --role
+		"resume": {true, true, "session"},   // session resume (no --role)
+		"status": {false, false, "session"}, // session board (no --role)
 	}
 	for k, want := range wantMeta {
 		a := byKind[k]
-		if a.Label == "" || a.Scope != "agent" {
-			t.Errorf("%s action missing label/scope: %+v", k, a)
+		if a.Label == "" || a.Scope != want.scope {
+			t.Errorf("%s action label/scope wrong: got scope %q label %q", k, a.Scope, a.Label)
 		}
 		if a.Mutates != want.mutates || a.NeedsConfirmation != want.confirm {
 			t.Errorf("%s mutates/needs_confirmation = %v/%v, want %v/%v", k, a.Mutates, a.NeedsConfirmation, want.mutates, want.confirm)
+		}
+		// Scope accuracy: an agent-scoped action's command must carry --role; a
+		// session-scoped one must not.
+		hasRole := strings.Contains(a.Command, "--role ")
+		if want.scope == "agent" && !hasRole {
+			t.Errorf("%s is agent-scoped but command lacks --role: %q", k, a.Command)
+		}
+		if want.scope == "session" && hasRole {
+			t.Errorf("%s is session-scoped but command has --role: %q", k, a.Command)
 		}
 	}
 	for _, k := range []string{"focus", "send", "resume", "status"} {
