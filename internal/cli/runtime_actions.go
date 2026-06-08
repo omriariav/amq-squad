@@ -76,12 +76,14 @@ func (mr memberRuntime) recordedPaneID() string {
 }
 
 // resolveControlTarget picks the tmux pane to act on for a member: the exact
-// recorded pane id when it is still live, otherwise the neutral resolver
-// (title-first, then engine+cwd). Returns the pane id plus a focus target.
+// recorded pane id when it is still live AND its working directory still
+// matches the member (guarding against pane-id reuse after a tmux server
+// restart), otherwise the neutral resolver (title-first, then engine+cwd).
+// Returns the pane id plus a focus target.
 func resolveControlTarget(mr memberRuntime, workstream string, panes []tmuxpane.TmuxPane) (paneID string, target tmuxpane.TmuxTarget, ok bool) {
 	if id := mr.recordedPaneID(); id != "" {
-		if tgt, found := tmuxpane.TargetForPaneID(id, panes); found {
-			return id, tgt, true
+		if p, found := tmuxpane.FindPaneByID(id, panes); found && samePath(p.CWD, mr.CWD) {
+			return id, tmuxpane.TargetFromPane(p), true
 		}
 	}
 	ag := state.Agent{Handle: mr.Handle, Role: mr.Member.Role, Engine: mr.Member.Binary}
@@ -202,7 +204,7 @@ Examples:
 	if strings.TrimSpace(*roleFlag) == "" {
 		return usageErrorf("send requires --role")
 	}
-	prompt, err := readPromptBody(*body, *bodyFile, flagWasSet(fs, "body"), flagWasSet(fs, "body-file"), os.Stdin)
+	prompt, err := readPromptBody(*body, *bodyFile, flagWasSet(fs, "body"), flagWasSet(fs, "body-file"), os.Stdin, stdinIsInteractive())
 	if err != nil {
 		return err
 	}
@@ -234,7 +236,9 @@ Examples:
 
 // readPromptBody resolves the prompt text from --body, --body-file (a path or
 // "-" for stdin), or bare stdin when neither flag is set and stdin is piped.
-func readPromptBody(body, bodyFile string, bodySet, fileSet bool, stdin io.Reader) (string, error) {
+// interactiveStdin reports whether stdin is a terminal; the bare-stdin path
+// then returns a usage error instead of blocking forever waiting for EOF.
+func readPromptBody(body, bodyFile string, bodySet, fileSet bool, stdin io.Reader, interactiveStdin bool) (string, error) {
 	if bodySet && fileSet {
 		return "", usageErrorf("use either --body or --body-file, not both")
 	}
@@ -257,7 +261,20 @@ func readPromptBody(body, bodyFile string, bodySet, fileSet bool, stdin io.Reade
 		}
 		return string(b), nil
 	}
+	if interactiveStdin {
+		return "", usageErrorf("no prompt provided; pass --body, --body-file FILE, or pipe text on stdin")
+	}
 	return readAllPrompt(stdin)
+}
+
+// stdinIsInteractive reports whether os.Stdin is a terminal (char device)
+// rather than a pipe or file, so `send` can refuse to block on TTY input.
+func stdinIsInteractive() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 func readAllPrompt(stdin io.Reader) (string, error) {

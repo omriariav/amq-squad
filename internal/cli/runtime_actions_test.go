@@ -50,30 +50,36 @@ func TestMemberActions(t *testing.T) {
 
 func TestReadPromptBody(t *testing.T) {
 	// --body wins.
-	got, err := readPromptBody("hello", "", true, false, strings.NewReader("ignored"))
+	got, err := readPromptBody("hello", "", true, false, strings.NewReader("ignored"), false)
 	if err != nil || got != "hello" {
 		t.Fatalf("--body: got %q err %v", got, err)
 	}
-	// --body-file - reads stdin.
-	got, err = readPromptBody("", "-", false, true, strings.NewReader("from stdin\nline2"))
+	// --body-file - reads stdin even when interactive (explicit request).
+	got, err = readPromptBody("", "-", false, true, strings.NewReader("from stdin\nline2"), true)
 	if err != nil || got != "from stdin\nline2" {
 		t.Fatalf("--body-file -: got %q err %v", got, err)
 	}
-	// bare stdin when neither flag set.
-	got, err = readPromptBody("", "", false, false, strings.NewReader("piped"))
+	// bare stdin when neither flag set and stdin is piped (not a TTY).
+	got, err = readPromptBody("", "", false, false, strings.NewReader("piped"), false)
 	if err != nil || got != "piped" {
 		t.Fatalf("stdin: got %q err %v", got, err)
 	}
+	// bare stdin on an interactive TTY -> usage error, never blocks.
+	if _, err := readPromptBody("", "", false, false, strings.NewReader(""), true); err == nil {
+		t.Fatal("interactive stdin with no body should be a usage error")
+	} else if _, ok := err.(UsageError); !ok {
+		t.Fatalf("want UsageError for interactive stdin, got %T", err)
+	}
 	// both flags -> usage error.
-	if _, err := readPromptBody("x", "f", true, true, strings.NewReader("")); err == nil {
+	if _, err := readPromptBody("x", "f", true, true, strings.NewReader(""), false); err == nil {
 		t.Fatal("--body + --body-file should error")
 	}
 	// empty body -> error.
-	if _, err := readPromptBody("   ", "", true, false, strings.NewReader("")); err == nil {
+	if _, err := readPromptBody("   ", "", true, false, strings.NewReader(""), false); err == nil {
 		t.Fatal("empty --body should error")
 	}
 	// empty stdin -> error.
-	if _, err := readPromptBody("", "", false, false, strings.NewReader("  \n")); err == nil {
+	if _, err := readPromptBody("", "", false, false, strings.NewReader("  \n"), false); err == nil {
 		t.Fatal("empty stdin should error")
 	}
 }
