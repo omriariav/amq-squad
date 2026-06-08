@@ -2,6 +2,7 @@ package team
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -264,5 +265,22 @@ func TestValidateMemberLauncher(t *testing.T) {
 	orphanArgs.LauncherArgs = []string{"--pull"}
 	if err := Validate(Team{Members: []Member{orphanArgs}}); err == nil || !strings.Contains(err.Error(), "set launcher before launcher_args") {
 		t.Errorf("launcher_args without launcher: want guard error, got %v", err)
+	}
+}
+
+func TestEffectiveCapabilitiesAdvertisesRuntimeActions(t *testing.T) {
+	// Every v1.5.0+ build exposes the tmux runtime contract, so clients
+	// (amq-noc) can gate their runtime-action UI on capabilities.runtime_actions.
+	caps := EffectiveCapabilities(Team{Schema: SchemaVersion}) // unconditional since v1.5.0
+	if !caps.RuntimeActions {
+		t.Error("EffectiveCapabilities must advertise RuntimeActions=true")
+	}
+	// It must serialize as the stable `runtime_actions` key the consumer reads.
+	b, err := json.Marshal(caps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"runtime_actions":true`) {
+		t.Errorf("capabilities JSON missing runtime_actions:true, got %s", b)
 	}
 }
