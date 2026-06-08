@@ -81,11 +81,20 @@ func (mr memberRuntime) recordedPaneID() string {
 // restart), otherwise the neutral resolver (title-first, then engine+cwd).
 // Returns the pane id plus a focus target.
 func resolveControlTarget(mr memberRuntime, workstream string, panes []tmuxpane.TmuxPane) (paneID string, target tmuxpane.TmuxTarget, ok bool) {
+	// When we know the agent's exact recorded pane, it is the authoritative
+	// identity: use it only if that pane is still live and in the member's cwd.
+	// If the recorded pane is gone, the agent's pane is gone — do NOT fall back
+	// to the fuzzy cwd+engine resolver, which for `send` could deliver to the
+	// wrong agent (a same-cwd/engine peer whose pane is still alive). Report
+	// not-found so the verb errors clearly instead of guessing.
 	if id := mr.recordedPaneID(); id != "" {
-		if p, found := tmuxpane.FindPaneByID(id, panes); found && samePath(p.CWD, mr.CWD) {
+		if p, found := tmuxpane.FindPaneByID(id, panes); found && sameResolvedDir(p.CWD, mr.CWD) {
 			return id, tmuxpane.TargetFromPane(p), true
 		}
+		return "", tmuxpane.TmuxTarget{}, false
 	}
+	// No recorded pane id (a pre-1.5 record, or an agent launched outside tmux):
+	// best-effort resolve by title-first, then cwd+engine.
 	ag := state.Agent{Handle: mr.Handle, Role: mr.Member.Role, Engine: mr.Member.Binary}
 	if tgt, found := tmuxpane.ResolveTmuxTargetForSession(ag, workstream, mr.CWD, panes, nil); found {
 		// tgt.Pane is the pane INDEX; tmux would resolve a bare index relative
@@ -99,6 +108,28 @@ func resolveControlTarget(mr memberRuntime, workstream string, panes []tmuxpane.
 		return paneTarget, tgt, true
 	}
 	return "", tmuxpane.TmuxTarget{}, false
+}
+
+// sameResolvedDir reports whether two paths refer to the same directory after
+// resolving symlinks, so a member cwd under a symlinked path (e.g. macOS
+// /var -> /private/var TMPDIR) matches tmux's resolved #{pane_current_path}.
+// Falls back to a plain absolute comparison when a side cannot be resolved.
+func sameResolvedDir(a, b string) bool {
+	if strings.TrimSpace(a) == "" || strings.TrimSpace(b) == "" {
+		return false
+	}
+	return resolveDir(a) == resolveDir(b)
+}
+
+func resolveDir(dir string) string {
+	abs := dir
+	if a, err := filepath.Abs(dir); err == nil {
+		abs = a
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return filepath.Clean(abs)
 }
 
 // paneIDForTarget returns the #{pane_id} of the live pane the resolver selected,
