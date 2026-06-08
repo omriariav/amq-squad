@@ -4,8 +4,46 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omriariav/amq-squad/internal/launch"
 	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/internal/tmuxpane"
 )
+
+func TestResolveControlTargetExactRecordedPane(t *testing.T) {
+	mr := memberRuntime{
+		Member: team.Member{Role: "cto", Binary: "codex"}, Handle: "cto", CWD: "/repo",
+		HasRecord: true, Record: launch.Record{Tmux: &launch.TmuxInfo{PaneID: "%265"}},
+	}
+	// Recorded pane is live AND its cwd matches -> trusted exactly.
+	panes := []tmuxpane.TmuxPane{{PaneID: "%265", Session: "main", Window: "0", Pane: "1", CWD: "/repo", Command: "codex"}}
+	id, _, ok := resolveControlTarget(mr, "issue-96", panes)
+	if !ok || id != "%265" {
+		t.Fatalf("recorded pane should resolve exactly, got id=%q ok=%v", id, ok)
+	}
+	// Recorded pane id reused in a DIFFERENT cwd (tmux restart) -> not trusted;
+	// no other pane matches the member -> unresolved rather than wrong pane.
+	stale := []tmuxpane.TmuxPane{{PaneID: "%265", Session: "main", Window: "0", Pane: "1", CWD: "/somewhere/else", Command: "codex"}}
+	if _, _, ok := resolveControlTarget(mr, "issue-96", stale); ok {
+		t.Fatal("reused pane id in a different cwd must not be trusted")
+	}
+}
+
+func TestResolveControlTargetFallbackReturnsPaneID(t *testing.T) {
+	// No recorded pane; the neutral resolver matches by cwd+engine. The returned
+	// target must be the exact pane_id, NOT the pane index (which tmux would
+	// resolve against the current window).
+	mr := memberRuntime{Member: team.Member{Role: "cto", Binary: "codex"}, Handle: "cto", CWD: "/repo"}
+	panes := []tmuxpane.TmuxPane{
+		{PaneID: "%77", Session: "main", Window: "0", Pane: "3", CWD: "/repo", Command: "codex"},
+	}
+	id, _, ok := resolveControlTarget(mr, "issue-96", panes)
+	if !ok {
+		t.Fatal("resolver should match by cwd+engine")
+	}
+	if id != "%77" {
+		t.Fatalf("fallback must return the exact pane_id, got %q (pane index would be \"3\")", id)
+	}
+}
 
 func TestMemberActions(t *testing.T) {
 	acts := memberActions("/Code/app", team.DefaultProfile, "issue-96", "cto", true)
