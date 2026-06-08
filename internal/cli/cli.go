@@ -207,6 +207,10 @@ func dispatch(args []string) error {
 		return runThread(args[1:])
 	case "status":
 		return runStatus(args[1:])
+	case "focus", "open":
+		return runFocus(args[1:])
+	case "send":
+		return runSend(args[1:])
 	case "console":
 		return runConsole(args[1:])
 	case "amq":

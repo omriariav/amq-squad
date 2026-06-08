@@ -95,6 +95,35 @@ func fillPaneAlive(rt *tmuxRuntimeJSON, live map[string]bool) {
 	rt.PaneAlive = rt.PaneID != "" && live[rt.PaneID]
 }
 
+// runtimeActionJSON is one stable, project-scoped command a client (amq-noc)
+// can render or copy for a member. Emitting the exact command keeps the control
+// contract in amq-squad: clients call/copy these instead of assembling tmux or
+// amq-squad invocations themselves.
+type runtimeActionJSON struct {
+	Kind      string `json:"kind"` // focus | send | resume | status
+	Command   string `json:"command"`
+	Available bool   `json:"available"`
+}
+
+// memberActions builds the per-member action commands. focus/send require a
+// live pane (paneAlive); resume and status are always available. The project
+// flag is included so the command is runnable from anywhere.
+func memberActions(projectDir, profile, session, role string, paneAlive bool) []runtimeActionJSON {
+	base := "amq-squad"
+	scope := " --project " + shellQuote(projectDir)
+	if profile != "" && profile != team.DefaultProfile {
+		scope += " --profile " + shellQuote(profile)
+	}
+	scope += " --session " + shellQuote(session)
+	roleArg := " --role " + shellQuote(role)
+	return []runtimeActionJSON{
+		{Kind: "focus", Available: paneAlive, Command: base + " focus" + scope + roleArg},
+		{Kind: "send", Available: paneAlive, Command: base + " send" + scope + roleArg + " --body-file -"},
+		{Kind: "resume", Available: true, Command: base + " resume" + scope + " --exec"},
+		{Kind: "status", Available: true, Command: base + " status" + scope + " --json"},
+	}
+}
+
 // resumeMemberJSON is one member row in the resume_plan envelope. It mirrors the
 // human plan (role/action/note/command) and adds the runtime identity so a
 // client can decide whether to focus a live pane or re-open one.
