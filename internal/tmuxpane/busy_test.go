@@ -2,6 +2,7 @@ package tmuxpane
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -16,9 +17,9 @@ func setCapturer(t *testing.T, fn func(string) (string, error)) {
 func TestPaneBusyDetectsInFlightAgent(t *testing.T) {
 	busyCaptures := []string{
 		"· 1.2k tokens · esc to interrupt",                     // Claude Code generating
-		"Running… (3s)",                                        // tool run
+		"● Generating · 88 tokens · esc to interrupt",          // token meter in footer
 		"Press esc to cancel",                                  // prompt/cancel state
-		"foo\nbar\n✳ Thinking · 412 tokens · esc to interrupt", // marker mid-buffer
+		"foo\nbar\n✳ Thinking · 412 tokens · esc to interrupt", // marker in the footer line
 	}
 	for _, capture := range busyCaptures {
 		setCapturer(t, func(string) (string, error) { return capture, nil })
@@ -42,6 +43,23 @@ func TestPaneBusyTreatsIdleAsIdle(t *testing.T) {
 		if err != nil || busy {
 			t.Errorf("capture %q should read as idle (busy=%v err=%v)", capture, busy, err)
 		}
+	}
+}
+
+func TestPaneBusyIgnoresScrollbackMarkers(t *testing.T) {
+	// A marker that appears in scrollback CONTENT (an assistant response or help
+	// text) but not in the live footer must NOT read as busy — only the tail is
+	// inspected.
+	var b strings.Builder
+	b.WriteString("note: press esc to interrupt to stop generation\n") // content, near the top
+	for i := 0; i < 20; i++ {
+		b.WriteString("ordinary output line\n")
+	}
+	b.WriteString("Done.\n\n> \n  ? for shortcuts\n") // idle footer
+	setCapturer(t, func(string) (string, error) { return b.String(), nil })
+	busy, err := PaneBusy("%1")
+	if err != nil || busy {
+		t.Errorf("a marker in scrollback (not the footer) must not read as busy: busy=%v err=%v", busy, err)
 	}
 }
 
