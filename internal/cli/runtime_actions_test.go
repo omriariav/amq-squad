@@ -74,6 +74,29 @@ func TestResolveControlTargetExactRecordedPane(t *testing.T) {
 	}
 }
 
+func TestResolveControlTargetRejectsReusedPaneTitledForOther(t *testing.T) {
+	// The recorded pane id is alive and in the right cwd, but tmux restarted and
+	// %42 is now a SIBLING agent's pane (titled for qa, same repo). cto's send
+	// must NOT target it.
+	mr := memberRuntime{
+		Member: team.Member{Role: "cto", Binary: "codex"}, Handle: "cto", CWD: "/repo",
+		HasRecord: true, Record: launch.Record{Tmux: &launch.TmuxInfo{PaneID: "%42"}},
+	}
+	reused := []tmuxpane.TmuxPane{
+		{PaneID: "%42", Session: "main", Window: "0", Pane: "1", CWD: "/repo", Command: "codex", Title: "amq:issue-96:qa"},
+	}
+	if _, _, ok := resolveControlTarget(mr, "issue-96", reused); ok {
+		t.Fatal("a recorded pane reused by a different agent (amq title for another role) must be rejected")
+	}
+	// Same pane id, but titled for cto (or untitled) -> trusted.
+	for _, title := range []string{"amq:issue-96:cto", "", "zsh"} {
+		ours := []tmuxpane.TmuxPane{{PaneID: "%42", CWD: "/repo", Command: "codex", Title: title}}
+		if _, _, ok := resolveControlTarget(mr, "issue-96", ours); !ok {
+			t.Errorf("pane titled %q (ours / untitled) should be trusted", title)
+		}
+	}
+}
+
 func TestResolveControlTargetFallbackReturnsPaneID(t *testing.T) {
 	// No recorded pane; the neutral resolver matches by cwd+engine. The returned
 	// target must be the exact pane_id, NOT the pane index (which tmux would

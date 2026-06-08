@@ -95,9 +95,10 @@ func TestRunTeamLaunchRejectsUnsupportedTerminalWithRegistry(t *testing.T) {
 
 func TestTmuxDryRunLinesShowPaneFlow(t *testing.T) {
 	plan := tmuxLaunchPlan{
-		Session: "amq-squad-repo",
-		Target:  "new-session",
-		Layout:  "vertical",
+		Session:    "amq-squad-repo", // tmux session name (targets)
+		Workstream: "repo",           // AMQ workstream (pane-title identity)
+		Target:     "new-session",
+		Layout:     "vertical",
 		Panes: []teamLaunchPane{
 			{Role: "cto", CWD: "/repo", Command: "cd /repo && amq-squad agent up codex"},
 			{Role: "qa", CWD: "/repo", Command: "cd /repo && amq-squad agent up claude"},
@@ -107,13 +108,14 @@ func TestTmuxDryRunLinesShowPaneFlow(t *testing.T) {
 	got := strings.Join(tmuxDryRunLines(plan), "\n")
 	for _, want := range []string{
 		"tmux new-session -d -s amq-squad-repo -n squad -c /repo",
-		// Pane titles carry the deterministic name-first jump token amq:<session>:<role>.
-		"tmux select-pane -t 'amq-squad-repo:0.0' -T 'amq:amq-squad-repo:cto'",
+		// Pane titles carry the name-first jump token amq:<workstream>:<role> —
+		// the WORKSTREAM, not the tmux session name, so it matches the resolver.
+		"tmux select-pane -t 'amq-squad-repo:0.0' -T 'amq:repo:cto'",
 		"tmux send-keys -t 'amq-squad-repo:0.0'",
 		"sleep 0.75",
 		"pane_1=$(tmux split-window -P -F '#{pane_id}' -t 'amq-squad-repo:0' -h -c /repo)",
 		"tmux select-layout -t 'amq-squad-repo:0' even-horizontal",
-		`tmux select-pane -t "$pane_1" -T 'amq:amq-squad-repo:qa'`,
+		`tmux select-pane -t "$pane_1" -T 'amq:repo:qa'`,
 		`tmux send-keys -t "$pane_1"`,
 		"# attach later with: tmux attach-session -t amq-squad-repo",
 	} {
@@ -125,9 +127,10 @@ func TestTmuxDryRunLinesShowPaneFlow(t *testing.T) {
 
 func TestTmuxDryRunLinesCanTargetCurrentWindow(t *testing.T) {
 	plan := tmuxLaunchPlan{
-		Session: "ignored",
-		Target:  "current-window",
-		Layout:  "vertical",
+		Session:    "ignored", // current-window ignores the session name
+		Workstream: "repo",    // but the pane-title identity is the workstream
+		Target:     "current-window",
+		Layout:     "vertical",
 		Panes: []teamLaunchPane{
 			{Role: "cto", CWD: "/repo", Command: "cd /repo && amq-squad agent up codex"},
 			{Role: "qa", CWD: "/repo", Command: "cd /repo && amq-squad agent up claude"},
@@ -140,8 +143,8 @@ func TestTmuxDryRunLinesCanTargetCurrentWindow(t *testing.T) {
 		// focused window, so panes never hijack an unrelated tab (#40).
 		`window=$(tmux display-message -p -t "${TMUX_PANE:?run amq-squad up from inside a tmux pane}" '#{session_name}:#{window_index}')`,
 		`first_pane="$TMUX_PANE"`,
-		// Pane titles carry the deterministic name-first jump token amq:<session>:<role>.
-		`tmux select-pane -t "$first_pane" -T 'amq:ignored:cto'`,
+		// Pane titles carry the name-first jump token amq:<workstream>:<role>.
+		`tmux select-pane -t "$first_pane" -T 'amq:repo:cto'`,
 		`pane_1=$(tmux split-window -P -F '#{pane_id}' -t "$window" -h -c /repo)`,
 		`tmux send-keys -t "$first_pane"`,
 		`tmux send-keys -t "$pane_1"`,

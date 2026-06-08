@@ -12,9 +12,10 @@ import (
 // same repo+engine still resolve to distinct panes.
 func TestTmuxDryRunLines_StampsDeterministicPaneTitles(t *testing.T) {
 	plan := tmuxLaunchPlan{
-		Session: "beta",
-		Target:  "new-session",
-		Layout:  "tiled",
+		Session:    "beta-tmux",
+		Workstream: "beta",
+		Target:     "new-session",
+		Layout:     "tiled",
 		Panes: []teamLaunchPane{
 			{Role: "cpo", CWD: "/repo", Command: "codex"},
 			{Role: "cto", CWD: "/repo", Command: "codex"},
