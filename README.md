@@ -32,6 +32,33 @@ go install github.com/omriariav/amq-squad/cmd/amq-squad@latest
 
 Requires Go 1.25+, the `amq` binary on `PATH` (v0.34+), and `tmux` on `PATH` for `amq-squad up`.
 
+### Skills (plugin marketplaces)
+
+This repo doubles as a plugin marketplace that ships the amq-squad skills
+(`amq-squad`, `amq-team-setup`, `amq-squad-role-creator`) for both Claude Code
+and Codex. The CLI and the skills are versioned together.
+
+Claude Code:
+
+```sh
+/plugin marketplace add omriariav/amq-squad
+/plugin install amq-squad@amq-squad
+```
+
+Codex:
+
+```sh
+codex plugin marketplace add omriariav/amq-squad
+codex plugin add amq-squad@amq-squad
+```
+
+The Claude marketplace manifest lives at `.claude-plugin/marketplace.json` and
+the Codex one at `.agents/plugins/marketplace.json`; each points at the
+binary-specific plugin under `plugins/claude` and `plugins/codex`. In Claude
+Code, skills are namespaced by plugin, e.g.
+`/amq-squad:amq-squad-role-creator`. In Codex, invoke them by skill name, e.g.
+`$amq-squad-role-creator`.
+
 ## Quick start
 
 ```sh

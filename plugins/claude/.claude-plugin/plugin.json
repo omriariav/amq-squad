@@ -1,0 +1,11 @@
+{
+  "name": "amq-squad",
+  "description": "amq-squad agent-team coordination skills for Claude Code: live coordination (amq-squad), first-time team setup (amq-team-setup), and custom role authoring (amq-squad-role-creator).",
+  "version": "1.4.2",
+  "author": {
+    "name": "Omri Ariav"
+  },
+  "homepage": "https://github.com/omriariav/amq-squad",
+  "repository": "https://github.com/omriariav/amq-squad",
+  "license": "MIT"
+}
