@@ -46,7 +46,9 @@ func TestTmuxDryRunNewWindowOneWindowPerAgent(t *testing.T) {
 	// Each agent still gets its deterministic pane-title token (so focus/send
 	// resolve identically to the pane backends) and a human window name.
 	for _, role := range []string{"cto", "qa"} {
-		token := "amq:amq-squad-proj:" + role
+		// Title uses the WORKSTREAM (issue-96), not the terminal session name
+		// (amq-squad-proj) — so it matches what the resolver expects.
+		token := "amq:issue-96:" + role
 		if !strings.Contains(joined, "-T '"+token+"'") && !strings.Contains(joined, "-T "+token) {
 			t.Errorf("missing pane title token for %q:\n%s", role, joined)
 		}
