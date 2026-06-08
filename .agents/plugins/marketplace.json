@@ -1,0 +1,20 @@
+{
+  "name": "amq-squad",
+  "interface": {
+    "displayName": "amq-squad"
+  },
+  "plugins": [
+    {
+      "name": "amq-squad",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
