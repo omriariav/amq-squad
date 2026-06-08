@@ -487,6 +487,7 @@ Team discovery payloads include derived operator metadata for external clients: 
 ```sh
 amq-squad status --json | jq .
 amq-squad history --json | jq .
+amq-squad resume --session issue-96 --json | jq .
 amq-squad doctor --json | jq .
 amq-squad team profiles --json | jq .
 amq-squad roles --json | jq .
@@ -505,6 +506,58 @@ Envelope shape:
   "data": { /* verb-specific payload */ }
 }
 ```
+
+## Runtime control (tmux)
+
+amq-squad owns the tmux execution/control contract for a team so external
+clients (such as amq-noc) can make agents actionable without scraping tmux or
+reconstructing pane layouts themselves.
+
+When an agent is launched inside tmux, its launch record persists the **exact
+tmux identity** of its pane — `session`, `window_id`, `window_name`, `pane_id`,
+and how the pane was created (`target`). Pane and window ids (`%265`, `@42`) are
+stable control addresses; window names are labels and are never used to target
+control.
+
+`status --json`, `history --json`, and `resume --json` expose that identity as a
+`tmux` block plus a computed `pane_alive` (does the recorded pane still exist?).
+`status --json` members also carry an `actions` array of stable, project-scoped
+commands a client can render or copy, each with an `available` flag:
+
+```json
+{
+  "role": "cto",
+  "status": "live",
+  "tmux": { "session": "main", "window_id": "@42", "pane_id": "%265",
+            "target": "current-window", "pane_alive": true },
+  "actions": [
+    { "kind": "focus",  "available": true, "command": "amq-squad focus --project DIR --session issue-96 --role cto" },
+    { "kind": "send",   "available": true, "command": "amq-squad send --project DIR --session issue-96 --role cto --body-file -" },
+    { "kind": "resume", "available": true, "command": "amq-squad resume --project DIR --session issue-96 --exec" }
+  ]
+}
+```
+
+The `tmux` block is omitted for agents launched outside tmux, so clients detect
+runtime-control availability by presence.
+
+High-level control verbs target the exact pane id (falling back to a neutral
+title/cwd resolver) and are all project-scoped:
+
+```sh
+amq-squad focus --session issue-96 --role cto   # bring the agent's pane into view
+amq-squad focus --session issue-96              # focus the session
+amq-squad open --session issue-96               # alias for focus
+amq-squad send  --session issue-96 --role cto --body "please review PR #65"
+amq-squad send  --session issue-96 --role qa --body-file ./prompt.md
+cat prompt.md | amq-squad send --session issue-96 --role cto --body-file -
+amq-squad resume --session issue-96 --exec      # relaunch the team's panes
+```
+
+`send` delivers the prompt deterministically: it stages the text in a tmux paste
+buffer (via stdin, never a shell string) and pastes it into the exact pane, then
+submits a single Enter — so multi-line prompts and text with quotes or shell
+metacharacters arrive verbatim. It errors clearly if the target pane is gone.
 
 ## Exit codes
 
