@@ -46,10 +46,14 @@ func TestSendPromptToPaneDeliversVerbatimWithEnter(t *testing.T) {
 	if got := (*calls)[0].args; !reflect.DeepEqual(got, []string{"display-message", "-p", "-t", "%265", "#{pane_id}"}) {
 		t.Fatalf("liveness probe argv = %v", got)
 	}
-	// 2) load-buffer carries the prompt via STDIN, never argv
+	// 2) load-buffer carries the prompt via STDIN, never argv, into a unique buf
 	lb := (*calls)[1]
-	if !reflect.DeepEqual(lb.args, []string{"load-buffer", "-b", promptBufferName, "-"}) {
+	if len(lb.args) != 4 || lb.args[0] != "load-buffer" || lb.args[1] != "-b" || lb.args[3] != "-" {
 		t.Fatalf("load-buffer argv = %v", lb.args)
+	}
+	buf := lb.args[2]
+	if !strings.HasPrefix(buf, "amq-squad-prompt-") {
+		t.Fatalf("buffer name not unique-prefixed: %q", buf)
 	}
 	if lb.stdin != prompt {
 		t.Fatalf("prompt not delivered verbatim via stdin:\n got %q\nwant %q", lb.stdin, prompt)
@@ -59,13 +63,28 @@ func TestSendPromptToPaneDeliversVerbatimWithEnter(t *testing.T) {
 			t.Fatalf("prompt text leaked into argv: %v", lb.args)
 		}
 	}
-	// 3) paste-buffer deletes the buffer, requests bracketed paste, targets pane
-	if got := (*calls)[2].args; !reflect.DeepEqual(got, []string{"paste-buffer", "-d", "-p", "-b", promptBufferName, "-t", "%265"}) {
-		t.Fatalf("paste-buffer argv = %v", got)
+	// 3) paste-buffer deletes the SAME buffer, requests bracketed paste, targets pane
+	if got := (*calls)[2].args; !reflect.DeepEqual(got, []string{"paste-buffer", "-d", "-p", "-b", buf, "-t", "%265"}) {
+		t.Fatalf("paste-buffer argv = %v (buf %q)", got, buf)
 	}
 	// 4) explicit Enter submit
 	if got := (*calls)[3].args; !reflect.DeepEqual(got, []string{"send-keys", "-t", "%265", "Enter"}) {
 		t.Fatalf("send-keys argv = %v", got)
+	}
+}
+
+func TestSendPromptUsesUniqueBufferPerCall(t *testing.T) {
+	calls := swapDeliver(t, nil)
+	if err := SendPromptToPane("%1", "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SendPromptToPane("%1", "b"); err != nil {
+		t.Fatal(err)
+	}
+	// load-buffer is the 2nd call of each 4-call send (indices 1 and 5).
+	buf1, buf2 := (*calls)[1].args[2], (*calls)[5].args[2]
+	if buf1 == buf2 {
+		t.Fatalf("concurrent sends must use distinct buffers, both = %q", buf1)
 	}
 }
 
