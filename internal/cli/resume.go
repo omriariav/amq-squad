@@ -23,6 +23,7 @@ func runResume(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory to resume (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to resume (default: default profile)")
 	execMode := fs.Bool("exec", false, "open the planned launch commands in the terminal backend (tmux) instead of printing them")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (with tmux runtime metadata) instead of the human plan")
 	terminal := fs.String("terminal", "tmux", "terminal backend to use with --exec")
 	target := fs.String("target", "current-window", "terminal target with --exec (tmux: current-window or new-session)")
 	layout := fs.String("layout", "vertical", "terminal layout with --exec (tmux: vertical, horizontal, or tiled)")
@@ -33,7 +34,7 @@ func runResume(args []string) error {
 
 Usage:
   amq-squad resume [--project DIR] [--profile NAME] [--session name] [--restore-existing]
-                   [--dry-run] [--force-duplicate]
+                   [--dry-run] [--json] [--force-duplicate]
                    [--no-bootstrap] [--trust sandboxed|trusted]
                    [--model role=model,...]
                    [--codex-args args] [--claude-args args]
@@ -56,7 +57,10 @@ Default behavior is plan-only: prints the per-member action table plus
 copy-pasteable commands. With --exec, opens those commands through the
 selected terminal backend (same path as 'up'), skipping members that are
 already live and refusing to start if any member is in the 'blocked'
-action without --force-duplicate.
+action without --force-duplicate. With --json, emits a schema-versioned
+resume_plan envelope (per-member action, command, and tmux runtime metadata
+including pane_alive) for clients; --json is a read-only preview and cannot be
+combined with --exec.
 
 Fresh / new-session behavior belongs to 'amq-squad fork --from S --as T'.
 
@@ -64,6 +68,7 @@ Examples:
   amq-squad resume
   amq-squad resume --project ~/Code/app --session issue-96
   amq-squad resume --session issue-96 --restore-existing
+  amq-squad resume --session issue-96 --json
   amq-squad resume --exec
   amq-squad resume --exec --target new-session --terminal-session squad
 `)
@@ -73,6 +78,9 @@ Examples:
 	}
 	if *execMode && *dryRun {
 		return usageErrorf("--exec and --dry-run are mutually exclusive")
+	}
+	if *jsonOut && *execMode {
+		return usageErrorf("--json is a read-only plan preview; it cannot be combined with --exec")
 	}
 
 	profile, err := resolveProfileFlag(*profileFlag)
@@ -119,6 +127,7 @@ Examples:
 		ClaudeArgsRaw:    *claudeArgsRaw,
 		DryRun:           *dryRun,
 		Profile:          profile,
+		JSON:             *jsonOut,
 		Style:            resumePrinterStyle{Label: "resume", FooterVerb: "up"},
 		Exec:             exec,
 	})
