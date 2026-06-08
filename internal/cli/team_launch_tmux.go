@@ -272,7 +272,7 @@ func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
 		}
 	}
 	for i, pane := range plan.Panes {
-		if err := runCommand("tmux", "send-keys", "-t", targets[i], pane.Command, "C-m"); err != nil {
+		if err := runCommand("tmux", "send-keys", "-t", targets[i], withTmuxTargetEnv(plan.Target, pane.Command), "C-m"); err != nil {
 			return err
 		}
 		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {

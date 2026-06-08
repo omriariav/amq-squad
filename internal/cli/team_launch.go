@@ -321,6 +321,23 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 	return panes
 }
 
+// withTmuxTargetEnv wraps a per-pane launch command so the launched agent's
+// record can persist how its pane was created (current-window / new-window /
+// new-session). The assignment is exported inside a subshell so it reaches the
+// amq-squad process (a plain `VAR=val cmd` would scope it to `cd` only) but
+// does NOT leak into the operator's pane shell after the agent exits — a leak
+// would make a later manual `agent up` in that pane record a stale target.
+// target is a controlled enum, never user text, and is shell-quoted defensively.
+// An empty target returns the command unchanged. Only the live tmux send-keys
+// paths use this, so dry-run / copy-paste commands stay clean.
+func withTmuxTargetEnv(target, command string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return command
+	}
+	return "(export " + envTmuxTarget + "=" + shellQuote(target) + "; " + command + ")"
+}
+
 func teamSquadBin() string {
 	if p, err := os.Executable(); err == nil {
 		return p
