@@ -500,6 +500,7 @@
         <a href="#verbs">Verbs</a>
         <a href="#console">Status board and console</a>
         <a href="#json">JSON and exit codes</a>
+        <a href="#runtime">Runtime control</a>
         <a href="#completion">Shell completions</a>
         <a href="#workstreams">Sessions and threads</a>
         <a href="#cross">Cross-project teams</a>
@@ -1372,6 +1373,65 @@ amq-squad version --json | jq .</code></pre></div>
               </tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      <section id="runtime">
+        <div class="content">
+          <h2>Runtime control (tmux)</h2>
+          <p>
+            amq-squad owns the tmux execution/control contract for a team, so
+            clients (such as amq-noc) make agents actionable without scraping
+            tmux or reconstructing pane layouts. When an agent launches inside
+            tmux, its launch record persists the exact tmux identity of its
+            pane: <code class="inline-code">session</code>,
+            <code class="inline-code">window_id</code>,
+            <code class="inline-code">window_name</code>,
+            <code class="inline-code">pane_id</code>, and how the pane was
+            created (<code class="inline-code">target</code>). Pane and window
+            ids (<code class="inline-code">%265</code>,
+            <code class="inline-code">@42</code>) are stable control addresses;
+            window names are labels and are never used as addresses.
+          </p>
+          <p>
+            <code class="inline-code">status --json</code>,
+            <code class="inline-code">history --json</code>, and
+            <code class="inline-code">resume --json</code> expose a
+            <code class="inline-code">tmux</code> block plus a computed
+            <code class="inline-code">pane_alive</code>. Status members also
+            carry an <code class="inline-code">actions</code> array of stable,
+            project-scoped commands a client can render or copy, each with an
+            <code class="inline-code">available</code> flag. The
+            <code class="inline-code">tmux</code> block is omitted for agents
+            launched outside tmux, so clients detect availability by presence.
+          </p>
+          <div class="code"><pre><code>{
+  "role": "cto",
+  "tmux": { "session": "main", "pane_id": "%265", "target": "current-window", "pane_alive": true },
+  "actions": [
+    { "kind": "focus",  "available": true, "command": "amq-squad focus --session issue-96 --role cto" },
+    { "kind": "send",   "available": true, "command": "amq-squad send --session issue-96 --role cto --body-file -" },
+    { "kind": "resume", "available": true, "command": "amq-squad resume --session issue-96 --exec" }
+  ]
+}</code></pre></div>
+          <p>
+            High-level control verbs target the exact pane id (falling back to a
+            neutral title/cwd resolver) and are project-scoped:
+          </p>
+          <div class="code"><pre><code>amq-squad focus --session issue-96 --role cto   # bring the agent's pane into view
+amq-squad focus --session issue-96              # focus the session ('open' is an alias)
+amq-squad send  --session issue-96 --role cto --body "please review PR #65"
+amq-squad send  --session issue-96 --role qa --body-file ./prompt.md
+cat prompt.md | amq-squad send --session issue-96 --role cto --body-file -
+amq-squad resume --session issue-96 --exec      # relaunch the team's panes</code></pre></div>
+          <p>
+            <code class="inline-code">send</code> delivers the prompt
+            deterministically: it stages the text in a tmux paste buffer (via
+            stdin, never a shell string) and pastes it into the exact pane, then
+            submits a single Enter — so multi-line prompts and text with quotes
+            or shell metacharacters arrive verbatim. It errors clearly if the
+            target pane is gone.
+          </p>
         </div>
       </section>
 
