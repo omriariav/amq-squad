@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -8,6 +10,50 @@ import (
 	"github.com/omriariav/amq-squad/internal/team"
 	"github.com/omriariav/amq-squad/internal/tmuxpane"
 )
+
+// TestResolveControlTargetSymlinkedCWD reproduces the live-test failure: the
+// member cwd is a symlinked path (like macOS /var/folders TMPDIR) while tmux
+// reports the resolved real path for the pane. The cwd guard must still match.
+func TestResolveControlTargetSymlinkedCWD(t *testing.T) {
+	real, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	// Member cwd is the symlink; tmux reports the resolved path for the pane.
+	mr := memberRuntime{
+		Member: team.Member{Role: "cto", Binary: "codex"}, Handle: "cto", CWD: link,
+		HasRecord: true, Record: launch.Record{Tmux: &launch.TmuxInfo{PaneID: "%104"}},
+	}
+	panes := []tmuxpane.TmuxPane{{PaneID: "%104", Session: "s", Window: "0", Pane: "0", CWD: real, Command: "codex"}}
+	id, _, ok := resolveControlTarget(mr, "issue-96", panes)
+	if !ok || id != "%104" {
+		t.Fatalf("symlinked member cwd must still resolve the recorded pane, got id=%q ok=%v", id, ok)
+	}
+}
+
+func TestSameResolvedDir(t *testing.T) {
+	real, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "lk")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if !sameResolvedDir(link, real) {
+		t.Errorf("a symlink and its target must compare equal")
+	}
+	if sameResolvedDir(real, real+"-other") {
+		t.Errorf("different dirs must not compare equal")
+	}
+	if sameResolvedDir("", real) {
+		t.Errorf("empty path must not match")
+	}
+}
 
 func TestResolveControlTargetExactRecordedPane(t *testing.T) {
 	mr := memberRuntime{

@@ -203,6 +203,24 @@ func TestParsePanes_ParsesPaneTitle(t *testing.T) {
 	}
 }
 
+func TestResolveTmuxTarget_DoesNotCrossAttributeTitledSibling(t *testing.T) {
+	ag := state.Agent{Handle: "cto", Role: "cto", Engine: "codex"}
+	// cto's pane is gone; only qa's amq-titled pane survives at the same
+	// cwd+engine. Resolving cto must NOT fall back onto qa's pane.
+	titledSibling := []TmuxPane{
+		{Session: "main", Window: "0", Pane: "1", CWD: "/repo", Command: "codex", Title: "amq:issue-96:qa"},
+	}
+	if _, ok := ResolveTmuxTargetForSession(ag, "issue-96", "/repo", titledSibling, nil); ok {
+		t.Fatal("must not attribute qa's titled pane to cto")
+	}
+	// An UNtitled sibling (older launch, no token) is still matchable by
+	// cwd+engine — the exclusion only applies to explicitly-tokened panes.
+	untitled := []TmuxPane{{Session: "main", Window: "0", Pane: "1", CWD: "/repo", Command: "codex"}}
+	if _, ok := ResolveTmuxTargetForSession(ag, "issue-96", "/repo", untitled, nil); !ok {
+		t.Fatal("untitled pane should still resolve by cwd+engine")
+	}
+}
+
 func TestSuggestJump_FormatsTarget(t *testing.T) {
 	got := SuggestJump(TmuxTarget{Session: "squad", Window: "1", Pane: "2"})
 	want := "tmux switch-client -t squad:1.2"
