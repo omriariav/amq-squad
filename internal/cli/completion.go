@@ -181,6 +181,7 @@ var completionCommonFlags = []string{
 	"--restore-existing",
 	"--review-age",
 	"--role",
+	"--role-file",
 	"--roles",
 	"--root",
 	"--run-action",

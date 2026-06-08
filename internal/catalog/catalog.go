@@ -149,8 +149,22 @@ func IDs() []string {
 }
 
 // ResolveSelection converts the user-facing persona picker syntax into role
-// IDs. It accepts catalog IDs, 1-based market numbers, and "all".
+// IDs. It accepts catalog IDs, 1-based market numbers, and "all". Tokens that
+// are not in the catalog are rejected.
 func ResolveSelection(line string) ([]string, error) {
+	return resolveSelection(line, false)
+}
+
+// ResolveSelectionAllowingCustom behaves like ResolveSelection but returns
+// unknown role slugs verbatim (lowercased and trimmed) instead of erroring,
+// so callers can treat them as custom roles. Numeric market picks and "all"
+// still resolve strictly against the catalog. Callers are responsible for
+// validating custom slugs and supplying their binary.
+func ResolveSelectionAllowingCustom(line string) ([]string, error) {
+	return resolveSelection(line, true)
+}
+
+func resolveSelection(line string, allowCustom bool) ([]string, error) {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return nil, fmt.Errorf("no selection provided")
@@ -177,6 +191,10 @@ func ResolveSelection(line string) ([]string, error) {
 			continue
 		}
 		if Lookup(p) == nil {
+			if allowCustom {
+				out = append(out, p)
+				continue
+			}
 			return nil, fmt.Errorf("unknown persona/role %q. Known personas: %s", p, strings.Join(IDs(), ", "))
 		}
 		out = append(out, p)

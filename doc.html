@@ -496,6 +496,7 @@
         <a href="#context">Context model</a>
         <a href="#briefs">Workstream briefs</a>
         <a href="#profiles">Profiles</a>
+        <a href="#custom-roles">Custom roles</a>
         <a href="#verbs">Verbs</a>
         <a href="#console">Status board and console</a>
         <a href="#json">JSON and exit codes</a>
@@ -1042,6 +1043,108 @@ amq-squad up --profile release            # operate on a named profile</code></p
             Omit <code class="inline-code">--profile</code> (or pass
             <code class="inline-code">--profile default</code>) for the
             default profile.
+          </p>
+        </div>
+      </section>
+
+      <section id="custom-roles">
+        <div class="content">
+          <h2>Custom roles</h2>
+          <p>
+            <code class="inline-code">--roles</code> /
+            <code class="inline-code">--personas</code> accept the built-in
+            personas (<code class="inline-code">cpo, cto, senior-dev, fullstack,
+            frontend-dev, backend-dev, mobile-dev, junior-dev, qa, pm,
+            designer</code>) and <b>custom roles</b> that are not in the
+            catalog. A custom role is any valid slug (lowercase
+            <code class="inline-code">a-z</code>,
+            <code class="inline-code">0-9</code>,
+            <code class="inline-code">-</code>,
+            <code class="inline-code">_</code>) and must carry an explicit
+            <code class="inline-code">--binary</code> because there is no
+            catalog default to fall back to. Built-in roles keep their catalog
+            defaults unless overridden. Custom roles are first-class members in
+            <code class="inline-code">team.json</code>,
+            <code class="inline-code">team-rules.md</code>, the bootstrap
+            prompt, status/history, and launch/resume.
+          </p>
+          <div class="code"><pre><code>amq-squad new team --roles researcher --binary researcher=codex
+amq-squad new team --roles researcher,reviewer --binary researcher=codex,reviewer=claude
+amq-squad new profile discovery --roles researcher --binary researcher=codex</code></pre></div>
+          <p>
+            A missing binary fails clearly:
+            <code class="inline-code">custom role "researcher" requires --binary researcher=&lt;cli&gt;</code>.
+          </p>
+          <h3>Role files</h3>
+          <p>
+            For a richer persona, author a <b>role file</b> and pass it with
+            <code class="inline-code">--role-file</code> (comma-separated) or
+            inline in <code class="inline-code">--roles</code>. Supported
+            formats: Markdown with optional YAML frontmatter (the body becomes
+            <code class="inline-code">role.md</code> verbatim), metadata-only
+            <code class="inline-code">.yaml</code>, or
+            <code class="inline-code">.json</code>. The file's
+            <code class="inline-code">binary:</code> field satisfies the binary
+            requirement, and <code class="inline-code">--binary</code> overrides
+            it. The authored document is staged at
+            <code class="inline-code">.amq-squad/roles/&lt;id&gt;.md</code> and
+            seeds that agent's <code class="inline-code">role.md</code> at
+            launch; later user edits are preserved. A role file whose id matches
+            a built-in persona is rejected.
+          </p>
+          <div class="code"><pre><code>amq-squad new team --role-file ./roles/researcher.md --roles cto
+amq-squad team init --roles "cto,./roles/researcher.md"
+
+# roles/researcher.md
+---
+id: researcher
+label: Research Engineer
+binary: codex
+peers: [cto, qa]
+---
+# Role: Research Engineer
+
+## Description
+Owns deep technical investigation, prototypes, and written findings.</code></pre></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Field</th>
+                  <th>Meaning</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>id</code> (or <code>role</code>)</td>
+                  <td>role slug + default handle (lowercase <code>a-z 0-9 - _</code>)</td>
+                </tr>
+                <tr>
+                  <td><code>label</code></td>
+                  <td>human title shown in listings and <code>role.md</code></td>
+                </tr>
+                <tr>
+                  <td><code>binary</code></td>
+                  <td><code>codex</code> or <code>claude</code></td>
+                </tr>
+                <tr>
+                  <td><code>description</code></td>
+                  <td>one-line summary seeded into the rendered <code>role.md</code></td>
+                </tr>
+                <tr>
+                  <td><code>skills</code></td>
+                  <td>list of slash commands for this role</td>
+                </tr>
+                <tr>
+                  <td><code>peers</code></td>
+                  <td>list of role ids this role talks to most</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            The <code class="inline-code">/amq-squad-role-creator</code> skill
+            walks through authoring role files and wiring them into a team.
           </p>
         </div>
       </section>
