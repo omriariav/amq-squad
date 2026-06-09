@@ -16,6 +16,13 @@ type deliverCall struct {
 // per tmux subcommand (keyed by the first arg).
 func swapDeliver(t *testing.T, results map[string]error) *[]deliverCall {
 	t.Helper()
+	// Make submit deterministic and fast: no real sleeps, and a capturer that
+	// reports the prompt left the input box (submitted on the first Enter) so the
+	// submit loop never shells real `tmux capture-pane`. Individual tests can
+	// override paneCapturer afterwards to exercise the retry/error paths.
+	prevSettle, prevVerify, prevCap := submitSettleDelay, submitVerifyDelay, paneCapturer
+	submitSettleDelay, submitVerifyDelay = 0, 0
+	paneCapturer = func(string) (string, error) { return "", nil }
 	var calls []deliverCall
 	prev := deliverExec
 	deliverExec = func(stdin string, args ...string) (string, error) {
@@ -27,8 +34,21 @@ func swapDeliver(t *testing.T, results map[string]error) *[]deliverCall {
 		}
 		return "", nil
 	}
-	t.Cleanup(func() { deliverExec = prev })
+	t.Cleanup(func() {
+		deliverExec = prev
+		submitSettleDelay, submitVerifyDelay, paneCapturer = prevSettle, prevVerify, prevCap
+	})
 	return &calls
+}
+
+func enterCount(calls []deliverCall) int {
+	n := 0
+	for _, c := range calls {
+		if len(c.args) > 0 && c.args[0] == "send-keys" && c.args[len(c.args)-1] == "Enter" {
+			n++
+		}
+	}
+	return n
 }
 
 func TestSendPromptToPaneDeliversVerbatimWithEnter(t *testing.T) {
@@ -146,3 +166,69 @@ func TestTargetForPaneID(t *testing.T) {
 		t.Fatal("empty pane id must not resolve")
 	}
 }
+
+// The #86 fix: if the first Enter does not submit (prompt still in the input
+// box), submit retries the Enter rather than leaving the message hanging.
+func TestSendPromptRetriesEnterWhenStillStaged(t *testing.T) {
+	calls := swapDeliver(t, nil)
+	prompt := "do the thing\nplease review"
+	n := 0
+	paneCapturer = func(string) (string, error) {
+		n++
+		if n == 1 {
+			// First check: the prompt's last line is still in the input box.
+			return "│ please review                │\n  ? for shortcuts", nil
+		}
+		return "", nil // second check: input box cleared -> submitted
+	}
+	if err := SendPromptToPane("%5", prompt); err != nil {
+		t.Fatalf("SendPromptToPane: %v", err)
+	}
+	if got := enterCount(*calls); got != 2 {
+		t.Fatalf("want 2 Enter attempts (one retry), got %d", got)
+	}
+}
+
+// If the prompt can never be confirmed submitted, return a clear error rather
+// than silently leaving text staged (#86 acceptance criterion).
+func TestSendPromptErrorsWhenNeverConfirmed(t *testing.T) {
+	calls := swapDeliver(t, nil)
+	prompt := "x\nhang me"
+	paneCapturer = func(string) (string, error) { return "│ hang me │\n  ? for shortcuts", nil } // always staged
+	err := SendPromptToPane("%5", prompt)
+	if err == nil || !strings.Contains(err.Error(), "could not confirm it submitted") {
+		t.Fatalf("want a clear not-submitted error, got %v", err)
+	}
+	if got := enterCount(*calls); got != submitAttempts {
+		t.Errorf("want %d Enter attempts before erroring, got %d", submitAttempts, got)
+	}
+}
+
+func TestPromptLeftInputBox(t *testing.T) {
+	prev := paneCapturer
+	t.Cleanup(func() { paneCapturer = prev })
+	// Tail still in the bottom input region -> not submitted.
+	paneCapturer = func(string) (string, error) { return "scrollback\n...\n│ review this │\n? for shortcuts", nil }
+	if promptLeftInputBox("%1", "review this") {
+		t.Error("a prompt still in the input box must read as NOT submitted")
+	}
+	// Tail scrolled up into the conversation (above the input region) -> submitted.
+	paneCapturer = func(string) (string, error) {
+		return "> review this\nagent output\nmore output\nstill more\n● Working… esc to interrupt\n  ? for shortcuts", nil
+	}
+	if !promptLeftInputBox("%1", "review this") {
+		t.Error("a prompt no longer in the input region must read as submitted")
+	}
+	// Capture error / empty tail -> treated as submitted (never block).
+	paneCapturer = func(string) (string, error) { return "", errExpected }
+	if !promptLeftInputBox("%1", "x") {
+		t.Error("a capture error must be treated as submitted")
+	}
+	if !promptLeftInputBox("%1", "") {
+		t.Error("an empty tail must be treated as submitted")
+	}
+}
+
+var errExpected = errorsNew("capture failed")
+
+func errorsNew(s string) error { return errors.New(s) }

@@ -6,6 +6,22 @@ import (
 	"os/exec"
 	"strings"
 	"sync/atomic"
+	"time"
+)
+
+// Submit-tuning knobs (package vars so tests can zero the sleeps). Plain tmux
+// (non iTerm2 -CC) does not buffer a bracketed paste the way -CC does, so the
+// agent TUI needs a brief moment to ingest the pasted body before the Enter —
+// otherwise the Enter races the paste and is dropped, leaving the prompt hanging
+// staged in the input box (#86). We settle, submit, verify the prompt left the
+// input box, and retry the Enter before giving up with a clear error.
+var (
+	submitSettleDelay = 120 * time.Millisecond
+	submitVerifyDelay = 200 * time.Millisecond
+	submitAttempts    = 3
+	// inputBoxLines is how many bottom lines of the pane count as the input
+	// region for the "did it leave the input box?" check.
+	inputBoxLines = 4
 )
 
 // DeadPaneError reports that a tmux pane targeted for control no longer exists
@@ -98,8 +114,62 @@ func SendPromptToPane(paneID, prompt string) error {
 	if out, err := deliverExec("", "paste-buffer", "-d", "-p", "-b", buf, "-t", paneID); err != nil {
 		return fmt.Errorf("tmux paste-buffer -t %s: %w: %s", paneID, err, strings.TrimSpace(out))
 	}
-	// Submit with one explicit Enter key event.
-	return SendKeysToPane(paneID, "Enter")
+	// Submit robustly — the Enter must not race the paste (the #86 hang).
+	return submitStagedPrompt(paneID, prompt)
+}
+
+// submitStagedPrompt presses Enter to submit a just-pasted prompt and confirms
+// it actually left the input box, retrying the Enter if not. It exists because a
+// bare paste-then-Enter often hangs in plain tmux: the Enter arrives before the
+// agent TUI has ingested the bracketed paste and is dropped, so the prompt sits
+// staged until a manual Enter. Each attempt settles first (lets the paste land),
+// sends Enter, then verifies via capture-pane that the prompt is no longer in the
+// input region. A still-staged prompt is retried (also covering TUIs that need a
+// second Enter after a paste); if it can never be confirmed submitted, it
+// returns a clear error rather than silently leaving the text staged.
+func submitStagedPrompt(paneID, prompt string) error {
+	tail := lastNonBlankLine(prompt)
+	for attempt := 0; attempt < submitAttempts; attempt++ {
+		time.Sleep(submitSettleDelay)
+		if err := SendKeysToPane(paneID, "Enter"); err != nil {
+			return err
+		}
+		time.Sleep(submitVerifyDelay)
+		if promptLeftInputBox(paneID, tail) {
+			return nil
+		}
+	}
+	return fmt.Errorf("delivered the prompt to pane %s but could not confirm it submitted after %d Enter attempts; the agent may still need a manual Enter", paneID, submitAttempts)
+}
+
+// promptLeftInputBox reports whether the staged prompt is no longer sitting in
+// the pane's input region (the bottom of the screen) — i.e. the Enter submitted
+// it. Best-effort: an empty tail or a capture failure is treated as submitted,
+// so a failed/unavailable check never blocks delivery or forces a false retry.
+func promptLeftInputBox(paneID, tail string) bool {
+	tail = strings.TrimSpace(tail)
+	if tail == "" {
+		return true
+	}
+	out, err := paneCapturer(paneID)
+	if err != nil {
+		return true
+	}
+	// The input box sits at the very bottom; if the prompt's last line is still
+	// down there, the Enter has not submitted it.
+	return !strings.Contains(tailLines(out, inputBoxLines), tail)
+}
+
+// lastNonBlankLine returns the last non-whitespace line of s — the distinctive
+// tail to look for in the input box.
+func lastNonBlankLine(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			return strings.TrimSpace(lines[i])
+		}
+	}
+	return ""
 }
 
 // FindPaneByID returns the live pane carrying paneID. Callers validate further
