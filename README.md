@@ -20,7 +20,7 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 Install the 1.6 line:
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v1.6.0
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v1.7.0
 amq-squad version
 ```
 
@@ -97,7 +97,7 @@ and **control targets the recorded pane id**, never window names. Full surface:
 | Skill | Audience | Reach for it when |
 | --- | --- | --- |
 | **`amq-squad`** | an agent on a live team | day-to-day coordination: inbox drains, routing, review/handoff, `status`/`console`/`history`, `up`/`stop`/`resume`/`fork`, `agent up`/`resume`, and tmux runtime control (`focus`/`send`). |
-| **`amq-team-setup`** | designing a team | first-time setup: personas, profile choice, team rules, pointer stubs, brief authoring, `sync`, validation. |
+| **`amq-team-setup`** | designing a team | wizard-style first-time setup: capture a goal from any source (prompt / `.md` / GitHub issue or PR / Jira / URL) into a canonical brief, pick personas + profile, optionally wire orchestration (who leads), team rules, pointer stubs, `sync`, validation. |
 | **`amq-squad-role-creator`** | adding a role type | authoring a new custom role (persona + `role.md`), inline or as a reusable role file. |
 | **`amq-squad-orchestrator`** | a **lead** agent | running a squad as a *driver*: spawn child agents, dispatch tasks into their panes with the busy-guarded `send`, monitor liveness via `status --json`, collect children's `[AGENT-EVENT]`-over-AMQ reports, and recover. The amq-squad-native equivalent of a hand-rolled tmux spawn protocol. |
 

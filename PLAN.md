@@ -59,19 +59,34 @@ the open issues by theme + status so the near-term path is legible at a glance.
     spawn / dispatch (busy-guarded `send`) / monitor (`status --json`) / the
     `[AGENT-EVENT]`-over-AMQ reporting protocol / recover. Plus the corrected
     `send` busy-guard note in the `amq-squad` skill.
+- **v1.7.0 — shipped. Closes #101 (one-setup orchestrated squad).**
+  - **#101 — `amq-team-setup` wizard.** A wizard-style 5-step flow in both
+    marketplaces (Claude + Codex): (A) capture a goal from ANY source — inline
+    prompt, local `.md`, GitHub issue or PR (`gh`), Jira key (Atlassian MCP /
+    `jira` CLI), or doc URL (Confluence / fetch) — fetched agent-side so core
+    stays tracker-neutral; (B) normalize into a canonical per-session brief
+    (`references/briefs-template.md`: Goal / Source / Scope / Out of scope /
+    Acceptance), drafted then confirmed (a raw ticket is not a brief); (C) an
+    orchestration opt-in driven by a STRUCTURED CLI primitive — `team.json`
+    gains `orchestrated`/`lead`, `amq-squad new team --orchestrated [--lead
+    ROLE]` records the lead and injects the orchestration reporting norm into
+    the generated `team-rules.md` (mirrors the #81 norm pattern, generated +
+    tested, never pasted prose), default off, exactly one lead, never the NOC.
+    Shipped as PR #103 (CLI primitive) + PR #104 (wizard skill).
 
 ## Themes
 
 ### Runtime orchestration (the v1.5.x arc)
 
 - **#101 — `amq-team-setup` wizard: goal→brief + orchestration opt-in**
-  *(planned, v1.7.0 headline).* A wizard-style flow that captures a goal from any
-  source (Jira / GitHub issue or PR / `.md` / URL / inline prompt) and normalizes
-  it into a canonical brief, then optionally wires the squad for orchestration via
-  a structured `new team --orchestrated --lead <role>` primitive (injects the
-  team-rules reporting norm; never pasted prose). Tracker-neutral core (the skill
-  fetches), default off, Claude + Codex, **never in the NOC**. Makes a one-setup
-  orchestrated squad — the amq-squad analog of Sagi's always-on protocol.
+  ✅ **shipped in v1.7.0** (PR #103 CLI primitive + #104 wizard skill). A
+  wizard-style flow that captures a goal from any source (Jira / GitHub issue or
+  PR / `.md` / URL / inline prompt) and normalizes it into a canonical brief,
+  then optionally wires the squad for orchestration via a structured `new team
+  --orchestrated --lead <role>` primitive (injects the team-rules reporting norm;
+  never pasted prose). Tracker-neutral core (the skill fetches), default off,
+  Claude + Codex, **never in the NOC**. Makes a one-setup orchestrated squad —
+  the amq-squad analog of Sagi's always-on protocol.
 - **#76 — Agent orchestrator.** ✅ shipped in v1.6.0: the `amq-squad-orchestrator`
   skill (lead spawns/dispatches/monitors child agents over the tmux contract; the
   `[AGENT-EVENT]`-over-AMQ reporting protocol) plus #95 external-pane adoption. The
