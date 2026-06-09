@@ -144,6 +144,36 @@ func memberActions(projectDir, profile, session, role string, paneAlive bool) []
 	}
 }
 
+// commandScope renders the shared "--project D [--profile P] --session S" tail
+// for project-scoped runtime commands, so member and session actions stay in
+// lockstep.
+func commandScope(projectDir, profile, session string) string {
+	scope := " --project " + shellQuote(projectDir)
+	if profile != "" && profile != team.DefaultProfile {
+		scope += " --profile " + shellQuote(profile)
+	}
+	scope += " --session " + shellQuote(session)
+	return scope
+}
+
+// sessionActions builds the SESSION-scope operator action catalog for a
+// workstream: the lifecycle controls a client renders for a session row. They
+// map to real amq-squad verbs (no synthetic "restart" — a client composes that
+// from stop + a resume). resume_new_session lets amq-squad derive the tmux
+// session name (omitting --terminal-session). All are runnable commands, so
+// available is true; the mutating ones request confirmation.
+func sessionActions(projectDir, profile, session string) []runtimeActionJSON {
+	base := "amq-squad"
+	scope := commandScope(projectDir, profile, session)
+	return []runtimeActionJSON{
+		{Kind: "status", Label: "show session status", Scope: "session", Mutates: false, NeedsConfirmation: false, Available: true, Command: base + " status" + scope + " --json"},
+		{Kind: "resume_preview", Label: "preview resume plan", Scope: "session", Mutates: false, NeedsConfirmation: false, Available: true, Command: base + " resume" + scope + " --json"},
+		{Kind: "resume_current_window", Label: "resume in current window", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " resume" + scope + " --exec --target current-window"},
+		{Kind: "resume_new_session", Label: "resume in new tmux session", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " resume" + scope + " --exec --target new-session"},
+		{Kind: "stop", Label: "stop the session", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " stop" + scope + " --all"},
+	}
+}
+
 // resumeMemberJSON is one member row in the resume_plan envelope. It mirrors the
 // human plan (role/action/note/command) and adds the runtime identity so a
 // client can decide whether to focus a live pane or re-open one.
