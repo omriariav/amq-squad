@@ -42,12 +42,12 @@ readme-html-check:
 		echo "pandoc not found; skipping README.html freshness check"; \
 	else \
 		tmp="$$(mktemp)"; \
+		trap 'rm -f "$$tmp"' EXIT; \
 		$(PANDOC_CMD) -o "$$tmp"; \
 		if ! diff -q "$$tmp" README.html >/dev/null 2>&1; then \
 			echo "README.html is stale: run 'make readme-html' and commit it" >&2; \
-			rm -f "$$tmp"; exit 1; \
+			exit 1; \
 		fi; \
-		rm -f "$$tmp"; \
 		echo "README.html is in sync with README.md"; \
 	fi
 
