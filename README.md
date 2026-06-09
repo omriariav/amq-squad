@@ -59,6 +59,53 @@ Code, skills are namespaced by plugin, e.g.
 `/amq-squad:amq-squad-role-creator`. In Codex, invoke them by skill name, e.g.
 `$amq-squad-role-creator`.
 
+## Using amq-squad
+
+amq-squad has two surfaces, and you use them at different times:
+
+- **The `amq-squad` CLI is for you, the operator.** Design a team, bring it
+  up / down / back in tmux, inspect it (`status`, `console`, `doctor`), and
+  control agent panes (`focus`, `send`). Most commands are **project-scoped**
+  (`--project DIR`, default cwd); the session-oriented ones (`up`, `status`,
+  `send`, `stop`, `resume`, ...) are also **session-scoped** (`--session NAME`,
+  the AMQ workstream). A few (`roles`, `doctor`) are neither or project-only.
+- **The skills are for the agents.** They teach a Claude or Codex agent how to
+  drive amq-squad + AMQ from *inside* a session: coordinate with peers, and (as
+  a lead) orchestrate a whole squad. You install them once per marketplace; the
+  agents invoke them by name.
+
+### The CLI in 60 seconds
+
+```sh
+cd ~/Code/my-project
+amq-squad new team --roles cto,fullstack,qa --sync   # 1. design the team
+amq-squad new session issue-96                        # 2. bring it up live in tmux
+amq-squad status --session issue-96                   # 3. see who is live
+amq-squad send --session issue-96 --role qa --body "run the smoke suite"   # 4. drive a pane
+amq-squad focus --session issue-96 --role qa          #    watch that agent work
+amq-squad stop --session issue-96 --all               # 5. tear down (stays resumable)
+amq-squad resume --session issue-96                   # 6. bring it back
+```
+
+The golden rules: **`up`/`new session` is for NEW work** (it refuses an existing
+session — use `resume` to continue), **`stop` preserves state** (resumable),
+and **control targets the recorded pane id**, never window names. Full surface:
+[Quick start](#quick-start), [Verbs](#verbs), [Runtime control](#runtime-control-tmux).
+
+### The four skills, and when to use each
+
+| Skill | Audience | Reach for it when |
+| --- | --- | --- |
+| **`amq-squad`** | an agent on a live team | day-to-day coordination: inbox drains, routing, review/handoff, `status`/`console`/`history`, `up`/`stop`/`resume`/`fork`, `agent up`/`resume`, and tmux runtime control (`focus`/`send`). |
+| **`amq-team-setup`** | designing a team | first-time setup: personas, profile choice, team rules, pointer stubs, brief authoring, `sync`, validation. |
+| **`amq-squad-role-creator`** | adding a role type | authoring a new custom role (persona + `role.md`), inline or as a reusable role file. |
+| **`amq-squad-orchestrator`** | a **lead** agent | running a squad as a *driver*: spawn child agents, dispatch tasks into their panes with the busy-guarded `send`, monitor liveness via `status --json`, collect children's `[AGENT-EVENT]`-over-AMQ reports, and recover. The amq-squad-native equivalent of a hand-rolled tmux spawn protocol. |
+
+Invoke a skill in Claude Code as `/amq-squad:<skill>` (e.g.
+`/amq-squad:amq-squad-orchestrator`); in Codex as `$<skill>` (e.g.
+`$amq-squad-orchestrator`). For routine member work use `amq-squad`; only the
+lead agent driving spawnees reaches for `amq-squad-orchestrator`.
+
 ## Quick start
 
 ```sh
@@ -538,8 +585,15 @@ commands a client can render or copy, each with an `available` flag:
 }
 ```
 
-The `tmux` block is omitted for agents launched outside tmux, so clients detect
-runtime-control availability by presence.
+The `tmux` block is absent when no pane can be resolved, so clients detect
+runtime-control availability by its presence. As of **v1.6.0**, `status --json`
+and `resume --json` (and the `focus`/`send` verbs) **adopt** a live agent's pane
+even when it was launched *outside* amq-squad's tmux backend (a raw
+`tmux new-window`): the recorded, verified agent pid is matched into a live
+pane's process subtree, so `focus`/`send`/`attach_control` and `pane_alive` work
+for it too. (`history --json` reflects persisted launch records only and does
+not adopt.) Launching through amq-squad is still preferred (it records the role,
+binary, and brief, not just a pane).
 
 High-level control verbs target the exact pane id (falling back to a neutral
 title/cwd resolver) and are all project-scoped:
