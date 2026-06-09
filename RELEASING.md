@@ -1,10 +1,15 @@
 # Releasing amq-squad
 
-Release changes must go through a PR and `make ci` before merge.
+Release changes must go through a PR and `make ci` before merge. `make ci`
+includes a README.html freshness check, so a release that touches `README.md`
+cannot merge without the matching regenerated `README.html` (see step 1).
 
 ## Patch Release Checklist
 
-1. Update user-facing install references, usually the README `go install` tag.
+1. Update user-facing install references (usually the README `go install` tag).
+   Any time you change `README.md`, run `make readme-html` to regenerate
+   `README.html` (requires `pandoc`) and commit both; `make ci` fails if
+   `README.html` is out of sync.
 2. Merge the release PR.
 3. Tag the merge commit:
 
