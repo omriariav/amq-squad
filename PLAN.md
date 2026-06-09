@@ -8,8 +8,8 @@ the open issues by theme + status so the near-term path is legible at a glance.
 - **v1.5.0 — shipped.** tmux runtime contract (persisted pane/window ids,
   `pane_alive`, per-agent `actions[]`, `focus`/`open`/`send` verbs, `--target
   new-window`), custom roles, Claude + Codex plugin marketplaces.
-- **v1.5.1 — in progress.** `capabilities.runtime_actions` (#73), `send`
-  busy-pane idle-check (#74 / #68), structured action metadata
+- **v1.5.1 — shipped.** `capabilities.runtime_actions` (#73), `send` busy-pane
+  idle-check (#74 / #68), structured action metadata
   `label`/`scope`/`mutates`/`needs_confirmation`/`reason` (#75).
 - **Next (v1.5.2 candidate):** session/project-scope actions in `status --json`
   to fully close amq-noc#7 (resume-current-window / resume-new-session / stop /
