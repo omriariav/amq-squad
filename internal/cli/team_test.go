@@ -1181,6 +1181,8 @@ func TestRunTeamInitSeedsTeamRules(t *testing.T) {
 		"Turns feedback into scoped tasks for the right owner. Does not implement code unless explicitly assigned by the user.",
 		"fullstack (Fullstack Developer)",
 		"Owns scoped end-to-end implementation",
+		"## Lifecycle / Release Updates",
+		"proactively posts a concise final-state update to the relevant peer thread",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("team-rules.md missing %q in:\n%s", want, body)

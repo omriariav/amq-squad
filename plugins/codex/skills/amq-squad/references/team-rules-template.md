@@ -81,6 +81,11 @@ Each agent should summarize the prior context it used before taking new work.
 - One concern per message when practical.
 - `amq send` reads stdin when `--body` is omitted. There is no `--body-file` flag.
 
+## Lifecycle / Release Updates
+
+- After an operator-approved lifecycle action (commit, PR open/ready, merge, tag, release, issue close, or a release-blocking decision), the owning/reviewer agent proactively posts a concise final-state update to the relevant peer thread. Do not wait to be pinged.
+- Include what changed, the current repo/release/issue state, and whether any further implementation is needed, so the peer converges cleanly after the action.
+
 ## Operator Gates
 
 If this profile enables operator gates, the human/operator is a virtual AMQ mailbox participant, not a runnable peer. Use the configured operator handle for human-only decisions or manual actions:
