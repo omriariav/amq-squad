@@ -132,8 +132,14 @@ func classifyAgentLiveness(agentDir, root, handle, role, binary, workstream, cwd
 		}
 	}
 
-	// Presence freshness/active/handle rules, identical to the prior status
-	// logic (and to preflight/list).
+	// Presence freshness/active/handle rules, plus the preflight's
+	// zombie-heartbeat guard (#38/#44). A fresh presence only proves SOMETHING
+	// wrote the file in the last 90s; if both the launch and wake writer records
+	// exist and both PIDs are confirmed dead, the file is a leftover heartbeat,
+	// not a live agent. presenceWriterIsKnownDead is the SAME guard the launch
+	// preflight applies, so status, resume, and preflight agree. It is
+	// conservative: only a both-records-present, both-dead case demotes
+	// presence; a missing/unknown writer keeps presence as live (unchanged).
 	presenceLive := false
 	presenceMismatched := false
 	if presenceErr == nil {
@@ -143,7 +149,7 @@ func classifyAgentLiveness(agentDir, root, handle, role, binary, workstream, cwd
 		active := strings.EqualFold(presence.Status, "active")
 		handleOK := presence.Handle == "" || presence.Handle == handle
 		switch {
-		case fresh && active && handleOK:
+		case fresh && active && handleOK && !presenceWriterIsKnownDead(agentDir, root, handle, binary, probe):
 			presenceLive = true
 		case fresh && active && !handleOK:
 			presenceMismatched = true

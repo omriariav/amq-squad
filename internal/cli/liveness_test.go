@@ -314,3 +314,128 @@ func TestClassifierReplacementLive(t *testing.T) {
 		t.Fatalf("replacement detail should mention recorded pid dead, got %q", live.Detail)
 	}
 }
+
+// TestStatusAndResumeAgreeOnZombiePresence is the #44 zombie-heartbeat
+// regression carried into the shared classifier: a FRESH active same-handle
+// presence.json whose launch+wake writer PIDs are BOTH confirmed dead is a
+// leftover heartbeat, not a live agent. The classifier must apply the same
+// zombie guard the launch preflight does, so the verdict is stale (not
+// presence-live). Status then correctly reports stale (previously it wrongly
+// said live -- the latent #44 bug), and resume offers restore with a command
+// (previously it would have reported action=live with no command). Both
+// surfaces must agree on stale.
+func TestStatusAndResumeAgreeOnZombiePresence(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	root := filepath.Join(base, "issue-96")
+	agentDir := filepath.Join(root, "agents", "cto")
+
+	// Both writer records present with dead PIDs.
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 7777, StartedAt: time.Now(),
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 8888, Root: root, Started: time.Now()})
+
+	// A fresh, active, same-handle presence -- the zombie heartbeat.
+	now := time.Now()
+	writeStatusPresence(t, base, "issue-96", "cto", presenceFile{
+		Handle:   "cto",
+		Status:   "active",
+		LastSeen: now.Add(-10 * time.Second),
+	})
+
+	// No live tmux pane, so the replacement-live fallback never fires.
+	withStubPaneLister(t, nil, nil)
+
+	// Both writer PIDs dead; neither matches.
+	probe := livenessProbe(map[int]bool{}, map[int]bool{}, now)
+
+	// 1) Classifier: zombie presence demotes to stale (NOT presence-live).
+	live := classifyAgentLiveness(agentDir, root, "cto", "cto", "codex", "issue-96", dir, probe)
+	if live.Verdict != livenessStale {
+		t.Fatalf("zombie presence verdict = %q, want stale", live.Verdict)
+	}
+	if live.Status != statusStateStale {
+		t.Fatalf("zombie presence status = %q, want stale (detail %q)", live.Status, live.Detail)
+	}
+	if live.Live() {
+		t.Fatalf("zombie presence must not report Live()")
+	}
+
+	// 2) classifyMemberStatus reports stale (the #44 fix at the status layer).
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	rec := classifyMemberStatus(tm, tm.Members[0], "issue-96", probe)
+	if rec.Status != statusStateStale {
+		t.Fatalf("status = %q, want stale (detail %q)", rec.Status, rec.Detail)
+	}
+
+	// 3) resume offers restore with a command -- NOT live-with-no-command.
+	plan, err := planMemberResume(memberPlanInput{
+		Member:     tm.Members[0],
+		Team:       tm,
+		Workstream: "issue-96",
+		Mode:       resumeModeDefault,
+		SquadBin:   teamSquadBin(),
+		Probe:      probe,
+	})
+	if err != nil {
+		t.Fatalf("planMemberResume: %v", err)
+	}
+	if plan.Action == resumeLive {
+		t.Fatalf("zombie-presence resume action = live; want restore. note=%q", plan.Note)
+	}
+	if plan.Action != resumeRestore {
+		t.Fatalf("zombie-presence resume action = %q, want restore", plan.Action)
+	}
+	if strings.TrimSpace(plan.Command) == "" {
+		t.Fatalf("zombie-presence restore must emit a non-empty command, got empty")
+	}
+
+	// 4) Agreement: status stale <-> resume not-live.
+	if rec.Status == statusStateStale && plan.Action == resumeLive {
+		t.Fatalf("status and resume disagree on zombie presence: status=stale but resume=live")
+	}
+}
+
+// TestClassifierPresenceLiveWhenWriterUnknown pins the conservative half of the
+// zombie guard: a fresh active presence with NO writer records (or a missing
+// one) still counts as presence-live, exactly as before. Only a both-present,
+// both-dead case demotes it. This guards against the guard over-reaching.
+func TestClassifierPresenceLiveWhenWriterUnknown(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	root := filepath.Join(base, "issue-96")
+	agentDir := filepath.Join(root, "agents", "cto")
+
+	// Fresh active presence, but NO launch.json and NO wake.lock: writers are
+	// unknown, so presence must still count as live.
+	now := time.Now()
+	writeStatusPresence(t, base, "issue-96", "cto", presenceFile{
+		Handle:   "cto",
+		Status:   "active",
+		LastSeen: now.Add(-10 * time.Second),
+	})
+	withStubPaneLister(t, nil, nil)
+	probe := livenessProbe(map[int]bool{}, map[int]bool{}, now)
+
+	live := classifyAgentLiveness(agentDir, root, "cto", "cto", "codex", "issue-96", dir, probe)
+	if live.Verdict != livenessPresenceLive {
+		t.Fatalf("presence with unknown writers verdict = %q, want presence-live", live.Verdict)
+	}
+	if live.Status != statusStateLive {
+		t.Fatalf("presence with unknown writers status = %q, want live", live.Status)
+	}
+}
