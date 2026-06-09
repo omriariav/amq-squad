@@ -584,6 +584,10 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		// must classify this as blocked, not silently emit fresh.
 		plan.Action = resumeBlocked
 		plan.Note = fmt.Sprintf("amq env unavailable: %v", err)
+		// Carry a liveness verdict even here so --json always has one (and so it
+		// agrees with status, which also reports missing when the env is
+		// unresolvable). The env failure means we cannot inspect any signal.
+		plan.Liveness = &agentLiveness{Verdict: livenessMissing, Status: statusStateMissing, Detail: plan.Note}
 		if in.Force {
 			plan.Action = resumeFresh
 			plan.Note = "force-duplicate: " + plan.Note
@@ -617,11 +621,17 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		probe = defaultDuplicateLaunchProbe
 	}
 
+	// Single shared liveness verdict — the same classifier status consumes (the
+	// #79 fix: status and resume can never disagree). Computed up front so EVERY
+	// return path below — including the forced preflight-error path — carries a
+	// liveness block.
+	live := classifyAgentLiveness(agentDir, root, handle, m.Role, m.Binary, env.SessionName, cwd, probe)
+	plan.Liveness = &live
+
 	// Surface a real I/O inspection error as blocked, preserving the prior
 	// safety contract. The preflight is still the authority on read errors; we
 	// run it in dry-run mode purely to catch perr (it reaps nothing on disk in
-	// dry-run). The live/stale DECISION, however, comes from the shared
-	// classifier below so status and resume can never disagree.
+	// dry-run). The live/stale DECISION comes from the shared classifier above.
 	pf := agentLaunchPreflight{
 		AgentDir:   agentDir,
 		Handle:     handle,
@@ -649,12 +659,6 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		}
 		return plan, nil
 	}
-
-	// Single shared liveness verdict — the same classifier status consumes.
-	// This is the fix for #79: a genuinely-stale agent is no longer mislabeled
-	// live by resume; the two surfaces now share one verdict.
-	live := classifyAgentLiveness(agentDir, root, handle, m.Role, m.Binary, env.SessionName, cwd, probe)
-	plan.Liveness = &live
 
 	if live.Live() {
 		// Live signal detected (agent / wake / presence / replacement). Same
