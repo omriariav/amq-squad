@@ -101,9 +101,16 @@ func TestStatusAndResumeAgreeOnStaleAgent(t *testing.T) {
 		t.Fatalf("restore action must emit a non-empty command, got empty")
 	}
 
-	// 4) Agreement: status stale <-> resume not-live.
+	// 4) Agreement: status stale <-> resume not-live, AND the resume plan carries
+	// the shared liveness verdict matching status (what resume --json exposes).
 	if rec.Status == statusStateStale && plan.Action == resumeLive {
 		t.Fatalf("status and resume disagree: status=stale but resume=live")
+	}
+	if plan.Liveness == nil {
+		t.Fatal("resume plan must carry a liveness verdict")
+	}
+	if plan.Liveness.Status != rec.Status {
+		t.Errorf("resume liveness.status %q != status %q (must agree)", plan.Liveness.Status, rec.Status)
 	}
 }
 
