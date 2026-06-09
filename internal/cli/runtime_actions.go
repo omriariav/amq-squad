@@ -102,7 +102,10 @@ func resolveControlTarget(mr memberRuntime, workstream string, panes []tmuxpane.
 	// agent pid (present even when no tmux block was captured) anchors the match.
 	ag := state.Agent{Handle: mr.Handle, Role: mr.Member.Role, Engine: mr.Member.Binary}
 	if mr.HasRecord {
-		ag.AgentPID = mr.Record.AgentPID
+		// Trust PID lineage only for a VERIFIED live agent pid: focus/send read
+		// the record without a liveness verdict, so a stale/reused pid must not
+		// anchor a cwd/engine-bypassing match (#95 review).
+		ag.AgentPID = verifiedAgentPID(mr.Record.AgentPID, mr.Member.Binary)
 	}
 	if tgt, found := tmuxpane.ResolveTmuxTargetForSession(ag, workstream, mr.CWD, panes, childrenPidTree()); found {
 		// tgt.Pane is the pane INDEX; tmux would resolve a bare index relative

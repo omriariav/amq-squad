@@ -194,7 +194,11 @@ func executeStatus(s statusExecution) error {
 	// PID lineage + cwd/engine from the memoized pane snapshot.
 	pidTree := childrenPidTree()
 	for i := range rows {
-		if rows[i].Tmux == nil && isLiveStatusState(rows[i].Status) {
+		// Only verified AGENT-live agents adopt by PID lineage: Signals.AgentPID
+		// is then a confirmed live process of the right binary. wake-live /
+		// presence-live have no verified agent pid, so do not trust lineage there
+		// (#95 review).
+		if rows[i].Tmux == nil && rows[i].Signals.AgentAlive && rows[i].Signals.BinaryMatch {
 			if panes, perr := statusPaneLister(); perr == nil {
 				if adopted := adoptLivePane(rows[i].Role, rows[i].Handle, rows[i].Binary, rows[i].CWD, workstream, rows[i].Signals.AgentPID, panes, pidTree); adopted != nil {
 					rows[i].Tmux = tmuxRuntimeFromInfo(adopted)
@@ -251,13 +255,6 @@ func firstStatusRoot(rows []statusRecord) string {
 		}
 	}
 	return ""
-}
-
-// isLiveStatusState reports whether a status state counts as a live agent
-// (verified agent pid, or a verified wake helper). Used to decide whether to
-// attempt live-pane adoption for an agent with no recorded tmux identity.
-func isLiveStatusState(s statusState) bool {
-	return s == statusStateLive || s == statusStateWakeLive
 }
 
 func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe duplicateLaunchProbe) statusRecord {

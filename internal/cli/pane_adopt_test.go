@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"testing"
 
 	"github.com/omriariav/amq-squad/internal/tmuxpane"
@@ -59,5 +60,25 @@ func TestAdoptLivePaneByPidWhenCommandMismatches(t *testing.T) {
 	}
 	if got := adoptLivePane("fullstack", "fullstack", "claude", "/repo", "main", 62277, panes, nil); got != nil {
 		t.Errorf("without PID lineage, a mismatched command must NOT adopt; got %+v", got)
+	}
+}
+
+// #95 review: PID-lineage adoption bypasses cwd+engine, so the anchoring pid
+// MUST be verified live + correct-binary; a stale/reused or wrong-binary pid is
+// rejected (returns 0 -> no lineage anchor).
+func TestVerifiedAgentPID(t *testing.T) {
+	if verifiedAgentPID(0, "codex") != 0 || verifiedAgentPID(-5, "codex") != 0 {
+		t.Error("non-positive pid must be 0")
+	}
+	if verifiedAgentPID(os.Getpid(), "") != 0 {
+		t.Error("empty binary must be 0")
+	}
+	// This live process is not running a binary named like this -> rejected.
+	if verifiedAgentPID(os.Getpid(), "definitely-not-this-binary-xyz") != 0 {
+		t.Error("a live pid running a DIFFERENT binary must be rejected (reuse guard)")
+	}
+	// A (very likely) dead pid -> rejected.
+	if verifiedAgentPID(2147483646, "codex") != 0 {
+		t.Error("a dead pid must be rejected")
 	}
 }

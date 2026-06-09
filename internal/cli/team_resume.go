@@ -630,9 +630,11 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 
 	// #95: a live agent launched outside amq-squad's tmux backend has no recorded
 	// tmux block; adopt its live pane so resume --json exposes the same pane
-	// identity status does (focus/attach parity across surfaces). Live agents
-	// only — a dead agent's pane is handled by the replacement path/classifier.
-	if live.Live() && plan.Tmux == nil {
+	// identity status does (focus/attach parity across surfaces). Verified
+	// AGENT-live only: that verdict proves Signals.AgentPID is a live process of
+	// the right binary, so PID lineage is safe. wake-live/presence-live have no
+	// verified agent pid (#95 review).
+	if live.Verdict == livenessAgentLive && plan.Tmux == nil {
 		if panes, perr := statusPaneLister(); perr == nil {
 			if adopted := adoptLivePane(m.Role, handle, m.Binary, cwd, env.SessionName, live.Signals.AgentPID, panes, childrenPidTree()); adopted != nil {
 				plan.Tmux = adopted
