@@ -115,61 +115,58 @@ func SendPromptToPane(paneID, prompt string) error {
 		return fmt.Errorf("tmux paste-buffer -t %s: %w: %s", paneID, err, strings.TrimSpace(out))
 	}
 	// Submit robustly — the Enter must not race the paste (the #86 hang).
-	return submitStagedPrompt(paneID, prompt)
+	return submitStagedPrompt(paneID)
 }
 
 // submitStagedPrompt presses Enter to submit a just-pasted prompt and confirms
-// it actually left the input box, retrying the Enter if not. It exists because a
-// bare paste-then-Enter often hangs in plain tmux: the Enter arrives before the
-// agent TUI has ingested the bracketed paste and is dropped, so the prompt sits
-// staged until a manual Enter. Each attempt settles first (lets the paste land),
-// sends Enter, then verifies via capture-pane that the prompt is no longer in the
-// input region. A still-staged prompt is retried (also covering TUIs that need a
-// second Enter after a paste); if it can never be confirmed submitted, it
-// returns a clear error rather than silently leaving the text staged.
-func submitStagedPrompt(paneID, prompt string) error {
-	tail := lastNonBlankLine(prompt)
+// it actually submitted, retrying the Enter if not. It exists because a bare
+// paste-then-Enter often hangs in plain tmux: the Enter arrives before the agent
+// TUI has ingested the bracketed paste and is dropped, so the prompt sits staged
+// until a manual Enter.
+//
+// Each attempt snapshots the input region (the bottom of the pane), presses
+// Enter, then re-snapshots: a successful submit CHANGES that region (the staged
+// prompt leaves the input box, replaced by an empty prompt / the agent's
+// response), while a dropped Enter leaves it byte-for-byte identical, which
+// triggers a retry. Comparing the region (rather than searching for the prompt
+// text) is robust to line wrapping and input-box borders, and engine-agnostic.
+// If submission can never be confirmed it returns a clear error rather than
+// silently leaving the text staged. Best-effort: if the region cannot be
+// captured it fails open (one Enter, no retry) so a capture problem never blocks
+// delivery or spins.
+func submitStagedPrompt(paneID string) error {
 	for attempt := 0; attempt < submitAttempts; attempt++ {
 		time.Sleep(submitSettleDelay)
+		before, beforeOK := captureInputRegion(paneID)
 		if err := SendKeysToPane(paneID, "Enter"); err != nil {
 			return err
 		}
 		time.Sleep(submitVerifyDelay)
-		if promptLeftInputBox(paneID, tail) {
+		after, afterOK := captureInputRegion(paneID)
+		// Submitted when the input region changed; fail open when either snapshot
+		// is unavailable (don't block or retry on a capture we can't trust).
+		if !beforeOK || !afterOK || after != before {
 			return nil
 		}
+		// Unchanged: the Enter was dropped — retry.
 	}
 	return fmt.Errorf("delivered the prompt to pane %s but could not confirm it submitted after %d Enter attempts; the agent may still need a manual Enter", paneID, submitAttempts)
 }
 
-// promptLeftInputBox reports whether the staged prompt is no longer sitting in
-// the pane's input region (the bottom of the screen) — i.e. the Enter submitted
-// it. Best-effort: an empty tail or a capture failure is treated as submitted,
-// so a failed/unavailable check never blocks delivery or forces a false retry.
-func promptLeftInputBox(paneID, tail string) bool {
-	tail = strings.TrimSpace(tail)
-	if tail == "" {
-		return true
-	}
+// captureInputRegion snapshots the bottom inputBoxLines of the pane (the input
+// region) for the before/after submit comparison. ok is false when the pane
+// cannot be captured or the region is blank (nothing to compare), so the caller
+// fails open instead of treating an empty capture as "unchanged".
+func captureInputRegion(paneID string) (region string, ok bool) {
 	out, err := paneCapturer(paneID)
 	if err != nil {
-		return true
+		return "", false
 	}
-	// The input box sits at the very bottom; if the prompt's last line is still
-	// down there, the Enter has not submitted it.
-	return !strings.Contains(tailLines(out, inputBoxLines), tail)
-}
-
-// lastNonBlankLine returns the last non-whitespace line of s — the distinctive
-// tail to look for in the input box.
-func lastNonBlankLine(s string) string {
-	lines := strings.Split(s, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.TrimSpace(lines[i]) != "" {
-			return strings.TrimSpace(lines[i])
-		}
+	region = tailLines(out, inputBoxLines)
+	if strings.TrimSpace(region) == "" {
+		return "", false
 	}
-	return ""
+	return region, true
 }
 
 // FindPaneByID returns the live pane carrying paneID. Callers validate further
