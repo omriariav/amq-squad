@@ -213,7 +213,7 @@ func executeStatus(s statusExecution) error {
 			Operator:     team.EffectiveOperator(t),
 			Capabilities: team.EffectiveCapabilities(t),
 			Records:      rows,
-			Actions:      sessionActions(t.Project, s.Profile, workstream),
+			Actions:      sessionActions(t.Project, s.Profile, workstream, firstLiveTmuxSession(rows)),
 		})
 	}
 	policy := outputPolicyCurrent()

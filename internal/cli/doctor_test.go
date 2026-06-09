@@ -438,6 +438,78 @@ func TestExecuteDoctorTmuxMissingFails(t *testing.T) {
 	}
 }
 
+func TestDoctorCheckTmuxExtendedKeys(t *testing.T) {
+	// Not inside tmux -> skipped, OK, no hint.
+	t.Run("not in tmux", func(t *testing.T) {
+		d := doctorExecution{
+			Getenv:          func(string) string { return "" },
+			TmuxShowOptions: func(string) (string, bool) { t.Fatal("must not probe tmux when $TMUX is unset"); return "", false },
+		}
+		c := doctorCheckTmuxExtendedKeys(d)
+		if c.Status != doctorOK {
+			t.Errorf("not-in-tmux status = %q, want ok", c.Status)
+		}
+		if !strings.Contains(c.Detail, "skipped") || strings.Contains(c.Detail, "Shift+Enter") {
+			t.Errorf("not-in-tmux detail should be a skip with no hint: %q", c.Detail)
+		}
+	})
+
+	// Inside tmux, extended-keys off -> OK (never fails) WITH the hint.
+	t.Run("off shows hint", func(t *testing.T) {
+		d := doctorExecution{
+			Getenv:          func(name string) string { return map[string]string{"TMUX": "/tmp/tmux-1/default,1,0"}[name] },
+			TmuxShowOptions: func(string) (string, bool) { return "off", true },
+		}
+		c := doctorCheckTmuxExtendedKeys(d)
+		if c.Status != doctorOK {
+			t.Errorf("extended-keys off must NOT fail doctor; status = %q", c.Status)
+		}
+		for _, want := range []string{
+			"Shift+Enter",
+			"tmux set-option -s extended-keys on",
+			"extended-keys-format csi-u",
+			"xterm*:extkeys",
+			"tmux -CC",
+			"amq-squad does not change it for you",
+		} {
+			if !strings.Contains(c.Detail, want) {
+				t.Errorf("hint missing %q: %q", want, c.Detail)
+			}
+		}
+	})
+
+	// Inside tmux, extended-keys unset (ok=false) -> OK with the hint too.
+	t.Run("unset shows hint", func(t *testing.T) {
+		d := doctorExecution{
+			Getenv:          func(string) string { return "/tmp/tmux-1/default,1,0" },
+			TmuxShowOptions: func(string) (string, bool) { return "", false },
+		}
+		c := doctorCheckTmuxExtendedKeys(d)
+		if c.Status != doctorOK || !strings.Contains(c.Detail, "Shift+Enter") {
+			t.Errorf("unset extended-keys should be ok with hint, got %+v", c)
+		}
+		if !strings.Contains(c.Detail, "unset") {
+			t.Errorf("unset detail should name the unset state: %q", c.Detail)
+		}
+	})
+
+	// Inside tmux, extended-keys on -> OK, no hint.
+	t.Run("on no hint", func(t *testing.T) {
+		d := doctorExecution{
+			Getenv:          func(string) string { return "/tmp/tmux-1/default,1,0" },
+			TmuxShowOptions: func(string) (string, bool) { return "on", true },
+		}
+		c := doctorCheckTmuxExtendedKeys(d)
+		if c.Status != doctorOK {
+			t.Errorf("extended-keys on status = %q, want ok", c.Status)
+		}
+		// The remediation hint (set-option commands) must be absent when on.
+		if strings.Contains(c.Detail, "set-option") || strings.Contains(c.Detail, "may not reach agents") {
+			t.Errorf("extended-keys on must not print the hint: %q", c.Detail)
+		}
+	})
+}
+
 func TestExecuteDoctorMarkerIntegrity(t *testing.T) {
 	cases := map[string]struct {
 		body   string

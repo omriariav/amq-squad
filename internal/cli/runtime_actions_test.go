@@ -260,7 +260,7 @@ func TestSendRequiresRole(t *testing.T) {
 }
 
 func TestSessionActions(t *testing.T) {
-	acts := sessionActions("/Code/app", team.DefaultProfile, "issue-96")
+	acts := sessionActions("/Code/app", team.DefaultProfile, "issue-96", "")
 	byKind := map[string]runtimeActionJSON{}
 	for _, a := range acts {
 		byKind[a.Kind] = a
@@ -304,7 +304,76 @@ func TestSessionActions(t *testing.T) {
 	if strings.Contains(byKind["status"].Command, "--profile") {
 		t.Errorf("default profile must be omitted: %q", byKind["status"].Command)
 	}
-	if !strings.Contains(sessionActions("/Code/app", "review", "issue-96")[0].Command, "--profile review") {
+	if !strings.Contains(sessionActions("/Code/app", "review", "issue-96", "")[0].Command, "--profile review") {
 		t.Error("named profile must appear in session action commands")
+	}
+	// With no live tmux session, attach_control is ABSENT (no target to attach).
+	if _, ok := byKind["attach_control"]; ok {
+		t.Errorf("attach_control must be omitted when tmuxSession is empty: %+v", acts)
+	}
+
+	// With a live tmux session, attach_control is APPENDED: it is a raw
+	// `tmux -CC attach -t <session>` command, session-scoped, non-mutating, and
+	// carries no --role.
+	withTmux := sessionActions("/Code/app", team.DefaultProfile, "issue-96", "main")
+	var attach *runtimeActionJSON
+	for i := range withTmux {
+		if withTmux[i].Kind == "attach_control" {
+			attach = &withTmux[i]
+		}
+	}
+	if attach == nil {
+		t.Fatalf("attach_control must be present when tmuxSession is non-empty: %+v", withTmux)
+	}
+	if attach.Command != "tmux -CC attach -t main" {
+		t.Errorf("attach_control command = %q, want %q", attach.Command, "tmux -CC attach -t main")
+	}
+	if attach.Scope != "session" {
+		t.Errorf("attach_control scope = %q, want session", attach.Scope)
+	}
+	if attach.Mutates || attach.NeedsConfirmation {
+		t.Errorf("attach_control must not mutate or need confirmation: %+v", attach)
+	}
+	if !attach.Available {
+		t.Errorf("attach_control must be available when tmuxSession is non-empty: %+v", attach)
+	}
+	if attach.Label == "" {
+		t.Errorf("attach_control must carry a label")
+	}
+	if strings.Contains(attach.Command, "--role") {
+		t.Errorf("attach_control is session-scoped and must not carry --role: %q", attach.Command)
+	}
+	// A session token needing shell quoting is quoted consistently.
+	quoted := sessionActions("/Code/app", team.DefaultProfile, "issue-96", "my session")
+	var quotedAttach string
+	for _, a := range quoted {
+		if a.Kind == "attach_control" {
+			quotedAttach = a.Command
+		}
+	}
+	if quotedAttach != "tmux -CC attach -t 'my session'" {
+		t.Errorf("attach_control should shell-quote the session token: %q", quotedAttach)
+	}
+}
+
+func TestFirstLiveTmuxSession(t *testing.T) {
+	// No rows / no tmux identity -> "".
+	if got := firstLiveTmuxSession(nil); got != "" {
+		t.Errorf("nil rows: got %q, want empty", got)
+	}
+	rows := []statusRecord{
+		{Role: "cto"}, // no tmux block
+		{Role: "qa", Tmux: &tmuxRuntimeJSON{Session: "dead", PaneID: "%1", PaneAlive: false}},
+	}
+	if got := firstLiveTmuxSession(rows); got != "" {
+		t.Errorf("no live pane: got %q, want empty", got)
+	}
+	// First live-pane row's session wins, even if a later row is also live.
+	rows = append(rows,
+		statusRecord{Role: "fs", Tmux: &tmuxRuntimeJSON{Session: "alpha", PaneID: "%2", PaneAlive: true}},
+		statusRecord{Role: "be", Tmux: &tmuxRuntimeJSON{Session: "beta", PaneID: "%3", PaneAlive: true}},
+	)
+	if got := firstLiveTmuxSession(rows); got != "alpha" {
+		t.Errorf("first live-pane session: got %q, want alpha", got)
 	}
 }
