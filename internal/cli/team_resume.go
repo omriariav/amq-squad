@@ -153,6 +153,7 @@ Examples:
 		DryRun:           *dryRun,
 		Profile:          profile,
 		JSON:             *jsonOut,
+		Probe:            defaultDuplicateLaunchProbe,
 	})
 }
 
@@ -176,6 +177,12 @@ type resumeExecution struct {
 	// JSON emits a schema-versioned resume_plan envelope instead of the human
 	// plan. It is a read-only preview, so it is mutually exclusive with Exec.
 	JSON bool
+	// Probe abstracts liveness/process inspection for the per-member live-signal
+	// classification (mirrors how statusExecution takes a probe). Defaults to
+	// defaultDuplicateLaunchProbe when unset; tests inject a deterministic probe.
+	// It does NOT govern the exec-time launch preflight, which stays on the
+	// authoritative defaultDuplicateLaunchProbe (see execResumePlan).
+	Probe duplicateLaunchProbe
 	// Style controls the printer header label and footer verb so the same
 	// planner can present its output as team resume, resume, or fork without
 	// duplicating logic.
@@ -280,6 +287,15 @@ func executeResume(r resumeExecution) error {
 		return err
 	}
 
+	// Default the probe so callers that build a resumeExecution without one
+	// (older entry points, fork) still classify against real liveness, while
+	// tests can inject a deterministic probe. This mirrors how status takes a
+	// probe and is independent of the exec-time launch preflight.
+	probe := r.Probe
+	if probe.PIDAlive == nil {
+		probe = defaultDuplicateLaunchProbe
+	}
+
 	squadBin := teamSquadBin()
 	plans := make([]resumePlan, 0, len(t.Members))
 	recordCount := 0
@@ -296,6 +312,7 @@ func executeResume(r resumeExecution) error {
 			Trust:          resolvedTrust,
 			ModelOverrides: modelOverrides,
 			Profile:        r.Profile,
+			Probe:          probe,
 		})
 		if err != nil {
 			return err
@@ -540,6 +557,10 @@ type memberPlanInput struct {
 	Trust          string
 	ModelOverrides map[string]string
 	Profile        string
+	// Probe abstracts liveness/process inspection for live-signal
+	// classification. Zero value falls back to defaultDuplicateLaunchProbe so
+	// direct callers and tests that omit it still get real liveness checks.
+	Probe duplicateLaunchProbe
 }
 
 // planMemberResume classifies one team member and emits the appropriate
@@ -586,7 +607,16 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	wakeLabel := wakeHealthForMember(agentDir, root, handle, rec, recFound)
 	plan.Wake = wakeLabel
 
-	// Run preflight in dry-run mode for live-signal classification.
+	probe := in.Probe
+	if probe.PIDAlive == nil {
+		probe = defaultDuplicateLaunchProbe
+	}
+
+	// Surface a real I/O inspection error as blocked, preserving the prior
+	// safety contract. The preflight is still the authority on read errors; we
+	// run it in dry-run mode purely to catch perr (it reaps nothing on disk in
+	// dry-run). The live/stale DECISION, however, comes from the shared
+	// classifier below so status and resume can never disagree.
 	pf := agentLaunchPreflight{
 		AgentDir:   agentDir,
 		Handle:     handle,
@@ -596,8 +626,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		Force:      false,
 		DryRun:     true,
 	}
-	blocker, perr := pf.check(defaultDuplicateLaunchProbe)
-	if perr != nil {
+	if _, perr := pf.check(probe); perr != nil {
 		// I/O error reading state: treat as blocked unless forced.
 		plan.Action = resumeBlocked
 		plan.Note = fmt.Sprintf("preflight error: %v", perr)
@@ -616,11 +645,18 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		return plan, nil
 	}
 
-	if blocker != nil {
-		// Live signal detected.
+	// Single shared liveness verdict — the same classifier status consumes.
+	// This is the fix for #79: a genuinely-stale agent is no longer mislabeled
+	// live by resume; the two surfaces now share one verdict.
+	live := classifyAgentLiveness(agentDir, root, handle, m.Role, m.Binary, env.SessionName, cwd, probe)
+
+	if live.Live() {
+		// Live signal detected (agent / wake / presence / replacement). Same
+		// contract as before: suppress the command unless --force-duplicate.
+		note := resumeLiveNote(live, m.Binary)
 		if in.Force {
 			plan.Action = resumeLive
-			plan.Note = "force-duplicate: " + summarizeBlocker(blocker)
+			plan.Note = "force-duplicate: " + note
 			if in.Mode == resumeModeFresh || !recFound {
 				plan.Command = freshLaunchCommand(in)
 			} else {
@@ -631,41 +667,14 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 			return plan, nil
 		}
 		plan.Action = resumeLive
-		plan.Note = summarizeBlocker(blocker)
+		plan.Note = note
 		// Suppress the command by default.
 		plan.Command = ""
 		return plan, nil
 	}
 
-	if recFound && rec.AgentPID > 0 {
-		statusRec := statusRecord{
-			Role:     m.Role,
-			Handle:   handle,
-			Binary:   m.Binary,
-			Session:  env.SessionName,
-			CWD:      cwd,
-			Root:     root,
-			AgentDir: agentDir,
-		}
-		if target, ok := liveReplacementPane(m, statusRec, env.SessionName); ok {
-			note := fmt.Sprintf("recorded pid dead; live %s at %s; relaunch via amq-squad to re-register", m.Binary, target)
-			plan.Action = resumeLive
-			if in.Force {
-				plan.Note = "force-duplicate: " + note
-				if in.Mode == resumeModeFresh {
-					plan.Command = freshLaunchCommand(in)
-				} else {
-					plan.Command = emitCommandWithOptions(rec, emitCommandOptions{Force: true, NoBootstrap: in.NoBootstrap})
-				}
-				return plan, nil
-			}
-			plan.Note = note
-			plan.Command = ""
-			return plan, nil
-		}
-	}
-
-	// No live signal. Choose restore vs fresh based on mode + record presence.
+	// No live signal (verdict stale or missing). Choose restore vs fresh based
+	// on mode + record presence.
 	if in.Mode == resumeModeFresh {
 		plan.Action = resumeFresh
 		plan.Command = freshLaunchCommand(in)
@@ -786,14 +795,30 @@ func wakeHealthForMember(agentDir, expectedRoot, handle string, rec launch.Recor
 	return fmt.Sprintf("pid:%d", lock.PID)
 }
 
-// summarizeBlocker compresses a duplicateBlocker into a one-line note.
-func summarizeBlocker(b *duplicateBlocker) string {
-	if b == nil || len(b.Reasons) == 0 {
-		return "live"
+// resumeLiveNote produces the per-member plan Note for a live verdict,
+// preserving the exact wording resume emitted before the classifier unification:
+//   - replacement-live keeps resume's "recorded pid dead; live <bin> at
+//     <target>; relaunch..." phrasing (the form its tests assert), and
+//   - the agent/wake/presence verdicts list EVERY live source (not just the
+//     highest-precedence verdict) in the preflight blocker order wake+launch+
+//     presence, joined with "+", exactly as summarizeBlocker did (so a
+//     multi-signal live agent still reads "wake+launch+presence").
+func resumeLiveNote(live agentLiveness, binary string) string {
+	if live.Verdict == livenessReplacementLive {
+		return fmt.Sprintf("recorded pid dead; live %s at %s; relaunch via amq-squad to re-register", binary, live.ReplacementTarget)
 	}
-	parts := make([]string, 0, len(b.Reasons))
-	for _, r := range b.Reasons {
-		parts = append(parts, r.Source)
+	var parts []string
+	if live.Signals.WakeAlive {
+		parts = append(parts, "wake")
+	}
+	if live.Signals.AgentAlive && live.Signals.BinaryMatch {
+		parts = append(parts, "launch")
+	}
+	if live.PresenceLive {
+		parts = append(parts, "presence")
+	}
+	if len(parts) == 0 {
+		return "live"
 	}
 	return strings.Join(parts, "+")
 }

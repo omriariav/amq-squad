@@ -305,18 +305,32 @@ func (p agentLaunchPreflight) inspectPresence(probe duplicateLaunchProbe) (*bloc
 	}, nil
 }
 
+// presenceWriterIsKnownDead delegates to the shared free function so the
+// zombie-heartbeat guard has ONE implementation used by both the preflight and
+// the shared liveness classifier (classifyAgentLiveness). The preflight has no
+// distinct Binary in this guard (launchWriterDead falls back to the record's
+// own binary, then p.Binary), so it is passed through.
+func (p agentLaunchPreflight) presenceWriterIsKnownDead(probe duplicateLaunchProbe) bool {
+	return presenceWriterIsKnownDead(p.AgentDir, p.Root, p.Handle, p.Binary, probe)
+}
+
 // presenceWriterIsKnownDead reports whether the on-disk wake.lock and
 // launch.json both point at processes that are gone (dead PID or PID-reuse
 // by an unrelated process). When either record is missing we cannot prove
 // the writer is dead, so we keep the conservative behavior (presence
-// blocks). Only when both records exist and both are confirmed dead do we
-// treat the presence file as a zombie heartbeat.
-func (p agentLaunchPreflight) presenceWriterIsKnownDead(probe duplicateLaunchProbe) bool {
-	lockDead, lockKnown := p.wakeWriterDead(probe)
+// counts as live / preflight blocks). Only when both records exist and both
+// are confirmed dead do we treat the presence file as a zombie heartbeat.
+//
+// This is the single shared guard: agentLaunchPreflight.inspectPresence and
+// classifyAgentLiveness both call it so status, resume, and the launch
+// preflight agree about what a fresh-but-dead-writer presence means. fallbackBinary
+// is the agent binary to assume when the launch record itself carries none.
+func presenceWriterIsKnownDead(agentDir, root, handle, fallbackBinary string, probe duplicateLaunchProbe) bool {
+	lockDead, lockKnown := wakeWriterDead(agentDir, root, handle, probe)
 	if !lockKnown {
 		return false
 	}
-	launchDead, launchKnown := p.launchWriterDead(probe)
+	launchDead, launchKnown := launchWriterDead(agentDir, fallbackBinary, probe)
 	if !launchKnown {
 		return false
 	}
@@ -328,10 +342,11 @@ func (p agentLaunchPreflight) presenceWriterIsKnownDead(probe duplicateLaunchPro
 // when the PID is gone or the live PID does not match an amq wake for this
 // handle/root. A corrupt or unparseable lock is reported as unknown (not
 // dead): we have no evidence either way and the conservative answer for
-// the zombie-presence guard is to keep blocking. The stale-cleanup path in
-// inspectWakeLock still removes the corrupt file on its own.
-func (p agentLaunchPreflight) wakeWriterDead(probe duplicateLaunchProbe) (dead, known bool) {
-	data, err := os.ReadFile(wakeLockPath(p.AgentDir))
+// the zombie-presence guard is to keep counting presence as live. The
+// stale-cleanup path in inspectWakeLock still removes the corrupt file on its
+// own.
+func wakeWriterDead(agentDir, root, handle string, probe duplicateLaunchProbe) (dead, known bool) {
+	data, err := os.ReadFile(wakeLockPath(agentDir))
 	if err != nil {
 		return false, false
 	}
@@ -345,11 +360,11 @@ func (p agentLaunchPreflight) wakeWriterDead(probe duplicateLaunchProbe) (dead, 
 	if !probe.PIDAlive(lock.PID) {
 		return true, true
 	}
-	expectedRoot := p.Root
+	expectedRoot := root
 	if lock.Root != "" {
 		expectedRoot = lock.Root
 	}
-	if !probe.ProcessMatch(lock.PID, wakeProcessMatcher(p.Handle, expectedRoot)) {
+	if !probe.ProcessMatch(lock.PID, wakeProcessMatcher(handle, expectedRoot)) {
 		return true, true
 	}
 	return false, true
@@ -358,9 +373,10 @@ func (p agentLaunchPreflight) wakeWriterDead(probe duplicateLaunchProbe) (dead, 
 // launchWriterDead inspects launch.json. Returns (dead, known): "known" is
 // true when the record existed and parsed and carries a captured AgentPID;
 // "dead" is true when that PID is gone or the live PID does not match the
-// expected agent binary.
-func (p agentLaunchPreflight) launchWriterDead(probe duplicateLaunchProbe) (dead, known bool) {
-	rec, err := launch.Read(p.AgentDir)
+// expected agent binary. fallbackBinary is used only when the record itself
+// recorded no binary.
+func launchWriterDead(agentDir, fallbackBinary string, probe duplicateLaunchProbe) (dead, known bool) {
+	rec, err := launch.Read(agentDir)
 	if err != nil {
 		return false, false
 	}
@@ -374,7 +390,7 @@ func (p agentLaunchPreflight) launchWriterDead(probe duplicateLaunchProbe) (dead
 	}
 	binary := strings.TrimSpace(rec.Binary)
 	if binary == "" {
-		binary = p.Binary
+		binary = fallbackBinary
 	}
 	if binary == "" || !probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(binary)) {
 		return true, true

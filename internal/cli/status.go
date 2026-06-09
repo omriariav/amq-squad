@@ -11,7 +11,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
 	"github.com/omriariav/amq-squad/internal/state"
 	"github.com/omriariav/amq-squad/internal/team"
 	"github.com/omriariav/amq-squad/internal/tmuxpane"
@@ -255,97 +254,16 @@ func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe d
 	rec.Root = root
 	rec.AgentDir = filepath.Join(root, "agents", rec.Handle)
 
-	launchRec, launchErr := launch.Read(rec.AgentDir)
-	if launchErr == nil {
-		rec.Tmux = tmuxRuntimeFromInfo(launchRec.Tmux)
-	}
-	wakeLock, wakeErr := readWakeLock(rec.AgentDir)
-	presence, presenceErr := readPresenceForEntry(rec.AgentDir)
-
-	hasLaunchPID := launchErr == nil && launchRec.AgentPID > 0
-	hasWakePID := wakeErr == nil && wakeLock.PID > 0
-
-	if hasLaunchPID {
-		rec.Signals.AgentPID = launchRec.AgentPID
-		if probe.PIDAlive(launchRec.AgentPID) {
-			rec.Signals.AgentAlive = true
-			binary := strings.TrimSpace(launchRec.Binary)
-			if binary == "" {
-				binary = m.Binary
-			}
-			if binary != "" && probe.ProcessMatch(launchRec.AgentPID, agentProcessMatcher(binary)) {
-				rec.Signals.BinaryMatch = true
-			}
-		}
-	}
-	if hasWakePID {
-		rec.Signals.WakePID = wakeLock.PID
-		if probe.PIDAlive(wakeLock.PID) {
-			expectedRoot := rec.Root
-			if wakeLock.Root != "" {
-				expectedRoot = wakeLock.Root
-			}
-			if probe.ProcessMatch(wakeLock.PID, wakeProcessMatcher(rec.Handle, expectedRoot)) {
-				rec.Signals.WakeAlive = true
-			}
-		}
-	}
-	// Apply the same freshness/active/handle rules preflight and list use so
-	// status agrees with them about what counts as a live presence signal.
-	presenceLive := false
-	presenceMismatched := false
-	if presenceErr == nil {
-		rec.Signals.Presence = presence.Status
-		rec.Signals.LastSeen = presence.LastSeen
-		fresh := !presence.LastSeen.IsZero() && probe.Now().Sub(presence.LastSeen) <= presenceFreshness
-		active := strings.EqualFold(presence.Status, "active")
-		handleOK := presence.Handle == "" || presence.Handle == rec.Handle
-		switch {
-		case fresh && active && handleOK:
-			presenceLive = true
-		case fresh && active && !handleOK:
-			presenceMismatched = true
-		}
-	}
-
-	if rec.Signals.AgentAlive && rec.Signals.BinaryMatch {
-		rec.Status = statusStateLive
-		rec.Detail = fmt.Sprintf("agent pid %d alive (%s)", rec.Signals.AgentPID, m.Binary)
-		return rec
-	}
-	if presenceLive {
-		rec.Status = statusStateLive
-		rec.Detail = fmt.Sprintf("fresh active presence, no verified pid (last seen %s)", presence.LastSeen.UTC().Format(time.RFC3339))
-		return rec
-	}
-	if rec.Signals.WakeAlive {
-		rec.Status = statusStateWakeLive
-		rec.Detail = wakeLiveDetail(rec.Signals)
-		return rec
-	}
-	// Not live. Stale requires a live-pointing disk signal for this handle.
-	// Lone stale/inactive/old presence does not count; it collapses to missing
-	// so old presence files don't lock a member into "stale" forever.
-	hasLiveSignal := hasLaunchPID || hasWakePID || presenceMismatched
-	if !hasLiveSignal {
-		rec.Status = statusStateMissing
-		rec.Detail = "no live signals for this handle"
-		return rec
-	}
-	// Before settling on stale: the recorded PID may be dead because the agent
-	// was relaunched OUTSIDE amq-squad (e.g. "relaunching as dogfood QA"), leaving
-	// a live replacement process the launch record never learned about. Look for a
-	// live tmux pane that resolves to this member (same engine + cwd, title-first,
-	// via the same neutral tmux resolver). If found, report live with a
-	// re-register hint rather than a misleading stale.
-	if target, ok := liveReplacementPane(m, rec, workstream); ok {
-		rec.Status = statusStateLive
-		rec.Detail = fmt.Sprintf("recorded pid dead; live %s at %s — relaunch via amq-squad to re-register", m.Binary, target)
-		return rec
-	}
-
-	rec.Status = statusStateStale
-	rec.Detail = staleDetail(rec.Signals, presenceMismatched) + "; relaunch via amq-squad to re-register"
+	// Consume the single shared liveness classifier so status and resume can
+	// never disagree. classifyAgentLiveness does the one disk read + probe
+	// checks and returns the verdict, signals, detail, status state, and the
+	// persisted tmux identity. classifyMemberStatus then just adopts them; the
+	// verdict->statusState mapping lives in the classifier (Status field).
+	live := classifyAgentLiveness(rec.AgentDir, root, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe)
+	rec.Tmux = tmuxRuntimeFromInfo(live.Tmux)
+	rec.Signals = live.Signals
+	rec.Status = live.Status
+	rec.Detail = live.Detail
 	return rec
 }
 
