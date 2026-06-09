@@ -64,13 +64,19 @@ the open issues by theme + status so the near-term path is legible at a glance.
 
 ### Runtime orchestration (the v1.5.x arc)
 
-- **#76 — Agent orchestrator** *(roadmap; substrate shipped).* A lead agent
-  spawns, drives, monitors child agents over the tmux contract; children push
-  `[AGENT-EVENT]` envelopes back. Mostly a protocol + skill on top of the shipped
-  primitives (`send`/`focus`/`--target new-window`/`PaneBusy`/pane-id
-  addressing); new binary work is `spawn` / `emit-event` / `watch`. **Never in
-  the NOC** — at most the NOC observes an orchestration. This is the headline
-  forward item.
+- **#101 — `amq-team-setup` wizard: goal→brief + orchestration opt-in**
+  *(planned, v1.7.0 headline).* A wizard-style flow that captures a goal from any
+  source (Jira / GitHub issue or PR / `.md` / URL / inline prompt) and normalizes
+  it into a canonical brief, then optionally wires the squad for orchestration via
+  a structured `new team --orchestrated --lead <role>` primitive (injects the
+  team-rules reporting norm; never pasted prose). Tracker-neutral core (the skill
+  fetches), default off, Claude + Codex, **never in the NOC**. Makes a one-setup
+  orchestrated squad — the amq-squad analog of Sagi's always-on protocol.
+- **#76 — Agent orchestrator.** ✅ shipped in v1.6.0: the `amq-squad-orchestrator`
+  skill (lead spawns/dispatches/monitors child agents over the tmux contract; the
+  `[AGENT-EVENT]`-over-AMQ reporting protocol) plus #95 external-pane adoption. The
+  protocol + skill rode on the shipped primitives (`send`/`focus`/`--target
+  new-window`/`PaneBusy`/pane-id); no new binary verbs were needed.
 - #79 — NOC runtime JSON contract gaps in v1.5.0. ✅ shipped in v1.5.2 (shared
   liveness classifier + `resume.plan[].liveness` + session-scope `status --json`
   actions) — *pending close.*
