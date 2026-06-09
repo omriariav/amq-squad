@@ -65,9 +65,10 @@ amq-squad has two surfaces, and you use them at different times:
 
 - **The `amq-squad` CLI is for you, the operator.** Design a team, bring it
   up / down / back in tmux, inspect it (`status`, `console`, `doctor`), and
-  control agent panes (`focus`, `send`). Everything is **project-scoped**
-  (`--project DIR`, default cwd) and **session-scoped** (`--session NAME`, the
-  AMQ workstream).
+  control agent panes (`focus`, `send`). Most commands are **project-scoped**
+  (`--project DIR`, default cwd); the session-oriented ones (`up`, `status`,
+  `send`, `stop`, `resume`, ...) are also **session-scoped** (`--session NAME`,
+  the AMQ workstream). A few (`roles`, `doctor`) are neither or project-only.
 - **The skills are for the agents.** They teach a Claude or Codex agent how to
   drive amq-squad + AMQ from *inside* a session: coordinate with peers, and (as
   a lead) orchestrate a whole squad. You install them once per marketplace; the
@@ -584,14 +585,15 @@ commands a client can render or copy, each with an `available` flag:
 }
 ```
 
-The `tmux` block is omitted only when no live pane can be resolved, so clients
-detect runtime-control availability by its presence. As of **v1.6.0**, a live
-agent launched *outside* amq-squad's tmux backend (a raw `tmux new-window`) is
-still controllable: amq-squad **adopts** its pane by process lineage (the
-recorded, verified agent pid is matched into the live pane's process subtree),
-so `focus`/`send`/`attach_control` and `pane_alive` work for it too. Launching
-through amq-squad is still preferred (it records the role, binary, and brief,
-not just a pane).
+The `tmux` block is absent when no pane can be resolved, so clients detect
+runtime-control availability by its presence. As of **v1.6.0**, `status --json`
+and `resume --json` (and the `focus`/`send` verbs) **adopt** a live agent's pane
+even when it was launched *outside* amq-squad's tmux backend (a raw
+`tmux new-window`): the recorded, verified agent pid is matched into a live
+pane's process subtree, so `focus`/`send`/`attach_control` and `pane_alive` work
+for it too. (`history --json` reflects persisted launch records only and does
+not adopt.) Launching through amq-squad is still preferred (it records the role,
+binary, and brief, not just a pane).
 
 High-level control verbs target the exact pane id (falling back to a neutral
 title/cwd resolver) and are all project-scoped:

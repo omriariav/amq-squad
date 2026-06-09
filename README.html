@@ -372,10 +372,13 @@ invoke them by skill name, e.g.
 operator.</strong> Design a team, bring it up / down / back in tmux,
 inspect it (<code>status</code>, <code>console</code>,
 <code>doctor</code>), and control agent panes (<code>focus</code>,
-<code>send</code>). Everything is <strong>project-scoped</strong>
-(<code>--project DIR</code>, default cwd) and
+<code>send</code>). Most commands are <strong>project-scoped</strong>
+(<code>--project DIR</code>, default cwd); the session-oriented ones
+(<code>up</code>, <code>status</code>, <code>send</code>,
+<code>stop</code>, <code>resume</code>, ...) are also
 <strong>session-scoped</strong> (<code>--session NAME</code>, the AMQ
-workstream).</li>
+workstream). A few (<code>roles</code>, <code>doctor</code>) are neither
+or project-only.</li>
 <li><strong>The skills are for the agents.</strong> They teach a Claude
 or Codex agent how to drive amq-squad + AMQ from <em>inside</em> a
 session: coordinate with peers, and (as a lead) orchestrate a whole
@@ -971,17 +974,19 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb22-1"><a href=
 <span id="cb22-9"><a href="#cb22-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span> <span class="dt">&quot;kind&quot;</span><span class="fu">:</span> <span class="st">&quot;resume&quot;</span><span class="fu">,</span> <span class="dt">&quot;available&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;amq-squad resume --project DIR --session issue-96 --exec&quot;</span> <span class="fu">}</span></span>
 <span id="cb22-10"><a href="#cb22-10" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
 <span id="cb22-11"><a href="#cb22-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
-<p>The <code>tmux</code> block is omitted only when no live pane can be
-resolved, so clients detect runtime-control availability by its
-presence. As of <strong>v1.6.0</strong>, a live agent launched
-<em>outside</em> amq-squad's tmux backend (a raw
-<code>tmux new-window</code>) is still controllable: amq-squad
-<strong>adopts</strong> its pane by process lineage (the recorded,
-verified agent pid is matched into the live pane's process subtree), so
+<p>The <code>tmux</code> block is absent when no pane can be resolved,
+so clients detect runtime-control availability by its presence. As of
+<strong>v1.6.0</strong>, <code>status --json</code> and
+<code>resume --json</code> (and the <code>focus</code>/<code>send</code>
+verbs) <strong>adopt</strong> a live agent's pane even when it was
+launched <em>outside</em> amq-squad's tmux backend (a raw
+<code>tmux new-window</code>): the recorded, verified agent pid is
+matched into a live pane's process subtree, so
 <code>focus</code>/<code>send</code>/<code>attach_control</code> and
-<code>pane_alive</code> work for it too. Launching through amq-squad is
-still preferred (it records the role, binary, and brief, not just a
-pane).</p>
+<code>pane_alive</code> work for it too. (<code>history --json</code>
+reflects persisted launch records only and does not adopt.) Launching
+through amq-squad is still preferred (it records the role, binary, and
+brief, not just a pane).</p>
 <p>High-level control verbs target the exact pane id (falling back to a
 neutral title/cwd resolver) and are all project-scoped:</p>
 <div class="sourceCode" id="cb23"><pre
