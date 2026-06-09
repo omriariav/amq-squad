@@ -47,6 +47,18 @@ the open issues by theme + status so the near-term path is legible at a glance.
     unified into one shared `internal/procinfo` probe consumed by BOTH
     `internal/cli` and `internal/state` (the status board + NOC snapshots), so
     every surface reads liveness identically.
+- **v1.6.0 — shipped. Closes the Sagi-spawn gap.**
+  - **#95 — Adopt externally-launched panes.** Agents launched outside
+    amq-squad's tmux backend (raw `tmux new-window`, Sagi-style) now have their
+    live pane adopted by PID lineage (a fork-free `procinfo.ChildrenIndex`
+    snapshot), so `focus`/`send`/`attach_control` and `pane_alive` work for them.
+    A PID-lineage match is definitive and bypasses the cwd/engine heuristics, but
+    only for a verified live agent pid (guards stale/reused pids).
+  - **#76 — Agent-orchestrator skill** in both marketplaces: a lead-agent
+    playbook (the Sagi `spawn.md` equivalent) over the shipped primitives —
+    spawn / dispatch (busy-guarded `send`) / monitor (`status --json`) / the
+    `[AGENT-EVENT]`-over-AMQ reporting protocol / recover. Plus the corrected
+    `send` busy-guard note in the `amq-squad` skill.
 
 ## Themes
 
