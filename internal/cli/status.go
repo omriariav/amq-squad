@@ -188,6 +188,24 @@ func executeStatus(s statusExecution) error {
 	for _, m := range members {
 		rows = append(rows, classifyMemberStatus(t, m, workstream, s.Probe))
 	}
+	// #95: adopt a live tmux pane for live agents with no recorded tmux identity
+	// (launched outside amq-squad's tmux backend, e.g. a raw `tmux new-window`),
+	// so focus/send/attach_control and pane_alive work for them too. Resolved by
+	// PID lineage + cwd/engine from the memoized pane snapshot.
+	pidTree := childrenPidTree()
+	for i := range rows {
+		// Only verified AGENT-live agents adopt by PID lineage: Signals.AgentPID
+		// is then a confirmed live process of the right binary. wake-live /
+		// presence-live have no verified agent pid, so do not trust lineage there
+		// (#95 review).
+		if rows[i].Tmux == nil && rows[i].Signals.AgentAlive && rows[i].Signals.BinaryMatch {
+			if panes, perr := statusPaneLister(); perr == nil {
+				if adopted := adoptLivePane(rows[i].Role, rows[i].Handle, rows[i].Binary, rows[i].CWD, workstream, rows[i].Signals.AgentPID, panes, pidTree); adopted != nil {
+					rows[i].Tmux = tmuxRuntimeFromInfo(adopted)
+				}
+			}
+		}
+	}
 	// Resolve pane liveness for every member that recorded a tmux pane, so
 	// clients can tell a still-valid pane from a stale launch record. Uses the
 	// same memoized snapshot as classification above.
