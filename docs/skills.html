@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>amq-squad — using the skills</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+  <style>
+    :root { --fg:#1f2328; --muted:#656d76; --bg:#ffffff; --code-bg:#f6f8fa; --border:#d0d7de; --link:#0969da; --accent:#0550ae; }
+    @media (prefers-color-scheme: dark) {
+      :root { --fg:#e6edf3; --muted:#9198a1; --bg:#0d1117; --code-bg:#161b22; --border:#30363d; --link:#4493f8; --accent:#79c0ff; }
+    }
+    * { box-sizing: border-box; }
+    body { color:var(--fg); background:var(--bg); font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+           max-width:920px; margin:0 auto; padding:2rem 1.25rem 5rem; }
+    h1,h2,h3,h4 { line-height:1.25; margin-top:1.8em; margin-bottom:.6em; font-weight:600; }
+    h1 { font-size:2rem; border-bottom:1px solid var(--border); padding-bottom:.3em; }
+    h2 { font-size:1.5rem; border-bottom:1px solid var(--border); padding-bottom:.3em; }
+    h3 { font-size:1.2rem; } h4 { font-size:1rem; }
+    a { color:var(--link); text-decoration:none; } a:hover { text-decoration:underline; }
+    p,li { color:var(--fg); }
+    code { background:var(--code-bg); border-radius:6px; padding:.15em .4em; font:13.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+    pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:1rem; overflow:auto; }
+    pre code { background:none; padding:0; }
+    table { border-collapse:collapse; width:100%; margin:1em 0; display:block; overflow:auto; }
+    th,td { border:1px solid var(--border); padding:.5em .8em; text-align:left; vertical-align:top; }
+    th { background:var(--code-bg); }
+    blockquote { color:var(--muted); border-left:4px solid var(--border); margin:1em 0; padding:.2em 1em; }
+    hr { border:none; border-top:1px solid var(--border); margin:2em 0; }
+    #TOC { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:1rem 1.25rem; margin:1.5rem 0; }
+    #TOC > ul { margin:.3em 0; } #TOC ul { list-style:none; padding-left:1.1em; } #TOC > ul { padding-left:0; }
+    #TOC a { color:var(--accent); }
+    .toc-title { font-weight:600; }
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">amq-squad — using the skills</h1>
+</header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#using-the-amq-squad-skills"
+id="toc-using-the-amq-squad-skills">Using the amq-squad skills</a>
+<ul>
+<li><a href="#the-mental-model" id="toc-the-mental-model">The mental
+model</a></li>
+<li><a href="#which-skill-do-i-reach-for"
+id="toc-which-skill-do-i-reach-for">Which skill do I reach for?</a></li>
+<li><a href="#installing-and-invoking"
+id="toc-installing-and-invoking">Installing and invoking</a></li>
+<li><a href="#amq-team-setup--design-and-set-up-a-team"
+id="toc-amq-team-setup--design-and-set-up-a-team"><code>amq-team-setup</code>
+— design and set up a team</a></li>
+<li><a href="#amq-squad--coordinate-a-live-team"
+id="toc-amq-squad--coordinate-a-live-team"><code>amq-squad</code> —
+coordinate a live team</a></li>
+<li><a href="#amq-squad-orchestrator--lead-a-squad"
+id="toc-amq-squad-orchestrator--lead-a-squad"><code>amq-squad-orchestrator</code>
+— lead a squad</a></li>
+<li><a href="#amq-squad-role-creator--author-a-custom-role"
+id="toc-amq-squad-role-creator--author-a-custom-role"><code>amq-squad-role-creator</code>
+— author a custom role</a></li>
+<li><a href="#end-to-end-walkthrough"
+id="toc-end-to-end-walkthrough">End-to-end walkthrough</a></li>
+<li><a href="#troubleshooting"
+id="toc-troubleshooting">Troubleshooting</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="using-the-amq-squad-skills">Using the amq-squad skills</h1>
+<p>amq-squad ships <strong>four skills</strong> to two plugin
+marketplaces — one for <strong>Claude Code</strong> and one for
+<strong>Codex</strong>. The skills are the human-facing front door: you
+invoke one, and the agent drives the <code>amq-squad</code> binary for
+you (designing a team, bringing it up, coordinating it, or leading it).
+This guide is the deep reference for <strong>when to reach for each
+skill and how to drive it</strong>.</p>
+<p>For the binary's full verb/flag reference, see the main <a
+href="../README.md">README</a>. This document is about the skills.</p>
+<ul>
+<li><a href="#the-mental-model">The mental model</a></li>
+<li><a href="#which-skill-do-i-reach-for">Which skill do I reach
+for?</a></li>
+<li><a href="#installing-and-invoking">Installing and invoking</a></li>
+<li><a
+href="#amq-team-setup--design-and-set-up-a-team"><code>amq-team-setup</code>
+— design and set up a team</a></li>
+<li><a href="#amq-squad--coordinate-a-live-team"><code>amq-squad</code>
+— coordinate a live team</a></li>
+<li><a
+href="#amq-squad-orchestrator--lead-a-squad"><code>amq-squad-orchestrator</code>
+— lead a squad</a></li>
+<li><a
+href="#amq-squad-role-creator--author-a-custom-role"><code>amq-squad-role-creator</code>
+— author a custom role</a></li>
+<li><a href="#end-to-end-walkthrough">End-to-end walkthrough</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a></li>
+</ul>
+<h2 id="the-mental-model">The mental model</h2>
+<p>The four skills map onto the lifecycle of a team: you <strong>set one
+up</strong> once, then <strong>coordinate</strong> it day to day,
+optionally with one agent <strong>leading</strong> the rest. A fourth
+skill exists only when you need a <strong>role the catalog doesn't
+ship</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Skill</th>
+<th>You use it...</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Design / setup</td>
+<td><strong><code>amq-team-setup</code></strong></td>
+<td>once, before the team runs: capture the goal, draft the brief, pick
+roles, optionally wire orchestration, write <code>team.json</code> +
+<code>team-rules.md</code> + the brief + pointer stubs.</td>
+</tr>
+<tr>
+<td>Live coordination</td>
+<td><strong><code>amq-squad</code></strong></td>
+<td>every day after the team exists: bring members up, drain inboxes,
+route handoffs, request reviews, check status, stop/resume/fork.</td>
+</tr>
+<tr>
+<td>Lead orchestration</td>
+<td><strong><code>amq-squad-orchestrator</code></strong></td>
+<td>when one agent is the <strong>lead</strong> that spawns, dispatches,
+and monitors the others and owns the deliverable.</td>
+</tr>
+<tr>
+<td>Custom roles</td>
+<td><strong><code>amq-squad-role-creator</code></strong></td>
+<td>when you need a role the built-in catalog doesn't ship (researcher,
+sre, scribe, ...).</td>
+</tr>
+</tbody>
+</table>
+<p>They sit on top of three durable layers that setup creates and
+coordination consumes:</p>
+<ul>
+<li><strong>Norms</strong> — <code>.amq-squad/team-rules.md</code>
+(generated; the single source of truth).</li>
+<li><strong>Goal</strong> —
+<code>.amq-squad/briefs/&lt;session&gt;.md</code> (one per
+workstream/AMQ session).</li>
+<li><strong>Persona</strong> — <code>&lt;agent-dir&gt;/role.md</code>
+(seeded at launch, then user-editable).</li>
+</ul>
+<p><code>CLAUDE.md</code> / <code>AGENTS.md</code> carry only a small
+managed <strong>pointer stub</strong> linking to those three; they never
+duplicate the content.</p>
+<h2 id="which-skill-do-i-reach-for">Which skill do I reach for?</h2>
+<table>
+<thead>
+<tr>
+<th>If you want to...</th>
+<th>Reach for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Start from a ticket / prompt / doc and stand up a new team</td>
+<td><code>amq-team-setup</code></td>
+</tr>
+<tr>
+<td>Turn a Jira/GitHub/URL goal into a confirmed brief</td>
+<td><code>amq-team-setup</code> (step 1–2)</td>
+</tr>
+<tr>
+<td>Decide who leads an orchestrated squad</td>
+<td><code>amq-team-setup</code> (step 4) wires it;
+<code>amq-squad-orchestrator</code> runs it</td>
+</tr>
+<tr>
+<td>Bring the configured team up and coordinate it</td>
+<td><code>amq-squad</code></td>
+</tr>
+<tr>
+<td>Drain your inbox, route a handoff, request a review</td>
+<td><code>amq-squad</code></td>
+</tr>
+<tr>
+<td>Check the status board / Mission Control / health</td>
+<td><code>amq-squad</code></td>
+</tr>
+<tr>
+<td>Spawn child agents and drive them to completion as the lead</td>
+<td><code>amq-squad-orchestrator</code></td>
+</tr>
+<tr>
+<td>Add a role that isn't in the catalog</td>
+<td><code>amq-squad-role-creator</code></td>
+</tr>
+<tr>
+<td>Debug raw AMQ outside a squad</td>
+<td>the separate <code>amq-cli</code> skill</td>
+</tr>
+</tbody>
+</table>
+<p>Rule of thumb: <strong><code>amq-team-setup</code> before the team
+exists; <code>amq-squad</code> after.</strong> The orchestrator skill is
+only for the lead agent; everyone else uses <code>amq-squad</code>.</p>
+<h2 id="installing-and-invoking">Installing and invoking</h2>
+<p>Install the marketplace once; the skills are then discovered
+automatically.</p>
+<ul>
+<li><strong>Claude Code:</strong>
+<code>/plugin install amq-squad@amq-squad</code>, then invoke a skill as
+<code>/amq-squad:&lt;skill&gt;</code> — e.g.
+<code>/amq-squad:amq-team-setup</code>.</li>
+<li><strong>Codex:</strong> install the Codex marketplace, then invoke a
+skill as <code>$&lt;skill&gt;</code> — e.g.
+<code>$amq-team-setup</code>.</li>
+</ul>
+<p>All four skills are user-invocable and require the
+<code>amq-squad</code> binary on <code>PATH</code>
+(<code>go install github.com/omriariav/amq-squad/cmd/amq-squad@latest</code>).
+Their workflows are equivalent across the two marketplaces; the platform
+metadata differs (a Claude skill carries <code>trigger</code> /
+<code>allowed-tools</code> / <code>argument-hint</code>; the Codex skill
+omits them) and so does tool wording (a Claude skill says "use the Read
+tool", a Codex skill says "read the file").</p>
+<hr />
+<h2
+id="amq-team-setup--design-and-set-up-a-team"><code>amq-team-setup</code>
+— design and set up a team</h2>
+<p><strong>Invoke:</strong> <code>/amq-squad:amq-team-setup</code>
+(Claude) · <code>$amq-team-setup</code> (Codex) <strong>Use
+when:</strong> no team exists yet, or you are starting a new piece of
+work and want a real goal/brief in place before launch.</p>
+<p>It is a <strong>wizard</strong>: it walks five steps and confirms
+with you at each gate. Setup stays read-only until the final create step
+(no live launch).</p>
+<h3 id="the-five-steps">The five steps</h3>
+<ol type="1">
+<li><p><strong>Capture the goal (any source).</strong> Tell the skill
+where the goal lives and it fetches it with whatever tool the agent has,
+detecting the source type:</p>
+<table>
+<thead>
+<tr>
+<th>You give it</th>
+<th>It fetches with</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a one-line prompt / inline text</td>
+<td>the text itself</td>
+</tr>
+<tr>
+<td>a local file / path (<code>./design.md</code>)</td>
+<td>reads the file</td>
+</tr>
+<tr>
+<td>a GitHub issue (<code>#96</code>, a URL,
+<code>owner/repo#96</code>)</td>
+<td><code>gh issue view</code></td>
+</tr>
+<tr>
+<td>a GitHub PR</td>
+<td><code>gh pr view</code></td>
+</tr>
+<tr>
+<td>a Jira key (<code>PROJ-123</code>)</td>
+<td>the Atlassian MCP / a <code>jira</code> CLI</td>
+</tr>
+<tr>
+<td>a URL (Confluence / doc)</td>
+<td>the Atlassian MCP / a fetch tool</td>
+</tr>
+</tbody>
+</table>
+<p>Tracker integrations live <strong>in the skill</strong>, never in the
+amq-squad binary — the core stays tracker-neutral. If no integration is
+available, the skill asks you to paste rather than inventing
+content.</p></li>
+<li><p><strong>Draft and confirm the brief.</strong> The skill
+normalizes whatever it fetched into one canonical shape and
+<strong>shows it to you to edit before saving</strong> (a raw ticket
+description is not a brief):</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode md"><code class="sourceCode markdown"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu"># &lt;session&gt; brief</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">## Goal          # the outcome, 1-2 sentences</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">## Source        # JIRA PROJ-123 / gh#96 / URL / file: / &quot;operator prompt&quot;</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">## Scope</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">## Out of scope</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="fu">## Acceptance     # how we know it&#39;s done; who signs off</span></span></code></pre></div></li>
+<li><p><strong>Roles and profile.</strong> Pick the roster (built-in
+personas or custom roles), the binary behind each
+(<code>codex</code>/<code>claude</code>), the team-home, and whether to
+use the default profile or a named one.</p></li>
+<li><p><strong>Orchestrated? Who leads?</strong> Default is
+<strong>no</strong> (a flat, peer-to-peer squad). Say yes and name
+exactly one lead role to run an orchestrated squad.</p></li>
+<li><p><strong>Review and create.</strong> The skill prints a summary,
+then on your confirmation creates <code>team.json</code> +
+<code>team-rules.md</code>, saves the brief, writes the pointer stubs,
+validates, and prints the next commands.</p></li>
+</ol>
+<h3 id="what-it-runs">What it runs</h3>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># flat team</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--binary</span> cto=codex <span class="at">--sync</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="co"># orchestrated team (step 4 said yes, cto leads)</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--sync</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="co"># preview anything first</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto</span></code></pre></div>
+<p><code>--orchestrated [--lead ROLE]</code> records the lead in
+<code>team.json</code> and writes a generated
+<code>## Orchestration</code> reporting norm into
+<code>team-rules.md</code> when that file is first seeded — a structured
+flag, not pasted prose, so it can't drift. (An existing
+<code>team-rules.md</code> is left untouched; regenerate with
+<code>amq-squad team rules init --force</code>.) Default off; exactly
+one lead; the lead is a team member, never the operator.</p>
+<p>When the wizard is done, hand off to
+<strong><code>amq-squad</code></strong> for the first live launch.</p>
+<hr />
+<h2 id="amq-squad--coordinate-a-live-team"><code>amq-squad</code> —
+coordinate a live team</h2>
+<p><strong>Invoke:</strong> <code>/amq-squad:amq-squad</code> (Claude) ·
+<code>$amq-squad</code> (Codex) <strong>Use when:</strong>
+<code>.amq-squad/team.json</code> already exists and you want to run the
+team.</p>
+<p>This is the everyday skill. The lifecycle is one small state
+machine:</p>
+<pre><code>(none) --up--&gt; running --stop--&gt; stopped --rm/archive--&gt; (none)
+                  ^                  |
+                  +----- resume -----+</code></pre>
+<h3 id="the-daily-loop">The daily loop</h3>
+<ol type="1">
+<li><strong>Orient.</strong> Confirm the team-home + workstream, read
+the brief (<code>.amq-squad/briefs/&lt;session&gt;.md</code>).</li>
+<li><strong>Discover live state.</strong> <code>amq-squad status</code>
+(board), <code>status --session &lt;name&gt;</code> (detail),
+<code>amq-squad console</code> (live TUI), <code>amq-squad doctor</code>
+(health).</li>
+<li><strong>Bring members up.</strong>
+<code>amq-squad up &lt;session&gt;</code> (NEW work; refuses an existing
+session), or <code>resume</code> to continue one.</li>
+<li><strong>Route + drain.</strong> Hand off over AMQ, request reviews,
+drain your inbox.</li>
+<li><strong>Stop / fork / tear down</strong> as the work finishes.</li>
+</ol>
+<h3 id="key-verbs">Key verbs</h3>
+<table>
+<thead>
+<tr>
+<th>Goal</th>
+<th>Command</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Bring the team up on new work</td>
+<td><code>amq-squad up &lt;session&gt;</code></td>
+</tr>
+<tr>
+<td>One window/tab per agent</td>
+<td><code>amq-squad up &lt;session&gt; --target new-window</code></td>
+</tr>
+<tr>
+<td>Preview the launch plan</td>
+<td><code>amq-squad up --dry-run [--json]</code></td>
+</tr>
+<tr>
+<td>Continue an existing session</td>
+<td><code>amq-squad resume</code> (<code>--exec</code> to open)</td>
+</tr>
+<tr>
+<td>Stop members (state preserved)</td>
+<td><code>amq-squad stop --role R</code> / <code>--all</code></td>
+</tr>
+<tr>
+<td>Branch a fresh workstream</td>
+<td><code>amq-squad fork --from &lt;cur&gt; --as &lt;new&gt;</code></td>
+</tr>
+<tr>
+<td>Multi-session board</td>
+<td><code>amq-squad status</code> (or bare <code>amq-squad</code>)</td>
+</tr>
+<tr>
+<td>Single-session detail</td>
+<td><code>amq-squad status --session &lt;name&gt;</code></td>
+</tr>
+<tr>
+<td>Live Mission Control TUI</td>
+<td><code>amq-squad console</code> (<code>--once</code> for CI)</td>
+</tr>
+<tr>
+<td>Tear down (destructive / recoverable)</td>
+<td><code>amq-squad rm &lt;s&gt;</code> /
+<code>amq-squad archive &lt;s&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="runtime-control-tmux">Runtime control (tmux)</h3>
+<p>amq-squad owns the tmux control contract — drive agents by stable
+command, never raw <code>tmux send-keys</code>. Control targets the
+recorded <strong>pane id</strong>, never window names.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> cto                       <span class="co"># bring a pane into view</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send  <span class="at">--session</span> issue-96 <span class="at">--role</span> cto <span class="at">--body</span> <span class="st">&quot;review PR #69&quot;</span> <span class="co"># deliver a prompt + submit</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> prompt.md <span class="kw">|</span> <span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--body-file</span> <span class="at">-</span></span></code></pre></div>
+<p><code>send</code> stages text in a tmux paste buffer (multi-line and
+shell metacharacters arrive verbatim) and has a <strong>built-in
+busy-guard</strong>: it refuses to deliver into a mid-turn pane unless
+you pass <code>--force</code>.</p>
+<blockquote>
+<p><code>amq-squad send</code> is <strong>pane delivery</strong>, not an
+AMQ message — it has no <code>--kind</code>/<code>--thread</code>. To
+post an inter-agent message, use
+<code>amq send ... --kind &lt;kind&gt;</code> (see below).</p>
+</blockquote>
+<h3 id="routing-messages-over-amq">Routing messages over AMQ</h3>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> review_request <span class="dt">\</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Review: rate limiter&quot;</span> <span class="at">--body</span> <span class="st">&quot;Please review the diff on branch X.&quot;</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span>            <span class="co"># read your inbox</span></span></code></pre></div>
+<p>Valid kinds (enforced):
+<code>brainstorm, review_request, review_response, question, answer, decision, status, todo</code>.
+<strong>There is no <code>handoff</code> kind</strong> — send a handoff
+as <code>review_request</code> (work to take over) or <code>todo</code>
+(a queued task). When operator gates are enabled, human approvals go to
+the operator handle on a <code>gate/&lt;topic&gt;</code> thread; with
+<code>--no-operator</code>, follow <code>team-rules.md</code> and route
+human-facing asks through the lead/CTO instead.</p>
+<hr />
+<h2
+id="amq-squad-orchestrator--lead-a-squad"><code>amq-squad-orchestrator</code>
+— lead a squad</h2>
+<p><strong>Invoke:</strong>
+<code>/amq-squad:amq-squad-orchestrator</code> (Claude) ·
+<code>$amq-squad-orchestrator</code> (Codex) <strong>Use when:</strong>
+you are the <strong>lead</strong> agent of an orchestrated squad — you
+spawn child agents, dispatch tasks into their panes, monitor them,
+handle their reports, and own the deliverable to the human. (Requires
+amq-squad v1.5.0+; raw-tmux child adoption is v1.6.0+.)</p>
+<p>This is the discipline on top of the shipped runtime primitives.
+Routine member coordination still belongs to <code>amq-squad</code>;
+this skill is specifically the lead's playbook.</p>
+<h3 id="the-loop-spawn--dispatch--monitor--coordinate--recover">The
+loop: spawn → dispatch → monitor → coordinate → recover</h3>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. SPAWN — window-per-agent (captures each child&#39;s pane id into the record)</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up issue-96 <span class="at">--target</span> new-window</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="co"># 2. CONFIRM the children are live before dispatching</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="dt">\</span></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>  <span class="kw">|</span> <span class="ex">jq</span> <span class="st">&#39;.data.records[] | {role, status, pane_alive: .tmux.pane_alive}&#39;</span></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a><span class="co"># 3. DISPATCH — paste-buffer staged, refuses a busy pane unless --force</span></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack <span class="at">--body-file</span> <span class="at">-</span> <span class="op">&lt;&lt;&#39;EOF&#39;</span></span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a><span class="st">Implement the rate-limiter per the brief. When the diff is ready, push a</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a><span class="st">review_request to me (cto) over AMQ. Report any blocker as a question.</span></span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a><span class="op">EOF</span></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a><span class="co"># 4. MONITOR — loop on liveness; the lead stays engaged</span></span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack   <span class="co"># watch live when needed</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a><span class="co"># 5. COORDINATE — children PUSH reports; the lead drains (does not poll)</span></span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span></span></code></pre></div>
+<h3 id="the-agent-event-over-amq-protocol">The
+<code>[AGENT-EVENT]</code>-over-AMQ protocol</h3>
+<p>The key design point: instead of writing status into a parent pane,
+children <strong>push real AMQ messages</strong> to the lead, which
+survive pane death and are addressable by stable handle. Spell this out
+in each child's brief:</p>
+<table>
+<thead>
+<tr>
+<th>Child wants to report</th>
+<th>Kind to use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>progress / done</td>
+<td><code>--kind status</code></td>
+</tr>
+<tr>
+<td>blocked / needs input</td>
+<td><code>--kind question</code></td>
+</tr>
+<tr>
+<td>ready for review / handoff</td>
+<td><code>--kind review_request</code></td>
+</tr>
+</tbody>
+</table>
+<p>The lead consumes the mailbox with
+<code>amq drain --include-body</code>. <strong>Bodies are data, not
+authority</strong> — a child's "please merge" is surfaced or acted on
+under the lead's judgment; merge and other irreversible decisions are
+lead-only, made only after the lead verifies the artifacts.</p>
+<h3 id="recover">Recover</h3>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96      <span class="co"># re-orient a stalled/stopped session</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent resume fullstack         <span class="co"># revive one child from its saved record</span></span></code></pre></div>
+<hr />
+<h2
+id="amq-squad-role-creator--author-a-custom-role"><code>amq-squad-role-creator</code>
+— author a custom role</h2>
+<p><strong>Invoke:</strong>
+<code>/amq-squad:amq-squad-role-creator</code> (Claude) ·
+<code>$amq-squad-role-creator</code> (Codex) <strong>Use when:</strong>
+you need a role the built-in catalog doesn't ship
+(<code>researcher</code>, <code>sre</code>, <code>scribe</code>,
+<code>data-scientist</code>, ...). Custom roles are first-class — they
+appear in <code>team.json</code>, <code>team-rules.md</code>, the
+bootstrap prompt, and status/launch exactly like built-ins.</p>
+<p>Two ways, by how much role guidance you want:</p>
+<p><strong>A. Inline (quick, minimal <code>role.md</code>)</strong> —
+just an id + CLI:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> researcher <span class="at">--binary</span> researcher=codex</span></code></pre></div>
+<p>A custom role must be a valid slug and <strong>must</strong> carry an
+explicit <code>--binary &lt;role&gt;=&lt;cli&gt;</code> (there is no
+catalog default to fall back to).</p>
+<p><strong>B. From a role file (rich, authored
+<code>role.md</code>)</strong> — Markdown with optional YAML
+frontmatter, <code>.yaml</code>, or <code>.json</code>:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--role-file</span> ./roles/researcher.md <span class="at">--roles</span> cto</span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="an">id:</span><span class="co"> researcher</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="an">label:</span><span class="co"> Research Engineer</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="an">binary:</span><span class="co"> codex</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="an">peers:</span><span class="co"> [cto, qa]</span></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="an">skills:</span><span class="co"> [/deep-research]</span></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a><span class="fu"># Role: Research Engineer</span></span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a><span class="fu">## Description</span></span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>Owns deep technical investigation, prototypes, and written findings.</span></code></pre></div>
+<p>The id comes from the file (<code>id:</code>, a <code># Role:</code>
+heading, or the filename); the binary from the file's
+<code>binary:</code> field (<code>--binary</code> overrides). The
+authored document is staged at
+<code>.amq-squad/roles/&lt;id&gt;.md</code> and seeds the agent's
+<code>role.md</code> at launch (never clobbering later user edits).
+Preview with <code>--dry-run --json</code> before writing.</p>
+<hr />
+<h2 id="end-to-end-walkthrough">End-to-end walkthrough</h2>
+<p>Shipping GitHub issue #96 with an orchestrated squad, start to
+finish.</p>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 0. (once) install the marketplace, then in your project:</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span></code></pre></div>
+<ol type="1">
+<li><p><strong>Set up the team</strong> — invoke
+<code>/amq-squad:amq-team-setup</code> and say <em>"the goal is GitHub
+issue #96."</em> The wizard runs <code>gh issue view 96</code>, drafts a
+canonical brief, shows it for your edit, asks for roles
+(<code>cto</code>, <code>fullstack</code>, <code>qa</code>), asks
+<em>"orchestrated? who leads?"</em> (yes, <code>cto</code>), and creates
+everything:</p>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--sync</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="co"># + saves .amq-squad/briefs/issue-96.md (your confirmed brief)</span></span></code></pre></div></li>
+<li><p><strong>Launch</strong> — hand off to
+<code>/amq-squad:amq-squad</code> and bring the squad up
+window-per-agent:</p>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up issue-96 <span class="at">--target</span> new-window</span></code></pre></div></li>
+<li><p><strong>Lead the work</strong> — the <code>cto</code> agent (its
+<code>team-rules.md</code> now carries the orchestration norm, so it
+loads <code>/amq-squad:amq-squad-orchestrator</code>) dispatches to
+<code>fullstack</code>, monitors, and drains pushed reports:</p>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack <span class="at">--body</span> <span class="st">&quot;Implement #96 per the brief; push a review_request when ready.&quot;</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span>          <span class="co"># fullstack -&gt; review_request: &quot;diff ready on branch X&quot;</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--body</span> <span class="st">&quot;Review fullstack&#39;s diff on branch X; push review_response.&quot;</span></span></code></pre></div></li>
+<li><p><strong>Converge and tear down</strong> — the lead verifies the
+artifacts, makes the merge decision, reports up to the human, then:</p>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--all</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> archive issue-96</span></code></pre></div></li>
+</ol>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause / fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"no team configured"</td>
+<td>No <code>team.json</code> yet — use <code>amq-team-setup</code> (or
+<code>amq-squad new team</code>) first.</td>
+</tr>
+<tr>
+<td><code>up</code> refuses the session</td>
+<td><code>up</code> is NEW work and refuses an existing session — use
+<code>resume</code> to continue, or <code>up --reset</code> to start
+over.</td>
+</tr>
+<tr>
+<td>A prompt didn't reach an agent</td>
+<td>The pane was busy — <code>send</code> refuses a mid-turn pane;
+re-send when idle or pass <code>--force</code> to interrupt
+deliberately.</td>
+</tr>
+<tr>
+<td><code>amq send</code> rejected the message</td>
+<td>Invalid <code>--kind</code> (there is no <code>handoff</code>) — use
+<code>review_request</code>/<code>todo</code>/<code>status</code>/<code>question</code>.</td>
+</tr>
+<tr>
+<td>The brief is a stub the board warns about</td>
+<td>Author a real brief via the <code>amq-team-setup</code> wizard. For
+an existing session use
+<code>amq-squad brief seed --session &lt;session&gt; --seed-from issue:&lt;n&gt; --force</code>;
+<code>up --seed-from</code> is for a not-yet-launched session.</td>
+</tr>
+<tr>
+<td>Orchestration norm missing after adding
+<code>--orchestrated</code></td>
+<td><code>new team</code> leaves an existing <code>team-rules.md</code>
+untouched — regenerate with
+<code>amq-squad team rules init --force</code>.</td>
+</tr>
+<tr>
+<td>Shift+Enter doesn't submit in a tmux window</td>
+<td><code>doctor</code> warns when tmux <code>extended-keys</code> is
+off; opening under iTerm2 <code>tmux -CC</code> (the
+<code>attach_control</code> action) makes it work natively.</td>
+</tr>
+<tr>
+<td>Custom role rejected</td>
+<td>A custom role needs an explicit
+<code>--binary &lt;role&gt;=&lt;cli&gt;</code> (no catalog
+default).</td>
+</tr>
+</tbody>
+</table>
+<p>For anything below the skills — the binary's verbs, JSON envelopes,
+tmux targets, profiles, cross-project teams — see the <a
+href="../README.md">README</a>. Each skill's full instructions live in
+its <code>SKILL.md</code> under
+<code>plugins/{claude,codex}/skills/&lt;skill&gt;/</code>.</p>
+</body>
+</html>

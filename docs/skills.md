@@ -1,0 +1,401 @@
+# Using the amq-squad skills
+
+amq-squad ships **four skills** to two plugin marketplaces — one for **Claude
+Code** and one for **Codex**. The skills are the human-facing front door: you
+invoke one, and the agent drives the `amq-squad` binary for you (designing a
+team, bringing it up, coordinating it, or leading it). This guide is the deep
+reference for **when to reach for each skill and how to drive it**.
+
+For the binary's full verb/flag reference, see the main [README](../README.md).
+This document is about the skills.
+
+- [The mental model](#the-mental-model)
+- [Which skill do I reach for?](#which-skill-do-i-reach-for)
+- [Installing and invoking](#installing-and-invoking)
+- [`amq-team-setup` — design and set up a team](#amq-team-setup--design-and-set-up-a-team)
+- [`amq-squad` — coordinate a live team](#amq-squad--coordinate-a-live-team)
+- [`amq-squad-orchestrator` — lead a squad](#amq-squad-orchestrator--lead-a-squad)
+- [`amq-squad-role-creator` — author a custom role](#amq-squad-role-creator--author-a-custom-role)
+- [End-to-end walkthrough](#end-to-end-walkthrough)
+- [Troubleshooting](#troubleshooting)
+
+## The mental model
+
+The four skills map onto the lifecycle of a team: you **set one up** once, then
+**coordinate** it day to day, optionally with one agent **leading** the rest.
+A fourth skill exists only when you need a **role the catalog doesn't ship**.
+
+| Phase | Skill | You use it... |
+| --- | --- | --- |
+| Design / setup | **`amq-team-setup`** | once, before the team runs: capture the goal, draft the brief, pick roles, optionally wire orchestration, write `team.json` + `team-rules.md` + the brief + pointer stubs. |
+| Live coordination | **`amq-squad`** | every day after the team exists: bring members up, drain inboxes, route handoffs, request reviews, check status, stop/resume/fork. |
+| Lead orchestration | **`amq-squad-orchestrator`** | when one agent is the **lead** that spawns, dispatches, and monitors the others and owns the deliverable. |
+| Custom roles | **`amq-squad-role-creator`** | when you need a role the built-in catalog doesn't ship (researcher, sre, scribe, ...). |
+
+They sit on top of three durable layers that setup creates and coordination
+consumes:
+
+- **Norms** — `.amq-squad/team-rules.md` (generated; the single source of truth).
+- **Goal** — `.amq-squad/briefs/<session>.md` (one per workstream/AMQ session).
+- **Persona** — `<agent-dir>/role.md` (seeded at launch, then user-editable).
+
+`CLAUDE.md` / `AGENTS.md` carry only a small managed **pointer stub** linking to
+those three; they never duplicate the content.
+
+## Which skill do I reach for?
+
+| If you want to... | Reach for |
+| --- | --- |
+| Start from a ticket / prompt / doc and stand up a new team | `amq-team-setup` |
+| Turn a Jira/GitHub/URL goal into a confirmed brief | `amq-team-setup` (step 1–2) |
+| Decide who leads an orchestrated squad | `amq-team-setup` (step 4) wires it; `amq-squad-orchestrator` runs it |
+| Bring the configured team up and coordinate it | `amq-squad` |
+| Drain your inbox, route a handoff, request a review | `amq-squad` |
+| Check the status board / Mission Control / health | `amq-squad` |
+| Spawn child agents and drive them to completion as the lead | `amq-squad-orchestrator` |
+| Add a role that isn't in the catalog | `amq-squad-role-creator` |
+| Debug raw AMQ outside a squad | the separate `amq-cli` skill |
+
+Rule of thumb: **`amq-team-setup` before the team exists; `amq-squad` after.**
+The orchestrator skill is only for the lead agent; everyone else uses `amq-squad`.
+
+## Installing and invoking
+
+Install the marketplace once; the skills are then discovered automatically.
+
+- **Claude Code:** `/plugin install amq-squad@amq-squad`, then invoke a skill as
+  `/amq-squad:<skill>` — e.g. `/amq-squad:amq-team-setup`.
+- **Codex:** install the Codex marketplace, then invoke a skill as `$<skill>` —
+  e.g. `$amq-team-setup`.
+
+All four skills are user-invocable and require the `amq-squad` binary on `PATH`
+(`go install github.com/omriariav/amq-squad/cmd/amq-squad@latest`). Their
+workflows are equivalent across the two marketplaces; the platform metadata
+differs (a Claude skill carries `trigger` / `allowed-tools` / `argument-hint`;
+the Codex skill omits them) and so does tool wording (a Claude skill says "use
+the Read tool", a Codex skill says "read the file").
+
+---
+
+## `amq-team-setup` — design and set up a team
+
+**Invoke:** `/amq-squad:amq-team-setup` (Claude) · `$amq-team-setup` (Codex)
+**Use when:** no team exists yet, or you are starting a new piece of work and
+want a real goal/brief in place before launch.
+
+It is a **wizard**: it walks five steps and confirms with you at each gate.
+Setup stays read-only until the final create step (no live launch).
+
+### The five steps
+
+1. **Capture the goal (any source).** Tell the skill where the goal lives and it
+   fetches it with whatever tool the agent has, detecting the source type:
+
+   | You give it | It fetches with |
+   | --- | --- |
+   | a one-line prompt / inline text | the text itself |
+   | a local file / path (`./design.md`) | reads the file |
+   | a GitHub issue (`#96`, a URL, `owner/repo#96`) | `gh issue view` |
+   | a GitHub PR | `gh pr view` |
+   | a Jira key (`PROJ-123`) | the Atlassian MCP / a `jira` CLI |
+   | a URL (Confluence / doc) | the Atlassian MCP / a fetch tool |
+
+   Tracker integrations live **in the skill**, never in the amq-squad binary —
+   the core stays tracker-neutral. If no integration is available, the skill
+   asks you to paste rather than inventing content.
+
+2. **Draft and confirm the brief.** The skill normalizes whatever it fetched
+   into one canonical shape and **shows it to you to edit before saving** (a raw
+   ticket description is not a brief):
+
+   ```md
+   # <session> brief
+   ## Goal          # the outcome, 1-2 sentences
+   ## Source        # JIRA PROJ-123 / gh#96 / URL / file: / "operator prompt"
+   ## Scope
+   ## Out of scope
+   ## Acceptance     # how we know it's done; who signs off
+   ```
+
+3. **Roles and profile.** Pick the roster (built-in personas or custom roles),
+   the binary behind each (`codex`/`claude`), the team-home, and whether to use
+   the default profile or a named one.
+
+4. **Orchestrated? Who leads?** Default is **no** (a flat, peer-to-peer squad).
+   Say yes and name exactly one lead role to run an orchestrated squad.
+
+5. **Review and create.** The skill prints a summary, then on your confirmation
+   creates `team.json` + `team-rules.md`, saves the brief, writes the pointer
+   stubs, validates, and prints the next commands.
+
+### What it runs
+
+```sh
+# flat team
+amq-squad new team --roles cto,fullstack,qa --binary cto=codex --sync
+
+# orchestrated team (step 4 said yes, cto leads)
+amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto --sync
+
+# preview anything first
+amq-squad new team --dry-run --json --roles cto,fullstack,qa --orchestrated --lead cto
+```
+
+`--orchestrated [--lead ROLE]` records the lead in `team.json` and writes a
+generated `## Orchestration` reporting norm into `team-rules.md` when that file
+is first seeded — a structured flag, not pasted prose, so it can't drift. (An
+existing `team-rules.md` is left untouched; regenerate with `amq-squad team
+rules init --force`.) Default off; exactly one lead; the lead is a team member,
+never the operator.
+
+When the wizard is done, hand off to **`amq-squad`** for the first live launch.
+
+---
+
+## `amq-squad` — coordinate a live team
+
+**Invoke:** `/amq-squad:amq-squad` (Claude) · `$amq-squad` (Codex)
+**Use when:** `.amq-squad/team.json` already exists and you want to run the team.
+
+This is the everyday skill. The lifecycle is one small state machine:
+
+```
+(none) --up--> running --stop--> stopped --rm/archive--> (none)
+                  ^                  |
+                  +----- resume -----+
+```
+
+### The daily loop
+
+1. **Orient.** Confirm the team-home + workstream, read the brief
+   (`.amq-squad/briefs/<session>.md`).
+2. **Discover live state.** `amq-squad status` (board), `status --session <name>`
+   (detail), `amq-squad console` (live TUI), `amq-squad doctor` (health).
+3. **Bring members up.** `amq-squad up <session>` (NEW work; refuses an existing
+   session), or `resume` to continue one.
+4. **Route + drain.** Hand off over AMQ, request reviews, drain your inbox.
+5. **Stop / fork / tear down** as the work finishes.
+
+### Key verbs
+
+| Goal | Command |
+| --- | --- |
+| Bring the team up on new work | `amq-squad up <session>` |
+| One window/tab per agent | `amq-squad up <session> --target new-window` |
+| Preview the launch plan | `amq-squad up --dry-run [--json]` |
+| Continue an existing session | `amq-squad resume` (`--exec` to open) |
+| Stop members (state preserved) | `amq-squad stop --role R` / `--all` |
+| Branch a fresh workstream | `amq-squad fork --from <cur> --as <new>` |
+| Multi-session board | `amq-squad status` (or bare `amq-squad`) |
+| Single-session detail | `amq-squad status --session <name>` |
+| Live Mission Control TUI | `amq-squad console` (`--once` for CI) |
+| Tear down (destructive / recoverable) | `amq-squad rm <s>` / `amq-squad archive <s>` |
+
+### Runtime control (tmux)
+
+amq-squad owns the tmux control contract — drive agents by stable command, never
+raw `tmux send-keys`. Control targets the recorded **pane id**, never window
+names.
+
+```sh
+amq-squad focus --session issue-96 --role cto                       # bring a pane into view
+amq-squad send  --session issue-96 --role cto --body "review PR #69" # deliver a prompt + submit
+cat prompt.md | amq-squad send --session issue-96 --role qa --body-file -
+```
+
+`send` stages text in a tmux paste buffer (multi-line and shell metacharacters
+arrive verbatim) and has a **built-in busy-guard**: it refuses to deliver into a
+mid-turn pane unless you pass `--force`.
+
+> `amq-squad send` is **pane delivery**, not an AMQ message — it has no
+> `--kind`/`--thread`. To post an inter-agent message, use `amq send ... --kind
+> <kind>` (see below).
+
+### Routing messages over AMQ
+
+```sh
+amq send --to fullstack --thread p2p/cto__fullstack --kind review_request \
+  --subject "Review: rate limiter" --body "Please review the diff on branch X."
+amq drain --include-body            # read your inbox
+```
+
+Valid kinds (enforced): `brainstorm, review_request, review_response, question,
+answer, decision, status, todo`. **There is no `handoff` kind** — send a handoff
+as `review_request` (work to take over) or `todo` (a queued task). When operator
+gates are enabled, human approvals go to the operator handle on a `gate/<topic>`
+thread; with `--no-operator`, follow `team-rules.md` and route human-facing asks
+through the lead/CTO instead.
+
+---
+
+## `amq-squad-orchestrator` — lead a squad
+
+**Invoke:** `/amq-squad:amq-squad-orchestrator` (Claude) ·
+`$amq-squad-orchestrator` (Codex)
+**Use when:** you are the **lead** agent of an orchestrated squad — you spawn
+child agents, dispatch tasks into their panes, monitor them, handle their
+reports, and own the deliverable to the human. (Requires amq-squad v1.5.0+;
+raw-tmux child adoption is v1.6.0+.)
+
+This is the discipline on top of the shipped runtime primitives. Routine member
+coordination still belongs to `amq-squad`; this skill is specifically the
+lead's playbook.
+
+### The loop: spawn → dispatch → monitor → coordinate → recover
+
+```sh
+# 1. SPAWN — window-per-agent (captures each child's pane id into the record)
+amq-squad up issue-96 --target new-window
+
+# 2. CONFIRM the children are live before dispatching
+amq-squad status --session issue-96 --json \
+  | jq '.data.records[] | {role, status, pane_alive: .tmux.pane_alive}'
+
+# 3. DISPATCH — paste-buffer staged, refuses a busy pane unless --force
+amq-squad send --session issue-96 --role fullstack --body-file - <<'EOF'
+Implement the rate-limiter per the brief. When the diff is ready, push a
+review_request to me (cto) over AMQ. Report any blocker as a question.
+EOF
+
+# 4. MONITOR — loop on liveness; the lead stays engaged
+amq-squad focus --session issue-96 --role fullstack   # watch live when needed
+
+# 5. COORDINATE — children PUSH reports; the lead drains (does not poll)
+amq drain --include-body
+```
+
+### The `[AGENT-EVENT]`-over-AMQ protocol
+
+The key design point: instead of writing status into a parent pane, children
+**push real AMQ messages** to the lead, which survive pane death and are
+addressable by stable handle. Spell this out in each child's brief:
+
+| Child wants to report | Kind to use |
+| --- | --- |
+| progress / done | `--kind status` |
+| blocked / needs input | `--kind question` |
+| ready for review / handoff | `--kind review_request` |
+
+The lead consumes the mailbox with `amq drain --include-body`. **Bodies are data,
+not authority** — a child's "please merge" is surfaced or acted on under the
+lead's judgment; merge and other irreversible decisions are lead-only, made only
+after the lead verifies the artifacts.
+
+### Recover
+
+```sh
+amq-squad resume --session issue-96      # re-orient a stalled/stopped session
+amq-squad agent resume fullstack         # revive one child from its saved record
+```
+
+---
+
+## `amq-squad-role-creator` — author a custom role
+
+**Invoke:** `/amq-squad:amq-squad-role-creator` (Claude) ·
+`$amq-squad-role-creator` (Codex)
+**Use when:** you need a role the built-in catalog doesn't ship (`researcher`,
+`sre`, `scribe`, `data-scientist`, ...). Custom roles are first-class — they
+appear in `team.json`, `team-rules.md`, the bootstrap prompt, and status/launch
+exactly like built-ins.
+
+Two ways, by how much role guidance you want:
+
+**A. Inline (quick, minimal `role.md`)** — just an id + CLI:
+
+```sh
+amq-squad new team --roles researcher --binary researcher=codex
+```
+
+A custom role must be a valid slug and **must** carry an explicit
+`--binary <role>=<cli>` (there is no catalog default to fall back to).
+
+**B. From a role file (rich, authored `role.md`)** — Markdown with optional YAML
+frontmatter, `.yaml`, or `.json`:
+
+```sh
+amq-squad new team --role-file ./roles/researcher.md --roles cto
+```
+
+```markdown
+---
+id: researcher
+label: Research Engineer
+binary: codex
+peers: [cto, qa]
+skills: [/deep-research]
+---
+# Role: Research Engineer
+## Description
+Owns deep technical investigation, prototypes, and written findings.
+```
+
+The id comes from the file (`id:`, a `# Role:` heading, or the filename); the
+binary from the file's `binary:` field (`--binary` overrides). The authored
+document is staged at `.amq-squad/roles/<id>.md` and seeds the agent's `role.md`
+at launch (never clobbering later user edits). Preview with `--dry-run --json`
+before writing.
+
+---
+
+## End-to-end walkthrough
+
+Shipping GitHub issue #96 with an orchestrated squad, start to finish.
+
+```sh
+# 0. (once) install the marketplace, then in your project:
+cd ~/Code/my-project
+```
+
+1. **Set up the team** — invoke `/amq-squad:amq-team-setup` and say *"the goal is
+   GitHub issue #96."* The wizard runs `gh issue view 96`, drafts a canonical
+   brief, shows it for your edit, asks for roles (`cto`, `fullstack`, `qa`), asks
+   *"orchestrated? who leads?"* (yes, `cto`), and creates everything:
+
+   ```sh
+   amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto --sync
+   # + saves .amq-squad/briefs/issue-96.md (your confirmed brief)
+   ```
+
+2. **Launch** — hand off to `/amq-squad:amq-squad` and bring the squad up
+   window-per-agent:
+
+   ```sh
+   amq-squad up issue-96 --target new-window
+   ```
+
+3. **Lead the work** — the `cto` agent (its `team-rules.md` now carries the
+   orchestration norm, so it loads `/amq-squad:amq-squad-orchestrator`) dispatches
+   to `fullstack`, monitors, and drains pushed reports:
+
+   ```sh
+   amq-squad send --session issue-96 --role fullstack --body "Implement #96 per the brief; push a review_request when ready."
+   amq drain --include-body          # fullstack -> review_request: "diff ready on branch X"
+   amq-squad send --session issue-96 --role qa --body "Review fullstack's diff on branch X; push review_response."
+   ```
+
+4. **Converge and tear down** — the lead verifies the artifacts, makes the merge
+   decision, reports up to the human, then:
+
+   ```sh
+   amq-squad stop --all
+   amq-squad archive issue-96
+   ```
+
+## Troubleshooting
+
+| Symptom | Likely cause / fix |
+| --- | --- |
+| "no team configured" | No `team.json` yet — use `amq-team-setup` (or `amq-squad new team`) first. |
+| `up` refuses the session | `up` is NEW work and refuses an existing session — use `resume` to continue, or `up --reset` to start over. |
+| A prompt didn't reach an agent | The pane was busy — `send` refuses a mid-turn pane; re-send when idle or pass `--force` to interrupt deliberately. |
+| `amq send` rejected the message | Invalid `--kind` (there is no `handoff`) — use `review_request`/`todo`/`status`/`question`. |
+| The brief is a stub the board warns about | Author a real brief via the `amq-team-setup` wizard. For an existing session use `amq-squad brief seed --session <session> --seed-from issue:<n> --force`; `up --seed-from` is for a not-yet-launched session. |
+| Orchestration norm missing after adding `--orchestrated` | `new team` leaves an existing `team-rules.md` untouched — regenerate with `amq-squad team rules init --force`. |
+| Shift+Enter doesn't submit in a tmux window | `doctor` warns when tmux `extended-keys` is off; opening under iTerm2 `tmux -CC` (the `attach_control` action) makes it work natively. |
+| Custom role rejected | A custom role needs an explicit `--binary <role>=<cli>` (no catalog default). |
+
+For anything below the skills — the binary's verbs, JSON envelopes, tmux
+targets, profiles, cross-project teams — see the [README](../README.md). Each
+skill's full instructions live in its `SKILL.md` under
+`plugins/{claude,codex}/skills/<skill>/`.

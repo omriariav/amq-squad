@@ -106,6 +106,11 @@ Invoke a skill in Claude Code as `/amq-squad:<skill>` (e.g.
 `$amq-squad-orchestrator`). For routine member work use `amq-squad`; only the
 lead agent driving spawnees reaches for `amq-squad-orchestrator`.
 
+**Deeper guide:** [docs/skills.md](docs/skills.md)
+([HTML](docs/skills.html)) walks each skill end to end — when to reach for it,
+how to invoke it, worked examples, a decision table, an issue-to-merge
+walkthrough, and troubleshooting.
+
 ## Quick start
 
 ```sh

@@ -1,4 +1,4 @@
-.PHONY: build test fmt fmt-check vet ci install release-smoke readme-html readme-html-check clean
+.PHONY: build test fmt fmt-check vet ci install release-smoke readme-html readme-html-check docs-html docs-html-check html clean
 
 GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*')
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -8,6 +8,13 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 # targets so they cannot diverge.
 PANDOC_CMD = pandoc README.md -f gfm -t html5 -s --toc --toc-depth=2 \
 	--metadata title="amq-squad — role-aware agent team launcher" \
+	--include-in-header=docs/readme-head.html
+
+# docs/skills.html is a generated render of docs/skills.md (the deep skills
+# guide). SKILLS_PANDOC_CMD mirrors PANDOC_CMD so the regenerate and freshness
+# targets cannot diverge.
+SKILLS_PANDOC_CMD = pandoc docs/skills.md -f gfm -t html5 -s --toc --toc-depth=2 \
+	--metadata title="amq-squad — using the skills" \
 	--include-in-header=docs/readme-head.html
 
 build:
@@ -25,7 +32,7 @@ fmt-check:
 vet:
 	go vet ./...
 
-ci: fmt-check vet test readme-html-check
+ci: fmt-check vet test readme-html-check docs-html-check
 
 # Regenerate the browsable README.html from README.md. Run this whenever
 # README.md changes (the release process bumps README.md, so it runs here).
@@ -50,6 +57,32 @@ readme-html-check:
 		fi; \
 		echo "README.html is in sync with README.md"; \
 	fi
+
+# Regenerate docs/skills.html from docs/skills.md. Run whenever the skills guide
+# changes (the release process bumps docs alongside README).
+docs-html:
+	@command -v pandoc >/dev/null 2>&1 || { echo "pandoc is required: brew install pandoc" >&2; exit 1; }
+	$(SKILLS_PANDOC_CMD) -o docs/skills.html
+	@echo "regenerated docs/skills.html"
+
+# Fail if docs/skills.html is stale relative to docs/skills.md (drift guard, part
+# of ci). Skips cleanly when pandoc is absent so pandoc-less CI is not blocked.
+docs-html-check:
+	@if ! command -v pandoc >/dev/null 2>&1; then \
+		echo "pandoc not found; skipping docs/skills.html freshness check"; \
+	else \
+		tmp="$$(mktemp)"; \
+		trap 'rm -f "$$tmp"' EXIT; \
+		$(SKILLS_PANDOC_CMD) -o "$$tmp"; \
+		if ! diff -q "$$tmp" docs/skills.html >/dev/null 2>&1; then \
+			echo "docs/skills.html is stale: run 'make docs-html' and commit it" >&2; \
+			exit 1; \
+		fi; \
+		echo "docs/skills.html is in sync with docs/skills.md"; \
+	fi
+
+# Regenerate every browsable HTML render.
+html: readme-html docs-html
 
 install: build
 	install amq-squad $(GOPATH)/bin/amq-squad 2>/dev/null || install amq-squad $(HOME)/go/bin/amq-squad
