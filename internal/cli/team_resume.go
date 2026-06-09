@@ -796,25 +796,31 @@ func wakeHealthForMember(agentDir, expectedRoot, handle string, rec launch.Recor
 }
 
 // resumeLiveNote produces the per-member plan Note for a live verdict,
-// preserving the wording resume emitted before the classifier unification:
+// preserving the exact wording resume emitted before the classifier unification:
 //   - replacement-live keeps resume's "recorded pid dead; live <bin> at
 //     <target>; relaunch..." phrasing (the form its tests assert), and
-//   - the agent/wake/presence verdicts collapse to the short source label
-//     summarizeBlocker produced from the preflight blocker (e.g. "launch",
-//     "wake", "presence"), so the table note is unchanged for those cases.
+//   - the agent/wake/presence verdicts list EVERY live source (not just the
+//     highest-precedence verdict) in the preflight blocker order wake+launch+
+//     presence, joined with "+", exactly as summarizeBlocker did (so a
+//     multi-signal live agent still reads "wake+launch+presence").
 func resumeLiveNote(live agentLiveness, binary string) string {
-	switch live.Verdict {
-	case livenessReplacementLive:
+	if live.Verdict == livenessReplacementLive {
 		return fmt.Sprintf("recorded pid dead; live %s at %s; relaunch via amq-squad to re-register", binary, live.ReplacementTarget)
-	case livenessAgentLive:
-		return "launch"
-	case livenessWakeLive:
-		return "wake"
-	case livenessPresenceLive:
-		return "presence"
-	default:
+	}
+	var parts []string
+	if live.Signals.WakeAlive {
+		parts = append(parts, "wake")
+	}
+	if live.Signals.AgentAlive && live.Signals.BinaryMatch {
+		parts = append(parts, "launch")
+	}
+	if live.PresenceLive {
+		parts = append(parts, "presence")
+	}
+	if len(parts) == 0 {
 		return "live"
 	}
+	return strings.Join(parts, "+")
 }
 
 // freshLaunchCommand emits the same command shape `team launch` would use

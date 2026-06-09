@@ -54,6 +54,12 @@ type agentLiveness struct {
 	// Signals is the populated status signal block (agent pid/alive/match,
 	// wake pid/alive, presence/last-seen).
 	Signals statusSignals
+	// PresenceLive is true when a fresh, active, same-handle presence is a real
+	// live signal (i.e. it passed the zombie-heartbeat guard). It is kept
+	// separate from the single Verdict so resume can list EVERY live source in
+	// its note (e.g. "wake+launch+presence"), matching the pre-unification
+	// blocker summary.
+	PresenceLive bool
 	// LaunchRecord is the parsed launch.json (zero value when none/unreadable).
 	LaunchRecord launch.Record
 	// LaunchFound is true when launch.json parsed successfully.
@@ -155,6 +161,7 @@ func classifyAgentLiveness(agentDir, root, handle, role, binary, workstream, cwd
 			presenceMismatched = true
 		}
 	}
+	out.PresenceLive = presenceLive
 
 	if out.Signals.AgentAlive && out.Signals.BinaryMatch {
 		out.Verdict = livenessAgentLive

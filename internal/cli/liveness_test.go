@@ -439,3 +439,31 @@ func TestClassifierPresenceLiveWhenWriterUnknown(t *testing.T) {
 		t.Fatalf("presence with unknown writers status = %q, want live", live.Status)
 	}
 }
+
+// resumeLiveNote must list EVERY live source (not just the highest-precedence
+// verdict) in preflight blocker order wake+launch+presence, matching the
+// pre-unification summarizeBlocker output the resume contract promised.
+func TestResumeLiveNoteListsAllLiveSources(t *testing.T) {
+	all := agentLiveness{
+		Verdict:      livenessAgentLive, // highest-precedence verdict...
+		Signals:      statusSignals{AgentAlive: true, BinaryMatch: true, WakeAlive: true},
+		PresenceLive: true, // ...but every source is live
+	}
+	if got := resumeLiveNote(all, "codex"); got != "wake+launch+presence" {
+		t.Errorf("multi-signal note = %q, want %q", got, "wake+launch+presence")
+	}
+	// A subset (wake + presence, no live agent pid).
+	sub := agentLiveness{Verdict: livenessPresenceLive, Signals: statusSignals{WakeAlive: true}, PresenceLive: true}
+	if got := resumeLiveNote(sub, "codex"); got != "wake+presence" {
+		t.Errorf("subset note = %q, want %q", got, "wake+presence")
+	}
+	// Single source.
+	if got := resumeLiveNote(agentLiveness{Verdict: livenessWakeLive, Signals: statusSignals{WakeAlive: true}}, "codex"); got != "wake" {
+		t.Errorf("wake-only note = %q, want wake", got)
+	}
+	// Replacement keeps its distinct phrasing + target.
+	repl := agentLiveness{Verdict: livenessReplacementLive, ReplacementTarget: "%5"}
+	if got := resumeLiveNote(repl, "codex"); !strings.Contains(got, "%5") || !strings.Contains(got, "recorded pid dead") {
+		t.Errorf("replacement note = %q, want it to mention the dead pid + target", got)
+	}
+}
