@@ -95,10 +95,16 @@ func resolveControlTarget(mr memberRuntime, workstream string, panes []tmuxpane.
 		}
 		return "", tmuxpane.TmuxTarget{}, false
 	}
-	// No recorded pane id (a pre-1.5 record, or an agent launched outside tmux):
-	// best-effort resolve by title-first, then cwd+engine.
+	// No recorded pane id (a pre-1.5 record, or an agent launched outside
+	// amq-squad's tmux backend): best-effort resolve by title-first, then
+	// cwd+engine, anchored by PID lineage so an externally-launched pane resolves
+	// to the right agent even when peers share cwd+engine (#95). The recorded
+	// agent pid (present even when no tmux block was captured) anchors the match.
 	ag := state.Agent{Handle: mr.Handle, Role: mr.Member.Role, Engine: mr.Member.Binary}
-	if tgt, found := tmuxpane.ResolveTmuxTargetForSession(ag, workstream, mr.CWD, panes, nil); found {
+	if mr.HasRecord {
+		ag.AgentPID = mr.Record.AgentPID
+	}
+	if tgt, found := tmuxpane.ResolveTmuxTargetForSession(ag, workstream, mr.CWD, panes, childrenPidTree()); found {
 		// tgt.Pane is the pane INDEX; tmux would resolve a bare index relative
 		// to the current client/window, not the agent's pane. Resolve to the
 		// exact pane_id, falling back to a fully-qualified session:window.pane
