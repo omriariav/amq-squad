@@ -258,3 +258,53 @@ func TestSendRequiresRole(t *testing.T) {
 		t.Fatalf("want UsageError, got %T: %v", err, err)
 	}
 }
+
+func TestSessionActions(t *testing.T) {
+	acts := sessionActions("/Code/app", team.DefaultProfile, "issue-96")
+	byKind := map[string]runtimeActionJSON{}
+	for _, a := range acts {
+		byKind[a.Kind] = a
+	}
+	want := []string{"status", "resume_preview", "resume_current_window", "resume_new_session", "stop"}
+	if len(acts) != len(want) {
+		t.Fatalf("want %d session actions, got %d", len(want), len(acts))
+	}
+	for _, k := range want {
+		a, ok := byKind[k]
+		if !ok {
+			t.Fatalf("missing session action %q", k)
+		}
+		if a.Scope != "session" || a.Label == "" {
+			t.Errorf("%s scope/label wrong: scope=%q label=%q", k, a.Scope, a.Label)
+		}
+		if !strings.Contains(a.Command, "--session issue-96") || !strings.Contains(a.Command, "--project /Code/app") {
+			t.Errorf("%s command missing scope: %q", k, a.Command)
+		}
+		if strings.Contains(a.Command, "--role") {
+			t.Errorf("a session action must not carry --role: %q", a.Command)
+		}
+	}
+	// Read-only vs mutating + confirmation.
+	if byKind["status"].Mutates || byKind["resume_preview"].Mutates {
+		t.Error("status/resume_preview must not mutate")
+	}
+	for _, k := range []string{"resume_current_window", "resume_new_session", "stop"} {
+		if !byKind[k].Mutates || !byKind[k].NeedsConfirmation {
+			t.Errorf("%s must mutate and need confirmation", k)
+		}
+	}
+	// Commands map to real verbs; new-session omits --terminal-session (derived).
+	if byKind["stop"].Command != "amq-squad stop --project /Code/app --session issue-96 --all" {
+		t.Errorf("stop command = %q", byKind["stop"].Command)
+	}
+	if !strings.HasSuffix(byKind["resume_new_session"].Command, "--exec --target new-session") {
+		t.Errorf("resume_new_session should omit --terminal-session: %q", byKind["resume_new_session"].Command)
+	}
+	// Profile: default omitted, named included.
+	if strings.Contains(byKind["status"].Command, "--profile") {
+		t.Errorf("default profile must be omitted: %q", byKind["status"].Command)
+	}
+	if !strings.Contains(sessionActions("/Code/app", "review", "issue-96")[0].Command, "--profile review") {
+		t.Error("named profile must appear in session action commands")
+	}
+}

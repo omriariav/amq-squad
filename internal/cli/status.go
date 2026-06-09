@@ -60,6 +60,11 @@ type statusEnvelopeData struct {
 	Operator     team.OperatorView `json:"operator"`
 	Capabilities team.Capabilities `json:"capabilities"`
 	Records      []statusRecord    `json:"records"`
+	// Actions are the SESSION-scope operator actions (status / resume preview /
+	// resume in current window / resume in new tmux session / stop), the catalog
+	// counterpart to each record's agent-scope actions. A client renders these
+	// for the session row instead of constructing the commands itself.
+	Actions []runtimeActionJSON `json:"actions"`
 }
 
 type statusRecord struct {
@@ -208,6 +213,7 @@ func executeStatus(s statusExecution) error {
 			Operator:     team.EffectiveOperator(t),
 			Capabilities: team.EffectiveCapabilities(t),
 			Records:      rows,
+			Actions:      sessionActions(t.Project, s.Profile, workstream),
 		})
 	}
 	policy := outputPolicyCurrent()
