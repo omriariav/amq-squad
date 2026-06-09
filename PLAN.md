@@ -23,6 +23,19 @@ the open issues by theme + status so the near-term path is legible at a glance.
     resume_new_session / stop) — closes amq-noc#7's producer side. Board/
     project-scope actions deferred (the board envelope carries no per-session
     profile).
+- **v1.5.3 — shipped.**
+  - **#86 — prompt delivery dropped the Enter.** `send` now submits robustly in
+    plain tmux: settle, Enter, verify the input region changed, retry, and a
+    clear error instead of silently leaving text staged.
+  - **#85 — iTerm2 `tmux -CC`.** An `attach_control` session action
+    (`tmux -CC attach -t <session>`) when the workstream has a live tmux session;
+    opening under `-CC` also makes Shift+Enter work natively.
+  - **shift+enter doctor hint** — `doctor` warns (informational) when tmux
+    `extended-keys` is off, with the opt-in fix; amq-squad never mutates the
+    user's tmux server.
+  - **#87** — plain `resume` vs `--json` was a cross-invocation race, not a code
+    bug; pinned with a consistency regression test.
+  - **#81** — post-release peer-notification norm in the default team-rules.
 
 ## Themes
 
