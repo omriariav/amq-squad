@@ -11,9 +11,18 @@ the open issues by theme + status so the near-term path is legible at a glance.
 - **v1.5.1 — shipped.** `capabilities.runtime_actions` (#73), `send` busy-pane
   idle-check (#74 / #68), structured action metadata
   `label`/`scope`/`mutates`/`needs_confirmation`/`reason` (#75).
-- **Next (v1.5.2 candidate):** session/project-scope actions in `status --json`
-  to fully close amq-noc#7 (resume-current-window / resume-new-session / stop /
-  restart) — extend the status envelope, no new command.
+- **v1.5.2 — shipped.**
+  - **#79 — NOC runtime JSON contract gaps.** Unified `status`/`resume` liveness
+    behind one shared classifier so `resume --json` can't contradict `status
+    --json` (incl. a zombie-heartbeat guard that also fixes the latent #44
+    "stale live presence" bug); a `liveness` block on `resume.plan[]`; honest
+    `resume --help`; regression coverage. (Ask #1, `runtime_actions`, shipped in
+    v1.5.1.)
+  - **Session-scope action catalog** on single-session `status --json`
+    (`data.actions`: status / resume_preview / resume_current_window /
+    resume_new_session / stop) — closes amq-noc#7's producer side. Board/
+    project-scope actions deferred (the board envelope carries no per-session
+    profile).
 
 ## Themes
 
@@ -26,6 +35,9 @@ the open issues by theme + status so the near-term path is legible at a glance.
   addressing); new binary work is `spawn` / `emit-event` / `watch`. **Never in
   the NOC** — at most the NOC observes an orchestration. This is the headline
   forward item.
+- #79 — NOC runtime JSON contract gaps in v1.5.0. ✅ shipped in v1.5.2 (shared
+  liveness classifier + `resume.plan[].liveness` + session-scope `status --json`
+  actions) — *pending close.*
 - #61 — Expose first-class tmux orchestration metadata for NOC clients.
   ✅ shipped in v1.5.0 — *pending close.*
 - #62 — Make tmux prompt delivery deterministic for launched agents.
