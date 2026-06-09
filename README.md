@@ -265,6 +265,8 @@ amq-squad brief seed --session issue-96 --seed-from issue:31
 - With `--dry-run`: prints the candidate brief envelope and writes nothing.
 - Without `--dry-run`: writes `.amq-squad/briefs/<session>.md` and brings the team up in the same call. An existing brief is preserved unless `--force` is set.
 
+The `amq-team-setup` skill wraps this in a wizard: it captures a goal from **any** source you have — an inline prompt, a local `.md`, a GitHub issue or PR, a Jira key, or a doc URL — fetches it agent-side (amq-squad core stays tracker-neutral), and drafts a **canonical brief** (Goal / Source / Scope / Out of scope / Acceptance) for you to confirm before it is saved. The brief is per-session.
+
 ### Profiles (schema 3)
 
 Profiles let one team-home hold parallel team shapes (for example a release team and a research team).
@@ -292,6 +294,16 @@ amq-squad new team --roles cto,qa --no-operator   # explicit opt-out
 
 The operator is not a runnable team member. JSON discovery derives `operator` and `capabilities.operator_gates`; `capabilities` is not persisted in `team.json`.
 
+### Orchestration (opt-in)
+
+By default a squad is flat: members coordinate peer-to-peer over AMQ. You can instead run an **orchestrated** squad, where one lead agent spawns, dispatches, and monitors the others and owns the deliverable. It is wired by a structured flag, not by hand-edited prose, so it cannot drift:
+
+```sh
+amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto
+```
+
+This records `orchestrated`/`lead` in `team.json` and injects a generated `## Orchestration` reporting norm into `.amq-squad/team-rules.md`: the lead loads the `amq-squad-orchestrator` skill, and children push `status` / `question` / `review_request` messages to the lead over AMQ. Default off; **exactly one lead**; the lead is a team member, **never the operator**. `--lead ROLE` implies `--orchestrated`; with `--orchestrated` alone a single-member team self-selects and a team with a `cto` defaults to `cto`. The `team_profile_plan` / `team_plan` JSON envelopes carry `orchestrated`/`lead`. If `team-rules.md` already exists, `new team` leaves it untouched — regenerate with `amq-squad team rules init --force` to pick up the norm.
+
 ## Verbs
 
 Team-level verbs:
@@ -310,6 +322,9 @@ amq-squad new team [--project DIR] [--sync] [--dry-run [--json]] [team init opti
                                   initial shared workstream; --operator sets
                                   the virtual operator handle; --no-operator
                                   disables operator gates;
+                                  --orchestrated [--lead ROLE] wires lead-agent
+                                  orchestration (default off; one lead, a team
+                                  member, never the operator);
                                   --project targets a team-home without cd.
 amq-squad new profile NAME [--project DIR] [--sync] [--dry-run [--json]] [team init options]
                                   Create a named team profile. Alias for
@@ -328,12 +343,14 @@ amq-squad new session [--project DIR] [--profile NAME] [<session>] [up options]
                                   a team-home without cd.
 
 amq-squad team init [--project DIR] [--profile NAME] [--roles a,b|numbers|all] [--binary role=bin,...]
-                     [--session ws] [--trust sandboxed|trusted]
+                     [--session ws] [--trust sandboxed|trusted] [--orchestrated [--lead ROLE]]
                      [--model role=model,...] [--codex-args ...] [--claude-args ...] [--dry-run [--json]]
                                   Write a team profile and seed .amq-squad/team-rules.md.
                                   --dry-run builds and prints the profile plan
                                   without writing team.json or team-rules.md.
                                   Add --json for a team_profile_plan envelope.
+                                  --orchestrated [--lead ROLE] opts the squad
+                                  into lead-agent orchestration (see Orchestration).
                                   --project targets a team-home without cd.
 amq-squad team rules init [--project DIR] [--force]
                                   Seed or refresh .amq-squad/team-rules.md.
