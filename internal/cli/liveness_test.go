@@ -515,3 +515,60 @@ func TestResumePlanJSONCarriesLiveness(t *testing.T) {
 		t.Errorf("a stale verdict should restore, got action %q", p.Action)
 	}
 }
+
+// #87: plain `resume` and `resume --json` MUST render the same action. They
+// both branch from the SAME []resumePlan in executeResume, so they cannot
+// diverge by code (the report was a cross-invocation race). This pins it: the
+// fixture sets Action DELIBERATELY mismatched against Liveness.Status, so a
+// renderer that (wrongly) re-derived the action from liveness would emit a
+// different string and fail. Both renderers must echo resumePlan.Action.
+func TestPlainAndJSONResumeRenderSameAction(t *testing.T) {
+	plans := []resumePlan{
+		// Action=restore but liveness says live: output must show "restore".
+		{Role: "cto", Handle: "cto", Action: resumeRestore, Command: "amq-squad agent up codex --role cto",
+			Liveness: &agentLiveness{Status: statusStateLive, Detail: "live"}},
+		// Action=live but liveness says stale: output must show "live".
+		{Role: "qa", Handle: "qa", Action: resumeLive, Note: "wake+launch",
+			Liveness: &agentLiveness{Status: statusStateStale}},
+	}
+	tm := team.Team{Project: "/p"}
+	var plain, jsonBuf bytes.Buffer
+	writeResumePlan(&plain, tm, "issue-96", resumeModeDefault, plans, false, false, resumePrinterStyle{Label: "resume", FooterVerb: "up"})
+	if err := writeResumeJSON(&jsonBuf, tm, "issue-96", resumeModeDefault, "", plans); err != nil {
+		t.Fatal(err)
+	}
+
+	// Plain: the row for each role shows that member's action.
+	plainRow := map[string]string{}
+	for _, line := range strings.Split(plain.String(), "\n") {
+		if f := strings.Fields(line); len(f) >= 2 {
+			plainRow[f[0]] = line
+		}
+	}
+	// JSON: action per role.
+	var env struct {
+		Data struct {
+			Plan []struct{ Role, Action string } `json:"plan"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(jsonBuf.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	jsonAction := map[string]string{}
+	for _, p := range env.Data.Plan {
+		jsonAction[p.Role] = p.Action
+	}
+
+	for _, p := range plans {
+		if row, ok := plainRow[p.Role]; !ok || !strings.Contains(row, string(p.Action)) {
+			t.Errorf("plain resume row for %s = %q, must show action %q", p.Role, row, p.Action)
+		}
+		if jsonAction[p.Role] != string(p.Action) {
+			t.Errorf("json action for %s = %q, want %q", p.Role, jsonAction[p.Role], p.Action)
+		}
+		// And the two renderers must agree.
+		if got := jsonAction[p.Role]; !strings.Contains(plainRow[p.Role], got) {
+			t.Errorf("plain (%q) and json (%q) disagree on %s's action", plainRow[p.Role], got, p.Role)
+		}
+	}
+}
