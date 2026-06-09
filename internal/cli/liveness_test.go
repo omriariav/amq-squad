@@ -572,3 +572,74 @@ func TestPlainAndJSONResumeRenderSameAction(t *testing.T) {
 		}
 	}
 }
+
+// #87 (reopened): when BOTH the agent PID and the wake PID are live, status,
+// doctor, plain resume, and resume --json must ALL classify the member live.
+// The reopened repro showed status/doctor saying stale while resume said live
+// for the exact same live records; they share classifyAgentLiveness, so this
+// pins cross-surface agreement on the full agent+wake-live evidence.
+func TestStatusDoctorResumeAgreeWhenAgentAndWakeLive(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
+	})
+	root := filepath.Join(base, "issue-96")
+	agentDir := filepath.Join(root, "agents", "cto")
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 6666, Root: root, Started: time.Now()})
+	withStubPaneLister(t, nil, nil)
+
+	now := time.Now()
+	// Both PIDs alive AND matching — the reopened repro's "ps shows both alive".
+	probe := livenessProbe(map[int]bool{5555: true, 6666: true}, map[int]bool{5555: true, 6666: true}, now)
+
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	m := tm.Members[0]
+
+	// 1) status
+	rec := classifyMemberStatus(tm, m, "issue-96", probe)
+	if rec.Status != statusStateLive {
+		t.Fatalf("status = %q, want live (agent+wake both alive); detail=%q", rec.Status, rec.Detail)
+	}
+	// 2) doctor maps the SAME statusRecord
+	if dc := doctorCheckFromStatus(rec); dc.Status != doctorOK {
+		t.Fatalf("doctor = %q, want ok; detail=%q", dc.Status, dc.Detail)
+	}
+	// 3) plain resume
+	plan, err := planMemberResume(memberPlanInput{
+		Member: m, Team: tm, Workstream: "issue-96", Mode: resumeModeDefault,
+		SquadBin: teamSquadBin(), Probe: probe,
+	})
+	if err != nil {
+		t.Fatalf("planMemberResume: %v", err)
+	}
+	if plan.Action != resumeLive {
+		t.Fatalf("plain resume action = %q, want live", plan.Action)
+	}
+	// 4) resume --json liveness
+	var buf bytes.Buffer
+	if err := writeResumeJSON(&buf, tm, "issue-96", resumeModeDefault, "", []resumePlan{plan}); err != nil {
+		t.Fatalf("writeResumeJSON: %v", err)
+	}
+	var env struct {
+		Data struct {
+			Plan []struct {
+				Liveness *struct {
+					Status string `json:"status"`
+				} `json:"liveness"`
+			} `json:"plan"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data.Plan[0].Liveness == nil || env.Data.Plan[0].Liveness.Status != string(statusStateLive) {
+		t.Fatalf("resume --json liveness = %+v, want live", env.Data.Plan[0].Liveness)
+	}
+}
