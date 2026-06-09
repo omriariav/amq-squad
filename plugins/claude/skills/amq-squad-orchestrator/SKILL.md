@@ -38,10 +38,10 @@ One window per agent (an iTerm2 tab under `tmux -CC`), full-size terminal each. 
 
 ```sh
 amq-squad up <session> --target new-session --terminal-session <name>
-tmux -CC attach -t <session>   # the published attach_control action
+tmux -CC attach -t <name>   # the attach_control action: the TMUX session (the --terminal-session value), NOT the workstream
 ```
 
-`--target new-session` creates a separate detached tmux session; you then attach it under iTerm2 control mode. The `attach_control` action (the `tmux -CC attach -t <session>` form) is the published way clients open it.
+`--target new-session` creates a separate detached tmux session; you then attach it under iTerm2 control mode. The `attach_control` action (the `tmux -CC attach -t <tmux-session>` form, targeting the tmux session name not the AMQ workstream) is the published command clients copy from `status --json`.
 
 **Single on-demand child:**
 
@@ -78,12 +78,12 @@ amq-squad focus --session S --role R
 Stay engaged. A spawned child is the lead's responsibility, not the human's. Loop on liveness rather than fire-and-forget:
 
 ```sh
-amq-squad status --session S --json | jq '.data.records[] | {role, liveness, pane_alive}'
+amq-squad status --session S --json | jq '.data.records[] | {role, status, pane_alive: .tmux.pane_alive}'
 amq-squad status                         # bare command -> no-session multi-session board for the whole fleet
 amq-squad console                        # live read-only Mission Control TUI
 ```
 
-- Per-agent `liveness` and `pane_alive` tell you who is actually working vs. dead vs. stalled.
+- Per-agent `status` and `tmux.pane_alive` tell you who is actually working vs. dead vs. stalled.
 - The bare `amq-squad status` (no `--session`) is the fleet board across all sessions.
 - The single-session `status --json` records also carry an `actions[]` array with the exact runnable `focus`/`send`/`resume` commands; prefer those over hand-built tmux.
 
@@ -145,7 +145,7 @@ amq-squad up issue-96 --target new-window
 
 # 2. Confirm both children are live before dispatching.
 amq-squad status --session issue-96 --json \
-  | jq '.data.records[] | {role, liveness, pane_alive}'
+  | jq '.data.records[] | {role, status, pane_alive: .tmux.pane_alive}'
 
 # 3. Dispatch the task to fullstack (paste-buffer staged; refuses if busy).
 amq-squad send --session issue-96 --role fullstack --body-file - <<'EOF'
@@ -154,7 +154,7 @@ push a review_request to me (cto) over AMQ. Report any blocker as a question.
 EOF
 
 # 4. Monitor. Loop on liveness; the lead stays engaged.
-amq-squad status --session issue-96 --json | jq '.data.records[] | {role, liveness, pane_alive}'
+amq-squad status --session issue-96 --json | jq '.data.records[] | {role, status, pane_alive: .tmux.pane_alive}'
 amq-squad focus --session issue-96 --role fullstack   # watch live when needed
 
 # 5. Drain the lead mailbox to receive children's pushed reports.
