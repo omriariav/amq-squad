@@ -16,6 +16,13 @@ type deliverCall struct {
 // per tmux subcommand (keyed by the first arg).
 func swapDeliver(t *testing.T, results map[string]error) *[]deliverCall {
 	t.Helper()
+	// Make submit deterministic and fast: no real sleeps, and a capturer that
+	// reports the prompt left the input box (submitted on the first Enter) so the
+	// submit loop never shells real `tmux capture-pane`. Individual tests can
+	// override paneCapturer afterwards to exercise the retry/error paths.
+	prevSettle, prevVerify, prevCap := submitSettleDelay, submitVerifyDelay, paneCapturer
+	submitSettleDelay, submitVerifyDelay = 0, 0
+	paneCapturer = func(string) (string, error) { return "", nil }
 	var calls []deliverCall
 	prev := deliverExec
 	deliverExec = func(stdin string, args ...string) (string, error) {
@@ -27,8 +34,21 @@ func swapDeliver(t *testing.T, results map[string]error) *[]deliverCall {
 		}
 		return "", nil
 	}
-	t.Cleanup(func() { deliverExec = prev })
+	t.Cleanup(func() {
+		deliverExec = prev
+		submitSettleDelay, submitVerifyDelay, paneCapturer = prevSettle, prevVerify, prevCap
+	})
 	return &calls
+}
+
+func enterCount(calls []deliverCall) int {
+	n := 0
+	for _, c := range calls {
+		if len(c.args) > 0 && c.args[0] == "send-keys" && c.args[len(c.args)-1] == "Enter" {
+			n++
+		}
+	}
+	return n
 }
 
 func TestSendPromptToPaneDeliversVerbatimWithEnter(t *testing.T) {
@@ -144,5 +164,93 @@ func TestTargetForPaneID(t *testing.T) {
 	}
 	if _, ok := TargetForPaneID("", panes); ok {
 		t.Fatal("empty pane id must not resolve")
+	}
+}
+
+// The #86 fix: if the first Enter does not submit (the input region is
+// unchanged), submit retries the Enter rather than leaving the message hanging.
+func TestSendPromptRetriesEnterWhenInputUnchanged(t *testing.T) {
+	calls := swapDeliver(t, nil)
+	// before/after per attempt: attempt 1 sees the input region UNCHANGED (Enter
+	// dropped) -> retry; attempt 2 sees it CHANGE (submitted).
+	const staged = "│ please review the long set of changes │\n  ? for shortcuts"
+	const cleared = "> \n  ? for shortcuts"
+	n := 0
+	paneCapturer = func(string) (string, error) {
+		n++
+		switch n {
+		case 1, 2, 3: // attempt1 before, attempt1 after, attempt2 before
+			return staged, nil
+		default: // attempt2 after
+			return cleared, nil
+		}
+	}
+	if err := SendPromptToPane("%5", "do it\nplease review the long set of changes"); err != nil {
+		t.Fatalf("SendPromptToPane: %v", err)
+	}
+	if got := enterCount(*calls); got != 2 {
+		t.Fatalf("want 2 Enter attempts (one retry), got %d", got)
+	}
+}
+
+// If the input region never changes, the prompt never submitted: return a clear
+// error rather than silently leaving text staged (#86 acceptance criterion).
+func TestSendPromptErrorsWhenNeverConfirmed(t *testing.T) {
+	calls := swapDeliver(t, nil)
+	paneCapturer = func(string) (string, error) { return "│ hang me │\n  ? for shortcuts", nil } // unchanged forever
+	err := SendPromptToPane("%5", "x\nhang me")
+	if err == nil || !strings.Contains(err.Error(), "could not confirm it submitted") {
+		t.Fatalf("want a clear not-submitted error, got %v", err)
+	}
+	if got := enterCount(*calls); got != submitAttempts {
+		t.Errorf("want %d Enter attempts before erroring, got %d", submitAttempts, got)
+	}
+}
+
+// A changed input region means submitted on the first Enter; a blank/unavailable
+// capture fails open (one Enter, no retry, no error).
+func TestSendPromptSubmitsOnInputChangeOrFailsOpen(t *testing.T) {
+	// Region CHANGES after Enter -> submitted, single Enter.
+	calls := swapDeliver(t, nil)
+	n := 0
+	paneCapturer = func(string) (string, error) {
+		n++
+		if n == 1 {
+			return "│ staged │\n? for shortcuts", nil // before
+		}
+		return "● Working… esc to interrupt\n>", nil // after: changed
+	}
+	if err := SendPromptToPane("%5", "go"); err != nil {
+		t.Fatal(err)
+	}
+	if got := enterCount(*calls); got != 1 {
+		t.Fatalf("a changed input region should submit in one Enter, got %d", got)
+	}
+
+	// Blank capture -> can't verify -> fail open (single Enter, no error).
+	calls2 := swapDeliver(t, nil) // its capturer returns "" (blank)
+	if err := SendPromptToPane("%5", "go"); err != nil {
+		t.Fatalf("blank capture must fail open, got %v", err)
+	}
+	if got := enterCount(*calls2); got != 1 {
+		t.Fatalf("blank capture should fail open after one Enter, got %d", got)
+	}
+}
+
+func TestCaptureInputRegion(t *testing.T) {
+	prev := paneCapturer
+	t.Cleanup(func() { paneCapturer = prev })
+	paneCapturer = func(string) (string, error) { return "a\nb\nc\nd\ne\nf", nil }
+	region, ok := captureInputRegion("%1")
+	if !ok || !strings.Contains(region, "f") || strings.Contains(region, "a") {
+		t.Errorf("captureInputRegion should return the bottom lines: ok=%v region=%q", ok, region)
+	}
+	paneCapturer = func(string) (string, error) { return "   \n  ", nil } // blank
+	if _, ok := captureInputRegion("%1"); ok {
+		t.Error("a blank region must report ok=false (nothing to compare)")
+	}
+	paneCapturer = func(string) (string, error) { return "", errors.New("pane gone") }
+	if _, ok := captureInputRegion("%1"); ok {
+		t.Error("a capture error must report ok=false")
 	}
 }
