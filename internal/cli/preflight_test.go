@@ -889,9 +889,31 @@ func TestSignalErrMeansAlive(t *testing.T) {
 	}
 }
 
+// #87: defaultProcessMatch reads the command line fork-free (procArgsNative)
+// and never forks ps when that succeeds — so it can't fail under fork pressure.
+func TestDefaultProcessMatchUsesNativeFastPath(t *testing.T) {
+	orig := procArgsNative
+	t.Cleanup(func() { procArgsNative = orig })
+
+	procArgsNative = func(int) (string, bool) { return "codex app-server", true }
+	if !defaultProcessMatch(99999, agentProcessMatcher("codex")) {
+		t.Error("native args matching the binary must match")
+	}
+	procArgsNative = func(int) (string, bool) { return "node /x/foo.js", true }
+	if defaultProcessMatch(99999, agentProcessMatcher("codex")) {
+		t.Error("native args for a different binary must not match")
+	}
+	// Native unavailable + a definitively-absent pid via ps fallback => no match,
+	// but crucially we exercised the fallback path without a real fork dependency.
+	procArgsNative = func(int) (string, bool) { return "", false }
+	if defaultProcessMatch(-1, agentProcessMatcher("codex")) {
+		t.Error("invalid pid must not match")
+	}
+}
+
 // #87: a transient ps fork failure (couldn't RUN) must be retried, not treated
-// as the process being unrelated/dead.
-func TestProcessMatchRetriesTransientPSFailure(t *testing.T) {
+// as the process being absent.
+func TestReadArgsRetriesTransientFailure(t *testing.T) {
 	calls := 0
 	read := func(int) (string, bool, error) {
 		calls++
@@ -900,9 +922,9 @@ func TestProcessMatchRetriesTransientPSFailure(t *testing.T) {
 		}
 		return "amq wake --me cto --root /p", true, nil
 	}
-	ok := processMatchWith(1234, func(a string) bool { return strings.Contains(a, "amq wake") }, read)
-	if !ok {
-		t.Error("a live process must match after transient ps failures are retried")
+	args, ok := readArgsWithRetry(1234, read)
+	if !ok || !strings.Contains(args, "amq wake") {
+		t.Errorf("must read args after transient failures are retried: ok=%v args=%q", ok, args)
 	}
 	if calls != 3 {
 		t.Errorf("expected 2 retries then success (3 reads), got %d", calls)
@@ -910,28 +932,55 @@ func TestProcessMatchRetriesTransientPSFailure(t *testing.T) {
 }
 
 // A definitive "pid absent" (ps ran, non-zero) must NOT be retried.
-func TestProcessMatchDefinitiveAbsentNoRetry(t *testing.T) {
+func TestReadArgsDefinitiveAbsentNoRetry(t *testing.T) {
 	calls := 0
 	read := func(int) (string, bool, error) {
 		calls++
 		return "", true, errors.New("exit status 1") // ps ran, pid gone
 	}
-	if processMatchWith(1234, func(string) bool { return true }, read) {
-		t.Error("a definitively absent pid must not match")
+	if _, ok := readArgsWithRetry(1234, read); ok {
+		t.Error("a definitively absent pid must be not-ok")
 	}
 	if calls != 1 {
 		t.Errorf("a definitive result must not retry, got %d reads", calls)
 	}
 }
 
-// Persistent transient failure exhausts the retries and ends false.
-func TestProcessMatchExhaustsRetries(t *testing.T) {
+// Persistent transient failure exhausts the retries and ends not-ok.
+func TestReadArgsExhaustsRetries(t *testing.T) {
 	calls := 0
 	read := func(int) (string, bool, error) { calls++; return "", false, errors.New("fork fail") }
-	if processMatchWith(1234, func(string) bool { return true }, read) {
-		t.Error("persistent ps failure must end false")
+	if _, ok := readArgsWithRetry(1234, read); ok {
+		t.Error("persistent failure must be not-ok")
 	}
 	if calls != psArgsAttempts {
 		t.Errorf("expected %d attempts, got %d", psArgsAttempts, calls)
+	}
+}
+
+// parseKernProcArgs2 reconstructs argv from the darwin sysctl buffer layout.
+func TestParseKernProcArgs2(t *testing.T) {
+	var b []byte
+	b = append(b, 2, 0, 0, 0)                            // argc = 2 (little-endian)
+	b = append(b, []byte("/usr/local/bin/codex\x00")...) // exec path
+	b = append(b, 0, 0, 0)                               // NUL padding
+	b = append(b, []byte("codex\x00app-server\x00")...)  // argv[0..1]
+	b = append(b, []byte("HOME=/Users/x\x00")...)        // env (ignored)
+	got, ok := parseKernProcArgs2(b)
+	if !ok || got != "codex app-server" {
+		t.Fatalf("parseKernProcArgs2 = %q, %v; want %q, true", got, ok, "codex app-server")
+	}
+	if _, ok := parseKernProcArgs2([]byte{1, 2}); ok {
+		t.Error("a short buffer must be not-ok")
+	}
+}
+
+func TestParseProcCmdline(t *testing.T) {
+	got, ok := parseProcCmdline([]byte("claude\x00--permission-mode\x00auto\x00"))
+	if !ok || got != "claude --permission-mode auto" {
+		t.Fatalf("parseProcCmdline = %q, %v", got, ok)
+	}
+	if _, ok := parseProcCmdline(nil); ok {
+		t.Error("empty cmdline must be not-ok")
 	}
 }
