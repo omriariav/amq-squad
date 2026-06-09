@@ -280,15 +280,25 @@ func ResolveTmuxTargetForSession(a state.Agent, sessionName, projectDir string, 
 		if want != "" && isAmqPaneToken(p.Title) && p.Title != want {
 			continue
 		}
-		if cleanDir(p.CWD) != wantCWD {
-			continue
-		}
-		if !commandMatchesEngine(p.Command, engine) {
-			continue
+
+		// A PID-lineage match is DEFINITIVE: the agent process literally lives in
+		// this pane's process subtree, so this is the agent's pane regardless of
+		// the pane's foreground command name (e.g. claude/codex rename their
+		// process) or a changed cwd. It therefore BYPASSES the cwd+engine
+		// heuristics, which only gate the non-pid fallback for agents launched
+		// outside amq-squad's tmux backend (#95).
+		pidMatch := a.AgentPID > 0 && pidTree != nil && subtreeContains(pidTree, p.PID, a.AgentPID)
+		if !pidMatch {
+			if cleanDir(p.CWD) != wantCWD {
+				continue
+			}
+			if !commandMatchesEngine(p.Command, engine) {
+				continue
+			}
 		}
 
 		score := 0
-		if a.AgentPID > 0 && pidTree != nil && subtreeContains(pidTree, p.PID, a.AgentPID) {
+		if pidMatch {
 			score += 100
 		}
 		if sessionName != "" && p.Session == sessionName {

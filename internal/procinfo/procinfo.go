@@ -62,6 +62,21 @@ func Match(pid int, predicate func(args string) bool) bool {
 	return predicate(args)
 }
 
+// ChildrenIndex takes one fork-free snapshot of the process table and returns a
+// function mapping a pid to its IMMEDIATE child pids (suitable as the pidTree
+// seam for tmux pane resolution: walking a pane's pane_pid down to an agent
+// pid). The returned function is a closure over the snapshot, so repeated
+// lookups do not re-read the table. err is non-nil when the table cannot be
+// read (e.g. unsupported platform); callers should treat that as "no pid tree"
+// and degrade to non-pid resolution rather than failing.
+func ChildrenIndex() (func(pid int) []int, error) {
+	index, err := parentChildIndex()
+	if err != nil {
+		return nil, err
+	}
+	return func(pid int) []int { return index[pid] }, nil
+}
+
 // Args returns pid's full command line, fork-free where possible (darwin sysctl
 // / linux /proc), falling back to ps (with retry on transient fork failures)
 // otherwise. ok=false means it could not be read at all.

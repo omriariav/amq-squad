@@ -2,6 +2,7 @@ package procinfo
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"syscall"
 	"testing"
@@ -121,5 +122,29 @@ func TestParseProcCmdline(t *testing.T) {
 	}
 	if _, ok := parseProcCmdline(nil); ok {
 		t.Error("empty cmdline must be not-ok")
+	}
+}
+
+// ChildrenIndex must build a real, fork-free parent->children map: this test
+// process is a child of its own parent (os.Getppid).
+func TestChildrenIndexFindsRealChild(t *testing.T) {
+	ci, err := ChildrenIndex()
+	if err != nil {
+		t.Skipf("no fork-free process table on this platform: %v", err)
+	}
+	ppid := os.Getppid()
+	self := os.Getpid()
+	found := false
+	for _, c := range ci(ppid) {
+		if c == self {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ChildrenIndex(%d) did not include this process %d; children=%v", ppid, self, ci(ppid))
+	}
+	// A pid with no children returns an empty slice, not a panic.
+	if got := ci(-1); len(got) != 0 {
+		t.Errorf("ci(-1) = %v, want empty", got)
 	}
 }
