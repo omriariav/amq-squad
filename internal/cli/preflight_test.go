@@ -2,9 +2,11 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -870,5 +872,66 @@ func TestPreflightFreshPresenceWithoutLockOrRecordStillBlocks(t *testing.T) {
 	}
 	if blocker == nil {
 		t.Fatal("with no on-disk writer records, presence must still block (cannot prove writer dead)")
+	}
+}
+
+// #87: a live process owned by another user returns EPERM from kill(0); that
+// means it EXISTS, so it must read as alive (previously mislabeled dead).
+func TestSignalErrMeansAlive(t *testing.T) {
+	if !signalErrMeansAlive(nil) {
+		t.Error("nil error (signalable) must be alive")
+	}
+	if !signalErrMeansAlive(syscall.EPERM) {
+		t.Error("EPERM means the process exists but is unsignalable: must be alive")
+	}
+	if signalErrMeansAlive(syscall.ESRCH) {
+		t.Error("ESRCH means no such process: must be dead")
+	}
+}
+
+// #87: a transient ps fork failure (couldn't RUN) must be retried, not treated
+// as the process being unrelated/dead.
+func TestProcessMatchRetriesTransientPSFailure(t *testing.T) {
+	calls := 0
+	read := func(int) (string, bool, error) {
+		calls++
+		if calls < 3 {
+			return "", false, errors.New("fork: resource temporarily unavailable") // could not run
+		}
+		return "amq wake --me cto --root /p", true, nil
+	}
+	ok := processMatchWith(1234, func(a string) bool { return strings.Contains(a, "amq wake") }, read)
+	if !ok {
+		t.Error("a live process must match after transient ps failures are retried")
+	}
+	if calls != 3 {
+		t.Errorf("expected 2 retries then success (3 reads), got %d", calls)
+	}
+}
+
+// A definitive "pid absent" (ps ran, non-zero) must NOT be retried.
+func TestProcessMatchDefinitiveAbsentNoRetry(t *testing.T) {
+	calls := 0
+	read := func(int) (string, bool, error) {
+		calls++
+		return "", true, errors.New("exit status 1") // ps ran, pid gone
+	}
+	if processMatchWith(1234, func(string) bool { return true }, read) {
+		t.Error("a definitively absent pid must not match")
+	}
+	if calls != 1 {
+		t.Errorf("a definitive result must not retry, got %d reads", calls)
+	}
+}
+
+// Persistent transient failure exhausts the retries and ends false.
+func TestProcessMatchExhaustsRetries(t *testing.T) {
+	calls := 0
+	read := func(int) (string, bool, error) { calls++; return "", false, errors.New("fork fail") }
+	if processMatchWith(1234, func(string) bool { return true }, read) {
+		t.Error("persistent ps failure must end false")
+	}
+	if calls != psArgsAttempts {
+		t.Errorf("expected %d attempts, got %d", psArgsAttempts, calls)
 	}
 }

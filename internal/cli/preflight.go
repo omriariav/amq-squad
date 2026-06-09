@@ -98,22 +98,70 @@ func defaultPIDAlive(pid int) bool {
 	if err != nil {
 		return false
 	}
-	return proc.Signal(syscall.Signal(0)) == nil
+	return signalErrMeansAlive(proc.Signal(syscall.Signal(0)))
 }
 
-// defaultProcessMatch shells out to ps to read the process command line for
-// pid and applies the predicate. Returns false on any error (best effort).
+// signalErrMeansAlive interprets the result of kill(pid, 0). nil means the
+// process exists and is signalable. EPERM means the process EXISTS but is owned
+// by another user (POSIX guarantees the target exists whenever EPERM is
+// returned) — so it is ALIVE, not dead. Any other error (notably ESRCH) means
+// the process is gone. Previously EPERM was treated as dead, which made a live
+// cross-user / sandboxed agent or wake helper flap to "not alive" and demoted
+// the member to stale, disagreeing with `resume` (#87).
+func signalErrMeansAlive(err error) bool {
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// psArgsAttempts bounds how many times processMatchWith re-reads `ps` when it
+// fails to RUN (a transient fork/resource error under load) before giving up.
+const psArgsAttempts = 3
+
+// defaultProcessMatch reads the process command line for pid via ps and applies
+// the predicate. It distinguishes a definitive answer (ps ran: the pid is
+// present or absent) from a transient failure (ps could not fork/exec under
+// load) and RETRIES the latter, so a live wake/agent is not mislabeled
+// "unrelated"/dead just because `ps` momentarily could not run (#87).
 func defaultProcessMatch(pid int, predicate func(args string) bool) bool {
+	return processMatchWith(pid, predicate, readPSArgs)
+}
+
+// readPSArgs reads the full command line for pid. ran is true when ps actually
+// executed (so a nil-args/error result is a DEFINITIVE "no such pid"); ran is
+// false when ps could not be run at all (a transient condition worth retrying).
+func readPSArgs(pid int) (args string, ran bool, err error) {
+	out, e := exec.Command("ps", "-o", "args=", "-p", fmt.Sprintf("%d", pid)).Output()
+	if e == nil {
+		return strings.TrimSpace(string(out)), true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(e, &exitErr) {
+		// ps ran and exited non-zero: the pid does not exist. Definitive.
+		return "", true, e
+	}
+	// ps could not be started (e.g. fork: resource temporarily unavailable).
+	return "", false, e
+}
+
+// processMatchWith applies predicate to a process's command line, retrying only
+// when the reader could not RUN (transient). It returns false when the reader
+// definitively ran (pid absent), when the predicate rejects the args, or after
+// exhausting retries — never demoting a live process on a one-off ps fork
+// failure.
+func processMatchWith(pid int, predicate func(args string) bool, read func(int) (string, bool, error)) bool {
 	if pid <= 0 || predicate == nil {
 		return false
 	}
-	cmd := exec.Command("ps", "-o", "args=", "-p", fmt.Sprintf("%d", pid))
-	out, err := cmd.Output()
-	if err != nil {
-		return false
+	for attempt := 0; attempt < psArgsAttempts; attempt++ {
+		args, ran, err := read(pid)
+		if err == nil {
+			return predicate(args)
+		}
+		if ran {
+			return false // ps ran and the pid is absent: definitive, no retry.
+		}
+		// ps could not run: transient. Retry.
 	}
-	args := strings.TrimSpace(string(out))
-	return predicate(args)
+	return false
 }
 
 // check inspects wake locks, prior launch records, and presence. It returns
