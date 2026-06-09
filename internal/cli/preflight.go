@@ -5,13 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/internal/procinfo"
 )
 
 // presenceFreshness defines how recently a presence.json must have been
@@ -84,108 +83,15 @@ type duplicateLaunchProbe struct {
 	Now          func() time.Time
 }
 
+// defaultDuplicateLaunchProbe is the production probe. PID liveness and process
+// matching come from the shared, fork-free internal/procinfo package so that
+// every amq-squad surface (cli status/resume/doctor/preflight AND
+// internal/state's board + NOC snapshots) reads liveness identically and cannot
+// disagree about whether a PID is alive (#87).
 var defaultDuplicateLaunchProbe = duplicateLaunchProbe{
-	PIDAlive:     defaultPIDAlive,
-	ProcessMatch: defaultProcessMatch,
+	PIDAlive:     procinfo.Alive,
+	ProcessMatch: procinfo.Match,
 	Now:          time.Now,
-}
-
-func defaultPIDAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return signalErrMeansAlive(proc.Signal(syscall.Signal(0)))
-}
-
-// signalErrMeansAlive interprets the result of kill(pid, 0). nil means the
-// process exists and is signalable. EPERM means the process EXISTS but is owned
-// by another user (POSIX guarantees the target exists whenever EPERM is
-// returned) — so it is ALIVE, not dead. Any other error (notably ESRCH) means
-// the process is gone. Previously EPERM was treated as dead, which made a live
-// cross-user / sandboxed agent or wake helper flap to "not alive" and demoted
-// the member to stale, disagreeing with `resume` (#87).
-func signalErrMeansAlive(err error) bool {
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
-
-// psArgsAttempts bounds how many times the ps FALLBACK re-reads when it fails to
-// RUN (a transient fork/resource error under load) before giving up.
-const psArgsAttempts = 3
-
-// procArgsNative reads a process's full command line WITHOUT forking (darwin
-// KERN_PROCARGS2 sysctl / linux /proc). It is a package var so tests can stub
-// it; ok=false means the native path is unavailable or failed, and readProcArgs
-// then falls back to ps.
-//
-// Avoiding the fork is the #87 fix: under fork/exec pressure (this machine runs
-// a large process table) `ps` returns EAGAIN, so the fork-based binary/wake
-// match flapped a LIVE agent/wake to "binary mismatch"/"not alive or unrelated"
-// while the fork-free PIDAlive (signal-0) still reported it alive — that is the
-// only way status/doctor can disagree with resume on identical live evidence.
-var procArgsNative = readProcArgsNative
-
-// defaultProcessMatch reads pid's command line (fork-free where possible) and
-// applies the predicate.
-func defaultProcessMatch(pid int, predicate func(args string) bool) bool {
-	if pid <= 0 || predicate == nil {
-		return false
-	}
-	args, ok := readProcArgs(pid)
-	if !ok {
-		return false
-	}
-	return predicate(args)
-}
-
-// readProcArgs returns pid's full command line, fork-free where possible
-// (darwin sysctl / linux /proc), falling back to ps (with retry on transient
-// fork failures) otherwise. ok=false means it could not be read at all.
-func readProcArgs(pid int) (string, bool) {
-	if pid <= 0 {
-		return "", false
-	}
-	if args, ok := procArgsNative(pid); ok {
-		return args, true
-	}
-	return readArgsWithRetry(pid, readPSArgs)
-}
-
-// readPSArgs reads the full command line for pid via ps. -ww disables column
-// truncation. ran is true when ps actually executed (so a nil-args/non-zero
-// result is a DEFINITIVE "no such pid"); ran is false when ps could not be run
-// at all (a transient condition worth retrying).
-func readPSArgs(pid int) (args string, ran bool, err error) {
-	out, e := exec.Command("ps", "-ww", "-o", "args=", "-p", fmt.Sprintf("%d", pid)).Output()
-	if e == nil {
-		return strings.TrimSpace(string(out)), true, nil
-	}
-	var exitErr *exec.ExitError
-	if errors.As(e, &exitErr) {
-		// ps ran and exited non-zero: the pid does not exist. Definitive.
-		return "", true, e
-	}
-	// ps could not be started (e.g. fork: resource temporarily unavailable).
-	return "", false, e
-}
-
-// readArgsWithRetry retries the reader only when it could not RUN (transient).
-// A definitive "ran but pid absent" is not retried.
-func readArgsWithRetry(pid int, read func(int) (string, bool, error)) (string, bool) {
-	for attempt := 0; attempt < psArgsAttempts; attempt++ {
-		args, ran, err := read(pid)
-		if err == nil {
-			return args, true
-		}
-		if ran {
-			return "", false // ran and pid absent: definitive, no retry.
-		}
-		// could not run: transient. Retry.
-	}
-	return "", false
 }
 
 // check inspects wake locks, prior launch records, and presence. It returns
