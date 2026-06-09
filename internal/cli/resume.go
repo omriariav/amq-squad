@@ -23,7 +23,7 @@ func runResume(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory to resume (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to resume (default: default profile)")
 	execMode := fs.Bool("exec", false, "open the planned launch commands in the terminal backend (tmux) instead of printing them")
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (with tmux runtime metadata) instead of the human plan")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (liveness + tmux metadata) instead of the human plan")
 	terminal := fs.String("terminal", "tmux", "terminal backend to use with --exec")
 	target := fs.String("target", "current-window", "terminal target with --exec (tmux: current-window, new-window, or new-session)")
 	layout := fs.String("layout", "vertical", "terminal layout with --exec (tmux: vertical, horizontal, or tiled)")
@@ -58,9 +58,11 @@ copy-pasteable commands. With --exec, opens those commands through the
 selected terminal backend (same path as 'up'), skipping members that are
 already live and refusing to start if any member is in the 'blocked'
 action without --force-duplicate. With --json, emits a schema-versioned
-resume_plan envelope (per-member action, command, and tmux runtime metadata
-including pane_alive) for clients; --json is a read-only preview and cannot be
-combined with --exec.
+resume_plan envelope for clients: per-member action plus a liveness block
+(status/detail/signals) consistent with 'status --json', and -- where available
+-- the copy-ready command (omitted for members already live) and tmux runtime
+metadata including pane_alive (present only for members launched in tmux).
+--json is a read-only preview and cannot be combined with --exec.
 
 Fresh / new-session behavior belongs to 'amq-squad fork --from S --as T'.
 
