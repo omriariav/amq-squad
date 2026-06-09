@@ -1,4 +1,4 @@
 interface:
   display_name: "AMQ Team Setup"
-  short_description: "Design and initialize an amq-squad team before first launch"
-  default_prompt: "Use $amq-team-setup to design this amq-squad team: pick the team-home, draft personas, choose a profile, write team rules, sync pointer stubs, and seed the first workstream brief. Hand off to $amq-squad once `amq-squad up --dry-run` is clean."
+  short_description: "Wizard to capture a goal/brief and set up an amq-squad team before first launch"
+  default_prompt: "Use $amq-team-setup to set up this amq-squad team, wizard-style: capture the goal from whatever source I have (a prompt, a .md, a GitHub issue/PR, a Jira ticket, or a URL) and draft a canonical per-session brief for me to confirm; pick roles/profile; ask whether to run an orchestrated squad and who leads; then create team.json + team-rules.md + the brief + pointer stubs and print the next commands. Hand off to $amq-squad once `amq-squad up --dry-run` is clean."
