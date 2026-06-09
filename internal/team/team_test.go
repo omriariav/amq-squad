@@ -14,8 +14,10 @@ import (
 func TestWriteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	in := Team{
-		Project:    dir,
-		Workstream: "stream1",
+		Project:      dir,
+		Workstream:   "stream1",
+		Orchestrated: true,
+		Lead:         "cpo",
 		Members: []Member{
 			{Role: "cpo", Binary: "codex", Handle: "cpo", Session: "stream1"},
 			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "stream2"},
@@ -42,6 +44,9 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 	if out.Workstream != in.Workstream {
 		t.Errorf("Workstream = %q, want %q", out.Workstream, in.Workstream)
+	}
+	if out.Orchestrated != in.Orchestrated || out.Lead != in.Lead {
+		t.Errorf("orchestration = (%v, %q), want (%v, %q)", out.Orchestrated, out.Lead, in.Orchestrated, in.Lead)
 	}
 	if out.Operator == nil || !out.Operator.Enabled || out.Operator.Handle != DefaultOperatorHandle {
 		t.Errorf("Operator = %+v, want enabled default %q", out.Operator, DefaultOperatorHandle)
@@ -242,6 +247,55 @@ func TestValidateRejectsRunnableOperatorHandles(t *testing.T) {
 		Members:  []Member{{Role: "support", Binary: "codex", Handle: DefaultOperatorHandle, Session: "issue-96"}},
 	}); err != nil {
 		t.Fatalf("Validate with custom operator and runnable user handle: %v", err)
+	}
+}
+
+func TestValidateOrchestration(t *testing.T) {
+	members := []Member{
+		{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "issue-96"},
+	}
+
+	// Orchestrated without a lead is rejected.
+	if err := Validate(Team{Orchestrated: true, Members: members}); err == nil || !strings.Contains(err.Error(), "lead role is required") {
+		t.Fatalf("orchestrated without lead: want 'lead role is required', got %v", err)
+	}
+
+	// Lead must name an actual member.
+	if err := Validate(Team{Orchestrated: true, Lead: "qa", Members: members}); err == nil || !strings.Contains(err.Error(), "not a team member") {
+		t.Fatalf("unknown lead: want 'not a team member', got %v", err)
+	}
+
+	// A valid lead on a member role passes.
+	if err := Validate(Team{Orchestrated: true, Lead: "cto", Members: members}); err != nil {
+		t.Fatalf("valid orchestration should validate, got %v", err)
+	}
+
+	// A lead set without orchestrated=true is the rejected half-state.
+	if err := Validate(Team{Lead: "cto", Members: members}); err == nil || !strings.Contains(err.Error(), "set orchestrated=true") {
+		t.Fatalf("lead without orchestrated: want 'set orchestrated=true', got %v", err)
+	}
+
+	// A duplicated lead role names two runnable members: rejected.
+	dupes := []Member{
+		{Role: "cto", Binary: "codex", Handle: "cto-a", Session: "issue-96"},
+		{Role: "cto", Binary: "codex", Handle: "cto-b", Session: "issue-96"},
+	}
+	if err := Validate(Team{Orchestrated: true, Lead: "cto", Members: dupes}); err == nil || !strings.Contains(err.Error(), "exactly one member") {
+		t.Fatalf("duplicate lead role: want 'exactly one member', got %v", err)
+	}
+
+	// A non-canonical lead (surrounding whitespace / uppercase) is rejected so
+	// it cannot leak into JSON plans; the CLI always writes a canonical value.
+	for _, bad := range []string{" cto ", "CTO"} {
+		if err := Validate(Team{Orchestrated: true, Lead: bad, Members: members}); err == nil {
+			t.Fatalf("non-canonical lead %q should be rejected", bad)
+		}
+	}
+
+	// A non-orchestrated team (zero values, as old team.json files load) passes.
+	if err := Validate(Team{Members: members}); err != nil {
+		t.Fatalf("non-orchestrated team should validate, got %v", err)
 	}
 }
 

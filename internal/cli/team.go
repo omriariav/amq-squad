@@ -92,6 +92,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
 	operatorFlag := fs.String("operator", team.DefaultOperatorHandle, "virtual operator mailbox handle for human gates (default: user)")
 	noOperator := fs.Bool("no-operator", false, "disable the virtual operator participant for this profile")
+	orchestratedFlag := fs.Bool("orchestrated", false, "wire the squad for lead-agent orchestration: inject the reporting norm into team-rules.md and mark the lead role")
+	leadFlag := fs.String("lead", "", "role that leads an orchestrated squad (must be a team member; implies --orchestrated)")
 	dryRun := fs.Bool("dry-run", false, "preview the team profile and rules paths without writing files")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned team_profile_plan envelope instead of the human dry-run preview")
 	force := fs.Bool("force", false, "overwrite an existing team.json")
@@ -101,8 +103,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--operator HANDLE|--no-operator] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
-  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--operator HANDLE|--no-operator] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes the team config under
@@ -127,6 +129,14 @@ also be referenced inline, e.g. --roles cto,./roles/researcher.md. The file's
 The authored document is staged under .amq-squad/roles/<id>.md and seeds that
 agent's role.md at launch.
 
+Orchestration (opt-in, default off): --orchestrated wires the squad for
+lead-agent orchestration. It records the lead in team.json and injects the
+orchestration reporting norm into team-rules.md (the lead loads the
+amq-squad-orchestrator skill; children push status/question/review_request over
+AMQ). Pass --lead ROLE to name the lead (implies --orchestrated); the lead must
+be a team member. Without --lead, a single-member team self-selects and a team
+with a cto defaults to cto.
+
 Known personas:
 `)
 		for _, r := range catalog.All() {
@@ -140,6 +150,7 @@ Examples:
   amq-squad team init --roles cto,fullstack --operator user
   amq-squad team init --roles cto,fullstack --operator operator
   amq-squad team init --roles cto,fullstack --no-operator
+  amq-squad team init --roles cto,fullstack,qa --orchestrated --lead cto
   amq-squad team init --project ~/Code/app --roles cto,qa
   amq-squad team init --roles 2,9
   amq-squad team init --roles all
@@ -365,6 +376,11 @@ Examples:
 		members = append(members, m)
 	}
 
+	orchestrated, leadRole, err := resolveOrchestration(*orchestratedFlag, *leadFlag, members)
+	if err != nil {
+		return err
+	}
+
 	t := team.Team{
 		Project: cwd,
 		// Intentionally do NOT stamp t.Workstream here. The pinned workstream
@@ -372,10 +388,12 @@ Examples:
 		// one. Live session resolution infers a shared member session or falls
 		// back to the project basename. The field remains readable for old
 		// team.json files. Member sessions still carry the chosen workstream.
-		Trust:      trustMode,
-		Operator:   &operator,
-		BinaryArgs: binaryArgs,
-		Members:    members,
+		Trust:        trustMode,
+		Operator:     &operator,
+		BinaryArgs:   binaryArgs,
+		Members:      members,
+		Orchestrated: orchestrated,
+		Lead:         leadRole,
 	}
 	rulesContent, err := renderTeamRules(t)
 	if err != nil {
@@ -460,6 +478,8 @@ type teamProfilePlan struct {
 	RulesPath       string                  `json:"rules_path"`
 	Workstream      string                  `json:"workstream"`
 	Trust           string                  `json:"trust"`
+	Orchestrated    bool                    `json:"orchestrated"`
+	Lead            string                  `json:"lead,omitempty"`
 	ExistingProfile bool                    `json:"existing_profile"`
 	Members         int                     `json:"members"`
 	BinaryArgs      map[string][]string     `json:"binary_args,omitempty"`
@@ -480,6 +500,11 @@ func printTeamInitDryRun(p teamInitDryRun) error {
 	fmt.Fprintf(os.Stdout, "# team-rules: %s\n", p.RulesPath)
 	fmt.Fprintf(os.Stdout, "# workstream: %s\n", p.Workstream)
 	fmt.Fprintf(os.Stdout, "# trust: %s\n", p.Trust)
+	if p.Team.Orchestrated {
+		fmt.Fprintf(os.Stdout, "# orchestrated: yes (lead: %s)\n", p.Team.Lead)
+	} else {
+		fmt.Fprintln(os.Stdout, "# orchestrated: no")
+	}
 	if p.Exists {
 		fmt.Fprintln(os.Stdout, "# existing-profile: yes (live run requires --force to overwrite)")
 	} else {
@@ -538,6 +563,8 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 		RulesPath:       p.RulesPath,
 		Workstream:      p.Workstream,
 		Trust:           p.Trust,
+		Orchestrated:    p.Team.Orchestrated,
+		Lead:            p.Team.Lead,
 		ExistingProfile: p.Exists,
 		Members:         len(rows),
 		BinaryArgs:      p.Team.BinaryArgs,
@@ -621,6 +648,8 @@ type teamPlan struct {
 	Workstream   string              `json:"workstream"`
 	Profile      string              `json:"profile"`
 	Trust        string              `json:"trust"`
+	Orchestrated bool                `json:"orchestrated"`
+	Lead         string              `json:"lead,omitempty"`
 	Members      int                 `json:"members"`
 	BinaryArgs   map[string][]string `json:"binary_args,omitempty"`
 	Operator     team.OperatorView   `json:"operator"`
@@ -695,6 +724,8 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			Workstream:   workstream,
 			Profile:      profileName,
 			Trust:        trustMode,
+			Orchestrated: t.Orchestrated,
+			Lead:         t.Lead,
 			Members:      len(members),
 			BinaryArgs:   binaryArgs,
 			Operator:     team.EffectiveOperator(t),
@@ -815,6 +846,46 @@ func validateModelOverrideKeys(overrides map[string]string, known map[string]boo
 	}
 	sort.Strings(unknown)
 	return fmt.Errorf("--model has unknown role(s): %s", strings.Join(unknown, ", "))
+}
+
+// resolveOrchestration turns the --orchestrated/--lead flags into the team's
+// orchestration state. Naming a --lead implies orchestration. When --orchestrated
+// is set without an explicit lead, a single-member team self-selects that member
+// and a team with a cto defaults to cto; otherwise the caller must name the lead.
+// The chosen lead must be one of the team's member roles (never the operator).
+func resolveOrchestration(orchestratedFlag bool, leadFlag string, members []team.Member) (bool, string, error) {
+	lead := strings.TrimSpace(strings.ToLower(leadFlag))
+	orchestrated := orchestratedFlag || lead != ""
+	if !orchestrated {
+		return false, "", nil
+	}
+	roleSet := make(map[string]bool, len(members))
+	for _, m := range members {
+		roleSet[m.Role] = true
+	}
+	if lead == "" {
+		switch {
+		case roleSet["cto"]:
+			lead = "cto"
+		case len(members) == 1:
+			lead = members[0].Role
+		default:
+			return false, "", fmt.Errorf("--orchestrated needs a lead: pass --lead <role> (one of: %s)", strings.Join(memberRolesSorted(members), ", "))
+		}
+	}
+	if !roleSet[lead] {
+		return false, "", fmt.Errorf("--lead %q is not a team member (members: %s)", lead, strings.Join(memberRolesSorted(members), ", "))
+	}
+	return true, lead, nil
+}
+
+func memberRolesSorted(members []team.Member) []string {
+	out := make([]string, 0, len(members))
+	for _, m := range members {
+		out = append(out, m.Role)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func lowercaseKeys(m map[string]string) map[string]string {

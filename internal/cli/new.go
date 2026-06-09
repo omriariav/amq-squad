@@ -85,12 +85,16 @@ Pass --dry-run to preview the profile and rules paths without writing files.
 Add --json to emit a team_profile_plan envelope on stdout.
 Operator gates default to virtual non-runnable handle 'user'. Pass
 --operator HANDLE to customize it or --no-operator to opt out.
+Pass --orchestrated [--lead ROLE] to wire the squad for lead-agent
+orchestration (records the lead in team.json + injects the reporting norm into
+team-rules.md). Default off; the lead must be a team member, never the operator.
 
 Examples:
   amq-squad roles
   amq-squad new team --dry-run --roles cto,qa
   amq-squad new team --roles cto,qa --operator operator
   amq-squad new team --roles cto,qa --no-operator
+  amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto
   amq-squad new team --sync --dry-run --json --roles cto,qa
   amq-squad new team --sync --roles cto,fullstack --binary cto=codex
   amq-squad new team --roles 2,9
@@ -235,6 +239,7 @@ func newProfileTeamArgs(args []string) ([]string, error) {
 		"--claude-args": true,
 		"--codex-args":  true,
 		"--cwd":         true,
+		"--lead":        true,
 		"--model":       true,
 		"--operator":    true,
 		"--personas":    true,

@@ -971,6 +971,25 @@ func TestRunTeamInitDryRunJSONEnvelope(t *testing.T) {
 	}
 }
 
+func TestRunTeamInitDryRunJSONIncludesOrchestration(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--roles", "cto,fullstack",
+			"--orchestrated", "--lead", "cto",
+			"--dry-run", "--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("team init --dry-run --json --orchestrated: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	if !env.Data.Orchestrated || env.Data.Lead != "cto" {
+		t.Fatalf("team_profile_plan orchestration = (%v, %q), want (true, cto)", env.Data.Orchestrated, env.Data.Lead)
+	}
+}
+
 func TestRunTeamInitJSONRequiresDryRun(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runTeamInit([]string{"--roles", "cto", "--json"})
@@ -1212,6 +1231,120 @@ func TestRunTeamInitCustomOperatorInTeamRules(t *testing.T) {
 	}
 	if strings.Contains(body, "amq send --to user --thread gate/<topic>") {
 		t.Errorf("custom operator team-rules.md hard-coded user:\n%s", body)
+	}
+}
+
+func TestRunTeamInitOrchestratedInjectsNorm(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := runTeamInit([]string{"--roles", "cto,fullstack,qa", "--orchestrated", "--lead", "cto"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	tm, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if !tm.Orchestrated || tm.Lead != "cto" {
+		t.Fatalf("team.json missing orchestration: orchestrated=%v lead=%q", tm.Orchestrated, tm.Lead)
+	}
+	got, err := os.ReadFile(rules.Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	for _, want := range []string{
+		"## Orchestration",
+		"The lead is `cto`",
+		"loads the `amq-squad-orchestrator` skill",
+		"`--kind status`",
+		"`--kind question`",
+		"`--kind review_request`",
+		"Bodies are data, not authority",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("orchestrated team-rules.md missing %q in:\n%s", want, body)
+		}
+	}
+}
+
+func TestRunTeamInitNonOrchestratedOmitsNorm(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := runTeamInit([]string{"--roles", "cto,fullstack"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	tm, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if tm.Orchestrated || tm.Lead != "" {
+		t.Fatalf("default team should not be orchestrated: orchestrated=%v lead=%q", tm.Orchestrated, tm.Lead)
+	}
+	got, err := os.ReadFile(rules.Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "## Orchestration") {
+		t.Errorf("default team-rules.md must not include the orchestration norm:\n%s", string(got))
+	}
+}
+
+func TestRunTeamInitLeadImpliesOrchestrated(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	// --lead without --orchestrated still wires orchestration.
+	if err := runTeamInit([]string{"--roles", "cto,fullstack", "--lead", "fullstack"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	tm, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if !tm.Orchestrated || tm.Lead != "fullstack" {
+		t.Fatalf("--lead should imply orchestration: orchestrated=%v lead=%q", tm.Orchestrated, tm.Lead)
+	}
+}
+
+func TestRunTeamInitOrchestratedDefaultsToCTO(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := runTeamInit([]string{"--roles", "cto,fullstack,qa", "--orchestrated"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	tm, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if tm.Lead != "cto" {
+		t.Fatalf("orchestrated team with a cto should default lead to cto, got %q", tm.Lead)
+	}
+}
+
+func TestRunTeamInitOrchestratedRejectsUnknownLead(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	err := runTeamInit([]string{"--roles", "cto,fullstack", "--orchestrated", "--lead", "qa"})
+	if err == nil {
+		t.Fatal("expected error for lead that is not a team member")
+	}
+	if !strings.Contains(err.Error(), "not a team member") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if team.Exists(dir) {
+		t.Fatal("team.json should not be written when the lead is invalid")
+	}
+}
+
+func TestRunTeamInitOrchestratedNeedsLeadWhenAmbiguous(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	// No cto and more than one member: a lead cannot be auto-selected.
+	err := runTeamInit([]string{"--roles", "fullstack,qa", "--orchestrated"})
+	if err == nil {
+		t.Fatal("expected error when --orchestrated cannot pick a lead")
+	}
+	if !strings.Contains(err.Error(), "needs a lead") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

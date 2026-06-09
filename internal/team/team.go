@@ -113,7 +113,14 @@ type Team struct {
 	Operator   *OperatorConfig     `json:"operator,omitempty"`
 	BinaryArgs map[string][]string `json:"binary_args,omitempty"`
 	Members    []Member            `json:"members"`
-	CreatedAt  time.Time           `json:"created_at"`
+	// Orchestrated marks this squad as lead-agent orchestrated: one member (Lead)
+	// drives the others as children over amq-squad's runtime primitives. Optional,
+	// default off; the generated team-rules.md gains the orchestration reporting
+	// norm only when it is true. Lead names the lead role (a member role, never the
+	// operator/NOC) and is required when Orchestrated is set.
+	Orchestrated bool      `json:"orchestrated,omitempty"`
+	Lead         string    `json:"lead,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 func DefaultOperator() OperatorConfig {
@@ -382,6 +389,9 @@ func Validate(t Team) error {
 			}
 		}
 	}
+	if err := validateOrchestration(t); err != nil {
+		return err
+	}
 	seenHandles := map[string]bool{}
 	for i, m := range t.Members {
 		prefix := fmt.Sprintf("members[%d]", i)
@@ -409,6 +419,49 @@ func Validate(t Team) error {
 		}
 	}
 	return nil
+}
+
+// validateOrchestration enforces the lead/orchestrated contract: a lead must be
+// a valid role slug that names an actual team member, and an orchestrated team
+// must declare exactly one lead. The lead is always a runnable member role, so
+// it can never be the non-runnable operator/NOC handle (that conflict is already
+// rejected by the member/operator handle check).
+func validateOrchestration(t Team) error {
+	if t.Orchestrated && strings.TrimSpace(t.Lead) == "" {
+		return fmt.Errorf("orchestrated: a lead role is required when orchestrated is true")
+	}
+	if t.Lead == "" {
+		return nil
+	}
+	// A lead is only meaningful for an orchestrated team. Reject the half-state
+	// (lead set, orchestrated off) so it cannot persist via hand-edit/API and
+	// surface a lead in JSON plans while the orchestration norm stays off.
+	if !t.Orchestrated {
+		return fmt.Errorf("lead: set orchestrated=true to name a lead")
+	}
+	// Validate the persisted value directly (not a trimmed copy) so a
+	// non-canonical lead (surrounding whitespace, uppercase) cannot be written
+	// or loaded and then leak into JSON plans. The CLI already lowercases and
+	// trims --lead before write, so this only bites hand-edited/API configs.
+	if err := ValidateRoleID(t.Lead); err != nil {
+		return fmt.Errorf("lead: %w", err)
+	}
+	// Exactly one lead: count matching member roles so a hand-authored config
+	// with a duplicated role can't make `lead` name two runnable members.
+	matches := 0
+	for _, m := range t.Members {
+		if m.Role == t.Lead {
+			matches++
+		}
+	}
+	switch matches {
+	case 0:
+		return fmt.Errorf("lead: role %q is not a team member", t.Lead)
+	case 1:
+		return nil
+	default:
+		return fmt.Errorf("lead: role %q names %d members; the lead must be exactly one member", t.Lead, matches)
+	}
 }
 
 func validateMember(prefix string, m Member) error {

@@ -121,6 +121,28 @@ func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 	}
 }
 
+func TestRunUpDryRunJSONIncludesOrchestration(t *testing.T) {
+	seedTeam(t, team.Team{
+		Workstream:   "issue-96",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96"},
+		},
+	})
+	stdout, _, err := captureOutput(t, func() error {
+		return runUp([]string{"--dry-run", "--json", "--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --json: %v", err)
+	}
+	env := decodeJSONEnvelope[teamPlan](t, stdout)
+	if !env.Data.Orchestrated || env.Data.Lead != "cto" {
+		t.Fatalf("team_plan orchestration = (%v, %q), want (true, cto)", env.Data.Orchestrated, env.Data.Lead)
+	}
+}
+
 func TestRunUpDryRunJSONUsesCustomOperator(t *testing.T) {
 	dir := t.TempDir()
 	op := team.OperatorConfig{Enabled: true, Handle: "operator"}
