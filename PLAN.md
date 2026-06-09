@@ -81,5 +81,8 @@ the open issues by theme + status so the near-term path is legible at a glance.
 
 - Several issues above are implemented but still open (marked *pending close*);
   they're listed for an accurate picture and should be triaged closed.
-- Roadmap order is theme-grouped, not strictly sequenced; the active line is
-  v1.5.1 → the #7 status-actions follow-up → (when there's demand) #76.
+- Roadmap order is theme-grouped, not strictly sequenced. v1.5.2 shipped the
+  #79 liveness unification and the session-scope `status --json` actions
+  (amq-noc#7 producer side). Remaining near-term: board/project-scope actions
+  (deferred — needs per-session profile in the board envelope); then, when
+  there's demand, #76 (the agent orchestrator).
