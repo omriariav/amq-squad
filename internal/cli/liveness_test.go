@@ -516,16 +516,20 @@ func TestResumePlanJSONCarriesLiveness(t *testing.T) {
 	}
 }
 
-// #87: plain `resume` and `resume --json` MUST render the same action — they
+// #87: plain `resume` and `resume --json` MUST render the same action. They
 // both branch from the SAME []resumePlan in executeResume, so they cannot
-// diverge by code (the report was a cross-invocation race). This pins it: if a
-// future change makes the plain renderer re-derive the action, this fails.
+// diverge by code (the report was a cross-invocation race). This pins it: the
+// fixture sets Action DELIBERATELY mismatched against Liveness.Status, so a
+// renderer that (wrongly) re-derived the action from liveness would emit a
+// different string and fail. Both renderers must echo resumePlan.Action.
 func TestPlainAndJSONResumeRenderSameAction(t *testing.T) {
 	plans := []resumePlan{
+		// Action=restore but liveness says live: output must show "restore".
 		{Role: "cto", Handle: "cto", Action: resumeRestore, Command: "amq-squad agent up codex --role cto",
-			Liveness: &agentLiveness{Status: statusStateStale, Detail: "stale"}},
+			Liveness: &agentLiveness{Status: statusStateLive, Detail: "live"}},
+		// Action=live but liveness says stale: output must show "live".
 		{Role: "qa", Handle: "qa", Action: resumeLive, Note: "wake+launch",
-			Liveness: &agentLiveness{Status: statusStateWakeLive}},
+			Liveness: &agentLiveness{Status: statusStateStale}},
 	}
 	tm := team.Team{Project: "/p"}
 	var plain, jsonBuf bytes.Buffer
