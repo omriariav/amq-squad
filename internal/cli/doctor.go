@@ -72,6 +72,14 @@ type doctorExecution struct {
 	WakeOverride   func(t team.Team, workstream string) []doctorCheck
 	WorkstreamHint string
 	Profile        string
+	// Getenv reads process environment (injectable so the tmux extended-keys
+	// check can be driven deterministically in tests). Defaults to os.Getenv.
+	Getenv func(name string) string
+	// TmuxShowOptions returns the value of a server-scoped tmux option (the seam
+	// behind `tmux show-options -s <name>`). It returns the raw value and ok =
+	// false when the option is unset or tmux is unavailable. Injectable so the
+	// extended-keys check never shells real tmux in tests.
+	TmuxShowOptions func(name string) (value string, ok bool)
 }
 
 func defaultDoctorExecution(projectDir string) doctorExecution {
@@ -81,10 +89,29 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		ResolveAMQEnv: func(projectDir string) (amqEnv, error) {
 			return resolveAMQEnvInDir(projectDir, "", "", "amq-squad")
 		},
-		RunAMQOps: defaultDoctorAMQOps,
-		LookPath:  exec.LookPath,
-		Probe:     defaultDuplicateLaunchProbe,
+		RunAMQOps:       defaultDoctorAMQOps,
+		LookPath:        exec.LookPath,
+		Probe:           defaultDuplicateLaunchProbe,
+		Getenv:          os.Getenv,
+		TmuxShowOptions: defaultTmuxShowServerOption,
 	}
+}
+
+// defaultTmuxShowServerOption reads a server-scoped tmux option via
+// `tmux show-options -s <name>`. tmux prints "<name> <value>"; we return the
+// value. ok is false when tmux is unavailable or the option is unset (tmux
+// exits non-zero / prints nothing), so the caller treats it as off/unknown.
+// READ-ONLY: amq-squad never runs `tmux set-option`.
+func defaultTmuxShowServerOption(name string) (string, bool) {
+	out, err := exec.Command("tmux", "show-options", "-s", name).Output()
+	if err != nil {
+		return "", false
+	}
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	if len(fields) < 2 {
+		return "", false
+	}
+	return fields[len(fields)-1], true
 }
 
 func runDoctor(args []string) error {
@@ -317,6 +344,7 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckAMQOps(d))
 	checks = append(checks, doctorCheckTeamConfig(d))
 	checks = append(checks, doctorCheckTmux(d))
+	checks = append(checks, doctorCheckTmuxExtendedKeys(d))
 	checks = append(checks, doctorCheckMarkerIntegrity(d)...)
 	checks = append(checks, doctorCheckPointerSync(d)...)
 	wakeChecks, workstream := doctorCheckWake(d)
@@ -459,6 +487,60 @@ func doctorCheckTmux(d doctorExecution) doctorCheck {
 		}
 	}
 	return doctorCheck{Name: "tmux", Status: doctorOK, Detail: path}
+}
+
+// doctorCheckTmuxExtendedKeys is an INFORMATIONAL hint (never fail) about plain
+// tmux dropping modified keys. When running inside tmux ($TMUX set) with the
+// server-wide `extended-keys` option off or unset, modified keys like
+// Shift+Enter (used for newline-in-input by some agents) don't reach the agent.
+// We surface the opt-in tmux settings the operator can apply themselves, and
+// note that iTerm2's tmux -CC (the attach_control action) avoids this entirely.
+//
+// amq-squad does NOT change the tmux server for you: this check only READS
+// `tmux show-options -s extended-keys` and PRINTS the hint. It is a no-op (ok)
+// when not inside tmux or when extended-keys is already on.
+func doctorCheckTmuxExtendedKeys(d doctorExecution) doctorCheck {
+	const name = "tmux extended-keys"
+	getenv := d.Getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if strings.TrimSpace(getenv("TMUX")) == "" {
+		return doctorCheck{
+			Name:   name,
+			Status: doctorOK,
+			Detail: "not running inside tmux; skipped",
+		}
+	}
+	if d.TmuxShowOptions == nil {
+		return doctorCheck{
+			Name:   name,
+			Status: doctorOK,
+			Detail: "extended-keys probe unavailable; skipped",
+		}
+	}
+	value, ok := d.TmuxShowOptions("extended-keys")
+	value = strings.TrimSpace(value)
+	if ok && value != "" && value != "off" {
+		return doctorCheck{
+			Name:   name,
+			Status: doctorOK,
+			Detail: "extended-keys " + value + " (modified keys like Shift+Enter reach agents)",
+		}
+	}
+	state := "unset"
+	if ok && value != "" {
+		state = value
+	}
+	return doctorCheck{
+		Name:   name,
+		Status: doctorOK,
+		Detail: "extended-keys " + state + ": modified keys (e.g. Shift+Enter) may not reach agents in plain tmux. " +
+			"This is a server-wide tmux setting you opt into (amq-squad does not change it for you); enable with: " +
+			"tmux set-option -s extended-keys on; tmux set-option -s extended-keys-format csi-u; " +
+			"tmux set-option -as terminal-features 'xterm*:extkeys'. " +
+			"iTerm2 tmux -CC (the attach_control action) avoids this entirely.",
+	}
 }
 
 func doctorCheckMarkerIntegrity(d doctorExecution) []doctorCheck {

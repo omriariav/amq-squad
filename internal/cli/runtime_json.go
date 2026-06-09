@@ -162,16 +162,52 @@ func commandScope(projectDir, profile, session string) string {
 // from stop + a resume). resume_new_session lets amq-squad derive the tmux
 // session name (omitting --terminal-session). All are runnable commands, so
 // available is true; the mutating ones request confirmation.
-func sessionActions(projectDir, profile, session string) []runtimeActionJSON {
+//
+// tmuxSession is the live tmux session the workstream's agents run in (derived
+// from the status rows). When non-empty, an attach_control action is appended
+// so a client can open/attach the session in iTerm2's tmux -CC control mode;
+// when empty it is omitted (no attach target to point at).
+func sessionActions(projectDir, profile, session, tmuxSession string) []runtimeActionJSON {
 	base := "amq-squad"
 	scope := commandScope(projectDir, profile, session)
-	return []runtimeActionJSON{
+	actions := []runtimeActionJSON{
 		{Kind: "status", Label: "show session status", Scope: "session", Mutates: false, NeedsConfirmation: false, Available: true, Command: base + " status" + scope + " --json"},
 		{Kind: "resume_preview", Label: "preview resume plan", Scope: "session", Mutates: false, NeedsConfirmation: false, Available: true, Command: base + " resume" + scope + " --json"},
 		{Kind: "resume_current_window", Label: "resume in current window", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " resume" + scope + " --exec --target current-window"},
 		{Kind: "resume_new_session", Label: "resume in new tmux session", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " resume" + scope + " --exec --target new-session"},
 		{Kind: "stop", Label: "stop the session", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " stop" + scope + " --all"},
 	}
+	// attach_control is a raw tmux command for the OPERATOR/NOC to run (NOT an
+	// amq-squad subcommand): `tmux -CC attach` is an interactive foreground
+	// client attach, so it is print/copy-oriented and amq-squad never execs it.
+	// Under iTerm2's tmux -CC control mode it gets native rendering and lets
+	// modified keys (e.g. Shift+Enter) reach the agent. It only makes sense when
+	// the workstream has a live tmux session, so it is appended only then.
+	if tmuxSession != "" {
+		actions = append(actions, runtimeActionJSON{
+			Kind:              "attach_control",
+			Label:             "open in iTerm2 (tmux -CC)",
+			Scope:             "session",
+			Mutates:           false,
+			NeedsConfirmation: false,
+			Available:         true,
+			Command:           "tmux -CC attach -t " + shellQuote(tmuxSession),
+		})
+	}
+	return actions
+}
+
+// firstLiveTmuxSession returns the tmux session name of the first status row
+// that carries a live tmux pane (Tmux != nil && Tmux.PaneAlive), or "" when no
+// row has a live pane. It is how the status write site derives the attach
+// target for the session-scope attach_control action.
+func firstLiveTmuxSession(rows []statusRecord) string {
+	for _, r := range rows {
+		if r.Tmux != nil && r.Tmux.PaneAlive {
+			return r.Tmux.Session
+		}
+	}
+	return ""
 }
 
 // resumeMemberJSON is one member row in the resume_plan envelope. It mirrors the
