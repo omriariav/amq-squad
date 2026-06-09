@@ -50,6 +50,11 @@ type resumePlan struct {
 	// any. Surfaced for `resume --json` so clients know which pane a restore
 	// targets and whether that pane is still alive.
 	Tmux *launch.TmuxInfo
+	// Liveness is the shared liveness verdict (the SAME classifier status uses),
+	// captured so `resume --json` can expose a `liveness` block a client compares
+	// to `status --json` instead of inferring from the planning `Action`. nil on
+	// the early blocked paths (amq env / preflight error) where no verdict ran.
+	Liveness *agentLiveness
 }
 
 func runTeamResume(args []string) error {
@@ -66,7 +71,7 @@ func runTeamResume(args []string) error {
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for fresh members, e.g. '--chrome'")
 	projectFlag := fs.String("project", "", "project/team-home directory to plan (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to plan (default: default profile)")
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (with tmux runtime metadata) instead of the human plan")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (liveness + tmux metadata) instead of the human plan")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team resume - plan how to bring the team back
@@ -579,6 +584,10 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		// must classify this as blocked, not silently emit fresh.
 		plan.Action = resumeBlocked
 		plan.Note = fmt.Sprintf("amq env unavailable: %v", err)
+		// Carry a liveness verdict even here so --json always has one (and so it
+		// agrees with status, which also reports missing when the env is
+		// unresolvable). The env failure means we cannot inspect any signal.
+		plan.Liveness = &agentLiveness{Verdict: livenessMissing, Status: statusStateMissing, Detail: plan.Note}
 		if in.Force {
 			plan.Action = resumeFresh
 			plan.Note = "force-duplicate: " + plan.Note
@@ -612,11 +621,17 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		probe = defaultDuplicateLaunchProbe
 	}
 
+	// Single shared liveness verdict — the same classifier status consumes (the
+	// #79 fix: status and resume can never disagree). Computed up front so EVERY
+	// return path below — including the forced preflight-error path — carries a
+	// liveness block.
+	live := classifyAgentLiveness(agentDir, root, handle, m.Role, m.Binary, env.SessionName, cwd, probe)
+	plan.Liveness = &live
+
 	// Surface a real I/O inspection error as blocked, preserving the prior
 	// safety contract. The preflight is still the authority on read errors; we
 	// run it in dry-run mode purely to catch perr (it reaps nothing on disk in
-	// dry-run). The live/stale DECISION, however, comes from the shared
-	// classifier below so status and resume can never disagree.
+	// dry-run). The live/stale DECISION comes from the shared classifier above.
 	pf := agentLaunchPreflight{
 		AgentDir:   agentDir,
 		Handle:     handle,
@@ -644,11 +659,6 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		}
 		return plan, nil
 	}
-
-	// Single shared liveness verdict — the same classifier status consumes.
-	// This is the fix for #79: a genuinely-stale agent is no longer mislabeled
-	// live by resume; the two surfaces now share one verdict.
-	live := classifyAgentLiveness(agentDir, root, handle, m.Role, m.Binary, env.SessionName, cwd, probe)
 
 	if live.Live() {
 		// Live signal detected (agent / wake / presence / replacement). Same

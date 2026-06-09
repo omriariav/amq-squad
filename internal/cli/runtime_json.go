@@ -156,6 +156,20 @@ type resumeMemberJSON struct {
 	Note             string           `json:"note,omitempty"`
 	Command          string           `json:"command,omitempty"`
 	Tmux             *tmuxRuntimeJSON `json:"tmux,omitempty"`
+	// Liveness is the shared liveness verdict (status + detail + signals), the
+	// SAME classification `status --json` reports. A client compares
+	// liveness.status to status's status instead of inferring liveness from the
+	// planning `action`. Omitted only on the blocked paths where no verdict ran.
+	Liveness *resumeLivenessJSON `json:"liveness,omitempty"`
+}
+
+// resumeLivenessJSON exposes the shared liveness verdict on a resume_plan member
+// so `resume --json` and `status --json` carry identical liveness for the same
+// agent. status is the same statusState string status emits.
+type resumeLivenessJSON struct {
+	Status  string        `json:"status"`
+	Detail  string        `json:"detail,omitempty"`
+	Signals statusSignals `json:"signals"`
 }
 
 // resumeEnvelopeData is the `resume_plan` envelope body: the same per-member
@@ -183,6 +197,14 @@ func writeResumeJSON(out io.Writer, t team.Team, workstream string, mode resumeM
 			}
 			fillPaneAlive(rt, livePanes)
 		}
+		var liveness *resumeLivenessJSON
+		if p.Liveness != nil {
+			liveness = &resumeLivenessJSON{
+				Status:  string(p.Liveness.Status),
+				Detail:  p.Liveness.Detail,
+				Signals: p.Liveness.Signals,
+			}
+		}
 		rows = append(rows, resumeMemberJSON{
 			Role:             p.Role,
 			Handle:           p.Handle,
@@ -192,6 +214,7 @@ func writeResumeJSON(out io.Writer, t team.Team, workstream string, mode resumeM
 			Note:             p.Note,
 			Command:          p.Command,
 			Tmux:             rt,
+			Liveness:         liveness,
 		})
 	}
 	profile = strings.TrimSpace(profile)
