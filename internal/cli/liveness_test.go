@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -465,5 +467,44 @@ func TestResumeLiveNoteListsAllLiveSources(t *testing.T) {
 	repl := agentLiveness{Verdict: livenessReplacementLive, ReplacementTarget: "%5"}
 	if got := resumeLiveNote(repl, "codex"); !strings.Contains(got, "%5") || !strings.Contains(got, "recorded pid dead") {
 		t.Errorf("replacement note = %q, want it to mention the dead pid + target", got)
+	}
+}
+
+// resume --json must expose a `liveness` block carrying the SAME verdict status
+// status reports, so a client compares liveness.status to status's status
+// instead of inferring liveness from the planning `action` (#79 PR B).
+func TestResumePlanJSONCarriesLiveness(t *testing.T) {
+	var buf bytes.Buffer
+	plans := []resumePlan{{
+		Role: "cto", Handle: "cto", Action: resumeRestore,
+		Command:  "amq-squad agent up codex --role cto",
+		Liveness: &agentLiveness{Status: statusStateStale, Detail: "agent pid dead", Signals: statusSignals{AgentPID: 7777}},
+	}}
+	if err := writeResumeJSON(&buf, team.Team{Project: "/p"}, "issue-96", resumeModeDefault, "", plans); err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		Data struct {
+			Plan []struct {
+				Action   string `json:"action"`
+				Liveness *struct {
+					Status string `json:"status"`
+					Detail string `json:"detail"`
+				} `json:"liveness"`
+			} `json:"plan"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	p := env.Data.Plan[0]
+	if p.Liveness == nil {
+		t.Fatal("resume_plan member must carry a liveness block")
+	}
+	if p.Liveness.Status != "stale" {
+		t.Errorf("liveness.status = %q, want %q (the shared verdict status)", p.Liveness.Status, "stale")
+	}
+	if p.Action != "restore" {
+		t.Errorf("a stale verdict should restore, got action %q", p.Action)
 	}
 }

@@ -50,6 +50,11 @@ type resumePlan struct {
 	// any. Surfaced for `resume --json` so clients know which pane a restore
 	// targets and whether that pane is still alive.
 	Tmux *launch.TmuxInfo
+	// Liveness is the shared liveness verdict (the SAME classifier status uses),
+	// captured so `resume --json` can expose a `liveness` block a client compares
+	// to `status --json` instead of inferring from the planning `Action`. nil on
+	// the early blocked paths (amq env / preflight error) where no verdict ran.
+	Liveness *agentLiveness
 }
 
 func runTeamResume(args []string) error {
@@ -66,7 +71,7 @@ func runTeamResume(args []string) error {
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for fresh members, e.g. '--chrome'")
 	projectFlag := fs.String("project", "", "project/team-home directory to plan (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to plan (default: default profile)")
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (with tmux runtime metadata) instead of the human plan")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (liveness + tmux metadata) instead of the human plan")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team resume - plan how to bring the team back
@@ -649,6 +654,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	// This is the fix for #79: a genuinely-stale agent is no longer mislabeled
 	// live by resume; the two surfaces now share one verdict.
 	live := classifyAgentLiveness(agentDir, root, handle, m.Role, m.Binary, env.SessionName, cwd, probe)
+	plan.Liveness = &live
 
 	if live.Live() {
 		// Live signal detected (agent / wake / presence / replacement). Same
