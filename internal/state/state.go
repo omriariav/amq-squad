@@ -24,10 +24,9 @@
 package state
 
 import (
-	"os"
-	"os/exec"
-	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/internal/procinfo"
 )
 
 // PresenceFreshness defines how recently a presence.json must have been updated
@@ -145,35 +144,12 @@ type Probe struct {
 	Now func() time.Time
 }
 
-// DefaultProbe is the production probe: real signal-0 liveness, a real `ps`
-// read for process matching, and the real wall clock.
+// DefaultProbe is the production probe. PID liveness and process matching come
+// from the shared, fork-free internal/procinfo package so the status board and
+// NOC snapshots read liveness identically to the cli status/resume/doctor
+// surfaces and cannot disagree about whether a PID is alive (#87).
 var DefaultProbe = Probe{
-	PIDAlive:     defaultPIDAlive,
-	ProcessMatch: defaultProcessMatch,
+	PIDAlive:     procinfo.Alive,
+	ProcessMatch: procinfo.Match,
 	Now:          time.Now,
-}
-
-func defaultPIDAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return proc.Signal(syscallSignalZero) == nil
-}
-
-// defaultProcessMatch reads the process command line for pid via `ps` and
-// applies predicate. Returns false on any error (best effort).
-func defaultProcessMatch(pid int, predicate func(args string) bool) bool {
-	if pid <= 0 || predicate == nil {
-		return false
-	}
-	cmd := exec.Command("ps", "-o", "args=", "-p", itoa(pid))
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	return predicate(strings.TrimSpace(string(out)))
 }

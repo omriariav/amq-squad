@@ -872,3 +872,6 @@ func TestPreflightFreshPresenceWithoutLockOrRecordStillBlocks(t *testing.T) {
 		t.Fatal("with no on-disk writer records, presence must still block (cannot prove writer dead)")
 	}
 }
+
+// The fork-free liveness probe (signal/EPERM, KERN_PROCARGS2 / /proc parsing,
+// ps-fallback retry) now lives in internal/procinfo; its tests moved there.

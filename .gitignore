@@ -10,3 +10,7 @@ coverage.txt
 
 # Claude Code local runtime state
 .claude/scheduled_tasks.lock
+
+# Local scratch / RC build artifacts (never commit)
+amq-squad-rc-*
+.pm-os/

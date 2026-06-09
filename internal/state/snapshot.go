@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/internal/procinfo"
 )
 
 // Build constructs a Snapshot by scanning the filesystem under baseRoot. It
@@ -309,10 +310,10 @@ func looksActiveForWake(live Liveness) bool {
 // seams they care about).
 func withDefaults(p Probe) Probe {
 	if p.PIDAlive == nil {
-		p.PIDAlive = defaultPIDAlive
+		p.PIDAlive = procinfo.Alive
 	}
 	if p.ProcessMatch == nil {
-		p.ProcessMatch = defaultProcessMatch
+		p.ProcessMatch = procinfo.Match
 	}
 	if p.Now == nil {
 		p.Now = DefaultProbe.Now

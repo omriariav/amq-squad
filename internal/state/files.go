@@ -5,13 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
 	"time"
 )
-
-// syscallSignalZero is the signal-0 used for a liveness probe. Aliased so
-// state.go can stay free of a direct syscall import in its probe definition.
-const syscallSignalZero = syscall.Signal(0)
 
 func itoa(n int) string { return strconv.Itoa(n) }
 

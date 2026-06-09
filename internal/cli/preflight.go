@@ -5,13 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/internal/procinfo"
 )
 
 // presenceFreshness defines how recently a presence.json must have been
@@ -84,36 +83,15 @@ type duplicateLaunchProbe struct {
 	Now          func() time.Time
 }
 
+// defaultDuplicateLaunchProbe is the production probe. PID liveness and process
+// matching come from the shared, fork-free internal/procinfo package so that
+// every amq-squad surface (cli status/resume/doctor/preflight AND
+// internal/state's board + NOC snapshots) reads liveness identically and cannot
+// disagree about whether a PID is alive (#87).
 var defaultDuplicateLaunchProbe = duplicateLaunchProbe{
-	PIDAlive:     defaultPIDAlive,
-	ProcessMatch: defaultProcessMatch,
+	PIDAlive:     procinfo.Alive,
+	ProcessMatch: procinfo.Match,
 	Now:          time.Now,
-}
-
-func defaultPIDAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return proc.Signal(syscall.Signal(0)) == nil
-}
-
-// defaultProcessMatch shells out to ps to read the process command line for
-// pid and applies the predicate. Returns false on any error (best effort).
-func defaultProcessMatch(pid int, predicate func(args string) bool) bool {
-	if pid <= 0 || predicate == nil {
-		return false
-	}
-	cmd := exec.Command("ps", "-o", "args=", "-p", fmt.Sprintf("%d", pid))
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	args := strings.TrimSpace(string(out))
-	return predicate(args)
 }
 
 // check inspects wake locks, prior launch records, and presence. It returns
