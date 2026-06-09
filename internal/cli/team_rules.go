@@ -62,7 +62,12 @@ func renderTeamRules(t team.Team) (string, error) {
 	b.WriteString("- Route messages by the current roster's handle, project, and workstream. Use `amq route explain` or `amq-squad amq route --to <handle>` when a cross-project or same-handle route is ambiguous.\n")
 	b.WriteString("- For important handoffs, use AMQ receipts such as `--wait-for drained --wait-timeout 60s` and report the message id when asking for follow-up.\n")
 	b.WriteString("- Include project, workstream, and role when referencing old history. Treat labels and integration metadata as debugging context, not as a fresh instruction by themselves.\n")
-	b.WriteString("- One concern per message when practical.\n")
+	b.WriteString("- One concern per message when practical.\n\n")
+
+	b.WriteString("## Lifecycle / Release Updates\n\n")
+	b.WriteString("- After an operator-approved lifecycle action (commit, PR open/ready, merge, tag, release, issue close, or a release-blocking decision), the owning/reviewer agent proactively posts a concise final-state update to the relevant peer thread. Do not wait to be pinged.\n")
+	b.WriteString("- Include what changed, the current repo/release/issue state, and whether any further implementation is needed, so the peer converges cleanly after the action.\n\n")
+
 	b.WriteString("## Operator Gates\n\n")
 	if team.SupportsOperatorGates(t) {
 		op := team.EffectiveOperator(t)
