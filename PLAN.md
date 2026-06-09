@@ -33,9 +33,20 @@ the open issues by theme + status so the near-term path is legible at a glance.
   - **shift+enter doctor hint** — `doctor` warns (informational) when tmux
     `extended-keys` is off, with the opt-in fix; amq-squad never mutates the
     user's tmux server.
-  - **#87** — plain `resume` vs `--json` was a cross-invocation race, not a code
-    bug; pinned with a consistency regression test.
+  - **#87** — plain `resume` vs `--json`: shipped a consistency regression test
+    (the same-invocation paths share one plan). NOTE: #87 was later **reopened**
+    with a deterministic repro and the real cause fixed in v1.5.4.
   - **#81** — post-release peer-notification norm in the default team-rules.
+- **v1.5.4 — shipped.**
+  - **#87 (reopened)** — `status`/`doctor` called live launch records stale
+    while `resume` saw them live, with `ps` proving the PIDs alive. Root cause:
+    `ProcessMatch` forked `ps`, which returns `EAGAIN` under fork pressure (a
+    large process table), demoting a live agent/wake to stale on some surfaces
+    but not others. Fix: read process command lines **fork-free** (darwin
+    `KERN_PROCARGS2` / linux `/proc`, `ps -ww` fallback) and `EPERM`⇒alive,
+    unified into one shared `internal/procinfo` probe consumed by BOTH
+    `internal/cli` and `internal/state` (the status board + NOC snapshots), so
+    every surface reads liveness identically.
 
 ## Themes
 
