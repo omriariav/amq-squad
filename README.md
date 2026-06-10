@@ -59,6 +59,13 @@ Code, skills are namespaced by plugin, e.g.
 `/amq-squad:amq-squad-role-creator`. In Codex, invoke them by skill name, e.g.
 `$amq-squad-role-creator`.
 
+To dogfood the skills from this working tree (instead of the marketplace
+snapshot), run `make dogfood-claude` here: it launches Claude Code with
+`--plugin-dir plugins/claude`, which loads the plugin live from disk and
+shadows the marketplace-installed copy for that session only. Codex has no
+per-session equivalent; it always serves the marketplace snapshot (refresh
+with `codex plugin marketplace upgrade` after merging skill changes).
+
 ## Using amq-squad
 
 amq-squad has two surfaces, and you use them at different times:

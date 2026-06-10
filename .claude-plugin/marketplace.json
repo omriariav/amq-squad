@@ -1,5 +1,6 @@
 {
   "name": "amq-squad",
+  "description": "Plugin marketplace for amq-squad: agent-team coordination skills for Claude Code, shipped from the amq-squad repo.",
   "owner": {
     "name": "Omri Ariav",
     "url": "https://github.com/omriariav"
@@ -8,7 +9,7 @@
     {
       "name": "amq-squad",
       "source": "./plugins/claude",
-      "description": "amq-squad agent-team coordination skills for Claude Code: live coordination (amq-squad), first-time team setup (amq-team-setup), and custom role authoring (amq-squad-role-creator).",
+      "description": "amq-squad agent-team coordination skills for Claude Code: live coordination (amq-squad), first-time team setup (amq-team-setup), custom role authoring (amq-squad-role-creator), and lead-agent orchestration (amq-squad-orchestrator).",
       "category": "orchestration",
       "homepage": "https://github.com/omriariav/amq-squad"
     }

@@ -365,6 +365,14 @@ binary-specific plugin under <code>plugins/claude</code> and
 plugin, e.g. <code>/amq-squad:amq-squad-role-creator</code>. In Codex,
 invoke them by skill name, e.g.
 <code>$amq-squad-role-creator</code>.</p>
+<p>To dogfood the skills from this working tree (instead of the
+marketplace snapshot), run <code>make dogfood-claude</code> here: it
+launches Claude Code with <code>--plugin-dir plugins/claude</code>,
+which loads the plugin live from disk and shadows the
+marketplace-installed copy for that session only. Codex has no
+per-session equivalent; it always serves the marketplace snapshot
+(refresh with <code>codex plugin marketplace upgrade</code> after
+merging skill changes).</p>
 <h2 id="using-amq-squad">Using amq-squad</h2>
 <p>amq-squad has two surfaces, and you use them at different times:</p>
 <ul>
