@@ -1,4 +1,4 @@
-.PHONY: build test fmt fmt-check vet ci install release-smoke readme-html readme-html-check docs-html docs-html-check html clean
+.PHONY: build test fmt fmt-check vet ci install release-smoke readme-html readme-html-check docs-html docs-html-check html dogfood-claude clean
 
 GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*')
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -86,6 +86,12 @@ html: readme-html docs-html
 
 install: build
 	install amq-squad $(GOPATH)/bin/amq-squad 2>/dev/null || install amq-squad $(HOME)/go/bin/amq-squad
+
+# Launch Claude Code with the plugin loaded live from this working tree.
+# Shadows the marketplace-installed amq-squad plugin for this session only;
+# other folders keep the GitHub-marketplace version.
+dogfood-claude:
+	claude --plugin-dir plugins/claude
 
 release-smoke:
 	@test "$(VERSION)" != "dev" || (echo "VERSION is required, for example VERSION=v0.5.1" >&2; exit 1)
