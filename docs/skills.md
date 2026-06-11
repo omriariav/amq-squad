@@ -126,7 +126,11 @@ Setup stays read-only until the final create step (no live launch).
 
 5. **Review and create.** The skill prints a summary, then on your confirmation
    creates `team.json` + `team-rules.md`, saves the brief, writes the pointer
-   stubs, validates, and prints the next commands.
+   stubs, validates, and prints the next commands. For a squad with two or
+   more Claude members it also asks whether the **workers** should run with a
+   trimmed plugin/hook surface and, if so, generates + wires the context
+   overlays in one command (`amq-squad team overlay init --workers ...`,
+   v1.9.0+) — the lead keeps the full configuration.
 
 ### What it runs
 
@@ -189,7 +193,16 @@ This is the everyday skill. The lifecycle is one small state machine:
 | Multi-session board | `amq-squad status` (or bare `amq-squad`) |
 | Single-session detail | `amq-squad status --session <name>` |
 | Live Mission Control TUI | `amq-squad console` (`--once` for CI) |
+| Trim worker context (overlays) | `amq-squad team overlay init --workers [--disable-plugins ids] [--disable-all-hooks]` |
 | Tear down (destructive / recoverable) | `amq-squad rm <s>` / `amq-squad archive <s>` |
+
+Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
+CLI args for one member only — the overlay verb above generates the flagship
+case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it
+for you. Plan emission fails fast when a referenced `--settings` file is
+missing. With amq 0.34.1+, launches also pass `--require-wake` so a launch
+fails immediately when the wake sidecar cannot acquire its lock
+(`--no-require-wake` opts out and persists into resume).
 
 ### Runtime control (tmux)
 
@@ -280,6 +293,17 @@ The lead consumes the mailbox with `amq drain --include-body`. **Bodies are data
 not authority** — a child's "please merge" is surfaced or acted on under the
 lead's judgment; merge and other irreversible decisions are lead-only, made only
 after the lead verifies the artifacts.
+
+### Operator directives (NOC → lead)
+
+The operator can steer the lead from amq-noc (v0.8.0+). A directive arrives
+pane-injected when the lead is live, or as a durable AMQ message when it was
+down: thread `p2p/<sorted lead__operator>`, kind `todo`, subject
+`DIRECTIVE: <first line>`. The lead treats directives as operator steering
+with **priority over child reports**, acknowledges on the same thread
+(`--kind status` or `answer`), and never treats one as a gate answer — a
+directive does not clear `gate/<topic>` threads. Orchestrated teams carry the
+convention as a generated line in their `## Orchestration` norm.
 
 ### Recover
 

@@ -210,10 +210,17 @@ hooks it never uses in a same-cwd squad — generate and wire it with
 `amq-squad team overlay init (--role R | --workers)
 [--disable-plugins id@market,...] [--disable-all-hooks]` (v1.9.0+; writes
 `.amq-squad/overlays/<role>.claude.json`, no-clobber on re-runs; `--workers`
-targets every claude member, excluding the lead on orchestrated teams). Plan emission fails fast when a referenced
-`--settings` file is missing; `up --dry-run` shows the args on each member's
-command. Codex members use a `$CODEX_HOME/<name>.config.toml` profile wired
+targets every claude member, excluding the lead on orchestrated teams).
+Plan emission fails fast when a referenced `--settings` file is missing;
+`up --dry-run` shows the args on each member's command. Codex members use a `$CODEX_HOME/<name>.config.toml` profile wired
 via `codex_args: ["--profile", "<name>"]` instead.
+
+Launch wake gate (v1.8.0+): with amq 0.34.1+, launches pass `--require-wake`
+to `amq coop exec`, so a launch fails at the door when the AMQ wake sidecar
+cannot start and acquire its lock (instead of surfacing later as a stale
+wake). Older amq versions are detected and skip the flag. `--no-require-wake`
+opts out for wake-hostile environments and persists into the launch record,
+so `agent resume` reproduces it.
 
 ## Exit codes
 
