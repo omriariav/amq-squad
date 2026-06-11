@@ -193,6 +193,15 @@ amq-squad agent up codex --role cto --session issue-96
 amq-squad agent resume fullstack
 ```
 
+Per-member native args (v1.8.0+): a `team.json` member may carry
+`claude_args` / `codex_args` (must match its binary; `team sync` rejects a
+mismatch). They append after the team-level `binary_args`, and `up`,
+`resume --exec`, `agent up`/`agent resume` apply them to that member only —
+e.g. a worker's `"claude_args": ["--settings", ".claude/agent-overlays/<role>.json"]`
+loads a settings overlay that trims the plugins/hooks it never uses in a
+same-cwd squad. No CLI flag: edit `team.json`, validate with
+`amq-squad team sync`; `up --dry-run` shows the args on each member's command.
+
 ## Exit codes
 
 - `0` success

@@ -98,6 +98,17 @@ You can also preview a candidate from a deterministic source with
   Keep the roster minimal; you can add roles later by re-running `team init`.
 - Choose the profile: default at `.amq-squad/team.json`, or a named profile at
   `.amq-squad/teams/<name>.json` for parallel team shapes (release vs research).
+- **Per-member native args** (v1.8.0+): a member entry in `team.json` may
+  carry `claude_args` / `codex_args` — extra native CLI args for that member
+  only, appended after the team-level `binary_args` so the member value wins.
+  The field must match the member's binary (`team sync` rejects a mismatch).
+  Flagship use: a same-cwd squad where only the lead needs the full
+  plugin/hook surface — give each worker
+  `"claude_args": ["--settings", ".claude/agent-overlays/<role>.json"]`
+  pointing at a Claude Code settings overlay (`enabledPlugins`,
+  `disableAllHooks`, ...) that trims plugins and hooks the worker never uses,
+  cutting its per-prompt context cost. There is no CLI flag for this field:
+  edit `team.json` after `new team`, then validate with `amq-squad team sync`.
 - Pick the team-home (where `.amq-squad/` lives): the cwd by default; for a
   monorepo, usually the repo root. Confirm if the choice is non-obvious.
 

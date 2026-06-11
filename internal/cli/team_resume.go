@@ -284,6 +284,9 @@ func executeResume(r resumeExecution) error {
 	if err := validateTrustCombination(resolvedTrust, r.ExplicitTrust || strings.TrimSpace(t.Trust) != "", false, mergedBinaryArgs); err != nil {
 		return err
 	}
+	if err := validateMembersTrust(resolvedTrust, r.ExplicitTrust || strings.TrimSpace(t.Trust) != "", t.Members); err != nil {
+		return err
+	}
 	memberRoles := make(map[string]bool, len(t.Members))
 	for _, m := range t.Members {
 		memberRoles[strings.ToLower(m.Role)] = true

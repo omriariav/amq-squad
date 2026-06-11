@@ -76,7 +76,8 @@ func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 		Workstream: "issue-96",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96",
+				ClaudeArgs: []string{"--settings", "overlay.json"}},
 		},
 	})
 	stdout, _, err := captureOutput(t, func() error {
@@ -118,6 +119,18 @@ func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 	// Trust default must be present so callers can inspect it.
 	if env.Data.Trust == "" {
 		t.Errorf("trust missing from team_plan: %+v", env.Data)
+	}
+	// #111: per-member args surface on the plan member AND in its command.
+	for _, m := range env.Data.Plan {
+		if m.Role != "fullstack" {
+			continue
+		}
+		if len(m.ClaudeArgs) != 2 || m.ClaudeArgs[0] != "--settings" {
+			t.Errorf("plan member fullstack claude_args = %v, want the configured overlay args", m.ClaudeArgs)
+		}
+		if !strings.Contains(m.Command, "--claude-args='--settings overlay.json'") {
+			t.Errorf("plan member fullstack command missing member claude_args: %q", m.Command)
+		}
 	}
 }
 

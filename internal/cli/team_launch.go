@@ -172,6 +172,9 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if err := validateTrustCombination(trustMode, explicitTrust || strings.TrimSpace(t.Trust) != "", false, mergedBinaryArgs); err != nil {
 		return err
 	}
+	if err := validateMembersTrust(trustMode, explicitTrust || strings.TrimSpace(t.Trust) != "", t.Members); err != nil {
+		return err
+	}
 	// Reject --model role=model entries whose role is not on the team.
 	memberRoles := make(map[string]bool, len(t.Members))
 	for _, m := range t.Members {
