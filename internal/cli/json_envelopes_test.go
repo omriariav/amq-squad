@@ -72,7 +72,7 @@ func TestRunRolesJSONEnvelope(t *testing.T) {
 }
 
 func TestRunUpDryRunJSONEnvelope(t *testing.T) {
-	seedTeam(t, team.Team{
+	dir := seedTeam(t, team.Team{
 		Workstream: "issue-96",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
@@ -80,6 +80,11 @@ func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 				ClaudeArgs: []string{"--settings", "overlay.json"}},
 		},
 	})
+	// The referenced overlay must exist: plan emission validates --settings
+	// paths against the member cwd since the team overlay primitive landed.
+	if err := os.WriteFile(filepath.Join(dir, "overlay.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	stdout, _, err := captureOutput(t, func() error {
 		return runUp([]string{"--dry-run", "--json", "--no-bootstrap"})
 	})
