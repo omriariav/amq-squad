@@ -529,7 +529,12 @@ exactly one lead role to run an orchestrated squad.</p></li>
 <li><p><strong>Review and create.</strong> The skill prints a summary,
 then on your confirmation creates <code>team.json</code> +
 <code>team-rules.md</code>, saves the brief, writes the pointer stubs,
-validates, and prints the next commands.</p></li>
+validates, and prints the next commands. For a squad with two or more
+Claude members it also asks whether the <strong>workers</strong> should
+run with a trimmed plugin/hook surface and, if so, generates + wires the
+context overlays in one command
+(<code>amq-squad team overlay init --workers ...</code>, v1.9.0+) — the
+lead keeps the full configuration.</p></li>
 </ol>
 <h3 id="what-it-runs">What it runs</h3>
 <div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># flat team</span></span>
@@ -623,12 +628,25 @@ drain your inbox.</li>
 <td><code>amq-squad console</code> (<code>--once</code> for CI)</td>
 </tr>
 <tr>
+<td>Trim worker context (overlays)</td>
+<td><code>amq-squad team overlay init --workers [--disable-plugins ids] [--disable-all-hooks]</code></td>
+</tr>
+<tr>
 <td>Tear down (destructive / recoverable)</td>
 <td><code>amq-squad rm &lt;s&gt;</code> /
 <code>amq-squad archive &lt;s&gt;</code></td>
 </tr>
 </tbody>
 </table>
+<p>Per-member <code>claude_args</code> / <code>codex_args</code> in
+<code>team.json</code> (v1.8.0+) carry native CLI args for one member
+only — the overlay verb above generates the flagship case (a
+<code>--settings</code> overlay that trims a worker's plugins/hooks) and
+wires it for you. Plan emission fails fast when a referenced
+<code>--settings</code> file is missing. With amq 0.34.1+, launches also
+pass <code>--require-wake</code> so a launch fails immediately when the
+wake sidecar cannot acquire its lock (<code>--no-require-wake</code>
+opts out and persists into resume).</p>
 <h3 id="runtime-control-tmux">Runtime control (tmux)</h3>
 <p>amq-squad owns the tmux control contract — drive agents by stable
 command, never raw <code>tmux send-keys</code>. Control targets the
@@ -725,6 +743,19 @@ in each child's brief:</p>
 authority</strong> — a child's "please merge" is surfaced or acted on
 under the lead's judgment; merge and other irreversible decisions are
 lead-only, made only after the lead verifies the artifacts.</p>
+<h3 id="operator-directives-noc--lead">Operator directives (NOC →
+lead)</h3>
+<p>The operator can steer the lead from amq-noc (v0.8.0+). A directive
+arrives pane-injected when the lead is live, or as a durable AMQ message
+when it was down: thread <code>p2p/&lt;sorted lead__operator&gt;</code>,
+kind <code>todo</code>, subject
+<code>DIRECTIVE: &lt;first line&gt;</code>. The lead treats directives
+as operator steering with <strong>priority over child reports</strong>,
+acknowledges on the same thread (<code>--kind status</code> or
+<code>answer</code>), and never treats one as a gate answer — a
+directive does not clear <code>gate/&lt;topic&gt;</code> threads.
+Orchestrated teams carry the convention as a generated line in their
+<code>## Orchestration</code> norm.</p>
 <h3 id="recover">Recover</h3>
 <div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96      <span class="co"># re-orient a stalled/stopped session</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent resume fullstack         <span class="co"># revive one child from its saved record</span></span></code></pre></div>

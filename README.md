@@ -231,6 +231,33 @@ launcher script must forward its trailing args to the agent** (e.g. end with
 `exec claude "$@"`). amq-squad refuses with a clear error if the launcher path is
 missing or not executable. `up --dry-run` prints the resolved launcher command.
 
+### Per-member native args and context overlays
+
+A `team.json` member may carry `claude_args` / `codex_args` — extra native CLI
+args applied to **that member only**, appended after the team-level
+`binary_args` so the member value wins by position. The field must match the
+member's binary (`team sync` rejects a mismatch), launch records persist it,
+and resume reproduces it.
+
+The flagship use is the **context-budget overlay** for same-cwd squads: only
+the lead needs the full plugin/hook surface, while workers on smaller-context
+models burn tokens on plugins and per-prompt hook output they never use.
+Generate and wire it in one command (v1.9.0+):
+
+```sh
+amq-squad team overlay init --workers --disable-all-hooks \
+  --disable-plugins gws@workspace,document-skills@anthropics
+```
+
+This writes a Claude settings overlay per worker
+(`.amq-squad/overlays/<role>.claude.json`, human-editable, never clobbered on
+re-runs) and wires `claude_args: ["--settings", <path>]` into the member.
+`--workers` targets every claude member (the orchestration lead is excluded);
+`--role R` targets one. Launch planning (`up`, `resume`, the tmux backend)
+fails fast, naming the member, when a referenced `--settings` file is missing. Codex members use
+the native equivalent: a `$CODEX_HOME/<name>.config.toml` profile wired via
+`codex_args: ["--profile", "<name>"]`.
+
 ## Context model
 
 The context model is three durable layers. Each layer has exactly one source of truth.
@@ -315,6 +342,8 @@ amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto
 ```
 
 This records `orchestrated`/`lead` in `team.json` and injects a generated `## Orchestration` reporting norm into `.amq-squad/team-rules.md`: the lead loads the `amq-squad-orchestrator` skill, and children push `status` / `question` / `review_request` messages to the lead over AMQ. Default off; **exactly one lead**; the lead is a team member, **never the operator**. `--lead ROLE` implies `--orchestrated`; with `--orchestrated` alone a single-member team self-selects and a team with a `cto` defaults to `cto`. The `team_profile_plan` / `team_plan` JSON envelopes carry `orchestrated`/`lead`. If `team-rules.md` already exists, `new team` leaves it untouched — regenerate with `amq-squad team rules init --force` to pick up the norm.
+
+The operator can steer the lead directly from amq-noc (v0.8.0+): a **directive** arrives on the lead's operator p2p thread as a `--kind todo` message whose subject starts with `DIRECTIVE:` — pane-injected when the lead is live, a durable AMQ message when it was down. The `amq-squad-orchestrator` skill teaches the lead to treat directives as operator steering with priority over child reports, acknowledge on the same thread, and never treat one as a gate answer (a directive never clears a `gate/<topic>` thread); orchestrated teams get the convention as a generated line in their `## Orchestration` norm.
 
 ## Verbs
 
@@ -735,6 +764,13 @@ amq-squad team init --personas cto,fullstack --trust trusted
 amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
 amq-squad agent up codex --model gpt-5
 ```
+
+With amq **0.34.1+**, launches pass `--require-wake` to `amq coop exec`, so a
+launch **fails at the door** when the AMQ wake sidecar cannot start and acquire
+its lock — instead of surfacing later as a stale or orphaned wake. Older amq
+versions are detected and skip the flag. `--no-require-wake` opts out for
+environments where wake cannot run; the opt-out is persisted in the launch
+record so resume reproduces it.
 
 ## Workstreams and threads
 
