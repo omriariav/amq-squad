@@ -191,16 +191,25 @@ amq-squad archive issue-96
 # Single-agent ops
 amq-squad agent up codex --role cto --session issue-96
 amq-squad agent resume fullstack
+
+# Trim worker context (generate + wire per-member --settings overlays)
+amq-squad team overlay init --workers --disable-all-hooks
+amq-squad team overlay init --role analyst --disable-plugins gws@workspace
 ```
 
 Per-member native args (v1.8.0+): a `team.json` member may carry
 `claude_args` / `codex_args` (must match its binary; `team sync` rejects a
 mismatch). They append after the team-level `binary_args`, and `up`,
-`resume --exec`, `agent up`/`agent resume` apply them to that member only —
-e.g. a worker's `"claude_args": ["--settings", ".claude/agent-overlays/<role>.json"]`
-loads a settings overlay that trims the plugins/hooks it never uses in a
-same-cwd squad. No CLI flag: edit `team.json`, validate with
-`amq-squad team sync`; `up --dry-run` shows the args on each member's command.
+`resume --exec`, `agent up`/`agent resume` apply them to that member only.
+The flagship use is a worker `--settings` overlay that trims the plugins and
+hooks it never uses in a same-cwd squad — generate and wire it with
+`amq-squad team overlay init (--role R | --workers)
+[--disable-plugins id@market,...] [--disable-all-hooks]` (v1.9.0+; writes
+`.amq-squad/overlays/<role>.claude.json`, no-clobber on re-runs; `--workers`
+targets every claude member, excluding the lead on orchestrated teams). Plan emission fails fast when a referenced
+`--settings` file is missing; `up --dry-run` shows the args on each member's
+command. Codex members use a `$CODEX_HOME/<name>.config.toml` profile wired
+via `codex_args: ["--profile", "<name>"]` instead.
 
 ## Exit codes
 
