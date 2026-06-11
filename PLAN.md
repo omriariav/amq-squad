@@ -59,6 +59,39 @@ the open issues by theme + status so the near-term path is legible at a glance.
     spawn / dispatch (busy-guarded `send`) / monitor (`status --json`) / the
     `[AGENT-EVENT]`-over-AMQ reporting protocol / recover. Plus the corrected
     `send` busy-guard note in the `amq-squad` skill.
+- **v1.8.0 — shipped. The dogfooding release: every item came out of the first
+  real-world orchestrated-squad run (pm-copilot, 2026-06-10).**
+  - **#109 — stop → rm refused for the 90s presence-freshness window.** A fresh
+    presence write with `status:"offline"` is the terminal act of a clean stop,
+    not a zombie writer: it no longer counts as a mailbox touch, so the
+    post-stop state classifies stale immediately (same as after the window) and
+    the documented `stop` → `rm` sequence works back-to-back. rm's refusal now
+    suggests `stop` (not the deprecated `down` alias) and names the freshness
+    window + time remaining when dead-mailbox-live agents hold the gate.
+    (PR #112)
+  - **#111 — per-member `claude_args`/`codex_args` overlay in team.json.**
+    Same-cwd squads can trim each worker's plugin/hook surface via a Claude
+    `--settings` overlay without touching the lead: member args append after
+    team-level `binary_args` (member wins by position), must match the
+    member's binary (validated), ride the existing `--claude-args`/`--codex-args`
+    plumbing (persisted in launch records, replayed on resume), are
+    trust-checked per member at plan time, and surface in plan JSON +
+    `--dry-run`. Skills in both marketplaces document the pattern. (PR #113)
+  - **#110 — amq-team-setup wizard doc gaps** from the same run, both mirrors:
+    `--binary` one-comma-list semantics, `--session` in the step-5 create
+    examples (+ the dir-name default warning), a launch-name consistency
+    warning in the handoff (a `--session` override at launch boots a new
+    workstream with a stub brief), role-file staging normalization, and the
+    show-role-bodies-before-create gate. (PR #114)
+  - **#30 item 1 — `coop exec --require-wake` adoption.** Launches fail at the
+    door when the wake sidecar cannot acquire its lock, version-gated on amq
+    0.34.1+ (empty/unparseable versions omit the flag), with a
+    `--no-require-wake` escape hatch that persists in the launch record so
+    resume reproduces it. The prevention half of the orphan-wake class.
+    (PR #115; #30 items 2–3 remain open)
+  - **Triage sweep:** closed shipped-but-open issues #22 (per-member model),
+    #19 (codex trust profiles), #53 (virtual operator), #27 (resume UX), #44 +
+    #45 (orphan wake detection/cleanup), and the #31 lifecycle epic.
 - **v1.7.0 — shipped. Closes #101 (one-setup orchestrated squad).**
   - **#101 — `amq-team-setup` wizard.** A wizard-style 5-step flow in both
     marketplaces (Claude + Codex): (A) capture a goal from ANY source — inline
@@ -105,25 +138,26 @@ the open issues by theme + status so the near-term path is legible at a glance.
 ### Team lifecycle & DX
 
 - #31 — *(epic, breaking)* Unify team lifecycle verbs; separate team identity
-  from workstream. Largely realized by the 2.0 reshape — *audit & close/refile.*
-- #27 — Unified team resume UX (fresh launch vs restore). *Likely addressed by
-  the resume rework — verify.*
+  from workstream. ✅ realized by the 2.0 reshape — closed in the v1.8.0 triage.
+- #27 — Unified team resume UX (fresh launch vs restore). ✅ shipped via the
+  resume planner — closed in the v1.8.0 triage.
 - #26 — Team rules template library for modern agent squads.
-- #22 — Support a per-member target model in team config.
+- #22 — Support a per-member target model in team config. ✅ shipped
+  (`Member.Model` + `--model role=model`) — closed in the v1.8.0 triage.
 - #39 — `team init --roles` rejects custom names. ✅ custom roles shipped in
   v1.5.0 — *pending close.*
 - #25 — Prevent launching duplicate live agents for the same role/handle/
   workstream. ✅ roster preflight + duplicate detection shipped — *pending close.*
-- #19 — Rework Codex trust defaults for generated launches.
+- #19 — Rework Codex trust defaults for generated launches. ✅ shipped
+  (sandboxed-by-default trust profiles) — closed in the v1.8.0 triage.
 - #11 — Replace placeholder `role.md` stubs with actionable role guidance.
 
 ### AMQ integration & operator
 
-- #53 — Support a virtual operator participant in squad teams. *Partially
-  addressed by the schema-3 operator (`user` handle / `--operator`) — verify
-  scope vs close.*
-- #30 — Adopt new AMQ features (require-wake, inject-via, from-session); drop
-  stale acks.
+- #53 — Support a virtual operator participant in squad teams. ✅ shipped as the
+  schema-3 operator — closed in the v1.8.0 triage.
+- #30 — Adopt new AMQ features; drop stale acks. Item 1 (`--require-wake`) ✅
+  shipped in v1.8.0; items 2–3 (`wake --inject-via`, from-session) remain.
 - #58 — Clarify the AMQ message-kind enum in the skill routing docs. *Largely
   addressed in the v1.5.0 skill update (#70) — verify & close.*
 
@@ -131,8 +165,11 @@ the open issues by theme + status so the near-term path is legible at a glance.
 
 - #46 — `amq env` failures are opaque; the launch path leaks shell
   `AM_ROOT`/`AM_ME` identity.
-- #45 — Exiting agent leaves an orphan `amq wake` process that blocks relaunch.
-- #44 — `down` leaves an orphaned `amq wake` process and stale live presence.
+- #45 — Exiting agent leaves an orphan `amq wake` that blocks relaunch.
+  ✅ closed in the v1.8.0 triage (v1.5.x preflight auto-clean + actionable
+  blocker; prevention shipped as `--require-wake` in v1.8.0).
+- #44 — `down` leaves an orphaned wake and stale live presence. ✅ closed in
+  the v1.8.0 triage (v1.5.2 classifier + v1.5.4 probe + stop-side reaping).
 
 ## Notes
 
