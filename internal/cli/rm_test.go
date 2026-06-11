@@ -327,6 +327,81 @@ func TestArchiveRefusesLiveSessionWithoutForce(t *testing.T) {
 	}
 }
 
+// TestRmProceedsAfterCleanStop is the #109 regression: stop's last act writes
+// presence.json with status "offline" and a fresh last_seen. That terminal
+// write must NOT hold rm's live-agents gate closed — the documented stop→rm
+// sequence has to work back-to-back, not after a 90s wait.
+func TestRmProceedsAfterCleanStop(t *testing.T) {
+	base := t.TempDir()
+	projectDir := t.TempDir()
+	root := filepath.Join(base, "first-run")
+	seedAgentRecord(t, base, "first-run", "copilot", launch.Record{
+		Binary: "claude", Handle: "copilot", AgentPID: 4242,
+		Root: root, Session: "first-run",
+	})
+	// Exactly what stop leaves behind: dead agent PID + a seconds-old
+	// presence write with status "offline".
+	seedBoardPresence(t, base, "first-run", "copilot", "offline", time.Now().Add(-5*time.Second))
+	deadPID := rmStateProbe(map[int]bool{4242: false}, map[int]bool{4242: false})
+
+	out, err := runRmExec(t, rmExecution{
+		ProjectDir: projectDir,
+		Session:    "first-run",
+		Mode:       rmModeDelete,
+		Yes:        true,
+		BaseRoot:   base,
+		Probe:      deadPID,
+	})
+	if err != nil {
+		t.Fatalf("rm right after a clean stop must proceed, got: %v\n%s", err, out)
+	}
+	if _, statErr := os.Stat(root); !os.IsNotExist(statErr) {
+		t.Errorf("rm should have removed the root; stat err = %v", statErr)
+	}
+}
+
+// TestRmRefusalNamesFreshnessWindow: when the only "live" evidence is a fresh
+// non-terminal presence write behind a dead PID (a genuine zombie writer), rm
+// still refuses — but the error must name the freshness window and suggest the
+// non-deprecated stop verb, so the operator knows waiting is an option (#109).
+func TestRmRefusalNamesFreshnessWindow(t *testing.T) {
+	base := t.TempDir()
+	projectDir := t.TempDir()
+	root := filepath.Join(base, "first-run")
+	seedAgentRecord(t, base, "first-run", "copilot", launch.Record{
+		Binary: "claude", Handle: "copilot", AgentPID: 4242,
+		Root: root, Session: "first-run",
+	})
+	// Zombie writer: dead agent PID, but presence still reads "active" and
+	// fresh — the dead-mailbox-live case that must keep refusing.
+	seedBoardPresence(t, base, "first-run", "copilot", "active", time.Now().Add(-5*time.Second))
+	deadPID := rmStateProbe(map[int]bool{4242: false}, map[int]bool{4242: false})
+
+	_, err := runRmExec(t, rmExecution{
+		ProjectDir: projectDir,
+		Session:    "first-run",
+		Mode:       rmModeDelete,
+		Yes:        true,
+		BaseRoot:   base,
+		Probe:      deadPID,
+	})
+	if err == nil {
+		t.Fatal("a zombie-writer session must still refuse rm without --force")
+	}
+	if !strings.Contains(err.Error(), "freshness window") {
+		t.Errorf("refusal should name the presence freshness window: %v", err)
+	}
+	if !strings.Contains(err.Error(), "amq-squad stop --all") {
+		t.Errorf("refusal should suggest the stop verb, not the deprecated down alias: %v", err)
+	}
+	if strings.Contains(err.Error(), "amq-squad down") {
+		t.Errorf("refusal must not suggest the deprecated down alias: %v", err)
+	}
+	if _, statErr := os.Stat(root); statErr != nil {
+		t.Errorf("refused rm must leave the root intact: %v", statErr)
+	}
+}
+
 // TestRmConfinedToSessionRoot is the highest-risk property: deleting session X
 // must leave a sibling session Y (and the brief for Y) completely intact.
 func TestRmConfinedToSessionRoot(t *testing.T) {

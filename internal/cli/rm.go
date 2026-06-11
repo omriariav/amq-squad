@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/internal/state"
 )
@@ -126,7 +128,8 @@ By default archive PREVIEWS exactly what will move and prompts for confirmation
 the prompt for automation.
 
 A session with any LIVE agent is refused unless --force; archive never stops
-running agents. Stop the team first with 'amq-squad down --all --force'.
+running agents. Stop the team first with
+'amq-squad stop --all [--session <session>] --force'.
 
 Examples:
   amq-squad archive issue-96
@@ -153,7 +156,8 @@ filesystem changes. Pass --yes/-y to skip the prompt for automation. To keep the
 data recoverable, use 'amq-squad archive <session>' instead.
 
 A session with any LIVE agent is refused unless --force; rm never stops running
-agents. Stop the team first with 'amq-squad down --all --force'.
+agents. Stop the team first with
+'amq-squad stop --all [--session <session>] --force'.
 
 Examples:
   amq-squad rm issue-96
@@ -307,13 +311,25 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 	// SAFETY 3: refuse a running session unless --force. Reuse the repo's
 	// liveness (internal/state) so this agrees with status/down about "live".
 	if target.RootExists {
-		live, err := liveAgentsInSession(e.ProjectDir, baseRoot, session, e.Probe)
+		live, mailboxWindow, err := liveAgentsInSession(e.ProjectDir, baseRoot, session, e.Probe)
 		if err != nil {
 			return false, fmt.Errorf("check liveness for session %q: %w", session, err)
 		}
 		if len(live) > 0 && !e.Force {
-			return false, fmt.Errorf("session %q has live agents (%s); stop it first with 'amq-squad down --all --force', or pass --force to %s anyway",
-				session, strings.Join(live, ", "), verb)
+			msg := fmt.Sprintf("session %q has live agents (%s); stop it first with 'amq-squad stop --all --session %s --force', or pass --force to %s anyway",
+				session, strings.Join(live, ", "), session, verb)
+			if mailboxWindow > 0 {
+				// Some refusing agents are only "live" via a fresh presence
+				// write, not a verified process. Tell the operator the window
+				// so waiting is a known option, not folklore.
+				display := mailboxWindow.Round(time.Second)
+				if display < time.Second {
+					display = time.Second // never render a confusing "~0s"
+				}
+				msg += fmt.Sprintf(" (some presence files were written within the %s freshness window; it clears in ~%s)",
+					state.PresenceFreshness, display)
+			}
+			return false, errors.New(msg)
 		}
 	}
 
@@ -337,24 +353,37 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 // liveAgentsInSession returns the handles of agents the repo's liveness
 // classifier considers operational (alive, wake-live, or dead-mailbox-live) in
 // the named session. An empty slice means the session is safe to tear down.
-func liveAgentsInSession(projectDir, baseRoot, session string, probe state.Probe) ([]string, error) {
+//
+// The second return is the longest remaining presence-freshness window among
+// the dead-mailbox-live agents (zero when none): how long until their fresh
+// presence writes expire and they stop counting as live. The refusal message
+// uses it so the operator knows waiting is an option (#109).
+func liveAgentsInSession(projectDir, baseRoot, session string, probe state.Probe) ([]string, time.Duration, error) {
 	snap, err := state.Build(projectDir, baseRoot, probe)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var live []string
+	var mailboxWindow time.Duration
 	for _, sess := range snap.Sessions {
 		if sess.Name != session {
 			continue
 		}
 		for _, a := range sess.Agents {
 			switch a.Liveness {
-			case state.LivenessAlive, state.LivenessWakeLive, state.LivenessDeadMailboxLive:
+			case state.LivenessAlive, state.LivenessWakeLive:
 				live = append(live, a.Handle)
+			case state.LivenessDeadMailboxLive:
+				live = append(live, a.Handle)
+				if !a.LastSeen.IsZero() {
+					if rem := state.PresenceFreshness - probe.Now().Sub(a.LastSeen); rem > mailboxWindow {
+						mailboxWindow = rem
+					}
+				}
 			}
 		}
 	}
-	return live, nil
+	return live, mailboxWindow, nil
 }
 
 // countAgentMailboxes counts the agent subdirectories under <root>/agents so

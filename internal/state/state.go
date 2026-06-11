@@ -69,6 +69,11 @@ const (
 	// still writing to the mailbox while the agent process is gone. This MUST
 	// NOT collapse into "stale" or "alive": it is its own signal that the
 	// operator likely has a zombie heartbeat or a detached wake.
+	//
+	// One carve-out: a fresh presence write whose status is explicitly
+	// "offline" never classifies here. That write is the terminal act of a
+	// clean stop, not a zombie writer; treating it as live-ish made stop→rm
+	// refuse for the whole freshness window (#109).
 	LivenessDeadMailboxLive Liveness = "dead-mailbox-live"
 )
 
