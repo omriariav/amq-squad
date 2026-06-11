@@ -17,10 +17,10 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 
 ## Install
 
-Install the 1.8 line:
+Install the 1.9 line:
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v1.8.0
+go install github.com/omriariav/amq-squad/cmd/amq-squad@v1.9.0
 amq-squad version
 ```
 
@@ -368,6 +368,15 @@ amq-squad team rules init [--project DIR] [--force]
                                   Seed or refresh .amq-squad/team-rules.md.
 amq-squad team rules show [--project DIR]
                                   Print .amq-squad/team-rules.md.
+amq-squad team overlay init (--role R | --workers) [--disable-plugins id@market,...]
+                        [--disable-all-hooks] [--force] [--dry-run]
+                                  Generate .amq-squad/overlays/<role>.claude.json
+                                  and wire the member's claude_args to load it
+                                  via --settings: trim a worker's plugin/hook
+                                  surface in a same-cwd squad. --workers targets
+                                  every claude member (orchestration lead
+                                  excluded). Plan emission fails fast when a
+                                  referenced --settings file is missing.
 amq-squad team sync [--project DIR] [--apply] [--allow-outside]
                                   Sync the pointer stub into CLAUDE.md and AGENTS.md.
                                   Exit 1 on drift when --apply is not set.
