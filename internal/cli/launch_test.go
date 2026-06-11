@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omriariav/amq-squad/internal/launch"
 )
 
 func TestRunLaunchDryRunSandboxedCodexOmitsBypassDefault(t *testing.T) {
@@ -23,6 +25,99 @@ func TestRunLaunchDryRunSandboxedCodexOmitsBypassDefault(t *testing.T) {
 	want := "amq coop exec codex -- test-prompt"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+	}
+}
+
+func TestAMQSupportsRequireWake(t *testing.T) {
+	for version, want := range map[string]bool{
+		"":         false, // very old amq: env reports no version
+		"garbage":  false, // unparseable: never pass an unverified flag
+		"0.33.9":   false,
+		"0.34.0":   false, // --require-wake landed in 0.34.1
+		"0.35":     false, // two-part versions don't parse; pinned so a parser change is visible
+		"0.34.1":   true,
+		"v0.34.1":  true,
+		"0.35.0":   true,
+		"1.0.0":    true,
+		" 0.34.1 ": true,
+	} {
+		if got := amqSupportsRequireWake(version); got != want {
+			t.Errorf("amqSupportsRequireWake(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
+func TestRunLaunchDryRunRequireWakeVersionGate(t *testing.T) {
+	// amq 0.34.1+ launches fail at the door when the wake sidecar cannot
+	// acquire its lock (#30): coop exec gains --require-wake by default.
+	setupFakeAMQWithVersion(t, "0.34.1")
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "codex", "test-prompt"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "amq coop exec --require-wake codex -- test-prompt") {
+		t.Fatalf("amq 0.34.1 launch should pass --require-wake:\n%s", stdout)
+	}
+}
+
+func TestRunLaunchDryRunRequireWakeWithSessionShape(t *testing.T) {
+	// Pin the full production argv shape: --session before --require-wake,
+	// both before the binary positional (amq rejects misplaced flags).
+	setupFakeAMQWithVersion(t, "0.34.1")
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--session", "issue-96", "codex", "test-prompt"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "amq coop exec --session issue-96 --require-wake codex -- test-prompt") {
+		t.Fatalf("session + require-wake argv shape drifted:\n%s", stdout)
+	}
+}
+
+func TestLaunchArgsFromRecordReplaysNoRequireWake(t *testing.T) {
+	// The opt-out answers an environment constraint (wake cannot acquire its
+	// lock), so resume/replay must reproduce it, not silently re-enable the
+	// gate. Compare with NoDefaultArgs, the precedent it follows.
+	rec := launch.Record{Binary: "codex", Handle: "cto", Session: "issue-96", NoRequireWake: true}
+	args := launchArgsFromRecord(rec)
+	found := false
+	for _, a := range args {
+		if a == "--no-require-wake" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("replay args missing --no-require-wake: %v", args)
+	}
+}
+
+func TestRunLaunchDryRunNoRequireWakeOptOut(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.34.1")
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--no-require-wake", "codex", "test-prompt"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stdout, "--require-wake") {
+		t.Fatalf("--no-require-wake must omit the flag:\n%s", stdout)
+	}
+}
+
+func TestRunLaunchDryRunOldAMQOmitsRequireWake(t *testing.T) {
+	// 0.34.0 predates the flag; passing it would fail every launch.
+	setupFakeAMQWithVersion(t, "0.34.0")
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "codex", "test-prompt"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stdout, "--require-wake") {
+		t.Fatalf("amq 0.34.0 must not receive --require-wake:\n%s", stdout)
 	}
 }
 
@@ -372,6 +467,13 @@ func TestApplyConversationRestoreArgsRejectsConflicts(t *testing.T) {
 
 func setupFakeAMQ(t *testing.T) {
 	t.Helper()
+	setupFakeAMQWithVersion(t, "")
+}
+
+// setupFakeAMQWithVersion installs a fake amq whose `env --json` reports the
+// given amq_version (empty omits the field, matching very old amq builds).
+func setupFakeAMQWithVersion(t *testing.T, version string) {
+	t.Helper()
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -380,7 +482,11 @@ func setupFakeAMQ(t *testing.T) {
 	root := filepath.Join(dir, ".agent-mail")
 	script := `#!/bin/sh
 if [ "$1" = "env" ]; then
-  printf '{"root":"%s"}\n' "$AMQ_FAKE_ROOT"
+  if [ -n "$AMQ_FAKE_VERSION" ]; then
+    printf '{"root":"%s","amq_version":"%s"}\n' "$AMQ_FAKE_ROOT" "$AMQ_FAKE_VERSION"
+  else
+    printf '{"root":"%s"}\n' "$AMQ_FAKE_ROOT"
+  fi
   exit 0
 fi
 echo "unexpected amq command: $*" >&2
@@ -390,6 +496,7 @@ exit 1
 		t.Fatal(err)
 	}
 	t.Setenv("AMQ_FAKE_ROOT", root)
+	t.Setenv("AMQ_FAKE_VERSION", version)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 

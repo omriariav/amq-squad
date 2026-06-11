@@ -27,6 +27,23 @@ func resolveAMQEnv(rootFlag, session, handle string) (amqEnv, error) {
 	return resolveAMQEnvInDir("", rootFlag, session, handle)
 }
 
+// minRequireWakeAMQVersion is the first AMQ release whose `coop exec` accepts
+// --require-wake (refuse to launch unless the wake sidecar acquires its lock).
+const minRequireWakeAMQVersion = "0.34.1"
+
+// amqSupportsRequireWake reports whether the amq version string from `amq env`
+// is new enough for `coop exec --require-wake`. Empty or unparseable versions
+// return false: passing an unknown flag to an old amq would fail every
+// launch, so the gate only engages on a positively verified version.
+func amqSupportsRequireWake(version string) bool {
+	got, ok := parseSemverParts(strings.TrimSpace(version))
+	if !ok {
+		return false
+	}
+	min, _ := parseSemverParts(minRequireWakeAMQVersion)
+	return compareSemverParts(got, min) >= 0
+}
+
 func resolveAMQEnvInDir(cwd, rootFlag, session, handle string) (amqEnv, error) {
 	args := []string{"env", "--json"}
 	if handle != "" {

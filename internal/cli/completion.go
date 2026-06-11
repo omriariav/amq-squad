@@ -176,6 +176,7 @@ var completionCommonFlags = []string{
 	"--no-bootstrap",
 	"--no-default-args",
 	"--no-operator",
+	"--no-require-wake",
 	"--once",
 	"--older-than",
 	"--operator",

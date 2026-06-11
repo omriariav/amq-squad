@@ -243,6 +243,9 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if rec.NoDefaultArgs {
 		args = append(args, "--no-default-args")
 	}
+	if rec.NoRequireWake {
+		args = append(args, "--no-require-wake")
+	}
 	if trust := trustModeFromRecord(rec); trust != "" {
 		args = append(args, "--trust", trust)
 	}
@@ -417,6 +420,9 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	}
 	if rec.NoDefaultArgs {
 		b.WriteString(" --no-default-args")
+	}
+	if rec.NoRequireWake {
+		b.WriteString(" --no-require-wake")
 	}
 	if trust := trustModeFromRecord(rec); trust != "" {
 		b.WriteString(" --trust ")

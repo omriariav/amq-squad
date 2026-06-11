@@ -50,6 +50,7 @@ func runLaunch(args []string) error {
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args to treat as launch defaults, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args to treat as launch defaults, e.g. '--chrome'")
 	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent for the same handle/workstream is detected")
+	noRequireWake := fs.Bool("no-require-wake", false, "do not pass --require-wake to amq coop exec (allows launching when the wake sidecar cannot acquire its lock)")
 	dryRun := fs.Bool("dry-run", false, "print the coop exec command without executing")
 	launcherRaw := fs.String("launcher", "", "custom launcher to exec instead of <binary> (still receives AMQ env/identity, bootstrap, and a launch record)")
 	launcherArgsRaw := fs.String("launcher-args", "", "args passed to --launcher before the agent's child args; the launcher must forward trailing args to <binary>")
@@ -82,6 +83,10 @@ Side effects before exec:
   9. Adds a generated bootstrap prompt unless --no-bootstrap is set or
      non-default binary args were provided.
  10. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
+     With amq 0.34.1+, --require-wake is passed so the launch fails at the
+     door when the wake sidecar cannot start and acquire its lock (instead
+     of surfacing as a stale/orphaned wake later). --no-require-wake opts
+     out for environments where wake cannot run but the agent should.
 
 With --dry-run, the resolved coop exec command is printed and amq-squad exits.
 Disk state is untouched and no exec occurs.
@@ -203,6 +208,7 @@ Examples:
 		Model:            strings.TrimSpace(*model),
 		Trust:            trustMode,
 		NoDefaultArgs:    *noDefaultArgs,
+		NoRequireWake:    *noRequireWake,
 		AgentPID:         os.Getpid(),
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
@@ -250,6 +256,16 @@ Examples:
 	}
 	if *me != "" {
 		coopArgs = append(coopArgs, "--me", *me)
+	}
+	// Fail the launch at the door when the wake sidecar cannot start and
+	// acquire its lock, instead of detecting a missing/orphaned wake later
+	// (#30). Version-gated: amq grew --require-wake in 0.34.1, and an empty
+	// or unparseable reported version omits the flag so older amq builds
+	// never see an unknown flag. --no-require-wake is the escape hatch for
+	// TIOCSTI-hostile environments where wake can't acquire its lock but the
+	// operator wants the agent anyway.
+	if !*noRequireWake && amqSupportsRequireWake(env.AMQVersion) {
+		coopArgs = append(coopArgs, "--require-wake")
 	}
 	// A custom launcher is exec'd in place of the binary. Launcher args precede
 	// the agent's normal child args; the launcher is expected to forward the
