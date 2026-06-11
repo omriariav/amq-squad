@@ -49,6 +49,33 @@ type Member struct {
 	// expected to forward the trailing args to Binary so bootstrap survives.
 	Launcher     string   `json:"launcher,omitempty"`
 	LauncherArgs []string `json:"launcher_args,omitempty"`
+	// ClaudeArgs / CodexArgs are optional per-member native CLI args (e.g. a
+	// `--settings` overlay that trims a worker's plugin/hook surface). They
+	// are appended AFTER the team-level binary_args for the member's binary,
+	// so the member-specific value wins by position. Only the field matching
+	// the member's binary may be set — claude_args on a codex member (and
+	// vice versa) is rejected at validation so flipping a member's binary can
+	// never silently apply stale flags.
+	ClaudeArgs []string `json:"claude_args,omitempty"`
+	CodexArgs  []string `json:"codex_args,omitempty"`
+}
+
+// ExtraArgs returns the per-member native CLI args that match the member's
+// binary (claude_args for claude, codex_args for codex). Nil when the binary
+// matches neither or the matching field is empty; otherwise a copy, so
+// callers can append without mutating the profile.
+func (m Member) ExtraArgs() []string {
+	var args []string
+	switch strings.ToLower(strings.TrimSpace(m.Binary)) {
+	case "claude":
+		args = m.ClaudeArgs
+	case "codex":
+		args = m.CodexArgs
+	}
+	if len(args) == 0 {
+		return nil
+	}
+	return append([]string(nil), args...)
 }
 
 // OperatorConfig describes the optional human/operator participant for a
@@ -514,6 +541,26 @@ func validateMember(prefix string, m Member) error {
 	}
 	if m.Launcher == "" && len(m.LauncherArgs) > 0 {
 		return fmt.Errorf("%s.launcher_args: set launcher before launcher_args", prefix)
+	}
+	for i, a := range m.ClaudeArgs {
+		if err := ValidateDisplayValue("claude_args", a); err != nil {
+			return fmt.Errorf("%s.claude_args[%d]: %w", prefix, i, err)
+		}
+	}
+	for i, a := range m.CodexArgs {
+		if err := ValidateDisplayValue("codex_args", a); err != nil {
+			return fmt.Errorf("%s.codex_args[%d]: %w", prefix, i, err)
+		}
+	}
+	// Binary-match contract: per-member args are bound to the binary they
+	// configure. Rejecting the mismatch (instead of silently ignoring it)
+	// means a member whose binary flips later can never carry stale flags.
+	bin := strings.ToLower(strings.TrimSpace(m.Binary))
+	if len(m.ClaudeArgs) > 0 && bin != "claude" {
+		return fmt.Errorf("%s.claude_args: member binary is %q; claude_args applies only to claude members", prefix, m.Binary)
+	}
+	if len(m.CodexArgs) > 0 && bin != "codex" {
+		return fmt.Errorf("%s.codex_args: member binary is %q; codex_args applies only to codex members", prefix, m.Binary)
 	}
 	return nil
 }

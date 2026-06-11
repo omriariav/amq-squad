@@ -462,12 +462,14 @@ type teamInitDryRun struct {
 }
 
 type teamProfilePlanMember struct {
-	Role    string `json:"role"`
-	Handle  string `json:"handle"`
-	Binary  string `json:"binary"`
-	Model   string `json:"model,omitempty"`
-	CWD     string `json:"cwd"`
-	Session string `json:"session"`
+	Role       string   `json:"role"`
+	Handle     string   `json:"handle"`
+	Binary     string   `json:"binary"`
+	Model      string   `json:"model,omitempty"`
+	CWD        string   `json:"cwd"`
+	Session    string   `json:"session"`
+	ClaudeArgs []string `json:"claude_args,omitempty"`
+	CodexArgs  []string `json:"codex_args,omitempty"`
 }
 
 type teamProfilePlan struct {
@@ -547,12 +549,14 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 	rows := make([]teamProfilePlanMember, 0, len(p.Team.Members))
 	for _, m := range orderedTeamMembers(p.Team.Members) {
 		rows = append(rows, teamProfilePlanMember{
-			Role:    m.Role,
-			Handle:  m.Handle,
-			Binary:  m.Binary,
-			Model:   m.Model,
-			CWD:     m.EffectiveCWD(p.Team.Project),
-			Session: m.Session,
+			Role:       m.Role,
+			Handle:     m.Handle,
+			Binary:     m.Binary,
+			Model:      m.Model,
+			CWD:        m.EffectiveCWD(p.Team.Project),
+			Session:    m.Session,
+			ClaudeArgs: m.ClaudeArgs,
+			CodexArgs:  m.CodexArgs,
 		})
 	}
 	return teamProfilePlan{
@@ -630,12 +634,14 @@ type emitTeamOptions struct {
 
 // teamPlanMember is the per-member entry inside a JSON team plan.
 type teamPlanMember struct {
-	Role    string `json:"role"`
-	Handle  string `json:"handle"`
-	Binary  string `json:"binary"`
-	Model   string `json:"model,omitempty"`
-	CWD     string `json:"cwd"`
-	Command string `json:"command"`
+	Role       string   `json:"role"`
+	Handle     string   `json:"handle"`
+	Binary     string   `json:"binary"`
+	Model      string   `json:"model,omitempty"`
+	CWD        string   `json:"cwd"`
+	ClaudeArgs []string `json:"claude_args,omitempty"`
+	CodexArgs  []string `json:"codex_args,omitempty"`
+	Command    string   `json:"command"`
 }
 
 // teamPlan is the JSON-friendly representation of a launch-plan preview.
@@ -693,6 +699,9 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 	if err := validateTrustCombination(trustMode, opts.ExplicitTrust || strings.TrimSpace(t.Trust) != "", false, binaryArgs); err != nil {
 		return err
 	}
+	if err := validateMembersTrust(trustMode, opts.ExplicitTrust || strings.TrimSpace(t.Trust) != "", members); err != nil {
+		return err
+	}
 	// Reject --model role=model where role is not on the team, so a typo on
 	// team show / team launch never silently drops the override.
 	memberRoles := make(map[string]bool, len(members))
@@ -736,11 +745,13 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			effectiveModel := memberEffectiveModel(m, opts.ModelOverrides)
 			cwd := m.EffectiveCWD(t.Project)
 			plan.Plan = append(plan.Plan, teamPlanMember{
-				Role:   m.Role,
-				Handle: m.Handle,
-				Binary: m.Binary,
-				Model:  effectiveModel,
-				CWD:    cwd,
+				Role:       m.Role,
+				Handle:     m.Handle,
+				Binary:     m.Binary,
+				Model:      effectiveModel,
+				CWD:        cwd,
+				ClaudeArgs: m.ClaudeArgs,
+				CodexArgs:  m.CodexArgs,
 				Command: emitTeamCommand(emitTeamCommandInput{
 					CWD:            cwd,
 					SquadBin:       squadBin,
@@ -1004,7 +1015,12 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 			b.WriteString(shellQuote(joinedAgentArgs(m.LauncherArgs)))
 		}
 	}
-	extraDefaultArgs := binaryArgsFor(m.Binary, in.BinaryArgs)
+	// Per-member native args (team.json claude_args/codex_args) come AFTER
+	// the team-level binary_args so the member-specific value wins by
+	// position. They ride the same --claude-args/--codex-args plumbing, so
+	// agent up persists them into the launch record and resume reproduces
+	// them like any other child args.
+	extraDefaultArgs := append(binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs()...)
 	if len(extraDefaultArgs) > 0 {
 		switch normalizedAgentBinary(m.Binary) {
 		case "codex":

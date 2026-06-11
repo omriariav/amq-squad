@@ -236,6 +236,65 @@ func TestEmitTeamCommandAddsConfiguredBinaryArgs(t *testing.T) {
 	}
 }
 
+func TestEmitTeamCommandAppendsPerMemberArgsAfterTeamArgs(t *testing.T) {
+	// #111: member claude_args ride after the team-level binary_args so the
+	// member-specific value wins by position, and they appear BOTH in the
+	// persisted --claude-args= flag and the explicit child args after --.
+	m := team.Member{
+		Role: "analyst", Binary: "claude", Handle: "analyst", Session: "s",
+		ClaudeArgs: []string{"--settings", ".claude/agent-overlays/analyst.json"},
+	}
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p",
+		Member: m, Workstream: "p", TrustMode: trustModeSandboxed,
+		BinaryArgs: map[string][]string{"claude": {"--chrome"}},
+	})
+	for _, want := range []string{
+		"agent up claude",
+		"--claude-args='--chrome --settings .claude/agent-overlays/analyst.json'",
+		"-- --permission-mode auto --chrome --settings .claude/agent-overlays/analyst.json",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("emitTeamCommand missing %q in: %s", want, cmd)
+		}
+	}
+}
+
+func TestEmitTeamCommandPerMemberArgsOnly(t *testing.T) {
+	// No team-level binary_args: a member's own args still emit.
+	m := team.Member{
+		Role: "cto", Binary: "codex", Handle: "cto", Session: "s",
+		CodexArgs: []string{"--profile", "fast"},
+	}
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p",
+		Member: m, Workstream: "p", TrustMode: trustModeSandboxed,
+	})
+	if !strings.Contains(cmd, "--codex-args='--profile fast'") {
+		t.Errorf("member codex_args missing from emitted command: %s", cmd)
+	}
+}
+
+func TestValidateMembersTrustRejectsSmuggledBypass(t *testing.T) {
+	// A sandboxed team must not smuggle the Codex bypass flag through one
+	// member's codex_args; the rejection names the member.
+	members := []team.Member{
+		{Role: "cto", Binary: "codex", Handle: "cto", Session: "s",
+			CodexArgs: []string{"--dangerously-bypass-approvals-and-sandbox"}},
+	}
+	err := validateMembersTrust(trustModeSandboxed, false, members)
+	if err == nil {
+		t.Fatal("sandboxed trust + member bypass arg must be rejected")
+	}
+	if !strings.Contains(err.Error(), "member cto") {
+		t.Errorf("rejection should name the member: %v", err)
+	}
+	// Trusted mode allows it (the bypass is then the explicit default anyway).
+	if err := validateMembersTrust(trustModeTrusted, true, members); err != nil {
+		t.Errorf("trusted mode should accept the member bypass arg, got %v", err)
+	}
+}
+
 func TestEmitTeamCommandQuotesPathsWithSpaces(t *testing.T) {
 	m := team.Member{Role: "cpo", Binary: "codex", Handle: "cpo", Session: "cpo"}
 	cmd := emitTeamCommand(emitTeamCommandInput{

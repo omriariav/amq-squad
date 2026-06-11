@@ -1,6 +1,11 @@
 package cli
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/omriariav/amq-squad/internal/team"
+)
 
 const (
 	trustModeSandboxed = "sandboxed"
@@ -69,6 +74,29 @@ func validateTrustCombination(trustMode string, trustExplicit, noDefaultArgs boo
 				}
 				return usageErrorf("--codex-args contains --dangerously-bypass-approvals-and-sandbox; pass --trust trusted instead so the trust boundary is explicit")
 			}
+		}
+	}
+	return nil
+}
+
+// validateMembersTrust applies the same trust-vs-args contradiction check to
+// each member's per-member native args (team.json claude_args/codex_args), so
+// a sandboxed team cannot smuggle the Codex bypass flag through one member's
+// codex_args. Runs at plan/launch time, next to the team-level check, so the
+// rejection happens before any pane exists instead of inside runLaunch.
+func validateMembersTrust(trustMode string, trustExplicit bool, members []team.Member) error {
+	for _, m := range members {
+		// ExtraArgs selects the field matching the member's binary, so a
+		// member can never be judged on args that don't apply to it (the
+		// schema validator rejects mismatched fields, but this helper must
+		// not depend on that having run).
+		extra := m.ExtraArgs()
+		if len(extra) == 0 {
+			continue
+		}
+		memberArgs := map[string][]string{normalizedAgentBinary(m.Binary): extra}
+		if err := validateTrustCombination(trustMode, trustExplicit, false, memberArgs); err != nil {
+			return fmt.Errorf("member %s: %w", m.Role, err)
 		}
 	}
 	return nil

@@ -322,6 +322,67 @@ func TestValidateMemberLauncher(t *testing.T) {
 	}
 }
 
+func TestValidateMemberPerMemberArgs(t *testing.T) {
+	claude := Member{Role: "analyst", Binary: "claude", Handle: "analyst", Session: "s"}
+	codex := Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}
+
+	ok := claude
+	ok.ClaudeArgs = []string{"--settings", ".claude/agent-overlays/analyst.json"}
+	if err := Validate(Team{Members: []Member{ok}}); err != nil {
+		t.Errorf("claude_args on a claude member should validate, got %v", err)
+	}
+
+	okCodex := codex
+	okCodex.CodexArgs = []string{"--enable", "goals"}
+	if err := Validate(Team{Members: []Member{okCodex}}); err != nil {
+		t.Errorf("codex_args on a codex member should validate, got %v", err)
+	}
+
+	// Binary mismatch is rejected, never silently ignored: stale flags must
+	// not survive a member's binary flip.
+	mismatch := codex
+	mismatch.ClaudeArgs = []string{"--settings", "x.json"}
+	if err := Validate(Team{Members: []Member{mismatch}}); err == nil || !strings.Contains(err.Error(), "claude_args applies only to claude members") {
+		t.Errorf("claude_args on codex member: want binary-match error, got %v", err)
+	}
+	mismatch2 := claude
+	mismatch2.CodexArgs = []string{"--enable", "goals"}
+	if err := Validate(Team{Members: []Member{mismatch2}}); err == nil || !strings.Contains(err.Error(), "codex_args applies only to codex members") {
+		t.Errorf("codex_args on claude member: want binary-match error, got %v", err)
+	}
+
+	// Entries are display-validated like every other persisted member field.
+	blank := claude
+	blank.ClaudeArgs = []string{"  "}
+	if err := Validate(Team{Members: []Member{blank}}); err == nil || !strings.Contains(err.Error(), "claude_args[0]") {
+		t.Errorf("blank claude_args entry: want display-value error, got %v", err)
+	}
+}
+
+func TestMemberExtraArgs(t *testing.T) {
+	m := Member{Role: "analyst", Binary: "claude", ClaudeArgs: []string{"--settings", "a.json"}, CodexArgs: nil}
+	got := m.ExtraArgs()
+	if len(got) != 2 || got[0] != "--settings" || got[1] != "a.json" {
+		t.Fatalf("ExtraArgs() = %v, want the claude_args", got)
+	}
+	// Returned slice is a copy: appending must not mutate the member.
+	_ = append(got, "--mutated")
+	if len(m.ClaudeArgs) != 2 {
+		t.Error("ExtraArgs must return a copy, member was mutated")
+	}
+	// Binary normalization: case/space-insensitive match.
+	m.Binary = " Claude "
+	if len(m.ExtraArgs()) != 2 {
+		t.Error("ExtraArgs should normalize the binary before matching")
+	}
+	// Unknown binary yields nil even when fields are set (validation rejects
+	// such configs, but loading them must stay non-destructive).
+	m.Binary = "other"
+	if m.ExtraArgs() != nil {
+		t.Error("ExtraArgs on an unmatched binary must be nil")
+	}
+}
+
 func TestEffectiveCapabilitiesAdvertisesRuntimeActions(t *testing.T) {
 	// Every v1.5.0+ build exposes the tmux runtime contract, so clients
 	// (amq-noc) can gate their runtime-action UI on capabilities.runtime_actions.
