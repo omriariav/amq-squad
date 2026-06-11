@@ -59,6 +59,24 @@ the open issues by theme + status so the near-term path is legible at a glance.
     spawn / dispatch (busy-guarded `send`) / monitor (`status --json`) / the
     `[AGENT-EVENT]`-over-AMQ reporting protocol / recover. Plus the corrected
     `send` busy-guard note in the `amq-squad` skill.
+- **v1.9.0 — shipped. Context-budget + operator-steering release.**
+  - **`team overlay` primitive (#111 follow-up).** `amq-squad team overlay
+    init (--role R | --workers)` generates `.amq-squad/overlays/
+    <role>.claude.json` and wires the member's `claude_args` to load it via
+    `--settings` — one command to trim a worker's plugin/hook surface in a
+    same-cwd squad. No-clobber + idempotent + `--force`-gated replacement;
+    `--workers` excludes the orchestration lead; plan emission (up / resume /
+    tmux launch) fails fast when a referenced `--settings` file is missing.
+    (PR #120; skills wizard beat + docs in PR #122, both marketplaces.)
+  - **#117 — operator DIRECTIVE convention.** The squad-side contract for
+    amq-noc v0.8.0's direct-lead flow: an "Operator directives" section in the
+    `amq-squad-orchestrator` skill (arrival shapes, priority over child
+    reports, ack on the same p2p thread, never clears `gate/<topic>`), plus a
+    generated line in the orchestrated `## Orchestration` team-rules norm
+    naming the lead handle (the #81/#101 generated-norm pattern). (PR #121)
+  - **Triage:** closed #46 (amq env identity strip + stderr surfacing both
+    shipped earlier) and #11 (role.md stubs already actionable, TODO text
+    survives only as the upgrade-path test fixture).
 - **v1.8.0 — shipped. The dogfooding release: every item came out of the first
   real-world orchestrated-squad run (pm-copilot, 2026-06-10).**
   - **#109 — stop → rm refused for the 90s presence-freshness window.** A fresh
@@ -151,6 +169,7 @@ the open issues by theme + status so the near-term path is legible at a glance.
 - #19 — Rework Codex trust defaults for generated launches. ✅ shipped
   (sandboxed-by-default trust profiles) — closed in the v1.8.0 triage.
 - #11 — Replace placeholder `role.md` stubs with actionable role guidance.
+  ✅ closed in the v1.9.0 triage (already shipped; pinned by tests).
 
 ### AMQ integration & operator
 
@@ -163,8 +182,9 @@ the open issues by theme + status so the near-term path is legible at a glance.
 
 ### Bugs
 
-- #46 — `amq env` failures are opaque; the launch path leaks shell
-  `AM_ROOT`/`AM_ME` identity.
+- #46 — `amq env` failures are opaque; identity leak. ✅ closed in the v1.9.0
+  triage (envWithoutAMQIdentity at both resolution and exec; stderr folded
+  into errors).
 - #45 — Exiting agent leaves an orphan `amq wake` that blocks relaunch.
   ✅ closed in the v1.8.0 triage (v1.5.x preflight auto-clean + actionable
   blocker; prevention shipped as `--require-wake` in v1.8.0).
