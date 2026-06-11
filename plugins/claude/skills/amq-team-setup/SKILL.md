@@ -126,8 +126,9 @@ You can also preview a candidate from a deterministic source with
   `"claude_args": ["--settings", ".claude/agent-overlays/<role>.json"]`
   pointing at a Claude Code settings overlay (`enabledPlugins`,
   `disableAllHooks`, ...) that trims plugins and hooks the worker never uses,
-  cutting its per-prompt context cost. There is no CLI flag for this field:
-  edit `team.json` after `new team`, then validate with `amq-squad team sync`.
+  cutting its per-prompt context cost. Do not hand-edit this: step 5 generates
+  and wires it with `amq-squad team overlay init` (v1.9.0+). Plan emission
+  validates that every referenced `--settings` file exists.
 - Pick the team-home (where `.amq-squad/` lives): the cwd by default; for a
   monorepo, usually the repo root. Confirm if the choice is non-obvious.
 
@@ -182,19 +183,43 @@ orchestrated?/lead, brief) and confirm. Then create:
    opt-in from step 4; without `--lead`, a single-member team self-selects and a
    team with a `cto` defaults to `cto`.
 
-2. **The brief**: save the confirmed step-2 draft to
+2. **Worker overlays** (optional; ask whenever the team has two or more
+   claude members — same-cwd squads are the flagship case): "Should the
+   workers run with a trimmed plugin/hook surface?"
+   Only the lead usually needs the full project configuration; workers on
+   smaller-context models burn context on plugins and per-prompt hook output
+   they never use. If yes, generate and wire the overlays in one command:
+
+   ```sh
+   amq-squad team overlay init --workers --disable-all-hooks \
+     --disable-plugins <id@marketplace,...>
+   # or one member at a time:
+   amq-squad team overlay init --role <role> --disable-all-hooks
+   ```
+
+   This writes `.amq-squad/overlays/<role>.claude.json` (human-editable
+   afterwards; re-runs never clobber it) and wires the member's
+   `claude_args: ["--settings", <path>]` in `team.json`. `--workers` targets
+   every claude member (on an orchestrated team the lead is excluded; a flat
+   team has no lead to exclude). To find plugin ids for
+   `--disable-plugins`, ask the user or check `claude plugin list` output.
+   Codex members use the native equivalent instead: a
+   `$CODEX_HOME/<name>.config.toml` profile wired via
+   `codex_args: ["--profile", "<name>"]`.
+
+3. **The brief**: save the confirmed step-2 draft to
    `.amq-squad/briefs/<session>.md` (a plain file write; the first live `up`
    preserves an existing brief). This kills the auto-stub the status board warns
    about.
 
-3. **Pointer stubs**: `amq-squad team sync --apply` writes the managed block in
+4. **Pointer stubs**: `amq-squad team sync --apply` writes the managed block in
    `CLAUDE.md` / `AGENTS.md` (add `--sync` to `new team` to do it in one shot).
 
-4. **Validate**: `amq-squad up --dry-run` (one launch command per member),
+5. **Validate**: `amq-squad up --dry-run` (one launch command per member),
    `amq-squad team sync` (no drift), `amq-squad doctor` (AMQ / tmux / wake /
    markers).
 
-5. **Print the next commands** and hand off:
+6. **Print the next commands** and hand off:
 
    ```sh
    amq-squad up                 # bring all members up in the current tmux window
@@ -223,6 +248,7 @@ orchestrated?/lead, brief) and confirm. Then create:
 | Preview the profile without writing | `amq-squad new team --dry-run [--json] --roles ...` |
 | Initialize interactively (prompts for roles/CLIs) | `amq-squad team init` |
 | Seed/refresh `.amq-squad/team-rules.md` | `amq-squad team rules init` |
+| Trim worker plugin/hook surface | `amq-squad team overlay init --workers [--disable-plugins id@market,...] [--disable-all-hooks]` |
 | Preview pointer-stub drift | `amq-squad team sync` |
 | Apply the pointer stub | `amq-squad team sync --apply` |
 | Inspect the planned launch (dry-run) | `amq-squad up --dry-run [--json]` |
@@ -258,8 +284,8 @@ Global output flags work before or after the subcommand: `--quiet`,
   out. Schema 1/2 profiles keep implicit `user` gates until rewritten.
 - Setup never executes a live launch. Use `--dry-run` until the user explicitly
   approves going live; live launches happen via the `amq-squad` skill's `up`
-  flow. (Writing the brief and the profile in step 5 are file writes, not a
-  launch.)
+  flow. (Writing the brief, the profile, and the overlays in step 5 are file
+  writes, not a launch.)
 - Codex trusted mode (`--trust trusted`) is the only path that prepends
   `--dangerously-bypass-approvals-and-sandbox`. The default `sandboxed` mode
   emits no implicit bypass; pick the mode deliberately if non-default.
