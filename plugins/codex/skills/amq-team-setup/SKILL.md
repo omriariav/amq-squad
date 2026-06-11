@@ -96,6 +96,22 @@ You can also preview a candidate from a deterministic source with
   squad, design-led, qa-led).
 - For each role decide binary (`codex` / `claude`), handle, cwd, and scope.
   Keep the roster minimal; you can add roles later by re-running `team init`.
+- Custom (non-catalog) roles enter via `--role-file <path>` (comma-separated,
+  or an inline path in `--roles`); author them with the
+  `amq-squad-role-creator` skill. Two beats that matter in practice:
+  - **Show, then create**: before creating the team, show the user every
+    custom role's full body and let them edit — skill lists and hard rules
+    get most of their fixes at this gate.
+  - **Staging normalizes the file**: `new team --role-file` stages a copy
+    under `.amq-squad/roles/<id>.md` with the YAML frontmatter absorbed into
+    `team.json` and only the Markdown body kept. Expected behavior, not
+    corruption; the authored source file is untouched.
+- `--binary` takes ONE comma-separated list
+  (`--binary copilot=claude,analyst=claude,...`). Repeating the flag does NOT
+  accumulate — only one list survives, and the resulting error ("custom role X
+  requires --binary x=<cli>") reads like a contradiction when you did pass it.
+  A role file's `binary:` frontmatter satisfies the requirement for that role,
+  so an all-role-file team usually needs no `--binary` at all.
 - Choose the profile: default at `.amq-squad/team.json`, or a named profile at
   `.amq-squad/teams/<name>.json` for parallel team shapes (release vs research).
 - **Per-member native args** (v1.8.0+): a member entry in `team.json` may
@@ -140,10 +156,19 @@ orchestrated?/lead, brief) and confirm. Then create:
 1. **Team profile + rules** (one command writes both):
 
    ```sh
-   amq-squad new team --roles cto,fullstack,qa --binary cto=codex
+   amq-squad new team --roles cto,fullstack,qa --binary cto=codex \
+     --session <workstream>
    # orchestrated variant:
-   amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto
+   amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto \
+     --session <workstream>
    ```
+
+   Pass `--session <workstream>` explicitly — the session name you confirmed
+   earlier does not apply itself. A brand-new profile has no member-session
+   pin yet, so without the flag the workstream falls back to the sanitized
+   team-home directory name, and the brief you write next lands under a
+   session the team never boots into. (Once members carry a session pin,
+   later resolution infers it from them.)
 
    `new team` writes `.amq-squad/team.json` and seeds the generated
    `.amq-squad/team-rules.md` **if it does not already exist** (an existing
@@ -175,6 +200,15 @@ orchestrated?/lead, brief) and confirm. Then create:
 
    First live launch belongs to the `amq-squad` skill (or, for an orchestrated
    squad, the lead drives spawn/dispatch/monitor via `amq-squad-orchestrator`).
+
+   **Launch-name consistency (read before handing off):** the configured
+   workstream applies only when the launch command carries NO `--session`
+   override. Launching under a different free-typed name (e.g. in a NOC
+   new-session form) boots a brand-new workstream with an auto-stub brief —
+   the brief from this step is invisible to those agents. If the status board
+   shows `(stub brief)` right after launch, the session name diverged: stop
+   the squad, `rm` the accidental session, and relaunch with the configured
+   workstream name explicitly (`amq-squad up <workstream>`).
 
 ## Verbs you will use
 
