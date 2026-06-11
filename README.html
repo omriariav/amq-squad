@@ -337,8 +337,8 @@ workstream)</li>
 (<code>launch.json</code> + <code>role.md</code> inside the AMQ
 mailbox). AMQ itself stays unchanged.</p>
 <h2 id="install">Install</h2>
-<p>Install the 1.8 line:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/cmd/amq-squad@v1.8.0</span>
+<p>Install the 1.9 line:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/cmd/amq-squad@v1.9.0</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For the latest 1.x build:</p>
 <div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/cmd/amq-squad@latest</span></code></pre></div>
@@ -767,6 +767,15 @@ amq-squad team rules init [--project DIR] [--force]
                                   Seed or refresh .amq-squad/team-rules.md.
 amq-squad team rules show [--project DIR]
                                   Print .amq-squad/team-rules.md.
+amq-squad team overlay init (--role R | --workers) [--disable-plugins id@market,...]
+                        [--disable-all-hooks] [--force] [--dry-run]
+                                  Generate .amq-squad/overlays/&lt;role&gt;.claude.json
+                                  and wire the member&#39;s claude_args to load it
+                                  via --settings: trim a worker&#39;s plugin/hook
+                                  surface in a same-cwd squad. --workers targets
+                                  every claude member (orchestration lead
+                                  excluded). Plan emission fails fast when a
+                                  referenced --settings file is missing.
 amq-squad team sync [--project DIR] [--apply] [--allow-outside]
                                   Sync the pointer stub into CLAUDE.md and AGENTS.md.
                                   Exit 1 on drift when --apply is not set.
