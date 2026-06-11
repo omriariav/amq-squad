@@ -123,7 +123,7 @@ You can also preview a candidate from a deterministic source with
   The field must match the member's binary (`team sync` rejects a mismatch).
   Flagship use: a same-cwd squad where only the lead needs the full
   plugin/hook surface — give each worker
-  `"claude_args": ["--settings", ".claude/agent-overlays/<role>.json"]`
+  `"claude_args": ["--settings", ".amq-squad/overlays/<role>.claude.json"]`
   pointing at a Claude Code settings overlay (`enabledPlugins`,
   `disableAllHooks`, ...) that trims plugins and hooks the worker never uses,
   cutting its per-prompt context cost. Do not hand-edit this: step 5 generates
