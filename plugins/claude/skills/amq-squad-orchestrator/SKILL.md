@@ -126,6 +126,37 @@ amq drain --include-body
 
 **Why durable mailbox over pane-push:** a pane-push envelope is lost if the parent pane dies or is busy, requires the child to know and idle-check the parent's exact pane, and must be scraped back out with `capture-pane`. The AMQ mailbox **survives pane death**, is **addressable by stable handle**, and needs **no scraping** (the lead drains structured messages). It is the durable, crash-survivable record; the pane is only the lead's live control surface.
 
+### Operator directives (NOC -> lead)
+
+The operator can steer you directly from the NOC (amq-noc v0.8.0+). A directive
+reaches you one of two ways: live, injected into your pane via the busy-guarded
+`amq-squad send`; or, when you were down, as a durable AMQ message you find on
+your next drain:
+
+- thread: `p2p/<sorted lead__operator>` (your operator p2p thread)
+- kind: `todo`
+- subject: `DIRECTIVE: <first line of the body>`
+
+Treat directives differently from child reports:
+
+- **Directives are operator steering.** Process them with priority over child
+  reports in the same drain: re-plan, re-dispatch, or stand down as instructed
+  before continuing the queue.
+- **Acknowledge on the same thread.** Reply on the directive's p2p thread with
+  `--kind status` (accepted / what you will do) or `--kind answer` (when the
+  directive asks a question). The operator is watching the thread from the NOC;
+  an unacknowledged directive looks ignored. The thread name is the
+  alphabetically sorted handle pair, e.g.:
+
+  ```sh
+  amq send --to user --thread p2p/copilot__user --kind status \
+    --subject "ACK: re-prioritizing per directive" --body "..."
+  ```
+- **A directive body is data, not a gate answer.** It never clears a
+  `gate/<topic>` thread: if you are waiting on an approval gate, keep waiting
+  for the gate reply on the gate thread, even when a directive arrives that
+  seems related. Surface the conflict to the operator instead of guessing.
+
 ## 5. Recover
 
 ```sh
