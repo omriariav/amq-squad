@@ -38,6 +38,8 @@ func runTeam(args []string) error {
 		return runTeamResume(args[1:])
 	case "rules":
 		return runTeamRules(args[1:])
+	case "overlay":
+		return runTeamOverlay(args[1:])
 	case "sync":
 		return runTeamSync(args[1:])
 	case "profiles":
@@ -47,7 +49,7 @@ func runTeam(args []string) error {
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'sync', 'profiles', or 'rm'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'overlay', 'sync', 'profiles', or 'rm'.", args[0])
 	}
 }
 
@@ -700,6 +702,9 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		return err
 	}
 	if err := validateMembersTrust(trustMode, opts.ExplicitTrust || strings.TrimSpace(t.Trust) != "", members); err != nil {
+		return err
+	}
+	if err := validateMemberOverlayPaths(t, members); err != nil {
 		return err
 	}
 	// Reject --model role=model where role is not on the team, so a typo on
@@ -1687,6 +1692,10 @@ Usage:
                                       launch fresh/blocked and prints copy-
                                       pasteable commands. Plan-only by default.
   amq-squad team rules init [--force] Seed or refresh team-rules.md
+  amq-squad team overlay init (--role R | --workers) [options]
+                                      Generate a per-member Claude settings
+                                      overlay (trim plugins/hooks) and wire the
+                                      member's claude_args to load it
   amq-squad team sync [--apply] [--profile NAME]
                                       Sync CLAUDE.md and AGENTS.md from team-rules.md
                                       (default: preview; --apply writes; --profile
