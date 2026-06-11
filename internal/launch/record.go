@@ -32,29 +32,29 @@ type Record struct {
 	Session string   `json:"session"`
 	// SharedWorkstream means Session was chosen as the team-wide workstream,
 	// even if the name happens to equal this agent's role or handle.
-	SharedWorkstream bool      `json:"shared_workstream,omitempty"`
-	Conversation     string    `json:"conversation,omitempty"`
-	Handle           string    `json:"handle"`
-	Role             string    `json:"role,omitempty"`
-	Root             string    `json:"root"`
-	BaseRoot         string    `json:"base_root,omitempty"`
-	RootSource       string    `json:"root_source,omitempty"`
-	AMQVersion       string    `json:"amq_version,omitempty"`
-	CodexArgs        []string  `json:"codex_args,omitempty"`
-	ClaudeArgs       []string  `json:"claude_args,omitempty"`
-	Launcher         string    `json:"launcher,omitempty"`
-	LauncherArgs     []string  `json:"launcher_args,omitempty"`
-	Model            string    `json:"model,omitempty"`
-	Trust            string    `json:"trust,omitempty"`
-	NoDefaultArgs    bool      `json:"no_default_args,omitempty"`
+	SharedWorkstream bool     `json:"shared_workstream,omitempty"`
+	Conversation     string   `json:"conversation,omitempty"`
+	Handle           string   `json:"handle"`
+	Role             string   `json:"role,omitempty"`
+	Root             string   `json:"root"`
+	BaseRoot         string   `json:"base_root,omitempty"`
+	RootSource       string   `json:"root_source,omitempty"`
+	AMQVersion       string   `json:"amq_version,omitempty"`
+	CodexArgs        []string `json:"codex_args,omitempty"`
+	ClaudeArgs       []string `json:"claude_args,omitempty"`
+	Launcher         string   `json:"launcher,omitempty"`
+	LauncherArgs     []string `json:"launcher_args,omitempty"`
+	Model            string   `json:"model,omitempty"`
+	Trust            string   `json:"trust,omitempty"`
+	NoDefaultArgs    bool     `json:"no_default_args,omitempty"`
 	// NoRequireWake records the --no-require-wake opt-out so resume/replay
 	// reproduces it: the constraint it answers (wake cannot acquire its lock
 	// in this environment) is a property of the execution environment, not a
 	// one-shot launch decision.
 	NoRequireWake bool      `json:"no_require_wake,omitempty"`
 	AgentPID      int       `json:"agent_pid,omitempty"`
-	AgentTTY         string    `json:"agent_tty,omitempty"`
-	StartedAt        time.Time `json:"started_at"`
+	AgentTTY      string    `json:"agent_tty,omitempty"`
+	StartedAt     time.Time `json:"started_at"`
 	// TeamProfile names the profile the launch was emitted from. Empty
 	// means the implicit default profile. Captured so status / bootstrap
 	// routing can reuse the same profile without rereading flags.
