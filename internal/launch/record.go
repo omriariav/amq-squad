@@ -47,7 +47,12 @@ type Record struct {
 	Model            string    `json:"model,omitempty"`
 	Trust            string    `json:"trust,omitempty"`
 	NoDefaultArgs    bool      `json:"no_default_args,omitempty"`
-	AgentPID         int       `json:"agent_pid,omitempty"`
+	// NoRequireWake records the --no-require-wake opt-out so resume/replay
+	// reproduces it: the constraint it answers (wake cannot acquire its lock
+	// in this environment) is a property of the execution environment, not a
+	// one-shot launch decision.
+	NoRequireWake bool      `json:"no_require_wake,omitempty"`
+	AgentPID      int       `json:"agent_pid,omitempty"`
 	AgentTTY         string    `json:"agent_tty,omitempty"`
 	StartedAt        time.Time `json:"started_at"`
 	// TeamProfile names the profile the launch was emitted from. Empty
