@@ -256,10 +256,10 @@ func TestClassifyDeadMailboxLiveNonActiveStatus(t *testing.T) {
 	agentDir := seedAgent(t, base, "s", "cto", launch.Record{
 		Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1234,
 	})
-	// Mailbox touched recently but status is "offline": still a live mailbox
-	// behind a dead process — the inverse lie (running-looking writes, status
-	// says offline). Must surface as dead-mailbox-live, not dead.
-	seedPresence(t, agentDir, "cto", "offline", testNow.Add(-5*time.Second))
+	// Mailbox touched recently with a non-active, non-terminal status ("idle"):
+	// still a live mailbox behind a dead process — something keeps writing
+	// while the agent is gone. Must surface as dead-mailbox-live, not dead.
+	seedPresence(t, agentDir, "cto", "idle", testNow.Add(-5*time.Second))
 	probe := fakeProbe(map[int]bool{1234: false}, map[int]bool{1234: false}, nil)
 
 	snap, err := Build(proj, base, probe)
@@ -269,6 +269,33 @@ func TestClassifyDeadMailboxLiveNonActiveStatus(t *testing.T) {
 	a := findAgent(t, snap, "cto")
 	if a.Liveness != LivenessDeadMailboxLive {
 		t.Fatalf("Liveness = %q, want dead-mailbox-live (fresh mailbox, dead pid)", a.Liveness)
+	}
+}
+
+func TestClassifyFreshOfflinePresenceIsNotMailboxLive(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	agentDir := seedAgent(t, base, "s", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1234,
+	})
+	// The post-stop state (#109): stop killed the agent and flipped presence
+	// to "offline" seconds ago. That write is a terminal signal, not a zombie
+	// heartbeat — it must classify exactly like an expired one (stale via the
+	// recorded-PID signal), NOT dead-mailbox-live, or the documented stop→rm
+	// sequence refuses for the whole PresenceFreshness window.
+	seedPresence(t, agentDir, "cto", "offline", testNow.Add(-5*time.Second))
+	probe := fakeProbe(map[int]bool{1234: false}, map[int]bool{1234: false}, nil)
+
+	snap, err := Build(proj, base, probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := findAgent(t, snap, "cto")
+	if a.Liveness == LivenessDeadMailboxLive {
+		t.Fatal("fresh offline presence + dead pid must not classify dead-mailbox-live (#109)")
+	}
+	if a.Liveness != LivenessStale {
+		t.Fatalf("Liveness = %q, want stale (same as after the freshness window expires)", a.Liveness)
 	}
 }
 

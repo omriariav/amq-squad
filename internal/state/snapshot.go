@@ -192,7 +192,14 @@ func classifyAgent(e launch.Entry, probe Probe) Agent {
 	if presErr == nil && !pres.LastSeen.IsZero() {
 		recent := probe.Now().Sub(pres.LastSeen) <= PresenceFreshness
 		handleOK := pres.Handle == "" || pres.Handle == rec.Handle
-		if recent && handleOK {
+		// A fresh write whose status is explicitly "offline" is the expected
+		// terminal act of a clean stop (stop/down flip presence offline as
+		// their last step), NOT evidence that something is still writing.
+		// Counting it as a live-ish touch made the documented stop→rm
+		// sequence deterministically refuse for PresenceFreshness (#109), so
+		// an offline write classifies exactly like an expired one.
+		terminal := strings.EqualFold(pres.Status, "offline")
+		if recent && handleOK && !terminal {
 			mailboxRecentlyTouched = true
 			if strings.EqualFold(pres.Status, "active") {
 				presenceActiveFresh = true
@@ -222,9 +229,11 @@ func classifyAgent(e launch.Entry, probe Probe) Agent {
 			a.Liveness = LivenessAlive
 		}
 	case mailboxRecentlyTouched && rec.AgentPID > 0:
-		// Mailbox touched recently (presence not "active", e.g. "offline"/"idle")
-		// yet the recorded agent PID is dead: something is still writing while
-		// the agent is gone. Distinct dead-mailbox-live signal.
+		// Mailbox touched recently with a non-active, non-terminal status
+		// (e.g. "idle"; "offline" never reaches here, see the terminal
+		// carve-out above) yet the recorded agent PID is dead: something is
+		// still writing while the agent is gone. Distinct dead-mailbox-live
+		// signal.
 		a.Liveness = LivenessDeadMailboxLive
 	case !hasAnyDiskSignal:
 		a.Liveness = LivenessMissing
