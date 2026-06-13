@@ -25,11 +25,15 @@ the open issues by theme + status so the near-term path is legible at a glance.
     `amq-squad-orchestrator` skill's "Compose the team from the goal (seeded)"
     playbook (both mirrors) — propose → gate/`<topic>` approval → `team member
     add` → `task add` → prune.
-  - ⏭ **Slice D — dogfood + eval gate (next, blocking):** commit
-    `docs/eval-strategy.md` (reference goals + scoring) and run a live Codex-led
-    dogfood on os-omri-pm from a **lead-only seed** (one lead member — a 0-member
-    empty seed is a Phase-1 opt-in). Holds Phase 1 until the lead's judgment,
-    not just the verbs, looks right.
+  - 🟡 **Slice D — dogfood + eval gate (eval ✅, live dogfood pending):**
+    `docs/eval-strategy.md` (rubric: 5 reference goals + scoring) and
+    `docs/eval-results.md` (a real **Codex-led** eval run) are committed — the
+    automated rubric **passes** (4/5 + 1 borderline; 5/5 mechanics OK; strong
+    judgment on the research goal). The remaining gate is a **human-judged live
+    dogfood on os-omri-pm** ("feels right"), which holds Phase 1. Two findings to
+    fold before/with Phase 1: add a `team member list` roster-read command, and a
+    `scribe`/`technical-writer` role to the library (so docs goals compose
+    without an implementer).
 - **v1.5.0 — shipped.** tmux runtime contract (persisted pane/window ids,
   `pane_alive`, per-agent `actions[]`, `focus`/`open`/`send` verbs, `--target
   new-window`), custom roles, Claude + Codex plugin marketplaces.
