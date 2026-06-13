@@ -187,6 +187,8 @@ func dispatch(args []string) error {
 	switch args[0] {
 	case "team":
 		return runTeam(args[1:])
+	case "task":
+		return runTask(args[1:])
 	case "new":
 		return runNew(args[1:])
 	case "roles":
@@ -257,7 +259,8 @@ Usage:
 Commands:
   new       Create a team, named profile, or workstream session
   roles     List built-in role IDs and market numbers for team creation
-  team      Set up and manage the team (init, rules, sync, profiles)
+  team      Set up and manage the team (init, rules, member, sync, profiles)
+  task      Native pull-based task store (add/list/claim/done/fail/block)
   up        Bring the team up (use --dry-run to print the launch plan)
   stop      Stop configured team members (SIGTERM; --force = SIGKILL). State is
             preserved on disk, so the session stays resumable.
