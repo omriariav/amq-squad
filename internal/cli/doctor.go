@@ -483,7 +483,7 @@ func doctorCheckTmux(d doctorExecution) doctorCheck {
 		return doctorCheck{
 			Name:   "tmux",
 			Status: doctorFail,
-			Detail: "tmux not found on PATH (required for team launch)",
+			Detail: "tmux not found on PATH (required for 'up' with --terminal tmux)",
 		}
 	}
 	return doctorCheck{Name: "tmux", Status: doctorOK, Detail: path}

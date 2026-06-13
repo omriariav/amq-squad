@@ -92,30 +92,15 @@ func runDownExec(t *testing.T, d downExecution) (string, error) {
 	return buf.String(), err
 }
 
-func TestRunDownRejectsRoleAndAll(t *testing.T) {
+func TestRunStopRejectsRoleAndAll(t *testing.T) {
 	seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
 	})
 	_, _, err := captureOutput(t, func() error {
-		return runDown([]string{"--role", "cto", "--all"})
+		return runStop([]string{"--role", "cto", "--all"})
 	})
 	if err == nil {
 		t.Fatal("--role and --all together should be a usage error")
-	}
-	if _, ok := err.(UsageError); !ok {
-		t.Fatalf("want UsageError, got %T: %v", err, err)
-	}
-}
-
-func TestRunDownRequiresSelector(t *testing.T) {
-	seedTeam(t, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
-	})
-	_, _, err := captureOutput(t, func() error {
-		return runDown([]string{})
-	})
-	if err == nil {
-		t.Fatal("missing selector should be a usage error")
 	}
 	if _, ok := err.(UsageError); !ok {
 		t.Fatalf("want UsageError, got %T: %v", err, err)
