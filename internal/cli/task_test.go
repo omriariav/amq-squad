@@ -80,6 +80,51 @@ func TestTaskListJSONEnvelope(t *testing.T) {
 	}
 }
 
+func TestTaskRejectsUnsafeSession(t *testing.T) {
+	chdir(t, t.TempDir())
+	for _, bad := range []string{"../escape", "a/b", "..", "UP"} {
+		if _, _, err := captureOutput(t, func() error {
+			return runTask([]string{"add", "--title", "x", "--session", bad})
+		}); err == nil || !strings.Contains(err.Error(), "invalid --session") {
+			t.Errorf("session %q: want invalid --session error, got %v", bad, err)
+		}
+	}
+}
+
+func TestTaskTransitionRejectsInapplicableFlag(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	withFixedTaskNow(t)
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"add", "--title", "x", "--session", "s"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"claim", "t1", "--me", "w", "--session", "s"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// `fail --evidence` must be a clear error, not a silent drop (--evidence
+	// belongs to done, not fail).
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"fail", "t1", "--evidence", "E", "--session", "s"})
+	}); err == nil || !strings.Contains(err.Error(), "evidence") {
+		t.Fatalf("fail --evidence should be rejected, got %v", err)
+	}
+}
+
+func TestTaskRejectsExtraPositional(t *testing.T) {
+	chdir(t, t.TempDir())
+	// An extra positional after the flags (Go's parser stops at a leading
+	// positional, so the meaningful case is a stray arg after --session).
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"list", "--session", "s", "extra"})
+	}); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+		t.Fatalf("extra positional should be rejected, got %v", err)
+	}
+}
+
 func TestTaskUnknownSubcommandErrors(t *testing.T) {
 	if _, _, err := captureOutput(t, func() error {
 		return runTask([]string{"bogus", "--session", "s"})
