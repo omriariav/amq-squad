@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
 // clockOrDefault returns the probe's injected clock, or the real wall-clock when

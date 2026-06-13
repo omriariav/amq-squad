@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // agentLivenessVerdict is the single shared liveness vocabulary that BOTH

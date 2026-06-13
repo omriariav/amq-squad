@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
 // archiveDirName is the base-root subdirectory that `archive` MOVES sessions

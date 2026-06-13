@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/rules"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/rules"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // Persisted team args that contradict the trust profile must be caught

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // The legacy verbs (top-level launch/restore/list, the old `down` alias, and

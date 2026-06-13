@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/console"
-	"github.com/omriariav/amq-squad/internal/state"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/console"
+	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // captureConsole drives executeConsole with a captured RunConsole seam so the

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
 // row is one navigable line in a view. Every view projects the (filtered)

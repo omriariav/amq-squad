@@ -7,8 +7,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/omriariav/amq-squad/internal/flock"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/flock"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // runTeamMember dispatches `amq-squad team member <add|rm|list>`: runtime roster
