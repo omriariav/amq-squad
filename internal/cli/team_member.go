@@ -48,20 +48,21 @@ Examples:
 	}
 }
 
-// peelRole splits a leading positional role from the remaining flag args, so
-// `add <role> --binary x` parses (Go's flag stops at the first non-flag, so
-// the role must be peeled before flag parsing).
-func peelRole(args []string) (role string, rest []string, err error) {
+// peelPositional splits a leading positional argument from the remaining flag
+// args (Go's flag parser stops at the first non-flag, so a positional that
+// precedes flags must be peeled first). ok is false when the first arg is
+// missing or is itself a flag; the caller supplies the context-specific error.
+func peelPositional(args []string) (val string, rest []string, ok bool) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return "", nil, usageErrorf("a role is required, e.g. 'team member add researcher --binary codex'")
+		return "", nil, false
 	}
-	return args[0], args[1:], nil
+	return args[0], args[1:], true
 }
 
 func runTeamMemberAdd(args []string) error {
-	role, rest, err := peelRole(args)
-	if err != nil {
-		return err
+	role, rest, ok := peelPositional(args)
+	if !ok {
+		return usageErrorf("a role is required, e.g. 'team member add researcher --binary codex'")
 	}
 	fs := flag.NewFlagSet("team member add", flag.ContinueOnError)
 	binaryFlag := fs.String("binary", "", "agent CLI for this member: claude or codex (required)")
@@ -88,6 +89,7 @@ func runTeamMemberAdd(args []string) error {
 		return fmt.Errorf("role: %w", err)
 	}
 
+	var err error
 	var claudeArgs, codexArgs []string
 	if strings.TrimSpace(*claudeArgsRaw) != "" {
 		if claudeArgs, err = parseAgentArgs(*claudeArgsRaw); err != nil {
@@ -167,9 +169,9 @@ func runTeamMemberAdd(args []string) error {
 }
 
 func runTeamMemberRemove(args []string) error {
-	role, rest, err := peelRole(args)
-	if err != nil {
-		return err
+	role, rest, ok := peelPositional(args)
+	if !ok {
+		return usageErrorf("a role is required, e.g. 'team member add researcher --binary codex'")
 	}
 	role = strings.ToLower(strings.TrimSpace(role))
 	fs := flag.NewFlagSet("team member rm", flag.ContinueOnError)

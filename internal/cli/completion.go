@@ -60,6 +60,7 @@ var completionTopCommands = []string{
 	"new",
 	"roles",
 	"team",
+	"task",
 	"up",
 	"stop",
 	"down",
@@ -123,6 +124,16 @@ var completionTeamMemberSubcommands = []string{
 	"remove",
 }
 
+// completionTaskSubcommands lists `amq-squad task` subcommands.
+var completionTaskSubcommands = []string{
+	"add",
+	"list",
+	"claim",
+	"done",
+	"fail",
+	"block",
+}
+
 // completionCommonFlags lists every flag registered by the current stdlib
 // CLI surfaces. The list is exhaustive on purpose: shell completion
 // shouldn't omit a flag just because it only appears on one command. Drift
@@ -150,6 +161,7 @@ var completionCommonFlags = []string{
 	"--apply",
 	"--as",
 	"--at-risk-wait",
+	"--assign",
 	"--binary",
 	"--body",
 	"--body-file",
@@ -159,10 +171,13 @@ var completionCommonFlags = []string{
 	"--conversation",
 	"--conversation-id",
 	"--cwd",
+	"--depends-on",
 	"--depth",
+	"--desc",
 	"--disable-all-hooks",
 	"--disable-plugins",
 	"--dry-run",
+	"--evidence",
 	"--exec",
 	"--filter",
 	"--force",
@@ -196,6 +211,7 @@ var completionCommonFlags = []string{
 	"--personas",
 	"--profile",
 	"--project",
+	"--reason",
 	"--refresh",
 	"--reset",
 	"--restore-existing",
@@ -212,6 +228,7 @@ var completionCommonFlags = []string{
 	"--stagger",
 	"--stage",
 	"--stale-after",
+	"--status",
 	"--sync",
 	"--target",
 	"--target-id",
@@ -222,6 +239,7 @@ var completionCommonFlags = []string{
 	"--team-workstream",
 	"--terminal",
 	"--terminal-session",
+	"--title",
 	"--tmp-older-than",
 	"--to",
 	"--tree",
@@ -288,6 +306,12 @@ func buildBashCompletionScript() string {
 	b.WriteString("    if [ \"${words[1]}\" = \"team\" ] && [ \"${words[2]}\" = \"member\" ] && [ \"$cword\" -eq 3 ]; then\n")
 	b.WriteString("        COMPREPLY=( $(compgen -W \"")
 	b.WriteString(strings.Join(completionTeamMemberSubcommands, " "))
+	b.WriteString("\" -- \"$cur\") )\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
+	b.WriteString("    if [ \"${words[1]}\" = \"task\" ] && [ \"$cword\" -eq 2 ]; then\n")
+	b.WriteString("        COMPREPLY=( $(compgen -W \"")
+	b.WriteString(strings.Join(completionTaskSubcommands, " "))
 	b.WriteString("\" -- \"$cur\") )\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
@@ -384,6 +408,17 @@ func buildZshCompletionScript() string {
 	b.WriteString("\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
+	b.WriteString("    if [[ \"${words[2]}\" == \"task\" && CURRENT -eq 3 ]]; then\n")
+	b.WriteString("        compadd -- ")
+	for i, s := range completionTaskSubcommands {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(zshQuote(s))
+	}
+	b.WriteString("\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
 	b.WriteString("    if [[ \"${words[2]}\" == \"agent\" && CURRENT -eq 3 ]]; then\n")
 	b.WriteString("        compadd -- ")
 	for i, s := range completionAgentSubcommands {
@@ -434,6 +469,10 @@ func buildFishCompletionScript() string {
 	b.WriteString("\n")
 	for _, sub := range completionTeamMemberSubcommands {
 		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from member\" -a %s\n", fishQuote(sub))
+	}
+	b.WriteString("\n")
+	for _, sub := range completionTaskSubcommands {
+		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from task\" -a %s\n", fishQuote(sub))
 	}
 	b.WriteString("\n")
 	for _, sub := range completionAgentSubcommands {
