@@ -5,6 +5,18 @@ the open issues by theme + status so the near-term path is legible at a glance.
 
 ## Release state
 
+- **v2.0.0 — in progress (goal-first dynamic teams).** A binary-neutral lead
+  composes its team from a goal (Codex can lead, not just be led); manual setup
+  stays the floor; spectrum manual → seeded (default) → autonomous (2.1). Full
+  plan + executable brief: `docs/v2.0.0.md`, `docs/v2.0.0-goal.md`. Proven
+  additively in the 1.x line first (Phase 0: A mutable roster → B native task
+  model → C orchestrate skill → D dogfood+eval gate) before the Phase 1 breaking
+  cut + `/v2`.
+  - **Slice A — `team member add/rm`** (runtime roster mutation): add/remove a
+    roster member at runtime via atomic, file-locked (`internal/flock`),
+    re-validated writes through `team.WriteProfile`, so a lead grows/shrinks its
+    team mid-session and the change persists for resume. Additive; no
+    removed/renamed verbs, no schema change.
 - **v1.5.0 — shipped.** tmux runtime contract (persisted pane/window ids,
   `pane_alive`, per-agent `actions[]`, `focus`/`open`/`send` verbs, `--target
   new-window`), custom roles, Claude + Codex plugin marketplaces.
