@@ -30,7 +30,7 @@ A fourth skill exists only when you need a **role the catalog doesn't ship**.
 | Design / setup | **`amq-team-setup`** | once, before the team runs: capture the goal, draft the brief, pick roles, optionally wire orchestration, write `team.json` + `team-rules.md` + the brief + pointer stubs. |
 | Live coordination | **`amq-squad`** | every day after the team exists: bring members up, drain inboxes, route handoffs, request reviews, check status, stop/resume/fork. |
 | Lead orchestration | **`amq-squad-orchestrator`** | when one agent is the **lead** that spawns, dispatches, and monitors the others and owns the deliverable. |
-| Custom roles | **`amq-squad-role-creator`** | when you need a role the built-in catalog doesn't ship (researcher, sre, scribe, ...). |
+| Custom roles | **`amq-squad-role-creator`** | when you need a role the built-in catalog doesn't ship (researcher, sre, archivist, ...). |
 
 They sit on top of three durable layers that setup creates and coordination
 consumes:
@@ -319,7 +319,7 @@ amq-squad agent resume fullstack         # revive one child from its saved recor
 **Invoke:** `/amq-squad:amq-squad-role-creator` (Claude) ·
 `$amq-squad-role-creator` (Codex)
 **Use when:** you need a role the built-in catalog doesn't ship (`researcher`,
-`sre`, `scribe`, `data-scientist`, ...). Custom roles are first-class — they
+`sre`, `archivist`, `data-scientist`, ...). Custom roles are first-class — they
 appear in `team.json`, `team-rules.md`, the bootstrap prompt, and status/launch
 exactly like built-ins.
 

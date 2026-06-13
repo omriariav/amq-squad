@@ -1,6 +1,6 @@
 ---
 name: amq-squad-role-creator
-description: Author custom amq-squad roles that are not in the built-in persona catalog, then wire them into a team. Covers writing a role file (Markdown with optional YAML frontmatter, .yaml, or .json), the required binary, and adding the role via `team init`/`new team`/`new profile` with `--role-file` or an inline path in `--roles`, plus the inline `--roles X --binary X=<cli>` shortcut. Use when someone wants a role like researcher, sre, scribe, or data-scientist that the catalog does not ship. For built-in personas (cto, qa, fullstack, ...) and general team design, use `amq-team-setup`; for live coordination use `amq-squad`.
+description: Author custom amq-squad roles that are not in the built-in persona catalog, then wire them into a team. Covers writing a role file (Markdown with optional YAML frontmatter, .yaml, or .json), the required binary, and adding the role via `team init`/`new team`/`new profile` with `--role-file` or an inline path in `--roles`, plus the inline `--roles X --binary X=<cli>` shortcut. Use when someone wants a role like researcher, sre, or data-scientist that the catalog does not ship. For built-in personas (cto, qa, fullstack, ...) and general team design, use `amq-team-setup`; for live coordination use `amq-squad`.
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 argument-hint: "[role-id] [codex|claude]"
 user-invocable: true
@@ -11,7 +11,7 @@ trigger: /amq-squad-role-creator
 
 Use this skill to add a **custom role** — one that is not in the built-in
 persona catalog (`cpo, cto, senior-dev, fullstack, frontend-dev, backend-dev,
-mobile-dev, junior-dev, qa, pm, designer`). Custom roles are first-class team
+mobile-dev, junior-dev, qa, pm, designer, scribe`). Custom roles are first-class team
 members: they appear in `team.json`, `team-rules.md`, the bootstrap prompt,
 status/history, and launch/resume exactly like built-ins.
 
@@ -102,14 +102,14 @@ for instruction.
 `# Role:` heading or filename; supply the binary with `--binary`):
 
 ```markdown
-# Role: Scribe
+# Role: Archivist
 
 ## Description
 Captures decisions and keeps the team's written record.
 ```
 
 ```sh
-amq-squad new team --roles "cto,./roles/scribe.md" --binary scribe=claude
+amq-squad new team --roles "cto,./roles/archivist.md" --binary archivist=claude
 ```
 
 **Metadata-only YAML or JSON** (no body; `role.md` is rendered from the

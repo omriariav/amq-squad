@@ -108,7 +108,7 @@ var roles = []Role{
 		PreferredBinary: "claude",
 		Profile:         "Keeps work ordered, unblocked, and shippable.",
 		Description:     "Translates product strategy into ordered work. Tracks scope, unblocks, and keeps the team aligned on what ships next.",
-		DefaultPeers:    []string{"cpo", "fullstack", "frontend-dev", "mobile-dev", "junior-dev", "qa", "designer"},
+		DefaultPeers:    []string{"cpo", "fullstack", "frontend-dev", "mobile-dev", "junior-dev", "qa", "designer", "scribe"},
 	},
 	{
 		ID:              "designer",
@@ -118,6 +118,14 @@ var roles = []Role{
 		Description:     "Designs the product surface. Produces UI components, flows, and visual assets, leaning on /frontend-design and /canvas-design.",
 		Skills:          []string{"/frontend-design", "/canvas-design"},
 		DefaultPeers:    []string{"cpo", "fullstack", "pm"},
+	},
+	{
+		ID:              "scribe",
+		Label:           "Technical Writer",
+		PreferredBinary: "claude",
+		Profile:         "Docs, references, guides, the written record.",
+		Description:     "Owns the written deliverable: API references, guides, READMEs, and the team's written record. The right author for a docs goal — does not implement product code.",
+		DefaultPeers:    []string{"cto", "backend-dev", "frontend-dev", "pm"},
 	},
 }
 

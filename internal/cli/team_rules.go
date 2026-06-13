@@ -151,6 +151,8 @@ func roleScope(roleID string) string {
 		return "Owns work ordering, clarification, coordination, status, and handoffs. Turns feedback into scoped tasks for the right owner. Does not implement code unless explicitly assigned by the user."
 	case "designer":
 		return "Owns product flows, UX, visual shape, and design assets. Does not implement production code unless explicitly assigned by the user."
+	case "scribe":
+		return "Owns the written deliverable and record: API references, guides, READMEs, and docs. Does not implement product code unless explicitly assigned by the user."
 	default:
 		return "Owns the responsibilities described in role.md. Ask before taking implementation work outside this role."
 	}

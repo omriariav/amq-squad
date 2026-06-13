@@ -703,7 +703,7 @@ amq-squad completion fish > ~/.config/fish/completions/amq-squad.fish
 
 `--roles`/`--personas` accept built-in personas (`cpo, cto, senior-dev,
 fullstack, frontend-dev, backend-dev, mobile-dev, junior-dev, qa, pm,
-designer`) and **custom roles** that are not in the catalog. A custom role is
+designer, scribe`) and **custom roles** that are not in the catalog. A custom role is
 any valid slug (lowercase `a-z`, `0-9`, `-`, `_`) and must carry an explicit
 `--binary` because there is no catalog default to fall back to. Built-in roles
 keep their catalog defaults unless overridden. Custom roles are first-class
