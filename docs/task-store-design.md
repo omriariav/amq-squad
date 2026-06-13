@@ -56,7 +56,7 @@ pending ──claim──▶ in_progress ──done──▶ completed
 - `claim`: allowed only from `pending`, and only when **every** id in
   `depends_on` is `completed` (dependency gating). Sets `assigned_to` and
   `in_progress`; clears terminal fields.
-- `done` / `fail` / `block`: allowed only from `in_progress`. `done`→`completed`
+- `done` / `fail` / `block`: allowed only from `in_progress` (assignee-only enforcement is deferred to Phase 1). `done`→`completed`
   (+ optional evidence); `fail`→`failed` (+ reason); `block`→`blocked`
   (+ reason). A `blocked`/`failed` task can be re-`claim`ed only after it is
   reset to `pending` (a later `task reset` verb; out of scope for Slice B —

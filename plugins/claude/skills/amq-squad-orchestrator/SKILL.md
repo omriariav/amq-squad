@@ -66,8 +66,9 @@ amq-squad agent up <binary> --role <role> --session <S> --me <handle>
 ```
 
 The roster add persists to team.json, so `resume` rebuilds the team you *built*,
-not the seed. (`--me` is the agent's AMQ handle, defaulting to the role;
-idempotent resume that prevents a double-spawn is a Phase-1 item.)
+not the seed. (`--me` is the agent's AMQ handle — pass the roster handle; if
+omitted, `agent up` defaults to the binary basename, not the role. Idempotent
+resume that prevents a double-spawn is a Phase-1 item.)
 
 **4. Decompose the goal into tasks.** Post the work as tasks the team pulls,
 with dependencies so it self-schedules:
@@ -78,8 +79,9 @@ amq-squad task add --title "implement" --depends-on t1 --session <S>
 amq-squad task list --session <S>
 ```
 
-Workers `task claim <id> --me <handle>` (gated until deps complete) and then
-`task done <id>` / `fail` / `block`. You watch progress with `task list`.
+Workers `task claim <id> --me <handle> --session <S>` (gated until deps
+complete) and then `task done <id> --session <S>` / `fail` / `block`. You watch
+progress with `task list --session <S>`.
 
 **5. Prune as work resolves.** When an agent's work is done and it is idle,
 shrink the team — stop it and drop it from the roster:
