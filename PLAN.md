@@ -29,11 +29,16 @@ the open issues by theme + status so the near-term path is legible at a glance.
     `docs/eval-strategy.md` (rubric: 5 reference goals + scoring) and
     `docs/eval-results.md` (a real **Codex-led** eval run) are committed — the
     automated rubric **passes** (4/5 + 1 borderline; 5/5 mechanics OK; strong
-    judgment on the research goal). The remaining gate is a **human-judged live
-    dogfood on os-omri-pm** ("feels right"), which holds Phase 1. Two findings to
-    fold before/with Phase 1: add a `team member list` roster-read command, and a
-    `scribe`/`technical-writer` role to the library (so docs goals compose
-    without an implementer).
+    judgment on the research goal). Both eval findings are now **folded**:
+    `team member list` (#132) and a built-in `scribe` role (#133). The remaining
+    gate is a **human-judged live dogfood on os-omri-pm** ("feels right"), which
+    holds Phase 1.
+  - **Codex cross-review** of all Phase-0 stages ran (4 agents); findings folded
+    in #130 (task-store path-traversal + flag-swallowing, skill copy-paste
+    `--session`, doc reconciliation).
+  - ⏸ **Phase 1 (breaking cut + `/v2` + release): HELD** at the human gate —
+    awaits the live os-omri-pm dogfood judgment + an explicit go/no-go. Not
+    started (no breaking work begun) by design.
 - **v1.5.0 — shipped.** tmux runtime contract (persisted pane/window ids,
   `pane_alive`, per-agent `actions[]`, `focus`/`open`/`send` verbs, `--target
   new-window`), custom roles, Claude + Codex plugin marketplaces.
