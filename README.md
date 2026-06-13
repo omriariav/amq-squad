@@ -17,17 +17,17 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 
 ## Install
 
-Install the 1.9 line:
+Install the 2.0 line (note the `/v2` module path):
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v1.9.3
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.0.0
 amq-squad version
 ```
 
-For the latest 1.x build:
+For the latest 2.x build:
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@latest
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest
 ```
 
 Requires Go 1.25+, the `amq` binary on `PATH` (v0.34+), and `tmux` on `PATH` for `amq-squad up`.
@@ -170,7 +170,7 @@ A session moves through one small state machine:
 - **`new session [<name>]`** is the create-focused alias for `up [<name>]`. It follows the same NEW-work refusal rules.
 - **`new team`** is the create-focused alias for `team init`.
 - **`new profile NAME`** is the named-profile alias for `team init --profile NAME`.
-- **`stop`** is the primary teardown: SIGTERM the live agents (`--force` = SIGKILL), but PRESERVE all on-disk state so the session stays resumable. (`down` is a deprecated alias for one release.)
+- **`stop`** is the primary teardown: SIGTERM the live agents (`--force` = SIGKILL), but PRESERVE all on-disk state so the session stays resumable. (The `down` alias was removed in 2.0.)
 - **`resume`** re-orients a stopped session. If an agent has a saved conversation, amq-squad reattaches it; otherwise it re-runs bootstrap so the agent re-reads its brief and AMQ history. It does NOT replay prior hidden reasoning.
 - **`rm` / `archive`** are the session-destructive ops. Both are confirm-gated (`--yes` to skip the prompt) and refuse a session with live agents unless `--force`. `rm` deletes the session root + brief; `archive` moves them aside, recoverable. `team rm` is separate: it removes one team profile config only.
 - A **restart** is just `stop` then `up` (after `rm`/`archive`) or `resume` for the same session.
@@ -211,7 +211,7 @@ amq-squad agent up codex --role cto --session issue-96
 amq-squad agent resume fullstack
 ```
 
-The old legacy verbs (`launch`, `restore`, `list`, `team show`, `team launch`) are removed from the primary command model; each prints a one-line migration hint pointing at its replacement. See [Removed legacy verbs](#removed-legacy-verbs) and [Migrating to 1.3.0](#migrating-to-130).
+The legacy verbs (`down`, `launch`, `restore`, `list`, `team show`, `team launch`) are **removed in 2.0**. Invoking one returns a usage error (exit 1); the replacements are listed in [Removed legacy verbs](#removed-legacy-verbs) and [`MIGRATION.md`](MIGRATION.md).
 
 ### Custom launchers
 
@@ -435,7 +435,7 @@ amq-squad stop [--all | --role R] [--project DIR] [--force]
                                   sidecar, flip presence offline. On-disk state is
                                   preserved, so the session stays resumable.
                                   --project targets a team-home without cd.
-                                  ('down' is a deprecated alias for one release.)
+                                  (The 'down' alias was removed in 2.0.)
 amq-squad resume [--project DIR] [--profile NAME] [--session ws] [--restore-existing]
                  [--exec] [--dry-run] [--force-duplicate]
                  [--no-bootstrap] [--trust sandboxed|trusted]
@@ -843,10 +843,11 @@ Inside an amq-squad-launched shell, use bare `amq` commands. The launcher alread
 
 ## Removed legacy verbs
 
-The legacy top-level verbs below are still recognized as explicit pointers: running one prints a one-line `stderr` migration hint (not an "unknown command") and exits with a usage error. Use the replacement.
+These verbs are **removed in 2.0**. Invoking one returns a usage error (exit 1, not a silent "unknown command"). Use the replacement. The full upgrade notes live in [`MIGRATION.md`](MIGRATION.md).
 
 | Removed verb | Replacement |
 | --- | --- |
+| `amq-squad down` | `amq-squad stop` |
 | `amq-squad launch <binary>` | `amq-squad agent up <binary>` |
 | `amq-squad restore` (print) | `amq-squad history` |
 | `amq-squad restore --exec --role R` | `amq-squad agent resume R` |
@@ -855,23 +856,7 @@ The legacy top-level verbs below are still recognized as explicit pointers: runn
 | `amq-squad team launch` | `amq-squad up` |
 | `amq-squad team launch --fresh --session X` | `amq-squad fork --from <current> --as X` |
 
-`down` is **deprecated** (not removed): it is an alias for `stop` that keeps working for one release and runs the identical logic. Prefer `stop`.
-
 Replay paths that emit copy-paste commands use the modern `agent up <binary>` command shape.
-
-## Migrating to 1.3.0
-
-1.3.0 keeps amq-squad focused on team setup, lifecycle, status, AMQ diagnostics, and the project-scoped console.
-
-| Before | 1.3.0 | Migration |
-| --- | --- | --- |
-| `down` | `stop` (primary) | Use `amq-squad stop`. `down` still works for one release as a deprecated alias. |
-| `launch <binary>` | removed | `amq-squad agent up <binary>` |
-| `restore` (print) / `restore --exec --role R` | removed | `amq-squad history` / `amq-squad agent resume R` |
-| `list` | removed | `amq-squad status` (live) or `amq-squad history` (records) |
-| `team show` / `team launch` | removed | `amq-squad up --dry-run` / `amq-squad up` |
-
-Each removed verb prints a migration hint when invoked, so muscle-memory commands get a pointer rather than a crash. JSON callers on the deprecated `down` alias still get pure JSON on stdout; the warning goes to stderr.
 
 ## Known gaps
 
