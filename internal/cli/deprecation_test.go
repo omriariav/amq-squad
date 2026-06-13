@@ -11,14 +11,15 @@ import (
 	"github.com/omriariav/amq-squad/internal/team"
 )
 
-// The five legacy verbs (top-level launch/restore/list and team show/launch)
-// are legacy commands. Each must return a UsageError (exit 1) whose message
-// names the modern replacement -- a helpful migration hint, NOT a silent
-// unknown-command. These tests pin both the exit classification and the hint.
+// The legacy verbs (top-level launch/restore/list, the old `down` alias, and
+// team show/launch) are fully removed in 2.0. Each must now return a
+// UsageError (exit 1); the modern replacements are documented in MIGRATION.md
+// and the top-level --help "Removed in 2.0" note. These tests pin the exit
+// classification so a removed verb can never silently succeed.
 
-// assertRemovedHint runs args through the public Run dispatcher and asserts it
-// returns a UsageError (exit 1) whose message contains each wanted substring.
-func assertRemovedHint(t *testing.T, args []string, wants ...string) {
+// assertRemovedUsageError runs args through the public Run dispatcher and
+// asserts it returns a UsageError (exit 1).
+func assertRemovedUsageError(t *testing.T, args []string) {
 	t.Helper()
 	_, _, err := captureOutput(t, func() error { return Run(args, "test") })
 	if err == nil {
@@ -31,56 +32,19 @@ func assertRemovedHint(t *testing.T, args []string, wants ...string) {
 	if code := ExitCode(err); code != ExitUser {
 		t.Errorf("Run %v: want exit %d, got %d", args, ExitUser, code)
 	}
-	for _, want := range wants {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("Run %v: error %q missing hint %q", args, err.Error(), want)
-		}
-	}
 }
 
-func TestLaunchVerbRemovedWithHint(t *testing.T) {
-	assertRemovedHint(t, []string{"launch", "codex"}, "legacy verb", "agent up")
-}
-
-func TestRestoreVerbRemovedWithHint(t *testing.T) {
-	// The restore hint must name both the print-mode replacement (history)
-	// and the exec-mode replacement (agent resume).
-	assertRemovedHint(t, []string{"restore", "--exec", "--role", "cto"},
-		"legacy verb", "history", "agent resume")
-}
-
-func TestListVerbRemovedWithHint(t *testing.T) {
-	assertRemovedHint(t, []string{"list"}, "legacy verb", "status", "history")
-}
-
-func TestTeamShowRemovedWithHint(t *testing.T) {
-	assertRemovedHint(t, []string{"team", "show"}, "legacy verb", "up --dry-run")
-}
-
-func TestTeamLaunchRemovedWithHint(t *testing.T) {
-	assertRemovedHint(t, []string{"team", "launch"}, "legacy verb", "up")
-}
-
-// The removed verbs must not be silently swallowed as unknown-command: the
-// hint text proves we routed to the dedicated removal message, not the
-// generic "unknown command" branch.
-func TestRemovedVerbsAreNotUnknownCommand(t *testing.T) {
+func TestRemovedVerbsReturnUsageError(t *testing.T) {
 	cases := [][]string{
-		{"launch"},
-		{"restore"},
+		{"launch", "codex"},
+		{"restore", "--exec", "--role", "cto"},
 		{"list"},
+		{"down", "--role", "cto"},
 		{"team", "show"},
 		{"team", "launch"},
 	}
 	for _, args := range cases {
-		_, _, err := captureOutput(t, func() error { return Run(args, "test") })
-		if err == nil {
-			t.Errorf("Run %v: want UsageError, got nil", args)
-			continue
-		}
-		if strings.Contains(err.Error(), "unknown command") || strings.Contains(err.Error(), "unknown 'team' subcommand") {
-			t.Errorf("Run %v: removed verb should emit a migration hint, not unknown-command: %q", args, err.Error())
-		}
+		assertRemovedUsageError(t, args)
 	}
 }
 
@@ -288,13 +252,13 @@ func TestCompletionDropsRemovedVerbs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"agent", "team", "up", "down"} {
+	for _, want := range []string{"agent", "team", "up", "stop"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("bash completion missing modern verb %q", want)
 		}
 	}
 	// Top-level removed verbs must be gone from the top-command list.
-	for _, gone := range []string{"launch", "restore", "list"} {
+	for _, gone := range []string{"launch", "restore", "list", "down"} {
 		if containsString(completionTopCommands, gone) {
 			t.Errorf("completionTopCommands should not list removed verb %q", gone)
 		}

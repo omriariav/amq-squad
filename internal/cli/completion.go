@@ -63,7 +63,6 @@ var completionTopCommands = []string{
 	"task",
 	"up",
 	"stop",
-	"down",
 	"brief",
 	"threads",
 	"thread",
