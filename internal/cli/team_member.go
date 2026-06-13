@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/omriariav/amq-squad/internal/flock"
 	"github.com/omriariav/amq-squad/internal/team"
 )
 
-// runTeamMember dispatches `amq-squad team member <add|rm>`: runtime roster
+// runTeamMember dispatches `amq-squad team member <add|rm|list>`: runtime roster
 // mutation. This is the durable-roster primitive the goal-first composition
 // model rests on — a lead (any binary) grows or shrinks its team mid-session,
 // and the change persists to team.json so resume rebuilds the team it built.
@@ -23,6 +24,7 @@ Usage:
       [--session S] [--model M] [--claude-args "…"] [--codex-args "…"]
       [--project DIR] [--profile NAME]
   amq-squad team member rm <role> [--project DIR] [--profile NAME]
+  amq-squad team member list [--json] [--project DIR] [--profile NAME]
 
 Mutates the persisted team profile (team.json) atomically and under an
 exclusive lock, then re-validates it (orchestration constraints included).
@@ -34,7 +36,7 @@ Examples:
   amq-squad team member rm researcher
 `)
 		if len(args) == 0 {
-			return usageErrorf("member requires a subcommand ('add' or 'rm')")
+			return usageErrorf("member requires a subcommand ('add', 'list', or 'rm')")
 		}
 		return nil
 	}
@@ -43,9 +45,81 @@ Examples:
 		return runTeamMemberAdd(args[1:])
 	case "rm", "remove":
 		return runTeamMemberRemove(args[1:])
+	case "list", "ls":
+		return runTeamMemberList(args[1:])
 	default:
-		return usageErrorf("unknown 'team member' subcommand: %q. Try 'add' or 'rm'.", args[0])
+		return usageErrorf("unknown 'team member' subcommand: %q. Try 'add', 'list', or 'rm'.", args[0])
 	}
+}
+
+// runTeamMemberList prints the current roster — the read companion to add/rm,
+// so a lead can see the team it has built without opening team.json.
+func runTeamMemberList(args []string) error {
+	fs := flag.NewFlagSet("team member list", flag.ContinueOnError)
+	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile to read (default: default profile)")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned roster envelope")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return usageErrorf("unexpected argument %q", fs.Arg(0))
+	}
+	projectDir, profile, err := resolveExistingTeamProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return fmt.Errorf("read team: %w", err)
+	}
+	members := orderedTeamMembers(t.Members)
+	if *jsonOut {
+		return printJSONEnvelope("team_roster", teamRosterData{
+			Profile: profile, Orchestrated: t.Orchestrated, Lead: t.Lead, Members: members,
+		})
+	}
+	if len(members) == 0 {
+		fmt.Println("(no members)")
+		return nil
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	// The LEAD column only carries information for an orchestrated team; omit it
+	// entirely for a flat team rather than printing an always-blank column.
+	if t.Orchestrated {
+		fmt.Fprintln(w, "ROLE\tBINARY\tHANDLE\tMODEL\tSESSION\tLEAD")
+	} else {
+		fmt.Fprintln(w, "ROLE\tBINARY\tHANDLE\tMODEL\tSESSION")
+	}
+	for _, m := range members {
+		model := orDash(m.Model)
+		session := orDash(m.Session)
+		if t.Orchestrated {
+			lead := ""
+			if m.Role == t.Lead {
+				lead = "lead"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", m.Role, m.Binary, m.Handle, model, session, lead)
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", m.Role, m.Binary, m.Handle, model, session)
+		}
+	}
+	return w.Flush()
+}
+
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
+}
+
+// teamRosterData is the `team member list --json` payload.
+type teamRosterData struct {
+	Profile      string        `json:"profile"`
+	Orchestrated bool          `json:"orchestrated"`
+	Lead         string        `json:"lead,omitempty"`
+	Members      []team.Member `json:"members"`
 }
 
 // peelPositional splits a leading positional argument from the remaining flag

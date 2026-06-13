@@ -120,6 +120,8 @@ var completionTeamRulesSubcommands = []string{
 // completionTeamMemberSubcommands lists `amq-squad team member` subcommands.
 var completionTeamMemberSubcommands = []string{
 	"add",
+	"list",
+	"ls",
 	"rm",
 	"remove",
 }

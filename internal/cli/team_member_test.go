@@ -164,6 +164,67 @@ func TestTeamMemberRmRefusesOrchestrationLead(t *testing.T) {
 	}
 }
 
+func TestTeamMemberListShowsRoster(t *testing.T) {
+	seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "s", Model: "sonnet"},
+		},
+	})
+	out, _, err := captureOutput(t, func() error {
+		return runTeamMember([]string{"list"})
+	})
+	if err != nil {
+		t.Fatalf("member list: %v", err)
+	}
+	for _, want := range []string{"cto", "qa", "sonnet", "lead"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("roster table missing %q in:\n%s", want, out)
+		}
+	}
+	// JSON envelope.
+	stdout, _, err := captureOutput(t, func() error {
+		return runTeamMember([]string{"list", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("member list --json: %v", err)
+	}
+	if !strings.Contains(stdout, "team_roster") || !strings.Contains(stdout, "\"lead\": \"cto\"") {
+		t.Errorf("roster json unexpected:\n%s", stdout)
+	}
+}
+
+func TestTeamMemberListFlatTeamAndEmptyAndAlias(t *testing.T) {
+	// Flat (non-orchestrated) team: no LEAD column, and --json omits "lead".
+	seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "claude", Handle: "cto", Session: "s"}},
+	})
+	out, _, err := captureOutput(t, func() error { return runTeamMember([]string{"ls"}) }) // ls alias
+	if err != nil {
+		t.Fatalf("member ls: %v", err)
+	}
+	if strings.Contains(out, "LEAD") {
+		t.Errorf("flat team should not show a LEAD column:\n%s", out)
+	}
+	stdout, _, err := captureOutput(t, func() error { return runTeamMember([]string{"list", "--json"}) })
+	if err != nil {
+		t.Fatalf("member list --json: %v", err)
+	}
+	if strings.Contains(stdout, "\"lead\"") {
+		t.Errorf("flat team json should omit the lead key:\n%s", stdout)
+	}
+}
+
+func TestTeamMemberListEmptyRoster(t *testing.T) {
+	seedTeam(t, team.Team{Members: nil})
+	out, _, err := captureOutput(t, func() error { return runTeamMember([]string{"list"}) })
+	if err != nil || !strings.Contains(out, "(no members)") {
+		t.Fatalf("empty roster: want '(no members)', got %q / %v", out, err)
+	}
+}
+
 func TestTeamMemberRequiresExistingTeam(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
