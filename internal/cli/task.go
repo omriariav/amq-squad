@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/internal/task"
+	"github.com/omriariav/amq-squad/internal/team"
 )
 
 // taskNow is overridable in tests for deterministic timestamps.
@@ -73,6 +74,15 @@ func taskSessionProject(sessionFlag, projectFlag string, fs *flag.FlagSet) (stri
 	session := strings.TrimSpace(sessionFlag)
 	if session == "" {
 		return "", "", usageErrorf("--session is required (tasks are per-workstream)")
+	}
+	// Validate the session name with the same rules as the rest of the
+	// workstream model, so it can't carry path separators or `..` and escape
+	// .amq-squad/tasks/<session>/ into an arbitrary directory.
+	if err := team.ValidateSessionName(session); err != nil {
+		return "", "", usageErrorf("invalid --session: %v", err)
+	}
+	if fs.NArg() > 0 {
+		return "", "", usageErrorf("unexpected argument %q", fs.Arg(0))
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -169,9 +179,18 @@ func runTaskTransition(args []string, verb string) error {
 		return usageErrorf("task %s requires a task id, e.g. 'task %s t1 --session S'", verb, verb)
 	}
 	fs := flag.NewFlagSet("task "+verb, flag.ContinueOnError)
-	meFlag := fs.String("me", "", "claiming agent handle (claim only)")
-	evidenceFlag := fs.String("evidence", "", "evidence/result note (done only)")
-	reasonFlag := fs.String("reason", "", "reason (fail/block only)")
+	// Register only the flag that applies to this verb, so e.g.
+	// `task fail t1 --evidence E` is a clear "flag not defined" error instead
+	// of silently dropping --evidence.
+	var me, evidence, reason string
+	switch verb {
+	case "claim":
+		fs.StringVar(&me, "me", "", "claiming agent handle (required)")
+	case "done":
+		fs.StringVar(&evidence, "evidence", "", "evidence/result note")
+	case "fail", "block":
+		fs.StringVar(&reason, "reason", "", "reason")
+	}
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	if err := parseFlags(fs, rest); err != nil {
@@ -185,13 +204,13 @@ func runTaskTransition(args []string, verb string) error {
 	var t task.Task
 	switch verb {
 	case "claim":
-		t, err = task.Claim(projectDir, session, id, *meFlag, now)
+		t, err = task.Claim(projectDir, session, id, me, now)
 	case "done":
-		t, err = task.Done(projectDir, session, id, *evidenceFlag, now)
+		t, err = task.Done(projectDir, session, id, evidence, now)
 	case "fail":
-		t, err = task.Fail(projectDir, session, id, *reasonFlag, now)
+		t, err = task.Fail(projectDir, session, id, reason, now)
 	case "block":
-		t, err = task.Block(projectDir, session, id, *reasonFlag, now)
+		t, err = task.Block(projectDir, session, id, reason, now)
 	}
 	if err != nil {
 		return err

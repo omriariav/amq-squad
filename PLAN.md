@@ -12,11 +12,24 @@ the open issues by theme + status so the near-term path is legible at a glance.
   additively in the 1.x line first (Phase 0: A mutable roster → B native task
   model → C orchestrate skill → D dogfood+eval gate) before the Phase 1 breaking
   cut + `/v2`.
-  - **Slice A — `team member add/rm`** (runtime roster mutation): add/remove a
-    roster member at runtime via atomic, file-locked (`internal/flock`),
-    re-validated writes through `team.WriteProfile`, so a lead grows/shrinks its
-    team mid-session and the change persists for resume. Additive; no
-    removed/renamed verbs, no schema change.
+  - ✅ **Slice A — `team member add/rm`** (merged): runtime roster mutation via
+    atomic, file-locked (`internal/flock`), re-validated writes through
+    `team.WriteProfile`, so a lead grows/shrinks its team mid-session and the
+    change persists for resume. (`--up`/`--stop` auto-launch and a `--max-agents`
+    cap are deferred — the add prints the `agent up` hint for now.)
+  - ✅ **Slice B — native task model** (merged): `internal/task` +
+    `.amq-squad/tasks/<session>/` + `task add/list/claim/done/fail/block`,
+    five-state machine with dependency gating and atomic file-locking; `task add`
+    is the goal→task decompose primitive (`docs/task-store-design.md`).
+  - ✅ **Slice C — orchestrate-from-goal skill** (merged): the
+    `amq-squad-orchestrator` skill's "Compose the team from the goal (seeded)"
+    playbook (both mirrors) — propose → gate/`<topic>` approval → `team member
+    add` → `task add` → prune.
+  - ⏭ **Slice D — dogfood + eval gate (next, blocking):** commit
+    `docs/eval-strategy.md` (reference goals + scoring) and run a live Codex-led
+    dogfood on os-omri-pm from a **lead-only seed** (one lead member — a 0-member
+    empty seed is a Phase-1 opt-in). Holds Phase 1 until the lead's judgment,
+    not just the verbs, looks right.
 - **v1.5.0 — shipped.** tmux runtime contract (persisted pane/window ids,
   `pane_alive`, per-agent `actions[]`, `focus`/`open`/`send` verbs, `--target
   new-window`), custom roles, Claude + Codex plugin marketplaces.
