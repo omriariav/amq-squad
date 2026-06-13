@@ -11,9 +11,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/state"
-	"github.com/omriariav/amq-squad/internal/team"
-	"github.com/omriariav/amq-squad/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 // statusPaneLister lists live tmux panes so status can detect a live agent that

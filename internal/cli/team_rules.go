@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/omriariav/amq-squad/internal/catalog"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/catalog"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func renderTeamRules(t team.Team) (string, error) {

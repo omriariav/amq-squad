@@ -10,7 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
 const defaultThreadsLimit = 20

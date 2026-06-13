@@ -32,7 +32,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
 // OpMessage is a single operator-authored AMQ write. The zero value is not

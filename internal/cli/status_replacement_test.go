@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/team"
-	"github.com/omriariav/amq-squad/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 // withStubPaneLister swaps statusPaneLister for the test and restores it.

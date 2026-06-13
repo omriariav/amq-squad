@@ -8,8 +8,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/task"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/task"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // taskNow is overridable in tests for deterministic timestamps.
