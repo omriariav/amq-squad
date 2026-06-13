@@ -40,6 +40,8 @@ func runTeam(args []string) error {
 		return runTeamRules(args[1:])
 	case "overlay":
 		return runTeamOverlay(args[1:])
+	case "member":
+		return runTeamMember(args[1:])
 	case "sync":
 		return runTeamSync(args[1:])
 	case "profiles":
@@ -49,7 +51,7 @@ func runTeam(args []string) error {
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'overlay', 'sync', 'profiles', or 'rm'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'overlay', 'member', 'sync', 'profiles', or 'rm'.", args[0])
 	}
 }
 
@@ -1696,6 +1698,11 @@ Usage:
                                       Generate a per-member Claude settings
                                       overlay (trim plugins/hooks) and wire the
                                       member's claude_args to load it
+  amq-squad team member add <role> --binary <claude|codex> [options]
+  amq-squad team member rm <role>     Add or remove a roster member at runtime
+                                      (atomic + locked + re-validated). The new
+                                      member is not launched; an 'agent up' hint
+                                      is printed.
   amq-squad team sync [--apply] [--profile NAME]
                                       Sync CLAUDE.md and AGENTS.md from team-rules.md
                                       (default: preview; --apply writes; --profile
