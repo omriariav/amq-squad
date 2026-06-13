@@ -15,7 +15,7 @@ const JSONSchemaVersion = 1
 
 // jsonEnvelope is the wrapping shape every --json output uses. Kind names
 // the produced view (e.g. "brief", "brief_seed", "status", "history", "team_plan",
-// "team_profile_plan", "version", "roles", "team_profiles",
+// "team_profile_plan", "team_roster", "tasks", "version", "roles", "team_profiles",
 // "brief_candidate"); Data is the kind-specific payload. Stdout receives the
 // envelope alone; diagnostics stay on stderr.
 type jsonEnvelope struct {

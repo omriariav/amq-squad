@@ -1699,7 +1699,8 @@ Usage:
                                       overlay (trim plugins/hooks) and wire the
                                       member's claude_args to load it
   amq-squad team member add <role> --binary <claude|codex> [options]
-  amq-squad team member rm <role>     Add or remove a roster member at runtime
+  amq-squad team member rm <role>
+  amq-squad team member list          Add/remove/list roster members at runtime
                                       (atomic + locked + re-validated). The new
                                       member is not launched; an 'agent up' hint
                                       is printed.
