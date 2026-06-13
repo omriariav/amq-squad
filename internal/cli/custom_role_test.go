@@ -268,11 +268,11 @@ Owns investigation.
 func TestRoleFileInlinePathStagesVerbatimDoc(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-	body := "# Role: Scribe\n\n## Description\nKeeps the written record.\n"
-	writeRoleFile(t, dir, "scribe.md", body)
+	body := "# Role: Archivist\n\n## Description\nKeeps the written record.\n"
+	writeRoleFile(t, dir, "archivist.md", body)
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--roles", "cto,./scribe.md", "--binary", "scribe=claude", "--session", "issue-96"})
+		return runNew([]string{"team", "--roles", "cto,./archivist.md", "--binary", "archivist=claude", "--session", "issue-96"})
 	})
 	if err != nil {
 		t.Fatalf("inline role file: %v\nstderr:\n%s", err, stderr)
@@ -283,17 +283,17 @@ func TestRoleFileInlinePathStagesVerbatimDoc(t *testing.T) {
 	}
 	found := false
 	for _, m := range cfg.Members {
-		if m.Role == "scribe" {
+		if m.Role == "archivist" {
 			found = true
 			if m.Binary != "claude" {
-				t.Errorf("scribe binary = %q, want claude", m.Binary)
+				t.Errorf("archivist binary = %q, want claude", m.Binary)
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("scribe not in members: %+v", cfg.Members)
+		t.Fatalf("archivist not in members: %+v", cfg.Members)
 	}
-	staged, err := os.ReadFile(team.CustomRolePath(dir, "scribe"))
+	staged, err := os.ReadFile(team.CustomRolePath(dir, "archivist"))
 	if err != nil {
 		t.Fatalf("staged role doc missing: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestRoleFileInlinePathStagesVerbatimDoc(t *testing.T) {
 
 	// And the launch-time seed copies the staged doc into the agent's role.md.
 	agentDir := t.TempDir()
-	if err := seedRoleStub(agentDir, "scribe", dir); err != nil {
+	if err := seedRoleStub(agentDir, "archivist", dir); err != nil {
 		t.Fatalf("seedRoleStub from staged doc: %v", err)
 	}
 	got, err := os.ReadFile(role.Path(agentDir))

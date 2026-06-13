@@ -40,12 +40,10 @@ borderline; #3 and #4 both cover their critical category.
    reading `.amq-squad/team.json` directly. Bare `amq-squad team` shows the
    roster, but a lead naturally reaches for `team member list`. **Recommended
    follow-up:** add `team member list` (or point the error at `amq-squad team`).
-2. **Role library lacks a docs/writer role** (catalog is cpo, cto, senior-dev,
-   fullstack, frontend-dev, backend-dev, mobile-dev, junior-dev, qa, pm,
-   designer). For the docs goal (#4) the lead reached for `backend-dev` as the
-   API SME — defensible, but it's why #4 is borderline. **Recommended
-   follow-up:** add a `scribe`/`technical-writer` role so docs goals compose
-   cleanly without an implementer.
+2. **Role library lacks a docs/writer role** (catalog at eval time lacked a docs role). For the docs goal (#4) the lead
+   reached for `backend-dev` as the API SME — defensible, but it is why #4 is
+   borderline. **Resolved:** a `scribe` (Technical Writer) role was added to the
+   catalog so docs goals compose cleanly without an implementer.
 
 Neither finding blocks the gate; both are good iteration before/with Phase 1.
 
