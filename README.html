@@ -271,6 +271,9 @@
 <ul>
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
+<li><a href="#20--goal-first-dynamic-teams"
+id="toc-20--goal-first-dynamic-teams">2.0 — goal-first, dynamic
+teams</a></li>
 <li><a href="#why" id="toc-why">Why</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#using-amq-squad" id="toc-using-amq-squad">Using
@@ -315,8 +318,88 @@ href="https://github.com/avivsinai/agent-message-queue">AMQ</a> by <a
 href="https://github.com/avivsinai">Aviv Sinai</a>.</p>
 <p>AMQ owns messaging between agents. <code>amq-squad</code> owns the
 layer above: who is on the team, what role each agent plays, what shared
-norms they follow, and how to bring the whole squad up, down, back, or
-into a new workstream.</p>
+norms they follow, and how to bring the whole squad up, stop it, resume
+it, or fork it into a new workstream.</p>
+<h2 id="20--goal-first-dynamic-teams">2.0 — goal-first, dynamic
+teams</h2>
+<p><strong>The shift.</strong> Until now you <em>designed a team, then
+ran it</em>: <code>team init</code> authored a static roster,
+<code>up</code> spawned exactly that roster, and composition was frozen
+for the session. 2.0 inverts it — <strong>you hand a lead a goal and the
+lead composes the team</strong>, proposing, spawning, and pruning agents
+at runtime as the work reveals what it needs. Goal-first changes the
+default <em>mental model</em>; manual still works exactly as before.</p>
+<p>The load-bearing constraint, and why this is amq-squad-native rather
+than "just use Claude Code Agent Teams": <strong>orchestration is
+binary-neutral — a Codex agent can <em>lead</em>, not just be
+led.</strong> No core primitive depends on <code>~/.claude/</code>.</p>
+<p>Composition is a spectrum, and <strong>manual stays the
+floor</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Who composes the team</th>
+<th>2.0</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Manual</strong></td>
+<td>You design the roster up front (<code>team init</code> / the setup
+wizard).</td>
+<td>first-class, unchanged</td>
+</tr>
+<tr>
+<td><strong>Seeded</strong></td>
+<td>The lead <strong>proposes</strong> each spawn from the goal; the
+<strong>operator approves</strong> it over a
+<code>gate/&lt;topic&gt;</code> thread.</td>
+<td>shipped</td>
+</tr>
+<tr>
+<td><strong>Autonomous</strong></td>
+<td>The lead spawns/prunes within guardrails, no per-spawn
+approval.</td>
+<td>deferred to 2.1</td>
+</tr>
+</tbody>
+</table>
+<p>Three binary-neutral primitives make it work, and all of them
+round-trip through stop/resume so a resumed session rebuilds the team
+the lead <strong>built</strong>, not the seed:</p>
+<ul>
+<li><strong>Mutable roster</strong> —
+<code>amq-squad team member add/rm/list</code> grows or shrinks the team
+mid-session (atomic, file-locked, re-validated, persisted).</li>
+<li><strong>Native task store</strong> —
+<code>amq-squad task add/list/claim/done/fail/block</code>: a
+pull-based, dependency-gated queue under
+<code>.amq-squad/tasks/&lt;session&gt;/</code>, so a lead of either
+binary decomposes the goal into claimable work.</li>
+<li><strong>Compose-from-goal playbook</strong> — the
+<code>amq-squad-orchestrator</code> skill (in both the Claude and Codex
+marketplaces) drives propose → approve → <code>team member add</code> →
+<code>task add</code> → prune.</li>
+</ul>
+<h3 id="breaking-changes">Breaking changes</h3>
+<p>2.0 is a major version; the breaking surface is small and mechanical
+(full upgrade notes in <a
+href="MIGRATION.md"><code>MIGRATION.md</code></a>):</p>
+<ul>
+<li><strong>Removed verbs</strong> — <code>down</code>,
+<code>launch</code>, <code>restore</code>, <code>list</code>,
+<code>team show</code>, <code>team launch</code> now return a usage
+error. Use <code>stop</code>, <code>agent up</code>,
+<code>history</code> / <code>agent resume</code>, <code>status</code> /
+<code>history</code>, <code>up --dry-run</code>, and <code>up</code>
+respectively.</li>
+<li><strong><code>/v2</code> module path</strong> — install from
+<code>github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</code>
+(note the <code>/v2</code>).</li>
+<li><strong>No data migration</strong> — existing <code>team.json</code>
+(schema v3) loads unchanged.</li>
+</ul>
 <h2 id="why">Why</h2>
 <p>AMQ's <code>coop exec</code> is a generic launcher. It sets up a
 mailbox and execs into <code>claude</code> or <code>codex</code>, but it
