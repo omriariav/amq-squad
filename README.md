@@ -2,7 +2,35 @@
 
 Role-aware agent team launcher built on top of [AMQ](https://github.com/avivsinai/agent-message-queue) by [Aviv Sinai](https://github.com/avivsinai).
 
-AMQ owns messaging between agents. `amq-squad` owns the layer above: who is on the team, what role each agent plays, what shared norms they follow, and how to bring the whole squad up, down, back, or into a new workstream.
+AMQ owns messaging between agents. `amq-squad` owns the layer above: who is on the team, what role each agent plays, what shared norms they follow, and how to bring the whole squad up, stop it, resume it, or fork it into a new workstream.
+
+## 2.0 — goal-first, dynamic teams
+
+**The shift.** Until now you *designed a team, then ran it*: `team init` authored a static roster, `up` spawned exactly that roster, and composition was frozen for the session. 2.0 inverts it — **you hand a lead a goal and the lead composes the team**, proposing, spawning, and pruning agents at runtime as the work reveals what it needs. Goal-first changes the default *mental model*; manual still works exactly as before.
+
+The load-bearing constraint, and why this is amq-squad-native rather than "just use Claude Code Agent Teams": **orchestration is binary-neutral — a Codex agent can *lead*, not just be led.** No core primitive depends on `~/.claude/`.
+
+Composition is a spectrum, and **manual stays the floor**:
+
+| Mode | Who composes the team | 2.0 |
+| --- | --- | --- |
+| **Manual** | You design the roster up front (`team init` / the setup wizard). | first-class, unchanged |
+| **Seeded** | The lead **proposes** each spawn from the goal; the **operator approves** it over a `gate/<topic>` thread. | shipped |
+| **Autonomous** | The lead spawns/prunes within guardrails, no per-spawn approval. | deferred to 2.1 |
+
+Three binary-neutral primitives make it work, and all of them round-trip through stop/resume so a resumed session rebuilds the team the lead **built**, not the seed:
+
+- **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted).
+- **Native task store** — `amq-squad task add/list/claim/done/fail/block`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/`, so a lead of either binary decomposes the goal into claimable work.
+- **Compose-from-goal playbook** — the `amq-squad-orchestrator` skill (in both the Claude and Codex marketplaces) drives propose → approve → `team member add` → `task add` → prune.
+
+### Breaking changes
+
+2.0 is a major version; the breaking surface is small and mechanical (full upgrade notes in [`MIGRATION.md`](MIGRATION.md)):
+
+- **Removed verbs** — `down`, `launch`, `restore`, `list`, `team show`, `team launch` now return a usage error. Use `stop`, `agent up`, `history` / `agent resume`, `status` / `history`, `up --dry-run`, and `up` respectively.
+- **`/v2` module path** — install from `github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest` (note the `/v2`).
+- **No data migration** — existing `team.json` (schema v3) loads unchanged.
 
 ## Why
 
