@@ -223,6 +223,43 @@ func TestTranslateAgentUpArgs(t *testing.T) {
 	}
 }
 
+func TestDefaultMeFromRole(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"role no me injects handle", []string{"codex", "--role", "cto"}, []string{"codex", "--me", "cto", "--role", "cto"}},
+		{"role=value form injects", []string{"claude", "--role=fullstack"}, []string{"claude", "--me", "fullstack", "--role=fullstack"}},
+		{"hyphen role is a valid handle", []string{"claude", "--role", "frontend-dev"}, []string{"claude", "--me", "frontend-dev", "--role", "frontend-dev"}},
+		{"uppercase role lowercased for handle", []string{"claude", "--role", "CTO"}, []string{"claude", "--me", "cto", "--role", "CTO"}},
+		{"explicit me wins", []string{"codex", "--role", "cto", "--me", "cto2"}, []string{"codex", "--role", "cto", "--me", "cto2"}},
+		{"me before role still wins", []string{"codex", "--me", "cto2", "--role", "cto"}, []string{"codex", "--me", "cto2", "--role", "cto"}},
+		{"no role unchanged", []string{"codex", "--dry-run"}, []string{"codex", "--dry-run"}},
+		{"exotic role keeps basename default", []string{"codex", "--role", "Senior Dev"}, []string{"codex", "--role", "Senior Dev"}},
+		{"role only in child block ignored", []string{"codex", "--no-bootstrap", "--", "--role", "x"}, []string{"codex", "--no-bootstrap", "--", "--role", "x"}},
+		{"bare role with no value unchanged", []string{"codex", "--dry-run", "--role"}, []string{"codex", "--dry-run", "--role"}},
+		{"role followed by dash token unchanged", []string{"codex", "--role", "--dry-run"}, []string{"codex", "--role", "--dry-run"}},
+		{"role after other string flag", []string{"claude", "--session", "issue-96", "--role", "cto"}, []string{"claude", "--me", "cto", "--session", "issue-96", "--role", "cto"}},
+		{"binary only", []string{"codex"}, []string{"codex"}},
+		{"help passthrough", []string{"--help"}, []string{"--help"}},
+		{"empty", nil, nil},
+	}
+	for _, tc := range cases {
+		got := defaultMeFromRole(tc.in)
+		if len(got) != len(tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("%s[%d]: got %q, want %q (got=%v want=%v)", tc.name, i, got[i], tc.want[i], got, tc.want)
+				break
+			}
+		}
+	}
+}
+
 // TestAgentUpHonorsPostBinaryFlags is the functional regression senior-dev
 // flagged: a user typing `agent up codex --dry-run ...` should see the
 // dry-run note on stderr, proving the launch flag was actually parsed.

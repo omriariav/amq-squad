@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // runAgent dispatches the `agent` subgroup: `agent up <binary>` launches a
@@ -61,6 +63,10 @@ Examples:
 `)
 		return nil
 	}
+	// Default the agent handle to its --role before translating, so a hand-typed
+	// `agent up <binary> --role R` (no --me) routes to the role's mailbox
+	// instead of the binary basename (see defaultMeFromRole).
+	args = defaultMeFromRole(args)
 	// agent up syntax is `agent up <binary> [launch flags] [-- child args]`.
 	// runLaunch's parser expects `[flags] <binary> [-- child]`, so translate
 	// before delegating: lift the binary to after the launch flags. This lets
@@ -68,6 +74,77 @@ Examples:
 	// parser still sees flags first.
 	translated := translateAgentUpArgs(args)
 	return runLaunch(translated)
+}
+
+// defaultMeFromRole makes `agent up <binary> --role R` (no --me) route to the
+// role's mailbox instead of the binary basename. Without it, every same-binary
+// agent shares one handle (claude/codex), so peer reports and gate replies
+// misroute — a real footgun the first 2.0 dogfood hit. The team-launch and
+// resume paths already pass an explicit --me per member; this closes the gap on
+// the direct single-agent front door (and the skill pairs --role with --me, so
+// this only backstops a hand-typed launch).
+//
+// It operates on agent-up-shaped args (binary positional first, launch flags
+// after, child args behind a `--`). Only the launch-flag region is inspected;
+// the child block is never touched. The derived handle must be a valid slug
+// handle (same rule as roster handles) — an exotic --role keeps the old
+// binary-basename default rather than synthesizing an invalid handle.
+func defaultMeFromRole(args []string) []string {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return args
+	}
+	binary := args[0]
+	rest := args[1:]
+	role := ""
+	haveMe := false
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		if a == "--" {
+			break // child block; stop scanning
+		}
+		name := a
+		hasEq := strings.Contains(a, "=")
+		if hasEq {
+			name = a[:strings.IndexByte(a, '=')]
+		}
+		switch name {
+		case "--me", "-me":
+			haveMe = true
+			if !hasEq {
+				i++ // skip the handle value token
+			}
+			continue
+		case "--role", "-role":
+			if hasEq {
+				role = a[strings.IndexByte(a, '=')+1:]
+			} else if i+1 < len(rest) && !strings.HasPrefix(rest[i+1], "-") {
+				role = rest[i+1]
+				i++
+			}
+			continue
+		}
+		// Skip the value token of any other value-consuming launch flag so a
+		// value can never be mistaken for --role/--me on the next iteration.
+		if !hasEq {
+			switch launchKnownFlag(name) {
+			case "string", "string-accepts-dash":
+				if i+1 < len(rest) {
+					i++
+				}
+			}
+		}
+	}
+	if haveMe || role == "" {
+		return args
+	}
+	handle := strings.ToLower(strings.TrimSpace(role))
+	if team.ValidateHandle(handle) != nil {
+		return args
+	}
+	out := make([]string, 0, len(args)+2)
+	out = append(out, binary, "--me", handle)
+	out = append(out, rest...)
+	return out
 }
 
 // translateAgentUpArgs reorders `agent up <binary> [flags...] [-- child]`

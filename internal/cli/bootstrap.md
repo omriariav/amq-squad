@@ -69,5 +69,5 @@ First steps:
 5. If routing is ambiguous, use `amq route explain` or the printed `amq-squad amq route --to <handle>` diagnostics before sending.
 6. For important review requests or queued handoffs, send with `--wait-for drained --wait-timeout 60s` and keep the message id.
 7. Do not resume old sessions or route work to historical agents unless the user explicitly asks.
-8. Start your first response by stating your role and handle, then summarize relevant prior context and what you are waiting for.
+8. Start your first response by stating your role, handle, and the amq-squad skill version (the `Skill version:` marker in the amq-squad skill you loaded — e.g. `amq-squad skill v2.0.0`); if you cannot find that marker, say so, since it means the 2.0 skill did not load. Then summarize relevant prior context and what you are waiting for.
 9. Stop and wait for instructions.

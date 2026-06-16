@@ -238,7 +238,14 @@ func runTeamMemberAdd(args []string) error {
 	}
 
 	fmt.Printf("added %s (%s) to the team.\n", added.Role, added.Binary)
-	fmt.Printf("start it with:\n  %s\n", agentUpHint(added))
+	// Steer the launch into a managed tmux pane: only then can amq-squad
+	// focus/send/close the agent (the pane-lifecycle work). A bare `agent up`
+	// TTY-execs with no managed pane, which is fine for a one-off but leaves an
+	// orchestrator's worker unmanaged — the gap the first 2.0 dogfood hit.
+	fmt.Printf("launch it in a managed tmux pane (run from inside tmux so amq-squad can focus/send/close it):\n")
+	fmt.Printf("  amq-squad resume --exec --target new-window\n")
+	fmt.Printf("  (brings up newly-added members in their own window and skips any already live)\n")
+	fmt.Printf("or run it directly in this terminal, without a managed pane:\n  %s\n", agentUpHint(added))
 	return nil
 }
 
