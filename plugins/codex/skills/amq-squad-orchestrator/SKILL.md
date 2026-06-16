@@ -125,14 +125,19 @@ complete) and then `task done <id> --session <S>` / `fail` / `block`. You watch
 progress with `task list --session <S>`.
 
 **5. Prune as work resolves.** When an agent's work is done and it is idle,
-shrink the team — stop it and drop it from the roster:
+shrink the team — stop it (closing its pane) and drop it from the roster:
 
 ```sh
-amq-squad stop --role <role> --session <S>
+amq-squad stop --role <role> --close-panes --session <S>
 amq-squad team member rm <role>
 ```
 
-Then drive the spawned team with the loop below.
+Pass **`--close-panes`** on a true prune: `stop` *keeps* the agent's tmux pane by
+default (so a stopped session stays readable and `resume` can re-create it), so
+without it the pruned worker's window lingers as an orphan. `team member rm` only
+edits the roster — it never touches panes — so the pane close has to come from
+`stop --close-panes` (or a session-level `rm`/`archive`). Then drive the
+spawned team with the loop below.
 
 **Heuristics & anti-patterns.** Propose the *minimal* team and grow on evidence
 (a blocked task often means a missing specialist). Avoid over-spawning (cost,
