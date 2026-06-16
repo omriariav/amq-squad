@@ -54,7 +54,7 @@ func TestParseFlagsUsageErrorAcrossCommands(t *testing.T) {
 		fn   func() error
 	}{
 		{"up", func() error { return runUp([]string{"--banana"}) }},
-		{"doctor", func() error { return runDoctor([]string{"--banana"}) }},
+		{"doctor", func() error { return runDoctor([]string{"--banana"}, "") }},
 		{"completion", func() error { return runCompletion([]string{"--banana"}) }},
 		{"team profiles", func() error { return runTeam([]string{"profiles", "--banana"}) }},
 		{"team rules init", func() error { return runTeam([]string{"rules", "init", "--banana"}) }},

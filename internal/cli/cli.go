@@ -63,7 +63,7 @@ func Run(args []string, version string) error {
 		return err
 	}
 
-	err = dispatch(args)
+	err = dispatch(args, version)
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
 	}
@@ -183,7 +183,7 @@ func projectHasDiscoverableSessions(projectDir string, resolveBaseRoot func(stri
 	return false
 }
 
-func dispatch(args []string) error {
+func dispatch(args []string, version string) error {
 	switch args[0] {
 	case "team":
 		return runTeam(args[1:])
@@ -226,7 +226,7 @@ func dispatch(args []string) error {
 	case "completion":
 		return runCompletion(args[1:])
 	case "doctor":
-		return runDoctor(args[1:])
+		return runDoctor(args[1:], version)
 	case "agent":
 		return runAgent(args[1:])
 	default:

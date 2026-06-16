@@ -100,6 +100,8 @@ yours.
 
 Launching a child **through amq-squad** is what captures its pane id into the launch record (the control contract). That is why you spawn via amq-squad, not via raw tmux.
 
+> **Version note:** a spawned child inherits the `amq-squad` on its `PATH` and calls it as bare `amq-squad`. If the binary you are driving differs from the one on `PATH`, children silently run that other version (and may lack newer primitives like `team member` / `task`). Run `amq-squad doctor` — it warns on this version skew — and align them (`go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest`) before composing a team.
+
 **Window-per-agent (preferred for a squad of children):**
 
 ```sh

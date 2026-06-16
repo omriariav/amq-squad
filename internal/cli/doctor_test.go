@@ -92,7 +92,7 @@ func syncDoctorPointers(t *testing.T, dir, rulesBody string) {
 }
 
 func TestRunDoctorRejectsPositionalArgs(t *testing.T) {
-	_, _, err := captureOutput(t, func() error { return runDoctor([]string{"foo"}) })
+	_, _, err := captureOutput(t, func() error { return runDoctor([]string{"foo"}, "") })
 	if err == nil {
 		t.Fatal("positional arg should be UsageError")
 	}
@@ -102,7 +102,7 @@ func TestRunDoctorRejectsPositionalArgs(t *testing.T) {
 }
 
 func TestRunDoctorRejectsUnknownFlag(t *testing.T) {
-	_, _, err := captureOutput(t, func() error { return runDoctor([]string{"--banana"}) })
+	_, _, err := captureOutput(t, func() error { return runDoctor([]string{"--banana"}, "") })
 	if err == nil {
 		t.Fatal("unknown flag should fail")
 	}
@@ -113,7 +113,7 @@ func TestRunDoctorRejectsUnknownFlag(t *testing.T) {
 
 func TestRunDoctorRejectsAllProfilesWithProfile(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
-		return runDoctor([]string{"--all-profiles", "--profile", "review"})
+		return runDoctor([]string{"--all-profiles", "--profile", "review"}, "")
 	})
 	if err == nil || !strings.Contains(err.Error(), "--all-profiles cannot be combined with --profile") {
 		t.Fatalf("all-profiles/profile error = %v", err)
@@ -127,7 +127,7 @@ func TestRunDoctorProjectTargetsOtherDir(t *testing.T) {
 	t.Setenv("PATH", "")
 
 	stdout, _, err := captureOutput(t, func() error {
-		return runDoctor([]string{"--project", project, "--json"})
+		return runDoctor([]string{"--project", project, "--json"}, "")
 	})
 	if err == nil {
 		t.Fatal("doctor with PATH stripped should fail health checks, preserving JSON output")
@@ -141,14 +141,14 @@ func TestRunDoctorProjectTargetsOtherDir(t *testing.T) {
 func TestRunDoctorProjectValidation(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
 	_, _, err := captureOutput(t, func() error {
-		return runDoctor([]string{"--project", missing, "--json"})
+		return runDoctor([]string{"--project", missing, "--json"}, "")
 	})
 	if err == nil || !strings.Contains(err.Error(), "--project") {
 		t.Fatalf("doctor --project missing error = %v, want --project error", err)
 	}
 
 	_, _, err = captureOutput(t, func() error {
-		return runDoctor([]string{"--project", "", "--json"})
+		return runDoctor([]string{"--project", "", "--json"}, "")
 	})
 	if err == nil || !strings.Contains(err.Error(), "--project requires a directory") {
 		t.Fatalf("doctor empty --project error = %v, want directory guidance", err)
