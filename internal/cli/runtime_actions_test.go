@@ -74,6 +74,59 @@ func TestResolveControlTargetExactRecordedPane(t *testing.T) {
 	}
 }
 
+// TestResolveControlTargetDirectInspectUnderCCScanMiss proves the iTerm2 tmux -CC
+// fix (#140): when the global list-panes scan misses the recorded pane (returned
+// nothing, or failed wholesale so the caller degraded to nil), the recorded pane
+// id is inspected directly and still resolves — while the cwd/title safety guards
+// are preserved.
+func TestResolveControlTargetDirectInspectUnderCCScanMiss(t *testing.T) {
+	mr := memberRuntime{
+		Member: team.Member{Role: "cto", Binary: "codex"}, Handle: "cto", CWD: "/repo",
+		HasRecord: true, Record: launch.Record{Tmux: &launch.TmuxInfo{PaneID: "%265"}},
+	}
+	restore := statusPaneInspector
+	defer func() { statusPaneInspector = restore }()
+
+	// Scan list is empty (the caller degraded after a -CC scan failure); direct
+	// inspection of the recorded id returns the live pane -> resolves.
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		if id != "%265" {
+			return tmuxpane.TmuxPane{}, false
+		}
+		return tmuxpane.TmuxPane{PaneID: "%265", Session: "main", Window: "0", Pane: "1", CWD: "/repo", Command: "codex"}, true
+	}
+	if id, _, ok := resolveControlTarget(mr, "issue-96", nil); !ok || id != "%265" {
+		t.Fatalf("recorded pane must resolve via direct inspection when the scan misses, got id=%q ok=%v", id, ok)
+	}
+
+	// Safety preserved: a directly-inspected pane in a DIFFERENT cwd (reused id
+	// after a tmux restart) must NOT be trusted.
+	statusPaneInspector = func(string) (tmuxpane.TmuxPane, bool) {
+		return tmuxpane.TmuxPane{PaneID: "%265", CWD: "/somewhere/else", Command: "codex"}, true
+	}
+	if _, _, ok := resolveControlTarget(mr, "issue-96", nil); ok {
+		t.Fatal("a directly-inspected pane in a different cwd must not be trusted")
+	}
+
+	// Pane truly gone: direct inspection returns not-found -> unresolved.
+	statusPaneInspector = func(string) (tmuxpane.TmuxPane, bool) { return tmuxpane.TmuxPane{}, false }
+	if _, _, ok := resolveControlTarget(mr, "issue-96", nil); ok {
+		t.Fatal("a gone pane must not resolve")
+	}
+
+	// Happy path: when the scan ALREADY has the pane, the direct inspector must
+	// NOT be consulted (no extra tmux call).
+	called := false
+	statusPaneInspector = func(string) (tmuxpane.TmuxPane, bool) { called = true; return tmuxpane.TmuxPane{}, false }
+	panes := []tmuxpane.TmuxPane{{PaneID: "%265", Session: "main", Window: "0", Pane: "1", CWD: "/repo", Command: "codex"}}
+	if _, _, ok := resolveControlTarget(mr, "issue-96", panes); !ok {
+		t.Fatal("scan hit should resolve")
+	}
+	if called {
+		t.Error("direct inspector must not be called when the scan already found the pane")
+	}
+}
+
 func TestResolveControlTargetRejectsReusedPaneTitledForOther(t *testing.T) {
 	// The recorded pane id is alive and in the right cwd, but tmux restarted and
 	// %42 is now a SIBLING agent's pane (titled for qa, same repo). cto's send

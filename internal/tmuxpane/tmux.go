@@ -152,24 +152,50 @@ func PaneIdentityFor(paneID string) (*PaneIdentity, error) {
 	}, nil
 }
 
+// paneListFormat is the tab-separated tmux format shared by the global
+// `list-panes -a` scan and the single-pane `display-message` lookup, so both
+// produce rows parsePanes understands.
+//
+// pane_id + window_id (exact control addresses, tab-free) are placed before the
+// trailing human labels pane_title + window_name so a label containing a tab can
+// never shift the ids. window_name remains the last field so the parser can
+// absorb any embedded tabs into it; an empty pane_title (older/non-amq panes)
+// leaves a trailing tab the parser tolerates.
+const paneListFormat = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_id}\t#{window_id}\t#{pane_title}\t#{window_name}"
+
 // DefaultPaneLister shells `tmux list-panes -a` with a tab-separated format and
 // parses each row into a TmuxPane. It is strictly READ-ONLY. A missing tmux
 // binary or no server is reported as an error so callers can degrade.
 func DefaultPaneLister() ([]TmuxPane, error) {
-	// pane_title + window_name are appended last so an empty title (older/non-amq
-	// panes) leaves a trailing tab the parser tolerates; pane_title carries the
-	// name-first resolution token and window_name the cross-session focus
-	// fallback.
-	// pane_id + window_id (exact control addresses, tab-free) are placed before
-	// the trailing human labels pane_title + window_name so a label containing a
-	// tab can never shift the ids. window_name remains the last field so the
-	// parser can absorb any embedded tabs into it.
-	const format = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_id}\t#{window_id}\t#{pane_title}\t#{window_name}"
-	out, err := exec.Command("tmux", "list-panes", "-a", "-F", format).Output()
+	out, err := exec.Command("tmux", "list-panes", "-a", "-F", paneListFormat).Output()
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-panes: %w", err)
 	}
 	return parsePanes(string(out)), nil
+}
+
+// InspectPaneByID resolves a single pane directly by its tmux id via
+// `tmux display-message -t <id>`, bypassing the global `list-panes -a` scan.
+// This is the robust path under iTerm2 tmux -CC control mode, where the global
+// scan can fail wholesale (exit 1) even though the exact recorded pane is still
+// individually addressable. Strictly READ-ONLY. Returns false when paneID is
+// empty, the pane is gone (display-message errors), or the row is malformed.
+// It uses the same captureExec seam as PaneIdentityFor so tests never shell real
+// tmux. display-message takes the format as a trailing positional argument (not
+// -F), matching PaneIdentityFor.
+func InspectPaneByID(paneID string) (TmuxPane, bool) {
+	if strings.TrimSpace(paneID) == "" {
+		return TmuxPane{}, false
+	}
+	out, err := captureExec("display-message", "-p", "-t", paneID, paneListFormat)
+	if err != nil {
+		return TmuxPane{}, false
+	}
+	panes := parsePanes(out)
+	if len(panes) == 0 {
+		return TmuxPane{}, false
+	}
+	return panes[0], true
 }
 
 // parsePanes parses the tab-separated `tmux list-panes` output. Malformed rows
