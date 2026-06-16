@@ -237,7 +237,14 @@ func TestDefaultMeFromRole(t *testing.T) {
 		{"me before role still wins", []string{"codex", "--me", "cto2", "--role", "cto"}, []string{"codex", "--me", "cto2", "--role", "cto"}},
 		{"no role unchanged", []string{"codex", "--dry-run"}, []string{"codex", "--dry-run"}},
 		{"exotic role keeps basename default", []string{"codex", "--role", "Senior Dev"}, []string{"codex", "--role", "Senior Dev"}},
-		{"role only in child block ignored", []string{"codex", "--no-bootstrap", "--", "--role", "x"}, []string{"codex", "--no-bootstrap", "--", "--role", "x"}},
+		{"role only in explicit child block ignored", []string{"codex", "--no-bootstrap", "--", "--role", "x"}, []string{"codex", "--no-bootstrap", "--", "--role", "x"}},
+		// Regression (codex review): a child positional opens the child block, so
+		// a trailing `--role` there is a CHILD arg and must NOT become --me.
+		{"child positional then role is child arg", []string{"codex", "prompt", "--role", "cto"}, []string{"codex", "prompt", "--role", "cto"}},
+		{"unknown child flag then role is child arg", []string{"codex", "--foo", "--role", "cto"}, []string{"codex", "--foo", "--role", "cto"}},
+		{"launch role before child role wins", []string{"codex", "--role", "cto", "--", "--role", "x"}, []string{"codex", "--me", "cto", "--role", "cto", "--", "--role", "x"}},
+		{"launch role then trailing child positional", []string{"codex", "--role", "cto", "prompt"}, []string{"codex", "--me", "cto", "--role", "cto", "prompt"}},
+		{"role after bool launch flag", []string{"codex", "--dry-run", "--role", "cto"}, []string{"codex", "--me", "cto", "--dry-run", "--role", "cto"}},
 		{"bare role with no value unchanged", []string{"codex", "--dry-run", "--role"}, []string{"codex", "--dry-run", "--role"}},
 		{"role followed by dash token unchanged", []string{"codex", "--role", "--dry-run"}, []string{"codex", "--role", "--dry-run"}},
 		{"role after other string flag", []string{"claude", "--session", "issue-96", "--role", "cto"}, []string{"claude", "--me", "cto", "--session", "issue-96", "--role", "cto"}},
