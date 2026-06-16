@@ -38,9 +38,10 @@ func TestInspectPaneByIDEmptyIDDoesNotShell(t *testing.T) {
 }
 
 func TestInspectPaneByIDErrorReturnsFalse(t *testing.T) {
-	// A gone pane: display-message exits non-zero. This is exactly the -CC case
-	// where the global scan fails but a present pane still resolves — here the
-	// pane is genuinely absent, so we must report not-found, not error.
+	// A gone pane: display-message exits non-zero on every retry. This is the
+	// -CC case where the global scan fails but a present pane still resolves —
+	// here the pane is genuinely absent, so we must report not-found, not error.
+	zeroReadBackoff(t)
 	swapCapture(t, "", errors.New("can't find pane %9"))
 	if _, ok := InspectPaneByID("%9"); ok {
 		t.Fatal("a display-message error must return false (pane gone)")
@@ -48,6 +49,7 @@ func TestInspectPaneByIDErrorReturnsFalse(t *testing.T) {
 }
 
 func TestInspectPaneByIDMalformedReturnsFalse(t *testing.T) {
+	zeroReadBackoff(t)
 	swapCapture(t, "main\t0\n", nil) // too few fields -> parsePanes skips the row
 	if _, ok := InspectPaneByID("%9"); ok {
 		t.Fatal("a malformed row must return false")

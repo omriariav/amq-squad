@@ -7,8 +7,26 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/state"
+)
+
+// tmuxReadAttempts bounds how many times a READ-ONLY tmux query is retried when
+// it transiently fails. Under iTerm2 tmux -CC the control client pauses when an
+// agent TUI floods output; while paused, in-session `tmux list-panes` /
+// `display-message` queries can return exit 1 / empty even though the pane is
+// alive. A pause clears in well under a second, so a few quick retries ride
+// through it, while a genuinely-gone pane still fails within the small total
+// budget ((attempts-1) * tmuxReadBackoff). READS ONLY: mutating tmux commands
+// (send-keys, kill-pane) are never retried — a partial write must not repeat.
+const tmuxReadAttempts = 3
+
+// tmuxReadBackoff is the pause between read retries; tmuxReadSleep is the sleep
+// seam. Both are vars so tests can zero the wait and run instantly.
+var (
+	tmuxReadBackoff = 90 * time.Millisecond
+	tmuxReadSleep   = func(d time.Duration) { time.Sleep(d) }
 )
 
 // TmuxPane is one row from `tmux list-panes -a`: a pane plus its running
@@ -166,12 +184,29 @@ const paneListFormat = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_
 // DefaultPaneLister shells `tmux list-panes -a` with a tab-separated format and
 // parses each row into a TmuxPane. It is strictly READ-ONLY. A missing tmux
 // binary or no server is reported as an error so callers can degrade.
-func DefaultPaneLister() ([]TmuxPane, error) {
+// listPanesExec is the seam for the global `tmux list-panes -a` scan. A var so
+// tests can inject sequenced failures that mimic the -CC pause shape.
+var listPanesExec = func() (string, error) {
 	out, err := exec.Command("tmux", "list-panes", "-a", "-F", paneListFormat).Output()
-	if err != nil {
-		return nil, fmt.Errorf("tmux list-panes: %w", err)
+	return string(out), err
+}
+
+func DefaultPaneLister() ([]TmuxPane, error) {
+	var lastErr error
+	for attempt := 0; attempt < tmuxReadAttempts; attempt++ {
+		out, err := listPanesExec()
+		if err == nil {
+			// An empty list with no error is a genuine "no panes", not a -CC
+			// stutter, so it returns immediately. Only an error (exit 1, the
+			// pause shape) is retried.
+			return parsePanes(out), nil
+		}
+		lastErr = err
+		if attempt+1 < tmuxReadAttempts {
+			tmuxReadSleep(tmuxReadBackoff)
+		}
 	}
-	return parsePanes(string(out)), nil
+	return nil, fmt.Errorf("tmux list-panes: %w", lastErr)
 }
 
 // InspectPaneByID resolves a single pane directly by its tmux id via
@@ -187,15 +222,22 @@ func InspectPaneByID(paneID string) (TmuxPane, bool) {
 	if strings.TrimSpace(paneID) == "" {
 		return TmuxPane{}, false
 	}
-	out, err := captureExec("display-message", "-p", "-t", paneID, paneListFormat)
-	if err != nil {
-		return TmuxPane{}, false
+	// Retry through transient -CC pauses: a paused control client makes
+	// `display-message -t <id>` return exit 1 / empty even though the pane is
+	// live. A genuinely-gone pane keeps failing and falls through to false
+	// within the bounded budget.
+	for attempt := 0; attempt < tmuxReadAttempts; attempt++ {
+		out, err := captureExec("display-message", "-p", "-t", paneID, paneListFormat)
+		if err == nil {
+			if panes := parsePanes(out); len(panes) > 0 {
+				return panes[0], true
+			}
+		}
+		if attempt+1 < tmuxReadAttempts {
+			tmuxReadSleep(tmuxReadBackoff)
+		}
 	}
-	panes := parsePanes(out)
-	if len(panes) == 0 {
-		return TmuxPane{}, false
-	}
-	return panes[0], true
+	return TmuxPane{}, false
 }
 
 // parsePanes parses the tab-separated `tmux list-panes` output. Malformed rows

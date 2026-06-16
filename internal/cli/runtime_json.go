@@ -92,7 +92,24 @@ func fillPaneAlive(rt *tmuxRuntimeJSON, live map[string]bool) {
 	if rt == nil {
 		return
 	}
-	rt.PaneAlive = rt.PaneID != "" && live[rt.PaneID]
+	if rt.PaneID == "" {
+		rt.PaneAlive = false
+		return
+	}
+	if live[rt.PaneID] {
+		rt.PaneAlive = true
+		return
+	}
+	// The global `list-panes` scan can miss a live pane while the iTerm2 -CC
+	// control client is paused (it comes back empty / exit 1). Before declaring
+	// the pane dead, confirm the recorded id DIRECTLY — the same robust path
+	// send/focus use — so resume/status liveness stops flapping under -CC and
+	// agrees with the control plane. statusPaneInspector retries internally.
+	if _, ok := statusPaneInspector(rt.PaneID); ok {
+		rt.PaneAlive = true
+		return
+	}
+	rt.PaneAlive = false
 }
 
 // runtimeActionJSON is one stable, project-scoped operator action a client
