@@ -311,9 +311,9 @@ Global output flags work before or after the subcommand: `--quiet`,
 ## Companion skills
 
 - `amq-squad` - live coordination after setup: drains, routing, status
-  board/console/history, up/stop/resume/fork/rm/archive (down is a deprecated
-  alias), agent up/resume, doctor. Switch to it as soon as `up --dry-run` is
-  clean and the user is ready to launch.
+  board/console/history, up/stop/resume/fork/rm/archive, agent up/resume,
+  doctor. Switch to it as soon as `up --dry-run` is clean and the user is ready
+  to launch.
 - `amq-squad-orchestrator` - the lead-agent playbook for an orchestrated squad
   (spawn / dispatch / monitor / the `[AGENT-EVENT]`-over-AMQ reporting protocol /
   recover). The lead loads it; this skill only wires the opt-in.

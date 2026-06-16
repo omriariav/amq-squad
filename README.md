@@ -457,12 +457,15 @@ amq-squad up [<session>] [--project DIR] [--profile NAME] [--session ws] [--rese
                                   no --seed-from/--brief the brief is AUTO-STUBBED (with a
                                   one-line notice) so CI/send-keys flows keep working.
                                   --project targets a team-home without cd.
-amq-squad stop [--all | --role R] [--project DIR] [--force]
+amq-squad stop [--all | --role R] [--project DIR] [--force] [--close-panes]
                                   Stop members: SIGTERM the live, binary-matched
                                   agent PID (--force = SIGKILL), reap the wake
                                   sidecar, flip presence offline. On-disk state is
                                   preserved, so the session stays resumable.
                                   --project targets a team-home without cd.
+                                  --close-panes also closes each stopped agent's
+                                  tmux pane (default: keep, so final output stays
+                                  readable; resume re-creates panes).
                                   (The 'down' alias was removed in 2.0.)
 amq-squad resume [--project DIR] [--profile NAME] [--session ws] [--restore-existing]
                  [--exec] [--dry-run] [--force-duplicate]
@@ -486,17 +489,20 @@ amq-squad fork --from <current> --as <new> [--project DIR] [--force-duplicate]
                                   created or preserved by the subsequent
                                   `up --session <new>` (or `agent up`) live launch.
                                   --project targets a team-home without cd.
-amq-squad rm <session> [--project DIR] [--yes] [--force]
+amq-squad rm <session> [--project DIR] [--yes] [--force] [--keep-panes]
                                   Permanently remove a finished session (its AMQ root dir
                                   + brief). Previews + prompts
                                   (default No) unless --yes; refuses a live session unless
-                                  --force; never touches a sibling session. --project
+                                  --force; never touches a sibling session. Closes the
+                                  torn-down agents' tmux panes by default (live agents
+                                  excluded); --keep-panes to leave them. --project
                                   targets a team-home without cd.
-amq-squad archive <session> [--project DIR] [--yes] [--force]
+amq-squad archive <session> [--project DIR] [--yes] [--force] [--keep-panes]
                                   Move a finished session aside instead of deleting it
                                   (to <baseRoot>/.archive/<session>/, recoverable).
                                   Confirm-gated; refuses a live session unless --force.
-                                  --project targets a team-home without cd.
+                                  Closes the agents' tmux panes by default; --keep-panes
+                                  to leave them. --project targets a team-home without cd.
 amq-squad status [--project DIR] [--json]
                                   Multi-session BOARD over every discovered session
 amq-squad status --session NAME [--project DIR] [--json]
@@ -521,9 +527,11 @@ amq-squad console [--project DIR] [--session NAME] [--refresh 2s] [--at-risk-wai
 amq-squad history [--json] [--project a,b]
                                   Restorable launch records across known projects.
 amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
-                                  AMQ version, AMQ ops diagnostics, profile
-                                  config, tmux, wake, marker integrity, and
-                                  pointer-sync drift.
+                                  AMQ version, AMQ ops diagnostics, the amq-squad
+                                  on PATH vs this build (version skew — spawned
+                                  agents inherit the PATH binary), profile config,
+                                  tmux, wake, marker integrity, and pointer-sync
+                                  drift.
 amq-squad amq env [--project DIR] [--session NAME] [--me HANDLE] [--json]
                                   Show the AMQ context amq-squad resolved for
                                   this project/session.
