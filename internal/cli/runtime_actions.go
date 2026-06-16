@@ -88,7 +88,15 @@ func resolveControlTarget(mr memberRuntime, workstream string, panes []tmuxpane.
 	// wrong agent (a same-cwd/engine peer whose pane is still alive). Report
 	// not-found so the verb errors clearly instead of guessing.
 	if id := mr.recordedPaneID(); id != "" {
-		if p, found := tmuxpane.FindPaneByID(id, panes); found &&
+		p, found := tmuxpane.FindPaneByID(id, panes)
+		if !found {
+			// The global `list-panes -a` scan missed this pane — it was empty,
+			// or it failed wholesale under iTerm2 tmux -CC even though the
+			// recorded id is still individually addressable. The recorded id IS
+			// the authoritative address, so inspect that one pane directly.
+			p, found = statusPaneInspector(id)
+		}
+		if found &&
 			sameResolvedDir(p.CWD, mr.CWD) &&
 			!paneTitledForDifferentAgent(p.Title, workstream, mr.Member.Role) {
 			return id, tmuxpane.TargetFromPane(p), true
@@ -212,7 +220,11 @@ Examples:
 func focusTarget(projectDir, profile, session string, explicitSession bool, role string) error {
 	panes, err := statusPaneLister()
 	if err != nil {
-		return fmt.Errorf("list tmux panes: %w", err)
+		// The global `tmux list-panes -a` scan can fail wholesale under iTerm2
+		// tmux -CC control mode even when a recorded pane is still directly
+		// addressable. Degrade to no scan results and let resolveControlTarget
+		// address the recorded pane id directly rather than aborting the op.
+		panes = nil
 	}
 	roles := []string{role}
 	if strings.TrimSpace(role) == "" {
@@ -303,7 +315,11 @@ Examples:
 	}
 	panes, err := statusPaneLister()
 	if err != nil {
-		return fmt.Errorf("list tmux panes: %w", err)
+		// The global `tmux list-panes -a` scan can fail wholesale under iTerm2
+		// tmux -CC control mode even when a recorded pane is still directly
+		// addressable. Degrade to no scan results and let resolveControlTarget
+		// address the recorded pane id directly rather than aborting the op.
+		panes = nil
 	}
 	paneID, _, ok := resolveControlTarget(mr, workstream, panes)
 	if !ok || strings.TrimSpace(paneID) == "" {

@@ -23,6 +23,12 @@ import (
 // tmux pane resolver uses, keeping detection consistent across surfaces.
 var statusPaneLister = tmuxpane.DefaultPaneLister
 
+// statusPaneInspector resolves a single pane directly by its recorded tmux id,
+// bypassing the global `list-panes -a` scan. It is the authoritative-address
+// path used when the scan misses or fails wholesale (e.g. under iTerm2 tmux -CC
+// control mode). Injected as a package var so tests supply a fake.
+var statusPaneInspector = tmuxpane.InspectPaneByID
+
 // statusState is the precise state vocabulary emitted by `amq-squad status`.
 // Definitions:
 //   - live:      launch-record PID alive AND binary matches; the agent is running.
