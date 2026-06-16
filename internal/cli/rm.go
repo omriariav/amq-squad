@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
@@ -55,6 +56,10 @@ type rmExecution struct {
 	Mode       rmMode
 	Yes        bool
 	Force      bool
+	// ClosePanes closes the recorded tmux pane of each torn-down agent. rm/archive
+	// default this ON (the session is going away); --keep-panes opts out. Panes of
+	// agents still considered live are never closed (rm --force leaves them running).
+	ClosePanes bool
 
 	// BaseRoot, when set, is used verbatim and ResolveBaseRoot is NOT called.
 	// Tests seed this; production leaves it empty and resolves once.
@@ -78,6 +83,7 @@ func runRm(args []string, mode rmMode) error {
 	yes := fs.Bool("yes", false, "skip the confirmation prompt (for automation)")
 	fs.BoolVar(yes, "y", false, "shorthand for --yes")
 	force := fs.Bool("force", false, "proceed even when the session has live agents (does NOT stop them)")
+	keepPanes := fs.Bool("keep-panes", false, "do NOT close the torn-down agents' tmux panes (default: close them, since the session is being removed)")
 	projectFlag := fs.String("project", "", "project/team-home directory to target (default: cwd)")
 	fs.Usage = rmUsage(fs, mode)
 	args = allowInterspersedFlags(fs, args)
@@ -104,6 +110,7 @@ func runRm(args []string, mode rmMode) error {
 		Mode:       mode,
 		Yes:        *yes,
 		Force:      *force,
+		ClosePanes: !*keepPanes,
 		Probe:      state.DefaultProbe,
 		Confirm:    os.Stdin,
 		Out:        os.Stdout,
@@ -116,7 +123,7 @@ func rmUsage(fs *flag.FlagSet, mode rmMode) func() {
 			fmt.Fprint(os.Stderr, `amq-squad archive - move a finished session aside (non-destructive)
 
 Usage:
-  amq-squad archive <session> [--project DIR] [--yes|-y] [--force]
+  amq-squad archive <session> [--project DIR] [--yes|-y] [--force] [--keep-panes]
 
 Moves the session's AMQ root dir to <baseRoot>/.archive/<session>/ and moves
 its brief alongside it as .archive/<session>/<session>.md. Nothing is deleted.
@@ -142,7 +149,7 @@ Examples:
 		fmt.Fprint(os.Stderr, `amq-squad rm - permanently remove a finished session
 
 Usage:
-  amq-squad rm <session> [--project DIR] [--yes|-y] [--force]
+  amq-squad rm <session> [--project DIR] [--yes|-y] [--force] [--keep-panes]
 
 Deletes the session's AMQ root dir (<baseRoot>/<session>/) and its brief
 (.amq-squad/briefs/<session>.md). This session-destructive verb is confined to
@@ -310,10 +317,14 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 
 	// SAFETY 3: refuse a running session unless --force. Reuse the repo's
 	// liveness (internal/state) so this agrees with status/down about "live".
+	liveSet := map[string]bool{}
 	if target.RootExists {
 		live, mailboxWindow, err := liveAgentsInSession(e.ProjectDir, baseRoot, session, e.Probe)
 		if err != nil {
 			return false, fmt.Errorf("check liveness for session %q: %w", session, err)
+		}
+		for _, h := range live {
+			liveSet[h] = true
 		}
 		if len(live) > 0 && !e.Force {
 			msg := fmt.Sprintf("session %q has live agents (%s); stop it first with 'amq-squad stop --all --session %s --force', or pass --force to %s anyway",
@@ -344,10 +355,58 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 		}
 	}
 
-	if e.Mode == rmModeArchive {
-		return false, archiveSession(out, target)
+	// Collect the panes to close BEFORE the root is moved/removed (the launch
+	// records live under it). Live agents are excluded so rm --force never kills
+	// a still-running agent's pane.
+	var paneIDs []string
+	if e.ClosePanes && target.RootExists {
+		paneIDs = collectSessionPaneIDs(target.Root, liveSet)
 	}
-	return false, deleteSession(out, target)
+
+	if e.Mode == rmModeArchive {
+		if err := archiveSession(out, target); err != nil {
+			return false, err
+		}
+	} else if err := deleteSession(out, target); err != nil {
+		return false, err
+	}
+	closeSessionPanes(out, paneIDs)
+	return false, nil
+}
+
+// collectSessionPaneIDs reads the recorded tmux pane id of every agent mailbox
+// under <root>/agents, skipping any handle in excludeLive. It is called BEFORE
+// the session root is moved/removed, since the launch records live under it.
+func collectSessionPaneIDs(root string, excludeLive map[string]bool) []string {
+	entries, err := os.ReadDir(filepath.Join(root, "agents"))
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, ent := range entries {
+		if !ent.IsDir() || excludeLive[ent.Name()] {
+			continue
+		}
+		rec, err := launch.Read(filepath.Join(root, "agents", ent.Name()))
+		if err != nil || rec.Tmux == nil {
+			continue
+		}
+		if id := strings.TrimSpace(rec.Tmux.PaneID); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// closeSessionPanes best-effort closes each recorded pane (kill-pane) and notes
+// it. A kill error (e.g. the pane is already gone) is swallowed; teardown has
+// already succeeded on disk and must not be reported as failed.
+func closeSessionPanes(out io.Writer, paneIDs []string) {
+	for _, id := range paneIDs {
+		if err := paneCloser(id); err == nil {
+			fmt.Fprintf(out, "closed tmux pane %s\n", id)
+		}
+	}
 }
 
 // liveAgentsInSession returns the handles of agents the repo's liveness

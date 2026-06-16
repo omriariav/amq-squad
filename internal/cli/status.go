@@ -29,6 +29,11 @@ var statusPaneLister = tmuxpane.DefaultPaneLister
 // control mode). Injected as a package var so tests supply a fake.
 var statusPaneInspector = tmuxpane.InspectPaneByID
 
+// paneCloser closes an agent's tmux pane on teardown (kill-pane). Injected as a
+// package var so tests record the call instead of killing a real pane. It
+// MUTATES tmux, so callers gate it on the agent being down.
+var paneCloser = tmuxpane.ClosePane
+
 // statusState is the precise state vocabulary emitted by `amq-squad status`.
 // Definitions:
 //   - live:      launch-record PID alive AND binary matches; the agent is running.

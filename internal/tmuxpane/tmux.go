@@ -501,6 +501,24 @@ func AttachCommand(t TmuxTarget) string {
 // signature.
 var switchExec execRunner = defaultExecRunner
 
+// closePaneExec is the injectable subprocess seam for ClosePane; tests swap it
+// for a recorder so they never kill a real pane.
+var closePaneExec execRunner = defaultExecRunner
+
+// ClosePane closes a single tmux pane by its id (`tmux kill-pane -t <id>`). When
+// the pane is the only one in its window tmux closes the window too, so this is
+// the right primitive whether the agent was launched into a shared
+// current-window split, its own new-window, or a new-session. Unlike the
+// read-only resolvers it MUTATES tmux, so callers MUST gate it on the agent
+// being down. A blank id is a no-op; an error (e.g. the pane is already gone) is
+// returned for the caller to treat as best-effort — teardown never depends on it.
+func ClosePane(paneID string) error {
+	if strings.TrimSpace(paneID) == "" {
+		return nil
+	}
+	return closePaneExec("tmux", "kill-pane", "-t", paneID)
+}
+
 // osascriptExec is the injectable subprocess seam for the iTerm2 native-window
 // raise on the CROSS-SESSION focus path (macOS osascript, always present, no
 // new dependency, no python). Production runs the real osascript and reads its
