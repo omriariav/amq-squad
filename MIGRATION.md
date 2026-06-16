@@ -73,7 +73,27 @@ The mutable-roster commands (`team member add/rm/list`) and the native task
 store (`task ...`, stored under `.amq-squad/tasks/`) are additive and do not
 alter the `team.json` shape.
 
-## 4. Shell completion
+## 4. Teardown now closes tmux panes
+
+`rm` and `archive` now **close the torn-down agents' tmux panes by default**
+(the session is being removed, so its panes are dead weight). Panes of agents
+still considered live are never touched. Pass `--keep-panes` to leave them.
+
+`stop` is unchanged by default (it keeps panes so final output stays readable
+and `resume` re-creates them); pass `--close-panes` to close them on stop too.
+
+Only panes amq-squad recorded are ever touched, and only for agents it believes
+are down — so this is safe, but if a workflow relied on dead panes lingering
+after `rm`/`archive`, add `--keep-panes`.
+
+## 5. Check for version skew
+
+amq-squad launches every agent into a shell that calls bare `amq-squad`
+(resolved via `PATH`). If you run a different build than the one on `PATH`,
+spawned agents silently use the `PATH` version. `amq-squad doctor` now warns on
+this skew — run it after upgrading and align the two.
+
+## 6. Shell completion
 
 Regenerate your shell completion so the removed verbs stop being suggested:
 
