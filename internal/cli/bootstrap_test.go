@@ -33,7 +33,7 @@ func TestBuildBootstrapPrompt(t *testing.T) {
 		"Team rules: /repo/.amq-squad/team-rules.md",
 		"Role file: /repo/.agent-mail/fresh-cto/agents/cto/role.md",
 		"Launch record: /repo/.agent-mail/fresh-cto/agents/cto/launch.json",
-		"Start your first response by stating your role and handle",
+		"Start your first response by stating your role, handle, and the amq-squad skill version",
 		"Stop and wait for instructions.",
 	} {
 		if !strings.Contains(got, want) {
