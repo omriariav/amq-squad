@@ -40,8 +40,11 @@ type downReport struct {
 	AgentDir string
 	Root     string
 	PID      int
-	Status   downStatus
-	Detail   string
+	// PaneID is the agent's recorded tmux pane id, used for the optional
+	// pane-close on teardown (--close-panes). Empty when no tmux record exists.
+	PaneID string
+	Status downStatus
+	Detail string
 }
 
 // processTerminator abstracts process-termination so tests can substitute a
@@ -115,6 +118,7 @@ func runStop(args []string) error {
 	role := fs.String("role", "", "narrow to a single configured role")
 	all := fs.Bool("all", false, "target every configured member of the team")
 	force := fs.Bool("force", false, "escalate to SIGKILL for agents that ignore SIGTERM")
+	closePanes := fs.Bool("close-panes", false, "also close each stopped agent's tmux pane (default: keep, so final output stays readable; resume re-creates panes)")
 	projectFlag := fs.String("project", "", "project/team-home directory to target (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to target (default: default profile)")
 	fs.Usage = func() {
@@ -160,13 +164,14 @@ func runStop(args []string) error {
 		Terminator: newSignalTerminator(*force),
 		Probe:      defaultDuplicateLaunchProbe,
 		Out:        os.Stdout,
+		ClosePanes: *closePanes,
 	})
 }
 
 func stopUsage() string {
 	var b strings.Builder
 	b.WriteString("amq-squad stop - stop configured team members (the session stays resumable)\n\n")
-	b.WriteString("Usage:\n  amq-squad stop (--role R | --all) [--project DIR] [--force] [--profile NAME] [--session NAME]\n\n")
+	b.WriteString("Usage:\n  amq-squad stop (--role R | --all) [--project DIR] [--force] [--close-panes] [--profile NAME] [--session NAME]\n\n")
 	b.WriteString(`Exactly one selector is required: --role R or --all. --all targets the
 configured members from this project's team.json in the resolved session
 (default: the team's workstream). --project targets another team-home without
@@ -204,6 +209,9 @@ type downExecution struct {
 	Terminator       processTerminator
 	Probe            duplicateLaunchProbe
 	Out              io.Writer
+	// ClosePanes closes each downed agent's recorded tmux pane after teardown.
+	// stop defaults this OFF (final output stays readable; --close-panes opts in).
+	ClosePanes bool
 }
 
 func executeDown(d downExecution) error {
@@ -231,7 +239,34 @@ func executeDown(d downExecution) error {
 	for _, m := range targets {
 		reports = append(reports, terminateMember(t, m, workstream, d.Terminator, d.Probe))
 	}
+	if d.ClosePanes {
+		closeDownedPanes(reports)
+	}
 	return renderDownReports(d.Out, verb, workstream, reports)
+}
+
+// closeDownedPanes closes the recorded tmux pane of every member that is
+// confirmed DOWN (stopped / cleaned / not-live) and carries a recorded pane id.
+// maybe-live and failed members are deliberately left alone — amq-squad never
+// closes a pane it is not sure is dead. Best-effort: a kill-pane error (e.g. the
+// pane is already gone) is swallowed and the teardown result is unaffected.
+func closeDownedPanes(reports []downReport) {
+	for i := range reports {
+		r := &reports[i]
+		if strings.TrimSpace(r.PaneID) == "" {
+			continue
+		}
+		switch r.Status {
+		case downStatusStopped, downStatusCleaned, downStatusNotLive:
+			if err := paneCloser(r.PaneID); err == nil {
+				if strings.TrimSpace(r.Detail) == "" {
+					r.Detail = "closed tmux pane " + r.PaneID
+				} else {
+					r.Detail += "; closed tmux pane " + r.PaneID
+				}
+			}
+		}
+	}
 }
 
 func selectDownMembers(t team.Team, role string, all bool) ([]team.Member, error) {
@@ -279,6 +314,9 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 		report.Status = downStatusFailed
 		report.Detail = "read launch record: " + err.Error()
 		return report
+	}
+	if rec.Tmux != nil {
+		report.PaneID = rec.Tmux.PaneID
 	}
 	report.PID = rec.AgentPID
 	if rec.AgentPID <= 0 {

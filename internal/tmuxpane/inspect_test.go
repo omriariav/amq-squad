@@ -53,3 +53,29 @@ func TestInspectPaneByIDMalformedReturnsFalse(t *testing.T) {
 		t.Fatal("a malformed row must return false")
 	}
 }
+
+func TestClosePane(t *testing.T) {
+	var got []string
+	prev := closePaneExec
+	closePaneExec = func(name string, args ...string) error {
+		got = append([]string{name}, args...)
+		return nil
+	}
+	t.Cleanup(func() { closePaneExec = prev })
+
+	if err := ClosePane("%265"); err != nil {
+		t.Fatalf("ClosePane: %v", err)
+	}
+	if want := []string{"tmux", "kill-pane", "-t", "%265"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("argv = %v, want %v", got, want)
+	}
+
+	// A blank id must be a no-op that never shells tmux.
+	got = nil
+	if err := ClosePane("   "); err != nil {
+		t.Fatalf("blank id should be a no-op, got %v", err)
+	}
+	if got != nil {
+		t.Errorf("blank id must not shell tmux; got %v", got)
+	}
+}
