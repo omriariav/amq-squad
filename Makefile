@@ -1,4 +1,4 @@
-.PHONY: build test fmt fmt-check vet ci install release-smoke readme-html readme-html-check docs-html docs-html-check html dogfood-claude clean
+.PHONY: build test fmt fmt-check vet ci install release-smoke readme-html readme-html-check docs-html docs-html-check html skills-check dogfood-claude clean
 
 GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*')
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -32,7 +32,14 @@ fmt-check:
 vet:
 	go vet ./...
 
-ci: fmt-check vet test readme-html-check docs-html-check
+ci: fmt-check vet test readme-html-check docs-html-check skills-check
+
+# Validate the YAML frontmatter of every plugin SKILL.md. A stray unquoted
+# colon-space in a description makes the loader silently skip the skill (it
+# shipped once in 1.9.1 and broke Codex orchestration), so this is a ci gate.
+skills-check:
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for skills-check" >&2; exit 1; }
+	@python3 scripts/check-skill-frontmatter.py
 
 # Regenerate the browsable README.html from README.md. Run this whenever
 # README.md changes (the release process bumps README.md, so it runs here).
