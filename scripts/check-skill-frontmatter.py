@@ -27,12 +27,16 @@ except ImportError:
     )
     sys.exit(2)
 
-FRONTMATTER = re.compile(r"^---\n(.*?)\n---", re.S)
+# Closing fence must be `---` alone on its own line (optional trailing spaces),
+# so a `---`-prefixed line inside the body cannot be mistaken for the delimiter.
+# CRLF tolerant.
+FRONTMATTER = re.compile(r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.S)
 
 
 def check(path):
     """Return an error string for `path`, or None when it is valid."""
-    text = open(path, encoding="utf-8").read()
+    # utf-8-sig strips a leading BOM so a BOM'd-but-valid file is not false-failed.
+    text = open(path, encoding="utf-8-sig").read()
     m = FRONTMATTER.match(text)
     if not m:
         return "missing `---` frontmatter block"
@@ -44,7 +48,11 @@ def check(path):
     if not isinstance(data, dict):
         return "frontmatter is not a YAML mapping"
     for key in ("name", "description"):
-        if not str(data.get(key, "")).strip():
+        # `key:` with no value parses to None, and `.get(key, "")` would miss it
+        # because the key IS present -> check the value explicitly so an empty
+        # name/description cannot false-pass (str(None) == "None" is truthy).
+        value = data.get(key)
+        if value is None or not str(value).strip():
             return f"missing or empty `{key}`"
     return None
 
