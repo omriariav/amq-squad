@@ -114,6 +114,17 @@ func TestResolveControlTargetDirectInspectUnderCCScanMiss(t *testing.T) {
 		t.Fatal("a gone pane must not resolve")
 	}
 
+	// Safety preserved: a directly-inspected pane in the right cwd but TITLED for
+	// a different agent (reused id after a tmux restart) must NOT be trusted —
+	// `send` must never deliver to a sibling. This guards the direct path the same
+	// way the scan path is guarded.
+	statusPaneInspector = func(string) (tmuxpane.TmuxPane, bool) {
+		return tmuxpane.TmuxPane{PaneID: "%265", CWD: "/repo", Command: "codex", Title: "amq:issue-96:qa"}, true
+	}
+	if _, _, ok := resolveControlTarget(mr, "issue-96", nil); ok {
+		t.Fatal("a directly-inspected pane titled for a different agent must be rejected")
+	}
+
 	// Happy path: when the scan ALREADY has the pane, the direct inspector must
 	// NOT be consulted (no extra tmux call).
 	called := false
@@ -124,6 +135,20 @@ func TestResolveControlTargetDirectInspectUnderCCScanMiss(t *testing.T) {
 	}
 	if called {
 		t.Error("direct inspector must not be called when the scan already found the pane")
+	}
+}
+
+// TestResolveControlTargetNoRecordedIDNilScan proves the -CC degrade path is safe
+// for a member with NO recorded pane id: runSend/focusTarget pass nil panes after
+// a scan failure, and the cwd+engine fallback resolver must handle that cleanly
+// (unresolved, never a panic or a wrong-pane guess).
+func TestResolveControlTargetNoRecordedIDNilScan(t *testing.T) {
+	mr := memberRuntime{
+		Member: team.Member{Role: "cto", Binary: "codex"}, Handle: "cto", CWD: "/repo",
+		HasRecord: true, Record: launch.Record{AgentPID: 4242}, // no Tmux block -> no recorded pane id
+	}
+	if _, _, ok := resolveControlTarget(mr, "issue-96", nil); ok {
+		t.Fatal("no recorded pane id + nil scan must resolve to not-found, not panic or guess")
 	}
 }
 
