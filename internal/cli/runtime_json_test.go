@@ -11,11 +11,17 @@ import (
 )
 
 // swapStatusPaneLister installs a fake pane lister for the duration of a test.
+// It also stubs the direct pane inspector to not-found so the pane_alive
+// recorded-id fallback (which fires for a pane missing from the scan) never
+// shells real tmux; a test that wants the inspector to find a pane overrides it
+// afterward.
 func swapStatusPaneLister(t *testing.T, panes []tmuxpane.TmuxPane, err error) {
 	t.Helper()
 	prev := statusPaneLister
 	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) { return panes, err }
-	t.Cleanup(func() { statusPaneLister = prev })
+	prevInspect := statusPaneInspector
+	statusPaneInspector = func(string) (tmuxpane.TmuxPane, bool) { return tmuxpane.TmuxPane{}, false }
+	t.Cleanup(func() { statusPaneLister = prev; statusPaneInspector = prevInspect })
 }
 
 func TestTmuxRuntimeFromInfo(t *testing.T) {
@@ -54,16 +60,53 @@ func TestMemoizePaneListerCallsUnderlyingOnce(t *testing.T) {
 
 func TestFillPaneAlive(t *testing.T) {
 	live := map[string]bool{"%5": true}
+
+	// Stub the direct inspector: it "finds" %7 only (the recorded-id fallback
+	// for a pane the global scan missed under -CC), and records whether it was
+	// consulted so we can assert the scan-hit fast path skips it.
+	inspected := []string{}
+	prev := statusPaneInspector
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		inspected = append(inspected, id)
+		return tmuxpane.TmuxPane{PaneID: id}, id == "%7"
+	}
+	t.Cleanup(func() { statusPaneInspector = prev })
+
+	// In the scan set -> alive, and the inspector is NOT consulted.
 	rt := &tmuxRuntimeJSON{PaneID: "%5"}
 	fillPaneAlive(rt, live)
 	if !rt.PaneAlive {
-		t.Error("pane %5 should be alive")
+		t.Error("pane %5 (in scan) should be alive")
 	}
+	if len(inspected) != 0 {
+		t.Errorf("a scan hit must not consult the inspector; got %v", inspected)
+	}
+
+	// Missing from the scan but the direct inspect finds it (the -CC fallback).
+	revived := &tmuxRuntimeJSON{PaneID: "%7"}
+	fillPaneAlive(revived, live)
+	if !revived.PaneAlive {
+		t.Error("pane %7 missing from scan but found by direct inspect should be alive")
+	}
+
+	// Missing from the scan AND the inspector misses -> genuinely dead.
 	dead := &tmuxRuntimeJSON{PaneID: "%9"}
 	fillPaneAlive(dead, live)
 	if dead.PaneAlive {
-		t.Error("pane %9 should be dead")
+		t.Error("pane %9 (scan miss + inspect miss) should be dead")
 	}
+
+	// No pane id -> dead, and never inspected.
+	inspected = nil
+	noID := &tmuxRuntimeJSON{}
+	fillPaneAlive(noID, live)
+	if noID.PaneAlive {
+		t.Error("a block with no pane id should be dead")
+	}
+	if len(inspected) != 0 {
+		t.Errorf("no pane id must not consult the inspector; got %v", inspected)
+	}
+
 	fillPaneAlive(nil, live) // must not panic
 }
 

@@ -8,12 +8,16 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
-// withStubPaneLister swaps statusPaneLister for the test and restores it.
+// withStubPaneLister swaps statusPaneLister for the test and restores it. It
+// also stubs the direct pane inspector to not-found so the pane_alive
+// recorded-id fallback never shells real tmux for a pane outside the scan.
 func withStubPaneLister(t *testing.T, panes []tmuxpane.TmuxPane, err error) {
 	t.Helper()
 	prev := statusPaneLister
 	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) { return panes, err }
-	t.Cleanup(func() { statusPaneLister = prev })
+	prevInspect := statusPaneInspector
+	statusPaneInspector = func(string) (tmuxpane.TmuxPane, bool) { return tmuxpane.TmuxPane{}, false }
+	t.Cleanup(func() { statusPaneLister = prev; statusPaneInspector = prevInspect })
 }
 
 // TestLiveReplacementPane_SameEngineFound: a member whose recorded PID is dead
