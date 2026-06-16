@@ -300,7 +300,7 @@ func TestRunConsoleRootFlagUnsupported(t *testing.T) {
 // the verb rather than reporting "unknown command").
 func TestConsoleVerbWiredIntoDispatch(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
-		return dispatch([]string{"console", "--definitely-not-a-flag"})
+		return dispatch([]string{"console", "--definitely-not-a-flag"}, "")
 	})
 	if err == nil {
 		t.Fatal("an unknown console flag should error")
