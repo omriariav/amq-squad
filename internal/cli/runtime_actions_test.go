@@ -55,6 +55,48 @@ func TestSameResolvedDir(t *testing.T) {
 	}
 }
 
+// TestCompareCWD locks in the dynamic-team fix: a member with no pinned cwd (the
+// `team member add` default) on a team with no project pin yields an empty
+// EffectiveCWD; the launch record's cwd must be used so the pane guard has a real
+// dir to match instead of "" (which rejects every live pane).
+func TestCompareCWD(t *testing.T) {
+	if got := compareCWD("/pinned", "/recorded"); got != "/pinned" {
+		t.Errorf("a pinned member cwd wins: got %q", got)
+	}
+	if got := compareCWD("", "/recorded"); got != "/recorded" {
+		t.Errorf("no pinned cwd must fall back to the record cwd: got %q", got)
+	}
+	if got := compareCWD("  ", "/recorded"); got != "/recorded" {
+		t.Errorf("blank pinned cwd must fall back to the record cwd: got %q", got)
+	}
+	if got := compareCWD("", ""); got != "" {
+		t.Errorf("no cwd anywhere stays empty: got %q", got)
+	}
+}
+
+// TestResolveControlTargetDynamicTeamNoPinnedCWD reproduces the 2.0 dogfood
+// failure: an orchestrated team with no project pin and a roster-added worker
+// with no cwd. With EffectiveCWD empty, the record's cwd backstops the guard so
+// send/focus resolve the live pane instead of always rejecting it.
+func TestResolveControlTargetDynamicTeamNoPinnedCWD(t *testing.T) {
+	// memberRuntime as resolveMemberRuntime would build it after the compareCWD
+	// fix: member pins no cwd, so CWD comes from the launch record.
+	mr := memberRuntime{
+		Member: team.Member{Role: "frontend-dev", Binary: "codex"}, Handle: "frontend-dev",
+		CWD:       compareCWD("", "/Users/me/tmp/squad-dogfood-2"),
+		HasRecord: true,
+		Record:    launch.Record{CWD: "/Users/me/tmp/squad-dogfood-2", Tmux: &launch.TmuxInfo{PaneID: "%311"}},
+	}
+	if mr.CWD == "" {
+		t.Fatal("guard precondition: member cwd must be backfilled from the record, not empty")
+	}
+	panes := []tmuxpane.TmuxPane{{PaneID: "%311", Session: "squad-dogfood-2", Window: "1", Pane: "0", CWD: "/Users/me/tmp/squad-dogfood-2", Command: "codex"}}
+	id, _, ok := resolveControlTarget(mr, "squad-dogfood-2", panes)
+	if !ok || id != "%311" {
+		t.Fatalf("a roster worker with no pinned cwd must still resolve its live pane, got id=%q ok=%v", id, ok)
+	}
+}
+
 func TestResolveControlTargetExactRecordedPane(t *testing.T) {
 	mr := memberRuntime{
 		Member: team.Member{Role: "cto", Binary: "codex"}, Handle: "cto", CWD: "/repo",

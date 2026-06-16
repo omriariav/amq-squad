@@ -63,8 +63,26 @@ func resolveMemberRuntime(projectDir, profile, session string, explicitSession b
 	if rec, rerr := launch.Read(agentDir); rerr == nil {
 		mr.Record = rec
 		mr.HasRecord = true
+		mr.CWD = compareCWD(cwd, rec.CWD)
 	}
 	return mr, workstream, nil
+}
+
+// compareCWD returns the directory resolveControlTarget compares a recorded pane
+// against. It prefers the member's pinned/effective cwd, but falls back to the
+// launch record's cwd when the member pins none. That fallback matters for the
+// dynamic-team default: a `team member add` roster entry records no cwd, and an
+// orchestrated team often has no project pin, so EffectiveCWD returns "" — and
+// sameResolvedDir treats "" as no-match, which would make the cwd guard reject
+// EVERY live pane (send/focus fail with "no live tmux pane" while status/resume
+// pane_alive, which skip the cwd check, report the same pane alive — the exact
+// split a 2.0 dogfood hit). The record carries the agent's real launch cwd, so
+// it is the authoritative compare dir when the member itself pins none.
+func compareCWD(effectiveCWD, recordCWD string) string {
+	if strings.TrimSpace(effectiveCWD) != "" {
+		return effectiveCWD
+	}
+	return strings.TrimSpace(recordCWD)
 }
 
 // recordedPaneID returns the exact tmux pane id persisted for the member, if any.
