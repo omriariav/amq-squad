@@ -298,7 +298,10 @@ func runTeamMemberRemove(args []string) error {
 	}
 
 	fmt.Printf("removed %s from the team.\n", role)
-	fmt.Printf("if it is live, stop it with:\n  amq-squad stop --role %s\n", role)
+	// rm is roster-only; it never touches the agent's tmux pane. Point at the
+	// pane-closing teardown so a pruned worker's window doesn't linger as an
+	// orphan (stop keeps the pane by default; --close-panes closes it).
+	fmt.Printf("if it is live, stop it AND close its pane with:\n  amq-squad stop --role %s --close-panes\n", role)
 	return nil
 }
 
