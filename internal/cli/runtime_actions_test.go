@@ -367,6 +367,19 @@ func TestResumeExecRejectsNonTmuxTerminal(t *testing.T) {
 	}
 }
 
+func TestErrTmuxAccessDenied(t *testing.T) {
+	got := strings.ToLower(errTmuxAccessDenied().Error())
+	for _, want := range []string{"operation not permitted", "sandboxed", "full access"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("access-denied error must mention %q; got: %s", want, got)
+		}
+	}
+	// It must NOT be the misleading message it replaces.
+	if strings.Contains(got, "no live tmux pane") {
+		t.Error("access-denied error must not read as 'no live tmux pane found'")
+	}
+}
+
 func TestSendRequiresRole(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runSend([]string{"--session", "issue-96", "--body", "hi"})
