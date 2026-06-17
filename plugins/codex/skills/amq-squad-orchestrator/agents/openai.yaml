@@ -1,4 +1,4 @@
 interface:
   display_name: "AMQ Squad Orchestrator"
   short_description: "Lead-agent playbook to spawn, dispatch, and monitor an amq-squad"
-  default_prompt: "Use $amq-squad-orchestrator to run this squad as the lead: spawn child agents (`up <session> --target new-window` / `agent up`), dispatch tasks into their panes with the busy-guarded `send`, monitor liveness with `status --json`, drain the reports children push to you as AMQ messages, and recover stuck members with `resume`."
+  default_prompt: "Use $amq-squad-orchestrator to run this squad as the lead: spawn child agents (`up <session> --target new-window` / `agent up`), dispatch tasks to them over durable AMQ (`amq send --kind todo --wait-for drained`; the busy-guarded pane `amq-squad send` is the fallback), monitor liveness with `status --json`, drain the reports children push to you as AMQ messages, and recover stuck members with `resume`."

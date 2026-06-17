@@ -29,7 +29,7 @@ from one place.**
 
 ## Version ladder (Definition of Done)
 
-### 2.0.0 — Foundation + Visibility  (in flight; DO NOT MERGE until reviewed)
+### 2.0.0 — Foundation + Visibility  (amq-squad CLI lifecycle + `/v2` shipped in v2.0.0; NOC visibility per the DoD below)
 Lifecycle redesign (up/stop/resume/rm/archive/status), read-only console, multi-root
 NOC (board + tree + jump), `/v2`, docs. Done when: nav confirmed live by the human,
 PR #52 reviewed + merged + tagged `v2.0.0`.

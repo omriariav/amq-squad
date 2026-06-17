@@ -246,9 +246,8 @@ through the lead/CTO instead.
 **Invoke:** `/amq-squad:amq-squad-orchestrator` (Claude) ·
 `$amq-squad-orchestrator` (Codex)
 **Use when:** you are the **lead** agent of an orchestrated squad — you spawn
-child agents, dispatch tasks into their panes, monitor them, handle their
-reports, and own the deliverable to the human. (Requires amq-squad v1.5.0+;
-raw-tmux child adoption is v1.6.0+.)
+child agents, dispatch tasks to them over durable AMQ, monitor them, handle
+their reports, and own the deliverable to the human.
 
 This is the discipline on top of the shipped runtime primitives. Routine member
 coordination still belongs to `amq-squad`; this skill is specifically the
@@ -264,8 +263,10 @@ amq-squad up issue-96 --target new-window
 amq-squad status --session issue-96 --json \
   | jq '.data.records[] | {role, status, pane_alive: .tmux.pane_alive}'
 
-# 3. DISPATCH — paste-buffer staged, refuses a busy pane unless --force
-amq-squad send --session issue-96 --role fullstack --body-file - <<'EOF'
+# 3. DISPATCH — over durable AMQ (queues, survives pane death; the busy-guarded
+#    `amq-squad send` pane injection is the fallback/nudge only)
+amq send --to fullstack --thread p2p/cto__fullstack --kind todo \
+  --subject "Task: rate-limiter" --body - --wait-for drained --wait-timeout 60s <<'EOF'
 Implement the rate-limiter per the brief. When the diff is ready, push a
 review_request to me (cto) over AMQ. Report any blocker as a question.
 EOF
@@ -393,9 +394,11 @@ cd ~/Code/my-project
    to `fullstack`, monitors, and drains pushed reports:
 
    ```sh
-   amq-squad send --session issue-96 --role fullstack --body "Implement #96 per the brief; push a review_request when ready."
+   amq send --to fullstack --thread p2p/cto__fullstack --kind todo --wait-for drained \
+     --subject "Task: #96" --body "Implement #96 per the brief; push a review_request when ready."
    amq drain --include-body          # fullstack -> review_request: "diff ready on branch X"
-   amq-squad send --session issue-96 --role qa --body "Review fullstack's diff on branch X; push review_response."
+   amq send --to qa --thread p2p/cto__qa --kind todo --wait-for drained \
+     --subject "Task: review #96" --body "Review fullstack's diff on branch X; push review_response."
    ```
 
 4. **Converge and tear down** — the lead verifies the artifacts, makes the merge

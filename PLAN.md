@@ -5,7 +5,7 @@ the open issues by theme + status so the near-term path is legible at a glance.
 
 ## Release state
 
-- **v2.0.0 — in progress (goal-first dynamic teams).** A binary-neutral lead
+- **v2.0.0 — shipped (goal-first dynamic teams).** A binary-neutral lead
   composes its team from a goal (Codex can lead, not just be led); manual setup
   stays the floor; spectrum manual → seeded (default) → autonomous (2.1). Full
   plan + executable brief: `docs/v2.0.0.md`, `docs/v2.0.0-goal.md`. Proven
@@ -36,9 +36,8 @@ the open issues by theme + status so the near-term path is legible at a glance.
   - **Codex cross-review** of all Phase-0 stages ran (4 agents); findings folded
     in #130 (task-store path-traversal + flag-swallowing, skill copy-paste
     `--session`, doc reconciliation).
-  - ⏸ **Phase 1 (breaking cut + `/v2` + release): HELD** at the human gate —
-    awaits the live os-omri-pm dogfood judgment + an explicit go/no-go. Not
-    started (no breaking work begun) by design.
+  - ✅ **Phase 1 (breaking cut + `/v2` + release): SHIPPED in v2.0.0** — the
+    9-slice stack (#135–#147) merged, tagged, and released.
 - **v1.5.0 — shipped.** tmux runtime contract (persisted pane/window ids,
   `pane_alive`, per-agent `actions[]`, `focus`/`open`/`send` verbs, `--target
   new-window`), custom roles, Claude + Codex plugin marketplaces.
@@ -90,7 +89,7 @@ the open issues by theme + status so the near-term path is legible at a glance.
     only for a verified live agent pid (guards stale/reused pids).
   - **#76 — Agent-orchestrator skill** in both marketplaces: a lead-agent
     playbook (the Sagi `spawn.md` equivalent) over the shipped primitives —
-    spawn / dispatch (busy-guarded `send`) / monitor (`status --json`) / the
+    spawn / dispatch (durable `amq send`; pane `send` is the fallback) / monitor (`status --json`) / the
     `[AGENT-EVENT]`-over-AMQ reporting protocol / recover. Plus the corrected
     `send` busy-guard note in the `amq-squad` skill.
 - **v1.9.0 — shipped. Context-budget + operator-steering release.**
@@ -173,7 +172,7 @@ the open issues by theme + status so the near-term path is legible at a glance.
   Claude + Codex, **never in the NOC**. Makes a one-setup orchestrated squad —
   the amq-squad analog of Sagi's always-on protocol.
 - **#76 — Agent orchestrator.** ✅ shipped in v1.6.0: the `amq-squad-orchestrator`
-  skill (lead spawns/dispatches/monitors child agents over the tmux contract; the
+  skill (lead spawns/dispatches/monitors child agents over the runtime primitives; the
   `[AGENT-EVENT]`-over-AMQ reporting protocol) plus #95 external-pane adoption. The
   protocol + skill rode on the shipped primitives (`send`/`focus`/`--target
   new-window`/`PaneBusy`/pane-id); no new binary verbs were needed.
