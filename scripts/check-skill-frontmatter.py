@@ -33,6 +33,12 @@ except ImportError:
 FRONTMATTER = re.compile(r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.S)
 
 
+# Codex's frontmatter loader REJECTS a description longer than this many
+# characters - the skill then silently fails to load (claude has no such cap).
+# Guard it for both lines so a long description can never ship unnoticed.
+DESCRIPTION_MAX = 1024
+
+
 def check(path):
     """Return an error string for `path`, or None when it is valid."""
     # utf-8-sig strips a leading BOM so a BOM'd-but-valid file is not false-failed.
@@ -54,6 +60,12 @@ def check(path):
         value = data.get(key)
         if value is None or not str(value).strip():
             return f"missing or empty `{key}`"
+    desc = str(data.get("description", ""))
+    if len(desc) > DESCRIPTION_MAX:
+        return (
+            f"description is {len(desc)} chars; exceeds the {DESCRIPTION_MAX}-char cap "
+            f"codex enforces (over it, the skill silently fails to load on codex)"
+        )
     return None
 
 
