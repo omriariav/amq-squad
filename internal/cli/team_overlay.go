@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // overlaysDirName is the team-home subdirectory that holds generated

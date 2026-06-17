@@ -24,7 +24,6 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"thread", "--help"},
 		{"status", "--help"},
 		{"console", "--help"},
-		{"down", "--help"},
 		{"up", "--help"},
 		{"resume", "--help"},
 		{"fork", "--help"},
@@ -75,7 +74,7 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 	}{
 		{name: "team init --help", args: []string{"team", "init", "--help"}, want: "amq-squad team init"},
 		{name: "up --help", args: []string{"up", "--help"}, want: "amq-squad up"},
-		{name: "down --help", args: []string{"down", "--help"}, want: "amq-squad down"},
+		{name: "stop --help", args: []string{"stop", "--help"}, want: "amq-squad stop"},
 		{name: "status --help", args: []string{"status", "--help"}, want: "amq-squad status"},
 		{name: "console --help", args: []string{"console", "--help"}, want: "amq-squad console"},
 		{name: "history --help", args: []string{"history", "--help"}, want: "amq-squad history"},

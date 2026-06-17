@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // UsageError signals a misuse of the CLI (unknown command/flag, bad
@@ -63,7 +63,7 @@ func Run(args []string, version string) error {
 		return err
 	}
 
-	err = dispatch(args)
+	err = dispatch(args, version)
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
 	}
@@ -183,7 +183,7 @@ func projectHasDiscoverableSessions(projectDir string, resolveBaseRoot func(stri
 	return false
 }
 
-func dispatch(args []string) error {
+func dispatch(args []string, version string) error {
 	switch args[0] {
 	case "team":
 		return runTeam(args[1:])
@@ -197,10 +197,6 @@ func dispatch(args []string) error {
 		return runUp(args[1:])
 	case "stop":
 		return runStop(args[1:])
-	case "down":
-		// Deprecated alias for `stop`, kept for one release. runDown prints a
-		// one-line stderr hint then runs the identical stop logic.
-		return runDown(args[1:])
 	case "brief":
 		return runBrief(args[1:])
 	case "threads":
@@ -227,22 +223,10 @@ func dispatch(args []string) error {
 		return runRm(args[1:], rmModeDelete)
 	case "archive":
 		return runRm(args[1:], rmModeArchive)
-	case "launch":
-		// Legacy verb. Kept as an explicit hint (not unknown-command) for one
-		// release so muscle-memory invocations get a pointer.
-		return usageErrorf("'launch' is a legacy verb; use 'agent up <binary>' to launch a single agent.")
-	case "restore":
-		// Legacy verb. Print mode maps to 'history'; exec mode maps to
-		// 'agent resume <role>'. Surface both so either intent is covered.
-		return usageErrorf("'restore' is a legacy verb; use 'history' to list restorable records or 'agent resume <role>' to re-launch one.")
-	case "list":
-		// Legacy verb in favor of 'status' (live agents) / 'history'
-		// (restorable records).
-		return usageErrorf("'list' is a legacy verb; use 'status' for live agents or 'history' for restorable records.")
 	case "completion":
 		return runCompletion(args[1:])
 	case "doctor":
-		return runDoctor(args[1:])
+		return runDoctor(args[1:], version)
 	case "agent":
 		return runAgent(args[1:])
 	default:
@@ -264,7 +248,6 @@ Commands:
   up        Bring the team up (use --dry-run to print the launch plan)
   stop      Stop configured team members (SIGTERM; --force = SIGKILL). State is
             preserved on disk, so the session stays resumable.
-  down      Deprecated alias for 'stop' (works for one release)
   brief     Print a workstream brief and classify it as none, stub, or real
   threads   List collapsed AMQ thread summaries for one workstream
   thread    Read one AMQ thread transcript by project and session
@@ -281,7 +264,7 @@ Commands:
   agent     Launch or resume a single agent (agent up / agent resume)
   version   Print the amq-squad version
 
-Removed legacy verbs (each prints a one-line migration hint): launch (use 'agent up'),
+Removed in 2.0 (see MIGRATION.md): down (use 'stop'), launch (use 'agent up'),
 restore (use 'history' or 'agent resume'), list (use 'status' or 'history'),
 team show (use 'up --dry-run'), team launch (use 'up').
 
@@ -297,8 +280,7 @@ Exit codes:
   2  system / runtime error (IO, process, config, environment)
   3  partial success (some targets succeeded, some failed)
 
-Note: 'stop'/'down' without --force used to exit 2 ("graceful unavailable").
-They now perform the SIGTERM teardown and exit 0 (or 3 on a partial run).
+Note: 'stop' performs the SIGTERM teardown and exits 0 (or 3 on a partial run).
 
 Examples:
   amq-squad new team --roles cto,fullstack --binary cto=codex

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 )
 
 func TestRunHistoryScansCurrentProject(t *testing.T) {

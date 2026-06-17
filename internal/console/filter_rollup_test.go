@@ -3,7 +3,7 @@ package console
 import (
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
 // TestFilterSnapshotRecomputesRollup pins the consistency fix: a filtered

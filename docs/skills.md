@@ -69,7 +69,7 @@ Install the marketplace once; the skills are then discovered automatically.
   e.g. `$amq-team-setup`.
 
 All four skills are user-invocable and require the `amq-squad` binary on `PATH`
-(`go install github.com/omriariav/amq-squad/cmd/amq-squad@latest`). Their
+(`go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest`). Their
 workflows are equivalent across the two marketplaces; the platform metadata
 differs (a Claude skill carries `trigger` / `allowed-tools` / `argument-hint`;
 the Codex skill omits them) and so does tool wording (a Claude skill says "use

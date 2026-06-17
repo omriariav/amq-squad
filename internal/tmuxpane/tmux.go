@@ -1,14 +1,59 @@
 package tmuxpane
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/omriariav/amq-squad/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/state"
+)
+
+// IsPermissionDenied reports whether a tmux command error means the process
+// could not reach the tmux server because access was DENIED — the signature of
+// a sandboxed agent (e.g. a Codex restricted sandbox) blocking the tmux socket,
+// as opposed to a transient -CC pause or a genuinely-missing pane. tmux prints
+// "error connecting to <socket> (Operation not permitted)" to stderr, which
+// exec.Cmd.Output captures on the *exec.ExitError. A permission denial is NOT
+// transient, so callers fail fast instead of retrying, and surface a clear
+// "grant tmux access" message instead of "no live tmux pane found".
+//
+// Match only the PERMISSION phrasing, not a bare "error connecting to": a
+// server-not-running failure also reads "error connecting to <socket> (No such
+// file or directory)", and that must stay a normal/transient error (no
+// misleading "you are sandboxed" advice, and it can still retry/degrade).
+func IsPermissionDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		msg += " " + strings.ToLower(string(ee.Stderr))
+	}
+	return strings.Contains(msg, "operation not permitted") ||
+		strings.Contains(msg, "permission denied")
+}
+
+// tmuxReadAttempts bounds how many times a READ-ONLY tmux query is retried when
+// it transiently fails. Under iTerm2 tmux -CC the control client pauses when an
+// agent TUI floods output; while paused, in-session `tmux list-panes` /
+// `display-message` queries can return exit 1 / empty even though the pane is
+// alive. A pause clears in well under a second, so a few quick retries ride
+// through it, while a genuinely-gone pane still fails within the small total
+// budget ((attempts-1) * tmuxReadBackoff). READS ONLY: mutating tmux commands
+// (send-keys, kill-pane) are never retried — a partial write must not repeat.
+const tmuxReadAttempts = 3
+
+// tmuxReadBackoff is the pause between read retries; tmuxReadSleep is the sleep
+// seam. Both are vars so tests can zero the wait and run instantly.
+var (
+	tmuxReadBackoff = 90 * time.Millisecond
+	tmuxReadSleep   = func(d time.Duration) { time.Sleep(d) }
 )
 
 // TmuxPane is one row from `tmux list-panes -a`: a pane plus its running
@@ -152,24 +197,82 @@ func PaneIdentityFor(paneID string) (*PaneIdentity, error) {
 	}, nil
 }
 
+// paneListFormat is the tab-separated tmux format shared by the global
+// `list-panes -a` scan and the single-pane `display-message` lookup, so both
+// produce rows parsePanes understands.
+//
+// pane_id + window_id (exact control addresses, tab-free) are placed before the
+// trailing human labels pane_title + window_name so a label containing a tab can
+// never shift the ids. window_name remains the last field so the parser can
+// absorb any embedded tabs into it; an empty pane_title (older/non-amq panes)
+// leaves a trailing tab the parser tolerates.
+const paneListFormat = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_id}\t#{window_id}\t#{pane_title}\t#{window_name}"
+
 // DefaultPaneLister shells `tmux list-panes -a` with a tab-separated format and
 // parses each row into a TmuxPane. It is strictly READ-ONLY. A missing tmux
 // binary or no server is reported as an error so callers can degrade.
+// listPanesExec is the seam for the global `tmux list-panes -a` scan. A var so
+// tests can inject sequenced failures that mimic the -CC pause shape.
+var listPanesExec = func() (string, error) {
+	out, err := exec.Command("tmux", "list-panes", "-a", "-F", paneListFormat).Output()
+	return string(out), err
+}
+
 func DefaultPaneLister() ([]TmuxPane, error) {
-	// pane_title + window_name are appended last so an empty title (older/non-amq
-	// panes) leaves a trailing tab the parser tolerates; pane_title carries the
-	// name-first resolution token and window_name the cross-session focus
-	// fallback.
-	// pane_id + window_id (exact control addresses, tab-free) are placed before
-	// the trailing human labels pane_title + window_name so a label containing a
-	// tab can never shift the ids. window_name remains the last field so the
-	// parser can absorb any embedded tabs into it.
-	const format = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_id}\t#{window_id}\t#{pane_title}\t#{window_name}"
-	out, err := exec.Command("tmux", "list-panes", "-a", "-F", format).Output()
-	if err != nil {
-		return nil, fmt.Errorf("tmux list-panes: %w", err)
+	var lastErr error
+	for attempt := 0; attempt < tmuxReadAttempts; attempt++ {
+		out, err := listPanesExec()
+		if err == nil {
+			// An empty list with no error is a genuine "no panes", not a -CC
+			// stutter, so it returns immediately. Only an error (exit 1, the
+			// pause shape) is retried.
+			return parsePanes(out), nil
+		}
+		lastErr = err
+		// A permission denial (sandboxed agent) is not transient — don't burn
+		// the retry budget on it; surface it immediately.
+		if IsPermissionDenied(err) {
+			break
+		}
+		if attempt+1 < tmuxReadAttempts {
+			tmuxReadSleep(tmuxReadBackoff)
+		}
 	}
-	return parsePanes(string(out)), nil
+	return nil, fmt.Errorf("tmux list-panes: %w", lastErr)
+}
+
+// InspectPaneByID resolves a single pane directly by its tmux id via
+// `tmux display-message -t <id>`, bypassing the global `list-panes -a` scan.
+// This is the robust path under iTerm2 tmux -CC control mode, where the global
+// scan can fail wholesale (exit 1) even though the exact recorded pane is still
+// individually addressable. Strictly READ-ONLY. Returns false when paneID is
+// empty, the pane is gone (display-message errors), or the row is malformed.
+// It uses the same captureExec seam as PaneIdentityFor so tests never shell real
+// tmux. display-message takes the format as a trailing positional argument (not
+// -F), matching PaneIdentityFor.
+func InspectPaneByID(paneID string) (TmuxPane, bool) {
+	if strings.TrimSpace(paneID) == "" {
+		return TmuxPane{}, false
+	}
+	// Retry through transient -CC pauses: a paused control client makes
+	// `display-message -t <id>` return exit 1 / empty even though the pane is
+	// live. A genuinely-gone pane keeps failing and falls through to false
+	// within the bounded budget.
+	for attempt := 0; attempt < tmuxReadAttempts; attempt++ {
+		out, err := captureExec("display-message", "-p", "-t", paneID, paneListFormat)
+		if err == nil {
+			if panes := parsePanes(out); len(panes) > 0 {
+				return panes[0], true
+			}
+		} else if IsPermissionDenied(err) {
+			// Sandboxed: tmux access is denied, not transient — stop retrying.
+			return TmuxPane{}, false
+		}
+		if attempt+1 < tmuxReadAttempts {
+			tmuxReadSleep(tmuxReadBackoff)
+		}
+	}
+	return TmuxPane{}, false
 }
 
 // parsePanes parses the tab-separated `tmux list-panes` output. Malformed rows
@@ -474,6 +577,24 @@ func AttachCommand(t TmuxTarget) string {
 // is package-level so tests can override it without changing the SwitchTo
 // signature.
 var switchExec execRunner = defaultExecRunner
+
+// closePaneExec is the injectable subprocess seam for ClosePane; tests swap it
+// for a recorder so they never kill a real pane.
+var closePaneExec execRunner = defaultExecRunner
+
+// ClosePane closes a single tmux pane by its id (`tmux kill-pane -t <id>`). When
+// the pane is the only one in its window tmux closes the window too, so this is
+// the right primitive whether the agent was launched into a shared
+// current-window split, its own new-window, or a new-session. Unlike the
+// read-only resolvers it MUTATES tmux, so callers MUST gate it on the agent
+// being down. A blank id is a no-op; an error (e.g. the pane is already gone) is
+// returned for the caller to treat as best-effort — teardown never depends on it.
+func ClosePane(paneID string) error {
+	if strings.TrimSpace(paneID) == "" {
+		return nil
+	}
+	return closePaneExec("tmux", "kill-pane", "-t", paneID)
+}
 
 // osascriptExec is the injectable subprocess seam for the iTerm2 native-window
 // raise on the CROSS-SESSION focus path (macOS osascript, always present, no

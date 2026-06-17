@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 const (

@@ -45,16 +45,18 @@ func TestParseFlagsWrapsUnknownFlag(t *testing.T) {
 }
 
 // Representative coverage: unknown flag on a top-level, a doctor, a
-// completion, and a nested `team show` command must all return UsageError.
+// completion, and a nested `team profiles` command must all return UsageError.
+// (Uses a LIVE nested subcommand so the case exercises the subcommand's
+// flag-parse path, not the unknown-subcommand default branch.)
 func TestParseFlagsUsageErrorAcrossCommands(t *testing.T) {
 	cases := []struct {
 		name string
 		fn   func() error
 	}{
 		{"up", func() error { return runUp([]string{"--banana"}) }},
-		{"doctor", func() error { return runDoctor([]string{"--banana"}) }},
+		{"doctor", func() error { return runDoctor([]string{"--banana"}, "") }},
 		{"completion", func() error { return runCompletion([]string{"--banana"}) }},
-		{"team show", func() error { return runTeam([]string{"show", "--banana"}) }},
+		{"team profiles", func() error { return runTeam([]string{"profiles", "--banana"}) }},
 		{"team rules init", func() error { return runTeam([]string{"rules", "init", "--banana"}) }},
 		{"version", func() error { return Run([]string{"version", "--banana"}, "test") }},
 	}
@@ -154,7 +156,7 @@ func TestRootHelpIncludesExitCodeTable(t *testing.T) {
 		}
 	}
 	// Command list must remain intact.
-	for _, want := range []string{"team", "up", "down", "status", "history", "doctor", "completion", "version"} {
+	for _, want := range []string{"team", "up", "stop", "status", "history", "doctor", "completion", "version"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("root --help missing command %q in:\n%s", want, stdout)
 		}

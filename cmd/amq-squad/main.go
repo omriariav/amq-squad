@@ -6,7 +6,7 @@ import (
 	"os"
 	"runtime/debug"
 
-	"github.com/omriariav/amq-squad/internal/cli"
+	"github.com/omriariav/amq-squad/v2/internal/cli"
 )
 
 var version = "dev"

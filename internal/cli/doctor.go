@@ -12,8 +12,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/omriariav/amq-squad/internal/rules"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/rules"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // doctorMinAMQVersion is the lowest AMQ release this build of amq-squad
@@ -80,6 +80,13 @@ type doctorExecution struct {
 	// false when the option is unset or tmux is unavailable. Injectable so the
 	// extended-keys check never shells real tmux in tests.
 	TmuxShowOptions func(name string) (value string, ok bool)
+	// RunningVersion is the version of the binary executing `doctor` (threaded
+	// from Run). Empty or "dev" for an unstamped local build.
+	RunningVersion string
+	// PathBinaryVersion resolves the `amq-squad` found on PATH and its reported
+	// version. found=false when none is on PATH. Injectable so the version-skew
+	// check never shells a real binary in tests.
+	PathBinaryVersion func() (path, version string, found bool)
 }
 
 func defaultDoctorExecution(projectDir string) doctorExecution {
@@ -89,12 +96,78 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		ResolveAMQEnv: func(projectDir string) (amqEnv, error) {
 			return resolveAMQEnvInDir(projectDir, "", "", "amq-squad")
 		},
-		RunAMQOps:       defaultDoctorAMQOps,
-		LookPath:        exec.LookPath,
-		Probe:           defaultDuplicateLaunchProbe,
-		Getenv:          os.Getenv,
-		TmuxShowOptions: defaultTmuxShowServerOption,
+		RunAMQOps:         defaultDoctorAMQOps,
+		LookPath:          exec.LookPath,
+		Probe:             defaultDuplicateLaunchProbe,
+		Getenv:            os.Getenv,
+		TmuxShowOptions:   defaultTmuxShowServerOption,
+		PathBinaryVersion: defaultPathBinaryVersion,
 	}
+}
+
+// defaultPathBinaryVersion resolves the `amq-squad` on PATH and runs
+// `<path> version` to read its reported version (e.g. "amq-squad v2.0.0" ->
+// "v2.0.0"). found=false when no amq-squad is on PATH. READ-ONLY.
+func defaultPathBinaryVersion() (string, string, bool) {
+	path, err := exec.LookPath("amq-squad")
+	if err != nil {
+		return "", "", false
+	}
+	out, err := exec.Command(path, "version").Output()
+	if err != nil {
+		return path, "", true
+	}
+	return path, parseAmqSquadVersion(string(out)), true
+}
+
+// parseAmqSquadVersion extracts the version token from `amq-squad version`
+// output ("amq-squad v2.0.0" -> "v2.0.0"). Returns the trimmed last field, or
+// the trimmed line when it has no spaces.
+func parseAmqSquadVersion(out string) string {
+	line := strings.TrimSpace(out)
+	if i := strings.LastIndex(line, " "); i >= 0 {
+		return strings.TrimSpace(line[i+1:])
+	}
+	return line
+}
+
+// doctorCheckVersionSkew warns when the `amq-squad` on PATH differs in version
+// from the binary running `doctor`. amq-squad launches every agent into a shell
+// that calls bare `amq-squad` (resolved via PATH), so if the operator runs a
+// different build than what is on PATH, each spawned agent — and a lead's whole
+// orchestration — silently uses the PATH version, not this one. (Exactly the
+// 2.0.0-rc dogfood trap: agents inherited a 1.9.1 on PATH and lost the new
+// team member/task primitives.)
+func doctorCheckVersionSkew(d doctorExecution) doctorCheck {
+	const name = "amq-squad on PATH"
+	const install = "go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest"
+
+	// Skip (and do NOT shell out) for an unstamped dev/test build: the version
+	// is only meaningful for an installed/released binary.
+	running := strings.TrimSpace(d.RunningVersion)
+	if running == "" || running == "dev" || running == "(devel)" {
+		return doctorCheck{Name: name, Status: doctorOK,
+			Detail: "running a dev/unstamped build; version-skew check skipped"}
+	}
+	resolve := d.PathBinaryVersion
+	if resolve == nil {
+		resolve = defaultPathBinaryVersion
+	}
+	path, pathVer, found := resolve()
+	if !found {
+		return doctorCheck{Name: name, Status: doctorWarn,
+			Detail: "amq-squad is not on PATH; agents launched by amq-squad call bare `amq-squad`, which must be on PATH. Install: " + install}
+	}
+	if pathVer == "" {
+		return doctorCheck{Name: name, Status: doctorWarn,
+			Detail: fmt.Sprintf("could not read the version of amq-squad on PATH (%s); cannot confirm spawned agents use this build (%s)", path, running)}
+	}
+	if pathVer == running {
+		return doctorCheck{Name: name, Status: doctorOK,
+			Detail: fmt.Sprintf("matches this build (%s) at %s", running, path)}
+	}
+	return doctorCheck{Name: name, Status: doctorWarn,
+		Detail: fmt.Sprintf("version skew: PATH amq-squad is %s (%s) but this process is %s; agents launched by amq-squad inherit the PATH binary, so orchestration uses %s. Reinstall to align: %s", pathVer, path, running, pathVer, install)}
 }
 
 // defaultTmuxShowServerOption reads a server-scoped tmux option via
@@ -114,7 +187,7 @@ func defaultTmuxShowServerOption(name string) (string, bool) {
 	return fields[len(fields)-1], true
 }
 
-func runDoctor(args []string) error {
+func runDoctor(args []string, version string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned doctor envelope instead of the human table")
 	projectFlag := fs.String("project", "", "project/team-home directory to check (default: cwd)")
@@ -126,8 +199,9 @@ func runDoctor(args []string) error {
 Usage:
   amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
 
-Checks: AMQ version and ops diagnostics, selected team profile, tmux
-availability, configured members' wake health, and CLAUDE.md / AGENTS.md
+Checks: AMQ version and ops diagnostics, the amq-squad on PATH vs this build
+(version skew — spawned agents inherit the PATH binary), selected team profile,
+tmux availability, configured members' wake health, and CLAUDE.md / AGENTS.md
 marker integrity plus pointer-sync drift for the selected profile's sync
 targets. Use --all-profiles for project health across every configured profile.
 Read-only. Exits non-zero if any check is "fail".
@@ -165,6 +239,7 @@ Examples:
 	d.JSON = *jsonOut
 	d.Profile = profile
 	d.AllProfiles = *allProfiles
+	d.RunningVersion = version
 	return executeDoctor(d)
 }
 
@@ -342,6 +417,7 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks := []doctorCheck{}
 	checks = append(checks, doctorCheckAMQVersion(d))
 	checks = append(checks, doctorCheckAMQOps(d))
+	checks = append(checks, doctorCheckVersionSkew(d))
 	checks = append(checks, doctorCheckTeamConfig(d))
 	checks = append(checks, doctorCheckTmux(d))
 	checks = append(checks, doctorCheckTmuxExtendedKeys(d))
@@ -483,7 +559,7 @@ func doctorCheckTmux(d doctorExecution) doctorCheck {
 		return doctorCheck{
 			Name:   "tmux",
 			Status: doctorFail,
-			Detail: "tmux not found on PATH (required for team launch)",
+			Detail: "tmux not found on PATH (required for 'up' with --terminal tmux)",
 		}
 	}
 	return doctorCheck{Name: "tmux", Status: doctorOK, Detail: path}

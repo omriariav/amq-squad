@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/console"
-	"github.com/omriariav/amq-squad/internal/state"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/console"
+	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // runConsole is the `amq-squad console` verb: a read-only, full-screen Mission

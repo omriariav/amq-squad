@@ -11,10 +11,10 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/omriariav/amq-squad/internal/catalog"
-	"github.com/omriariav/amq-squad/internal/role"
-	"github.com/omriariav/amq-squad/internal/rules"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/catalog"
+	"github.com/omriariav/amq-squad/v2/internal/role"
+	"github.com/omriariav/amq-squad/v2/internal/rules"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func runTeam(args []string) error {
@@ -27,13 +27,6 @@ func runTeam(args []string) error {
 		return nil
 	case "init":
 		return runTeamInit(args[1:])
-	case "show":
-		// Legacy verb. Kept as an explicit hint (not unknown-command) for one
-		// release so muscle-memory invocations get a pointer.
-		return usageErrorf("'team show' is a legacy verb; use 'up --dry-run' to preview the launch plan.")
-	case "launch":
-		// Legacy verb. Kept as an explicit hint for one release.
-		return usageErrorf("'team launch' is a legacy verb; use 'up' to bring the team up.")
 	case "resume":
 		return runTeamResume(args[1:])
 	case "rules":
@@ -1712,8 +1705,7 @@ Usage:
   amq-squad team rm [--profile NAME]  Delete one team profile config (confirm-gated)
 
 To launch the team, use the top-level 'up' verb: 'amq-squad up' brings it up,
-'amq-squad up --dry-run' prints one launch command per member. ('team show'
-and 'team launch' are legacy verbs.)
+'amq-squad up --dry-run' prints one launch command per member.
 
 Most subcommands accept --profile NAME to operate on a named profile under
 .amq-squad/teams/<name>.json; omit the flag (or pass --profile default) to

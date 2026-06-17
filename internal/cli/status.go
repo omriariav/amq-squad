@@ -11,9 +11,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/state"
-	"github.com/omriariav/amq-squad/internal/team"
-	"github.com/omriariav/amq-squad/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 // statusPaneLister lists live tmux panes so status can detect a live agent that
@@ -22,6 +22,17 @@ import (
 // classifier never shells real tmux. Defaults to the same read-only lister the
 // tmux pane resolver uses, keeping detection consistent across surfaces.
 var statusPaneLister = tmuxpane.DefaultPaneLister
+
+// statusPaneInspector resolves a single pane directly by its recorded tmux id,
+// bypassing the global `list-panes -a` scan. It is the authoritative-address
+// path used when the scan misses or fails wholesale (e.g. under iTerm2 tmux -CC
+// control mode). Injected as a package var so tests supply a fake.
+var statusPaneInspector = tmuxpane.InspectPaneByID
+
+// paneCloser closes an agent's tmux pane on teardown (kill-pane). Injected as a
+// package var so tests record the call instead of killing a real pane. It
+// MUTATES tmux, so callers gate it on the agent being down.
+var paneCloser = tmuxpane.ClosePane
 
 // statusState is the precise state vocabulary emitted by `amq-squad status`.
 // Definitions:

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 )
 
 // staleProbe is a deterministic probe pinned to `now` with no live PIDs.

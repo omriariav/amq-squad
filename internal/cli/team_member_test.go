@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func teamMembers(t *testing.T, dir string) []team.Member {

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func TestBuildBootstrapPrompt(t *testing.T) {
@@ -33,12 +33,53 @@ func TestBuildBootstrapPrompt(t *testing.T) {
 		"Team rules: /repo/.amq-squad/team-rules.md",
 		"Role file: /repo/.agent-mail/fresh-cto/agents/cto/role.md",
 		"Launch record: /repo/.agent-mail/fresh-cto/agents/cto/launch.json",
-		"Start your first response by stating your role and handle",
+		"Start your first response by stating your role, handle, and the amq-squad skill version",
 		"Stop and wait for instructions.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("bootstrap prompt missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+func TestBootstrapWorkerReadyHandshake(t *testing.T) {
+	// A non-lead member of an orchestrated team is told to announce READY to its
+	// lead on startup.
+	worker, err := buildBootstrapPrompt(bootstrapContext{
+		Role: "frontend-dev", Handle: "frontend-dev", Binary: "codex",
+		Orchestrated: true, IsLead: false, LeadHandle: "cto",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"worker on a lead-orchestrated squad",
+		`amq send --to cto --kind status --subject "READY: frontend-dev"`,
+	} {
+		if !strings.Contains(worker, want) {
+			t.Errorf("worker bootstrap missing %q in:\n%s", want, worker)
+		}
+	}
+
+	// The lead itself must NOT get a READY-to-self instruction.
+	lead, err := buildBootstrapPrompt(bootstrapContext{
+		Role: "cto", Handle: "cto", Binary: "codex",
+		Orchestrated: true, IsLead: true, LeadHandle: "cto",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(lead, "READY:") {
+		t.Errorf("the lead must not get a READY-to-self handshake:\n%s", lead)
+	}
+
+	// A non-orchestrated agent gets no handshake at all.
+	solo, err := buildBootstrapPrompt(bootstrapContext{Role: "dev", Handle: "dev", Binary: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(solo, "READY:") {
+		t.Errorf("a non-orchestrated agent must not get a READY handshake:\n%s", solo)
 	}
 }
 

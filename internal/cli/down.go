@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 type downStatus string
@@ -40,8 +40,11 @@ type downReport struct {
 	AgentDir string
 	Root     string
 	PID      int
-	Status   downStatus
-	Detail   string
+	// PaneID is the agent's recorded tmux pane id, used for the optional
+	// pane-close on teardown (--close-panes). Empty when no tmux record exists.
+	PaneID string
+	Status downStatus
+	Detail string
 }
 
 // processTerminator abstracts process-termination so tests can substitute a
@@ -110,26 +113,16 @@ func signalNameOf(term processTerminator) string {
 // recoverable via `amq-squad resume`. --force escalates to SIGKILL for agents
 // that ignore SIGTERM.
 func runStop(args []string) error {
-	return runStopOrDown("stop", false, args)
-}
-
-// runDown is a deprecated alias for `stop`, kept for one release so existing
-// muscle-memory and scripts keep working. It runs the identical stop logic and
-// prints a one-line stderr deprecation hint.
-func runDown(args []string) error {
-	return runStopOrDown("down", true, args)
-}
-
-func runStopOrDown(verb string, deprecated bool, args []string) error {
-	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
+	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
 	sessionName := fs.String("session", "", "AMQ workstream session name (default: team workstream)")
 	role := fs.String("role", "", "narrow to a single configured role")
 	all := fs.Bool("all", false, "target every configured member of the team")
 	force := fs.Bool("force", false, "escalate to SIGKILL for agents that ignore SIGTERM")
+	closePanes := fs.Bool("close-panes", false, "also close each stopped agent's tmux pane (default: keep, so final output stays readable; resume re-creates panes)")
 	projectFlag := fs.String("project", "", "project/team-home directory to target (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to target (default: default profile)")
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, stopUsage(verb, deprecated))
+		fmt.Fprint(os.Stderr, stopUsage())
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -139,12 +132,7 @@ func runStopOrDown(verb string, deprecated bool, args []string) error {
 		return usageErrorf("--role and --all are mutually exclusive")
 	}
 	if *role == "" && !*all {
-		return usageErrorf("%s requires a target selector: pass --role <role> or --all", verb)
-	}
-
-	if deprecated {
-		// One-line stderr deprecation hint; the command still does the work.
-		fmt.Fprintln(os.Stderr, "down is now 'stop'; 'amq-squad down' still works for one release.")
+		return usageErrorf("stop requires a target selector: pass --role <role> or --all")
 	}
 
 	profile, err := resolveProfileFlag(*profileFlag)
@@ -163,7 +151,7 @@ func runStopOrDown(verb string, deprecated bool, args []string) error {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
 	return executeDown(downExecution{
-		Verb:             verb,
+		Verb:             "stop",
 		ProjectDir:       projectDir,
 		RequestedSession: *sessionName,
 		ExplicitSession:  flagWasSet(fs, "session"),
@@ -176,20 +164,14 @@ func runStopOrDown(verb string, deprecated bool, args []string) error {
 		Terminator: newSignalTerminator(*force),
 		Probe:      defaultDuplicateLaunchProbe,
 		Out:        os.Stdout,
+		ClosePanes: *closePanes,
 	})
 }
 
-func stopUsage(verb string, deprecated bool) string {
-	header := "amq-squad stop - stop configured team members (the session stays resumable)"
-	if deprecated {
-		header = "amq-squad down - deprecated alias for 'amq-squad stop'"
-	}
+func stopUsage() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n", header)
-	fmt.Fprintf(&b, "Usage:\n  amq-squad %s (--role R | --all) [--project DIR] [--force] [--profile NAME] [--session NAME]\n\n", verb)
-	if deprecated {
-		b.WriteString("'down' is now 'stop'. This alias keeps working for one release and runs\nthe identical logic; prefer 'amq-squad stop'.\n\n")
-	}
+	b.WriteString("amq-squad stop - stop configured team members (the session stays resumable)\n\n")
+	b.WriteString("Usage:\n  amq-squad stop (--role R | --all) [--project DIR] [--force] [--close-panes] [--profile NAME] [--session NAME]\n\n")
 	b.WriteString(`Exactly one selector is required: --role R or --all. --all targets the
 configured members from this project's team.json in the resolved session
 (default: the team's workstream). --project targets another team-home without
@@ -205,16 +187,14 @@ The on-disk state (launch record, mailbox, brief) is PRESERVED, so the session
 is recoverable: bring it back with 'amq-squad resume'.
 
 Exit codes: a successful stop exits 0; a mixed run (some stopped, some failed
-or unconfirmed) exits 3. NOTE: prior releases made 'down' without --force exit
-2 ("graceful unavailable"); stop now performs the SIGTERM teardown and exits 0
-(or 3 partial) instead.
+or unconfirmed) exits 3.
 
 Examples:
+  amq-squad stop --role cto
+  amq-squad stop --project ~/Code/app --all --session issue-96
+  amq-squad stop --all --session issue-96
+  amq-squad stop --role cto --force   # SIGKILL an agent that ignores SIGTERM
 `)
-	fmt.Fprintf(&b, "  amq-squad %s --role cto\n", verb)
-	fmt.Fprintf(&b, "  amq-squad %s --project ~/Code/app --all --session issue-96\n", verb)
-	fmt.Fprintf(&b, "  amq-squad %s --all --session issue-96\n", verb)
-	fmt.Fprintf(&b, "  amq-squad %s --role cto --force   # SIGKILL an agent that ignores SIGTERM\n", verb)
 	return b.String()
 }
 
@@ -229,6 +209,9 @@ type downExecution struct {
 	Terminator       processTerminator
 	Probe            duplicateLaunchProbe
 	Out              io.Writer
+	// ClosePanes closes each downed agent's recorded tmux pane after teardown.
+	// stop defaults this OFF (final output stays readable; --close-panes opts in).
+	ClosePanes bool
 }
 
 func executeDown(d downExecution) error {
@@ -256,7 +239,34 @@ func executeDown(d downExecution) error {
 	for _, m := range targets {
 		reports = append(reports, terminateMember(t, m, workstream, d.Terminator, d.Probe))
 	}
+	if d.ClosePanes {
+		closeDownedPanes(reports)
+	}
 	return renderDownReports(d.Out, verb, workstream, reports)
+}
+
+// closeDownedPanes closes the recorded tmux pane of every member that is
+// confirmed DOWN (stopped / cleaned / not-live) and carries a recorded pane id.
+// maybe-live and failed members are deliberately left alone — amq-squad never
+// closes a pane it is not sure is dead. Best-effort: a kill-pane error (e.g. the
+// pane is already gone) is swallowed and the teardown result is unaffected.
+func closeDownedPanes(reports []downReport) {
+	for i := range reports {
+		r := &reports[i]
+		if strings.TrimSpace(r.PaneID) == "" {
+			continue
+		}
+		switch r.Status {
+		case downStatusStopped, downStatusCleaned, downStatusNotLive:
+			if err := paneCloser(r.PaneID); err == nil {
+				if strings.TrimSpace(r.Detail) == "" {
+					r.Detail = "closed tmux pane " + r.PaneID
+				} else {
+					r.Detail += "; closed tmux pane " + r.PaneID
+				}
+			}
+		}
+	}
 }
 
 func selectDownMembers(t team.Team, role string, all bool) ([]team.Member, error) {
@@ -304,6 +314,9 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 		report.Status = downStatusFailed
 		report.Detail = "read launch record: " + err.Error()
 		return report
+	}
+	if rec.Tmux != nil {
+		report.PaneID = rec.Tmux.PaneID
 	}
 	report.PID = rec.AgentPID
 	if rec.AgentPID <= 0 {

@@ -26,7 +26,7 @@ package state
 import (
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/procinfo"
+	"github.com/omriariav/amq-squad/v2/internal/procinfo"
 )
 
 // PresenceFreshness defines how recently a presence.json must have been updated

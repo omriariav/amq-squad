@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/flock"
+	"github.com/omriariav/amq-squad/v2/internal/flock"
 )
 
 // Status values for the five-state machine.

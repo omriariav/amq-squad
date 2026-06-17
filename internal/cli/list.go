@@ -11,7 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 )
 
 type listRecord struct {

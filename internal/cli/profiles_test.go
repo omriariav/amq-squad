@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // seedProfile writes a profile config into projectDir without changing the

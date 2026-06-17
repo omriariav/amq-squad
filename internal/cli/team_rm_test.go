@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func teamRemoveFixture(t *testing.T, dir, profile string) string {
