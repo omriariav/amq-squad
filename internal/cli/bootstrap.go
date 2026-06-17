@@ -35,9 +35,16 @@ type bootstrapContext struct {
 	BriefPath     string
 	Operator      team.OperatorView
 	OperatorGates bool
-	CurrentTeam   []bootstrapTeamMember
-	Workstreams   []bootstrapWorkstream
-	Warnings      []string
+	// Orchestrated/IsLead/LeadHandle drive the spawned-worker READY handshake:
+	// a non-lead member of an orchestrated team announces readiness to its lead
+	// on startup so the lead can dispatch without guessing the worker's load
+	// state (and without eating busy-guard rejections on a still-loading pane).
+	Orchestrated bool
+	IsLead       bool
+	LeadHandle   string
+	CurrentTeam  []bootstrapTeamMember
+	Workstreams  []bootstrapWorkstream
+	Warnings     []string
 }
 
 type bootstrapTeamMember struct {
@@ -82,6 +89,7 @@ func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
 	ctx.AgentDir = promptText(ctx.AgentDir)
 	ctx.TeamHome = promptText(ctx.TeamHome)
 	ctx.TeamRulesPath = promptText(ctx.TeamRulesPath)
+	ctx.LeadHandle = promptText(ctx.LeadHandle)
 	ctx.RolePath = promptText(ctx.RolePath)
 	ctx.LaunchPath = promptText(ctx.LaunchPath)
 	ctx.BriefPath = promptText(ctx.BriefPath)
@@ -136,6 +144,7 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		teamRulesPath = rules.Path(rec.CWD)
 	}
 	operator, operatorGates := bootstrapOperator(rec, teamHome)
+	orchestrated, isLead, leadHandle := bootstrapOrchestration(rec, teamHome)
 	currentTeam, warnings := bootstrapCurrentTeam(rec, teamHome)
 	return bootstrapContext{
 		Role:          rec.Role,
@@ -155,10 +164,36 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		BriefPath:     briefPath(resolveBriefHome(teamHome, rec.CWD), rec.Session),
 		Operator:      operator,
 		OperatorGates: operatorGates,
+		Orchestrated:  orchestrated,
+		IsLead:        isLead,
+		LeadHandle:    leadHandle,
 		CurrentTeam:   currentTeam,
 		Workstreams:   siblingWorkstreamSummaries(rec.Root, rec.Session),
 		Warnings:      warnings,
 	}
+}
+
+// bootstrapOrchestration reports whether this launch belongs to a lead-
+// orchestrated team, whether THIS agent is the lead, and the lead's handle. A
+// non-lead member uses it to announce READY to the lead on startup. Returns
+// zero values (no handshake) when the profile is unreadable or not orchestrated.
+func bootstrapOrchestration(rec launch.Record, teamHome string) (orchestrated, isLead bool, leadHandle string) {
+	home := teamHome
+	if home == "" {
+		home = rec.CWD
+	}
+	t, err := team.ReadProfile(home, rec.TeamProfile)
+	if err != nil || !t.Orchestrated || strings.TrimSpace(t.Lead) == "" {
+		return false, false, ""
+	}
+	isLead = strings.EqualFold(strings.TrimSpace(rec.Role), strings.TrimSpace(t.Lead))
+	for _, m := range t.Members {
+		if strings.EqualFold(m.Role, t.Lead) {
+			leadHandle = memberHandle(m)
+			break
+		}
+	}
+	return true, isLead, leadHandle
 }
 
 func bootstrapOperator(rec launch.Record, teamHome string) (team.OperatorView, bool) {
