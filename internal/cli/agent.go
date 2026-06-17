@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // runAgent dispatches the `agent` subgroup: `agent up <binary>` launches a
@@ -61,6 +63,10 @@ Examples:
 `)
 		return nil
 	}
+	// Default the agent handle to its --role before translating, so a hand-typed
+	// `agent up <binary> --role R` (no --me) routes to the role's mailbox
+	// instead of the binary basename (see defaultMeFromRole).
+	args = defaultMeFromRole(args)
 	// agent up syntax is `agent up <binary> [launch flags] [-- child args]`.
 	// runLaunch's parser expects `[flags] <binary> [-- child]`, so translate
 	// before delegating: lift the binary to after the launch flags. This lets
@@ -68,6 +74,153 @@ Examples:
 	// parser still sees flags first.
 	translated := translateAgentUpArgs(args)
 	return runLaunch(translated)
+}
+
+// defaultMeFromRole makes `agent up <binary> --role R` (no --me) route to the
+// role's mailbox instead of the binary basename. Without it, every same-binary
+// agent shares one handle (claude/codex), so peer reports and gate replies
+// misroute — a real footgun the first 2.0 dogfood hit. The team-launch and
+// resume paths already pass an explicit --me per member; this closes the gap on
+// the direct single-agent front door (and the skill pairs --role with --me, so
+// this only backstops a hand-typed launch).
+//
+// It operates on agent-up-shaped args (binary positional first, launch flags
+// after, child args behind a `--`). Only the launch-flag region is inspected;
+// the child block is never touched. The derived handle must be a valid slug
+// handle (same rule as roster handles) — an exotic --role keeps the old
+// binary-basename default rather than synthesizing an invalid handle.
+func defaultMeFromRole(args []string) []string {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return args
+	}
+	binary := args[0]
+	rest := args[1:]
+	// Read --role/--me ONLY from the genuine launch-flag region. Using the same
+	// boundary as translateAgentUpArgs is what keeps a CHILD `--role` (e.g.
+	// `agent up codex "prompt" --role x`, where the prompt positional already
+	// opened the child block) from being mistaken for a launch role.
+	end, _ := agentUpFlagsEnd(rest)
+	role, haveMe := agentUpRoleAndMe(rest[:end])
+	if haveMe || role == "" {
+		return args
+	}
+	handle := strings.ToLower(strings.TrimSpace(role))
+	if team.ValidateHandle(handle) != nil {
+		return args
+	}
+	out := make([]string, 0, len(args)+2)
+	out = append(out, binary, "--me", handle)
+	out = append(out, rest...)
+	return out
+}
+
+// agentUpRoleAndMe scans a slice of launch flags (the region BEFORE the child
+// boundary, as returned by agentUpFlagsEnd) for the agent's --role value and
+// whether --me was given. Within this region every value-consuming flag has its
+// value present, so a name match is reliable; the default branch skips other
+// flags' value tokens so a value can never be read as --role/--me.
+func agentUpRoleAndMe(flags []string) (role string, haveMe bool) {
+	for i := 0; i < len(flags); i++ {
+		a := flags[i]
+		name := a
+		hasEq := strings.Contains(a, "=")
+		if hasEq {
+			name = a[:strings.IndexByte(a, '=')]
+		}
+		switch name {
+		case "--me", "-me":
+			haveMe = true
+			if !hasEq && i+1 < len(flags) {
+				i++ // skip the handle value token
+			}
+		case "--role", "-role":
+			if hasEq {
+				role = a[strings.IndexByte(a, '=')+1:]
+			} else if i+1 < len(flags) && !strings.HasPrefix(flags[i+1], "-") {
+				role = flags[i+1]
+				i++
+			}
+		default:
+			if !hasEq {
+				switch launchKnownFlag(name) {
+				case "string", "string-accepts-dash":
+					if i+1 < len(flags) {
+						i++
+					}
+				}
+			}
+		}
+	}
+	return role, haveMe
+}
+
+// agentUpFlagsEnd finds where the launch-flag region of `agent up <binary>
+// [flags...] [-- child]` ends and the child block begins, given rest = the args
+// AFTER the binary positional. It is the single source of truth for that split,
+// shared by translateAgentUpArgs (which reorders around it) and
+// defaultMeFromRole (which reads --role/--me from rest[:end]).
+//
+//   - An explicit `--` boundary wins: end is its index, explicitDashDash=true,
+//     and rest[end:] (which still starts with `--`) is the child block verbatim.
+//   - Otherwise the first unrecognized token (a bare positional or an unknown
+//     `-...` flag, or a bare string flag with no usable value) opens the child
+//     block; recognized launch flags and their values are consumed first.
+func agentUpFlagsEnd(rest []string) (end int, explicitDashDash bool) {
+	for i, a := range rest {
+		if a == "--" {
+			return i, true
+		}
+	}
+	end = len(rest)
+walk:
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		if !strings.HasPrefix(a, "-") {
+			// Bare positional after the binary: child boundary.
+			end = i
+			break walk
+		}
+		// `--flag=value` syntax: split and check name.
+		name := a
+		hasEq := strings.Contains(a, "=")
+		if hasEq {
+			name = a[:strings.IndexByte(a, '=')]
+		}
+		switch launchKnownFlag(name) {
+		case "string":
+			if hasEq {
+				continue
+			}
+			// Bare `--role` is only a complete launch flag if the next token is
+			// a non-flag value. If the next token is missing or dash-prefixed,
+			// that token is part of the child block (legacy `launch` parses it
+			// that way too because the binary positional came first).
+			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
+				end = i
+				break walk
+			}
+			i++ // consume value token
+		case "string-accepts-dash":
+			if hasEq {
+				continue
+			}
+			// `--codex-args` / `--claude-args` carry native child-flag strings
+			// that commonly start with `-` (e.g. `--enable goals`, `--chrome`);
+			// always consume the next token as the value when present.
+			if i+1 >= len(rest) {
+				end = i
+				break walk
+			}
+			i++ // consume value token (may start with `-`)
+		case "bool":
+			continue
+		default:
+			// Unknown `-...` token: child block starts here.
+			end = i
+			break walk
+		}
+	}
+	return end, false
 }
 
 // translateAgentUpArgs reorders `agent up <binary> [flags...] [-- child]`
@@ -90,81 +243,18 @@ func translateAgentUpArgs(args []string) []string {
 	binary := args[0]
 	rest := args[1:]
 
-	// Explicit `--` boundary: keep child block verbatim.
-	for i, a := range rest {
-		if a == "--" {
-			flags := rest[:i]
-			child := rest[i:]
-			out := append([]string{}, flags...)
-			out = append(out, binary)
-			out = append(out, child...)
-			return out
-		}
-	}
-
-	// No explicit `--`. Walk rest, consuming only recognized launch flags
-	// (and their values for string-valued flags). Stop at the first
-	// unrecognized token; everything from there is the child block.
-	flagsEnd := len(rest)
-walk:
-	for i := 0; i < len(rest); i++ {
-		a := rest[i]
-		if !strings.HasPrefix(a, "-") {
-			// Bare positional after the binary: child boundary.
-			flagsEnd = i
-			break walk
-		}
-		// `--flag=value` syntax: split and check name.
-		name := a
-		hasEq := strings.Contains(a, "=")
-		if hasEq {
-			name = a[:strings.IndexByte(a, '=')]
-		}
-		kind := launchKnownFlag(name)
-		switch kind {
-		case "string":
-			if hasEq {
-				continue
-			}
-			// Bare `--role` is only a complete launch flag if the next
-			// token is a non-flag value. If the next token is missing
-			// or dash-prefixed, that token is part of the child block
-			// (legacy `launch` parses it that way too because the
-			// binary positional came first). Match that parity.
-			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
-				flagsEnd = i
-				break walk
-			}
-			i++ // consume value token
-			continue
-		case "string-accepts-dash":
-			if hasEq {
-				continue
-			}
-			// `--codex-args` / `--claude-args` are documented to carry
-			// native child-flag strings that commonly start with `-`
-			// (e.g. `--enable goals`, `--chrome`). Always consume the
-			// next token as the value when present; only the trailing
-			// no-value case falls back to child boundary.
-			if i+1 >= len(rest) {
-				flagsEnd = i
-				break walk
-			}
-			i++ // consume value token (may start with `-`)
-			continue
-		case "bool":
-			continue
-		default:
-			// Unknown `-...` token: child block starts here.
-			flagsEnd = i
-			break walk
-		}
-	}
-	flags := rest[:flagsEnd]
-	child := rest[flagsEnd:]
+	// Split launch flags from the child block via the shared boundary helper.
+	end, explicitDashDash := agentUpFlagsEnd(rest)
+	flags := rest[:end]
+	child := rest[end:]
 	out := append([]string{}, flags...)
 	out = append(out, binary)
-	if len(child) > 0 {
+	if explicitDashDash {
+		// child still starts with the explicit `--`; keep it verbatim.
+		out = append(out, child...)
+	} else if len(child) > 0 {
+		// implicit boundary: synthesize `--` so native child flags like
+		// `--foo` do not collide with runLaunch's flag parser.
 		out = append(out, "--")
 		out = append(out, child...)
 	}

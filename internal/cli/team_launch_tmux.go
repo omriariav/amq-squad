@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func init() {
@@ -484,8 +484,8 @@ func warnTmuxControlModeClients(clients []tmuxClient) {
 		fmt.Fprintf(os.Stderr, "warning: control client %s flags: %s\n", c.TTY, c.Flags)
 	}
 	fmt.Fprintln(os.Stderr, "warning: starting panes with a stagger to reduce the initial output burst.")
-	fmt.Fprintln(os.Stderr, "warning: if input stalls, recover from a non-tmux shell with: tmux detach-client -t <tty>")
-	fmt.Fprintln(os.Stderr, "warning: consider raising the control client limit with: tmux refresh-client -f pause-after=0")
+	fmt.Fprintln(os.Stderr, "warning: amq-squad retries its tmux control queries through these pauses, so send/focus/status ride through a stutter.")
+	fmt.Fprintln(os.Stderr, "warning: if the iTerm2 view itself stalls, recover from a non-tmux shell with: tmux detach-client -t <tty>, then reattach.")
 }
 
 func tmuxEnsureSessionAbsent(session string) error {

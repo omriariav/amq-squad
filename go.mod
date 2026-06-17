@@ -1,4 +1,4 @@
-module github.com/omriariav/amq-squad
+module github.com/omriariav/amq-squad/v2
 
 go 1.25.9
 

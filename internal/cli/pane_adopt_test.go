@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 // #95: adoptLivePane must resolve an externally-launched agent's live pane, and

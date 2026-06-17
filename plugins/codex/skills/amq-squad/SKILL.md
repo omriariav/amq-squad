@@ -1,6 +1,6 @@
 ---
 name: amq-squad
-description: Project-aware skill for live amq-squad team coordination after `.amq-squad/team.json` exists. Covers inbox drains, routing, review/handoff, status board/console/history, up/stop/resume/fork/rm/archive (down is a deprecated alias), agent up/resume, doctor, workstream briefs, ACTIVE-EPIC startup, and tmux runtime control — focus/open/send to exact panes, deterministic prompt delivery, --target new-window window-per-agent, and tmux runtime metadata (pane ids, pane_alive, action commands) in status/history/resume --json for clients like amq-noc. For first-time team design (personas, profile choice, team rules, pointer stubs, brief authoring, sync), prefer the companion `amq-team-setup` skill. Use raw `amq-cli` only for AMQ debugging outside the squad.
+description: Project-aware skill for live amq-squad team coordination after `.amq-squad/team.json` exists. Covers inbox drains, routing, review/handoff, status board/console/history, up/stop/resume/fork/rm/archive, agent up/resume, doctor, workstream briefs, ACTIVE-EPIC startup, and tmux runtime control — focus/open/send to exact panes, deterministic prompt delivery, --target new-window window-per-agent, and tmux runtime metadata (pane ids, pane_alive, action commands) in status/history/resume --json for clients like amq-noc. For first-time team design (personas, profile choice, team rules, pointer stubs, brief authoring, sync), prefer the companion `amq-team-setup` skill. Use raw `amq-cli` only for AMQ debugging outside the squad.
 ---
 
 # amq-squad
@@ -10,6 +10,8 @@ Use this skill once a team is configured (`.amq-squad/team.json` exists) to run 
 Launch priming is automatic. `up` / `agent up` inject the bootstrap prompt; agents do not paste it by hand.
 
 This skill is named `amq-squad`; the binary is also named `amq-squad`.
+
+**Skill version: 2.0.0** — on your FIRST response of a session, print the line `amq-squad skill v2.0.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
 
 ## Context model
 
@@ -48,10 +50,14 @@ The lifecycle is one small state machine: `(none) --up--> running --stop--> stop
 | Diagnose AMQ/tmux/markers/wake health | `amq-squad doctor` |
 | List configured profiles | `amq-squad team profiles` |
 | Sync the pointer stub into `CLAUDE.md` / `AGENTS.md` | `amq-squad team sync --apply` |
+| Mutate the live roster at runtime | `amq-squad team member add <role> --binary B` / `team member rm <role>` / `team member list` |
+| Native pull-based task queue for a workstream | `amq-squad task add --title T --session S` / `task list --session S` / `task claim <id> --me H --session S` / `task done <id> --session S` |
 
-`up` means NEW work and **refuses** a session that already exists — use `resume` to continue it, or `up --reset` to start over. `stop` is the primary teardown (`down` is a deprecated alias for one release). With no `--seed-from`, `up` AUTO-STUBS the brief and prints a one-line notice — so before `up`, decide whether to author the brief first (`up --dry-run --seed-from ...`) or let `up` stub it and edit afterward. `rm`/`archive` are the only destructive ops; both confirm-gate (default No, `--yes` to skip) and refuse a live session unless `--force`.
+`up` means NEW work and **refuses** a session that already exists — use `resume` to continue it, or `up --reset` to start over. `stop` is the primary teardown (the `down` alias was removed in 2.0). With no `--seed-from`, `up` AUTO-STUBS the brief and prints a one-line notice — so before `up`, decide whether to author the brief first (`up --dry-run --seed-from ...`) or let `up` stub it and edit afterward. `rm`/`archive` are the only destructive ops; both confirm-gate (default No, `--yes` to skip) and refuse a live session unless `--force`.
 
 Pass `--profile NAME` to operate on a named profile under `.amq-squad/teams/<name>.json`. Omit (or pass `--profile default`) for `.amq-squad/team.json`.
+
+`team member` and `task` are the dynamic-team primitives. `team member add/rm` mutates `team.json` atomically under an exclusive lock and re-validates it (the new member is NOT launched — run the launch command `team member add` prints: a managed pane via `resume --exec --target new-window`, or `agent up` for an unmanaged one-off). `task` is a native pull-based store under `.amq-squad/tasks/<session>/`: a task is claimable only once all its `--depends-on` tasks are completed, and every mutation is atomic and lock-serialized. Both take `--session` (tasks require it).
 
 Every command accepts `--json` where machine-readable output makes sense (`status`, `history`, `resume`, `doctor`, `team profiles`, `version`, and `up --dry-run`). JSON outputs are schema-versioned envelopes `{ schema_version, kind, data }`. Diagnostics stay on stderr; stdout under `--json` is pure JSON. For machine clients, the per-member records in `status --session <name> --json` (kind `status`), `history --json`, and `resume --json` (kind `resume_plan`) carry a `tmux` runtime block (`session`, `window_id`, `window_name`, `pane_id`, `target`) plus a computed `pane_alive` — **present only for agents launched in tmux**, so detect by presence. `status --session <name> --json` records additionally carry an `actions` array (`focus`/`send`/`resume`/`status`) with the exact runnable command and an `available` flag, so a client (e.g. amq-noc) renders/copies stable commands instead of inferring tmux state. (The bare `amq-squad status --json` is the multi-session board envelope `kind: sessions` — it has no per-member records or actions; use `--session <name>` for member detail.)
 
@@ -106,7 +112,7 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
    - NEW work: `amq-squad up [<session>]` opens the team in tmux. It REFUSES an existing session — use `resume` to continue, or `up --reset` to start over. With no `--seed-from`, the brief auto-stubs (one-line notice); decide brief-first vs stub-then-edit before launching.
    - Preview-only: `amq-squad up --dry-run` prints one launch command per member; share or paste into separate panes.
    - Restart someone: `amq-squad agent resume <role>` (delegates to the saved launch record). Use `agent up <binary> [flags]` for ad-hoc single-agent launches.
-   - Stop: `amq-squad stop --role R` (or `--all`); `--force` escalates to SIGKILL. State is preserved, so the session stays resumable. (`down` is a deprecated alias.)
+   - Stop: `amq-squad stop --role R` (or `--all`); `--force` escalates to SIGKILL. State is preserved, so the session stays resumable. (The `down` alias was removed in 2.0.)
    - Re-orient: `amq-squad resume` reattaches a saved conversation if present, else re-runs bootstrap so the agent re-reads its brief + AMQ history (no replay of prior reasoning). Plan-only; `--exec` opens the commands.
    - Tear down for good: `amq-squad rm <session>` (destructive, confirm-gated) or `amq-squad archive <session>` (recoverable). Both refuse a live session unless `--force` — stop first.
 
@@ -134,6 +140,12 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
    amq drain --include-body
    ```
    Acknowledge briefly on the same thread when useful - one factual line, not a status update.
+
+8. **Work the task store (when one drives the workstream).**
+   - When the lead has posted work as tasks (`amq-squad task list --session <S>`), the store is the durable source of truth for who-owns-what — keep it in sync; do not just prose-ACK over AMQ.
+   - Before you START a piece of dispatched work, claim its task: `amq-squad task claim <id> --me <handle> --session <S>`. A claim is gated until the task's `--depends-on` tasks are `completed`, so a successful claim also confirms your dependencies are met.
+   - When you FINISH, close it: `amq-squad task done <id> --session <S>`. If you cannot finish, record `task fail <id>` (with a reason) or `task block <id>` rather than leaving it `in_progress`.
+   - The pushed AMQ report and the task transition are complementary, not redundant: the message tells the lead; the store records the state. Do both.
 
 ## Inbox handling
 
@@ -225,12 +237,13 @@ so `agent resume` reproduces it.
 - `2` system / runtime error (IO, process, config, environment)
 - `3` partial success (some targets succeeded, some failed; e.g. `stop` with mixed stopped + failed)
 
-## Removed / deprecated verbs
+## Removed verbs
 
-These 1.x verbs were **removed in 2.0**. Each still prints a one-line stderr migration hint (then exits with a usage error). Recommend the replacement, never the removed verb.
+These 1.x verbs were **removed in 2.0**. Each now returns a plain usage error (exit 1); there is no migration hint any more. Recommend the replacement, never the removed verb. Full notes live in `MIGRATION.md`.
 
 | Removed verb | Recommend |
 | --- | --- |
+| `amq-squad down` | `amq-squad stop` |
 | `amq-squad launch <binary>` | `amq-squad agent up <binary>` |
 | `amq-squad restore` (print) | `amq-squad history` |
 | `amq-squad restore --exec --role R` | `amq-squad agent resume R` |
@@ -238,8 +251,6 @@ These 1.x verbs were **removed in 2.0**. Each still prints a one-line stderr mig
 | `amq-squad team show` | `amq-squad up --dry-run` |
 | `amq-squad team launch` | `amq-squad up` |
 | `amq-squad team launch --fresh --session X` | `amq-squad fork --from <current> --as X` |
-
-`amq-squad down` is **deprecated** (not removed): it is an alias for `stop` that works for one more release and runs identical logic. Prefer `stop`.
 
 ## Team-rules content (generated by `team init`)
 

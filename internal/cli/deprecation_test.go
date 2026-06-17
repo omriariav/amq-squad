@@ -8,17 +8,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-// The five legacy verbs (top-level launch/restore/list and team show/launch)
-// are legacy commands. Each must return a UsageError (exit 1) whose message
-// names the modern replacement -- a helpful migration hint, NOT a silent
-// unknown-command. These tests pin both the exit classification and the hint.
+// The legacy verbs (top-level launch/restore/list, the old `down` alias, and
+// team show/launch) are fully removed in 2.0. Each must now return a
+// UsageError (exit 1); the modern replacements are documented in MIGRATION.md
+// and the top-level --help "Removed in 2.0" note. These tests pin the exit
+// classification so a removed verb can never silently succeed.
 
-// assertRemovedHint runs args through the public Run dispatcher and asserts it
-// returns a UsageError (exit 1) whose message contains each wanted substring.
-func assertRemovedHint(t *testing.T, args []string, wants ...string) {
+// assertRemovedUsageError runs args through the public Run dispatcher and
+// asserts it returns a UsageError (exit 1).
+func assertRemovedUsageError(t *testing.T, args []string) {
 	t.Helper()
 	_, _, err := captureOutput(t, func() error { return Run(args, "test") })
 	if err == nil {
@@ -31,56 +32,19 @@ func assertRemovedHint(t *testing.T, args []string, wants ...string) {
 	if code := ExitCode(err); code != ExitUser {
 		t.Errorf("Run %v: want exit %d, got %d", args, ExitUser, code)
 	}
-	for _, want := range wants {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("Run %v: error %q missing hint %q", args, err.Error(), want)
-		}
-	}
 }
 
-func TestLaunchVerbRemovedWithHint(t *testing.T) {
-	assertRemovedHint(t, []string{"launch", "codex"}, "legacy verb", "agent up")
-}
-
-func TestRestoreVerbRemovedWithHint(t *testing.T) {
-	// The restore hint must name both the print-mode replacement (history)
-	// and the exec-mode replacement (agent resume).
-	assertRemovedHint(t, []string{"restore", "--exec", "--role", "cto"},
-		"legacy verb", "history", "agent resume")
-}
-
-func TestListVerbRemovedWithHint(t *testing.T) {
-	assertRemovedHint(t, []string{"list"}, "legacy verb", "status", "history")
-}
-
-func TestTeamShowRemovedWithHint(t *testing.T) {
-	assertRemovedHint(t, []string{"team", "show"}, "legacy verb", "up --dry-run")
-}
-
-func TestTeamLaunchRemovedWithHint(t *testing.T) {
-	assertRemovedHint(t, []string{"team", "launch"}, "legacy verb", "up")
-}
-
-// The removed verbs must not be silently swallowed as unknown-command: the
-// hint text proves we routed to the dedicated removal message, not the
-// generic "unknown command" branch.
-func TestRemovedVerbsAreNotUnknownCommand(t *testing.T) {
+func TestRemovedVerbsReturnUsageError(t *testing.T) {
 	cases := [][]string{
-		{"launch"},
-		{"restore"},
+		{"launch", "codex"},
+		{"restore", "--exec", "--role", "cto"},
 		{"list"},
+		{"down", "--role", "cto"},
 		{"team", "show"},
 		{"team", "launch"},
 	}
 	for _, args := range cases {
-		_, _, err := captureOutput(t, func() error { return Run(args, "test") })
-		if err == nil {
-			t.Errorf("Run %v: want UsageError, got nil", args)
-			continue
-		}
-		if strings.Contains(err.Error(), "unknown command") || strings.Contains(err.Error(), "unknown 'team' subcommand") {
-			t.Errorf("Run %v: removed verb should emit a migration hint, not unknown-command: %q", args, err.Error())
-		}
+		assertRemovedUsageError(t, args)
 	}
 }
 
@@ -259,6 +223,50 @@ func TestTranslateAgentUpArgs(t *testing.T) {
 	}
 }
 
+func TestDefaultMeFromRole(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"role no me injects handle", []string{"codex", "--role", "cto"}, []string{"codex", "--me", "cto", "--role", "cto"}},
+		{"role=value form injects", []string{"claude", "--role=fullstack"}, []string{"claude", "--me", "fullstack", "--role=fullstack"}},
+		{"hyphen role is a valid handle", []string{"claude", "--role", "frontend-dev"}, []string{"claude", "--me", "frontend-dev", "--role", "frontend-dev"}},
+		{"uppercase role lowercased for handle", []string{"claude", "--role", "CTO"}, []string{"claude", "--me", "cto", "--role", "CTO"}},
+		{"explicit me wins", []string{"codex", "--role", "cto", "--me", "cto2"}, []string{"codex", "--role", "cto", "--me", "cto2"}},
+		{"me before role still wins", []string{"codex", "--me", "cto2", "--role", "cto"}, []string{"codex", "--me", "cto2", "--role", "cto"}},
+		{"no role unchanged", []string{"codex", "--dry-run"}, []string{"codex", "--dry-run"}},
+		{"exotic role keeps basename default", []string{"codex", "--role", "Senior Dev"}, []string{"codex", "--role", "Senior Dev"}},
+		{"role only in explicit child block ignored", []string{"codex", "--no-bootstrap", "--", "--role", "x"}, []string{"codex", "--no-bootstrap", "--", "--role", "x"}},
+		// Regression (codex review): a child positional opens the child block, so
+		// a trailing `--role` there is a CHILD arg and must NOT become --me.
+		{"child positional then role is child arg", []string{"codex", "prompt", "--role", "cto"}, []string{"codex", "prompt", "--role", "cto"}},
+		{"unknown child flag then role is child arg", []string{"codex", "--foo", "--role", "cto"}, []string{"codex", "--foo", "--role", "cto"}},
+		{"launch role before child role wins", []string{"codex", "--role", "cto", "--", "--role", "x"}, []string{"codex", "--me", "cto", "--role", "cto", "--", "--role", "x"}},
+		{"launch role then trailing child positional", []string{"codex", "--role", "cto", "prompt"}, []string{"codex", "--me", "cto", "--role", "cto", "prompt"}},
+		{"role after bool launch flag", []string{"codex", "--dry-run", "--role", "cto"}, []string{"codex", "--me", "cto", "--dry-run", "--role", "cto"}},
+		{"bare role with no value unchanged", []string{"codex", "--dry-run", "--role"}, []string{"codex", "--dry-run", "--role"}},
+		{"role followed by dash token unchanged", []string{"codex", "--role", "--dry-run"}, []string{"codex", "--role", "--dry-run"}},
+		{"role after other string flag", []string{"claude", "--session", "issue-96", "--role", "cto"}, []string{"claude", "--me", "cto", "--session", "issue-96", "--role", "cto"}},
+		{"binary only", []string{"codex"}, []string{"codex"}},
+		{"help passthrough", []string{"--help"}, []string{"--help"}},
+		{"empty", nil, nil},
+	}
+	for _, tc := range cases {
+		got := defaultMeFromRole(tc.in)
+		if len(got) != len(tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("%s[%d]: got %q, want %q (got=%v want=%v)", tc.name, i, got[i], tc.want[i], got, tc.want)
+				break
+			}
+		}
+	}
+}
+
 // TestAgentUpHonorsPostBinaryFlags is the functional regression senior-dev
 // flagged: a user typing `agent up codex --dry-run ...` should see the
 // dry-run note on stderr, proving the launch flag was actually parsed.
@@ -288,13 +296,13 @@ func TestCompletionDropsRemovedVerbs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"agent", "team", "up", "down"} {
+	for _, want := range []string{"agent", "team", "up", "stop"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("bash completion missing modern verb %q", want)
 		}
 	}
 	// Top-level removed verbs must be gone from the top-command list.
-	for _, gone := range []string{"launch", "restore", "list"} {
+	for _, gone := range []string{"launch", "restore", "list", "down"} {
 		if containsString(completionTopCommands, gone) {
 			t.Errorf("completionTopCommands should not list removed verb %q", gone)
 		}

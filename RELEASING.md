@@ -10,6 +10,10 @@ cannot merge without the matching regenerated `README.html` (see step 1).
    Any time you change `README.md`, run `make readme-html` to regenerate
    `README.html` (requires `pandoc`) and commit both; `make ci` fails if
    `README.html` is out of sync.
+   When bumping a plugin manifest version, also bump the `Skill version: X.Y.Z`
+   marker in `plugins/{claude,codex}/skills/amq-squad/SKILL.md` (the agent echoes
+   it on startup). `make ci` (`skills-check`) fails if the marker and the manifest
+   version drift apart.
 2. Merge the release PR.
 3. Tag the merge commit:
 
@@ -25,10 +29,11 @@ cannot merge without the matching regenerated `README.html` (see step 1).
    make release-smoke VERSION=v0.5.1
    ```
 
-The smoke test installs `github.com/omriariav/amq-squad/cmd/amq-squad@VERSION`
-into a temporary `GOBIN` and fails unless `amq-squad version` prints the same
-version. This catches releases where the source tag works but the documented
-`go install` path reports `dev` or an old version.
+The smoke test installs `github.com/omriariav/amq-squad/v2/cmd/amq-squad@VERSION`
+(note the `/v2` module path for v2+) into a temporary `GOBIN` and fails unless
+`amq-squad version` prints the same version. This catches releases where the
+source tag works but the documented `go install` path reports `dev` or an old
+version.
 
 ## Minor release checklist
 
@@ -64,11 +69,12 @@ top of the patch checklist.
   --stop--> stopped --rm/archive--> (none)`, with `resume` returning a stopped
   session to running. `up` now means NEW work and refuses an existing session
   (`resume` to continue, `up --reset` to start over); `stop` is the primary
-  teardown (state preserved, resumable) and `down` is a deprecated alias; `rm`
-  and `archive` are the only destructive ops, both confirm-gated. The pinned
-  `team.json` `workstream` default is dropped behind a deprecation shim
-  (removal in 2.1). Removed verbs: `launch`, `restore`, `list`, `team show`,
-  `team launch` (each prints a migration hint). The brief auto-stubs on `up`.
+  teardown (state preserved, resumable) and `down` was removed in 2.0 (it had
+  been a deprecated alias); `rm` and `archive` are the only destructive ops,
+  both confirm-gated. The pinned `team.json` `workstream` default is dropped
+  behind a deprecation shim (removal in 2.1). Removed verbs: `down`, `launch`,
+  `restore`, `list`, `team show`, `team launch` (each now returns a usage
+  error). The brief auto-stubs on `up`.
 - **Mission Control.** New read-only `amq-squad console` TUI (board / detail /
   collapsed-thread bus / peek / triage rollup; `--once` for CI), and the bare
   `amq-squad` now renders a multi-session status board.

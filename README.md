@@ -2,7 +2,35 @@
 
 Role-aware agent team launcher built on top of [AMQ](https://github.com/avivsinai/agent-message-queue) by [Aviv Sinai](https://github.com/avivsinai).
 
-AMQ owns messaging between agents. `amq-squad` owns the layer above: who is on the team, what role each agent plays, what shared norms they follow, and how to bring the whole squad up, down, back, or into a new workstream.
+AMQ owns messaging between agents. `amq-squad` owns the layer above: who is on the team, what role each agent plays, what shared norms they follow, and how to bring the whole squad up, stop it, resume it, or fork it into a new workstream.
+
+## 2.0 — goal-first, dynamic teams
+
+**The shift.** Until now you *designed a team, then ran it*: `team init` authored a static roster, `up` spawned exactly that roster, and composition was frozen for the session. 2.0 inverts it — **you hand a lead a goal and the lead composes the team**, proposing, spawning, and pruning agents at runtime as the work reveals what it needs. Goal-first changes the default *mental model*; manual still works exactly as before.
+
+The load-bearing constraint, and why this is amq-squad-native rather than "just use Claude Code Agent Teams": **orchestration is binary-neutral — a Codex agent can *lead*, not just be led.** No core primitive depends on `~/.claude/`.
+
+Composition is a spectrum, and **manual stays the floor**:
+
+| Mode | Who composes the team | 2.0 |
+| --- | --- | --- |
+| **Manual** | You design the roster up front (`team init` / the setup wizard). | first-class, unchanged |
+| **Seeded** | The lead **proposes** each spawn from the goal; the **operator approves** it over a `gate/<topic>` thread. | shipped |
+| **Autonomous** | The lead spawns/prunes within guardrails, no per-spawn approval. | deferred to 2.1 |
+
+Three binary-neutral primitives make it work, and all of them round-trip through stop/resume so a resumed session rebuilds the team the lead **built**, not the seed:
+
+- **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted).
+- **Native task store** — `amq-squad task add/list/claim/done/fail/block`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/`, so a lead of either binary decomposes the goal into claimable work.
+- **Compose-from-goal playbook** — the `amq-squad-orchestrator` skill (in both the Claude and Codex marketplaces) drives propose → approve → `team member add` → `task add` → prune.
+
+### Breaking changes
+
+2.0 is a major version; the breaking surface is small and mechanical (full upgrade notes in [`MIGRATION.md`](MIGRATION.md)):
+
+- **Removed verbs** — `down`, `launch`, `restore`, `list`, `team show`, `team launch` now return a usage error. Use `stop`, `agent up`, `history` / `agent resume`, `status` / `history`, `up --dry-run`, and `up` respectively.
+- **`/v2` module path** — install from `github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest` (note the `/v2`).
+- **No data migration** — existing `team.json` (schema v3) loads unchanged.
 
 ## Why
 
@@ -17,17 +45,17 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 
 ## Install
 
-Install the 1.9 line:
+Install the 2.0 line (note the `/v2` module path):
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@v1.9.3
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.0.0
 amq-squad version
 ```
 
-For the latest 1.x build:
+For the latest 2.x build:
 
 ```sh
-go install github.com/omriariav/amq-squad/cmd/amq-squad@latest
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest
 ```
 
 Requires Go 1.25+, the `amq` binary on `PATH` (v0.34+), and `tmux` on `PATH` for `amq-squad up`.
@@ -106,7 +134,7 @@ and **control targets the recorded pane id**, never window names. Full surface:
 | **`amq-squad`** | an agent on a live team | day-to-day coordination: inbox drains, routing, review/handoff, `status`/`console`/`history`, `up`/`stop`/`resume`/`fork`, `agent up`/`resume`, and tmux runtime control (`focus`/`send`). |
 | **`amq-team-setup`** | designing a team | wizard-style first-time setup: capture a goal from any source (prompt / `.md` / GitHub issue or PR / Jira / URL) into a canonical brief, pick personas + profile, optionally wire orchestration (who leads), team rules, pointer stubs, `sync`, validation. |
 | **`amq-squad-role-creator`** | adding a role type | authoring a new custom role (persona + `role.md`), inline or as a reusable role file. |
-| **`amq-squad-orchestrator`** | a **lead** agent | running a squad as a *driver*: spawn child agents, dispatch tasks into their panes with the busy-guarded `send`, monitor liveness via `status --json`, collect children's `[AGENT-EVENT]`-over-AMQ reports, and recover. The amq-squad-native equivalent of a hand-rolled tmux spawn protocol. |
+| **`amq-squad-orchestrator`** | a **lead** agent | running a squad as a *driver*: spawn child agents, dispatch tasks to them over durable AMQ (the busy-guarded pane `send` is the fallback), monitor liveness via `status --json`, collect children's `[AGENT-EVENT]`-over-AMQ reports, and recover. The amq-squad-native equivalent of a hand-rolled tmux spawn protocol. |
 
 Invoke a skill in Claude Code as `/amq-squad:<skill>` (e.g.
 `/amq-squad:amq-squad-orchestrator`); in Codex as `$<skill>` (e.g.
@@ -156,7 +184,7 @@ amq-squad fork --project ~/Code/other-app --from issue-96 --as issue-96-review
 amq-squad rm issue-96                # remove a finished session (confirm-gated; or `archive`)
 ```
 
-### The 1.3 lifecycle
+### Lifecycle
 
 A session moves through one small state machine:
 
@@ -170,7 +198,7 @@ A session moves through one small state machine:
 - **`new session [<name>]`** is the create-focused alias for `up [<name>]`. It follows the same NEW-work refusal rules.
 - **`new team`** is the create-focused alias for `team init`.
 - **`new profile NAME`** is the named-profile alias for `team init --profile NAME`.
-- **`stop`** is the primary teardown: SIGTERM the live agents (`--force` = SIGKILL), but PRESERVE all on-disk state so the session stays resumable. (`down` is a deprecated alias for one release.)
+- **`stop`** is the primary teardown: SIGTERM the live agents (`--force` = SIGKILL), but PRESERVE all on-disk state so the session stays resumable. (The `down` alias was removed in 2.0.)
 - **`resume`** re-orients a stopped session. If an agent has a saved conversation, amq-squad reattaches it; otherwise it re-runs bootstrap so the agent re-reads its brief and AMQ history. It does NOT replay prior hidden reasoning.
 - **`rm` / `archive`** are the session-destructive ops. Both are confirm-gated (`--yes` to skip the prompt) and refuse a session with live agents unless `--force`. `rm` deletes the session root + brief; `archive` moves them aside, recoverable. `team rm` is separate: it removes one team profile config only.
 - A **restart** is just `stop` then `up` (after `rm`/`archive`) or `resume` for the same session.
@@ -211,7 +239,7 @@ amq-squad agent up codex --role cto --session issue-96
 amq-squad agent resume fullstack
 ```
 
-The old legacy verbs (`launch`, `restore`, `list`, `team show`, `team launch`) are removed from the primary command model; each prints a one-line migration hint pointing at its replacement. See [Removed legacy verbs](#removed-legacy-verbs) and [Migrating to 1.3.0](#migrating-to-130).
+The legacy verbs (`down`, `launch`, `restore`, `list`, `team show`, `team launch`) are **removed in 2.0**. Invoking one returns a usage error (exit 1); the replacements are listed in [Removed legacy verbs](#removed-legacy-verbs) and [`MIGRATION.md`](MIGRATION.md).
 
 ### Custom launchers
 
@@ -429,13 +457,16 @@ amq-squad up [<session>] [--project DIR] [--profile NAME] [--session ws] [--rese
                                   no --seed-from/--brief the brief is AUTO-STUBBED (with a
                                   one-line notice) so CI/send-keys flows keep working.
                                   --project targets a team-home without cd.
-amq-squad stop [--all | --role R] [--project DIR] [--force]
+amq-squad stop [--all | --role R] [--project DIR] [--force] [--close-panes]
                                   Stop members: SIGTERM the live, binary-matched
                                   agent PID (--force = SIGKILL), reap the wake
                                   sidecar, flip presence offline. On-disk state is
                                   preserved, so the session stays resumable.
                                   --project targets a team-home without cd.
-                                  ('down' is a deprecated alias for one release.)
+                                  --close-panes also closes each stopped agent's
+                                  tmux pane (default: keep, so final output stays
+                                  readable; resume re-creates panes).
+                                  (The 'down' alias was removed in 2.0.)
 amq-squad resume [--project DIR] [--profile NAME] [--session ws] [--restore-existing]
                  [--exec] [--dry-run] [--force-duplicate]
                  [--no-bootstrap] [--trust sandboxed|trusted]
@@ -458,17 +489,20 @@ amq-squad fork --from <current> --as <new> [--project DIR] [--force-duplicate]
                                   created or preserved by the subsequent
                                   `up --session <new>` (or `agent up`) live launch.
                                   --project targets a team-home without cd.
-amq-squad rm <session> [--project DIR] [--yes] [--force]
+amq-squad rm <session> [--project DIR] [--yes] [--force] [--keep-panes]
                                   Permanently remove a finished session (its AMQ root dir
                                   + brief). Previews + prompts
                                   (default No) unless --yes; refuses a live session unless
-                                  --force; never touches a sibling session. --project
+                                  --force; never touches a sibling session. Closes the
+                                  torn-down agents' tmux panes by default (live agents
+                                  excluded); --keep-panes to leave them. --project
                                   targets a team-home without cd.
-amq-squad archive <session> [--project DIR] [--yes] [--force]
+amq-squad archive <session> [--project DIR] [--yes] [--force] [--keep-panes]
                                   Move a finished session aside instead of deleting it
                                   (to <baseRoot>/.archive/<session>/, recoverable).
                                   Confirm-gated; refuses a live session unless --force.
-                                  --project targets a team-home without cd.
+                                  Closes the agents' tmux panes by default; --keep-panes
+                                  to leave them. --project targets a team-home without cd.
 amq-squad status [--project DIR] [--json]
                                   Multi-session BOARD over every discovered session
 amq-squad status --session NAME [--project DIR] [--json]
@@ -493,9 +527,11 @@ amq-squad console [--project DIR] [--session NAME] [--refresh 2s] [--at-risk-wai
 amq-squad history [--json] [--project a,b]
                                   Restorable launch records across known projects.
 amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
-                                  AMQ version, AMQ ops diagnostics, profile
-                                  config, tmux, wake, marker integrity, and
-                                  pointer-sync drift.
+                                  AMQ version, AMQ ops diagnostics, the amq-squad
+                                  on PATH vs this build (version skew — spawned
+                                  agents inherit the PATH binary), profile config,
+                                  tmux, wake, marker integrity, and pointer-sync
+                                  drift.
 amq-squad amq env [--project DIR] [--session NAME] [--me HANDLE] [--json]
                                   Show the AMQ context amq-squad resolved for
                                   this project/session.
@@ -653,7 +689,7 @@ commands a client can render or copy, each with an `available` flag:
 ```
 
 The `tmux` block is absent when no pane can be resolved, so clients detect
-runtime-control availability by its presence. As of **v1.6.0**, `status --json`
+runtime-control availability by its presence. `status --json`
 and `resume --json` (and the `focus`/`send` verbs) **adopt** a live agent's pane
 even when it was launched *outside* amq-squad's tmux backend (a raw
 `tmux new-window`): the recorded, verified agent pid is matched into a live
@@ -843,10 +879,11 @@ Inside an amq-squad-launched shell, use bare `amq` commands. The launcher alread
 
 ## Removed legacy verbs
 
-The legacy top-level verbs below are still recognized as explicit pointers: running one prints a one-line `stderr` migration hint (not an "unknown command") and exits with a usage error. Use the replacement.
+These verbs are **removed in 2.0**. Invoking one returns a usage error (exit 1, not a silent "unknown command"). Use the replacement. The full upgrade notes live in [`MIGRATION.md`](MIGRATION.md).
 
 | Removed verb | Replacement |
 | --- | --- |
+| `amq-squad down` | `amq-squad stop` |
 | `amq-squad launch <binary>` | `amq-squad agent up <binary>` |
 | `amq-squad restore` (print) | `amq-squad history` |
 | `amq-squad restore --exec --role R` | `amq-squad agent resume R` |
@@ -855,23 +892,7 @@ The legacy top-level verbs below are still recognized as explicit pointers: runn
 | `amq-squad team launch` | `amq-squad up` |
 | `amq-squad team launch --fresh --session X` | `amq-squad fork --from <current> --as X` |
 
-`down` is **deprecated** (not removed): it is an alias for `stop` that keeps working for one release and runs the identical logic. Prefer `stop`.
-
 Replay paths that emit copy-paste commands use the modern `agent up <binary>` command shape.
-
-## Migrating to 1.3.0
-
-1.3.0 keeps amq-squad focused on team setup, lifecycle, status, AMQ diagnostics, and the project-scoped console.
-
-| Before | 1.3.0 | Migration |
-| --- | --- | --- |
-| `down` | `stop` (primary) | Use `amq-squad stop`. `down` still works for one release as a deprecated alias. |
-| `launch <binary>` | removed | `amq-squad agent up <binary>` |
-| `restore` (print) / `restore --exec --role R` | removed | `amq-squad history` / `amq-squad agent resume R` |
-| `list` | removed | `amq-squad status` (live) or `amq-squad history` (records) |
-| `team show` / `team launch` | removed | `amq-squad up --dry-run` / `amq-squad up` |
-
-Each removed verb prints a migration hint when invoked, so muscle-memory commands get a pointer rather than a crash. JSON callers on the deprecated `down` alias still get pure JSON on stdout; the warning goes to stderr.
 
 ## Known gaps
 

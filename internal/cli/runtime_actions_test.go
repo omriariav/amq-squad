@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/team"
-	"github.com/omriariav/amq-squad/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 // TestResolveControlTargetSymlinkedCWD reproduces the live-test failure: the
@@ -55,6 +55,48 @@ func TestSameResolvedDir(t *testing.T) {
 	}
 }
 
+// TestCompareCWD locks in the dynamic-team fix: a member with no pinned cwd (the
+// `team member add` default) on a team with no project pin yields an empty
+// EffectiveCWD; the launch record's cwd must be used so the pane guard has a real
+// dir to match instead of "" (which rejects every live pane).
+func TestCompareCWD(t *testing.T) {
+	if got := compareCWD("/pinned", "/recorded"); got != "/pinned" {
+		t.Errorf("a pinned member cwd wins: got %q", got)
+	}
+	if got := compareCWD("", "/recorded"); got != "/recorded" {
+		t.Errorf("no pinned cwd must fall back to the record cwd: got %q", got)
+	}
+	if got := compareCWD("  ", "/recorded"); got != "/recorded" {
+		t.Errorf("blank pinned cwd must fall back to the record cwd: got %q", got)
+	}
+	if got := compareCWD("", ""); got != "" {
+		t.Errorf("no cwd anywhere stays empty: got %q", got)
+	}
+}
+
+// TestResolveControlTargetDynamicTeamNoPinnedCWD reproduces the 2.0 dogfood
+// failure: an orchestrated team with no project pin and a roster-added worker
+// with no cwd. With EffectiveCWD empty, the record's cwd backstops the guard so
+// send/focus resolve the live pane instead of always rejecting it.
+func TestResolveControlTargetDynamicTeamNoPinnedCWD(t *testing.T) {
+	// memberRuntime as resolveMemberRuntime would build it after the compareCWD
+	// fix: member pins no cwd, so CWD comes from the launch record.
+	mr := memberRuntime{
+		Member: team.Member{Role: "frontend-dev", Binary: "codex"}, Handle: "frontend-dev",
+		CWD:       compareCWD("", "/Users/me/tmp/squad-dogfood-2"),
+		HasRecord: true,
+		Record:    launch.Record{CWD: "/Users/me/tmp/squad-dogfood-2", Tmux: &launch.TmuxInfo{PaneID: "%311"}},
+	}
+	if mr.CWD == "" {
+		t.Fatal("guard precondition: member cwd must be backfilled from the record, not empty")
+	}
+	panes := []tmuxpane.TmuxPane{{PaneID: "%311", Session: "squad-dogfood-2", Window: "1", Pane: "0", CWD: "/Users/me/tmp/squad-dogfood-2", Command: "codex"}}
+	id, _, ok := resolveControlTarget(mr, "squad-dogfood-2", panes)
+	if !ok || id != "%311" {
+		t.Fatalf("a roster worker with no pinned cwd must still resolve its live pane, got id=%q ok=%v", id, ok)
+	}
+}
+
 func TestResolveControlTargetExactRecordedPane(t *testing.T) {
 	mr := memberRuntime{
 		Member: team.Member{Role: "cto", Binary: "codex"}, Handle: "cto", CWD: "/repo",
@@ -71,6 +113,84 @@ func TestResolveControlTargetExactRecordedPane(t *testing.T) {
 	stale := []tmuxpane.TmuxPane{{PaneID: "%265", Session: "main", Window: "0", Pane: "1", CWD: "/somewhere/else", Command: "codex"}}
 	if _, _, ok := resolveControlTarget(mr, "issue-96", stale); ok {
 		t.Fatal("reused pane id in a different cwd must not be trusted")
+	}
+}
+
+// TestResolveControlTargetDirectInspectUnderCCScanMiss proves the iTerm2 tmux -CC
+// fix (#140): when the global list-panes scan misses the recorded pane (returned
+// nothing, or failed wholesale so the caller degraded to nil), the recorded pane
+// id is inspected directly and still resolves — while the cwd/title safety guards
+// are preserved.
+func TestResolveControlTargetDirectInspectUnderCCScanMiss(t *testing.T) {
+	mr := memberRuntime{
+		Member: team.Member{Role: "cto", Binary: "codex"}, Handle: "cto", CWD: "/repo",
+		HasRecord: true, Record: launch.Record{Tmux: &launch.TmuxInfo{PaneID: "%265"}},
+	}
+	restore := statusPaneInspector
+	defer func() { statusPaneInspector = restore }()
+
+	// Scan list is empty (the caller degraded after a -CC scan failure); direct
+	// inspection of the recorded id returns the live pane -> resolves.
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		if id != "%265" {
+			return tmuxpane.TmuxPane{}, false
+		}
+		return tmuxpane.TmuxPane{PaneID: "%265", Session: "main", Window: "0", Pane: "1", CWD: "/repo", Command: "codex"}, true
+	}
+	if id, _, ok := resolveControlTarget(mr, "issue-96", nil); !ok || id != "%265" {
+		t.Fatalf("recorded pane must resolve via direct inspection when the scan misses, got id=%q ok=%v", id, ok)
+	}
+
+	// Safety preserved: a directly-inspected pane in a DIFFERENT cwd (reused id
+	// after a tmux restart) must NOT be trusted.
+	statusPaneInspector = func(string) (tmuxpane.TmuxPane, bool) {
+		return tmuxpane.TmuxPane{PaneID: "%265", CWD: "/somewhere/else", Command: "codex"}, true
+	}
+	if _, _, ok := resolveControlTarget(mr, "issue-96", nil); ok {
+		t.Fatal("a directly-inspected pane in a different cwd must not be trusted")
+	}
+
+	// Pane truly gone: direct inspection returns not-found -> unresolved.
+	statusPaneInspector = func(string) (tmuxpane.TmuxPane, bool) { return tmuxpane.TmuxPane{}, false }
+	if _, _, ok := resolveControlTarget(mr, "issue-96", nil); ok {
+		t.Fatal("a gone pane must not resolve")
+	}
+
+	// Safety preserved: a directly-inspected pane in the right cwd but TITLED for
+	// a different agent (reused id after a tmux restart) must NOT be trusted —
+	// `send` must never deliver to a sibling. This guards the direct path the same
+	// way the scan path is guarded.
+	statusPaneInspector = func(string) (tmuxpane.TmuxPane, bool) {
+		return tmuxpane.TmuxPane{PaneID: "%265", CWD: "/repo", Command: "codex", Title: "amq:issue-96:qa"}, true
+	}
+	if _, _, ok := resolveControlTarget(mr, "issue-96", nil); ok {
+		t.Fatal("a directly-inspected pane titled for a different agent must be rejected")
+	}
+
+	// Happy path: when the scan ALREADY has the pane, the direct inspector must
+	// NOT be consulted (no extra tmux call).
+	called := false
+	statusPaneInspector = func(string) (tmuxpane.TmuxPane, bool) { called = true; return tmuxpane.TmuxPane{}, false }
+	panes := []tmuxpane.TmuxPane{{PaneID: "%265", Session: "main", Window: "0", Pane: "1", CWD: "/repo", Command: "codex"}}
+	if _, _, ok := resolveControlTarget(mr, "issue-96", panes); !ok {
+		t.Fatal("scan hit should resolve")
+	}
+	if called {
+		t.Error("direct inspector must not be called when the scan already found the pane")
+	}
+}
+
+// TestResolveControlTargetNoRecordedIDNilScan proves the -CC degrade path is safe
+// for a member with NO recorded pane id: runSend/focusTarget pass nil panes after
+// a scan failure, and the cwd+engine fallback resolver must handle that cleanly
+// (unresolved, never a panic or a wrong-pane guess).
+func TestResolveControlTargetNoRecordedIDNilScan(t *testing.T) {
+	mr := memberRuntime{
+		Member: team.Member{Role: "cto", Binary: "codex"}, Handle: "cto", CWD: "/repo",
+		HasRecord: true, Record: launch.Record{AgentPID: 4242}, // no Tmux block -> no recorded pane id
+	}
+	if _, _, ok := resolveControlTarget(mr, "issue-96", nil); ok {
+		t.Fatal("no recorded pane id + nil scan must resolve to not-found, not panic or guess")
 	}
 }
 
@@ -244,6 +364,19 @@ func TestResumeExecRejectsNonTmuxTerminal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "new-window") {
 		t.Errorf("error should point to --target new-window: %v", err)
+	}
+}
+
+func TestErrTmuxAccessDenied(t *testing.T) {
+	got := strings.ToLower(errTmuxAccessDenied().Error())
+	for _, want := range []string{"operation not permitted", "sandboxed", "full access"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("access-denied error must mention %q; got: %s", want, got)
+		}
+	}
+	// It must NOT be the misleading message it replaces.
+	if strings.Contains(got, "no live tmux pane") {
+		t.Error("access-denied error must not read as 'no live tmux pane found'")
 	}
 }
 

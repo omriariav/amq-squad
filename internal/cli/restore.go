@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/role"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/role"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 type restoreCandidate struct {

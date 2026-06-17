@@ -104,7 +104,7 @@ release-smoke:
 	@test "$(VERSION)" != "dev" || (echo "VERSION is required, for example VERSION=v0.5.1" >&2; exit 1)
 	@tmp="$$(mktemp -d)"; \
 	trap 'rm -rf "$$tmp"' EXIT; \
-	GOBIN="$$tmp" GOPROXY=direct go install github.com/omriariav/amq-squad/cmd/amq-squad@$(VERSION); \
+	GOBIN="$$tmp" GOPROXY=direct go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@$(VERSION); \
 	got="$$("$$tmp/amq-squad" version)"; \
 	want="amq-squad $(VERSION)"; \
 	if [ "$$got" != "$$want" ]; then \

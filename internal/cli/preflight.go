@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/procinfo"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/procinfo"
 )
 
 // presenceFreshness defines how recently a presence.json must have been

@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/omriariav/amq-squad/internal/launch"
-	"github.com/omriariav/amq-squad/internal/state"
-	"github.com/omriariav/amq-squad/internal/team"
-	"github.com/omriariav/amq-squad/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 // memberRuntime is a resolved team member plus its on-disk launch record, used
@@ -63,8 +63,26 @@ func resolveMemberRuntime(projectDir, profile, session string, explicitSession b
 	if rec, rerr := launch.Read(agentDir); rerr == nil {
 		mr.Record = rec
 		mr.HasRecord = true
+		mr.CWD = compareCWD(cwd, rec.CWD)
 	}
 	return mr, workstream, nil
+}
+
+// compareCWD returns the directory resolveControlTarget compares a recorded pane
+// against. It prefers the member's pinned/effective cwd, but falls back to the
+// launch record's cwd when the member pins none. That fallback matters for the
+// dynamic-team default: a `team member add` roster entry records no cwd, and an
+// orchestrated team often has no project pin, so EffectiveCWD returns "" — and
+// sameResolvedDir treats "" as no-match, which would make the cwd guard reject
+// EVERY live pane (send/focus fail with "no live tmux pane" while status/resume
+// pane_alive, which skip the cwd check, report the same pane alive — the exact
+// split a 2.0 dogfood hit). The record carries the agent's real launch cwd, so
+// it is the authoritative compare dir when the member itself pins none.
+func compareCWD(effectiveCWD, recordCWD string) string {
+	if strings.TrimSpace(effectiveCWD) != "" {
+		return effectiveCWD
+	}
+	return strings.TrimSpace(recordCWD)
 }
 
 // recordedPaneID returns the exact tmux pane id persisted for the member, if any.
@@ -88,7 +106,15 @@ func resolveControlTarget(mr memberRuntime, workstream string, panes []tmuxpane.
 	// wrong agent (a same-cwd/engine peer whose pane is still alive). Report
 	// not-found so the verb errors clearly instead of guessing.
 	if id := mr.recordedPaneID(); id != "" {
-		if p, found := tmuxpane.FindPaneByID(id, panes); found &&
+		p, found := tmuxpane.FindPaneByID(id, panes)
+		if !found {
+			// The global `list-panes -a` scan missed this pane — it was empty,
+			// or it failed wholesale under iTerm2 tmux -CC even though the
+			// recorded id is still individually addressable. The recorded id IS
+			// the authoritative address, so inspect that one pane directly.
+			p, found = statusPaneInspector(id)
+		}
+		if found &&
 			sameResolvedDir(p.CWD, mr.CWD) &&
 			!paneTitledForDifferentAgent(p.Title, workstream, mr.Member.Role) {
 			return id, tmuxpane.TargetFromPane(p), true
@@ -209,10 +235,30 @@ Examples:
 
 // focusTarget resolves and switches to the pane for a role (or the session's
 // first resolvable pane when role is empty).
+// errTmuxAccessDenied is returned when amq-squad's internal tmux query is denied
+// access to the tmux server (a sandboxed agent), instead of the misleading "no
+// live tmux pane found". It names the cause and the fix so a sandboxed lead is
+// not left debugging a phantom dead pane.
+func errTmuxAccessDenied() error {
+	return fmt.Errorf("tmux control unavailable: connecting to the tmux server was denied (operation not permitted). " +
+		"The agent is likely sandboxed — grant it tmux socket access (Codex: run `/permissions full access`, or scope-approve " +
+		"`amq-squad status`/`focus`/`send`/`resume`; or launch the lead unsandboxed), then retry")
+}
+
 func focusTarget(projectDir, profile, session string, explicitSession bool, role string) error {
 	panes, err := statusPaneLister()
 	if err != nil {
-		return fmt.Errorf("list tmux panes: %w", err)
+		if tmuxpane.IsPermissionDenied(err) {
+			// The tmux socket itself is unreachable because access was denied
+			// (a sandboxed agent). That is NOT "pane gone" — surface the real
+			// cause and how to fix it, instead of the misleading "no live pane".
+			return errTmuxAccessDenied()
+		}
+		// The global `tmux list-panes -a` scan can fail wholesale under iTerm2
+		// tmux -CC control mode even when a recorded pane is still directly
+		// addressable. Degrade to no scan results and let resolveControlTarget
+		// address the recorded pane id directly rather than aborting the op.
+		panes = nil
 	}
 	roles := []string{role}
 	if strings.TrimSpace(role) == "" {
@@ -303,7 +349,17 @@ Examples:
 	}
 	panes, err := statusPaneLister()
 	if err != nil {
-		return fmt.Errorf("list tmux panes: %w", err)
+		if tmuxpane.IsPermissionDenied(err) {
+			// The tmux socket itself is unreachable because access was denied
+			// (a sandboxed agent). That is NOT "pane gone" — surface the real
+			// cause and how to fix it, instead of the misleading "no live pane".
+			return errTmuxAccessDenied()
+		}
+		// The global `tmux list-panes -a` scan can fail wholesale under iTerm2
+		// tmux -CC control mode even when a recorded pane is still directly
+		// addressable. Degrade to no scan results and let resolveControlTarget
+		// address the recorded pane id directly rather than aborting the op.
+		panes = nil
 	}
 	paneID, _, ok := resolveControlTarget(mr, workstream, panes)
 	if !ok || strings.TrimSpace(paneID) == "" {

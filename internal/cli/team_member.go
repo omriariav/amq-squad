@@ -7,8 +7,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/omriariav/amq-squad/internal/flock"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/flock"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // runTeamMember dispatches `amq-squad team member <add|rm|list>`: runtime roster
@@ -28,7 +28,8 @@ Usage:
 
 Mutates the persisted team profile (team.json) atomically and under an
 exclusive lock, then re-validates it (orchestration constraints included).
-The new member is NOT launched; the printed 'agent up' command starts it.
+The new member is NOT launched; 'add' prints how to start it (a managed pane
+via 'resume --exec --target new-window', or 'agent up' for an unmanaged one-off).
 
 Examples:
   amq-squad team member add researcher --binary codex
@@ -238,7 +239,14 @@ func runTeamMemberAdd(args []string) error {
 	}
 
 	fmt.Printf("added %s (%s) to the team.\n", added.Role, added.Binary)
-	fmt.Printf("start it with:\n  %s\n", agentUpHint(added))
+	// Steer the launch into a managed tmux pane: only then can amq-squad
+	// focus/send/close the agent (the pane-lifecycle work). A bare `agent up`
+	// TTY-execs with no managed pane, which is fine for a one-off but leaves an
+	// orchestrator's worker unmanaged — the gap the first 2.0 dogfood hit.
+	fmt.Printf("launch it in a managed tmux pane (run from inside tmux so amq-squad can focus/send/close it):\n")
+	fmt.Printf("  amq-squad resume --exec --target new-window\n")
+	fmt.Printf("  (brings up newly-added members in their own window and skips any already live)\n")
+	fmt.Printf("or run it directly in this terminal, without a managed pane:\n  %s\n", agentUpHint(added))
 	return nil
 }
 
@@ -291,7 +299,10 @@ func runTeamMemberRemove(args []string) error {
 	}
 
 	fmt.Printf("removed %s from the team.\n", role)
-	fmt.Printf("if it is live, stop it with:\n  amq-squad stop --role %s\n", role)
+	// rm is roster-only; it never touches the agent's tmux pane. Point at the
+	// pane-closing teardown so a pruned worker's window doesn't linger as an
+	// orphan (stop keeps the pane by default; --close-panes closes it).
+	fmt.Printf("if it is live, stop it AND close its pane with:\n  amq-squad stop --role %s --close-panes\n", role)
 	return nil
 }
 
@@ -335,9 +346,8 @@ func inheritedSession(t team.Team) string {
 	return session
 }
 
-// agentUpHint builds the exact `agent up` command that launches a member with
-// its full roster config (binary, role, session, model, per-member args), so
-// the printed hint is copy-paste faithful until `--up` (a later slice) lands.
+// agentUpHint builds the direct unmanaged `agent up` fallback command with the
+// member's roster config (binary, role, session, model, per-member args).
 func agentUpHint(m team.Member) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "amq-squad agent up %s --role %s", m.Binary, m.Role)

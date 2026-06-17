@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/internal/console"
-	"github.com/omriariav/amq-squad/internal/state"
-	"github.com/omriariav/amq-squad/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/console"
+	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // captureConsole drives executeConsole with a captured RunConsole seam so the
@@ -300,7 +300,7 @@ func TestRunConsoleRootFlagUnsupported(t *testing.T) {
 // the verb rather than reporting "unknown command").
 func TestConsoleVerbWiredIntoDispatch(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
-		return dispatch([]string{"console", "--definitely-not-a-flag"})
+		return dispatch([]string{"console", "--definitely-not-a-flag"}, "")
 	})
 	if err == nil {
 		t.Fatal("an unknown console flag should error")
