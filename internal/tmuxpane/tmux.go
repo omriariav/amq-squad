@@ -21,6 +21,11 @@ import (
 // exec.Cmd.Output captures on the *exec.ExitError. A permission denial is NOT
 // transient, so callers fail fast instead of retrying, and surface a clear
 // "grant tmux access" message instead of "no live tmux pane found".
+//
+// Match only the PERMISSION phrasing, not a bare "error connecting to": a
+// server-not-running failure also reads "error connecting to <socket> (No such
+// file or directory)", and that must stay a normal/transient error (no
+// misleading "you are sandboxed" advice, and it can still retry/degrade).
 func IsPermissionDenied(err error) bool {
 	if err == nil {
 		return false
@@ -31,7 +36,7 @@ func IsPermissionDenied(err error) bool {
 		msg += " " + strings.ToLower(string(ee.Stderr))
 	}
 	return strings.Contains(msg, "operation not permitted") ||
-		strings.Contains(msg, "error connecting to")
+		strings.Contains(msg, "permission denied")
 }
 
 // tmuxReadAttempts bounds how many times a READ-ONLY tmux query is retried when

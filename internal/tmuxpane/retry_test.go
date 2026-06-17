@@ -17,8 +17,19 @@ func TestIsPermissionDenied(t *testing.T) {
 	if !IsPermissionDenied(errors.New("error connecting to /tmp/tmux-1/default (Operation not permitted)")) {
 		t.Error("the socket-denied signature must be detected")
 	}
+	if !IsPermissionDenied(errors.New("connect: permission denied")) {
+		t.Error("a 'permission denied' phrasing must be detected")
+	}
 	if !IsPermissionDenied(fmt.Errorf("tmux list-panes: %w", errors.New("Operation not permitted"))) {
 		t.Error("a wrapped permission denial must be detected")
+	}
+	// A server-not-running failure also reads "error connecting to <socket>",
+	// but it is NOT a permission denial — it must not be classified as sandbox.
+	if IsPermissionDenied(errors.New("error connecting to /tmp/tmux-1/default (No such file or directory)")) {
+		t.Error("a server-not-running error must NOT be classified as permission denial")
+	}
+	if IsPermissionDenied(errors.New("no server running on /tmp/tmux-1/default")) {
+		t.Error("a no-server error must NOT be classified as permission denial")
 	}
 }
 
