@@ -235,9 +235,25 @@ Examples:
 
 // focusTarget resolves and switches to the pane for a role (or the session's
 // first resolvable pane when role is empty).
+// errTmuxAccessDenied is returned when amq-squad's internal tmux query is denied
+// access to the tmux server (a sandboxed agent), instead of the misleading "no
+// live tmux pane found". It names the cause and the fix so a sandboxed lead is
+// not left debugging a phantom dead pane.
+func errTmuxAccessDenied() error {
+	return fmt.Errorf("tmux control unavailable: connecting to the tmux server was denied (operation not permitted). " +
+		"The agent is likely sandboxed — grant it tmux socket access (Codex: run `/permissions full access`, or scope-approve " +
+		"`amq-squad status`/`focus`/`send`/`resume`; or launch the lead unsandboxed), then retry")
+}
+
 func focusTarget(projectDir, profile, session string, explicitSession bool, role string) error {
 	panes, err := statusPaneLister()
 	if err != nil {
+		if tmuxpane.IsPermissionDenied(err) {
+			// The tmux socket itself is unreachable because access was denied
+			// (a sandboxed agent). That is NOT "pane gone" — surface the real
+			// cause and how to fix it, instead of the misleading "no live pane".
+			return errTmuxAccessDenied()
+		}
 		// The global `tmux list-panes -a` scan can fail wholesale under iTerm2
 		// tmux -CC control mode even when a recorded pane is still directly
 		// addressable. Degrade to no scan results and let resolveControlTarget
@@ -333,6 +349,12 @@ Examples:
 	}
 	panes, err := statusPaneLister()
 	if err != nil {
+		if tmuxpane.IsPermissionDenied(err) {
+			// The tmux socket itself is unreachable because access was denied
+			// (a sandboxed agent). That is NOT "pane gone" — surface the real
+			// cause and how to fix it, instead of the misleading "no live pane".
+			return errTmuxAccessDenied()
+		}
 		// The global `tmux list-panes -a` scan can fail wholesale under iTerm2
 		// tmux -CC control mode even when a recorded pane is still directly
 		// addressable. Degrade to no scan results and let resolveControlTarget

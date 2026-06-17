@@ -1,6 +1,7 @@
 package tmuxpane
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,27 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/state"
 )
+
+// IsPermissionDenied reports whether a tmux command error means the process
+// could not reach the tmux server because access was DENIED — the signature of
+// a sandboxed agent (e.g. a Codex restricted sandbox) blocking the tmux socket,
+// as opposed to a transient -CC pause or a genuinely-missing pane. tmux prints
+// "error connecting to <socket> (Operation not permitted)" to stderr, which
+// exec.Cmd.Output captures on the *exec.ExitError. A permission denial is NOT
+// transient, so callers fail fast instead of retrying, and surface a clear
+// "grant tmux access" message instead of "no live tmux pane found".
+func IsPermissionDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		msg += " " + strings.ToLower(string(ee.Stderr))
+	}
+	return strings.Contains(msg, "operation not permitted") ||
+		strings.Contains(msg, "error connecting to")
+}
 
 // tmuxReadAttempts bounds how many times a READ-ONLY tmux query is retried when
 // it transiently fails. Under iTerm2 tmux -CC the control client pauses when an
@@ -202,6 +224,11 @@ func DefaultPaneLister() ([]TmuxPane, error) {
 			return parsePanes(out), nil
 		}
 		lastErr = err
+		// A permission denial (sandboxed agent) is not transient — don't burn
+		// the retry budget on it; surface it immediately.
+		if IsPermissionDenied(err) {
+			break
+		}
 		if attempt+1 < tmuxReadAttempts {
 			tmuxReadSleep(tmuxReadBackoff)
 		}
@@ -232,6 +259,9 @@ func InspectPaneByID(paneID string) (TmuxPane, bool) {
 			if panes := parsePanes(out); len(panes) > 0 {
 				return panes[0], true
 			}
+		} else if IsPermissionDenied(err) {
+			// Sandboxed: tmux access is denied, not transient — stop retrying.
+			return TmuxPane{}, false
 		}
 		if attempt+1 < tmuxReadAttempts {
 			tmuxReadSleep(tmuxReadBackoff)

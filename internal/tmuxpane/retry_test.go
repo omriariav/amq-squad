@@ -2,9 +2,65 @@ package tmuxpane
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
+
+func TestIsPermissionDenied(t *testing.T) {
+	if IsPermissionDenied(nil) {
+		t.Error("nil is not a permission denial")
+	}
+	if IsPermissionDenied(errors.New("exit status 1")) {
+		t.Error("a generic exit is not a permission denial")
+	}
+	if !IsPermissionDenied(errors.New("error connecting to /tmp/tmux-1/default (Operation not permitted)")) {
+		t.Error("the socket-denied signature must be detected")
+	}
+	if !IsPermissionDenied(fmt.Errorf("tmux list-panes: %w", errors.New("Operation not permitted"))) {
+		t.Error("a wrapped permission denial must be detected")
+	}
+}
+
+func TestInspectPaneByIDFailsFastOnPermissionDenied(t *testing.T) {
+	zeroReadBackoff(t)
+	calls := 0
+	prev := captureExec
+	captureExec = func(...string) (string, error) {
+		calls++
+		return "", errors.New("error connecting to /tmp/tmux/default (Operation not permitted)")
+	}
+	t.Cleanup(func() { captureExec = prev })
+
+	if _, ok := InspectPaneByID("%5"); ok {
+		t.Fatal("a permission denial must return false")
+	}
+	if calls != 1 {
+		t.Fatalf("a permission denial must NOT retry; got %d attempts", calls)
+	}
+}
+
+func TestDefaultPaneListerFailsFastOnPermissionDenied(t *testing.T) {
+	zeroReadBackoff(t)
+	calls := 0
+	prev := listPanesExec
+	listPanesExec = func() (string, error) {
+		calls++
+		return "", errors.New("Operation not permitted")
+	}
+	t.Cleanup(func() { listPanesExec = prev })
+
+	_, err := DefaultPaneLister()
+	if err == nil {
+		t.Fatal("a permission denial must return an error")
+	}
+	if !IsPermissionDenied(err) {
+		t.Errorf("the returned error must still read as permission-denied: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("a permission denial must NOT retry; got %d attempts", calls)
+	}
+}
 
 // zeroReadBackoff makes the retry sleep a no-op for a test so the bounded-retry
 // paths run instantly (no real wall-clock delay).
