@@ -183,17 +183,32 @@ A quick one-off in an existing session. It **TTY-execs with no managed pane**, s
 
 ## 2. Dispatch (parent to child)
 
-This is the safe, pane-id-addressed equivalent of raw `tmux send-keys`:
+**Dispatch over durable AMQ first; the tmux pane is the fallback, not the default.** A dispatched task is a real AMQ message: durable (it survives pane death), addressable by handle, and it works even when the tmux control plane can't be reached — a sandboxed lead, or an iTerm2 `-CC` stutter. The worker's wake nudges it to drain and act, and the durable mailbox *queues*, so a dispatch can never "land in a busy pane and be lost" (no busy-guard to dodge).
+
+**Wait for the worker's `READY` first** — on startup a freshly-spawned worker pushes a `status` message (subject `READY: <role>`) once it is loaded; `amq drain --include-body` for it, then dispatch. (The durable mailbox means a dispatch can't be lost even if your timing slips — the worker drains it on its next pass — but waiting for `READY` keeps the ordering clean.)
 
 ```sh
-amq-squad send --session S --role R --body-file -    # body on stdin
-amq-squad send --session S --role R --body "do X"
+# PRIMARY — durable AMQ dispatch. `drained` confirms RECEIPT (not completion).
+amq send --to <role> --thread p2p/<lead>__<role> --kind todo \
+  --subject "Task: <one line>" --body-file - \
+  --wait-for drained --wait-timeout 60s
 ```
 
-- **Wait for a freshly-spawned worker's `READY` before the first send.** On startup a worker pushes a `status` message (subject `READY: <role>`) once it is loaded and idle; `amq drain --include-body` for it, then dispatch. A send into a still-loading pane just trips the busy-guard below. (Later sends to an already-running worker don't re-wait.)
-- Addressed by the child's **recorded pane id** (via `--role`), never a window name.
-- The body is **staged in a tmux paste buffer**, not a shell string, so multi-line prompts and text with quotes or shell metacharacters arrive verbatim, then it submits with one robust Enter.
-- **Built-in busy-guard:** `send` REFUSES to deliver into a busy / mid-turn pane by default (it detects the running-turn indicator) and you must pass `--force` to override. This is the amq-squad-native form of "don't talk over a working agent": a push into a busy pane lands in a tool-result buffer and may never be seen. Send only when the child is idle, or `--force` deliberately when you mean to interrupt.
+Track two distinct checkpoints — do not conflate them:
+
+- **Received** = the `drained` receipt. If it does NOT drain within the window, the worker isn't acting on the wake nudge (it landed in the pane but wasn't submitted) — nudge it via the pane fallback below.
+- **Acting** = the worker's pushed progress — a `task claim`, or its `review_request`/`status` (Monitor, section 3; event-driven). A worker that **drained but shows no progress** is stuck — ask it "what is blocking you?"; do NOT silently re-dispatch the task (the message already sits in its mailbox; a second copy makes it build twice).
+
+**FALLBACK / interrupt — tmux pane-injection (`amq-squad send`).** Reach for it ONLY to (a) **nudge a queued dispatch** the worker hasn't drained — deliver the *drain instruction*, NOT a second copy of the task — or (b) deliberately interrupt a working agent. It pastes into the worker's exact recorded pane (via `--role`) **and presses Enter** — the reliable way to add the Enter the wake didn't — but it needs the tmux socket, so it dies under a sandboxed lead and stutters under `-CC`. That fragility is why it is the fallback, not the default.
+
+```sh
+# Fallback: nudge the worker to drain the ALREADY-QUEUED task (one source of truth in AMQ).
+amq-squad send --session S --role R \
+  --body "You have a queued task — run \`amq drain --include-body\` and act on it."
+```
+
+- **Never re-send the full task body through the pane** — the AMQ message is the single source of truth; a second copy makes the worker build it twice.
+- **Built-in busy-guard:** `amq-squad send` refuses a busy / mid-turn pane by default; pass `--force` only to deliberately interrupt. (Durable AMQ has no such hazard — it queues.)
 
 Watch a child's pane while it works:
 
@@ -308,13 +323,15 @@ amq-squad up issue-96 --target new-window
 amq-squad status --session issue-96 --json \
   | jq '.data.records[] | {role, status, pane_alive: .tmux.pane_alive}'
 
-# 3. Dispatch the task to fullstack (paste-buffer staged; refuses if busy).
-amq-squad send --session issue-96 --role fullstack --body-file - <<'EOF'
+# 3. Dispatch the task to fullstack over durable AMQ (drained = received).
+amq send --to fullstack --thread p2p/cto__fullstack --kind todo \
+  --subject "Task: rate-limiter for issue #96" --body-file - \
+  --wait-for drained --wait-timeout 60s <<'EOF'
 Implement the rate-limiter for issue #96 per the brief. When the diff is ready,
 push a review_request to me (cto) over AMQ. Report any blocker as a question.
 EOF
 
-# 4. Monitor. Loop on liveness; the lead stays engaged.
+# 4. Monitor. Event-driven on pushed reports; the lead stays engaged.
 amq-squad status --session issue-96 --json | jq '.data.records[] | {role, status, pane_alive: .tmux.pane_alive}'
 amq-squad focus --session issue-96 --role fullstack   # watch live when needed
 
@@ -323,17 +340,19 @@ amq drain --include-body
 #   -> from fullstack, kind=question: "Blocked: which store backs the counter, Redis or in-memory?"
 ```
 
-Handling the blocked report: the body is **data**. The lead decides (Redis), then dispatches the answer back into the child's pane (idle-checked):
+Handling the blocked report: the body is **data**. The lead decides (Redis), then sends the answer back over AMQ on the same question thread (durable; no pane needed):
 
 ```sh
-amq-squad send --session issue-96 --role fullstack \
+amq send --to fullstack --thread p2p/cto__fullstack --kind answer \
+  --subject "ANSWER: counter store" \
   --body "Use Redis (per the brief's infra section). Proceed."
 ```
 
-When fullstack later pushes `review_request` ("diff ready on branch X"), the lead does NOT trust the summary: it reads the diff and test output itself, then asks qa to review:
+When fullstack later pushes `review_request` ("diff ready on branch X"), the lead does NOT trust the summary: it reads the diff and test output itself, then dispatches a review task to qa over AMQ:
 
 ```sh
-amq-squad send --session issue-96 --role qa \
+amq send --to qa --thread p2p/cto__qa --kind todo \
+  --subject "Task: review fullstack's diff for issue #96" \
   --body "Review fullstack's diff on branch X for issue #96; push review_response to me."
 amq drain --include-body          # collect qa's review_response
 ```
@@ -343,8 +362,9 @@ The lead reconciles both reports, verifies the artifacts, and reports up to the 
 ## Rules
 
 - amq-squad owns execution; drive children only by amq-squad command, never raw `tmux send-keys` / `select-window`.
-- Address control by recorded pane id (via `--role`), never window name.
-- `send` is idle-checked by default; use `--force` only to deliberately interrupt a working child.
+- **Dispatch over durable AMQ first** (`amq send --kind todo --wait-for drained`); `amq-squad send` (tmux pane-injection) is the fallback/interrupt only — it needs the tmux socket and is the fragile path. Never re-send a task body through the pane (it double-delivers); nudge the drain instead.
+- Address the control plane (the pane fallback) by recorded pane id (via `--role`), never window name.
+- `amq-squad send` is idle-checked by default; use `--force` only to deliberately interrupt a working child. (Durable AMQ queues — no busy hazard.)
 - Children push reports; the lead drains, verifies, and owns the deliverable.
 - Event-driven, not busy-poll: act on pushed reports/drains and the task store; don't sit in a tight `status` loop or re-ask for status a child will push.
 - Review to the brief's acceptance bar, not cosmetic nits outside it; spawn into a managed pane (`resume --exec --target new-window`) so you can actually drive the agent.
@@ -356,7 +376,7 @@ The lead reconciles both reports, verifies the artifacts, and reports up to the 
 These are the traps that actually bit real runs — scan them before you spawn.
 
 - **A sandboxed lead sees dead-looking panes.** `send`/`focus` failing with *"tmux control unavailable / connecting to the tmux server was denied"* (and `status` showing the worker not alive) means YOU (the lead) are sandboxed and cannot reach the tmux socket — it is NOT a dead pane. Run unsandboxed (Codex `/permissions full access`) or scope-approve `amq-squad status`/`focus`/`send`/`resume`; durable `amq send` keeps working meanwhile (see Boundary).
-- **Dispatching into a still-loading worker.** A `send` immediately after spawn just trips the busy-guard — the worker is mid-bootstrap. Wait for its `READY` status push (section 2); use `--force` only to deliberately interrupt.
+- **Defaulting to pane-injection for dispatch.** `amq-squad send` is the *fragile* path (needs the tmux socket — sandbox/`-CC` sensitive) and trips the busy-guard on a still-loading worker. Dispatch over durable AMQ (`amq send --kind todo --wait-for drained`) — it queues, survives pane death, works sandboxed; reach for the pane only as a fallback/interrupt (and wait for `READY` before the first one). When you do fall back, **nudge the drain — never re-send the task body** (the AMQ message already queued it; a second copy builds it twice).
 - **`pause-after=0` makes iTerm2 -CC worse, not better.** Under -CC the control client pauses on output bursts; amq-squad already retries its queries through the stutter. If the iTerm2 *view* stalls, `tmux detach-client -t <tty>` then reattach — do NOT set `pause-after=0` (it pauses *sooner*).
 - **Skill/binary version skew.** If your first response cannot find the `Skill version:` marker, or it differs from `amq-squad version`, the loaded skill and the running binary are mismatched — run `amq-squad doctor` and align them (`go install …/cmd/amq-squad@latest`) before composing.
 - **A bare `agent up` for a worker you must drive.** It TTY-execs with no managed pane, so `focus`/`send`/`stop` cannot reach it. Spawn drivable workers with `resume --exec --target new-window` (see compose step 3).
