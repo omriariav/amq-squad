@@ -28,7 +28,8 @@ Usage:
 
 Mutates the persisted team profile (team.json) atomically and under an
 exclusive lock, then re-validates it (orchestration constraints included).
-The new member is NOT launched; the printed 'agent up' command starts it.
+The new member is NOT launched; 'add' prints how to start it (a managed pane
+via 'resume --exec --target new-window', or 'agent up' for an unmanaged one-off).
 
 Examples:
   amq-squad team member add researcher --binary codex
@@ -345,9 +346,8 @@ func inheritedSession(t team.Team) string {
 	return session
 }
 
-// agentUpHint builds the exact `agent up` command that launches a member with
-// its full roster config (binary, role, session, model, per-member args), so
-// the printed hint is copy-paste faithful until `--up` (a later slice) lands.
+// agentUpHint builds the direct unmanaged `agent up` fallback command with the
+// member's roster config (binary, role, session, model, per-member args).
 func agentUpHint(m team.Member) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "amq-squad agent up %s --role %s", m.Binary, m.Role)

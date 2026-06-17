@@ -529,10 +529,11 @@ or as a reusable role file.</td>
 <td><strong><code>amq-squad-orchestrator</code></strong></td>
 <td>a <strong>lead</strong> agent</td>
 <td>running a squad as a <em>driver</em>: spawn child agents, dispatch
-tasks into their panes with the busy-guarded <code>send</code>, monitor
-liveness via <code>status --json</code>, collect children's
-<code>[AGENT-EVENT]</code>-over-AMQ reports, and recover. The
-amq-squad-native equivalent of a hand-rolled tmux spawn protocol.</td>
+tasks to them over durable AMQ (the busy-guarded pane <code>send</code>
+is the fallback), monitor liveness via <code>status --json</code>,
+collect children's <code>[AGENT-EVENT]</code>-over-AMQ reports, and
+recover. The amq-squad-native equivalent of a hand-rolled tmux spawn
+protocol.</td>
 </tr>
 </tbody>
 </table>
@@ -581,7 +582,7 @@ issue-to-merge walkthrough, and troubleshooting.</p>
 <span id="cb6-31"><a href="#cb6-31" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> fork <span class="at">--from</span> issue-96 <span class="at">--as</span> issue-96-review  <span class="co"># branch a fresh workstream</span></span>
 <span id="cb6-32"><a href="#cb6-32" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> fork <span class="at">--project</span> ~/Code/other-app <span class="at">--from</span> issue-96 <span class="at">--as</span> issue-96-review</span>
 <span id="cb6-33"><a href="#cb6-33" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> rm issue-96                <span class="co"># remove a finished session (confirm-gated; or `archive`)</span></span></code></pre></div>
-<h3 id="the-13-lifecycle">The 1.3 lifecycle</h3>
+<h3 id="lifecycle">Lifecycle</h3>
 <p>A session moves through one small state machine:</p>
 <pre class="text"><code>(none) --up--&gt; running --stop--&gt; stopped --rm/archive--&gt; (none)
                   ^                  |
@@ -1164,13 +1165,12 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb24-1"><a href=
 <span id="cb24-10"><a href="#cb24-10" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
 <span id="cb24-11"><a href="#cb24-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>The <code>tmux</code> block is absent when no pane can be resolved,
-so clients detect runtime-control availability by its presence. As of
-<strong>v1.6.0</strong>, <code>status --json</code> and
-<code>resume --json</code> (and the <code>focus</code>/<code>send</code>
-verbs) <strong>adopt</strong> a live agent's pane even when it was
-launched <em>outside</em> amq-squad's tmux backend (a raw
-<code>tmux new-window</code>): the recorded, verified agent pid is
-matched into a live pane's process subtree, so
+so clients detect runtime-control availability by its presence.
+<code>status --json</code> and <code>resume --json</code> (and the
+<code>focus</code>/<code>send</code> verbs) <strong>adopt</strong> a
+live agent's pane even when it was launched <em>outside</em> amq-squad's
+tmux backend (a raw <code>tmux new-window</code>): the recorded,
+verified agent pid is matched into a live pane's process subtree, so
 <code>focus</code>/<code>send</code>/<code>attach_control</code> and
 <code>pane_alive</code> work for it too. (<code>history --json</code>
 reflects persisted launch records only and does not adopt.) Launching

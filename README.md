@@ -134,7 +134,7 @@ and **control targets the recorded pane id**, never window names. Full surface:
 | **`amq-squad`** | an agent on a live team | day-to-day coordination: inbox drains, routing, review/handoff, `status`/`console`/`history`, `up`/`stop`/`resume`/`fork`, `agent up`/`resume`, and tmux runtime control (`focus`/`send`). |
 | **`amq-team-setup`** | designing a team | wizard-style first-time setup: capture a goal from any source (prompt / `.md` / GitHub issue or PR / Jira / URL) into a canonical brief, pick personas + profile, optionally wire orchestration (who leads), team rules, pointer stubs, `sync`, validation. |
 | **`amq-squad-role-creator`** | adding a role type | authoring a new custom role (persona + `role.md`), inline or as a reusable role file. |
-| **`amq-squad-orchestrator`** | a **lead** agent | running a squad as a *driver*: spawn child agents, dispatch tasks into their panes with the busy-guarded `send`, monitor liveness via `status --json`, collect children's `[AGENT-EVENT]`-over-AMQ reports, and recover. The amq-squad-native equivalent of a hand-rolled tmux spawn protocol. |
+| **`amq-squad-orchestrator`** | a **lead** agent | running a squad as a *driver*: spawn child agents, dispatch tasks to them over durable AMQ (the busy-guarded pane `send` is the fallback), monitor liveness via `status --json`, collect children's `[AGENT-EVENT]`-over-AMQ reports, and recover. The amq-squad-native equivalent of a hand-rolled tmux spawn protocol. |
 
 Invoke a skill in Claude Code as `/amq-squad:<skill>` (e.g.
 `/amq-squad:amq-squad-orchestrator`); in Codex as `$<skill>` (e.g.
@@ -184,7 +184,7 @@ amq-squad fork --project ~/Code/other-app --from issue-96 --as issue-96-review
 amq-squad rm issue-96                # remove a finished session (confirm-gated; or `archive`)
 ```
 
-### The 1.3 lifecycle
+### Lifecycle
 
 A session moves through one small state machine:
 
@@ -689,7 +689,7 @@ commands a client can render or copy, each with an `available` flag:
 ```
 
 The `tmux` block is absent when no pane can be resolved, so clients detect
-runtime-control availability by its presence. As of **v1.6.0**, `status --json`
+runtime-control availability by its presence. `status --json`
 and `resume --json` (and the `focus`/`send` verbs) **adopt** a live agent's pane
 even when it was launched *outside* amq-squad's tmux backend (a raw
 `tmux new-window`): the recorded, verified agent pid is matched into a live
