@@ -16,7 +16,7 @@ Composition is a spectrum, and **manual stays the floor**:
 | --- | --- | --- |
 | **Manual** | You design the roster up front (`team init` / the setup wizard). | first-class, unchanged |
 | **Seeded** | The lead **proposes** each spawn from the goal; the **operator approves** it over a `gate/<topic>` thread. | shipped |
-| **Autonomous** | The lead spawns/prunes within guardrails, no per-spawn approval. | deferred to 2.1 |
+| **Autonomous** | The lead spawns/prunes within guardrails, no per-spawn approval. | future |
 
 Three binary-neutral primitives make it work, and all of them round-trip through stop/resume so a resumed session rebuilds the team the lead **built**, not the seed:
 
