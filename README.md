@@ -1,18 +1,30 @@
 # amq-squad
 
-Role-aware agent team launcher built on top of [AMQ](https://github.com/avivsinai/agent-message-queue) by [Aviv Sinai](https://github.com/avivsinai).
+**amq-squad composes, launches, and drives teams of Claude and Codex agents that coordinate over AMQ.** Hand a lead agent a goal and it builds the team — or design the roster yourself. Orchestration is binary-neutral: a Codex agent can *lead*, not just be led.
 
-AMQ owns messaging between agents. `amq-squad` owns the layer above: who is on the team, what role each agent plays, what shared norms they follow, and how to bring the whole squad up, stop it, resume it, or fork it into a new workstream.
+Built on [AMQ](https://github.com/avivsinai/agent-message-queue) by [Aviv Sinai](https://github.com/avivsinai): AMQ owns messaging between agents; `amq-squad` owns the layer above — who is on the team, what role each agent plays, the shared norms they follow, and how to bring the whole squad up, stop, resume, or fork it into a new workstream.
 
-## 2.0 — goal-first, dynamic teams
+## Contents
 
-**The shift.** Until now you *designed a team, then ran it*: `team init` authored a static roster, `up` spawned exactly that roster, and composition was frozen for the session. 2.0 inverts it — **you hand a lead a goal and the lead composes the team**, proposing, spawning, and pruning agents at runtime as the work reveals what it needs. Goal-first changes the default *mental model*; manual still works exactly as before.
+**Start here:** [Install](#install) · [Using amq-squad](#using-amq-squad) · [Quick start](#quick-start)
+
+**Concepts:** [Goal-first dynamic teams](#goal-first-dynamic-teams) · [Why](#why) · [Context model](#context-model) · [Workstreams &amp; threads](#workstreams-and-threads) · [Cross-project teams](#cross-project-teams)
+
+**Command reference:** [Verbs](#verbs) · [Status board &amp; console](#status-board-and-mission-control-console) · [AMQ diagnostics](#amq-diagnostics) · [Runtime control (tmux)](#runtime-control-tmux) · [JSON envelopes](#json-envelopes) · [Exit codes](#exit-codes) · [Shell completions](#shell-completions) · [Removed legacy verbs](#removed-legacy-verbs)
+
+**Customize:** [Custom roles](#custom-roles) · [Trust &amp; binary defaults](#trust-and-binary-defaults) · [Messaging in a squad](#messaging-inside-a-squad) · [Files amq-squad writes](#files-amq-squad-writes)
+
+**Reference:** [Known gaps](#known-gaps) · [Requires](#requires)
+
+## Goal-first, dynamic teams
+
+**The shift (2.0).** Until now you *designed a team, then ran it*: `team init` authored a static roster, `up` spawned exactly that roster, and composition was frozen for the session. 2.0 inverts it — **you hand a lead a goal and the lead composes the team**, proposing, spawning, and pruning agents at runtime as the work reveals what it needs. Goal-first changes the default *mental model*; manual still works exactly as before.
 
 The load-bearing constraint, and why this is amq-squad-native rather than "just use Claude Code Agent Teams": **orchestration is binary-neutral — a Codex agent can *lead*, not just be led.** No core primitive depends on `~/.claude/`.
 
 Composition is a spectrum, and **manual stays the floor**:
 
-| Mode | Who composes the team | 2.0 |
+| Mode | Who composes the team | Status in 2.0 |
 | --- | --- | --- |
 | **Manual** | You design the roster up front (`team init` / the setup wizard). | first-class, unchanged |
 | **Seeded** | The lead **proposes** each spawn from the goal; the **operator approves** it over a `gate/<topic>` thread. | shipped |
@@ -23,6 +35,18 @@ Three binary-neutral primitives make it work, and all of them round-trip through
 - **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted).
 - **Native task store** — `amq-squad task add/list/claim/done/fail/block`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/`, so a lead of either binary decomposes the goal into claimable work.
 - **Compose-from-goal playbook** — the `amq-squad-orchestrator` skill (in both the Claude and Codex marketplaces) drives propose → approve → `team member add` → `task add` → prune.
+
+In practice — you stand up an orchestrated squad, then the lead composes and drives it:
+
+```sh
+# You (operator): create an orchestrated team and bring it up, seeded from a goal.
+amq-squad new team --roles cto --orchestrated --lead cto --session issue-96
+amq-squad new session issue-96 --seed-from issue:96 --target new-window
+
+# The cto lead loads the amq-squad-orchestrator skill and, as the work reveals needs:
+amq-squad team member add fullstack --binary codex --session issue-96  # grow the roster
+amq-squad task add --title "implement the fix" --session issue-96      # decompose the goal
+```
 
 ### Breaking changes
 
@@ -99,7 +123,7 @@ with `codex plugin marketplace upgrade` after merging skill changes).
 amq-squad has two surfaces, and you use them at different times:
 
 - **The `amq-squad` CLI is for you, the operator.** Design a team, bring it
-  up / down / back in tmux, inspect it (`status`, `console`, `doctor`), and
+  up / stop / resume in tmux, inspect it (`status`, `console`, `doctor`), and
   control agent panes (`focus`, `send`). Most commands are **project-scoped**
   (`--project DIR`, default cwd); the session-oriented ones (`up`, `status`,
   `send`, `stop`, `resume`, ...) are also **session-scoped** (`--session NAME`,
@@ -119,7 +143,7 @@ amq-squad status --session issue-96                   # 3. see who is live
 amq-squad send --session issue-96 --role qa --body "run the smoke suite"   # 4. drive a pane
 amq-squad focus --session issue-96 --role qa          #    watch that agent work
 amq-squad stop --session issue-96 --all               # 5. tear down (stays resumable)
-amq-squad resume --session issue-96                   # 6. bring it back
+amq-squad resume --session issue-96 --exec            # 6. bring it back (bare resume = plan only)
 ```
 
 The golden rules: **`up`/`new session` is for NEW work** (it refuses an existing
@@ -151,7 +175,7 @@ walkthrough, and troubleshooting.
 ```sh
 cd ~/Code/my-project
 
-amq-squad roles                      # list role IDs and market numbers
+amq-squad roles                      # list role IDs and menu numbers
 amq-squad new team --dry-run --roles cto,qa
 amq-squad new team --dry-run --json --roles cto,qa
 amq-squad new team --sync --session issue-96
@@ -177,7 +201,7 @@ amq-squad amq route --session issue-96 --me cto --to fullstack
 
 amq-squad stop --all                 # SIGTERM the team (--force = SIGKILL); stays resumable
 amq-squad stop --project ~/Code/other-app --all --session issue-97
-amq-squad resume                     # re-orient / reattach the saved session
+amq-squad resume                     # re-orient (plan only; add --exec to relaunch)
 amq-squad resume --project ~/Code/other-app --session issue-97
 amq-squad fork --from issue-96 --as issue-96-review  # branch a fresh workstream
 amq-squad fork --project ~/Code/other-app --from issue-96 --as issue-96-review
@@ -330,7 +354,7 @@ amq-squad brief seed --session issue-96 --seed-from issue:31
 `--seed-from` semantics:
 
 - With `--dry-run`: prints the candidate brief envelope and writes nothing.
-- Without `--dry-run`: writes `.amq-squad/briefs/<session>.md` and brings the team up in the same call. An existing brief is preserved unless `--force` is set.
+- Without `--dry-run`: writes `.amq-squad/briefs/<session>.md` and brings the team up in the same call. `--seed-from` needs `--force` to overwrite an existing brief; a bare `up` (no `--seed-from`) keeps it.
 
 The `amq-team-setup` skill wraps this in a wizard: it captures a goal from **any** source you have — an inline prompt, a local `.md`, a GitHub issue or PR, a Jira key, or a doc URL — fetches it agent-side (amq-squad core stays tracker-neutral), and drafts a **canonical brief** (Goal / Source / Scope / Out of scope / Acceptance) for you to confirm before it is saved. The brief is per-session.
 
@@ -387,7 +411,7 @@ amq-squad new team [--project DIR] [--sync] [--dry-run [--json]] [team init opti
                                   team_profile_plan envelope.
                                   Add --sync to also write CLAUDE.md / AGENTS.md
                                   managed pointer stubs. --roles accepts IDs,
-                                  market numbers, or all; --session sets the
+                                  menu numbers, or all; --session sets the
                                   initial shared workstream; --operator sets
                                   the virtual operator handle; --no-operator
                                   disables operator gates;
@@ -398,11 +422,11 @@ amq-squad new team [--project DIR] [--sync] [--dry-run [--json]] [team init opti
 amq-squad new profile NAME [--project DIR] [--sync] [--dry-run [--json]] [team init options]
                                   Create a named team profile. Alias for
                                   team init --profile NAME. Supports --sync,
-                                  --roles IDs, market numbers, all, and
+                                  --roles IDs, menu numbers, all, and
                                   role=binary overrides, plus --session for
                                   the initial shared workstream.
 amq-squad roles [--json]
-                                  List built-in role IDs, market numbers, default
+                                  List built-in role IDs, menu numbers, default
                                   CLIs, and short profile copy for team creation.
 amq-squad new session [--project DIR] [--profile NAME] [<session>] [up options]
                                   Create NEW work. Alias for up, with the same
@@ -445,8 +469,8 @@ amq-squad team rm [PROFILE] [--project DIR] [--profile NAME] [--dry-run] [--yes|
                                   briefs, team-rules.md, or pointer stubs.
 
 amq-squad up [<session>] [--project DIR] [--profile NAME] [--session ws] [--reset [--yes] [--force]]
-             [--dry-run] [--json] [--seed-from file:|issue:|gh: [--force]]
-             [--terminal tmux] [--target current-window|new-session]
+             [--dry-run [--json]] [--seed-from file:|issue:|gh: [--force]]
+             [--terminal tmux] [--target current-window|new-window|new-session]
              [--layout vertical|horizontal|tiled] [--terminal-session name]
              [--stagger 750ms] [--no-bootstrap] [--force-duplicate]
                                   NEW work. Bring the configured team up live (tmux) or
@@ -454,10 +478,10 @@ amq-squad up [<session>] [--project DIR] [--profile NAME] [--session ws] [--rese
                                   already exists (use `resume`, or `up --reset` to start
                                   over). The name comes from the <session> positional or
                                   --session (both is an error); inferred otherwise. With
-                                  no --seed-from/--brief the brief is AUTO-STUBBED (with a
+                                  no --seed-from the brief is AUTO-STUBBED (with a
                                   one-line notice) so CI/send-keys flows keep working.
                                   --project targets a team-home without cd.
-amq-squad stop [--all | --role R] [--project DIR] [--force] [--close-panes]
+amq-squad stop (--role R | --all) [--project DIR] [--force] [--close-panes]
                                   Stop members: SIGTERM the live, binary-matched
                                   agent PID (--force = SIGKILL), reap the wake
                                   sidecar, flip presence offline. On-disk state is
@@ -518,6 +542,15 @@ amq-squad brief seed --session NAME --seed-from REF [--project DIR] [--force]
                                   Write a workstream brief from file:<path>,
                                   issue:<n>, or gh:owner/repo#<n> without
                                   launching the team. Use --dry-run to preview.
+amq-squad task add --title T [--desc D] [--depends-on id,...] [--assign role] --session S
+amq-squad task list [--status S] [--json] --session S
+amq-squad task claim <id> --me HANDLE --session S
+amq-squad task done <id> [--evidence E] --session S
+amq-squad task fail|block <id> [--reason R] --session S
+                                  Native pull-based, dependency-gated task store
+                                  under .amq-squad/tasks/<session>/. A task is
+                                  claimable only once its --depends-on tasks are
+                                  completed. All subcommands require --session.
 amq-squad console [--project DIR] [--session NAME] [--refresh 2s] [--at-risk-wait 5m]
                   [--review-age 15m] [--once]
                                   Mission Control TUI over this project. Renders
@@ -526,6 +559,12 @@ amq-squad console [--project DIR] [--session NAME] [--refresh 2s] [--at-risk-wai
                                   --project targets a team-home without cd.
 amq-squad history [--json] [--project a,b]
                                   Restorable launch records across known projects.
+amq-squad threads --session NAME [--project DIR] [--limit N] [--json]
+                                  One collapsed row per AMQ thread in the
+                                  workstream (read-only).
+amq-squad thread --session NAME --id THREAD [--project DIR] [--include-body=false] [--json]
+                                  Read one AMQ thread transcript (read-only; does
+                                  not move unread mail).
 amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
                                   AMQ version, AMQ ops diagnostics, the amq-squad
                                   on PATH vs this build (version skew — spawned
@@ -547,10 +586,14 @@ amq-squad amq who|presence [--project DIR] [--session NAME] [--me HANDLE] [--jso
 amq-squad amq receipts list --me HANDLE [--project DIR] [--session NAME] [--msg-id ID] [--json]
 amq-squad amq receipts wait --me HANDLE --msg-id ID [--stage drained|dlq] [--timeout 60s]
                                   Inspect or wait for AMQ delivery receipts.
-amq-squad amq dlq list|read --me HANDLE [--project DIR] [--session NAME] [--json]
-amq-squad amq dlq retry|retry-all|purge --me HANDLE [--project DIR] [--session NAME]
-                                  Inspect DLQ state. Mutating retry/purge
-                                  commands preview and prompt by default.
+amq-squad amq dlq list --me HANDLE [--project DIR] [--session NAME] [--json]
+amq-squad amq dlq read --id ID --me HANDLE [--project DIR] [--session NAME] [--json]
+amq-squad amq dlq retry --id ID --me HANDLE [--project DIR] [--session NAME]
+amq-squad amq dlq retry-all|purge --me HANDLE [--project DIR] [--session NAME]
+                                  Inspect/repair DLQ state. `read`/`retry` take
+                                  `--id ID`; `purge` takes `--older-than DUR`.
+                                  Mutating retry/purge commands preview and
+                                  prompt by default.
 amq-squad amq cleanup --session NAME --tmp-older-than 36h [--project DIR]
                                   Confirm-gated AMQ tmp cleanup for one
                                   session.
@@ -577,7 +620,7 @@ amq-squad agent resume <role> [--project a,b]
 
 For `agent up`, recognized launcher flags after `<binary>` (such as `--role`, `--session`, `--trust`, `--model`, `--codex-args`, `--claude-args`, `--help`) keep flowing into the launcher; unrecognized flags and the first non-flag positional are treated as child args. Use `--` for an explicit child boundary. `amq-squad agent up codex --help` prints launcher help; `amq-squad agent up codex -- --help` passes native help to the child. `--codex-args` and `--claude-args` accept dash-prefixed values such as `--codex-args '--enable goals'`.
 
-Global output flags work before or after the subcommand: `--quiet`, `--verbose`, `--color auto|always|never`. `NO_COLOR` overrides `--color=always`. `--quiet` and `--verbose` are mutually exclusive. Deprecation warnings survive `--quiet`.
+Global output flags work before or after the subcommand: `--quiet`, `--verbose`, `--color auto|always|never`. `NO_COLOR` overrides `--color=always`. `--quiet` and `--verbose` are mutually exclusive.
 
 ## Status board and Mission Control console
 
@@ -630,7 +673,7 @@ Use route diagnostics before uncertain cross-project sends, receipt waits for im
 
 ## JSON envelopes
 
-Verbs that produce machine-readable output accept `--json` and emit a schema-versioned envelope on stdout. Diagnostics stay on stderr; stdout under `--json` is pure JSON.
+amq-squad's own verbs that produce machine-readable output accept `--json` and emit a schema-versioned envelope on stdout. Diagnostics stay on stderr; stdout under `--json` is pure JSON. (Some `amq-squad amq …` wrappers emit an amq-squad envelope — e.g. `amq env --json` is kind `amq_env` — while others delegate to AMQ's own JSON.)
 
 Team discovery payloads include derived operator metadata for external clients: `operator.enabled`, `operator.handle` when enabled, `operator.runnable=false`, and `capabilities.operator_gates`.
 
@@ -669,10 +712,11 @@ and how the pane was created (`target`). Pane and window ids (`%265`, `@42`) are
 stable control addresses; window names are labels and are never used to target
 control.
 
-`status --json`, `history --json`, and `resume --json` expose that identity as a
-`tmux` block plus a computed `pane_alive` (does the recorded pane still exist?).
-`status --json` members also carry an `actions` array of stable, project-scoped
-commands a client can render or copy, each with an `available` flag:
+`status --session NAME --json`, `history --json`, and `resume --json` expose that
+identity as a `tmux` block plus a computed `pane_alive` (does the recorded pane
+still exist?). Those `status --session NAME --json` members also carry an
+`actions` array of stable, project-scoped commands a client can render or copy,
+each with an `available` flag:
 
 ```json
 {
@@ -688,9 +732,13 @@ commands a client can render or copy, each with an `available` flag:
 }
 ```
 
-The `tmux` block is absent when no pane can be resolved, so clients detect
-runtime-control availability by its presence. `status --json`
-and `resume --json` (and the `focus`/`send` verbs) **adopt** a live agent's pane
+The `tmux` block is present only when the agent has a known tmux identity (absent
+otherwise — e.g. an agent not launched under tmux). Its presence means "has a
+recorded pane", not "is reachable": a pane that has since died still carries a
+`tmux` block with `pane_alive: false`, so use `pane_alive` (and each
+`actions[].available` flag) for whether control is currently possible.
+`status --session NAME --json` and `resume --json` (and the `focus`/`send` verbs)
+**adopt** a live agent's pane
 even when it was launched *outside* amq-squad's tmux backend (a raw
 `tmux new-window`): the recorded, verified agent pid is matched into a live
 pane's process subtree, so `focus`/`send`/`attach_control` and `pane_alive` work
