@@ -182,7 +182,7 @@ amq-squad agent up <binary> --role R --session S    # TTY-execs — no managed p
 
 A quick one-off in an existing session. It **TTY-execs with no managed pane**, so `focus`/`send`/`stop` cannot drive it (and `--me` defaults to `--role` so it does not share the binary-basename mailbox). To add a child you will actually orchestrate, put it on the roster and bring it up in a managed window instead: `team member add R --binary <binary> --session S` then `resume --exec --target new-window`.
 
-- Launching THROUGH amq-squad is what records the child's pane id into the contract, which is why every dispatch/monitor command below can address by `--role`.
+- Launching THROUGH amq-squad is what records the child's pane id into the contract, which is why the **pane-control** commands below (`focus`, and the `send` fallback) address it by `--role`. (Durable AMQ dispatch addresses by handle — `--to <role>` — not the pane id.)
 - As of **v1.6.0**, a child started by raw `tmux new-window` is also addressable via pane adoption, but launching via amq-squad is still preferred (it records the role, binary, and brief, not just a pane).
 
 ## 2. Dispatch (parent to child)
@@ -194,7 +194,8 @@ A quick one-off in an existing session. It **TTY-execs with no managed pane**, s
 ```sh
 # PRIMARY — durable AMQ dispatch. `drained` confirms RECEIPT (not completion).
 amq send --to <role> --thread p2p/<lead>__<role> --kind todo \
-  --subject "Task: <one line>" --body-file - \
+  --subject "Task: <one line>" \
+  --body "<the task: what to build, and to push a review_request when done>" \
   --wait-for drained --wait-timeout 60s
 ```
 
@@ -329,7 +330,7 @@ amq-squad status --session issue-96 --json \
 
 # 3. Dispatch the task to fullstack over durable AMQ (drained = received).
 amq send --to fullstack --thread p2p/cto__fullstack --kind todo \
-  --subject "Task: rate-limiter for issue #96" --body-file - \
+  --subject "Task: rate-limiter for issue #96" --body - \
   --wait-for drained --wait-timeout 60s <<'EOF'
 Implement the rate-limiter for issue #96 per the brief. When the diff is ready,
 push a review_request to me (cto) over AMQ. Report any blocker as a question.
