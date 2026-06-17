@@ -190,6 +190,7 @@ amq-squad send --session S --role R --body-file -    # body on stdin
 amq-squad send --session S --role R --body "do X"
 ```
 
+- **Wait for a freshly-spawned worker's `READY` before the first send.** On startup a worker pushes a `status` message (subject `READY: <role>`) once it is loaded and idle; `amq drain --include-body` for it, then dispatch. A send into a still-loading pane just trips the busy-guard below. (Later sends to an already-running worker don't re-wait.)
 - Addressed by the child's **recorded pane id** (via `--role`), never a window name.
 - The body is **staged in a tmux paste buffer**, not a shell string, so multi-line prompts and text with quotes or shell metacharacters arrive verbatim, then it submits with one robust Enter.
 - **Built-in busy-guard:** `send` REFUSES to deliver into a busy / mid-turn pane by default (it detects the running-turn indicator) and you must pass `--force` to override. This is the amq-squad-native form of "don't talk over a working agent": a push into a busy pane lands in a tool-result buffer and may never be seen. Send only when the child is idle, or `--force` deliberately when you mean to interrupt.
