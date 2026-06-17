@@ -39,7 +39,7 @@ The human/operator is mailbox handle {{.Operator.Handle}}. This participant is n
 - ask: `amq send --to {{.Operator.Handle}} --thread gate/<topic> --kind question --subject "APPROVAL: <decision>"`
 - reply path: the operator replies on the same thread with `amq send --me {{.Operator.Handle}} --to <agent-handle> --thread gate/<topic> --kind answer --subject "APPROVED: <decision>"` (or `DENIED:` / `ANSWER:`).
 - reuse the same stable `gate/<topic>` thread for updates to the same decision.
-- p2p prose such as "operator-held", "manual RC", or "pending operator" is evidence only; it is not an operator gate.
+- p2p prose such as "operator-held", "manual approval", or "pending operator" is evidence only; it is not an operator gate.
 
 {{- else }}
 Operator gate routing:
@@ -73,7 +73,7 @@ First steps:
 9. Stop and wait for instructions.
 {{- if and .Orchestrated (not .IsLead) .LeadHandle }}
 
-You are a worker on a lead-orchestrated squad (lead handle: {{.LeadHandle}}). As part of step 8, after stating your identity, push a READY signal to your lead so it can dispatch the moment you are loaded instead of guessing (a send into a still-loading pane just hits the busy-guard):
+You are a worker on a lead-orchestrated squad (lead handle: {{.LeadHandle}}). As part of step 8, after stating your identity, push a READY signal to your lead so it can send the first durable AMQ task (`amq send --kind todo --wait-for drained`) once you are loaded and draining. Pane injection is fallback only:
 - `amq send --to {{.LeadHandle}} --kind status --subject "READY: {{orDefault .Role "agent"}}" --body "loaded and idle; ready for dispatch"`
-Then wait (step 9) for the lead's dispatch — a task, an AMQ message, or a prompt delivered into your pane.
+Then wait (step 9) for the lead's dispatch over durable AMQ, or for a pane prompt only when the lead is using the fallback path.
 {{- end }}
