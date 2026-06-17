@@ -36,10 +36,10 @@ except ImportError:
 # CRLF tolerant.
 FRONTMATTER = re.compile(r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.S)
 
-
 # Codex's frontmatter loader REJECTS a description longer than this many
-# characters - the skill then silently fails to load (claude has no such cap).
-# Guard it for both lines so a long description can never ship unnoticed.
+# characters — the skill then silently fails to load (claude has no such cap).
+# That shipped once unnoticed because nothing checked length here, so a long
+# description loaded fine on claude but vanished on codex. Guard it for both.
 DESCRIPTION_MAX = 1024
 
 
