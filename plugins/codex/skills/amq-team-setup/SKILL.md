@@ -286,7 +286,7 @@ Global output flags work before or after the subcommand: `--quiet`,
 - Codex trusted mode (`--trust trusted`) is the only path that prepends
   `--dangerously-bypass-approvals-and-sandbox`. The default `sandboxed` mode
   emits no implicit bypass; pick the mode deliberately if non-default.
-- Do not touch `README.md`, `doc.html`, or unrelated repo files during setup.
+- Do not touch `README.md` or unrelated repo files during setup.
   Stay inside `.amq-squad/`, `CLAUDE.md`, and `AGENTS.md`.
 
 ## References

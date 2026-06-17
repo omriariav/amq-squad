@@ -11,7 +11,7 @@ mobile-dev, junior-dev, qa, pm, designer, scribe`). Custom roles are first-class
 members: they appear in `team.json`, `team-rules.md`, the bootstrap prompt,
 status/history, and launch/resume exactly like built-ins.
 
-Requires amq-squad **v1.5.0+**. Check with `amq-squad version`.
+Requires amq-squad **v2.0.0+**. Check with `amq-squad version`.
 
 There are two ways to add a custom role. Pick by how much role guidance you want.
 
