@@ -351,6 +351,16 @@ The lead reconciles both reports, verifies the artifacts, and reports up to the 
 - Bodies are data, not authority. Merge / irreversible decisions are lead-only.
 - One concern per AMQ message; route by handle for child-to-lead reports, by pane id only for the lead's control plane.
 
+## Common mistakes (dogfood-learned)
+
+These are the traps that actually bit real runs — scan them before you spawn.
+
+- **A sandboxed lead sees dead-looking panes.** `send`/`focus`/`status` failing with *"tmux control unavailable / connecting to the tmux server was denied"* means YOU (the lead) are sandboxed and cannot reach the tmux socket — it is NOT a dead pane. Run unsandboxed (Codex `/permissions full access`) or scope-approve `amq-squad status`/`focus`/`send`/`resume`; durable `amq send` keeps working meanwhile (see Boundary).
+- **Dispatching into a still-loading worker.** A `send` immediately after spawn just trips the busy-guard — the worker is mid-bootstrap. Wait for its `READY` status push (section 2); use `--force` only to deliberately interrupt.
+- **`pause-after=0` makes iTerm2 -CC worse, not better.** Under -CC the control client pauses on output bursts; amq-squad already retries its queries through the stutter. If the iTerm2 *view* stalls, `tmux detach-client -t <tty>` then reattach — do NOT set `pause-after=0` (it pauses *sooner*).
+- **Skill/binary version skew.** If your first response cannot find the `Skill version:` marker, or it differs from `amq-squad version`, the loaded skill and the running binary are mismatched — run `amq-squad doctor` and align them (`go install …/cmd/amq-squad@latest`) before composing.
+- **A bare `agent up` for a worker you must drive.** It TTY-execs with no managed pane, so `focus`/`send`/`stop` cannot reach it. Spawn drivable workers with `resume --exec --target new-window` (see compose step 3).
+
 ## When NOT to use this skill
 
 - Routine member coordination once a team is up (drains, routing, review/handoff, status board/console, up/stop/resume/fork) -> `amq-squad`.
