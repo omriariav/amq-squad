@@ -251,7 +251,8 @@ func DefaultPaneLister() ([]TmuxPane, error) {
 // tmux. display-message takes the format as a trailing positional argument (not
 // -F), matching PaneIdentityFor.
 func InspectPaneByID(paneID string) (TmuxPane, bool) {
-	if strings.TrimSpace(paneID) == "" {
+	id := strings.TrimSpace(paneID)
+	if id == "" {
 		return TmuxPane{}, false
 	}
 	// Retry through transient -CC pauses: a paused control client makes
@@ -259,9 +260,16 @@ func InspectPaneByID(paneID string) (TmuxPane, bool) {
 	// live. A genuinely-gone pane keeps failing and falls through to false
 	// within the bounded budget.
 	for attempt := 0; attempt < tmuxReadAttempts; attempt++ {
-		out, err := captureExec("display-message", "-p", "-t", paneID, paneListFormat)
+		out, err := captureExec("display-message", "-p", "-t", id, paneListFormat)
 		if err == nil {
-			if panes := parsePanes(out); len(panes) > 0 {
+			// VERIFY the returned row is actually the requested pane. `tmux
+			// display-message -t <id>` does NOT error when <id> is gone; it
+			// silently resolves the target to a FALLBACK pane (the client's
+			// current pane) and prints that one's fields. Returning it blindly
+			// reports pane_alive:true for a pane that has been closed (the #156
+			// false positive). Only accept the row when its pane_id matches the
+			// id we asked for; a mismatch means the original pane is gone.
+			if panes := parsePanes(out); len(panes) > 0 && panes[0].PaneID == id {
 				return panes[0], true
 			}
 		} else if IsPermissionDenied(err) {
