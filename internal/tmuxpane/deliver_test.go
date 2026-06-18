@@ -315,6 +315,10 @@ func TestSendPromptErrorsWhenNeverConfirmed(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "could not confirm it submitted") {
 		t.Fatalf("want a clear not-submitted error, got %v", err)
 	}
+	var unconfirmed *SubmitUnconfirmedError
+	if !errors.As(err, &unconfirmed) {
+		t.Fatalf("want a *SubmitUnconfirmedError so callers can distinguish it, got %T", err)
+	}
 	if got := enterCount(*calls); got != submitAttempts {
 		t.Errorf("want %d Enter attempts before erroring, got %d", submitAttempts, got)
 	}

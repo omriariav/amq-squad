@@ -251,7 +251,24 @@ func submitStagedPrompt(paneID string) error {
 		}
 		// Unchanged: the Enter was dropped — retry.
 	}
-	return fmt.Errorf("delivered the prompt to pane %s but could not confirm it submitted after %d Enter attempts; the agent may still need a manual Enter", paneID, submitAttempts)
+	return &SubmitUnconfirmedError{PaneID: paneID, Attempts: submitAttempts}
+}
+
+// SubmitUnconfirmedError reports that the prompt was pasted and Enter pressed,
+// but the input region never changed, so submission could not be CONFIRMED. It
+// is a soft, ambiguous signal, not a hard failure: the Enter may simply have
+// been dropped (the agent still needs a manual Enter), OR the agent had already
+// moved on — e.g. an amq wake sidecar drained the durable message first and the
+// agent is now working, so its input box looks unchanged. Callers that have a
+// durable fallback (dispatch) should treat it accordingly rather than as a lost
+// delivery; a bare `amq-squad send` surfaces it so the operator can retry.
+type SubmitUnconfirmedError struct {
+	PaneID   string
+	Attempts int
+}
+
+func (e *SubmitUnconfirmedError) Error() string {
+	return fmt.Sprintf("delivered the prompt to pane %s but could not confirm it submitted after %d Enter attempts; the agent may still need a manual Enter", e.PaneID, e.Attempts)
 }
 
 // captureInputRegion snapshots the bottom inputBoxLines of the pane (the input
