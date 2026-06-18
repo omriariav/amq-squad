@@ -419,6 +419,7 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckAMQOps(d))
 	checks = append(checks, doctorCheckVersionSkew(d))
 	checks = append(checks, doctorCheckTeamConfig(d))
+	checks = append(checks, doctorCheckTeamRulesRoster(d))
 	checks = append(checks, doctorCheckTmux(d))
 	checks = append(checks, doctorCheckTmuxExtendedKeys(d))
 	checks = append(checks, doctorCheckMarkerIntegrity(d)...)
@@ -550,6 +551,49 @@ func doctorCheckTeamConfig(d doctorExecution) doctorCheck {
 		Name:   "team config",
 		Status: doctorOK,
 		Detail: path,
+	}
+}
+
+// doctorCheckTeamRulesRoster is a NON-FAILING hint that the shared
+// team-rules.md no longer describes the selected profile's roster. team-rules.md
+// is one shared file per team-home written no-clobber, so a profile created
+// after the file already existed inherits a roster description authored for a
+// different profile (finding #155). This NEVER fails: agents route from the live
+// routing block injected at bootstrap, not from this file's "## Role Scope"
+// roster, so the drift is cosmetic. It only nudges the operator to reconcile the
+// doc. ok when there is no profile/file (the pointer-sync check covers a missing
+// file) or the file names every member. Deliberately does NOT suggest
+// `team rules init --force`: that re-renders the DEFAULT profile, which for a
+// named profile would stamp the wrong roster.
+func doctorCheckTeamRulesRoster(d doctorExecution) doctorCheck {
+	const name = "team-rules roster"
+	profile := doctorProfile(d)
+	if !team.ExistsProfile(d.ProjectDir, profile) {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "no team profile; skipped"}
+	}
+	t, err := team.ReadProfile(d.ProjectDir, profile)
+	if err != nil {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "team config unreadable; skipped"}
+	}
+	body, err := rules.Read(d.ProjectDir)
+	if err != nil {
+		// A missing/unreadable team-rules.md is reported by the pointer-sync check.
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "no team-rules.md; skipped"}
+	}
+	var missing []string
+	for _, m := range orderedTeamMembers(t.Members) {
+		if !strings.Contains(body, memberRosterPrefix(m)) {
+			missing = append(missing, m.Role)
+		}
+	}
+	if len(missing) == 0 {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: rules.Path(d.ProjectDir) + " describes the " + profile + " roster"}
+	}
+	return doctorCheck{
+		Name:   name,
+		Status: doctorWarn,
+		Detail: fmt.Sprintf("%s does not describe profile %q member(s): %s. team-rules.md is shared per team-home and was left unchanged when this profile was created; agents route from the live bootstrap block, so this is cosmetic. Reconcile the doc, or keep profile-specific norms in each role.md.",
+			rules.Path(d.ProjectDir), profile, strings.Join(missing, ", ")),
 	}
 }
 

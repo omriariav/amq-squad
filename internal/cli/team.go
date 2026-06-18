@@ -435,6 +435,14 @@ Examples:
 	}
 	if wroteRules {
 		fmt.Fprintf(os.Stderr, "Wrote %s.\n", rules.Path(cwd))
+	} else if existing, rerr := rules.Read(cwd); rerr == nil && !teamRulesDescribesRoster(existing, t) {
+		// team-rules.md is one shared file per team-home (no-clobber). This
+		// profile reused an existing file whose roster description does not name
+		// every member of THIS profile, so its "## Role Scope" roster is stale
+		// for this profile. It is not a hard error — agents route from the live
+		// routing block injected at bootstrap, not from this file's roster — but
+		// the operator should know the doc and this profile disagree.
+		fmt.Fprintf(os.Stderr, "Warning: %s already exists and was left unchanged; its roster does not describe this profile's members. Agents use the live routing block injected at bootstrap, not this file's roster, so this is cosmetic. Reconcile the doc if the rosters should match.\n", rules.Path(cwd))
 	}
 	if interactive {
 		fmt.Fprintln(os.Stderr)
