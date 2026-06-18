@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 func TestDispatchSendArgs(t *testing.T) {
@@ -37,6 +38,35 @@ func TestDispatchNudgePromptCarriesNoBody(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(dispatchNudgePrompt), "%s") {
 		t.Fatalf("nudge must be a fixed string with no body interpolation: %q", dispatchNudgePrompt)
+	}
+}
+
+func TestClassifyNudgeResult(t *testing.T) {
+	busy := func(string) (bool, error) { return true, nil }
+	idle := func(string) (bool, error) { return false, nil }
+	unconfirmed := &tmuxpane.SubmitUnconfirmedError{PaneID: "%7", Attempts: 3}
+
+	// Clean send -> nudged.
+	if o, err := classifyNudgeResult("%7", nil, idle); err != nil || o.PaneID != "%7" {
+		t.Fatalf("clean send: got %+v, %v", o, err)
+	}
+	// Unconfirmed but the pane is now BUSY -> the agent was woken (sidecar) and is
+	// working; count as delivered, NOT a failure.
+	if o, err := classifyNudgeResult("%7", unconfirmed, busy); err != nil || o.PaneID != "%7" {
+		t.Fatalf("unconfirmed+busy should be delivered: got %+v, %v", o, err)
+	}
+	// Unconfirmed and still idle -> soft skip (durable task queued), no error.
+	o, err := classifyNudgeResult("%7", unconfirmed, idle)
+	if err != nil {
+		t.Fatalf("unconfirmed+idle must not be a hard error: %v", err)
+	}
+	if o.PaneID != "" || !strings.Contains(o.Skipped, "unconfirmed") {
+		t.Fatalf("unconfirmed+idle should be a soft skip, got %+v", o)
+	}
+	// A real failure (dead pane) propagates as an error.
+	dead := &tmuxpane.DeadPaneError{PaneID: "%7"}
+	if _, err := classifyNudgeResult("%7", dead, idle); err == nil {
+		t.Fatal("a dead-pane error must propagate as a failure")
 	}
 }
 
