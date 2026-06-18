@@ -184,7 +184,7 @@ A quick one-off in an existing session. It **TTY-execs with no managed pane**, s
 
 **Use `amq-squad dispatch` — one deterministic, root-correct command for the whole dispatch.** It does both halves atomically: it (1) sends a **durable** AMQ `todo` to the workstream's resolved root — the single source of truth, surviving pane death and addressable by handle — and (2) **nudges the child's exact recorded pane** with a fixed *drain instruction* so an idle worker wakes and runs `amq drain`. The task body rides ONLY in the durable message, so a dispatch can never double-deliver; and the root is resolved for you even when you are an **external lead** (a human-driven session with no `AM_ROOT` injected) whose bare `amq send` would otherwise misroute to the default `.agent-mail`.
 
-**Wait for the worker's `READY` first** — on startup a freshly-spawned worker pushes a `status` message (subject `READY: <role>`) once it is loaded; `amq-squad amq drain --me <lead> --session S --include-body` for it, then dispatch. (The durable mailbox means a dispatch can't be lost even if your timing slips — the worker drains it on its next pass — but waiting for `READY` keeps the ordering clean.)
+**Confirm the workers are live, then dispatch — do NOT wait for a `READY` handshake.** A freshly-spawned worker states its readiness in its OWN pane and stops; it does not reliably push a `READY` AMQ message, so a lead that waits for one waits forever. `amq-squad dispatch` does not need it anyway: it queues the durable task AND nudges the idle pane to drain. So just check liveness — `amq-squad status --session S --json` shows each worker `alive` — and dispatch. If a worker does happen to push a `READY`/status, you'll see it on your next on-demand drain; never block on it.
 
 ```sh
 # PRIMARY — durable task + drain-only pane nudge, in one root-correct command.
@@ -234,6 +234,7 @@ amq-squad console                        # live read-only Mission Control TUI
 - Per-agent `status` and `tmux.pane_alive` tell you who is actually working vs. dead vs. stalled.
 - The bare `amq-squad status` (no `--session`) is the fleet board across all sessions.
 - The single-session `status --json` records also carry an `actions[]` array with the exact runnable `focus`/`send`/`resume` commands; prefer those over hand-built tmux.
+- **Never run a background `amq drain` loop to wait for a report.** `amq drain` is DESTRUCTIVE — it moves messages to `cur` — so a backgrounded poll loop races your foreground drains and silently consumes reports out from under you (messages "vanish"). Drain ON DEMAND, in the foreground, once, when you expect a report. If you need to BLOCK until one arrives, use a single foreground `amq watch` (non-destructive, bounded by `--timeout`) and then `amq drain --include-body` once — never a backgrounded `sleep`+`drain` loop.
 
 Diagnose before nudging: a stalled child with an intact plan and no progress is usually an API timeout (a resume nudge fixes it); a child looping is tool-loop drift (send a specific break instruction); a silent child may be blocked (ask "what is blocking you?"). Verify a nudge landed by re-checking `status`/`focus`.
 
