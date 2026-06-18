@@ -22,6 +22,11 @@ var (
 	// inputBoxLines is how many bottom lines of the pane count as the input
 	// region for the "did it leave the input box?" check.
 	inputBoxLines = 4
+	// pasteSettleInterval is the gap between readiness captures before a
+	// bracketed (multi-line) paste; pasteSettleMax caps how many we take before
+	// pasting anyway. Vars so tests can zero the wait.
+	pasteSettleInterval = 80 * time.Millisecond
+	pasteSettleMax      = 8
 )
 
 // DeadPaneError reports that a tmux pane targeted for control no longer exists
@@ -37,6 +42,19 @@ func (e *DeadPaneError) Error() string {
 }
 
 func (e *DeadPaneError) Unwrap() error { return e.Err }
+
+// BracketedPasteLeakError reports that a multi-line prompt's bracketed-paste
+// markers (ESC[200~/ESC[201~) were echoed into the pane as literal text instead
+// of being consumed — the signature of pasting into an agent TUI that had not
+// yet enabled bracketed-paste mode (DECSET 2004), typically a pane still
+// booting. The prompt did NOT land cleanly, so the caller should retry once the
+// pane has settled. For a dispatch the durable AMQ message is unaffected, so
+// this is a wake miss, not a lost task.
+type BracketedPasteLeakError struct{ PaneID string }
+
+func (e *BracketedPasteLeakError) Error() string {
+	return fmt.Sprintf("tmux pane %s did not ingest the bracketed paste (markers leaked as text); the agent is likely still starting up — prompt not delivered, retry shortly", e.PaneID)
+}
 
 // deliverExec is the seam for tmux subprocesses used by prompt delivery. Unlike
 // execRunner it accepts optional stdin (so prompt text reaches tmux via
@@ -104,6 +122,16 @@ func SendPromptToPane(paneID, prompt string) error {
 	if !PaneExists(paneID) {
 		return &DeadPaneError{PaneID: paneID, Err: fmt.Errorf("display-message returned no pane")}
 	}
+	bracketed := promptNeedsBracketedPaste(prompt)
+	if bracketed {
+		// A bracketed paste's ESC[200~/ESC[201~ wrappers are only honored once the
+		// agent TUI has enabled bracketed-paste mode (DECSET 2004), which a
+		// freshly-spawned pane does late in its boot. Wait for the pane to finish
+		// drawing (its output stops changing) before pasting, so the markers are
+		// consumed instead of echoed as literal "[200~" text and the body's
+		// embedded newlines are not submitted line-by-line. Best-effort + bounded.
+		waitPaneSettled(paneID)
+	}
 	// Stage the prompt in a unique buffer via stdin — the text never appears on
 	// a command line, so no quoting/metacharacter handling is required, and a
 	// per-send name keeps concurrent sends from clobbering each other.
@@ -115,26 +143,80 @@ func SendPromptToPane(paneID, prompt string) error {
 	if out, err := deliverExec("", pasteBufferArgs(buf, paneID, prompt)...); err != nil {
 		return fmt.Errorf("tmux paste-buffer -t %s: %w: %s", paneID, err, strings.TrimSpace(out))
 	}
+	// Backstop: if the bracketed-paste markers still leaked as literal text (the
+	// pane was not ready after the settle wait), the prompt did NOT land cleanly.
+	// Report a clear, retryable failure rather than pressing Enter on a mangled
+	// input — a dispatch keeps the durable message queued and surfaces the miss.
+	if bracketed {
+		time.Sleep(submitSettleDelay) // let the paste render before inspecting
+		if bracketedPasteLeaked(paneID) {
+			return &BracketedPasteLeakError{PaneID: paneID}
+		}
+	}
 	// Submit robustly — the Enter must not race the paste (the #86 hang).
 	return submitStagedPrompt(paneID)
 }
 
-// pasteBufferArgs builds the `tmux paste-buffer` argv for a staged prompt. It
-// requests bracketed paste (`-p`) ONLY when the prompt spans multiple lines: a
-// multi-line body needs its embedded newlines buffered as paste content so they
-// do not submit early, leaving the trailing Enter as the sole submit. A
-// single-line prompt has no line break to protect, and the bracketed-paste START
-// marker (ESC[200~) can leak as literal "[200~" text into an agent TUI that has
-// not yet enabled bracketed-paste mode — the stuck-input hang observed when
-// nudging a freshly-spawned Codex pane. Omitting `-p` for single-line prompts
-// removes that failure mode entirely; the Enter-retry in submitStagedPrompt
-// still covers a plain paste/Enter race. We test for CR as well as LF so a bare
-// "\r" (which a terminal may treat like Enter) keeps the bracketed protection.
+// promptNeedsBracketedPaste reports whether a prompt must be delivered with a
+// bracketed paste: it contains a line break (CR or LF) whose Enter must be
+// buffered as paste content rather than submitting. A single-line prompt has no
+// line break to protect, so it is pasted plainly (no ESC[200~ wrappers that
+// could leak into a not-yet-ready TUI — the freshly-spawned Codex `[200~` hang).
+func promptNeedsBracketedPaste(prompt string) bool {
+	return strings.ContainsAny(prompt, "\r\n")
+}
+
+// pasteBufferArgs builds the `tmux paste-buffer` argv for a staged prompt,
+// requesting bracketed paste (`-p`) only for multi-line prompts (see
+// promptNeedsBracketedPaste). The text is staged via `load-buffer -` stdin, so
+// dropping `-p` never affects quoting/metacharacters — `-p` is purely about
+// keeping embedded newlines from submitting early.
 func pasteBufferArgs(buf, paneID, prompt string) []string {
-	if strings.ContainsAny(prompt, "\r\n") {
+	if promptNeedsBracketedPaste(prompt) {
 		return []string{"paste-buffer", "-d", "-p", "-b", buf, "-t", paneID}
 	}
 	return []string{"paste-buffer", "-d", "-b", buf, "-t", paneID}
+}
+
+// waitPaneSettled blocks (bounded) until the pane's visible content stops
+// changing across a capture interval — the signal that a freshly-spawned TUI has
+// finished drawing and (with it) enabled bracketed-paste mode. Best-effort: it
+// returns only when the pane cannot be captured (a capture error), and proceeds
+// anyway after pasteSettleMax captures so a pane that never fully quiesces (e.g.
+// a footer clock) never blocks delivery. A BLANK capture is treated as an
+// observed state, not a reason to stop: a just-spawned pane is often momentarily
+// blank before it draws — the riskiest window for bracketed-paste mode not yet
+// being on — so we keep polling through blank -> drawn -> steady. Uses the same
+// capture seam as PaneBusy.
+func waitPaneSettled(paneID string) {
+	prev, err := paneCapturer(paneID)
+	if err != nil {
+		return
+	}
+	for i := 0; i < pasteSettleMax; i++ {
+		time.Sleep(pasteSettleInterval)
+		cur, err := paneCapturer(paneID)
+		if err != nil {
+			return
+		}
+		if cur == prev {
+			return // output unchanged over the interval -> settled
+		}
+		prev = cur
+	}
+}
+
+// bracketedPasteLeaked reports whether a bracketed-paste control marker is
+// visible as literal text in the pane — the signature of a paste that landed
+// before the TUI enabled bracketed-paste mode, so tmux's ESC[200~/ESC[201~
+// wrappers were echoed rather than consumed. Best-effort: a capture failure
+// reports false (never block delivery on a capture we cannot trust).
+func bracketedPasteLeaked(paneID string) bool {
+	out, err := paneCapturer(paneID)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(out, "[200~") || strings.Contains(out, "[201~")
 }
 
 // submitStagedPrompt presses Enter to submit a just-pasted prompt and confirms
