@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -243,8 +244,28 @@ func defaultDispatchWakePane(projectDir, profile, session string, explicitSessio
 			return dispatchOutcome{Skipped: fmt.Sprintf("pane %s is busy (mid-turn); the agent drains the task when idle, or re-dispatch with --force", paneID)}, nil
 		}
 	}
-	if err := tmuxpane.SendPromptToPane(paneID, dispatchNudgePrompt); err != nil {
-		return dispatchOutcome{}, err
+	err = tmuxpane.SendPromptToPane(paneID, dispatchNudgePrompt)
+	return classifyNudgeResult(paneID, err, tmuxpane.PaneBusy)
+}
+
+// classifyNudgeResult maps a pane-nudge result to a dispatchOutcome. A
+// SubmitUnconfirmedError is ambiguous, NOT a failure: the Enter could not be
+// confirmed, but often the agent was already woken (the amq wake sidecar drained
+// the durable task first) and is now working — which is exactly why its input
+// box looked unchanged. So if the pane is now busy, count the wake as delivered;
+// otherwise report a soft skip (the durable task is queued and the worker drains
+// it on its next turn). Only a hard error (dead pane, bracketed-paste leak,
+// tmux denied) is a real failure. paneBusy is injected for testing.
+func classifyNudgeResult(paneID string, sendErr error, paneBusy func(string) (bool, error)) (dispatchOutcome, error) {
+	if sendErr == nil {
+		return dispatchOutcome{PaneID: paneID}, nil
 	}
-	return dispatchOutcome{PaneID: paneID}, nil
+	var unconfirmed *tmuxpane.SubmitUnconfirmedError
+	if errors.As(sendErr, &unconfirmed) {
+		if busy, berr := paneBusy(paneID); berr == nil && busy {
+			return dispatchOutcome{PaneID: paneID}, nil
+		}
+		return dispatchOutcome{Skipped: fmt.Sprintf("pane %s nudged but submission unconfirmed; the durable task is queued and the worker drains it on its next turn", paneID)}, nil
+	}
+	return dispatchOutcome{}, sendErr
 }
