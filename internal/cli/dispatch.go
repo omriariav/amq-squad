@@ -39,6 +39,7 @@ func runDispatch(args []string) error {
 	sessionFlag := fs.String("session", "", "workstream session of the team")
 	roleFlag := fs.String("role", "", "role of the child agent to dispatch the task to")
 	fromFlag := fs.String("from", "", "sender handle (default: the orchestration lead, else AM_ME)")
+	threadFlag := fs.String("thread", "", "AMQ thread to send on, e.g. p2p/<lead>__<role> (default: amq's auto thread)")
 	kindFlag := fs.String("kind", "todo", "AMQ message kind (todo, question, status, ...)")
 	subjectFlag := fs.String("subject", "", "task subject line")
 	body := fs.String("body", "", "task body (alternative to --body-file)")
@@ -53,7 +54,7 @@ func runDispatch(args []string) error {
 
 Usage:
   amq-squad dispatch [--project DIR] [--profile NAME] --session S --role ROLE
-                     [--from HANDLE] [--kind todo] --subject SUBJ
+                     [--from HANDLE] [--thread THREAD] [--kind todo] --subject SUBJ
                      (--body TEXT | --body-file FILE) [--priority P]
                      [--force] [--no-wake]
 
@@ -73,6 +74,7 @@ next turn. Pass --force to nudge anyway, or --no-wake to queue without nudging.
 
 Examples:
   amq-squad dispatch --session issue-96 --role qa --subject "Validate PR #64" --body "Run the suite and report risk."
+  amq-squad dispatch --session issue-96 --role fullstack --thread p2p/cto__fullstack --subject "Build X" --body-file ./task.md
   amq-squad dispatch --session issue-96 --role cto --kind question --subject "Approve merge?" --body-file ./ask.md
   amq-squad dispatch --session issue-96 --role fullstack --from cto --subject "Build X" --body "..." --force
 `)
@@ -127,7 +129,7 @@ Examples:
 	}
 	ctx := amqContext{ProjectDir: cwd, Env: env, Root: absoluteAMQRoot(cwd, env.Root), Me: from}
 
-	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *kindFlag, *subjectFlag, taskBody, *priorityFlag)
+	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag)
 	out, err := runAMQCommand(amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: sendCmd})
 	if err != nil {
 		return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
@@ -161,8 +163,11 @@ Examples:
 // dispatchSendArgs builds the `amq send` argv for a dispatch: a durable message
 // to the resolved root from the lead handle to the child handle. The body is
 // always passed (it is required and validated upstream). Pure + table-testable.
-func dispatchSendArgs(root, from, to, kind, subject, body, priority string) []string {
+func dispatchSendArgs(root, from, to, thread, kind, subject, body, priority string) []string {
 	args := []string{"send", "--root", root, "--me", from, "--to", to}
+	if th := strings.TrimSpace(thread); th != "" {
+		args = append(args, "--thread", th)
+	}
 	if k := strings.TrimSpace(kind); k != "" {
 		args = append(args, "--kind", k)
 	}

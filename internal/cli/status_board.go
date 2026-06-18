@@ -66,13 +66,13 @@ const (
 // distinct "(stub brief)" / "(no brief)" labels in the table without changing
 // the JSON `brief` contract.
 type sessionBoardRow struct {
-	Name         string     `json:"name"`
-	Root         string     `json:"root"`
-	State        boardState `json:"state"`
-	AgentsTotal  int        `json:"agents_total"`
-	AgentsAlive  int        `json:"agents_alive"`
-	WakeLive     int        `json:"wake_live,omitempty"`
-	AtRisk       int        `json:"at_risk"`
+	Name        string     `json:"name"`
+	Root        string     `json:"root"`
+	State       boardState `json:"state"`
+	AgentsTotal int        `json:"agents_total"`
+	AgentsAlive int        `json:"agents_alive"`
+	WakeLive    int        `json:"wake_live,omitempty"`
+	AtRisk      int        `json:"at_risk"`
 	// AgentsStale counts leftover (stale/dead/missing) records that were aged
 	// OUT of the health rollup because their last activity is older than
 	// boardStaleRecordAge. They are excluded from AgentsTotal so a pile of old

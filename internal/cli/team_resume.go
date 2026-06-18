@@ -173,17 +173,17 @@ type resumeExecution struct {
 	// resumes every team member; a non-empty list restricts the plan (and
 	// --exec) to those roles, so a lead can bring up a subset without
 	// relaunching itself or other live members.
-	RolesRaw string
-	Mode     resumeMode
-	Force            bool
-	NoBootstrap      bool
-	TrustRaw         string
-	ExplicitTrust    bool
-	ModelRaw         string
-	CodexArgsRaw     string
-	ClaudeArgsRaw    string
-	DryRun           bool
-	Profile          string
+	RolesRaw      string
+	Mode          resumeMode
+	Force         bool
+	NoBootstrap   bool
+	TrustRaw      string
+	ExplicitTrust bool
+	ModelRaw      string
+	CodexArgsRaw  string
+	ClaudeArgsRaw string
+	DryRun        bool
+	Profile       string
 	// JSON emits a schema-versioned resume_plan envelope instead of the human
 	// plan. It is a read-only preview, so it is mutually exclusive with Exec.
 	JSON bool

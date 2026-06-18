@@ -43,6 +43,7 @@ The lifecycle is one small state machine: `(none) --up--> running --stop--> stop
 | Single-session detail | `amq-squad status --session <name>` |
 | Focus an agent's pane (or the session) | `amq-squad focus --session <name> [--role R]` (`open` = session alias) |
 | Deliver a prompt to an agent's pane + submit | `amq-squad send --session <name> --role R --body "..."` |
+| Dispatch a durable task to an agent and wake it | `amq-squad dispatch --session <name> --role R --kind todo --subject "..." --body "..."` |
 | Live read-only Mission Control TUI | `amq-squad console` (`--once` for CI) |
 | Inspect restorable launch records (project history) | `amq-squad history` |
 | Launch a single agent (modern verb) | `amq-squad agent up <binary>` |
@@ -70,6 +71,7 @@ amq-squad owns the tmux execution/control contract, so drive agents by stable co
 - **`amq-squad focus --session S [--role R]`** — bring an agent's pane into view (with `--role`), or the session's first live pane (no role). `open` is the session alias.
 - **`amq-squad send --session S --role R --body "..."`** (or `--body-file F`, or `--body-file -` for stdin) — deliver a prompt into an agent's exact pane and submit it with one Enter. Text is staged in a tmux paste buffer (not a shell string), so **multi-line prompts and text with quotes or shell metacharacters arrive verbatim**. It errors clearly if the pane is gone. **Built-in busy-guard:** `send` REFUSES to deliver into a busy / mid-turn pane by default (a push into a working agent can land in a tool-result buffer and be missed); pass `--force` to override and deliberately interrupt.
   - This is **pane delivery, not an AMQ message**: `amq-squad send` takes `--body`/`--body-file` and has **no `--kind`/`--thread`**. To post an inter-agent AMQ message, use `amq send ... --kind <valid kind>` (see *Route messages*) — never put a `--kind` on `amq-squad send`.
+- **`amq-squad dispatch --session S --role R --kind todo --subject "..." --body "..."`** — the deterministic way to hand an agent a task: it sends a **durable** AMQ message to the workstream's resolved root (root-correct even for an external lead whose bare `amq send` would misroute to the default `.agent-mail`) AND nudges the agent's pane with a fixed *drain instruction* so an idle worker wakes and runs `amq drain`. The task body rides only in the durable message (no double-delivery). The nudge is best-effort: a gone/busy pane leaves the task queued (drained on the worker's next turn); `--force` nudges a busy pane, `--no-wake` queues without nudging, `--thread`/`--from` set the AMQ thread/sender. For the full lead-to-child pattern, use the `amq-squad-orchestrator` skill.
 - Each agent launched in tmux persists its exact tmux identity in its launch record; `status --session <name> --json`, `history --json`, and `resume --json` expose it plus `pane_alive`, and the single-session `status --json` `actions[]` give the exact focus/send/resume commands. Prefer those over hand-built tmux.
 
 **Launch topology** — `amq-squad up --target ...`:

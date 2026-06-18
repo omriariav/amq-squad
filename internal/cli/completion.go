@@ -247,6 +247,7 @@ var completionCommonFlags = []string{
 	"--team-workstream",
 	"--terminal",
 	"--terminal-session",
+	"--thread",
 	"--title",
 	"--tmp-older-than",
 	"--to",
