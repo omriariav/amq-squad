@@ -2,9 +2,11 @@ package tmuxpane
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 type deliverCall struct {
@@ -20,8 +22,8 @@ func swapDeliver(t *testing.T, results map[string]error) *[]deliverCall {
 	// reports the prompt left the input box (submitted on the first Enter) so the
 	// submit loop never shells real `tmux capture-pane`. Individual tests can
 	// override paneCapturer afterwards to exercise the retry/error paths.
-	prevSettle, prevVerify, prevCap := submitSettleDelay, submitVerifyDelay, paneCapturer
-	submitSettleDelay, submitVerifyDelay = 0, 0
+	prevSettle, prevVerify, prevCap, prevPaste := submitSettleDelay, submitVerifyDelay, paneCapturer, pasteSettleInterval
+	submitSettleDelay, submitVerifyDelay, pasteSettleInterval = 0, 0, 0
 	paneCapturer = func(string) (string, error) { return "", nil }
 	var calls []deliverCall
 	prev := deliverExec
@@ -36,7 +38,7 @@ func swapDeliver(t *testing.T, results map[string]error) *[]deliverCall {
 	}
 	t.Cleanup(func() {
 		deliverExec = prev
-		submitSettleDelay, submitVerifyDelay, paneCapturer = prevSettle, prevVerify, prevCap
+		submitSettleDelay, submitVerifyDelay, paneCapturer, pasteSettleInterval = prevSettle, prevVerify, prevCap, prevPaste
 	})
 	return &calls
 }
@@ -122,6 +124,82 @@ func TestSendPromptBracketedPasteOnlyForMultiline(t *testing.T) {
 	buf2 := (*calls2)[1].args[2]
 	if want := []string{"paste-buffer", "-d", "-p", "-b", buf2, "-t", "%8"}; !reflect.DeepEqual(paste2, want) {
 		t.Fatalf("multi-line paste argv = %v, want %v (with -p)", paste2, want)
+	}
+}
+
+func TestSendPromptMultilineLeakReturnsError(t *testing.T) {
+	// A multi-line prompt pasted into a not-yet-ready TUI leaves the bracketed-
+	// paste START marker as literal text. We must detect that and FAIL clearly
+	// rather than press Enter on a mangled input.
+	calls := swapDeliver(t, nil)
+	paneCapturer = func(string) (string, error) {
+		return "│ [200~first line\nsecond line │\n  ? for shortcuts", nil
+	}
+	err := SendPromptToPane("%9", "first line\nsecond line")
+	var leak *BracketedPasteLeakError
+	if !errors.As(err, &leak) {
+		t.Fatalf("want *BracketedPasteLeakError, got %T: %v", err, err)
+	}
+	if leak.PaneID != "%9" {
+		t.Errorf("leak PaneID = %q, want %%9", leak.PaneID)
+	}
+	// It must NOT submit a mangled input.
+	if got := enterCount(*calls); got != 0 {
+		t.Fatalf("a leaked bracketed paste must not press Enter, got %d", got)
+	}
+}
+
+func TestSendPromptSingleLineIgnoresStrayMarker(t *testing.T) {
+	// The leak backstop applies ONLY to bracketed (multi-line) pastes. A single-
+	// line nudge sends no markers, so a stray "[200~" already on screen (e.g. in
+	// scrollback) must not be misread as a failed delivery.
+	swapDeliver(t, nil)
+	paneCapturer = func(string) (string, error) { return "[200~ from earlier\n> ", nil }
+	err := SendPromptToPane("%9", "run `amq drain --include-body` and act on it")
+	var leak *BracketedPasteLeakError
+	if errors.As(err, &leak) {
+		t.Fatalf("single-line delivery must not raise a bracketed-paste leak error: %v", err)
+	}
+}
+
+func TestSendPromptMultilineCleanSucceeds(t *testing.T) {
+	// Multi-line, no leaked marker, input region changes after Enter -> success.
+	swapDeliver(t, nil)
+	n := 0
+	paneCapturer = func(string) (string, error) {
+		n++
+		// distinct, marker-free captures: settle proceeds, no leak, submit
+		// sees the region change on the Enter.
+		return fmt.Sprintf("clean input box render %d\n> ", n), nil
+	}
+	if err := SendPromptToPane("%9", "line one\nline two"); err != nil {
+		t.Fatalf("clean multi-line send should succeed, got %v", err)
+	}
+}
+
+func TestWaitPaneSettledProceedsWhenStable(t *testing.T) {
+	prevCap, prevInt := paneCapturer, pasteSettleInterval
+	pasteSettleInterval = 0
+	t.Cleanup(func() { paneCapturer, pasteSettleInterval = prevCap, prevInt })
+
+	// Starts BLANK (the riskiest fresh-startup window), draws, then holds steady:
+	// waitPaneSettled must poll through the blank instead of bailing on it, and
+	// return once output stops changing (never block).
+	seq := []string{"", "boot", "ready", "ready", "ready"}
+	i := 0
+	paneCapturer = func(string) (string, error) {
+		s := seq[i]
+		if i < len(seq)-1 {
+			i++
+		}
+		return s, nil
+	}
+	done := make(chan struct{})
+	go func() { waitPaneSettled("%1"); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitPaneSettled did not return on a stabilizing pane")
 	}
 }
 
@@ -217,7 +295,10 @@ func TestSendPromptRetriesEnterWhenInputUnchanged(t *testing.T) {
 			return cleared, nil
 		}
 	}
-	if err := SendPromptToPane("%5", "do it\nplease review the long set of changes"); err != nil {
+	// Single-line so the only captures are submit's before/after pair (a
+	// multi-line prompt would add the settle + leak-check captures and shift this
+	// counter); the Enter-retry behavior under test is identical either way.
+	if err := SendPromptToPane("%5", "please review the long set of changes"); err != nil {
 		t.Fatalf("SendPromptToPane: %v", err)
 	}
 	if got := enterCount(*calls); got != 2 {
