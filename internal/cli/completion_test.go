@@ -231,6 +231,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"focus":      true,
 		"open":       true,
 		"send":       true,
+		"dispatch":   true,
 		"console":    true,
 		"amq":        true,
 		"history":    true,

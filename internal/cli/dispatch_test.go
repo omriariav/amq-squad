@@ -1,0 +1,190 @@
+package cli
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/omriariav/amq-squad/v2/internal/team"
+)
+
+func TestDispatchSendArgs(t *testing.T) {
+	got := dispatchSendArgs("/repo/.agent-mail/issue-96", "cto", "qa", "todo", "Do X", "details here", "urgent")
+	want := []string{
+		"send", "--root", "/repo/.agent-mail/issue-96", "--me", "cto", "--to", "qa",
+		"--kind", "todo", "--subject", "Do X", "--body", "details here", "--priority", "urgent",
+	}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("dispatchSendArgs = %v\nwant %v", got, want)
+	}
+
+	// Optional fields omitted when empty; body always present.
+	got = dispatchSendArgs("/r", "a", "b", "", "", "body", "")
+	for _, bad := range []string{"--kind", "--subject", "--priority"} {
+		if containsString(got, bad) {
+			t.Fatalf("empty %s should be omitted: %v", bad, got)
+		}
+	}
+	if !containsString(got, "--body") {
+		t.Fatalf("body must always be sent: %v", got)
+	}
+}
+
+func TestDispatchNudgePromptCarriesNoBody(t *testing.T) {
+	// The nudge must point the agent at `amq drain` and never embed task content
+	// (that lives only in the durable message — the single source of truth).
+	if !strings.Contains(dispatchNudgePrompt, "amq drain") {
+		t.Fatalf("nudge must tell the agent to drain: %q", dispatchNudgePrompt)
+	}
+	if strings.Contains(strings.ToLower(dispatchNudgePrompt), "%s") {
+		t.Fatalf("nudge must be a fixed string with no body interpolation: %q", dispatchNudgePrompt)
+	}
+}
+
+func TestResolveDispatchSender(t *testing.T) {
+	orchestrated := team.Team{
+		Orchestrated: true, Lead: "cto",
+		Members: []team.Member{{Role: "cto", Handle: "cto"}, {Role: "qa", Handle: "qa"}},
+	}
+	flat := team.Team{Members: []team.Member{{Role: "qa", Handle: "qa"}}}
+
+	// Explicit --from always wins.
+	if got, err := resolveDispatchSender(orchestrated, "lead-x"); err != nil || got != "lead-x" {
+		t.Fatalf("explicit from = %q, %v; want lead-x", got, err)
+	}
+	// Orchestrated team defaults to the lead handle.
+	if got, err := resolveDispatchSender(orchestrated, ""); err != nil || got != "cto" {
+		t.Fatalf("orchestrated default = %q, %v; want cto", got, err)
+	}
+	// Non-orchestrated, no AM_ME -> usage error guiding the operator to --from.
+	t.Setenv("AM_ME", "")
+	_, err := resolveDispatchSender(flat, "")
+	if err == nil || !strings.Contains(err.Error(), "--from") {
+		t.Fatalf("flat team without AM_ME should require --from, got %v", err)
+	}
+	// Non-orchestrated falls back to AM_ME when present.
+	t.Setenv("AM_ME", "bootstrapped-lead")
+	if got, err := resolveDispatchSender(flat, ""); err != nil || got != "bootstrapped-lead" {
+		t.Fatalf("AM_ME fallback = %q, %v; want bootstrapped-lead", got, err)
+	}
+}
+
+func writeDispatchTeam(t *testing.T, dir string) {
+	t.Helper()
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Project:      dir,
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// withDispatchWakeSeam records the nudge call and returns a canned outcome.
+func withDispatchWakeSeam(t *testing.T, outcome dispatchOutcome, err error) *[]string {
+	t.Helper()
+	var calls []string
+	prev := dispatchWakePane
+	dispatchWakePane = func(projectDir, profile, session string, explicitSession bool, role string, force bool) (dispatchOutcome, error) {
+		calls = append(calls, role)
+		return outcome, err
+	}
+	t.Cleanup(func() { dispatchWakePane = prev })
+	return &calls
+}
+
+func TestRunDispatchSendsDurablyThenNudges(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "sent msg abc123\n")
+	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run the suite"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("amq send calls = %d, want 1", len(*calls))
+	}
+	got := strings.Join((*calls)[0].Arg, " ")
+	// Durable send to the resolved root, from the orchestration lead, to qa.
+	for _, want := range []string{"send", "--root", ".agent-mail/issue-96", "--me cto", "--to qa", "--kind todo", "--subject Validate", "--body run the suite"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("send args missing %q: %s", want, got)
+		}
+	}
+	if !strings.Contains(stdout, "sent msg abc123") {
+		t.Fatalf("amq send output should pass through: %q", stdout)
+	}
+	if len(*nudges) != 1 || (*nudges)[0] != "qa" {
+		t.Fatalf("expected one nudge for qa, got %v", *nudges)
+	}
+	if !strings.Contains(stderr, "Nudged qa pane %7") {
+		t.Fatalf("expected nudged notice, got:\n%s", stderr)
+	}
+}
+
+func TestRunDispatchNoWakeSkipsNudge(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}"}, "ok\n")
+	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y", "--no-wake"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch --no-wake: %v", err)
+	}
+	if len(*nudges) != 0 {
+		t.Fatalf("--no-wake must not nudge, got %v", *nudges)
+	}
+	if !strings.Contains(stderr, "Skipped pane nudge") {
+		t.Fatalf("expected no-wake notice, got:\n%s", stderr)
+	}
+}
+
+func TestRunDispatchWakeFailureStillSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}"}, "ok\n")
+	// The durable send succeeded; a wake error must NOT fail the dispatch.
+	_ = withDispatchWakeSeam(t, dispatchOutcome{}, errTmuxAccessDenied())
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y"})
+	})
+	if err != nil {
+		t.Fatalf("wake failure must not fail dispatch, got %v", err)
+	}
+	if !strings.Contains(stderr, "pane nudge failed") {
+		t.Fatalf("expected nudge-failed warning, got:\n%s", stderr)
+	}
+}
+
+func TestRunDispatchValidations(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"missing role", []string{"--session", "s", "--subject", "x", "--body", "y"}, "requires --role"},
+		{"missing subject", []string{"--session", "s", "--role", "qa", "--body", "y"}, "requires --subject"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := captureOutput(t, func() error { return runDispatch(tc.args) })
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want contains %q", err, tc.want)
+			}
+		})
+	}
+}

@@ -24,6 +24,7 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"thread", "--help"},
 		{"status", "--help"},
 		{"console", "--help"},
+		{"dispatch", "--help"},
 		{"up", "--help"},
 		{"resume", "--help"},
 		{"fork", "--help"},

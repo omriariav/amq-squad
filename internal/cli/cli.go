@@ -209,6 +209,8 @@ func dispatch(args []string, version string) error {
 		return runFocus(args[1:])
 	case "send":
 		return runSend(args[1:])
+	case "dispatch":
+		return runDispatch(args[1:])
 	case "console":
 		return runConsole(args[1:])
 	case "amq":
