@@ -27,6 +27,20 @@ func TestInspectPaneByIDResolvesSinglePane(t *testing.T) {
 	}
 }
 
+func TestInspectPaneByIDMismatchReturnsFalse(t *testing.T) {
+	// tmux `display-message -t <gone-id>` does NOT error — it silently falls
+	// back to the client's CURRENT pane and prints that pane's fields. The row
+	// parses fine but its pane_id is NOT the one we asked for, so reporting it
+	// would be the #156 false positive (pane_alive:true for a closed pane).
+	// A mismatched pane_id must resolve to not-found.
+	zeroReadBackoff(t)
+	row := "main\t0\t1\t1234\tcodex\t/repo\t%999\t@42\tamq:issue-96:cto\tdogfood\n"
+	swapCapture(t, row, nil)
+	if _, ok := InspectPaneByID("%265"); ok {
+		t.Fatal("display-message returning a DIFFERENT pane_id must return false")
+	}
+}
+
 func TestInspectPaneByIDEmptyIDDoesNotShell(t *testing.T) {
 	got := swapCapture(t, "ignored", nil)
 	if _, ok := InspectPaneByID("   "); ok {
