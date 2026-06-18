@@ -107,6 +107,55 @@ func TestRunResumeProjectTargetsOtherDir(t *testing.T) {
 // extractPlanRows pulls the ROLE/ACTION/WAKE/NOTE table out of resume output
 // so parity tests can compare the planner's classification without coupling
 // to header/footer wording.
+func TestRunResumeRoleFilterSelectsSubset(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return runResume([]string{"--role", "fullstack,qa"})
+	})
+	if err != nil {
+		t.Fatalf("resume --role: %v", err)
+	}
+	rows := extractPlanRows(stdout)
+	for _, want := range []string{"fullstack", "qa"} {
+		if !strings.Contains(rows, want) {
+			t.Fatalf("plan rows missing selected role %q:\n%s", want, rows)
+		}
+	}
+	if strings.Contains(rows, "cto") {
+		t.Fatalf("unselected role cto must not appear in the plan rows:\n%s", rows)
+	}
+}
+
+func TestRunResumeRoleFilterRejectsUnknown(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := captureOutput(t, func() error {
+		return runResume([]string{"--role", "bogus"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "no team member(s) with role bogus") {
+		t.Fatalf("unknown role should fail clearly, got %v", err)
+	}
+}
+
 func extractPlanRows(out string) string {
 	const marker = "ROLE"
 	idx := strings.Index(out, marker)

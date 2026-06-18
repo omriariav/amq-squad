@@ -169,7 +169,12 @@ type resumeExecution struct {
 	ProjectDir       string
 	RequestedSession string
 	ExplicitSession  bool
-	Mode             resumeMode
+	// RolesRaw is the optional comma-separated subset of roles to resume. Empty
+	// resumes every team member; a non-empty list restricts the plan (and
+	// --exec) to those roles, so a lead can bring up a subset without
+	// relaunching itself or other live members.
+	RolesRaw string
+	Mode     resumeMode
 	Force            bool
 	NoBootstrap      bool
 	TrustRaw         string
@@ -251,6 +256,31 @@ func (s resumePrinterStyle) footerVerb() string {
 	return s.FooterVerb
 }
 
+// parseResumeRoles splits the --role subset filter into a normalized, de-duped,
+// ordered list of lowercase role ids. Empty input yields nil (no filter).
+func parseResumeRoles(raw string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		role := strings.ToLower(strings.TrimSpace(part))
+		if role == "" || seen[role] {
+			continue
+		}
+		seen[role] = true
+		out = append(out, role)
+	}
+	return out
+}
+
+// teamRoleList returns the team's roles in canonical order, for error messages.
+func teamRoleList(t team.Team) []string {
+	out := make([]string, 0, len(t.Members))
+	for _, m := range orderedTeamMembers(t.Members) {
+		out = append(out, m.Role)
+	}
+	return out
+}
+
 func executeResume(r resumeExecution) error {
 	trustMode, err := normalizeTrustMode(r.TrustRaw)
 	if err != nil {
@@ -298,6 +328,27 @@ func executeResume(r resumeExecution) error {
 		return err
 	}
 
+	// Optional --role subset: restrict the plan (and --exec) to the named roles.
+	// Validate each against the roster up front so a typo fails clearly instead
+	// of silently resuming nothing.
+	roleFilter := parseResumeRoles(r.RolesRaw)
+	if len(roleFilter) > 0 {
+		var unknown []string
+		for _, role := range roleFilter {
+			if !memberRoles[role] {
+				unknown = append(unknown, role)
+			}
+		}
+		if len(unknown) > 0 {
+			return usageErrorf("--role: no team member(s) with role %s (team roles: %s)",
+				strings.Join(unknown, ", "), strings.Join(teamRoleList(t), ", "))
+		}
+	}
+	roleSelected := make(map[string]bool, len(roleFilter))
+	for _, role := range roleFilter {
+		roleSelected[role] = true
+	}
+
 	// Default the probe so callers that build a resumeExecution without one
 	// (older entry points, fork) still classify against real liveness, while
 	// tests can inject a deterministic probe. This mirrors how status takes a
@@ -311,6 +362,9 @@ func executeResume(r resumeExecution) error {
 	plans := make([]resumePlan, 0, len(t.Members))
 	recordCount := 0
 	for _, m := range orderedTeamMembers(t.Members) {
+		if len(roleSelected) > 0 && !roleSelected[strings.ToLower(m.Role)] {
+			continue
+		}
 		plan, err := planMemberResume(memberPlanInput{
 			Member:         m,
 			Team:           t,
