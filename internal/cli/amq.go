@@ -314,16 +314,23 @@ func runAMQPassthrough(sub string, args []string) error {
 
 // splitAMQPassthroughArgs separates the wrapper's resolution flags
 // (--project/--session/--me, single- or double-dash, space- or =-joined) from
-// the arguments forwarded to `amq`. A user-supplied --root/--from-root is
-// rejected (the wrapper owns the root). A bare `--` terminator forwards the
-// remainder verbatim so a target flag the wrapper would otherwise consume can
-// still reach amq. Pure and table-testable.
+// the arguments forwarded to `amq`.
+//
+// Wrapper flags are consumed ONLY from the LEADING run of args: the first token
+// that is not one of them ends wrapper parsing, and the entire remainder is
+// forwarded to `amq` verbatim. This makes it impossible to misread a passthrough
+// flag's VALUE as a wrapper flag (e.g. `--subject --session` forwards both — the
+// `--session` is the subject's value, not a re-resolution), and keeps the
+// wrapper from ever silently sending to the wrong root. A user-supplied
+// --root/--from-root in the wrapper position is rejected (the wrapper owns the
+// root); an explicit `--` terminator forces the boundary so wrapper-shaped target
+// flags can be passed through. Pure and table-testable.
 func splitAMQPassthroughArgs(sub string, args []string) (project, session, me string, projectSet bool, passthrough []string, err error) {
 	i := 0
 	for i < len(args) {
 		a := args[i]
 		if a == "--" {
-			passthrough = append(passthrough, args[i+1:]...)
+			i++ // drop the terminator; forward everything after it verbatim
 			break
 		}
 		name, inlineVal, hasInline := amqFlagName(a)
@@ -350,12 +357,13 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 			continue
 		case "root", "from-root":
 			return "", "", "", false, nil, usageErrorf(
-				"do not pass --%s to 'amq-squad amq %s'; amq-squad resolves the queue root from --project/--session. Use bare 'amq %s' for manual root control, or put a target flag after '--'.",
+				"do not pass --%s to 'amq-squad amq %s'; amq-squad resolves the queue root from --project/--session. Use bare 'amq %s' for manual root control.",
 				name, sub, sub)
 		}
-		passthrough = append(passthrough, a)
-		i++
+		// First non-wrapper token: stop here and forward the rest untouched.
+		break
 	}
+	passthrough = append(passthrough, args[i:]...)
 	return project, session, me, projectSet, passthrough, nil
 }
 
@@ -382,10 +390,11 @@ func amqPassthroughUsage(sub string) string {
 Usage:
   amq-squad amq %s [--project DIR] [--session NAME] [--me HANDLE] [amq %s flags...]
 
-amq-squad consumes --project/--session/--me to resolve the queue root (so an
-external lead reaches .agent-mail/<session> instead of the default .agent-mail)
-and forwards every other flag to 'amq %s'. Do not pass --root; it is resolved
-for you. For a cross-project/cross-session target, use inline addressing
+amq-squad consumes --project/--session/--me (pass them FIRST, before the amq
+flags) to resolve the queue root — so an external lead reaches
+.agent-mail/<session> instead of the default .agent-mail — and forwards every
+remaining flag to 'amq %s'. Do not pass --root; it is resolved for you. For a
+cross-project/cross-session target, use inline addressing
 (--to handle@project:session) or place amq's own target flags after '--'.
 
 See 'amq %s --help' for the full flag surface.
