@@ -601,6 +601,68 @@ func TestExecuteDoctorPointerSyncWarnsOnDrift(t *testing.T) {
 	}
 }
 
+func TestExecuteDoctorTeamRulesRosterWarnsOnDrift(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A team-rules.md that does NOT name the cto member: the shared file was
+	// authored for a different roster (finding #155). The hint warns, but never
+	// fails — agents route from the live bootstrap block.
+	if err := rules.Write(dir, "# Team Rules\n\n## Role Scope\n\n- pm (Product Manager): handle `pm`, ...\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	d := newDoctorExec(t, dir)
+	var buf bytes.Buffer
+	d.Out = &buf
+	if err := executeDoctor(d); err != nil {
+		t.Fatalf("roster drift hint must not fail doctor: %v\n%s", err, buf.String())
+	}
+	row := firstLineWith(buf.String(), "team-rules roster")
+	for _, want := range []string{"warn", "cto", "cosmetic"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("roster drift row missing %q: %q", want, row)
+		}
+	}
+	// The hint must NOT steer the operator at `team rules init --force` (that
+	// re-renders the default profile = wrong roster for a named profile).
+	if strings.Contains(row, "--force") {
+		t.Errorf("roster drift row must not suggest --force: %q", row)
+	}
+}
+
+func TestExecuteDoctorTeamRulesRosterOKWhenDescribed(t *testing.T) {
+	dir := t.TempDir()
+	tm := team.Team{
+		Project: dir,
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}
+	if err := team.WriteProfile(dir, team.DefaultProfile, tm); err != nil {
+		t.Fatal(err)
+	}
+	body, err := renderTeamRules(tm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rules.Write(dir, body); err != nil {
+		t.Fatal(err)
+	}
+
+	d := newDoctorExec(t, dir)
+	var buf bytes.Buffer
+	d.Out = &buf
+	if err := executeDoctor(d); err != nil {
+		t.Fatalf("doctor failed: %v\n%s", err, buf.String())
+	}
+	row := firstLineWith(buf.String(), "team-rules roster")
+	if !strings.Contains(row, "ok") {
+		t.Fatalf("team-rules that describes the roster should be ok, got: %q", row)
+	}
+}
+
 func TestExecuteDoctorPointerSyncNamedProfileOutsideHint(t *testing.T) {
 	dir := t.TempDir()
 	memberDir := t.TempDir()

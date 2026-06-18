@@ -278,6 +278,55 @@ func TestRunNewProfileDelegatesToNamedTeamInit(t *testing.T) {
 	}
 }
 
+func TestRunNewProfileWarnsWhenSharedRulesDescribeDifferentRoster(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	// First team writes team-rules.md describing the cto roster.
+	if _, stderr, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--roles", "cto", "--session", "issue-96"})
+	}); err != nil {
+		t.Fatalf("new team: %v\nstderr:\n%s", err, stderr)
+	}
+
+	// A second profile with a DIFFERENT roster reuses the shared (no-clobber)
+	// team-rules.md, whose Role Scope still names cto, not pm -> warn (#155).
+	_, stderr, err := captureOutput(t, func() error {
+		return runNew([]string{"profile", "review", "--roles", "pm", "--session", "review"})
+	})
+	if err != nil {
+		t.Fatalf("new profile review: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{"left unchanged", "does not describe this profile's members", "bootstrap"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stale-rules warning missing %q in stderr:\n%s", want, stderr)
+		}
+	}
+}
+
+func TestRunNewProfileNoWarnWhenSharedRulesMatchRoster(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	if _, stderr, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--roles", "cto", "--session", "issue-96"})
+	}); err != nil {
+		t.Fatalf("new team: %v\nstderr:\n%s", err, stderr)
+	}
+
+	// A second profile with the SAME roster (cto) reuses the shared file, which
+	// already describes cto -> no roster-drift warning.
+	_, stderr, err := captureOutput(t, func() error {
+		return runNew([]string{"profile", "review", "--roles", "cto", "--session", "review"})
+	})
+	if err != nil {
+		t.Fatalf("new profile review: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stderr, "left unchanged") {
+		t.Fatalf("matching roster must not warn; stderr:\n%s", stderr)
+	}
+}
+
 func TestRunNewProfileProjectBeforeNameDryRunJSON(t *testing.T) {
 	project := t.TempDir()
 	other := t.TempDir()
