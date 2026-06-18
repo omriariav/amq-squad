@@ -178,9 +178,180 @@ func TestAMQCleanupRequiresSession(t *testing.T) {
 
 func TestAMQRejectsUnknownSubcommand(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
-		return runAMQ([]string{"send"})
+		return runAMQ([]string{"frobnicate"})
 	})
 	if err == nil || !strings.Contains(err.Error(), "unknown amq subcommand") {
 		t.Fatalf("unknown subcommand error = %v", err)
 	}
+}
+
+func TestAMQSendResolvesRootAndForwards(t *testing.T) {
+	chdir(t, t.TempDir())
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "sent\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "lead", "--to", "worker", "--kind", "todo", "--subject", "go"})
+	})
+	if err != nil {
+		t.Fatalf("amq send: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(*calls))
+	}
+	req := (*calls)[0]
+	got := strings.Join(req.Arg, " ")
+	// send is the verb; the resolved root is injected; the rest is forwarded
+	// verbatim. --session/--me are consumed for resolution, NOT forwarded.
+	for _, want := range []string{"send", "--root", ".agent-mail/issue-96", "--to worker", "--kind todo", "--subject go"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("send args missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "--session issue-96") || strings.Contains(got, "--me lead") {
+		t.Fatalf("resolution flags must not be forwarded to amq: %s", got)
+	}
+	// The acting handle reaches amq via AM_ME, and the root via AM_ROOT.
+	if !envHas(req.Env, "AM_ME", "lead") {
+		t.Fatalf("AM_ME=lead not injected: %v", req.Env)
+	}
+	if !envHasPrefix(req.Env, "AM_ROOT", ".agent-mail/issue-96") {
+		t.Fatalf("AM_ROOT not injected with resolved root: %v", req.Env)
+	}
+}
+
+func TestAMQDrainResolvesRootAndForwards(t *testing.T) {
+	chdir(t, t.TempDir())
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--session", "issue-96", "--me", "lead", "--include-body", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("amq drain: %v", err)
+	}
+	got := strings.Join((*calls)[0].Arg, " ")
+	for _, want := range []string{"drain", "--root", ".agent-mail/issue-96", "--include-body", "--json"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("drain args missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestAMQPassthroughRejectsRoot(t *testing.T) {
+	chdir(t, t.TempDir())
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}"}, "")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--root", ".agent-mail", "--to", "worker"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "do not pass --root") {
+		t.Fatalf("send --root should be rejected, got %v", err)
+	}
+}
+
+func TestAMQWatchStreams(t *testing.T) {
+	chdir(t, t.TempDir())
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}"}, "")
+	var streamed []string
+	prev := runAMQStreaming
+	runAMQStreaming = func(ctx amqContext, cmd []string) error {
+		streamed = cmd
+		return nil
+	}
+	t.Cleanup(func() { runAMQStreaming = prev })
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"watch", "--session", "issue-96", "--me", "lead", "--poll"})
+	})
+	if err != nil {
+		t.Fatalf("amq watch: %v", err)
+	}
+	got := strings.Join(streamed, " ")
+	for _, want := range []string{"watch", "--root", ".agent-mail/issue-96", "--poll"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("watch streamed args missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestSplitAMQPassthroughArgs(t *testing.T) {
+	cases := []struct {
+		name        string
+		args        []string
+		wantProject string
+		wantSession string
+		wantMe      string
+		wantSet     bool
+		wantPass    []string
+		wantErr     string
+	}{
+		{
+			name:        "space form consumed, rest forwarded",
+			args:        []string{"--session", "work", "--me", "lead", "--to", "worker", "--kind", "todo"},
+			wantSession: "work", wantMe: "lead",
+			wantPass: []string{"--to", "worker", "--kind", "todo"},
+		},
+		{
+			name:        "equals form and single dash",
+			args:        []string{"-session=work", "--me=lead", "--to=worker"},
+			wantSession: "work", wantMe: "lead",
+			wantPass: []string{"--to=worker"},
+		},
+		{
+			name:        "project sets flag",
+			args:        []string{"--project", "/repo", "--to", "x"},
+			wantProject: "/repo", wantSet: true,
+			wantPass: []string{"--to", "x"},
+		},
+		{
+			name:        "terminator forwards target flags verbatim",
+			args:        []string{"--session", "work", "--", "--session", "target", "--to", "codex"},
+			wantSession: "work",
+			wantPass:    []string{"--session", "target", "--to", "codex"},
+		},
+		{
+			name:    "root rejected",
+			args:    []string{"--session", "work", "--root", ".agent-mail"},
+			wantErr: "do not pass --root",
+		},
+		{
+			name:    "dangling value flag",
+			args:    []string{"--to", "x", "--session"},
+			wantErr: "needs a value",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			project, session, me, set, pass, err := splitAMQPassthroughArgs("send", tc.args)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want contains %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if project != tc.wantProject || session != tc.wantSession || me != tc.wantMe || set != tc.wantSet {
+				t.Fatalf("got project=%q session=%q me=%q set=%v; want %q/%q/%q/%v",
+					project, session, me, set, tc.wantProject, tc.wantSession, tc.wantMe, tc.wantSet)
+			}
+			if strings.Join(pass, " ") != strings.Join(tc.wantPass, " ") {
+				t.Fatalf("passthrough = %v, want %v", pass, tc.wantPass)
+			}
+		})
+	}
+}
+
+func envHas(env []string, key, val string) bool {
+	return containsString(env, key+"="+val)
+}
+
+func envHasPrefix(env []string, key, valSubstr string) bool {
+	for _, e := range env {
+		if strings.HasPrefix(e, key+"=") && strings.Contains(e, valSubstr) {
+			return true
+		}
+	}
+	return false
 }

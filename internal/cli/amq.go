@@ -47,7 +47,7 @@ type amqContext struct {
 
 func runAMQ(args []string) error {
 	if len(args) == 0 {
-		return usageErrorf("amq requires a subcommand: env, ops, route, who, presence, receipts, dlq, cleanup")
+		return usageErrorf("amq requires a subcommand: env, ops, route, who, presence, send, drain, watch, receipts, dlq, cleanup")
 	}
 	switch args[0] {
 	case "env":
@@ -60,6 +60,8 @@ func runAMQ(args []string) error {
 		return runAMQWho(args[1:])
 	case "presence":
 		return runAMQPresence(args[1:])
+	case "send", "drain", "watch":
+		return runAMQPassthrough(args[0], args[1:])
 	case "receipts":
 		return runAMQReceipts(args[1:])
 	case "dlq":
@@ -67,7 +69,7 @@ func runAMQ(args []string) error {
 	case "cleanup":
 		return runAMQCleanup(args[1:])
 	default:
-		return usageErrorf("unknown amq subcommand %q. Use env, ops, route, who, presence, receipts, dlq, or cleanup.", args[0])
+		return usageErrorf("unknown amq subcommand %q. Use env, ops, route, who, presence, send, drain, watch, receipts, dlq, or cleanup.", args[0])
 	}
 }
 
@@ -255,6 +257,139 @@ Usage:
 		cmd = append(cmd, "--json")
 	}
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
+}
+
+// runAMQStreaming is the seam for a long-running passthrough (`amq watch`),
+// which streams output until it exits rather than returning a buffered blob like
+// runAMQCommand. Production wires the child's stdio to the operator's terminal;
+// tests override it.
+var runAMQStreaming = defaultRunAMQStreaming
+
+func defaultRunAMQStreaming(ctx amqContext, cmd []string) error {
+	c := exec.Command("amq", cmd...)
+	c.Env = amqCommandEnv(ctx)
+	c.Dir = ctx.ProjectDir
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	c.Stdin = os.Stdin
+	return c.Run()
+}
+
+// runAMQPassthrough wraps a raw `amq` verb (send, drain, watch) so an EXTERNAL
+// lead — a human-driven session with no AM_ROOT/AM_ME injected — reaches the
+// correct workstream root instead of the default `.agent-mail`. Bare `amq send`
+// from such a session silently delivers to `.agent-mail` while a named-profile
+// worker drains `.agent-mail/<session>`, so the message never arrives (#152).
+//
+// It consumes ONLY --project/--session/--me (to resolve the queue root + acting
+// handle, exactly like every other `amq-squad amq` subcommand), injects them as
+// AM_ROOT/AM_BASE_ROOT/AM_ME plus an explicit --root, and forwards every other
+// argument to `amq` verbatim. It deliberately does NOT reimplement amq's flag
+// surface; unknown flags flow straight through. A user-supplied --root is
+// rejected so the resolved root can never be silently overridden into ambiguity.
+//
+// Because the wrapper OWNS --project/--session/--me as resolution inputs, amq's
+// own --project/--session TARGET flags (cross-project / cross-session delivery)
+// must be expressed with inline `--to handle@project:session` addressing or
+// placed after a `--` terminator, which forwards the remainder untouched.
+func runAMQPassthrough(sub string, args []string) error {
+	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
+		fmt.Fprint(os.Stderr, amqPassthroughUsage(sub))
+		return nil
+	}
+	project, session, me, projectSet, passthrough, err := splitAMQPassthroughArgs(sub, args)
+	if err != nil {
+		return err
+	}
+	ctx, err := resolveAMQContext(project, session, me, projectSet)
+	if err != nil {
+		return err
+	}
+	cmd := append([]string{sub, "--root", ctx.Root}, passthrough...)
+	if sub == "watch" {
+		return runAMQStreaming(ctx, cmd)
+	}
+	return runAndWriteAMQ(os.Stdout, ctx, cmd)
+}
+
+// splitAMQPassthroughArgs separates the wrapper's resolution flags
+// (--project/--session/--me, single- or double-dash, space- or =-joined) from
+// the arguments forwarded to `amq`. A user-supplied --root/--from-root is
+// rejected (the wrapper owns the root). A bare `--` terminator forwards the
+// remainder verbatim so a target flag the wrapper would otherwise consume can
+// still reach amq. Pure and table-testable.
+func splitAMQPassthroughArgs(sub string, args []string) (project, session, me string, projectSet bool, passthrough []string, err error) {
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if a == "--" {
+			passthrough = append(passthrough, args[i+1:]...)
+			break
+		}
+		name, inlineVal, hasInline := amqFlagName(a)
+		switch name {
+		case "project", "session", "me":
+			val := inlineVal
+			next := i + 1
+			if !hasInline {
+				if next >= len(args) {
+					return "", "", "", false, nil, usageErrorf("flag --%s needs a value", name)
+				}
+				val = args[next]
+				next++
+			}
+			switch name {
+			case "project":
+				project, projectSet = val, true
+			case "session":
+				session = val
+			case "me":
+				me = val
+			}
+			i = next
+			continue
+		case "root", "from-root":
+			return "", "", "", false, nil, usageErrorf(
+				"do not pass --%s to 'amq-squad amq %s'; amq-squad resolves the queue root from --project/--session. Use bare 'amq %s' for manual root control, or put a target flag after '--'.",
+				name, sub, sub)
+		}
+		passthrough = append(passthrough, a)
+		i++
+	}
+	return project, session, me, projectSet, passthrough, nil
+}
+
+// amqFlagName normalizes a CLI token to its flag name (leading dashes stripped,
+// any =value split off) and reports whether it carried an inline value. A
+// non-flag token (or a bare "-"/"--") returns name "".
+func amqFlagName(tok string) (name, val string, hasVal bool) {
+	if len(tok) < 2 || tok[0] != '-' {
+		return "", "", false
+	}
+	t := strings.TrimLeft(tok, "-")
+	if t == "" {
+		return "", "", false
+	}
+	if i := strings.IndexByte(t, '='); i >= 0 {
+		return t[:i], t[i+1:], true
+	}
+	return t, "", false
+}
+
+func amqPassthroughUsage(sub string) string {
+	return fmt.Sprintf(`amq-squad amq %s - run 'amq %s' against the resolved workstream root
+
+Usage:
+  amq-squad amq %s [--project DIR] [--session NAME] [--me HANDLE] [amq %s flags...]
+
+amq-squad consumes --project/--session/--me to resolve the queue root (so an
+external lead reaches .agent-mail/<session> instead of the default .agent-mail)
+and forwards every other flag to 'amq %s'. Do not pass --root; it is resolved
+for you. For a cross-project/cross-session target, use inline addressing
+(--to handle@project:session) or place amq's own target flags after '--'.
+
+See 'amq %s --help' for the full flag surface.
+`, sub, sub, sub, sub, sub, sub)
 }
 
 func runAMQReceipts(args []string) error {
