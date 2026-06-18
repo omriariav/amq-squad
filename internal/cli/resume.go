@@ -22,6 +22,7 @@ func runResume(args []string) error {
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for fresh members, e.g. '--chrome'")
 	projectFlag := fs.String("project", "", "project/team-home directory to resume (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to resume (default: default profile)")
+	roleFlag := fs.String("role", "", "comma-separated subset of roles to resume (default: all members)")
 	execMode := fs.Bool("exec", false, "open the planned launch commands in the terminal backend (tmux) instead of printing them")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (liveness + tmux metadata) instead of the human plan")
 	terminal := fs.String("terminal", "tmux", "terminal backend to use with --exec")
@@ -33,7 +34,7 @@ func runResume(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad resume - bring the team back from launch records
 
 Usage:
-  amq-squad resume [--project DIR] [--profile NAME] [--session name] [--restore-existing]
+  amq-squad resume [--project DIR] [--profile NAME] [--session name] [--role a,b] [--restore-existing]
                    [--dry-run] [--json] [--force-duplicate]
                    [--no-bootstrap] [--trust sandboxed|trusted]
                    [--model role=model,...]
@@ -57,7 +58,9 @@ Default behavior is plan-only: prints the per-member action table plus
 copy-pasteable commands. With --exec, opens those commands through the
 selected terminal backend (same path as 'up'), skipping members that are
 already live and refusing to start if any member is in the 'blocked'
-action without --force-duplicate. With --json, emits a schema-versioned
+action without --force-duplicate. Use --role a,b to resume only a subset
+of members (e.g. bring up two workers without relaunching a live lead).
+With --json, emits a schema-versioned
 resume_plan envelope for clients: per-member action plus a liveness block
 (status/detail/signals) consistent with 'status --json', and -- where available
 -- the copy-ready command (omitted for members already live) and tmux runtime
@@ -72,6 +75,7 @@ Examples:
   amq-squad resume --session issue-96 --restore-existing
   amq-squad resume --session issue-96 --json
   amq-squad resume --exec
+  amq-squad resume --exec --role fullstack,qa
   amq-squad resume --exec --target new-session --terminal-session squad
 `)
 	}
@@ -119,6 +123,7 @@ Examples:
 		ProjectDir:       projectDir,
 		RequestedSession: *sessionFlag,
 		ExplicitSession:  flagWasSet(fs, "session"),
+		RolesRaw:         *roleFlag,
 		Mode:             mode,
 		Force:            *forceDuplicate,
 		NoBootstrap:      *noBootstrap,
