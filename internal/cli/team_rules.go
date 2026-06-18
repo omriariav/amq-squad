@@ -24,12 +24,8 @@ func renderTeamRules(t team.Team) (string, error) {
 	b.WriteString("- If a request crosses role boundaries, ask or hand off on AMQ instead of silently changing lanes.\n\n")
 
 	for _, m := range t.Members {
-		label := m.Role
-		if r := catalog.Lookup(m.Role); r != nil {
-			label = r.Label
-		}
-		fmt.Fprintf(&b, "- %s (%s): handle `%s`, default workstream `%s`, cwd `%s`. %s\n",
-			m.Role, label, m.Handle, workstream, m.EffectiveCWD(projectDir), roleScope(m.Role))
+		fmt.Fprintf(&b, "%s, default workstream `%s`, cwd `%s`. %s\n",
+			memberRosterPrefix(m), workstream, m.EffectiveCWD(projectDir), roleScope(m.Role))
 	}
 	if team.SupportsOperatorGates(t) {
 		op := team.EffectiveOperator(t)
@@ -98,6 +94,37 @@ func renderTeamRules(t team.Team) (string, error) {
 	b.WriteString("- Do not use em dashes.\n")
 	b.WriteString("- Do not rewrite unrelated files.\n")
 	return b.String(), nil
+}
+
+// memberRosterPrefix is the stable leading segment of a member's line in the
+// generated team-rules.md: "- <role> (<label>): handle `<handle>`". It excludes
+// the workstream/cwd/scope tail, which can legitimately vary, so it is the exact
+// part the roster-drift check matches against the on-disk file. renderTeamRules
+// and the drift check share it so they can never disagree on the shape — the
+// check is a deterministic containment test against our own emitted prefix, not
+// a fuzzy parse of free-form prose.
+func memberRosterPrefix(m team.Member) string {
+	label := m.Role
+	if r := catalog.Lookup(m.Role); r != nil {
+		label = r.Label
+	}
+	return fmt.Sprintf("- %s (%s): handle `%s`", m.Role, label, m.Handle)
+}
+
+// teamRulesDescribesRoster reports whether the on-disk team-rules.md body
+// describes the given team's CURRENT roster: it contains the roster line prefix
+// (role + label + handle) for every member. team-rules.md is one shared file per
+// team-home written no-clobber, so a profile created when the file already
+// existed reuses a roster description authored for a DIFFERENT profile. A missing
+// member prefix is the deterministic signal of that drift; hand-edited norms
+// never false-flag because only the member prefixes are matched.
+func teamRulesDescribesRoster(body string, t team.Team) bool {
+	for _, m := range t.Members {
+		if !strings.Contains(body, memberRosterPrefix(m)) {
+			return false
+		}
+	}
+	return true
 }
 
 // writeOrchestrationNorm appends the lead-agent orchestration reporting norm to
