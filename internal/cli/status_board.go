@@ -73,8 +73,15 @@ type sessionBoardRow struct {
 	AgentsAlive  int        `json:"agents_alive"`
 	WakeLive     int        `json:"wake_live,omitempty"`
 	AtRisk       int        `json:"at_risk"`
-	Brief        string     `json:"brief,omitempty"`
-	LastActivity time.Time  `json:"last_activity,omitempty"`
+	// AgentsStale counts leftover (stale/dead/missing) records that were aged
+	// OUT of the health rollup because their last activity is older than
+	// boardStaleRecordAge. They are excluded from AgentsTotal so a pile of old
+	// ghost records from a prior session does not pin a quiet session at
+	// "degraded"; they are still surfaced (count + "(+N stale)" note) so the
+	// operator can prune them.
+	AgentsStale  int       `json:"agents_stale,omitempty"`
+	Brief        string    `json:"brief,omitempty"`
+	LastActivity time.Time `json:"last_activity,omitempty"`
 	briefKind    briefKind
 }
 
@@ -160,7 +167,7 @@ func executeStatusBoard(s statusBoardExecution) error {
 
 	rows := make([]sessionBoardRow, 0, len(snap.Sessions))
 	for _, sess := range snap.Sessions {
-		rows = append(rows, boardRowFor(s.ProjectDir, sess))
+		rows = append(rows, boardRowFor(s.ProjectDir, sess, now()))
 	}
 
 	if s.JSON {
@@ -172,24 +179,48 @@ func executeStatusBoard(s statusBoardExecution) error {
 	return renderBoardTable(s.Out, snap.BaseRoot, rows, now())
 }
 
-// boardRowFor rolls one discovered session up into a board row: a state
-// derived from agent liveness, an alive/total health count with an at-risk
-// flag, the brief one-liner, and the most recent agent LastSeen.
-func boardRowFor(projectDir string, sess state.Session) sessionBoardRow {
+// boardStaleRecordAge is how cold a leftover (stale/dead/missing) agent record
+// must be before the board ages it out of the health rollup. It mirrors the
+// coordination layer's staleness window so the board and the thread rollup agree
+// on what "old" means.
+const boardStaleRecordAge = state.DefaultStaleAfter
+
+// boardRowFor rolls one discovered session up into a board row: a state derived
+// from agent liveness, an alive/total health count with an at-risk flag, the
+// brief one-liner, and the most recent agent LastSeen. Leftover records that
+// have gone cold past boardStaleRecordAge are aged out of the health denominator
+// (AgentsTotal) and counted in AgentsStale instead, so old ghost records from a
+// prior session do not pin a quiet session at "degraded" (#157). now is the
+// reference clock for that aging.
+func boardRowFor(projectDir string, sess state.Session, now time.Time) sessionBoardRow {
 	row := sessionBoardRow{
-		Name:        sess.Name,
-		Root:        sess.Root,
-		AgentsTotal: len(sess.Agents),
+		Name: sess.Name,
+		Root: sess.Root,
 	}
 	var latest time.Time
 	for _, a := range sess.Agents {
 		switch a.Liveness {
 		case state.LivenessAlive:
 			row.AgentsAlive++
+			row.AgentsTotal++
 		case state.LivenessWakeLive:
 			row.WakeLive++
+			row.AgentsTotal++
 		case state.LivenessDeadMailboxLive:
 			row.AtRisk++
+			row.AgentsTotal++
+		default:
+			// stale / dead / missing: a leftover disk record. If it has a real
+			// last-activity timestamp older than the staleness window, age it out
+			// of the health rollup (a pile of old ghosts must not read degraded). A
+			// record with a recent timestamp still counts — a member that just went
+			// down should read degraded — and an unknown/zero timestamp is kept too
+			// (conservative: don't drop a record we can't date).
+			if boardRecordAgedOut(a, now) {
+				row.AgentsStale++
+			} else {
+				row.AgentsTotal++
+			}
 		}
 		if a.LastSeen.After(latest) {
 			latest = a.LastSeen
@@ -199,6 +230,17 @@ func boardRowFor(projectDir string, sess state.Session) sessionBoardRow {
 	row.State = rollupBoardState(row.AgentsAlive, row.WakeLive, row.AtRisk, row.AgentsTotal)
 	row.Brief, row.briefKind = classifyBrief(projectDir, sess.Name)
 	return row
+}
+
+// boardRecordAgedOut reports whether a leftover agent record is cold enough to
+// drop from the health rollup: it must carry a real last-activity timestamp
+// (a zero time is kept, since we cannot judge its age) that is older than
+// boardStaleRecordAge.
+func boardRecordAgedOut(a state.Agent, now time.Time) bool {
+	if a.LastSeen.IsZero() {
+		return false
+	}
+	return now.Sub(a.LastSeen) > boardStaleRecordAge
 }
 
 // rollupBoardState maps an alive/at-risk/total triple to the session state.
@@ -439,11 +481,20 @@ func boardSessionName(name string) string {
 //
 // The text is stable; callers do not depend on color here.
 func boardAgentsCell(r sessionBoardRow) string {
+	staleNote := ""
+	if r.AgentsStale > 0 {
+		staleNote = fmt.Sprintf(" (+%d stale)", r.AgentsStale)
+	}
 	if r.State == boardStateStopped {
 		if r.AgentsTotal == 0 {
+			if r.AgentsStale > 0 {
+				// Only old ghost records remain: report stopped, not "0/N", and
+				// name the leftovers so the operator can prune them.
+				return fmt.Sprintf("stopped (%d stale)", r.AgentsStale)
+			}
 			return "stopped"
 		}
-		return fmt.Sprintf("%d %s", r.AgentsTotal, pluralize(r.AgentsTotal, "agent", "agents"))
+		return fmt.Sprintf("%d %s", r.AgentsTotal, pluralize(r.AgentsTotal, "agent", "agents")) + staleNote
 	}
 	cell := fmt.Sprintf("%d/%d alive", r.AgentsAlive, r.AgentsTotal)
 	if r.AtRisk > 0 {
@@ -452,7 +503,7 @@ func boardAgentsCell(r sessionBoardRow) string {
 	if r.WakeLive > 0 {
 		cell += fmt.Sprintf(" (%d wake-live)", r.WakeLive)
 	}
-	return cell
+	return cell + staleNote
 }
 
 // boardBriefCell renders the BRIEF column with stub honesty: a real brief shows
