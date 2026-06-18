@@ -8,18 +8,18 @@ import (
 )
 
 func TestDispatchSendArgs(t *testing.T) {
-	got := dispatchSendArgs("/repo/.agent-mail/issue-96", "cto", "qa", "todo", "Do X", "details here", "urgent")
+	got := dispatchSendArgs("/repo/.agent-mail/issue-96", "cto", "qa", "p2p/cto__qa", "todo", "Do X", "details here", "urgent")
 	want := []string{
 		"send", "--root", "/repo/.agent-mail/issue-96", "--me", "cto", "--to", "qa",
-		"--kind", "todo", "--subject", "Do X", "--body", "details here", "--priority", "urgent",
+		"--thread", "p2p/cto__qa", "--kind", "todo", "--subject", "Do X", "--body", "details here", "--priority", "urgent",
 	}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("dispatchSendArgs = %v\nwant %v", got, want)
 	}
 
 	// Optional fields omitted when empty; body always present.
-	got = dispatchSendArgs("/r", "a", "b", "", "", "body", "")
-	for _, bad := range []string{"--kind", "--subject", "--priority"} {
+	got = dispatchSendArgs("/r", "a", "b", "", "", "", "body", "")
+	for _, bad := range []string{"--thread", "--kind", "--subject", "--priority"} {
 		if containsString(got, bad) {
 			t.Fatalf("empty %s should be omitted: %v", bad, got)
 		}

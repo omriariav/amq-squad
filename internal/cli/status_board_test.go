@@ -117,7 +117,7 @@ func seedMultiSessionBoard(t *testing.T) string {
 
 func TestBoardRowAgesOutStaleRecords(t *testing.T) {
 	now := boardNow
-	old := now.Add(-96 * time.Hour)    // older than boardStaleRecordAge (72h)
+	old := now.Add(-96 * time.Hour) // older than boardStaleRecordAge (72h)
 	recent := now.Add(-10 * time.Minute)
 
 	t.Run("ghosts do not drag a live session to degraded", func(t *testing.T) {
