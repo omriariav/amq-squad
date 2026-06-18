@@ -236,6 +236,7 @@ var completionCommonFlags = []string{
 	"--stage",
 	"--stale-after",
 	"--status",
+	"--stop-agents",
 	"--subject",
 	"--sync",
 	"--target",

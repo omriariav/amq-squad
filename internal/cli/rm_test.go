@@ -269,18 +269,20 @@ func TestRmRefusesLiveSessionWithoutForce(t *testing.T) {
 	}
 }
 
-// TestRmForceOverridesLiveSession: --force tears down a live session anyway
-// (the operator's explicit override). It must NOT silently stop the agent — it
-// only removes the on-disk footprint.
+// TestRmForceOverridesLiveSession: --force tears down a live session's on-disk
+// footprint but must NOT stop the agent or close its pane (the documented
+// contract). It must, however, no longer be SILENT about it: it names the live
+// agent's now-unmanaged pane and points at --stop-agents.
 func TestRmForceOverridesLiveSession(t *testing.T) {
 	base := t.TempDir()
 	projectDir := t.TempDir()
 	root := filepath.Join(base, "issue-96")
 	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
 		Binary: "codex", Handle: "cto", AgentPID: 4242,
-		Root: root, Session: "issue-96",
+		Root: root, Session: "issue-96", Tmux: &launch.TmuxInfo{PaneID: "%42"},
 	})
 	liveProbe := rmStateProbe(map[int]bool{4242: true}, map[int]bool{4242: true})
+	closed := swapPaneCloser(t)
 
 	out, err := runRmExec(t, rmExecution{
 		ProjectDir: projectDir,
@@ -288,6 +290,7 @@ func TestRmForceOverridesLiveSession(t *testing.T) {
 		Mode:       rmModeDelete,
 		Yes:        true,
 		Force:      true,
+		ClosePanes: true,
 		BaseRoot:   base,
 		Probe:      liveProbe,
 	})
@@ -296,6 +299,72 @@ func TestRmForceOverridesLiveSession(t *testing.T) {
 	}
 	if _, statErr := os.Stat(root); !os.IsNotExist(statErr) {
 		t.Errorf("rm --force should remove the root; stat err = %v", statErr)
+	}
+	// The live agent's pane must be LEFT OPEN (force never kills a live agent).
+	for _, id := range *closed {
+		if id == "%42" {
+			t.Fatalf("rm --force must not close a live agent's pane %%42")
+		}
+	}
+	// ...but it must say so, with the pane and the --stop-agents path.
+	for _, want := range []string{"left RUNNING", "cto", "%42", "--stop-agents"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rm --force notice missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestRmStopAgentsTearsDownLiveSession: --stop-agents is the one-command full
+// teardown — it SIGTERMs the live agents, closes their panes, then removes the
+// session.
+func TestRmStopAgentsTearsDownLiveSession(t *testing.T) {
+	base := t.TempDir()
+	projectDir := t.TempDir()
+	root := filepath.Join(base, "issue-96")
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 4242,
+		Root: root, Session: "issue-96", Tmux: &launch.TmuxInfo{PaneID: "%42"},
+	})
+	liveProbe := rmStateProbe(map[int]bool{4242: true}, map[int]bool{4242: true})
+	closed := swapPaneCloser(t)
+	term := &recordingTerminator{}
+
+	out, err := runRmExec(t, rmExecution{
+		ProjectDir: projectDir,
+		Session:    "issue-96",
+		Mode:       rmModeDelete,
+		Yes:        true,
+		// NB: Force deliberately NOT set — --stop-agents must imply it in the
+		// execution path so a live session is not refused.
+		StopAgents: true,
+		ClosePanes: true,
+		Terminator: term,
+		BaseRoot:   base,
+		Probe:      liveProbe,
+	})
+	if err != nil {
+		t.Fatalf("rm --stop-agents should succeed: %v\n%s", err, out)
+	}
+	if len(term.calls) != 1 || term.calls[0] != 4242 {
+		t.Fatalf("expected SIGTERM of pid 4242, got terminate calls %v", term.calls)
+	}
+	foundPane := false
+	for _, id := range *closed {
+		if id == "%42" {
+			foundPane = true
+		}
+	}
+	if !foundPane {
+		t.Fatalf("--stop-agents must close the live agent's pane %%42; closed = %v", *closed)
+	}
+	if _, statErr := os.Stat(root); !os.IsNotExist(statErr) {
+		t.Errorf("--stop-agents should remove the root; stat err = %v", statErr)
+	}
+	if !strings.Contains(out, "stopped agent cto") {
+		t.Errorf("expected 'stopped agent cto' notice, got:\n%s", out)
+	}
+	if strings.Contains(out, "left RUNNING") {
+		t.Errorf("--stop-agents must not print the left-running notice:\n%s", out)
 	}
 }
 
