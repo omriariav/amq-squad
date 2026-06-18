@@ -93,6 +93,38 @@ func TestSendPromptToPaneDeliversVerbatimWithEnter(t *testing.T) {
 	}
 }
 
+func TestSendPromptBracketedPasteOnlyForMultiline(t *testing.T) {
+	// A single-line prompt (the dispatch drain-nudge shape) must paste WITHOUT
+	// -p: the bracketed-paste start marker (ESC[200~) can leak as literal text
+	// into a just-spawned Codex TUI before it enables bracketed-paste mode,
+	// leaving the input stuck and unsubmitted.
+	calls := swapDeliver(t, nil)
+	if err := SendPromptToPane("%7", "run `amq drain --include-body` and act on it"); err != nil {
+		t.Fatalf("SendPromptToPane: %v", err)
+	}
+	paste := (*calls)[2].args // exists, load-buffer, paste-buffer, send-keys
+	buf := (*calls)[1].args[2]
+	if want := []string{"paste-buffer", "-d", "-b", buf, "-t", "%7"}; !reflect.DeepEqual(paste, want) {
+		t.Fatalf("single-line paste argv = %v, want %v (no -p)", paste, want)
+	}
+	for _, a := range paste {
+		if a == "-p" {
+			t.Fatalf("single-line prompt must NOT request bracketed paste: %v", paste)
+		}
+	}
+
+	// A multi-line prompt keeps -p so embedded newlines don't submit early.
+	calls2 := swapDeliver(t, nil)
+	if err := SendPromptToPane("%8", "first line\nsecond line"); err != nil {
+		t.Fatalf("SendPromptToPane multi-line: %v", err)
+	}
+	paste2 := (*calls2)[2].args
+	buf2 := (*calls2)[1].args[2]
+	if want := []string{"paste-buffer", "-d", "-p", "-b", buf2, "-t", "%8"}; !reflect.DeepEqual(paste2, want) {
+		t.Fatalf("multi-line paste argv = %v, want %v (with -p)", paste2, want)
+	}
+}
+
 func TestSendPromptUsesUniqueBufferPerCall(t *testing.T) {
 	calls := swapDeliver(t, nil)
 	if err := SendPromptToPane("%1", "a"); err != nil {
