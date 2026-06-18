@@ -92,10 +92,11 @@ func SendKeysToPane(paneID string, keys ...string) error {
 // SendPromptToPane delivers prompt to the exact tmux pane and submits it with an
 // explicit Enter. The prompt is staged into a tmux paste buffer via stdin
 // (`load-buffer -`), never a shell string or argv, so multi-line text, quotes,
-// and shell metacharacters are preserved verbatim. paste-buffer -p requests
-// bracketed paste when the target app supports it, so embedded newlines do not
-// submit the prompt prematurely; the trailing Enter is the single submit event.
-// Returns *DeadPaneError when the pane is gone.
+// and shell metacharacters are preserved verbatim. For MULTI-LINE text it pastes
+// with `-p` (bracketed paste) so embedded newlines do not submit the prompt
+// prematurely; the trailing Enter is the single submit event. A SINGLE-LINE
+// prompt is pasted WITHOUT `-p` (see pasteBufferArgs). Returns *DeadPaneError
+// when the pane is gone.
 func SendPromptToPane(paneID, prompt string) error {
 	if strings.TrimSpace(paneID) == "" {
 		return fmt.Errorf("send: empty pane id")
@@ -110,12 +111,30 @@ func SendPromptToPane(paneID, prompt string) error {
 	if out, err := deliverExec(prompt, "load-buffer", "-b", buf, "-"); err != nil {
 		return fmt.Errorf("tmux load-buffer: %w: %s", err, strings.TrimSpace(out))
 	}
-	// Paste into the exact pane (bracketed when supported) and delete the buffer.
-	if out, err := deliverExec("", "paste-buffer", "-d", "-p", "-b", buf, "-t", paneID); err != nil {
+	// Paste into the exact pane and delete the buffer.
+	if out, err := deliverExec("", pasteBufferArgs(buf, paneID, prompt)...); err != nil {
 		return fmt.Errorf("tmux paste-buffer -t %s: %w: %s", paneID, err, strings.TrimSpace(out))
 	}
 	// Submit robustly — the Enter must not race the paste (the #86 hang).
 	return submitStagedPrompt(paneID)
+}
+
+// pasteBufferArgs builds the `tmux paste-buffer` argv for a staged prompt. It
+// requests bracketed paste (`-p`) ONLY when the prompt spans multiple lines: a
+// multi-line body needs its embedded newlines buffered as paste content so they
+// do not submit early, leaving the trailing Enter as the sole submit. A
+// single-line prompt has no line break to protect, and the bracketed-paste START
+// marker (ESC[200~) can leak as literal "[200~" text into an agent TUI that has
+// not yet enabled bracketed-paste mode — the stuck-input hang observed when
+// nudging a freshly-spawned Codex pane. Omitting `-p` for single-line prompts
+// removes that failure mode entirely; the Enter-retry in submitStagedPrompt
+// still covers a plain paste/Enter race. We test for CR as well as LF so a bare
+// "\r" (which a terminal may treat like Enter) keeps the bracketed protection.
+func pasteBufferArgs(buf, paneID, prompt string) []string {
+	if strings.ContainsAny(prompt, "\r\n") {
+		return []string{"paste-buffer", "-d", "-p", "-b", buf, "-t", paneID}
+	}
+	return []string{"paste-buffer", "-d", "-b", buf, "-t", paneID}
 }
 
 // submitStagedPrompt presses Enter to submit a just-pasted prompt and confirms
