@@ -310,13 +310,30 @@ func TestSplitAMQPassthroughArgs(t *testing.T) {
 			wantPass:    []string{"--session", "target", "--to", "codex"},
 		},
 		{
-			name:    "root rejected",
+			// A passthrough flag whose VALUE equals a wrapper flag name must NOT be
+			// re-read as a wrapper flag: parsing stops at the first non-wrapper
+			// token (--to), so --subject's value "--session" is forwarded verbatim.
+			name:        "passthrough value equal to a wrapper flag is not consumed",
+			args:        []string{"--session", "work", "--to", "qa", "--subject", "--session", "--body", "x"},
+			wantSession: "work",
+			wantPass:    []string{"--to", "qa", "--subject", "--session", "--body", "x"},
+		},
+		{
+			// Likewise, a --root appearing AFTER the leading wrapper run is a
+			// passthrough value/flag, forwarded to amq, never a false rejection.
+			name:        "root after the leading run is forwarded, not rejected",
+			args:        []string{"--session", "work", "--subject", "--root"},
+			wantSession: "work",
+			wantPass:    []string{"--subject", "--root"},
+		},
+		{
+			name:    "root rejected in the wrapper position",
 			args:    []string{"--session", "work", "--root", ".agent-mail"},
 			wantErr: "do not pass --root",
 		},
 		{
-			name:    "dangling value flag",
-			args:    []string{"--to", "x", "--session"},
+			name:    "dangling wrapper value flag",
+			args:    []string{"--me", "lead", "--session"},
 			wantErr: "needs a value",
 		},
 	}

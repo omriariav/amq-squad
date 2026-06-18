@@ -18,8 +18,8 @@ import (
 // message. The nudge exists only because `amq`'s own wake sidecar (TIOCSTI) is
 // experimental/unreliable on modern macOS/Linux, so amq-squad's tmux pane
 // injection is the dependable way to poke an idle agent into draining.
-const dispatchNudgePrompt = "amq-squad dispatch: a new task is queued in your inbox. " +
-	"Run `amq drain --include-body` now and act on the newest todo. Do not wait to be polled."
+const dispatchNudgePrompt = "amq-squad dispatch: a new message is queued in your inbox. " +
+	"Run `amq drain --include-body` now and act on the newest item. Do not wait to be polled."
 
 // dispatchOutcome reports how the best-effort pane nudge resolved. PaneID is the
 // pane that was nudged (empty when none was). Skipped carries a human-readable
