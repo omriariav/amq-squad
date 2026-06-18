@@ -115,6 +115,81 @@ func seedMultiSessionBoard(t *testing.T) string {
 	return base
 }
 
+func TestBoardRowAgesOutStaleRecords(t *testing.T) {
+	now := boardNow
+	old := now.Add(-96 * time.Hour)    // older than boardStaleRecordAge (72h)
+	recent := now.Add(-10 * time.Minute)
+
+	t.Run("ghosts do not drag a live session to degraded", func(t *testing.T) {
+		sess := state.Session{
+			Name: "ws",
+			Agents: []state.Agent{
+				{Liveness: state.LivenessAlive, LastSeen: recent},
+				{Liveness: state.LivenessStale, LastSeen: old},
+				{Liveness: state.LivenessDead, LastSeen: old},
+			},
+		}
+		row := boardRowFor(t.TempDir(), sess, now)
+		if row.State != boardStateRunning {
+			t.Fatalf("state = %q, want running (old ghosts aged out)", row.State)
+		}
+		if row.AgentsAlive != 1 || row.AgentsTotal != 1 || row.AgentsStale != 2 {
+			t.Fatalf("got alive=%d total=%d stale=%d; want 1/1/2", row.AgentsAlive, row.AgentsTotal, row.AgentsStale)
+		}
+		if cell := boardAgentsCell(row); !strings.Contains(cell, "1/1 alive") || !strings.Contains(cell, "(+2 stale)") {
+			t.Fatalf("cell = %q, want '1/1 alive (+2 stale)'", cell)
+		}
+	})
+
+	t.Run("only old ghosts read stopped, not degraded", func(t *testing.T) {
+		sess := state.Session{
+			Name: "ws",
+			Agents: []state.Agent{
+				{Liveness: state.LivenessStale, LastSeen: old},
+				{Liveness: state.LivenessDead, LastSeen: old},
+			},
+		}
+		row := boardRowFor(t.TempDir(), sess, now)
+		if row.State != boardStateStopped {
+			t.Fatalf("state = %q, want stopped", row.State)
+		}
+		if row.AgentsTotal != 0 || row.AgentsStale != 2 {
+			t.Fatalf("got total=%d stale=%d; want 0/2", row.AgentsTotal, row.AgentsStale)
+		}
+		if cell := boardAgentsCell(row); cell != "stopped (2 stale)" {
+			t.Fatalf("cell = %q, want 'stopped (2 stale)'", cell)
+		}
+	})
+
+	t.Run("a recently-down member still reads degraded", func(t *testing.T) {
+		sess := state.Session{
+			Name: "ws",
+			Agents: []state.Agent{
+				{Liveness: state.LivenessAlive, LastSeen: recent},
+				{Liveness: state.LivenessStale, LastSeen: recent}, // not yet cold
+			},
+		}
+		row := boardRowFor(t.TempDir(), sess, now)
+		if row.State != boardStateDegraded {
+			t.Fatalf("state = %q, want degraded (recent down member counts)", row.State)
+		}
+		if row.AgentsTotal != 2 || row.AgentsStale != 0 {
+			t.Fatalf("got total=%d stale=%d; want 2/0", row.AgentsTotal, row.AgentsStale)
+		}
+	})
+
+	t.Run("an undated leftover record is kept, not aged out", func(t *testing.T) {
+		sess := state.Session{
+			Name:   "ws",
+			Agents: []state.Agent{{Liveness: state.LivenessMissing}}, // zero LastSeen
+		}
+		row := boardRowFor(t.TempDir(), sess, now)
+		if row.AgentsTotal != 1 || row.AgentsStale != 0 {
+			t.Fatalf("undated record: total=%d stale=%d; want 1/0", row.AgentsTotal, row.AgentsStale)
+		}
+	})
+}
+
 func TestStatusBoardMultiSession(t *testing.T) {
 	base := seedMultiSessionBoard(t)
 	proj := t.TempDir()
