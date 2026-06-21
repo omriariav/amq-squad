@@ -135,10 +135,20 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
 	}
-	if msg := strings.TrimSpace(string(out)); msg != "" {
-		fmt.Println(msg)
+	// Print our OWN authoritative, session-aware summary rather than echoing
+	// `amq send`'s raw line — that line renders an empty "session:" for a
+	// --root-only send, which reads like a bug. We know the session, root, and
+	// handle here; pull the message id out of amq's output. Fall back to amq's
+	// raw line only if the id can't be parsed (so nothing is ever hidden).
+	if msgID := parseSentMessageID(string(out)); msgID != "" {
+		fmt.Printf("Dispatched %s to %s (handle %s) on session %s — msg %s (root %s)\n",
+			*kindFlag, *roleFlag, member.Handle, workstream, msgID, ctx.Root)
+	} else {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			fmt.Println(msg)
+		}
+		quietNotice("Queued %s task for %s (handle %s) at %s.\n", *kindFlag, *roleFlag, member.Handle, ctx.Root)
 	}
-	quietNotice("Queued %s task for %s (handle %s) at %s.\n", *kindFlag, *roleFlag, member.Handle, ctx.Root)
 
 	if *noWakeFlag {
 		quietNotice("Skipped pane nudge (--no-wake); %s drains the task on its next turn.\n", *roleFlag)
@@ -159,6 +169,21 @@ Examples:
 		quietNotice("Task queued; pane not nudged: %s\n", outcome.Skipped)
 	}
 	return nil
+}
+
+// parseSentMessageID extracts the message id from `amq send`'s text output,
+// whose confirmation line reads "Sent <id> to <handle> (...)". Returns "" when
+// no such line is found, so the caller can fall back to echoing amq's raw output
+// rather than hiding it.
+func parseSentMessageID(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Sent "); ok {
+			if fields := strings.Fields(rest); len(fields) > 0 {
+				return fields[0]
+			}
+		}
+	}
+	return ""
 }
 
 // dispatchSendArgs builds the `amq send` argv for a dispatch: a durable message

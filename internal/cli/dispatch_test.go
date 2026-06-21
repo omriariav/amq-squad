@@ -41,6 +41,41 @@ func TestDispatchNudgePromptCarriesNoBody(t *testing.T) {
 	}
 }
 
+func TestParseSentMessageID(t *testing.T) {
+	out := "Sent 2026-06-21T09-12-42.415Z_pid63003_cc12d3ad to qa (session: , root: /x/.agent-mail/clitest)\n"
+	if got := parseSentMessageID(out); got != "2026-06-21T09-12-42.415Z_pid63003_cc12d3ad" {
+		t.Fatalf("parseSentMessageID = %q", got)
+	}
+	if got := parseSentMessageID("drained by lead\nnothing here"); got != "" {
+		t.Fatalf("no Sent line should yield empty, got %q", got)
+	}
+}
+
+func TestRunDispatchPrintsSessionAwareSummary(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"},
+		"Sent 2026abc_msgid to qa (session: , root: /x/.agent-mail/issue-96)\n")
+	_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	// Our own summary: names the session, carries the msg id, NO empty "session:".
+	for _, want := range []string{"Dispatched todo to qa", "on session issue-96", "msg 2026abc_msgid"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("summary missing %q in:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "session: ,") {
+		t.Fatalf("must not echo amq's empty-session line:\n%s", stdout)
+	}
+}
+
 func TestClassifyNudgeResult(t *testing.T) {
 	busy := func(string) (bool, error) { return true, nil }
 	idle := func(string) (bool, error) { return false, nil }
