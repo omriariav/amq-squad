@@ -14,6 +14,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 // doctorMinAMQVersion is the lowest AMQ release this build of amq-squad
@@ -87,6 +88,10 @@ type doctorExecution struct {
 	// version. found=false when none is on PATH. Injectable so the version-skew
 	// check never shells a real binary in tests.
 	PathBinaryVersion func() (path, version string, found bool)
+	// PaneLister lists tmux panes for orphan-pane detection. ResolveBaseRoot
+	// resolves the AMQ base root whose launch records are treated as current.
+	PaneLister      tmuxpane.PaneLister
+	ResolveBaseRoot func(projectDir string) (string, error)
 }
 
 func defaultDoctorExecution(projectDir string) doctorExecution {
@@ -102,6 +107,8 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		Getenv:            os.Getenv,
 		TmuxShowOptions:   defaultTmuxShowServerOption,
 		PathBinaryVersion: defaultPathBinaryVersion,
+		PaneLister:        statusPaneLister,
+		ResolveBaseRoot:   scanBaseRootForProject,
 	}
 }
 
@@ -422,6 +429,7 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckTeamRulesRoster(d))
 	checks = append(checks, doctorCheckTmux(d))
 	checks = append(checks, doctorCheckTmuxExtendedKeys(d))
+	checks = append(checks, doctorCheckOrphanPanes(d))
 	checks = append(checks, doctorCheckMarkerIntegrity(d)...)
 	checks = append(checks, doctorCheckPointerSync(d)...)
 	wakeChecks, workstream := doctorCheckWake(d)
@@ -661,6 +669,45 @@ func doctorCheckTmuxExtendedKeys(d doctorExecution) doctorCheck {
 			"tmux set-option -as terminal-features 'xterm*:extkeys'. " +
 			"iTerm2 tmux -CC (the attach_control action) avoids this entirely.",
 	}
+}
+
+func doctorCheckOrphanPanes(d doctorExecution) doctorCheck {
+	const name = "orphan panes"
+	lister := d.PaneLister
+	if lister == nil {
+		lister = statusPaneLister
+	}
+	resolve := d.ResolveBaseRoot
+	if resolve == nil {
+		resolve = scanBaseRootForProject
+	}
+	baseRoot, err := resolve(d.ProjectDir)
+	if err != nil || strings.TrimSpace(baseRoot) == "" {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "AMQ base root unavailable; skipped"}
+	}
+	panes, err := lister()
+	if err != nil {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "tmux pane scan unavailable; skipped"}
+	}
+	records, err := liveLaunchPaneTokens(d.ProjectDir, filepath.Clean(baseRoot))
+	if err != nil {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "launch-record scan unavailable; skipped"}
+	}
+	orphans := findOrphanPanes(panes, records, "")
+	if len(orphans) == 0 {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "no orphan amq-squad panes found"}
+	}
+	sessions := map[string]bool{}
+	for _, p := range orphans {
+		sessions[p.Session] = true
+	}
+	detail := fmt.Sprintf("%d orphan pane(s) found across %d session(s); run 'amq-squad prune-panes' to preview cleanup", len(orphans), len(sessions))
+	if len(sessions) == 1 {
+		for s := range sessions {
+			detail = fmt.Sprintf("%d orphan pane(s) found; run 'amq-squad prune-panes --session %s' to preview cleanup", len(orphans), s)
+		}
+	}
+	return doctorCheck{Name: name, Status: doctorWarn, Detail: detail}
 }
 
 func doctorCheckMarkerIntegrity(d doctorExecution) []doctorCheck {

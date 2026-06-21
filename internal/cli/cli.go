@@ -211,6 +211,10 @@ func dispatch(args []string, version string) error {
 		return runSend(args[1:])
 	case "dispatch":
 		return runDispatch(args[1:])
+	case "collect":
+		return runCollect(args[1:])
+	case "prune-panes":
+		return runPrunePanes(args[1:])
 	case "console":
 		return runConsole(args[1:])
 	case "amq":
@@ -254,6 +258,8 @@ Commands:
   threads   List collapsed AMQ thread summaries for one workstream
   thread    Read one AMQ thread transcript by project and session
   status    Multi-session board (also bare 'amq-squad'); --project and --session for detail
+  collect   Drain once, optionally wait once for a report, then drain once
+  prune-panes Reclaim orphaned amq-squad tmux panes (confirm-gated)
   console   Read-only Mission Control TUI over all sessions (--once for CI)
   amq       Project-aware AMQ diagnostics and confirm-gated maintenance
   history   List restorable launch records
