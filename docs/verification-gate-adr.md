@@ -1,6 +1,6 @@
 # ADR: Verification-before-merge gate
 
-Status: Proposed for v2.3.0, pending cto sign-off
+Status: Approved for v2.3.0
 
 Issue: #164
 
