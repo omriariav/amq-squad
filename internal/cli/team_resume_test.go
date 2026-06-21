@@ -375,7 +375,7 @@ func TestRunTeamResumeFreshIgnoresRestoreRecords(t *testing.T) {
 	if err := team.Write(dir, team.Team{
 		Workstream: "issue-96",
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: ""},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -934,6 +934,71 @@ func TestRunTeamResumeReattachWhenSavedConversation(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "reattach: saved conversation cto-thread") {
 		t.Errorf("plan Note should name the reattached conversation:\n%s", stdout)
+	}
+}
+
+func TestRunTeamResumeMixedSessionFiltersOutCrossSessionMembers(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{
+			{Role: "go-dev", Binary: "claude", Handle: "go-dev", Session: "v2-3-0"},
+			{Role: "architect", Binary: "codex", Handle: "architect", Session: "v2-3-0"},
+			{Role: "pm-copilot", Binary: "claude", Handle: "pm-copilot", Session: "pm-copilot"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamResume([]string{"--session", "v2-3-0"})
+	})
+	if err != nil {
+		t.Fatalf("team resume: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stdout, "pm-copilot") {
+		t.Errorf("resume plan should not include cross-session member pm-copilot:\n%s", stdout)
+	}
+	for _, want := range []string{"go-dev", "architect"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("resume plan missing session member %q:\n%s", want, stdout)
+		}
+	}
+	if !strings.Contains(stderr, "skipping pm-copilot") {
+		t.Errorf("stderr missing skip notice for pm-copilot:\n%s", stderr)
+	}
+}
+
+func TestRunTeamResumeMixedSessionIncludesUnpinnedMembers(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{
+			{Role: "go-dev", Binary: "claude", Handle: "go-dev", Session: "v2-3-0"},
+			{Role: "shared-bot", Binary: "claude", Handle: "shared-bot", Session: ""},
+			{Role: "pm-copilot", Binary: "claude", Handle: "pm-copilot", Session: "pm-copilot"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamResume([]string{"--session", "v2-3-0"})
+	})
+	if err != nil {
+		t.Fatalf("team resume: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{"go-dev", "shared-bot"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("resume plan missing %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "pm-copilot") {
+		t.Errorf("resume plan should not include cross-session member pm-copilot:\n%s", stdout)
 	}
 }
 

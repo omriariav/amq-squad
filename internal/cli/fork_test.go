@@ -16,8 +16,8 @@ func seedForkTeam(t *testing.T, dir string) {
 	if err := team.Write(dir, team.Team{
 		Workstream: "issue-96",
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96"},
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: ""},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: ""},
 		},
 	}); err != nil {
 		t.Fatal(err)

@@ -250,7 +250,7 @@ func TestRunResumeHonorsExplicitSession(t *testing.T) {
 	resumeChdir(t, dir)
 	if err := team.Write(dir, team.Team{
 		Workstream: "issue-96",
-		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-99"}},
 	}); err != nil {
 		t.Fatal(err)
 	}

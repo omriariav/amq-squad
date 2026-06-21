@@ -306,6 +306,14 @@ func executeResume(r resumeExecution) error {
 	if err != nil {
 		return err
 	}
+	active, skipped := filterMembersBySession(t.Members, workstream)
+	for _, m := range skipped {
+		quietNotice("notice: skipping %s: pinned to session %q, not %q\n", m.Role, m.Session, workstream)
+	}
+	if len(active) == 0 {
+		return fmt.Errorf("no team members are pinned to session %q (all %d member(s) belong to other sessions)", workstream, len(t.Members))
+	}
+	t.Members = active
 	mergedBinaryArgs := mergeBinaryArgs(t.BinaryArgs, binaryArgs)
 	resolvedTrust, err := resolveTeamTrustMode(t, trustMode, r.ExplicitTrust)
 	if err != nil {
