@@ -7,6 +7,29 @@ session state does **not** need to be migrated.
 
 This guide covers everything you have to change.
 
+## What's new in 2.1.0 (additive; nothing to migrate)
+
+2.1.0 ("orchestrator dogfood hardening") only adds commands and fixes — it
+removes nothing and changes no on-disk format. New surface:
+
+- **`amq-squad dispatch --session S --role R --kind todo --subject … --body …`**
+  — the deterministic lead→child dispatch: a durable AMQ send to the
+  workstream's resolved root PLUS a drain-only pane nudge, in one root-correct
+  command. Use it instead of hand-rolling `amq send` + a manual nudge from a lead.
+- **`amq-squad amq send|reply|drain|watch|list|read|thread`** — root-resolving
+  passthroughs so an EXTERNAL lead (a human-driven session with no `AM_ROOT`)
+  reaches `.agent-mail/<session>` instead of the default `.agent-mail`.
+- **`amq-squad resume --role a,b`** — resume only a subset of members.
+- **`amq-squad rm|archive --stop-agents`** — one-command teardown of a live
+  squad (SIGTERM the agents, close their panes, then remove). Plain `--force`
+  now also names any live agents it leaves running.
+
+Reliability fixes: `status` no longer reports `pane_alive:true` for a closed
+pane; teardown never closes a pane whose id was reused by another agent; the
+dispatch wake is pane-precise and submits cleanly on freshly-spawned panes; the
+board ages cold ghost records out of its health rollup; `new profile`/`doctor`
+flag a stale shared `team-rules.md` roster.
+
 ## 1. Module path: add `/v2`
 
 Go requires a `/vN` suffix on the module path for v2 and later, so v1 and v2
