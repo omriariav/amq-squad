@@ -61,6 +61,7 @@ var completionTopCommands = []string{
 	"roles",
 	"team",
 	"task",
+	"verify",
 	"up",
 	"stop",
 	"brief",
@@ -136,6 +137,11 @@ var completionTaskSubcommands = []string{
 	"done",
 	"fail",
 	"block",
+}
+
+// completionVerifySubcommands lists the `amq-squad verify` subcommands.
+var completionVerifySubcommands = []string{
+	"merge",
 }
 
 // completionCommonFlags lists every flag registered by the current stdlib
@@ -327,6 +333,12 @@ func buildBashCompletionScript() string {
 	b.WriteString("\" -- \"$cur\") )\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
+	b.WriteString("    if [ \"${words[1]}\" = \"verify\" ] && [ \"$cword\" -eq 2 ]; then\n")
+	b.WriteString("        COMPREPLY=( $(compgen -W \"")
+	b.WriteString(strings.Join(completionVerifySubcommands, " "))
+	b.WriteString("\" -- \"$cur\") )\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
 	b.WriteString("    if [ \"${words[1]}\" = \"agent\" ] && [ \"$cword\" -eq 2 ]; then\n")
 	b.WriteString("        COMPREPLY=( $(compgen -W \"")
 	b.WriteString(strings.Join(completionAgentSubcommands, " "))
@@ -431,6 +443,17 @@ func buildZshCompletionScript() string {
 	b.WriteString("\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
+	b.WriteString("    if [[ \"${words[2]}\" == \"verify\" && CURRENT -eq 3 ]]; then\n")
+	b.WriteString("        compadd -- ")
+	for i, s := range completionVerifySubcommands {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(zshQuote(s))
+	}
+	b.WriteString("\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
 	b.WriteString("    if [[ \"${words[2]}\" == \"agent\" && CURRENT -eq 3 ]]; then\n")
 	b.WriteString("        compadd -- ")
 	for i, s := range completionAgentSubcommands {
@@ -485,6 +508,10 @@ func buildFishCompletionScript() string {
 	b.WriteString("\n")
 	for _, sub := range completionTaskSubcommands {
 		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from task\" -a %s\n", fishQuote(sub))
+	}
+	b.WriteString("\n")
+	for _, sub := range completionVerifySubcommands {
+		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from verify\" -a %s\n", fishQuote(sub))
 	}
 	b.WriteString("\n")
 	for _, sub := range completionAgentSubcommands {

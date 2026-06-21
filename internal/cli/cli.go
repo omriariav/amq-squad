@@ -189,6 +189,8 @@ func dispatch(args []string, version string) error {
 		return runTeam(args[1:])
 	case "task":
 		return runTask(args[1:])
+	case "verify":
+		return runVerify(args[1:])
 	case "new":
 		return runNew(args[1:])
 	case "roles":
@@ -251,6 +253,7 @@ Commands:
   roles     List built-in role IDs and market numbers for team creation
   team      Set up and manage the team (init, rules, member, sync, profiles)
   task      Native pull-based task store (add/list/claim/done/fail/block)
+  verify    Deterministic preflight checks (verify merge)
   up        Bring the team up (use --dry-run to print the launch plan)
   stop      Stop configured team members (SIGTERM; --force = SIGKILL). State is
             preserved on disk, so the session stays resumable.
@@ -296,6 +299,7 @@ Examples:
   amq-squad roles
   amq-squad new session issue-96
   amq-squad brief --session issue-96
+  amq-squad verify merge --evidence evidence.json
   amq-squad team init --roles cto,fullstack --binary cto=codex
   amq-squad up --dry-run --no-bootstrap
   amq-squad stop --project ~/Code/app --all --session issue-96
