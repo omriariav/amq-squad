@@ -237,6 +237,43 @@ func TestAMQDrainResolvesRootAndForwards(t *testing.T) {
 	}
 }
 
+func TestAMQReadVerbsResolveRootAndForward(t *testing.T) {
+	// An external lead inspecting the bus must hit the SESSION root, not the
+	// default .agent-mail — so the read verbs are root-resolving passthroughs too.
+	cases := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"thread", []string{"thread", "--session", "issue-96", "--me", "lead", "--id", "p2p/lead__qa", "--include-body"},
+			[]string{"thread", "--root", ".agent-mail/issue-96", "--id p2p/lead__qa", "--include-body"}},
+		{"list", []string{"list", "--session", "issue-96", "--me", "qa"},
+			[]string{"list", "--root", ".agent-mail/issue-96"}},
+		{"read", []string{"read", "--session", "issue-96", "--me", "qa", "--id", "msg1"},
+			[]string{"read", "--root", ".agent-mail/issue-96", "--id msg1"}},
+		{"reply", []string{"reply", "--session", "issue-96", "--me", "lead", "--id", "msg1", "--body", "ok"},
+			[]string{"reply", "--root", ".agent-mail/issue-96", "--id msg1", "--body ok"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chdir(t, t.TempDir())
+			calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+			if _, _, err := captureOutput(t, func() error { return runAMQ(tc.args) }); err != nil {
+				t.Fatalf("amq %s: %v", tc.name, err)
+			}
+			got := strings.Join((*calls)[0].Arg, " ")
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("amq %s args missing %q: %s", tc.name, want, got)
+				}
+			}
+			if strings.Contains(got, "--session issue-96") || strings.Contains(got, "--me ") {
+				t.Fatalf("resolution flags must not be forwarded: %s", got)
+			}
+		})
+	}
+}
+
 func TestAMQPassthroughRejectsRoot(t *testing.T) {
 	chdir(t, t.TempDir())
 	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}"}, "")

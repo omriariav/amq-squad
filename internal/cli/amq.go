@@ -47,7 +47,7 @@ type amqContext struct {
 
 func runAMQ(args []string) error {
 	if len(args) == 0 {
-		return usageErrorf("amq requires a subcommand: env, ops, route, who, presence, send, drain, watch, receipts, dlq, cleanup")
+		return usageErrorf("amq requires a subcommand: env, ops, route, who, presence, send, reply, drain, watch, list, read, thread, receipts, dlq, cleanup")
 	}
 	switch args[0] {
 	case "env":
@@ -60,7 +60,11 @@ func runAMQ(args []string) error {
 		return runAMQWho(args[1:])
 	case "presence":
 		return runAMQPresence(args[1:])
-	case "send", "drain", "watch":
+	case "send", "reply", "drain", "watch", "list", "read", "thread":
+		// Root-resolving passthroughs for an EXTERNAL lead (no AM_ROOT injected):
+		// the write/consume verbs (send/reply/drain/watch) AND the inspection
+		// verbs (list/read/thread) all resolve the queue root, so bare `amq` from
+		// a non-bootstrapped shell would silently hit the default `.agent-mail`.
 		return runAMQPassthrough(args[0], args[1:])
 	case "receipts":
 		return runAMQReceipts(args[1:])
@@ -69,7 +73,7 @@ func runAMQ(args []string) error {
 	case "cleanup":
 		return runAMQCleanup(args[1:])
 	default:
-		return usageErrorf("unknown amq subcommand %q. Use env, ops, route, who, presence, send, drain, watch, receipts, dlq, or cleanup.", args[0])
+		return usageErrorf("unknown amq subcommand %q. Use env, ops, route, who, presence, send, reply, drain, watch, list, read, thread, receipts, dlq, or cleanup.", args[0])
 	}
 }
 
@@ -275,7 +279,8 @@ func defaultRunAMQStreaming(ctx amqContext, cmd []string) error {
 	return c.Run()
 }
 
-// runAMQPassthrough wraps a raw `amq` verb (send, drain, watch) so an EXTERNAL
+// runAMQPassthrough wraps a root-resolving raw `amq` verb (send, reply, drain,
+// watch, list, read, thread) so an EXTERNAL
 // lead — a human-driven session with no AM_ROOT/AM_ME injected — reaches the
 // correct workstream root instead of the default `.agent-mail`. Bare `amq send`
 // from such a session silently delivers to `.agent-mail` while a named-profile
