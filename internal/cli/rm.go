@@ -397,14 +397,15 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 	// Collect the panes to close BEFORE the root is moved/removed (the launch
 	// records live under it). Live agents are excluded by default so rm --force
 	// never kills a still-running agent's pane; --stop-agents closes their
-	// (now-stopped) panes too.
-	var paneIDs []string
+	// (now-stopped) panes too. Each pane is identity-checked at close time so a
+	// reused pane id never closes the wrong pane.
+	var panesToClose []recordedPane
 	if e.ClosePanes && target.RootExists {
 		exclude := liveSet
 		if e.StopAgents {
 			exclude = nil
 		}
-		paneIDs = collectSessionPaneIDs(target.Root, exclude)
+		panesToClose = collectSessionPaneIDs(target.Root, exclude)
 	}
 
 	if e.Mode == rmModeArchive {
@@ -414,7 +415,7 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 	} else if err := deleteSession(out, target); err != nil {
 		return false, err
 	}
-	closeSessionPanes(out, paneIDs)
+	closeSessionPanes(out, session, panesToClose)
 
 	// Without --stop-agents, this verb removed/moved the session state but
 	// deliberately left live agents running (it does not stop agents). That used
@@ -428,12 +429,20 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 // collectSessionPaneIDs reads the recorded tmux pane id of every agent mailbox
 // under <root>/agents, skipping any handle in excludeLive. It is called BEFORE
 // the session root is moved/removed, since the launch records live under it.
-func collectSessionPaneIDs(root string, excludeLive map[string]bool) []string {
+// recordedPane is a pane to close, carried with the identity fields the safe
+// close needs to confirm it was not reused by a different agent.
+type recordedPane struct {
+	PaneID string
+	Role   string
+	CWD    string
+}
+
+func collectSessionPaneIDs(root string, excludeLive map[string]bool) []recordedPane {
 	entries, err := os.ReadDir(filepath.Join(root, "agents"))
 	if err != nil {
 		return nil
 	}
-	var ids []string
+	var panes []recordedPane
 	for _, ent := range entries {
 		if !ent.IsDir() || excludeLive[ent.Name()] {
 			continue
@@ -443,10 +452,10 @@ func collectSessionPaneIDs(root string, excludeLive map[string]bool) []string {
 			continue
 		}
 		if id := strings.TrimSpace(rec.Tmux.PaneID); id != "" {
-			ids = append(ids, id)
+			panes = append(panes, recordedPane{PaneID: id, Role: rec.Role, CWD: rec.CWD})
 		}
 	}
-	return ids
+	return panes
 }
 
 // sessionAgent is a live agent's recorded identity (handle + agent pid + pane),
@@ -524,10 +533,13 @@ func notifyLiveAgentsLeftRunning(out io.Writer, verb string, agents []sessionAge
 // closeSessionPanes best-effort closes each recorded pane (kill-pane) and notes
 // it. A kill error (e.g. the pane is already gone) is swallowed; teardown has
 // already succeeded on disk and must not be reported as failed.
-func closeSessionPanes(out io.Writer, paneIDs []string) {
-	for _, id := range paneIDs {
-		if err := paneCloser(id); err == nil {
-			fmt.Fprintf(out, "closed tmux pane %s\n", id)
+func closeSessionPanes(out io.Writer, session string, panes []recordedPane) {
+	for _, p := range panes {
+		closed, skip := closeRecordedPaneSafely(p.PaneID, session, p.Role, p.CWD)
+		if closed {
+			fmt.Fprintf(out, "closed tmux pane %s\n", p.PaneID)
+		} else if skip != "" {
+			fmt.Fprintf(out, "left tmux pane open: %s\n", skip)
 		}
 	}
 }
