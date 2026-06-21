@@ -57,6 +57,66 @@ func TestVerifyMergeReportsFailuresInJSON(t *testing.T) {
 	}
 }
 
+func TestVerifyMergeFailureCodes(t *testing.T) {
+	tests := []struct {
+		name     string
+		evidence verifyMergeEvidence
+		wantCode string
+	}{
+		{
+			name: "missing_head_sha",
+			evidence: verifyMergeEvidence{
+				CI:     verifyMergeCheck{State: "success", SHA: "abc123"},
+				Review: verifyMergeCheck{State: "clean", SHA: "abc123"},
+			},
+			wantCode: "missing_head_sha",
+		},
+		{
+			name: "missing_state",
+			evidence: verifyMergeEvidence{
+				HeadSHA: "abc123",
+				CI:      verifyMergeCheck{SHA: "abc123"},
+				Review:  verifyMergeCheck{State: "clean", SHA: "abc123"},
+			},
+			wantCode: "ci_missing_state",
+		},
+		{
+			name: "missing_sha",
+			evidence: verifyMergeEvidence{
+				HeadSHA: "abc123",
+				CI:      verifyMergeCheck{State: "success"},
+				Review:  verifyMergeCheck{State: "clean", SHA: "abc123"},
+			},
+			wantCode: "ci_missing_sha",
+		},
+		{
+			name: "unnamed_exception",
+			evidence: verifyMergeEvidence{
+				HeadSHA:    "abc123",
+				CI:         verifyMergeCheck{State: "success", SHA: "abc123"},
+				Review:     verifyMergeCheck{State: "clean", SHA: "abc123"},
+				Exceptions: []verifyMergeException{{Approved: true}},
+			},
+			wantCode: "unnamed_exception",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := validateVerifyMergeEvidence(tc.evidence)
+			if result.OK {
+				t.Fatalf("validateVerifyMergeEvidence OK, want failure %q", tc.wantCode)
+			}
+			for _, failure := range result.Failures {
+				if failure.Code == tc.wantCode {
+					return
+				}
+			}
+			t.Fatalf("missing failure code %q in %#v", tc.wantCode, result.Failures)
+		})
+	}
+}
+
 func TestVerifyMergeRejectsMissingEvidenceFlag(t *testing.T) {
 	if _, _, err := captureOutput(t, func() error {
 		return runVerify([]string{"merge"})
