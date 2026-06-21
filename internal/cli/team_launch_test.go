@@ -14,8 +14,8 @@ func TestBuildTmuxLaunchPlanUsesCatalogOrderAndLaunchCommands(t *testing.T) {
 	tm := team.Team{
 		Project: "/repo",
 		Members: []team.Member{
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "fullstack"},
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: ""},
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: ""},
 		},
 	}
 	plan := buildTmuxLaunchPlan(tm, teamLaunchOptions{
@@ -172,8 +172,8 @@ func TestRunTeamLaunchDryRunDefaultsToCurrentWindow(t *testing.T) {
 	})
 	if err := team.Write(dir, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "fullstack"},
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: ""},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: ""},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -226,8 +226,8 @@ func TestRunTeamLaunchDryRunUsesExplicitSharedWorkstream(t *testing.T) {
 	})
 	if err := team.Write(dir, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "fullstack"},
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: ""},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: ""},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -272,8 +272,8 @@ func TestRunTeamLaunchDryRunUsesBinaryArgs(t *testing.T) {
 	})
 	if err := team.Write(dir, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "fullstack"},
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: ""},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: ""},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -319,8 +319,8 @@ func TestRunTeamLaunchFreshRejectsExistingWorkstream(t *testing.T) {
 	})
 	if err := team.Write(dir, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "fullstack"},
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: ""},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: ""},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -351,8 +351,8 @@ func TestRunTeamLaunchDryRunUsesSharedWorkstreamAcrossMemberCWDs(t *testing.T) {
 	})
 	if err := team.Write(dir, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "fullstack", CWD: sibling},
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: ""},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "", CWD: sibling},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -391,7 +391,7 @@ func TestRunTeamLaunchDryRunNewSessionDoesNotAutoAttach(t *testing.T) {
 	})
 	if err := team.Write(dir, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: ""},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -452,6 +452,168 @@ func TestParseTmuxClientsReturnsControlModeClients(t *testing.T) {
 	}
 	if got[0].TTY != "/dev/ttys001" || !strings.Contains(got[0].Flags, "pause-after=120") {
 		t.Fatalf("client = %+v", got[0])
+	}
+}
+
+// filterMembersBySession tests
+
+func TestFilterMembersBySessionReturnsAllWhenUnpinned(t *testing.T) {
+	members := []team.Member{
+		{Role: "cto", Session: ""},
+		{Role: "fullstack", Session: ""},
+	}
+	active, skipped := filterMembersBySession(members, "v2-3-0")
+	if len(active) != 2 {
+		t.Fatalf("active = %d, want 2", len(active))
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("skipped = %d, want 0", len(skipped))
+	}
+}
+
+func TestFilterMembersBySessionReturnsMatchingAndUnpinned(t *testing.T) {
+	members := []team.Member{
+		{Role: "go-dev", Session: "v2-3-0"},
+		{Role: "architect", Session: ""},
+		{Role: "pm-copilot", Session: "pm-copilot"},
+	}
+	active, skipped := filterMembersBySession(members, "v2-3-0")
+	if len(active) != 2 {
+		t.Fatalf("active = %d, want 2 (go-dev + architect)", len(active))
+	}
+	if active[0].Role != "go-dev" || active[1].Role != "architect" {
+		t.Fatalf("active roles = %v, want [go-dev architect]", []string{active[0].Role, active[1].Role})
+	}
+	if len(skipped) != 1 || skipped[0].Role != "pm-copilot" {
+		t.Fatalf("skipped = %v, want [pm-copilot]", skipped)
+	}
+}
+
+func TestFilterMembersBySessionSkipsAllCrossSession(t *testing.T) {
+	members := []team.Member{
+		{Role: "pm-a", Session: "pm-copilot"},
+		{Role: "pm-b", Session: "pm-copilot"},
+	}
+	active, skipped := filterMembersBySession(members, "v2-3-0")
+	if len(active) != 0 {
+		t.Fatalf("active = %d, want 0", len(active))
+	}
+	if len(skipped) != 2 {
+		t.Fatalf("skipped = %d, want 2", len(skipped))
+	}
+}
+
+func TestRunTeamLaunchDryRunMixedSessionFiltersOutCrossSessionMembers(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{
+			{Role: "go-dev", Binary: "claude", Handle: "go-dev", Session: "v2-3-0"},
+			{Role: "architect", Binary: "codex", Handle: "architect", Session: "v2-3-0"},
+			{Role: "pm-copilot", Binary: "claude", Handle: "pm-copilot", Session: "pm-copilot"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamLaunch([]string{"--session", "v2-3-0", "--dry-run", "--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stdout, "pm-copilot") {
+		t.Errorf("dry-run should not include cross-session member pm-copilot:\n%s", stdout)
+	}
+	for _, want := range []string{"--me go-dev", "--me architect"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("dry-run missing session member %q:\n%s", want, stdout)
+		}
+	}
+	if !strings.Contains(stderr, `skipping pm-copilot`) {
+		t.Errorf("stderr missing skip notice for pm-copilot:\n%s", stderr)
+	}
+}
+
+func TestRunTeamLaunchDryRunMixedSessionIncludesUnpinnedMembers(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{
+			{Role: "go-dev", Binary: "claude", Handle: "go-dev", Session: "v2-3-0"},
+			{Role: "shared-bot", Binary: "claude", Handle: "shared-bot", Session: ""},
+			{Role: "pm-copilot", Binary: "claude", Handle: "pm-copilot", Session: "pm-copilot"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamLaunch([]string{"--session", "v2-3-0", "--dry-run", "--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{"--me go-dev", "--me shared-bot"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("dry-run missing %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "pm-copilot") {
+		t.Errorf("dry-run should not include cross-session member pm-copilot:\n%s", stdout)
+	}
+}
+
+func TestRunTeamLaunchAllCrossSessionErrors(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{
+			{Role: "pm-a", Binary: "claude", Handle: "pm-a", Session: "pm-copilot"},
+			{Role: "pm-b", Binary: "claude", Handle: "pm-b", Session: "pm-copilot"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runTeamLaunch([]string{"--session", "v2-3-0", "--dry-run", "--no-bootstrap"})
+	})
+	if err == nil || !strings.Contains(err.Error(), `no team members are pinned to session "v2-3-0"`) {
+		t.Fatalf("runTeamLaunch error = %v, want all-cross-session rejection", err)
 	}
 }
 

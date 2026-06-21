@@ -273,7 +273,7 @@ func TestRunUpLiveHonorsBackendFlags(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	seedTeam(t, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-97"},
 		},
 	})
 
@@ -402,7 +402,7 @@ func TestRunUpLiveFreshIsNoOp(t *testing.T) {
 	backend := useFakeBackend(t)
 	setupFakeAMQSessionRoots(t)
 	seedTeam(t, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: ""}},
 	})
 
 	_, stderr, err := captureOutput(t, func() error {

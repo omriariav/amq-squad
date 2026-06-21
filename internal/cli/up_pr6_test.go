@@ -41,7 +41,7 @@ func teamWith(role, session string) team.Team {
 func TestRunUpNewSessionAutoStubsAndWarns(t *testing.T) {
 	backend := useFakeBackend(t)
 	setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, teamWith("cto", "issue-96"))
+	dir := seedTeam(t, teamWith("cto", ""))
 
 	_, stderr, err := captureOutput(t, func() error {
 		return runUp([]string{"--terminal", "fake", "--session", "issue-200", "--no-bootstrap"})
@@ -70,7 +70,7 @@ func TestRunUpNewSessionAutoStubsAndWarns(t *testing.T) {
 func TestRunUpSeedFromAuthorsRealBriefNoWarning(t *testing.T) {
 	backend := useFakeBackend(t)
 	setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, teamWith("cto", "issue-96"))
+	dir := seedTeam(t, teamWith("cto", ""))
 
 	src := filepath.Join(t.TempDir(), "goal.md")
 	if err := os.WriteFile(src, []byte("Ship the new workstream gate.\n"), 0o644); err != nil {
@@ -106,7 +106,7 @@ func TestRunUpSeedFromAuthorsRealBriefNoWarning(t *testing.T) {
 func TestRunUpPositionalSessionName(t *testing.T) {
 	backend := useFakeBackend(t)
 	setupFakeAMQSessionRoots(t)
-	seedTeam(t, teamWith("cto", "issue-96"))
+	seedTeam(t, teamWith("cto", ""))
 
 	if _, _, err := captureOutput(t, func() error {
 		return runUp([]string{"--terminal", "fake", "--no-bootstrap", "issue-202"})
@@ -126,7 +126,7 @@ func TestRunUpPositionalSessionName(t *testing.T) {
 func TestRunUpPositionalAndSessionConflict(t *testing.T) {
 	useFakeBackend(t)
 	setupFakeAMQSessionRoots(t)
-	seedTeam(t, teamWith("cto", "issue-96"))
+	seedTeam(t, teamWith("cto", ""))
 
 	_, _, err := captureOutput(t, func() error {
 		return runUp([]string{"--terminal", "fake", "--no-bootstrap", "--session", "issue-203", "issue-204"})
@@ -147,7 +147,7 @@ func TestRunUpResetDeclinedMakesZeroChanges(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	// Decline ("n") with a dead probe so liveness never blocks before confirm.
 	withResetSeams(t, "n\n", deadStateProbe())
-	dir := seedTeam(t, teamWith("cto", "issue-96"))
+	dir := seedTeam(t, teamWith("cto", ""))
 
 	root := filepath.Join(base, "issue-205")
 	if err := os.MkdirAll(filepath.Join(root, "agents", "cto"), 0o755); err != nil {
@@ -187,7 +187,7 @@ func TestRunUpResetYesWipesAndRelaunches(t *testing.T) {
 	backend := useFakeBackend(t)
 	base := setupFakeAMQSessionRoots(t)
 	withResetSeams(t, "", deadStateProbe())
-	dir := seedTeam(t, teamWith("cto", "issue-96"))
+	dir := seedTeam(t, teamWith("cto", ""))
 
 	root := filepath.Join(base, "issue-206")
 	if err := os.MkdirAll(filepath.Join(root, "agents", "cto"), 0o755); err != nil {
@@ -235,7 +235,7 @@ func TestRunUpResetRefusesLiveSessionWithoutForce(t *testing.T) {
 	// Live: PID alive AND binary matches.
 	liveProbe := rmStateProbe(map[int]bool{4242: true}, map[int]bool{4242: true})
 	withResetSeams(t, "y\n", liveProbe)
-	seedTeam(t, teamWith("cto", "issue-96"))
+	seedTeam(t, teamWith("cto", ""))
 
 	root := filepath.Join(base, "issue-207")
 	seedAgentRecord(t, base, "issue-207", "cto", launch.Record{
@@ -263,7 +263,7 @@ func TestRunUpResetForceWipesLiveSession(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	liveProbe := rmStateProbe(map[int]bool{4242: true}, map[int]bool{4242: true})
 	withResetSeams(t, "", liveProbe)
-	seedTeam(t, teamWith("cto", "issue-96"))
+	seedTeam(t, teamWith("cto", ""))
 
 	root := filepath.Join(base, "issue-208")
 	seedAgentRecord(t, base, "issue-208", "cto", launch.Record{
@@ -289,7 +289,7 @@ func TestRunUpResetForceWipesLiveSession(t *testing.T) {
 func TestRunUpRefusesOnRestorableRecord(t *testing.T) {
 	backend := useFakeBackend(t)
 	base := setupFakeAMQSessionRoots(t)
-	seedTeam(t, teamWith("cto", "issue-96"))
+	seedTeam(t, teamWith("cto", ""))
 
 	// A restorable launch record under the session, but no live process; the
 	// root dir created by seedAgentRecord also makes teamWorkstreamExists true,

@@ -18,6 +18,21 @@ type bootstrapWorkstream struct {
 	LastTouched string
 }
 
+// filterMembersBySession partitions members into active and skipped groups for
+// a given target workstream. A member is active when its Session is empty (no
+// pin) or matches workstream exactly. Members pinned to a different session are
+// skipped and callers should emit a per-member notice before discarding them.
+func filterMembersBySession(members []team.Member, workstream string) (active, skipped []team.Member) {
+	for _, m := range members {
+		if m.Session == "" || m.Session == workstream {
+			active = append(active, m)
+		} else {
+			skipped = append(skipped, m)
+		}
+	}
+	return active, skipped
+}
+
 func defaultWorkstreamName(projectDir string) string {
 	base := filepath.Base(projectDir)
 	if base == "." || base == string(filepath.Separator) || base == "" {

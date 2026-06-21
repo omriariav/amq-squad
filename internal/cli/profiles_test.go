@@ -508,7 +508,7 @@ func TestForkFooterCarriesProfile(t *testing.T) {
 	seedProfile(t, dir, "review", team.Team{
 		Workstream: "review",
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"},
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: ""},
 		},
 	})
 	// Seed a SOURCE root on disk so fork's source-state check passes.
