@@ -37,6 +37,9 @@ func runBrief(args []string) error {
 	if len(args) > 0 && args[0] == "seed" {
 		return runBriefSeed(args[1:])
 	}
+	if len(args) > 0 && args[0] == "decision" {
+		return runBriefDecision(args[1:])
+	}
 	fs := flag.NewFlagSet("brief", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name")
@@ -47,6 +50,7 @@ func runBrief(args []string) error {
 Usage:
   amq-squad brief --session NAME [--project DIR] [--json]
   amq-squad brief seed --session NAME --seed-from REF [--project DIR] [--force] [--dry-run] [--json]
+  amq-squad brief decision --session NAME --title TEXT --body TEXT [--project DIR]
 
 Reads .amq-squad/briefs/<session>.md from the selected team-home and reports
 whether the brief is missing, still the generated stub, or filled in.
@@ -56,6 +60,7 @@ Examples:
   amq-squad brief --project ~/Code/app --session issue-96
   amq-squad brief --session issue-96 --json | jq .
   amq-squad brief seed --session issue-96 --seed-from issue:31
+  amq-squad brief decision --session issue-96 --title "adopted stdlib-only rule" --body "No external deps beyond the Go stdlib."
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -253,6 +258,58 @@ func writeBriefSeedReport(out io.Writer, data briefSeedEnvelopeData) {
 	fmt.Fprintf(out, "# force: %t\n", data.Force)
 	fmt.Fprintln(out)
 	fmt.Fprint(out, data.Content)
+}
+
+func runBriefDecision(args []string) error {
+	fs := flag.NewFlagSet("brief decision", flag.ContinueOnError)
+	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	sessionFlag := fs.String("session", "", "AMQ workstream session name")
+	titleFlag := fs.String("title", "", "short label for the decision entry heading (optional)")
+	bodyFlag := fs.String("body", "", "decision prose to append")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad brief decision - append a dated decision entry to the workstream brief
+
+Usage:
+  amq-squad brief decision --session NAME --body TEXT [--title TEXT] [--project DIR]
+
+Atomically appends a dated "## Decisions" entry to .amq-squad/briefs/<session>.md.
+The section is created if it does not already exist. Entries are never rewritten.
+
+Format appended:
+  ### YYYY-MM-DD [— title]
+  body
+
+Examples:
+  amq-squad brief decision --session issue-96 --title "stdlib only" --body "No external deps beyond the Go stdlib."
+  amq-squad brief decision --session issue-96 --body "Decided to use flock for atomic appends."
+`)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return usageErrorf("brief decision takes no positional arguments; use --session NAME --body TEXT")
+	}
+	if !flagWasSet(fs, "session") || strings.TrimSpace(*sessionFlag) == "" {
+		return usageErrorf("brief decision requires --session NAME")
+	}
+	if !flagWasSet(fs, "body") || strings.TrimSpace(*bodyFlag) == "" {
+		return usageErrorf("brief decision requires --body TEXT")
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getwd: %w", err)
+	}
+	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
+	path, err := appendBriefDecision(projectDir, *sessionFlag, *titleFlag, *bodyFlag, decisionNow())
+	if err != nil {
+		return err
+	}
+	quietNotice("appended decision to %s\n", path)
+	return nil
 }
 
 func briefKindString(kind briefKind) string {
