@@ -71,6 +71,8 @@ var completionTopCommands = []string{
 	"open",
 	"send",
 	"dispatch",
+	"collect",
+	"prune-panes",
 	"console",
 	"amq",
 	"history",
