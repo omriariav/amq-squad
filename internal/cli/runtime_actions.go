@@ -169,6 +169,44 @@ func resolveDir(dir string) string {
 	return filepath.Clean(abs)
 }
 
+// closeRecordedPaneSafely closes paneID ONLY when the live pane it resolves to is
+// provably the SAME pane the launch record describes — the destructive twin of
+// #156's read-path guard, applied to kill-pane so teardown never closes a pane
+// whose id was REUSED by a different agent/session after a tmux server restart.
+// It inspects the pane by id (InspectPaneByID already verifies the returned
+// pane_id == paneID), then requires positive identity: the pane's title is this
+// agent's amq token, or — for an untitled/clobbered pane — its cwd matches the
+// recorded cwd. A pane that is already gone is a silent no-op. session+role
+// derive the expected amq title token; recordedCWD is the agent's launch cwd (""
+// when unknown). Returns whether it closed, plus a non-empty skip reason when it
+// deliberately left the pane open, so the caller can warn instead of killing the
+// wrong pane.
+func closeRecordedPaneSafely(paneID, session, role, recordedCWD string) (closed bool, skip string) {
+	id := strings.TrimSpace(paneID)
+	if id == "" {
+		return false, ""
+	}
+	p, ok := statusPaneInspector(id)
+	if !ok {
+		return false, "" // pane already gone — nothing to close
+	}
+	switch {
+	case p.Title == paneTitleToken(session, role):
+		// exact amq token -> definitely this agent's pane.
+	case paneTitledForDifferentAgent(p.Title, session, role):
+		return false, fmt.Sprintf("pane %s now belongs to a different agent (title %q); left open (likely pane-id reuse)", id, p.Title)
+	default:
+		// No amq title token to trust: only safe to close if the cwd still matches.
+		if strings.TrimSpace(recordedCWD) == "" || !sameResolvedDir(p.CWD, recordedCWD) {
+			return false, fmt.Sprintf("pane %s identity unconfirmed (cwd %q vs recorded %q); left open", id, p.CWD, recordedCWD)
+		}
+	}
+	if err := paneCloser(id); err != nil {
+		return false, ""
+	}
+	return true, ""
+}
+
 // paneTitledForDifferentAgent reports whether a pane carries an amq title token
 // (amq:<workstream>:<role>) for a role OTHER than the expected one — i.e. the
 // recorded pane id was reused by a sibling agent (e.g. after a tmux server

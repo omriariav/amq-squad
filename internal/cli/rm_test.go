@@ -322,11 +322,12 @@ func TestRmStopAgentsTearsDownLiveSession(t *testing.T) {
 	projectDir := t.TempDir()
 	root := filepath.Join(base, "issue-96")
 	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", AgentPID: 4242,
+		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
 		Root: root, Session: "issue-96", Tmux: &launch.TmuxInfo{PaneID: "%42"},
 	})
 	liveProbe := rmStateProbe(map[int]bool{4242: true}, map[int]bool{4242: true})
 	closed := swapPaneCloser(t)
+	swapPaneInspectorMatching(t, "issue-96", map[string]string{"%42": "cto"})
 	term := &recordingTerminator{}
 
 	out, err := runRmExec(t, rmExecution{

@@ -43,6 +43,9 @@ type downReport struct {
 	// PaneID is the agent's recorded tmux pane id, used for the optional
 	// pane-close on teardown (--close-panes). Empty when no tmux record exists.
 	PaneID string
+	// CWD is the member's resolved working dir, used to identity-check the pane
+	// before closing it (guards against pane-id reuse).
+	CWD    string
 	Status downStatus
 	Detail string
 }
@@ -240,7 +243,7 @@ func executeDown(d downExecution) error {
 		reports = append(reports, terminateMember(t, m, workstream, d.Terminator, d.Probe))
 	}
 	if d.ClosePanes {
-		closeDownedPanes(reports)
+		closeDownedPanes(reports, workstream)
 	}
 	return renderDownReports(d.Out, verb, workstream, reports)
 }
@@ -250,7 +253,7 @@ func executeDown(d downExecution) error {
 // maybe-live and failed members are deliberately left alone — amq-squad never
 // closes a pane it is not sure is dead. Best-effort: a kill-pane error (e.g. the
 // pane is already gone) is swallowed and the teardown result is unaffected.
-func closeDownedPanes(reports []downReport) {
+func closeDownedPanes(reports []downReport, workstream string) {
 	for i := range reports {
 		r := &reports[i]
 		if strings.TrimSpace(r.PaneID) == "" {
@@ -258,11 +261,18 @@ func closeDownedPanes(reports []downReport) {
 		}
 		switch r.Status {
 		case downStatusStopped, downStatusCleaned, downStatusNotLive:
-			if err := paneCloser(r.PaneID); err == nil {
+			closed, skip := closeRecordedPaneSafely(r.PaneID, workstream, r.Role, r.CWD)
+			note := ""
+			if closed {
+				note = "closed tmux pane " + r.PaneID
+			} else if skip != "" {
+				note = "left tmux pane open: " + skip
+			}
+			if note != "" {
 				if strings.TrimSpace(r.Detail) == "" {
-					r.Detail = "closed tmux pane " + r.PaneID
+					r.Detail = note
 				} else {
-					r.Detail += "; closed tmux pane " + r.PaneID
+					r.Detail += "; " + note
 				}
 			}
 		}
@@ -318,6 +328,7 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 	if rec.Tmux != nil {
 		report.PaneID = rec.Tmux.PaneID
 	}
+	report.CWD = compareCWD(cwd, rec.CWD)
 	report.PID = rec.AgentPID
 	if rec.AgentPID <= 0 {
 		// No pid was captured at launch (e.g. codex seats never recorded one).
