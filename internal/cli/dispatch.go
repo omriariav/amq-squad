@@ -16,9 +16,9 @@ import (
 // content: the task body lives only in the durable AMQ message (the single
 // source of truth), so the worker reads it with `amq drain` and there is no risk
 // of a pane-injected copy diverging from — or double-delivering — the queued
-// message. The nudge exists only because `amq`'s own wake sidecar (TIOCSTI) is
-// experimental/unreliable on modern macOS/Linux, so amq-squad's tmux pane
-// injection is the dependable way to poke an idle agent into draining.
+// message. amq-squad nudges through the agent's OWN tmux pane — which it launched
+// and tracks by exact pane id — so it has a pane-precise, tmux-native way to poke
+// an idle agent into draining, independent of amq's own wake path.
 const dispatchNudgePrompt = "amq-squad dispatch: a new message is queued in your inbox. " +
 	"Run `amq drain --include-body` now and act on the newest item. Do not wait to be polled."
 
@@ -66,8 +66,8 @@ The deterministic lead-to-child dispatch. It does two things, in order:
   2. Nudges the child's exact tmux pane with a FIXED drain-only prompt so an
      idle agent wakes and runs 'amq drain'. The task body is NEVER injected into
      the pane — only the durable message carries it — so there is no double
-     delivery. (amq's own wake sidecar is experimental/unreliable, so the tmux
-     nudge is the dependable wake for amq-squad's agents.)
+     delivery. (Because amq-squad launched the agents it knows each one's exact
+     tmux pane, so it wakes by pane id — a pane-precise, tmux-native nudge.)
 
 By default the nudge is skipped when the agent looks busy (a prompt pushed over
 a working agent is lost); the task stays queued and the agent drains it on its
