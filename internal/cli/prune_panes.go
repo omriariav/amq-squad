@@ -52,8 +52,8 @@ zero changes. Pass --session to limit the scan to one workstream, or omit it to
 scan all amq-squad pane titles visible to tmux.
 
 Every close is identity-checked immediately before kill-pane: the pane id must
-still exist and still carry the same amq:<session>:<role> title. Reused pane ids
-are left open.
+still exist, still carry the same amq:<session>:<role> title, and still have no
+current launch record. Reused pane ids and freshly adopted panes are left open.
 
 Examples:
   amq-squad prune-panes --session issue-96
@@ -139,7 +139,7 @@ func executePrunePanes(e prunePanesExecution) error {
 		}
 	}
 	for _, p := range orphans {
-		closed, skip := closeOrphanPaneSafely(p)
+		closed, skip := closeOrphanPaneSafely(p, e.ProjectDir, baseRoot)
 		if closed {
 			fmt.Fprintf(out, "closed tmux pane %s (%s)\n", p.PaneID, p.Title)
 		} else if skip != "" {
@@ -251,7 +251,7 @@ func confirmPrunePanes(out io.Writer, r io.Reader) bool {
 	return answer == "y" || answer == "yes"
 }
 
-func closeOrphanPaneSafely(p orphanPane) (closed bool, skip string) {
+func closeOrphanPaneSafely(p orphanPane, projectDir, baseRoot string) (closed bool, skip string) {
 	live, ok := statusPaneInspector(p.PaneID)
 	if !ok {
 		return false, ""
@@ -259,8 +259,15 @@ func closeOrphanPaneSafely(p orphanPane) (closed bool, skip string) {
 	if live.Title != p.Title {
 		return false, fmt.Sprintf("pane %s title changed from %q to %q; left open", p.PaneID, p.Title, live.Title)
 	}
+	records, err := liveLaunchPaneTokens(projectDir, baseRoot)
+	if err != nil {
+		return false, fmt.Sprintf("pane %s launch-record recheck failed: %v; left open", p.PaneID, err)
+	}
+	if records[launchPaneKey(p.PaneID, p.Title)] {
+		return false, fmt.Sprintf("pane %s now has a live launch record for %s; left open", p.PaneID, p.Title)
+	}
 	if err := paneCloser(p.PaneID); err != nil {
-		return false, ""
+		return false, fmt.Sprintf("pane %s close failed: %v; left open", p.PaneID, err)
 	}
 	return true, ""
 }

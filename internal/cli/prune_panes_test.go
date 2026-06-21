@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -105,6 +106,64 @@ func TestExecutePrunePanesYesClosesOnlyIdentityConfirmedOrphans(t *testing.T) {
 	}
 }
 
+func TestExecutePrunePanesRechecksLaunchRecordsBeforeClose(t *testing.T) {
+	base := t.TempDir()
+	projectDir := t.TempDir()
+	closed := swapPaneCloser(t)
+	swapPaneInspectorMatching(t, "s1", map[string]string{"%2": "qa"})
+
+	out, err := runPrunePanesExec(t, prunePanesExecution{
+		ProjectDir:      projectDir,
+		Session:         "s1",
+		ExplicitSession: true,
+		BaseRoot:        base,
+		PaneLister: func() ([]tmuxpane.TmuxPane, error) {
+			return []tmuxpane.TmuxPane{{PaneID: "%2", Title: "amq:s1:qa"}}, nil
+		},
+		Confirm: seedOnRead(t, "y\n", func() {
+			seedAgentRecord(t, base, "s1", "qa", launch.Record{
+				Binary: "codex", Handle: "qa", Role: "qa", Session: "s1",
+				Tmux: &launch.TmuxInfo{PaneID: "%2"},
+			})
+		}),
+	})
+	if err != nil {
+		t.Fatalf("prune-panes: %v\n%s", err, out)
+	}
+	if len(*closed) != 0 {
+		t.Fatalf("freshly adopted pane must stay open, closed = %v", *closed)
+	}
+	if !strings.Contains(out, "now has a live launch record") {
+		t.Fatalf("output should explain launch-record recheck skip:\n%s", out)
+	}
+}
+
+func TestExecutePrunePanesReportsCloseFailure(t *testing.T) {
+	base := t.TempDir()
+	projectDir := t.TempDir()
+	prevCloser := paneCloser
+	paneCloser = func(string) error { return errors.New("permission denied") }
+	t.Cleanup(func() { paneCloser = prevCloser })
+	swapPaneInspectorMatching(t, "s1", map[string]string{"%2": "qa"})
+
+	out, err := runPrunePanesExec(t, prunePanesExecution{
+		ProjectDir:      projectDir,
+		Session:         "s1",
+		ExplicitSession: true,
+		Yes:             true,
+		BaseRoot:        base,
+		PaneLister: func() ([]tmuxpane.TmuxPane, error) {
+			return []tmuxpane.TmuxPane{{PaneID: "%2", Title: "amq:s1:qa"}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("prune-panes: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "close failed: permission denied") {
+		t.Fatalf("output should report pane close failure:\n%s", out)
+	}
+}
+
 func TestLiveLaunchPaneTokensReadsCurrentRecords(t *testing.T) {
 	base := t.TempDir()
 	projectDir := t.TempDir()
@@ -127,4 +186,22 @@ func runPrunePanesExec(t *testing.T, e prunePanesExecution) (string, error) {
 	e.Out = &b
 	err := executePrunePanes(e)
 	return b.String(), err
+}
+
+type seededReader struct {
+	r    *strings.Reader
+	seed func()
+}
+
+func seedOnRead(t *testing.T, s string, seed func()) *seededReader {
+	t.Helper()
+	return &seededReader{r: strings.NewReader(s), seed: seed}
+}
+
+func (r *seededReader) Read(p []byte) (int, error) {
+	if r.seed != nil {
+		r.seed()
+		r.seed = nil
+	}
+	return r.r.Read(p)
 }
