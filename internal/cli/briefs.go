@@ -6,9 +6,75 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/flock"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 )
+
+// decisionNow is the clock for decision entry timestamps. Overridable in tests.
+var decisionNow = func() time.Time { return time.Now() }
+
+// decisionsHeader is the markdown section that hosts append-only decision
+// entries. appendBriefDecision ensures this header is present before appending.
+const decisionsHeader = "## Decisions"
+
+// appendBriefDecision atomically appends a dated decision entry to the brief
+// at (teamHome, session). If the brief does not yet contain a "## Decisions"
+// section, one is added. The operation is serialized by an flock on a sidecar
+// lock file so concurrent callers never produce interleaved writes.
+//
+// Entry format (mirrors the hand-written entries already in the brief):
+//
+//	### YYYY-MM-DD — <title>
+//	<body>
+func appendBriefDecision(teamHome, session, title, body string, now time.Time) (string, error) {
+	path := briefPath(teamHome, session)
+	if path == "" {
+		return "", fmt.Errorf("cannot resolve brief path: team-home or session is empty")
+	}
+	lockPath := path + ".lock"
+	var writtenPath string
+	err := flock.WithLock(lockPath, func() error {
+		existing, err := os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("read brief: %w", err)
+		}
+		content := string(existing)
+		entry := formatDecisionEntry(now, title, body)
+		var newContent string
+		if !strings.Contains(content, decisionsHeader) {
+			newContent = strings.TrimRight(content, "\n") + "\n\n" + decisionsHeader + "\n\n" + entry
+		} else {
+			newContent = strings.TrimRight(content, "\n") + "\n\n" + entry
+		}
+		newContent = strings.TrimRight(newContent, "\n") + "\n"
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("create briefs dir: %w", err)
+		}
+		tmp := path + ".tmp"
+		if err := os.WriteFile(tmp, []byte(newContent), 0o644); err != nil {
+			return fmt.Errorf("write tmp: %w", err)
+		}
+		if err := os.Rename(tmp, path); err != nil {
+			return fmt.Errorf("rename: %w", err)
+		}
+		writtenPath = path
+		return nil
+	})
+	return writtenPath, err
+}
+
+// formatDecisionEntry renders a single append-only decision block.
+func formatDecisionEntry(now time.Time, title, body string) string {
+	date := now.Format("2006-01-02")
+	title = strings.TrimSpace(title)
+	body = strings.TrimRight(strings.TrimSpace(body), "\n")
+	if title == "" {
+		return "### " + date + "\n" + body + "\n"
+	}
+	return "### " + date + " — " + title + "\n" + body + "\n"
+}
 
 // briefsDirName is the per-team-home directory holding workstream briefs.
 const briefsDirName = "briefs"

@@ -52,6 +52,12 @@ staged custom roles under `.amq-squad/roles/` (author new ones with the
 `amq-squad-role-creator` skill). Bias to **fewer** agents; add more only when
 the work is actually serializing.
 
+**Brief `## Decisions` convention (append-only).** A brief may contain a `## Decisions` section — an ordered log of dated, append-only entries recording choices the team has resolved. Never edit or delete prior entries. To record a new decision use the helper:
+```
+amq-squad brief decision --session <S> --body "…" [--title "short label"]
+```
+This atomically appends a `### YYYY-MM-DD [— title]\nbody` block, creating the section if it does not exist. Recording design choices here keeps them durable across context resets without coupling to the task store.
+
 **Picking each member — role, then horsepower.** Two independent choices:
 
 - **Role: catalog first, mint on a miss.** Use a **catalog** role (a built-in or
