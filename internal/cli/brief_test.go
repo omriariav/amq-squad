@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunBriefReadsExisting(t *testing.T) {
@@ -215,6 +216,190 @@ func TestRunBriefSeedForceOverwrites(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "NEW") || strings.Contains(string(got), "OLD") {
 		t.Fatalf("force did not replace brief:\n%s", got)
+	}
+}
+
+// decision tests
+
+var fixedDecisionTime = time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+
+func withFixedDecisionTime(t *testing.T) {
+	t.Helper()
+	prev := decisionNow
+	decisionNow = func() time.Time { return fixedDecisionTime }
+	t.Cleanup(func() { decisionNow = prev })
+}
+
+func TestFormatDecisionEntryWithTitle(t *testing.T) {
+	got := formatDecisionEntry(fixedDecisionTime, "stdlib only", "No external deps.")
+	want := "### 2026-06-21 — stdlib only\nNo external deps.\n"
+	if got != want {
+		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestFormatDecisionEntryWithoutTitle(t *testing.T) {
+	got := formatDecisionEntry(fixedDecisionTime, "", "No external deps.")
+	want := "### 2026-06-21\nNo external deps.\n"
+	if got != want {
+		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestAppendBriefDecisionCreatesDecisionsSection(t *testing.T) {
+	project := t.TempDir()
+	writeTestBrief(t, project, "s1", "# s1\n\nGoal: ship.\n")
+
+	path, err := appendBriefDecision(project, "s1", "stdlib only", "No external deps.", fixedDecisionTime)
+	if err != nil {
+		t.Fatalf("appendBriefDecision: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	for _, want := range []string{
+		"## Decisions",
+		"### 2026-06-21 — stdlib only",
+		"No external deps.",
+		"Goal: ship.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+	if strings.Index(body, "## Decisions") < strings.Index(body, "Goal: ship.") {
+		t.Errorf("## Decisions should come after existing content, not before")
+	}
+}
+
+func TestAppendBriefDecisionAppendsToExistingSection(t *testing.T) {
+	project := t.TempDir()
+	writeTestBrief(t, project, "s2", "# s2\n\n## Decisions\n\n### 2026-06-20 — first\nFirst decision.\n")
+
+	_, err := appendBriefDecision(project, "s2", "second", "Second decision.", fixedDecisionTime)
+	if err != nil {
+		t.Fatalf("appendBriefDecision: %v", err)
+	}
+
+	got, err := os.ReadFile(briefPath(project, "s2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	if !strings.Contains(body, "### 2026-06-20 — first") {
+		t.Errorf("first entry should be preserved:\n%s", body)
+	}
+	if !strings.Contains(body, "### 2026-06-21 — second") {
+		t.Errorf("second entry missing:\n%s", body)
+	}
+	if strings.Index(body, "first") > strings.Index(body, "second") {
+		t.Errorf("first entry should appear before second in file")
+	}
+	if strings.Count(body, "## Decisions") != 1 {
+		t.Errorf("## Decisions header should appear exactly once:\n%s", body)
+	}
+}
+
+func TestAppendBriefDecisionCreatesFileWhenMissing(t *testing.T) {
+	project := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(project, ".amq-squad", "briefs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := appendBriefDecision(project, "new-session", "first", "Body text.", fixedDecisionTime)
+	if err != nil {
+		t.Fatalf("appendBriefDecision on missing brief: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	if !strings.Contains(body, "## Decisions") || !strings.Contains(body, "### 2026-06-21 — first") {
+		t.Fatalf("unexpected content for new file:\n%s", body)
+	}
+}
+
+func TestAppendBriefDecisionWithoutTitleOmitsDash(t *testing.T) {
+	project := t.TempDir()
+	writeTestBrief(t, project, "s3", "# s3\n")
+
+	_, err := appendBriefDecision(project, "s3", "", "No title here.", fixedDecisionTime)
+	if err != nil {
+		t.Fatalf("appendBriefDecision: %v", err)
+	}
+
+	got, _ := os.ReadFile(briefPath(project, "s3"))
+	if strings.Contains(string(got), " — ") {
+		t.Errorf("no-title entry should not contain ' — ':\n%s", got)
+	}
+	if !strings.Contains(string(got), "### 2026-06-21\n") {
+		t.Errorf("no-title entry should use bare date heading:\n%s", got)
+	}
+}
+
+func TestAppendBriefDecisionDoesNotDuplicateHeader(t *testing.T) {
+	project := t.TempDir()
+	writeTestBrief(t, project, "s4", "# s4\n\n## Decisions\n\n")
+
+	for i := 0; i < 3; i++ {
+		if _, err := appendBriefDecision(project, "s4", "d", "body", fixedDecisionTime); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+
+	got, _ := os.ReadFile(briefPath(project, "s4"))
+	if count := strings.Count(string(got), "## Decisions"); count != 1 {
+		t.Errorf("## Decisions appears %d times, want 1:\n%s", count, got)
+	}
+}
+
+func TestRunBriefDecisionAppendsEntry(t *testing.T) {
+	withFixedDecisionTime(t)
+	project := t.TempDir()
+	writeTestBrief(t, project, "issue-96", "# issue-96\n\nGoal: ship.\n")
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runBrief([]string{"decision",
+			"--project", project,
+			"--session", "issue-96",
+			"--title", "stdlib only",
+			"--body", "No external deps.",
+		})
+	})
+	if err != nil {
+		t.Fatalf("runBrief decision: %v\nstderr:\n%s", err, stderr)
+	}
+
+	got, _ := os.ReadFile(briefPath(project, "issue-96"))
+	body := string(got)
+	if !strings.Contains(body, "## Decisions") || !strings.Contains(body, "### 2026-06-21 — stdlib only") {
+		t.Errorf("decision not appended:\n%s", body)
+	}
+	if !strings.Contains(stderr, "appended decision to") {
+		t.Errorf("success notice missing from stderr:\n%s", stderr)
+	}
+}
+
+func TestRunBriefDecisionRequiresSession(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return runBrief([]string{"decision", "--body", "x"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--session") {
+		t.Fatalf("missing --session should error, got %v", err)
+	}
+}
+
+func TestRunBriefDecisionRequiresBody(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return runBrief([]string{"decision", "--session", "s"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--body") {
+		t.Fatalf("missing --body should error, got %v", err)
 	}
 }
 
