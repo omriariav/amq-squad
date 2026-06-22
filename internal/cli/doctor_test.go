@@ -35,6 +35,9 @@ func newDoctorExec(t *testing.T, dir string) doctorExecution {
 		WakeOverride: func(team.Team, string) []doctorCheck {
 			return []doctorCheck{{Name: "wake cto", Status: doctorOK, Detail: "no live signals"}}
 		},
+		CodexSkillCacheRoot: func() string {
+			return filepath.Join(dir, ".codex-cache", "amq-squad")
+		},
 	}
 }
 

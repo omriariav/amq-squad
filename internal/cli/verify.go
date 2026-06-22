@@ -38,15 +38,37 @@ type verifyMergeException struct {
 }
 
 type verifyMergeResult struct {
-	OK       bool                 `json:"ok"`
-	Subject  string               `json:"subject,omitempty"`
-	HeadSHA  string               `json:"head_sha,omitempty"`
-	Failures []verifyMergeFailure `json:"failures,omitempty"`
+	OK              bool                        `json:"ok"`
+	Subject         string                      `json:"subject,omitempty"`
+	HeadSHA         string                      `json:"head_sha,omitempty"`
+	EvidenceSummary *verifyMergeEvidenceSummary `json:"evidence_summary,omitempty"`
+	Failures        []verifyMergeFailure        `json:"failures,omitempty"`
 }
 
 type verifyMergeFailure struct {
 	Code   string `json:"code"`
 	Detail string `json:"detail"`
+}
+
+type verifyMergeEvidenceSummary struct {
+	CI         verifyMergeCheckSummary       `json:"ci"`
+	Review     verifyMergeCheckSummary       `json:"review"`
+	Exceptions []verifyMergeExceptionSummary `json:"exceptions,omitempty"`
+}
+
+type verifyMergeCheckSummary struct {
+	State     string `json:"state"`
+	SHA       string `json:"sha"`
+	Source    string `json:"source"`
+	CheckedAt string `json:"checked_at"`
+	URL       string `json:"url,omitempty"`
+}
+
+type verifyMergeExceptionSummary struct {
+	Name     string `json:"name"`
+	Approved bool   `json:"approved"`
+	Gate     string `json:"gate,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 func runVerify(args []string) error {
@@ -185,7 +207,37 @@ func validateVerifyMergeEvidence(e verifyMergeEvidence) verifyMergeResult {
 		}
 	}
 	result.OK = len(result.Failures) == 0
+	if result.OK {
+		summary := summarizeVerifyMergeEvidence(e)
+		result.EvidenceSummary = &summary
+	}
 	return result
+}
+
+func summarizeVerifyMergeEvidence(e verifyMergeEvidence) verifyMergeEvidenceSummary {
+	summary := verifyMergeEvidenceSummary{
+		CI:     summarizeVerifyMergeCheck(e.CI),
+		Review: summarizeVerifyMergeCheck(e.Review),
+	}
+	for _, ex := range e.Exceptions {
+		summary.Exceptions = append(summary.Exceptions, verifyMergeExceptionSummary{
+			Name:     strings.TrimSpace(ex.Name),
+			Approved: ex.Approved,
+			Gate:     strings.TrimSpace(ex.Gate),
+			Reason:   strings.TrimSpace(ex.Reason),
+		})
+	}
+	return summary
+}
+
+func summarizeVerifyMergeCheck(check verifyMergeCheck) verifyMergeCheckSummary {
+	return verifyMergeCheckSummary{
+		State:     strings.TrimSpace(check.State),
+		SHA:       strings.TrimSpace(check.SHA),
+		Source:    strings.TrimSpace(check.Source),
+		CheckedAt: strings.TrimSpace(check.CheckedAt),
+		URL:       strings.TrimSpace(check.URL),
+	}
 }
 
 func validateVerifyMergeCheck(field string, check verifyMergeCheck, headSHA string, wantState string) []verifyMergeFailure {

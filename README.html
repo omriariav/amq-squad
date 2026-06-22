@@ -602,7 +602,7 @@ issue-to-merge walkthrough, and troubleshooting.</p>
 <span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--project</span> ~/Code/other-app <span class="at">--session</span> issue-97</span>
 <span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console                    <span class="co"># live read-only Mission Control TUI</span></span>
 <span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--project</span> ~/Code/other-app <span class="at">--once</span></span>
-<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor                     <span class="co"># AMQ version / tmux / wake / pointer sync</span></span>
+<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor                     <span class="co"># AMQ / PATH / Codex skill cache / tmux / wake / pointer sync</span></span>
 <span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--project</span> ~/Code/other-app <span class="at">--profile</span> release</span>
 <span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--project</span> ~/Code/other-app <span class="at">--all-profiles</span></span>
 <span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq env <span class="at">--session</span> issue-96 <span class="co"># resolved AMQ root/session/handle</span></span>
@@ -1080,9 +1080,9 @@ amq-squad thread --session NAME --id THREAD [--project DIR] [--include-body=fals
 amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
                                   AMQ version, AMQ ops diagnostics, the amq-squad
                                   on PATH vs this build (version skew — spawned
-                                  agents inherit the PATH binary), profile config,
-                                  tmux, wake, marker integrity, and pointer-sync
-                                  drift.
+                                  agents inherit the PATH binary), Codex plugin
+                                  skill-cache alignment, profile config, tmux,
+                                  wake, marker integrity, and pointer-sync drift.
 amq-squad amq env [--project DIR] [--session NAME] [--me HANDLE] [--json]
                                   Show the AMQ context amq-squad resolved for
                                   this project/session.

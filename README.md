@@ -192,7 +192,7 @@ amq-squad status --session issue-96  # single-session detail
 amq-squad status --project ~/Code/other-app --session issue-97
 amq-squad console                    # live read-only Mission Control TUI
 amq-squad console --project ~/Code/other-app --once
-amq-squad doctor                     # AMQ version / tmux / wake / pointer sync
+amq-squad doctor                     # AMQ / PATH / Codex skill cache / tmux / wake / pointer sync
 amq-squad doctor --project ~/Code/other-app --profile release
 amq-squad doctor --project ~/Code/other-app --all-profiles
 amq-squad amq env --session issue-96 # resolved AMQ root/session/handle
@@ -594,9 +594,9 @@ amq-squad thread --session NAME --id THREAD [--project DIR] [--include-body=fals
 amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
                                   AMQ version, AMQ ops diagnostics, the amq-squad
                                   on PATH vs this build (version skew — spawned
-                                  agents inherit the PATH binary), profile config,
-                                  tmux, wake, marker integrity, and pointer-sync
-                                  drift.
+                                  agents inherit the PATH binary), Codex plugin
+                                  skill-cache alignment, profile config, tmux,
+                                  wake, marker integrity, and pointer-sync drift.
 amq-squad amq env [--project DIR] [--session NAME] [--me HANDLE] [--json]
                                   Show the AMQ context amq-squad resolved for
                                   this project/session.
