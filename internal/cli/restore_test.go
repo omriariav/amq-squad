@@ -63,6 +63,36 @@ func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
 	}
 }
 
+func TestLaunchArgsFromRecordReplaysWakeInject(t *testing.T) {
+	rec := launch.Record{
+		Binary:         "codex",
+		Handle:         "cto",
+		Role:           "cto",
+		Session:        "issue-96",
+		WakeInjectVia:  "/opt/amq-inject",
+		WakeInjectArgs: []string{"--pane", "%42"},
+	}
+	want := []string{
+		"--role", "cto", "--session", "issue-96",
+		"--wake-inject-via", "/opt/amq-inject",
+		"--wake-inject-arg=--pane", "--wake-inject-arg=%42",
+		"--trust", "sandboxed", "--me", "cto", "codex",
+	}
+	if got := launchArgsFromRecord(rec); !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord(rec)\n got: %v\nwant: %v", got, want)
+	}
+	cmd := emitCommandWithOptions(rec, emitCommandOptions{})
+	for _, want := range []string{
+		"--wake-inject-via /opt/amq-inject",
+		"--wake-inject-arg=--pane",
+		"--wake-inject-arg='%42'",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("emit command missing %q in: %s", want, cmd)
+		}
+	}
+}
+
 func TestRunRestoreProjectFlagExpandsHome(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	home := t.TempDir()

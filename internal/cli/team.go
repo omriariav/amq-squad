@@ -633,6 +633,8 @@ type emitTeamOptions struct {
 	ExplicitTrust    bool
 	ModelOverrides   map[string]string
 	ForceDuplicate   bool
+	WakeInjectVia    string
+	WakeInjectArgs   []string
 	Profile          string
 	// JSON requests a structured "team_plan" envelope on stdout instead of
 	// the human launch-command preview. Diagnostics still go to stderr.
@@ -782,6 +784,8 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 					Model:          effectiveModel,
 					ForceDuplicate: opts.ForceDuplicate,
 					Profile:        opts.Profile,
+					WakeInjectVia:  opts.WakeInjectVia,
+					WakeInjectArgs: opts.WakeInjectArgs,
 				}),
 			})
 		}
@@ -834,6 +838,8 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			Model:          effectiveModel,
 			Profile:        opts.Profile,
 			ForceDuplicate: opts.ForceDuplicate,
+			WakeInjectVia:  opts.WakeInjectVia,
+			WakeInjectArgs: opts.WakeInjectArgs,
 		}))
 		fmt.Println()
 	}
@@ -977,6 +983,8 @@ type emitTeamCommandInput struct {
 	TrustMode      string
 	Model          string
 	ForceDuplicate bool
+	WakeInjectVia  string
+	WakeInjectArgs []string
 	Profile        string
 }
 
@@ -1018,6 +1026,14 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 	}
 	if in.ForceDuplicate {
 		b.WriteString(" --force-duplicate")
+	}
+	if via := strings.TrimSpace(in.WakeInjectVia); via != "" {
+		b.WriteString(" --wake-inject-via ")
+		b.WriteString(shellQuote(via))
+		for _, arg := range in.WakeInjectArgs {
+			b.WriteString(" --wake-inject-arg=")
+			b.WriteString(shellQuote(arg))
+		}
 	}
 	if m.Handle != "" {
 		// Always explicit: a role-named handle avoids collisions when the

@@ -188,6 +188,8 @@ func TestUpDryRunMatchesTeamShowWithFlags(t *testing.T) {
 		"--codex-args=--profile fast",
 		"--claude-args=--chrome",
 		"--force-duplicate",
+		"--wake-inject-via", "/opt/amq-inject",
+		"--wake-inject-arg=--pane",
 	}
 
 	showOut, _, err := captureOutput(t, func() error {
@@ -216,6 +218,9 @@ func TestUpDryRunMatchesTeamShowWithFlags(t *testing.T) {
 	}
 	if !strings.Contains(upOut, "--claude-args=--chrome") {
 		t.Errorf("--claude-args not applied: %s", upOut)
+	}
+	if !strings.Contains(upOut, "--wake-inject-via /opt/amq-inject") || !strings.Contains(upOut, "--wake-inject-arg=--pane") {
+		t.Errorf("wake injector flags not applied: %s", upOut)
 	}
 }
 
@@ -292,6 +297,8 @@ func TestRunUpLiveHonorsBackendFlags(t *testing.T) {
 			"--codex-args=--profile fast",
 			"--claude-args=--chrome",
 			"--force-duplicate",
+			"--wake-inject-via", "/opt/amq-inject",
+			"--wake-inject-arg=--pane",
 			"--no-attach",
 		})
 	})
@@ -340,6 +347,12 @@ func TestRunUpLiveHonorsBackendFlags(t *testing.T) {
 	}
 	if !opts.ForceDuplicate {
 		t.Error("--force-duplicate not propagated")
+	}
+	if opts.WakeInjectVia != "/opt/amq-inject" {
+		t.Errorf("WakeInjectVia = %q, want /opt/amq-inject", opts.WakeInjectVia)
+	}
+	if got := opts.WakeInjectArgs; len(got) != 1 || got[0] != "--pane" {
+		t.Errorf("WakeInjectArgs = %v, want [--pane]", got)
 	}
 }
 

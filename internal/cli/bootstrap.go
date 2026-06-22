@@ -300,6 +300,9 @@ func routeCommandFor(sourceRoot, sourceSession string, currentProject, targetPro
 	if !sameCWD && currentProject.Name != targetProject.Name {
 		args = append(args, "--project", targetProject.Name)
 	}
+	if sourceSession != "" && session != "" && session != sourceSession {
+		args = append(args, "--from-session", sourceSession)
+	}
 	if session != "" {
 		args = append(args, "--session", session)
 	}

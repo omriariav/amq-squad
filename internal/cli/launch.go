@@ -24,6 +24,17 @@ import (
 // unset and record an empty target.
 const envTmuxTarget = "AMQ_SQUAD_TMUX_TARGET"
 
+type stringListFlag []string
+
+func (f *stringListFlag) String() string {
+	return strings.Join(*f, " ")
+}
+
+func (f *stringListFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
+
 // runLaunch is the real single-agent launcher. The top-level `launch` verb is
 // legacy; this body now backs `agent up` (via runAgentUp -> translateAgentUpArgs)
 // and the replay path (execRestoreRecord). It is internal-only and carries no
@@ -51,6 +62,9 @@ func runLaunch(args []string) error {
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args to treat as launch defaults, e.g. '--chrome'")
 	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent for the same handle/workstream is detected")
 	noRequireWake := fs.Bool("no-require-wake", false, "do not pass --require-wake to amq coop exec (allows launching when the wake sidecar cannot acquire its lock)")
+	wakeInjectVia := fs.String("wake-inject-via", "", "absolute executable passed to amq coop exec --wake-inject-via (amq 0.37.1+)")
+	var wakeInjectArgs stringListFlag
+	fs.Var(&wakeInjectArgs, "wake-inject-arg", "argument passed to amq coop exec --wake-inject-arg (repeatable; requires --wake-inject-via)")
 	dryRun := fs.Bool("dry-run", false, "print the coop exec command without executing")
 	launcherRaw := fs.String("launcher", "", "custom launcher to exec instead of <binary> (still receives AMQ env/identity, bootstrap, and a launch record)")
 	launcherArgsRaw := fs.String("launcher-args", "", "args passed to --launcher before the agent's child args; the launcher must forward trailing args to <binary>")
@@ -83,10 +97,12 @@ Side effects before exec:
   9. Adds a generated bootstrap prompt unless --no-bootstrap is set or
      non-default binary args were provided.
  10. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
-     With amq 0.34.1+, --require-wake is passed so the launch fails at the
+     With amq 0.37.1+, --require-wake is passed so the launch fails at the
      door when the wake sidecar cannot start and acquire its lock (instead
      of surfacing as a stale/orphaned wake later). --no-require-wake opts
      out for environments where wake cannot run but the agent should.
+     --wake-inject-via and repeatable --wake-inject-arg are forwarded to
+     amq coop exec so AMQ can save a repairable external wake target.
 
 With --dry-run, the resolved coop exec command is printed and amq-squad exits.
 Disk state is untouched and no exec occurs.
@@ -129,6 +145,14 @@ Examples:
 	}
 	if err := validateTrustCombination(trustMode, trustExplicit, *noDefaultArgs, binaryArgs); err != nil {
 		return err
+	}
+	wakeInjectViaValue := strings.TrimSpace(*wakeInjectVia)
+	wakeInjectArgValues := append([]string(nil), wakeInjectArgs...)
+	if len(wakeInjectArgValues) > 0 && wakeInjectViaValue == "" {
+		return usageErrorf("--wake-inject-arg requires --wake-inject-via")
+	}
+	if wakeInjectViaValue != "" && !filepath.IsAbs(wakeInjectViaValue) {
+		return usageErrorf("--wake-inject-via must be an absolute path")
 	}
 	launcher := strings.TrimSpace(*launcherRaw)
 	var launcherArgs []string
@@ -209,6 +233,8 @@ Examples:
 		Trust:            trustMode,
 		NoDefaultArgs:    *noDefaultArgs,
 		NoRequireWake:    *noRequireWake,
+		WakeInjectVia:    wakeInjectViaValue,
+		WakeInjectArgs:   wakeInjectArgValues,
 		AgentPID:         os.Getpid(),
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
@@ -267,6 +293,15 @@ Examples:
 	if !*noRequireWake && amqSupportsRequireWake(env.AMQVersion) {
 		coopArgs = append(coopArgs, "--require-wake")
 	}
+	if wakeInjectViaValue != "" {
+		if !amqSupportsWakeInject(env.AMQVersion) {
+			return fmt.Errorf("--wake-inject-via requires amq %s or newer (found %s)", minWakeInjectAMQVersion, versionOrUnknown(env.AMQVersion))
+		}
+		coopArgs = append(coopArgs, "--wake-inject-via", wakeInjectViaValue)
+		for _, arg := range wakeInjectArgValues {
+			coopArgs = append(coopArgs, "--wake-inject-arg="+arg)
+		}
+	}
 	// A custom launcher is exec'd in place of the binary. Launcher args precede
 	// the agent's normal child args; the launcher is expected to forward the
 	// trailing args to the binary so bootstrap and default args still reach it.
@@ -292,6 +327,11 @@ Examples:
 	if launcher != "" {
 		if err := ensureLauncherExecutable(launcher); err != nil {
 			return err
+		}
+	}
+	if wakeInjectViaValue != "" {
+		if err := ensureLauncherExecutable(wakeInjectViaValue); err != nil {
+			return fmt.Errorf("wake inject executable: %w", err)
 		}
 	}
 

@@ -875,12 +875,17 @@ amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
 amq-squad agent up codex --model gpt-5
 ```
 
-With amq **0.34.1+**, launches pass `--require-wake` to `amq coop exec`, so a
-launch **fails at the door** when the AMQ wake sidecar cannot start and acquire
-its lock — instead of surfacing later as a stale or orphaned wake. Older amq
-versions are detected and skip the flag. `--no-require-wake` opts out for
-environments where wake cannot run; the opt-out is persisted in the launch
-record so resume reproduces it.
+amq-squad v2.5.0 requires amq **0.37.1+**. Launches pass `--require-wake` to
+`amq coop exec`, so a launch **fails at the door** when the AMQ wake sidecar
+cannot start and acquire its lock, instead of surfacing later as a stale or
+orphaned wake. `--no-require-wake` opts out for environments where wake cannot
+run; the opt-out is persisted in the launch record so resume reproduces it.
+
+For external-injector wake setups, pass `--wake-inject-via /absolute/injector`
+and repeat `--wake-inject-arg=value` as needed on `agent up`, `up`, or
+`team show`. These flags are forwarded to `amq coop exec`, persisted in
+`launch.json`, and replayed by `agent resume`. Use the `--flag=value` form for
+dash-prefixed injector arguments such as `--wake-inject-arg=--pane`.
 
 ## Workstreams and threads
 
