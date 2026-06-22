@@ -117,6 +117,18 @@ Examples:
 	if err != nil {
 		return err
 	}
+	// Option 3 (#176): warn when the dispatcher handle differs from the
+	// team.json configured lead. Children report to the task's From field
+	// (the dispatcher), not the configured lead, so the operator needs to
+	// know if they are routing to a different mailbox than they might expect.
+	if t.Orchestrated && strings.TrimSpace(t.Lead) != "" {
+		if configuredLead, ok := teamMemberByRole(t, t.Lead); ok {
+			if ch := memberHandle(configuredLead); ch != "" && ch != from {
+				fmt.Fprintf(os.Stderr, "notice: dispatch --from %q differs from configured lead %q; "+
+					"children will report to the dispatcher (%q), not the team lead.\n", from, ch, from)
+			}
+		}
+	}
 
 	// Resolve the workstream root for the SENDER. The durable message lands in
 	// .agent-mail/<workstream> regardless of which session the lead runs from,
