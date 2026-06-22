@@ -1404,11 +1404,11 @@ resume reproduces it.</p>
 <p>For external-injector wake setups, pass
 <code>--wake-inject-via /absolute/injector</code> and repeat
 <code>--wake-inject-arg=value</code> as needed on <code>agent up</code>,
-<code>up</code>, or <code>team show</code>. These flags are forwarded to
-<code>amq coop exec</code>, persisted in <code>launch.json</code>, and
-replayed by <code>agent resume</code>. Use the <code>--flag=value</code>
-form for dash-prefixed injector arguments such as
-<code>--wake-inject-arg=--pane</code>.</p>
+<code>up</code>, or <code>up --dry-run</code> launch-plan output. These
+flags are forwarded to <code>amq coop exec</code>, persisted in
+<code>launch.json</code>, and replayed by <code>agent resume</code>. Use
+the <code>--flag=value</code> form for dash-prefixed injector arguments
+such as <code>--wake-inject-arg=--pane</code>.</p>
 <h2 id="workstreams-and-threads">Workstreams and threads</h2>
 <ul>
 <li><strong>Workstream</strong> = AMQ <code>--session</code>. All
