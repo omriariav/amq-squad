@@ -451,6 +451,9 @@ func collectSessionPaneIDs(root string, excludeLive map[string]bool) []recordedP
 		if err != nil || rec.Tmux == nil {
 			continue
 		}
+		if rec.External {
+			continue
+		}
 		if id := strings.TrimSpace(rec.Tmux.PaneID); id != "" {
 			panes = append(panes, recordedPane{PaneID: id, Role: rec.Role, CWD: rec.CWD})
 		}
@@ -462,9 +465,10 @@ func collectSessionPaneIDs(root string, excludeLive map[string]bool) []recordedP
 // read from its launch record under the session root. Used by --stop-agents to
 // terminate it and by the "left running" notice to name its unmanaged pane.
 type sessionAgent struct {
-	Handle string
-	PID    int
-	PaneID string
+	Handle   string
+	PID      int
+	PaneID   string
+	External bool
 }
 
 // liveSessionAgents reads the recorded agent pid and pane id for each handle in
@@ -477,7 +481,7 @@ func liveSessionAgents(root string, liveSet map[string]bool) []sessionAgent {
 		if err != nil {
 			continue
 		}
-		sa := sessionAgent{Handle: handle, PID: rec.AgentPID}
+		sa := sessionAgent{Handle: handle, PID: rec.AgentPID, External: rec.External}
 		if rec.Tmux != nil {
 			sa.PaneID = strings.TrimSpace(rec.Tmux.PaneID)
 		}
@@ -495,6 +499,9 @@ func stopLiveSessionAgents(out io.Writer, agents []sessionAgent, term processTer
 		term = newSignalTerminator(false)
 	}
 	for _, a := range agents {
+		if a.External {
+			continue
+		}
 		if a.PID <= 0 {
 			continue
 		}
@@ -512,8 +519,13 @@ func stopLiveSessionAgents(out io.Writer, agents []sessionAgent, term processTer
 func notifyLiveAgentsLeftRunning(out io.Writer, verb string, agents []sessionAgent) {
 	handles := make([]string, 0, len(agents))
 	var panes []string
+	var external []string
 	for _, a := range agents {
 		handles = append(handles, a.Handle)
+		if a.External {
+			external = append(external, a.Handle)
+			continue
+		}
 		if a.PaneID != "" {
 			panes = append(panes, a.PaneID)
 		}
@@ -526,6 +538,9 @@ func notifyLiveAgentsLeftRunning(out io.Writer, verb string, agents []sessionAge
 			cmds = append(cmds, "tmux kill-pane -t "+p)
 		}
 		fmt.Fprintf(out, "  their panes are now unmanaged; close them with:  %s\n", strings.Join(cmds, " ; "))
+	}
+	if len(external) > 0 {
+		fmt.Fprintf(out, "  external pane(s) are operator-owned and were left open: %s\n", strings.Join(external, ", "))
 	}
 	fmt.Fprintf(out, "  or re-run with --stop-agents to stop them and close their panes as part of teardown.\n")
 }

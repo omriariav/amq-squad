@@ -60,6 +60,7 @@ var completionTopCommands = []string{
 	"new",
 	"roles",
 	"team",
+	"lead",
 	"task",
 	"verify",
 	"up",
@@ -106,6 +107,7 @@ var completionTeamSubcommands = []string{
 	"init",
 	"resume",
 	"rules",
+	"lead",
 	"overlay",
 	"member",
 	"sync",
@@ -114,11 +116,23 @@ var completionTeamSubcommands = []string{
 	"delete",
 }
 
+// completionLeadSubcommands lists the top-level `amq-squad lead` subcommands.
+var completionLeadSubcommands = []string{
+	"register",
+}
+
 // completionTeamRulesSubcommands lists `amq-squad team rules` subcommands.
 var completionTeamRulesSubcommands = []string{
 	"init",
 	"show",
 	"templates",
+}
+
+// completionTeamLeadSubcommands lists `amq-squad team lead` subcommands.
+var completionTeamLeadSubcommands = []string{
+	"set",
+	"clear",
+	"show",
 }
 
 // completionTeamMemberSubcommands lists `amq-squad team member` subcommands.
@@ -323,6 +337,12 @@ func buildBashCompletionScript() string {
 	b.WriteString("\" -- \"$cur\") )\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
+	b.WriteString("    if [ \"${words[1]}\" = \"team\" ] && [ \"${words[2]}\" = \"lead\" ] && [ \"$cword\" -eq 3 ]; then\n")
+	b.WriteString("        COMPREPLY=( $(compgen -W \"")
+	b.WriteString(strings.Join(completionTeamLeadSubcommands, " "))
+	b.WriteString("\" -- \"$cur\") )\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
 	b.WriteString("    if [ \"${words[1]}\" = \"team\" ] && [ \"${words[2]}\" = \"member\" ] && [ \"$cword\" -eq 3 ]; then\n")
 	b.WriteString("        COMPREPLY=( $(compgen -W \"")
 	b.WriteString(strings.Join(completionTeamMemberSubcommands, " "))
@@ -344,6 +364,12 @@ func buildBashCompletionScript() string {
 	b.WriteString("    if [ \"${words[1]}\" = \"agent\" ] && [ \"$cword\" -eq 2 ]; then\n")
 	b.WriteString("        COMPREPLY=( $(compgen -W \"")
 	b.WriteString(strings.Join(completionAgentSubcommands, " "))
+	b.WriteString("\" -- \"$cur\") )\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
+	b.WriteString("    if [ \"${words[1]}\" = \"lead\" ] && [ \"$cword\" -eq 2 ]; then\n")
+	b.WriteString("        COMPREPLY=( $(compgen -W \"")
+	b.WriteString(strings.Join(completionLeadSubcommands, " "))
 	b.WriteString("\" -- \"$cur\") )\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
@@ -423,6 +449,17 @@ func buildZshCompletionScript() string {
 	b.WriteString("\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
+	b.WriteString("    if [[ \"${words[2]}\" == \"team\" && \"${words[3]}\" == \"lead\" && CURRENT -eq 4 ]]; then\n")
+	b.WriteString("        compadd -- ")
+	for i, s := range completionTeamLeadSubcommands {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(zshQuote(s))
+	}
+	b.WriteString("\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
 	b.WriteString("    if [[ \"${words[2]}\" == \"team\" && \"${words[3]}\" == \"member\" && CURRENT -eq 4 ]]; then\n")
 	b.WriteString("        compadd -- ")
 	for i, s := range completionTeamMemberSubcommands {
@@ -459,6 +496,17 @@ func buildZshCompletionScript() string {
 	b.WriteString("    if [[ \"${words[2]}\" == \"agent\" && CURRENT -eq 3 ]]; then\n")
 	b.WriteString("        compadd -- ")
 	for i, s := range completionAgentSubcommands {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(zshQuote(s))
+	}
+	b.WriteString("\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
+	b.WriteString("    if [[ \"${words[2]}\" == \"lead\" && CURRENT -eq 3 ]]; then\n")
+	b.WriteString("        compadd -- ")
+	for i, s := range completionLeadSubcommands {
 		if i > 0 {
 			b.WriteString(" ")
 		}
@@ -504,6 +552,10 @@ func buildFishCompletionScript() string {
 		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from rules\" -a %s\n", fishQuote(sub))
 	}
 	b.WriteString("\n")
+	for _, sub := range completionTeamLeadSubcommands {
+		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from team; and __fish_seen_subcommand_from lead\" -a %s\n", fishQuote(sub))
+	}
+	b.WriteString("\n")
 	for _, sub := range completionTeamMemberSubcommands {
 		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from member\" -a %s\n", fishQuote(sub))
 	}
@@ -518,6 +570,10 @@ func buildFishCompletionScript() string {
 	b.WriteString("\n")
 	for _, sub := range completionAgentSubcommands {
 		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from agent\" -a %s\n", fishQuote(sub))
+	}
+	b.WriteString("\n")
+	for _, sub := range completionLeadSubcommands {
+		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from lead; and not __fish_seen_subcommand_from team\" -a %s\n", fishQuote(sub))
 	}
 	b.WriteString("\n")
 	for _, f := range completionCommonFlags {
