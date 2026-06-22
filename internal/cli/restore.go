@@ -243,6 +243,12 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if rec.NoDefaultArgs {
 		args = append(args, "--no-default-args")
 	}
+	if origin := strings.TrimSpace(rec.SpawnOrigin); origin != "" {
+		args = append(args, "--spawn-origin", origin)
+	}
+	if rec.SpawnDepth > 0 {
+		args = append(args, "--spawn-depth", fmt.Sprintf("%d", rec.SpawnDepth))
+	}
 	if rec.NoRequireWake {
 		args = append(args, "--no-require-wake")
 	}
@@ -426,6 +432,14 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	}
 	if rec.NoDefaultArgs {
 		b.WriteString(" --no-default-args")
+	}
+	if origin := strings.TrimSpace(rec.SpawnOrigin); origin != "" {
+		b.WriteString(" --spawn-origin ")
+		b.WriteString(shellQuote(origin))
+	}
+	if rec.SpawnDepth > 0 {
+		b.WriteString(" --spawn-depth ")
+		b.WriteString(shellQuote(fmt.Sprintf("%d", rec.SpawnDepth)))
 	}
 	if rec.NoRequireWake {
 		b.WriteString(" --no-require-wake")

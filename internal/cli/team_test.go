@@ -186,6 +186,25 @@ func TestEmitTeamCommandTrustedCodexIncludesBypass(t *testing.T) {
 	}
 }
 
+func TestEmitTeamCommandApproveForMeCodexPreset(t *testing.T) {
+	m := team.Member{Role: "worker", Binary: "codex", Handle: "worker", Session: "s"}
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p",
+		Member: m, Workstream: "p", TrustMode: trustModeApproveForMe,
+	})
+	for _, want := range []string{
+		"--trust approve-for-me",
+		"-- --sandbox workspace-write --ask-for-approval on-request -c 'approvals_reviewer=\"auto_review\"'",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("emitTeamCommand missing %q in: %s", want, cmd)
+		}
+	}
+	if strings.Contains(cmd, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Errorf("approve-for-me must not include bypass: %s", cmd)
+	}
+}
+
 func TestEmitTeamCommandIncludesModelOverride(t *testing.T) {
 	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto", Model: "gpt-5"}
 	cmd := emitTeamCommand(emitTeamCommandInput{

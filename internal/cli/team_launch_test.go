@@ -142,11 +142,11 @@ func TestTmuxDryRunLinesCanTargetCurrentWindow(t *testing.T) {
 		// Anchored on the launching shell's own pane ($TMUX_PANE), not the
 		// focused window, so panes never hijack an unrelated tab (#40).
 		`window=$(tmux display-message -p -t "${TMUX_PANE:?run amq-squad up from inside a tmux pane}" '#{session_name}:#{window_index}')`,
-		`first_pane="$TMUX_PANE"`,
 		// Pane titles carry the name-first jump token amq:<workstream>:<role>.
-		`tmux select-pane -t "$first_pane" -T 'amq:repo:cto'`,
+		`pane_0=$(tmux split-window -P -F '#{pane_id}' -t "$window" -h -c /repo)`,
+		`tmux select-pane -t "$pane_0" -T 'amq:repo:cto'`,
 		`pane_1=$(tmux split-window -P -F '#{pane_id}' -t "$window" -h -c /repo)`,
-		`tmux send-keys -t "$first_pane"`,
+		`tmux send-keys -t "$pane_0"`,
 		`tmux send-keys -t "$pane_1"`,
 		"# using current tmux window; no attach needed",
 	} {
