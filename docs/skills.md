@@ -174,7 +174,8 @@ This is the everyday skill. The lifecycle is one small state machine:
 1. **Orient.** Confirm the team-home + workstream, read the brief
    (`.amq-squad/briefs/<session>.md`).
 2. **Discover live state.** `amq-squad status` (board), `status --session <name>`
-   (detail), `amq-squad console` (live TUI), `amq-squad doctor` (health).
+   (detail), `amq-squad console` (live TUI), `amq-squad doctor` (health,
+   including PATH and Codex skill-cache alignment).
 3. **Bring members up.** `amq-squad up <session>` (NEW work; refuses an existing
    session), or `resume` to continue one.
 4. **Route + drain.** Hand off over AMQ, request reviews, drain your inbox.
@@ -200,7 +201,7 @@ Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
 CLI args for one member only — the overlay verb above generates the flagship
 case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it
 for you. Plan emission fails fast when a referenced `--settings` file is
-missing. In v2.5.0 with amq 0.37.1+, launches also pass `--require-wake` so a launch
+missing. In v2.6.0 with AMQ 0.38.0+, launches also pass `--require-wake` so a launch
 fails immediately when the wake sidecar cannot acquire its lock
 (`--no-require-wake` opts out and persists into resume).
 
@@ -419,6 +420,7 @@ cd ~/Code/my-project
 | `amq send` rejected the message | Invalid `--kind` (there is no `handoff`) — use `review_request`/`todo`/`status`/`question`. |
 | The brief is a stub the board warns about | Author a real brief via the `amq-team-setup` wizard. For an existing session use `amq-squad brief seed --session <session> --seed-from issue:<n> --force`; `up --seed-from` is for a not-yet-launched session. |
 | Orchestration norm missing after adding `--orchestrated` | `new team` leaves an existing `team-rules.md` untouched — regenerate with `amq-squad team rules init --force`. |
+| Codex loads an old amq-squad skill after upgrade | Run `amq-squad doctor`; the Codex skill-cache check warns when the released bundle is missing, stale, or only present through a compatibility symlink. Refresh the plugin/skill cache instead of relying on manual symlinks. |
 | Shift+Enter doesn't submit in a tmux window | `doctor` warns when tmux `extended-keys` is off; opening under iTerm2 `tmux -CC` (the `attach_control` action) makes it work natively. |
 | Custom role rejected | A custom role needs an explicit `--binary <role>=<cli>` (no catalog default). |
 

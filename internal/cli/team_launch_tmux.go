@@ -141,22 +141,27 @@ func tmuxDryRunLines(plan tmuxLaunchPlan) []string {
 		firstTarget = "$first_pane"
 		lines = append(lines,
 			`window=$(tmux display-message -p -t "${TMUX_PANE:?run amq-squad up from inside a tmux pane}" '#{session_name}:#{window_index}')`,
-			`first_pane="$TMUX_PANE"`,
 		)
 	} else {
 		lines = append(lines, shellCommand("tmux", "new-session", "-d", "-s", plan.Session, "-n", "squad", "-c", plan.Panes[0].CWD))
 	}
 	targets := []string{firstTarget}
 	lines = append(lines, tmuxSelectPaneDryRunLine(firstTarget, paneTitleToken(plan.Workstream, plan.Panes[0].Role)))
-	for i, pane := range plan.Panes[1:] {
-		paneVar := fmt.Sprintf("pane_%d", i+1)
+	start := 1
+	if plan.Target == "current-window" {
+		targets = nil
+		lines = lines[:len(lines)-1]
+		start = 0
+	}
+	for i, pane := range plan.Panes[start:] {
+		paneVar := fmt.Sprintf("pane_%d", i+start)
 		targets = append(targets, "$"+paneVar)
 		lines = append(lines,
 			tmuxSplitDryRunLine(paneVar, windowTarget, pane.CWD, plan.Layout),
 			tmuxSelectPaneDryRunLine("$"+paneVar, paneTitleToken(plan.Workstream, pane.Role)),
 		)
 	}
-	if len(plan.Panes) > 1 {
+	if len(targets) > 1 {
 		lines = append(lines, tmuxSelectLayoutDryRunLine(windowTarget, plan.Layout))
 	}
 	for i, pane := range plan.Panes {
@@ -294,11 +299,16 @@ func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
 	default:
 		return fmt.Errorf("unsupported tmux target %q", plan.Target)
 	}
-	if err := runCommand("tmux", "select-pane", "-t", firstTarget, "-T", paneTitleToken(plan.Workstream, plan.Panes[0].Role)); err != nil {
-		return err
+	targets := []string{}
+	panesToSplit := plan.Panes
+	if plan.Target != "current-window" {
+		if err := runCommand("tmux", "select-pane", "-t", firstTarget, "-T", paneTitleToken(plan.Workstream, plan.Panes[0].Role)); err != nil {
+			return err
+		}
+		targets = append(targets, firstTarget)
+		panesToSplit = plan.Panes[1:]
 	}
-	targets := []string{firstTarget}
-	for _, pane := range plan.Panes[1:] {
+	for _, pane := range panesToSplit {
 		paneID, err := outputCommand("tmux", "split-window", "-P", "-F", "#{pane_id}", "-t", windowTarget, tmuxSplitDirection(plan.Layout), "-c", pane.CWD)
 		if err != nil {
 			return err
@@ -312,7 +322,10 @@ func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
 			return err
 		}
 	}
-	if len(plan.Panes) > 1 {
+	if len(targets) != len(plan.Panes) {
+		return fmt.Errorf("tmux launch created %d pane target(s), want %d", len(targets), len(plan.Panes))
+	}
+	if len(targets) > 1 {
 		if err := runCommand("tmux", "select-layout", "-t", windowTarget, tmuxSelectLayout(plan.Layout)); err != nil {
 			return err
 		}
@@ -326,7 +339,7 @@ func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
 		}
 	}
 	if plan.Target == "current-window" {
-		quietNotice("Added team panes to current tmux window.\n")
+		quietNotice("Added %d team pane(s) to current tmux window.\n", len(targets))
 		verbosePolicyEcho()
 		return nil
 	}

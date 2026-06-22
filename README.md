@@ -82,7 +82,7 @@ For the latest 2.x build:
 go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest
 ```
 
-Requires Go 1.25+, the `amq` binary on `PATH` (v0.37.1+), and `tmux` on `PATH` for `amq-squad up`.
+Requires Go 1.25+, the `amq` binary on `PATH` (v0.38.0+), and `tmux` on `PATH` for `amq-squad up`.
 
 ### Skills (plugin marketplaces)
 
@@ -192,7 +192,7 @@ amq-squad status --session issue-96  # single-session detail
 amq-squad status --project ~/Code/other-app --session issue-97
 amq-squad console                    # live read-only Mission Control TUI
 amq-squad console --project ~/Code/other-app --once
-amq-squad doctor                     # AMQ version / tmux / wake / pointer sync
+amq-squad doctor                     # AMQ / PATH / Codex skill cache / tmux / wake / pointer sync
 amq-squad doctor --project ~/Code/other-app --profile release
 amq-squad doctor --project ~/Code/other-app --all-profiles
 amq-squad amq env --session issue-96 # resolved AMQ root/session/handle
@@ -383,7 +383,9 @@ amq-squad new team --roles cto,qa --operator ops  # custom operator handle
 amq-squad new team --roles cto,qa --no-operator   # explicit opt-out
 ```
 
-The operator is not a runnable team member. JSON discovery derives `operator` and `capabilities.operator_gates`; `capabilities` is not persisted in `team.json`.
+The operator is not a runnable team member. AMQ 0.38.0 reserves the conventional `user` mailbox for this human/operator role; custom operator handles use the same amq-squad protocol. JSON discovery derives `operator` and `capabilities.operator_gates`; `capabilities` is not persisted in `team.json`.
+
+Operator gates are structural AMQ handoffs, not authentication. Send human-only decisions or manual actions to the configured operator handle on stable `gate/<topic>` threads, with `--kind question --subject "APPROVAL: <decision>"` for approvals and `--kind decision --subject "DONE: <goal>"` for manual closeout. The operator replies on the same thread with `--kind answer` and subjects such as `APPROVED:`, `DENIED:`, or `ANSWER:`. P2P prose like "pending operator" is evidence only; it is not a gate. `amq-squad notify` surfaces new or stale needs-you gates with inspect/respond commands and de-duplicates unchanged items, but notification output never authorizes or clears a gate.
 
 ### Orchestration (opt-in)
 
@@ -393,9 +395,9 @@ By default a squad is flat: members coordinate peer-to-peer over AMQ. You can in
 amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto
 ```
 
-This records `orchestrated`/`lead` in `team.json` and injects a generated `## Orchestration` reporting norm into `.amq-squad/team-rules.md`: the lead loads the `amq-squad-orchestrator` skill, and children push `status` / `question` / `review_request` messages to the lead over AMQ. Default off; **exactly one lead**; the lead is a team member, **never the operator**. `--lead ROLE` implies `--orchestrated`; with `--orchestrated` alone a single-member team self-selects and a team with a `cto` defaults to `cto`. The `team_profile_plan` / `team_plan` JSON envelopes carry `orchestrated`/`lead`. If `team-rules.md` already exists, `new team` leaves it untouched — regenerate with `amq-squad team rules init --force` to pick up the norm.
+This records `orchestrated`/`lead` in `team.json` and injects a generated `## Orchestration` reporting norm into `.amq-squad/team-rules.md`: the lead loads the `amq-squad-orchestrator` skill, dispatches durable AMQ tasks, and children push ACK/start, progress, blockers, review requests, and DONE reports back to the sender/lead over AMQ. Default off; **exactly one lead**; the lead is a team member, **never the operator**. `--lead ROLE` implies `--orchestrated`; with `--orchestrated` alone a single-member team self-selects and a team with a `cto` defaults to `cto`. The `team_profile_plan` / `team_plan` JSON envelopes carry `orchestrated`/`lead`. If `team-rules.md` already exists, `new team` leaves it untouched, so regenerate with `amq-squad team rules init --force` to pick up the norm.
 
-The operator can steer the lead directly from amq-noc (v0.8.0+): a **directive** arrives on the lead's operator p2p thread as a `--kind todo` message whose subject starts with `DIRECTIVE:` — pane-injected when the lead is live, a durable AMQ message when it was down. The `amq-squad-orchestrator` skill teaches the lead to treat directives as operator steering with priority over child reports, acknowledge on the same thread, and never treat one as a gate answer (a directive never clears a `gate/<topic>` thread); orchestrated teams get the convention as a generated line in their `## Orchestration` norm.
+The operator normally steers the workstream through the lead/orchestrator. The operator can steer the lead directly from amq-noc (v0.8.0+), or with plain AMQ: a **directive** arrives on the lead's operator p2p thread as a `--kind todo` message whose subject starts with `DIRECTIVE:`. The lead treats directives as operator steering with priority over child reports, acknowledges on the same thread, and never treats one as a gate answer (a directive never clears a `gate/<topic>` thread). Direct operator-to-worker messages are exceptional; when they affect scope, priority, merge readiness, release state, or external actions, the worker reports them to the lead before acting or includes the lead/thread metadata in the AMQ report.
 
 For an existing profile, use `amq-squad team lead set <role>` to opt into orchestration without rebuilding the roster, `team lead clear` to return to a flat squad, and `team lead show --json` for discovery. A lead that is already running in an operator-owned pane can register itself with `amq-squad lead register --role <role> --session <session>`; this writes an explicit external launch record so `status` / `focus` / `send` can target the pane. External lead records are visible and directable, but lifecycle commands do not own them: `stop` reports that the pane must be stopped manually, `rm` / `archive` leave it open, and `resume` asks the operator to run `lead register` again instead of replaying the pane.
 
@@ -438,7 +440,7 @@ amq-squad new session [--project DIR] [--profile NAME] [<session>] [up options]
                                   a team-home without cd.
 
 amq-squad team init [--project DIR] [--profile NAME] [--roles a,b|numbers|all] [--binary role=bin,...]
-                     [--session ws] [--trust sandboxed|trusted] [--orchestrated [--lead ROLE]]
+                     [--session ws] [--trust sandboxed|approve-for-me|trusted] [--orchestrated [--lead ROLE]]
                      [--model role=model,...] [--codex-args ...] [--claude-args ...] [--dry-run [--json]]
                                   Write a team profile and seed .amq-squad/team-rules.md.
                                   --dry-run builds and prints the profile plan
@@ -512,7 +514,7 @@ amq-squad stop (--role R | --all) [--project DIR] [--force] [--close-panes]
                                   (The 'down' alias was removed in 2.0.)
 amq-squad resume [--project DIR] [--profile NAME] [--session ws] [--restore-existing]
                  [--exec] [--dry-run] [--force-duplicate]
-                 [--no-bootstrap] [--trust sandboxed|trusted]
+                 [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted]
                  [--model role=model,...]
                  [--codex-args args] [--claude-args args]
                                   Re-orient an existing session. Reattaches a saved
@@ -583,6 +585,11 @@ amq-squad console [--project DIR] [--session NAME] [--refresh 2s] [--at-risk-wai
                                   to /dev/tty (stdout stays clean). --once prints
                                   a single static board to stdout for CI / non-TTY.
                                   --project targets a team-home without cd.
+amq-squad notify [--project DIR] [--profile NAME] [--session NAME]
+                 [--renotify-after 30m] [--dry-run] [--json]
+                                  Emit de-duplicated operator attention items for
+                                  live needs-you gates, with inspect/respond
+                                  commands. Does not approve or clear gates.
 amq-squad history [--json] [--project a,b]
                                   Restorable launch records across known projects.
 amq-squad threads --session NAME [--project DIR] [--limit N] [--json]
@@ -594,9 +601,9 @@ amq-squad thread --session NAME --id THREAD [--project DIR] [--include-body=fals
 amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
                                   AMQ version, AMQ ops diagnostics, the amq-squad
                                   on PATH vs this build (version skew — spawned
-                                  agents inherit the PATH binary), profile config,
-                                  tmux, wake, marker integrity, and pointer-sync
-                                  drift.
+                                  agents inherit the PATH binary), Codex plugin
+                                  skill-cache alignment, profile config, tmux,
+                                  wake, marker integrity, and pointer-sync drift.
 amq-squad amq env [--project DIR] [--session NAME] [--me HANDLE] [--json]
                                   Show the AMQ context amq-squad resolved for
                                   this project/session.
@@ -633,7 +640,7 @@ Single-agent primitives:
 ```text
 amq-squad agent up <binary> [--project DIR] [--role R] [--session ws] [--team-profile NAME]
                             [--conversation ref] [--no-bootstrap]
-                            [--trust sandboxed|trusted] [--model NAME]
+                            [--trust sandboxed|approve-for-me|trusted] [--model NAME]
                             [--codex-args ...] [--claude-args ...]
                             [--force-duplicate] [-- <native flags>]
                                   Launch one agent. Writes launch.json + role.md
@@ -674,6 +681,8 @@ It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--o
 ## AMQ diagnostics
 
 `amq-squad amq ...` is a project-aware wrapper around AMQ diagnostics. It resolves the same AMQ root, base root, session, and handle that the squad launcher uses, then delegates to AMQ.
+
+amq-squad v2.6.0 requires AMQ 0.38.0 or newer. That floor includes eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
 
 Read-only diagnostics run directly:
 
@@ -863,19 +872,20 @@ wiring them into a team.
 Generated launch commands include these per-binary defaults:
 
 - **Claude:** `--permission-mode auto`
-- **Codex:** nothing by default (sandboxed). Pass `--trust trusted` to prepend `--dangerously-bypass-approvals-and-sandbox` for the local power-user profile.
+- **Codex:** nothing by default (sandboxed). Pass `--trust approve-for-me` to use Codex Auto with `workspace-write`, `on-request`, and `approvals_reviewer="auto_review"`. Pass `--trust trusted` only for the local power-user profile that prepends `--dangerously-bypass-approvals-and-sandbox`.
 
-`--trust trusted` is persisted in the team profile by `team init` and is re-emitted by `up`, `agent up`, `resume`, and `fork`. Combining `--trust trusted` with `--no-default-args` is rejected, as is sandboxed mode with the bypass flag smuggled through `--codex-args`.
+`--trust approve-for-me` and `--trust trusted` are persisted in the team profile by `team init` and are re-emitted by `up`, `agent up`, `resume`, and `fork`. Combining `--trust trusted` with `--no-default-args` is rejected, as is sandboxed or approve-for-me mode with the bypass flag smuggled through `--codex-args`.
 
 Pass `--model NAME` to set the native `--model` flag on Codex or Claude. `team init --model role=model,...` persists per-member models.
 
 ```sh
 amq-squad team init --personas cto,fullstack --trust trusted
+amq-squad team init --personas cto,fullstack --trust approve-for-me
 amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
 amq-squad agent up codex --model gpt-5
 ```
 
-amq-squad v2.5.0 requires amq **0.37.1+**. Launches pass `--require-wake` to
+amq-squad v2.6.0 requires amq **0.38.0+**. Launches pass `--require-wake` to
 `amq coop exec`, so a launch **fails at the door** when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale or
 orphaned wake. `--no-require-wake` opts out for environments where wake cannot
@@ -982,5 +992,5 @@ Replay paths that emit copy-paste commands use the modern `agent up <binary>` co
 ## Requires
 
 - Go 1.25+
-- `amq` binary on `PATH` (v0.37.1+)
+- `amq` binary on `PATH` (v0.38.0+)
 - `tmux` on `PATH` for `amq-squad up`

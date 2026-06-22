@@ -458,7 +458,7 @@ mailbox). AMQ itself stays unchanged.</p>
 <p>For the latest 2.x build:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span></code></pre></div>
 <p>Requires Go 1.25+, the <code>amq</code> binary on <code>PATH</code>
-(v0.37.1+), and <code>tmux</code> on <code>PATH</code> for
+(v0.38.0+), and <code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code>.</p>
 <h3 id="skills-plugin-marketplaces">Skills (plugin marketplaces)</h3>
 <p>This repo doubles as a plugin marketplace that ships the amq-squad
@@ -602,7 +602,7 @@ issue-to-merge walkthrough, and troubleshooting.</p>
 <span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--project</span> ~/Code/other-app <span class="at">--session</span> issue-97</span>
 <span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console                    <span class="co"># live read-only Mission Control TUI</span></span>
 <span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--project</span> ~/Code/other-app <span class="at">--once</span></span>
-<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor                     <span class="co"># AMQ version / tmux / wake / pointer sync</span></span>
+<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor                     <span class="co"># AMQ / PATH / Codex skill cache / tmux / wake / pointer sync</span></span>
 <span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--project</span> ~/Code/other-app <span class="at">--profile</span> release</span>
 <span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--project</span> ~/Code/other-app <span class="at">--all-profiles</span></span>
 <span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq env <span class="at">--session</span> issue-96 <span class="co"># resolved AMQ root/session/handle</span></span>
@@ -834,10 +834,25 @@ gates:</p>
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa                 <span class="co"># default operator handle: user</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--operator</span> ops  <span class="co"># custom operator handle</span></span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--no-operator</span>   <span class="co"># explicit opt-out</span></span></code></pre></div>
-<p>The operator is not a runnable team member. JSON discovery derives
-<code>operator</code> and <code>capabilities.operator_gates</code>;
-<code>capabilities</code> is not persisted in
-<code>team.json</code>.</p>
+<p>The operator is not a runnable team member. AMQ 0.38.0 reserves the
+conventional <code>user</code> mailbox for this human/operator role;
+custom operator handles use the same amq-squad protocol. JSON discovery
+derives <code>operator</code> and
+<code>capabilities.operator_gates</code>; <code>capabilities</code> is
+not persisted in <code>team.json</code>.</p>
+<p>Operator gates are structural AMQ handoffs, not authentication. Send
+human-only decisions or manual actions to the configured operator handle
+on stable <code>gate/&lt;topic&gt;</code> threads, with
+<code>--kind question --subject "APPROVAL: &lt;decision&gt;"</code> for
+approvals and
+<code>--kind decision --subject "DONE: &lt;goal&gt;"</code> for manual
+closeout. The operator replies on the same thread with
+<code>--kind answer</code> and subjects such as <code>APPROVED:</code>,
+<code>DENIED:</code>, or <code>ANSWER:</code>. P2P prose like "pending
+operator" is evidence only; it is not a gate.
+<code>amq-squad notify</code> surfaces new or stale needs-you gates with
+inspect/respond commands and de-duplicates unchanged items, but
+notification output never authorizes or clears a gate.</p>
 <h3 id="orchestration-opt-in">Orchestration (opt-in)</h3>
 <p>By default a squad is flat: members coordinate peer-to-peer over AMQ.
 You can instead run an <strong>orchestrated</strong> squad, where one
@@ -850,9 +865,9 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#
 <code>team.json</code> and injects a generated
 <code>## Orchestration</code> reporting norm into
 <code>.amq-squad/team-rules.md</code>: the lead loads the
-<code>amq-squad-orchestrator</code> skill, and children push
-<code>status</code> / <code>question</code> /
-<code>review_request</code> messages to the lead over AMQ. Default off;
+<code>amq-squad-orchestrator</code> skill, dispatches durable AMQ tasks,
+and children push ACK/start, progress, blockers, review requests, and
+DONE reports back to the sender/lead over AMQ. Default off;
 <strong>exactly one lead</strong>; the lead is a team member,
 <strong>never the operator</strong>. <code>--lead ROLE</code> implies
 <code>--orchestrated</code>; with <code>--orchestrated</code> alone a
@@ -861,19 +876,20 @@ defaults to <code>cto</code>. The <code>team_profile_plan</code> /
 <code>team_plan</code> JSON envelopes carry
 <code>orchestrated</code>/<code>lead</code>. If
 <code>team-rules.md</code> already exists, <code>new team</code> leaves
-it untouched — regenerate with
+it untouched, so regenerate with
 <code>amq-squad team rules init --force</code> to pick up the norm.</p>
-<p>The operator can steer the lead directly from amq-noc (v0.8.0+): a
-<strong>directive</strong> arrives on the lead's operator p2p thread as
-a <code>--kind todo</code> message whose subject starts with
-<code>DIRECTIVE:</code> — pane-injected when the lead is live, a durable
-AMQ message when it was down. The <code>amq-squad-orchestrator</code>
-skill teaches the lead to treat directives as operator steering with
-priority over child reports, acknowledge on the same thread, and never
-treat one as a gate answer (a directive never clears a
-<code>gate/&lt;topic&gt;</code> thread); orchestrated teams get the
-convention as a generated line in their <code>## Orchestration</code>
-norm.</p>
+<p>The operator normally steers the workstream through the
+lead/orchestrator. The operator can steer the lead directly from amq-noc
+(v0.8.0+), or with plain AMQ: a <strong>directive</strong> arrives on
+the lead's operator p2p thread as a <code>--kind todo</code> message
+whose subject starts with <code>DIRECTIVE:</code>. The lead treats
+directives as operator steering with priority over child reports,
+acknowledges on the same thread, and never treats one as a gate answer
+(a directive never clears a <code>gate/&lt;topic&gt;</code> thread).
+Direct operator-to-worker messages are exceptional; when they affect
+scope, priority, merge readiness, release state, or external actions,
+the worker reports them to the lead before acting or includes the
+lead/thread metadata in the AMQ report.</p>
 <p>For an existing profile, use
 <code>amq-squad team lead set &lt;role&gt;</code> to opt into
 orchestration without rebuilding the roster,
@@ -924,7 +940,7 @@ amq-squad new session [--project DIR] [--profile NAME] [&lt;session&gt;] [up opt
                                   a team-home without cd.
 
 amq-squad team init [--project DIR] [--profile NAME] [--roles a,b|numbers|all] [--binary role=bin,...]
-                     [--session ws] [--trust sandboxed|trusted] [--orchestrated [--lead ROLE]]
+                     [--session ws] [--trust sandboxed|approve-for-me|trusted] [--orchestrated [--lead ROLE]]
                      [--model role=model,...] [--codex-args ...] [--claude-args ...] [--dry-run [--json]]
                                   Write a team profile and seed .amq-squad/team-rules.md.
                                   --dry-run builds and prints the profile plan
@@ -998,7 +1014,7 @@ amq-squad stop (--role R | --all) [--project DIR] [--force] [--close-panes]
                                   (The &#39;down&#39; alias was removed in 2.0.)
 amq-squad resume [--project DIR] [--profile NAME] [--session ws] [--restore-existing]
                  [--exec] [--dry-run] [--force-duplicate]
-                 [--no-bootstrap] [--trust sandboxed|trusted]
+                 [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted]
                  [--model role=model,...]
                  [--codex-args args] [--claude-args args]
                                   Re-orient an existing session. Reattaches a saved
@@ -1069,6 +1085,11 @@ amq-squad console [--project DIR] [--session NAME] [--refresh 2s] [--at-risk-wai
                                   to /dev/tty (stdout stays clean). --once prints
                                   a single static board to stdout for CI / non-TTY.
                                   --project targets a team-home without cd.
+amq-squad notify [--project DIR] [--profile NAME] [--session NAME]
+                 [--renotify-after 30m] [--dry-run] [--json]
+                                  Emit de-duplicated operator attention items for
+                                  live needs-you gates, with inspect/respond
+                                  commands. Does not approve or clear gates.
 amq-squad history [--json] [--project a,b]
                                   Restorable launch records across known projects.
 amq-squad threads --session NAME [--project DIR] [--limit N] [--json]
@@ -1080,9 +1101,9 @@ amq-squad thread --session NAME --id THREAD [--project DIR] [--include-body=fals
 amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
                                   AMQ version, AMQ ops diagnostics, the amq-squad
                                   on PATH vs this build (version skew — spawned
-                                  agents inherit the PATH binary), profile config,
-                                  tmux, wake, marker integrity, and pointer-sync
-                                  drift.
+                                  agents inherit the PATH binary), Codex plugin
+                                  skill-cache alignment, profile config, tmux,
+                                  wake, marker integrity, and pointer-sync drift.
 amq-squad amq env [--project DIR] [--session NAME] [--me HANDLE] [--json]
                                   Show the AMQ context amq-squad resolved for
                                   this project/session.
@@ -1115,7 +1136,7 @@ amq-squad completion &lt;bash|zsh|fish&gt;
 <p>Single-agent primitives:</p>
 <pre class="text"><code>amq-squad agent up &lt;binary&gt; [--project DIR] [--role R] [--session ws] [--team-profile NAME]
                             [--conversation ref] [--no-bootstrap]
-                            [--trust sandboxed|trusted] [--model NAME]
+                            [--trust sandboxed|approve-for-me|trusted] [--model NAME]
                             [--codex-args ...] [--claude-args ...]
                             [--force-duplicate] [-- &lt;native flags&gt;]
                                   Launch one agent. Writes launch.json + role.md
@@ -1184,6 +1205,10 @@ attached.</p>
 <p><code>amq-squad amq ...</code> is a project-aware wrapper around AMQ
 diagnostics. It resolves the same AMQ root, base root, session, and
 handle that the squad launcher uses, then delegates to AMQ.</p>
+<p>amq-squad v2.6.0 requires AMQ 0.38.0 or newer. That floor includes
+eval-safe <code>amq env --export</code> and the reserved human
+<code>user</code> mailbox behavior used by operator gates and
+notification surfaces.</p>
 <p>Read-only diagnostics run directly:</p>
 <div class="sourceCode" id="cb21"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq env <span class="at">--session</span> issue-96</span>
@@ -1377,24 +1402,28 @@ authoring role files and wiring them into a team.</p>
 <ul>
 <li><strong>Claude:</strong> <code>--permission-mode auto</code></li>
 <li><strong>Codex:</strong> nothing by default (sandboxed). Pass
-<code>--trust trusted</code> to prepend
-<code>--dangerously-bypass-approvals-and-sandbox</code> for the local
-power-user profile.</li>
+<code>--trust approve-for-me</code> to use Codex Auto with
+<code>workspace-write</code>, <code>on-request</code>, and
+<code>approvals_reviewer="auto_review"</code>. Pass
+<code>--trust trusted</code> only for the local power-user profile that
+prepends <code>--dangerously-bypass-approvals-and-sandbox</code>.</li>
 </ul>
-<p><code>--trust trusted</code> is persisted in the team profile by
-<code>team init</code> and is re-emitted by <code>up</code>,
-<code>agent up</code>, <code>resume</code>, and <code>fork</code>.
-Combining <code>--trust trusted</code> with
-<code>--no-default-args</code> is rejected, as is sandboxed mode with
-the bypass flag smuggled through <code>--codex-args</code>.</p>
+<p><code>--trust approve-for-me</code> and <code>--trust trusted</code>
+are persisted in the team profile by <code>team init</code> and are
+re-emitted by <code>up</code>, <code>agent up</code>,
+<code>resume</code>, and <code>fork</code>. Combining
+<code>--trust trusted</code> with <code>--no-default-args</code> is
+rejected, as is sandboxed or approve-for-me mode with the bypass flag
+smuggled through <code>--codex-args</code>.</p>
 <p>Pass <code>--model NAME</code> to set the native <code>--model</code>
 flag on Codex or Claude. <code>team init --model role=model,...</code>
 persists per-member models.</p>
 <div class="sourceCode" id="cb31"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> trusted</span>
-<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5,fullstack=sonnet</span>
-<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5</span></code></pre></div>
-<p>amq-squad v2.5.0 requires amq <strong>0.37.1+</strong>. Launches pass
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> approve-for-me</span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5,fullstack=sonnet</span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5</span></code></pre></div>
+<p>amq-squad v2.6.0 requires amq <strong>0.38.0+</strong>. Launches pass
 <code>--require-wake</code> to <code>amq coop exec</code>, so a launch
 <strong>fails at the door</strong> when the AMQ wake sidecar cannot
 start and acquire its lock, instead of surfacing later as a stale or
@@ -1556,7 +1585,7 @@ project's <code>.amqrc</code> for cross-project AMQ routing.
 <h2 id="requires">Requires</h2>
 <ul>
 <li>Go 1.25+</li>
-<li><code>amq</code> binary on <code>PATH</code> (v0.37.1+)</li>
+<li><code>amq</code> binary on <code>PATH</code> (v0.38.0+)</li>
 <li><code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code></li>
 </ul>

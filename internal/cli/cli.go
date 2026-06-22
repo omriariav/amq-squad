@@ -221,6 +221,8 @@ func dispatch(args []string, version string) error {
 		return runPrunePanes(args[1:])
 	case "console":
 		return runConsole(args[1:])
+	case "notify":
+		return runNotify(args[1:])
 	case "amq":
 		return runAMQ(args[1:])
 	case "history":
@@ -267,6 +269,7 @@ Commands:
   collect   Drain once, optionally wait once for a report, then drain once
   prune-panes Reclaim orphaned amq-squad tmux panes (confirm-gated)
   console   Read-only Mission Control TUI over all sessions (--once for CI)
+  notify    Emit de-duplicated operator attention notifications
   amq       Project-aware AMQ diagnostics and confirm-gated maintenance
   history   List restorable launch records
   resume    Plan how to bring the team back into the resolved workstream
@@ -305,6 +308,7 @@ Examples:
   amq-squad verify merge --evidence evidence.json
   amq-squad team init --roles cto,fullstack --binary cto=codex
   amq-squad up --dry-run --no-bootstrap
+  amq-squad notify --project ~/Code/app
   amq-squad stop --project ~/Code/app --all --session issue-96
   amq-squad amq route --session issue-96 --me cto --to fullstack
   amq-squad rm issue-96 --yes

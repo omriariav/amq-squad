@@ -28,6 +28,45 @@ func TestRunLaunchDryRunSandboxedCodexOmitsBypassDefault(t *testing.T) {
 	}
 }
 
+func TestRunLaunchDryRunApproveForMeCodexPreset(t *testing.T) {
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--trust", "approve-for-me", "codex", "test-prompt"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"--sandbox workspace-write",
+		"--ask-for-approval on-request",
+		"-c 'approvals_reviewer=\"auto_review\"'",
+		"test-prompt",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("approve-for-me must not imply trusted bypass:\n%s", stdout)
+	}
+}
+
+func TestValidateManagedTmuxLaunchRejectsNonTTY(t *testing.T) {
+	t.Setenv(envTmuxTarget, "current-window")
+	t.Setenv("TMUX", "/tmp/tmux-1/default,1,0")
+	t.Setenv("TMUX_PANE", "%9")
+	old := launchStdinIsTerminal
+	launchStdinIsTerminal = func() bool { return false }
+	t.Cleanup(func() { launchStdinIsTerminal = old })
+	err := validateManagedTmuxLaunch(launch.Record{
+		Tmux: &launch.TmuxInfo{PaneID: "%9", Target: "current-window"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "real terminal") {
+		t.Fatalf("managed non-tty launch error = %v, want real terminal refusal", err)
+	}
+}
+
 func TestAMQSupportsRequireWake(t *testing.T) {
 	for version, want := range map[string]bool{
 		"":         false, // very old amq: env reports no version
