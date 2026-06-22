@@ -12,9 +12,10 @@ import (
 )
 
 type amqCommandRequest struct {
-	Dir string
-	Env []string
-	Arg []string
+	Dir   string
+	Env   []string
+	Arg   []string
+	Stdin io.Reader // optional; nil means no stdin
 }
 
 type amqCommandRunner func(amqCommandRequest) ([]byte, error)
@@ -27,6 +28,7 @@ func defaultRunAMQCommand(req amqCommandRequest) ([]byte, error) {
 	cmd := exec.Command("amq", req.Arg...)
 	cmd.Env = req.Env
 	cmd.Dir = req.Dir
+	cmd.Stdin = req.Stdin
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		detail := strings.TrimSpace(string(out))
@@ -127,10 +129,14 @@ func amqCommandEnv(ctx amqContext) []string {
 }
 
 func runAndWriteAMQ(out io.Writer, ctx amqContext, args []string) error {
+	return runAndWriteAMQWithStdin(out, ctx, args, nil)
+}
+
+func runAndWriteAMQWithStdin(out io.Writer, ctx amqContext, args []string, stdin io.Reader) error {
 	if out == nil {
 		out = os.Stdout
 	}
-	data, err := runAMQCommand(amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: args})
+	data, err := runAMQCommand(amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: args, Stdin: stdin})
 	if err != nil {
 		return err
 	}
@@ -314,7 +320,24 @@ func runAMQPassthrough(sub string, args []string) error {
 	if sub == "watch" {
 		return runAMQStreaming(ctx, cmd)
 	}
+	if passthroughNeedsStdin(passthrough) {
+		return runAndWriteAMQWithStdin(os.Stdout, ctx, cmd, os.Stdin)
+	}
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
+}
+
+// passthroughNeedsStdin reports whether the passthrough args include a --body
+// value of "-", which means the amq subprocess will read its body from stdin.
+func passthroughNeedsStdin(args []string) bool {
+	for i, a := range args {
+		if a == "--body=-" {
+			return true
+		}
+		if a == "--body" && i+1 < len(args) && args[i+1] == "-" {
+			return true
+		}
+	}
+	return false
 }
 
 // splitAMQPassthroughArgs separates the wrapper's resolution flags
@@ -340,7 +363,9 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 		}
 		name, inlineVal, hasInline := amqFlagName(a)
 		switch name {
-		case "project", "session", "me":
+		case "project", "session", "me",
+			"from",      // alias for --me, matches dispatch/send ergonomics
+			"body-file": // rewritten to --body @<path> (or --body - for stdin)
 			val := inlineVal
 			next := i + 1
 			if !hasInline {
@@ -355,8 +380,16 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 				project, projectSet = val, true
 			case "session":
 				session = val
-			case "me":
+			case "me", "from":
 				me = val
+			case "body-file":
+				// Rewrite --body-file <path> to --body @<path>.
+				// The special value "-" means stdin: rewrite to --body -.
+				bodyVal := "@" + val
+				if val == "-" {
+					bodyVal = "-"
+				}
+				passthrough = append(passthrough, "--body", bodyVal)
 			}
 			i = next
 			continue
