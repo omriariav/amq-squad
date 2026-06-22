@@ -30,6 +30,7 @@ func resolveAMQEnv(rootFlag, session, handle string) (amqEnv, error) {
 // minRequireWakeAMQVersion is the first AMQ release whose `coop exec` accepts
 // --require-wake (refuse to launch unless the wake sidecar acquires its lock).
 const minRequireWakeAMQVersion = "0.34.1"
+const minWakeInjectAMQVersion = "0.37.0"
 
 // amqSupportsRequireWake reports whether the amq version string from `amq env`
 // is new enough for `coop exec --require-wake`. Empty or unparseable versions
@@ -42,6 +43,23 @@ func amqSupportsRequireWake(version string) bool {
 	}
 	min, _ := parseSemverParts(minRequireWakeAMQVersion)
 	return compareSemverParts(got, min) >= 0
+}
+
+func amqSupportsWakeInject(version string) bool {
+	got, ok := parseSemverParts(strings.TrimSpace(version))
+	if !ok {
+		return false
+	}
+	min, _ := parseSemverParts(minWakeInjectAMQVersion)
+	return compareSemverParts(got, min) >= 0
+}
+
+func versionOrUnknown(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return "unknown"
+	}
+	return version
 }
 
 func resolveAMQEnvInDir(cwd, rootFlag, session, handle string) (amqEnv, error) {

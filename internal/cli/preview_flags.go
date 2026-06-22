@@ -3,6 +3,8 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -18,10 +20,12 @@ type previewFlags struct {
 	codexArgsRaw   *string
 	claudeArgsRaw  *string
 	forceDuplicate *bool
+	wakeInjectVia  *string
+	wakeInjectArgs stringListFlag
 }
 
 func registerPreviewFlags(fs *flag.FlagSet) *previewFlags {
-	return &previewFlags{
+	p := &previewFlags{
 		noBootstrap:    fs.Bool("no-bootstrap", false, "emit launch commands that skip the generated bootstrap prompt"),
 		session:        fs.String("session", "", "AMQ workstream session name (default: sanitized team-home directory name; lowercase a-z, 0-9, -, _)"),
 		fresh:          fs.Bool("fresh", false, "fail if the selected workstream session already exists"),
@@ -30,7 +34,10 @@ func registerPreviewFlags(fs *flag.FlagSet) *previewFlags {
 		codexArgsRaw:   fs.String("codex-args", "", "extra Codex args for this run, e.g. '--enable goals'"),
 		claudeArgsRaw:  fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'"),
 		forceDuplicate: fs.Bool("force-duplicate", false, "include --force-duplicate in emitted launch commands"),
+		wakeInjectVia:  fs.String("wake-inject-via", "", "absolute executable forwarded to every agent launch as amq coop exec --wake-inject-via"),
 	}
+	fs.Var(&p.wakeInjectArgs, "wake-inject-arg", "argument forwarded to every agent launch as amq coop exec --wake-inject-arg (repeatable; requires --wake-inject-via)")
+	return p
 }
 
 func (p *previewFlags) toEmitOptions(fs *flag.FlagSet) (emitTeamOptions, error) {
@@ -47,6 +54,14 @@ func (p *previewFlags) toEmitOptions(fs *flag.FlagSet) (emitTeamOptions, error) 
 	if err != nil {
 		return emitTeamOptions{}, err
 	}
+	wakeInjectVia := strings.TrimSpace(*p.wakeInjectVia)
+	wakeInjectArgs := append([]string(nil), p.wakeInjectArgs...)
+	if len(wakeInjectArgs) > 0 && wakeInjectVia == "" {
+		return emitTeamOptions{}, usageErrorf("--wake-inject-arg requires --wake-inject-via")
+	}
+	if wakeInjectVia != "" && !filepath.IsAbs(wakeInjectVia) {
+		return emitTeamOptions{}, usageErrorf("--wake-inject-via must be an absolute path")
+	}
 	return emitTeamOptions{
 		NoBootstrap:      *p.noBootstrap,
 		RequestedSession: *p.session,
@@ -57,6 +72,8 @@ func (p *previewFlags) toEmitOptions(fs *flag.FlagSet) (emitTeamOptions, error) 
 		ExplicitTrust:    flagWasSet(fs, "trust"),
 		ModelOverrides:   modelOverrides,
 		ForceDuplicate:   *p.forceDuplicate,
+		WakeInjectVia:    wakeInjectVia,
+		WakeInjectArgs:   wakeInjectArgs,
 	}, nil
 }
 
@@ -107,5 +124,7 @@ func buildLiveLaunchOptions(fs *flag.FlagSet, pf *previewFlags, lf *liveLaunchFl
 		Trust:           emit.RequestedTrust,
 		ModelOverrides:  emit.ModelOverrides,
 		ForceDuplicate:  emit.ForceDuplicate,
+		WakeInjectVia:   emit.WakeInjectVia,
+		WakeInjectArgs:  emit.WakeInjectArgs,
 	}, nil
 }

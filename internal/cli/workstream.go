@@ -295,7 +295,7 @@ func latestWorkstreamModTime(root string) time.Time {
 		}
 		agentRoot := filepath.Join(agentsRoot, e.Name())
 		observe(agentRoot)
-		for _, name := range []string{"inbox", "outbox", "acks", "receipts", "dlq"} {
+		for _, name := range []string{"inbox", "outbox", "receipts", "dlq"} {
 			observe(filepath.Join(agentRoot, name))
 		}
 	}

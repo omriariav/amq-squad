@@ -200,7 +200,7 @@ Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
 CLI args for one member only — the overlay verb above generates the flagship
 case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it
 for you. Plan emission fails fast when a referenced `--settings` file is
-missing. With amq 0.34.1+, launches also pass `--require-wake` so a launch
+missing. In v2.5.0 with amq 0.37.1+, launches also pass `--require-wake` so a launch
 fails immediately when the wake sidecar cannot acquire its lock
 (`--no-require-wake` opts out and persists into resume).
 
