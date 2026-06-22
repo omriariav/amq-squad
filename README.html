@@ -834,10 +834,25 @@ gates:</p>
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa                 <span class="co"># default operator handle: user</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--operator</span> ops  <span class="co"># custom operator handle</span></span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--no-operator</span>   <span class="co"># explicit opt-out</span></span></code></pre></div>
-<p>The operator is not a runnable team member. JSON discovery derives
-<code>operator</code> and <code>capabilities.operator_gates</code>;
-<code>capabilities</code> is not persisted in
-<code>team.json</code>.</p>
+<p>The operator is not a runnable team member. AMQ 0.38.0 reserves the
+conventional <code>user</code> mailbox for this human/operator role;
+custom operator handles use the same amq-squad protocol. JSON discovery
+derives <code>operator</code> and
+<code>capabilities.operator_gates</code>; <code>capabilities</code> is
+not persisted in <code>team.json</code>.</p>
+<p>Operator gates are structural AMQ handoffs, not authentication. Send
+human-only decisions or manual actions to the configured operator handle
+on stable <code>gate/&lt;topic&gt;</code> threads, with
+<code>--kind question --subject "APPROVAL: &lt;decision&gt;"</code> for
+approvals and
+<code>--kind decision --subject "DONE: &lt;goal&gt;"</code> for manual
+closeout. The operator replies on the same thread with
+<code>--kind answer</code> and subjects such as <code>APPROVED:</code>,
+<code>DENIED:</code>, or <code>ANSWER:</code>. P2P prose like "pending
+operator" is evidence only; it is not a gate.
+<code>amq-squad notify</code> surfaces new or stale needs-you gates with
+inspect/respond commands and de-duplicates unchanged items, but
+notification output never authorizes or clears a gate.</p>
 <h3 id="orchestration-opt-in">Orchestration (opt-in)</h3>
 <p>By default a squad is flat: members coordinate peer-to-peer over AMQ.
 You can instead run an <strong>orchestrated</strong> squad, where one
@@ -850,9 +865,9 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#
 <code>team.json</code> and injects a generated
 <code>## Orchestration</code> reporting norm into
 <code>.amq-squad/team-rules.md</code>: the lead loads the
-<code>amq-squad-orchestrator</code> skill, and children push
-<code>status</code> / <code>question</code> /
-<code>review_request</code> messages to the lead over AMQ. Default off;
+<code>amq-squad-orchestrator</code> skill, dispatches durable AMQ tasks,
+and children push ACK/start, progress, blockers, review requests, and
+DONE reports back to the sender/lead over AMQ. Default off;
 <strong>exactly one lead</strong>; the lead is a team member,
 <strong>never the operator</strong>. <code>--lead ROLE</code> implies
 <code>--orchestrated</code>; with <code>--orchestrated</code> alone a
@@ -861,19 +876,20 @@ defaults to <code>cto</code>. The <code>team_profile_plan</code> /
 <code>team_plan</code> JSON envelopes carry
 <code>orchestrated</code>/<code>lead</code>. If
 <code>team-rules.md</code> already exists, <code>new team</code> leaves
-it untouched — regenerate with
+it untouched, so regenerate with
 <code>amq-squad team rules init --force</code> to pick up the norm.</p>
-<p>The operator can steer the lead directly from amq-noc (v0.8.0+): a
-<strong>directive</strong> arrives on the lead's operator p2p thread as
-a <code>--kind todo</code> message whose subject starts with
-<code>DIRECTIVE:</code> — pane-injected when the lead is live, a durable
-AMQ message when it was down. The <code>amq-squad-orchestrator</code>
-skill teaches the lead to treat directives as operator steering with
-priority over child reports, acknowledge on the same thread, and never
-treat one as a gate answer (a directive never clears a
-<code>gate/&lt;topic&gt;</code> thread); orchestrated teams get the
-convention as a generated line in their <code>## Orchestration</code>
-norm.</p>
+<p>The operator normally steers the workstream through the
+lead/orchestrator. The operator can steer the lead directly from amq-noc
+(v0.8.0+), or with plain AMQ: a <strong>directive</strong> arrives on
+the lead's operator p2p thread as a <code>--kind todo</code> message
+whose subject starts with <code>DIRECTIVE:</code>. The lead treats
+directives as operator steering with priority over child reports,
+acknowledges on the same thread, and never treats one as a gate answer
+(a directive never clears a <code>gate/&lt;topic&gt;</code> thread).
+Direct operator-to-worker messages are exceptional; when they affect
+scope, priority, merge readiness, release state, or external actions,
+the worker reports them to the lead before acting or includes the
+lead/thread metadata in the AMQ report.</p>
 <h2 id="verbs">Verbs</h2>
 <p>Team-level verbs:</p>
 <pre class="text"><code>amq-squad new team [--project DIR] [--sync] [--dry-run [--json]] [team init options]
@@ -1031,6 +1047,11 @@ amq-squad console [--project DIR] [--session NAME] [--refresh 2s] [--at-risk-wai
                                   to /dev/tty (stdout stays clean). --once prints
                                   a single static board to stdout for CI / non-TTY.
                                   --project targets a team-home without cd.
+amq-squad notify [--project DIR] [--profile NAME] [--session NAME]
+                 [--renotify-after 30m] [--dry-run] [--json]
+                                  Emit de-duplicated operator attention items for
+                                  live needs-you gates, with inspect/respond
+                                  commands. Does not approve or clear gates.
 amq-squad history [--json] [--project a,b]
                                   Restorable launch records across known projects.
 amq-squad threads --session NAME [--project DIR] [--limit N] [--json]
@@ -1146,6 +1167,10 @@ attached.</p>
 <p><code>amq-squad amq ...</code> is a project-aware wrapper around AMQ
 diagnostics. It resolves the same AMQ root, base root, session, and
 handle that the squad launcher uses, then delegates to AMQ.</p>
+<p>amq-squad v2.6.0 requires AMQ 0.38.0 or newer. That floor includes
+eval-safe <code>amq env --export</code> and the reserved human
+<code>user</code> mailbox behavior used by operator gates and
+notification surfaces.</p>
 <p>Read-only diagnostics run directly:</p>
 <div class="sourceCode" id="cb21"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq env <span class="at">--session</span> issue-96</span>
@@ -1356,11 +1381,10 @@ persists per-member models.</p>
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> trusted</span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5,fullstack=sonnet</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5</span></code></pre></div>
-<p>With amq <strong>0.34.1+</strong>, launches pass
-<code>--require-wake</code> to <code>amq coop exec</code>, so a launch
-<strong>fails at the door</strong> when the AMQ wake sidecar cannot
-start and acquire its lock — instead of surfacing later as a stale or
-orphaned wake. Older amq versions are detected and skip the flag.
+<p>Launches pass <code>--require-wake</code> to
+<code>amq coop exec</code>, so a launch <strong>fails at the
+door</strong> when the AMQ wake sidecar cannot start and acquire its
+lock instead of surfacing later as a stale or orphaned wake.
 <code>--no-require-wake</code> opts out for environments where wake
 cannot run; the opt-out is persisted in the launch record so resume
 reproduces it.</p>
