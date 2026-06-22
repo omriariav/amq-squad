@@ -133,6 +133,39 @@ func TestExecuteStatusLiveAgent(t *testing.T) {
 	}
 }
 
+func TestExecuteStatusJSONIncludesSpawnMetadata(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96", SpawnOrigin: "profile", SpawnDepth: 1},
+		},
+	})
+	seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
+		Binary: "codex", Handle: "qa", AgentPID: 5555, SpawnOrigin: "cto", SpawnDepth: 1,
+	})
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Probe:            statusProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now()),
+		JSON:             true,
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if len(env.Data.Records) != 1 {
+		t.Fatalf("records = %d, want 1", len(env.Data.Records))
+	}
+	got := env.Data.Records[0]
+	if got.SpawnOrigin != "cto" || got.SpawnDepth != 1 {
+		t.Fatalf("spawn metadata = origin %q depth %d, want cto/1", got.SpawnOrigin, got.SpawnDepth)
+	}
+	if !env.Data.Capabilities.AutonomousGuardrails {
+		t.Fatalf("status capabilities must advertise autonomous guardrails")
+	}
+}
+
 func TestExecuteStatusStaleWhenPIDDead(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{

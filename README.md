@@ -438,7 +438,7 @@ amq-squad new session [--project DIR] [--profile NAME] [<session>] [up options]
                                   a team-home without cd.
 
 amq-squad team init [--project DIR] [--profile NAME] [--roles a,b|numbers|all] [--binary role=bin,...]
-                     [--session ws] [--trust sandboxed|trusted] [--orchestrated [--lead ROLE]]
+                     [--session ws] [--trust sandboxed|approve-for-me|trusted] [--orchestrated [--lead ROLE]]
                      [--model role=model,...] [--codex-args ...] [--claude-args ...] [--dry-run [--json]]
                                   Write a team profile and seed .amq-squad/team-rules.md.
                                   --dry-run builds and prints the profile plan
@@ -512,7 +512,7 @@ amq-squad stop (--role R | --all) [--project DIR] [--force] [--close-panes]
                                   (The 'down' alias was removed in 2.0.)
 amq-squad resume [--project DIR] [--profile NAME] [--session ws] [--restore-existing]
                  [--exec] [--dry-run] [--force-duplicate]
-                 [--no-bootstrap] [--trust sandboxed|trusted]
+                 [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted]
                  [--model role=model,...]
                  [--codex-args args] [--claude-args args]
                                   Re-orient an existing session. Reattaches a saved
@@ -633,7 +633,7 @@ Single-agent primitives:
 ```text
 amq-squad agent up <binary> [--project DIR] [--role R] [--session ws] [--team-profile NAME]
                             [--conversation ref] [--no-bootstrap]
-                            [--trust sandboxed|trusted] [--model NAME]
+                            [--trust sandboxed|approve-for-me|trusted] [--model NAME]
                             [--codex-args ...] [--claude-args ...]
                             [--force-duplicate] [-- <native flags>]
                                   Launch one agent. Writes launch.json + role.md
@@ -863,14 +863,15 @@ wiring them into a team.
 Generated launch commands include these per-binary defaults:
 
 - **Claude:** `--permission-mode auto`
-- **Codex:** nothing by default (sandboxed). Pass `--trust trusted` to prepend `--dangerously-bypass-approvals-and-sandbox` for the local power-user profile.
+- **Codex:** nothing by default (sandboxed). Pass `--trust approve-for-me` to use Codex Auto with `workspace-write`, `on-request`, and `approvals_reviewer="auto_review"`. Pass `--trust trusted` only for the local power-user profile that prepends `--dangerously-bypass-approvals-and-sandbox`.
 
-`--trust trusted` is persisted in the team profile by `team init` and is re-emitted by `up`, `agent up`, `resume`, and `fork`. Combining `--trust trusted` with `--no-default-args` is rejected, as is sandboxed mode with the bypass flag smuggled through `--codex-args`.
+`--trust approve-for-me` and `--trust trusted` are persisted in the team profile by `team init` and are re-emitted by `up`, `agent up`, `resume`, and `fork`. Combining `--trust trusted` with `--no-default-args` is rejected, as is sandboxed or approve-for-me mode with the bypass flag smuggled through `--codex-args`.
 
 Pass `--model NAME` to set the native `--model` flag on Codex or Claude. `team init --model role=model,...` persists per-member models.
 
 ```sh
 amq-squad team init --personas cto,fullstack --trust trusted
+amq-squad team init --personas cto,fullstack --trust approve-for-me
 amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
 amq-squad agent up codex --model gpt-5
 ```

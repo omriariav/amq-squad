@@ -24,6 +24,8 @@ import (
 // unset and record an empty target.
 const envTmuxTarget = "AMQ_SQUAD_TMUX_TARGET"
 
+var launchStdinIsTerminal = stdinIsTerminal
+
 type stringListFlag []string
 
 func (f *stringListFlag) String() string {
@@ -56,8 +58,10 @@ func runLaunch(args []string) error {
 	conversationID := fs.String("conversation-id", "", "alias for --conversation")
 	noBootstrap := fs.Bool("no-bootstrap", false, "do not pass the generated bootstrap prompt to the agent")
 	noDefaultArgs := fs.Bool("no-default-args", false, "do not prepend Codex or Claude default permission args")
-	trustRaw := fs.String("trust", "", "Codex trust profile: sandboxed (default) or trusted (local power mode)")
+	trustRaw := fs.String("trust", "", "Codex trust profile: sandboxed (default), approve-for-me, or trusted (local power mode)")
 	model := fs.String("model", "", "native model name to pass to the agent binary, e.g. 'gpt-5' or 'sonnet'")
+	spawnOrigin := fs.String("spawn-origin", "", "runtime composition origin recorded in launch.json")
+	spawnDepth := fs.Int("spawn-depth", 0, "runtime composition depth recorded in launch.json")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args to treat as launch defaults, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args to treat as launch defaults, e.g. '--chrome'")
 	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent for the same handle/workstream is detected")
@@ -88,9 +92,10 @@ Side effects before exec:
      already running. Override with --force-duplicate.
   3. Writes launch.json under the amq-squad extension namespace.
   4. Writes a role.md stub if one does not already exist.
-  5. Prepends Claude default permission args, and prepends Codex permission
-     args only when --trust trusted is set. --no-default-args opts out of all
-     built-in defaults.
+  5. Prepends Claude default permission args. Codex defaults stay empty for
+     sandboxed mode, use Auto plus auto_review for --trust approve-for-me, and
+     use the bypass flag only for --trust trusted. --no-default-args opts out
+     of all built-in defaults.
   6. Inserts --model <name> for codex or claude when --model is provided.
   7. Prepends --codex-args or --claude-args for the matching binary.
   8. Translates --conversation for Codex or Claude resume when provided.
@@ -145,6 +150,9 @@ Examples:
 	}
 	if err := validateTrustCombination(trustMode, trustExplicit, *noDefaultArgs, binaryArgs); err != nil {
 		return err
+	}
+	if *spawnDepth < 0 {
+		return usageErrorf("--spawn-depth cannot be negative")
 	}
 	wakeInjectViaValue := strings.TrimSpace(*wakeInjectVia)
 	wakeInjectArgValues := append([]string(nil), wakeInjectArgs...)
@@ -232,6 +240,8 @@ Examples:
 		Model:            strings.TrimSpace(*model),
 		Trust:            trustMode,
 		NoDefaultArgs:    *noDefaultArgs,
+		SpawnOrigin:      strings.TrimSpace(*spawnOrigin),
+		SpawnDepth:       *spawnDepth,
 		NoRequireWake:    *noRequireWake,
 		WakeInjectVia:    wakeInjectViaValue,
 		WakeInjectArgs:   wakeInjectArgValues,
@@ -255,7 +265,6 @@ Examples:
 			Target:     strings.TrimSpace(os.Getenv(envTmuxTarget)),
 		}
 	}
-
 	// Keep generated bootstrap out of launch.json so restore stays compact
 	// and does not replay stale startup text.
 	effectiveChildArgs := append([]string(nil), childArgs...)
@@ -323,6 +332,9 @@ Examples:
 		verbosePolicyEcho()
 		return nil
 	}
+	if err := validateManagedTmuxLaunch(rec); err != nil {
+		return err
+	}
 
 	if launcher != "" {
 		if err := ensureLauncherExecutable(launcher); err != nil {
@@ -382,6 +394,28 @@ Examples:
 	// stale AM_ROOT/AM_ME from the launching shell along to the agent would
 	// re-create the identity-leak asymmetry #46 closed for env resolution.
 	return syscall.Exec(amqBin, append([]string{"amq"}, coopArgs...), envWithoutAMQIdentity(os.Environ()))
+}
+
+func validateManagedTmuxLaunch(rec launch.Record) error {
+	target := strings.TrimSpace(os.Getenv(envTmuxTarget))
+	if target == "" {
+		return nil
+	}
+	if os.Getenv("TMUX") == "" || strings.TrimSpace(os.Getenv("TMUX_PANE")) == "" {
+		return fmt.Errorf("managed tmux launch for %s requires TMUX and TMUX_PANE; refusing to write launch.json", target)
+	}
+	if !launchStdinIsTerminal() {
+		return fmt.Errorf("managed tmux launch for %s requires a real terminal; refusing to write launch.json", target)
+	}
+	if rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) == "" {
+		return fmt.Errorf("managed tmux launch for %s could not resolve a pane id; refusing to write launch.json", target)
+	}
+	return nil
+}
+
+func stdinIsTerminal() bool {
+	info, err := os.Stdin.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // ensureLauncherExecutable verifies a custom --launcher path exists and is an

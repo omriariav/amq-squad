@@ -43,6 +43,11 @@ type Member struct {
 	Session string `json:"session"` // AMQ workstream session name
 	Model   string `json:"model,omitempty"`
 	CWD     string `json:"cwd,omitempty"`
+	// SpawnOrigin and SpawnDepth record how runtime composition added this
+	// member. Seeded/static members default to depth 0. Runtime children added
+	// by the orchestration lead are depth 1 under the default cap.
+	SpawnOrigin string `json:"spawn_origin,omitempty"`
+	SpawnDepth  int    `json:"spawn_depth,omitempty"`
 	// Launcher is an optional wrapper command exec'd in place of Binary while
 	// the member still receives AMQ identity, bootstrap, and a launch record.
 	// LauncherArgs precede the agent's normal child args; the launcher is
@@ -103,6 +108,9 @@ type Capabilities struct {
 	// and the focus/open/send control verbs. Always true since v1.5.0; a client
 	// can gate its runtime-action UI on it instead of sniffing for fields.
 	RuntimeActions bool `json:"runtime_actions"`
+	// AutonomousGuardrails advertises that runtime composition carries
+	// bodies-are-data guidance plus spawn-depth/origin metadata.
+	AutonomousGuardrails bool `json:"autonomous_guardrails"`
 }
 
 // EffectiveCWD returns the member's working directory, falling back to the
@@ -145,9 +153,13 @@ type Team struct {
 	// default off; the generated team-rules.md gains the orchestration reporting
 	// norm only when it is true. Lead names the lead role (a member role, never the
 	// operator/NOC) and is required when Orchestrated is set.
-	Orchestrated bool      `json:"orchestrated,omitempty"`
-	Lead         string    `json:"lead,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	Orchestrated bool   `json:"orchestrated,omitempty"`
+	Lead         string `json:"lead,omitempty"`
+	// MaxSpawnDepth caps runtime composition fan-out. Zero means the safe
+	// default of 1: the operator-launched lead may add direct children, but
+	// children cannot add grandchildren.
+	MaxSpawnDepth int       `json:"max_spawn_depth,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 func DefaultOperator() OperatorConfig {
@@ -187,9 +199,17 @@ func SupportsOperatorGates(t Team) bool {
 
 func EffectiveCapabilities(t Team) Capabilities {
 	return Capabilities{
-		OperatorGates:  SupportsOperatorGates(t),
-		RuntimeActions: true, // every v1.5.0+ build exposes the runtime contract
+		OperatorGates:        SupportsOperatorGates(t),
+		RuntimeActions:       true, // every v1.5.0+ build exposes the runtime contract
+		AutonomousGuardrails: true,
 	}
+}
+
+func EffectiveMaxSpawnDepth(t Team) int {
+	if t.MaxSpawnDepth > 0 {
+		return t.MaxSpawnDepth
+	}
+	return 1
 }
 
 // Path returns the team.json path for the default profile under projectDir.
@@ -387,8 +407,11 @@ func Validate(t Team) error {
 			return fmt.Errorf("workstream: %w", err)
 		}
 	}
-	if t.Trust != "" && t.Trust != "sandboxed" && t.Trust != "trusted" {
-		return fmt.Errorf("trust: invalid trust mode %q: use sandboxed or trusted", t.Trust)
+	if t.Trust != "" && t.Trust != "sandboxed" && t.Trust != "approve-for-me" && t.Trust != "trusted" {
+		return fmt.Errorf("trust: invalid trust mode %q: use sandboxed, approve-for-me, or trusted", t.Trust)
+	}
+	if t.MaxSpawnDepth < 0 {
+		return fmt.Errorf("max_spawn_depth: cannot be negative")
 	}
 	operatorHandle := ""
 	if t.Operator == nil {
@@ -525,6 +548,14 @@ func validateMember(prefix string, m Member) error {
 		if !filepath.IsAbs(m.CWD) {
 			return fmt.Errorf("%s.cwd: must be absolute", prefix)
 		}
+	}
+	if m.SpawnOrigin != "" {
+		if err := ValidateDisplayValue("spawn_origin", m.SpawnOrigin); err != nil {
+			return fmt.Errorf("%s.spawn_origin: %w", prefix, err)
+		}
+	}
+	if m.SpawnDepth < 0 {
+		return fmt.Errorf("%s.spawn_depth: cannot be negative", prefix)
 	}
 	if m.Launcher != "" {
 		if err := ValidateDisplayValue("launcher", m.Launcher); err != nil {
