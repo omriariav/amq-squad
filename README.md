@@ -883,9 +883,10 @@ run; the opt-out is persisted in the launch record so resume reproduces it.
 
 For external-injector wake setups, pass `--wake-inject-via /absolute/injector`
 and repeat `--wake-inject-arg=value` as needed on `agent up`, `up`, or
-`team show`. These flags are forwarded to `amq coop exec`, persisted in
-`launch.json`, and replayed by `agent resume`. Use the `--flag=value` form for
-dash-prefixed injector arguments such as `--wake-inject-arg=--pane`.
+`up --dry-run` launch-plan output. These flags are forwarded to
+`amq coop exec`, persisted in `launch.json`, and replayed by `agent resume`.
+Use the `--flag=value` form for dash-prefixed injector arguments such as
+`--wake-inject-arg=--pane`.
 
 ## Workstreams and threads
 
