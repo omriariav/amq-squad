@@ -57,6 +57,61 @@ func TestVerifyMergeReportsFailuresInJSON(t *testing.T) {
 	}
 }
 
+func TestVerifyMergeSuccessJSONIncludesEvidenceSummary(t *testing.T) {
+	dir := t.TempDir()
+	evidence := writeVerifyEvidence(t, dir, `{
+  "subject": "PR #164",
+  "head_sha": "abc123",
+  "ci": {"state": "success", "sha": "abc123", "source": "local make ci", "checked_at": "2026-06-21T16:00:00Z", "url": "https://ci.example/build/1"},
+  "review": {"state": "clean", "sha": "abc123", "source": "cto approval", "checked_at": "2026-06-21T16:01:00Z"},
+  "exceptions": [{"name": "shared infra", "approved": true, "gate": "gate/merge", "reason": "operator approved"}]
+}`)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runVerify([]string{"merge", "--evidence", evidence, "--json"})
+	})
+	if err != nil {
+		t.Fatalf("verify merge --json: %v", err)
+	}
+	for _, want := range []string{
+		`"kind": "verify_merge"`,
+		`"ok": true`,
+		`"evidence_summary"`,
+		`"ci"`,
+		`"source": "local make ci"`,
+		`"checked_at": "2026-06-21T16:00:00Z"`,
+		`"url": "https://ci.example/build/1"`,
+		`"review"`,
+		`"source": "cto approval"`,
+		`"exceptions"`,
+		`"gate": "gate/merge"`,
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("missing %q in JSON output:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestVerifyMergeFailureJSONOmitsEvidenceSummary(t *testing.T) {
+	dir := t.TempDir()
+	evidence := writeVerifyEvidence(t, dir, `{
+  "subject": "PR #164",
+  "head_sha": "abc123",
+  "ci": {"state": "pending", "sha": "old456", "source": "ci", "checked_at": "2026-06-21T16:00:00Z"},
+  "review": {"state": "clean", "sha": "abc123", "source": "review", "checked_at": "2026-06-21T16:01:00Z"},
+  "exceptions": []
+}`)
+	stdout, _, err := captureOutput(t, func() error {
+		return runVerify([]string{"merge", "--evidence", evidence, "--json"})
+	})
+	if err == nil {
+		t.Fatal("want failed preflight error")
+	}
+	if strings.Contains(stdout, "evidence_summary") {
+		t.Fatalf("failure JSON should stay focused on failures:\n%s", stdout)
+	}
+}
+
 func TestVerifyMergeFailureCodes(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -63,5 +65,58 @@ func TestParseAmqSquadVersion(t *testing.T) {
 		if got := parseAmqSquadVersion(in); got != want {
 			t.Errorf("parseAmqSquadVersion(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestDoctorCheckCodexSkillCache(t *testing.T) {
+	cache := t.TempDir()
+	writeCachedSkill := func(version string) {
+		t.Helper()
+		path := filepath.Join(cache, version, "skills", "amq-squad", "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("# amq-squad\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(version string) doctorCheck {
+		return doctorCheckCodexSkillCache(doctorExecution{
+			RunningVersion: version,
+			CodexSkillCacheRoot: func() string {
+				return cache
+			},
+		})
+	}
+
+	writeCachedSkill("2.5.0")
+	ok := check("v2.5.0")
+	if ok.Status != doctorOK || !strings.Contains(ok.Detail, "2.5.0") {
+		t.Fatalf("cache check = %+v, want ok for direct released bundle", ok)
+	}
+
+	stale := check("v2.6.0")
+	if stale.Status != doctorWarn || !strings.Contains(stale.Detail, "not directly cached") || !strings.Contains(stale.Detail, "2.5.0") {
+		t.Fatalf("stale cache check = %+v, want actionable warning naming cached versions", stale)
+	}
+}
+
+func TestDoctorCheckCodexSkillCacheWarnsOnSymlink(t *testing.T) {
+	cache := t.TempDir()
+	target := filepath.Join(cache, "2.5.0-real")
+	if err := os.MkdirAll(filepath.Join(target, "skills", "amq-squad"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(cache, "2.5.0")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	got := doctorCheckCodexSkillCache(doctorExecution{
+		RunningVersion: "v2.5.0",
+		CodexSkillCacheRoot: func() string {
+			return cache
+		},
+	})
+	if got.Status != doctorWarn || !strings.Contains(got.Detail, "symlink") {
+		t.Fatalf("symlink cache check = %+v, want warning", got)
 	}
 }
