@@ -3,7 +3,6 @@ package cli
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1490,7 +1489,8 @@ func TestRunTeamRulesInitForceRefreshesScopedRules(t *testing.T) {
 		"pm (Project Manager / Product Owner)",
 		"Turns feedback into scoped tasks for the right owner. Does not implement code unless explicitly assigned by the user.",
 		"fullstack (Fullstack Developer)",
-		fmt.Sprintf("default workstream `%s`", defaultWorkstreamName(dir)),
+		"default workstream `pm`",
+		"default workstream `fullstack`",
 		"On first session run, start the first response by stating your role, handle, and amq-squad skill version",
 		"Use the `amq-squad` skill for team setup",
 		"Use `amq-cli` only for raw AMQ debugging",
@@ -1501,13 +1501,188 @@ func TestRunTeamRulesInitForceRefreshesScopedRules(t *testing.T) {
 			t.Errorf("team-rules.md missing %q in:\n%s", want, body)
 		}
 	}
-	for _, legacy := range []string{
-		"default workstream `pm`",
-		"default workstream `fullstack`",
+}
+
+func TestRunTeamRulesTemplatesListsAvailableTemplates(t *testing.T) {
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"templates"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamRules templates: %v", err)
+	}
+	if stderr != "" {
+		t.Fatalf("templates should be silent on stderr, got:\n%s", stderr)
+	}
+	for _, want := range []string{
+		"dev-only",
+		"product-squad",
+		"scrum",
+		"custom",
+		"Engineering-only squads",
+		"Product, design, engineering, and QA squads",
 	} {
-		if strings.Contains(body, legacy) {
-			t.Errorf("team-rules.md contains legacy role session %q in:\n%s", legacy, body)
+		if !strings.Contains(stdout, want) {
+			t.Errorf("templates output missing %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestTeamRulesTemplateSelection(t *testing.T) {
+	tests := []struct {
+		name  string
+		roles []string
+		want  string
+	}{
+		{name: "dev only", roles: []string{"cto", "fullstack", "qa"}, want: "dev-only"},
+		{name: "product squad", roles: []string{"pm", "designer", "fullstack"}, want: "product-squad"},
+		{name: "scrum accountabilities", roles: []string{"product-owner", "scrum-master", "developers"}, want: "scrum"},
+		{name: "custom", roles: []string{"rules-dev", "principal"}, want: "custom"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm := team.Team{Project: t.TempDir()}
+			for _, role := range tt.roles {
+				tm.Members = append(tm.Members, team.Member{Role: role, Binary: "codex", Handle: role, Session: role})
+			}
+			got, err := selectTeamRulesTemplate("auto", tm)
+			if err != nil {
+				t.Fatalf("selectTeamRulesTemplate: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("template = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRenderTeamRulesTemplatesIncludeRequiredSections(t *testing.T) {
+	tm := team.Team{
+		Project: t.TempDir(),
+		Members: []team.Member{
+			{Role: "pm", Binary: "codex", Handle: "pm", Session: "shared"},
+			{Role: "designer", Binary: "codex", Handle: "designer", Session: "shared"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "shared"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "shared"},
+		},
+	}
+	for _, template := range []string{"dev-only", "product-squad", "scrum"} {
+		t.Run(template, func(t *testing.T) {
+			body, err := renderTeamRulesWithTemplate(tm, template)
+			if err != nil {
+				t.Fatalf("renderTeamRulesWithTemplate: %v", err)
+			}
+			for _, want := range []string{
+				"## Purpose and Scope",
+				"## Role Scope and Accountabilities",
+				"## Decision Rights",
+				"## Workflow",
+				"## Communication",
+				"## Quality Gates",
+				"## Conflict Protocol",
+				"## Review Cadence",
+				"pm (Project Manager / Product Owner): handle `pm`",
+				"fullstack (Fullstack Developer): handle `fullstack`",
+				"cwd `" + tm.Project + "`",
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("%s template missing %q:\n%s", template, want, body)
+				}
+			}
+		})
+	}
+}
+
+func TestRunTeamRulesInitTemplateAutoUsesNamedProfile(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := team.WriteProfile(dir, "codex-v2-5-0", team.Team{
+		Project: dir,
+		Members: []team.Member{
+			{Role: "pm", Binary: "codex", Handle: "pm", Session: "v2-5-0"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "v2-5-0"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"init", "--profile", "codex-v2-5-0", "--template", "auto", "--force"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamRules init named profile: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, "Selected team-rules template: product-squad") {
+		t.Fatalf("auto selection notice missing from stderr:\n%s", stderr)
+	}
+	got, err := os.ReadFile(rules.Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	for _, want := range []string{
+		"Template: `product-squad`",
+		"pm (Project Manager / Product Owner): handle `pm`",
+		"fullstack (Fullstack Developer): handle `fullstack`",
+		"Product discovery artifacts name the user problem",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("named-profile team-rules missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestRunTeamRulesInitNamedProfilePreservesMixedMemberSessions(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := team.WriteProfile(dir, "codex-v2-5-0", team.Team{
+		Project: dir,
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "external-lead"},
+			{Role: "runtime-dev", Binary: "codex", Handle: "runtime-dev", Session: "v2-5-0"},
+			{Role: "rules-dev", Binary: "codex", Handle: "rules-dev", Session: "v2-5-0"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"init", "--profile", "codex-v2-5-0", "--template", "auto", "--force"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamRules init named mixed profile: %v\nstderr:\n%s", err, stderr)
+	}
+	got, err := os.ReadFile(rules.Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	for _, want := range []string{
+		"cto (CTO): handle `cto`, default workstream `external-lead`",
+		"runtime-dev (runtime-dev): handle `runtime-dev`, default workstream `v2-5-0`",
+		"rules-dev (rules-dev): handle `rules-dev`, default workstream `v2-5-0`",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("mixed-session team-rules missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "default workstream `"+defaultWorkstreamName(dir)+"`") {
+		t.Errorf("mixed-session named profile should not collapse members to project fallback:\n%s", body)
+	}
+}
+
+func TestRunTeamRulesInitRejectsUnknownTemplateWithoutTeam(t *testing.T) {
+	dir := t.TempDir()
+	_, _, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"init", "--project", dir, "--template", "nope", "--force"})
+	})
+	if err == nil {
+		t.Fatal("expected unknown template to fail even without a configured team")
+	}
+	if !strings.Contains(err.Error(), "unknown team-rules template") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, statErr := os.Stat(rules.Path(dir)); !os.IsNotExist(statErr) {
+		t.Fatalf("unknown template should not write team-rules.md, stat err = %v", statErr)
 	}
 }
 
