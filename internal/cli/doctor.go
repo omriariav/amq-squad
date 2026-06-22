@@ -88,6 +88,10 @@ type doctorExecution struct {
 	// version. found=false when none is on PATH. Injectable so the version-skew
 	// check never shells a real binary in tests.
 	PathBinaryVersion func() (path, version string, found bool)
+	// CodexSkillCacheRoot returns the local Codex plugin cache directory for the
+	// amq-squad skill bundle. Injectable so tests do not read the operator's
+	// home directory.
+	CodexSkillCacheRoot func() string
 	// PaneLister lists tmux panes for orphan-pane detection. ResolveBaseRoot
 	// resolves the AMQ base root whose launch records are treated as current.
 	PaneLister      tmuxpane.PaneLister
@@ -101,15 +105,24 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		ResolveAMQEnv: func(projectDir string) (amqEnv, error) {
 			return resolveAMQEnvInDir(projectDir, "", "", "amq-squad")
 		},
-		RunAMQOps:         defaultDoctorAMQOps,
-		LookPath:          exec.LookPath,
-		Probe:             defaultDuplicateLaunchProbe,
-		Getenv:            os.Getenv,
-		TmuxShowOptions:   defaultTmuxShowServerOption,
-		PathBinaryVersion: defaultPathBinaryVersion,
-		PaneLister:        statusPaneLister,
-		ResolveBaseRoot:   scanBaseRootForProject,
+		RunAMQOps:           defaultDoctorAMQOps,
+		LookPath:            exec.LookPath,
+		Probe:               defaultDuplicateLaunchProbe,
+		Getenv:              os.Getenv,
+		TmuxShowOptions:     defaultTmuxShowServerOption,
+		PathBinaryVersion:   defaultPathBinaryVersion,
+		CodexSkillCacheRoot: defaultCodexSkillCacheRoot,
+		PaneLister:          statusPaneLister,
+		ResolveBaseRoot:     scanBaseRootForProject,
 	}
+}
+
+func defaultCodexSkillCacheRoot() string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return ""
+	}
+	return filepath.Join(home, ".codex", "plugins", "cache", "amq-squad", "amq-squad")
 }
 
 // defaultPathBinaryVersion resolves the `amq-squad` on PATH and runs
@@ -175,6 +188,72 @@ func doctorCheckVersionSkew(d doctorExecution) doctorCheck {
 	}
 	return doctorCheck{Name: name, Status: doctorWarn,
 		Detail: fmt.Sprintf("version skew: PATH amq-squad is %s (%s) but this process is %s; agents launched by amq-squad inherit the PATH binary, so orchestration uses %s. Reinstall to align: %s", pathVer, path, running, pathVer, install)}
+}
+
+func doctorCheckCodexSkillCache(d doctorExecution) doctorCheck {
+	const name = "Codex skill cache"
+	running := strings.TrimSpace(d.RunningVersion)
+	if running == "" || running == "dev" || running == "(devel)" {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "running a dev/unstamped build; skill-cache check skipped"}
+	}
+	want := strings.TrimPrefix(running, "v")
+	if want == "" {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "running version unavailable; skill-cache check skipped"}
+	}
+	rootFn := d.CodexSkillCacheRoot
+	if rootFn == nil {
+		rootFn = defaultCodexSkillCacheRoot
+	}
+	root := strings.TrimSpace(rootFn())
+	if root == "" {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "Codex cache root unavailable; skipped"}
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return doctorCheck{Name: name, Status: doctorOK, Detail: "no amq-squad Codex skill cache found; skipped"}
+		}
+		return doctorCheck{Name: name, Status: doctorWarn, Detail: fmt.Sprintf("cannot inspect %s: %v", root, err)}
+	}
+	var versions []string
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			versions = append(versions, entry.Name())
+		}
+	}
+	if len(versions) == 0 {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "no cached amq-squad skill versions found; skipped"}
+	}
+	wantPath := filepath.Join(root, want)
+	info, err := os.Lstat(wantPath)
+	if err != nil {
+		return doctorCheck{
+			Name:   name,
+			Status: doctorWarn,
+			Detail: fmt.Sprintf("released skill bundle %s is not directly cached under %s; found %s. Refresh the Codex plugin/skill cache instead of relying on stale pointers or compatibility symlinks.",
+				want, root, strings.Join(versions, ", ")),
+		}
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return doctorCheck{
+			Name:   name,
+			Status: doctorWarn,
+			Detail: fmt.Sprintf("released skill bundle %s is a symlink at %s; refresh the Codex plugin/skill cache so it resolves to the installed bundle directly.",
+				want, wantPath),
+		}
+	}
+	if _, err := os.Stat(filepath.Join(wantPath, "skills", "amq-squad", "SKILL.md")); err != nil {
+		return doctorCheck{
+			Name:   name,
+			Status: doctorWarn,
+			Detail: fmt.Sprintf("released skill bundle %s exists but skills/amq-squad/SKILL.md is missing or unreadable: %v", want, err),
+		}
+	}
+	return doctorCheck{
+		Name:   name,
+		Status: doctorOK,
+		Detail: fmt.Sprintf("released skill bundle %s is cached directly at %s", want, wantPath),
+	}
 }
 
 // defaultTmuxShowServerOption reads a server-scoped tmux option via
@@ -425,6 +504,7 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckAMQVersion(d))
 	checks = append(checks, doctorCheckAMQOps(d))
 	checks = append(checks, doctorCheckVersionSkew(d))
+	checks = append(checks, doctorCheckCodexSkillCache(d))
 	checks = append(checks, doctorCheckTeamConfig(d))
 	checks = append(checks, doctorCheckTeamRulesRoster(d))
 	checks = append(checks, doctorCheckTmux(d))
