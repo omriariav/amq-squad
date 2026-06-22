@@ -244,6 +244,8 @@ type resumeMemberJSON struct {
 	Role             string           `json:"role"`
 	Handle           string           `json:"handle,omitempty"`
 	Action           string           `json:"action"`
+	LaunchState      string           `json:"launch_state"`
+	RecordState      string           `json:"record_state"`
 	HasRestoreRecord bool             `json:"has_restore_record"`
 	Wake             string           `json:"wake,omitempty"`
 	Note             string           `json:"note,omitempty"`
@@ -302,6 +304,8 @@ func writeResumeJSON(out io.Writer, t team.Team, workstream string, mode resumeM
 			Role:             p.Role,
 			Handle:           p.Handle,
 			Action:           string(p.Action),
+			LaunchState:      resumeLaunchState(p),
+			RecordState:      resumeRecordState(p),
 			HasRestoreRecord: p.HasRestoreRecord,
 			Wake:             wakeForJSON(p.Wake),
 			Note:             p.Note,
@@ -322,6 +326,42 @@ func writeResumeJSON(out io.Writer, t team.Team, workstream string, mode resumeM
 		Members:    len(rows),
 		Plan:       rows,
 	})
+}
+
+func resumeLaunchState(p resumePlan) string {
+	switch {
+	case p.Action == resumeBlocked:
+		return "blocked"
+	case strings.TrimSpace(p.Command) != "":
+		return "will-launch"
+	case p.Action == resumeLive:
+		return "skipped"
+	default:
+		return "failed"
+	}
+}
+
+func resumeRecordState(p resumePlan) string {
+	if p.Liveness != nil {
+		switch p.Liveness.Status {
+		case statusStateLive, statusStateWakeLive:
+			if !p.Liveness.LaunchFound {
+				return "missing"
+			}
+			return "launched"
+		case statusStateStale:
+			if p.Liveness.LaunchFound {
+				return "stale-record"
+			}
+			return "stale-signal"
+		case statusStateMissing:
+			return "missing"
+		}
+	}
+	if p.HasRestoreRecord {
+		return "restorable"
+	}
+	return "missing"
 }
 
 // wakeForJSON normalizes the human "-" placeholder to an empty (omitted) field.

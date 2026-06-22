@@ -161,6 +161,9 @@ func TestExecuteStatusJSONIncludesSpawnMetadata(t *testing.T) {
 	if got.SpawnOrigin != "cto" || got.SpawnDepth != 1 {
 		t.Fatalf("spawn metadata = origin %q depth %d, want cto/1", got.SpawnOrigin, got.SpawnDepth)
 	}
+	if got.RecordState != "launched" {
+		t.Fatalf("record_state = %q, want launched", got.RecordState)
+	}
 	if !env.Data.Capabilities.AutonomousGuardrails {
 		t.Fatalf("status capabilities must advertise autonomous guardrails")
 	}

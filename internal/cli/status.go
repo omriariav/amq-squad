@@ -92,6 +92,7 @@ type statusRecord struct {
 	Root        string        `json:"root,omitempty"`
 	AgentDir    string        `json:"agent_dir,omitempty"`
 	Status      statusState   `json:"status"`
+	RecordState string        `json:"record_state"`
 	Detail      string        `json:"detail,omitempty"`
 	Signals     statusSignals `json:"signals"`
 	// Tmux is the persisted tmux runtime identity (exact pane/window ids) plus
@@ -323,6 +324,7 @@ func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe d
 	env, err := resolveAMQEnvInDir(rec.CWD, "", workstream, m.Handle)
 	if err != nil {
 		rec.Status = statusStateMissing
+		rec.RecordState = "missing"
 		rec.Detail = "amq env unresolved: " + err.Error()
 		return rec
 	}
@@ -350,8 +352,28 @@ func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe d
 	}
 	rec.Signals = live.Signals
 	rec.Status = live.Status
+	rec.RecordState = statusRecordState(live)
 	rec.Detail = live.Detail
 	return rec
+}
+
+func statusRecordState(live agentLiveness) string {
+	switch live.Status {
+	case statusStateLive, statusStateWakeLive:
+		if !live.LaunchFound {
+			return "missing"
+		}
+		return "launched"
+	case statusStateStale:
+		if live.LaunchFound {
+			return "stale-record"
+		}
+		return "stale-signal"
+	case statusStateMissing:
+		return "missing"
+	default:
+		return "unknown"
+	}
 }
 
 // liveReplacementPane reports a live tmux pane that resolves to this member when
