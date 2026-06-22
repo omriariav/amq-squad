@@ -363,9 +363,7 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 		}
 		name, inlineVal, hasInline := amqFlagName(a)
 		switch name {
-		case "project", "session", "me",
-			"from",      // alias for --me, matches dispatch/send ergonomics
-			"body-file": // rewritten to --body @<path> (or --body - for stdin)
+		case "project", "session", "me":
 			val := inlineVal
 			next := i + 1
 			if !hasInline {
@@ -380,17 +378,50 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 				project, projectSet = val, true
 			case "session":
 				session = val
-			case "me", "from":
+			case "me":
 				me = val
-			case "body-file":
-				// Rewrite --body-file <path> to --body @<path>.
-				// The special value "-" means stdin: rewrite to --body -.
-				bodyVal := "@" + val
-				if val == "-" {
-					bodyVal = "-"
-				}
-				passthrough = append(passthrough, "--body", bodyVal)
 			}
+			i = next
+			continue
+		case "from":
+			// --from is a --me alias for send/reply only, matching dispatch
+			// ergonomics. For other verbs (drain, watch, list, etc.) it is not
+			// a wrapper flag; stop wrapper parsing and forward --from verbatim.
+			if sub != "send" && sub != "reply" {
+				break
+			}
+			val := inlineVal
+			next := i + 1
+			if !hasInline {
+				if next >= len(args) {
+					return "", "", "", false, nil, usageErrorf("flag --from needs a value")
+				}
+				val = args[next]
+				next++
+			}
+			me = val
+			i = next
+			continue
+		case "body-file":
+			// --body-file is a send/reply convenience only; for other verbs
+			// forward verbatim. Rewrites to --body @<path> (or --body - for stdin).
+			if sub != "send" && sub != "reply" {
+				break
+			}
+			val := inlineVal
+			next := i + 1
+			if !hasInline {
+				if next >= len(args) {
+					return "", "", "", false, nil, usageErrorf("flag --body-file needs a value")
+				}
+				val = args[next]
+				next++
+			}
+			bodyVal := "@" + val
+			if val == "-" {
+				bodyVal = "-"
+			}
+			passthrough = append(passthrough, "--body", bodyVal)
 			i = next
 			continue
 		case "root", "from-root":
