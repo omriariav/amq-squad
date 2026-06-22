@@ -58,6 +58,31 @@ func TestTmuxDryRunNewWindowOneWindowPerAgent(t *testing.T) {
 	}
 }
 
+func TestTmuxDryRunCurrentWindowSplitsPaneForEveryAgent(t *testing.T) {
+	plan := tmuxLaunchPlan{
+		Session:    "amq-squad-proj",
+		Workstream: "issue-96",
+		Target:     "current-window",
+		Layout:     "vertical",
+		Panes: []teamLaunchPane{
+			{Role: "cto", CWD: "/repo", Command: "cd /repo && amq-squad agent up codex --role cto"},
+			{Role: "qa", CWD: "/repo", Command: "cd /repo && amq-squad agent up codex --role qa"},
+		},
+	}
+	joined := strings.Join(tmuxDryRunLines(plan), "\n")
+	if strings.Contains(joined, "first_pane") {
+		t.Fatalf("current-window launch must not reuse the launching pane:\n%s", joined)
+	}
+	if c := strings.Count(joined, "tmux split-window"); c != 2 {
+		t.Fatalf("current-window should split one pane per agent, got %d:\n%s", c, joined)
+	}
+	for _, target := range []string{"$pane_0", "$pane_1"} {
+		if !strings.Contains(joined, target) {
+			t.Fatalf("current-window plan missing %s:\n%s", target, joined)
+		}
+	}
+}
+
 func TestTmuxWindowName(t *testing.T) {
 	if got := tmuxWindowName("cto"); got != "cto" {
 		t.Errorf("tmuxWindowName(cto) = %q, want cto", got)

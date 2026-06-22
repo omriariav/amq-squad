@@ -8,20 +8,26 @@ import (
 )
 
 const (
-	trustModeSandboxed = "sandboxed"
-	trustModeTrusted   = "trusted"
+	trustModeSandboxed    = "sandboxed"
+	trustModeApproveForMe = "approve-for-me"
+	trustModeTrusted      = "trusted"
 )
 
-var codexTrustedArgs = []string{"--dangerously-bypass-approvals-and-sandbox"}
+var (
+	codexApproveForMeArgs = []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`}
+	codexTrustedArgs      = []string{"--dangerously-bypass-approvals-and-sandbox"}
+)
 
 func normalizeTrustMode(mode string) (string, error) {
 	switch mode {
 	case "", trustModeSandboxed:
 		return trustModeSandboxed, nil
+	case trustModeApproveForMe:
+		return trustModeApproveForMe, nil
 	case trustModeTrusted:
 		return trustModeTrusted, nil
 	default:
-		return "", usageErrorf("invalid trust mode %q: use sandboxed or trusted", mode)
+		return "", usageErrorf("invalid trust mode %q: use sandboxed, approve-for-me, or trusted", mode)
 	}
 }
 
@@ -32,8 +38,11 @@ func defaultChildArgsForBinary(binary string) []string {
 func defaultChildArgsForBinaryWithTrust(binary, trustMode string) []string {
 	switch defaultHandleFor(binary) {
 	case "codex":
-		if trustMode == trustModeTrusted {
+		switch trustMode {
+		case trustModeTrusted:
 			return append([]string(nil), codexTrustedArgs...)
+		case trustModeApproveForMe:
+			return append([]string(nil), codexApproveForMeArgs...)
 		}
 		return nil
 	case "claude":

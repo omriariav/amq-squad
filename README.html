@@ -924,7 +924,7 @@ amq-squad new session [--project DIR] [--profile NAME] [&lt;session&gt;] [up opt
                                   a team-home without cd.
 
 amq-squad team init [--project DIR] [--profile NAME] [--roles a,b|numbers|all] [--binary role=bin,...]
-                     [--session ws] [--trust sandboxed|trusted] [--orchestrated [--lead ROLE]]
+                     [--session ws] [--trust sandboxed|approve-for-me|trusted] [--orchestrated [--lead ROLE]]
                      [--model role=model,...] [--codex-args ...] [--claude-args ...] [--dry-run [--json]]
                                   Write a team profile and seed .amq-squad/team-rules.md.
                                   --dry-run builds and prints the profile plan
@@ -998,7 +998,7 @@ amq-squad stop (--role R | --all) [--project DIR] [--force] [--close-panes]
                                   (The &#39;down&#39; alias was removed in 2.0.)
 amq-squad resume [--project DIR] [--profile NAME] [--session ws] [--restore-existing]
                  [--exec] [--dry-run] [--force-duplicate]
-                 [--no-bootstrap] [--trust sandboxed|trusted]
+                 [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted]
                  [--model role=model,...]
                  [--codex-args args] [--claude-args args]
                                   Re-orient an existing session. Reattaches a saved
@@ -1115,7 +1115,7 @@ amq-squad completion &lt;bash|zsh|fish&gt;
 <p>Single-agent primitives:</p>
 <pre class="text"><code>amq-squad agent up &lt;binary&gt; [--project DIR] [--role R] [--session ws] [--team-profile NAME]
                             [--conversation ref] [--no-bootstrap]
-                            [--trust sandboxed|trusted] [--model NAME]
+                            [--trust sandboxed|approve-for-me|trusted] [--model NAME]
                             [--codex-args ...] [--claude-args ...]
                             [--force-duplicate] [-- &lt;native flags&gt;]
                                   Launch one agent. Writes launch.json + role.md
@@ -1377,23 +1377,27 @@ authoring role files and wiring them into a team.</p>
 <ul>
 <li><strong>Claude:</strong> <code>--permission-mode auto</code></li>
 <li><strong>Codex:</strong> nothing by default (sandboxed). Pass
-<code>--trust trusted</code> to prepend
-<code>--dangerously-bypass-approvals-and-sandbox</code> for the local
-power-user profile.</li>
+<code>--trust approve-for-me</code> to use Codex Auto with
+<code>workspace-write</code>, <code>on-request</code>, and
+<code>approvals_reviewer="auto_review"</code>. Pass
+<code>--trust trusted</code> only for the local power-user profile that
+prepends <code>--dangerously-bypass-approvals-and-sandbox</code>.</li>
 </ul>
-<p><code>--trust trusted</code> is persisted in the team profile by
-<code>team init</code> and is re-emitted by <code>up</code>,
-<code>agent up</code>, <code>resume</code>, and <code>fork</code>.
-Combining <code>--trust trusted</code> with
-<code>--no-default-args</code> is rejected, as is sandboxed mode with
-the bypass flag smuggled through <code>--codex-args</code>.</p>
+<p><code>--trust approve-for-me</code> and <code>--trust trusted</code>
+are persisted in the team profile by <code>team init</code> and are
+re-emitted by <code>up</code>, <code>agent up</code>,
+<code>resume</code>, and <code>fork</code>. Combining
+<code>--trust trusted</code> with <code>--no-default-args</code> is
+rejected, as is sandboxed or approve-for-me mode with the bypass flag
+smuggled through <code>--codex-args</code>.</p>
 <p>Pass <code>--model NAME</code> to set the native <code>--model</code>
 flag on Codex or Claude. <code>team init --model role=model,...</code>
 persists per-member models.</p>
 <div class="sourceCode" id="cb31"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> trusted</span>
-<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5,fullstack=sonnet</span>
-<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5</span></code></pre></div>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> approve-for-me</span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5,fullstack=sonnet</span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5</span></code></pre></div>
 <p>amq-squad v2.5.0 requires amq <strong>0.37.1+</strong>. Launches pass
 <code>--require-wake</code> to <code>amq coop exec</code>, so a launch
 <strong>fails at the door</strong> when the AMQ wake sidecar cannot

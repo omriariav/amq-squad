@@ -86,7 +86,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	sessionFlag := fs.String("session", "", "AMQ workstream session name for all members (lowercase a-z, 0-9, -, _)")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
 	modelFlag := fs.String("model", "", "per-persona model overrides, e.g. cto=gpt-5,fullstack=sonnet")
-	trustRaw := fs.String("trust", "", "Codex trust profile for generated commands: sandboxed (default) or trusted")
+	trustRaw := fs.String("trust", "", "Codex trust profile for generated commands: sandboxed (default), approve-for-me, or trusted")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
 	operatorFlag := fs.String("operator", team.DefaultOperatorHandle, "virtual operator mailbox handle for human gates (default: user)")
@@ -102,8 +102,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
-  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes the team config under
@@ -598,7 +598,7 @@ func runTeamShow(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
 
 Usage:
-  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--json]
+  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--json]
 
 Examples:
   amq-squad team show
@@ -1027,6 +1027,14 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 	if in.ForceDuplicate {
 		b.WriteString(" --force-duplicate")
 	}
+	if origin := strings.TrimSpace(m.SpawnOrigin); origin != "" {
+		b.WriteString(" --spawn-origin ")
+		b.WriteString(shellQuote(origin))
+	}
+	if m.SpawnDepth > 0 {
+		b.WriteString(" --spawn-depth ")
+		b.WriteString(shellQuote(fmt.Sprintf("%d", m.SpawnDepth)))
+	}
 	if via := strings.TrimSpace(in.WakeInjectVia); via != "" {
 		b.WriteString(" --wake-inject-via ")
 		b.WriteString(shellQuote(via))
@@ -1151,6 +1159,7 @@ func promptTrustSelection(reader *bufio.Reader, out io.Writer, current string) (
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Codex trust profile?")
 	fmt.Fprintln(out, "  sandboxed (recommended) - Codex prompts for approvals/sandbox")
+	fmt.Fprintln(out, "  approve-for-me     - workspace-write, on-request, auto_review")
 	fmt.Fprintln(out, "  trusted   (local power) - prepends --dangerously-bypass-approvals-and-sandbox")
 	fmt.Fprintf(out, "  Press Enter for %s.\n", current)
 	fmt.Fprintln(out)
