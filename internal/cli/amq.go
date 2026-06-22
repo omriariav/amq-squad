@@ -12,9 +12,10 @@ import (
 )
 
 type amqCommandRequest struct {
-	Dir string
-	Env []string
-	Arg []string
+	Dir   string
+	Env   []string
+	Arg   []string
+	Stdin io.Reader // optional; nil means no stdin
 }
 
 type amqCommandRunner func(amqCommandRequest) ([]byte, error)
@@ -27,6 +28,7 @@ func defaultRunAMQCommand(req amqCommandRequest) ([]byte, error) {
 	cmd := exec.Command("amq", req.Arg...)
 	cmd.Env = req.Env
 	cmd.Dir = req.Dir
+	cmd.Stdin = req.Stdin
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		detail := strings.TrimSpace(string(out))
@@ -127,10 +129,14 @@ func amqCommandEnv(ctx amqContext) []string {
 }
 
 func runAndWriteAMQ(out io.Writer, ctx amqContext, args []string) error {
+	return runAndWriteAMQWithStdin(out, ctx, args, nil)
+}
+
+func runAndWriteAMQWithStdin(out io.Writer, ctx amqContext, args []string, stdin io.Reader) error {
 	if out == nil {
 		out = os.Stdout
 	}
-	data, err := runAMQCommand(amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: args})
+	data, err := runAMQCommand(amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: args, Stdin: stdin})
 	if err != nil {
 		return err
 	}
@@ -314,7 +320,24 @@ func runAMQPassthrough(sub string, args []string) error {
 	if sub == "watch" {
 		return runAMQStreaming(ctx, cmd)
 	}
+	if passthroughNeedsStdin(passthrough) {
+		return runAndWriteAMQWithStdin(os.Stdout, ctx, cmd, os.Stdin)
+	}
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
+}
+
+// passthroughNeedsStdin reports whether the passthrough args include a --body
+// value of "-", which means the amq subprocess will read its body from stdin.
+func passthroughNeedsStdin(args []string) bool {
+	for i, a := range args {
+		if a == "--body=-" {
+			return true
+		}
+		if a == "--body" && i+1 < len(args) && args[i+1] == "-" {
+			return true
+		}
+	}
+	return false
 }
 
 // splitAMQPassthroughArgs separates the wrapper's resolution flags
@@ -360,6 +383,25 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 			}
 			i = next
 			continue
+		case "from":
+			// --from is a --me alias for send/reply only, matching dispatch
+			// ergonomics. For other verbs (drain, watch, list, etc.) it is not
+			// a wrapper flag; stop wrapper parsing and forward --from verbatim.
+			if sub != "send" && sub != "reply" {
+				break
+			}
+			val := inlineVal
+			next := i + 1
+			if !hasInline {
+				if next >= len(args) {
+					return "", "", "", false, nil, usageErrorf("flag --from needs a value")
+				}
+				val = args[next]
+				next++
+			}
+			me = val
+			i = next
+			continue
 		case "root", "from-root":
 			return "", "", "", false, nil, usageErrorf(
 				"do not pass --%s to 'amq-squad amq %s'; amq-squad resolves the queue root from --project/--session. Use bare 'amq %s' for manual root control.",
@@ -369,7 +411,42 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 		break
 	}
 	passthrough = append(passthrough, args[i:]...)
+	// --body-file is a send/reply parity flag: rewrite it to --body @<path>
+	// (or --body - for stdin) anywhere in the passthrough, not just the leading
+	// position. Other verbs (drain, list, etc.) receive --body-file verbatim.
+	if sub == "send" || sub == "reply" {
+		passthrough = normalizeBodyFileFlag(passthrough)
+	}
 	return project, session, me, projectSet, passthrough, nil
+}
+
+// normalizeBodyFileFlag rewrites every --body-file <path> or --body-file=<path>
+// token in args to --body @<path> (or --body - for stdin). Safe to call on the
+// full passthrough slice because amq has no native --body-file flag.
+func normalizeBodyFileFlag(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		name, inlineVal, hasInline := amqFlagName(args[i])
+		if name != "body-file" {
+			out = append(out, args[i])
+			continue
+		}
+		val := inlineVal
+		if !hasInline {
+			if i+1 >= len(args) {
+				out = append(out, args[i]) // malformed; forward as-is
+				continue
+			}
+			i++
+			val = args[i]
+		}
+		bodyVal := "@" + val
+		if val == "-" {
+			bodyVal = "-"
+		}
+		out = append(out, "--body", bodyVal)
+	}
+	return out
 }
 
 // amqFlagName normalizes a CLI token to its flag name (leading dashes stripped,
