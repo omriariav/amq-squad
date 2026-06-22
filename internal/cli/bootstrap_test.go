@@ -83,6 +83,33 @@ func TestBootstrapWorkerReadyHandshake(t *testing.T) {
 	}
 }
 
+// TestBootstrapWorkerFromFieldGuidance is the production-path half of the #176
+// fix: the bootstrap for a worker on an orchestrated squad must instruct it to
+// reply to the task's From field, so that when the dispatcher and the team.json
+// lead are different handles, reports route to the actual dispatcher.
+func TestBootstrapWorkerFromFieldGuidance(t *testing.T) {
+	got, err := buildBootstrapPrompt(bootstrapContext{
+		Role:         "worker",
+		Handle:       "worker",
+		Binary:       "codex",
+		Orchestrated: true,
+		IsLead:       false,
+		LeadHandle:   "cto-handle",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Worker must be told to use the From field of each dispatched task.
+	// This is the channel-origin mechanism: dispatch sets From = dispatcher,
+	// worker reads From and replies there, not to the static team.json lead.
+	if !strings.Contains(got, "From") {
+		t.Fatalf("bootstrap must mention the From field for task replies; got:\n%s", got)
+	}
+	if !strings.Contains(got, "--to cto-handle") {
+		t.Fatalf("READY should route to configured lead; got:\n%s", got)
+	}
+}
+
 func TestBuildBootstrapPromptIncludesBriefPath(t *testing.T) {
 	got, err := buildBootstrapPrompt(bootstrapContext{
 		Role:       "cto",
