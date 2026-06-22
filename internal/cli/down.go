@@ -330,6 +330,15 @@ func terminateMember(t team.Team, m team.Member, workstream string, term process
 	}
 	report.CWD = compareCWD(cwd, rec.CWD)
 	report.PID = rec.AgentPID
+	if rec.External {
+		report.Status = downStatusMaybeLive
+		if report.PaneID != "" {
+			report.Detail = fmt.Sprintf("external/adopted pane %s is operator-owned; stop it manually if needed", report.PaneID)
+		} else {
+			report.Detail = "external/adopted session is operator-owned; stop it manually if needed"
+		}
+		return report
+	}
 	if rec.AgentPID <= 0 {
 		// No pid was captured at launch (e.g. codex seats never recorded one).
 		// There is nothing to signal, so consult presence before implying the

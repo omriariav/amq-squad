@@ -169,6 +169,14 @@ func classifyAgentLiveness(agentDir, root, handle, role, binary, workstream, cwd
 		out.Detail = fmt.Sprintf("agent pid %d alive (%s)", out.Signals.AgentPID, binary)
 		return out
 	}
+	if launchErr == nil && launchRec.External && launchRec.Tmux != nil && strings.TrimSpace(launchRec.Tmux.PaneID) != "" {
+		if _, ok := statusPaneInspector(launchRec.Tmux.PaneID); ok {
+			out.Verdict = livenessAgentLive
+			out.Status = statusStateLive
+			out.Detail = fmt.Sprintf("external pane %s live (registered lead)", launchRec.Tmux.PaneID)
+			return out
+		}
+	}
 	if presenceLive {
 		out.Verdict = livenessPresenceLive
 		out.Status = statusStateLive

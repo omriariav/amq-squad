@@ -772,6 +772,12 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		plan.Command = freshLaunchCommand(in)
 		return plan, nil
 	}
+	if recFound && rec.External {
+		plan.Action = resumeBlocked
+		plan.Command = ""
+		plan.Note = "external/adopted record is not restorable; run 'amq-squad lead register' again from the lead pane"
+		return plan, nil
+	}
 	if recFound {
 		plan.Action = resumeRestore
 		plan.Command = emitCommandWithOptions(rec, emitCommandOptions{NoBootstrap: in.NoBootstrap})

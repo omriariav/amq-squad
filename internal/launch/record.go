@@ -52,6 +52,7 @@ type Record struct {
 	// in this environment) is a property of the execution environment, not a
 	// one-shot launch decision.
 	NoRequireWake bool      `json:"no_require_wake,omitempty"`
+	External      bool      `json:"external,omitempty"`
 	AgentPID      int       `json:"agent_pid,omitempty"`
 	AgentTTY      string    `json:"agent_tty,omitempty"`
 	StartedAt     time.Time `json:"started_at"`

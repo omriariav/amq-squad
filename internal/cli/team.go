@@ -31,6 +31,8 @@ func runTeam(args []string) error {
 		return runTeamResume(args[1:])
 	case "rules":
 		return runTeamRules(args[1:])
+	case "lead":
+		return runTeamLead(args[1:])
 	case "overlay":
 		return runTeamOverlay(args[1:])
 	case "member":
@@ -44,7 +46,7 @@ func runTeam(args []string) error {
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'overlay', 'member', 'sync', 'profiles', or 'rm'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'lead', 'overlay', 'member', 'sync', 'profiles', or 'rm'.", args[0])
 	}
 }
 

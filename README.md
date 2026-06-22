@@ -397,6 +397,8 @@ This records `orchestrated`/`lead` in `team.json` and injects a generated `## Or
 
 The operator can steer the lead directly from amq-noc (v0.8.0+): a **directive** arrives on the lead's operator p2p thread as a `--kind todo` message whose subject starts with `DIRECTIVE:` — pane-injected when the lead is live, a durable AMQ message when it was down. The `amq-squad-orchestrator` skill teaches the lead to treat directives as operator steering with priority over child reports, acknowledge on the same thread, and never treat one as a gate answer (a directive never clears a `gate/<topic>` thread); orchestrated teams get the convention as a generated line in their `## Orchestration` norm.
 
+For an existing profile, use `amq-squad team lead set <role>` to opt into orchestration without rebuilding the roster, `team lead clear` to return to a flat squad, and `team lead show --json` for discovery. A lead that is already running in an operator-owned pane can register itself with `amq-squad lead register --role <role> --session <session>`; this writes an explicit external launch record so `status` / `focus` / `send` can target the pane. External lead records are visible and directable, but lifecycle commands do not own them: `stop` reports that the pane must be stopped manually, `rm` / `archive` leave it open, and `resume` asks the operator to run `lead register` again instead of replaying the pane.
+
 ## Verbs
 
 Team-level verbs:
@@ -449,6 +451,13 @@ amq-squad team rules init [--project DIR] [--force]
                                   Seed or refresh .amq-squad/team-rules.md.
 amq-squad team rules show [--project DIR]
                                   Print .amq-squad/team-rules.md.
+amq-squad team lead set <role> [--project DIR] [--profile NAME]
+amq-squad team lead clear [--project DIR] [--profile NAME]
+amq-squad team lead show [--project DIR] [--profile NAME] [--json]
+                                  Mutate or inspect the profile's orchestration
+                                  lead. `set` validates that <role> is a team
+                                  member and records orchestrated=true.
+                                  `clear` returns the profile to flat mode.
 amq-squad team overlay init (--role R | --workers) [--disable-plugins id@market,...]
                         [--disable-all-hooks] [--force] [--dry-run]
                                   Generate .amq-squad/overlays/<role>.claude.json
@@ -551,6 +560,13 @@ amq-squad task fail|block <id> [--reason R] --session S
                                   under .amq-squad/tasks/<session>/. A task is
                                   claimable only once its --depends-on tasks are
                                   completed. All subcommands require --session.
+amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
+                                  Adopt the current tmux pane as an
+                                  operator-owned external lead for an
+                                  orchestrated profile. The pane becomes
+                                  visible/directable in status/focus/send JSON,
+                                  but stop/rm/archive/resume do not kill,
+                                  close, or replay it.
 amq-squad console [--project DIR] [--session NAME] [--refresh 2s] [--at-risk-wait 5m]
                   [--review-age 15m] [--once]
                                   Mission Control TUI over this project. Renders
