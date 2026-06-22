@@ -70,6 +70,9 @@ type statusEnvelopeData struct {
 	Profile      string            `json:"profile,omitempty"`
 	Operator     team.OperatorView `json:"operator"`
 	Capabilities team.Capabilities `json:"capabilities"`
+	Orchestrated bool              `json:"orchestrated,omitempty"`
+	Lead         string            `json:"lead,omitempty"`
+	LeadHandle   string            `json:"lead_handle,omitempty"`
 	Records      []statusRecord    `json:"records"`
 	// Actions are the SESSION-scope operator actions (status / resume preview /
 	// resume in current window / resume in new tmux session / stop), the catalog
@@ -96,6 +99,29 @@ type statusRecord struct {
 	// Actions are the stable, project-scoped commands a client can render/copy
 	// for this member (focus/send/resume/status). Populated for --json only.
 	Actions []runtimeActionJSON `json:"actions,omitempty"`
+}
+
+type sessionStatusContext struct {
+	Team         team.Team
+	Profile      string
+	Workstream   string
+	Orchestrated bool
+	Lead         string
+	LeadHandle   string
+	Actions      []runtimeActionJSON
+}
+
+func newSessionStatusContext(t team.Team, profile, workstream, tmuxSession string) sessionStatusContext {
+	orchestrated, lead, leadHandle := orchestrationStatusFields(t)
+	return sessionStatusContext{
+		Team:         t,
+		Profile:      profile,
+		Workstream:   workstream,
+		Orchestrated: orchestrated,
+		Lead:         lead,
+		LeadHandle:   leadHandle,
+		Actions:      sessionActions(t.Project, profile, workstream, tmuxSession),
+	}
 }
 
 func runStatus(args []string) error {
@@ -185,64 +211,25 @@ func executeStatus(s statusExecution) error {
 		return err
 	}
 
-	// Share one tmux pane snapshot across this whole command: live-replacement
-	// detection inside classifyMemberStatus and pane_alive resolution below
-	// both read statusPaneLister, so memoize it for the command's duration —
-	// `tmux list-panes` runs at most once and both readings see the same
-	// snapshot (avoiding N+1 calls and snapshot skew).
-	restoreLister := statusPaneLister
-	statusPaneLister = memoizePaneLister(restoreLister)
-	defer func() { statusPaneLister = restoreLister }()
-
-	members := orderedTeamMembers(t.Members)
-	rows := make([]statusRecord, 0, len(members))
-	for _, m := range members {
-		rows = append(rows, classifyMemberStatus(t, m, workstream, s.Probe))
-	}
-	// #95: adopt a live tmux pane for live agents with no recorded tmux identity
-	// (launched outside amq-squad's tmux backend, e.g. a raw `tmux new-window`),
-	// so focus/send/attach_control and pane_alive work for them too. Resolved by
-	// PID lineage + cwd/engine from the memoized pane snapshot.
-	pidTree := childrenPidTree()
-	for i := range rows {
-		// Only verified AGENT-live agents adopt by PID lineage: Signals.AgentPID
-		// is then a confirmed live process of the right binary. wake-live /
-		// presence-live have no verified agent pid, so do not trust lineage there
-		// (#95 review).
-		if rows[i].Tmux == nil && rows[i].Signals.AgentAlive && rows[i].Signals.BinaryMatch {
-			if panes, perr := statusPaneLister(); perr == nil {
-				if adopted := adoptLivePane(rows[i].Role, rows[i].Handle, rows[i].Binary, rows[i].CWD, workstream, rows[i].Signals.AgentPID, panes, pidTree); adopted != nil {
-					rows[i].Tmux = tmuxRuntimeFromInfo(adopted)
-				}
-			}
-		}
-	}
-	// Resolve pane liveness for every member that recorded a tmux pane, so
-	// clients can tell a still-valid pane from a stale launch record. Uses the
-	// same memoized snapshot as classification above.
-	var livePanes map[string]bool
-	for i := range rows {
-		if rows[i].Tmux != nil {
-			if livePanes == nil {
-				livePanes = livePaneIDSet(statusPaneLister)
-			}
-			fillPaneAlive(rows[i].Tmux, livePanes)
-		}
-	}
+	rows := buildStatusRows(t, workstream, s.Probe)
 	if s.JSON {
 		// Attach the stable action commands a client can render/copy per member.
 		for i := range rows {
 			alive := rows[i].Tmux != nil && rows[i].Tmux.PaneAlive
 			rows[i].Actions = memberActions(t.Project, s.Profile, workstream, rows[i].Role, alive)
 		}
+		ctx := newSessionStatusContext(t, s.Profile, workstream, firstLiveTmuxSession(rows))
 		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
 			TeamHome:     t.Project,
 			Workstream:   workstream,
 			Profile:      s.Profile,
 			Operator:     team.EffectiveOperator(t),
 			Capabilities: team.EffectiveCapabilities(t),
+			Orchestrated: ctx.Orchestrated,
+			Lead:         ctx.Lead,
+			LeadHandle:   ctx.LeadHandle,
 			Records:      rows,
-			Actions:      sessionActions(t.Project, s.Profile, workstream, firstLiveTmuxSession(rows)),
+			Actions:      ctx.Actions,
 		})
 	}
 	policy := outputPolicyCurrent()
@@ -257,6 +244,59 @@ func executeStatus(s statusExecution) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), r.Detail)
 	}
 	return w.Flush()
+}
+
+func buildStatusRows(t team.Team, workstream string, probe duplicateLaunchProbe) []statusRecord {
+	// Share one tmux pane snapshot across this whole command: live-replacement
+	// detection inside classifyMemberStatus and pane_alive resolution below
+	// both read statusPaneLister, so memoize it for the command's duration.
+	restoreLister := statusPaneLister
+	statusPaneLister = memoizePaneLister(restoreLister)
+	defer func() { statusPaneLister = restoreLister }()
+
+	members := orderedTeamMembers(t.Members)
+	rows := make([]statusRecord, 0, len(members))
+	for _, m := range members {
+		rows = append(rows, classifyMemberStatus(t, m, workstream, probe))
+	}
+	// #95: adopt a live tmux pane for live agents with no recorded tmux identity
+	// (launched outside amq-squad's tmux backend, e.g. a raw `tmux new-window`),
+	// so focus/send/attach_control and pane_alive work for them too.
+	pidTree := childrenPidTree()
+	for i := range rows {
+		if rows[i].Tmux == nil && rows[i].Signals.AgentAlive && rows[i].Signals.BinaryMatch {
+			if panes, perr := statusPaneLister(); perr == nil {
+				if adopted := adoptLivePane(rows[i].Role, rows[i].Handle, rows[i].Binary, rows[i].CWD, workstream, rows[i].Signals.AgentPID, panes, pidTree); adopted != nil {
+					rows[i].Tmux = tmuxRuntimeFromInfo(adopted)
+				}
+			}
+		}
+	}
+	var livePanes map[string]bool
+	for i := range rows {
+		if rows[i].Tmux != nil {
+			if livePanes == nil {
+				livePanes = livePaneIDSet(statusPaneLister)
+			}
+			fillPaneAlive(rows[i].Tmux, livePanes)
+		}
+	}
+	return rows
+}
+
+func orchestrationStatusFields(t team.Team) (bool, string, string) {
+	if !t.Orchestrated {
+		return false, "", ""
+	}
+	lead := strings.TrimSpace(t.Lead)
+	leadHandle := lead
+	for _, m := range t.Members {
+		if m.Role == lead {
+			leadHandle = memberHandle(m)
+			break
+		}
+	}
+	return true, lead, leadHandle
 }
 
 func firstStatusRoot(rows []statusRecord) string {
