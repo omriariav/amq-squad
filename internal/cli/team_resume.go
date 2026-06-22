@@ -220,6 +220,43 @@ type resumeExecOptions struct {
 	Stagger         time.Duration
 }
 
+type resumeExecLaunchCheck struct {
+	Role       string
+	CWD        string
+	AgentDir   string
+	Handle     string
+	Workstream string
+	Root       string
+	Binary     string
+	Force      bool
+}
+
+type resumeExecLaunchSnapshot struct {
+	Exists    bool
+	ModTime   time.Time
+	StartedAt time.Time
+}
+
+type resumeExecLaunchResult struct {
+	Check  resumeExecLaunchCheck
+	State  string
+	Detail string
+}
+
+const (
+	resumeExecLaunchStateLaunched    = "launched"
+	resumeExecLaunchStateMissing     = "missing"
+	resumeExecLaunchStateStaleRecord = "stale-record"
+	resumeExecLaunchStateFailed      = "failed"
+)
+
+var (
+	runTmuxLaunchPlanForResume       = runTmuxLaunchPlan
+	verifyResumeExecLaunchRecordsNow = verifyResumeExecLaunchRecords
+	resumeExecLaunchVerifyTimeout    = 5 * time.Second
+	resumeExecLaunchVerifyInterval   = 100 * time.Millisecond
+)
+
 // resumePrinterStyle parameterizes the per-entry-point output surface. The
 // zero value is the legacy `team resume` shape (preserved for old tests and
 // existing scripts). Top-level resume and fork supply non-zero values.
@@ -551,29 +588,45 @@ func execResumePlan(t team.Team, workstream string, plans []resumePlan, exec res
 	// AFTER tmux has split panes. Run the same aggregate check now so a
 	// blocked member aborts cleanly before any backend side effects, and
 	// honor --force-duplicate by stamping it into each plan.
-	preflights, err := buildResumeExecPreflights(t, panes, workstream, force)
+	checks, err := buildResumeExecLaunchChecks(t, panes, workstream, force)
 	if err != nil {
 		return err
 	}
-	if err := preflightTeam(preflights, defaultDuplicateLaunchProbe); err != nil {
+	if err := preflightTeam(resumeExecLaunchPreflights(checks), defaultDuplicateLaunchProbe); err != nil {
 		return err
 	}
 
 	for _, p := range skipped {
 		fmt.Fprintf(os.Stderr, "skipping %s: %s\n", p.Role, p.Note)
 	}
-	return runTmuxLaunchPlan(plan)
+	snapshots := snapshotResumeExecLaunchRecords(checks)
+	if err := runTmuxLaunchPlanForResume(plan); err != nil {
+		return err
+	}
+	results := verifyResumeExecLaunchRecordsNow(checks, snapshots)
+	if err := resumeExecLaunchError(results); err != nil {
+		return err
+	}
+	return nil
 }
 
 // buildResumeExecPreflights resolves the AMQ identity for each runnable
 // pane and constructs an agentLaunchPreflight tuple that preflightTeam can
 // use to refuse a blocked roster before tmux opens any pane.
 func buildResumeExecPreflights(t team.Team, panes []teamLaunchPane, workstream string, force bool) ([]agentLaunchPreflight, error) {
+	checks, err := buildResumeExecLaunchChecks(t, panes, workstream, force)
+	if err != nil {
+		return nil, err
+	}
+	return resumeExecLaunchPreflights(checks), nil
+}
+
+func buildResumeExecLaunchChecks(t team.Team, panes []teamLaunchPane, workstream string, force bool) ([]resumeExecLaunchCheck, error) {
 	byRole := make(map[string]team.Member, len(t.Members))
 	for _, m := range t.Members {
 		byRole[strings.ToLower(m.Role)] = m
 	}
-	out := make([]agentLaunchPreflight, 0, len(panes))
+	out := make([]resumeExecLaunchCheck, 0, len(panes))
 	for _, pane := range panes {
 		m, ok := byRole[strings.ToLower(pane.Role)]
 		if !ok {
@@ -592,7 +645,9 @@ func buildResumeExecPreflights(t team.Team, panes []teamLaunchPane, workstream s
 		if env.Me != "" {
 			handle = env.Me
 		}
-		out = append(out, agentLaunchPreflight{
+		out = append(out, resumeExecLaunchCheck{
+			Role:       pane.Role,
+			CWD:        cwd,
 			AgentDir:   filepath.Join(root, "agents", handle),
 			Handle:     handle,
 			Workstream: env.SessionName,
@@ -602,6 +657,128 @@ func buildResumeExecPreflights(t team.Team, panes []teamLaunchPane, workstream s
 		})
 	}
 	return out, nil
+}
+
+func resumeExecLaunchPreflights(checks []resumeExecLaunchCheck) []agentLaunchPreflight {
+	out := make([]agentLaunchPreflight, 0, len(checks))
+	for _, c := range checks {
+		out = append(out, agentLaunchPreflight{
+			AgentDir:   c.AgentDir,
+			Handle:     c.Handle,
+			Workstream: c.Workstream,
+			Root:       c.Root,
+			Binary:     c.Binary,
+			Force:      c.Force,
+		})
+	}
+	return out
+}
+
+func snapshotResumeExecLaunchRecords(checks []resumeExecLaunchCheck) map[string]resumeExecLaunchSnapshot {
+	out := make(map[string]resumeExecLaunchSnapshot, len(checks))
+	for _, c := range checks {
+		snap := resumeExecLaunchSnapshot{}
+		path := launch.ExistingPath(c.AgentDir)
+		if info, err := os.Stat(path); err == nil {
+			snap.Exists = true
+			snap.ModTime = info.ModTime()
+		}
+		if rec, err := launch.Read(c.AgentDir); err == nil {
+			snap.Exists = true
+			snap.StartedAt = rec.StartedAt
+		}
+		out[c.Role] = snap
+	}
+	return out
+}
+
+func verifyResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {
+	deadline := time.Now().Add(resumeExecLaunchVerifyTimeout)
+	for {
+		results := inspectResumeExecLaunchRecords(checks, snapshots)
+		if allResumeExecLaunchesDone(results) || !time.Now().Before(deadline) {
+			return results
+		}
+		time.Sleep(resumeExecLaunchVerifyInterval)
+	}
+}
+
+func inspectResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {
+	results := make([]resumeExecLaunchResult, 0, len(checks))
+	for _, c := range checks {
+		res := resumeExecLaunchResult{Check: c, State: resumeExecLaunchStateLaunched}
+		rec, err := launch.Read(c.AgentDir)
+		if err != nil {
+			res.State = resumeExecLaunchStateMissing
+			res.Detail = "launch record missing at " + launch.ExistingPath(c.AgentDir)
+			results = append(results, res)
+			continue
+		}
+		snap := snapshots[c.Role]
+		if snap.Exists {
+			path := launch.ExistingPath(c.AgentDir)
+			if info, statErr := os.Stat(path); statErr == nil && !info.ModTime().After(snap.ModTime) && !rec.StartedAt.After(snap.StartedAt) {
+				res.State = resumeExecLaunchStateStaleRecord
+				res.Detail = "launch record was not refreshed at " + path
+				results = append(results, res)
+				continue
+			}
+		}
+		if !strings.EqualFold(strings.TrimSpace(rec.Role), strings.TrimSpace(c.Role)) {
+			res.State = resumeExecLaunchStateFailed
+			res.Detail = fmt.Sprintf("launch record role %q does not match requested role %q", rec.Role, c.Role)
+			results = append(results, res)
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(rec.Handle), strings.TrimSpace(c.Handle)) {
+			res.State = resumeExecLaunchStateFailed
+			res.Detail = fmt.Sprintf("launch record handle %q does not match requested handle %q", rec.Handle, c.Handle)
+			results = append(results, res)
+			continue
+		}
+		if strings.TrimSpace(rec.Session) != strings.TrimSpace(c.Workstream) {
+			res.State = resumeExecLaunchStateFailed
+			res.Detail = fmt.Sprintf("launch record workstream %q does not match requested workstream %q", rec.Session, c.Workstream)
+			results = append(results, res)
+			continue
+		}
+		if rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) == "" {
+			res.State = resumeExecLaunchStateFailed
+			res.Detail = "launch record did not capture a tmux pane id"
+			results = append(results, res)
+			continue
+		}
+		results = append(results, res)
+	}
+	return results
+}
+
+func allResumeExecLaunchesDone(results []resumeExecLaunchResult) bool {
+	for _, r := range results {
+		if r.State != resumeExecLaunchStateLaunched {
+			return false
+		}
+	}
+	return true
+}
+
+func resumeExecLaunchError(results []resumeExecLaunchResult) error {
+	failed := make([]resumeExecLaunchResult, 0)
+	for _, r := range results {
+		if r.State != resumeExecLaunchStateLaunched {
+			failed = append(failed, r)
+		}
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+	lines := []string{fmt.Sprintf("resume --exec partial launch failure: %d of %d requested member(s) did not publish a fresh launch record:", len(failed), len(results))}
+	for _, r := range failed {
+		lines = append(lines, fmt.Sprintf("  - %s: %s: %s", r.Check.Role, r.State, r.Detail))
+	}
+	msg := strings.Join(lines, "\n")
+	fmt.Fprintln(os.Stderr, msg)
+	return &PartialError{Message: msg}
 }
 
 // planMemberCWD resolves the effective cwd for a planned role by looking up

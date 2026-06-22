@@ -400,6 +400,74 @@ func TestExecResumePlanNothingToLaunch(t *testing.T) {
 	}
 }
 
+// TestExecResumePlanReportsPartialLaunchRecordFailure covers #208's
+// current-window failure mode: tmux accepted a multi-role plan, but one
+// requested role never published a fresh launch.json. The command must return
+// non-zero with role-level detail instead of leaving the operator with only the
+// optimistic "Added team panes" notice.
+func TestExecResumePlanReportsPartialLaunchRecordFailure(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+
+	oldRun := runTmuxLaunchPlanForResume
+	oldTimeout := resumeExecLaunchVerifyTimeout
+	oldInterval := resumeExecLaunchVerifyInterval
+	runTmuxLaunchPlanForResume = func(plan tmuxLaunchPlan) error {
+		if plan.Target != "current-window" {
+			t.Errorf("target = %q, want current-window", plan.Target)
+		}
+		if len(plan.Panes) != 2 {
+			t.Errorf("panes = %d, want 2", len(plan.Panes))
+		}
+		writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+			CWD:       dir,
+			Binary:    "codex",
+			Role:      "cto",
+			StartedAt: time.Now().UTC(),
+			Tmux:      &launch.TmuxInfo{PaneID: "%101", Session: "squad", Target: "current-window"},
+		})
+		_, _ = os.Stderr.WriteString("Added 2 team pane(s) to current tmux window.\n")
+		return nil
+	}
+	resumeExecLaunchVerifyTimeout = time.Millisecond
+	resumeExecLaunchVerifyInterval = time.Millisecond
+	t.Cleanup(func() {
+		runTmuxLaunchPlanForResume = oldRun
+		resumeExecLaunchVerifyTimeout = oldTimeout
+		resumeExecLaunchVerifyInterval = oldInterval
+	})
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return execResumePlan(
+			team.Team{
+				Project: dir,
+				Members: []team.Member{
+					{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+					{Role: "frontend-dev", Binary: "codex", Handle: "frontend-dev", Session: "issue-96"},
+				},
+			},
+			"issue-96",
+			[]resumePlan{
+				{Role: "cto", Action: resumeFresh, Command: "amq-squad agent up codex --role cto"},
+				{Role: "frontend-dev", Action: resumeFresh, Command: "amq-squad agent up codex --role frontend-dev"},
+			},
+			resumeExecOptions{Enabled: true, Terminal: "tmux", Target: "current-window", Layout: "tiled"},
+			false,
+		)
+	})
+	if err == nil {
+		t.Fatal("partial launch record failure should return an error")
+	}
+	if _, ok := err.(*PartialError); !ok {
+		t.Fatalf("want *PartialError, got %T: %v", err, err)
+	}
+	for _, want := range []string{"Added 2 team pane", "partial launch failure", "frontend-dev", "missing", "launch record"} {
+		if !strings.Contains(stderr, want) && !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q in stderr/error\nstdout:\n%s\nstderr:\n%s\nerr:\n%v", want, stdout, stderr, err)
+		}
+	}
+}
+
 // TestExecResumePlanRejectsUnknownTerminal makes sure the operator gets a
 // clear error rather than a downstream nil-map panic when the terminal
 // flag value is wrong.
