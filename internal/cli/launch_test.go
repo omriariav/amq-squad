@@ -47,6 +47,22 @@ func TestAMQSupportsRequireWake(t *testing.T) {
 	}
 }
 
+func TestAMQSupportsWakeInject(t *testing.T) {
+	for version, want := range map[string]bool{
+		"":         false,
+		"garbage":  false,
+		"0.36.9":   false,
+		"0.37.0":   true,
+		"v0.37.0":  true,
+		"0.38.0":   true,
+		" 0.37.0 ": true,
+	} {
+		if got := amqSupportsWakeInject(version); got != want {
+			t.Errorf("amqSupportsWakeInject(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
 func TestRunLaunchDryRunRequireWakeVersionGate(t *testing.T) {
 	// amq 0.34.1+ launches fail at the door when the wake sidecar cannot
 	// acquire its lock (#30): coop exec gains --require-wake by default.
@@ -74,6 +90,55 @@ func TestRunLaunchDryRunRequireWakeWithSessionShape(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "amq coop exec --session issue-96 --require-wake codex -- test-prompt") {
 		t.Fatalf("session + require-wake argv shape drifted:\n%s", stdout)
+	}
+}
+
+func TestRunLaunchDryRunWakeInjectVersionGate(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.37.0")
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{
+			"--dry-run", "--no-bootstrap",
+			"--wake-inject-via", "/opt/amq-inject",
+			"--wake-inject-arg=--pane", "--wake-inject-arg=%42",
+			"codex", "test-prompt",
+		})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"--require-wake",
+		"--wake-inject-via /opt/amq-inject",
+		"--wake-inject-arg=--pane",
+		"--wake-inject-arg=%42",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout missing %q in:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestRunLaunchDryRunWakeInjectRejectsOldAMQ(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.36.0")
+	_, _, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-via", "/opt/amq-inject", "codex"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires amq 0.37.0 or newer") {
+		t.Fatalf("wake-inject old amq error = %v", err)
+	}
+}
+
+func TestRunLaunchWakeInjectValidatesShape(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.37.0")
+	if _, _, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-arg=x", "codex"})
+	}); err == nil || !strings.Contains(err.Error(), "requires --wake-inject-via") {
+		t.Fatalf("missing via error = %v", err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-via", "relative-inject", "codex"})
+	}); err == nil || !strings.Contains(err.Error(), "must be an absolute path") {
+		t.Fatalf("relative via error = %v", err)
 	}
 }
 
