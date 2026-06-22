@@ -409,3 +409,101 @@ func envHasPrefix(env []string, key, valSubstr string) bool {
 	}
 	return false
 }
+
+// TestSplitAMQPassthroughArgsParityFlags covers the flag-parity fixes from
+// #178: --from aliases --me, and --body-file is rewritten to --body @<path>
+// (or --body - for stdin).
+func TestSplitAMQPassthroughArgsParityFlags(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		wantMe   string
+		wantPass []string
+	}{
+		{
+			name:   "--from aliases --me",
+			args:   []string{"--from", "lead", "--to", "worker"},
+			wantMe: "lead", wantPass: []string{"--to", "worker"},
+		},
+		{
+			name:   "--from= inline alias",
+			args:   []string{"--from=lead", "--to", "worker"},
+			wantMe: "lead", wantPass: []string{"--to", "worker"},
+		},
+		{
+			name:     "--body-file rewrites to --body @path",
+			args:     []string{"--body-file", "/tmp/msg.txt", "--to", "worker"},
+			wantPass: []string{"--body", "@/tmp/msg.txt", "--to", "worker"},
+		},
+		{
+			name:     "--body-file - rewrites to --body -",
+			args:     []string{"--body-file", "-", "--to", "worker"},
+			wantPass: []string{"--body", "-", "--to", "worker"},
+		},
+		{
+			name:     "--body-file= inline rewrite",
+			args:     []string{"--body-file=/tmp/msg.txt", "--to", "worker"},
+			wantPass: []string{"--body", "@/tmp/msg.txt", "--to", "worker"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, me, _, pass, err := splitAMQPassthroughArgs("send", tc.args)
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if me != tc.wantMe {
+				t.Fatalf("me = %q, want %q", me, tc.wantMe)
+			}
+			if strings.Join(pass, " ") != strings.Join(tc.wantPass, " ") {
+				t.Fatalf("passthrough = %v, want %v", pass, tc.wantPass)
+			}
+		})
+	}
+}
+
+func TestPassthroughNeedsStdin(t *testing.T) {
+	cases := []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"--to", "worker", "--body", "-"}, true},
+		{[]string{"--body=-"}, true},
+		{[]string{"--to", "worker", "--body", "@/tmp/file"}, false},
+		{[]string{"--to", "worker"}, false},
+		// value "--body" at end (no value) should not panic
+		{[]string{"--body"}, false},
+	}
+	for _, tc := range cases {
+		if got := passthroughNeedsStdin(tc.args); got != tc.want {
+			t.Errorf("passthroughNeedsStdin(%v) = %v, want %v", tc.args, got, tc.want)
+		}
+	}
+}
+
+// TestAMQPassthroughSendForwardsStdin verifies that --body - causes the
+// runner to receive the stdin reader (the stdin-forwarding fix from #178).
+func TestAMQPassthroughSendForwardsStdin(t *testing.T) {
+	chdir(t, t.TempDir())
+	var capturedReq amqCommandRequest
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/work", BaseRoot: ".agent-mail"}, "msg-001\n")
+	// Wrap the seam to capture the full request including Stdin.
+	prevRun := runAMQCommand
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		capturedReq = req
+		return prevRun(req)
+	}
+	t.Cleanup(func() { runAMQCommand = prevRun })
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "work", "--me", "lead",
+			"--to", "worker", "--kind", "status", "--body", "-"})
+	})
+	if err != nil {
+		t.Fatalf("amq send with --body -: %v", err)
+	}
+	if capturedReq.Stdin == nil {
+		t.Error("stdin should be forwarded when --body - is in the passthrough args")
+	}
+	_ = calls
+}
