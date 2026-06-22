@@ -278,7 +278,7 @@ func buildStatusRows(t team.Team, workstream string, probe duplicateLaunchProbe)
 			if livePanes == nil {
 				livePanes = livePaneIDSet(statusPaneLister)
 			}
-			fillPaneAlive(rows[i].Tmux, livePanes)
+			fillPaneAliveFromLiveness(rows[i].Tmux, livePanes, &agentLiveness{Signals: rows[i].Signals})
 		}
 	}
 	return rows
