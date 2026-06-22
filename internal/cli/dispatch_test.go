@@ -235,6 +235,43 @@ func TestRunDispatchWakeFailureStillSucceeds(t *testing.T) {
 	}
 }
 
+// TestDispatchMismatchedSenderSetsFromInTask is the production-path test for
+// #176: when dispatch --from orchestrator is used with a team whose lead is cto,
+// the AMQ message is sent with --me orchestrator so the task's From field is
+// "orchestrator". The worker drains it, sees From=orchestrator, and bootstrap
+// tells it to reply there — not to the team.json lead.
+func TestDispatchMismatchedSenderSetsFromInTask(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir) // team: orchestrated, lead=cto handle=cto
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-abc to qa\n")
+	_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	_, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa",
+			"--from", "orchestrator", "--subject", "X", "--body", "y"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	// The AMQ message must carry --me orchestrator so its From field is the
+	// dispatcher, not the team.json lead. Workers draining it reply to From.
+	if len(*calls) == 0 {
+		t.Fatal("no amq calls made")
+	}
+	sendArgs := (*calls)[0].Arg
+	meIdx := -1
+	for i, a := range sendArgs {
+		if a == "--me" {
+			meIdx = i
+			break
+		}
+	}
+	if meIdx < 0 || meIdx+1 >= len(sendArgs) || sendArgs[meIdx+1] != "orchestrator" {
+		t.Fatalf("amq send --me should be orchestrator (dispatcher); args: %v", sendArgs)
+	}
+}
+
 // TestRunDispatchWarnsMismatchedSender covers option 3 of #176: when
 // dispatch --from differs from the team.json configured lead, a notice is
 // printed to stderr so the operator knows children will report to the

@@ -42,13 +42,9 @@ type bootstrapContext struct {
 	Orchestrated bool
 	IsLead       bool
 	LeadHandle   string
-	// DispatcherHandle overrides LeadHandle as the READY and report-routing
-	// target when the operator launched workers with an explicit dispatcher
-	// different from the team.json configured lead (#176).
-	DispatcherHandle string
-	CurrentTeam      []bootstrapTeamMember
-	Workstreams      []bootstrapWorkstream
-	Warnings         []string
+	CurrentTeam  []bootstrapTeamMember
+	Workstreams  []bootstrapWorkstream
+	Warnings     []string
 }
 
 type bootstrapTeamMember struct {
@@ -94,7 +90,6 @@ func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
 	ctx.TeamHome = promptText(ctx.TeamHome)
 	ctx.TeamRulesPath = promptText(ctx.TeamRulesPath)
 	ctx.LeadHandle = promptText(ctx.LeadHandle)
-	ctx.DispatcherHandle = promptText(ctx.DispatcherHandle)
 	ctx.RolePath = promptText(ctx.RolePath)
 	ctx.LaunchPath = promptText(ctx.LaunchPath)
 	ctx.BriefPath = promptText(ctx.BriefPath)
@@ -166,16 +161,15 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		// Brief resolution uses the same rule as the live-launch ensure
 		// step so bootstrap can never name a path that ensure skipped (or
 		// vice versa).
-		BriefPath:        briefPath(resolveBriefHome(teamHome, rec.CWD), rec.Session),
-		Operator:         operator,
-		OperatorGates:    operatorGates,
-		Orchestrated:     orchestrated,
-		IsLead:           isLead,
-		LeadHandle:       leadHandle,
-		DispatcherHandle: rec.DispatcherHandle,
-		CurrentTeam:      currentTeam,
-		Workstreams:      siblingWorkstreamSummaries(rec.Root, rec.Session),
-		Warnings:         warnings,
+		BriefPath:     briefPath(resolveBriefHome(teamHome, rec.CWD), rec.Session),
+		Operator:      operator,
+		OperatorGates: operatorGates,
+		Orchestrated:  orchestrated,
+		IsLead:        isLead,
+		LeadHandle:    leadHandle,
+		CurrentTeam:   currentTeam,
+		Workstreams:   siblingWorkstreamSummaries(rec.Root, rec.Session),
+		Warnings:      warnings,
 	}
 }
 
