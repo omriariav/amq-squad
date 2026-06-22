@@ -118,6 +118,7 @@ var completionTeamSubcommands = []string{
 var completionTeamRulesSubcommands = []string{
 	"init",
 	"show",
+	"templates",
 }
 
 // completionTeamMemberSubcommands lists `amq-squad team member` subcommands.
@@ -251,6 +252,7 @@ var completionCommonFlags = []string{
 	"--target-id",
 	"--target-project",
 	"--target-session",
+	"--template",
 	"--team-home",
 	"--team-profile",
 	"--team-workstream",

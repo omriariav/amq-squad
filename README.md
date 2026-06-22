@@ -445,8 +445,18 @@ amq-squad team init [--project DIR] [--profile NAME] [--roles a,b|numbers|all] [
                                   --orchestrated [--lead ROLE] opts the squad
                                   into lead-agent orchestration (see Orchestration).
                                   --project targets a team-home without cd.
-amq-squad team rules init [--project DIR] [--force]
+amq-squad team rules templates
+                                  List available team-rules templates.
+amq-squad team rules init [--project DIR] [--profile NAME]
+                     [--template auto|dev-only|product-squad|scrum|custom] [--force]
                                   Seed or refresh .amq-squad/team-rules.md.
+                                  auto selects from the configured roster:
+                                  dev-only for engineering teams,
+                                  product-squad when product/design roles are
+                                  present, scrum for Scrum accountabilities,
+                                  and custom otherwise. --profile renders a
+                                  named profile while keeping team-rules.md
+                                  shared per team-home.
 amq-squad team rules show [--project DIR]
                                   Print .amq-squad/team-rules.md.
 amq-squad team overlay init (--role R | --workers) [--disable-plugins id@market,...]
