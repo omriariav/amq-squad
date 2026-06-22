@@ -200,9 +200,6 @@ func runLeadRegister(args []string) error {
 	if id == nil {
 		return fmt.Errorf("lead register requires a current tmux pane (TMUX/TMUX_PANE unset)")
 	}
-	if err := setTeamLeadForProfile(projectDir, profile, role); err != nil {
-		return err
-	}
 	cwd := member.EffectiveCWD(t.Project)
 	handle := memberHandle(member)
 	env, err := resolveAMQEnvInDir(cwd, "", workstream, handle)
@@ -241,6 +238,9 @@ func runLeadRegister(args []string) error {
 	}
 	if err := launch.Write(agentDir, rec); err != nil {
 		return fmt.Errorf("write external launch record: %w", err)
+	}
+	if err := setTeamLeadForProfile(projectDir, profile, role); err != nil {
+		return err
 	}
 	fmt.Printf("registered external lead %s (%s) at pane %s for session %s.\n", role, handle, id.PaneID, env.SessionName)
 	return nil
