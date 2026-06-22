@@ -82,7 +82,7 @@ For the latest 2.x build:
 go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest
 ```
 
-Requires Go 1.25+, the `amq` binary on `PATH` (v0.34+), and `tmux` on `PATH` for `amq-squad up`.
+Requires Go 1.25+, the `amq` binary on `PATH` (v0.37.1+), and `tmux` on `PATH` for `amq-squad up`.
 
 ### Skills (plugin marketplaces)
 
@@ -981,5 +981,5 @@ Replay paths that emit copy-paste commands use the modern `agent up <binary>` co
 ## Requires
 
 - Go 1.25+
-- `amq` binary on `PATH` (v0.34+)
+- `amq` binary on `PATH` (v0.37.1+)
 - `tmux` on `PATH` for `amq-squad up`
