@@ -221,6 +221,9 @@ func collectOperatorAttention(projectDir string, snap state.Snapshot, operatorHa
 			if th.Historical {
 				continue
 			}
+			if !notifyStructuralOperatorAttention(th, operatorHandle) {
+				continue
+			}
 			age := now.Sub(th.LastEventAt)
 			if age < 0 {
 				age = 0
@@ -258,6 +261,30 @@ func collectOperatorAttention(projectDir string, snap state.Snapshot, operatorHa
 		return out[i].Thread < out[j].Thread
 	})
 	return out
+}
+
+func notifyStructuralOperatorAttention(th state.ThreadSummary, operatorHandle string) bool {
+	if !notifyUnreadBy(th, operatorHandle) {
+		return false
+	}
+	if strings.HasPrefix(th.ID, "gate/") {
+		return true
+	}
+	switch th.Kind {
+	case state.KindQuestion, state.KindDecision:
+		return true
+	default:
+		return false
+	}
+}
+
+func notifyUnreadBy(th state.ThreadSummary, handle string) bool {
+	for _, unread := range th.UnreadBy {
+		if unread == handle {
+			return true
+		}
+	}
+	return false
 }
 
 func selectNotifications(items []operatorAttention, prior notifyStateFile, renotifyAfter time.Duration, now time.Time) ([]operatorAttention, int, notifyStateFile) {
