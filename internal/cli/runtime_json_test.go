@@ -153,6 +153,9 @@ func TestWriteResumeJSONShapeAndPaneAlive(t *testing.T) {
 	if cto.Action != "restore" || !cto.HasRestoreRecord {
 		t.Errorf("cto plan wrong: %+v", cto)
 	}
+	if cto.LaunchState != "will-launch" || cto.RecordState != "restorable" {
+		t.Errorf("cto state wrong: launch=%q record=%q", cto.LaunchState, cto.RecordState)
+	}
 	if cto.Wake != "" {
 		t.Errorf("wake '-' should normalize to empty, got %q", cto.Wake)
 	}
@@ -162,6 +165,9 @@ func TestWriteResumeJSONShapeAndPaneAlive(t *testing.T) {
 	qa := env.Data.Plan[1]
 	if qa.Action != "launch fresh" || qa.Tmux != nil {
 		t.Errorf("qa plan should be fresh with no tmux: %+v", qa)
+	}
+	if qa.LaunchState != "will-launch" || qa.RecordState != "missing" {
+		t.Errorf("qa state wrong: launch=%q record=%q", qa.LaunchState, qa.RecordState)
 	}
 }
 
