@@ -235,6 +235,51 @@ func TestRunDispatchWakeFailureStillSucceeds(t *testing.T) {
 	}
 }
 
+// TestRunDispatchWarnsMismatchedSender covers option 3 of #176: when
+// dispatch --from differs from the team.json configured lead, a notice is
+// printed to stderr so the operator knows children will report to the
+// dispatcher, not the configured lead mailbox.
+func TestRunDispatchWarnsMismatchedSender(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir) // team: orchestrated, lead=cto handle=cto
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-abc to qa\n")
+	_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa",
+			"--from", "orchestrator", "--subject", "X", "--body", "y"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch: %v\nstderr:\n%s", err, stderr)
+	}
+	// notice must name both the dispatcher and the configured lead
+	for _, want := range []string{"orchestrator", "cto"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("mismatch notice missing %q; stderr:\n%s", want, stderr)
+		}
+	}
+}
+
+func TestRunDispatchNoWarnWhenSenderMatchesLead(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir) // team: orchestrated, lead=cto handle=cto
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-abc to qa\n")
+	_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa",
+			"--from", "cto", "--subject", "X", "--body", "y"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stderr, "notice:") {
+		t.Fatalf("no mismatch notice expected when sender == configured lead; stderr:\n%s", stderr)
+	}
+}
+
 func TestRunDispatchValidations(t *testing.T) {
 	cases := []struct {
 		name string
