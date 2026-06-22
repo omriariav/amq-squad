@@ -458,7 +458,7 @@ mailbox). AMQ itself stays unchanged.</p>
 <p>For the latest 2.x build:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span></code></pre></div>
 <p>Requires Go 1.25+, the <code>amq</code> binary on <code>PATH</code>
-(v0.34+), and <code>tmux</code> on <code>PATH</code> for
+(v0.37.1+), and <code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code>.</p>
 <h3 id="skills-plugin-marketplaces">Skills (plugin marketplaces)</h3>
 <p>This repo doubles as a plugin marketplace that ships the amq-squad
@@ -1394,14 +1394,21 @@ persists per-member models.</p>
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> trusted</span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5,fullstack=sonnet</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5</span></code></pre></div>
-<p>With amq <strong>0.34.1+</strong>, launches pass
+<p>amq-squad v2.5.0 requires amq <strong>0.37.1+</strong>. Launches pass
 <code>--require-wake</code> to <code>amq coop exec</code>, so a launch
 <strong>fails at the door</strong> when the AMQ wake sidecar cannot
-start and acquire its lock — instead of surfacing later as a stale or
-orphaned wake. Older amq versions are detected and skip the flag.
-<code>--no-require-wake</code> opts out for environments where wake
-cannot run; the opt-out is persisted in the launch record so resume
-reproduces it.</p>
+start and acquire its lock, instead of surfacing later as a stale or
+orphaned wake. <code>--no-require-wake</code> opts out for environments
+where wake cannot run; the opt-out is persisted in the launch record so
+resume reproduces it.</p>
+<p>For external-injector wake setups, pass
+<code>--wake-inject-via /absolute/injector</code> and repeat
+<code>--wake-inject-arg=value</code> as needed on <code>agent up</code>,
+<code>up</code>, or <code>up --dry-run</code> launch-plan output. These
+flags are forwarded to <code>amq coop exec</code>, persisted in
+<code>launch.json</code>, and replayed by <code>agent resume</code>. Use
+the <code>--flag=value</code> form for dash-prefixed injector arguments
+such as <code>--wake-inject-arg=--pane</code>.</p>
 <h2 id="workstreams-and-threads">Workstreams and threads</h2>
 <ul>
 <li><strong>Workstream</strong> = AMQ <code>--session</code>. All
@@ -1549,7 +1556,7 @@ project's <code>.amqrc</code> for cross-project AMQ routing.
 <h2 id="requires">Requires</h2>
 <ul>
 <li>Go 1.25+</li>
-<li><code>amq</code> binary on <code>PATH</code> (v0.34+)</li>
+<li><code>amq</code> binary on <code>PATH</code> (v0.37.1+)</li>
 <li><code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code></li>
 </ul>

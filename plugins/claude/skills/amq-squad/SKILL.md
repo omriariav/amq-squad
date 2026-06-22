@@ -231,12 +231,16 @@ Plan emission fails fast when a referenced `--settings` file is missing;
 `up --dry-run` shows the args on each member's command. Codex members use a `$CODEX_HOME/<name>.config.toml` profile wired
 via `codex_args: ["--profile", "<name>"]` instead.
 
-Launch wake gate (v1.8.0+): with amq 0.34.1+, launches pass `--require-wake`
-to `amq coop exec`, so a launch fails at the door when the AMQ wake sidecar
-cannot start and acquire its lock (instead of surfacing later as a stale
-wake). Older amq versions are detected and skip the flag. `--no-require-wake`
-opts out for wake-hostile environments and persists into the launch record,
-so `agent resume` reproduces it.
+Launch wake gate (v2.5.0+): amq-squad requires amq 0.37.1+ and launches pass
+`--require-wake` to `amq coop exec`, so a launch fails at the door when the AMQ
+wake sidecar cannot start and acquire its lock (instead of surfacing later as a
+stale wake). `--no-require-wake` opts out for wake-hostile environments and
+persists into the launch record, so `agent resume` reproduces it.
+External-injector wake setups can pass `--wake-inject-via /absolute/injector`
+and repeat `--wake-inject-arg=value`; these flags are forwarded to
+`amq coop exec`, persisted in launch.json, and replayed by resume. Use the
+`--flag=value` form for dash-prefixed injector args such as
+`--wake-inject-arg=--pane`.
 
 ## Exit codes
 

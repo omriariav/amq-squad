@@ -274,6 +274,24 @@ func TestEmitTeamCommandPerMemberArgsOnly(t *testing.T) {
 	}
 }
 
+func TestEmitTeamCommandAddsWakeInject(t *testing.T) {
+	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p",
+		Member: m, Workstream: "p", TrustMode: trustModeSandboxed,
+		WakeInjectVia: "/opt/amq-inject", WakeInjectArgs: []string{"--pane", "%42"},
+	})
+	for _, want := range []string{
+		"--wake-inject-via /opt/amq-inject",
+		"--wake-inject-arg=--pane",
+		"--wake-inject-arg='%42'",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("emitTeamCommand missing %q in: %s", want, cmd)
+		}
+	}
+}
+
 func TestValidateMembersTrustRejectsSmuggledBypass(t *testing.T) {
 	// A sandboxed team must not smuggle the Codex bypass flag through one
 	// member's codex_args; the rejection names the member.

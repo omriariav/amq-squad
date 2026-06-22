@@ -279,6 +279,8 @@ var completionCommonFlags = []string{
 	"--tree",
 	"--trust",
 	"--timeout",
+	"--wake-inject-arg",
+	"--wake-inject-via",
 	"--yes",
 }
 
