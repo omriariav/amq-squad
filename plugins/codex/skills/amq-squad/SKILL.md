@@ -11,7 +11,7 @@ Launch priming is automatic. `up` / `agent up` inject the bootstrap prompt; agen
 
 This skill is named `amq-squad`; the binary is also named `amq-squad`.
 
-**Skill version: 2.3.0** — on your FIRST response of a session, print the line `amq-squad skill v2.3.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
+**Skill version: 2.5.0** — on your FIRST response of a session, print the line `amq-squad skill v2.5.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
 
 ## Context model
 
@@ -52,13 +52,15 @@ The lifecycle is one small state machine: `(none) --up--> running --stop--> stop
 | List configured profiles | `amq-squad team profiles` |
 | Sync the pointer stub into `CLAUDE.md` / `AGENTS.md` | `amq-squad team sync --apply` |
 | Mutate the live roster at runtime | `amq-squad team member add <role> --binary B` / `team member rm <role>` / `team member list` |
+| Set or inspect the orchestrated lead | `amq-squad team lead set <role>` / `team lead clear` / `team lead show --json` |
+| Register this pane as an external lead | `amq-squad lead register --role <role> --session S` |
 | Native pull-based task queue for a workstream | `amq-squad task add --title T --session S` / `task list --session S` / `task claim <id> --me H --session S` / `task done <id> --session S` |
 
 `up` means NEW work and **refuses** a session that already exists — use `resume` to continue it, or `up --reset` to start over. `stop` is the primary teardown (the `down` alias was removed in 2.0). With no `--seed-from`, `up` AUTO-STUBS the brief and prints a one-line notice — so before `up`, decide whether to author the brief first (`up --dry-run --seed-from ...`) or let `up` stub it and edit afterward. `rm`/`archive` are the only destructive ops; both confirm-gate (default No, `--yes` to skip) and refuse a live session unless `--force`.
 
 Pass `--profile NAME` to operate on a named profile under `.amq-squad/teams/<name>.json`. Omit (or pass `--profile default`) for `.amq-squad/team.json`.
 
-`team member` and `task` are the dynamic-team primitives. `team member add/rm` mutates `team.json` atomically under an exclusive lock and re-validates it (the new member is NOT launched — run the launch command `team member add` prints: a managed pane via `resume --exec --target new-window`, or `agent up` for an unmanaged one-off). `task` is a native pull-based store under `.amq-squad/tasks/<session>/`: a task is claimable only once all its `--depends-on` tasks are completed, and every mutation is atomic and lock-serialized. Both take `--session` (tasks require it).
+`team member`, `team lead`, `lead register`, and `task` are the dynamic-team primitives. `team member add/rm` mutates `team.json` atomically under an exclusive lock and re-validates it (the new member is NOT launched — run the launch command `team member add` prints: a managed pane via `resume --exec --target new-window`, or `agent up` for an unmanaged one-off). `team lead set/clear/show` mutates or inspects profile orchestration state for an existing roster. `lead register` adopts the current tmux pane as an operator-owned external lead for the session: status/action JSON can render and target it, but lifecycle commands do not own the pane, so `stop`/`rm`/`archive`/`resume` will not kill, close, or replay it. `task` is a native pull-based store under `.amq-squad/tasks/<session>/`: a task is claimable only once all its `--depends-on` tasks are completed, and every mutation is atomic and lock-serialized. Runtime mutations take `--session` where applicable (tasks require it).
 
 Every command accepts `--json` where machine-readable output makes sense (`status`, `history`, `resume`, `doctor`, `team profiles`, `version`, and `up --dry-run`). JSON outputs are schema-versioned envelopes `{ schema_version, kind, data }`. Diagnostics stay on stderr; stdout under `--json` is pure JSON. For machine clients, the per-member records in `status --session <name> --json` (kind `status`), `history --json`, and `resume --json` (kind `resume_plan`) carry a `tmux` runtime block (`session`, `window_id`, `window_name`, `pane_id`, `target`) plus a computed `pane_alive` — **present only for agents launched in tmux**, so detect by presence. `status --session <name> --json` records additionally carry an `actions` array (`focus`/`send`/`resume`/`status`) with the exact runnable command and an `available` flag, so a client (e.g. amq-noc) renders/copies stable commands instead of inferring tmux state. (The bare `amq-squad status --json` is the multi-session board envelope `kind: sessions` — it has no per-member records or actions; use `--session <name>` for member detail.)
 
@@ -225,12 +227,16 @@ Plan emission fails fast when a referenced `--settings` file is missing;
 `up --dry-run` shows the args on each member's command. Codex members use a `$CODEX_HOME/<name>.config.toml` profile wired
 via `codex_args: ["--profile", "<name>"]` instead.
 
-Launch wake gate (v1.8.0+): with amq 0.34.1+, launches pass `--require-wake`
-to `amq coop exec`, so a launch fails at the door when the AMQ wake sidecar
-cannot start and acquire its lock (instead of surfacing later as a stale
-wake). Older amq versions are detected and skip the flag. `--no-require-wake`
-opts out for wake-hostile environments and persists into the launch record,
-so `agent resume` reproduces it.
+Launch wake gate (v2.5.0+): amq-squad requires amq 0.37.1+ and launches pass
+`--require-wake` to `amq coop exec`, so a launch fails at the door when the AMQ
+wake sidecar cannot start and acquire its lock (instead of surfacing later as a
+stale wake). `--no-require-wake` opts out for wake-hostile environments and
+persists into the launch record, so `agent resume` reproduces it.
+External-injector wake setups can pass `--wake-inject-via /absolute/injector`
+and repeat `--wake-inject-arg=value`; these flags are forwarded to
+`amq coop exec`, persisted in launch.json, and replayed by resume. Use the
+`--flag=value` form for dash-prefixed injector args such as
+`--wake-inject-arg=--pane`.
 
 ## Exit codes
 

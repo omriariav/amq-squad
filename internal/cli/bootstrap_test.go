@@ -323,8 +323,35 @@ func TestBootstrapCurrentTeamKeepsLegacyRoleSessions(t *testing.T) {
 	if qa.Session != "qa" {
 		t.Fatalf("legacy qa session = %q, want qa", qa.Session)
 	}
-	if qa.Route != "amq send --to qa --session qa --thread p2p/cto__qa" {
+	if qa.Route != "amq send --to qa --from-session cto --session qa --thread p2p/cto__qa" {
 		t.Fatalf("legacy qa route = %q", qa.Route)
+	}
+}
+
+func TestBootstrapCurrentTeamCrossSessionRouteUsesFromSession(t *testing.T) {
+	teamHome := t.TempDir()
+	if err := team.Write(teamHome, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "qa"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := launch.Record{Role: "cto", Handle: "cto", Session: "cto", CWD: teamHome}
+	got, warnings := bootstrapCurrentTeam(rec, teamHome)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	var qa bootstrapTeamMember
+	for _, m := range got {
+		if m.Role == "qa" {
+			qa = m
+		}
+	}
+	if qa.Route != "amq send --to qa --from-session cto --session qa --thread p2p/cto__qa" {
+		t.Fatalf("cross-session qa route = %q", qa.Route)
 	}
 }
 

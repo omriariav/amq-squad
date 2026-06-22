@@ -117,7 +117,7 @@ func TestRunUpProjectDryRunTargetsOtherDir(t *testing.T) {
 	project := t.TempDir()
 	other := t.TempDir()
 	if err := team.Write(project, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -172,8 +172,8 @@ func TestUpDryRunMatchesTeamShowWithFlags(t *testing.T) {
 		Trust:      trustModeTrusted,
 		BinaryArgs: map[string][]string{"codex": {"--enable", "goals"}},
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96"},
+			{Role: "cto", Binary: "codex", Handle: "cto"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack"},
 		},
 	}
 	setupFakeAMQSessionRoots(t)
@@ -188,6 +188,8 @@ func TestUpDryRunMatchesTeamShowWithFlags(t *testing.T) {
 		"--codex-args=--profile fast",
 		"--claude-args=--chrome",
 		"--force-duplicate",
+		"--wake-inject-via", "/opt/amq-inject",
+		"--wake-inject-arg=--pane",
 	}
 
 	showOut, _, err := captureOutput(t, func() error {
@@ -216,6 +218,9 @@ func TestUpDryRunMatchesTeamShowWithFlags(t *testing.T) {
 	}
 	if !strings.Contains(upOut, "--claude-args=--chrome") {
 		t.Errorf("--claude-args not applied: %s", upOut)
+	}
+	if !strings.Contains(upOut, "--wake-inject-via /opt/amq-inject") || !strings.Contains(upOut, "--wake-inject-arg=--pane") {
+		t.Errorf("wake injector flags not applied: %s", upOut)
 	}
 }
 
@@ -292,6 +297,8 @@ func TestRunUpLiveHonorsBackendFlags(t *testing.T) {
 			"--codex-args=--profile fast",
 			"--claude-args=--chrome",
 			"--force-duplicate",
+			"--wake-inject-via", "/opt/amq-inject",
+			"--wake-inject-arg=--pane",
 			"--no-attach",
 		})
 	})
@@ -340,6 +347,12 @@ func TestRunUpLiveHonorsBackendFlags(t *testing.T) {
 	}
 	if !opts.ForceDuplicate {
 		t.Error("--force-duplicate not propagated")
+	}
+	if opts.WakeInjectVia != "/opt/amq-inject" {
+		t.Errorf("WakeInjectVia = %q, want /opt/amq-inject", opts.WakeInjectVia)
+	}
+	if got := opts.WakeInjectArgs; len(got) != 1 || got[0] != "--pane" {
+		t.Errorf("WakeInjectArgs = %v, want [--pane]", got)
 	}
 }
 
@@ -428,5 +441,53 @@ func TestRunUpLiveRequiresTeam(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "no team configured") {
 		t.Fatalf("bare up without team config: got %v, want 'no team configured' error", err)
+	}
+}
+
+// TestRunUpDryRunMixedSessionFiltersOutCrossSessionMembers verifies that
+// up --dry-run applies the session filter (matching team launch --dry-run),
+// closing the gap filed in #177.
+func TestRunUpDryRunMixedSessionFiltersOutCrossSessionMembers(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "go-dev", Binary: "claude", Handle: "go-dev", Session: "v2-4-0"},
+			{Role: "architect", Binary: "codex", Handle: "architect", Session: "v2-4-0"},
+			{Role: "pm-copilot", Binary: "claude", Handle: "pm-copilot", Session: "pm-copilot"},
+		},
+	})
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runUp([]string{"--dry-run", "--no-bootstrap", "v2-4-0"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stdout, "pm-copilot") {
+		t.Errorf("up --dry-run should not include cross-session member pm-copilot:\n%s", stdout)
+	}
+	for _, want := range []string{"--me go-dev", "--me architect"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("up --dry-run missing session member %q:\n%s", want, stdout)
+		}
+	}
+	if !strings.Contains(stderr, "skipping pm-copilot") {
+		t.Errorf("stderr missing skip notice for pm-copilot:\n%s", stderr)
+	}
+}
+
+// TestRunUpDryRunAllCrossSessionErrors verifies that up --dry-run returns an
+// error when no members match the target session (mirrors the live-launch
+// behavior added in #170).
+func TestRunUpDryRunAllCrossSessionErrors(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "go-dev", Binary: "claude", Handle: "go-dev", Session: "alpha"},
+			{Role: "architect", Binary: "codex", Handle: "architect", Session: "alpha"},
+		},
+	})
+	_, _, err := captureOutput(t, func() error {
+		return runUp([]string{"--dry-run", "--no-bootstrap", "beta"})
+	})
+	if err == nil || !strings.Contains(err.Error(), `no team members are pinned to session "beta"`) {
+		t.Fatalf("up --dry-run all-cross-session: got %v, want 'no team members' error", err)
 	}
 }

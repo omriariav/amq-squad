@@ -159,7 +159,7 @@ func TestExecuteDoctorAMQVersionTooOld(t *testing.T) {
 	dir := t.TempDir()
 	d := newDoctorExec(t, dir)
 	d.ResolveAMQEnv = func(string) (amqEnv, error) {
-		return amqEnv{AMQVersion: "0.33.9", Root: dir}, nil
+		return amqEnv{AMQVersion: "0.37.0", Root: dir}, nil
 	}
 	var buf bytes.Buffer
 	d.Out = &buf
@@ -173,7 +173,7 @@ func TestExecuteDoctorAMQVersionTooOld(t *testing.T) {
 	if got == nil || got.Status != doctorFail {
 		t.Fatalf("amq version check = %+v, want fail", got)
 	}
-	if !strings.Contains(got.Detail, "0.33.9") {
+	if !strings.Contains(got.Detail, "0.37.0") || !strings.Contains(got.Detail, "0.38.0") {
 		t.Errorf("detail should name the bad version: %q", got.Detail)
 	}
 }
@@ -772,7 +772,7 @@ func TestExecuteDoctorWakeHandlesAMQEnvErrorPerMember(t *testing.T) {
 	d := doctorExecution{
 		ProjectDir:    dir,
 		Out:           &bytes.Buffer{},
-		ResolveAMQEnv: func(string) (amqEnv, error) { return amqEnv{AMQVersion: "0.34.1"}, nil },
+		ResolveAMQEnv: func(string) (amqEnv, error) { return amqEnv{AMQVersion: "0.38.0"}, nil },
 		LookPath:      func(string) (string, error) { return "/usr/bin/tmux", nil },
 		Probe:         defaultDuplicateLaunchProbe,
 	}

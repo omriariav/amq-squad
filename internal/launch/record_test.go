@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"testing"
 	"time"
@@ -25,6 +26,8 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		BaseRoot:         filepath.Dir(dir),
 		RootSource:       "project_amqrc",
 		AMQVersion:       "0.34.0",
+		WakeInjectVia:    "/opt/amq-inject",
+		WakeInjectArgs:   []string{"--pane", "%42"},
 		StartedAt:        time.Now().UTC().Truncate(time.Second),
 	}
 	if err := Write(dir, in); err != nil {
@@ -52,8 +55,11 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		out.Conversation != in.Conversation ||
 		out.Handle != in.Handle || out.Role != in.Role || out.Root != in.Root ||
 		out.BaseRoot != in.BaseRoot || out.RootSource != in.RootSource ||
-		out.AMQVersion != in.AMQVersion {
+		out.AMQVersion != in.AMQVersion || out.WakeInjectVia != in.WakeInjectVia {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", out, in)
+	}
+	if !reflect.DeepEqual(out.WakeInjectArgs, in.WakeInjectArgs) {
+		t.Errorf("WakeInjectArgs = %v, want %v", out.WakeInjectArgs, in.WakeInjectArgs)
 	}
 	if len(out.Argv) != len(in.Argv) {
 		t.Fatalf("Argv len mismatch: %v vs %v", out.Argv, in.Argv)

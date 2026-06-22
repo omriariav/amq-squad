@@ -280,12 +280,14 @@ func translateAgentUpArgs(args []string) []string {
 func launchKnownFlag(name string) string {
 	switch name {
 	case "--codex-args", "--claude-args", "--launcher-args",
-		"-codex-args", "-claude-args", "-launcher-args":
+		"--wake-inject-arg",
+		"-codex-args", "-claude-args", "-launcher-args",
+		"-wake-inject-arg":
 		return "string-accepts-dash"
 	case "--role", "--session", "--me", "--root", "--project", "--team-home", "--team-profile",
-		"--conversation", "--conversation-id", "--trust", "--model", "--launcher",
+		"--conversation", "--conversation-id", "--trust", "--model", "--launcher", "--wake-inject-via",
 		"-role", "-session", "-me", "-root", "-project", "-team-home", "-team-profile",
-		"-conversation", "-conversation-id", "-trust", "-model", "-launcher":
+		"-conversation", "-conversation-id", "-trust", "-model", "-launcher", "-wake-inject-via":
 		return "string"
 	case "--team-workstream", "--no-bootstrap", "--no-default-args",
 		"--force-duplicate", "--dry-run", "--no-require-wake",

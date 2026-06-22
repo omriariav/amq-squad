@@ -51,10 +51,16 @@ type Record struct {
 	// reproduces it: the constraint it answers (wake cannot acquire its lock
 	// in this environment) is a property of the execution environment, not a
 	// one-shot launch decision.
-	NoRequireWake bool      `json:"no_require_wake,omitempty"`
-	AgentPID      int       `json:"agent_pid,omitempty"`
-	AgentTTY      string    `json:"agent_tty,omitempty"`
-	StartedAt     time.Time `json:"started_at"`
+	NoRequireWake bool `json:"no_require_wake,omitempty"`
+	External      bool `json:"external,omitempty"`
+	// WakeInjectVia and WakeInjectArgs record AMQ 0.37.0 external wake
+	// injector settings so resume/replay can repair and restart the same
+	// digest-bound wake target later.
+	WakeInjectVia  string    `json:"wake_inject_via,omitempty"`
+	WakeInjectArgs []string  `json:"wake_inject_args,omitempty"`
+	AgentPID       int       `json:"agent_pid,omitempty"`
+	AgentTTY       string    `json:"agent_tty,omitempty"`
+	StartedAt      time.Time `json:"started_at"`
 	// TeamProfile names the profile the launch was emitted from. Empty
 	// means the implicit default profile. Captured so status / bootstrap
 	// routing can reuse the same profile without rereading flags.
@@ -333,7 +339,7 @@ func hasLegacyActivity(agentDir string) bool {
 	if _, err := os.Stat(filepath.Join(agentDir, "presence.json")); err == nil {
 		return true
 	}
-	for _, name := range []string{"inbox", "outbox", "acks", "receipts", "dlq"} {
+	for _, name := range []string{"inbox", "outbox", "receipts", "dlq"} {
 		if hasFiles(filepath.Join(agentDir, name)) {
 			return true
 		}

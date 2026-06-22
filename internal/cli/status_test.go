@@ -456,12 +456,14 @@ func TestExecuteStatusJSON(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "cto", Binary: "codex", Handle: "lead-handle", Session: "issue-96"},
 			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96"},
 		},
+		Orchestrated: true,
+		Lead:         "cto",
 	})
-	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", AgentPID: 100,
+	seedAgentRecord(t, base, "issue-96", "lead-handle", launch.Record{
+		Binary: "codex", Handle: "lead-handle", AgentPID: 100,
 	})
 
 	out, err := runStatusExec(t, statusExecution{
@@ -477,6 +479,9 @@ func TestExecuteStatusJSON(t *testing.T) {
 	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
 	if env.Kind != "status" {
 		t.Errorf("envelope kind = %q, want status", env.Kind)
+	}
+	if !env.Data.Orchestrated || env.Data.Lead != "cto" || env.Data.LeadHandle != "lead-handle" {
+		t.Fatalf("orchestration fields = orchestrated:%v lead:%q lead_handle:%q, want true/cto/lead-handle", env.Data.Orchestrated, env.Data.Lead, env.Data.LeadHandle)
 	}
 	rows := env.Data.Records
 	if len(rows) != 2 {
@@ -499,6 +504,28 @@ func TestExecuteStatusJSON(t *testing.T) {
 	}
 	if fullstackRow.Status != statusStateMissing {
 		t.Errorf("fullstack status = %q, want missing", fullstackRow.Status)
+	}
+}
+
+func TestExecuteStatusJSONOmitsOrchestrationForFlatTeams(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	for _, absent := range []string{`"orchestrated"`, `"lead"`, `"lead_handle"`} {
+		if strings.Contains(out, absent) {
+			t.Fatalf("flat status JSON should omit %s:\n%s", absent, out)
+		}
 	}
 }
 

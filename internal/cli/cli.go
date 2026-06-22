@@ -187,6 +187,8 @@ func dispatch(args []string, version string) error {
 	switch args[0] {
 	case "team":
 		return runTeam(args[1:])
+	case "lead":
+		return runLead(args[1:])
 	case "task":
 		return runTask(args[1:])
 	case "verify":
@@ -253,7 +255,8 @@ Usage:
 Commands:
   new       Create a team, named profile, or workstream session
   roles     List built-in role IDs and market numbers for team creation
-  team      Set up and manage the team (init, rules, member, sync, profiles)
+  team      Set up and manage the team (init, rules, lead, member, sync, profiles)
+  lead      Register or inspect an external orchestrator lead
   task      Native pull-based task store (add/list/claim/done/fail/block)
   verify    Deterministic preflight checks (verify merge)
   up        Bring the team up (use --dry-run to print the launch plan)

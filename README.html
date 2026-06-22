@@ -453,12 +453,12 @@ workstream)</li>
 mailbox). AMQ itself stays unchanged.</p>
 <h2 id="install">Install</h2>
 <p>Install the 2.0 line (note the <code>/v2</code> module path):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.3.0</span>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.5.0</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For the latest 2.x build:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span></code></pre></div>
 <p>Requires Go 1.25+, the <code>amq</code> binary on <code>PATH</code>
-(v0.34+), and <code>tmux</code> on <code>PATH</code> for
+(v0.38.0+), and <code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code>.</p>
 <h3 id="skills-plugin-marketplaces">Skills (plugin marketplaces)</h3>
 <p>This repo doubles as a plugin marketplace that ships the amq-squad
@@ -890,6 +890,20 @@ Direct operator-to-worker messages are exceptional; when they affect
 scope, priority, merge readiness, release state, or external actions,
 the worker reports them to the lead before acting or includes the
 lead/thread metadata in the AMQ report.</p>
+<p>For an existing profile, use
+<code>amq-squad team lead set &lt;role&gt;</code> to opt into
+orchestration without rebuilding the roster,
+<code>team lead clear</code> to return to a flat squad, and
+<code>team lead show --json</code> for discovery. A lead that is already
+running in an operator-owned pane can register itself with
+<code>amq-squad lead register --role &lt;role&gt; --session &lt;session&gt;</code>;
+this writes an explicit external launch record so <code>status</code> /
+<code>focus</code> / <code>send</code> can target the pane. External
+lead records are visible and directable, but lifecycle commands do not
+own them: <code>stop</code> reports that the pane must be stopped
+manually, <code>rm</code> / <code>archive</code> leave it open, and
+<code>resume</code> asks the operator to run <code>lead register</code>
+again instead of replaying the pane.</p>
 <h2 id="verbs">Verbs</h2>
 <p>Team-level verbs:</p>
 <pre class="text"><code>amq-squad new team [--project DIR] [--sync] [--dry-run [--json]] [team init options]
@@ -935,10 +949,27 @@ amq-squad team init [--project DIR] [--profile NAME] [--roles a,b|numbers|all] [
                                   --orchestrated [--lead ROLE] opts the squad
                                   into lead-agent orchestration (see Orchestration).
                                   --project targets a team-home without cd.
-amq-squad team rules init [--project DIR] [--force]
+amq-squad team rules templates
+                                  List available team-rules templates.
+amq-squad team rules init [--project DIR] [--profile NAME]
+                     [--template auto|dev-only|product-squad|scrum|custom] [--force]
                                   Seed or refresh .amq-squad/team-rules.md.
+                                  auto selects from the configured roster:
+                                  dev-only for engineering teams,
+                                  product-squad when product/design roles are
+                                  present, scrum for Scrum accountabilities,
+                                  and custom otherwise. --profile renders a
+                                  named profile while keeping team-rules.md
+                                  shared per team-home.
 amq-squad team rules show [--project DIR]
                                   Print .amq-squad/team-rules.md.
+amq-squad team lead set &lt;role&gt; [--project DIR] [--profile NAME]
+amq-squad team lead clear [--project DIR] [--profile NAME]
+amq-squad team lead show [--project DIR] [--profile NAME] [--json]
+                                  Mutate or inspect the profile&#39;s orchestration
+                                  lead. `set` validates that &lt;role&gt; is a team
+                                  member and records orchestrated=true.
+                                  `clear` returns the profile to flat mode.
 amq-squad team overlay init (--role R | --workers) [--disable-plugins id@market,...]
                         [--disable-all-hooks] [--force] [--dry-run]
                                   Generate .amq-squad/overlays/&lt;role&gt;.claude.json
@@ -1041,6 +1072,13 @@ amq-squad task fail|block &lt;id&gt; [--reason R] --session S
                                   under .amq-squad/tasks/&lt;session&gt;/. A task is
                                   claimable only once its --depends-on tasks are
                                   completed. All subcommands require --session.
+amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
+                                  Adopt the current tmux pane as an
+                                  operator-owned external lead for an
+                                  orchestrated profile. The pane becomes
+                                  visible/directable in status/focus/send JSON,
+                                  but stop/rm/archive/resume do not kill,
+                                  close, or replay it.
 amq-squad console [--project DIR] [--session NAME] [--refresh 2s] [--at-risk-wait 5m]
                   [--review-age 15m] [--once]
                                   Mission Control TUI over this project. Renders
@@ -1381,13 +1419,21 @@ persists per-member models.</p>
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> trusted</span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5,fullstack=sonnet</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5</span></code></pre></div>
-<p>Launches pass <code>--require-wake</code> to
-<code>amq coop exec</code>, so a launch <strong>fails at the
-door</strong> when the AMQ wake sidecar cannot start and acquire its
-lock instead of surfacing later as a stale or orphaned wake.
-<code>--no-require-wake</code> opts out for environments where wake
-cannot run; the opt-out is persisted in the launch record so resume
-reproduces it.</p>
+<p>amq-squad v2.6.0 requires amq <strong>0.38.0+</strong>. Launches pass
+<code>--require-wake</code> to <code>amq coop exec</code>, so a launch
+<strong>fails at the door</strong> when the AMQ wake sidecar cannot
+start and acquire its lock, instead of surfacing later as a stale or
+orphaned wake. <code>--no-require-wake</code> opts out for environments
+where wake cannot run; the opt-out is persisted in the launch record so
+resume reproduces it.</p>
+<p>For external-injector wake setups, pass
+<code>--wake-inject-via /absolute/injector</code> and repeat
+<code>--wake-inject-arg=value</code> as needed on <code>agent up</code>,
+<code>up</code>, or <code>up --dry-run</code> launch-plan output. These
+flags are forwarded to <code>amq coop exec</code>, persisted in
+<code>launch.json</code>, and replayed by <code>agent resume</code>. Use
+the <code>--flag=value</code> form for dash-prefixed injector arguments
+such as <code>--wake-inject-arg=--pane</code>.</p>
 <h2 id="workstreams-and-threads">Workstreams and threads</h2>
 <ul>
 <li><strong>Workstream</strong> = AMQ <code>--session</code>. All
@@ -1535,7 +1581,7 @@ project's <code>.amqrc</code> for cross-project AMQ routing.
 <h2 id="requires">Requires</h2>
 <ul>
 <li>Go 1.25+</li>
-<li><code>amq</code> binary on <code>PATH</code> (v0.34+)</li>
+<li><code>amq</code> binary on <code>PATH</code> (v0.38.0+)</li>
 <li><code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code></li>
 </ul>

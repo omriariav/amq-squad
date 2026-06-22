@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // boardState is the rolled-up run-state of a whole session, derived from its
@@ -68,6 +69,7 @@ const (
 type sessionBoardRow struct {
 	Name        string     `json:"name"`
 	Root        string     `json:"root"`
+	Profile     string     `json:"profile,omitempty"`
 	State       boardState `json:"state"`
 	AgentsTotal int        `json:"agents_total"`
 	AgentsAlive int        `json:"agents_alive"`
@@ -79,9 +81,13 @@ type sessionBoardRow struct {
 	// ghost records from a prior session does not pin a quiet session at
 	// "degraded"; they are still surfaced (count + "(+N stale)" note) so the
 	// operator can prune them.
-	AgentsStale  int       `json:"agents_stale,omitempty"`
-	Brief        string    `json:"brief,omitempty"`
-	LastActivity time.Time `json:"last_activity,omitempty"`
+	AgentsStale  int                 `json:"agents_stale,omitempty"`
+	Brief        string              `json:"brief,omitempty"`
+	LastActivity time.Time           `json:"last_activity,omitempty"`
+	Actions      []runtimeActionJSON `json:"actions,omitempty"`
+	Orchestrated bool                `json:"orchestrated,omitempty"`
+	Lead         string              `json:"lead,omitempty"`
+	LeadHandle   string              `json:"lead_handle,omitempty"`
 	briefKind    briefKind
 }
 
@@ -166,8 +172,17 @@ func executeStatusBoard(s statusBoardExecution) error {
 	}
 
 	rows := make([]sessionBoardRow, 0, len(snap.Sessions))
+	var profiles []boardProfile
+	if s.JSON {
+		profiles = boardProfilesForProject(s.ProjectDir)
+	}
+	statusProbe := duplicateProbeFromStateProbe(s.Probe, now)
 	for _, sess := range snap.Sessions {
-		rows = append(rows, boardRowFor(s.ProjectDir, sess, now()))
+		row := boardRowFor(s.ProjectDir, sess, now())
+		if s.JSON {
+			enrichBoardRow(profiles, sess, statusProbe, &row)
+		}
+		rows = append(rows, row)
 	}
 
 	if s.JSON {
@@ -177,6 +192,95 @@ func executeStatusBoard(s statusBoardExecution) error {
 		})
 	}
 	return renderBoardTable(s.Out, snap.BaseRoot, rows, now())
+}
+
+type boardProfile struct {
+	Name string
+	Team team.Team
+}
+
+func boardProfilesForProject(projectDir string) []boardProfile {
+	names, err := configuredTeamProfiles(projectDir)
+	if err != nil {
+		return nil
+	}
+	out := make([]boardProfile, 0, len(names))
+	for _, name := range names {
+		t, err := team.ReadProfile(projectDir, name)
+		if err != nil {
+			continue
+		}
+		out = append(out, boardProfile{Name: name, Team: t})
+	}
+	return out
+}
+
+func duplicateProbeFromStateProbe(p state.Probe, now func() time.Time) duplicateLaunchProbe {
+	if p.PIDAlive == nil {
+		p.PIDAlive = state.DefaultProbe.PIDAlive
+	}
+	if p.ProcessMatch == nil {
+		p.ProcessMatch = state.DefaultProbe.ProcessMatch
+	}
+	if p.Now == nil {
+		p.Now = now
+	}
+	return duplicateLaunchProbe{
+		PIDAlive:     p.PIDAlive,
+		ProcessMatch: p.ProcessMatch,
+		Now:          p.Now,
+	}
+}
+
+func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicateLaunchProbe, row *sessionBoardRow) {
+	profile, t, ok := boardProfileForSession(profiles, sess)
+	if !ok {
+		return
+	}
+	statusRows := buildStatusRows(t, sess.Name, probe)
+	ctx := newSessionStatusContext(t, profile, sess.Name, firstLiveTmuxSession(statusRows))
+	row.Profile = ctx.Profile
+	row.Actions = ctx.Actions
+	row.Orchestrated = ctx.Orchestrated
+	row.Lead = ctx.Lead
+	row.LeadHandle = ctx.LeadHandle
+}
+
+func boardProfileForSession(profiles []boardProfile, sess state.Session) (string, team.Team, bool) {
+	if profile, ok := launchProfileForSession(sess); ok {
+		for _, p := range profiles {
+			if p.Name == profile {
+				return p.Name, p.Team, true
+			}
+		}
+	}
+	for _, p := range profiles {
+		workstream, err := resolveTeamWorkstreamName(p.Team, "", false)
+		if err == nil && workstream == sess.Name {
+			return p.Name, p.Team, true
+		}
+	}
+	return "", team.Team{}, false
+}
+
+func launchProfileForSession(sess state.Session) (string, bool) {
+	seen := map[string]bool{}
+	for _, a := range sess.Agents {
+		profile := strings.TrimSpace(a.TeamProfile)
+		if profile == "" {
+			profile = team.DefaultProfile
+		}
+		seen[profile] = true
+	}
+	if len(seen) == 0 {
+		return "", false
+	}
+	profiles := make([]string, 0, len(seen))
+	for profile := range seen {
+		profiles = append(profiles, profile)
+	}
+	sort.Strings(profiles)
+	return profiles[0], true
 }
 
 // boardStaleRecordAge is how cold a leftover (stale/dead/missing) agent record

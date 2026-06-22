@@ -31,6 +31,8 @@ func runTeam(args []string) error {
 		return runTeamResume(args[1:])
 	case "rules":
 		return runTeamRules(args[1:])
+	case "lead":
+		return runTeamLead(args[1:])
 	case "overlay":
 		return runTeamOverlay(args[1:])
 	case "member":
@@ -44,7 +46,7 @@ func runTeam(args []string) error {
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'overlay', 'member', 'sync', 'profiles', or 'rm'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'lead', 'overlay', 'member', 'sync', 'profiles', or 'rm'.", args[0])
 	}
 }
 
@@ -631,6 +633,8 @@ type emitTeamOptions struct {
 	ExplicitTrust    bool
 	ModelOverrides   map[string]string
 	ForceDuplicate   bool
+	WakeInjectVia    string
+	WakeInjectArgs   []string
 	Profile          string
 	// JSON requests a structured "team_plan" envelope on stdout instead of
 	// the human launch-command preview. Diagnostics still go to stderr.
@@ -690,6 +694,14 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		}
 	}
 
+	active, skipped := filterMembersBySession(t.Members, workstream)
+	for _, m := range skipped {
+		quietNotice("notice: skipping %s: pinned to session %q, not %q\n", m.Role, m.Session, workstream)
+	}
+	if len(active) == 0 {
+		return fmt.Errorf("no team members are pinned to session %q (all %d member(s) belong to other sessions)", workstream, len(t.Members))
+	}
+	t.Members = active
 	members := orderedTeamMembers(t.Members)
 	binaryArgs := mergeBinaryArgs(t.BinaryArgs, opts.ExtraBinaryArgs)
 	trustMode, err := resolveTeamTrustMode(t, opts.RequestedTrust, opts.ExplicitTrust)
@@ -772,6 +784,8 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 					Model:          effectiveModel,
 					ForceDuplicate: opts.ForceDuplicate,
 					Profile:        opts.Profile,
+					WakeInjectVia:  opts.WakeInjectVia,
+					WakeInjectArgs: opts.WakeInjectArgs,
 				}),
 			})
 		}
@@ -824,6 +838,8 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			Model:          effectiveModel,
 			Profile:        opts.Profile,
 			ForceDuplicate: opts.ForceDuplicate,
+			WakeInjectVia:  opts.WakeInjectVia,
+			WakeInjectArgs: opts.WakeInjectArgs,
 		}))
 		fmt.Println()
 	}
@@ -967,6 +983,8 @@ type emitTeamCommandInput struct {
 	TrustMode      string
 	Model          string
 	ForceDuplicate bool
+	WakeInjectVia  string
+	WakeInjectArgs []string
 	Profile        string
 }
 
@@ -1008,6 +1026,14 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 	}
 	if in.ForceDuplicate {
 		b.WriteString(" --force-duplicate")
+	}
+	if via := strings.TrimSpace(in.WakeInjectVia); via != "" {
+		b.WriteString(" --wake-inject-via ")
+		b.WriteString(shellQuote(via))
+		for _, arg := range in.WakeInjectArgs {
+			b.WriteString(" --wake-inject-arg=")
+			b.WriteString(shellQuote(arg))
+		}
 	}
 	if m.Handle != "" {
 		// Always explicit: a role-named handle avoids collisions when the
@@ -1342,13 +1368,18 @@ func runTeamRules(args []string) error {
 Usage:
   amq-squad team rules show [--project DIR]
                                        Print team-rules.md
-  amq-squad team rules init [--project DIR] [--force]
+  amq-squad team rules init [--project DIR] [--profile NAME] [--template auto|dev-only|product-squad|scrum|custom] [--force]
                                        Seed or refresh team-rules.md
+  amq-squad team rules templates
+                                       List available templates
 
 Examples:
+  amq-squad team rules templates
   amq-squad team rules show
   amq-squad team rules show --project ~/Code/app
   amq-squad team rules init
+  amq-squad team rules init --template product-squad
+  amq-squad team rules init --profile codex-v2-5-0 --template auto --force
   amq-squad team rules init --project ~/Code/app
   amq-squad team rules init --force
 `)
@@ -1358,6 +1389,24 @@ Examples:
 		return nil
 	}
 	switch args[0] {
+	case "templates":
+		fs := flag.NewFlagSet("team rules templates", flag.ContinueOnError)
+		fs.Usage = func() {
+			fmt.Fprint(os.Stderr, `amq-squad team rules templates - list available team-rules templates
+
+Usage:
+  amq-squad team rules templates
+
+Templates can be used with 'amq-squad team rules init --template NAME'.
+`)
+		}
+		if err := parseFlags(fs, args[1:]); err != nil {
+			return err
+		}
+		for _, tmpl := range teamRulesTemplates {
+			fmt.Fprintf(os.Stdout, "%-14s %s\n", tmpl.Name, tmpl.Description)
+		}
+		return nil
 	case "show":
 		fs := flag.NewFlagSet("team rules show", flag.ContinueOnError)
 		projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
@@ -1404,16 +1453,22 @@ Examples:
 		fs := flag.NewFlagSet("team rules init", flag.ContinueOnError)
 		force := fs.Bool("force", false, "overwrite an existing team-rules.md with the generated template")
 		projectFlag := fs.String("project", "", "project/team-home directory to update (default: cwd)")
+		profileFlag := fs.String("profile", "", "team profile to render when reading team.json (default: default)")
+		templateFlag := fs.String("template", "auto", "team-rules template: auto, dev-only, product-squad, scrum, or custom")
 		fs.Usage = func() {
 			fmt.Fprint(os.Stderr, `amq-squad team rules init - seed or refresh .amq-squad/team-rules.md
 
 Usage:
-  amq-squad team rules init [--project DIR] [--force]
+  amq-squad team rules init [--project DIR] [--profile NAME] [--template auto|dev-only|product-squad|scrum|custom] [--force]
 
 --project targets another team-home without changing directories.
+--profile renders a named team profile. team-rules.md is still shared per team-home.
+--template auto selects dev-only, product-squad, scrum, or custom from the roster.
 
 Examples:
   amq-squad team rules init
+  amq-squad team rules init --template dev-only
+  amq-squad team rules init --profile codex-v2-5-0 --template auto --force
   amq-squad team rules init --project ~/Code/app
   amq-squad team rules init --force
 `)
@@ -1429,13 +1484,33 @@ Examples:
 		if err != nil {
 			return err
 		}
+		profile, err := resolveProfileFlag(*profileFlag)
+		if err != nil {
+			return err
+		}
+		if _, err := selectTeamRulesTemplate(*templateFlag, team.Team{}); err != nil {
+			return err
+		}
 		content := rules.StubContent
-		if t, err := team.Read(projectDir); err == nil {
-			rendered, err := renderTeamRules(t)
+		if team.ExistsProfile(projectDir, profile) {
+			t, err := team.ReadProfile(projectDir, profile)
+			if err != nil {
+				return fmt.Errorf("read profile %q: %w", profile, err)
+			}
+			selectedTemplate, err := selectTeamRulesTemplate(*templateFlag, t)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(*templateFlag) == "" || strings.TrimSpace(*templateFlag) == "auto" {
+				quietNotice("Selected team-rules template: %s\n", selectedTemplate)
+			}
+			rendered, err := renderTeamRulesWithTemplate(t, selectedTemplate)
 			if err != nil {
 				return fmt.Errorf("render team-rules.md: %w", err)
 			}
 			content = rendered
+		} else if flagWasSet(fs, "profile") {
+			return fmt.Errorf("team profile %q not found at %s", profile, team.ProfilePath(projectDir, profile))
 		}
 		if *force {
 			if err := rules.Write(projectDir, content); err != nil {

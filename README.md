@@ -72,7 +72,7 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 Install the 2.0 line (note the `/v2` module path):
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.3.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.5.0
 amq-squad version
 ```
 
@@ -82,7 +82,7 @@ For the latest 2.x build:
 go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest
 ```
 
-Requires Go 1.25+, the `amq` binary on `PATH` (v0.34+), and `tmux` on `PATH` for `amq-squad up`.
+Requires Go 1.25+, the `amq` binary on `PATH` (v0.38.0+), and `tmux` on `PATH` for `amq-squad up`.
 
 ### Skills (plugin marketplaces)
 
@@ -399,6 +399,8 @@ This records `orchestrated`/`lead` in `team.json` and injects a generated `## Or
 
 The operator normally steers the workstream through the lead/orchestrator. The operator can steer the lead directly from amq-noc (v0.8.0+), or with plain AMQ: a **directive** arrives on the lead's operator p2p thread as a `--kind todo` message whose subject starts with `DIRECTIVE:`. The lead treats directives as operator steering with priority over child reports, acknowledges on the same thread, and never treats one as a gate answer (a directive never clears a `gate/<topic>` thread). Direct operator-to-worker messages are exceptional; when they affect scope, priority, merge readiness, release state, or external actions, the worker reports them to the lead before acting or includes the lead/thread metadata in the AMQ report.
 
+For an existing profile, use `amq-squad team lead set <role>` to opt into orchestration without rebuilding the roster, `team lead clear` to return to a flat squad, and `team lead show --json` for discovery. A lead that is already running in an operator-owned pane can register itself with `amq-squad lead register --role <role> --session <session>`; this writes an explicit external launch record so `status` / `focus` / `send` can target the pane. External lead records are visible and directable, but lifecycle commands do not own them: `stop` reports that the pane must be stopped manually, `rm` / `archive` leave it open, and `resume` asks the operator to run `lead register` again instead of replaying the pane.
+
 ## Verbs
 
 Team-level verbs:
@@ -447,10 +449,27 @@ amq-squad team init [--project DIR] [--profile NAME] [--roles a,b|numbers|all] [
                                   --orchestrated [--lead ROLE] opts the squad
                                   into lead-agent orchestration (see Orchestration).
                                   --project targets a team-home without cd.
-amq-squad team rules init [--project DIR] [--force]
+amq-squad team rules templates
+                                  List available team-rules templates.
+amq-squad team rules init [--project DIR] [--profile NAME]
+                     [--template auto|dev-only|product-squad|scrum|custom] [--force]
                                   Seed or refresh .amq-squad/team-rules.md.
+                                  auto selects from the configured roster:
+                                  dev-only for engineering teams,
+                                  product-squad when product/design roles are
+                                  present, scrum for Scrum accountabilities,
+                                  and custom otherwise. --profile renders a
+                                  named profile while keeping team-rules.md
+                                  shared per team-home.
 amq-squad team rules show [--project DIR]
                                   Print .amq-squad/team-rules.md.
+amq-squad team lead set <role> [--project DIR] [--profile NAME]
+amq-squad team lead clear [--project DIR] [--profile NAME]
+amq-squad team lead show [--project DIR] [--profile NAME] [--json]
+                                  Mutate or inspect the profile's orchestration
+                                  lead. `set` validates that <role> is a team
+                                  member and records orchestrated=true.
+                                  `clear` returns the profile to flat mode.
 amq-squad team overlay init (--role R | --workers) [--disable-plugins id@market,...]
                         [--disable-all-hooks] [--force] [--dry-run]
                                   Generate .amq-squad/overlays/<role>.claude.json
@@ -553,6 +572,13 @@ amq-squad task fail|block <id> [--reason R] --session S
                                   under .amq-squad/tasks/<session>/. A task is
                                   claimable only once its --depends-on tasks are
                                   completed. All subcommands require --session.
+amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
+                                  Adopt the current tmux pane as an
+                                  operator-owned external lead for an
+                                  orchestrated profile. The pane becomes
+                                  visible/directable in status/focus/send JSON,
+                                  but stop/rm/archive/resume do not kill,
+                                  close, or replay it.
 amq-squad console [--project DIR] [--session NAME] [--refresh 2s] [--at-risk-wait 5m]
                   [--review-age 15m] [--once]
                                   Mission Control TUI over this project. Renders
@@ -858,11 +884,18 @@ amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
 amq-squad agent up codex --model gpt-5
 ```
 
-Launches pass `--require-wake` to `amq coop exec`, so a launch **fails at the
-door** when the AMQ wake sidecar cannot start and acquire its lock instead of
-surfacing later as a stale or orphaned wake. `--no-require-wake` opts out for
-environments where wake cannot run; the opt-out is persisted in the launch
-record so resume reproduces it.
+amq-squad v2.6.0 requires amq **0.38.0+**. Launches pass `--require-wake` to
+`amq coop exec`, so a launch **fails at the door** when the AMQ wake sidecar
+cannot start and acquire its lock, instead of surfacing later as a stale or
+orphaned wake. `--no-require-wake` opts out for environments where wake cannot
+run; the opt-out is persisted in the launch record so resume reproduces it.
+
+For external-injector wake setups, pass `--wake-inject-via /absolute/injector`
+and repeat `--wake-inject-arg=value` as needed on `agent up`, `up`, or
+`up --dry-run` launch-plan output. These flags are forwarded to
+`amq coop exec`, persisted in `launch.json`, and replayed by `agent resume`.
+Use the `--flag=value` form for dash-prefixed injector arguments such as
+`--wake-inject-arg=--pane`.
 
 ## Workstreams and threads
 
@@ -958,5 +991,5 @@ Replay paths that emit copy-paste commands use the modern `agent up <binary>` co
 ## Requires
 
 - Go 1.25+
-- `amq` binary on `PATH` (v0.34+)
+- `amq` binary on `PATH` (v0.38.0+)
 - `tmux` on `PATH` for `amq-squad up`
