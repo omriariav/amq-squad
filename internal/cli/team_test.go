@@ -3,7 +3,6 @@ package cli
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1490,7 +1489,8 @@ func TestRunTeamRulesInitForceRefreshesScopedRules(t *testing.T) {
 		"pm (Project Manager / Product Owner)",
 		"Turns feedback into scoped tasks for the right owner. Does not implement code unless explicitly assigned by the user.",
 		"fullstack (Fullstack Developer)",
-		fmt.Sprintf("default workstream `%s`", defaultWorkstreamName(dir)),
+		"default workstream `pm`",
+		"default workstream `fullstack`",
 		"On first session run, start the first response by stating your role, handle, and amq-squad skill version",
 		"Use the `amq-squad` skill for team setup",
 		"Use `amq-cli` only for raw AMQ debugging",
@@ -1499,14 +1499,6 @@ func TestRunTeamRulesInitForceRefreshesScopedRules(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("team-rules.md missing %q in:\n%s", want, body)
-		}
-	}
-	for _, legacy := range []string{
-		"default workstream `pm`",
-		"default workstream `fullstack`",
-	} {
-		if strings.Contains(body, legacy) {
-			t.Errorf("team-rules.md contains legacy role session %q in:\n%s", legacy, body)
 		}
 	}
 }
@@ -1636,6 +1628,61 @@ func TestRunTeamRulesInitTemplateAutoUsesNamedProfile(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("named-profile team-rules missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestRunTeamRulesInitNamedProfilePreservesMixedMemberSessions(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := team.WriteProfile(dir, "codex-v2-5-0", team.Team{
+		Project: dir,
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "external-lead"},
+			{Role: "runtime-dev", Binary: "codex", Handle: "runtime-dev", Session: "v2-5-0"},
+			{Role: "rules-dev", Binary: "codex", Handle: "rules-dev", Session: "v2-5-0"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"init", "--profile", "codex-v2-5-0", "--template", "auto", "--force"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamRules init named mixed profile: %v\nstderr:\n%s", err, stderr)
+	}
+	got, err := os.ReadFile(rules.Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	for _, want := range []string{
+		"cto (CTO): handle `cto`, default workstream `external-lead`",
+		"runtime-dev (runtime-dev): handle `runtime-dev`, default workstream `v2-5-0`",
+		"rules-dev (rules-dev): handle `rules-dev`, default workstream `v2-5-0`",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("mixed-session team-rules missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "default workstream `"+defaultWorkstreamName(dir)+"`") {
+		t.Errorf("mixed-session named profile should not collapse members to project fallback:\n%s", body)
+	}
+}
+
+func TestRunTeamRulesInitRejectsUnknownTemplateWithoutTeam(t *testing.T) {
+	dir := t.TempDir()
+	_, _, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"init", "--project", dir, "--template", "nope", "--force"})
+	})
+	if err == nil {
+		t.Fatal("expected unknown template to fail even without a configured team")
+	}
+	if !strings.Contains(err.Error(), "unknown team-rules template") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, statErr := os.Stat(rules.Path(dir)); !os.IsNotExist(statErr) {
+		t.Fatalf("unknown template should not write team-rules.md, stat err = %v", statErr)
 	}
 }
 

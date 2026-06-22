@@ -1470,6 +1470,9 @@ Examples:
 		if err != nil {
 			return err
 		}
+		if _, err := selectTeamRulesTemplate(*templateFlag, team.Team{}); err != nil {
+			return err
+		}
 		content := rules.StubContent
 		if team.ExistsProfile(projectDir, profile) {
 			t, err := team.ReadProfile(projectDir, profile)

@@ -31,7 +31,7 @@ func renderTeamRules(t team.Team) (string, error) {
 func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 	var b strings.Builder
 	projectDir := t.Project
-	workstream, err := resolveTeamWorkstreamName(t, "", false)
+	fallbackWorkstream, err := resolveTeamWorkstreamName(t, "", false)
 	if err != nil {
 		return "", err
 	}
@@ -50,7 +50,7 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 
 	for _, m := range t.Members {
 		fmt.Fprintf(&b, "%s, default workstream `%s`, cwd `%s`. %s\n",
-			memberRosterPrefix(m), workstream, m.EffectiveCWD(projectDir), roleScope(m.Role))
+			memberRosterPrefix(m), memberRulesWorkstream(m, fallbackWorkstream), m.EffectiveCWD(projectDir), roleScope(m.Role))
 	}
 	if team.SupportsOperatorGates(t) {
 		op := team.EffectiveOperator(t)
@@ -125,6 +125,13 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 	b.WriteString("- Do not use em dashes.\n")
 	b.WriteString("- Do not rewrite unrelated files.\n")
 	return b.String(), nil
+}
+
+func memberRulesWorkstream(m team.Member, fallback string) string {
+	if session := strings.TrimSpace(m.Session); session != "" {
+		return session
+	}
+	return fallback
 }
 
 func selectTeamRulesTemplate(requested string, t team.Team) (string, error) {
