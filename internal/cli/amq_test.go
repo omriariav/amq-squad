@@ -411,44 +411,66 @@ func envHasPrefix(env []string, key, valSubstr string) bool {
 }
 
 // TestSplitAMQPassthroughArgsParityFlags covers the flag-parity fixes from
-// #178: --from aliases --me, and --body-file is rewritten to --body @<path>
-// (or --body - for stdin).
+// #178: --from aliases --me and --body-file rewrites to --body @<path> for
+// send/reply ONLY. Both are forwarded verbatim for other verbs (drain, list…).
 func TestSplitAMQPassthroughArgsParityFlags(t *testing.T) {
 	cases := []struct {
 		name     string
+		sub      string
 		args     []string
 		wantMe   string
 		wantPass []string
 	}{
 		{
-			name:   "--from aliases --me",
+			name:   "--from aliases --me for send",
+			sub:    "send",
 			args:   []string{"--from", "lead", "--to", "worker"},
 			wantMe: "lead", wantPass: []string{"--to", "worker"},
 		},
 		{
-			name:   "--from= inline alias",
+			name:   "--from aliases --me for reply",
+			sub:    "reply",
 			args:   []string{"--from=lead", "--to", "worker"},
 			wantMe: "lead", wantPass: []string{"--to", "worker"},
 		},
 		{
-			name:     "--body-file rewrites to --body @path",
+			// --from for drain is NOT a wrapper flag; stops parsing and forwards
+			// --from verbatim (amq will reject it, but not our wrapper).
+			name:     "--from forwarded verbatim for drain (not aliased)",
+			sub:      "drain",
+			args:     []string{"--from", "lead", "--me", "other"},
+			wantMe:   "",
+			wantPass: []string{"--from", "lead", "--me", "other"},
+		},
+		{
+			name:     "--body-file rewrites to --body @path for send",
+			sub:      "send",
 			args:     []string{"--body-file", "/tmp/msg.txt", "--to", "worker"},
 			wantPass: []string{"--body", "@/tmp/msg.txt", "--to", "worker"},
 		},
 		{
-			name:     "--body-file - rewrites to --body -",
+			name:     "--body-file - rewrites to --body - (stdin) for send",
+			sub:      "send",
 			args:     []string{"--body-file", "-", "--to", "worker"},
 			wantPass: []string{"--body", "-", "--to", "worker"},
 		},
 		{
-			name:     "--body-file= inline rewrite",
+			name:     "--body-file= inline rewrite for reply",
+			sub:      "reply",
 			args:     []string{"--body-file=/tmp/msg.txt", "--to", "worker"},
 			wantPass: []string{"--body", "@/tmp/msg.txt", "--to", "worker"},
+		},
+		{
+			// --body-file for list is NOT rewritten; forwarded verbatim.
+			name:     "--body-file forwarded verbatim for list (not rewritten)",
+			sub:      "list",
+			args:     []string{"--body-file", "/tmp/f"},
+			wantPass: []string{"--body-file", "/tmp/f"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, me, _, pass, err := splitAMQPassthroughArgs("send", tc.args)
+			_, _, me, _, pass, err := splitAMQPassthroughArgs(tc.sub, tc.args)
 			if err != nil {
 				t.Fatalf("unexpected err: %v", err)
 			}
@@ -481,29 +503,38 @@ func TestPassthroughNeedsStdin(t *testing.T) {
 	}
 }
 
-// TestAMQPassthroughSendForwardsStdin verifies that --body - causes the
-// runner to receive the stdin reader (the stdin-forwarding fix from #178).
+// TestAMQPassthroughSendForwardsStdin covers both stdin paths (#178):
+// --body - (explicit stdin flag) and --body-file - (rewritten to --body -).
 func TestAMQPassthroughSendForwardsStdin(t *testing.T) {
 	chdir(t, t.TempDir())
-	var capturedReq amqCommandRequest
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/work", BaseRoot: ".agent-mail"}, "msg-001\n")
-	// Wrap the seam to capture the full request including Stdin.
-	prevRun := runAMQCommand
-	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
-		capturedReq = req
-		return prevRun(req)
-	}
-	t.Cleanup(func() { runAMQCommand = prevRun })
 
-	_, _, err := captureOutput(t, func() error {
-		return runAMQ([]string{"send", "--session", "work", "--me", "lead",
-			"--to", "worker", "--kind", "status", "--body", "-"})
-	})
-	if err != nil {
-		t.Fatalf("amq send with --body -: %v", err)
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"--body -", []string{"send", "--session", "work", "--me", "lead", "--to", "worker", "--kind", "status", "--body", "-"}},
+		// --body-file must come in the leading (wrapper-flag) position, before
+		// passthrough flags like --to, since splitAMQPassthroughArgs only rewrites
+		// leading wrapper flags. Placing it after --to would leave it unrewritten.
+		{"--body-file -", []string{"send", "--session", "work", "--me", "lead", "--body-file", "-", "--to", "worker", "--kind", "status"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var capturedReq amqCommandRequest
+			_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/work", BaseRoot: ".agent-mail"}, "msg-001\n")
+			prevRun := runAMQCommand
+			runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+				capturedReq = req
+				return prevRun(req)
+			}
+			t.Cleanup(func() { runAMQCommand = prevRun })
+
+			_, _, err := captureOutput(t, func() error { return runAMQ(tc.args) })
+			if err != nil {
+				t.Fatalf("amq send: %v", err)
+			}
+			if capturedReq.Stdin == nil {
+				t.Errorf("stdin should be forwarded for %s", tc.name)
+			}
+		})
 	}
-	if capturedReq.Stdin == nil {
-		t.Error("stdin should be forwarded when --body - is in the passthrough args")
-	}
-	_ = calls
 }
