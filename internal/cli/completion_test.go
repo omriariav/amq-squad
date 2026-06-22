@@ -236,6 +236,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"collect":     true,
 		"prune-panes": true,
 		"console":     true,
+		"notify":      true,
 		"amq":         true,
 		"history":     true,
 		"resume":      true,

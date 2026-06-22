@@ -34,12 +34,15 @@ These entries come from the current `.amq-squad/team.json` and are authoritative
 {{- end }}
 {{- if .OperatorGates }}
 Operator gate routing:
-The human/operator is mailbox handle {{.Operator.Handle}}. This participant is not a runnable agent. Use it only for human-only decisions or manual actions, not ordinary peer coordination.
+The human/operator is mailbox handle {{.Operator.Handle}}. This participant is not a runnable agent. AMQ 0.38 reserves the conventional `user` handle for this role; custom operator handles follow the same protocol. Use the operator handle only for human-only decisions or manual actions, not ordinary peer coordination.
 
 - ask: `amq send --to {{.Operator.Handle}} --thread gate/<topic> --kind question --subject "APPROVAL: <decision>"`
+- done/manual closeout: `amq send --to {{.Operator.Handle}} --thread gate/<topic> --kind decision --subject "DONE: <goal>"`
 - reply path: the operator replies on the same thread with `amq send --me {{.Operator.Handle}} --to <agent-handle> --thread gate/<topic> --kind answer --subject "APPROVED: <decision>"` (or `DENIED:` / `ANSWER:`).
 - reuse the same stable `gate/<topic>` thread for updates to the same decision.
+- notifications: `amq-squad notify --session {{orDefault .Session "<workstream>"}}` surfaces new or stale operator gates with inspect/respond commands; it is an attention signal, not authorization.
 - p2p prose such as "operator-held", "manual approval", or "pending operator" is evidence only; it is not an operator gate.
+- operator -> orchestrator is the default human interface; operator -> worker is exceptional. If a direct operator message changes scope, priority, merge readiness, release state, or external actions, report it to the lead before acting.
 
 {{- else }}
 Operator gate routing:
