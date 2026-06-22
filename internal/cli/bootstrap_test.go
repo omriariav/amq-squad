@@ -83,58 +83,30 @@ func TestBootstrapWorkerReadyHandshake(t *testing.T) {
 	}
 }
 
-// TestBootstrapWorkerDispatcherHandleOverride covers option 1 of #176: when
-// DispatcherHandle differs from LeadHandle, the bootstrap routes READY to the
-// dispatcher and tells the worker to reply to the task's From field.
-func TestBootstrapWorkerDispatcherHandleOverride(t *testing.T) {
+// TestBootstrapWorkerFromFieldGuidance is the production-path half of the #176
+// fix: the bootstrap for a worker on an orchestrated squad must instruct it to
+// reply to the task's From field, so that when the dispatcher and the team.json
+// lead are different handles, reports route to the actual dispatcher.
+func TestBootstrapWorkerFromFieldGuidance(t *testing.T) {
 	got, err := buildBootstrapPrompt(bootstrapContext{
-		Role:             "worker",
-		Handle:           "worker",
-		Binary:           "codex",
-		Orchestrated:     true,
-		IsLead:           false,
-		LeadHandle:       "cto-handle",
-		DispatcherHandle: "orchestrator",
+		Role:         "worker",
+		Handle:       "worker",
+		Binary:       "codex",
+		Orchestrated: true,
+		IsLead:       false,
+		LeadHandle:   "cto-handle",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// READY routes to dispatcher, not configured lead
-	if !strings.Contains(got, "--to orchestrator") {
-		t.Fatalf("READY should route to dispatcher; got:\n%s", got)
-	}
-	// Configured lead still visible for transparency
-	if !strings.Contains(got, "cto-handle") {
-		t.Fatalf("configured lead should still appear; got:\n%s", got)
-	}
-	// Mismatch note present
-	if !strings.Contains(got, "effective dispatcher for this session: orchestrator") {
-		t.Fatalf("mismatch note missing; got:\n%s", got)
-	}
-	// From-field guidance present
+	// Worker must be told to use the From field of each dispatched task.
+	// This is the channel-origin mechanism: dispatch sets From = dispatcher,
+	// worker reads From and replies there, not to the static team.json lead.
 	if !strings.Contains(got, "From") {
-		t.Fatalf("From-field guidance missing; got:\n%s", got)
-	}
-}
-
-func TestBootstrapWorkerDispatcherMatchesLeadNoMismatchNote(t *testing.T) {
-	got, err := buildBootstrapPrompt(bootstrapContext{
-		Role:             "worker",
-		Handle:           "worker",
-		Binary:           "codex",
-		Orchestrated:     true,
-		IsLead:           false,
-		LeadHandle:       "cto-handle",
-		DispatcherHandle: "cto-handle",
-	})
-	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("bootstrap must mention the From field for task replies; got:\n%s", got)
 	}
 	if !strings.Contains(got, "--to cto-handle") {
-		t.Fatalf("READY should route to cto-handle; got:\n%s", got)
-	}
-	if strings.Contains(got, "effective dispatcher") {
-		t.Fatalf("no mismatch note expected when dispatcher == lead; got:\n%s", got)
+		t.Fatalf("READY should route to configured lead; got:\n%s", got)
 	}
 }
 

@@ -59,11 +59,6 @@ type Record struct {
 	// means the implicit default profile. Captured so status / bootstrap
 	// routing can reuse the same profile without rereading flags.
 	TeamProfile string `json:"team_profile,omitempty"`
-	// DispatcherHandle is the AMQ handle of whoever dispatches tasks to this
-	// agent. Non-empty when the operator launched with an explicit dispatcher
-	// that differs from the team.json configured lead (fix #176). Bootstrap
-	// uses it as the effective reporting target, overriding the configured lead.
-	DispatcherHandle string `json:"dispatcher_handle,omitempty"`
 	// Tmux is the tmux runtime identity captured at launch time when
 	// amq-squad runs inside tmux. nil when launched outside tmux (or when
 	// tmux metadata could not be resolved). Clients detect runtime-control
