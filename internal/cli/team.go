@@ -690,6 +690,14 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		}
 	}
 
+	active, skipped := filterMembersBySession(t.Members, workstream)
+	for _, m := range skipped {
+		quietNotice("notice: skipping %s: pinned to session %q, not %q\n", m.Role, m.Session, workstream)
+	}
+	if len(active) == 0 {
+		return fmt.Errorf("no team members are pinned to session %q (all %d member(s) belong to other sessions)", workstream, len(t.Members))
+	}
+	t.Members = active
 	members := orderedTeamMembers(t.Members)
 	binaryArgs := mergeBinaryArgs(t.BinaryArgs, opts.ExtraBinaryArgs)
 	trustMode, err := resolveTeamTrustMode(t, opts.RequestedTrust, opts.ExplicitTrust)

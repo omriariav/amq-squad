@@ -344,8 +344,8 @@ func TestRunTeamShowUsesDefaultSharedWorkstream(t *testing.T) {
 	})
 	if err := team.Write(dir, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "fullstack"},
+			{Role: "cto", Binary: "codex", Handle: "cto"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack"},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -527,7 +527,7 @@ func TestRunTeamShowFreshAllowsNewWorkstream(t *testing.T) {
 		}
 	})
 	if err := team.Write(dir, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}},
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto"}},
 	}); err != nil {
 		t.Fatal(err)
 	}

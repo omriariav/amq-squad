@@ -453,8 +453,8 @@ func TestRunNewTeamRoleSelectionShortcuts(t *testing.T) {
 func TestRunNewSessionDelegatesToUpDryRun(t *testing.T) {
 	seedTeam(t, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96"},
+			{Role: "cto", Binary: "codex", Handle: "cto"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack"},
 		},
 	})
 
@@ -518,7 +518,7 @@ func TestRunNewSessionProjectDelegatesFromOtherCWD(t *testing.T) {
 	other := t.TempDir()
 	if err := team.Write(project, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "cto", Binary: "codex", Handle: "cto"},
 		},
 	}); err != nil {
 		t.Fatal(err)

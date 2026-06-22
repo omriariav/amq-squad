@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -89,6 +90,24 @@ Examples:
 		return usageErrorf("--json is a read-only plan preview; it cannot be combined with --exec")
 	}
 
+	// Positional session, consistent with up/rm/archive.
+	requestedSession := *sessionFlag
+	explicitSession := flagWasSet(fs, "session")
+	if fs.NArg() > 1 {
+		return usageErrorf("resume takes at most one session positional; got %d", fs.NArg())
+	}
+	if fs.NArg() == 1 {
+		positional := strings.TrimSpace(fs.Arg(0))
+		if flagWasSet(fs, "session") {
+			return usageErrorf("pass the session name either positionally or via --session, not both")
+		}
+		if err := validateWorkstreamName(positional); err != nil {
+			return err
+		}
+		requestedSession = positional
+		explicitSession = true
+	}
+
 	profile, err := resolveProfileFlag(*profileFlag)
 	if err != nil {
 		return err
@@ -121,8 +140,8 @@ Examples:
 	}
 	return executeResume(resumeExecution{
 		ProjectDir:       projectDir,
-		RequestedSession: *sessionFlag,
-		ExplicitSession:  flagWasSet(fs, "session"),
+		RequestedSession: requestedSession,
+		ExplicitSession:  explicitSession,
 		RolesRaw:         *roleFlag,
 		Mode:             mode,
 		Force:            *forceDuplicate,

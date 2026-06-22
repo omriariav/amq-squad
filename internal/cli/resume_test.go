@@ -416,6 +416,68 @@ func TestExecResumePlanRejectsUnknownTerminal(t *testing.T) {
 	}
 }
 
+// TestRunResumePositionalSessionHonored verifies that `resume <session>`
+// treats the positional as the session name, fixing #177's secondary finding.
+func TestRunResumePositionalSessionHonored(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{
+			{Role: "go-dev", Binary: "claude", Handle: "go-dev", Session: "beta"},
+			{Role: "architect", Binary: "codex", Handle: "architect", Session: "alpha"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := captureOutput(t, func() error { return runResume([]string{"beta"}) })
+	if err != nil {
+		t.Fatalf("resume beta: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "beta") {
+		t.Errorf("positional session not honored; got:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "skipping architect") {
+		t.Errorf("stderr missing skip notice for cross-session member:\n%s", stderr)
+	}
+}
+
+// TestRunResumePositionalAndFlagIsError verifies that passing session both
+// positionally and via --session is rejected.
+func TestRunResumePositionalAndFlagIsError(t *testing.T) {
+	dir := t.TempDir()
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "beta"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := captureOutput(t, func() error {
+		return runResume([]string{"--session", "beta", "beta"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "positionally or via --session, not both") {
+		t.Fatalf("expected both-session error; got %v", err)
+	}
+}
+
+// TestRunResumeTooManyPositionalsIsError verifies that more than one positional
+// is rejected cleanly.
+func TestRunResumeTooManyPositionalsIsError(t *testing.T) {
+	dir := t.TempDir()
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "beta"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := captureOutput(t, func() error {
+		return runResume([]string{"beta", "extra"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "at most one session positional") {
+		t.Fatalf("expected too-many-positionals error; got %v", err)
+	}
+}
+
 // walkDir is a tiny wrapper around filepath.Walk used by the disk-mutation
 // fingerprint test. Kept local so the existing helpers stay focused on the
 // planner inputs.
