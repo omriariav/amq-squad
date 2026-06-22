@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,6 +88,42 @@ func TestLeadRegisterWritesExternalRecordAndSetsLead(t *testing.T) {
 	}
 	if !rec.External || rec.AgentPID != 0 || rec.Tmux == nil || rec.Tmux.PaneID != "%5" || rec.Tmux.Target != "external" {
 		t.Fatalf("external record = %+v", rec)
+	}
+}
+
+func TestLeadRegisterWriteFailurePreservesTeamLeadConfig(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "qa",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatalf("mkdir fake base: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "issue-96"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("seed blocking session path: %v", err)
+	}
+	prev := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "lead", PaneID: "%5"}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prev })
+
+	if _, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96"})
+	}); err == nil || !strings.Contains(err.Error(), "write external launch record") {
+		t.Fatalf("lead register err = %v, want launch record write failure", err)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if !cfg.Orchestrated || cfg.Lead != "qa" {
+		t.Fatalf("team config after failed register = orchestrated:%v lead:%q, want preserved true/qa", cfg.Orchestrated, cfg.Lead)
 	}
 }
 
