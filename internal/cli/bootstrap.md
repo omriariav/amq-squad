@@ -72,8 +72,10 @@ First steps:
 8. Start your first response by stating your role, handle, and the amq-squad skill version (the `Skill version:` marker in the amq-squad skill you loaded — e.g. `amq-squad skill v2.0.0`); if you cannot find that marker, say so, since it means the 2.0 skill did not load. Then summarize relevant prior context and what you are waiting for.
 9. Stop and wait for instructions.
 {{- if and .Orchestrated (not .IsLead) .LeadHandle }}
+{{- $effectiveLead := orDefault .DispatcherHandle .LeadHandle}}
 
-You are a worker on a lead-orchestrated squad (lead handle: {{.LeadHandle}}). As part of step 8, after stating your identity, push a READY signal to your lead so it can send the first durable AMQ task (`amq send --kind todo --wait-for drained`) once you are loaded and draining. Pane injection is fallback only:
-- `amq send --to {{.LeadHandle}} --kind status --subject "READY: {{orDefault .Role "agent"}}" --body "loaded and idle; ready for dispatch"`
+You are a worker on a lead-orchestrated squad (team lead: {{.LeadHandle}}{{if and .DispatcherHandle (ne .DispatcherHandle .LeadHandle)}}; effective dispatcher for this session: {{.DispatcherHandle}}{{end}}). As part of step 8, after stating your identity, push a READY signal so the dispatcher can send the first durable AMQ task (`amq send --kind todo --wait-for drained`) once you are loaded and draining. Pane injection is fallback only:
+- `amq send --to {{$effectiveLead}} --kind status --subject "READY: {{orDefault .Role "agent"}}" --body "loaded and idle; ready for dispatch"`
+For every durable AMQ task you receive (`--kind todo`), **reply to the task's `From` field** — that sender is your effective lead for that task and may differ from the configured team lead above.
 Then wait (step 9) for the lead's dispatch over durable AMQ, or for a pane prompt only when the lead is using the fallback path.
 {{- end }}

@@ -83,6 +83,61 @@ func TestBootstrapWorkerReadyHandshake(t *testing.T) {
 	}
 }
 
+// TestBootstrapWorkerDispatcherHandleOverride covers option 1 of #176: when
+// DispatcherHandle differs from LeadHandle, the bootstrap routes READY to the
+// dispatcher and tells the worker to reply to the task's From field.
+func TestBootstrapWorkerDispatcherHandleOverride(t *testing.T) {
+	got, err := buildBootstrapPrompt(bootstrapContext{
+		Role:             "worker",
+		Handle:           "worker",
+		Binary:           "codex",
+		Orchestrated:     true,
+		IsLead:           false,
+		LeadHandle:       "cto-handle",
+		DispatcherHandle: "orchestrator",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// READY routes to dispatcher, not configured lead
+	if !strings.Contains(got, "--to orchestrator") {
+		t.Fatalf("READY should route to dispatcher; got:\n%s", got)
+	}
+	// Configured lead still visible for transparency
+	if !strings.Contains(got, "cto-handle") {
+		t.Fatalf("configured lead should still appear; got:\n%s", got)
+	}
+	// Mismatch note present
+	if !strings.Contains(got, "effective dispatcher for this session: orchestrator") {
+		t.Fatalf("mismatch note missing; got:\n%s", got)
+	}
+	// From-field guidance present
+	if !strings.Contains(got, "From") {
+		t.Fatalf("From-field guidance missing; got:\n%s", got)
+	}
+}
+
+func TestBootstrapWorkerDispatcherMatchesLeadNoMismatchNote(t *testing.T) {
+	got, err := buildBootstrapPrompt(bootstrapContext{
+		Role:             "worker",
+		Handle:           "worker",
+		Binary:           "codex",
+		Orchestrated:     true,
+		IsLead:           false,
+		LeadHandle:       "cto-handle",
+		DispatcherHandle: "cto-handle",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "--to cto-handle") {
+		t.Fatalf("READY should route to cto-handle; got:\n%s", got)
+	}
+	if strings.Contains(got, "effective dispatcher") {
+		t.Fatalf("no mismatch note expected when dispatcher == lead; got:\n%s", got)
+	}
+}
+
 func TestBuildBootstrapPromptIncludesBriefPath(t *testing.T) {
 	got, err := buildBootstrapPrompt(bootstrapContext{
 		Role:       "cto",
