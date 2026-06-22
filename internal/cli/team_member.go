@@ -22,6 +22,7 @@ func runTeamMember(args []string) error {
 Usage:
   amq-squad team member add <role> --binary <claude|codex> [--handle H]
       [--session S] [--model M] [--claude-args "…"] [--codex-args "…"]
+      [--spawn-origin NAME] [--spawn-depth N]
       [--project DIR] [--profile NAME]
   amq-squad team member rm <role> [--project DIR] [--profile NAME]
   amq-squad team member list [--json] [--project DIR] [--profile NAME]
@@ -144,6 +145,8 @@ func runTeamMemberAdd(args []string) error {
 	handleFlag := fs.String("handle", "", "AMQ handle (defaults to the role)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session (defaults to the team's existing session)")
 	modelFlag := fs.String("model", "", "native model name passed to the binary")
+	spawnOriginFlag := fs.String("spawn-origin", "", "override recorded composition origin (default: AM_ME or operator/manual)")
+	spawnDepthFlag := fs.Int("spawn-depth", -1, "override recorded composition depth (default: inferred from origin)")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for this member")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for this member")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
@@ -184,6 +187,9 @@ func runTeamMemberAdd(args []string) error {
 	if bin == "claude" && len(codexArgs) > 0 {
 		return usageErrorf("--codex-args applies only to codex members")
 	}
+	if *spawnDepthFlag < -1 {
+		return usageErrorf("--spawn-depth cannot be negative")
+	}
 
 	projectDir, profile, err := resolveExistingTeamProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {
@@ -210,16 +216,22 @@ func runTeamMemberAdd(args []string) error {
 				return fmt.Errorf("handle %q is already in use; pass a distinct --handle", handle)
 			}
 		}
+		origin, depth, err := inferRuntimeSpawn(t, *spawnOriginFlag, *spawnDepthFlag)
+		if err != nil {
+			return err
+		}
 		session := strings.ToLower(strings.TrimSpace(*sessionFlag))
 		if session == "" {
 			session = inheritedSession(t)
 		}
 		added = team.Member{
-			Role:    role,
-			Binary:  bin,
-			Handle:  handle,
-			Session: session,
-			Model:   strings.TrimSpace(*modelFlag),
+			Role:        role,
+			Binary:      bin,
+			Handle:      handle,
+			Session:     session,
+			Model:       strings.TrimSpace(*modelFlag),
+			SpawnOrigin: origin,
+			SpawnDepth:  depth,
 		}
 		if bin == "claude" {
 			added.ClaudeArgs = claudeArgs
@@ -248,6 +260,45 @@ func runTeamMemberAdd(args []string) error {
 	fmt.Printf("  (brings up newly-added members in their own window and skips any already live)\n")
 	fmt.Printf("or run it directly in this terminal, without a managed pane:\n  %s\n", agentUpHint(added))
 	return nil
+}
+
+func inferRuntimeSpawn(t team.Team, originFlag string, depthFlag int) (string, int, error) {
+	origin := strings.TrimSpace(originFlag)
+	if origin == "" {
+		origin = strings.TrimSpace(os.Getenv("AM_ME"))
+	}
+	if origin == "" {
+		origin = "operator"
+	}
+	depth := depthFlag
+	caller, callerIsMember := findMemberByOrigin(t, origin)
+	if depth < 0 {
+		if callerIsMember {
+			depth = caller.SpawnDepth + 1
+		} else {
+			depth = 0
+		}
+	}
+	if t.Orchestrated && callerIsMember && !memberIsLead(t, caller) {
+		return "", 0, fmt.Errorf("spawn guard: member %q is not the orchestration lead; child-spawns-child is disabled", origin)
+	}
+	if depth > team.EffectiveMaxSpawnDepth(t) {
+		return "", 0, fmt.Errorf("spawn guard: depth %d exceeds max_spawn_depth %d", depth, team.EffectiveMaxSpawnDepth(t))
+	}
+	return origin, depth, nil
+}
+
+func findMemberByOrigin(t team.Team, origin string) (team.Member, bool) {
+	for _, m := range t.Members {
+		if origin == m.Role || origin == memberHandle(m) {
+			return m, true
+		}
+	}
+	return team.Member{}, false
+}
+
+func memberIsLead(t team.Team, m team.Member) bool {
+	return t.Orchestrated && strings.EqualFold(m.Role, t.Lead)
 }
 
 func runTeamMemberRemove(args []string) error {

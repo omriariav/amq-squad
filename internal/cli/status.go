@@ -82,16 +82,18 @@ type statusEnvelopeData struct {
 }
 
 type statusRecord struct {
-	Role     string        `json:"role"`
-	Handle   string        `json:"handle"`
-	Binary   string        `json:"binary"`
-	Session  string        `json:"session"`
-	CWD      string        `json:"cwd"`
-	Root     string        `json:"root,omitempty"`
-	AgentDir string        `json:"agent_dir,omitempty"`
-	Status   statusState   `json:"status"`
-	Detail   string        `json:"detail,omitempty"`
-	Signals  statusSignals `json:"signals"`
+	Role        string        `json:"role"`
+	Handle      string        `json:"handle"`
+	Binary      string        `json:"binary"`
+	Session     string        `json:"session"`
+	CWD         string        `json:"cwd"`
+	SpawnOrigin string        `json:"spawn_origin,omitempty"`
+	SpawnDepth  int           `json:"spawn_depth,omitempty"`
+	Root        string        `json:"root,omitempty"`
+	AgentDir    string        `json:"agent_dir,omitempty"`
+	Status      statusState   `json:"status"`
+	Detail      string        `json:"detail,omitempty"`
+	Signals     statusSignals `json:"signals"`
 	// Tmux is the persisted tmux runtime identity (exact pane/window ids) plus
 	// a computed pane_alive, so clients can target follow-up control. Omitted
 	// when the agent's launch record carried no tmux identity.
@@ -310,11 +312,13 @@ func firstStatusRoot(rows []statusRecord) string {
 
 func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe duplicateLaunchProbe) statusRecord {
 	rec := statusRecord{
-		Role:    m.Role,
-		Handle:  m.Handle,
-		Binary:  m.Binary,
-		Session: workstream,
-		CWD:     m.EffectiveCWD(t.Project),
+		Role:        m.Role,
+		Handle:      m.Handle,
+		Binary:      m.Binary,
+		Session:     workstream,
+		CWD:         m.EffectiveCWD(t.Project),
+		SpawnOrigin: m.SpawnOrigin,
+		SpawnDepth:  m.SpawnDepth,
 	}
 	env, err := resolveAMQEnvInDir(rec.CWD, "", workstream, m.Handle)
 	if err != nil {
@@ -336,6 +340,14 @@ func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe d
 	// verdict->statusState mapping lives in the classifier (Status field).
 	live := classifyAgentLiveness(rec.AgentDir, root, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe)
 	rec.Tmux = tmuxRuntimeFromInfo(live.Tmux)
+	if live.LaunchFound {
+		if origin := strings.TrimSpace(live.LaunchRecord.SpawnOrigin); origin != "" {
+			rec.SpawnOrigin = origin
+		}
+		if live.LaunchRecord.SpawnDepth > 0 {
+			rec.SpawnDepth = live.LaunchRecord.SpawnDepth
+		}
+	}
 	rec.Signals = live.Signals
 	rec.Status = live.Status
 	rec.Detail = live.Detail

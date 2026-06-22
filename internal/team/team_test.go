@@ -67,6 +67,25 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWriteReadApproveForMeTrust(t *testing.T) {
+	dir := t.TempDir()
+	if err := Write(dir, Team{
+		Trust: "approve-for-me",
+		Members: []Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatalf("Write approve-for-me trust: %v", err)
+	}
+	got, err := Read(dir)
+	if err != nil {
+		t.Fatalf("Read approve-for-me trust: %v", err)
+	}
+	if got.Trust != "approve-for-me" {
+		t.Fatalf("trust = %q, want approve-for-me", got.Trust)
+	}
+}
+
 func TestReadMissing(t *testing.T) {
 	dir := t.TempDir()
 	_, err := Read(dir)

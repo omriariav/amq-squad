@@ -47,6 +47,8 @@ type Record struct {
 	Model            string   `json:"model,omitempty"`
 	Trust            string   `json:"trust,omitempty"`
 	NoDefaultArgs    bool     `json:"no_default_args,omitempty"`
+	SpawnOrigin      string   `json:"spawn_origin,omitempty"`
+	SpawnDepth       int      `json:"spawn_depth,omitempty"`
 	// NoRequireWake records the --no-require-wake opt-out so resume/replay
 	// reproduces it: the constraint it answers (wake cannot acquire its lock
 	// in this environment) is a property of the execution environment, not a

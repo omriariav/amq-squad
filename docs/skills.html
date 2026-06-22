@@ -574,7 +574,7 @@ the brief (<code>.amq-squad/briefs/&lt;session&gt;.md</code>).</li>
 <li><strong>Discover live state.</strong> <code>amq-squad status</code>
 (board), <code>status --session &lt;name&gt;</code> (detail),
 <code>amq-squad console</code> (live TUI), <code>amq-squad doctor</code>
-(health).</li>
+(health, including PATH and Codex skill-cache alignment).</li>
 <li><strong>Bring members up.</strong>
 <code>amq-squad up &lt;session&gt;</code> (NEW work; refuses an existing
 session), or <code>resume</code> to continue one.</li>
@@ -643,7 +643,7 @@ drain your inbox.</li>
 only — the overlay verb above generates the flagship case (a
 <code>--settings</code> overlay that trims a worker's plugins/hooks) and
 wires it for you. Plan emission fails fast when a referenced
-<code>--settings</code> file is missing. In v2.5.0 with amq 0.37.1+,
+<code>--settings</code> file is missing. In v2.6.0 with AMQ 0.38.0+,
 launches also pass <code>--require-wake</code> so a launch fails
 immediately when the wake sidecar cannot acquire its lock
 (<code>--no-require-wake</code> opts out and persists into resume).</p>
@@ -884,6 +884,13 @@ an existing session use
 <td><code>new team</code> leaves an existing <code>team-rules.md</code>
 untouched — regenerate with
 <code>amq-squad team rules init --force</code>.</td>
+</tr>
+<tr>
+<td>Codex loads an old amq-squad skill after upgrade</td>
+<td>Run <code>amq-squad doctor</code>; the Codex skill-cache check warns
+when the released bundle is missing, stale, or only present through a
+compatibility symlink. Refresh the plugin/skill cache instead of relying
+on manual symlinks.</td>
 </tr>
 <tr>
 <td>Shift+Enter doesn't submit in a tmux window</td>

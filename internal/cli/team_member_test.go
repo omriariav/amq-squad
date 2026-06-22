@@ -43,6 +43,33 @@ func TestTeamMemberAddAppendsAndPersists(t *testing.T) {
 	}
 }
 
+func TestTeamMemberAddRecordsSpawnDepthAndRejectsChildSpawn(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	t.Setenv("AM_ME", "cto")
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamMember([]string{"add", "qa", "--binary", "codex"})
+	}); err != nil {
+		t.Fatalf("lead member add: %v", err)
+	}
+	got := teamMembers(t, dir)[1]
+	if got.SpawnOrigin != "cto" || got.SpawnDepth != 1 {
+		t.Fatalf("spawn metadata = origin %q depth %d, want cto/1", got.SpawnOrigin, got.SpawnDepth)
+	}
+
+	t.Setenv("AM_ME", "qa")
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamMember([]string{"add", "reviewer", "--binary", "codex"})
+	}); err == nil || !strings.Contains(err.Error(), "child-spawns-child") {
+		t.Fatalf("child add error = %v, want child-spawns-child guard", err)
+	}
+}
+
 func TestTeamMemberAddNormalizesCaseAndPrintsFaithfulHint(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "claude", Handle: "cto", Session: "issue-96"}},
