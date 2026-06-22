@@ -96,7 +96,7 @@ Usage:
   amq-squad team launch [--profile NAME] [--session workstream] [--fresh] [--terminal tmux]
     [--target current-window|new-window|new-session] [--layout vertical|horizontal|tiled]
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
-    [--trust sandboxed|trusted] [--model role=model,...]
+    [--trust sandboxed|approve-for-me|trusted] [--model role=model,...]
     [--codex-args args] [--claude-args args]
     [--force-duplicate] [--dry-run]
 

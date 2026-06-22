@@ -255,6 +255,8 @@ var completionCommonFlags = []string{
 	"--session",
 	"--set",
 	"--scope",
+	"--spawn-depth",
+	"--spawn-origin",
 	"--stagger",
 	"--stage",
 	"--stale-after",

@@ -54,10 +54,17 @@ func TestBootstrapWorkerReadyHandshake(t *testing.T) {
 	}
 	for _, want := range []string{
 		"worker on a lead-orchestrated squad",
+		"As part of step 9",
 		`amq send --to cto --kind status --subject "READY: frontend-dev"`,
+		"Then wait (step 10)",
 	} {
 		if !strings.Contains(worker, want) {
 			t.Errorf("worker bootstrap missing %q in:\n%s", want, worker)
+		}
+	}
+	for _, stale := range []string{"As part of step 8", "Then wait (step 9)"} {
+		if strings.Contains(worker, stale) {
+			t.Errorf("worker bootstrap contains stale step reference %q in:\n%s", stale, worker)
 		}
 	}
 
