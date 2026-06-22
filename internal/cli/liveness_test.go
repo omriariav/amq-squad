@@ -485,7 +485,7 @@ func TestResumePlanJSONCarriesLiveness(t *testing.T) {
 	plans := []resumePlan{{
 		Role: "cto", Handle: "cto", Action: resumeRestore,
 		Command:  "amq-squad agent up codex --role cto",
-		Liveness: &agentLiveness{Status: statusStateStale, Detail: "agent pid dead", Signals: statusSignals{AgentPID: 7777}},
+		Liveness: &agentLiveness{Status: statusStateStale, Detail: "agent pid dead", Signals: statusSignals{AgentPID: 7777}, LaunchFound: true},
 	}}
 	if err := writeResumeJSON(&buf, team.Team{Project: "/p"}, "issue-96", resumeModeDefault, "", plans); err != nil {
 		t.Fatal(err)
@@ -493,8 +493,9 @@ func TestResumePlanJSONCarriesLiveness(t *testing.T) {
 	var env struct {
 		Data struct {
 			Plan []struct {
-				Action   string `json:"action"`
-				Liveness *struct {
+				Action      string `json:"action"`
+				RecordState string `json:"record_state"`
+				Liveness    *struct {
 					Status string `json:"status"`
 					Detail string `json:"detail"`
 				} `json:"liveness"`
@@ -513,6 +514,9 @@ func TestResumePlanJSONCarriesLiveness(t *testing.T) {
 	}
 	if p.Action != "restore" {
 		t.Errorf("a stale verdict should restore, got action %q", p.Action)
+	}
+	if p.RecordState != "stale-record" {
+		t.Errorf("record_state = %q, want stale-record", p.RecordState)
 	}
 }
 
