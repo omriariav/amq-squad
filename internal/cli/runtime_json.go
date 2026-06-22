@@ -112,6 +112,16 @@ func fillPaneAlive(rt *tmuxRuntimeJSON, live map[string]bool) {
 	rt.PaneAlive = false
 }
 
+func fillPaneAliveFromLiveness(rt *tmuxRuntimeJSON, live map[string]bool, liveness *agentLiveness) {
+	fillPaneAlive(rt, live)
+	if rt == nil || rt.PaneAlive || strings.TrimSpace(rt.PaneID) == "" || liveness == nil {
+		return
+	}
+	if liveness.Signals.AgentAlive && liveness.Signals.BinaryMatch {
+		rt.PaneAlive = true
+	}
+}
+
 // runtimeActionJSON is one stable, project-scoped operator action a client
 // (amq-noc) can render, copy, or execute for a member. Emitting the exact
 // command keeps the control contract in amq-squad: clients call/copy these
@@ -278,7 +288,7 @@ func writeResumeJSON(out io.Writer, t team.Team, workstream string, mode resumeM
 			if livePanes == nil {
 				livePanes = livePaneIDSet(statusPaneLister)
 			}
-			fillPaneAlive(rt, livePanes)
+			fillPaneAliveFromLiveness(rt, livePanes, p.Liveness)
 		}
 		var liveness *resumeLivenessJSON
 		if p.Liveness != nil {
