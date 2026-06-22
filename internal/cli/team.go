@@ -1350,13 +1350,18 @@ func runTeamRules(args []string) error {
 Usage:
   amq-squad team rules show [--project DIR]
                                        Print team-rules.md
-  amq-squad team rules init [--project DIR] [--force]
+  amq-squad team rules init [--project DIR] [--profile NAME] [--template auto|dev-only|product-squad|scrum|custom] [--force]
                                        Seed or refresh team-rules.md
+  amq-squad team rules templates
+                                       List available templates
 
 Examples:
+  amq-squad team rules templates
   amq-squad team rules show
   amq-squad team rules show --project ~/Code/app
   amq-squad team rules init
+  amq-squad team rules init --template product-squad
+  amq-squad team rules init --profile codex-v2-5-0 --template auto --force
   amq-squad team rules init --project ~/Code/app
   amq-squad team rules init --force
 `)
@@ -1366,6 +1371,24 @@ Examples:
 		return nil
 	}
 	switch args[0] {
+	case "templates":
+		fs := flag.NewFlagSet("team rules templates", flag.ContinueOnError)
+		fs.Usage = func() {
+			fmt.Fprint(os.Stderr, `amq-squad team rules templates - list available team-rules templates
+
+Usage:
+  amq-squad team rules templates
+
+Templates can be used with 'amq-squad team rules init --template NAME'.
+`)
+		}
+		if err := parseFlags(fs, args[1:]); err != nil {
+			return err
+		}
+		for _, tmpl := range teamRulesTemplates {
+			fmt.Fprintf(os.Stdout, "%-14s %s\n", tmpl.Name, tmpl.Description)
+		}
+		return nil
 	case "show":
 		fs := flag.NewFlagSet("team rules show", flag.ContinueOnError)
 		projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
@@ -1412,16 +1435,22 @@ Examples:
 		fs := flag.NewFlagSet("team rules init", flag.ContinueOnError)
 		force := fs.Bool("force", false, "overwrite an existing team-rules.md with the generated template")
 		projectFlag := fs.String("project", "", "project/team-home directory to update (default: cwd)")
+		profileFlag := fs.String("profile", "", "team profile to render when reading team.json (default: default)")
+		templateFlag := fs.String("template", "auto", "team-rules template: auto, dev-only, product-squad, scrum, or custom")
 		fs.Usage = func() {
 			fmt.Fprint(os.Stderr, `amq-squad team rules init - seed or refresh .amq-squad/team-rules.md
 
 Usage:
-  amq-squad team rules init [--project DIR] [--force]
+  amq-squad team rules init [--project DIR] [--profile NAME] [--template auto|dev-only|product-squad|scrum|custom] [--force]
 
 --project targets another team-home without changing directories.
+--profile renders a named team profile. team-rules.md is still shared per team-home.
+--template auto selects dev-only, product-squad, scrum, or custom from the roster.
 
 Examples:
   amq-squad team rules init
+  amq-squad team rules init --template dev-only
+  amq-squad team rules init --profile codex-v2-5-0 --template auto --force
   amq-squad team rules init --project ~/Code/app
   amq-squad team rules init --force
 `)
@@ -1437,13 +1466,30 @@ Examples:
 		if err != nil {
 			return err
 		}
+		profile, err := resolveProfileFlag(*profileFlag)
+		if err != nil {
+			return err
+		}
 		content := rules.StubContent
-		if t, err := team.Read(projectDir); err == nil {
-			rendered, err := renderTeamRules(t)
+		if team.ExistsProfile(projectDir, profile) {
+			t, err := team.ReadProfile(projectDir, profile)
+			if err != nil {
+				return fmt.Errorf("read profile %q: %w", profile, err)
+			}
+			selectedTemplate, err := selectTeamRulesTemplate(*templateFlag, t)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(*templateFlag) == "" || strings.TrimSpace(*templateFlag) == "auto" {
+				quietNotice("Selected team-rules template: %s\n", selectedTemplate)
+			}
+			rendered, err := renderTeamRulesWithTemplate(t, selectedTemplate)
 			if err != nil {
 				return fmt.Errorf("render team-rules.md: %w", err)
 			}
 			content = rendered
+		} else if flagWasSet(fs, "profile") {
+			return fmt.Errorf("team profile %q not found at %s", profile, team.ProfilePath(projectDir, profile))
 		}
 		if *force {
 			if err := rules.Write(projectDir, content); err != nil {

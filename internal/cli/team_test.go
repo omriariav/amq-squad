@@ -1511,6 +1511,134 @@ func TestRunTeamRulesInitForceRefreshesScopedRules(t *testing.T) {
 	}
 }
 
+func TestRunTeamRulesTemplatesListsAvailableTemplates(t *testing.T) {
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"templates"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamRules templates: %v", err)
+	}
+	if stderr != "" {
+		t.Fatalf("templates should be silent on stderr, got:\n%s", stderr)
+	}
+	for _, want := range []string{
+		"dev-only",
+		"product-squad",
+		"scrum",
+		"custom",
+		"Engineering-only squads",
+		"Product, design, engineering, and QA squads",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("templates output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestTeamRulesTemplateSelection(t *testing.T) {
+	tests := []struct {
+		name  string
+		roles []string
+		want  string
+	}{
+		{name: "dev only", roles: []string{"cto", "fullstack", "qa"}, want: "dev-only"},
+		{name: "product squad", roles: []string{"pm", "designer", "fullstack"}, want: "product-squad"},
+		{name: "scrum accountabilities", roles: []string{"product-owner", "scrum-master", "developers"}, want: "scrum"},
+		{name: "custom", roles: []string{"rules-dev", "principal"}, want: "custom"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm := team.Team{Project: t.TempDir()}
+			for _, role := range tt.roles {
+				tm.Members = append(tm.Members, team.Member{Role: role, Binary: "codex", Handle: role, Session: role})
+			}
+			got, err := selectTeamRulesTemplate("auto", tm)
+			if err != nil {
+				t.Fatalf("selectTeamRulesTemplate: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("template = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRenderTeamRulesTemplatesIncludeRequiredSections(t *testing.T) {
+	tm := team.Team{
+		Project: t.TempDir(),
+		Members: []team.Member{
+			{Role: "pm", Binary: "codex", Handle: "pm", Session: "shared"},
+			{Role: "designer", Binary: "codex", Handle: "designer", Session: "shared"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "shared"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "shared"},
+		},
+	}
+	for _, template := range []string{"dev-only", "product-squad", "scrum"} {
+		t.Run(template, func(t *testing.T) {
+			body, err := renderTeamRulesWithTemplate(tm, template)
+			if err != nil {
+				t.Fatalf("renderTeamRulesWithTemplate: %v", err)
+			}
+			for _, want := range []string{
+				"## Purpose and Scope",
+				"## Role Scope and Accountabilities",
+				"## Decision Rights",
+				"## Workflow",
+				"## Communication",
+				"## Quality Gates",
+				"## Conflict Protocol",
+				"## Review Cadence",
+				"pm (Project Manager / Product Owner): handle `pm`",
+				"fullstack (Fullstack Developer): handle `fullstack`",
+				"cwd `" + tm.Project + "`",
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("%s template missing %q:\n%s", template, want, body)
+				}
+			}
+		})
+	}
+}
+
+func TestRunTeamRulesInitTemplateAutoUsesNamedProfile(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := team.WriteProfile(dir, "codex-v2-5-0", team.Team{
+		Project: dir,
+		Members: []team.Member{
+			{Role: "pm", Binary: "codex", Handle: "pm", Session: "v2-5-0"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "v2-5-0"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runTeamRules([]string{"init", "--profile", "codex-v2-5-0", "--template", "auto", "--force"})
+	})
+	if err != nil {
+		t.Fatalf("runTeamRules init named profile: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, "Selected team-rules template: product-squad") {
+		t.Fatalf("auto selection notice missing from stderr:\n%s", stderr)
+	}
+	got, err := os.ReadFile(rules.Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	for _, want := range []string{
+		"Template: `product-squad`",
+		"pm (Project Manager / Product Owner): handle `pm`",
+		"fullstack (Fullstack Developer): handle `fullstack`",
+		"Product discovery artifacts name the user problem",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("named-profile team-rules missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestRunTeamRulesShowPrintsScopedRules(t *testing.T) {
 	dir := t.TempDir()
 	body := "# Team Rules\n\ncustom rules\n"
