@@ -87,6 +87,30 @@ func TestNotifyUsesCustomOperatorHandle(t *testing.T) {
 	}
 }
 
+func TestNotifyIgnoresP2PProseOnlyNeedsYou(t *testing.T) {
+	project, base, statePath := seedNotifyProject(t, team.OperatorConfig{Enabled: true, Handle: team.DefaultOperatorHandle})
+	ctoDir := seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyLaunch(t, project, base, "s", "dev")
+	seedNotifyMessageToDir(t, ctoDir, "new", notifyMsg{
+		ID: "prose", From: "dev", To: "cto", Thread: "p2p/cto__dev",
+		Subject: "waiting for operator approval", Kind: "status", Created: notifyNow.Add(-time.Minute),
+	})
+
+	out := executeNotifyForTest(t, notifyExecution{
+		ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath,
+		RenotifyAfter: time.Hour, Now: func() time.Time { return notifyNow },
+	})
+	if strings.Contains(out, "p2p/cto__dev") || strings.Contains(out, "operator approval") {
+		t.Fatalf("notify must not emit p2p prose-only needs-you threads:\n%s", out)
+	}
+	if !strings.Contains(out, "no operator attention items") {
+		t.Fatalf("expected no operator attention items, got:\n%s", out)
+	}
+	if _, err := os.Stat(statePath); err != nil {
+		t.Fatalf("notify should still write empty throttle state for enabled profiles: %v", err)
+	}
+}
+
 func TestNotifyNoOperatorReportsDisabled(t *testing.T) {
 	project, base, statePath := seedNotifyProject(t, team.OperatorConfig{Enabled: false})
 	seedNotifyLaunch(t, project, base, "s", "cto")
@@ -167,7 +191,13 @@ type notifyMsg struct {
 
 func seedNotifyMessage(t *testing.T, base, session, owner, box string, msg notifyMsg) {
 	t.Helper()
-	dir := filepath.Join(base, session, "agents", owner, "inbox", box)
+	agentDir := filepath.Join(base, session, "agents", owner)
+	seedNotifyMessageToDir(t, agentDir, box, msg)
+}
+
+func seedNotifyMessageToDir(t *testing.T, agentDir, box string, msg notifyMsg) {
+	t.Helper()
+	dir := filepath.Join(agentDir, "inbox", box)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
