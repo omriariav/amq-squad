@@ -113,6 +113,15 @@ it; ask again for an explicit `APPROVED:` / `DENIED:`. `DENIED:` or no reply
 means **do not spawn** — re-propose or adjust. The answer authorizes the spawn
 only; it is not authority over *how* you do the work.
 
+**Live-channel approval still counts, but make it durable.** If the operator is
+actively working in your live pane/chat and gives an explicit approval for the
+pending gate there, do not ignore it just because the AMQ gate thread has no
+operator-authored answer yet. Treat the live answer as operator input, then
+immediately ACK or mirror the decision on the matching `gate/<topic>` thread
+without spoofing the operator handle. Before declaring any gate blocked, check
+both the live operator channel and the AMQ gate/inbox state, and record what you
+found on the gate thread.
+
 **3. Grow the roster, then spawn into a managed pane.** On approval, add the
 member to the durable roster, then launch it **into a managed tmux pane** so the
 runtime can `focus`/`send`/`stop` it (a bare `agent up` TTY-execs with no managed
@@ -372,6 +381,11 @@ Treat directives differently from child reports:
   `gate/<topic>` thread: if you are waiting on an approval gate, keep waiting
   for the gate reply on the gate thread, even when a directive arrives that
   seems related. Surface the conflict to the operator instead of guessing.
+- **Live operator chat is not a directive.** When the operator explicitly
+  approves a pending gate in your live pane/chat, ACK or mirror that decision on
+  the same `gate/<topic>` thread and then proceed under the gate rules. Do not
+  declare the gate blocked until you have checked both live operator input and
+  AMQ gate/inbox state.
 - **Questions arising from directive work go back to gates.** If a directive or
   other AMQ-originated ask creates a new operator decision, raise it on a stable
   `gate/<topic>` thread instead of opening an interactive prompt in your pane.
