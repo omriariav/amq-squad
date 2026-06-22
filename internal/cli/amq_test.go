@@ -461,6 +461,14 @@ func TestSplitAMQPassthroughArgsParityFlags(t *testing.T) {
 			wantPass: []string{"--body", "@/tmp/msg.txt", "--to", "worker"},
 		},
 		{
+			// --body-file after --to (real-world shape): leading scan stops at --to,
+			// but normalizeBodyFileFlag post-processes the full passthrough.
+			name:     "--body-file after --to rewrites for send",
+			sub:      "send",
+			args:     []string{"--session", "work", "--to", "worker", "--body-file", "-"},
+			wantPass: []string{"--to", "worker", "--body", "-"},
+		},
+		{
 			// --body-file for list is NOT rewritten; forwarded verbatim.
 			name:     "--body-file forwarded verbatim for list (not rewritten)",
 			sub:      "list",
@@ -513,10 +521,11 @@ func TestAMQPassthroughSendForwardsStdin(t *testing.T) {
 		args []string
 	}{
 		{"--body -", []string{"send", "--session", "work", "--me", "lead", "--to", "worker", "--kind", "status", "--body", "-"}},
-		// --body-file must come in the leading (wrapper-flag) position, before
-		// passthrough flags like --to, since splitAMQPassthroughArgs only rewrites
-		// leading wrapper flags. Placing it after --to would leave it unrewritten.
-		{"--body-file -", []string{"send", "--session", "work", "--me", "lead", "--body-file", "-", "--to", "worker", "--kind", "status"}},
+		// --body-file before --to (leading position, same result).
+		{"--body-file - (leading)", []string{"send", "--session", "work", "--me", "lead", "--body-file", "-", "--to", "worker", "--kind", "status"}},
+		// --body-file after --to: real-world shape; normalizeBodyFileFlag rewrites
+		// it in the full passthrough even though leading scan stopped at --to.
+		{"--body-file - (after --to)", []string{"send", "--session", "work", "--me", "lead", "--to", "worker", "--kind", "status", "--body-file", "-"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var capturedReq amqCommandRequest

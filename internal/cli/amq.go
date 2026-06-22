@@ -402,28 +402,6 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 			me = val
 			i = next
 			continue
-		case "body-file":
-			// --body-file is a send/reply convenience only; for other verbs
-			// forward verbatim. Rewrites to --body @<path> (or --body - for stdin).
-			if sub != "send" && sub != "reply" {
-				break
-			}
-			val := inlineVal
-			next := i + 1
-			if !hasInline {
-				if next >= len(args) {
-					return "", "", "", false, nil, usageErrorf("flag --body-file needs a value")
-				}
-				val = args[next]
-				next++
-			}
-			bodyVal := "@" + val
-			if val == "-" {
-				bodyVal = "-"
-			}
-			passthrough = append(passthrough, "--body", bodyVal)
-			i = next
-			continue
 		case "root", "from-root":
 			return "", "", "", false, nil, usageErrorf(
 				"do not pass --%s to 'amq-squad amq %s'; amq-squad resolves the queue root from --project/--session. Use bare 'amq %s' for manual root control.",
@@ -433,7 +411,42 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 		break
 	}
 	passthrough = append(passthrough, args[i:]...)
+	// --body-file is a send/reply parity flag: rewrite it to --body @<path>
+	// (or --body - for stdin) anywhere in the passthrough, not just the leading
+	// position. Other verbs (drain, list, etc.) receive --body-file verbatim.
+	if sub == "send" || sub == "reply" {
+		passthrough = normalizeBodyFileFlag(passthrough)
+	}
 	return project, session, me, projectSet, passthrough, nil
+}
+
+// normalizeBodyFileFlag rewrites every --body-file <path> or --body-file=<path>
+// token in args to --body @<path> (or --body - for stdin). Safe to call on the
+// full passthrough slice because amq has no native --body-file flag.
+func normalizeBodyFileFlag(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		name, inlineVal, hasInline := amqFlagName(args[i])
+		if name != "body-file" {
+			out = append(out, args[i])
+			continue
+		}
+		val := inlineVal
+		if !hasInline {
+			if i+1 >= len(args) {
+				out = append(out, args[i]) // malformed; forward as-is
+				continue
+			}
+			i++
+			val = args[i]
+		}
+		bodyVal := "@" + val
+		if val == "-" {
+			bodyVal = "-"
+		}
+		out = append(out, "--body", bodyVal)
+	}
+	return out
 }
 
 // amqFlagName normalizes a CLI token to its flag name (leading dashes stripped,
