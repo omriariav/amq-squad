@@ -238,7 +238,10 @@ answer, decision, status, todo`. **There is no `handoff` kind** — send a hando
 as `review_request` (work to take over) or `todo` (a queued task). When operator
 gates are enabled, human approvals go to the operator handle on a `gate/<topic>`
 thread; with `--no-operator`, follow `team-rules.md` and route human-facing asks
-through the lead/CTO instead.
+through the lead/CTO instead. If the operator approves a pending gate in a live
+pane/chat instead of AMQ, the lead treats it as operator input, ACKs or mirrors
+it on the matching gate thread without spoofing the operator handle, and checks
+both the live channel and AMQ gate/inbox state before declaring the gate blocked.
 
 ---
 

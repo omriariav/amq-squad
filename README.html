@@ -848,11 +848,16 @@ approvals and
 <code>--kind decision --subject "DONE: &lt;goal&gt;"</code> for manual
 closeout. The operator replies on the same thread with
 <code>--kind answer</code> and subjects such as <code>APPROVED:</code>,
-<code>DENIED:</code>, or <code>ANSWER:</code>. P2P prose like "pending
-operator" is evidence only; it is not a gate.
-<code>amq-squad notify</code> surfaces new or stale needs-you gates with
-inspect/respond commands and de-duplicates unchanged items, but
-notification output never authorizes or clears a gate.</p>
+<code>DENIED:</code>, or <code>ANSWER:</code>. If the operator answers a
+pending gate in a live pane/chat instead of AMQ, the lead treats it as
+operator input, immediately ACKs or mirrors it on the matching
+<code>gate/&lt;topic&gt;</code> thread without spoofing the operator
+handle, and checks both the live channel and AMQ gate/inbox state before
+declaring the gate blocked. P2P prose like "pending operator" is
+evidence only; it is not a gate. <code>amq-squad notify</code> surfaces
+new or stale needs-you gates with inspect/respond commands and
+de-duplicates unchanged items, but notification output never authorizes
+or clears a gate.</p>
 <h3 id="orchestration-opt-in">Orchestration (opt-in)</h3>
 <p>By default a squad is flat: members coordinate peer-to-peer over AMQ.
 You can instead run an <strong>orchestrated</strong> squad, where one
