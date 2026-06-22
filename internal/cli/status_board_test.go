@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 // boardNow is the deterministic clock anchoring the board tests so relative
@@ -327,6 +330,90 @@ func TestStatusBoardSessionsJSONEnvelope(t *testing.T) {
 	}
 	if running := byName["running-ws"]; running.AgentsAlive != 1 || running.AgentsTotal != 1 {
 		t.Errorf("running-ws alive/total = %d/%d, want 1/1", running.AgentsAlive, running.AgentsTotal)
+	}
+}
+
+func TestStatusBoardJSONCarriesProfileActionsAndOrchestration(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	proj := t.TempDir()
+	if err := team.Write(proj, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "lead-handle", Session: "running-ws"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "running-ws"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedAgentRecord(t, base, "running-ws", "lead-handle", launch.Record{
+		Binary: "codex", Handle: "lead-handle", Role: "cto", Session: "running-ws", AgentPID: 1111,
+		TeamProfile: team.DefaultProfile,
+		Tmux:        &launch.TmuxInfo{Session: "tmux-running-ws", PaneID: "%118"},
+	})
+	seedBoardPresence(t, base, "running-ws", "lead-handle", "active", boardNow.Add(-30*time.Second))
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%118"}}, nil)
+
+	probe := boardProbe(map[int]bool{1111: true}, map[int]bool{1111: true})
+	boardOut, err := runBoardExec(t, base, proj, probe, true)
+	if err != nil {
+		t.Fatalf("board --json: %v\n%s", err, boardOut)
+	}
+	boardEnv := decodeJSONEnvelope[sessionsEnvelopeData](t, boardOut)
+	if len(boardEnv.Data.Sessions) != 1 {
+		t.Fatalf("sessions = %+v, want one", boardEnv.Data.Sessions)
+	}
+	row := boardEnv.Data.Sessions[0]
+	if row.Profile != team.DefaultProfile {
+		t.Fatalf("board profile = %q, want default", row.Profile)
+	}
+	if !row.Orchestrated || row.Lead != "cto" || row.LeadHandle != "lead-handle" {
+		t.Fatalf("board orchestration = orchestrated:%v lead:%q lead_handle:%q, want true/cto/lead-handle", row.Orchestrated, row.Lead, row.LeadHandle)
+	}
+	if len(row.Actions) == 0 {
+		t.Fatalf("board actions empty: %+v", row)
+	}
+
+	statusOut, err := runStatusExec(t, statusExecution{
+		ProjectDir:       proj,
+		RequestedSession: "running-ws",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{1111: true}, map[int]bool{1111: true}, boardNow),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, statusOut)
+	}
+	statusEnv := decodeJSONEnvelope[statusEnvelopeData](t, statusOut)
+	if !reflect.DeepEqual(row.Actions, statusEnv.Data.Actions) {
+		t.Fatalf("board actions differ from single-session actions\nboard:  %+v\nstatus: %+v", row.Actions, statusEnv.Data.Actions)
+	}
+	if row.Actions[len(row.Actions)-1].Kind != "attach_control" {
+		t.Fatalf("board actions should include attach_control for live tmux session: %+v", row.Actions)
+	}
+}
+
+func TestStatusBoardJSONOmitsOrchestrationForFlatTeams(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	proj := t.TempDir()
+	if err := team.Write(proj, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "flat-ws"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedAgentRecord(t, base, "flat-ws", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", Session: "flat-ws", AgentPID: 1111,
+	})
+	seedBoardPresence(t, base, "flat-ws", "cto", "active", boardNow.Add(-30*time.Second))
+
+	out, err := runBoardExec(t, base, proj, boardProbe(map[int]bool{1111: true}, map[int]bool{1111: true}), true)
+	if err != nil {
+		t.Fatalf("board --json: %v\n%s", err, out)
+	}
+	for _, absent := range []string{`"orchestrated"`, `"lead"`, `"lead_handle"`} {
+		if strings.Contains(out, absent) {
+			t.Fatalf("flat board JSON should omit %s:\n%s", absent, out)
+		}
 	}
 }
 
