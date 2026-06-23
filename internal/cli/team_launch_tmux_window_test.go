@@ -43,6 +43,16 @@ func TestTmuxDryRunNewWindowOneWindowPerAgent(t *testing.T) {
 	if c := strings.Count(joined, "tmux send-keys"); c != 2 {
 		t.Errorf("expected one send-keys per agent, got %d:\n%s", c, joined)
 	}
+	for _, line := range strings.Split(joined, "\n") {
+		if strings.Contains(line, "tmux send-keys") && strings.Contains(line, "TMUX_PANE") {
+			t.Fatalf("spawn command must target the new agent pane, not the launching/lead pane:\n%s\nfull plan:\n%s", line, joined)
+		}
+	}
+	for _, target := range []string{"$win_0", "$win_1"} {
+		if !strings.Contains(joined, "tmux send-keys -t \""+target+"\"") {
+			t.Fatalf("new-window plan should send spawn command to %s:\n%s", target, joined)
+		}
+	}
 	// Each agent still gets its deterministic pane-title token (so focus/send
 	// resolve identically to the pane backends) and a human window name.
 	for _, role := range []string{"cto", "qa"} {

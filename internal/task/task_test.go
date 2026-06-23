@@ -52,7 +52,7 @@ func TestClaimGatesOnDependencies(t *testing.T) {
 	if _, err := Claim(dir, "s", dep.ID, "worker", fixedNow); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Done(dir, "s", dep.ID, "", fixedNow); err != nil {
+	if _, err := Done(dir, "s", dep.ID, "worker", "", fixedNow); err != nil {
 		t.Fatal(err)
 	}
 	got, err := Claim(dir, "s", gated.ID, "worker2", fixedNow)
@@ -69,7 +69,7 @@ func TestStateMachineTransitions(t *testing.T) {
 	tk, _ := Add(dir, "s", AddInput{Title: "x"}, fixedNow)
 
 	// done requires in_progress.
-	if _, err := Done(dir, "s", tk.ID, "ev", fixedNow); err == nil {
+	if _, err := Done(dir, "s", tk.ID, "w", "ev", fixedNow); err == nil {
 		t.Error("done on a pending task should be rejected")
 	}
 	if _, err := Claim(dir, "s", tk.ID, "w", fixedNow); err != nil {
@@ -79,7 +79,7 @@ func TestStateMachineTransitions(t *testing.T) {
 	if _, err := Claim(dir, "s", tk.ID, "w2", fixedNow); err == nil {
 		t.Error("re-claiming an in_progress task should be rejected")
 	}
-	done, err := Done(dir, "s", tk.ID, "shipped", fixedNow)
+	done, err := Done(dir, "s", tk.ID, "w", "shipped", fixedNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestStateMachineTransitions(t *testing.T) {
 		t.Fatalf("done = %+v", done)
 	}
 	// terminal: cannot fail a completed task.
-	if _, err := Fail(dir, "s", tk.ID, "no", fixedNow); err == nil {
+	if _, err := Fail(dir, "s", tk.ID, "w", "no", fixedNow); err == nil {
 		t.Error("fail on a completed task should be rejected")
 	}
 }
@@ -100,8 +100,8 @@ func TestFailAndBlockCarryReasons(t *testing.T) {
 		want  string
 		field func(Task) string
 	}{
-		{"a", func(id string) (Task, error) { return Fail(dir, "s", id, "boom", fixedNow) }, StatusFailed, func(t Task) string { return t.FailureReason }},
-		{"b", func(id string) (Task, error) { return Block(dir, "s", id, "waiting", fixedNow) }, StatusBlocked, func(t Task) string { return t.BlockReason }},
+		{"a", func(id string) (Task, error) { return Fail(dir, "s", id, "w", "boom", fixedNow) }, StatusFailed, func(t Task) string { return t.FailureReason }},
+		{"b", func(id string) (Task, error) { return Block(dir, "s", id, "w", "waiting", fixedNow) }, StatusBlocked, func(t Task) string { return t.BlockReason }},
 	} {
 		tk, _ := Add(dir, "s", AddInput{Title: tc.title}, fixedNow)
 		if _, err := Claim(dir, "s", tk.ID, "w", fixedNow); err != nil {

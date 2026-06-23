@@ -41,7 +41,7 @@ func TestTaskAddListClaimDoneFlow(t *testing.T) {
 		t.Fatalf("task claim: %v", err)
 	}
 	out, _, err = captureOutput(t, func() error {
-		return runTask([]string{"done", "t1", "--evidence", "PR#1", "--session", "s"})
+		return runTask([]string{"done", "t1", "--me", "worker", "--evidence", "PR#1", "--session", "s"})
 	})
 	if err != nil {
 		t.Fatalf("task done: %v", err)
@@ -108,9 +108,94 @@ func TestTaskTransitionRejectsInapplicableFlag(t *testing.T) {
 	// `fail --evidence` must be a clear error, not a silent drop (--evidence
 	// belongs to done, not fail).
 	if _, _, err := captureOutput(t, func() error {
-		return runTask([]string{"fail", "t1", "--evidence", "E", "--session", "s"})
+		return runTask([]string{"fail", "t1", "--me", "w", "--evidence", "E", "--session", "s"})
 	}); err == nil || !strings.Contains(err.Error(), "evidence") {
 		t.Fatalf("fail --evidence should be rejected, got %v", err)
+	}
+}
+
+func TestTaskShowAndReset(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	withFixedTaskNow(t)
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"add", "--title", "x", "--desc", "details", "--session", "s"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := captureOutput(t, func() error {
+		return runTask([]string{"show", "t1", "--session", "s"})
+	})
+	if err != nil {
+		t.Fatalf("task show: %v", err)
+	}
+	for _, want := range []string{"ID: t1", "Title: x", "Description: details"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("show output missing %q:\n%s", want, out)
+		}
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"claim", "t1", "--me", "worker", "--session", "s"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"block", "t1", "--me", "worker", "--reason", "waiting", "--session", "s"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = captureOutput(t, func() error {
+		return runTask([]string{"reset", "t1", "--me", "worker", "--reason", "retry", "--session", "s"})
+	})
+	if err != nil {
+		t.Fatalf("task reset: %v", err)
+	}
+	if !strings.Contains(out, "t1 is now pending") {
+		t.Fatalf("reset output unexpected:\n%s", out)
+	}
+}
+
+func TestTaskAssigneeOnlyTransitions(t *testing.T) {
+	chdir(t, t.TempDir())
+	withFixedTaskNow(t)
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"add", "--title", "x", "--session", "s"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"claim", "t1", "--me", "worker", "--session", "s"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"done", "t1", "--session", "s"})
+	}); err == nil || !strings.Contains(err.Error(), "--me handle is required") {
+		t.Fatalf("done without assignee should be rejected, got %v", err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"done", "t1", "--me", "other", "--session", "s"})
+	}); err == nil || !strings.Contains(err.Error(), "assigned to worker") {
+		t.Fatalf("done by non-assignee should be rejected, got %v", err)
+	}
+}
+
+func TestTaskShowJSONEnvelope(t *testing.T) {
+	chdir(t, t.TempDir())
+	withFixedTaskNow(t)
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"add", "--title", "x", "--session", "s"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return runTask([]string{"show", "t1", "--json", "--session", "s"})
+	})
+	if err != nil {
+		t.Fatalf("task show --json: %v", err)
+	}
+	if !strings.Contains(stdout, "\"kind\": \"task\"") || !strings.Contains(stdout, "\"id\": \"t1\"") {
+		t.Fatalf("task show json unexpected:\n%s", stdout)
 	}
 }
 

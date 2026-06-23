@@ -105,6 +105,51 @@ func TestTeamMemberAddRequiresValidBinary(t *testing.T) {
 	}
 }
 
+func TestTeamMemberAddLaunchDryRunDoesNotPersist(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	out, _, err := captureOutput(t, func() error {
+		return runTeamMember([]string{"add", "qa", "--binary", "codex", "--launch", "--target", "new-window", "--dry-run"})
+	})
+	if err != nil {
+		t.Fatalf("member add --launch --dry-run: %v", err)
+	}
+	if !strings.Contains(out, "would add qa") || !strings.Contains(out, "amq-squad resume") || !strings.Contains(out, "--target new-window") {
+		t.Fatalf("dry-run output missing launch preview:\n%s", out)
+	}
+	if n := len(teamMembers(t, dir)); n != 1 {
+		t.Fatalf("dry-run must not persist; got %d members", n)
+	}
+}
+
+func TestTeamMemberAddLaunchRunsResumeAfterPersist(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	var gotArgs []string
+	prev := teamMemberLaunch
+	teamMemberLaunch = func(args []string) error {
+		gotArgs = append([]string(nil), args...)
+		return nil
+	}
+	t.Cleanup(func() { teamMemberLaunch = prev })
+
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamMember([]string{"add", "qa", "--binary", "codex", "--launch"})
+	}); err != nil {
+		t.Fatalf("member add --launch: %v", err)
+	}
+	if len(teamMembers(t, dir)) != 2 {
+		t.Fatalf("member should persist before launch")
+	}
+	for _, want := range []string{"--exec", "--target", "new-window", "--project", resolveDir(dir), "--session", "issue-96"} {
+		if !containsString(gotArgs, want) {
+			t.Fatalf("launch args missing %q: %v", want, gotArgs)
+		}
+	}
+}
+
 func TestTeamMemberAddRejectsDuplicateRoleAndHandle(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "claude", Handle: "cto", Session: "s"}},
@@ -169,6 +214,60 @@ func TestTeamMemberRmUnknownRoleErrors(t *testing.T) {
 		return runTeamMember([]string{"rm", "ghost"})
 	}); err == nil || !strings.Contains(err.Error(), "not a team member") {
 		t.Fatalf("want 'not a team member', got %v", err)
+	}
+}
+
+func TestTeamMemberRmStopDryRunDoesNotPersist(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	out, _, err := captureOutput(t, func() error {
+		return runTeamMember([]string{"rm", "qa", "--stop", "--close-panes", "--dry-run"})
+	})
+	if err != nil {
+		t.Fatalf("member rm --stop --dry-run: %v", err)
+	}
+	if !strings.Contains(out, "amq-squad stop") || !strings.Contains(out, "--close-panes") || !strings.Contains(out, "would remove qa") {
+		t.Fatalf("dry-run output missing stop preview:\n%s", out)
+	}
+	if n := len(teamMembers(t, dir)); n != 2 {
+		t.Fatalf("dry-run must not remove member; got %d", n)
+	}
+}
+
+func TestTeamMemberRmStopRunsBeforeRemove(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	var gotArgs []string
+	prev := teamMemberStop
+	teamMemberStop = func(args []string) error {
+		gotArgs = append([]string(nil), args...)
+		if len(teamMembers(t, dir)) != 2 {
+			t.Fatalf("member should still be present when stop runs")
+		}
+		return nil
+	}
+	t.Cleanup(func() { teamMemberStop = prev })
+
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamMember([]string{"rm", "qa", "--stop", "--force", "--close-panes"})
+	}); err != nil {
+		t.Fatalf("member rm --stop: %v", err)
+	}
+	if len(teamMembers(t, dir)) != 1 {
+		t.Fatalf("member should be removed after stop")
+	}
+	for _, want := range []string{"--role", "qa", "--force", "--close-panes", "--project", resolveDir(dir), "--session", "issue-96"} {
+		if !containsString(gotArgs, want) {
+			t.Fatalf("stop args missing %q: %v", want, gotArgs)
+		}
 	}
 }
 

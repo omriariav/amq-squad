@@ -149,10 +149,12 @@ var completionTeamMemberSubcommands = []string{
 var completionTaskSubcommands = []string{
 	"add",
 	"list",
+	"show",
 	"claim",
 	"done",
 	"fail",
 	"block",
+	"reset",
 }
 
 // completionVerifySubcommands lists the `amq-squad verify` subcommands.
@@ -197,6 +199,7 @@ var completionCommonFlags = []string{
 	"--commands",
 	"--conversation",
 	"--conversation-id",
+	"--create-task",
 	"--cwd",
 	"--depends-on",
 	"--depth",
@@ -222,6 +225,7 @@ var completionCommonFlags = []string{
 	"--launcher-args",
 	"--layout",
 	"--lead",
+	"--launch",
 	"--limit",
 	"--me",
 	"--model",
@@ -263,6 +267,7 @@ var completionCommonFlags = []string{
 	"--stage",
 	"--stale-after",
 	"--status",
+	"--stop",
 	"--stop-agents",
 	"--subject",
 	"--sync",
@@ -270,6 +275,7 @@ var completionCommonFlags = []string{
 	"--target-id",
 	"--target-project",
 	"--target-session",
+	"--task",
 	"--template",
 	"--team-home",
 	"--team-profile",

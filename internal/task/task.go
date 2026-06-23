@@ -41,6 +41,8 @@ type Task struct {
 	Evidence      string    `json:"evidence,omitempty"`
 	FailureReason string    `json:"failure_reason,omitempty"`
 	BlockReason   string    `json:"block_reason,omitempty"`
+	ResetReason   string    `json:"reset_reason,omitempty"`
+	Dispatch      *Dispatch `json:"dispatch,omitempty"`
 }
 
 // AddInput is the create payload for Add.
@@ -49,6 +51,16 @@ type AddInput struct {
 	Description string
 	DependsOn   []string
 	AssignTo    string
+}
+
+// Dispatch records the durable AMQ message linked to a native task.
+type Dispatch struct {
+	Assignee     string    `json:"assignee,omitempty"`
+	Thread       string    `json:"thread,omitempty"`
+	Kind         string    `json:"kind,omitempty"`
+	Subject      string    `json:"subject,omitempty"`
+	MessageID    string    `json:"message_id,omitempty"`
+	DispatchedAt time.Time `json:"dispatched_at,omitempty"`
 }
 
 // Dir is the task directory for a workstream: .amq-squad/tasks/<session>.
@@ -106,6 +118,20 @@ func List(projectDir, session string) ([]Task, error) {
 	return tasks, nil
 }
 
+// Show returns one task by id.
+func Show(projectDir, session, id string) (Task, error) {
+	tasks, err := readAll(Dir(projectDir, session))
+	if err != nil {
+		return Task{}, err
+	}
+	for _, t := range tasks {
+		if t.ID == strings.TrimSpace(id) {
+			return t, nil
+		}
+	}
+	return Task{}, fmt.Errorf("task %q not found in workstream %q", strings.TrimSpace(id), session)
+}
+
 // Claim moves a pending task to in_progress for handle, but only when every
 // dependency is completed (dependency gating).
 func Claim(projectDir, session, id, handle string, now time.Time) (Task, error) {
@@ -127,38 +153,93 @@ func Claim(projectDir, session, id, handle string, now time.Time) (Task, error) 
 		}
 		t.Status = StatusInProgress
 		t.AssignedTo = strings.TrimSpace(handle)
-		t.Evidence, t.FailureReason, t.BlockReason = "", "", ""
+		t.Evidence, t.FailureReason, t.BlockReason, t.ResetReason = "", "", "", ""
 		t.UpdatedAt = now
 		return nil
 	})
 }
 
 // Done / Fail / Block are the in_progress → terminal transitions.
-func Done(projectDir, session, id, evidence string, now time.Time) (Task, error) {
-	return terminal(projectDir, session, id, StatusCompleted, func(t *Task) { t.Evidence = strings.TrimSpace(evidence) }, now)
+func Done(projectDir, session, id, actor, evidence string, now time.Time) (Task, error) {
+	return terminal(projectDir, session, id, actor, StatusCompleted, func(t *Task) { t.Evidence = strings.TrimSpace(evidence) }, now)
 }
 
-func Fail(projectDir, session, id, reason string, now time.Time) (Task, error) {
-	return terminal(projectDir, session, id, StatusFailed, func(t *Task) { t.FailureReason = strings.TrimSpace(reason) }, now)
+func Fail(projectDir, session, id, actor, reason string, now time.Time) (Task, error) {
+	return terminal(projectDir, session, id, actor, StatusFailed, func(t *Task) { t.FailureReason = strings.TrimSpace(reason) }, now)
 }
 
-func Block(projectDir, session, id, reason string, now time.Time) (Task, error) {
-	return terminal(projectDir, session, id, StatusBlocked, func(t *Task) { t.BlockReason = strings.TrimSpace(reason) }, now)
+func Block(projectDir, session, id, actor, reason string, now time.Time) (Task, error) {
+	return terminal(projectDir, session, id, actor, StatusBlocked, func(t *Task) { t.BlockReason = strings.TrimSpace(reason) }, now)
+}
+
+// Reset returns a non-pending task to pending so it can be claimed again.
+func Reset(projectDir, session, id, actor, reason string, now time.Time) (Task, error) {
+	return mutate(projectDir, session, id, func(t *Task, _ map[string]*Task) error {
+		if t.Status == StatusPending {
+			return fmt.Errorf("task %s is already pending; reset requires a non-pending task", id)
+		}
+		if err := requireAssignee(t, actor, "reset"); err != nil {
+			return err
+		}
+		t.Status = StatusPending
+		t.AssignedTo = ""
+		t.Evidence, t.FailureReason, t.BlockReason = "", "", ""
+		if trimmed := strings.TrimSpace(reason); trimmed != "" {
+			t.ResetReason = trimmed
+		} else {
+			t.ResetReason = ""
+		}
+		t.UpdatedAt = now
+		return nil
+	})
+}
+
+// LinkDispatch records durable AMQ metadata on a task.
+func LinkDispatch(projectDir, session, id string, dispatch Dispatch, now time.Time) (Task, error) {
+	return mutate(projectDir, session, id, func(t *Task, _ map[string]*Task) error {
+		d := dispatch
+		d.Assignee = strings.TrimSpace(d.Assignee)
+		d.Thread = strings.TrimSpace(d.Thread)
+		d.Kind = strings.TrimSpace(d.Kind)
+		d.Subject = strings.TrimSpace(d.Subject)
+		d.MessageID = strings.TrimSpace(d.MessageID)
+		if d.DispatchedAt.IsZero() {
+			d.DispatchedAt = now
+		}
+		t.Dispatch = &d
+		t.UpdatedAt = now
+		return nil
+	})
 }
 
 // terminal applies an in_progress → completed/failed/blocked transition.
-// Terminal states are final in Slice B: there is no reset path, so to re-attempt
-// a failed/blocked task, create a new one (`task reset` is deferred to Phase 1).
-func terminal(projectDir, session, id, to string, set func(*Task), now time.Time) (Task, error) {
+func terminal(projectDir, session, id, actor, to string, set func(*Task), now time.Time) (Task, error) {
 	return mutate(projectDir, session, id, func(t *Task, _ map[string]*Task) error {
 		if t.Status != StatusInProgress {
 			return fmt.Errorf("task %s is %s, not in_progress; claim it before marking it %s", id, t.Status, to)
+		}
+		if err := requireAssignee(t, actor, to); err != nil {
+			return err
 		}
 		t.Status = to
 		set(t)
 		t.UpdatedAt = now
 		return nil
 	})
+}
+
+func requireAssignee(t *Task, actor, verb string) error {
+	actor = strings.TrimSpace(actor)
+	if t.AssignedTo == "" {
+		return nil
+	}
+	if actor == "" {
+		return fmt.Errorf("--me handle is required to %s task %s assigned to %s", verb, t.ID, t.AssignedTo)
+	}
+	if actor != t.AssignedTo {
+		return fmt.Errorf("task %s is assigned to %s; %s cannot mark it %s", t.ID, t.AssignedTo, actor, verb)
+	}
+	return nil
 }
 
 // --- internals ---

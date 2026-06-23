@@ -22,12 +22,12 @@ type tasksEnvelopeData struct {
 	Tasks   []task.Task `json:"tasks"`
 }
 
-// Deferred to Phase 1 (see docs/task-store-design.md): `task reset`
-// (blocked/failed → pending), assignee-only transition enforcement, and a
-// `task show <id>` read verb. Slice B is intentionally list-only + one-way
-// terminal transitions.
+type taskEnvelopeData struct {
+	Session string    `json:"session"`
+	Task    task.Task `json:"task"`
+}
 
-// runTask dispatches `amq-squad task <add|list|claim|done|fail|block>`: the
+// runTask dispatches `amq-squad task <add|list|show|claim|done|fail|block|reset>`: the
 // native pull-based task store. The lead decomposes the goal into tasks; any
 // worker (Claude or Codex) claims them and self-schedules around dependencies.
 func runTask(args []string) error {
@@ -37,17 +37,19 @@ func runTask(args []string) error {
 Usage:
   amq-squad task add --title T [--desc D] [--depends-on id,…] [--assign role] --session S
   amq-squad task list [--status S] [--json] --session S
+  amq-squad task show <id> [--json] --session S
   amq-squad task claim <id> --me <handle> --session S
-  amq-squad task done  <id> [--evidence E] --session S
-  amq-squad task fail  <id> [--reason R] --session S
-  amq-squad task block <id> [--reason R] --session S
+  amq-squad task done  <id> --me <handle> [--evidence E] --session S
+  amq-squad task fail  <id> --me <handle> [--reason R] --session S
+  amq-squad task block <id> --me <handle> [--reason R] --session S
+  amq-squad task reset <id> --me <handle> [--reason R] --session S
 
 Tasks live under .amq-squad/tasks/<session>/. A task is claimable only when all
 its --depends-on tasks are completed (dependency gating). All mutations are
 atomic and lock-serialized.
 `)
 		if len(args) == 0 {
-			return usageErrorf("task requires a subcommand (add, list, claim, done, fail, block)")
+			return usageErrorf("task requires a subcommand (add, list, show, claim, done, fail, block, reset)")
 		}
 		return nil
 	}
@@ -56,6 +58,8 @@ atomic and lock-serialized.
 		return runTaskAdd(args[1:])
 	case "list", "ls":
 		return runTaskList(args[1:])
+	case "show":
+		return runTaskShow(args[1:])
 	case "claim":
 		return runTaskTransition(args[1:], "claim")
 	case "done", "complete":
@@ -64,8 +68,10 @@ atomic and lock-serialized.
 		return runTaskTransition(args[1:], "fail")
 	case "block":
 		return runTaskTransition(args[1:], "block")
+	case "reset":
+		return runTaskTransition(args[1:], "reset")
 	default:
-		return usageErrorf("unknown 'task' subcommand: %q. Try add, list, claim, done, fail, or block.", args[0])
+		return usageErrorf("unknown 'task' subcommand: %q. Try add, list, show, claim, done, fail, block, or reset.", args[0])
 	}
 }
 
@@ -101,6 +107,7 @@ func runTaskAdd(args []string) error {
 	desc := fs.String("desc", "", "task description")
 	dependsOn := fs.String("depends-on", "", "comma-separated task ids that must complete first")
 	assign := fs.String("assign", "", "pre-assign to a role/handle (optional)")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned task envelope")
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	if err := parseFlags(fs, args); err != nil {
@@ -118,6 +125,9 @@ func runTaskAdd(args []string) error {
 	}, taskNow())
 	if err != nil {
 		return err
+	}
+	if *jsonOut {
+		return printJSONEnvelope("task", taskEnvelopeData{Session: session, Task: t})
 	}
 	fmt.Printf("added %s: %s\n", t.ID, t.Title)
 	return nil
@@ -172,6 +182,61 @@ func runTaskList(args []string) error {
 	return w.Flush()
 }
 
+func runTaskShow(args []string) error {
+	id, rest, ok := peelPositional(args)
+	if !ok {
+		return usageErrorf("task show requires a task id, e.g. 'task show t1 --session S'")
+	}
+	fs := flag.NewFlagSet("task show", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned task envelope")
+	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
+	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	if err := parseFlags(fs, rest); err != nil {
+		return err
+	}
+	session, projectDir, err := taskSessionProject(*sessionFlag, *projectFlag, fs)
+	if err != nil {
+		return err
+	}
+	t, err := task.Show(projectDir, session, id)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSONEnvelope("task", taskEnvelopeData{Session: session, Task: t})
+	}
+	printTaskDetails(t)
+	return nil
+}
+
+func printTaskDetails(t task.Task) {
+	fmt.Printf("ID: %s\n", t.ID)
+	fmt.Printf("Title: %s\n", t.Title)
+	fmt.Printf("Status: %s\n", t.Status)
+	fmt.Printf("Assigned: %s\n", orDash(t.AssignedTo))
+	fmt.Printf("Depends: %s\n", orDash(strings.Join(t.DependsOn, ",")))
+	if t.Description != "" {
+		fmt.Printf("Description: %s\n", t.Description)
+	}
+	if t.Evidence != "" {
+		fmt.Printf("Evidence: %s\n", t.Evidence)
+	}
+	if t.FailureReason != "" {
+		fmt.Printf("Failure: %s\n", t.FailureReason)
+	}
+	if t.BlockReason != "" {
+		fmt.Printf("Block: %s\n", t.BlockReason)
+	}
+	if t.ResetReason != "" {
+		fmt.Printf("Reset: %s\n", t.ResetReason)
+	}
+	if t.Dispatch != nil {
+		fmt.Printf("Dispatch Assignee: %s\n", orDash(t.Dispatch.Assignee))
+		fmt.Printf("Dispatch Thread: %s\n", orDash(t.Dispatch.Thread))
+		fmt.Printf("Dispatch Message: %s\n", orDash(t.Dispatch.MessageID))
+	}
+}
+
 // runTaskTransition handles claim/done/fail/block: each takes a positional id.
 func runTaskTransition(args []string, verb string) error {
 	id, rest, ok := peelPositional(args)
@@ -184,13 +249,16 @@ func runTaskTransition(args []string, verb string) error {
 	// of silently dropping --evidence.
 	var me, evidence, reason string
 	switch verb {
-	case "claim":
+	case "claim", "done", "fail", "block", "reset":
 		fs.StringVar(&me, "me", "", "claiming agent handle (required)")
+	}
+	switch verb {
 	case "done":
 		fs.StringVar(&evidence, "evidence", "", "evidence/result note")
-	case "fail", "block":
+	case "fail", "block", "reset":
 		fs.StringVar(&reason, "reason", "", "reason")
 	}
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned task envelope")
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	if err := parseFlags(fs, rest); err != nil {
@@ -206,14 +274,19 @@ func runTaskTransition(args []string, verb string) error {
 	case "claim":
 		t, err = task.Claim(projectDir, session, id, me, now)
 	case "done":
-		t, err = task.Done(projectDir, session, id, evidence, now)
+		t, err = task.Done(projectDir, session, id, me, evidence, now)
 	case "fail":
-		t, err = task.Fail(projectDir, session, id, reason, now)
+		t, err = task.Fail(projectDir, session, id, me, reason, now)
 	case "block":
-		t, err = task.Block(projectDir, session, id, reason, now)
+		t, err = task.Block(projectDir, session, id, me, reason, now)
+	case "reset":
+		t, err = task.Reset(projectDir, session, id, me, reason, now)
 	}
 	if err != nil {
 		return err
+	}
+	if *jsonOut {
+		return printJSONEnvelope("task", taskEnvelopeData{Session: session, Task: t})
 	}
 	fmt.Printf("%s is now %s", t.ID, t.Status)
 	if t.AssignedTo != "" {
