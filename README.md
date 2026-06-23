@@ -14,7 +14,7 @@ Built on [AMQ](https://github.com/avivsinai/agent-message-queue) by [Aviv Sinai]
 
 **Customize:** [Custom roles](#custom-roles) · [Trust &amp; binary defaults](#trust-and-binary-defaults) · [Messaging in a squad](#messaging-inside-a-squad) · [Files amq-squad writes](#files-amq-squad-writes)
 
-**Reference:** [Known gaps](#known-gaps) · [Requires](#requires)
+**Reference:** [AMQ swarm interop](docs/amq-swarm-interop.md) · [Known gaps](#known-gaps) · [Requires](#requires)
 
 ## Goal-first, dynamic teams
 
@@ -24,17 +24,21 @@ The load-bearing constraint, and why this is amq-squad-native rather than "just 
 
 Composition is a spectrum, and **manual stays the floor**:
 
-| Mode | Who composes the team | Status in 2.0 |
+| Mode | Who composes the team | Status |
 | --- | --- | --- |
 | **Manual** | You design the roster up front (`team init` / the setup wizard). | first-class, unchanged |
 | **Seeded** | The lead **proposes** each spawn from the goal; the **operator approves** it over a `gate/<topic>` thread. | shipped |
-| **Autonomous** | The lead spawns/prunes within guardrails, no per-spawn approval. | future |
+| **Autonomous** | The lead spawns/prunes within an explicit policy, no per-spawn approval. | opt-in MVP |
 
 Three binary-neutral primitives make it work, and all of them round-trip through stop/resume so a resumed session rebuilds the team the lead **built**, not the seed:
 
-- **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted).
-- **Native task store** — `amq-squad task add/list/claim/done/fail/block`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/`, so a lead of either binary decomposes the goal into claimable work.
+- **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted). Add `--launch --dry-run` or `rm --stop --dry-run` to preview exact runtime actions before running them.
+- **Native task store** — `amq-squad task add/list/show/claim/done/fail/block/reset`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/`, so a lead of either binary decomposes the goal into claimable work.
 - **Compose-from-goal playbook** — the `amq-squad-orchestrator` skill (in both the Claude and Codex marketplaces) drives propose → approve → `team member add` → `task add` → prune.
+
+AMQ `swarm` interop is supported as an external notification/adoption boundary,
+not as a replacement task store. See
+[docs/amq-swarm-interop.md](docs/amq-swarm-interop.md) for the v2.7.0 decision.
 
 In practice — you stand up an orchestrated squad, then the lead composes and drives it:
 
@@ -45,7 +49,7 @@ amq-squad new session issue-96 --seed-from issue:96 --target new-window
 
 # The cto lead loads the amq-squad-orchestrator skill and, as the work reveals needs:
 amq-squad team member add fullstack --binary codex --session issue-96  # grow the roster
-amq-squad task add --title "implement the fix" --session issue-96      # decompose the goal
+amq-squad dispatch --session issue-96 --role fullstack --create-task --subject "implement the fix" --body "..."
 ```
 
 ### Breaking changes
@@ -72,7 +76,7 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 Install the 2.0 line (note the `/v2` module path):
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.6.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.7.0
 amq-squad version
 ```
 
@@ -358,6 +362,70 @@ amq-squad brief seed --session issue-96 --seed-from issue:31
 
 The `amq-team-setup` skill wraps this in a wizard: it captures a goal from **any** source you have — an inline prompt, a local `.md`, a GitHub issue or PR, a Jira key, or a doc URL — fetches it agent-side (amq-squad core stays tracker-neutral), and drafts a **canonical brief** (Goal / Source / Scope / Out of scope / Acceptance) for you to confirm before it is saved. The brief is per-session.
 
+### Goal draft
+
+`amq-squad goal draft` is the fast, preview-first setup helper for repeated
+goal-first runs. It turns a short goal, and optionally a GitHub milestone, into
+a deterministic setup plan without writing files, mutating rosters, creating
+tasks, sending AMQ messages, or launching agents.
+
+```sh
+amq-squad goal draft \
+  --goal "deliver GitHub milestone v2.7.0" \
+  --repo omriariav/amq-squad \
+  --milestone v2.7.0 \
+  --session v2-7-0 \
+  --profile codex-v2-7-0
+
+amq-squad goal draft --goal "fix issue 96" --session issue-96 --json
+```
+
+The draft includes a brief skeleton, proposed roster, task-store plan, seeded
+spawn-gate prompts, initial dispatch prompts, and the equivalent orchestrator
+`/goal --goal` prompt. Use it before `amq-team-setup` or the
+`amq-squad-orchestrator` skill when you want a fast starting point, then review
+and explicitly approve any real setup mutations. Manual setup remains the right
+path when the team shape is already known or the goal needs unusual constraints.
+
+For an Autonomous preview, opt in explicitly and include a bounded policy:
+
+```sh
+amq-squad goal draft \
+  --goal "deliver GitHub milestone v2.7.0" \
+  --session v2-7-0 \
+  --composition autonomous \
+  --max-agents 4 \
+  --max-total-spawns 3 \
+  --allowed-roles goal-dev,runtime-dev,cli-dev \
+  --budget-turns 20
+```
+
+Autonomous mode is never inferred from the goal text. A profile must be
+orchestrated and must declare `--composition autonomous` with positive
+`--max-agents`, `--max-total-spawns`, and `--budget-turns`, plus either
+`--allowed-roles` or `--allowed-role-classes`. `amq-squad status --json` and the
+status board expose the effective policy, counters, and remaining budget.
+
+Pause or permanently shut off an autonomous profile without editing JSON:
+
+```sh
+amq-squad team autonomous show --json
+amq-squad team autonomous pause
+amq-squad team autonomous resume
+amq-squad team autonomous disable
+```
+
+Autonomous only covers composition decisions inside that policy. It does not
+authorize merges, pushes, releases, destructive filesystem actions, external
+communications, provider side effects, or child-agent self-spawn authority.
+Those still require the normal operator/lead path. The runtime authorization
+path records JSONL audit evidence under
+`.amq-squad/autonomous/<session>/audit.jsonl` and persists policy counters
+before returning an allowed spawn/prune decision. Prune requests must include
+measured idle age, explicit evidence that active task linkage was checked, and
+no linked active tasks; `--idle-reap-minutes` sets the minimum idle age before
+pruning is allowed.
+
 ### Profiles (schema 3)
 
 Profiles let one team-home hold parallel team shapes (for example a release team and a research team).
@@ -563,15 +631,24 @@ amq-squad brief seed --session NAME --seed-from REF [--project DIR] [--force]
                                   Write a workstream brief from file:<path>,
                                   issue:<n>, or gh:owner/repo#<n> without
                                   launching the team. Use --dry-run to preview.
-amq-squad task add --title T [--desc D] [--depends-on id,...] [--assign role] --session S
+amq-squad task add --title T [--desc D] [--depends-on id,...] [--assign role] [--json] --session S
 amq-squad task list [--status S] [--json] --session S
-amq-squad task claim <id> --me HANDLE --session S
-amq-squad task done <id> [--evidence E] --session S
-amq-squad task fail|block <id> [--reason R] --session S
+amq-squad task show <id> [--json] --session S
+amq-squad task claim <id> --me HANDLE [--json] --session S
+amq-squad task done <id> --me HANDLE [--evidence E] [--json] --session S
+amq-squad task fail|block <id> --me HANDLE [--reason R] [--json] --session S
+amq-squad task reset <id> --me HANDLE [--reason R] [--json] --session S
                                   Native pull-based, dependency-gated task store
                                   under .amq-squad/tasks/<session>/. A task is
                                   claimable only once its --depends-on tasks are
-                                  completed. All subcommands require --session.
+                                  completed. Terminal/reset transitions on an
+                                  assigned task require the assignee's --me.
+                                  All subcommands require --session.
+amq-squad dispatch --session S --role R --subject SUBJ --body BODY [--create-task | --task ID] [--json]
+                                  Queue a durable AMQ message and best-effort
+                                  drain nudge. Plain dispatch stays AMQ-only;
+                                  --create-task creates and links a native task,
+                                  while --task links an existing task id.
 amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
                                   Adopt the current tmux pane as an
                                   operator-owned external lead for an
@@ -674,6 +751,7 @@ The console gives you:
 - a **board** of all sessions, grouped attention-first (needs-you > blocked > gated > at-risk > running > stopped),
 - per-session **detail** with each agent's liveness and a **collapsed-thread bus** ("qa ↔ cto  blocked · subject  N msgs · 7m"),
 - **peek** (`space`) for a read-only view of an agent's recent output, unread inbox, and what it is blocked on,
+- an **action palette** (`a`) with copy-ready commands such as `focus`, `send`, `resume`, `stop`, `task list`, and `dispatch`; the console never runs commands directly. This is the user-facing closure for #220.
 - a **triage rollup** headline (`N needs-you threads · N blocked threads · N gated threads · N at-risk threads`) and `/`-filters (`needs-you`, `needs-user`, `gated`, `at-risk`, `blocked`, `stale-blocked`, `unread`, `agent:<h>`, `model:<m>`, `session:<n>`, `label:<l>`, `orchestrator:<o>`).
 
 It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--once` it emits one static board to stdout and exits — use this when there is no terminal attached.
@@ -682,7 +760,7 @@ It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--o
 
 `amq-squad amq ...` is a project-aware wrapper around AMQ diagnostics. It resolves the same AMQ root, base root, session, and handle that the squad launcher uses, then delegates to AMQ.
 
-amq-squad v2.6.0 requires AMQ 0.38.0 or newer. That floor includes eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
+amq-squad v2.7.0 requires AMQ 0.38.0 or newer. That floor includes eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
 
 Read-only diagnostics run directly:
 
@@ -719,6 +797,10 @@ amq-squad resume --session issue-96 --json | jq .
 amq-squad doctor --json | jq .
 amq-squad team profiles --json | jq .
 amq-squad roles --json | jq .
+amq-squad dispatch --session issue-96 --role qa --subject "Review" --body "..." --json | jq .
+amq-squad task add --title "Review PR" --session issue-96 --json | jq .
+amq-squad task claim t1 --me qa --session issue-96 --json | jq .
+amq-squad team member add qa --binary codex --json | jq .
 amq-squad team init --dry-run --json --roles cto,qa | jq .
 amq-squad new team --sync --dry-run --json --roles cto,qa | jq .
 amq-squad up --dry-run --json | jq .
@@ -734,6 +816,12 @@ Envelope shape:
   "data": { /* verb-specific payload */ }
 }
 ```
+
+High-value mutating commands also support JSON success envelopes for
+orchestrators and NOC tooling. Initial stable mutator envelopes include
+`dispatch`, `task add`, task transitions (`claim`, `done`, `fail`, `block`),
+and `team member add/rm`. Human output remains unchanged when `--json` is not
+passed. This is the user-facing closure for #222.
 
 ## Runtime control (tmux)
 
@@ -751,7 +839,10 @@ control.
 identity as a `tmux` block plus a computed `pane_alive` (does the recorded pane
 still exist?). Those `status --session NAME --json` members also carry an
 `actions` array of stable, project-scoped commands a client can render or copy,
-each with an `available` flag:
+each with an `available` flag. The same shared action catalog feeds the console
+palette, and selected AMQ-facing commands resolve project/session/root/identity
+through the shared AMQ context helper; together these are the user-facing closure
+for #223:
 
 ```json
 {
@@ -809,6 +900,11 @@ metacharacters arrive verbatim. It errors clearly if the target pane is gone.
 | `3` | partial success (some targets succeeded, some failed; e.g. `stop` with mixed stopped + failed) |
 
 ## Shell completions
+
+GitHub Actions runs `make ci` on pull requests and pushes to `main`. The workflow
+installs `pandoc` so formatting, tests, generated HTML freshness, and skill
+frontmatter checks run with the same baseline expected locally. This is the
+user-facing closure for #221.
 
 ```sh
 amq-squad completion bash > /etc/bash_completion.d/amq-squad
@@ -885,7 +981,7 @@ amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
 amq-squad agent up codex --model gpt-5
 ```
 
-amq-squad v2.6.0 requires amq **0.38.0+**. Launches pass `--require-wake` to
+amq-squad v2.7.0 requires amq **0.38.0+**. Launches pass `--require-wake` to
 `amq coop exec`, so a launch **fails at the door** when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale or
 orphaned wake. `--no-require-wake` opts out for environments where wake cannot

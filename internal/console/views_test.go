@@ -182,7 +182,7 @@ func TestSpacePeeksReadOnly(t *testing.T) {
 func TestEnterNeverPeeksOrAttaches(t *testing.T) {
 	m := boardModel()
 	m = press(t, m, "enter")
-	if m.Overlay() == overlayPeek || m.Overlay() == overlayAttach {
+	if m.Overlay() == overlayPeek || m.Overlay() == overlayActions {
 		t.Errorf("enter must never peek or attach, got overlay %d", m.Overlay())
 	}
 }
@@ -272,17 +272,17 @@ func TestQQuits(t *testing.T) {
 	}
 }
 
-// --- Attach is inert and surfaces the suggested command ---------------------
+// --- Actions are inert and surface copy-ready commands ----------------------
 
-// TestAttachIsInertAndShowsCommand proves `a` does NOT mutate route/snapshot,
-// opens the attach overlay, and surfaces a suggested tmux/amq jump command.
-func TestAttachIsInertAndShowsCommand(t *testing.T) {
+// TestActionsAreInertAndShowCommands proves `a` does NOT mutate route/snapshot,
+// opens the read-only action palette, and surfaces copy-ready commands.
+func TestActionsAreInertAndShowCommands(t *testing.T) {
 	m := boardModel()
 	before := m.Snapshot()
 	m2 := press(t, m, "a")
 
-	if m2.Overlay() != overlayAttach {
-		t.Fatalf("a should open the attach overlay, got %d", m2.Overlay())
+	if m2.Overlay() != overlayActions {
+		t.Fatalf("a should open the actions overlay, got %d", m2.Overlay())
 	}
 	if m2.Route() != routeBoard {
 		t.Errorf("a must not change the route, got %d", m2.Route())
@@ -298,8 +298,8 @@ func TestAttachIsInertAndShowsCommand(t *testing.T) {
 		t.Errorf("attach hint should suggest amq-squad attach and a tmux fallback, got: %s", hint)
 	}
 	out := m2.View()
-	if !strings.Contains(out, "nothing was attached") {
-		t.Errorf("attach overlay must state nothing was attached:\n%s", out)
+	if !strings.Contains(out, "actions (read-only)") || !strings.Contains(out, "task_list") {
+		t.Errorf("action palette should be read-only and include task_list:\n%s", out)
 	}
 	// The selected board row is the needs-you session; its name should appear.
 	if !strings.Contains(hint, "issue-96") {
@@ -307,9 +307,9 @@ func TestAttachIsInertAndShowsCommand(t *testing.T) {
 	}
 }
 
-// TestAttachAgentHintNamesAgent proves attach on a selected agent suggests a
-// per-agent jump command naming the handle.
-func TestAttachAgentHintNamesAgent(t *testing.T) {
+// TestActionPaletteForAgentIncludesControlAndDispatch proves actions on a
+// selected agent include the expected copy-ready commands.
+func TestActionPaletteForAgentIncludesControlAndDispatch(t *testing.T) {
 	m := boardModel()
 	m = press(t, m, "enter") // detail of issue-96; first row is the cto agent
 	sel, ok := m.selectedRow()
@@ -317,9 +317,72 @@ func TestAttachAgentHintNamesAgent(t *testing.T) {
 		t.Fatalf("first detail row should be an agent, got %+v ok=%v", sel, ok)
 	}
 	m = press(t, m, "a")
-	hint := m.AttachHint()
-	if !strings.Contains(hint, "--agent") {
-		t.Errorf("agent attach hint should include --agent, got: %s", hint)
+	out := m.View()
+	for _, want := range []string{"focus", "send", "dispatch"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("agent action palette missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestActionPaletteShowsUnavailableReasonAtNarrowWidth(t *testing.T) {
+	m := boardModel()
+	m = press(t, m, "enter", "j") // qa is stale in the fixture
+	m.width = 48
+	m = press(t, m, "a")
+	out := m.View()
+	if !strings.Contains(out, "unavailable") {
+		t.Fatalf("stale agent actions should show unavailable reasons:\n%s", out)
+	}
+	if !strings.Contains(out, "\n      ") {
+		t.Fatalf("narrow action palette should wrap long command lines:\n%s", out)
+	}
+}
+
+func TestActionPaletteIncludesNamedProfile(t *testing.T) {
+	m := namedProfileBoardModel("review")
+
+	boardActions := m.actionPalette()
+	assertAllActionsContain(t, boardActions, "--profile review")
+
+	m = press(t, m, "enter") // detail of issue-96; first row is the cto agent
+	sel, ok := m.selectedRow()
+	if !ok || sel.kind != rowAgent {
+		t.Fatalf("first detail row should be an agent, got %+v ok=%v", sel, ok)
+	}
+	assertAllActionsContain(t, m.actionPalette(), "--profile review")
+
+	m = press(t, m, "j", "j") // first thread row after cto and qa
+	sel, ok = m.selectedRow()
+	if !ok || sel.kind != rowThread {
+		t.Fatalf("third detail row should be a thread, got %+v ok=%v", sel, ok)
+	}
+	assertAllActionsContain(t, m.actionPalette(), "--profile review")
+}
+
+func namedProfileBoardModel(profile string) Model {
+	snap := richFixture()
+	for i := range snap.Sessions {
+		if snap.Sessions[i].Name != "issue-96" {
+			continue
+		}
+		for j := range snap.Sessions[i].Agents {
+			snap.Sessions[i].Agents[j].TeamProfile = profile
+		}
+	}
+	m := newModel(rebuildConfig{BaseRoot: "/base", ProjectDir: "/Code/app"}, snap, "")
+	return m.reselect()
+}
+
+func assertAllActionsContain(t *testing.T, actions []paletteAction, want string) {
+	t.Helper()
+	if len(actions) == 0 {
+		t.Fatal("expected action palette entries")
+	}
+	for _, a := range actions {
+		if !strings.Contains(a.Command, want) {
+			t.Fatalf("action %s command missing %q: %q", a.Kind, want, a.Command)
+		}
 	}
 }
 
@@ -566,7 +629,7 @@ func TestHelpOverlay(t *testing.T) {
 		t.Fatalf("? should open the help overlay, got %d", m.Overlay())
 	}
 	out := m.View()
-	for _, want := range []string{"peek", "drill", "attach", "timeline", "filter", "quit", "READ-ONLY"} {
+	for _, want := range []string{"peek", "drill", "actions", "timeline", "filter", "quit", "READ-ONLY"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help should document %q:\n%s", want, out)
 		}
@@ -769,13 +832,13 @@ func TestAttachOverlayStartsWithReadOnlyNotice(t *testing.T) {
 	}
 }
 
-// TestFooterAttachNotBarePlainAttach proves the footer labels `a` as a command
-// to copy, never the bare "attach" (which would imply it attaches).
-func TestFooterAttachNotBarePlainAttach(t *testing.T) {
+// TestFooterActionsNotExecutable proves the footer labels `a` as read-only
+// actions, not a direct execution command.
+func TestFooterActionsNotExecutable(t *testing.T) {
 	m := boardModel()
 	footer := m.keyHints()
-	if !strings.Contains(footer, "a copy attach cmd") {
-		t.Errorf("footer should label `a` as 'copy attach cmd':\n%s", footer)
+	if !strings.Contains(footer, "a actions") {
+		t.Errorf("footer should label `a` as actions:\n%s", footer)
 	}
 	if strings.Contains(footer, "a attach ") || strings.HasSuffix(footer, "a attach") {
 		t.Errorf("footer must NOT call `a` a bare 'attach':\n%s", footer)

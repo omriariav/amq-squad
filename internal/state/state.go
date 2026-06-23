@@ -112,6 +112,16 @@ type Agent struct {
 	AgentDir     string
 	Source       string // launch source label, e.g. "launch.json" or "amq history"
 	TeamProfile  string // launch team profile; empty means the default profile
+	Tmux         *TmuxRuntime
+}
+
+type TmuxRuntime struct {
+	Session    string
+	WindowID   string
+	WindowName string
+	PaneID     string
+	Target     string
+	PaneAlive  bool
 }
 
 // Session groups the agents discovered under one AMQ session root, plus the

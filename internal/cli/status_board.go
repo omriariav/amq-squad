@@ -81,13 +81,14 @@ type sessionBoardRow struct {
 	// ghost records from a prior session does not pin a quiet session at
 	// "degraded"; they are still surfaced (count + "(+N stale)" note) so the
 	// operator can prune them.
-	AgentsStale  int                 `json:"agents_stale,omitempty"`
-	Brief        string              `json:"brief,omitempty"`
-	LastActivity time.Time           `json:"last_activity,omitempty"`
-	Actions      []runtimeActionJSON `json:"actions,omitempty"`
-	Orchestrated bool                `json:"orchestrated,omitempty"`
-	Lead         string              `json:"lead,omitempty"`
-	LeadHandle   string              `json:"lead_handle,omitempty"`
+	AgentsStale  int                   `json:"agents_stale,omitempty"`
+	Brief        string                `json:"brief,omitempty"`
+	LastActivity time.Time             `json:"last_activity,omitempty"`
+	Actions      []runtimeActionJSON   `json:"actions,omitempty"`
+	Orchestrated bool                  `json:"orchestrated,omitempty"`
+	Lead         string                `json:"lead,omitempty"`
+	LeadHandle   string                `json:"lead_handle,omitempty"`
+	Autonomous   team.AutonomousStatus `json:"autonomous"`
 	briefKind    briefKind
 }
 
@@ -244,6 +245,7 @@ func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicate
 	row.Orchestrated = ctx.Orchestrated
 	row.Lead = ctx.Lead
 	row.LeadHandle = ctx.LeadHandle
+	row.Autonomous = team.EffectiveAutonomousStatus(t)
 }
 
 func boardProfileForSession(profiles []boardProfile, sess state.Session) (string, team.Team, bool) {

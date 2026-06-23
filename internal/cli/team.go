@@ -37,6 +37,8 @@ func runTeam(args []string) error {
 		return runTeamOverlay(args[1:])
 	case "member":
 		return runTeamMember(args[1:])
+	case "autonomous":
+		return runTeamAutonomous(args[1:])
 	case "sync":
 		return runTeamSync(args[1:])
 	case "profiles":
@@ -46,7 +48,7 @@ func runTeam(args []string) error {
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'lead', 'overlay', 'member', 'sync', 'profiles', or 'rm'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'lead', 'overlay', 'member', 'autonomous', 'sync', 'profiles', or 'rm'.", args[0])
 	}
 }
 
@@ -93,6 +95,13 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	noOperator := fs.Bool("no-operator", false, "disable the virtual operator participant for this profile")
 	orchestratedFlag := fs.Bool("orchestrated", false, "wire the squad for lead-agent orchestration: inject the reporting norm into team-rules.md and mark the lead role")
 	leadFlag := fs.String("lead", "", "role that leads an orchestrated squad (must be a team member; implies --orchestrated)")
+	compositionFlag := fs.String("composition", team.CompositionSeeded, "composition mode: seeded (default) or autonomous")
+	maxAgentsFlag := fs.Int("max-agents", 0, "autonomous guardrail: maximum active agents")
+	maxTotalSpawnsFlag := fs.Int("max-total-spawns", 0, "autonomous guardrail: maximum total autonomous spawns")
+	allowedRolesFlag := fs.String("allowed-roles", "", "autonomous guardrail: comma-separated role allowlist")
+	allowedRoleClassesFlag := fs.String("allowed-role-classes", "", "autonomous guardrail: comma-separated role-class allowlist")
+	budgetTurnsFlag := fs.Int("budget-turns", 0, "autonomous guardrail: maximum lead turns before operator review")
+	idleReapMinutesFlag := fs.Int("idle-reap-minutes", 0, "autonomous guardrail: idle minutes before prune is allowed")
 	dryRun := fs.Bool("dry-run", false, "preview the team profile and rules paths without writing files")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned team_profile_plan envelope instead of the human dry-run preview")
 	force := fs.Bool("force", false, "overwrite an existing team.json")
@@ -102,8 +111,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
-  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes the team config under
@@ -135,6 +144,12 @@ amq-squad-orchestrator skill; children push status/question/review_request over
 AMQ). Pass --lead ROLE to name the lead (implies --orchestrated); the lead must
 be a team member. Without --lead, a single-member team self-selects and a team
 with a cto defaults to cto.
+
+Autonomous composition is opt-in and requires --orchestrated plus an explicit
+policy: --composition autonomous --max-agents N --max-total-spawns N
+--allowed-roles role,... (or --allowed-role-classes class,...) --budget-turns N.
+It never authorizes merges, pushes, releases, destructive filesystem actions,
+external communications, or provider side effects.
 
 Known personas:
 `)
@@ -379,6 +394,11 @@ Examples:
 	if err != nil {
 		return err
 	}
+	composition := strings.TrimSpace(*compositionFlag)
+	autonomousPolicy, err := resolveAutonomousPolicy(composition, *maxAgentsFlag, *maxTotalSpawnsFlag, *allowedRolesFlag, *allowedRoleClassesFlag, *budgetTurnsFlag, *idleReapMinutesFlag)
+	if err != nil {
+		return err
+	}
 
 	t := team.Team{
 		Project: cwd,
@@ -393,6 +413,8 @@ Examples:
 		Members:      members,
 		Orchestrated: orchestrated,
 		Lead:         leadRole,
+		Composition:  composition,
+		Autonomous:   autonomousPolicy,
 	}
 	rulesContent, err := renderTeamRules(t)
 	if err != nil {
@@ -494,6 +516,7 @@ type teamProfilePlan struct {
 	BinaryArgs      map[string][]string     `json:"binary_args,omitempty"`
 	Operator        team.OperatorView       `json:"operator"`
 	Capabilities    team.Capabilities       `json:"capabilities"`
+	Autonomous      team.AutonomousStatus   `json:"autonomous"`
 	SyncCommand     string                  `json:"sync_command,omitempty"`
 	Plan            []teamProfilePlanMember `json:"plan"`
 }
@@ -514,6 +537,7 @@ func printTeamInitDryRun(p teamInitDryRun) error {
 	} else {
 		fmt.Fprintln(os.Stdout, "# orchestrated: no")
 	}
+	fmt.Fprintf(os.Stdout, "# composition: %s\n", team.EffectiveComposition(p.Team))
 	if p.Exists {
 		fmt.Fprintln(os.Stdout, "# existing-profile: yes (live run requires --force to overwrite)")
 	} else {
@@ -581,6 +605,7 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 		BinaryArgs:      p.Team.BinaryArgs,
 		Operator:        team.EffectiveOperator(p.Team),
 		Capabilities:    team.EffectiveCapabilities(p.Team),
+		Autonomous:      team.EffectiveAutonomousStatus(p.Team),
 		SyncCommand:     p.SyncCommand,
 		Plan:            rows,
 	}
@@ -658,18 +683,19 @@ type teamPlanMember struct {
 // plan: project/team-home + workstream + trust + profile + binary args +
 // per-member command lines.
 type teamPlan struct {
-	TeamHome     string              `json:"team_home"`
-	Project      string              `json:"project"`
-	Workstream   string              `json:"workstream"`
-	Profile      string              `json:"profile"`
-	Trust        string              `json:"trust"`
-	Orchestrated bool                `json:"orchestrated"`
-	Lead         string              `json:"lead,omitempty"`
-	Members      int                 `json:"members"`
-	BinaryArgs   map[string][]string `json:"binary_args,omitempty"`
-	Operator     team.OperatorView   `json:"operator"`
-	Capabilities team.Capabilities   `json:"capabilities"`
-	Plan         []teamPlanMember    `json:"plan"`
+	TeamHome     string                `json:"team_home"`
+	Project      string                `json:"project"`
+	Workstream   string                `json:"workstream"`
+	Profile      string                `json:"profile"`
+	Trust        string                `json:"trust"`
+	Orchestrated bool                  `json:"orchestrated"`
+	Lead         string                `json:"lead,omitempty"`
+	Members      int                   `json:"members"`
+	BinaryArgs   map[string][]string   `json:"binary_args,omitempty"`
+	Operator     team.OperatorView     `json:"operator"`
+	Capabilities team.Capabilities     `json:"capabilities"`
+	Autonomous   team.AutonomousStatus `json:"autonomous"`
+	Plan         []teamPlanMember      `json:"plan"`
 }
 
 func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
@@ -759,6 +785,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			BinaryArgs:   binaryArgs,
 			Operator:     team.EffectiveOperator(t),
 			Capabilities: team.EffectiveCapabilities(t),
+			Autonomous:   team.EffectiveAutonomousStatus(t),
 			Plan:         make([]teamPlanMember, 0, len(members)),
 		}
 		for _, m := range members {
@@ -881,6 +908,35 @@ func validateModelOverrideKeys(overrides map[string]string, known map[string]boo
 	}
 	sort.Strings(unknown)
 	return fmt.Errorf("--model has unknown role(s): %s", strings.Join(unknown, ", "))
+}
+
+func resolveAutonomousPolicy(composition string, maxAgents, maxTotalSpawns int, allowedRoles, allowedRoleClasses string, budgetTurns, idleReapMinutes int) (*team.AutonomousPolicy, error) {
+	composition = strings.TrimSpace(composition)
+	if composition == "" {
+		composition = team.CompositionSeeded
+	}
+	switch composition {
+	case team.CompositionSeeded:
+		if maxAgents != 0 || maxTotalSpawns != 0 || strings.TrimSpace(allowedRoles) != "" || strings.TrimSpace(allowedRoleClasses) != "" || budgetTurns != 0 || idleReapMinutes != 0 {
+			return nil, fmt.Errorf("autonomous policy flags require --composition autonomous")
+		}
+		return nil, nil
+	case team.CompositionAutonomous:
+		p := team.AutonomousPolicy{
+			MaxActiveAgents:    maxAgents,
+			MaxTotalSpawns:     maxTotalSpawns,
+			AllowedRoles:       splitCommaList(allowedRoles),
+			AllowedRoleClasses: splitCommaList(allowedRoleClasses),
+			BudgetTurns:        budgetTurns,
+			IdleReapMinutes:    idleReapMinutes,
+		}
+		if err := team.ValidateAutonomousPolicy(p); err != nil {
+			return nil, err
+		}
+		return &p, nil
+	default:
+		return nil, fmt.Errorf("--composition: invalid mode %q: use %s or %s", composition, team.CompositionSeeded, team.CompositionAutonomous)
+	}
 }
 
 // resolveOrchestration turns the --orchestrated/--lead flags into the team's

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -184,66 +185,11 @@ func projectHasDiscoverableSessions(projectDir string, resolveBaseRoot func(stri
 }
 
 func dispatch(args []string, version string) error {
-	switch args[0] {
-	case "team":
-		return runTeam(args[1:])
-	case "lead":
-		return runLead(args[1:])
-	case "task":
-		return runTask(args[1:])
-	case "verify":
-		return runVerify(args[1:])
-	case "new":
-		return runNew(args[1:])
-	case "roles":
-		return runRoles(args[1:])
-	case "up":
-		return runUp(args[1:])
-	case "stop":
-		return runStop(args[1:])
-	case "brief":
-		return runBrief(args[1:])
-	case "threads":
-		return runThreads(args[1:])
-	case "thread":
-		return runThread(args[1:])
-	case "status":
-		return runStatus(args[1:])
-	case "focus", "open":
-		return runFocus(args[1:])
-	case "send":
-		return runSend(args[1:])
-	case "dispatch":
-		return runDispatch(args[1:])
-	case "collect":
-		return runCollect(args[1:])
-	case "prune-panes":
-		return runPrunePanes(args[1:])
-	case "console":
-		return runConsole(args[1:])
-	case "notify":
-		return runNotify(args[1:])
-	case "amq":
-		return runAMQ(args[1:])
-	case "history":
-		return runHistory(args[1:])
-	case "resume":
-		return runResume(args[1:])
-	case "fork":
-		return runFork(args[1:])
-	case "rm":
-		return runRm(args[1:], rmModeDelete)
-	case "archive":
-		return runRm(args[1:], rmModeArchive)
-	case "completion":
-		return runCompletion(args[1:])
-	case "doctor":
-		return runDoctor(args[1:], version)
-	case "agent":
-		return runAgent(args[1:])
-	default:
+	cmd, ok := lookupCommand(args[0], version)
+	if !ok {
 		return usageErrorf("unknown command: %q. Run 'amq-squad --help' for usage.", args[0])
 	}
+	return cmd.Run(args[1:])
 }
 
 func printUsage() {
@@ -253,33 +199,14 @@ Usage:
   amq-squad <command> [options]
 
 Commands:
-  new       Create a team, named profile, or workstream session
-  roles     List built-in role IDs and market numbers for team creation
-  team      Set up and manage the team (init, rules, lead, member, sync, profiles)
-  lead      Register or inspect an external orchestrator lead
-  task      Native pull-based task store (add/list/claim/done/fail/block)
-  verify    Deterministic preflight checks (verify merge)
-  up        Bring the team up (use --dry-run to print the launch plan)
-  stop      Stop configured team members (SIGTERM; --force = SIGKILL). State is
-            preserved on disk, so the session stays resumable.
-  brief     Print a workstream brief and classify it as none, stub, or real
-  threads   List collapsed AMQ thread summaries for one workstream
-  thread    Read one AMQ thread transcript by project and session
-  status    Multi-session board (also bare 'amq-squad'); --project and --session for detail
-  collect   Drain once, optionally wait once for a report, then drain once
-  prune-panes Reclaim orphaned amq-squad tmux panes (confirm-gated)
-  console   Read-only Mission Control TUI over all sessions (--once for CI)
-  notify    Emit de-duplicated operator attention notifications
-  amq       Project-aware AMQ diagnostics and confirm-gated maintenance
-  history   List restorable launch records
-  resume    Plan how to bring the team back into the resolved workstream
-  fork      Plan fresh launches in a new workstream branched off an existing one
-  rm        Permanently remove a finished session (root dir + brief; confirm-gated)
-  archive   Move a finished session aside instead of deleting (confirm-gated)
-  completion Emit a shell completion script (bash, zsh, fish)
-  doctor    Check amq-squad / AMQ setup (use --project and --profile for other teams)
-  agent     Launch or resume a single agent (agent up / agent resume)
-  version   Print the amq-squad version
+`)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	for _, cmd := range commandRegistry("") {
+		fmt.Fprintf(w, "  %s\t%s\n", cmd.Name, cmd.Summary)
+	}
+	fmt.Fprintln(w, "  version\tPrint the amq-squad version")
+	_ = w.Flush()
+	fmt.Print(`
 
 Removed in 2.0 (see MIGRATION.md): down (use 'stop'), launch (use 'agent up'),
 restore (use 'history' or 'agent resume'), list (use 'status' or 'history'),

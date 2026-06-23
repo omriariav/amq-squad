@@ -11,6 +11,11 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
+var (
+	teamMemberLaunch = runResume
+	teamMemberStop   = runStop
+)
+
 // runTeamMember dispatches `amq-squad team member <add|rm|list>`: runtime roster
 // mutation. This is the durable-roster primitive the goal-first composition
 // model rests on — a lead (any binary) grows or shrinks its team mid-session,
@@ -23,8 +28,9 @@ Usage:
   amq-squad team member add <role> --binary <claude|codex> [--handle H]
       [--session S] [--model M] [--claude-args "…"] [--codex-args "…"]
       [--spawn-origin NAME] [--spawn-depth N]
-      [--project DIR] [--profile NAME]
+      [--project DIR] [--profile NAME] [--launch] [--target new-window] [--dry-run] [--json]
   amq-squad team member rm <role> [--project DIR] [--profile NAME]
+      [--stop] [--force] [--close-panes] [--dry-run] [--json]
   amq-squad team member list [--json] [--project DIR] [--profile NAME]
 
 Mutates the persisted team profile (team.json) atomically and under an
@@ -151,8 +157,15 @@ func runTeamMemberAdd(args []string) error {
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for this member")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to mutate (default: default profile)")
+	launchFlag := fs.Bool("launch", false, "after adding, launch pending members with resume --exec")
+	targetFlag := fs.String("target", "new-window", "launch target for --launch (current-window|new-window|new-session)")
+	dryRunFlag := fs.Bool("dry-run", false, "preview roster and launch actions without mutating")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	if err := parseFlags(fs, rest); err != nil {
 		return err
+	}
+	if !*launchFlag && flagWasSet(fs, "target") {
+		return usageErrorf("--target requires --launch")
 	}
 
 	bin := normalizedAgentBinary(*binaryFlag)
@@ -197,14 +210,10 @@ func runTeamMemberAdd(args []string) error {
 	}
 
 	var added team.Member
-	if err := withProfileLock(projectDir, profile, func() error {
-		t, err := team.ReadProfile(projectDir, profile)
-		if err != nil {
-			return fmt.Errorf("read team: %w", err)
-		}
+	buildAdded := func(t team.Team) (team.Member, error) {
 		for _, m := range t.Members {
 			if m.Role == role {
-				return fmt.Errorf("role %q is already on the team", role)
+				return team.Member{}, fmt.Errorf("role %q is already on the team", role)
 			}
 		}
 		handle := strings.ToLower(strings.TrimSpace(*handleFlag))
@@ -213,18 +222,18 @@ func runTeamMemberAdd(args []string) error {
 		}
 		for _, m := range t.Members {
 			if m.Handle == handle {
-				return fmt.Errorf("handle %q is already in use; pass a distinct --handle", handle)
+				return team.Member{}, fmt.Errorf("handle %q is already in use; pass a distinct --handle", handle)
 			}
 		}
 		origin, depth, err := inferRuntimeSpawn(t, *spawnOriginFlag, *spawnDepthFlag)
 		if err != nil {
-			return err
+			return team.Member{}, err
 		}
 		session := strings.ToLower(strings.TrimSpace(*sessionFlag))
 		if session == "" {
 			session = inheritedSession(t)
 		}
-		added = team.Member{
+		added := team.Member{
 			Role:        role,
 			Binary:      bin,
 			Handle:      handle,
@@ -238,6 +247,32 @@ func runTeamMemberAdd(args []string) error {
 		} else {
 			added.CodexArgs = codexArgs
 		}
+		return added, nil
+	}
+	if *dryRunFlag {
+		t, err := team.ReadProfile(projectDir, profile)
+		if err != nil {
+			return fmt.Errorf("read team: %w", err)
+		}
+		added, err = buildAdded(t)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("# preview: would add %s (%s) to profile %s\n", added.Role, added.Binary, profile)
+		if *launchFlag {
+			fmt.Printf("# preview: would launch with:\n  %s\n", teamMemberLaunchCommand(projectDir, profile, added.Session, *targetFlag))
+		}
+		return nil
+	}
+	if err := withProfileLock(projectDir, profile, func() error {
+		t, err := team.ReadProfile(projectDir, profile)
+		if err != nil {
+			return fmt.Errorf("read team: %w", err)
+		}
+		added, err = buildAdded(t)
+		if err != nil {
+			return err
+		}
 		t.Members = append(t.Members, added)
 		// WriteProfile re-validates the whole team (orchestration, per-member
 		// binary-match, duplicate handles) before the atomic rename, so an
@@ -250,6 +285,21 @@ func runTeamMemberAdd(args []string) error {
 		return err
 	}
 
+	if *jsonOut {
+		return printJSONEnvelope("team_member_add", mutationResult{
+			Command: "team member add",
+			Status:  "created",
+			Project: projectDir,
+			Session: added.Session,
+			Profile: profile,
+			Role:    added.Role,
+			Handle:  added.Handle,
+			Actions: []mutationAction{
+				followUp("resume", "launch managed member", "amq-squad resume --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --exec --target new-window"),
+				followUp("agent_up", "launch unmanaged member", agentUpHint(added)),
+			},
+		})
+	}
 	fmt.Printf("added %s (%s) to the team.\n", added.Role, added.Binary)
 	// Steer the launch into a managed tmux pane: only then can amq-squad
 	// focus/send/close the agent (the pane-lifecycle work). A bare `agent up`
@@ -259,6 +309,12 @@ func runTeamMemberAdd(args []string) error {
 	fmt.Printf("  amq-squad resume --exec --target new-window\n")
 	fmt.Printf("  (brings up newly-added members in their own window and skips any already live)\n")
 	fmt.Printf("or run it directly in this terminal, without a managed pane:\n  %s\n", agentUpHint(added))
+	if *launchFlag {
+		fmt.Printf("launching pending members with:\n  %s\n", teamMemberLaunchCommand(projectDir, profile, added.Session, *targetFlag))
+		if err := teamMemberLaunch(teamMemberLaunchArgs(projectDir, profile, added.Session, *targetFlag)); err != nil {
+			return fmt.Errorf("launch after add: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -310,12 +366,43 @@ func runTeamMemberRemove(args []string) error {
 	fs := flag.NewFlagSet("team member rm", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to mutate (default: default profile)")
+	stopFlag := fs.Bool("stop", false, "stop the member before removing it from the roster")
+	forceFlag := fs.Bool("force", false, "with --stop, escalate to SIGKILL")
+	closePanesFlag := fs.Bool("close-panes", false, "with --stop, close the member's tmux pane after stopping")
+	dryRunFlag := fs.Bool("dry-run", false, "preview stop and roster actions without mutating")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	if err := parseFlags(fs, rest); err != nil {
 		return err
+	}
+	if !*stopFlag && (flagWasSet(fs, "force") || flagWasSet(fs, "close-panes")) {
+		return usageErrorf("--force and --close-panes require --stop")
 	}
 	projectDir, profile, err := resolveExistingTeamProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
+	}
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return fmt.Errorf("read team: %w", err)
+	}
+	if t.Orchestrated && t.Lead == role {
+		return fmt.Errorf("role %q is the orchestration lead; reassign the lead before removing it", role)
+	}
+	removedMember, ok := teamMemberByRole(t, role)
+	if !ok {
+		return fmt.Errorf("role %q is not a team member", role)
+	}
+	if *dryRunFlag {
+		if *stopFlag {
+			fmt.Printf("# preview: would stop with:\n  %s\n", teamMemberStopCommand(projectDir, profile, role, removedMember.Session, *forceFlag, *closePanesFlag))
+		}
+		fmt.Printf("# preview: would remove %s from profile %s\n", role, profile)
+		return nil
+	}
+	if *stopFlag {
+		if err := teamMemberStop(teamMemberStopArgs(projectDir, profile, role, removedMember.Session, *forceFlag, *closePanesFlag)); err != nil {
+			return fmt.Errorf("stop before remove: %w", err)
+		}
 	}
 
 	var removed bool
@@ -349,12 +436,62 @@ func runTeamMemberRemove(args []string) error {
 		return err
 	}
 
+	if *jsonOut {
+		return printJSONEnvelope("team_member_rm", mutationResult{
+			Command: "team member rm",
+			Status:  "removed",
+			Project: projectDir,
+			Profile: profile,
+			Role:    role,
+			Actions: []mutationAction{
+				followUp("stop", "close live pane", "amq-squad stop --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --role "+shellQuote(role)+" --close-panes"),
+			},
+		})
+	}
 	fmt.Printf("removed %s from the team.\n", role)
 	// rm is roster-only; it never touches the agent's tmux pane. Point at the
 	// pane-closing teardown so a pruned worker's window doesn't linger as an
 	// orphan (stop keeps the pane by default; --close-panes closes it).
 	fmt.Printf("if it is live, stop it AND close its pane with:\n  amq-squad stop --role %s --close-panes\n", role)
 	return nil
+}
+
+func teamMemberLaunchArgs(projectDir, profile, session, target string) []string {
+	args := []string{"--exec", "--target", strings.TrimSpace(target), "--project", projectDir, "--profile", profile}
+	if strings.TrimSpace(session) != "" {
+		args = append(args, "--session", session)
+	}
+	return args
+}
+
+func teamMemberLaunchCommand(projectDir, profile, session, target string) string {
+	return "amq-squad resume " + shellJoin(teamMemberLaunchArgs(projectDir, profile, session, target))
+}
+
+func teamMemberStopArgs(projectDir, profile, role, session string, force, closePanes bool) []string {
+	args := []string{"--role", role, "--project", projectDir, "--profile", profile}
+	if strings.TrimSpace(session) != "" {
+		args = append(args, "--session", session)
+	}
+	if force {
+		args = append(args, "--force")
+	}
+	if closePanes {
+		args = append(args, "--close-panes")
+	}
+	return args
+}
+
+func teamMemberStopCommand(projectDir, profile, role, session string, force, closePanes bool) string {
+	return "amq-squad stop " + shellJoin(teamMemberStopArgs(projectDir, profile, role, session, force, closePanes))
+}
+
+func shellJoin(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
 }
 
 // resolveExistingTeamProfile resolves the project dir + profile (reusing the
