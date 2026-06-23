@@ -344,7 +344,8 @@ href="#removed-legacy-verbs">Removed legacy verbs</a></p>
 · <a href="#trust-and-binary-defaults">Trust &amp; binary defaults</a> ·
 <a href="#messaging-inside-a-squad">Messaging in a squad</a> · <a
 href="#files-amq-squad-writes">Files amq-squad writes</a></p>
-<p><strong>Reference:</strong> <a href="#known-gaps">Known gaps</a> · <a
+<p><strong>Reference:</strong> <a href="docs/amq-swarm-interop.md">AMQ
+swarm interop</a> · <a href="#known-gaps">Known gaps</a> · <a
 href="#requires">Requires</a></p>
 <h2 id="goal-first-dynamic-teams">Goal-first, dynamic teams</h2>
 <p><strong>The shift (2.0).</strong> Until now you <em>designed a team,
@@ -409,6 +410,10 @@ binary decomposes the goal into claimable work.</li>
 marketplaces) drives propose → approve → <code>team member add</code> →
 <code>task add</code> → prune.</li>
 </ul>
+<p>AMQ <code>swarm</code> interop is supported as an external
+notification/adoption boundary, not as a replacement task store. See <a
+href="docs/amq-swarm-interop.md">docs/amq-swarm-interop.md</a> for the
+v2.7.0 decision.</p>
 <p>In practice — you stand up an orchestrated squad, then the lead
 composes and drives it:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># You (operator): create an orchestrated team and bring it up, seeded from a goal.</span></span>

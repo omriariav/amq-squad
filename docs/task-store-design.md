@@ -122,7 +122,8 @@ dispatch is explicit:
 
 - Cycle detection is unnecessary: deps must reference already-created (lower-id)
   tasks, so the graph is a DAG by construction — see `Add`.
-- Bridge of task changes to AMQ notifications (the swarm-bridge analog) — folds
-  into Slice C's orchestrate loop / Phase 1.
+- Bridge of task changes to AMQ notifications. The v2.7.0 interop decision is
+  docs-only: keep `.amq-squad/tasks/` authoritative and use AMQ swarm as an
+  external notification/adoption boundary. See `docs/amq-swarm-interop.md`.
 - The lead's *judgment* about which tasks to create — that is Slice C (the
   orchestrate-from-goal skill), validated at the Slice D eval gate.

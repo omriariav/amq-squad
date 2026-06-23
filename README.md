@@ -14,7 +14,7 @@ Built on [AMQ](https://github.com/avivsinai/agent-message-queue) by [Aviv Sinai]
 
 **Customize:** [Custom roles](#custom-roles) · [Trust &amp; binary defaults](#trust-and-binary-defaults) · [Messaging in a squad](#messaging-inside-a-squad) · [Files amq-squad writes](#files-amq-squad-writes)
 
-**Reference:** [Known gaps](#known-gaps) · [Requires](#requires)
+**Reference:** [AMQ swarm interop](docs/amq-swarm-interop.md) · [Known gaps](#known-gaps) · [Requires](#requires)
 
 ## Goal-first, dynamic teams
 
@@ -35,6 +35,10 @@ Three binary-neutral primitives make it work, and all of them round-trip through
 - **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted). Add `--launch --dry-run` or `rm --stop --dry-run` to preview exact runtime actions before running them.
 - **Native task store** — `amq-squad task add/list/show/claim/done/fail/block/reset`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/`, so a lead of either binary decomposes the goal into claimable work.
 - **Compose-from-goal playbook** — the `amq-squad-orchestrator` skill (in both the Claude and Codex marketplaces) drives propose → approve → `team member add` → `task add` → prune.
+
+AMQ `swarm` interop is supported as an external notification/adoption boundary,
+not as a replacement task store. See
+[docs/amq-swarm-interop.md](docs/amq-swarm-interop.md) for the v2.7.0 decision.
 
 In practice — you stand up an orchestrated squad, then the lead composes and drives it:
 
