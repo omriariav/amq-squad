@@ -28,9 +28,9 @@ Usage:
   amq-squad team member add <role> --binary <claude|codex> [--handle H]
       [--session S] [--model M] [--claude-args "…"] [--codex-args "…"]
       [--spawn-origin NAME] [--spawn-depth N]
-      [--project DIR] [--profile NAME] [--launch] [--target new-window] [--dry-run]
+      [--project DIR] [--profile NAME] [--launch] [--target new-window] [--dry-run] [--json]
   amq-squad team member rm <role> [--project DIR] [--profile NAME]
-      [--stop] [--force] [--close-panes] [--dry-run]
+      [--stop] [--force] [--close-panes] [--dry-run] [--json]
   amq-squad team member list [--json] [--project DIR] [--profile NAME]
 
 Mutates the persisted team profile (team.json) atomically and under an
@@ -160,6 +160,7 @@ func runTeamMemberAdd(args []string) error {
 	launchFlag := fs.Bool("launch", false, "after adding, launch pending members with resume --exec")
 	targetFlag := fs.String("target", "new-window", "launch target for --launch (current-window|new-window|new-session)")
 	dryRunFlag := fs.Bool("dry-run", false, "preview roster and launch actions without mutating")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	if err := parseFlags(fs, rest); err != nil {
 		return err
 	}
@@ -284,6 +285,21 @@ func runTeamMemberAdd(args []string) error {
 		return err
 	}
 
+	if *jsonOut {
+		return printJSONEnvelope("team_member_add", mutationResult{
+			Command: "team member add",
+			Status:  "created",
+			Project: projectDir,
+			Session: added.Session,
+			Profile: profile,
+			Role:    added.Role,
+			Handle:  added.Handle,
+			Actions: []mutationAction{
+				followUp("resume", "launch managed member", "amq-squad resume --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --exec --target new-window"),
+				followUp("agent_up", "launch unmanaged member", agentUpHint(added)),
+			},
+		})
+	}
 	fmt.Printf("added %s (%s) to the team.\n", added.Role, added.Binary)
 	// Steer the launch into a managed tmux pane: only then can amq-squad
 	// focus/send/close the agent (the pane-lifecycle work). A bare `agent up`
@@ -354,6 +370,7 @@ func runTeamMemberRemove(args []string) error {
 	forceFlag := fs.Bool("force", false, "with --stop, escalate to SIGKILL")
 	closePanesFlag := fs.Bool("close-panes", false, "with --stop, close the member's tmux pane after stopping")
 	dryRunFlag := fs.Bool("dry-run", false, "preview stop and roster actions without mutating")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	if err := parseFlags(fs, rest); err != nil {
 		return err
 	}
@@ -419,6 +436,18 @@ func runTeamMemberRemove(args []string) error {
 		return err
 	}
 
+	if *jsonOut {
+		return printJSONEnvelope("team_member_rm", mutationResult{
+			Command: "team member rm",
+			Status:  "removed",
+			Project: projectDir,
+			Profile: profile,
+			Role:    role,
+			Actions: []mutationAction{
+				followUp("stop", "close live pane", "amq-squad stop --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --role "+shellQuote(role)+" --close-panes"),
+			},
+		})
+	}
 	fmt.Printf("removed %s from the team.\n", role)
 	// rm is roster-only; it never touches the agent's tmux pane. Point at the
 	// pane-closing teardown so a pruned worker's window doesn't linger as an

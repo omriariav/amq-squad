@@ -55,6 +55,31 @@ func TestAMQRouteBuildsRouteExplain(t *testing.T) {
 	}
 }
 
+func TestResolveAMQContextForProjectIsPrimaryResolver(t *testing.T) {
+	dir := t.TempDir()
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail", AMQVersion: "0.38.0"}, "ok\n")
+	ctx, err := resolveAMQContextForProject(dir, "issue-96", "cto")
+	if err != nil {
+		t.Fatalf("resolveAMQContextForProject: %v", err)
+	}
+	if !sameResolvedDir(ctx.ProjectDir, dir) {
+		t.Fatalf("ProjectDir = %q, want %q", ctx.ProjectDir, dir)
+	}
+	if ctx.Me != "cto" || ctx.Env.SessionName != "issue-96" {
+		t.Fatalf("identity/session not resolved: %+v", ctx)
+	}
+	if !strings.HasSuffix(ctx.Root, ".agent-mail/issue-96") {
+		t.Fatalf("Root = %q, want session root", ctx.Root)
+	}
+	base, err := resolveAMQBaseRootForProject(dir, "issue-96", "cto")
+	if err != nil {
+		t.Fatalf("resolveAMQBaseRootForProject: %v", err)
+	}
+	if !strings.HasSuffix(base, ".agent-mail") {
+		t.Fatalf("BaseRoot = %q, want .agent-mail container", base)
+	}
+}
+
 func TestAMQRouteAddsJSONByDefault(t *testing.T) {
 	chdir(t, t.TempDir())
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, `{"routable":true}`+"\n")

@@ -1070,13 +1070,13 @@ amq-squad brief seed --session NAME --seed-from REF [--project DIR] [--force]
                                   Write a workstream brief from file:&lt;path&gt;,
                                   issue:&lt;n&gt;, or gh:owner/repo#&lt;n&gt; without
                                   launching the team. Use --dry-run to preview.
-amq-squad task add --title T [--desc D] [--depends-on id,...] [--assign role] --session S
+amq-squad task add --title T [--desc D] [--depends-on id,...] [--assign role] [--json] --session S
 amq-squad task list [--status S] [--json] --session S
 amq-squad task show &lt;id&gt; [--json] --session S
-amq-squad task claim &lt;id&gt; --me HANDLE --session S
-amq-squad task done &lt;id&gt; --me HANDLE [--evidence E] --session S
-amq-squad task fail|block &lt;id&gt; --me HANDLE [--reason R] --session S
-amq-squad task reset &lt;id&gt; --me HANDLE [--reason R] --session S
+amq-squad task claim &lt;id&gt; --me HANDLE [--json] --session S
+amq-squad task done &lt;id&gt; --me HANDLE [--evidence E] [--json] --session S
+amq-squad task fail|block &lt;id&gt; --me HANDLE [--reason R] [--json] --session S
+amq-squad task reset &lt;id&gt; --me HANDLE [--reason R] [--json] --session S
                                   Native pull-based, dependency-gated task store
                                   under .amq-squad/tasks/&lt;session&gt;/. A task is
                                   claimable only once its --depends-on tasks are
@@ -1204,6 +1204,11 @@ stopped),</li>
 msgs · 7m"),</li>
 <li><strong>peek</strong> (<code>space</code>) for a read-only view of
 an agent's recent output, unread inbox, and what it is blocked on,</li>
+<li>an <strong>action palette</strong> (<code>a</code>) with copy-ready
+commands such as <code>focus</code>, <code>send</code>,
+<code>resume</code>, <code>stop</code>, <code>task list</code>, and
+<code>dispatch</code>; the console never runs commands directly. This is
+the user-facing closure for #220.</li>
 <li>a <strong>triage rollup</strong> headline
 (<code>N needs-you threads · N blocked threads · N gated threads · N at-risk threads</code>)
 and <code>/</code>-filters (<code>needs-you</code>,
@@ -1261,10 +1266,14 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb23-1"><a href="#
 <span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
 <span id="cb23-5"><a href="#cb23-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team profiles <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
 <span id="cb23-6"><a href="#cb23-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> roles <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb23-7"><a href="#cb23-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb23-8"><a href="#cb23-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--sync</span> <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb23-9"><a href="#cb23-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--dry-run</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb23-10"><a href="#cb23-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span></code></pre></div>
+<span id="cb23-7"><a href="#cb23-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--subject</span> <span class="st">&quot;Review&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb23-8"><a href="#cb23-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--title</span> <span class="st">&quot;Review PR&quot;</span> <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb23-9"><a href="#cb23-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task claim t1 <span class="at">--me</span> qa <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb23-10"><a href="#cb23-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add qa <span class="at">--binary</span> codex <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb23-11"><a href="#cb23-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb23-12"><a href="#cb23-12" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--sync</span> <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb23-13"><a href="#cb23-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--dry-run</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb23-14"><a href="#cb23-14" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span></code></pre></div>
 <p>Envelope shape:</p>
 <div class="sourceCode" id="cb24"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
@@ -1272,6 +1281,13 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb24-1"><a href=
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;kind&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;verb&gt;&quot;</span><span class="fu">,</span></span>
 <span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;data&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="er">/*</span> <span class="er">verb-specific</span> <span class="er">payload</span> <span class="er">*/</span> <span class="fu">}</span></span>
 <span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>High-value mutating commands also support JSON success envelopes for
+orchestrators and NOC tooling. Initial stable mutator envelopes include
+<code>dispatch</code>, <code>task add</code>, task transitions
+(<code>claim</code>, <code>done</code>, <code>fail</code>,
+<code>block</code>), and <code>team member add/rm</code>. Human output
+remains unchanged when <code>--json</code> is not passed. This is the
+user-facing closure for #222.</p>
 <h2 id="runtime-control-tmux">Runtime control (tmux)</h2>
 <p>amq-squad owns the tmux execution/control contract for a team so
 external clients (such as amq-noc) can make agents actionable without
@@ -1288,7 +1304,10 @@ identity as a <code>tmux</code> block plus a computed
 <code>pane_alive</code> (does the recorded pane still exist?). Those
 <code>status --session NAME --json</code> members also carry an
 <code>actions</code> array of stable, project-scoped commands a client
-can render or copy, each with an <code>available</code> flag:</p>
+can render or copy, each with an <code>available</code> flag. The same
+shared action catalog feeds the console palette, and selected AMQ-facing
+commands resolve project/session/root/identity through the shared AMQ
+context helper; together these are the user-facing closure for #223:</p>
 <div class="sourceCode" id="cb25"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
 <span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;role&quot;</span><span class="fu">:</span> <span class="st">&quot;cto&quot;</span><span class="fu">,</span></span>
@@ -1363,6 +1382,11 @@ input)</td>
 </tbody>
 </table>
 <h2 id="shell-completions">Shell completions</h2>
+<p>GitHub Actions runs <code>make ci</code> on pull requests and pushes
+to <code>main</code>. The workflow installs <code>pandoc</code> so
+formatting, tests, generated HTML freshness, and skill frontmatter
+checks run with the same baseline expected locally. This is the
+user-facing closure for #221.</p>
 <div class="sourceCode" id="cb27"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> completion bash <span class="op">&gt;</span> /etc/bash_completion.d/amq-squad</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> completion zsh  <span class="op">&gt;</span> <span class="st">&quot;</span><span class="va">${fpath</span><span class="op">[</span><span class="dv">1</span><span class="op">]</span><span class="va">}</span><span class="st">/_amq-squad&quot;</span></span>

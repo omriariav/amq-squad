@@ -171,6 +171,15 @@ func classifyAgent(e launch.Entry, probe Probe) Agent {
 		Source:       e.Source,
 		TeamProfile:  rec.TeamProfile,
 	}
+	if rec.Tmux != nil && (rec.Tmux.PaneID != "" || rec.Tmux.WindowID != "" || rec.Tmux.Session != "" || rec.Tmux.WindowName != "" || rec.Tmux.Target != "") {
+		a.Tmux = &TmuxRuntime{
+			Session:    rec.Tmux.Session,
+			WindowID:   rec.Tmux.WindowID,
+			WindowName: rec.Tmux.WindowName,
+			PaneID:     rec.Tmux.PaneID,
+			Target:     rec.Tmux.Target,
+		}
+	}
 
 	pres, presErr := readPresence(e.AgentDir)
 	if presErr == nil {
@@ -247,6 +256,9 @@ func classifyAgent(e launch.Entry, probe Probe) Agent {
 
 	// --- Derive WakeHealth (only when the agent looks active enough). ---
 	a.WakeHealth = wakeHealth(a.Liveness, wakePID, wakeAlive)
+	if a.Tmux != nil {
+		a.Tmux.PaneAlive = a.Liveness == LivenessAlive || a.Liveness == LivenessWakeLive
+	}
 
 	return a
 }

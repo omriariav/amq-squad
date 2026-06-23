@@ -230,16 +230,16 @@ func (m Model) renderFooter() string {
 // keyHints returns the route-appropriate footer key legend.
 func (m Model) keyHints() string {
 	switch m.overlay {
-	case overlayPeek, overlayAttach:
+	case overlayPeek, overlayActions:
 		return "esc close · q close"
 	case overlayHelp:
 		return "esc close"
 	}
 	switch m.route {
 	case routeBoard:
-		return "↑/↓ move · enter drill · space peek · a copy attach cmd · / filter · g refresh · ? help · q quit"
+		return "↑/↓ move · enter drill · space peek · a actions · / filter · g refresh · ? help · q quit"
 	case routeSession:
-		return "↑/↓ move · enter expand · space peek · l logs · a copy attach cmd · t timeline · / filter · esc back · g refresh · q quit"
+		return "↑/↓ move · enter expand · space peek · l logs · a actions · t timeline · / filter · esc back · g refresh · q quit"
 	case routeThread:
 		return "↑/↓ scroll · esc back · g refresh · q quit"
 	default:
@@ -505,8 +505,8 @@ func (m Model) renderOverlay() string {
 	switch m.overlay {
 	case overlayPeek:
 		return m.renderPeek()
-	case overlayAttach:
-		return m.renderAttach()
+	case overlayActions:
+		return m.renderActions()
 	case overlayHelp:
 		return renderHelp()
 	default:
@@ -661,6 +661,26 @@ func (m Model) renderAttach() string {
 	return b.String()
 }
 
+func (m Model) renderActions() string {
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("actions (read-only)") + "\n")
+	b.WriteString(styleFaint.Render("copy a command; this console never runs it") + "\n\n")
+	actions := m.actionPalette()
+	if len(actions) == 0 {
+		b.WriteString("  (no actions for this selection)\n")
+		return b.String()
+	}
+	width := m.width
+	if width <= 0 {
+		width = 100
+	}
+	for _, a := range actions {
+		b.WriteString(renderActionLine(a, width))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 // renderHelp renders the keymap help overlay.
 func renderHelp() string {
 	lines := []string{
@@ -670,7 +690,7 @@ func renderHelp() string {
 		"  enter        expand / drill (board → detail, thread → expand)",
 		"  space        peek (read-only output, unread, blocked-on, freshness)",
 		"  l            logs / tail (raw chronological messages)",
-		"  a            copy attach cmd (shows the suggested command — does NOT attach)",
+		"  a            actions (copy-ready commands — does NOT run them)",
 		"  t            timeline pane (state transitions)",
 		"  /            filter (needs-you · gated · at-risk · blocked · unread · agent:<h> · model:<m> · session:<n>)",
 		"  esc          back / close overlay / cancel filter",

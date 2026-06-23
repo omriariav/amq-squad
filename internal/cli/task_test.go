@@ -80,6 +80,36 @@ func TestTaskListJSONEnvelope(t *testing.T) {
 	}
 }
 
+func TestTaskMutationJSONEnvelopes(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	withFixedTaskNow(t)
+	stdout, _, err := captureOutput(t, func() error {
+		return runTask([]string{"add", "--title", "x", "--assign", "worker", "--session", "s", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("task add --json: %v", err)
+	}
+	added := decodeJSONEnvelope[mutationResult](t, stdout)
+	if added.Kind != "task_add" || added.Data.ID != "t1" || added.Data.Status != "created" || added.Data.Session != "s" {
+		t.Fatalf("bad task_add envelope: %+v", added)
+	}
+	if strings.Contains(stdout, "added t1") {
+		t.Fatalf("--json must not include human output:\n%s", stdout)
+	}
+
+	stdout, _, err = captureOutput(t, func() error {
+		return runTask([]string{"claim", "t1", "--me", "worker", "--session", "s", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("task claim --json: %v", err)
+	}
+	claimed := decodeJSONEnvelope[mutationResult](t, stdout)
+	if claimed.Kind != "task_claim" || claimed.Data.Status != "in_progress" || claimed.Data.Role != "worker" {
+		t.Fatalf("bad task_claim envelope: %+v", claimed)
+	}
+}
+
 func TestTaskRejectsUnsafeSession(t *testing.T) {
 	chdir(t, t.TempDir())
 	for _, bad := range []string{"../escape", "a/b", "..", "UP"} {

@@ -107,7 +107,7 @@ func runTaskAdd(args []string) error {
 	desc := fs.String("desc", "", "task description")
 	dependsOn := fs.String("depends-on", "", "comma-separated task ids that must complete first")
 	assign := fs.String("assign", "", "pre-assign to a role/handle (optional)")
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned task envelope")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	if err := parseFlags(fs, args); err != nil {
@@ -127,7 +127,18 @@ func runTaskAdd(args []string) error {
 		return err
 	}
 	if *jsonOut {
-		return printJSONEnvelope("task", taskEnvelopeData{Session: session, Task: t})
+		return printJSONEnvelope("task_add", mutationResult{
+			Command: "task add",
+			Status:  "created",
+			Project: projectDir,
+			Session: session,
+			ID:      t.ID,
+			Role:    t.AssignedTo,
+			Actions: []mutationAction{
+				followUp("list", "list tasks", "amq-squad task list --project "+shellQuote(projectDir)+" --session "+shellQuote(session)),
+				followUp("claim", "claim task", "amq-squad task claim "+shellQuote(t.ID)+" --me <handle> --project "+shellQuote(projectDir)+" --session "+shellQuote(session)),
+			},
+		})
 	}
 	fmt.Printf("added %s: %s\n", t.ID, t.Title)
 	return nil
@@ -248,6 +259,7 @@ func runTaskTransition(args []string, verb string) error {
 	// `task fail t1 --evidence E` is a clear "flag not defined" error instead
 	// of silently dropping --evidence.
 	var me, evidence, reason string
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	switch verb {
 	case "claim", "done", "fail", "block", "reset":
 		fs.StringVar(&me, "me", "", "claiming agent handle (required)")
@@ -258,7 +270,6 @@ func runTaskTransition(args []string, verb string) error {
 	case "fail", "block", "reset":
 		fs.StringVar(&reason, "reason", "", "reason")
 	}
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned task envelope")
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	if err := parseFlags(fs, rest); err != nil {
@@ -286,7 +297,18 @@ func runTaskTransition(args []string, verb string) error {
 		return err
 	}
 	if *jsonOut {
-		return printJSONEnvelope("task", taskEnvelopeData{Session: session, Task: t})
+		return printJSONEnvelope("task_"+verb, mutationResult{
+			Command: "task " + verb,
+			Status:  t.Status,
+			Project: projectDir,
+			Session: session,
+			ID:      t.ID,
+			Role:    t.AssignedTo,
+			Actions: []mutationAction{
+				followUp("show", "show task", "amq-squad task show "+shellQuote(t.ID)+" --project "+shellQuote(projectDir)+" --session "+shellQuote(session)+" --json"),
+				followUp("list", "list tasks", "amq-squad task list --project "+shellQuote(projectDir)+" --session "+shellQuote(session)+" --json"),
+			},
+		})
 	}
 	fmt.Printf("%s is now %s", t.ID, t.Status)
 	if t.AssignedTo != "" {

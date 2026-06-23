@@ -98,6 +98,10 @@ func resolveAMQContext(projectFlag, session, me string, projectSet bool) (amqCon
 	if err != nil {
 		return amqContext{}, err
 	}
+	return resolveAMQContextForProject(projectDir, session, me)
+}
+
+func resolveAMQContextForProject(projectDir, session, me string) (amqContext, error) {
 	env, err := resolveAMQEnvForAMQCommand(projectDir, "", session, me)
 	if err != nil {
 		return amqContext{}, err
@@ -112,6 +116,14 @@ func resolveAMQContext(projectFlag, session, me string, projectSet bool) (amqCon
 		Root:       absoluteAMQRoot(projectDir, env.Root),
 		Me:         handle,
 	}, nil
+}
+
+func resolveAMQBaseRootForProject(projectDir, session, me string) (string, error) {
+	ctx, err := resolveAMQContextForProject(projectDir, session, me)
+	if err != nil {
+		return "", err
+	}
+	return chooseProjectBaseRoot(projectDir, ctx.Env), nil
 }
 
 func amqCommandEnv(ctx amqContext) []string {

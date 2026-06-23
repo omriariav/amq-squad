@@ -43,6 +43,36 @@ func TestTeamMemberAddAppendsAndPersists(t *testing.T) {
 	}
 }
 
+func TestTeamMemberMutationJSONEnvelopes(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	stdout, _, err := captureOutput(t, func() error {
+		return runTeamMember([]string{"add", "qa", "--binary", "codex", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("member add --json: %v", err)
+	}
+	added := decodeJSONEnvelope[mutationResult](t, stdout)
+	if added.Kind != "team_member_add" || added.Data.Role != "qa" || added.Data.Handle != "qa" || !sameResolvedDir(added.Data.Project, dir) {
+		t.Fatalf("bad member add envelope: %+v", added)
+	}
+	if strings.Contains(stdout, "added qa") {
+		t.Fatalf("--json must not include human output:\n%s", stdout)
+	}
+
+	stdout, _, err = captureOutput(t, func() error {
+		return runTeamMember([]string{"rm", "qa", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("member rm --json: %v", err)
+	}
+	removed := decodeJSONEnvelope[mutationResult](t, stdout)
+	if removed.Kind != "team_member_rm" || removed.Data.Status != "removed" || removed.Data.Role != "qa" {
+		t.Fatalf("bad member rm envelope: %+v", removed)
+	}
+}
+
 func TestTeamMemberAddRecordsSpawnDepthAndRejectsChildSpawn(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Orchestrated: true,

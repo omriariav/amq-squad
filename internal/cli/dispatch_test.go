@@ -79,6 +79,32 @@ func TestRunDispatchPrintsSessionAwareSummary(t *testing.T) {
 	}
 }
 
+func TestRunDispatchJSONEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"},
+		"Sent msg-123 to qa (session: , root: /x/.agent-mail/issue-96)\n")
+	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch --json: %v", err)
+	}
+	env := decodeJSONEnvelope[mutationResult](t, stdout)
+	if env.Kind != "dispatch" || env.Data.Status != "queued_and_nudged" || env.Data.MessageID != "msg-123" || env.Data.Handle != "qa" {
+		t.Fatalf("bad dispatch envelope: %+v", env)
+	}
+	if strings.Contains(stdout, "Dispatched todo") {
+		t.Fatalf("--json must not include human output:\n%s", stdout)
+	}
+	if len(*nudges) != 1 {
+		t.Fatalf("expected one nudge, got %v", *nudges)
+	}
+}
+
 func TestClassifyNudgeResult(t *testing.T) {
 	busy := func(string) (bool, error) { return true, nil }
 	idle := func(string) (bool, error) { return false, nil }

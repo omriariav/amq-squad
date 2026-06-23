@@ -236,8 +236,8 @@ func TestResolveControlTargetFallbackReturnsPaneID(t *testing.T) {
 
 func TestMemberActions(t *testing.T) {
 	acts := memberActions("/Code/app", team.DefaultProfile, "issue-96", "cto", true)
-	if len(acts) != 4 {
-		t.Fatalf("want 4 actions, got %d", len(acts))
+	if len(acts) != 6 {
+		t.Fatalf("want 6 actions, got %d", len(acts))
 	}
 	byKind := map[string]runtimeActionJSON{}
 	for _, a := range acts {
@@ -246,8 +246,8 @@ func TestMemberActions(t *testing.T) {
 	if !byKind["focus"].Available || !byKind["send"].Available {
 		t.Errorf("focus/send should be available when the pane is alive")
 	}
-	if !byKind["resume"].Available || !byKind["status"].Available {
-		t.Errorf("resume/status should always be available")
+	if !byKind["resume"].Available || !byKind["status"].Available || !byKind["dispatch"].Available || !byKind["task_list"].Available {
+		t.Errorf("resume/status/dispatch/task_list should always be available")
 	}
 	// #7 schema: each action carries a label, an agent scope, and mutate/confirm
 	// metadata so a client can render a confirm-gated executable action.
@@ -255,10 +255,12 @@ func TestMemberActions(t *testing.T) {
 		mutates, confirm bool
 		scope            string
 	}{
-		"focus":  {false, false, "agent"},   // has --role
-		"send":   {true, true, "agent"},     // has --role
-		"resume": {true, true, "session"},   // session resume (no --role)
-		"status": {false, false, "session"}, // session board (no --role)
+		"focus":     {false, false, "agent"},   // has --role
+		"send":      {true, true, "agent"},     // has --role
+		"dispatch":  {true, true, "agent"},     // has --role
+		"resume":    {true, true, "session"},   // session resume (no --role)
+		"status":    {false, false, "session"}, // session board (no --role)
+		"task_list": {false, false, "session"},
 	}
 	for k, want := range wantMeta {
 		a := byKind[k]
@@ -278,9 +280,13 @@ func TestMemberActions(t *testing.T) {
 			t.Errorf("%s is session-scoped but command has --role: %q", k, a.Command)
 		}
 	}
-	for _, k := range []string{"focus", "send", "resume", "status"} {
+	for _, k := range []string{"focus", "send", "resume", "status", "dispatch", "task_list"} {
 		cmd := byKind[k].Command
-		if !strings.HasPrefix(cmd, "amq-squad "+k) {
+		verb := k
+		if k == "task_list" {
+			verb = "task list"
+		}
+		if !strings.HasPrefix(cmd, "amq-squad "+verb) {
 			t.Errorf("%s command = %q, want it to start with the verb", k, cmd)
 		}
 		if !strings.Contains(cmd, "--session issue-96") || !strings.Contains(cmd, "--project /Code/app") {
@@ -295,7 +301,7 @@ func TestMemberActions(t *testing.T) {
 	if !strings.Contains(named[0].Command, "--profile review") {
 		t.Errorf("named profile not in command: %q", named[0].Command)
 	}
-	// Dead pane -> focus/send unavailable WITH a reason; resume/status stay
+	// Dead pane -> focus/send unavailable WITH a reason; other actions stay
 	// available with no reason.
 	dead := memberActions("/Code/app", team.DefaultProfile, "issue-96", "cto", false)
 	for _, a := range dead {
@@ -398,7 +404,7 @@ func TestSessionActions(t *testing.T) {
 	for _, a := range acts {
 		byKind[a.Kind] = a
 	}
-	want := []string{"status", "resume_preview", "resume_current_window", "resume_new_session", "stop"}
+	want := []string{"status", "resume_preview", "resume_current_window", "resume_new_session", "stop", "task_list"}
 	if len(acts) != len(want) {
 		t.Fatalf("want %d session actions, got %d", len(want), len(acts))
 	}

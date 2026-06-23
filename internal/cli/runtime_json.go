@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/runtimeaction"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -128,59 +129,14 @@ func fillPaneAliveFromLiveness(rt *tmuxRuntimeJSON, live map[string]bool, livene
 // instead of assembling tmux or amq-squad invocations themselves. The structured
 // metadata (mutates / needs_confirmation / available / reason) lets a client
 // gate an EXECUTABLE action deterministically without hard-coding policy.
-type runtimeActionJSON struct {
-	// Kind is the stable id of the action (focus | send | resume | status).
-	Kind string `json:"kind"`
-	// Label is a short human-facing name for the action.
-	Label string `json:"label"`
-	// Scope is the action's target granularity (currently always "agent").
-	Scope             string `json:"scope"`
-	Command           string `json:"command"`
-	Mutates           bool   `json:"mutates"`            // changes squad/agent state
-	NeedsConfirmation bool   `json:"needs_confirmation"` // a client should confirm first
-	Available         bool   `json:"available"`
-	// Reason explains why an action is unavailable in the current context;
-	// empty when available.
-	Reason string `json:"reason,omitempty"`
-}
+type runtimeActionJSON = runtimeaction.Action
 
 // memberActions builds the per-member action catalog. focus/send require a live
 // pane (paneAlive); resume and status are always available. Each action carries
 // the metadata a client needs to render a confirm-gated executable action. The
 // project flag is included so the command is runnable from anywhere.
 func memberActions(projectDir, profile, session, role string, paneAlive bool) []runtimeActionJSON {
-	base := "amq-squad"
-	scope := " --project " + shellQuote(projectDir)
-	if profile != "" && profile != team.DefaultProfile {
-		scope += " --profile " + shellQuote(profile)
-	}
-	scope += " --session " + shellQuote(session)
-	roleArg := " --role " + shellQuote(role)
-	deadReason := ""
-	if !paneAlive {
-		deadReason = "agent pane is not live"
-	}
-	// focus/send carry --role (agent scope); resume/status as commanded here act
-	// on the whole session (no --role), so their scope is "session". A per-agent
-	// dedicated catalog with agent-scoped resume/restart is a follow-up.
-	return []runtimeActionJSON{
-		{Kind: "focus", Label: "focus pane", Scope: "agent", Mutates: false, NeedsConfirmation: false, Available: paneAlive, Reason: deadReason, Command: base + " focus" + scope + roleArg},
-		{Kind: "send", Label: "send a prompt", Scope: "agent", Mutates: true, NeedsConfirmation: true, Available: paneAlive, Reason: deadReason, Command: base + " send" + scope + roleArg + " --body-file -"},
-		{Kind: "resume", Label: "resume session", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " resume" + scope + " --exec"},
-		{Kind: "status", Label: "show session status", Scope: "session", Mutates: false, NeedsConfirmation: false, Available: true, Command: base + " status" + scope + " --json"},
-	}
-}
-
-// commandScope renders the shared "--project D [--profile P] --session S" tail
-// for project-scoped runtime commands, so member and session actions stay in
-// lockstep.
-func commandScope(projectDir, profile, session string) string {
-	scope := " --project " + shellQuote(projectDir)
-	if profile != "" && profile != team.DefaultProfile {
-		scope += " --profile " + shellQuote(profile)
-	}
-	scope += " --session " + shellQuote(session)
-	return scope
+	return runtimeaction.Member(projectDir, profile, session, role, paneAlive)
 }
 
 // sessionActions builds the SESSION-scope operator action catalog for a
@@ -195,33 +151,7 @@ func commandScope(projectDir, profile, session string) string {
 // so a client can open/attach the session in iTerm2's tmux -CC control mode;
 // when empty it is omitted (no attach target to point at).
 func sessionActions(projectDir, profile, session, tmuxSession string) []runtimeActionJSON {
-	base := "amq-squad"
-	scope := commandScope(projectDir, profile, session)
-	actions := []runtimeActionJSON{
-		{Kind: "status", Label: "show session status", Scope: "session", Mutates: false, NeedsConfirmation: false, Available: true, Command: base + " status" + scope + " --json"},
-		{Kind: "resume_preview", Label: "preview resume plan", Scope: "session", Mutates: false, NeedsConfirmation: false, Available: true, Command: base + " resume" + scope + " --json"},
-		{Kind: "resume_current_window", Label: "resume in current window", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " resume" + scope + " --exec --target current-window"},
-		{Kind: "resume_new_session", Label: "resume in new tmux session", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " resume" + scope + " --exec --target new-session"},
-		{Kind: "stop", Label: "stop the session", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: base + " stop" + scope + " --all"},
-	}
-	// attach_control is a raw tmux command for the OPERATOR/NOC to run (NOT an
-	// amq-squad subcommand): `tmux -CC attach` is an interactive foreground
-	// client attach, so it is print/copy-oriented and amq-squad never execs it.
-	// Under iTerm2's tmux -CC control mode it gets native rendering and lets
-	// modified keys (e.g. Shift+Enter) reach the agent. It only makes sense when
-	// the workstream has a live tmux session, so it is appended only then.
-	if tmuxSession != "" {
-		actions = append(actions, runtimeActionJSON{
-			Kind:              "attach_control",
-			Label:             "open in iTerm2 (tmux -CC)",
-			Scope:             "session",
-			Mutates:           false,
-			NeedsConfirmation: false,
-			Available:         true,
-			Command:           "tmux -CC attach -t " + shellQuote(tmuxSession),
-		})
-	}
-	return actions
+	return runtimeaction.Session(projectDir, profile, session, tmuxSession)
 }
 
 // firstLiveTmuxSession returns the tmux session name of the first status row
