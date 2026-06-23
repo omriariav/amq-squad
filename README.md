@@ -24,11 +24,11 @@ The load-bearing constraint, and why this is amq-squad-native rather than "just 
 
 Composition is a spectrum, and **manual stays the floor**:
 
-| Mode | Who composes the team | Status in 2.0 |
+| Mode | Who composes the team | Status |
 | --- | --- | --- |
 | **Manual** | You design the roster up front (`team init` / the setup wizard). | first-class, unchanged |
 | **Seeded** | The lead **proposes** each spawn from the goal; the **operator approves** it over a `gate/<topic>` thread. | shipped |
-| **Autonomous** | The lead spawns/prunes within guardrails, no per-spawn approval. | future |
+| **Autonomous** | The lead spawns/prunes within an explicit policy, no per-spawn approval. | opt-in MVP |
 
 Three binary-neutral primitives make it work, and all of them round-trip through stop/resume so a resumed session rebuilds the team the lead **built**, not the seed:
 
@@ -357,6 +357,70 @@ amq-squad brief seed --session issue-96 --seed-from issue:31
 - Without `--dry-run`: writes `.amq-squad/briefs/<session>.md` and brings the team up in the same call. `--seed-from` needs `--force` to overwrite an existing brief; a bare `up` (no `--seed-from`) keeps it.
 
 The `amq-team-setup` skill wraps this in a wizard: it captures a goal from **any** source you have — an inline prompt, a local `.md`, a GitHub issue or PR, a Jira key, or a doc URL — fetches it agent-side (amq-squad core stays tracker-neutral), and drafts a **canonical brief** (Goal / Source / Scope / Out of scope / Acceptance) for you to confirm before it is saved. The brief is per-session.
+
+### Goal draft
+
+`amq-squad goal draft` is the fast, preview-first setup helper for repeated
+goal-first runs. It turns a short goal, and optionally a GitHub milestone, into
+a deterministic setup plan without writing files, mutating rosters, creating
+tasks, sending AMQ messages, or launching agents.
+
+```sh
+amq-squad goal draft \
+  --goal "deliver GitHub milestone v2.7.0" \
+  --repo omriariav/amq-squad \
+  --milestone v2.7.0 \
+  --session v2-7-0 \
+  --profile codex-v2-7-0
+
+amq-squad goal draft --goal "fix issue 96" --session issue-96 --json
+```
+
+The draft includes a brief skeleton, proposed roster, task-store plan, seeded
+spawn-gate prompts, initial dispatch prompts, and the equivalent orchestrator
+`/goal --goal` prompt. Use it before `amq-team-setup` or the
+`amq-squad-orchestrator` skill when you want a fast starting point, then review
+and explicitly approve any real setup mutations. Manual setup remains the right
+path when the team shape is already known or the goal needs unusual constraints.
+
+For an Autonomous preview, opt in explicitly and include a bounded policy:
+
+```sh
+amq-squad goal draft \
+  --goal "deliver GitHub milestone v2.7.0" \
+  --session v2-7-0 \
+  --composition autonomous \
+  --max-agents 4 \
+  --max-total-spawns 3 \
+  --allowed-roles goal-dev,runtime-dev,cli-dev \
+  --budget-turns 20
+```
+
+Autonomous mode is never inferred from the goal text. A profile must be
+orchestrated and must declare `--composition autonomous` with positive
+`--max-agents`, `--max-total-spawns`, and `--budget-turns`, plus either
+`--allowed-roles` or `--allowed-role-classes`. `amq-squad status --json` and the
+status board expose the effective policy, counters, and remaining budget.
+
+Pause or permanently shut off an autonomous profile without editing JSON:
+
+```sh
+amq-squad team autonomous show --json
+amq-squad team autonomous pause
+amq-squad team autonomous resume
+amq-squad team autonomous disable
+```
+
+Autonomous only covers composition decisions inside that policy. It does not
+authorize merges, pushes, releases, destructive filesystem actions, external
+communications, provider side effects, or child-agent self-spawn authority.
+Those still require the normal operator/lead path. The runtime authorization
+path records JSONL audit evidence under
+`.amq-squad/autonomous/<session>/audit.jsonl` and persists policy counters
+before returning an allowed spawn/prune decision. Prune requests must include
+measured idle age, explicit evidence that active task linkage was checked, and
+no linked active tasks; `--idle-reap-minutes` sets the minimum idle age before
+pruning is allowed.
 
 ### Profiles (schema 3)
 

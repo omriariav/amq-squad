@@ -98,6 +98,44 @@ type OperatorView struct {
 	Runnable bool   `json:"runnable"`
 }
 
+const (
+	CompositionSeeded     = "seeded"
+	CompositionAutonomous = "autonomous"
+)
+
+type AutonomousPolicy struct {
+	MaxActiveAgents    int             `json:"max_active_agents"`
+	MaxTotalSpawns     int             `json:"max_total_spawns"`
+	AllowedRoles       []string        `json:"allowed_roles,omitempty"`
+	AllowedRoleClasses []string        `json:"allowed_role_classes,omitempty"`
+	BudgetTurns        int             `json:"budget_turns"`
+	IdleReapMinutes    int             `json:"idle_reap_minutes,omitempty"`
+	Paused             bool            `json:"paused,omitempty"`
+	Disabled           bool            `json:"disabled,omitempty"`
+	State              AutonomousState `json:"state,omitempty"`
+}
+
+type AutonomousState struct {
+	TotalSpawns     int `json:"total_spawns,omitempty"`
+	BudgetTurnsUsed int `json:"budget_turns_used,omitempty"`
+}
+
+type AutonomousStatus struct {
+	Composition      string            `json:"composition"`
+	Enabled          bool              `json:"enabled"`
+	Paused           bool              `json:"paused,omitempty"`
+	Disabled         bool              `json:"disabled,omitempty"`
+	Policy           *AutonomousPolicy `json:"policy,omitempty"`
+	ActiveAgents     int               `json:"active_agents"`
+	MaxActiveAgents  int               `json:"max_active_agents,omitempty"`
+	TotalSpawns      int               `json:"total_spawns,omitempty"`
+	MaxTotalSpawns   int               `json:"max_total_spawns,omitempty"`
+	BudgetTurnsUsed  int               `json:"budget_turns_used,omitempty"`
+	BudgetTurns      int               `json:"budget_turns,omitempty"`
+	BudgetTurnsLeft  int               `json:"budget_turns_left,omitempty"`
+	OperatorRequired []string          `json:"operator_required,omitempty"`
+}
+
 // Capabilities is derived client metadata. It is intentionally not persisted
 // in team.json so hand-edited configs cannot drift.
 type Capabilities struct {
@@ -153,8 +191,10 @@ type Team struct {
 	// default off; the generated team-rules.md gains the orchestration reporting
 	// norm only when it is true. Lead names the lead role (a member role, never the
 	// operator/NOC) and is required when Orchestrated is set.
-	Orchestrated bool   `json:"orchestrated,omitempty"`
-	Lead         string `json:"lead,omitempty"`
+	Orchestrated bool              `json:"orchestrated,omitempty"`
+	Lead         string            `json:"lead,omitempty"`
+	Composition  string            `json:"composition,omitempty"`
+	Autonomous   *AutonomousPolicy `json:"autonomous,omitempty"`
 	// MaxSpawnDepth caps runtime composition fan-out. Zero means the safe
 	// default of 1: the operator-launched lead may add direct children, but
 	// children cannot add grandchildren.
@@ -210,6 +250,45 @@ func EffectiveMaxSpawnDepth(t Team) int {
 		return t.MaxSpawnDepth
 	}
 	return 1
+}
+
+func EffectiveComposition(t Team) string {
+	if strings.TrimSpace(t.Composition) == "" {
+		return CompositionSeeded
+	}
+	return t.Composition
+}
+
+func EffectiveAutonomousStatus(t Team) AutonomousStatus {
+	composition := EffectiveComposition(t)
+	status := AutonomousStatus{
+		Composition:      composition,
+		Enabled:          composition == CompositionAutonomous && t.Autonomous != nil && !t.Autonomous.Disabled,
+		ActiveAgents:     len(t.Members),
+		OperatorRequired: []string{"merge", "push", "release", "destructive-filesystem", "external-communication", "provider-side-effect"},
+	}
+	if t.Autonomous == nil {
+		return status
+	}
+	p := *t.Autonomous
+	p.AllowedRoles = append([]string(nil), p.AllowedRoles...)
+	p.AllowedRoleClasses = append([]string(nil), p.AllowedRoleClasses...)
+	status.Policy = &p
+	status.Paused = p.Paused
+	status.Disabled = p.Disabled
+	status.MaxActiveAgents = p.MaxActiveAgents
+	status.TotalSpawns = p.State.TotalSpawns
+	status.MaxTotalSpawns = p.MaxTotalSpawns
+	status.BudgetTurnsUsed = p.State.BudgetTurnsUsed
+	status.BudgetTurns = p.BudgetTurns
+	if p.BudgetTurns > 0 {
+		left := p.BudgetTurns - p.State.BudgetTurnsUsed
+		if left < 0 {
+			left = 0
+		}
+		status.BudgetTurnsLeft = left
+	}
+	return status
 }
 
 // Path returns the team.json path for the default profile under projectDir.
@@ -413,6 +492,9 @@ func Validate(t Team) error {
 	if t.MaxSpawnDepth < 0 {
 		return fmt.Errorf("max_spawn_depth: cannot be negative")
 	}
+	if err := validateComposition(t); err != nil {
+		return err
+	}
 	operatorHandle := ""
 	if t.Operator == nil {
 		operatorHandle = DefaultOperatorHandle
@@ -467,6 +549,62 @@ func Validate(t Team) error {
 			}
 			seenHandles[handle] = true
 		}
+	}
+	return nil
+}
+
+func validateComposition(t Team) error {
+	mode := EffectiveComposition(t)
+	switch mode {
+	case CompositionSeeded:
+		if t.Autonomous != nil {
+			return fmt.Errorf("autonomous: set composition=%q before configuring autonomous policy", CompositionAutonomous)
+		}
+		return nil
+	case CompositionAutonomous:
+		if !t.Orchestrated {
+			return fmt.Errorf("composition: autonomous requires orchestrated=true")
+		}
+		if t.Autonomous == nil {
+			return fmt.Errorf("autonomous: policy is required when composition=autonomous")
+		}
+		return ValidateAutonomousPolicy(*t.Autonomous)
+	default:
+		return fmt.Errorf("composition: invalid mode %q: use %s or %s", t.Composition, CompositionSeeded, CompositionAutonomous)
+	}
+}
+
+func ValidateAutonomousPolicy(p AutonomousPolicy) error {
+	if p.MaxActiveAgents <= 0 {
+		return fmt.Errorf("autonomous.max_active_agents: must be positive")
+	}
+	if p.MaxTotalSpawns <= 0 {
+		return fmt.Errorf("autonomous.max_total_spawns: must be positive")
+	}
+	if p.BudgetTurns <= 0 {
+		return fmt.Errorf("autonomous.budget_turns: must be positive")
+	}
+	if p.IdleReapMinutes < 0 {
+		return fmt.Errorf("autonomous.idle_reap_minutes: cannot be negative")
+	}
+	if len(p.AllowedRoles) == 0 && len(p.AllowedRoleClasses) == 0 {
+		return fmt.Errorf("autonomous.allowed_roles: at least one allowed role or role class is required")
+	}
+	for i, role := range p.AllowedRoles {
+		if err := ValidateRoleID(role); err != nil {
+			return fmt.Errorf("autonomous.allowed_roles[%d]: %w", i, err)
+		}
+	}
+	for i, class := range p.AllowedRoleClasses {
+		if err := validateSlug("role class", class, true); err != nil {
+			return fmt.Errorf("autonomous.allowed_role_classes[%d]: %w", i, err)
+		}
+	}
+	if p.State.TotalSpawns < 0 {
+		return fmt.Errorf("autonomous.state.total_spawns: cannot be negative")
+	}
+	if p.State.BudgetTurnsUsed < 0 {
+		return fmt.Errorf("autonomous.state.budget_turns_used: cannot be negative")
 	}
 	return nil
 }

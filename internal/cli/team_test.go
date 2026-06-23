@@ -1426,6 +1426,98 @@ func TestRunTeamInitNonOrchestratedOmitsNorm(t *testing.T) {
 	}
 }
 
+func TestRunTeamInitSeededIsDefaultComposition(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := runTeamInit([]string{"--roles", "cto,fullstack"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	tm, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if got := team.EffectiveComposition(tm); got != team.CompositionSeeded {
+		t.Fatalf("composition = %q, want seeded", got)
+	}
+	if tm.Autonomous != nil {
+		t.Fatalf("seeded default should not persist autonomous policy: %+v", tm.Autonomous)
+	}
+}
+
+func TestRunTeamInitAutonomousPersistsExplicitPolicy(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := runTeamInit([]string{
+		"--roles", "cto,fullstack",
+		"--orchestrated", "--lead", "cto",
+		"--composition", "autonomous",
+		"--max-agents", "4",
+		"--max-total-spawns", "3",
+		"--allowed-roles", "fullstack,qa",
+		"--budget-turns", "20",
+	}); err != nil {
+		t.Fatalf("runTeamInit autonomous: %v", err)
+	}
+	tm, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if got := team.EffectiveComposition(tm); got != team.CompositionAutonomous {
+		t.Fatalf("composition = %q, want autonomous", got)
+	}
+	if tm.Autonomous == nil {
+		t.Fatal("autonomous policy missing")
+	}
+	if tm.Autonomous.MaxActiveAgents != 4 || tm.Autonomous.MaxTotalSpawns != 3 || tm.Autonomous.BudgetTurns != 20 {
+		t.Fatalf("autonomous policy mismatch: %+v", tm.Autonomous)
+	}
+	if strings.Join(tm.Autonomous.AllowedRoles, ",") != "fullstack,qa" {
+		t.Fatalf("allowed roles = %v", tm.Autonomous.AllowedRoles)
+	}
+}
+
+func TestRunTeamInitAutonomousRequiresExplicitPolicy(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	err := runTeamInit([]string{"--roles", "cto,fullstack", "--orchestrated", "--lead", "cto", "--composition", "autonomous"})
+	if err == nil || !strings.Contains(err.Error(), "max_active_agents") {
+		t.Fatalf("expected missing policy error, got %v", err)
+	}
+	if team.Exists(dir) {
+		t.Fatal("invalid autonomous policy should not write team.json")
+	}
+}
+
+func TestRunTeamAutonomousPauseAndDisable(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := runTeamInit([]string{
+		"--roles", "cto,fullstack",
+		"--orchestrated", "--lead", "cto",
+		"--composition", "autonomous",
+		"--max-agents", "4",
+		"--max-total-spawns", "3",
+		"--allowed-roles", "fullstack",
+		"--budget-turns", "20",
+	}); err != nil {
+		t.Fatalf("runTeamInit autonomous: %v", err)
+	}
+	if err := runTeamAutonomous([]string{"pause"}); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	tm, _ := team.Read(dir)
+	if tm.Autonomous == nil || !tm.Autonomous.Paused {
+		t.Fatalf("pause did not persist: %+v", tm.Autonomous)
+	}
+	if err := runTeamAutonomous([]string{"disable"}); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	tm, _ = team.Read(dir)
+	if tm.Autonomous == nil || !tm.Autonomous.Disabled {
+		t.Fatalf("disable did not persist: %+v", tm.Autonomous)
+	}
+}
+
 func TestRunTeamInitLeadImpliesOrchestrated(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
