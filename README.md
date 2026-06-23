@@ -32,8 +32,8 @@ Composition is a spectrum, and **manual stays the floor**:
 
 Three binary-neutral primitives make it work, and all of them round-trip through stop/resume so a resumed session rebuilds the team the lead **built**, not the seed:
 
-- **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted).
-- **Native task store** — `amq-squad task add/list/claim/done/fail/block`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/`, so a lead of either binary decomposes the goal into claimable work.
+- **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted). Add `--launch --dry-run` or `rm --stop --dry-run` to preview exact runtime actions before running them.
+- **Native task store** — `amq-squad task add/list/show/claim/done/fail/block/reset`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/`, so a lead of either binary decomposes the goal into claimable work.
 - **Compose-from-goal playbook** — the `amq-squad-orchestrator` skill (in both the Claude and Codex marketplaces) drives propose → approve → `team member add` → `task add` → prune.
 
 In practice — you stand up an orchestrated squad, then the lead composes and drives it:
@@ -45,7 +45,7 @@ amq-squad new session issue-96 --seed-from issue:96 --target new-window
 
 # The cto lead loads the amq-squad-orchestrator skill and, as the work reveals needs:
 amq-squad team member add fullstack --binary codex --session issue-96  # grow the roster
-amq-squad task add --title "implement the fix" --session issue-96      # decompose the goal
+amq-squad dispatch --session issue-96 --role fullstack --create-task --subject "implement the fix" --body "..."
 ```
 
 ### Breaking changes
@@ -565,13 +565,22 @@ amq-squad brief seed --session NAME --seed-from REF [--project DIR] [--force]
                                   launching the team. Use --dry-run to preview.
 amq-squad task add --title T [--desc D] [--depends-on id,...] [--assign role] --session S
 amq-squad task list [--status S] [--json] --session S
+amq-squad task show <id> [--json] --session S
 amq-squad task claim <id> --me HANDLE --session S
-amq-squad task done <id> [--evidence E] --session S
-amq-squad task fail|block <id> [--reason R] --session S
+amq-squad task done <id> --me HANDLE [--evidence E] --session S
+amq-squad task fail|block <id> --me HANDLE [--reason R] --session S
+amq-squad task reset <id> --me HANDLE [--reason R] --session S
                                   Native pull-based, dependency-gated task store
                                   under .amq-squad/tasks/<session>/. A task is
                                   claimable only once its --depends-on tasks are
-                                  completed. All subcommands require --session.
+                                  completed. Terminal/reset transitions on an
+                                  assigned task require the assignee's --me.
+                                  All subcommands require --session.
+amq-squad dispatch --session S --role R --subject SUBJ --body BODY [--create-task | --task ID] [--json]
+                                  Queue a durable AMQ message and best-effort
+                                  drain nudge. Plain dispatch stays AMQ-only;
+                                  --create-task creates and links a native task,
+                                  while --task links an existing task id.
 amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
                                   Adopt the current tmux pane as an
                                   operator-owned external lead for an

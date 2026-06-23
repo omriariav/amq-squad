@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -31,9 +32,25 @@ type dispatchOutcome struct {
 	Skipped string
 }
 
+type dispatchEnvelopeData struct {
+	Session   string          `json:"session"`
+	Role      string          `json:"role"`
+	Assignee  string          `json:"assignee"`
+	Thread    string          `json:"thread,omitempty"`
+	Kind      string          `json:"kind"`
+	MessageID string          `json:"message_id,omitempty"`
+	TaskID    string          `json:"task_id,omitempty"`
+	Root      string          `json:"root"`
+	Nudge     dispatchOutcome `json:"nudge"`
+}
+
 // dispatchWakePane delivers dispatchNudgePrompt to a member's live pane. It is a
 // package var so tests can drive runDispatch without a tmux server.
 var dispatchWakePane = defaultDispatchWakePane
+
+// dispatchLinkTask is a seam for partial-failure tests around post-send task
+// metadata linkage. Production uses taskstore.LinkDispatch directly.
+var dispatchLinkTask = taskstore.LinkDispatch
 
 func runDispatch(args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
@@ -50,6 +67,9 @@ func runDispatch(args []string) error {
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	forceFlag := fs.Bool("force", false, "nudge the pane even if the agent looks busy (mid-turn)")
 	noWakeFlag := fs.Bool("no-wake", false, "queue the durable task without nudging the pane")
+	createTaskFlag := fs.Bool("create-task", false, "create and link a native task-store task before dispatch")
+	taskIDFlag := fs.String("task", "", "link dispatch metadata to an existing native task id")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned dispatch envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad dispatch - queue a durable task for a child and wake it to drain
 
@@ -57,7 +77,7 @@ Usage:
   amq-squad dispatch [--project DIR] [--profile NAME] --session S --role ROLE
                      [--from HANDLE] [--thread THREAD] [--kind todo] --subject SUBJ
                      (--body TEXT | --body-file FILE) [--priority P]
-                     [--force] [--no-wake]
+                     [--force] [--no-wake] [--create-task | --task ID] [--json]
 
 The deterministic lead-to-child dispatch. It does two things, in order:
   1. Sends a DURABLE AMQ message to the workstream's resolved root (the single
@@ -88,6 +108,9 @@ Examples:
 	}
 	if strings.TrimSpace(*subjectFlag) == "" {
 		return usageErrorf("dispatch requires --subject")
+	}
+	if *createTaskFlag && strings.TrimSpace(*taskIDFlag) != "" {
+		return usageErrorf("--create-task and --task are mutually exclusive")
 	}
 	taskBody, err := readPromptBody(*body, *bodyFile, flagWasSet(fs, "body"), flagWasSet(fs, "body-file"), os.Stdin, stdinIsInteractive())
 	if err != nil {
@@ -142,28 +165,73 @@ Examples:
 	}
 	ctx := amqContext{ProjectDir: cwd, Env: env, Root: absoluteAMQRoot(cwd, env.Root), Me: from}
 
+	taskID := strings.TrimSpace(*taskIDFlag)
+	if *createTaskFlag {
+		created, err := taskstore.Add(projectDir, workstream, taskstore.AddInput{
+			Title:       *subjectFlag,
+			Description: taskBody,
+			AssignTo:    member.Handle,
+		}, taskNow())
+		if err != nil {
+			return fmt.Errorf("create native task for dispatch: %w", err)
+		}
+		taskID = created.ID
+	} else if taskID != "" {
+		if _, err := taskstore.Show(projectDir, workstream, taskID); err != nil {
+			return fmt.Errorf("link native task for dispatch: %w", err)
+		}
+	}
+
 	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag)
 	out, err := runAMQCommand(amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: sendCmd})
 	if err != nil {
 		return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
+	}
+	msgID := parseSentMessageID(string(out))
+	if taskID != "" {
+		linked, lerr := dispatchLinkTask(projectDir, workstream, taskID, taskstore.Dispatch{
+			Assignee:  member.Handle,
+			Thread:    *threadFlag,
+			Kind:      *kindFlag,
+			Subject:   *subjectFlag,
+			MessageID: msgID,
+		}, taskNow())
+		if lerr != nil {
+			return fmt.Errorf("link native task %s to dispatch: %w", taskID, lerr)
+		}
+		taskID = linked.ID
 	}
 	// Print our OWN authoritative, session-aware summary rather than echoing
 	// `amq send`'s raw line — that line renders an empty "session:" for a
 	// --root-only send, which reads like a bug. We know the session, root, and
 	// handle here; pull the message id out of amq's output. Fall back to amq's
 	// raw line only if the id can't be parsed (so nothing is ever hidden).
-	if msgID := parseSentMessageID(string(out)); msgID != "" {
-		fmt.Printf("Dispatched %s to %s (handle %s) on session %s — msg %s (root %s)\n",
-			*kindFlag, *roleFlag, member.Handle, workstream, msgID, ctx.Root)
-	} else {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			fmt.Println(msg)
+	if !*jsonOut {
+		if msgID != "" {
+			taskText := ""
+			if taskID != "" {
+				taskText = fmt.Sprintf(" — task %s", taskID)
+			}
+			fmt.Printf("Dispatched %s to %s (handle %s) on session %s — msg %s%s (root %s)\n",
+				*kindFlag, *roleFlag, member.Handle, workstream, msgID, taskText, ctx.Root)
+		} else {
+			if msg := strings.TrimSpace(string(out)); msg != "" {
+				fmt.Println(msg)
+			}
+			quietNotice("Queued %s task for %s (handle %s) at %s.\n", *kindFlag, *roleFlag, member.Handle, ctx.Root)
 		}
-		quietNotice("Queued %s task for %s (handle %s) at %s.\n", *kindFlag, *roleFlag, member.Handle, ctx.Root)
 	}
 
+	outcome := dispatchOutcome{}
 	if *noWakeFlag {
 		quietNotice("Skipped pane nudge (--no-wake); %s drains the task on its next turn.\n", *roleFlag)
+		if *jsonOut {
+			return printJSONEnvelope("dispatch", dispatchEnvelopeData{
+				Session: workstream, Role: *roleFlag, Assignee: member.Handle, Thread: *threadFlag,
+				Kind: *kindFlag, MessageID: msgID, TaskID: taskID, Root: ctx.Root,
+				Nudge: dispatchOutcome{Skipped: "--no-wake"},
+			})
+		}
 		return nil
 	}
 
@@ -173,12 +241,25 @@ Examples:
 		// dispatch failure. Surface it (warnings bypass quietNotice) so the
 		// operator can nudge or resume manually, but exit 0.
 		fmt.Fprintf(os.Stderr, "warning: task queued, but the pane nudge failed: %v\n", werr)
+		if *jsonOut {
+			return printJSONEnvelope("dispatch", dispatchEnvelopeData{
+				Session: workstream, Role: *roleFlag, Assignee: member.Handle, Thread: *threadFlag,
+				Kind: *kindFlag, MessageID: msgID, TaskID: taskID, Root: ctx.Root,
+				Nudge: dispatchOutcome{Skipped: werr.Error()},
+			})
+		}
 		return nil
 	}
 	if outcome.PaneID != "" {
 		quietNotice("Nudged %s pane %s to drain.\n", *roleFlag, outcome.PaneID)
 	} else {
 		quietNotice("Task queued; pane not nudged: %s\n", outcome.Skipped)
+	}
+	if *jsonOut {
+		return printJSONEnvelope("dispatch", dispatchEnvelopeData{
+			Session: workstream, Role: *roleFlag, Assignee: member.Handle, Thread: *threadFlag,
+			Kind: *kindFlag, MessageID: msgID, TaskID: taskID, Root: ctx.Root, Nudge: outcome,
+		})
 	}
 	return nil
 }

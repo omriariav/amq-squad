@@ -396,9 +396,11 @@ the lead <strong>built</strong>, not the seed:</p>
 <ul>
 <li><strong>Mutable roster</strong> —
 <code>amq-squad team member add/rm/list</code> grows or shrinks the team
-mid-session (atomic, file-locked, re-validated, persisted).</li>
+mid-session (atomic, file-locked, re-validated, persisted). Add
+<code>--launch --dry-run</code> or <code>rm --stop --dry-run</code> to
+preview exact runtime actions before running them.</li>
 <li><strong>Native task store</strong> —
-<code>amq-squad task add/list/claim/done/fail/block</code>: a
+<code>amq-squad task add/list/show/claim/done/fail/block/reset</code>: a
 pull-based, dependency-gated queue under
 <code>.amq-squad/tasks/&lt;session&gt;/</code>, so a lead of either
 binary decomposes the goal into claimable work.</li>
@@ -415,7 +417,7 @@ composes and drives it:</p>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="co"># The cto lead loads the amq-squad-orchestrator skill and, as the work reveals needs:</span></span>
 <span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add fullstack <span class="at">--binary</span> codex <span class="at">--session</span> issue-96  <span class="co"># grow the roster</span></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--title</span> <span class="st">&quot;implement the fix&quot;</span> <span class="at">--session</span> issue-96      <span class="co"># decompose the goal</span></span></code></pre></div>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack <span class="at">--create-task</span> <span class="at">--subject</span> <span class="st">&quot;implement the fix&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span></code></pre></div>
 <h3 id="breaking-changes">Breaking changes</h3>
 <p>2.0 is a major version; the breaking surface is small and mechanical
 (full upgrade notes in <a
@@ -1070,13 +1072,22 @@ amq-squad brief seed --session NAME --seed-from REF [--project DIR] [--force]
                                   launching the team. Use --dry-run to preview.
 amq-squad task add --title T [--desc D] [--depends-on id,...] [--assign role] --session S
 amq-squad task list [--status S] [--json] --session S
+amq-squad task show &lt;id&gt; [--json] --session S
 amq-squad task claim &lt;id&gt; --me HANDLE --session S
-amq-squad task done &lt;id&gt; [--evidence E] --session S
-amq-squad task fail|block &lt;id&gt; [--reason R] --session S
+amq-squad task done &lt;id&gt; --me HANDLE [--evidence E] --session S
+amq-squad task fail|block &lt;id&gt; --me HANDLE [--reason R] --session S
+amq-squad task reset &lt;id&gt; --me HANDLE [--reason R] --session S
                                   Native pull-based, dependency-gated task store
                                   under .amq-squad/tasks/&lt;session&gt;/. A task is
                                   claimable only once its --depends-on tasks are
-                                  completed. All subcommands require --session.
+                                  completed. Terminal/reset transitions on an
+                                  assigned task require the assignee&#39;s --me.
+                                  All subcommands require --session.
+amq-squad dispatch --session S --role R --subject SUBJ --body BODY [--create-task | --task ID] [--json]
+                                  Queue a durable AMQ message and best-effort
+                                  drain nudge. Plain dispatch stays AMQ-only;
+                                  --create-task creates and links a native task,
+                                  while --task links an existing task id.
 amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
                                   Adopt the current tmux pane as an
                                   operator-owned external lead for an

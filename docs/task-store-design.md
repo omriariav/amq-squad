@@ -34,7 +34,16 @@ create verb**). Ours has `task add`, so an any-binary lead can decompose.
   "updated_at": "2026-06-13T…Z",
   "evidence": "",                    // set on done
   "failure_reason": "",              // set on fail
-  "block_reason": ""                 // set on block
+  "block_reason": "",                // set on block
+  "reset_reason": "",                // set on reset
+  "dispatch": {                       // optional durable AMQ link
+    "assignee": "fullstack",
+    "thread": "p2p/cto__fullstack",
+    "kind": "todo",
+    "subject": "Wire the rate limiter",
+    "message_id": "2026-...",
+    "dispatched_at": "2026-06-13T…Z"
+  }
 }
 ```
 
@@ -56,11 +65,13 @@ pending ──claim──▶ in_progress ──done──▶ completed
 - `claim`: allowed only from `pending`, and only when **every** id in
   `depends_on` is `completed` (dependency gating). Sets `assigned_to` and
   `in_progress`; clears terminal fields.
-- `done` / `fail` / `block`: allowed only from `in_progress` (assignee-only enforcement is deferred to Phase 1). `done`→`completed`
-  (+ optional evidence); `fail`→`failed` (+ reason); `block`→`blocked`
-  (+ reason). A `blocked`/`failed` task can be re-`claim`ed only after it is
-  reset to `pending` (a later `task reset` verb; out of scope for Slice B —
-  blocked/failed are terminal here).
+- `done` / `fail` / `block`: allowed only from `in_progress`.
+  If the task has an assignee, the transition requires `--me` to match
+  `assigned_to`. `done`→`completed` (+ optional evidence); `fail`→`failed`
+  (+ reason); `block`→`blocked` (+ reason).
+- `reset`: returns a non-pending task to `pending`, clears the assignee and
+  terminal fields, optionally records `reset_reason`, and can then be claimed
+  again. For assigned tasks, `--me` must match the assignee.
 - Any other transition is rejected with a clear error naming the current state.
 
 ## ID allocation
@@ -75,23 +86,40 @@ because allocation happens inside the lock.
 | --- | --- |
 | `task add --title T [--desc D] [--depends-on id,…] [--assign role] --session S` | create a `pending` task; **the goal→task decomposition primitive** |
 | `task list [--status S] [--json] --session S` | list tasks (table or `tasks` JSON envelope) |
+| `task show <id> [--json] --session S` | show one task, including dispatch metadata when present |
 | `task claim <id> --me handle --session S` | pending + deps-completed → in_progress, assigned to `handle` |
-| `task done <id> [--evidence E] --session S` | in_progress (by assignee) → completed |
-| `task fail <id> [--reason R] --session S` | in_progress → failed |
-| `task block <id> [--reason R] --session S` | in_progress → blocked |
+| `task done <id> --me handle [--evidence E] --session S` | in_progress (by assignee) → completed |
+| `task fail <id> --me handle [--reason R] --session S` | in_progress (by assignee) → failed |
+| `task block <id> --me handle [--reason R] --session S` | in_progress (by assignee) → blocked |
+| `task reset <id> --me handle [--reason R] --session S` | non-pending (by assignee when assigned) → pending |
 
 - `--session` resolves the workstream (required; tasks are per-workstream).
-- `claim`/`done`/`fail`/`block` operate on an existing id; transitions are
-  validated; ownership: `done`/`fail`/`block` require the task to be
-  `in_progress` (Slice B does not enforce assignee identity — a single-operator
-  convenience; assignee-only transitions are a Phase-1 hardening with the
-  seeded-approval work).
+- `claim`/`done`/`fail`/`block`/`reset` operate on an existing id; transitions
+  are validated and assigned terminal/reset transitions are assignee-only.
 
-## Not in Slice B (deferred)
+## Dispatch linkage
 
-- `task reset` (blocked/failed → pending), a `task show <id>` read verb, and
-  assignee-only transition enforcement — Phase 1. (List is the only read
-  surface in Slice B; terminal states are one-way.)
+Plain `amq-squad dispatch` stays AMQ-only for one-off messages. Task-backed
+dispatch is explicit:
+
+- `dispatch --create-task` creates a native pending task assigned to the target
+  role's handle, sends the durable AMQ message, then records the AMQ message id
+  and thread metadata on the task.
+- `dispatch --task <id>` sends the durable AMQ message and links the returned
+  message metadata to an existing task.
+- Human and JSON dispatch output include the task id when a native task is
+  involved. If the AMQ send fails after a `--create-task`, the task remains in
+  the store without dispatch metadata so the lead can inspect or reset it rather
+  than losing the audit record.
+- If the AMQ send succeeds but recording dispatch metadata fails, amq-squad
+  reports an error and does not pane-nudge the worker. The durable AMQ message
+  may already be queued, so amq-squad does not try to roll it back. The native
+  task remains inspectable without dispatch metadata; the lead can reconcile
+  from the AMQ send result, manually reset or complete the task, and re-nudge
+  the worker if needed.
+
+## Still deferred
+
 - Cycle detection is unnecessary: deps must reference already-created (lower-id)
   tasks, so the graph is a DAG by construction — see `Add`.
 - Bridge of task changes to AMQ notifications (the swarm-bridge analog) — folds

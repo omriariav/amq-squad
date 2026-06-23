@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -213,6 +216,138 @@ func TestRunDispatchNoWakeSkipsNudge(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "Skipped pane nudge") {
 		t.Fatalf("expected no-wake notice, got:\n%s", stderr)
+	}
+}
+
+func TestRunDispatchCreateTaskLinksMessage(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-abc to qa\n")
+	_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch --create-task: %v", err)
+	}
+	if !strings.Contains(stdout, "task t1") {
+		t.Fatalf("dispatch output should include task id:\n%s", stdout)
+	}
+	show, _, err := captureOutput(t, func() error {
+		return runTask([]string{"show", "t1", "--session", "issue-96"})
+	})
+	if err != nil {
+		t.Fatalf("task show: %v", err)
+	}
+	for _, want := range []string{"Assigned: qa", "Dispatch Assignee: qa", "Dispatch Message: msg-abc"} {
+		if !strings.Contains(show, want) {
+			t.Fatalf("task show missing %q:\n%s", want, show)
+		}
+	}
+}
+
+func TestRunDispatchCreateTaskAMQSendFailureLeavesTaskAuditTrail(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	var calls []amqCommandRequest
+	prevEnv := resolveAMQEnvForAMQCommand
+	prevRun := runAMQCommand
+	resolveAMQEnvForAMQCommand = func(cwd, rootFlag, session, handle string) (amqEnv, error) {
+		return amqEnv{Root: ".agent-mail/" + session, BaseRoot: ".agent-mail", SessionName: session, Me: handle}, nil
+	}
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		calls = append(calls, req)
+		return nil, errors.New("amq send failed")
+	}
+	t.Cleanup(func() {
+		resolveAMQEnvForAMQCommand = prevEnv
+		runAMQCommand = prevRun
+	})
+	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	_, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "dispatch send to qa") {
+		t.Fatalf("dispatch should report AMQ send failure, got %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected one attempted AMQ send, got %d", len(calls))
+	}
+	if len(*nudges) != 0 {
+		t.Fatalf("failed durable send must not nudge, got %v", *nudges)
+	}
+	show, _, showErr := captureOutput(t, func() error {
+		return runTask([]string{"show", "t1", "--session", "issue-96"})
+	})
+	if showErr != nil {
+		t.Fatalf("created task should remain inspectable after AMQ failure: %v", showErr)
+	}
+	if !strings.Contains(show, "ID: t1") || strings.Contains(show, "Dispatch Message:") {
+		t.Fatalf("task should remain without dispatch metadata after AMQ failure:\n%s", show)
+	}
+}
+
+func TestRunDispatchCreateTaskLinkFailureLeavesQueuedMessageAndTask(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-link to qa\n")
+	prevLink := dispatchLinkTask
+	dispatchLinkTask = func(projectDir, session, id string, dispatch taskstore.Dispatch, now time.Time) (taskstore.Task, error) {
+		return taskstore.Task{}, errors.New("link failed")
+	}
+	t.Cleanup(func() { dispatchLinkTask = prevLink })
+	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	_, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "link native task t1 to dispatch") {
+		t.Fatalf("dispatch should report link failure, got %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("expected one successful AMQ send before link failure, got %d", len(*calls))
+	}
+	if len(*nudges) != 0 {
+		t.Fatalf("link failure must not nudge because metadata linkage failed, got %v", *nudges)
+	}
+	show, _, showErr := captureOutput(t, func() error {
+		return runTask([]string{"show", "t1", "--session", "issue-96"})
+	})
+	if showErr != nil {
+		t.Fatalf("created task should remain inspectable after link failure: %v", showErr)
+	}
+	if !strings.Contains(show, "ID: t1") || strings.Contains(show, "Dispatch Message:") {
+		t.Fatalf("task should remain without dispatch metadata after link failure:\n%s", show)
+	}
+}
+
+func TestRunDispatchTaskJSONEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"add", "--title", "existing", "--assign", "qa", "--session", "issue-96"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-json to qa\n")
+	_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--task", "t1", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch --task --json: %v", err)
+	}
+	for _, want := range []string{"\"kind\": \"dispatch\"", "\"task_id\": \"t1\"", "\"message_id\": \"msg-json\"", "\"assignee\": \"qa\""} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("dispatch json missing %q:\n%s", want, stdout)
+		}
 	}
 }
 
