@@ -157,11 +157,7 @@ func envWithoutAMQIdentity(env []string) []string {
 }
 
 func scanBaseRootForProject(projectDir string) (string, error) {
-	env, err := resolveAMQEnvInDir(projectDir, "", "", "amq-squad")
-	if err != nil {
-		return "", err
-	}
-	return chooseProjectBaseRoot(projectDir, env), nil
+	return resolveAMQBaseRootForProject(projectDir, "", "amq-squad")
 }
 
 // chooseProjectBaseRoot picks the directory the board/console should scan for

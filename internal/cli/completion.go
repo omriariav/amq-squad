@@ -56,39 +56,7 @@ Examples:
 // generated completion scripts. Kept in sync with cli.go dispatch by the
 // completion tests, which assert representative entries appear in each
 // shell's output.
-var completionTopCommands = []string{
-	"new",
-	"roles",
-	"team",
-	"lead",
-	"task",
-	"verify",
-	"up",
-	"stop",
-	"brief",
-	"threads",
-	"thread",
-	"status",
-	"focus",
-	"open",
-	"send",
-	"dispatch",
-	"collect",
-	"prune-panes",
-	"console",
-	"notify",
-	"amq",
-	"history",
-	"resume",
-	"fork",
-	"rm",
-	"archive",
-	"agent",
-	"completion",
-	"doctor",
-	"version",
-	"help",
-}
+var completionTopCommands = commandNames("")
 
 // completionNewSubcommands lists the `amq-squad new` subcommands.
 var completionNewSubcommands = []string{

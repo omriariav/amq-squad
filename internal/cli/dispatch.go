@@ -69,7 +69,7 @@ func runDispatch(args []string) error {
 	noWakeFlag := fs.Bool("no-wake", false, "queue the durable task without nudging the pane")
 	createTaskFlag := fs.Bool("create-task", false, "create and link a native task-store task before dispatch")
 	taskIDFlag := fs.String("task", "", "link dispatch metadata to an existing native task id")
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned dispatch envelope")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad dispatch - queue a durable task for a child and wake it to drain
 
@@ -159,11 +159,11 @@ Examples:
 	// instead of the default .agent-mail (#152's misroute, the root cause #153
 	// builds on).
 	cwd := member.EffectiveCWD(t.Project)
-	env, err := resolveAMQEnvForAMQCommand(cwd, "", workstream, from)
+	ctx, err := resolveAMQContextForProject(cwd, workstream, from)
 	if err != nil {
 		return fmt.Errorf("resolve amq root for dispatch: %w", err)
 	}
-	ctx := amqContext{ProjectDir: cwd, Env: env, Root: absoluteAMQRoot(cwd, env.Root), Me: from}
+	ctx.Me = from
 
 	taskID := strings.TrimSpace(*taskIDFlag)
 	if *createTaskFlag {
@@ -224,14 +224,23 @@ Examples:
 
 	outcome := dispatchOutcome{}
 	if *noWakeFlag {
-		quietNotice("Skipped pane nudge (--no-wake); %s drains the task on its next turn.\n", *roleFlag)
 		if *jsonOut {
-			return printJSONEnvelope("dispatch", dispatchEnvelopeData{
-				Session: workstream, Role: *roleFlag, Assignee: member.Handle, Thread: *threadFlag,
-				Kind: *kindFlag, MessageID: msgID, TaskID: taskID, Root: ctx.Root,
-				Nudge: dispatchOutcome{Skipped: "--no-wake"},
+			return printJSONEnvelope("dispatch", mutationResult{
+				Command:   "dispatch",
+				Status:    "queued",
+				Project:   projectDir,
+				Session:   workstream,
+				Profile:   profile,
+				ID:        taskID,
+				TaskID:    taskID,
+				Role:      member.Role,
+				Assignee:  member.Handle,
+				Handle:    member.Handle,
+				MessageID: msgID,
+				Root:      ctx.Root,
 			})
 		}
+		quietNotice("Skipped pane nudge (--no-wake); %s drains the task on its next turn.\n", *roleFlag)
 		return nil
 	}
 
@@ -242,24 +251,51 @@ Examples:
 		// operator can nudge or resume manually, but exit 0.
 		fmt.Fprintf(os.Stderr, "warning: task queued, but the pane nudge failed: %v\n", werr)
 		if *jsonOut {
-			return printJSONEnvelope("dispatch", dispatchEnvelopeData{
-				Session: workstream, Role: *roleFlag, Assignee: member.Handle, Thread: *threadFlag,
-				Kind: *kindFlag, MessageID: msgID, TaskID: taskID, Root: ctx.Root,
-				Nudge: dispatchOutcome{Skipped: werr.Error()},
+			return printJSONEnvelope("dispatch", mutationResult{
+				Command:   "dispatch",
+				Status:    "queued_nudge_failed",
+				Project:   projectDir,
+				Session:   workstream,
+				Profile:   profile,
+				ID:        taskID,
+				TaskID:    taskID,
+				Role:      member.Role,
+				Assignee:  member.Handle,
+				Handle:    member.Handle,
+				MessageID: msgID,
+				Root:      ctx.Root,
 			})
 		}
 		return nil
+	}
+	if *jsonOut {
+		status := "queued"
+		if outcome.PaneID != "" {
+			status = "queued_and_nudged"
+		}
+		return printJSONEnvelope("dispatch", mutationResult{
+			Command:   "dispatch",
+			Status:    status,
+			Project:   projectDir,
+			Session:   workstream,
+			Profile:   profile,
+			ID:        taskID,
+			TaskID:    taskID,
+			Role:      member.Role,
+			Assignee:  member.Handle,
+			Handle:    member.Handle,
+			MessageID: msgID,
+			Root:      ctx.Root,
+			Actions: []mutationAction{
+				followUp("receipts", "wait for drain receipt", "amq-squad amq receipts wait --project "+shellQuote(projectDir)+" --session "+shellQuote(workstream)+" --me "+shellQuote(from)+" --msg-id "+shellQuote(msgID)+" --stage drained"),
+				followUp("status", "show recipient status", "amq-squad status --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --session "+shellQuote(workstream)+" --json"),
+			},
+		})
 	}
 	if outcome.PaneID != "" {
 		quietNotice("Nudged %s pane %s to drain.\n", *roleFlag, outcome.PaneID)
 	} else {
 		quietNotice("Task queued; pane not nudged: %s\n", outcome.Skipped)
-	}
-	if *jsonOut {
-		return printJSONEnvelope("dispatch", dispatchEnvelopeData{
-			Session: workstream, Role: *roleFlag, Assignee: member.Handle, Thread: *threadFlag,
-			Kind: *kindFlag, MessageID: msgID, TaskID: taskID, Root: ctx.Root, Nudge: outcome,
-		})
 	}
 	return nil
 }

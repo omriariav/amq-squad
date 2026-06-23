@@ -563,13 +563,13 @@ amq-squad brief seed --session NAME --seed-from REF [--project DIR] [--force]
                                   Write a workstream brief from file:<path>,
                                   issue:<n>, or gh:owner/repo#<n> without
                                   launching the team. Use --dry-run to preview.
-amq-squad task add --title T [--desc D] [--depends-on id,...] [--assign role] --session S
+amq-squad task add --title T [--desc D] [--depends-on id,...] [--assign role] [--json] --session S
 amq-squad task list [--status S] [--json] --session S
 amq-squad task show <id> [--json] --session S
-amq-squad task claim <id> --me HANDLE --session S
-amq-squad task done <id> --me HANDLE [--evidence E] --session S
-amq-squad task fail|block <id> --me HANDLE [--reason R] --session S
-amq-squad task reset <id> --me HANDLE [--reason R] --session S
+amq-squad task claim <id> --me HANDLE [--json] --session S
+amq-squad task done <id> --me HANDLE [--evidence E] [--json] --session S
+amq-squad task fail|block <id> --me HANDLE [--reason R] [--json] --session S
+amq-squad task reset <id> --me HANDLE [--reason R] [--json] --session S
                                   Native pull-based, dependency-gated task store
                                   under .amq-squad/tasks/<session>/. A task is
                                   claimable only once its --depends-on tasks are
@@ -683,6 +683,7 @@ The console gives you:
 - a **board** of all sessions, grouped attention-first (needs-you > blocked > gated > at-risk > running > stopped),
 - per-session **detail** with each agent's liveness and a **collapsed-thread bus** ("qa ↔ cto  blocked · subject  N msgs · 7m"),
 - **peek** (`space`) for a read-only view of an agent's recent output, unread inbox, and what it is blocked on,
+- an **action palette** (`a`) with copy-ready commands such as `focus`, `send`, `resume`, `stop`, `task list`, and `dispatch`; the console never runs commands directly. This is the user-facing closure for #220.
 - a **triage rollup** headline (`N needs-you threads · N blocked threads · N gated threads · N at-risk threads`) and `/`-filters (`needs-you`, `needs-user`, `gated`, `at-risk`, `blocked`, `stale-blocked`, `unread`, `agent:<h>`, `model:<m>`, `session:<n>`, `label:<l>`, `orchestrator:<o>`).
 
 It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--once` it emits one static board to stdout and exits — use this when there is no terminal attached.
@@ -728,6 +729,10 @@ amq-squad resume --session issue-96 --json | jq .
 amq-squad doctor --json | jq .
 amq-squad team profiles --json | jq .
 amq-squad roles --json | jq .
+amq-squad dispatch --session issue-96 --role qa --subject "Review" --body "..." --json | jq .
+amq-squad task add --title "Review PR" --session issue-96 --json | jq .
+amq-squad task claim t1 --me qa --session issue-96 --json | jq .
+amq-squad team member add qa --binary codex --json | jq .
 amq-squad team init --dry-run --json --roles cto,qa | jq .
 amq-squad new team --sync --dry-run --json --roles cto,qa | jq .
 amq-squad up --dry-run --json | jq .
@@ -743,6 +748,12 @@ Envelope shape:
   "data": { /* verb-specific payload */ }
 }
 ```
+
+High-value mutating commands also support JSON success envelopes for
+orchestrators and NOC tooling. Initial stable mutator envelopes include
+`dispatch`, `task add`, task transitions (`claim`, `done`, `fail`, `block`),
+and `team member add/rm`. Human output remains unchanged when `--json` is not
+passed. This is the user-facing closure for #222.
 
 ## Runtime control (tmux)
 
@@ -760,7 +771,10 @@ control.
 identity as a `tmux` block plus a computed `pane_alive` (does the recorded pane
 still exist?). Those `status --session NAME --json` members also carry an
 `actions` array of stable, project-scoped commands a client can render or copy,
-each with an `available` flag:
+each with an `available` flag. The same shared action catalog feeds the console
+palette, and selected AMQ-facing commands resolve project/session/root/identity
+through the shared AMQ context helper; together these are the user-facing closure
+for #223:
 
 ```json
 {
@@ -818,6 +832,11 @@ metacharacters arrive verbatim. It errors clearly if the target pane is gone.
 | `3` | partial success (some targets succeeded, some failed; e.g. `stop` with mixed stopped + failed) |
 
 ## Shell completions
+
+GitHub Actions runs `make ci` on pull requests and pushes to `main`. The workflow
+installs `pandoc` so formatting, tests, generated HTML freshness, and skill
+frontmatter checks run with the same baseline expected locally. This is the
+user-facing closure for #221.
 
 ```sh
 amq-squad completion bash > /etc/bash_completion.d/amq-squad

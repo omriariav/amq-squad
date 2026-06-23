@@ -91,7 +91,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // The keymap:
 //
 //	space  peek (read-only overlay)         l  logs/tail mode
-//	enter  expand/drill (board->detail,     a  attach (INERT: shows the command)
+//	enter  expand/drill (board->detail,     a  actions (INERT: copy commands)
 //	       thread->expand)                  t  timeline pane toggle (detail)
 //	/      filter entry                     esc back / close overlay / cancel
 //	j/k/↑/↓ move      g  refresh-now (resync)   q  quit      ?  help
@@ -174,10 +174,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "a":
-		// a = attach: INERT in v0. Compute and show the suggested jump command;
-		// NEVER actually attach or mutate anything.
+		// a = actions: INERT. Compute and show copy-ready commands; NEVER
+		// actually run them or mutate anything.
 		m.attachHint = m.suggestAttach()
-		m.overlay = overlayAttach
+		m.overlay = overlayActions
 		return m, nil
 
 	case "t":

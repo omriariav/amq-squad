@@ -28,11 +28,33 @@ func TestRunHelpIncludesVersionCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run help: %v\nstderr:\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "version   Print the amq-squad version") {
+	if !strings.Contains(stdout, "version") || !strings.Contains(stdout, "Print the amq-squad version") {
 		t.Fatalf("help missing version command:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "roles     List built-in role IDs") {
+	if !strings.Contains(stdout, "roles") || !strings.Contains(stdout, "List built-in role IDs") {
 		t.Fatalf("help missing roles command:\n%s", stdout)
+	}
+}
+
+func TestCommandRegistryPowersDispatchHelpAndCompletion(t *testing.T) {
+	for _, want := range []string{"dispatch", "task", "console", "doctor"} {
+		if _, ok := lookupCommand(want, "v-test"); !ok {
+			t.Fatalf("registry missing %q", want)
+		}
+		if !containsString(completionTopCommands, want) {
+			t.Fatalf("completion missing registry command %q", want)
+		}
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return Run([]string{"--help"}, "v-test")
+	})
+	if err != nil {
+		t.Fatalf("Run --help: %v", err)
+	}
+	for _, want := range []string{"dispatch", "console", "task"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("help missing registry command %q:\n%s", want, stdout)
+		}
 	}
 }
 
