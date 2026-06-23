@@ -49,9 +49,9 @@ const (
 )
 
 // overlay is a modal layer drawn ON TOP of the active route. Overlays are
-// strictly READ-ONLY: peek shows recent output / unread / block reason, attach
-// shows the suggested (inert) jump command, help shows the keymap. None of them
-// mutate state, send a message, or start/stop a process.
+// strictly READ-ONLY: peek shows recent output / unread / block reason, actions
+// show copy-ready commands, help shows the keymap. None of them mutate state,
+// send a message, or start/stop a process.
 type overlay int
 
 const (
@@ -59,8 +59,8 @@ const (
 	overlayNone overlay = iota
 	// overlayPeek: the read-only peek pane for the selected agent/thread.
 	overlayPeek
-	// overlayAttach: the inert attach overlay showing the suggested command.
-	overlayAttach
+	// overlayActions: the inert action palette showing copy-ready commands.
+	overlayActions
 	// overlayHelp: the keymap help.
 	overlayHelp
 )

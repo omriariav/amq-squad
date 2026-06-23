@@ -565,6 +565,46 @@ func TestExecuteStatusJSONOmitsOrchestrationForFlatTeams(t *testing.T) {
 	}
 }
 
+func TestExecuteStatusJSONIncludesAutonomousPolicy(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "issue-96"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+		Composition:  team.CompositionAutonomous,
+		Autonomous: &team.AutonomousPolicy{
+			MaxActiveAgents: 4,
+			MaxTotalSpawns:  3,
+			AllowedRoles:    []string{"fullstack"},
+			BudgetTurns:     20,
+			State:           team.AutonomousState{TotalSpawns: 1, BudgetTurnsUsed: 5},
+		},
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 100,
+	})
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{100: true}, map[int]bool{100: true}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if !env.Data.Autonomous.Enabled || env.Data.Autonomous.Composition != team.CompositionAutonomous {
+		t.Fatalf("autonomous status missing/enabled false: %+v", env.Data.Autonomous)
+	}
+	if env.Data.Autonomous.MaxActiveAgents != 4 || env.Data.Autonomous.TotalSpawns != 1 || env.Data.Autonomous.BudgetTurnsLeft != 15 {
+		t.Fatalf("autonomous counters mismatch: %+v", env.Data.Autonomous)
+	}
+}
+
 func TestExecuteStatusIgnoresUnconfiguredHandles(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{

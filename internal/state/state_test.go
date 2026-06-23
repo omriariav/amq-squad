@@ -138,6 +138,26 @@ func TestBuildDiscoversSessionsAndAgents(t *testing.T) {
 	}
 }
 
+func TestBuildCarriesTmuxRuntimeForConsoleActions(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	seedAgent(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96", AgentPID: 1111,
+		Tmux: &launch.TmuxInfo{Session: "mux", WindowID: "@1", WindowName: "cto", PaneID: "%7", Target: "new-window"},
+	})
+	snap, err := Build(proj, base, fakeProbe(map[int]bool{1111: true}, map[int]bool{1111: true}, nil))
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	a := findAgent(t, snap, "cto")
+	if a.Tmux == nil {
+		t.Fatal("tmux runtime should be present")
+	}
+	if a.Tmux.Session != "mux" || a.Tmux.PaneID != "%7" || !a.Tmux.PaneAlive {
+		t.Fatalf("bad tmux runtime: %+v", a.Tmux)
+	}
+}
+
 func TestBuildNormalizesRelativeLaunchRoot(t *testing.T) {
 	proj := t.TempDir()
 	base := filepath.Join(proj, ".agent-mail")

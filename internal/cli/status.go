@@ -65,15 +65,16 @@ type statusSignals struct {
 // statusEnvelopeData is the kind="status" payload: resolved team-home,
 // workstream, profile, and the per-member records.
 type statusEnvelopeData struct {
-	TeamHome     string            `json:"team_home"`
-	Workstream   string            `json:"workstream"`
-	Profile      string            `json:"profile,omitempty"`
-	Operator     team.OperatorView `json:"operator"`
-	Capabilities team.Capabilities `json:"capabilities"`
-	Orchestrated bool              `json:"orchestrated,omitempty"`
-	Lead         string            `json:"lead,omitempty"`
-	LeadHandle   string            `json:"lead_handle,omitempty"`
-	Records      []statusRecord    `json:"records"`
+	TeamHome     string                `json:"team_home"`
+	Workstream   string                `json:"workstream"`
+	Profile      string                `json:"profile,omitempty"`
+	Operator     team.OperatorView     `json:"operator"`
+	Capabilities team.Capabilities     `json:"capabilities"`
+	Orchestrated bool                  `json:"orchestrated,omitempty"`
+	Lead         string                `json:"lead,omitempty"`
+	LeadHandle   string                `json:"lead_handle,omitempty"`
+	Autonomous   team.AutonomousStatus `json:"autonomous"`
+	Records      []statusRecord        `json:"records"`
 	// Actions are the SESSION-scope operator actions (status / resume preview /
 	// resume in current window / resume in new tmux session / stop), the catalog
 	// counterpart to each record's agent-scope actions. A client renders these
@@ -231,6 +232,7 @@ func executeStatus(s statusExecution) error {
 			Orchestrated: ctx.Orchestrated,
 			Lead:         ctx.Lead,
 			LeadHandle:   ctx.LeadHandle,
+			Autonomous:   team.EffectiveAutonomousStatus(t),
 			Records:      rows,
 			Actions:      ctx.Actions,
 		})
