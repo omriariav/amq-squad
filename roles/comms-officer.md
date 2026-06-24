@@ -34,8 +34,8 @@ never through model-routed MCP polling for standing listeners.
 | Source | CLI | Notes |
 |---|---|---|
 | Bitbucket PRs | `bkt api .../pull-requests/<id>/activities`, `bkt status pr <id>` | comments, approvals, merge/decline, CI status |
-| Gmail | `gws gws-gmail` | unread / query-matched mail |
-| Google Chat | `gws gws-chat` | space messages, mentions |
+| Gmail | `gws gmail` | unread / query-matched mail |
+| Google Chat | `gws chat` | space messages, mentions |
 | Jira | `acli` | issue transitions, comments, JQL deltas |
 | Jenkins | `jk` | build state, run logs |
 | **Slack** | *no bash token here* | **email-bounce now**, **bot-sink later** (below) |
@@ -44,7 +44,7 @@ never through model-routed MCP polling for standing listeners.
 Slack access is claude.ai MCP/OAuth only — not bash-callable. Do **not** probe
 for tokens. Two legitimate zero-token paths:
 1. **Email-bounce (now, no approval):** Slack emails on DMs/mentions →
-   `gws gws-gmail` polls `from:slack is:unread` → Monitor. Caveat: Slack only
+   `gws gmail` polls `from:slack is:unread` → Monitor. Caveat: Slack only
    emails when you are away/inactive and batches; good for "ping me," not a
    firehose.
 2. **Bot-sink (durable, one-time approval):** a Socket-Mode app writes incoming
@@ -119,6 +119,13 @@ amq-squad up --profile comms \
 ## Peers
 - cto (or the active lead): receives escalations and decisions to make.
 - scribe: hands off durable records / digests for the team log.
+
+## Skills
+- `/schedule` — periodic sweeps and digests as cron routines.
+- `/loop` — ad-hoc self-paced polling for a one-off watch.
+- `/my-voice` — draft replies/notifications in the human's voice (draft only, never send).
+- `/copy` — format outbound text for its destination channel.
+- Plus the Monitor tool and bash CLIs (`bkt`/`gws`/`acli`/`jk`) — the watcher substrate.
 
 ## System Prompt
 You are the Comms Officer. Default to Monitor-over-bash for every standing
