@@ -85,8 +85,9 @@ func useFakeBackend(t *testing.T) *fakeBackend {
 	return backend
 }
 
-// TestUpDryRunMatchesTeamShowCore proves the core path: with no extra flags,
-// `up --dry-run` emits the same launch-command plan as `team show`.
+// TestUpDryRunMatchesTeamShowCoreWithExplicitTarget proves the low-level
+// escape hatch: when an operator explicitly chooses a target, `up --dry-run`
+// keeps the legacy launch-command plan shape used by `team show`.
 func TestUpDryRunMatchesTeamShowCore(t *testing.T) {
 	cfg := team.Team{
 		Members: []team.Member{
@@ -103,13 +104,34 @@ func TestUpDryRunMatchesTeamShowCore(t *testing.T) {
 		t.Fatalf("team show: %v", err)
 	}
 	upOut, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--no-bootstrap"})
+		return runUp([]string{"--dry-run", "--no-bootstrap", "--target", "current-window"})
 	})
 	if err != nil {
 		t.Fatalf("up --dry-run: %v", err)
 	}
 	if showOut != upOut {
 		t.Fatalf("up --dry-run output differs from team show.\nteam show:\n%s\nup --dry-run:\n%s", showOut, upOut)
+	}
+}
+
+func TestUpDryRunDefaultsToSiblingTabsVisibility(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-238"}},
+	})
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runUp([]string{"issue-238", "--dry-run", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run default visibility: %v", err)
+	}
+	env := decodeJSONEnvelope[teamPlan](t, stdout)
+	if env.Data.Visibility != "sibling-tabs" {
+		t.Fatalf("visibility = %q, want sibling-tabs", env.Data.Visibility)
+	}
+	if env.Data.LaunchCommand != "amq-squad up issue-238 --visibility sibling-tabs" {
+		t.Fatalf("launch_command = %q", env.Data.LaunchCommand)
 	}
 }
 
@@ -191,6 +213,7 @@ func TestUpDryRunMatchesTeamShowWithFlags(t *testing.T) {
 		"--wake-inject-via", "/opt/amq-inject",
 		"--wake-inject-arg=--pane",
 	}
+	upFlagSet := append([]string{"--target", "current-window"}, flagSet...)
 
 	showOut, _, err := captureOutput(t, func() error {
 		return runTeamShow(flagSet)
@@ -199,7 +222,7 @@ func TestUpDryRunMatchesTeamShowWithFlags(t *testing.T) {
 		t.Fatalf("team show: %v", err)
 	}
 	upOut, _, err := captureOutput(t, func() error {
-		return runUp(append([]string{"--dry-run"}, flagSet...))
+		return runUp(append([]string{"--dry-run"}, upFlagSet...))
 	})
 	if err != nil {
 		t.Fatalf("up --dry-run: %v", err)
