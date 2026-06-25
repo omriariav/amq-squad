@@ -1,4 +1,4 @@
-.PHONY: build test fmt fmt-check vet ci install release-smoke readme-html readme-html-check docs-html docs-html-check html skills-check dogfood-claude clean
+.PHONY: build test fmt fmt-check vet ci install release-check release-smoke readme-html readme-html-check docs-html docs-html-check html skills-check dogfood-claude clean
 
 GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*')
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -40,6 +40,11 @@ ci: fmt-check vet test readme-html-check docs-html-check skills-check
 skills-check:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for skills-check" >&2; exit 1; }
 	@python3 scripts/check-skill-frontmatter.py
+
+release-check:
+	@test "$(VERSION)" != "dev" || (echo "VERSION is required, for example VERSION=v2.8.1" >&2; exit 1)
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for release-check" >&2; exit 1; }
+	@python3 scripts/check-release-version.py "$(VERSION)"
 
 # Regenerate the browsable README.html from README.md. Run this whenever
 # README.md changes (the release process bumps README.md, so it runs here).
@@ -102,6 +107,7 @@ dogfood-claude:
 
 release-smoke:
 	@test "$(VERSION)" != "dev" || (echo "VERSION is required, for example VERSION=v0.5.1" >&2; exit 1)
+	@$(MAKE) --no-print-directory release-check VERSION="$(VERSION)"
 	@tmp="$$(mktemp -d)"; \
 	trap 'rm -rf "$$tmp"' EXIT; \
 	GOBIN="$$tmp" GOPROXY=direct go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@$(VERSION); \

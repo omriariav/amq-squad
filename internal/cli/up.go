@@ -29,7 +29,7 @@ func runUp(args []string) error {
 	yes := fs.Bool("yes", false, "skip the --reset confirmation prompt (for automation)")
 	fs.BoolVar(yes, "y", false, "shorthand for --yes")
 	profileFlag := fs.String("profile", "", "team profile to bring up (default: default profile)")
-	visibilityFlag := fs.String("visibility", "", "launch topology shortcut: sibling-tabs, detached, current, or plan")
+	visibilityFlag := fs.String("visibility", visibilitySiblingTabs, "launch topology shortcut: sibling-tabs, detached, current, or plan")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned JSON envelope (requires --dry-run; the live up path stays human-only in 11A)")
 	pf := registerPreviewFlags(fs)
 	lf := registerLiveLaunchFlags(fs)
@@ -189,11 +189,12 @@ Examples:
 			opts.RequestedSession = positionalSession
 			opts.ExplicitSession = true
 		}
-		if flagWasSet(fs, "visibility") && (flagWasSet(fs, "terminal") || flagWasSet(fs, "target")) {
+		visibility := launchVisibilityForFlags(*visibilityFlag, flagWasSet(fs, "visibility"), flagWasSet(fs, "terminal"), flagWasSet(fs, "target"), flagWasSet(fs, "terminal-session"))
+		if visibility != "" && flagWasSet(fs, "visibility") && (flagWasSet(fs, "terminal") || flagWasSet(fs, "target")) {
 			return usageErrorf("--visibility cannot be combined with --terminal or --target; choose one topology surface")
 		}
-		if flagWasSet(fs, "visibility") {
-			mode, err := normalizeLaunchVisibility(*visibilityFlag)
+		if visibility != "" {
+			mode, err := normalizeLaunchVisibility(visibility)
 			if err != nil {
 				return err
 			}
@@ -253,7 +254,8 @@ Examples:
 	if err != nil {
 		return err
 	}
-	if err := applyLaunchVisibility(&opts, *visibilityFlag, flagWasSet(fs, "terminal"), flagWasSet(fs, "target"), flagWasSet(fs, "terminal-session"), true); err != nil {
+	visibility := launchVisibilityForFlags(*visibilityFlag, flagWasSet(fs, "visibility"), flagWasSet(fs, "terminal"), flagWasSet(fs, "target"), flagWasSet(fs, "terminal-session"))
+	if err := applyLaunchVisibility(&opts, visibility, flagWasSet(fs, "terminal"), flagWasSet(fs, "target"), flagWasSet(fs, "terminal-session"), true); err != nil {
 		return err
 	}
 	// --fresh is reconciled to a no-op on `up`: refuse-existing is the default

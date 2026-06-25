@@ -335,7 +335,7 @@ func TestRunUpDryRunWithoutSeedStillMatchesTeamShow(t *testing.T) {
 		t.Fatalf("team show: %v", err)
 	}
 	upOut, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--no-bootstrap"})
+		return runUp([]string{"--dry-run", "--no-bootstrap", "--target", "current-window"})
 	})
 	if err != nil {
 		t.Fatalf("up --dry-run: %v", err)

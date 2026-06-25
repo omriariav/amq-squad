@@ -5,6 +5,18 @@ import (
 	"testing"
 )
 
+func TestLaunchVisibilityDefaultsUnlessLowLevelTopologyExplicit(t *testing.T) {
+	if got := launchVisibilityForFlags("sibling-tabs", false, false, false, false); got != "sibling-tabs" {
+		t.Fatalf("default visibility = %q, want sibling-tabs", got)
+	}
+	if got := launchVisibilityForFlags("sibling-tabs", false, false, true, false); got != "" {
+		t.Fatalf("explicit --target should disable default visibility, got %q", got)
+	}
+	if got := launchVisibilityForFlags("detached", true, false, false, false); got != "detached" {
+		t.Fatalf("explicit visibility = %q, want detached", got)
+	}
+}
+
 func TestApplyLaunchVisibilitySiblingTabsRequiresLiveTmuxPane(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_PANE", "")

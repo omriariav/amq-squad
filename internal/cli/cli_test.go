@@ -114,7 +114,7 @@ peers:
 		"Custom roles (.amq-squad/roles)",
 		"probe-officer",
 		"codex",
-		"Investigates runtime probes.",
+		"staged custom role",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("roles output missing %q:\n%s", want, stdout)

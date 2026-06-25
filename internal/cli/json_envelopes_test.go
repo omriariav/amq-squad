@@ -104,6 +104,12 @@ peers: [cto]
 	if got.ID != "probe-officer" || got.Label != "Probe Officer" || got.PreferredBinary != "codex" {
 		t.Fatalf("custom role = %+v, want probe-officer metadata", got)
 	}
+	if got.Description != "Investigates runtime probes." {
+		t.Fatalf("custom role description = %q", got.Description)
+	}
+	if got.Profile != "" {
+		t.Fatalf("custom role profile = %q, want empty profile metadata", got.Profile)
+	}
 	if len(got.Skills) != 1 || got.Skills[0] != "/probe" || len(got.DefaultPeers) != 1 || got.DefaultPeers[0] != "cto" {
 		t.Fatalf("custom role skills/peers = %+v / %+v", got.Skills, got.DefaultPeers)
 	}
@@ -339,7 +345,7 @@ func TestRunTeamShowJSONMatchesUpDryRunPlan(t *testing.T) {
 		t.Fatalf("team show --json: %v", err)
 	}
 	upOut, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--json", "--no-bootstrap"})
+		return runUp([]string{"--dry-run", "--json", "--no-bootstrap", "--target", "current-window"})
 	})
 	if err != nil {
 		t.Fatalf("up --dry-run --json: %v", err)
