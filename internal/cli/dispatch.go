@@ -93,6 +93,11 @@ By default the nudge is skipped when the agent looks busy (a prompt pushed over
 a working agent is lost); the task stays queued and the agent drains it on its
 next turn. Pass --force to nudge anyway, or --no-wake to queue without nudging.
 
+After dispatch, the lead should collect the child's completion/report message
+with the printed root-correct 'amq-squad collect --session ... --me ...'
+command. Drain receipts only prove the child saw the task; they do not prove the
+task is complete.
+
 Examples:
   amq-squad dispatch --session issue-96 --role qa --subject "Validate PR #64" --body "Run the suite and report risk."
   amq-squad dispatch --session issue-96 --role fullstack --thread p2p/cto__fullstack --subject "Build X" --body-file ./task.md
@@ -220,6 +225,7 @@ Examples:
 			}
 			quietNotice("Queued %s task for %s (handle %s) at %s.\n", *kindFlag, *roleFlag, member.Handle, ctx.Root)
 		}
+		fmt.Printf("Next: collect the child report with `%s`\n", dispatchCollectCommand(projectDir, workstream, from))
 	}
 
 	outcome := dispatchOutcome{}
@@ -238,6 +244,7 @@ Examples:
 				Handle:    member.Handle,
 				MessageID: msgID,
 				Root:      ctx.Root,
+				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
 			})
 		}
 		quietNotice("Skipped pane nudge (--no-wake); %s drains the task on its next turn.\n", *roleFlag)
@@ -264,6 +271,7 @@ Examples:
 				Handle:    member.Handle,
 				MessageID: msgID,
 				Root:      ctx.Root,
+				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
 			})
 		}
 		return nil
@@ -286,10 +294,7 @@ Examples:
 			Handle:    member.Handle,
 			MessageID: msgID,
 			Root:      ctx.Root,
-			Actions: []mutationAction{
-				followUp("receipts", "wait for drain receipt", "amq-squad amq receipts wait --project "+shellQuote(projectDir)+" --session "+shellQuote(workstream)+" --me "+shellQuote(from)+" --msg-id "+shellQuote(msgID)+" --stage drained"),
-				followUp("status", "show recipient status", "amq-squad status --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --session "+shellQuote(workstream)+" --json"),
-			},
+			Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
 		})
 	}
 	if outcome.PaneID != "" {
@@ -298,6 +303,24 @@ Examples:
 		quietNotice("Task queued; pane not nudged: %s\n", outcome.Skipped)
 	}
 	return nil
+}
+
+func dispatchCollectCommand(projectDir, session, me string) string {
+	return "amq-squad collect --project " + shellQuote(projectDir) +
+		" --session " + shellQuote(session) +
+		" --me " + shellQuote(me) +
+		" --timeout 120s --include-body"
+}
+
+func dispatchFollowUpActions(projectDir, profile, session, from, msgID string) []mutationAction {
+	actions := []mutationAction{
+		followUp("collect", "collect child report", dispatchCollectCommand(projectDir, session, from)),
+	}
+	if strings.TrimSpace(msgID) != "" {
+		actions = append(actions, followUp("receipts", "wait for drain receipt", "amq-squad amq receipts wait --project "+shellQuote(projectDir)+" --session "+shellQuote(session)+" --me "+shellQuote(from)+" --msg-id "+shellQuote(msgID)+" --stage drained"))
+	}
+	actions = append(actions, followUp("status", "show recipient status", "amq-squad status --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --session "+shellQuote(session)+" --json"))
+	return actions
 }
 
 // parseSentMessageID extracts the message id from `amq send`'s text output,

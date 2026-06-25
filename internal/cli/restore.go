@@ -261,7 +261,7 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if trust := trustModeFromRecord(rec); trust != "" {
 		args = append(args, "--trust", trust)
 	}
-	if model := strings.TrimSpace(rec.Model); model != "" {
+	if model := resolvedModelForRecord(rec); model != "" {
 		args = append(args, "--model", model)
 	}
 	// =VALUE form keeps the value glued to the flag so a literal "--" inside
@@ -300,6 +300,8 @@ func restoreArgvFromRecord(rec launch.Record) []string {
 	}
 	if model := strings.TrimSpace(rec.Model); model != "" {
 		argv = removeContiguousSubsequence(argv, []string{"--model", model})
+	} else {
+		argv = removeModelArgs(argv)
 	}
 	if !rec.NoDefaultArgs {
 		trust := trustModeFromRecord(rec)
@@ -318,6 +320,26 @@ func launchExtraBinaryArgs(rec launch.Record) []string {
 		return rec.ClaudeArgs
 	}
 	return nil
+}
+
+func resolvedModelForRecord(rec launch.Record) string {
+	return resolveModelForLaunch(rec.Binary, rec.Model, launchExtraBinaryArgs(rec))
+}
+
+func removeModelArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--model" && i+1 < len(args):
+			i++
+			continue
+		case strings.HasPrefix(arg, "--model="):
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 // trustModeFromRecord returns the trust mode to re-emit on restore. If the
@@ -456,7 +478,7 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 		b.WriteString(" --trust ")
 		b.WriteString(shellQuote(trust))
 	}
-	if model := strings.TrimSpace(rec.Model); model != "" {
+	if model := resolvedModelForRecord(rec); model != "" {
 		b.WriteString(" --model ")
 		b.WriteString(shellQuote(model))
 	}

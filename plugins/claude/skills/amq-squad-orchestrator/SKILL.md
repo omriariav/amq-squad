@@ -82,12 +82,14 @@ amq-squad goal draft \
   --milestone v2.7.0 \
   --session v2-7-0 \
   --profile codex-v2-7-0 \
+  --visibility sibling-tabs \
   --codex-only
 
 # Optional autonomous preview: still read-only, still requires later approval.
 amq-squad goal draft \
   --goal "deliver v2.7.0" \
   --session v2-7-0 \
+  --visibility sibling-tabs \
   --composition autonomous \
   --max-agents 4 \
   --max-total-spawns 3 \
@@ -110,16 +112,26 @@ $amq-squad:amq-squad-orchestrator /goal \
   --milestone v2.7.0 \
   --session v2-7-0 \
   --profile codex-v2-7-0 \
+  --visibility sibling-tabs \
   --codex-only
 ```
 
 The preview must include: workstream/profile, source-of-truth links, preflight
 checks, roster, coordination constraints, implementation/review constraints,
-dogfood requirements where relevant, task-store plan, spawn gates, dispatch
-prompts, and done criteria. Preserve v2.6.0 guardrails: AMQ-first reporting,
-seeded spawn gates, live approval mirroring, autonomous policy/audit details
-when explicitly requested, Codex-only deviation when requested, and exact-head
-CI/review/verify evidence before merge-ready claims.
+dogfood requirements where relevant, visibility/topology choice, task-store
+plan, spawn gates, dispatch prompts, and done criteria. Preserve v2.6.0
+guardrails: AMQ-first reporting, seeded spawn gates, live approval mirroring,
+autonomous policy/audit details when explicitly requested, Codex-only deviation
+when requested, and exact-head CI/review/verify evidence before merge-ready
+claims.
+
+Default visibility is `sibling-tabs`: run the launch from an existing visible
+tmux control-mode pane, so the lead and workers open as sibling tmux windows in
+that same tmux session. Use `--visibility detached` only when a separate tmux
+session is intentional, `--visibility current` for split panes in the current
+window, and `--visibility plan` for commands only. The visible default refuses
+outside tmux before worker spawn; it must not silently create hidden detached
+workers.
 
 After showing the preview, ask for explicit operator confirmation before writing
 briefs, mutating team/profile state, adding tasks, raising spawn gates, or
@@ -211,15 +223,18 @@ pane — fine for a one-off, wrong for a worker you must drive):
 
 ```sh
 amq-squad team member add <role> --binary <claude|codex> --session <S> [--model M]
-# launch the newly-added member in its own tmux window (run from inside tmux):
+# launch the newly-added member from an attached, operator-visible tmux pane:
 amq-squad resume --exec --target new-window   # brings up new members; skips any already live
 ```
 
 The roster add persists to team.json, so `resume` rebuilds the team you *built*,
-not the seed. `resume --exec --target new-window` launches the just-added member
-fresh (it has no saved record yet) and skips members already live, so it is the
-incremental "add one, bring it up" step — and the new agent gets a real pane the
-runtime addresses by `--role`. (Need a one-off, unmanaged agent instead? `agent
+not the seed. `resume --exec --target new-window` is the valid incremental
+launch path, but use it only when the lead is already inside the tmux session
+the operator is watching; outside tmux, do not treat a detached session as a
+visible handoff. This launches the just-added member fresh (it has no saved
+record yet) and skips members already live, so it is the incremental "add one,
+bring it up" step — and the new agent gets a real pane the runtime addresses by
+`--role`. (Need a one-off, unmanaged agent instead? `agent
 up <binary> --role <role> --session <S>` TTY-execs it; it now defaults `--me` to
 the role, so a same-binary worker no longer silently shares the `claude`/`codex`
 mailbox — but it has no managed pane.)
@@ -287,22 +302,47 @@ Launching a child **through amq-squad** is what captures its pane id into the la
 
 > **Version note:** a spawned child inherits the `amq-squad` on its `PATH` and calls it as bare `amq-squad`. If the binary you are driving differs from the one on `PATH`, children silently run that other version (and may lack newer primitives like `team member` / `task`). Run `amq-squad doctor` — it warns on this version skew — and align them (`go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest`) before composing a team.
 
-**Window-per-agent (preferred for a squad of children):**
+**Operator-visible sibling tabs (default for goal handoff):**
 
 ```sh
-amq-squad up <session> --target new-window
+amq-squad up <session> --visibility sibling-tabs
 ```
 
-One window per agent (an iTerm2 tab under `tmux -CC`), full-size terminal each. All children share the session's pane-id control contract.
+Run this from the operator's existing visible tmux control-mode pane. It opens
+one tmux window per agent in that same tmux session, refuses outside tmux before
+worker spawn, and keeps all children under the pane-id control contract.
+
+After spawn, verify the topology before dispatching worker tasks:
+
+```sh
+amq-squad status --session <session> --json
+```
+
+`topology.mode` should be `sibling-tabs`. If it is `split-session` and
+`topology.visible_problem` is true, the lead and workers are split across tmux
+sessions; stop and relaunch or attach/open the correct session before claiming
+the team is operator-visible.
 
 **Detached squad session + control-mode attach:**
 
 ```sh
-amq-squad up <session> --target new-session --terminal-session <name>
+amq-squad up <session> --visibility detached --terminal-session <name>
 tmux -CC attach -t <name>   # the attach_control action: the TMUX session (the --terminal-session value), NOT the workstream
 ```
 
-`--target new-session` creates a separate detached tmux session; you then attach it under iTerm2 control mode. The `attach_control` action (the `tmux -CC attach -t <tmux-session>` form, targeting the tmux session name not the AMQ workstream) is the published command clients copy from `status --json`.
+`--visibility detached` creates a separate tmux session intentionally; attach it
+under iTerm2 control mode before treating the team as visible. The
+`attach_control` action (`tmux -CC attach -t <tmux-session>`) is also published
+by `status --json`.
+
+**Advanced split-pane mode:**
+
+```sh
+amq-squad up <session> --visibility current
+```
+
+Use this only when split panes in the current window are intentional. It is not
+the default visible goal topology for multi-agent orchestration.
 
 **Single on-demand child (direct, unmanaged):**
 
@@ -326,6 +366,8 @@ A quick one-off in an existing session. It **TTY-execs with no managed pane**, s
 amq-squad dispatch --session S --role R --thread p2p/<lead>__<role> --kind todo \
   --subject "Task: <one line>" \
   --body "<the task: what to build, and to push a review_request when done>"
+# Then collect the child report before making final claims:
+amq-squad collect --session S --me <lead> --timeout 120s --include-body
 ```
 
 - The pane nudge is **best-effort**: a gone or busy pane (or a sandboxed lead that can't reach the tmux socket) leaves the durable task queued and exits 0 — the worker drains it on its next turn. Pass `--force` to nudge a busy pane, `--no-wake` to queue without nudging.
@@ -334,6 +376,7 @@ amq-squad dispatch --session S --role R --thread p2p/<lead>__<role> --kind todo 
 Track two distinct checkpoints — do not conflate them:
 
 - **Received** = the durable message is queued and (for a live idle worker) the nudge fired. dispatch prints the `amq send` result; if you need a hard `drained` receipt, use `amq-squad amq send … --wait-for drained` (below).
+- **Reported** = the lead has run `amq-squad collect --session S --me <lead> --timeout 120s --include-body` and reconciled the worker's pushed `review_request`/`status`/question. A drain receipt only proves the child saw the task; it is not completion evidence.
 - **Acting** = the worker's pushed progress — a `task claim`, or its `review_request`/`status` (Monitor, section 3; event-driven). A worker that **drained but shows no progress** is stuck — ask it "what is blocking you?"; do NOT silently re-dispatch the task (the message already sits in its mailbox; a second copy makes it build twice).
 
 **Lower-level halves (when you need them separately).** `amq-squad dispatch` is `amq-squad amq send` (the root-correct durable send) plus `amq-squad send` (the pane nudge), composed. Reach for them directly only to (a) re-**nudge** a queued task a worker hasn't drained — deliver the *drain instruction*, NOT a second copy of the body — (b) deliberately interrupt a working agent, or (c) get a hard `drained` receipt via `--wait-for drained`. The pane half needs the tmux socket, so it dies under a sandboxed lead and stutters under `-CC` (that fragility is why `dispatch` treats the nudge as best-effort).
@@ -371,6 +414,8 @@ amq-squad console                        # live read-only Mission Control TUI
 - The single-session `status --json` records also carry an `actions[]` array with the exact runnable `focus`/`send`/`resume` commands; prefer those over hand-built tmux.
 
 **To collect a worker's report, use `amq-squad collect --session S --me <lead> [--timeout D] [--include-body]`.** It makes collect deterministic: one drain; if empty and you choose to wait, exactly one bounded `amq watch`; then one final drain. Running it is impossible to misuse — no poll loop, no accidental background drain (drain is destructive and races your foreground drains).
+
+If you dispatched a child this turn and a report is expected, collect before answering the operator or making a final claim. The only exception is when the operator explicitly asked you only to queue work.
 
 Diagnose before nudging: a stalled child with an intact plan and no progress is usually an API timeout (a resume nudge fixes it); a child looping is tool-loop drift (send a specific break instruction); a silent child may be blocked (ask "what is blocking you?"). Verify a nudge landed by re-checking `status`/`focus`.
 
@@ -533,7 +578,7 @@ The lead reconciles both reports, verifies the artifacts, runs `amq-squad verify
 ## Rules
 
 - amq-squad owns spawn/execution/control; never drive children by raw `tmux send-keys` / `select-window`. Task dispatch goes through `amq-squad dispatch` (next bullet).
-- **Use `amq-squad dispatch`** (`--session S --role R --kind todo --subject … --body …`): one root-correct command that queues the durable task AND nudges the worker's pane to drain it. Never re-send a task body through the pane (it double-delivers); the nudge carries only the *drain instruction*. The halves are `amq-squad amq send` (durable, add `--wait-for drained` for a hard receipt) + `amq-squad send` (the pane nudge/interrupt).
+- **Use `amq-squad dispatch`** (`--session S --role R --kind todo --subject … --body …`): one root-correct command that queues the durable task AND nudges the worker's pane to drain it. Never re-send a task body through the pane (it double-delivers); the nudge carries only the *drain instruction*. The halves are `amq-squad amq send` (durable, add `--wait-for drained` for a hard receipt) + `amq-squad send` (the pane nudge/interrupt). Then run the printed `amq-squad collect --session ... --me ...` command to collect completion/report messages.
 - Address the control plane (the pane nudge/`focus`) by recorded pane id (via `--role`), never window name.
 - The pane nudge is idle-checked by default; pass `--force` (on `dispatch` or `amq-squad send`) only to deliberately interrupt a working child. (The durable message queues — no busy hazard.)
 - Children push reports; the lead collects with `amq-squad collect`, verifies, and owns the deliverable.

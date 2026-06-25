@@ -60,6 +60,7 @@ type Record struct {
 	// digest-bound wake target later.
 	WakeInjectVia  string    `json:"wake_inject_via,omitempty"`
 	WakeInjectArgs []string  `json:"wake_inject_args,omitempty"`
+	WakePID        int       `json:"wake_pid,omitempty"`
 	AgentPID       int       `json:"agent_pid,omitempty"`
 	AgentTTY       string    `json:"agent_tty,omitempty"`
 	StartedAt      time.Time `json:"started_at"`

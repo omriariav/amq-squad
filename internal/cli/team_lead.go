@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
@@ -14,6 +17,27 @@ import (
 )
 
 var currentPaneIdentity = tmuxpane.CurrentPaneIdentity
+
+type leadWakeOptions struct {
+	ProjectDir     string
+	Root           string
+	Handle         string
+	Require        bool
+	WakeInjectVia  string
+	WakeInjectArgs []string
+}
+
+type leadWakeResult struct {
+	PID     int
+	Started bool
+	Detail  string
+}
+
+var leadWakeStarter = startExternalLeadWake
+var externalLeadWakeCommand = exec.Command
+var externalLeadWakeReadyTimeout = 5 * time.Second
+var externalLeadWakePollInterval = 50 * time.Millisecond
+var externalLeadWakeStopTimeout = 2 * time.Second
 
 type teamLeadData struct {
 	Profile      string `json:"profile"`
@@ -137,10 +161,14 @@ func runLead(args []string) error {
 
 Usage:
   amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
+                          [--no-wake] [--require-wake|--no-require-wake]
+                          [--wake-inject-via PATH] [--wake-inject-arg ARG]
 
 register adopts the current tmux pane as the external lead for an existing team
 profile. It sets orchestrated/lead when needed and writes an explicit external
-runtime record, without pretending amq-squad spawned or owns the pane.
+runtime record, without pretending amq-squad spawned or owns the pane. By
+default it also starts or repairs the AMQ wake sidecar for the lead's resolved
+session root, so child reports create the same attention path spawned agents get.
 `)
 		if len(args) == 0 {
 			return usageErrorf("lead requires a subcommand ('register')")
@@ -161,11 +189,28 @@ func runLeadRegister(args []string) error {
 	sessionFlag := fs.String("session", "", "AMQ workstream session (default: team workstream)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to mutate (default: default profile)")
+	noWake := fs.Bool("no-wake", false, "write the external lead record without starting amq wake")
+	requireWake := fs.Bool("require-wake", false, "fail if the external lead wake sidecar cannot become ready (default)")
+	noRequireWake := fs.Bool("no-require-wake", false, "warn instead of failing if the external lead wake sidecar cannot become ready")
+	wakeInjectVia := fs.String("wake-inject-via", "", "absolute executable passed to amq wake --inject-via for external lead notifications")
+	var wakeInjectArgs stringListFlag
+	fs.Var(&wakeInjectArgs, "wake-inject-arg", "argument passed to amq wake --inject-arg (repeatable; requires --wake-inject-via)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
 		return usageErrorf("unexpected argument %q", fs.Arg(0))
+	}
+	if *requireWake && *noRequireWake {
+		return usageErrorf("--require-wake and --no-require-wake are mutually exclusive")
+	}
+	wakeInjectViaValue := strings.TrimSpace(*wakeInjectVia)
+	wakeInjectArgValues := append([]string(nil), wakeInjectArgs...)
+	if len(wakeInjectArgValues) > 0 && wakeInjectViaValue == "" {
+		return usageErrorf("--wake-inject-arg requires --wake-inject-via")
+	}
+	if wakeInjectViaValue != "" && !filepath.IsAbs(wakeInjectViaValue) {
+		return usageErrorf("--wake-inject-via must be an absolute path")
 	}
 	projectDir, profile, err := resolveExistingTeamProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {
@@ -211,6 +256,24 @@ func runLeadRegister(args []string) error {
 	}
 	root := absoluteAMQRoot(cwd, env.Root)
 	agentDir := filepath.Join(root, "agents", handle)
+	var wakeResult leadWakeResult
+	if !*noWake {
+		wakeResult, err = leadWakeStarter(leadWakeOptions{
+			ProjectDir:     cwd,
+			Root:           root,
+			Handle:         handle,
+			Require:        !*noRequireWake,
+			WakeInjectVia:  wakeInjectViaValue,
+			WakeInjectArgs: wakeInjectArgValues,
+		})
+		if err != nil {
+			return fmt.Errorf("start external lead wake: %w", err)
+		}
+	}
+	wakePID := wakeResult.PID
+	if lock, lockErr := readWakeLock(agentDir); lockErr == nil && lock.PID > 0 {
+		wakePID = lock.PID
+	}
 	rec := launch.Record{
 		CWD:              cwd,
 		Binary:           member.Binary,
@@ -225,6 +288,10 @@ func runLeadRegister(args []string) error {
 		Model:            strings.TrimSpace(member.Model),
 		Trust:            strings.TrimSpace(t.Trust),
 		External:         true,
+		NoRequireWake:    *noRequireWake,
+		WakeInjectVia:    wakeInjectViaValue,
+		WakeInjectArgs:   wakeInjectArgValues,
+		WakePID:          wakePID,
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
 		TeamProfile:      profile,
@@ -243,7 +310,139 @@ func runLeadRegister(args []string) error {
 		return err
 	}
 	fmt.Printf("registered external lead %s (%s) at pane %s for session %s.\n", role, handle, id.PaneID, env.SessionName)
+	if *noWake {
+		fmt.Println("wake: skipped (--no-wake); lead must collect manually")
+	} else if wakeResult.Detail != "" {
+		fmt.Printf("wake: %s\n", wakeResult.Detail)
+	}
 	return nil
+}
+
+func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
+	if strings.TrimSpace(opts.Root) == "" {
+		return leadWakeResult{}, fmt.Errorf("missing AMQ root")
+	}
+	if strings.TrimSpace(opts.Handle) == "" {
+		return leadWakeResult{}, fmt.Errorf("missing lead handle")
+	}
+	ready, err := os.CreateTemp("", "amq-squad-wake-ready-*")
+	if err != nil {
+		return leadWakeResult{}, fmt.Errorf("create ready file: %w", err)
+	}
+	readyPath := ready.Name()
+	_ = ready.Close()
+	_ = os.Remove(readyPath)
+	defer os.Remove(readyPath)
+
+	args := []string{
+		"wake",
+		"--root", opts.Root,
+		"--me", opts.Handle,
+		"--accept-existing-wake",
+		"--ready-file", readyPath,
+	}
+	if via := strings.TrimSpace(opts.WakeInjectVia); via != "" {
+		args = append(args, "--inject-via", via)
+		for _, arg := range opts.WakeInjectArgs {
+			args = append(args, "--inject-arg", arg)
+		}
+	}
+	cmd := externalLeadWakeCommand("amq", args...)
+	cmd.Dir = opts.ProjectDir
+	cmd.Env = append(envWithoutAMQIdentity(os.Environ()), "AM_ROOT="+opts.Root, "AM_ME="+opts.Handle)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	ownExternalLeadWakeProcessGroup(cmd)
+	if err := cmd.Start(); err != nil {
+		return leadWakeResult{}, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	deadline := time.Now().Add(externalLeadWakeReadyTimeout)
+	for {
+		if _, err := os.Stat(readyPath); err == nil {
+			return leadWakeResult{PID: cmd.Process.Pid, Started: true, Detail: fmt.Sprintf("ready for %s at %s (pid %d)", opts.Handle, opts.Root, cmd.Process.Pid)}, nil
+		}
+		select {
+		case err := <-done:
+			if err == nil {
+				return leadWakeResult{Started: false, Detail: fmt.Sprintf("existing wake accepted for %s at %s", opts.Handle, opts.Root)}, nil
+			}
+			cleanupDetail := ""
+			if stopErr := stopExternalLeadWakeProcessGroup(cmd); stopErr != nil {
+				cleanupDetail = fmt.Sprintf("failed to stop spawned wake process group %d: %v", cmd.Process.Pid, stopErr)
+			} else {
+				cleanupDetail = fmt.Sprintf("stopped spawned wake process group %d", cmd.Process.Pid)
+			}
+			if opts.Require {
+				return leadWakeResult{}, fmt.Errorf("%w; %s", err, cleanupDetail)
+			}
+			return leadWakeResult{Started: false, Detail: fmt.Sprintf("wake not ready: %v; %s", err, cleanupDetail)}, nil
+		default:
+		}
+		if time.Now().After(deadline) {
+			msg := fmt.Sprintf("wake did not become ready within %s for %s at %s", externalLeadWakeReadyTimeout, opts.Handle, opts.Root)
+			if stopErr := stopExternalLeadWakeProcess(cmd, done); stopErr != nil {
+				msg = fmt.Sprintf("%s; failed to stop spawned wake process group %d: %v", msg, cmd.Process.Pid, stopErr)
+			} else {
+				msg = fmt.Sprintf("%s; stopped spawned wake process group %d", msg, cmd.Process.Pid)
+			}
+			if opts.Require {
+				return leadWakeResult{}, fmt.Errorf("%s", msg)
+			}
+			return leadWakeResult{Started: false, Detail: msg}, nil
+		}
+		time.Sleep(externalLeadWakePollInterval)
+	}
+}
+
+func ownExternalLeadWakeProcessGroup(cmd *exec.Cmd) {
+	if cmd == nil {
+		return
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
+}
+
+func stopExternalLeadWakeProcess(cmd *exec.Cmd, done <-chan error) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	killErr := stopExternalLeadWakeProcessGroup(cmd)
+	select {
+	case <-done:
+	case <-time.After(externalLeadWakeStopTimeout):
+		return fmt.Errorf("timed out waiting for process exit")
+	}
+	if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+		return killErr
+	}
+	return nil
+}
+
+func stopExternalLeadWakeProcessGroup(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	pid := cmd.Process.Pid
+	if pid <= 0 {
+		return nil
+	}
+	err := syscall.Kill(-pid, syscall.SIGKILL)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, syscall.ESRCH) {
+		err = cmd.Process.Kill()
+		if errors.Is(err, os.ErrProcessDone) {
+			return nil
+		}
+	}
+	return err
 }
 
 func setTeamLead(projectFlag, profileFlag string, projectSet bool, role string) error {

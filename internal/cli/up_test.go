@@ -224,6 +224,87 @@ func TestUpDryRunMatchesTeamShowWithFlags(t *testing.T) {
 	}
 }
 
+func TestUpDryRunVisibilityChangesPreviewTopology(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-238"}},
+	})
+
+	siblingOut, _, err := captureOutput(t, func() error {
+		return runUp([]string{"issue-238", "--dry-run", "--visibility", "sibling-tabs"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --visibility sibling-tabs: %v", err)
+	}
+	detachedOut, _, err := captureOutput(t, func() error {
+		return runUp([]string{"issue-238", "--dry-run", "--visibility", "detached"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --visibility detached: %v", err)
+	}
+	if siblingOut == detachedOut {
+		t.Fatalf("sibling-tabs and detached dry-runs must differ:\n%s", siblingOut)
+	}
+	for _, want := range []string{
+		"# visibility: sibling-tabs",
+		"# launch:    amq-squad up issue-238 --visibility sibling-tabs",
+	} {
+		if !strings.Contains(siblingOut, want) {
+			t.Fatalf("sibling-tabs preview missing %q:\n%s", want, siblingOut)
+		}
+	}
+	for _, want := range []string{
+		"# visibility: detached",
+		"# launch:    amq-squad up issue-238 --visibility detached",
+	} {
+		if !strings.Contains(detachedOut, want) {
+			t.Fatalf("detached preview missing %q:\n%s", want, detachedOut)
+		}
+	}
+}
+
+func TestUpDryRunVisibilityPlanIsPreviewOnly(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-238"}},
+	})
+
+	out, _, err := captureOutput(t, func() error {
+		return runUp([]string{"issue-238", "--dry-run", "--visibility", "plan"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --visibility plan: %v", err)
+	}
+	for _, want := range []string{
+		"# visibility: plan",
+		"# launch:    amq-squad up issue-238 --visibility sibling-tabs --dry-run",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("plan preview missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestUpDryRunJSONCarriesVisibilityTopology(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-238"}},
+	})
+	stdout, _, err := captureOutput(t, func() error {
+		return runUp([]string{"issue-238", "--dry-run", "--json", "--visibility", "current"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --json --visibility current: %v", err)
+	}
+	env := decodeJSONEnvelope[teamPlan](t, stdout)
+	if env.Data.Visibility != "current" {
+		t.Fatalf("visibility = %q, want current", env.Data.Visibility)
+	}
+	if env.Data.LaunchCommand != "amq-squad up issue-238 --visibility current" {
+		t.Fatalf("launch_command = %q", env.Data.LaunchCommand)
+	}
+}
+
 func TestUpDryRunRequiresTeam(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)

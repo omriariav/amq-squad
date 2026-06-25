@@ -1506,23 +1506,33 @@ authoring role files and wiring them into a team.</p>
 <p>Generated launch commands include these per-binary defaults:</p>
 <ul>
 <li><strong>Claude:</strong> <code>--permission-mode auto</code></li>
-<li><strong>Codex:</strong> nothing by default (sandboxed). Pass
-<code>--trust approve-for-me</code> to use Codex Auto with
-<code>workspace-write</code>, <code>on-request</code>, and
+<li><strong>Codex:</strong> approve-for-me by default, which uses Codex
+Auto with <code>workspace-write</code>, <code>on-request</code>, and
 <code>approvals_reviewer="auto_review"</code>. Pass
-<code>--trust trusted</code> only for the local power-user profile that
-prepends <code>--dangerously-bypass-approvals-and-sandbox</code>.</li>
+<code>--trust sandboxed</code> to opt into manual approval/sandbox
+prompts. Pass <code>--trust trusted</code> only for the local power-user
+profile that prepends
+<code>--dangerously-bypass-approvals-and-sandbox</code>.</li>
 </ul>
-<p><code>--trust approve-for-me</code> and <code>--trust trusted</code>
-are persisted in the team profile by <code>team init</code> and are
-re-emitted by <code>up</code>, <code>agent up</code>,
+<p>Explicit <code>--trust sandboxed</code>,
+<code>--trust approve-for-me</code>, and <code>--trust trusted</code>
+selections are persisted in the team profile by <code>team init</code>
+and are re-emitted by <code>up</code>, <code>agent up</code>,
 <code>resume</code>, and <code>fork</code>. Combining
 <code>--trust trusted</code> with <code>--no-default-args</code> is
 rejected, as is sandboxed or approve-for-me mode with the bypass flag
 smuggled through <code>--codex-args</code>.</p>
 <p>Pass <code>--model NAME</code> to set the native <code>--model</code>
 flag on Codex or Claude. <code>team init --model role=model,...</code>
-persists per-member models.</p>
+persists per-member models. If no explicit model is set, amq-squad looks
+for a global default in <code>AMQ_SQUAD_CONFIG</code>, then
+<code>$XDG_CONFIG_HOME/amq-squad/config.json</code>, then
+<code>~/.amq-squad/config.json</code>; Codex also falls back to local
+Codex config (<code>$CODEX_HOME/config.toml</code>, profile config when
+<code>--profile</code> is present, or
+<code>~/.codex/config.toml</code>). Supported amq-squad config keys are
+<code>model</code>, <code>codex_model</code>, <code>claude_model</code>,
+or a <code>models</code> map keyed by binary name.</p>
 <div class="sourceCode" id="cb34"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> trusted</span>
 <span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> approve-for-me</span>

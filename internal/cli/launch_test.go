@@ -14,7 +14,7 @@ func TestRunLaunchDryRunSandboxedCodexOmitsBypassDefault(t *testing.T) {
 	setupFakeAMQ(t)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runLaunch([]string{"--dry-run", "--no-bootstrap", "codex", "test-prompt"})
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--trust", "sandboxed", "codex", "test-prompt"})
 	})
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
@@ -107,7 +107,7 @@ func TestRunLaunchDryRunRequireWakeVersionGate(t *testing.T) {
 	// acquire its lock (#30): coop exec gains --require-wake by default.
 	setupFakeAMQWithVersion(t, "0.34.1")
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runLaunch([]string{"--dry-run", "--no-bootstrap", "codex", "test-prompt"})
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--trust", "sandboxed", "codex", "test-prompt"})
 	})
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
@@ -122,7 +122,7 @@ func TestRunLaunchDryRunRequireWakeWithSessionShape(t *testing.T) {
 	// both before the binary positional (amq rejects misplaced flags).
 	setupFakeAMQWithVersion(t, "0.34.1")
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--session", "issue-96", "codex", "test-prompt"})
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--session", "issue-96", "--trust", "sandboxed", "codex", "test-prompt"})
 	})
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
@@ -326,7 +326,7 @@ func TestRunLaunchModelInsertsNativeFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	want := "amq coop exec codex -- --model gpt-5"
+	want := "--model gpt-5"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -417,7 +417,7 @@ func TestRunLaunchDryRunConversationCodexResumeSandboxed(t *testing.T) {
 	setupFakeAMQ(t)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runLaunch([]string{"--dry-run", "--conversation", "cto-thread", "codex"})
+		return runLaunch([]string{"--dry-run", "--trust", "sandboxed", "--conversation", "cto-thread", "codex"})
 	})
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)

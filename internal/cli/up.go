@@ -29,6 +29,7 @@ func runUp(args []string) error {
 	yes := fs.Bool("yes", false, "skip the --reset confirmation prompt (for automation)")
 	fs.BoolVar(yes, "y", false, "shorthand for --yes")
 	profileFlag := fs.String("profile", "", "team profile to bring up (default: default profile)")
+	visibilityFlag := fs.String("visibility", "", "launch topology shortcut: sibling-tabs, detached, current, or plan")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned JSON envelope (requires --dry-run; the live up path stays human-only in 11A)")
 	pf := registerPreviewFlags(fs)
 	lf := registerLiveLaunchFlags(fs)
@@ -38,6 +39,7 @@ func runUp(args []string) error {
 Usage:
   amq-squad up [<session>] [--project DIR] [--profile NAME] [--session workstream]
     [--reset [--yes|-y] [--force]]
+    [--visibility sibling-tabs|detached|current|plan]
     [--terminal tmux] [--target current-window|new-window|new-session]
     [--layout vertical|horizontal|tiled]
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
@@ -78,6 +80,11 @@ overwrites an existing brief; --force without --seed-from (and without
 duplicate-agent flag.
 
 Supported terminal backends: %s
+
+--visibility is the operator-facing topology shortcut. sibling-tabs opens one
+tmux window per agent in the CURRENT visible tmux session and refuses outside
+tmux before spawning hidden workers. detached explicitly creates a separate
+tmux session. current splits the current tmux window. plan is preview-only.
 
 Examples:
   amq-squad up issue-101
@@ -122,6 +129,11 @@ Examples:
 	}
 	if *jsonOut && !*dryRun {
 		return usageErrorf("--json requires --dry-run on `up`; the live launch path does not have a JSON contract in this release")
+	}
+	if flagWasSet(fs, "visibility") {
+		if _, err := normalizeLaunchVisibility(*visibilityFlag); err != nil {
+			return err
+		}
 	}
 	if *reset && *dryRun {
 		return usageErrorf("--reset and --dry-run are mutually exclusive; --reset is destructive and --dry-run mutates nothing")
@@ -177,6 +189,19 @@ Examples:
 			opts.RequestedSession = positionalSession
 			opts.ExplicitSession = true
 		}
+		if flagWasSet(fs, "visibility") && (flagWasSet(fs, "terminal") || flagWasSet(fs, "target")) {
+			return usageErrorf("--visibility cannot be combined with --terminal or --target; choose one topology surface")
+		}
+		if flagWasSet(fs, "visibility") {
+			mode, err := normalizeLaunchVisibility(*visibilityFlag)
+			if err != nil {
+				return err
+			}
+			if flagWasSet(fs, "terminal-session") && mode != visibilityDetached {
+				return usageErrorf("--terminal-session is only valid with --visibility detached")
+			}
+			opts.Visibility = mode
+		}
 		opts.Profile = profile
 		opts.JSON = *jsonOut
 		return emitTeamCommands(cwd, opts)
@@ -226,6 +251,9 @@ Examples:
 
 	opts, err := buildLiveLaunchOptions(fs, pf, lf)
 	if err != nil {
+		return err
+	}
+	if err := applyLaunchVisibility(&opts, *visibilityFlag, flagWasSet(fs, "terminal"), flagWasSet(fs, "target"), flagWasSet(fs, "terminal-session"), true); err != nil {
 		return err
 	}
 	// --fresh is reconciled to a no-op on `up`: refuse-existing is the default

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
@@ -165,6 +166,66 @@ func firstLiveTmuxSession(rows []statusRecord) string {
 		}
 	}
 	return ""
+}
+
+func statusTopologyForRows(rows []statusRecord, orchestrated bool) *statusTopology {
+	sessionSet := map[string]bool{}
+	windowSet := map[string]bool{}
+	livePanes := 0
+	unknownWindow := false
+	for _, r := range rows {
+		if r.Tmux == nil || !r.Tmux.PaneAlive {
+			continue
+		}
+		livePanes++
+		session := strings.TrimSpace(r.Tmux.Session)
+		if session != "" {
+			sessionSet[session] = true
+		}
+		window := strings.TrimSpace(r.Tmux.WindowID)
+		if window == "" {
+			window = strings.TrimSpace(r.Tmux.WindowName)
+		}
+		if session == "" || window == "" {
+			unknownWindow = true
+			continue
+		}
+		windowSet[session+"\x00"+window] = true
+	}
+	sessions := make([]string, 0, len(sessionSet))
+	for s := range sessionSet {
+		sessions = append(sessions, s)
+	}
+	sort.Strings(sessions)
+	topology := &statusTopology{
+		Mode:         "unknown",
+		TmuxSessions: sessions,
+		LivePanes:    livePanes,
+		LiveWindows:  len(windowSet),
+	}
+	switch {
+	case livePanes == 0:
+		topology.Detail = "no live tmux panes with runtime identity"
+	case len(sessionSet) > 1:
+		topology.Mode = "split-session"
+		topology.Detail = "live agents span multiple tmux sessions"
+		if orchestrated {
+			topology.VisibleProblem = true
+			topology.ProblemFor = visibilitySiblingTabs
+		}
+	case len(sessionSet) == 1 && !unknownWindow && len(windowSet) == livePanes:
+		topology.Mode = visibilitySiblingTabs
+		topology.Detail = "live agents are sibling tmux windows in one session"
+	case len(sessionSet) == 1 && !unknownWindow && len(windowSet) == 1 && livePanes > 1:
+		topology.Mode = "current-window"
+		topology.Detail = "live agents share one tmux window as split panes"
+	case len(sessionSet) == 1:
+		topology.Mode = "mixed"
+		topology.Detail = "live agents share one tmux session but window topology is mixed or partially unknown"
+	default:
+		topology.Detail = "tmux session topology is unknown"
+	}
+	return topology
 }
 
 // resumeMemberJSON is one member row in the resume_plan envelope. It mirrors the

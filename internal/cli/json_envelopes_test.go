@@ -71,6 +71,44 @@ func TestRunRolesJSONEnvelope(t *testing.T) {
 	}
 }
 
+func TestRunRolesJSONEnvelopeIncludesStagedCustomRoles(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	rolesDir := filepath.Join(dir, ".amq-squad", "roles")
+	if err := os.MkdirAll(rolesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rolesDir, "probe-officer.md"), []byte(`---
+label: Probe Officer
+binary: codex
+description: Investigates runtime probes.
+skills: [/probe]
+peers: [cto]
+---
+# Role: Probe Officer
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return Run([]string{"roles", "--json"}, "v-test")
+	})
+	if err != nil {
+		t.Fatalf("roles --json: %v", err)
+	}
+	env := decodeJSONEnvelope[rolesEnvelopeData](t, stdout)
+	if len(env.Data.CustomRoles) != 1 {
+		t.Fatalf("custom_roles = %+v, want one staged role", env.Data.CustomRoles)
+	}
+	got := env.Data.CustomRoles[0]
+	if got.ID != "probe-officer" || got.Label != "Probe Officer" || got.PreferredBinary != "codex" {
+		t.Fatalf("custom role = %+v, want probe-officer metadata", got)
+	}
+	if len(got.Skills) != 1 || got.Skills[0] != "/probe" || len(got.DefaultPeers) != 1 || got.DefaultPeers[0] != "cto" {
+		t.Fatalf("custom role skills/peers = %+v / %+v", got.Skills, got.DefaultPeers)
+	}
+}
+
 func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Workstream: "issue-96",

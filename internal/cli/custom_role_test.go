@@ -315,6 +315,115 @@ func TestRoleFileInlinePathStagesVerbatimDoc(t *testing.T) {
 	}
 }
 
+func writeStagedRoleFile(t *testing.T, dir, id, body string) string {
+	t.Helper()
+	path := team.CustomRolePath(dir, id)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestStagedCustomRoleDiscoveredByBareID confirms a role authored under
+// .amq-squad/roles can be selected by its role id without repeating
+// --role-file. The filename is the routing id; the H1 is display copy.
+func TestStagedCustomRoleDiscoveredByBareID(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeStagedRoleFile(t, dir, "researcher", `---
+binary: codex
+---
+# Role: Research Engineer
+
+## Mission
+Investigate ambiguous code paths.
+`)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--roles", "researcher", "--session", "issue-96", "--dry-run", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("discovered staged custom role: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	if env.Data.Members != 1 || len(env.Data.Plan) != 1 {
+		t.Fatalf("members/plan = %d/%d, want 1/1", env.Data.Members, len(env.Data.Plan))
+	}
+	got := env.Data.Plan[0]
+	if got.Role != "researcher" || got.Binary != "codex" || got.Handle != "researcher" {
+		t.Fatalf("plan member = %+v, want researcher/codex", got)
+	}
+}
+
+// TestStagedCustomRoleLiveWriteDoesNotRestage keeps .amq-squad/roles as an
+// authored source: a live team create must not strip frontmatter from a role it
+// discovered there.
+func TestStagedCustomRoleLiveWriteDoesNotRestage(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	path := writeStagedRoleFile(t, dir, "researcher", `---
+binary: codex
+---
+# Role: Research Engineer
+
+## Mission
+Investigate ambiguous code paths.
+`)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--roles", "researcher", "--session", "issue-96"})
+	})
+	if err != nil {
+		t.Fatalf("live create with staged role: %v\nstderr:\n%s", err, stderr)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team config: %v", err)
+	}
+	if len(cfg.Members) != 1 || cfg.Members[0].Role != "researcher" || cfg.Members[0].Binary != "codex" {
+		t.Fatalf("members = %+v, want researcher/codex", cfg.Members)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read staged role: %v", err)
+	}
+	if !strings.Contains(string(body), "binary: codex") {
+		t.Fatalf("staged role frontmatter was stripped:\n%s", body)
+	}
+}
+
+// TestExplicitRoleFileOverridesDiscoveredRole preserves the existing refresh
+// workflow: an explicit --role-file for the same id wins over the staged copy.
+func TestExplicitRoleFileOverridesDiscoveredRole(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeStagedRoleFile(t, dir, "researcher", `---
+binary: claude
+---
+# Role: Research Engineer
+`)
+	rf := writeRoleFile(t, dir, "researcher-next.md", `---
+id: researcher
+binary: codex
+---
+# Role: Research Engineer
+`)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--role-file", rf, "--roles", "researcher", "--session", "issue-96", "--dry-run", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("explicit role-file override: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	if len(env.Data.Plan) != 1 || env.Data.Plan[0].Binary != "codex" {
+		t.Fatalf("plan = %+v, want explicit binary codex", env.Data.Plan)
+	}
+}
+
 // TestRoleFileCatalogIDCollisionFails: a role file whose id matches a built-in
 // persona is rejected, since the built-in would win at launch and silently drop
 // the file's binary and authored document.

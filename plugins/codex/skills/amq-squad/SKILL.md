@@ -60,6 +60,8 @@ The lifecycle is one small state machine: `(none) --up--> running --stop--> stop
 
 Pass `--profile NAME` to operate on a named profile under `.amq-squad/teams/<name>.json`. Omit (or pass `--profile default`) for `.amq-squad/team.json`.
 
+**Lifecycle safety contract:** before any lifecycle mutation (`stop`, `resume --exec`, `send`, `focus`, `rm`, `archive`, `up --reset`, `team member rm --stop`), resolve the active project, profile, and session explicitly. Run `amq-squad team profiles --json`, the multi-session `amq-squad status`, then `amq-squad status --project <repo> --profile <profile> --session <session> --json`. If more than one profile exists, never run a lifecycle command without `--profile`; omitting it can inspect or mutate the default roster while the active squad lives in a named profile. Prefer the exact commands from `.data.actions[]` and per-record `actions[]` in the scoped `status --json` output instead of hand-assembling `stop`/`resume`/`focus`/`send` commands.
+
 `team member`, `team lead`, `lead register`, and `task` are the dynamic-team primitives. `team member add/rm` mutates `team.json` atomically under an exclusive lock and re-validates it (the new member is NOT launched — run the launch command `team member add` prints: a managed pane via `resume --exec --target new-window`, or `agent up` for an unmanaged one-off). `team lead set/clear/show` mutates or inspects profile orchestration state for an existing roster. `lead register` adopts the current tmux pane as an operator-owned external lead for the session: status/action JSON can render and target it, but lifecycle commands do not own the pane, so `stop`/`rm`/`archive`/`resume` will not kill, close, or replay it. `task` is a native pull-based store under `.amq-squad/tasks/<session>/`: a task is claimable only once all its `--depends-on` tasks are completed, and every mutation is atomic and lock-serialized. Runtime mutations take `--session` where applicable (tasks require it).
 
 Every command accepts `--json` where machine-readable output makes sense (`status`, `history`, `resume`, `doctor`, `team profiles`, `version`, and `up --dry-run`). JSON outputs are schema-versioned envelopes `{ schema_version, kind, data }`. Diagnostics stay on stderr; stdout under `--json` is pure JSON. For machine clients, the per-member records in `status --session <name> --json` (kind `status`), `history --json`, and `resume --json` (kind `resume_plan`) carry a `tmux` runtime block (`session`, `window_id`, `window_name`, `pane_id`, `target`) plus a computed `pane_alive` — **present only for agents launched in tmux**, so detect by presence. `status --session <name> --json` records additionally carry an `actions` array (`focus`/`send`/`resume`/`status`) with the exact runnable command and an `available` flag, so a client (e.g. amq-noc) renders/copies stable commands instead of inferring tmux state. (The bare `amq-squad status --json` is the multi-session board envelope `kind: sessions` — it has no per-member records or actions; use `--session <name>` for member detail.)
@@ -73,7 +75,7 @@ amq-squad owns the tmux execution/control contract, so drive agents by stable co
 - **`amq-squad focus --session S [--role R]`** — bring an agent's pane into view (with `--role`), or the session's first live pane (no role). `open` is the session alias.
 - **`amq-squad send --session S --role R --body "..."`** (or `--body-file F`, or `--body-file -` for stdin) — deliver a prompt into an agent's exact pane and submit it with one Enter. Text is staged in a tmux paste buffer (not a shell string), so **multi-line prompts and text with quotes or shell metacharacters arrive verbatim**. It errors clearly if the pane is gone. **Built-in busy-guard:** `send` REFUSES to deliver into a busy / mid-turn pane by default (a push into a working agent can land in a tool-result buffer and be missed); pass `--force` to override and deliberately interrupt.
   - This is **pane delivery, not an AMQ message**: `amq-squad send` takes `--body`/`--body-file` and has **no `--kind`/`--thread`**. To post an inter-agent AMQ message, use `amq send ... --kind <valid kind>` (see *Route messages*) — never put a `--kind` on `amq-squad send`.
-- **`amq-squad dispatch --session S --role R --kind todo --subject "..." --body "..."`** — the deterministic way to hand an agent a task: it sends a **durable** AMQ message to the workstream's resolved root (root-correct even for an external lead whose bare `amq send` would misroute to the default `.agent-mail`) AND nudges the agent's pane with a fixed *drain instruction* so an idle worker wakes and runs `amq drain`. The task body rides only in the durable message (no double-delivery). The nudge is best-effort: a gone/busy pane leaves the task queued (drained on the worker's next turn); `--force` nudges a busy pane, `--no-wake` queues without nudging, `--thread`/`--from` set the AMQ thread/sender. For the full lead-to-child pattern, use the `amq-squad-orchestrator` skill.
+- **`amq-squad dispatch --session S --role R --kind todo --subject "..." --body "..."`** — the deterministic way to hand an agent a task: it sends a **durable** AMQ message to the workstream's resolved root (root-correct even for an external lead whose bare `amq send` would misroute to the default `.agent-mail`) AND nudges the agent's pane with a fixed *drain instruction* so an idle worker wakes and runs `amq drain`. The task body rides only in the durable message (no double-delivery). The nudge is best-effort: a gone/busy pane leaves the task queued (drained on the worker's next turn); `--force` nudges a busy pane, `--no-wake` queues without nudging, `--thread`/`--from` set the AMQ thread/sender. After dispatch, collect the child report with the printed root-correct `amq-squad collect --session ... --me ... --timeout 120s --include-body`; a drain receipt only proves the child saw the task, not that it completed. For the full lead-to-child pattern, use the `amq-squad-orchestrator` skill.
 - Each agent launched in tmux persists its exact tmux identity in its launch record; `status --session <name> --json`, `history --json`, and `resume --json` expose it plus `pane_alive`, and the single-session `status --json` `actions[]` give the exact focus/send/resume commands. Prefer those over hand-built tmux.
 
 **Launch topology** — `amq-squad up --target ...`:
@@ -108,6 +110,7 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
 
 3. **Discover live state and history.**
    - `amq-squad status` (or bare `amq-squad`) for the multi-session board; `status --session <name>` for the single-session detail.
+   - Before lifecycle mutations, resolve the exact profile and session: `amq-squad team profiles --json`, `amq-squad status`, then `amq-squad status --project <repo> --profile <profile> --session <session> --json`. Treat the action commands in that JSON as the source of truth for follow-up control.
    - `amq-squad console` for the live read-only Mission Control TUI (`--once` for a static board in CI / no-TTY).
    - `amq-squad doctor` for AMQ version / tmux / wake / marker integrity.
    - `amq-squad history` for restorable records in this project (use `--project a,b` to widen scope only when the user explicitly asks).
@@ -116,16 +119,23 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
    - NEW work: `amq-squad up [<session>]` opens the team in tmux. It REFUSES an existing session — use `resume` to continue, or `up --reset` to start over. With no `--seed-from`, the brief auto-stubs (one-line notice); decide brief-first vs stub-then-edit before launching.
    - Preview-only: `amq-squad up --dry-run` prints one launch command per member; share or paste into separate panes.
    - Restart someone: `amq-squad agent resume <role>` (delegates to the saved launch record). Use `agent up <binary> [flags]` for ad-hoc single-agent launches.
-   - Stop: `amq-squad stop --role R` (or `--all`); `--force` escalates to SIGKILL. State is preserved, so the session stays resumable. (The `down` alias was removed in 2.0.)
+   - Stop: use the exact scoped command from `status --json` when possible, e.g. `amq-squad stop --project <repo> --profile <profile> --session <session> --all --close-panes` for managed worker teardown. `--force` escalates to SIGKILL. State is preserved, so the session stays resumable. (The `down` alias was removed in 2.0.)
    - Re-orient: `amq-squad resume` reattaches a saved conversation if present, else re-runs bootstrap so the agent re-reads its brief + AMQ history (no replay of prior reasoning). Plan-only; `--exec` opens the commands.
    - Tear down for good: `amq-squad rm <session>` (destructive, confirm-gated) or `amq-squad archive <session>` (recoverable). Both refuse a live session unless `--force` — stop first.
+   - External/adopted lead panes are operator-owned. Do not kill them with raw tmux or treat `stop` output as permission to close them; report that they remain open and whether one is the current pane.
 
-5. **Fork into a new workstream.**
+5. **Teardown checklist for release/dogfood sessions.**
+   - Resolve scope first: `amq-squad team profiles --json`, `amq-squad status`, and scoped `status --project <repo> --profile <profile> --session <session> --json`.
+   - Copy the `stop` command from scoped `status --json .data.actions[]` when available; for managed worker panes it should include explicit `--project`, `--profile`, `--session`, `--all`, and usually `--close-panes`.
+   - Confirm external/adopted leads in the status rows and leave them to the operator.
+   - Verify with a second scoped stop/status pass expecting managed workers to be `not-live`, plus recorded pane/PID checks when release evidence requires it.
+
+6. **Fork into a new workstream.**
    - `amq-squad fork --from <current> --as <new>` plans fresh launches in the new session, branched off the current workstream.
    - The new workstream gets its own brief at `.amq-squad/briefs/<new>.md`.
    - Existing target workstreams need `--force-duplicate` to overwrite.
 
-6. **Route messages.**
+7. **Route messages.**
    - Same-project role handoffs use the shared workstream and a canonical p2p thread:
      ```sh
      amq send --to fullstack --thread p2p/cto__fullstack --kind review_request \
@@ -137,15 +147,16 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
    - Synchronous wait: append `--wait-for drained --wait-timeout 60s`.
    - Cross-session sends need explicit `--session` and `--thread`; avoid them in normal flow.
 
-7. **Drain inbox.**
+8. **Drain inbox.**
    ```sh
    amq list --new
    amq read --id <id>
    amq drain --include-body
    ```
    Acknowledge briefly on the same thread when useful - one factual line, not a status update.
+   - Leads collecting child reports should prefer `amq-squad collect --session <S> --me <lead> --timeout 120s --include-body` over raw `amq drain`; `collect` resolves the correct workstream root for external leads, drains once, waits once when requested, then drains once more.
 
-8. **Work the task store (when one drives the workstream).**
+9. **Work the task store (when one drives the workstream).**
    - When the lead has posted work as tasks (`amq-squad task list --session <S>`), the store is the durable source of truth for who-owns-what — keep it in sync; do not just prose-ACK over AMQ.
    - Before you START a piece of dispatched work, claim its task: `amq-squad task claim <id> --me <handle> --session <S>`. A claim is gated until the task's `--depends-on` tasks are `completed`, so a successful claim also confirms your dependencies are met.
    - When you FINISH, close it: `amq-squad task done <id> --session <S>`. If you cannot finish, record `task fail <id>` (with a reason) or `task block <id>` rather than leaving it `in_progress`.
@@ -182,7 +193,11 @@ amq-squad up --dry-run
 amq-squad focus --session issue-96 --role cto
 amq-squad send  --session issue-96 --role cto --body "please review PR #69"
 cat prompt.md | amq-squad send --session issue-96 --role qa --body-file -
-amq-squad status --session issue-96 --json | jq '.data.records[] | {role, tmux, actions}'
+amq-squad dispatch --session issue-96 --role qa --from cto --subject "Validate" --body-file ./task.md
+amq-squad collect --session issue-96 --me cto --timeout 120s --include-body
+amq-squad team profiles --json
+amq-squad status
+amq-squad status --project /Code/app --profile review --session issue-96 --json | jq '.data.records[] | {role, tmux, actions}'
 amq-squad resume --session issue-96 --json | jq '.kind, .data.plan'
 
 # Seed a brief from a GitHub issue and write it
@@ -198,7 +213,7 @@ amq-squad fork --from issue-96 --as issue-96-review
 
 # Stop members (state preserved, resumable)
 amq-squad stop --role qa
-amq-squad stop --all --force
+amq-squad stop --project /Code/app --profile review --session issue-96 --all --close-panes
 
 # Tear down for good (confirm-gated; refuses live unless --force)
 amq-squad rm issue-96
