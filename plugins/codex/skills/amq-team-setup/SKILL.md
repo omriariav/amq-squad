@@ -219,12 +219,18 @@ orchestrated?/lead, brief) and confirm. Then create:
 6. **Print the next commands** and hand off:
 
    ```sh
-   amq-squad up                 # bring all members up in the current tmux window
-   amq-squad up --target new-window   # window-per-agent (preferred for a squad)
+   amq-squad up <workstream> --visibility sibling-tabs  # default visible sibling windows
+   amq-squad up <workstream> --visibility detached      # explicit detached tmux session
+   amq-squad up <workstream> --visibility current       # split the current window
    ```
 
    First live launch belongs to the `amq-squad` skill (or, for an orchestrated
    squad, the lead drives spawn/dispatch/monitor via `amq-squad-orchestrator`).
+   The default handoff must keep the team visible to the operator:
+   `--visibility sibling-tabs` opens one window per agent in the current visible
+   tmux session and refuses outside tmux before spawning hidden workers. Use
+   `--visibility detached` only when a separate tmux session is intentional and
+   attach/open it before considering the team handed off.
 
    **Launch-name consistency (read before handing off):** the configured
    workstream applies only when the launch command carries NO `--session`

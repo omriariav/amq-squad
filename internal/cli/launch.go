@@ -58,7 +58,7 @@ func runLaunch(args []string) error {
 	conversationID := fs.String("conversation-id", "", "alias for --conversation")
 	noBootstrap := fs.Bool("no-bootstrap", false, "do not pass the generated bootstrap prompt to the agent")
 	noDefaultArgs := fs.Bool("no-default-args", false, "do not prepend Codex or Claude default permission args")
-	trustRaw := fs.String("trust", "", "Codex trust profile: sandboxed (default), approve-for-me, or trusted (local power mode)")
+	trustRaw := fs.String("trust", "", "Codex trust profile: approve-for-me (default), sandboxed, or trusted (local power mode)")
 	model := fs.String("model", "", "native model name to pass to the agent binary, e.g. 'gpt-5' or 'sonnet'")
 	spawnOrigin := fs.String("spawn-origin", "", "runtime composition origin recorded in launch.json")
 	spawnDepth := fs.Int("spawn-depth", 0, "runtime composition depth recorded in launch.json")
@@ -92,11 +92,12 @@ Side effects before exec:
      already running. Override with --force-duplicate.
   3. Writes launch.json under the amq-squad extension namespace.
   4. Writes a role.md stub if one does not already exist.
-  5. Prepends Claude default permission args. Codex defaults stay empty for
-     sandboxed mode, use Auto plus auto_review for --trust approve-for-me, and
-     use the bypass flag only for --trust trusted. --no-default-args opts out
-     of all built-in defaults.
-  6. Inserts --model <name> for codex or claude when --model is provided.
+  5. Prepends Claude default permission args. Codex defaults to Auto plus
+     auto_review for --trust approve-for-me, stays empty for --trust sandboxed,
+     and uses the bypass flag only for --trust trusted. --no-default-args opts
+     out of all built-in defaults.
+  6. Inserts --model <name> for codex or claude when resolved from CLI,
+     amq-squad config, or local Codex config.
   7. Prepends --codex-args or --claude-args for the matching binary.
   8. Translates --conversation for Codex or Claude resume when provided.
   9. Adds a generated bootstrap prompt unless --no-bootstrap is set or
@@ -183,7 +184,8 @@ Examples:
 		childArgs = append(remaining[1:], childArgs...)
 	}
 	extraDefaultArgs := binaryArgsFor(binary, binaryArgs)
-	modelArgs := modelArgsForBinary(binary, *model)
+	resolvedModel := resolveModelForLaunch(binary, *model, extraDefaultArgs)
+	modelArgs := modelArgsForBinary(binary, resolvedModel)
 	defaultArgs := launchDefaultChildArgsWithTrust(binary, !*noDefaultArgs, modelArgs, extraDefaultArgs, trustMode)
 	childArgs = ensureLeadingChildArgs(defaultArgs, childArgs)
 	if conversationRef != "" {
@@ -237,7 +239,7 @@ Examples:
 		ClaudeArgs:       binaryArgs["claude"],
 		Launcher:         launcher,
 		LauncherArgs:     launcherArgs,
-		Model:            strings.TrimSpace(*model),
+		Model:            resolvedModel,
 		Trust:            trustMode,
 		NoDefaultArgs:    *noDefaultArgs,
 		SpawnOrigin:      strings.TrimSpace(*spawnOrigin),

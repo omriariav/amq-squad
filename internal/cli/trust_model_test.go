@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -9,6 +11,10 @@ import (
 )
 
 func TestDefaultChildArgsForBinaryWithTrust(t *testing.T) {
+	wantApprove := []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`}
+	if got := defaultChildArgsForBinary("codex"); !reflect.DeepEqual(got, wantApprove) {
+		t.Errorf("default codex args = %v, want approve-for-me %v", got, wantApprove)
+	}
 	if got := defaultChildArgsForBinaryWithTrust("codex", trustModeSandboxed); len(got) != 0 {
 		t.Errorf("sandboxed codex defaults = %v, want []", got)
 	}
@@ -22,6 +28,64 @@ func TestDefaultChildArgsForBinaryWithTrust(t *testing.T) {
 	}
 	if got := defaultChildArgsForBinaryWithTrust("claude", trustModeTrusted); !reflect.DeepEqual(got, wantClaude) {
 		t.Errorf("trust does not change claude defaults: %v", got)
+	}
+}
+
+func TestResolveModelUsesAMQSquadConfigBeforeCodexLocal(t *testing.T) {
+	configDir := t.TempDir()
+	home := t.TempDir()
+	writeFile(t, filepath.Join(configDir, "amq-squad", "config.json"), `{"models":{"codex":"gpt-5.5"}}`)
+	writeFile(t, filepath.Join(home, ".codex", "config.toml"), `model = "gpt-local"`)
+	withModelLookupRoots(t, configDir, home, map[string]string{})
+
+	if got := resolveModelForLaunch("codex", "", nil); got != "gpt-5.5" {
+		t.Fatalf("resolved model = %q, want gpt-5.5", got)
+	}
+	if got := resolveModelForLaunch("codex", "gpt-explicit", nil); got != "gpt-explicit" {
+		t.Fatalf("explicit model = %q, want gpt-explicit", got)
+	}
+}
+
+func TestResolveModelUsesCodexProfileConfig(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(home, ".codex")
+	writeFile(t, filepath.Join(codexHome, "worker.config.toml"), `model = "gpt-5.5"`)
+	writeFile(t, filepath.Join(codexHome, "config.toml"), `model = "gpt-default"`)
+	withModelLookupRoots(t, t.TempDir(), home, map[string]string{"CODEX_HOME": codexHome})
+
+	got := resolveModelForLaunch("codex", "", []string{"--profile", "worker"})
+	if got != "gpt-5.5" {
+		t.Fatalf("profile model = %q, want gpt-5.5", got)
+	}
+}
+
+func withModelLookupRoots(t *testing.T, configDir, home string, env map[string]string) {
+	t.Helper()
+	oldConfigDir := modelUserConfigDir
+	oldHomeDir := modelUserHomeDir
+	oldGetenv := modelGetenv
+	modelUserConfigDir = func() (string, error) { return configDir, nil }
+	modelUserHomeDir = func() (string, error) { return home, nil }
+	modelGetenv = func(key string) string {
+		if v, ok := env[key]; ok {
+			return v
+		}
+		return ""
+	}
+	t.Cleanup(func() {
+		modelUserConfigDir = oldConfigDir
+		modelUserHomeDir = oldHomeDir
+		modelGetenv = oldGetenv
+	})
+}
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

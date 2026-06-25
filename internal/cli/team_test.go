@@ -36,6 +36,43 @@ func TestEmitTeamCommandsRejectsPersistedSandboxedBypass(t *testing.T) {
 	}
 }
 
+func TestResolveTeamTrustModeEmptyProfileUsesManagedDefault(t *testing.T) {
+	got, err := resolveTeamTrustMode(team.Team{}, "", false)
+	if err != nil {
+		t.Fatalf("resolveTeamTrustMode: %v", err)
+	}
+	if got != trustModeApproveForMe {
+		t.Fatalf("empty team trust = %q, want %q", got, trustModeApproveForMe)
+	}
+}
+
+func TestEmitTeamCommandsExistingProfileWithoutTrustUsesApproveForMe(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{
+			{Role: "dev", Binary: "codex", Handle: "dev", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := captureOutput(t, func() error {
+		return emitTeamCommands(dir, emitTeamOptions{})
+	})
+	if err != nil {
+		t.Fatalf("emitTeamCommands: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"--trust approve-for-me",
+		"--sandbox workspace-write",
+		"--ask-for-approval on-request",
+		"-c 'approvals_reviewer=\"auto_review\"'",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("team command missing %q in:\n%s", want, stdout)
+		}
+	}
+}
+
 func TestEmitTeamCommandsRejectsUnknownModelRoleKey(t *testing.T) {
 	dir := t.TempDir()
 	if err := team.Write(dir, team.Team{
@@ -672,10 +709,11 @@ func TestShouldAppendBootstrapWithDefaultChildArgs(t *testing.T) {
 }
 
 func TestEnsureDefaultChildArgs(t *testing.T) {
-	// Sandboxed Codex (the new default) has no built-in defaults to ensure.
+	// Codex defaults to approve-for-me for managed workers.
 	got := ensureDefaultChildArgs("codex", nil)
-	if len(got) != 0 {
-		t.Errorf("ensureDefaultChildArgs sandboxed codex = %v, want []", got)
+	wantApprove := []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`}
+	if !reflect.DeepEqual(got, wantApprove) {
+		t.Errorf("ensureDefaultChildArgs codex = %v, want %v", got, wantApprove)
 	}
 	got = ensureDefaultChildArgs("claude", nil)
 	want := []string{"--permission-mode", "auto"}
@@ -704,7 +742,7 @@ func TestEnsureDefaultChildArgs(t *testing.T) {
 func TestPromptPersonaSelection(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("4,2\n"))
 	var out bytes.Buffer
-	got, err := promptPersonaSelection(reader, &out)
+	got, err := promptPersonaSelection(reader, &out, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -719,7 +757,7 @@ func TestPromptPersonaSelection(t *testing.T) {
 
 func TestPrintPersonaMarketIncludesEmployeeProfiles(t *testing.T) {
 	var out bytes.Buffer
-	printPersonaMarket(&out)
+	printPersonaMarket(&out, nil)
 	got := out.String()
 	for _, want := range []string{
 		"frontend-dev",
@@ -736,7 +774,7 @@ func TestPrintPersonaMarketIncludesEmployeeProfiles(t *testing.T) {
 }
 
 func TestParsePersonaSelection(t *testing.T) {
-	got, err := parsePersonaSelection("junior-dev,2")
+	got, err := parsePersonaSelection("junior-dev,2", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -744,14 +782,14 @@ func TestParsePersonaSelection(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parsePersonaSelection = %v, want %v", got, want)
 	}
-	got, err = parsePersonaSelection("all")
+	got, err = parsePersonaSelection("all", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) == 0 || got[0] != "cpo" {
 		t.Errorf("parsePersonaSelection all = %v, want catalog IDs", got)
 	}
-	if _, err := parsePersonaSelection("999"); err == nil {
+	if _, err := parsePersonaSelection("999", nil); err == nil {
 		t.Error("parsePersonaSelection should reject out-of-range numbers")
 	}
 }
@@ -760,7 +798,7 @@ func TestPromptBinarySelection(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("fullstack=codex\n"))
 	var out bytes.Buffer
 	overrides := map[string]string{}
-	if err := promptBinarySelection(reader, &out, []string{"fullstack", "qa"}, overrides); err != nil {
+	if err := promptBinarySelection(reader, &out, []string{"fullstack", "qa"}, overrides, nil); err != nil {
 		t.Fatal(err)
 	}
 	if overrides["fullstack"] != "codex" {
@@ -778,7 +816,7 @@ func TestPromptBinarySelectionPreservesFlagOverride(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("\n"))
 	var out bytes.Buffer
 	overrides := map[string]string{"fullstack": "codex"}
-	if err := promptBinarySelection(reader, &out, []string{"fullstack"}, overrides); err != nil {
+	if err := promptBinarySelection(reader, &out, []string{"fullstack"}, overrides, nil); err != nil {
 		t.Fatal(err)
 	}
 	if overrides["fullstack"] != "codex" {

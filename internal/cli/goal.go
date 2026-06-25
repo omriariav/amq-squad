@@ -36,6 +36,7 @@ type goalDraftData struct {
 	Session            string                 `json:"session"`
 	Profile            string                 `json:"profile"`
 	Composition        string                 `json:"composition"`
+	Visibility         string                 `json:"visibility"`
 	AutonomousPolicy   *team.AutonomousPolicy `json:"autonomous_policy,omitempty"`
 	PreviewOnly        bool                   `json:"preview_only"`
 	CodexOnly          bool                   `json:"codex_only,omitempty"`
@@ -110,7 +111,7 @@ func printGoalUsage() {
 	fmt.Fprint(os.Stderr, `amq-squad goal - draft or apply a preview-first goal setup plan
 
 Usage:
-  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
+  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
 
 Examples:
   amq-squad goal draft --goal "deliver GitHub milestone v2.7.0" --repo omriariav/amq-squad --milestone v2.7.0 --session v2-7-0 --profile codex-v2-7-0
@@ -132,13 +133,14 @@ func runGoalDraft(args []string) error {
 	allowedRoleClassesFlag := fs.String("allowed-role-classes", "", "autonomous guardrail: comma-separated role-class allowlist")
 	budgetTurnsFlag := fs.Int("budget-turns", 0, "autonomous guardrail: maximum lead turns before operator review")
 	idleReapMinutesFlag := fs.Int("idle-reap-minutes", 0, "autonomous guardrail: idle minutes before prune is allowed")
+	visibilityFlag := fs.String("visibility", visibilitySiblingTabs, "launch topology: sibling-tabs (default), detached, current, or plan")
 	codexOnly := fs.Bool("codex-only", false, "propose Codex binaries for every role")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned goal_draft envelope instead of Markdown")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad goal draft - produce a preview-only setup plan from a goal
 
 Usage:
-  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
+  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
 
 The draft is read-only. It prints proposed briefs, roster entries, task-store
 items, spawn gates, dispatches, and the orchestrator prompt, but it does not
@@ -176,6 +178,7 @@ Examples:
 		AllowedRoleClasses: strings.TrimSpace(*allowedRoleClassesFlag),
 		BudgetTurns:        *budgetTurnsFlag,
 		IdleReapMinutes:    *idleReapMinutesFlag,
+		Visibility:         strings.TrimSpace(*visibilityFlag),
 	})
 	if err != nil {
 		return err
@@ -201,6 +204,7 @@ type goalDraftOptions struct {
 	AllowedRoleClasses string
 	BudgetTurns        int
 	IdleReapMinutes    int
+	Visibility         string
 }
 
 func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
@@ -234,6 +238,10 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 	if err != nil {
 		return goalDraftData{}, err
 	}
+	visibility, err := normalizeLaunchVisibility(opts.Visibility)
+	if err != nil {
+		return goalDraftData{}, err
+	}
 	issues, err := resolveGoalMilestoneIssues(opts.Repo, opts.Milestone)
 	if err != nil {
 		return goalDraftData{}, err
@@ -245,6 +253,7 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 		Session:          session,
 		Profile:          profile,
 		Composition:      composition,
+		Visibility:       visibility,
 		AutonomousPolicy: autonomousPolicy,
 		PreviewOnly:      true,
 		CodexOnly:        opts.CodexOnly,
@@ -253,6 +262,8 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 		Notes: []string{
 			"Seeded composition remains the default; autonomous composition requires explicit opt-in and policy limits.",
 			"This draft is preview-only and does not mutate team.json, briefs, task files, AMQ mailboxes, launch records, wake locks, or panes.",
+			"Default visibility is sibling-tabs: launch from an existing visible tmux pane so the lead and workers open as sibling tmux windows in that same session.",
+			"Use --visibility detached only when a separate tmux session is intentional; use --visibility current for split panes in the current window; use --visibility plan when you want commands only.",
 			"Merge, push, release, destructive filesystem actions, external communications, and provider side effects remain operator-owned.",
 		},
 	}
@@ -361,6 +372,7 @@ func renderGoalBriefSkeleton(data goalDraftData) string {
 	}
 	b.WriteString("## Scope\n- Deliver the goal through amq-squad orchestration.\n- Keep AMQ, the task store, and the workstream brief as durable coordination records.\n")
 	fmt.Fprintf(&b, "- Composition mode: %s.\n\n", data.Composition)
+	fmt.Fprintf(&b, "- Visibility: %s.\n\n", data.Visibility)
 	if data.AutonomousPolicy != nil {
 		b.WriteString("## Autonomous policy\n")
 		fmt.Fprintf(&b, "- Max active agents: %d\n", data.AutonomousPolicy.MaxActiveAgents)
@@ -484,7 +496,37 @@ func defaultGoalMutations(data goalDraftData) []goalCommandPlan {
 		}
 		mutations = append(mutations, goalCommandPlan{Title: "add " + task.ID, Command: cmd, Reason: "Create the native task-store item after preview approval."})
 	}
+	mutations = append(mutations, goalVisibilityMutation(data))
 	return mutations
+}
+
+func goalVisibilityMutation(data goalDraftData) goalCommandPlan {
+	switch data.Visibility {
+	case visibilityDetached:
+		return goalCommandPlan{
+			Title:   "launch detached team",
+			Command: fmt.Sprintf("amq-squad up %s --profile %s --visibility detached", data.Session, data.Profile),
+			Reason:  "Explicitly create a detached tmux session for background work; attach/open it deliberately before treating the team as visible.",
+		}
+	case visibilityCurrent:
+		return goalCommandPlan{
+			Title:   "launch in current window",
+			Command: fmt.Sprintf("amq-squad up %s --profile %s --visibility current", data.Session, data.Profile),
+			Reason:  "Split the current visible tmux window into agent panes; this is compact but not the default sibling-window topology.",
+		}
+	case visibilityPlan:
+		return goalCommandPlan{
+			Title:   "preview visible launch",
+			Command: fmt.Sprintf("amq-squad up %s --profile %s --visibility sibling-tabs --dry-run", data.Session, data.Profile),
+			Reason:  "Preview launch commands only; do not open panes or windows until the operator approves a concrete visibility mode.",
+		}
+	default:
+		return goalCommandPlan{
+			Title:   "launch visible team",
+			Command: fmt.Sprintf("amq-squad up %s --profile %s --visibility sibling-tabs", data.Session, data.Profile),
+			Reason:  "Run from a visible tmux pane; opens the lead and workers as sibling tmux windows in the same session and refuses outside tmux before spawning hidden workers.",
+		}
+	}
 }
 
 func renderGoalOrchestratorPrompt(data goalDraftData) string {
@@ -508,6 +550,7 @@ func writeGoalDraftMarkdown(out *os.File, data goalDraftData) {
 	fmt.Fprintln(out, "# amq-squad goal draft")
 	fmt.Fprintf(out, "# preview_only: %t\n", data.PreviewOnly)
 	fmt.Fprintf(out, "# composition: %s\n", data.Composition)
+	fmt.Fprintf(out, "# visibility: %s\n", data.Visibility)
 	fmt.Fprintf(out, "# session: %s\n", data.Session)
 	fmt.Fprintf(out, "# profile: %s\n", data.Profile)
 	if data.Repo != "" {

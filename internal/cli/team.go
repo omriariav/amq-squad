@@ -88,7 +88,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	sessionFlag := fs.String("session", "", "AMQ workstream session name for all members (lowercase a-z, 0-9, -, _)")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
 	modelFlag := fs.String("model", "", "per-persona model overrides, e.g. cto=gpt-5,fullstack=sonnet")
-	trustRaw := fs.String("trust", "", "Codex trust profile for generated commands: sandboxed (default), approve-for-me, or trusted")
+	trustRaw := fs.String("trust", "", "Codex trust profile for generated commands: approve-for-me (default), sandboxed, or trusted")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
 	operatorFlag := fs.String("operator", team.DefaultOperatorHandle, "virtual operator mailbox handle for human gates (default: user)")
@@ -125,8 +125,10 @@ values under --project resolve from DIR. Default AMQ workstream sessions are
 derived from the team-home directory name.
 
 Custom roles: a --roles/--personas entry that is not a built-in persona is
-treated as a custom role. Each custom role must be a valid slug (lowercase
-a-z, 0-9, -, _) and must carry an explicit --binary role=<cli> entry, e.g.
+treated as a custom role. Team formation auto-discovers authored custom roles
+from .amq-squad/roles/<id>.md. Each custom role must be a valid slug
+(lowercase a-z, 0-9, -, _) and must carry an explicit --binary role=<cli>
+entry unless its discovered/loaded role file has a 'binary:' field, e.g.
 --roles researcher --binary researcher=codex. Built-in personas keep their
 catalog defaults unless overridden.
 
@@ -258,7 +260,8 @@ Examples:
 	binaryOverrides = lowercaseKeys(binaryOverrides)
 
 	// customDefs holds custom roles loaded from files (via --role-file or an
-	// inline path token in --roles/--personas), keyed by resolved role id.
+	// inline path token in --roles/--personas) plus staged roles discovered
+	// from .amq-squad/roles/, keyed by resolved role id.
 	customDefs := map[string]role.Definition{}
 	roleFilePaths := splitCSV(*roleFileFlag)
 	fileSelected := make([]string, 0, len(roleFilePaths))
@@ -272,9 +275,15 @@ Examples:
 
 	var picked []string
 	interactive := *rolesFlag == "" && *personasFlag == "" && len(roleFilePaths) == 0
+	if interactive {
+		if err := discoverStagedCustomRoleDefs(cwd, customDefs); err != nil {
+			return err
+		}
+	}
 	// The non-interactive flag paths accept custom role slugs (resolved by the
 	// member loop below, which requires a --binary or a role file for each) and
-	// inline role-file paths. The interactive prompt stays catalog-only.
+	// inline role-file paths. The interactive prompt accepts built-ins plus
+	// staged roles discovered under .amq-squad/roles/.
 	if *personasFlag != "" {
 		picked, err = resolveTeamSelection(*personasFlag, customDefs)
 		if err != nil {
@@ -290,11 +299,11 @@ Examples:
 		picked = nil
 	} else {
 		reader := bufio.NewReader(os.Stdin)
-		picked, err = promptPersonaSelection(reader, os.Stderr)
+		picked, err = promptPersonaSelection(reader, os.Stderr, customDefs)
 		if err != nil {
 			return err
 		}
-		if err := promptBinarySelection(reader, os.Stderr, picked, binaryOverrides); err != nil {
+		if err := promptBinarySelection(reader, os.Stderr, picked, binaryOverrides, customDefs); err != nil {
 			return err
 		}
 		if err := promptModelSelection(reader, os.Stderr, modelOverrides); err != nil {
@@ -321,6 +330,11 @@ Examples:
 	picked = append(picked, fileSelected...)
 	if len(picked) == 0 {
 		return fmt.Errorf("no personas selected, aborting")
+	}
+	if !interactive {
+		if err := discoverStagedCustomRoleDefs(cwd, customDefs); err != nil {
+			return err
+		}
 	}
 
 	// Reject --model role=model where role is not a chosen persona, so a
@@ -443,6 +457,9 @@ Examples:
 	for _, m := range members {
 		def, ok := customDefs[m.Role]
 		if !ok {
+			continue
+		}
+		if customRoleSourceIsStaged(cwd, def.Source) {
 			continue
 		}
 		wrote, err := stageCustomRoleDoc(cwd, def)
@@ -653,6 +670,7 @@ type emitTeamOptions struct {
 	RequestedSession string
 	ExplicitSession  bool
 	Fresh            bool
+	Visibility       string
 	ExtraBinaryArgs  map[string][]string
 	RequestedTrust   string
 	ExplicitTrust    bool
@@ -683,19 +701,21 @@ type teamPlanMember struct {
 // plan: project/team-home + workstream + trust + profile + binary args +
 // per-member command lines.
 type teamPlan struct {
-	TeamHome     string                `json:"team_home"`
-	Project      string                `json:"project"`
-	Workstream   string                `json:"workstream"`
-	Profile      string                `json:"profile"`
-	Trust        string                `json:"trust"`
-	Orchestrated bool                  `json:"orchestrated"`
-	Lead         string                `json:"lead,omitempty"`
-	Members      int                   `json:"members"`
-	BinaryArgs   map[string][]string   `json:"binary_args,omitempty"`
-	Operator     team.OperatorView     `json:"operator"`
-	Capabilities team.Capabilities     `json:"capabilities"`
-	Autonomous   team.AutonomousStatus `json:"autonomous"`
-	Plan         []teamPlanMember      `json:"plan"`
+	TeamHome      string                `json:"team_home"`
+	Project       string                `json:"project"`
+	Workstream    string                `json:"workstream"`
+	Profile       string                `json:"profile"`
+	Trust         string                `json:"trust"`
+	Orchestrated  bool                  `json:"orchestrated"`
+	Lead          string                `json:"lead,omitempty"`
+	Members       int                   `json:"members"`
+	BinaryArgs    map[string][]string   `json:"binary_args,omitempty"`
+	Operator      team.OperatorView     `json:"operator"`
+	Capabilities  team.Capabilities     `json:"capabilities"`
+	Autonomous    team.AutonomousStatus `json:"autonomous"`
+	Visibility    string                `json:"visibility,omitempty"`
+	LaunchCommand string                `json:"launch_command,omitempty"`
+	Plan          []teamPlanMember      `json:"plan"`
 }
 
 func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
@@ -757,6 +777,12 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 	if err := validateModelOverrideKeys(opts.ModelOverrides, memberRoles); err != nil {
 		return err
 	}
+	if filtered, skipped, err := maybeFilterCurrentExternalLead(t, workstream, opts.Profile, trustMode, binaryArgs, opts.ModelOverrides, false); err != nil {
+		return err
+	} else if skipped {
+		t = filtered
+		members = orderedTeamMembers(t.Members)
+	}
 
 	// Use the running amq-squad's absolute path so emitted commands work
 	// even when amq-squad isn't on PATH.
@@ -774,22 +800,24 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			profileName = team.DefaultProfile
 		}
 		plan := teamPlan{
-			TeamHome:     t.Project,
-			Project:      t.Project,
-			Workstream:   workstream,
-			Profile:      profileName,
-			Trust:        trustMode,
-			Orchestrated: t.Orchestrated,
-			Lead:         t.Lead,
-			Members:      len(members),
-			BinaryArgs:   binaryArgs,
-			Operator:     team.EffectiveOperator(t),
-			Capabilities: team.EffectiveCapabilities(t),
-			Autonomous:   team.EffectiveAutonomousStatus(t),
-			Plan:         make([]teamPlanMember, 0, len(members)),
+			TeamHome:      t.Project,
+			Project:       t.Project,
+			Workstream:    workstream,
+			Profile:       profileName,
+			Trust:         trustMode,
+			Orchestrated:  t.Orchestrated,
+			Lead:          t.Lead,
+			Members:       len(members),
+			BinaryArgs:    binaryArgs,
+			Operator:      team.EffectiveOperator(t),
+			Capabilities:  team.EffectiveCapabilities(t),
+			Autonomous:    team.EffectiveAutonomousStatus(t),
+			Visibility:    opts.Visibility,
+			LaunchCommand: visibilityPreviewLaunchCommand(workstream, profileName, opts.Visibility),
+			Plan:          make([]teamPlanMember, 0, len(members)),
 		}
 		for _, m := range members {
-			effectiveModel := memberEffectiveModel(m, opts.ModelOverrides)
+			effectiveModel := memberResolvedModel(m, opts.ModelOverrides, binaryArgs)
 			cwd := m.EffectiveCWD(t.Project)
 			plan.Plan = append(plan.Plan, teamPlanMember{
 				Role:       m.Role,
@@ -825,6 +853,12 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 	fmt.Printf("# workstream: %s\n", workstream)
 	fmt.Printf("# trust:     %s\n", trustMode)
 	fmt.Printf("# members:   %d\n", len(members))
+	if opts.Visibility != "" {
+		fmt.Printf("# visibility: %s\n", opts.Visibility)
+		if cmd := visibilityPreviewLaunchCommand(workstream, opts.Profile, opts.Visibility); cmd != "" {
+			fmt.Printf("# launch:    %s\n", cmd)
+		}
+	}
 	if formatted := formatBinaryArgs(binaryArgs); formatted != "" {
 		fmt.Printf("# binary args: %s\n", formatted)
 	}
@@ -846,7 +880,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		if r := catalog.Lookup(m.Role); r != nil {
 			label = r.Label
 		}
-		effectiveModel := memberEffectiveModel(m, opts.ModelOverrides)
+		effectiveModel := memberResolvedModel(m, opts.ModelOverrides, binaryArgs)
 		cwd := m.EffectiveCWD(t.Project)
 		modelLabel := effectiveModel
 		if modelLabel == "" {
@@ -880,7 +914,7 @@ func resolveTeamTrustMode(t team.Team, requested string, explicit bool) (string,
 	if strings.TrimSpace(t.Trust) != "" {
 		return normalizeTrustMode(t.Trust)
 	}
-	return trustModeSandboxed, nil
+	return defaultTrustMode(), nil
 }
 
 func memberEffectiveModel(m team.Member, overrides map[string]string) string {
@@ -1140,9 +1174,9 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 	return b.String()
 }
 
-func promptPersonaSelection(reader *bufio.Reader, out io.Writer) ([]string, error) {
+func promptPersonaSelection(reader *bufio.Reader, out io.Writer, customDefs map[string]role.Definition) ([]string, error) {
 	fmt.Fprintln(out, "Squad market")
-	printPersonaMarket(out)
+	printPersonaMarket(out, customDefs)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Choose personas to hire:")
 	fmt.Fprintln(out, "  names or numbers, comma-separated")
@@ -1154,7 +1188,7 @@ func promptPersonaSelection(reader *bufio.Reader, out io.Writer) ([]string, erro
 	if err != nil {
 		return nil, fmt.Errorf("read selection: %w", err)
 	}
-	return parsePersonaSelection(line)
+	return parsePersonaSelection(line, customDefs)
 }
 
 // promptModelSelection asks the user for per-role model overrides. Empty
@@ -1210,12 +1244,12 @@ func promptWorkstreamSelection(reader *bufio.Reader, out io.Writer, defaultName 
 }
 
 // promptTrustSelection asks for the Codex trust profile. Default is the
-// current trust mode (sandboxed). Returns the selected normalized trust mode.
+// current trust mode. Returns the selected normalized trust mode.
 func promptTrustSelection(reader *bufio.Reader, out io.Writer, current string) (string, error) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Codex trust profile?")
-	fmt.Fprintln(out, "  sandboxed (recommended) - Codex prompts for approvals/sandbox")
-	fmt.Fprintln(out, "  approve-for-me     - workspace-write, on-request, auto_review")
+	fmt.Fprintln(out, "  approve-for-me (default) - workspace-write, on-request, auto_review")
+	fmt.Fprintln(out, "  sandboxed          - Codex prompts for approvals/sandbox")
 	fmt.Fprintln(out, "  trusted   (local power) - prepends --dangerously-bypass-approvals-and-sandbox")
 	fmt.Fprintf(out, "  Press Enter for %s.\n", current)
 	fmt.Fprintln(out)
@@ -1235,10 +1269,10 @@ func promptTrustSelection(reader *bufio.Reader, out io.Writer, current string) (
 	return mode, nil
 }
 
-func promptBinarySelection(reader *bufio.Reader, out io.Writer, personas []string, overrides map[string]string) error {
+func promptBinarySelection(reader *bufio.Reader, out io.Writer, personas []string, overrides map[string]string, customDefs map[string]role.Definition) error {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Squad plan")
-	printSquadPlan(out, personas, overrides)
+	printSquadPlan(out, personas, overrides, customDefs)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "CLI overrides?")
 	fmt.Fprintln(out, "  Press Enter to keep defaults.")
@@ -1262,19 +1296,61 @@ func promptBinarySelection(reader *bufio.Reader, out io.Writer, personas []strin
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Updated squad plan")
-	printSquadPlan(out, personas, overrides)
+	printSquadPlan(out, personas, overrides, customDefs)
 	return nil
 }
 
-func printPersonaMarket(out io.Writer) {
+func printPersonaMarket(out io.Writer, customDefs map[string]role.Definition) {
 	fmt.Fprintf(out, "  %-2s %-12s %-31s %-7s %s\n", "#", "PERSONA", "PROFILE", "CLI", "FIT")
 	for i, r := range catalog.All() {
 		fmt.Fprintf(out, "  %-2d %-12s %-31s %-7s %s\n", i+1, r.ID, r.Label, r.PreferredBinary, r.Profile)
 	}
+	ids := customRoleIDs(customDefs)
+	for _, id := range ids {
+		def := customDefs[id]
+		label := strings.TrimSpace(def.Label)
+		if label == "" {
+			label = id
+		}
+		binary := strings.TrimSpace(def.Binary)
+		if binary == "" {
+			binary = "(set)"
+		}
+		fit := strings.TrimSpace(def.Description)
+		if fit == "" {
+			fit = "staged custom role"
+		}
+		fmt.Fprintf(out, "  %-2s %-12s %-31s %-7s %s\n", "-", id, label, binary, fit)
+	}
 }
 
-func parsePersonaSelection(line string) ([]string, error) {
-	return catalog.ResolveSelection(line)
+func parsePersonaSelection(line string, customDefs map[string]role.Definition) ([]string, error) {
+	var out []string
+	for _, tok := range strings.Split(line, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		ids, err := catalog.ResolveSelection(tok)
+		if err == nil {
+			out = append(out, ids...)
+			continue
+		}
+		id := strings.ToLower(tok)
+		if _, ok := customDefs[id]; ok {
+			out = append(out, id)
+			continue
+		}
+		known := catalog.IDs()
+		if customIDs := customRoleIDs(customDefs); len(customIDs) > 0 {
+			known = append(known, customIDs...)
+		}
+		return nil, fmt.Errorf("unknown persona/role %q. Known personas: %s", tok, strings.Join(known, ", "))
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no selection provided")
+	}
+	return out, nil
 }
 
 // resolveTeamSelection resolves a --roles/--personas CSV that may mix catalog
@@ -1335,6 +1411,93 @@ func loadRoleFileDef(path string, defs map[string]role.Definition) (string, erro
 	return def.ID, nil
 }
 
+// discoverStagedCustomRoleDefs loads authored custom-role documents staged
+// under <projectDir>/.amq-squad/roles. The file name is the role ID source of
+// truth for staged docs; the Markdown heading is display copy and may differ.
+// Existing definitions win so explicit --role-file / inline paths can refresh
+// a staged role without being rejected as duplicates.
+func discoverStagedCustomRoleDefs(projectDir string, defs map[string]role.Definition) error {
+	entries, err := os.ReadDir(team.RolesDir(projectDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read custom roles dir: %w", err)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, entry := range entries {
+		if entry.IsDir() || !isCustomRoleFileName(entry.Name()) {
+			continue
+		}
+		path := filepath.Join(team.RolesDir(projectDir), entry.Name())
+		def, err := parseStagedCustomRoleDef(path)
+		if err != nil {
+			return err
+		}
+		if _, ok := defs[def.ID]; ok {
+			continue
+		}
+		defs[def.ID] = def
+	}
+	return nil
+}
+
+func isCustomRoleFileName(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".md", ".markdown", ".yaml", ".yml", ".json":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseStagedCustomRoleDef(path string) (role.Definition, error) {
+	def, err := role.ParseFile(path)
+	if err != nil {
+		return role.Definition{}, err
+	}
+	id := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	id = strings.ToLower(strings.TrimSpace(id))
+	if err := team.ValidateRoleID(id); err != nil {
+		return role.Definition{}, fmt.Errorf("role file %s: %w", path, err)
+	}
+	if catalog.Lookup(id) != nil {
+		return role.Definition{}, fmt.Errorf("role file %s: id %q is a built-in persona; choose a different id for a custom role", path, id)
+	}
+	def.ID = id
+	def.Source = path
+	return def, nil
+}
+
+func customRoleIDs(defs map[string]role.Definition) []string {
+	ids := make([]string, 0, len(defs))
+	for id := range defs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func customRoleSourceIsStaged(projectDir, source string) bool {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return false
+	}
+	absSource, err := filepath.Abs(source)
+	if err != nil {
+		return false
+	}
+	absRolesDir, err := filepath.Abs(team.RolesDir(projectDir))
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRolesDir, absSource)
+	if err != nil {
+		return false
+	}
+	return rel != "." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != ".."
+}
+
 // stageCustomRoleDoc writes a custom role's authored document under
 // <projectDir>/.amq-squad/roles/<id>.md. It is idempotent: identical content
 // is left untouched. Returns true when it wrote (or rewrote) the file.
@@ -1357,7 +1520,7 @@ func stageCustomRoleDoc(projectDir string, def role.Definition) (bool, error) {
 	return true, nil
 }
 
-func printSquadPlan(out io.Writer, personas []string, overrides map[string]string) {
+func printSquadPlan(out io.Writer, personas []string, overrides map[string]string, customDefs map[string]role.Definition) {
 	fmt.Fprintf(out, "  %-12s %-31s %-7s %s\n", "PERSONA", "PROFILE", "CLI", "SESSION")
 	for _, raw := range personas {
 		id := strings.TrimSpace(strings.ToLower(raw))
@@ -1366,7 +1529,18 @@ func printSquadPlan(out io.Writer, personas []string, overrides map[string]strin
 		}
 		r := catalog.Lookup(id)
 		if r == nil {
-			fmt.Fprintf(out, "  %-12s %-31s %-7s %s\n", id, "(unknown)", "", id)
+			label := "(custom role)"
+			binary := ""
+			if def, ok := customDefs[id]; ok {
+				if strings.TrimSpace(def.Label) != "" {
+					label = strings.TrimSpace(def.Label)
+				}
+				binary = strings.TrimSpace(def.Binary)
+			}
+			if b, ok := overrides[id]; ok {
+				binary = b
+			}
+			fmt.Fprintf(out, "  %-12s %-31s %-7s %s\n", id, label, binary, id)
 			continue
 		}
 		binary := r.PreferredBinary

@@ -20,7 +20,9 @@ var (
 
 func normalizeTrustMode(mode string) (string, error) {
 	switch mode {
-	case "", trustModeSandboxed:
+	case "":
+		return defaultTrustMode(), nil
+	case trustModeSandboxed:
 		return trustModeSandboxed, nil
 	case trustModeApproveForMe:
 		return trustModeApproveForMe, nil
@@ -31,8 +33,12 @@ func normalizeTrustMode(mode string) (string, error) {
 	}
 }
 
+func defaultTrustMode() string {
+	return trustModeApproveForMe
+}
+
 func defaultChildArgsForBinary(binary string) []string {
-	return defaultChildArgsForBinaryWithTrust(binary, trustModeSandboxed)
+	return defaultChildArgsForBinaryWithTrust(binary, defaultTrustMode())
 }
 
 func defaultChildArgsForBinaryWithTrust(binary, trustMode string) []string {
@@ -53,7 +59,7 @@ func defaultChildArgsForBinaryWithTrust(binary, trustMode string) []string {
 }
 
 func launchDefaultChildArgs(binary string, includeBuiltIn bool, modelArgs, extraArgs []string) []string {
-	return launchDefaultChildArgsWithTrust(binary, includeBuiltIn, modelArgs, extraArgs, trustModeSandboxed)
+	return launchDefaultChildArgsWithTrust(binary, includeBuiltIn, modelArgs, extraArgs, defaultTrustMode())
 }
 
 func launchDefaultChildArgsWithTrust(binary string, includeBuiltIn bool, modelArgs, extraArgs []string, trustMode string) []string {

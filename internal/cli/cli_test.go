@@ -82,6 +82,46 @@ func TestRunRolesListsMarketNumbers(t *testing.T) {
 	}
 }
 
+func TestRunRolesListsStagedCustomRolesSeparately(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	rolesDir := filepath.Join(dir, ".amq-squad", "roles")
+	if err := os.MkdirAll(rolesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rolesDir, "probe-officer.md"), []byte(`---
+label: Probe Officer
+binary: codex
+description: Investigates runtime probes.
+skills:
+  - /probe
+peers:
+  - cto
+---
+# Role: Probe Officer
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return Run([]string{"roles"}, "v-test")
+	})
+	if err != nil {
+		t.Fatalf("Run roles: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"Built-in roles",
+		"Custom roles (.amq-squad/roles)",
+		"probe-officer",
+		"codex",
+		"Investigates runtime probes.",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("roles output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
 func TestRunRolesRejectsPositionalArgs(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return Run([]string{"roles", "cto"}, "v-test")

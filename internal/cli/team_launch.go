@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 type teamLaunchOptions struct {
@@ -196,6 +198,14 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if err := validateModelOverrideKeys(opts.ModelOverrides, memberRoles); err != nil {
 		return err
 	}
+	if filtered, skipped, err := maybeFilterCurrentExternalLead(t, opts.Workstream, opts.Profile, trustMode, mergedBinaryArgs, opts.ModelOverrides, !opts.DryRun); err != nil {
+		return err
+	} else if skipped {
+		t = filtered
+	}
+	if len(t.Members) == 0 {
+		return fmt.Errorf("no team members to launch after external lead filtering")
+	}
 	if opts.Fresh {
 		exists, root, err := teamWorkstreamExists(t, opts.Workstream)
 		if err != nil {
@@ -330,7 +340,7 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 				Workstream:     opts.Workstream,
 				BinaryArgs:     binaryArgs,
 				TrustMode:      opts.Trust,
-				Model:          memberEffectiveModel(m, opts.ModelOverrides),
+				Model:          memberResolvedModel(m, opts.ModelOverrides, binaryArgs),
 				ForceDuplicate: opts.ForceDuplicate,
 				Profile:        opts.Profile,
 				WakeInjectVia:  opts.WakeInjectVia,
@@ -339,6 +349,109 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 		})
 	}
 	return panes
+}
+
+func maybeFilterCurrentExternalLead(t team.Team, workstream, profile, trustMode string, binaryArgs map[string][]string, modelOverrides map[string]string, write bool) (team.Team, bool, error) {
+	if !t.Orchestrated || strings.TrimSpace(t.Lead) == "" {
+		return t, false, nil
+	}
+	lead, ok := memberByRole(t, strings.ToLower(strings.TrimSpace(t.Lead)))
+	if !ok {
+		return t, false, nil
+	}
+	id, err := currentPaneIdentity()
+	if err != nil || id == nil || strings.TrimSpace(id.PaneID) == "" {
+		return t, false, nil
+	}
+	cwd := lead.EffectiveCWD(t.Project)
+	handle := memberHandle(lead)
+	env, err := resolveAMQEnvInDir(cwd, "", workstream, handle)
+	if err != nil {
+		if !write {
+			return t, false, nil
+		}
+		return t, false, fmt.Errorf("resolve amq env for external lead %s: %w", handle, err)
+	}
+	if env.Me != "" {
+		handle = env.Me
+	}
+	root := absoluteAMQRoot(cwd, env.Root)
+	agentDir := filepath.Join(root, "agents", handle)
+	if rec, err := launch.Read(agentDir); err == nil && externalRecordMatchesPane(rec, id.PaneID) {
+		return filterLaunchMember(t, lead.Role, id.PaneID), true, nil
+	}
+	if !write || !currentEnvIdentifiesExternalLead(lead, handle, root) {
+		return t, false, nil
+	}
+	rec := externalLeadRecordForLaunch(lead, cwd, handle, root, env, id, profile, trustMode, binaryArgs, modelOverrides)
+	if err := launch.Write(agentDir, rec); err != nil {
+		return t, false, fmt.Errorf("write external lead record: %w", err)
+	}
+	return filterLaunchMember(t, lead.Role, id.PaneID), true, nil
+}
+
+func externalRecordMatchesPane(rec launch.Record, paneID string) bool {
+	return rec.External && rec.Tmux != nil && strings.TrimSpace(rec.Tmux.PaneID) == strings.TrimSpace(paneID)
+}
+
+func currentEnvIdentifiesExternalLead(m team.Member, handle, root string) bool {
+	me := strings.TrimSpace(os.Getenv("AM_ME"))
+	if me == "" || (me != handle && me != m.Role) {
+		return false
+	}
+	if envRoot := strings.TrimSpace(os.Getenv("AM_ROOT")); envRoot != "" && root != "" && !rootsMatch(envRoot, root) {
+		return false
+	}
+	return true
+}
+
+func externalLeadRecordForLaunch(m team.Member, cwd, handle, root string, env amqEnv, pane *tmuxpane.PaneIdentity, profile, trustMode string, binaryArgs map[string][]string, modelOverrides map[string]string) launch.Record {
+	rec := launch.Record{
+		CWD:              cwd,
+		Binary:           m.Binary,
+		Session:          env.SessionName,
+		SharedWorkstream: true,
+		Handle:           handle,
+		Role:             m.Role,
+		Root:             root,
+		BaseRoot:         absoluteAMQRoot(cwd, env.BaseRoot),
+		RootSource:       env.RootSource,
+		AMQVersion:       env.AMQVersion,
+		Model:            memberResolvedModel(m, modelOverrides, binaryArgs),
+		Trust:            trustMode,
+		External:         true,
+		AgentTTY:         currentLaunchTTY(),
+		StartedAt:        time.Now().UTC(),
+		TeamProfile:      profile,
+		Tmux: &launch.TmuxInfo{
+			Session:    pane.Session,
+			WindowID:   pane.WindowID,
+			WindowName: pane.WindowName,
+			PaneID:     pane.PaneID,
+			Target:     "external",
+		},
+	}
+	extra := append(binaryArgsFor(m.Binary, binaryArgs), m.ExtraArgs()...)
+	switch normalizedAgentBinary(m.Binary) {
+	case "codex":
+		rec.CodexArgs = extra
+	case "claude":
+		rec.ClaudeArgs = extra
+	}
+	return rec
+}
+
+func filterLaunchMember(t team.Team, role, paneID string) team.Team {
+	filtered := t
+	filtered.Members = make([]team.Member, 0, len(t.Members))
+	for _, m := range t.Members {
+		if m.Role == role {
+			continue
+		}
+		filtered.Members = append(filtered.Members, m)
+	}
+	quietNotice("notice: treating %s as external lead at pane %s; not spawning a duplicate lead\n", role, paneID)
+	return filtered
 }
 
 // withTmuxTargetEnv wraps a per-pane launch command so the launched agent's

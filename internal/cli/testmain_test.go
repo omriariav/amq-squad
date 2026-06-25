@@ -9,6 +9,18 @@ import (
 
 func TestMain(m *testing.M) {
 	tempDir := ""
+	modelDir, err := os.MkdirTemp("", "amq-squad-test-models-*")
+	if err != nil {
+		panic(err)
+	}
+	modelUserConfigDir = func() (string, error) { return filepath.Join(modelDir, "config"), nil }
+	modelUserHomeDir = func() (string, error) { return filepath.Join(modelDir, "home"), nil }
+	if err := os.Setenv("CODEX_HOME", filepath.Join(modelDir, "codex")); err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("AMQ_SQUAD_CONFIG", filepath.Join(modelDir, "missing.json")); err != nil {
+		panic(err)
+	}
 	if _, err := exec.LookPath("amq"); err != nil {
 		var setupErr error
 		tempDir, setupErr = installPackageTestAMQ()
@@ -20,6 +32,7 @@ func TestMain(m *testing.M) {
 	if tempDir != "" {
 		_ = os.RemoveAll(tempDir)
 	}
+	_ = os.RemoveAll(modelDir)
 	os.Exit(code)
 }
 
