@@ -122,6 +122,16 @@ func TestRunTeamResumeAllFreshWhenNoRecords(t *testing.T) {
 	if !strings.Contains(stdout, "launch fresh") {
 		t.Errorf("no-record team should plan launch fresh:\n%s", stdout)
 	}
+	for _, want := range []string{
+		"--trust approve-for-me",
+		"--sandbox workspace-write",
+		"--ask-for-approval on-request",
+		"approvals_reviewer=\"auto_review\"",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("no-Trust resume output missing %q in:\n%s", want, stdout)
+		}
+	}
 	if strings.Contains(stdout, "  restore  ") || strings.Contains(stdout, "\trestore\t") {
 		t.Errorf("no-record team should not surface restore action:\n%s", stdout)
 	}

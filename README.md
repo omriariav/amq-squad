@@ -968,11 +968,11 @@ wiring them into a team.
 Generated launch commands include these per-binary defaults:
 
 - **Claude:** `--permission-mode auto`
-- **Codex:** nothing by default (sandboxed). Pass `--trust approve-for-me` to use Codex Auto with `workspace-write`, `on-request`, and `approvals_reviewer="auto_review"`. Pass `--trust trusted` only for the local power-user profile that prepends `--dangerously-bypass-approvals-and-sandbox`.
+- **Codex:** approve-for-me by default, which uses Codex Auto with `workspace-write`, `on-request`, and `approvals_reviewer="auto_review"`. Pass `--trust sandboxed` to opt into manual approval/sandbox prompts. Pass `--trust trusted` only for the local power-user profile that prepends `--dangerously-bypass-approvals-and-sandbox`.
 
-`--trust approve-for-me` and `--trust trusted` are persisted in the team profile by `team init` and are re-emitted by `up`, `agent up`, `resume`, and `fork`. Combining `--trust trusted` with `--no-default-args` is rejected, as is sandboxed or approve-for-me mode with the bypass flag smuggled through `--codex-args`.
+Explicit `--trust sandboxed`, `--trust approve-for-me`, and `--trust trusted` selections are persisted in the team profile by `team init` and are re-emitted by `up`, `agent up`, `resume`, and `fork`. Combining `--trust trusted` with `--no-default-args` is rejected, as is sandboxed or approve-for-me mode with the bypass flag smuggled through `--codex-args`.
 
-Pass `--model NAME` to set the native `--model` flag on Codex or Claude. `team init --model role=model,...` persists per-member models.
+Pass `--model NAME` to set the native `--model` flag on Codex or Claude. `team init --model role=model,...` persists per-member models. If no explicit model is set, amq-squad looks for a global default in `AMQ_SQUAD_CONFIG`, then `$XDG_CONFIG_HOME/amq-squad/config.json`, then `~/.amq-squad/config.json`; Codex also falls back to local Codex config (`$CODEX_HOME/config.toml`, profile config when `--profile` is present, or `~/.codex/config.toml`). Supported amq-squad config keys are `model`, `codex_model`, `claude_model`, or a `models` map keyed by binary name.
 
 ```sh
 amq-squad team init --personas cto,fullstack --trust trusted

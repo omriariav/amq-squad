@@ -404,7 +404,7 @@ func TestSessionActions(t *testing.T) {
 	for _, a := range acts {
 		byKind[a.Kind] = a
 	}
-	want := []string{"status", "resume_preview", "resume_current_window", "resume_new_session", "stop", "task_list"}
+	want := []string{"status", "resume_preview", "resume_current_window", "resume_new_session", "stop", "stop_close_panes", "task_list"}
 	if len(acts) != len(want) {
 		t.Fatalf("want %d session actions, got %d", len(want), len(acts))
 	}
@@ -427,7 +427,7 @@ func TestSessionActions(t *testing.T) {
 	if byKind["status"].Mutates || byKind["resume_preview"].Mutates {
 		t.Error("status/resume_preview must not mutate")
 	}
-	for _, k := range []string{"resume_current_window", "resume_new_session", "stop"} {
+	for _, k := range []string{"resume_current_window", "resume_new_session", "stop", "stop_close_panes"} {
 		if !byKind[k].Mutates || !byKind[k].NeedsConfirmation {
 			t.Errorf("%s must mutate and need confirmation", k)
 		}
@@ -435,6 +435,9 @@ func TestSessionActions(t *testing.T) {
 	// Commands map to real verbs; new-session omits --terminal-session (derived).
 	if byKind["stop"].Command != "amq-squad stop --project /Code/app --session issue-96 --all" {
 		t.Errorf("stop command = %q", byKind["stop"].Command)
+	}
+	if byKind["stop_close_panes"].Command != "amq-squad stop --project /Code/app --session issue-96 --all --close-panes" {
+		t.Errorf("stop_close_panes command = %q", byKind["stop_close_panes"].Command)
 	}
 	if !strings.HasSuffix(byKind["resume_new_session"].Command, "--exec --target new-session") {
 		t.Errorf("resume_new_session should omit --terminal-session: %q", byKind["resume_new_session"].Command)

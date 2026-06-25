@@ -38,6 +38,7 @@ func Session(projectDir, profile, session, tmuxSession string) []Action {
 		{Kind: "resume_current_window", Label: "resume in current window", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: "amq-squad resume" + scope + " --exec --target current-window"},
 		{Kind: "resume_new_session", Label: "resume in new tmux session", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: "amq-squad resume" + scope + " --exec --target new-session"},
 		{Kind: "stop", Label: "stop the session", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: "amq-squad stop" + scope + " --all"},
+		{Kind: "stop_close_panes", Label: "stop session and close managed panes", Scope: "session", Mutates: true, NeedsConfirmation: true, Available: true, Command: "amq-squad stop" + scope + " --all --close-panes"},
 		{Kind: "task_list", Label: "list tasks", Scope: "session", Mutates: false, NeedsConfirmation: false, Available: true, Command: "amq-squad task list" + scope},
 	}
 	if tmuxSession != "" {

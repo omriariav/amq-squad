@@ -344,9 +344,9 @@ func TestLaunchArgsFromRecordPreservesSharedWorkstream(t *testing.T) {
 		Role:             "cto",
 	}
 	got := launchArgsFromRecord(rec)
-	// codex defaults to sandboxed; --trust sandboxed is emitted explicitly so
-	// the trust boundary is visible on replay. No Conversation -> re-orient
-	// resume, so --no-bootstrap is absent.
+	// Legacy codex records without a trust field restore as sandboxed; --trust
+	// sandboxed is emitted explicitly so the trust boundary is visible on
+	// replay. No Conversation -> re-orient resume, so --no-bootstrap is absent.
 	want := []string{"--role", "cto", "--session", "cto", "--team-workstream", "--trust", "sandboxed", "--me", "cto", "codex"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)

@@ -74,6 +74,7 @@ type statusEnvelopeData struct {
 	Lead         string                `json:"lead,omitempty"`
 	LeadHandle   string                `json:"lead_handle,omitempty"`
 	Autonomous   team.AutonomousStatus `json:"autonomous"`
+	Topology     *statusTopology       `json:"topology,omitempty"`
 	Records      []statusRecord        `json:"records"`
 	// Actions are the SESSION-scope operator actions (status / resume preview /
 	// resume in current window / resume in new tmux session / stop), the catalog
@@ -103,6 +104,16 @@ type statusRecord struct {
 	// Actions are the stable, project-scoped commands a client can render/copy
 	// for this member (focus/send/resume/status). Populated for --json only.
 	Actions []runtimeActionJSON `json:"actions,omitempty"`
+}
+
+type statusTopology struct {
+	Mode           string   `json:"mode"`
+	TmuxSessions   []string `json:"tmux_sessions,omitempty"`
+	LivePanes      int      `json:"live_panes"`
+	LiveWindows    int      `json:"live_windows,omitempty"`
+	VisibleProblem bool     `json:"visible_problem,omitempty"`
+	ProblemFor     string   `json:"problem_for,omitempty"`
+	Detail         string   `json:"detail,omitempty"`
 }
 
 type sessionStatusContext struct {
@@ -233,6 +244,7 @@ func executeStatus(s statusExecution) error {
 			Lead:         ctx.Lead,
 			LeadHandle:   ctx.LeadHandle,
 			Autonomous:   team.EffectiveAutonomousStatus(t),
+			Topology:     statusTopologyForRows(rows, ctx.Orchestrated),
 			Records:      rows,
 			Actions:      ctx.Actions,
 		})

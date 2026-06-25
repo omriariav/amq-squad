@@ -11,6 +11,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 func statusProbe(alive map[int]bool, match map[int]bool, now time.Time) duplicateLaunchProbe {
@@ -104,6 +105,59 @@ func TestRunStatusProjectValidation(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "--project requires a directory") {
 		t.Fatalf("status empty --project error = %v, want directory guidance", err)
+	}
+}
+
+func TestStatusJSONTopologyFlagsSplitSessionForVisibleMode(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-238"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "issue-238"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-238", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-238", AgentPID: 1001,
+		Tmux: &launch.TmuxInfo{
+			Session:  "operator-visible",
+			WindowID: "@1",
+			PaneID:   "%1",
+			Target:   "new-window",
+		},
+	})
+	seedAgentRecord(t, base, "issue-238", "fullstack", launch.Record{
+		Binary: "codex", Handle: "fullstack", Role: "fullstack", Session: "issue-238", AgentPID: 1002,
+		Tmux: &launch.TmuxInfo{
+			Session:  "hidden-workers",
+			WindowID: "@2",
+			PaneID:   "%2",
+			Target:   "new-session",
+		},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}, {PaneID: "%2"}}, nil)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-238",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{1001: true, 1002: true}, map[int]bool{1001: true, 1002: true}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.Topology == nil {
+		t.Fatal("topology missing from status JSON")
+	}
+	topology := env.Data.Topology
+	if topology.Mode != "split-session" || !topology.VisibleProblem || topology.ProblemFor != visibilitySiblingTabs {
+		t.Fatalf("topology = %+v, want split-session visible problem for sibling-tabs", topology)
+	}
+	if strings.Join(topology.TmuxSessions, ",") != "hidden-workers,operator-visible" {
+		t.Fatalf("tmux sessions = %v, want sorted split sessions", topology.TmuxSessions)
 	}
 }
 
