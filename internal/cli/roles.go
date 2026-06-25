@@ -96,7 +96,6 @@ func rolesData(projectDir string) (rolesEnvelopeData, error) {
 			ID:              id,
 			Label:           label,
 			PreferredBinary: def.Binary,
-			Profile:         def.Description,
 			Description:     def.Description,
 			Skills:          append([]string(nil), def.Skills...),
 			DefaultPeers:    append([]string(nil), def.Peers...),

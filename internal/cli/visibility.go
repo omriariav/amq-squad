@@ -28,6 +28,16 @@ func normalizeLaunchVisibility(raw string) (string, error) {
 	}
 }
 
+func launchVisibilityForFlags(raw string, explicitVisibility, explicitTerminal, explicitTarget, explicitTerminalSession bool) string {
+	if explicitVisibility {
+		return strings.TrimSpace(raw)
+	}
+	if explicitTerminal || explicitTarget || explicitTerminalSession {
+		return ""
+	}
+	return visibilitySiblingTabs
+}
+
 func applyLaunchVisibility(opts *teamLaunchOptions, visibility string, explicitTerminal, explicitTarget, explicitTerminalSession, live bool) error {
 	visibility = strings.TrimSpace(visibility)
 	if visibility == "" {
