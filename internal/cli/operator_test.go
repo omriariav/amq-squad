@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -133,6 +135,7 @@ func TestOperatorPollReadOnlyJSONUsesOperatorLoopContract(t *testing.T) {
 		Profile:    team.DefaultProfile,
 		Session:    "s",
 		BaseRoot:   base,
+		ReadOnly:   true,
 		JSON:       true,
 		Out:        &out,
 		Probe: state.Probe{
@@ -157,12 +160,284 @@ func TestOperatorPollReadOnlyJSONUsesOperatorLoopContract(t *testing.T) {
 	}
 }
 
-func TestRunOperatorPollRequiresReadOnly(t *testing.T) {
+func TestOperatorPollClaimsLeaseAndCursorHighWater(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyMessage(t, base, "s", team.DefaultOperatorHandle, "cur", notifyMsg{
+		ID:      "2026-06-28T22-00-02.000Z_pid1_newer",
+		From:    "cto",
+		To:      team.DefaultOperatorHandle,
+		Thread:  "p2p/cto__user",
+		Subject: "read high-water",
+		Kind:    string(state.KindStatus),
+		Created: notifyNow.Add(2 * time.Minute),
+	})
+	seedNotifyMessage(t, base, "s", team.DefaultOperatorHandle, "new", notifyMsg{
+		ID:      "2026-06-28T22-00-01.000Z_pid1_older",
+		From:    "cto",
+		To:      team.DefaultOperatorHandle,
+		Thread:  "gate/release",
+		Subject: "APPROVAL: release",
+		Kind:    string(state.KindQuestion),
+		Created: notifyNow.Add(time.Minute),
+	})
+
+	var out bytes.Buffer
+	err := executeOperatorPoll(operatorExecution{
+		ProjectDir: project,
+		Profile:    team.DefaultProfile,
+		Session:    "s",
+		BaseRoot:   base,
+		Owner:      "noc",
+		OwnerID:    "noc:host:1",
+		LeaseTTL:   5 * time.Minute,
+		JSON:       true,
+		Out:        &out,
+		Probe: state.Probe{
+			PIDAlive:     func(pid int) bool { return true },
+			ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+			Now:          func() time.Time { return notifyNow },
+		},
+		Now: func() time.Time { return notifyNow },
+	})
+	if err != nil {
+		t.Fatalf("operator poll lease claim: %v", err)
+	}
+	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
+	if env.Kind != "operator_poll" || env.Data.ReadOnly {
+		t.Fatalf("poll envelope kind/readonly = %q/%v, want operator_poll/false", env.Kind, env.Data.ReadOnly)
+	}
+	loop := env.Data.OperatorLoop
+	if loop.State != "poller_active" || loop.Owner != "noc" || loop.OwnerID != "noc:host:1" || loop.Cursor != "2026-06-28T22-00-02.000Z_pid1_newer" {
+		t.Fatalf("operator loop = %+v, want active noc lease with inbox high-water cursor", loop)
+	}
+	if loop.LeaseExpiresAt != notifyNow.Add(5*time.Minute).UTC().Format(time.RFC3339) || loop.LastPollAt != notifyNow.UTC().Format(time.RFC3339) {
+		t.Fatalf("lease timestamps = %+v, want RFC3339 UTC from fixed clock", loop)
+	}
+	leasePath := operatorLoopLeasePath(project, team.DefaultProfile, "s")
+	if leasePath != filepath.Join(project, team.DirName, "operator-loop", "s.json") {
+		t.Fatalf("default lease path = %q, want profile omitted", leasePath)
+	}
+	if _, err := os.Stat(filepath.Join(project, team.DirName, "operator-loop", team.DefaultProfile, "s.json")); !os.IsNotExist(err) {
+		t.Fatalf("default-profile lease must not be written under literal default dir")
+	}
+	lease, err := readOperatorLoopLease(leasePath)
+	if err != nil {
+		t.Fatalf("read lease: %v", err)
+	}
+	if lease.OwnerID != "noc:host:1" || lease.Cursor != "2026-06-28T22-00-02.000Z_pid1_newer" {
+		t.Fatalf("lease = %+v, want claimed high-water lease", lease)
+	}
+}
+
+func TestOperatorStatusReportsExistingLeaseReadOnly(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	now := notifyNow
+	err := writeOperatorLoopLease(operatorLoopLeasePath(project, team.DefaultProfile, "s"), operatorLoopLeaseFile{
+		SchemaVersion:  1,
+		Profile:        team.DefaultProfile,
+		Session:        "s",
+		NamespaceID:    "default/s",
+		Mode:           "poll",
+		Owner:          "daemon",
+		OwnerID:        "daemon:host:7",
+		LeaseTTL:       "2m0s",
+		LeaseExpiresAt: now.Add(time.Minute).UTC(),
+		LastPollAt:     now.Add(-time.Minute).UTC(),
+		Cursor:         "m9",
+		UpdatedAt:      now.Add(-time.Minute).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("write lease: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = executeOperatorStatus(operatorExecution{
+		ProjectDir: project,
+		Profile:    team.DefaultProfile,
+		Session:    "s",
+		BaseRoot:   base,
+		JSON:       true,
+		Out:        &out,
+		Probe: state.Probe{
+			PIDAlive:     func(pid int) bool { return true },
+			ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+			Now:          func() time.Time { return now },
+		},
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("operator status lease read: %v", err)
+	}
+	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
+	loop := env.Data.OperatorLoop
+	if !env.Data.ReadOnly || loop.State != "poller_active" || loop.Owner != "daemon" || loop.OwnerID != "daemon:host:7" || loop.Cursor != "m9" {
+		t.Fatalf("status loop = %+v readonly=%v, want read-only active lease", loop, env.Data.ReadOnly)
+	}
+}
+
+func TestOperatorPollRefusesActiveForeignLease(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	now := notifyNow
+	if err := writeOperatorLoopLease(operatorLoopLeasePath(project, team.DefaultProfile, "s"), operatorLoopLeaseFile{
+		SchemaVersion:  1,
+		Profile:        team.DefaultProfile,
+		Session:        "s",
+		NamespaceID:    "default/s",
+		Mode:           "poll",
+		Owner:          "noc",
+		OwnerID:        "noc:host:1",
+		LeaseTTL:       "2m0s",
+		LeaseExpiresAt: now.Add(time.Minute).UTC(),
+		LastPollAt:     now.Add(-time.Minute).UTC(),
+		UpdatedAt:      now.Add(-time.Minute).UTC(),
+	}); err != nil {
+		t.Fatalf("write lease: %v", err)
+	}
+
+	err := executeOperatorPoll(operatorExecution{
+		ProjectDir: project,
+		Profile:    team.DefaultProfile,
+		Session:    "s",
+		BaseRoot:   base,
+		Owner:      "cli",
+		OwnerID:    "cli:host:2",
+		LeaseTTL:   2 * time.Minute,
+		Out:        &bytes.Buffer{},
+		Probe: state.Probe{
+			PIDAlive:     func(pid int) bool { return true },
+			ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+			Now:          func() time.Time { return now },
+		},
+		Now: func() time.Time { return now },
+	})
+	if err == nil || !strings.Contains(err.Error(), "already held by noc:host:1") {
+		t.Fatalf("foreign active lease error = %v, want deterministic conflict", err)
+	}
+	lease, readErr := readOperatorLoopLease(operatorLoopLeasePath(project, team.DefaultProfile, "s"))
+	if readErr != nil {
+		t.Fatalf("read lease: %v", readErr)
+	}
+	if lease.OwnerID != "noc:host:1" {
+		t.Fatalf("lease owner after conflict = %q, want unchanged noc:host:1", lease.OwnerID)
+	}
+}
+
+func TestOperatorPollClaimsExpiredForeignLease(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	now := notifyNow
+	if err := writeOperatorLoopLease(operatorLoopLeasePath(project, team.DefaultProfile, "s"), operatorLoopLeaseFile{
+		SchemaVersion:  1,
+		Profile:        team.DefaultProfile,
+		Session:        "s",
+		NamespaceID:    "default/s",
+		Mode:           "poll",
+		Owner:          "noc",
+		OwnerID:        "noc:host:1",
+		LeaseTTL:       "2m0s",
+		LeaseExpiresAt: now.Add(-time.Minute).UTC(),
+		LastPollAt:     now.Add(-3 * time.Minute).UTC(),
+		UpdatedAt:      now.Add(-3 * time.Minute).UTC(),
+	}); err != nil {
+		t.Fatalf("write lease: %v", err)
+	}
+
+	var out bytes.Buffer
+	err := executeOperatorPoll(operatorExecution{
+		ProjectDir: project,
+		Profile:    team.DefaultProfile,
+		Session:    "s",
+		BaseRoot:   base,
+		Owner:      "cli",
+		OwnerID:    "cli:host:2",
+		LeaseTTL:   2 * time.Minute,
+		JSON:       true,
+		Out:        &out,
+		Probe: state.Probe{
+			PIDAlive:     func(pid int) bool { return true },
+			ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+			Now:          func() time.Time { return now },
+		},
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("claim expired lease: %v", err)
+	}
+	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
+	if env.Data.OperatorLoop.State != "poller_active" || env.Data.OperatorLoop.OwnerID != "cli:host:2" {
+		t.Fatalf("operator loop = %+v, want expired lease reclaimed by cli:host:2", env.Data.OperatorLoop)
+	}
+}
+
+func TestOperatorPollForceStealsLiveLeaseWritesAudit(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	now := notifyNow
+	if err := writeOperatorLoopLease(operatorLoopLeasePath(project, team.DefaultProfile, "s"), operatorLoopLeaseFile{
+		SchemaVersion:  1,
+		Profile:        team.DefaultProfile,
+		Session:        "s",
+		NamespaceID:    "default/s",
+		Mode:           "poll",
+		Owner:          "noc",
+		OwnerID:        "noc:host:1",
+		LeaseTTL:       "2m0s",
+		LeaseExpiresAt: now.Add(time.Minute).UTC(),
+		LastPollAt:     now.Add(-time.Minute).UTC(),
+		UpdatedAt:      now.Add(-time.Minute).UTC(),
+	}); err != nil {
+		t.Fatalf("write lease: %v", err)
+	}
+
+	err := executeOperatorPoll(operatorExecution{
+		ProjectDir:  project,
+		Profile:     team.DefaultProfile,
+		Session:     "s",
+		BaseRoot:    base,
+		Owner:       "cli",
+		OwnerID:     "cli:host:2",
+		LeaseTTL:    2 * time.Minute,
+		Force:       true,
+		ForceReason: "recover stuck poller",
+		Out:         &bytes.Buffer{},
+		Probe: state.Probe{
+			PIDAlive:     func(pid int) bool { return true },
+			ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+			Now:          func() time.Time { return now },
+		},
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("force steal lease: %v", err)
+	}
+	lease, readErr := readOperatorLoopLease(operatorLoopLeasePath(project, team.DefaultProfile, "s"))
+	if readErr != nil {
+		t.Fatalf("read lease: %v", readErr)
+	}
+	if lease.OwnerID != "cli:host:2" {
+		t.Fatalf("lease owner after force = %q, want cli:host:2", lease.OwnerID)
+	}
+	auditPath := filepath.Join(project, team.DirName, "operator-loop-audit", "s.jsonl")
+	b, err := os.ReadFile(auditPath)
+	if err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	for _, want := range []string{"recover stuck poller", "noc:host:1", "cli:host:2"} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("audit missing %q:\n%s", want, string(b))
+		}
+	}
+}
+
+func TestRunOperatorPollForceRequiresReason(t *testing.T) {
 	chdir(t, t.TempDir())
 	_, _, err := captureOutput(t, func() error {
-		return runOperator([]string{"poll", "--session", "s", "--json"})
+		return runOperator([]string{"poll", "--session", "s", "--force", "--json"})
 	})
-	if err == nil || !strings.Contains(err.Error(), "requires --readonly") {
-		t.Fatalf("operator poll without readonly error = %v, want --readonly usage", err)
+	if err == nil || !strings.Contains(err.Error(), "--force requires --reason") {
+		t.Fatalf("operator poll --force without reason error = %v, want reason usage", err)
 	}
 }
