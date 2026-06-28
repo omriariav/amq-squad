@@ -277,6 +277,52 @@ func TestOperatorStatusReportsExistingLeaseReadOnly(t *testing.T) {
 	}
 }
 
+func TestOperatorStatusReportsExpiredLeaseStale(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	now := notifyNow
+	err := writeOperatorLoopLease(operatorLoopLeasePath(project, team.DefaultProfile, "s"), operatorLoopLeaseFile{
+		SchemaVersion:  1,
+		Profile:        team.DefaultProfile,
+		Session:        "s",
+		NamespaceID:    "default/s",
+		Mode:           "poll",
+		Owner:          "daemon",
+		OwnerID:        "daemon:host:7",
+		LeaseTTL:       "2m0s",
+		LeaseExpiresAt: now.Add(-time.Minute).UTC(),
+		LastPollAt:     now.Add(-3 * time.Minute).UTC(),
+		Cursor:         "m9",
+		UpdatedAt:      now.Add(-3 * time.Minute).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("write lease: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = executeOperatorStatus(operatorExecution{
+		ProjectDir: project,
+		Profile:    team.DefaultProfile,
+		Session:    "s",
+		BaseRoot:   base,
+		JSON:       true,
+		Out:        &out,
+		Probe: state.Probe{
+			PIDAlive:     func(pid int) bool { return true },
+			ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+			Now:          func() time.Time { return now },
+		},
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("operator status expired lease read: %v", err)
+	}
+	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
+	if env.Data.OperatorLoop.State != "poller_stale" || env.Data.OperatorLoop.OwnerID != "daemon:host:7" {
+		t.Fatalf("status loop = %+v, want stale daemon lease", env.Data.OperatorLoop)
+	}
+}
+
 func TestOperatorPollRefusesActiveForeignLease(t *testing.T) {
 	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
 	seedNotifyLaunch(t, project, base, "s", "cto")
@@ -322,6 +368,63 @@ func TestOperatorPollRefusesActiveForeignLease(t *testing.T) {
 	}
 	if lease.OwnerID != "noc:host:1" {
 		t.Fatalf("lease owner after conflict = %q, want unchanged noc:host:1", lease.OwnerID)
+	}
+}
+
+func TestOperatorPollJSONConflictEmitsHolderAndRuntimeError(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	now := notifyNow
+	if err := writeOperatorLoopLease(operatorLoopLeasePath(project, team.DefaultProfile, "s"), operatorLoopLeaseFile{
+		SchemaVersion:  1,
+		Profile:        team.DefaultProfile,
+		Session:        "s",
+		NamespaceID:    "default/s",
+		Mode:           "poll",
+		Owner:          "noc",
+		OwnerID:        "noc:host:1",
+		LeaseTTL:       "2m0s",
+		LeaseExpiresAt: now.Add(time.Minute).UTC(),
+		LastPollAt:     now.Add(-time.Minute).UTC(),
+		Cursor:         "m9",
+		UpdatedAt:      now.Add(-time.Minute).UTC(),
+	}); err != nil {
+		t.Fatalf("write lease: %v", err)
+	}
+
+	var out bytes.Buffer
+	err := executeOperatorPoll(operatorExecution{
+		ProjectDir: project,
+		Profile:    team.DefaultProfile,
+		Session:    "s",
+		BaseRoot:   base,
+		Owner:      "cli",
+		OwnerID:    "cli:host:2",
+		LeaseTTL:   2 * time.Minute,
+		JSON:       true,
+		Out:        &out,
+		Probe: state.Probe{
+			PIDAlive:     func(pid int) bool { return true },
+			ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+			Now:          func() time.Time { return now },
+		},
+		Now: func() time.Time { return now },
+	})
+	if err == nil || ExitCode(err) != ExitSystem {
+		t.Fatalf("conflict err = %v exit=%d, want runtime/system conflict", err, ExitCode(err))
+	}
+	if _, ok := err.(UsageError); ok {
+		t.Fatalf("conflict err must not be UsageError: %T %v", err, err)
+	}
+	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
+	if env.Kind != "operator_poll" || env.Data.Claimed == nil || *env.Data.Claimed {
+		t.Fatalf("poll conflict kind/claimed = %q/%v, want operator_poll claimed=false", env.Kind, env.Data.Claimed)
+	}
+	if env.Data.OperatorLoop.State != "poller_active" || env.Data.OperatorLoop.OwnerID != "noc:host:1" {
+		t.Fatalf("operator loop = %+v, want current holder", env.Data.OperatorLoop)
+	}
+	if env.Data.Conflict == nil || env.Data.Conflict.Code != "lease_conflict" || env.Data.Conflict.OwnerID != "noc:host:1" || env.Data.Conflict.LeaseExpiresAt == "" || env.Data.Conflict.Cursor != "m9" {
+		t.Fatalf("conflict = %+v, want structured current holder", env.Data.Conflict)
 	}
 }
 
