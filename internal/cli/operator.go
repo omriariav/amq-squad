@@ -32,6 +32,7 @@ type operatorStatusEnvelopeData struct {
 	Profile          string               `json:"profile"`
 	Session          string               `json:"session"`
 	Namespace        squadnamespace.Ref   `json:"namespace"`
+	ReadOnly         bool                 `json:"readonly"`
 	Operator         statusOperatorView   `json:"operator"`
 	OperatorDelivery operatorDeliveryData `json:"operator_delivery"`
 	OperatorLoop     operatorLoopStatus   `json:"operator_loop"`
@@ -62,8 +63,10 @@ func runOperator(args []string) error {
 	switch args[0] {
 	case "status":
 		return runOperatorStatus(args[1:])
+	case "poll":
+		return runOperatorPoll(args[1:])
 	default:
-		return usageErrorf("unknown 'operator' subcommand: %q. Try 'status'.", args[0])
+		return usageErrorf("unknown 'operator' subcommand: %q. Try 'status' or 'poll'.", args[0])
 	}
 }
 
@@ -104,21 +107,74 @@ claim a poll lease or move mailbox messages.
 }
 
 func executeOperatorStatus(o operatorExecution) error {
-	out := o.Out
-	if out == nil {
-		out = os.Stdout
+	data, err := buildOperatorStatusData(o)
+	if err != nil {
+		return err
 	}
+	return writeOrRenderOperatorStatus(o.Out, "operator_status", "operator status", data, o.JSON)
+}
+
+func runOperatorPoll(args []string) error {
+	fs := flag.NewFlagSet("operator poll", flag.ContinueOnError)
+	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
+	sessionFlag := fs.String("session", "", "AMQ workstream/session to inspect")
+	readonly := fs.Bool("readonly", false, "read the operator loop state without claiming a poll lease")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned operator poll envelope")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad operator poll - read the operator polling workload
+
+Usage:
+  amq-squad operator poll --readonly [--project DIR] [--profile NAME] [--session NAME] [--json]
+
+Reads the canonical operator inbox and operator-loop counters without moving
+mailbox messages. Lease-backed polling will land in a later #250 slice; this
+preview command requires --readonly so callers do not mistake it for a claim.
+`)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if !*readonly {
+		return usageErrorf("operator poll currently requires --readonly; lease-backed polling is not implemented yet")
+	}
+	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
+	return executeOperatorPoll(operatorExecution{
+		ProjectDir:      projectDir,
+		Profile:         profile,
+		Session:         *sessionFlag,
+		JSON:            *jsonOut,
+		Out:             os.Stdout,
+		ResolveBaseRoot: scanBaseRootForProject,
+		Probe:           state.DefaultProbe,
+		Now:             time.Now,
+	})
+}
+
+func executeOperatorPoll(o operatorExecution) error {
+	data, err := buildOperatorStatusData(o)
+	if err != nil {
+		return err
+	}
+	data.ReadOnly = true
+	return writeOrRenderOperatorStatus(o.Out, "operator_poll", "operator poll", data, o.JSON)
+}
+
+func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, error) {
 	now := time.Now
 	if o.Now != nil {
 		now = o.Now
 	}
 	t, err := team.ReadProfile(o.ProjectDir, o.Profile)
 	if err != nil {
-		return fmt.Errorf("read team: %w", err)
+		return operatorStatusEnvelopeData{}, fmt.Errorf("read team: %w", err)
 	}
 	workstream, err := resolveTeamWorkstreamName(t, o.Session, strings.TrimSpace(o.Session) != "")
 	if err != nil {
-		return err
+		return operatorStatusEnvelopeData{}, err
 	}
 	ns := squadnamespace.Resolve(t.Project, o.Profile, workstream)
 	operator := statusOperatorForTeam(t, ns)
@@ -128,6 +184,7 @@ func executeOperatorStatus(o operatorExecution) error {
 		Profile:          squadnamespace.NormalizeProfile(o.Profile),
 		Session:          workstream,
 		Namespace:        ns,
+		ReadOnly:         true,
 		Operator:         operator,
 		OperatorDelivery: delivery,
 		OperatorGates:    team.SupportsOperatorGates(t),
@@ -140,7 +197,7 @@ func executeOperatorStatus(o operatorExecution) error {
 			DegradedReason: "operator gates disabled for this profile",
 		}
 		data.Message = "operator gates disabled"
-		return writeOrRenderOperatorStatus(out, data, o.JSON)
+		return data, nil
 	}
 
 	baseRoot := strings.TrimSpace(o.BaseRoot)
@@ -151,12 +208,12 @@ func executeOperatorStatus(o operatorExecution) error {
 		}
 		baseRoot, err = resolve(o.ProjectDir)
 		if err != nil {
-			return fmt.Errorf("resolve AMQ base root: %w", err)
+			return operatorStatusEnvelopeData{}, fmt.Errorf("resolve AMQ base root: %w", err)
 		}
 	}
 	snap, err := state.BuildWithThresholds(o.ProjectDir, baseRoot, o.Probe, state.Thresholds{OperatorHandle: operator.Handle})
 	if err != nil {
-		return fmt.Errorf("scan AMQ base root: %w", err)
+		return operatorStatusEnvelopeData{}, fmt.Errorf("scan AMQ base root: %w", err)
 	}
 	data.BaseRoot = snap.BaseRoot
 	items := collectOperatorAttention(o.ProjectDir, o.Profile, snap, operator.Handle, workstream, now())
@@ -182,7 +239,7 @@ func executeOperatorStatus(o operatorExecution) error {
 		data.Operator.Poll.Unread = backlog
 		data.Operator.Poll.OpenGates = gatesOpen
 	}
-	return writeOrRenderOperatorStatus(out, data, o.JSON)
+	return data, nil
 }
 
 func operatorSessionSnapshot(snap state.Snapshot, profile, session string) (state.Session, bool) {
@@ -244,15 +301,18 @@ func operatorLoopState(pollRequired bool) string {
 	return "unconfigured"
 }
 
-func writeOrRenderOperatorStatus(out io.Writer, data operatorStatusEnvelopeData, jsonOut bool) error {
+func writeOrRenderOperatorStatus(out io.Writer, kind, label string, data operatorStatusEnvelopeData, jsonOut bool) error {
+	if out == nil {
+		out = os.Stdout
+	}
 	if jsonOut {
-		return writeJSONEnvelope(out, "operator_status", data)
+		return writeJSONEnvelope(out, kind, data)
 	}
 	inboxRoot := ""
 	if data.Operator.CanonicalInbox != nil {
 		inboxRoot = data.Operator.CanonicalInbox.Root
 	}
-	fmt.Fprintf(out, "# operator status: %s/%s\n", data.Profile, data.Session)
+	fmt.Fprintf(out, "# %s: %s/%s\n", label, data.Profile, data.Session)
 	fmt.Fprintf(out, "# inbox: %s handle=%s\n", inboxRoot, data.Operator.Handle)
 	fmt.Fprintf(out, "# loop: %s owner=%s backlog=%d\n\n", data.OperatorLoop.State, data.OperatorLoop.Owner, data.OperatorLoop.Backlog)
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)

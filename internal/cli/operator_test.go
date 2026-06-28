@@ -64,6 +64,9 @@ func TestOperatorStatusJSONReportsPollContractAndAttention(t *testing.T) {
 		t.Fatalf("kind = %q, want operator_status", env.Kind)
 	}
 	data := env.Data
+	if !data.ReadOnly {
+		t.Fatalf("readonly = false, want true for operator status")
+	}
 	if data.Operator.Handle != team.DefaultOperatorHandle || data.Operator.CanonicalInbox == nil {
 		t.Fatalf("operator = %+v, want canonical user inbox", data.Operator)
 	}
@@ -108,5 +111,58 @@ func TestOperatorStatusDisabledProfileIsUnconfigured(t *testing.T) {
 	}
 	if !strings.Contains(env.Data.Message, "disabled") {
 		t.Fatalf("message = %q, want disabled guidance", env.Data.Message)
+	}
+}
+
+func TestOperatorPollReadOnlyJSONUsesOperatorLoopContract(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyMessage(t, base, "s", team.DefaultOperatorHandle, "new", notifyMsg{
+		ID:      "gate-1",
+		From:    "cto",
+		To:      team.DefaultOperatorHandle,
+		Thread:  "gate/release",
+		Subject: "APPROVAL: release",
+		Kind:    string(state.KindQuestion),
+		Created: notifyNow,
+	})
+
+	var out bytes.Buffer
+	err := executeOperatorPoll(operatorExecution{
+		ProjectDir: project,
+		Profile:    team.DefaultProfile,
+		Session:    "s",
+		BaseRoot:   base,
+		JSON:       true,
+		Out:        &out,
+		Probe: state.Probe{
+			PIDAlive:     func(pid int) bool { return true },
+			ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+			Now:          func() time.Time { return notifyNow },
+		},
+		Now: func() time.Time { return notifyNow },
+	})
+	if err != nil {
+		t.Fatalf("operator poll readonly: %v", err)
+	}
+	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
+	if env.Kind != "operator_poll" {
+		t.Fatalf("kind = %q, want operator_poll", env.Kind)
+	}
+	if !env.Data.ReadOnly {
+		t.Fatalf("readonly = false, want true")
+	}
+	if env.Data.OperatorLoop.Backlog != 1 || env.Data.OperatorLoop.GatesOpen != 1 || env.Data.OperatorLoop.Owner != "none" {
+		t.Fatalf("operator loop = %+v, want read-only unowned poll counts", env.Data.OperatorLoop)
+	}
+}
+
+func TestRunOperatorPollRequiresReadOnly(t *testing.T) {
+	chdir(t, t.TempDir())
+	_, _, err := captureOutput(t, func() error {
+		return runOperator([]string{"poll", "--session", "s", "--json"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires --readonly") {
+		t.Fatalf("operator poll without readonly error = %v, want --readonly usage", err)
 	}
 }
