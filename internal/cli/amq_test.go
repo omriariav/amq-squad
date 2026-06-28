@@ -16,7 +16,11 @@ func withAMQCommandSeams(t *testing.T, env amqEnv, output string) *[]amqCommandR
 	prevRun := runAMQCommand
 	resolveAMQEnvForAMQCommand = func(cwd, rootFlag, session, handle string) (amqEnv, error) {
 		got := env
-		got.Root = strings.ReplaceAll(got.Root, "{session}", session)
+		if strings.TrimSpace(rootFlag) != "" {
+			got.Root = rootFlag
+		} else {
+			got.Root = strings.ReplaceAll(got.Root, "{session}", session)
+		}
 		got.SessionName = session
 		got.Me = handle
 		if got.BaseRoot == "" {
@@ -354,6 +358,46 @@ func TestAMQDrainBlocksNonOwnerMailboxInProjectTeam(t *testing.T) {
 	}
 }
 
+func TestAMQDrainBlocksNonOwnerMailboxInNamedProfile(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeamProfile(t, dir, "review")
+	t.Setenv("AM_ME", "cto")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--profile", "review", "--session", "issue-96", "--me", "qa", "--include-body"})
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "refusing amq drain") ||
+		!strings.Contains(err.Error(), "lead-owned mailbox") {
+		t.Fatalf("named-profile boundary error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("blocked named-profile drain should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestAMQDrainInfersNamedProfileFromResolvedRoot(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeamProfile(t, dir, "review")
+	t.Setenv("AM_ME", "cto")
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(".agent-mail", "review", "issue-96"), BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--me", "qa", "--include-body"})
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "refusing amq drain") ||
+		!strings.Contains(err.Error(), "lead-owned mailbox") {
+		t.Fatalf("root-inferred named-profile boundary error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("blocked root-inferred named-profile drain should not call amq, calls = %d", len(*calls))
+	}
+}
+
 func TestAMQDrainOverrideRequiresReason(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -431,7 +475,12 @@ func TestAMQWatchBlocksNonOwnerMailboxInProjectTeam(t *testing.T) {
 
 func writeAMQBoundaryTeam(t *testing.T, dir string) {
 	t.Helper()
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+	writeAMQBoundaryTeamProfile(t, dir, team.DefaultProfile)
+}
+
+func writeAMQBoundaryTeamProfile(t *testing.T, dir, profile string) {
+	t.Helper()
+	if err := team.WriteProfile(dir, profile, team.Team{
 		Project:       dir,
 		Orchestrated:  true,
 		Lead:          "cto",
@@ -479,6 +528,30 @@ func TestAMQReadVerbsResolveRootAndForward(t *testing.T) {
 				t.Fatalf("resolution flags must not be forwarded: %s", got)
 			}
 		})
+	}
+}
+
+func TestAMQReadOnlyVerbAllowsNamedProfileInspection(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeamProfile(t, dir, "review")
+	t.Setenv("AM_ME", "cto")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"read", "--profile", "review", "--session", "issue-96", "--me", "qa", "--id", "msg1"})
+	})
+	if err != nil {
+		t.Fatalf("named-profile read-only inspection should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("read calls = %d, want 1", len(*calls))
+	}
+	got := strings.Join((*calls)[0].Arg, " ")
+	for _, want := range []string{"read", filepath.Join(".agent-mail", "review", "issue-96"), "--id msg1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("named-profile read args missing %q: %s", want, got)
+		}
 	}
 }
 
@@ -547,6 +620,12 @@ func TestSplitAMQPassthroughArgs(t *testing.T) {
 			args:        []string{"--project", "/repo", "--to", "x"},
 			wantProject: "/repo", wantSet: true,
 			wantPass: []string{"--to", "x"},
+		},
+		{
+			name:        "profile consumed for wrapper resolution",
+			args:        []string{"--profile", "review", "--session", "work", "--to", "x"},
+			wantSession: "work",
+			wantPass:    []string{"--to", "x"},
 		},
 		{
 			name:        "terminator forwards target flags verbatim",

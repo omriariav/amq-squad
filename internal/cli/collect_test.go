@@ -134,6 +134,46 @@ func TestRunCollectBlocksNonOwnerMailboxInProjectTeam(t *testing.T) {
 	}
 }
 
+func TestRunCollectBlocksNonOwnerMailboxInNamedProfile(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeamProfile(t, dir, "review")
+	t.Setenv("AM_ME", "cto")
+	calls := withCollectAMQSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, []string{"message\n"})
+
+	_, _, err := captureOutput(t, func() error {
+		return runCollect([]string{"--profile", "review", "--session", "issue-96", "--me", "qa", "--include-body"})
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "refusing collect") ||
+		!strings.Contains(err.Error(), "lead-owned mailbox") {
+		t.Fatalf("named-profile collect boundary error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("blocked named-profile collect should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestRunCollectInfersNamedProfileFromResolvedRoot(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeamProfile(t, dir, "review")
+	t.Setenv("AM_ME", "cto")
+	calls := withCollectAMQSeams(t, amqEnv{Root: filepath.Join(".agent-mail", "review", "issue-96"), BaseRoot: ".agent-mail"}, []string{"message\n"})
+
+	_, _, err := captureOutput(t, func() error {
+		return runCollect([]string{"--session", "issue-96", "--me", "qa", "--include-body"})
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "refusing collect") ||
+		!strings.Contains(err.Error(), "lead-owned mailbox") {
+		t.Fatalf("root-inferred named-profile collect boundary error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("blocked root-inferred named-profile collect should not call amq, calls = %d", len(*calls))
+	}
+}
+
 func TestRunCollectOverrideRequiresReason(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -223,7 +263,11 @@ func withCollectAMQSeamsFunc(t *testing.T, env amqEnv, run func(amqCommandReques
 	prevRun := runAMQCommand
 	resolveAMQEnvForAMQCommand = func(cwd, rootFlag, session, handle string) (amqEnv, error) {
 		got := env
-		got.Root = strings.ReplaceAll(got.Root, "{session}", session)
+		if strings.TrimSpace(rootFlag) != "" {
+			got.Root = rootFlag
+		} else {
+			got.Root = strings.ReplaceAll(got.Root, "{session}", session)
+		}
 		got.SessionName = session
 		got.Me = handle
 		if got.BaseRoot == "" {
