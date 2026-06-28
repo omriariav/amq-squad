@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -18,7 +20,10 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-const defaultOperatorPollLeaseTTL = 2 * time.Minute
+const (
+	defaultOperatorPollLeaseTTL  = 2 * time.Minute
+	defaultOperatorWatchInterval = 5 * time.Second
+)
 
 type operatorExecution struct {
 	ProjectDir      string
@@ -38,6 +43,13 @@ type operatorExecution struct {
 	Now             func() time.Time
 }
 
+type operatorWatchExecution struct {
+	operatorExecution
+	Interval time.Duration
+	Once     bool
+	Sleep    func(time.Duration) bool
+}
+
 type operatorStatusEnvelopeData struct {
 	ProjectDir       string                `json:"project_dir"`
 	BaseRoot         string                `json:"base_root,omitempty"`
@@ -52,8 +64,15 @@ type operatorStatusEnvelopeData struct {
 	OperatorGates    bool                  `json:"operator_gates"`
 	Claimed          *bool                 `json:"claimed,omitempty"`
 	Conflict         *operatorPollConflict `json:"conflict,omitempty"`
+	Watch            *operatorWatchMeta    `json:"watch,omitempty"`
 	Message          string                `json:"message,omitempty"`
 	operatorCursor   string
+}
+
+type operatorWatchMeta struct {
+	Interval string    `json:"interval"`
+	Tick     int       `json:"tick"`
+	At       time.Time `json:"at"`
 }
 
 type operatorPollConflict struct {
@@ -121,15 +140,17 @@ func (e *operatorPollLeaseConflictError) Error() string {
 
 func runOperator(args []string) error {
 	if len(args) == 0 {
-		return usageErrorf("operator requires a subcommand (status)")
+		return usageErrorf("operator requires a subcommand (status, poll, or watch)")
 	}
 	switch args[0] {
 	case "status":
 		return runOperatorStatus(args[1:])
 	case "poll":
 		return runOperatorPoll(args[1:])
+	case "watch":
+		return runOperatorWatch(args[1:])
 	default:
-		return usageErrorf("unknown 'operator' subcommand: %q. Try 'status' or 'poll'.", args[0])
+		return usageErrorf("unknown 'operator' subcommand: %q. Try 'status', 'poll', or 'watch'.", args[0])
 	}
 }
 
@@ -239,47 +260,195 @@ operator-loop lease for the resolved profile/session.
 }
 
 func executeOperatorPoll(o operatorExecution) error {
-	data, err := buildOperatorStatusData(o)
+	data, err := buildOperatorPollData(o)
+	if err != nil {
+		var conflict *operatorPollLeaseConflictError
+		if o.JSON && errors.As(err, &conflict) {
+			if writeErr := writeOrRenderOperatorStatus(o.Out, "operator_poll", "operator poll", data, o.JSON); writeErr != nil {
+				return writeErr
+			}
+		}
+		return err
+	}
+	return writeOrRenderOperatorStatus(o.Out, "operator_poll", "operator poll", data, o.JSON)
+}
+
+func runOperatorWatch(args []string) error {
+	fs := flag.NewFlagSet("operator watch", flag.ContinueOnError)
+	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
+	sessionFlag := fs.String("session", "", "AMQ workstream/session to inspect")
+	owner := fs.String("owner", "cli", "poll lease owner class (cli, noc, daemon)")
+	ownerID := fs.String("owner-id", "", "stable poll lease owner identity (default: cli:<hostname>:<pid>)")
+	leaseTTL := fs.Duration("ttl", defaultOperatorPollLeaseTTL, "poll lease duration")
+	interval := fs.Duration("interval", defaultOperatorWatchInterval, "watch refresh interval")
+	once := fs.Bool("once", false, "emit one watch tick and exit")
+	jsonOut := fs.Bool("json", false, "emit compact NDJSON operator_watch envelopes")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad operator watch - reference operator polling loop
+
+Usage:
+  amq-squad operator watch [--project DIR] [--profile NAME] [--session NAME] [--owner NAME] [--owner-id ID] [--ttl D] [--interval D] [--once] [--json]
+
+Recomputes operator state and claims or refreshes the local operator-loop lease
+on a cadence. This command does not drain, read, or move AMQ mailbox messages.
+When stopped, the lease is not released immediately; it expires after --ttl.
+`)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if *leaseTTL <= 0 {
+		return usageErrorf("--ttl must be > 0")
+	}
+	if *interval <= 0 {
+		return usageErrorf("--interval must be > 0")
+	}
+	if *interval > *leaseTTL/2 {
+		return usageErrorf("--interval must be <= --ttl/2 so the watch refreshes before lease expiry")
+	}
+	if err := validateOperatorOwner(*owner); err != nil {
+		return err
+	}
+	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
-	data.ReadOnly = o.ReadOnly
-	if !o.ReadOnly {
-		now := operatorNow(o)
-		owner := strings.TrimSpace(o.Owner)
-		if owner == "" {
-			owner = "cli"
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	sleep := func(d time.Duration) bool {
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return true
+		case <-sigCh:
+			return false
 		}
-		if err := validateOperatorOwner(owner); err != nil {
-			return err
+	}
+	select {
+	case <-sigCh:
+		return nil
+	default:
+	}
+	return executeOperatorWatch(operatorWatchExecution{
+		operatorExecution: operatorExecution{
+			ProjectDir:      projectDir,
+			Profile:         profile,
+			Session:         *sessionFlag,
+			Owner:           *owner,
+			OwnerID:         *ownerID,
+			LeaseTTL:        *leaseTTL,
+			JSON:            *jsonOut,
+			Out:             os.Stdout,
+			ResolveBaseRoot: scanBaseRootForProject,
+			Probe:           state.DefaultProbe,
+			Now:             time.Now,
+		},
+		Interval: *interval,
+		Once:     *once,
+		Sleep:    sleep,
+	})
+}
+
+func executeOperatorWatch(w operatorWatchExecution) error {
+	if w.Out == nil {
+		w.Out = os.Stdout
+	}
+	interval := w.Interval
+	if interval <= 0 {
+		interval = defaultOperatorWatchInterval
+	}
+	sleep := w.Sleep
+	if sleep == nil {
+		sleep = func(d time.Duration) bool {
+			time.Sleep(d)
+			return true
 		}
-		ownerID := strings.TrimSpace(o.OwnerID)
-		if ownerID == "" {
-			ownerID = defaultOperatorOwnerID(owner)
-		}
-		ttl := o.LeaseTTL
-		if ttl <= 0 {
-			ttl = defaultOperatorPollLeaseTTL
-		}
-		lease, err := claimOperatorLoopLease(data.ProjectDir, data.Profile, data.Session, data.Namespace.ID, owner, ownerID, ttl, data.operatorCursor, now, o.Force, o.ForceReason)
+	}
+	tick := 1
+	for {
+		now := operatorNow(w.operatorExecution)
+		data, err := buildOperatorPollData(w.operatorExecution)
 		if err != nil {
 			var conflict *operatorPollLeaseConflictError
-			if o.JSON && errors.As(err, &conflict) {
-				claimed := false
-				data.Claimed = &claimed
-				applyOperatorLoopLease(&data.OperatorLoop, conflict.Lease, now)
-				data.Conflict = operatorPollLeaseConflictData(conflict)
-				if writeErr := writeOrRenderOperatorStatus(o.Out, "operator_poll", "operator poll", data, o.JSON); writeErr != nil {
-					return writeErr
-				}
+			if !errors.As(err, &conflict) {
+				return err
 			}
-			return err
+			data.Watch = &operatorWatchMeta{Interval: interval.String(), Tick: tick, At: now.UTC()}
+			if writeErr := writeOperatorWatchTick(w.Out, data, w.JSON); writeErr != nil {
+				return writeErr
+			}
+			if w.Once {
+				return err
+			}
+		} else if w.Once {
+			data.Watch = &operatorWatchMeta{Interval: interval.String(), Tick: tick, At: now.UTC()}
+			if writeErr := writeOperatorWatchTick(w.Out, data, w.JSON); writeErr != nil {
+				return writeErr
+			}
+			return nil
+		} else {
+			data.Watch = &operatorWatchMeta{Interval: interval.String(), Tick: tick, At: now.UTC()}
+			if writeErr := writeOperatorWatchTick(w.Out, data, w.JSON); writeErr != nil {
+				return writeErr
+			}
 		}
-		applyOperatorLoopLease(&data.OperatorLoop, lease, now)
-		claimed := true
-		data.Claimed = &claimed
+		if !sleep(interval) {
+			return nil
+		}
+		tick++
 	}
-	return writeOrRenderOperatorStatus(o.Out, "operator_poll", "operator poll", data, o.JSON)
+}
+
+func writeOperatorWatchTick(out io.Writer, data operatorStatusEnvelopeData, jsonOut bool) error {
+	if jsonOut {
+		return writeCompactJSONEnvelope(out, "operator_watch", data)
+	}
+	return writeOrRenderOperatorStatus(out, "operator_watch", "operator watch", data, false)
+}
+
+func buildOperatorPollData(o operatorExecution) (operatorStatusEnvelopeData, error) {
+	data, err := buildOperatorStatusData(o)
+	if err != nil {
+		return data, err
+	}
+	data.ReadOnly = o.ReadOnly
+	if o.ReadOnly {
+		return data, nil
+	}
+	now := operatorNow(o)
+	owner := strings.TrimSpace(o.Owner)
+	if owner == "" {
+		owner = "cli"
+	}
+	if err := validateOperatorOwner(owner); err != nil {
+		return data, err
+	}
+	ownerID := strings.TrimSpace(o.OwnerID)
+	if ownerID == "" {
+		ownerID = defaultOperatorOwnerID(owner)
+	}
+	ttl := o.LeaseTTL
+	if ttl <= 0 {
+		ttl = defaultOperatorPollLeaseTTL
+	}
+	lease, err := claimOperatorLoopLease(data.ProjectDir, data.Profile, data.Session, data.Namespace.ID, owner, ownerID, ttl, data.operatorCursor, now, o.Force, o.ForceReason)
+	if err != nil {
+		var conflict *operatorPollLeaseConflictError
+		if errors.As(err, &conflict) {
+			claimed := false
+			data.Claimed = &claimed
+			applyOperatorLoopLease(&data.OperatorLoop, conflict.Lease, now)
+			data.Conflict = operatorPollLeaseConflictData(conflict)
+		}
+		return data, err
+	}
+	applyOperatorLoopLease(&data.OperatorLoop, lease, now)
+	claimed := true
+	data.Claimed = &claimed
+	return data, nil
 }
 
 func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, error) {

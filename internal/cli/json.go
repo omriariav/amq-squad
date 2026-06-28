@@ -41,3 +41,7 @@ func writeJSONEnvelope(w io.Writer, kind string, data any) error {
 	enc.SetIndent("", "  ")
 	return enc.Encode(jsonEnvelope{SchemaVersion: JSONSchemaVersion, Kind: kind, Data: data})
 }
+
+func writeCompactJSONEnvelope(w io.Writer, kind string, data any) error {
+	return json.NewEncoder(w).Encode(jsonEnvelope{SchemaVersion: JSONSchemaVersion, Kind: kind, Data: data})
+}
