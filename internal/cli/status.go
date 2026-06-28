@@ -295,8 +295,10 @@ func executeStatus(s statusExecution) error {
 		}
 		invariantErrors := annotateVisibilityInvariants(rows, ctx)
 		execution := executionContractForTeam(t, s.Profile, workstream, binding.Mode, topologyMode(topology), version)
+		execution.InvariantsEvaluated = true
 		execution.InvariantOK = len(invariantErrors) == 0
 		execution.InvariantErrors = invariantErrors
+		applyLeadExecutionContract(&execution, t.LeadExecution)
 		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
 			TeamHome:          t.Project,
 			Workstream:        workstream,

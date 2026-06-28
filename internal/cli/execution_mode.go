@@ -30,6 +30,44 @@ type executionInvariantError struct {
 	Message string `json:"message"`
 }
 
+type leadExecutionData struct {
+	Declared            bool                  `json:"declared"`
+	Posture             string                `json:"posture"`
+	GoalSignificance    string                `json:"goal_significance"`
+	DecisionTime        string                `json:"decision_time,omitempty"`
+	Reason              string                `json:"reason,omitempty"`
+	ChildBudget         int                   `json:"child_budget,omitempty"`
+	PlannedDelegations  []string              `json:"planned_delegations,omitempty"`
+	ReviewPlan          string                `json:"review_plan,omitempty"`
+	IndependentReview   independentReviewData `json:"independent_review"`
+	FinalRecommendation string                `json:"final_recommendation,omitempty"`
+}
+
+type releaseReadinessGateData struct {
+	ID       string `json:"id"`
+	Required bool   `json:"required"`
+	Passed   bool   `json:"passed"`
+	Detail   string `json:"detail"`
+	Evidence string `json:"evidence,omitempty"`
+}
+
+type releaseReadinessData struct {
+	Ready     bool                       `json:"ready"`
+	State     string                     `json:"state"`
+	Authority string                     `json:"authority"`
+	Detail    string                     `json:"detail"`
+	Gates     []releaseReadinessGateData `json:"gates"`
+}
+
+type independentReviewData struct {
+	Status    string `json:"status"`
+	Evidence  string `json:"evidence,omitempty"`
+	Reviewer  string `json:"reviewer,omitempty"`
+	ThreadID  string `json:"thread_id,omitempty"`
+	Reference string `json:"reference,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 type executionModeData struct {
 	Mode                  string                    `json:"mode"`
 	ControlRoot           string                    `json:"control_root,omitempty"`
@@ -44,11 +82,14 @@ type executionModeData struct {
 	GoalBinding           string                    `json:"goal_binding,omitempty"`
 	VisibilityTopology    string                    `json:"visibility_topology,omitempty"`
 	PollingRequired       bool                      `json:"polling_required"`
+	InvariantsEvaluated   bool                      `json:"invariants_evaluated"`
 	InvariantOK           bool                      `json:"invariant_ok"`
 	InvariantErrors       []executionInvariantError `json:"invariant_errors,omitempty"`
 	ModeError             string                    `json:"mode_error,omitempty"`
 	Boundary              string                    `json:"boundary,omitempty"`
 	VersionCompatibility  versionCompatibilityData  `json:"version_compatibility"`
+	LeadExecution         leadExecutionData         `json:"lead_execution"`
+	ReleaseReadiness      releaseReadinessData      `json:"release_readiness"`
 }
 
 func normalizeExecutionMode(mode string) (string, error) {
@@ -143,6 +184,7 @@ func executionContract(mode, controlRoot, targetRoot, profile, session, namespac
 		VisibleTeamMembers:   append([]string(nil), visible...),
 		GoalBinding:          goalBinding,
 		VisibilityTopology:   topology,
+		InvariantsEvaluated:  false,
 		InvariantOK:          true,
 		VersionCompatibility: versionCompatibility(runningVersion, targetContract),
 	}
@@ -169,6 +211,7 @@ func executionContract(mode, controlRoot, targetRoot, profile, session, namespac
 		contract.PollingRequired = false
 		contract.Boundary = "one visible project-root lead owns implementation, validation, child delegation, and final evidence"
 	}
+	applyLeadExecutionContract(&contract, nil)
 	return contract
 }
 
@@ -200,7 +243,7 @@ func executionContractForTeam(t team.Team, profile, session, goalBinding, topolo
 	if targetRoot == "" {
 		targetRoot = t.Project
 	}
-	return executionContract(
+	contract := executionContract(
 		mode,
 		controlRoot,
 		targetRoot,
@@ -214,6 +257,8 @@ func executionContractForTeam(t team.Team, profile, session, goalBinding, topolo
 		t.TargetContract,
 		visibleMembersForExecutionMode(mode, t, lead),
 	)
+	applyLeadExecutionContract(&contract, t.LeadExecution)
+	return contract
 }
 
 func visibleMembersForExecutionMode(mode string, t team.Team, lead string) []string {
@@ -237,4 +282,200 @@ func topologyMode(topology *statusTopology) string {
 		return ""
 	}
 	return topology.Mode
+}
+
+func applyLeadExecutionContract(contract *executionModeData, exec *team.LeadExecution) {
+	if contract == nil {
+		return
+	}
+	contract.LeadExecution = leadExecutionDataForConfig(exec)
+	contract.ReleaseReadiness = releaseReadinessForExecution(*contract)
+}
+
+func leadExecutionDataForConfig(exec *team.LeadExecution) leadExecutionData {
+	if exec == nil {
+		return leadExecutionData{
+			Declared:          false,
+			Posture:           "undeclared",
+			GoalSignificance:  team.GoalSignificanceStandard,
+			IndependentReview: independentReviewData{Status: team.IndependentReviewRequired},
+		}
+	}
+	significance := strings.TrimSpace(exec.GoalSignificance)
+	if significance == "" {
+		significance = team.GoalSignificanceStandard
+	}
+	return leadExecutionData{
+		Declared:            true,
+		Posture:             strings.TrimSpace(exec.Posture),
+		GoalSignificance:    significance,
+		DecisionTime:        strings.TrimSpace(exec.DecisionTime),
+		Reason:              strings.TrimSpace(exec.Reason),
+		ChildBudget:         exec.ChildBudget,
+		PlannedDelegations:  append([]string(nil), exec.PlannedDelegations...),
+		ReviewPlan:          strings.TrimSpace(exec.ReviewPlan),
+		IndependentReview:   independentReviewDataForConfig(exec.IndependentReview),
+		FinalRecommendation: strings.TrimSpace(exec.FinalRecommendation),
+	}
+}
+
+func independentReviewDataForConfig(review *team.IndependentReview) independentReviewData {
+	if review == nil {
+		return independentReviewData{Status: team.IndependentReviewRequired}
+	}
+	status := strings.TrimSpace(review.Status)
+	if status == "" {
+		status = team.IndependentReviewRequired
+	}
+	return independentReviewData{
+		Status:    status,
+		Evidence:  strings.TrimSpace(review.Evidence),
+		Reviewer:  strings.TrimSpace(review.Reviewer),
+		ThreadID:  strings.TrimSpace(review.ThreadID),
+		Reference: strings.TrimSpace(review.Reference),
+		Reason:    strings.TrimSpace(review.Reason),
+	}
+}
+
+func releaseReadinessForExecution(contract executionModeData) releaseReadinessData {
+	leadExec := contract.LeadExecution
+	gates := []releaseReadinessGateData{
+		{
+			ID:       "visible_lead_invariants_ok",
+			Required: true,
+			Passed:   contract.InvariantsEvaluated && contract.InvariantOK,
+			Detail:   visibleLeadInvariantDetail(contract),
+			Evidence: invariantEvidence(contract),
+		},
+		{
+			ID:       "lead_execution_declared",
+			Required: true,
+			Passed:   leadExec.Declared && leadExec.Posture != "" && leadExec.Posture != "undeclared",
+			Detail:   "release lead declares solo, delegated, or visible_team execution posture",
+			Evidence: leadExec.Posture,
+		},
+		{
+			ID:       "lead_final_recommendation",
+			Required: true,
+			Passed:   strings.TrimSpace(leadExec.FinalRecommendation) != "",
+			Detail:   "lead-owned final recommendation is present",
+			Evidence: leadExec.FinalRecommendation,
+		},
+		{
+			ID:       "independent_review_evidence_or_waiver",
+			Required: true,
+			Passed:   independentReviewGatePassed(leadExec.IndependentReview),
+			Detail:   "independent review is complete with evidence, or explicitly waived with a reason",
+			Evidence: independentReviewEvidence(leadExec.IndependentReview),
+		},
+	}
+	if requiresSoloJustification(contract, leadExec) {
+		gates = append(gates, releaseReadinessGateData{
+			ID:       "solo_justification_for_non_trivial_goal",
+			Required: true,
+			Passed:   strings.TrimSpace(leadExec.Reason) != "",
+			Detail:   "solo release execution on a non-trivial goal has an explicit justification",
+			Evidence: leadExec.Reason,
+		})
+	}
+	ready := true
+	for _, gate := range gates {
+		if gate.Required && !gate.Passed {
+			ready = false
+			break
+		}
+	}
+	state := "blocked"
+	if ready {
+		state = "ready"
+	} else if !contract.InvariantsEvaluated {
+		state = "not_evaluated"
+	}
+	return releaseReadinessData{
+		Ready:     ready,
+		State:     state,
+		Authority: "declared_evidence_only",
+		Detail:    "release readiness surfaces declared posture and evidence pointers; it does not independently authorize release or verify external evidence",
+		Gates:     gates,
+	}
+}
+
+func requiresSoloJustification(contract executionModeData, leadExec leadExecutionData) bool {
+	if leadExec.Posture != team.LeadExecutionSolo {
+		return false
+	}
+	if leadExec.GoalSignificance == team.GoalSignificanceTrivial {
+		return false
+	}
+	switch contract.Mode {
+	case executionModeProjectLead, executionModeProjectTeam:
+		return true
+	default:
+		return false
+	}
+}
+
+func invariantEvidence(contract executionModeData) string {
+	if !contract.InvariantsEvaluated {
+		return "not_evaluated"
+	}
+	if contract.InvariantOK {
+		return "ok"
+	}
+	if len(contract.InvariantErrors) == 0 {
+		return "failed"
+	}
+	parts := make([]string, 0, len(contract.InvariantErrors))
+	for _, err := range contract.InvariantErrors {
+		parts = append(parts, err.Code)
+	}
+	return strings.Join(parts, ",")
+}
+
+func visibleLeadInvariantDetail(contract executionModeData) string {
+	if !contract.InvariantsEvaluated {
+		return "visible lead invariants were not evaluated on this static/config surface"
+	}
+	return "visible lead invariants are satisfied"
+}
+
+func independentReviewGatePassed(review independentReviewData) bool {
+	switch review.Status {
+	case team.IndependentReviewComplete:
+		return independentReviewEvidencePresent(review)
+	case team.IndependentReviewWaived:
+		return strings.TrimSpace(review.Reason) != ""
+	default:
+		return false
+	}
+}
+
+func independentReviewEvidencePresent(review independentReviewData) bool {
+	return strings.TrimSpace(review.Evidence) != "" ||
+		strings.TrimSpace(review.Reviewer) != "" ||
+		strings.TrimSpace(review.ThreadID) != "" ||
+		strings.TrimSpace(review.Reference) != ""
+}
+
+func independentReviewEvidence(review independentReviewData) string {
+	parts := []string{}
+	if review.Status != "" {
+		parts = append(parts, "status="+review.Status)
+	}
+	if review.Reviewer != "" {
+		parts = append(parts, "reviewer="+review.Reviewer)
+	}
+	if review.ThreadID != "" {
+		parts = append(parts, "thread="+review.ThreadID)
+	}
+	if review.Reference != "" {
+		parts = append(parts, "ref="+review.Reference)
+	}
+	if review.Evidence != "" {
+		parts = append(parts, "evidence="+review.Evidence)
+	}
+	if review.Reason != "" {
+		parts = append(parts, "reason="+review.Reason)
+	}
+	return strings.Join(parts, "; ")
 }

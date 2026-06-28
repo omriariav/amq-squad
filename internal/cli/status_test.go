@@ -38,6 +38,14 @@ func actionsByKind(actions []runtimeActionJSON) map[string]runtimeActionJSON {
 	return out
 }
 
+func readinessGatesByCode(gates []releaseReadinessGateData) map[string]releaseReadinessGateData {
+	out := map[string]releaseReadinessGateData{}
+	for _, gate := range gates {
+		out[gate.ID] = gate
+	}
+	return out
+}
+
 // TestRunStatusSessionRequiresTeam covers the single-session DETAIL path:
 // status --session NAME still hard-requires a configured team, because it
 // classifies that team's members. The no-selector BOARD path is the one that
@@ -464,6 +472,266 @@ func TestExecuteStatusJSONIncludesExecutionMode(t *testing.T) {
 	}
 	if !exec.VersionCompatibility.Compatible || exec.VersionCompatibility.RunningVersion != "2.10.0" {
 		t.Fatalf("version compatibility = %+v", exec.VersionCompatibility)
+	}
+}
+
+func TestExecuteStatusJSONBlocksReleaseReadyForSoloWithoutReason(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"},
+		},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectLead,
+		LeadExecution: &team.LeadExecution{
+			Posture:             team.LeadExecutionSolo,
+			IndependentReview:   &team.IndependentReview{Status: team.IndependentReviewWaived, Reason: "reviewer unavailable for fixture"},
+			FinalRecommendation: "ready except solo justification",
+		},
+	})
+	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7201,
+		AdoptionMode: "managed_window", LauncherPaneID: "%launcher",
+		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@1", PaneID: "%1", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "v2-11-0",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7201: true}, map[int]bool{7201: true}, time.Now()),
+		RuntimeVersion:   "2.11.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.Execution.LeadExecution.Posture != team.LeadExecutionSolo || !env.Data.Execution.LeadExecution.Declared {
+		t.Fatalf("lead execution = %+v, want declared solo", env.Data.Execution.LeadExecution)
+	}
+	ready := env.Data.Execution.ReleaseReadiness
+	if ready.Ready || ready.State != "blocked" {
+		t.Fatalf("release readiness = %+v, want blocked", ready)
+	}
+	gates := readinessGatesByCode(ready.Gates)
+	gate := gates["solo_justification_for_non_trivial_goal"]
+	if !gate.Required || gate.Passed || !strings.Contains(gate.Detail, "solo") {
+		t.Fatalf("solo gate = %+v, want required unsatisfied gate", gate)
+	}
+}
+
+func TestExecuteStatusJSONReleaseReadyWithVisibleTeamAndReview(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"},
+			{Role: "developer", Binary: "claude", Handle: "developer", Session: "v2-11-0"},
+		},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectTeam,
+		LeadExecution: &team.LeadExecution{
+			Posture:             team.LeadExecutionVisibleTeam,
+			DecisionTime:        "2026-06-28T23:00:00Z",
+			Reason:              "release lead owns code and developer reviews each slice",
+			ChildBudget:         1,
+			PlannedDelegations:  []string{"developer review"},
+			ReviewPlan:          "developer reviews release gates",
+			IndependentReview:   &team.IndependentReview{Status: team.IndependentReviewComplete, Reviewer: "developer", ThreadID: "p2p/developer__release-lead"},
+			FinalRecommendation: "ready after validation",
+		},
+	})
+	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7301,
+		AdoptionMode: "managed_window", LauncherPaneID: "%launcher",
+		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@1", PaneID: "%1", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "v2-11-0",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7301: true}, map[int]bool{7301: true}, time.Now()),
+		RuntimeVersion:   "2.11.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	exec := env.Data.Execution
+	if exec.LeadExecution.Posture != team.LeadExecutionVisibleTeam || exec.LeadExecution.IndependentReview.Status != team.IndependentReviewComplete {
+		t.Fatalf("lead execution = %+v, want visible team with complete review", exec.LeadExecution)
+	}
+	if !exec.ReleaseReadiness.Ready || exec.ReleaseReadiness.State != "ready" {
+		t.Fatalf("release readiness = %+v, want ready", exec.ReleaseReadiness)
+	}
+	for _, gate := range exec.ReleaseReadiness.Gates {
+		if gate.Required && !gate.Passed {
+			t.Fatalf("gate %+v should be satisfied in ready state", gate)
+		}
+	}
+}
+
+func TestExecuteStatusJSONBlocksReleaseReadyForReviewCompleteWithoutEvidence(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"},
+			{Role: "developer", Binary: "claude", Handle: "developer", Session: "v2-11-0"},
+		},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectTeam,
+		LeadExecution: &team.LeadExecution{
+			Posture:             team.LeadExecutionVisibleTeam,
+			IndependentReview:   &team.IndependentReview{Status: team.IndependentReviewComplete},
+			FinalRecommendation: "ready except review evidence",
+		},
+	})
+	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7401,
+		AdoptionMode: "managed_window", LauncherPaneID: "%launcher",
+		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@1", PaneID: "%1", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "v2-11-0",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7401: true}, map[int]bool{7401: true}, time.Now()),
+		RuntimeVersion:   "2.11.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	ready := env.Data.Execution.ReleaseReadiness
+	if ready.Ready {
+		t.Fatalf("release readiness = %+v, want blocked without review evidence", ready)
+	}
+	gate := readinessGatesByCode(ready.Gates)["independent_review_evidence_or_waiver"]
+	if gate.Passed || !strings.Contains(gate.Detail, "evidence") {
+		t.Fatalf("review gate = %+v, want unsatisfied evidence gate", gate)
+	}
+}
+
+func TestExecuteStatusJSONReleaseReadyAllowsTrivialSoloWithoutReason(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "tiny"},
+		},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectLead,
+		LeadExecution: &team.LeadExecution{
+			Posture:             team.LeadExecutionSolo,
+			GoalSignificance:    team.GoalSignificanceTrivial,
+			IndependentReview:   &team.IndependentReview{Status: team.IndependentReviewWaived, Reason: "trivial docs-only change"},
+			FinalRecommendation: "ready",
+		},
+	})
+	seedAgentRecord(t, base, "tiny", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7501,
+		AdoptionMode: "managed_window", LauncherPaneID: "%launcher",
+		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@1", PaneID: "%1", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "tiny",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7501: true}, map[int]bool{7501: true}, time.Now()),
+		RuntimeVersion:   "2.11.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	ready := env.Data.Execution.ReleaseReadiness
+	if !ready.Ready {
+		t.Fatalf("release readiness = %+v, want ready for explicitly trivial solo goal", ready)
+	}
+	if _, ok := readinessGatesByCode(ready.Gates)["solo_justification_for_non_trivial_goal"]; ok {
+		t.Fatalf("trivial solo goal should not emit non-trivial solo justification gate: %+v", ready.Gates)
+	}
+}
+
+func TestExecuteStatusJSONReleaseReadyBlockedByVisibleLeadInvariant(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"},
+			{Role: "developer", Binary: "claude", Handle: "developer", Session: "v2-11-0"},
+		},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectTeam,
+		LeadExecution: &team.LeadExecution{
+			Posture:             team.LeadExecutionVisibleTeam,
+			IndependentReview:   &team.IndependentReview{Status: team.IndependentReviewComplete, Reviewer: "developer"},
+			FinalRecommendation: "ready except visibility",
+		},
+	})
+	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7601,
+		AdoptionMode: "managed_session", LauncherPaneID: "%launcher",
+		Tmux: &launch.TmuxInfo{Session: "detached", WindowID: "@1", PaneID: "%1", Target: "new-session"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "v2-11-0",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7601: true}, map[int]bool{7601: true}, time.Now()),
+		RuntimeVersion:   "2.11.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	ready := env.Data.Execution.ReleaseReadiness
+	if ready.Ready {
+		t.Fatalf("release readiness = %+v, want blocked by visibility invariant", ready)
+	}
+	gate := readinessGatesByCode(ready.Gates)["visible_lead_invariants_ok"]
+	if gate.Passed || !strings.Contains(gate.Evidence, "no_visible_lead") {
+		t.Fatalf("visible lead gate = %+v, want failed no_visible_lead evidence", gate)
+	}
+}
+
+func TestExecutionContractForTeamReleaseReadinessNotEvaluatedWithoutRuntimeInvariants(t *testing.T) {
+	tm := team.Team{
+		Project:       "/project",
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectTeam,
+		Members: []team.Member{
+			{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"},
+			{Role: "developer", Binary: "claude", Handle: "developer", Session: "v2-11-0"},
+		},
+		LeadExecution: &team.LeadExecution{
+			Posture:             team.LeadExecutionVisibleTeam,
+			IndependentReview:   &team.IndependentReview{Status: team.IndependentReviewComplete, Reviewer: "developer"},
+			FinalRecommendation: "ready except runtime invariants",
+		},
+	}
+	exec := executionContractForTeam(tm, team.DefaultProfile, "v2-11-0", "native_goal", "", "2.11.0")
+	if exec.InvariantsEvaluated {
+		t.Fatalf("static execution contract should not mark invariants evaluated: %+v", exec)
+	}
+	if exec.ReleaseReadiness.Ready || exec.ReleaseReadiness.State != "not_evaluated" {
+		t.Fatalf("static release readiness = %+v, want not_evaluated", exec.ReleaseReadiness)
+	}
+	gate := readinessGatesByCode(exec.ReleaseReadiness.Gates)["visible_lead_invariants_ok"]
+	if gate.Passed || gate.Evidence != "not_evaluated" {
+		t.Fatalf("static visible lead gate = %+v, want not_evaluated failure", gate)
 	}
 }
 
