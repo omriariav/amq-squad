@@ -83,15 +83,17 @@ type sessionBoardRow struct {
 	// ghost records from a prior session does not pin a quiet session at
 	// "degraded"; they are still surfaced (count + "(+N stale)" note) so the
 	// operator can prune them.
-	AgentsStale  int                   `json:"agents_stale,omitempty"`
-	Brief        string                `json:"brief,omitempty"`
-	LastActivity time.Time             `json:"last_activity,omitempty"`
-	Actions      []runtimeActionJSON   `json:"actions,omitempty"`
-	Orchestrated bool                  `json:"orchestrated,omitempty"`
-	Lead         string                `json:"lead,omitempty"`
-	LeadHandle   string                `json:"lead_handle,omitempty"`
-	Autonomous   team.AutonomousStatus `json:"autonomous"`
-	briefKind    briefKind
+	AgentsStale      int                   `json:"agents_stale,omitempty"`
+	Brief            string                `json:"brief,omitempty"`
+	LastActivity     time.Time             `json:"last_activity,omitempty"`
+	Actions          []runtimeActionJSON   `json:"actions,omitempty"`
+	Orchestrated     bool                  `json:"orchestrated,omitempty"`
+	Lead             string                `json:"lead,omitempty"`
+	LeadHandle       string                `json:"lead_handle,omitempty"`
+	Autonomous       team.AutonomousStatus `json:"autonomous"`
+	Execution        *executionModeData    `json:"execution,omitempty"`
+	OperatorDelivery *operatorDeliveryData `json:"operator_delivery,omitempty"`
+	briefKind        briefKind
 }
 
 // statusBoardExecution carries the inputs for the multi-session board so tests
@@ -111,6 +113,7 @@ type statusBoardExecution struct {
 	Now             func() time.Time
 	Out             io.Writer
 	JSON            bool
+	RuntimeVersion  string
 }
 
 // runStatusBoard is the no-selector status entrypoint: a docker-ps / git
@@ -119,10 +122,15 @@ type statusBoardExecution struct {
 // missing/unresolvable or there are no sessions: it resolves the base root
 // best-effort and renders a clear, non-fatal guidance state instead.
 func runStatusBoard(projectDir string, jsonOut bool) error {
+	return runStatusBoardWithVersion(projectDir, jsonOut, "dev")
+}
+
+func runStatusBoardWithVersion(projectDir string, jsonOut bool, version string) error {
 	return executeStatusBoard(statusBoardExecution{
-		ProjectDir: projectDir,
-		Out:        os.Stdout,
-		JSON:       jsonOut,
+		ProjectDir:     projectDir,
+		Out:            os.Stdout,
+		JSON:           jsonOut,
+		RuntimeVersion: version,
 	})
 }
 
@@ -179,11 +187,15 @@ func executeStatusBoard(s statusBoardExecution) error {
 	if s.JSON {
 		profiles = boardProfilesForProject(s.ProjectDir)
 	}
+	version := strings.TrimSpace(s.RuntimeVersion)
+	if version == "" {
+		version = "dev"
+	}
 	statusProbe := duplicateProbeFromStateProbe(s.Probe, now)
 	for _, sess := range snap.Sessions {
 		row := boardRowFor(s.ProjectDir, sess, now())
 		if s.JSON {
-			enrichBoardRow(profiles, sess, statusProbe, &row)
+			enrichBoardRow(profiles, sess, statusProbe, version, &row)
 		}
 		rows = append(rows, row)
 	}
@@ -235,20 +247,27 @@ func duplicateProbeFromStateProbe(p state.Probe, now func() time.Time) duplicate
 	}
 }
 
-func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicateLaunchProbe, row *sessionBoardRow) {
+func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicateLaunchProbe, version string, row *sessionBoardRow) {
 	profile, t, ok := boardProfileForSession(profiles, sess)
 	if !ok {
 		return
 	}
 	statusRows := buildStatusRows(t, profile, sess.Name, probe)
 	ctx := newSessionStatusContext(t, profile, sess.Name, firstLiveTmuxSession(statusRows))
+	ns := squadnamespace.Resolve(t.Project, ctx.Profile, sess.Name)
+	binding := goalBindingForStatus(ns, ctx, statusRows)
+	topology := statusTopologyForRows(statusRows, ctx.Orchestrated)
 	row.Profile = ctx.Profile
-	row.Namespace = squadnamespace.Resolve(t.Project, ctx.Profile, sess.Name)
+	row.Namespace = ns
 	row.Actions = ctx.Actions
 	row.Orchestrated = ctx.Orchestrated
 	row.Lead = ctx.Lead
 	row.LeadHandle = ctx.LeadHandle
 	row.Autonomous = team.EffectiveAutonomousStatus(t)
+	execution := executionContractForTeam(t, profile, sess.Name, binding.Mode, topologyMode(topology), version)
+	row.Execution = &execution
+	delivery := operatorDeliveryForTeam(t)
+	row.OperatorDelivery = &delivery
 }
 
 func boardProfileForSession(profiles []boardProfile, sess state.Session) (string, team.Team, bool) {

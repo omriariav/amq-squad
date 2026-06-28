@@ -286,8 +286,10 @@ func launchKnownFlag(name string) string {
 		return "string-accepts-dash"
 	case "--role", "--session", "--me", "--root", "--project", "--team-home", "--team-profile",
 		"--conversation", "--conversation-id", "--trust", "--model", "--launcher", "--wake-inject-via",
+		"--spawn-origin", "--spawn-depth",
 		"-role", "-session", "-me", "-root", "-project", "-team-home", "-team-profile",
-		"-conversation", "-conversation-id", "-trust", "-model", "-launcher", "-wake-inject-via":
+		"-conversation", "-conversation-id", "-trust", "-model", "-launcher", "-wake-inject-via",
+		"-spawn-origin", "-spawn-depth":
 		return "string"
 	case "--team-workstream", "--no-bootstrap", "--no-default-args",
 		"--force-duplicate", "--dry-run", "--no-require-wake",

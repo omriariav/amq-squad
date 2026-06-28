@@ -67,19 +67,22 @@ type statusSignals struct {
 // statusEnvelopeData is the kind="status" payload: resolved team-home,
 // workstream, profile, and the per-member records.
 type statusEnvelopeData struct {
-	TeamHome     string                `json:"team_home"`
-	Workstream   string                `json:"workstream"`
-	Profile      string                `json:"profile,omitempty"`
-	Namespace    squadnamespace.Ref    `json:"namespace"`
-	Operator     team.OperatorView     `json:"operator"`
-	Capabilities team.Capabilities     `json:"capabilities"`
-	Orchestrated bool                  `json:"orchestrated,omitempty"`
-	Lead         string                `json:"lead,omitempty"`
-	LeadHandle   string                `json:"lead_handle,omitempty"`
-	GoalBinding  goalBindingData       `json:"goal_binding"`
-	Autonomous   team.AutonomousStatus `json:"autonomous"`
-	Topology     *statusTopology       `json:"topology,omitempty"`
-	Records      []statusRecord        `json:"records"`
+	TeamHome          string                 `json:"team_home"`
+	Workstream        string                 `json:"workstream"`
+	Profile           string                 `json:"profile,omitempty"`
+	Namespace         squadnamespace.Ref     `json:"namespace"`
+	Operator          team.OperatorView      `json:"operator"`
+	OperatorDelivery  operatorDeliveryData   `json:"operator_delivery"`
+	Capabilities      team.Capabilities      `json:"capabilities"`
+	Orchestrated      bool                   `json:"orchestrated,omitempty"`
+	Lead              string                 `json:"lead,omitempty"`
+	LeadHandle        string                 `json:"lead_handle,omitempty"`
+	GoalBinding       goalBindingData        `json:"goal_binding"`
+	Autonomous        team.AutonomousStatus  `json:"autonomous"`
+	Execution         executionModeData      `json:"execution"`
+	NamespaceConflict *namespaceConflictData `json:"namespace_conflict,omitempty"`
+	Topology          *statusTopology        `json:"topology,omitempty"`
+	Records           []statusRecord         `json:"records"`
 	// Actions are the SESSION-scope operator actions (status / resume preview /
 	// resume in current window / resume in new tmux session / stop), the catalog
 	// counterpart to each record's agent-scope actions. A client renders these
@@ -146,6 +149,10 @@ func newSessionStatusContext(t team.Team, profile, workstream, tmuxSession strin
 }
 
 func runStatus(args []string) error {
+	return runStatusWithVersion(args, "dev")
+}
+
+func runStatusWithVersion(args []string, version string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	sessionName := fs.String("session", "", "AMQ workstream session name (default: a board over all discovered sessions)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned status envelope instead of the human table")
@@ -189,7 +196,7 @@ Examples:
 	// This is the front-door default, so it degrades gracefully rather than
 	// hard-erroring when `amq` is missing or there are no sessions.
 	if !flagWasSet(fs, "session") {
-		return runStatusBoard(projectDir, *jsonOut)
+		return runStatusBoardWithVersion(projectDir, *jsonOut, version)
 	}
 	profile, err := resolveProfileFlag(*profileFlag)
 	if err != nil {
@@ -206,6 +213,7 @@ Examples:
 		Probe:            defaultDuplicateLaunchProbe,
 		Out:              os.Stdout,
 		JSON:             *jsonOut,
+		RuntimeVersion:   version,
 	})
 }
 
@@ -217,6 +225,7 @@ type statusExecution struct {
 	Probe            duplicateLaunchProbe
 	Out              io.Writer
 	JSON             bool
+	RuntimeVersion   string
 }
 
 func executeStatus(s statusExecution) error {
@@ -235,34 +244,49 @@ func executeStatus(s statusExecution) error {
 	rows := buildStatusRows(t, s.Profile, workstream, s.Probe)
 	if s.JSON {
 		ns := squadnamespace.Resolve(t.Project, s.Profile, workstream)
+		conflict := namespaceConflictForProfileSession(t.Project, s.Profile, workstream)
 		// Attach the stable action commands a client can render/copy per member.
 		for i := range rows {
 			rows[i].Namespace = ns
 			alive := rows[i].Tmux != nil && rows[i].Tmux.PaneAlive
-			rows[i].Actions = memberActions(t.Project, s.Profile, workstream, rows[i].Role, alive)
+			rows[i].Actions = disableNamespaceConflictActions(memberActions(t.Project, s.Profile, workstream, rows[i].Role, alive), conflict)
 		}
 		ctx := newSessionStatusContext(t, s.Profile, workstream, firstLiveTmuxSession(rows))
+		ctx.Actions = disableNamespaceConflictActions(ctx.Actions, conflict)
+		binding := goalBindingForStatus(ns, ctx, rows)
+		topology := statusTopologyForRows(rows, ctx.Orchestrated)
+		version := strings.TrimSpace(s.RuntimeVersion)
+		if version == "" {
+			version = "dev"
+		}
 		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
-			TeamHome:     t.Project,
-			Workstream:   workstream,
-			Profile:      s.Profile,
-			Namespace:    ns,
-			Operator:     team.EffectiveOperator(t),
-			Capabilities: team.EffectiveCapabilities(t),
-			Orchestrated: ctx.Orchestrated,
-			Lead:         ctx.Lead,
-			LeadHandle:   ctx.LeadHandle,
-			GoalBinding:  goalBindingForStatus(ns, ctx, rows),
-			Autonomous:   team.EffectiveAutonomousStatus(t),
-			Topology:     statusTopologyForRows(rows, ctx.Orchestrated),
-			Records:      rows,
-			Actions:      ctx.Actions,
+			TeamHome:          t.Project,
+			Workstream:        workstream,
+			Profile:           s.Profile,
+			Namespace:         ns,
+			Operator:          team.EffectiveOperator(t),
+			OperatorDelivery:  operatorDeliveryForTeam(t),
+			Capabilities:      team.EffectiveCapabilities(t),
+			Orchestrated:      ctx.Orchestrated,
+			Lead:              ctx.Lead,
+			LeadHandle:        ctx.LeadHandle,
+			GoalBinding:       binding,
+			Autonomous:        team.EffectiveAutonomousStatus(t),
+			Execution:         executionContractForTeam(t, s.Profile, workstream, binding.Mode, topologyMode(topology), version),
+			NamespaceConflict: conflict,
+			Topology:          topology,
+			Records:           rows,
+			Actions:           ctx.Actions,
 		})
 	}
 	policy := outputPolicyCurrent()
 	fmt.Fprintf(s.Out, "# workstream: %s\n", workstream)
 	if root := firstStatusRoot(rows); root != "" {
 		fmt.Fprintf(s.Out, "# AM_ROOT:    %s\n", root)
+	}
+	delivery := operatorDeliveryForTeam(t)
+	if delivery.Enabled {
+		fmt.Fprintf(s.Out, "# operator_delivery: %s\n", operatorDeliverySummary(delivery))
 	}
 	fmt.Fprintln(s.Out)
 	w := tabwriter.NewWriter(s.Out, 0, 0, 2, ' ', 0)
@@ -296,25 +320,53 @@ func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows 
 		return binding
 	}
 	for _, row := range rows {
-		if row.Role != ctx.Lead || row.goalBinding == nil || !row.goalBinding.NativeGoal {
+		if row.Role != ctx.Lead {
 			continue
 		}
 		if row.Status != statusStateLive && row.Status != statusStateWakeLive {
 			continue
 		}
-		binding.Mode = "native_goal"
-		binding.NativeGoal = true
-		binding.Verified = true
-		binding.Source = "launch-record"
-		binding.NativeSource = row.goalBinding.Source
-		binding.Command = row.goalBinding.Command
-		if detail := strings.TrimSpace(row.goalBinding.Detail); detail != "" {
-			binding.Detail = detail
-		} else {
-			binding.Detail = "configured visible lead launch record carries native /goal binding evidence"
+		if row.goalBinding != nil && row.goalBinding.NativeGoal {
+			binding.Mode = "native_goal"
+			binding.NativeGoal = true
+			binding.Verified = true
+			binding.Source = "launch-record"
+			binding.NativeSource = row.goalBinding.Source
+			binding.Command = row.goalBinding.Command
+			if detail := strings.TrimSpace(row.goalBinding.Detail); detail != "" {
+				binding.Detail = detail
+			} else {
+				binding.Detail = "configured visible lead launch record carries native /goal binding evidence"
+			}
+			return binding
 		}
-		return binding
+		if projectExecutionModeRequiresNativeGoal(ctx.Team) {
+			return nativeGoalMissingBinding(binding, row)
+		}
 	}
+	return binding
+}
+
+func projectExecutionModeRequiresNativeGoal(t team.Team) bool {
+	switch effectiveTeamExecutionMode(t) {
+	case executionModeProjectLead, executionModeProjectTeam:
+		return true
+	default:
+		return false
+	}
+}
+
+func nativeGoalMissingBinding(binding goalBindingData, row statusRecord) goalBindingData {
+	binding.Mode = "native_goal_missing"
+	binding.NativeGoal = false
+	binding.Verified = false
+	binding.NativeSource = "missing"
+	if row.RecordState == "launched" {
+		binding.Source = "launch-record"
+	} else {
+		binding.Source = "runtime-observation"
+	}
+	binding.Detail = "A live visible project lead is running without launch-record evidence of a native /goal command; relaunch from the generated /goal plan or treat this as an explicit unsupported fallback before claiming release readiness."
 	return binding
 }
 

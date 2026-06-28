@@ -373,6 +373,12 @@ func TestStatusBoardJSONCarriesProfileActionsAndOrchestration(t *testing.T) {
 	if !row.Orchestrated || row.Lead != "cto" || row.LeadHandle != "lead-handle" {
 		t.Fatalf("board orchestration = orchestrated:%v lead:%q lead_handle:%q, want true/cto/lead-handle", row.Orchestrated, row.Lead, row.LeadHandle)
 	}
+	if row.Execution == nil || row.Execution.Mode != executionModeProjectLead || row.Execution.MutableActor != "cto" || !row.Execution.ImplementationAllowed {
+		t.Fatalf("board execution = %+v, want project_lead led by cto", row.Execution)
+	}
+	if row.OperatorDelivery == nil || !row.OperatorDelivery.PollRequired || row.OperatorDelivery.WakeSupported || !row.OperatorDelivery.DurableAMQ {
+		t.Fatalf("board operator_delivery = %+v, want poll-required durable AMQ without wake", row.OperatorDelivery)
+	}
 	if len(row.Actions) == 0 {
 		t.Fatalf("board actions empty: %+v", row)
 	}

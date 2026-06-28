@@ -345,6 +345,10 @@ func executeResume(r resumeExecution) error {
 	if err != nil {
 		return err
 	}
+	namespaceConflict := namespaceConflictForProfileSession(t.Project, r.Profile, workstream)
+	if namespaceConflict != nil && !r.JSON {
+		return namespaceConflictError("resume", namespaceConflict)
+	}
 	active, skipped := filterMembersBySession(t.Members, workstream)
 	for _, m := range skipped {
 		quietNotice("notice: skipping %s: pinned to session %q, not %q\n", m.Role, m.Session, workstream)
@@ -434,6 +438,9 @@ func executeResume(r resumeExecution) error {
 		}
 		plans = append(plans, plan)
 	}
+	if namespaceConflict != nil {
+		plans = blockResumePlansForNamespaceConflict(plans, namespaceConflict)
+	}
 
 	// --restore-existing checks that restorable records EXIST for the
 	// workstream, independent of whether the final action is restore.
@@ -468,10 +475,13 @@ func executeResume(r resumeExecution) error {
 		if out == nil {
 			out = os.Stdout
 		}
-		return writeResumeJSON(out, t, workstream, r.Mode, r.Profile, plans)
+		return writeResumeJSON(out, t, workstream, r.Mode, r.Profile, namespaceConflict, plans)
 	}
 
 	if r.Exec.Enabled {
+		if namespaceConflict != nil {
+			return namespaceConflictError("resume --exec", namespaceConflict)
+		}
 		return execResumePlan(t, r.Profile, workstream, plans, r.Exec, r.Force)
 	}
 
@@ -802,6 +812,19 @@ func planMemberCWD(t team.Team, role string) string {
 		}
 	}
 	return t.Project
+}
+
+func blockResumePlansForNamespaceConflict(plans []resumePlan, conflict *namespaceConflictData) []resumePlan {
+	if conflict == nil {
+		return plans
+	}
+	out := append([]resumePlan(nil), plans...)
+	for i := range out {
+		out[i].Action = resumeBlocked
+		out[i].Command = ""
+		out[i].Note = "namespace conflict: " + conflict.Detail
+	}
+	return out
 }
 
 type memberPlanInput struct {

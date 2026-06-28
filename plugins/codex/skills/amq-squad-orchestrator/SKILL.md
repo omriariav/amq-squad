@@ -90,6 +90,36 @@ For `/goal` runs, keep the operator interface simple and lead-centered:
   operator/orchestrator-visible surface; do not leave it only in a child pane,
   internal worker thread, or hidden gate.
 
+### Execution modes (2.10.0)
+
+Before implementation starts, make the ownership mode explicit in the preview
+and in any generated prompts:
+
+- `global_orchestrator`: control-plane only. Usually runs from a neutral root
+  such as `~/Code` or amq-noc. It previews, selects the target
+  project/profile/session, creates or registers a `project_lead` or
+  `project_team`, routes approvals/directives, polls when wake is unavailable,
+  and reports evidence. It does not inspect or edit project code unless the
+  operator explicitly converts it to `direct_lead_session`.
+- `project_lead`: one visible project-root lead owns `/goal`, repo inspection,
+  implementation, tests, child delegation, blockers, and final evidence. This
+  is the default project execution mode.
+- `project_team`: a visible project-root team with a visible lead and visible
+  members. Use it only when the operator intentionally wants to inspect multiple
+  project agents instead of one lead.
+- `direct_lead_session`: the current session is explicitly the visible
+  project-root lead and may mutate files. This is the single-project quick-work
+  exception, not the default for NOC/control-root workflows.
+
+If you are a global orchestrator and no project lead/team exists, stop before
+editing files and surface a mode error. If you already made a diff by mistake,
+package it as handoff context for the project lead instead of silently
+continuing as implementer. Use `amq-squad goal draft --mode ...` and check its
+`execution` JSON object: it must name `control_root`, `target_project_root`,
+`mutable_actor`, `implementation_allowed`, goal binding, topology, and version
+compatibility. `status --json` and the board JSON expose the same execution
+contract for monitoring.
+
 Preserve team rules and custom role contracts across this flow. A `/goal`
 preview or directive may steer the lead, but it does not authorize merge, push,
 release, destructive filesystem actions, provider side effects, external
@@ -101,6 +131,9 @@ blockers, approval requests, and final evidence to AMQ/NOC-visible surfaces; the
 parent orchestrator or NOC polls each lead's inbox, gate threads, and
 `status --json` on a cadence. Child agents remain internal unless the lead
 escalates them.
+If `status --json.operator_delivery.poll_required=true`, the operator mailbox is
+also polling-only: reports, blockers, and approval gates are durable AMQ records,
+and the orchestrator or NOC must drain/poll them instead of waiting for wake.
 Use `goal_binding` in `goal draft --json` and `status --json` to distinguish a
 generated native `/goal` plan (`native_goal_pending`), verified launch-record
 native binding (`native_goal`), and the explicit AMQ task + active brief +

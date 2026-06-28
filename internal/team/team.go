@@ -195,6 +195,12 @@ type Team struct {
 	Lead         string            `json:"lead,omitempty"`
 	Composition  string            `json:"composition,omitempty"`
 	Autonomous   *AutonomousPolicy `json:"autonomous,omitempty"`
+	// ExecutionMode records the operator-visible ownership contract for this
+	// profile. Empty means callers apply the compatibility default.
+	ExecutionMode     string `json:"execution_mode,omitempty"`
+	ControlRoot       string `json:"control_root,omitempty"`
+	TargetProjectRoot string `json:"target_project_root,omitempty"`
+	TargetContract    string `json:"target_contract,omitempty"`
 	// MaxSpawnDepth caps runtime composition fan-out. Zero means the safe
 	// default of 1: the operator-launched lead may add direct children, but
 	// children cannot add grandchildren.
