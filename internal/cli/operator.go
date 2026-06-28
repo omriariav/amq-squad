@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -38,19 +39,31 @@ type operatorExecution struct {
 }
 
 type operatorStatusEnvelopeData struct {
-	ProjectDir       string               `json:"project_dir"`
-	BaseRoot         string               `json:"base_root,omitempty"`
-	Profile          string               `json:"profile"`
-	Session          string               `json:"session"`
-	Namespace        squadnamespace.Ref   `json:"namespace"`
-	ReadOnly         bool                 `json:"readonly"`
-	Operator         statusOperatorView   `json:"operator"`
-	OperatorDelivery operatorDeliveryData `json:"operator_delivery"`
-	OperatorLoop     operatorLoopStatus   `json:"operator_loop"`
-	Attention        []operatorAttention  `json:"attention,omitempty"`
-	OperatorGates    bool                 `json:"operator_gates"`
-	Message          string               `json:"message,omitempty"`
+	ProjectDir       string                `json:"project_dir"`
+	BaseRoot         string                `json:"base_root,omitempty"`
+	Profile          string                `json:"profile"`
+	Session          string                `json:"session"`
+	Namespace        squadnamespace.Ref    `json:"namespace"`
+	ReadOnly         bool                  `json:"readonly"`
+	Operator         statusOperatorView    `json:"operator"`
+	OperatorDelivery operatorDeliveryData  `json:"operator_delivery"`
+	OperatorLoop     operatorLoopStatus    `json:"operator_loop"`
+	Attention        []operatorAttention   `json:"attention,omitempty"`
+	OperatorGates    bool                  `json:"operator_gates"`
+	Claimed          *bool                 `json:"claimed,omitempty"`
+	Conflict         *operatorPollConflict `json:"conflict,omitempty"`
+	Message          string                `json:"message,omitempty"`
 	operatorCursor   string
+}
+
+type operatorPollConflict struct {
+	Code           string `json:"code"`
+	Message        string `json:"message"`
+	Owner          string `json:"owner"`
+	OwnerID        string `json:"owner_id"`
+	LeaseExpiresAt string `json:"lease_expires_at,omitempty"`
+	LastPollAt     string `json:"last_poll_at,omitempty"`
+	Cursor         string `json:"cursor,omitempty"`
 }
 
 type operatorLoopStatus struct {
@@ -96,6 +109,14 @@ type operatorLoopForceAuditRecord struct {
 	PreviousOwnerID      string    `json:"previous_owner_id"`
 	PreviousLeaseExpires time.Time `json:"previous_lease_expires_at"`
 	Reason               string    `json:"reason"`
+}
+
+type operatorPollLeaseConflictError struct {
+	Lease operatorLoopLeaseFile
+}
+
+func (e *operatorPollLeaseConflictError) Error() string {
+	return fmt.Sprintf("operator poll lease already held by %s until %s; pass --force --reason <why> to steal it", e.Lease.OwnerID, e.Lease.LeaseExpiresAt.UTC().Format(time.RFC3339))
 }
 
 func runOperator(args []string) error {
@@ -242,9 +263,21 @@ func executeOperatorPoll(o operatorExecution) error {
 		}
 		lease, err := claimOperatorLoopLease(data.ProjectDir, data.Profile, data.Session, data.Namespace.ID, owner, ownerID, ttl, data.operatorCursor, now, o.Force, o.ForceReason)
 		if err != nil {
+			var conflict *operatorPollLeaseConflictError
+			if o.JSON && errors.As(err, &conflict) {
+				claimed := false
+				data.Claimed = &claimed
+				applyOperatorLoopLease(&data.OperatorLoop, conflict.Lease, now)
+				data.Conflict = operatorPollLeaseConflictData(conflict)
+				if writeErr := writeOrRenderOperatorStatus(o.Out, "operator_poll", "operator poll", data, o.JSON); writeErr != nil {
+					return writeErr
+				}
+			}
 			return err
 		}
 		applyOperatorLoopLease(&data.OperatorLoop, lease, now)
+		claimed := true
+		data.Claimed = &claimed
 	}
 	return writeOrRenderOperatorStatus(o.Out, "operator_poll", "operator poll", data, o.JSON)
 }
@@ -446,7 +479,7 @@ func claimOperatorLoopLease(projectDir, profile, session, namespaceID, owner, ow
 		}
 		liveForeign := current.OwnerID != "" && current.OwnerID != ownerID && now.Before(current.LeaseExpiresAt)
 		if liveForeign && !force {
-			return usageErrorf("operator poll lease already held by %s until %s; pass --force --reason <why> to steal it", current.OwnerID, current.LeaseExpiresAt.UTC().Format(time.RFC3339))
+			return &operatorPollLeaseConflictError{Lease: current}
 		}
 		if liveForeign && strings.TrimSpace(forceReason) == "" {
 			return usageErrorf("operator poll --force requires --reason <why>")
@@ -553,6 +586,27 @@ func applyOperatorLoopLease(loop *operatorLoopStatus, lease operatorLoopLeaseFil
 		return
 	}
 	loop.State = "poller_stale"
+}
+
+func operatorPollLeaseConflictData(conflict *operatorPollLeaseConflictError) *operatorPollConflict {
+	if conflict == nil {
+		return nil
+	}
+	lease := conflict.Lease
+	out := &operatorPollConflict{
+		Code:    "lease_conflict",
+		Message: conflict.Error(),
+		Owner:   lease.Owner,
+		OwnerID: lease.OwnerID,
+		Cursor:  lease.Cursor,
+	}
+	if !lease.LeaseExpiresAt.IsZero() {
+		out.LeaseExpiresAt = lease.LeaseExpiresAt.UTC().Format(time.RFC3339)
+	}
+	if !lease.LastPollAt.IsZero() {
+		out.LastPollAt = lease.LastPollAt.UTC().Format(time.RFC3339)
+	}
+	return out
 }
 
 func operatorInboxHighWater(threads []state.ThreadSummary, operatorHandle string) string {
