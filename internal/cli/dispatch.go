@@ -25,13 +25,21 @@ const dispatchNudgePrompt = "amq-squad dispatch: a new message is queued in your
 	"Run `amq drain --include-body` now and act on the newest item. Do not wait to be polled."
 
 // dispatchOutcome reports how the best-effort pane nudge resolved. PaneID is the
-// pane that was nudged (empty when none was). Skipped carries a human-readable
-// reason the nudge did not happen (no live pane, or busy without --force); a
-// skip is NOT an error because the durable task is already queued.
+// pane that was nudged (empty when none was). SubmitState distinguishes a
+// confirmed Enter from a staged-but-unconfirmed prompt. Skipped carries a
+// human-readable reason the nudge did not happen (no live pane, or busy without
+// --force); a skip is NOT an error because the durable task is already queued.
 type dispatchOutcome struct {
-	PaneID  string
-	Skipped string
+	PaneID      string `json:"pane_id,omitempty"`
+	Skipped     string `json:"skipped,omitempty"`
+	SubmitState string `json:"submit_state,omitempty"`
+	Detail      string `json:"detail,omitempty"`
 }
+
+const (
+	dispatchSubmitConfirmed   = "submit_confirmed"
+	dispatchSubmitUnconfirmed = "submit_unconfirmed"
+)
 
 type dispatchEnvelopeData struct {
 	Session   string          `json:"session"`
@@ -155,7 +163,7 @@ Examples:
 	}
 	receipt := newDeliveryReceipt(projectDir, profile, workstream, member.Role, member.Handle, effectiveTeamExecutionMode(t), "dispatch")
 	receipt.Method = "durable_amq"
-	receipt.addStage("queued", "dispatch accepted by amq-squad")
+	receipt.addStage("queued_amq", "dispatch accepted by amq-squad")
 	// Option 3 (#176): warn when the dispatcher handle differs from the
 	// team.json configured lead. Children report to the task's From field
 	// (the dispatcher), not the configured lead, so the operator needs to
@@ -275,7 +283,7 @@ Examples:
 		return nil
 	}
 
-	receipt.addStage("wake_requested", "requested pane prompt fallback nudge for recipient")
+	receipt.addStage("nudge_requested", "requested pane prompt fallback nudge for recipient")
 	outcome, werr := dispatchWakePane(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag, *forceFlag)
 	if werr != nil {
 		receipt.TaskID = taskID
@@ -316,8 +324,18 @@ Examples:
 		receipt.PaneID = outcome.PaneID
 		receipt.Fallback = true
 		receipt.Method = "durable_amq_plus_prompt_fallback"
-		receipt.Status = "prompt_fallback_sent"
-		receipt.addStage("prompt_fallback_sent", "fixed drain-only pane prompt sent; this is fallback delivery, not an AMQ acknowledgement")
+		receipt.addStage("prompt_staged", "fixed drain-only pane prompt staged; this is fallback delivery, not an AMQ acknowledgement")
+		receipt.addStage("submit_attempted", "attempted to submit the staged drain-only prompt")
+		switch outcome.SubmitState {
+		case dispatchSubmitUnconfirmed:
+			receipt.Status = dispatchSubmitUnconfirmed
+			receipt.Detail = outcome.Detail
+			receipt.addStage(dispatchSubmitUnconfirmed, outcome.Detail)
+		default:
+			receipt.Status = dispatchSubmitConfirmed
+			receipt.addStage(dispatchSubmitConfirmed, "Enter submitted; input-region change observed, or snapshot unavailable (fail-open)")
+			outcome.SubmitState = dispatchSubmitConfirmed
+		}
 	} else {
 		receipt.Status = "wake_pending"
 		receipt.Detail = outcome.Skipped
@@ -330,6 +348,9 @@ Examples:
 		status := "queued"
 		if outcome.PaneID != "" {
 			status = "queued_and_nudged"
+			if outcome.SubmitState == dispatchSubmitUnconfirmed {
+				status = "queued_nudge_submit_unconfirmed"
+			}
 		}
 		return printJSONEnvelope("dispatch", mutationResult{
 			Command:         "dispatch",
@@ -350,7 +371,11 @@ Examples:
 		})
 	}
 	if outcome.PaneID != "" {
-		quietNotice("Nudged %s pane %s to drain.\n", *roleFlag, outcome.PaneID)
+		if outcome.SubmitState == dispatchSubmitUnconfirmed {
+			quietNotice("Nudged %s pane %s to drain, but submit was unconfirmed; durable task remains queued.\n", *roleFlag, outcome.PaneID)
+		} else {
+			quietNotice("Nudged %s pane %s to drain.\n", *roleFlag, outcome.PaneID)
+		}
 	} else {
 		quietNotice("Task queued; pane not nudged: %s\n", outcome.Skipped)
 	}
@@ -487,14 +512,17 @@ func defaultDispatchWakePane(projectDir, profile, session string, explicitSessio
 // tmux denied) is a real failure. paneBusy is injected for testing.
 func classifyNudgeResult(paneID string, sendErr error, paneBusy func(string) (bool, error)) (dispatchOutcome, error) {
 	if sendErr == nil {
-		return dispatchOutcome{PaneID: paneID}, nil
+		return dispatchOutcome{PaneID: paneID, SubmitState: dispatchSubmitConfirmed}, nil
 	}
 	var unconfirmed *tmuxpane.SubmitUnconfirmedError
 	if errors.As(sendErr, &unconfirmed) {
+		detail := fmt.Sprintf("pane %s was staged and Enter was attempted, but submission could not be confirmed after %d attempts", paneID, unconfirmed.Attempts)
 		if busy, berr := paneBusy(paneID); berr == nil && busy {
-			return dispatchOutcome{PaneID: paneID}, nil
+			detail += "; pane is now busy, so the agent may already be processing the durable task"
+		} else {
+			detail += "; pane may still need a manual Enter or a drain-only re-nudge"
 		}
-		return dispatchOutcome{Skipped: fmt.Sprintf("pane %s nudged but submission unconfirmed; the durable task is queued and the worker drains it on its next turn", paneID)}, nil
+		return dispatchOutcome{PaneID: paneID, SubmitState: dispatchSubmitUnconfirmed, Detail: detail}, nil
 	}
 	return dispatchOutcome{}, sendErr
 }

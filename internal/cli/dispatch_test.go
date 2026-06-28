@@ -105,10 +105,17 @@ func TestRunDispatchJSONEnvelope(t *testing.T) {
 		env.Data.DeliveryReceipt.Kind != "dispatch" ||
 		env.Data.DeliveryReceipt.Method != "durable_amq_plus_prompt_fallback" ||
 		env.Data.DeliveryReceipt.MessageID != "msg-123" ||
-		env.Data.DeliveryReceipt.Status != "prompt_fallback_sent" ||
+		env.Data.DeliveryReceipt.Status != dispatchSubmitConfirmed ||
 		env.Data.DeliveryReceipt.PaneID != "%7" ||
 		!env.Data.DeliveryReceipt.Fallback {
 		t.Fatalf("bad dispatch delivery receipt: %+v", env.Data.DeliveryReceipt)
+	}
+	if !receiptHasStage(env.Data.DeliveryReceipt, "queued_amq") ||
+		!receiptHasStage(env.Data.DeliveryReceipt, "nudge_requested") ||
+		!receiptHasStage(env.Data.DeliveryReceipt, "prompt_staged") ||
+		!receiptHasStage(env.Data.DeliveryReceipt, "submit_attempted") ||
+		!receiptHasStage(env.Data.DeliveryReceipt, dispatchSubmitConfirmed) {
+		t.Fatalf("dispatch receipt stages = %+v, want explicit submit-confirmed state machine", env.Data.DeliveryReceipt.Stages)
 	}
 	if env.Data.DeliveryReceipt.Path == "" {
 		t.Fatalf("dispatch receipt should be written to disk: %+v", env.Data.DeliveryReceipt)
@@ -136,6 +143,58 @@ func TestRunDispatchJSONEnvelope(t *testing.T) {
 	}
 }
 
+func TestRunDispatchJSONEnvelopeReportsSubmitUnconfirmed(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"},
+		"Sent msg-456 to qa (session: , root: /x/.agent-mail/issue-96)\n")
+	_ = withDispatchWakeSeam(t, dispatchOutcome{
+		PaneID:      "%7",
+		SubmitState: dispatchSubmitUnconfirmed,
+		Detail:      "pane %7 was staged and Enter was attempted, but submission could not be confirmed after 3 attempts",
+	}, nil)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch --json: %v", err)
+	}
+	env := decodeJSONEnvelope[mutationResult](t, stdout)
+	if env.Data.Status != "queued_nudge_submit_unconfirmed" {
+		t.Fatalf("dispatch status = %q, want queued_nudge_submit_unconfirmed", env.Data.Status)
+	}
+	r := env.Data.DeliveryReceipt
+	if r == nil ||
+		r.Status != dispatchSubmitUnconfirmed ||
+		r.Method != "durable_amq_plus_prompt_fallback" ||
+		r.PaneID != "%7" ||
+		!r.Fallback ||
+		!strings.Contains(r.Detail, "could not be confirmed") {
+		t.Fatalf("dispatch receipt = %+v, want explicit submit_unconfirmed pane attempt", r)
+	}
+	if !receiptHasStage(r, "queued_amq") ||
+		!receiptHasStage(r, "nudge_requested") ||
+		!receiptHasStage(r, "prompt_staged") ||
+		!receiptHasStage(r, "submit_attempted") ||
+		!receiptHasStage(r, dispatchSubmitUnconfirmed) {
+		t.Fatalf("dispatch receipt stages = %+v, want explicit submit-unconfirmed state machine", r.Stages)
+	}
+}
+
+func receiptHasStage(r *deliveryReceiptData, state string) bool {
+	if r == nil {
+		return false
+	}
+	for _, stage := range r.Stages {
+		if stage.State == state {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDispatchCollectCommandQuotesScope(t *testing.T) {
 	got := dispatchCollectCommand("/Code/my app", "issue-96", "lead user")
 	want := "amq-squad collect --project '/Code/my app' --session issue-96 --me 'lead user' --timeout 120s --include-body"
@@ -150,21 +209,21 @@ func TestClassifyNudgeResult(t *testing.T) {
 	unconfirmed := &tmuxpane.SubmitUnconfirmedError{PaneID: "%7", Attempts: 3}
 
 	// Clean send -> nudged.
-	if o, err := classifyNudgeResult("%7", nil, idle); err != nil || o.PaneID != "%7" {
+	if o, err := classifyNudgeResult("%7", nil, idle); err != nil || o.PaneID != "%7" || o.SubmitState != dispatchSubmitConfirmed {
 		t.Fatalf("clean send: got %+v, %v", o, err)
 	}
-	// Unconfirmed but the pane is now BUSY -> the agent was woken (sidecar) and is
-	// working; count as delivered, NOT a failure.
-	if o, err := classifyNudgeResult("%7", unconfirmed, busy); err != nil || o.PaneID != "%7" {
+	// Unconfirmed but the pane is now BUSY remains an explicit unconfirmed
+	// receipt state; busy is useful detail, not proof of submit confirmation.
+	if o, err := classifyNudgeResult("%7", unconfirmed, busy); err != nil || o.PaneID != "%7" || o.SubmitState != dispatchSubmitUnconfirmed || !strings.Contains(o.Detail, "busy") {
 		t.Fatalf("unconfirmed+busy should be delivered: got %+v, %v", o, err)
 	}
-	// Unconfirmed and still idle -> soft skip (durable task queued), no error.
+	// Unconfirmed and still idle -> explicit unconfirmed pane attempt, no error.
 	o, err := classifyNudgeResult("%7", unconfirmed, idle)
 	if err != nil {
 		t.Fatalf("unconfirmed+idle must not be a hard error: %v", err)
 	}
-	if o.PaneID != "" || !strings.Contains(o.Skipped, "unconfirmed") {
-		t.Fatalf("unconfirmed+idle should be a soft skip, got %+v", o)
+	if o.PaneID != "%7" || o.SubmitState != dispatchSubmitUnconfirmed || !strings.Contains(o.Detail, "manual Enter") {
+		t.Fatalf("unconfirmed+idle should be an explicit unconfirmed attempt, got %+v", o)
 	}
 	// A real failure (dead pane) propagates as an error.
 	dead := &tmuxpane.DeadPaneError{PaneID: "%7"}
