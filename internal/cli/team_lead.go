@@ -256,6 +256,7 @@ func runLeadRegister(args []string) error {
 	}
 	root := absoluteAMQRoot(cwd, env.Root)
 	agentDir := filepath.Join(root, "agents", handle)
+	existingRec, existingRecErr := launch.Read(agentDir)
 	var wakeResult leadWakeResult
 	if !*noWake {
 		wakeResult, err = leadWakeStarter(leadWakeOptions{
@@ -303,6 +304,10 @@ func runLeadRegister(args []string) error {
 			Target:     "external",
 		},
 	}
+	if preserveExternalGoalBinding(existingRec, existingRecErr, role, env.SessionName) {
+		gb := *existingRec.GoalBinding
+		rec.GoalBinding = &gb
+	}
 	if err := launch.Write(agentDir, rec); err != nil {
 		return fmt.Errorf("write external launch record: %w", err)
 	}
@@ -316,6 +321,18 @@ func runLeadRegister(args []string) error {
 		fmt.Printf("wake: %s\n", wakeResult.Detail)
 	}
 	return nil
+}
+
+func preserveExternalGoalBinding(rec launch.Record, err error, role, session string) bool {
+	if err != nil || rec.GoalBinding == nil || !rec.GoalBinding.NativeGoal {
+		return false
+	}
+	recRole := strings.TrimSpace(rec.Role)
+	if recRole != "" && recRole != strings.TrimSpace(role) {
+		return false
+	}
+	recSession := strings.TrimSpace(rec.Session)
+	return recSession == "" || recSession == strings.TrimSpace(session)
 }
 
 func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
