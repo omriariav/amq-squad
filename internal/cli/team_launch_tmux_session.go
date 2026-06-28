@@ -152,6 +152,10 @@ func runTmuxSessionLaunchPlan(plan tmuxSessionLaunchPlan) error {
 		if err := runCommand(tmuxSessionBinary, tmuxSessionCreateArgv(plan.Workstream, pane.Role, pane.CWD)...); err != nil {
 			return err
 		}
+		// "new-window" is the correct visibility provenance here: this backend's
+		// contract is one named, attached iTerm2 window per agent (tmuxSessionResumeArgv
+		// attaches the session for focus), so status maps it to adoption_mode=managed_window
+		// (operator-visible), NOT a detached session. Do not remap to managed_session.
 		if err := runCommand("tmux", "send-keys", "-t", plan.Workstream+":"+pane.Role, withTmuxTargetEnv("new-window", pane.Command), "C-m"); err != nil {
 			return err
 		}
