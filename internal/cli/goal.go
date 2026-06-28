@@ -11,8 +11,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 var goalGhRun = func(args ...string) ([]byte, error) {
@@ -34,10 +36,15 @@ type goalDraftData struct {
 	Goal               string                 `json:"goal"`
 	Repo               string                 `json:"repo,omitempty"`
 	Milestone          string                 `json:"milestone,omitempty"`
+	TargetContract     string                 `json:"target_contract,omitempty"`
 	Session            string                 `json:"session"`
 	Profile            string                 `json:"profile"`
 	Lead               string                 `json:"lead"`
+	Mode               string                 `json:"mode"`
+	ControlRoot        string                 `json:"control_root,omitempty"`
+	TargetProjectRoot  string                 `json:"target_project_root,omitempty"`
 	Namespace          squadnamespace.Ref     `json:"namespace"`
+	Execution          executionModeData      `json:"execution"`
 	GoalBinding        goalBindingData        `json:"goal_binding"`
 	Composition        string                 `json:"composition"`
 	Visibility         string                 `json:"visibility"`
@@ -106,6 +113,10 @@ type goalDispatchPlan struct {
 }
 
 func runGoal(args []string) error {
+	return runGoalWithVersion(args, "dev")
+}
+
+func runGoalWithVersion(args []string, version string) error {
 	if len(args) == 0 {
 		printGoalUsage()
 		return nil
@@ -115,7 +126,9 @@ func runGoal(args []string) error {
 		printGoalUsage()
 		return nil
 	case "draft":
-		return runGoalDraft(args[1:])
+		return runGoalDraftWithVersion(args[1:], version)
+	case "deliver":
+		return runGoalDeliver(args[1:])
 	case "apply":
 		return usageErrorf("goal apply is not implemented yet; run `amq-squad goal draft` and review the preview first")
 	default:
@@ -127,7 +140,8 @@ func printGoalUsage() {
 	fmt.Fprint(os.Stderr, `amq-squad goal - draft or apply a preview-first goal setup plan
 
 Usage:
-  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
+  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
+  amq-squad goal deliver --goal TEXT --session NAME [--profile NAME] [--role ROLE] [--json]
 
 Examples:
   amq-squad goal draft --goal "deliver GitHub milestone v2.7.0" --repo omriariav/amq-squad --milestone v2.7.0 --session v2-7-0 --profile codex-v2-7-0
@@ -135,14 +149,154 @@ Examples:
 `)
 }
 
+func runGoalDeliver(args []string) error {
+	fs := flag.NewFlagSet("goal deliver", flag.ContinueOnError)
+	goalFlag := fs.String("goal", "", "goal text to deliver as a native /goal control command")
+	sessionFlag := fs.String("session", "", "workstream session of the visible lead")
+	roleFlag := fs.String("role", "", "role to receive the native /goal command (default: configured lead)")
+	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad goal deliver - deliver native /goal as a control action
+
+Usage:
+  amq-squad goal deliver [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--json]
+
+Delivers a native Codex /goal command to the visible lead as a first-class
+control action. This is not an ordinary prompt send: it preserves the busy guard
+for amq-squad send, but /goal delivery may target a busy Codex lead because the
+runtime accepts goal control messages safely.
+`)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	goal := strings.TrimSpace(*goalFlag)
+	if goal == "" {
+		return usageErrorf("goal deliver requires --goal TEXT")
+	}
+	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
+	if !team.ExistsProfile(projectDir, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	}
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return fmt.Errorf("read team: %w", err)
+	}
+	workstream, err := resolveTeamWorkstreamName(t, *sessionFlag, flagWasSet(fs, "session"))
+	if err != nil {
+		return err
+	}
+	if err := ensureNoNamespaceConflict("goal deliver", projectDir, profile, workstream); err != nil {
+		return err
+	}
+	role := strings.TrimSpace(*roleFlag)
+	if role == "" {
+		role = strings.TrimSpace(t.Lead)
+	}
+	if role == "" {
+		return usageErrorf("goal deliver requires --role when the team has no configured lead")
+	}
+	member, ok := teamMemberByRole(t, role)
+	if !ok {
+		return fmt.Errorf("no team member with role %q in this team", role)
+	}
+	prompt := nativeGoalControlPrompt(goal, t, profile, workstream, role)
+	receipt := newDeliveryReceipt(projectDir, profile, workstream, role, member.Handle, effectiveTeamExecutionMode(t), "native_goal")
+	receipt.Method = "native_goal_control"
+	receipt.addStage("queued", "native /goal control delivery accepted by amq-squad")
+
+	mr, resolvedWorkstream, err := resolveMemberRuntime(projectDir, profile, workstream, true, role)
+	if err != nil {
+		return err
+	}
+	panes, err := statusPaneLister()
+	if err != nil {
+		if tmuxpane.IsPermissionDenied(err) {
+			return errTmuxAccessDenied()
+		}
+		panes = nil
+	}
+	paneID, _, ok := resolveControlTarget(mr, resolvedWorkstream, panes)
+	if !ok || strings.TrimSpace(paneID) == "" {
+		return fmt.Errorf("no live tmux pane found for role %q; cannot deliver native /goal", role)
+	}
+	receipt.PaneID = paneID
+	receipt.addStage("control_delivery_started", "resolved exact target pane for native /goal control")
+	if err := sendPromptToPane(paneID, prompt); err != nil {
+		receipt.Status = "failed"
+		receipt.Detail = err.Error()
+		receipt.addStage("failed", err.Error())
+		_ = writeDeliveryReceipt(projectDir, profile, workstream, &receipt)
+		return err
+	}
+	receipt.Status = "native_goal_delivered"
+	receipt.addStage("native_goal_delivered", "native /goal command delivered without ordinary prompt busy-guard semantics")
+	if mr.HasRecord {
+		rec := mr.Record
+		rec.GoalBinding = &launch.GoalBinding{
+			Mode:       "native_goal",
+			NativeGoal: true,
+			Source:     "goal-control",
+			Command:    prompt,
+			Detail:     "native /goal delivered as a first-class control action",
+		}
+		if err := launch.Write(mr.AgentDir, rec); err != nil {
+			return fmt.Errorf("update launch goal binding: %w", err)
+		}
+		receipt.addStage("launch_record_updated", "launch record goal_binding updated from native /goal control delivery")
+	}
+	if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSONEnvelope("goal_deliver", mutationResult{
+			Command:         "goal deliver",
+			Status:          receipt.Status,
+			Project:         projectDir,
+			Session:         workstream,
+			Profile:         profile,
+			Namespace:       squadnamespace.Resolve(projectDir, profile, workstream),
+			Role:            role,
+			Handle:          member.Handle,
+			DeliveryReceipt: &receipt,
+		})
+	}
+	fmt.Printf("Delivered native /goal to %s pane %s (attempt %s).\n", role, paneID, receipt.AttemptID)
+	return nil
+}
+
+func nativeGoalControlPrompt(goal string, t team.Team, profile, session, role string) string {
+	args := []string{"/goal", "--goal", strconv.Quote(goal), "--session", session, "--profile", profile, "--mode", effectiveTeamExecutionMode(t)}
+	if role != "" && role != "cto" {
+		args = append(args, "--lead", role)
+	}
+	if target := strings.TrimSpace(t.TargetContract); target != "" {
+		args = append(args, "--target-contract", target)
+	}
+	return strings.Join(args, " ")
+}
+
 func runGoalDraft(args []string) error {
+	return runGoalDraftWithVersion(args, "dev")
+}
+
+func runGoalDraftWithVersion(args []string, version string) error {
 	fs := flag.NewFlagSet("goal draft", flag.ContinueOnError)
 	goalFlag := fs.String("goal", "", "high-level goal to turn into a setup draft")
 	repoFlag := fs.String("repo", "", "GitHub repo owner/name for milestone lookup")
 	milestoneFlag := fs.String("milestone", "", "GitHub milestone title to include issue titles and URLs")
+	targetContractFlag := fs.String("target-contract", "", "target amq-squad contract version for compatibility checks (default: milestone if semver, else 2.10.0)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name")
 	profileFlag := fs.String("profile", "", "team profile name for the proposed setup")
 	leadFlag := fs.String("lead", "cto", "operator-visible goal lead role")
+	modeFlag := fs.String("mode", executionModeProjectLead, "execution mode: global_orchestrator, project_lead, project_team, or direct_lead_session")
+	controlRootFlag := fs.String("control-root", "", "control-plane root directory (default: cwd)")
+	targetProjectRootFlag := fs.String("target-project-root", "", "target project root directory (default: cwd)")
 	compositionFlag := fs.String("composition", team.CompositionSeeded, "composition mode: seeded (default) or autonomous")
 	maxAgentsFlag := fs.Int("max-agents", 0, "autonomous guardrail: maximum active agents")
 	maxTotalSpawnsFlag := fs.Int("max-total-spawns", 0, "autonomous guardrail: maximum total autonomous spawns")
@@ -157,7 +311,7 @@ func runGoalDraft(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad goal draft - produce a preview-only setup plan from a goal
 
 Usage:
-  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
+  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
 
 The draft is read-only. It prints proposed briefs, roster entries, task-store
 items, spawn gates, dispatches, and the orchestrator prompt, but it does not
@@ -185,10 +339,15 @@ Examples:
 		Goal:               goal,
 		Repo:               strings.TrimSpace(*repoFlag),
 		Milestone:          strings.TrimSpace(*milestoneFlag),
+		TargetContract:     strings.TrimSpace(*targetContractFlag),
 		Session:            strings.TrimSpace(*sessionFlag),
 		Profile:            strings.TrimSpace(*profileFlag),
 		Lead:               strings.TrimSpace(*leadFlag),
+		Mode:               strings.TrimSpace(*modeFlag),
+		ControlRoot:        strings.TrimSpace(*controlRootFlag),
+		TargetProjectRoot:  strings.TrimSpace(*targetProjectRootFlag),
 		CodexOnly:          *codexOnly,
+		RuntimeVersion:     version,
 		Composition:        strings.TrimSpace(*compositionFlag),
 		MaxAgents:          *maxAgentsFlag,
 		MaxTotalSpawns:     *maxTotalSpawnsFlag,
@@ -212,10 +371,15 @@ type goalDraftOptions struct {
 	Goal               string
 	Repo               string
 	Milestone          string
+	TargetContract     string
 	Session            string
 	Profile            string
 	Lead               string
+	Mode               string
+	ControlRoot        string
+	TargetProjectRoot  string
 	CodexOnly          bool
+	RuntimeVersion     string
 	Composition        string
 	MaxAgents          int
 	MaxTotalSpawns     int
@@ -256,6 +420,10 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 	if err := validateProfileName(lead); err != nil {
 		return goalDraftData{}, fmt.Errorf("invalid lead: %w", err)
 	}
+	mode, err := normalizeExecutionMode(opts.Mode)
+	if err != nil {
+		return goalDraftData{}, err
+	}
 	composition := strings.TrimSpace(opts.Composition)
 	if composition == "" {
 		composition = team.CompositionSeeded
@@ -272,26 +440,34 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 	if err != nil {
 		return goalDraftData{}, err
 	}
+	targetContract := inferGoalTargetContract(opts.TargetContract, opts.Milestone)
+	controlRoot := cleanRootOrDefault(opts.ControlRoot, cwdOrEmpty())
+	targetRoot := cleanRootOrDefault(opts.TargetProjectRoot, cwdOrEmpty())
 	data := goalDraftData{
-		Goal:             opts.Goal,
-		Repo:             opts.Repo,
-		Milestone:        opts.Milestone,
-		Session:          session,
-		Profile:          profile,
-		Lead:             lead,
-		Namespace:        squadnamespace.Resolve("", profile, session),
-		Composition:      composition,
-		Visibility:       visibility,
-		AutonomousPolicy: autonomousPolicy,
-		PreviewOnly:      true,
-		CodexOnly:        opts.CodexOnly,
-		IssueSources:     issues,
-		Roster:           defaultGoalRoster(lead, opts.CodexOnly, len(issues)),
+		Goal:              opts.Goal,
+		Repo:              opts.Repo,
+		Milestone:         opts.Milestone,
+		TargetContract:    targetContract,
+		Session:           session,
+		Profile:           profile,
+		Lead:              lead,
+		Mode:              mode,
+		ControlRoot:       controlRoot,
+		TargetProjectRoot: targetRoot,
+		Namespace:         squadnamespace.Resolve("", profile, session),
+		Composition:       composition,
+		Visibility:        visibility,
+		AutonomousPolicy:  autonomousPolicy,
+		PreviewOnly:       true,
+		CodexOnly:         opts.CodexOnly,
+		IssueSources:      issues,
+		Roster:            defaultGoalRoster(lead, opts.CodexOnly, len(issues)),
 		Notes: []string{
 			"Seeded composition remains the default; autonomous composition requires explicit opt-in and policy limits.",
 			"This draft is preview-only and does not mutate team.json, briefs, task files, AMQ mailboxes, launch records, wake locks, or panes.",
 			"Default visibility is sibling-tabs: launch the visible lead from an existing visible tmux pane with the generated native /goal prompt; workers remain behind spawn gates.",
 			"Step 1 / Step 2 / Step 3: preview first, create or register the visible goal lead, then monitor the run through that lead.",
+			"Execution mode is explicit: global_orchestrator monitors only; project_lead and project_team mutate through their project-root lead; direct_lead_session is an explicit exception.",
 			"The top-level orchestrator dispatches to the visible goal lead; child agents stay implementation details unless an approval gate, blocker, release risk, or final evidence requires surfacing them.",
 			"Leads must immediately surface any blocker or approval request to the operator/orchestrator-visible surface; never leave it only in an internal pane or hidden gate.",
 			"When wake is unavailable, the parent orchestrator or NOC polls each visible lead's inbox, gates, and status on a cadence; one /goal maps to one visible lead.",
@@ -303,6 +479,7 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 	}
 	data.OrchestratorPrompt = renderGoalOrchestratorPrompt(data)
 	data.GoalBinding = goalBindingForDraft(data.Namespace, data.OrchestratorPrompt)
+	data.Execution = executionContract(mode, controlRoot, targetRoot, profile, session, data.Namespace.ID, lead, data.GoalBinding.Mode, visibility, opts.RuntimeVersion, targetContract, goalVisibleMembers(mode, data.Roster, lead))
 	data.BriefSkeleton = renderGoalBriefSkeleton(data)
 	data.Tasks = defaultGoalTasks(data)
 	data.SpawnGates = defaultGoalSpawnGates(data)
@@ -321,6 +498,34 @@ func goalBindingForDraft(ns squadnamespace.Ref, command string) goalBindingData 
 	binding.Command = command
 	binding.Detail = "The generated visible-lead prompt is a native /goal command; status reports native_goal only after the lead launch record records that command, otherwise AMQ task + brief fallback remains explicit."
 	return binding
+}
+
+func inferGoalTargetContract(explicit, milestone string) string {
+	if strings.TrimSpace(explicit) != "" {
+		return strings.TrimPrefix(strings.TrimSpace(explicit), "v")
+	}
+	if _, ok := parseSemverParts(milestone); ok {
+		return strings.TrimPrefix(strings.TrimSpace(milestone), "v")
+	}
+	return "2.10.0"
+}
+
+func goalVisibleMembers(mode string, roster []goalRosterMember, lead string) []string {
+	switch mode {
+	case executionModeProjectTeam:
+		out := make([]string, 0, len(roster))
+		for _, member := range roster {
+			if strings.TrimSpace(member.Role) != "" {
+				out = append(out, member.Role)
+			}
+		}
+		return out
+	default:
+		if strings.TrimSpace(lead) == "" {
+			return nil
+		}
+		return []string{lead}
+	}
 }
 
 func validateProfileName(name string) error {
@@ -428,6 +633,7 @@ func renderGoalBriefSkeleton(data goalDraftData) string {
 		b.WriteString("\n")
 	}
 	b.WriteString("## Scope\n- Deliver the goal through amq-squad orchestration.\n- Keep AMQ, the task store, and the workstream brief as durable coordination records.\n")
+	fmt.Fprintf(&b, "- Execution mode: %s. Mutable actor: %s. Implementation allowed: %t.\n", data.Execution.Mode, data.Execution.MutableActor, data.Execution.ImplementationAllowed)
 	fmt.Fprintf(&b, "- Visible lead binding: %s (%s).\n", data.GoalBinding.Mode, data.GoalBinding.Source)
 	fmt.Fprintf(&b, "- Composition mode: %s.\n\n", data.Composition)
 	fmt.Fprintf(&b, "- Visibility: %s.\n\n", data.Visibility)
@@ -535,10 +741,20 @@ func defaultGoalMutations(data goalDraftData) []goalCommandPlan {
 			compositionArgs += fmt.Sprintf(" --idle-reap-minutes %d", data.AutonomousPolicy.IdleReapMinutes)
 		}
 	}
+	executionArgs := fmt.Sprintf(" --mode %s", data.Mode)
+	if data.ControlRoot != "" {
+		executionArgs += " --control-root " + shellQuote(data.ControlRoot)
+	}
+	if data.TargetProjectRoot != "" {
+		executionArgs += " --target-project-root " + shellQuote(data.TargetProjectRoot)
+	}
+	if data.TargetContract != "" {
+		executionArgs += " --target-contract " + shellQuote(data.TargetContract)
+	}
 	mutations := []goalCommandPlan{
 		{
 			Title:   "initialize profile",
-			Command: fmt.Sprintf("amq-squad team init --profile %s --session %s --roles %s --binary %s --orchestrated --lead %s%s --dry-run", data.Profile, data.Session, strings.Join(roles, ","), strings.Join(binaries, ","), data.Lead, compositionArgs),
+			Command: fmt.Sprintf("amq-squad team init --profile %s --session %s --roles %s --binary %s --orchestrated --lead %s%s%s --dry-run", data.Profile, data.Session, strings.Join(roles, ","), strings.Join(binaries, ","), data.Lead, executionArgs, compositionArgs),
 			Reason:  "Preview the proposed roster and orchestration metadata before writing team config.",
 		},
 		{
@@ -629,7 +845,16 @@ func visibleLeadLaunchCommand(data goalDraftData, dryRun bool) string {
 }
 
 func renderGoalOrchestratorPrompt(data goalDraftData) string {
-	args := []string{"/goal", "--goal", strconv.Quote(data.Goal), "--session", data.Session, "--profile", data.Profile}
+	args := []string{"/goal", "--goal", strconv.Quote(data.Goal), "--session", data.Session, "--profile", data.Profile, "--mode", data.Mode}
+	if data.ControlRoot != "" {
+		args = append(args, "--control-root", data.ControlRoot)
+	}
+	if data.TargetProjectRoot != "" {
+		args = append(args, "--target-project-root", data.TargetProjectRoot)
+	}
+	if data.TargetContract != "" {
+		args = append(args, "--target-contract", data.TargetContract)
+	}
 	if data.Lead != "" && data.Lead != "cto" {
 		args = append(args, "--lead", data.Lead)
 	}
@@ -652,11 +877,28 @@ func writeGoalDraftMarkdown(out *os.File, data goalDraftData) {
 	fmt.Fprintln(out, "# amq-squad goal draft")
 	fmt.Fprintf(out, "# preview_only: %t\n", data.PreviewOnly)
 	fmt.Fprintf(out, "# composition: %s\n", data.Composition)
+	fmt.Fprintf(out, "# mode: %s\n", data.Mode)
 	fmt.Fprintf(out, "# visibility: %s\n", data.Visibility)
 	fmt.Fprintf(out, "# session: %s\n", data.Session)
 	fmt.Fprintf(out, "# profile: %s\n", data.Profile)
 	fmt.Fprintf(out, "# lead: %s\n", data.Lead)
 	fmt.Fprintf(out, "# namespace: %s\n", data.Namespace.ID)
+	if data.ControlRoot != "" {
+		fmt.Fprintf(out, "# control_root: %s\n", data.ControlRoot)
+	}
+	if data.TargetProjectRoot != "" {
+		fmt.Fprintf(out, "# target_project_root: %s\n", data.TargetProjectRoot)
+	}
+	if data.Execution.MutableActor != "" {
+		fmt.Fprintf(out, "# mutable_actor: %s\n", data.Execution.MutableActor)
+	}
+	fmt.Fprintf(out, "# implementation_allowed: %t\n", data.Execution.ImplementationAllowed)
+	if data.Execution.ModeError != "" {
+		fmt.Fprintf(out, "# mode_error: %s\n", data.Execution.ModeError)
+	}
+	if data.Execution.VersionCompatibility.Detail != "" {
+		fmt.Fprintf(out, "# version_compatibility: %s\n", data.Execution.VersionCompatibility.Detail)
+	}
 	if data.Repo != "" {
 		fmt.Fprintf(out, "# repo: %s\n", data.Repo)
 	}
@@ -677,6 +919,20 @@ func writeGoalDraftMarkdown(out *os.File, data goalDraftData) {
 	for _, member := range data.Roster {
 		fmt.Fprintf(out, "- %s (%s): %s\n", member.Role, member.Binary, member.Reason)
 	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "## Execution Boundary")
+	fmt.Fprintf(out, "- Mode: %s\n", data.Execution.Mode)
+	fmt.Fprintf(out, "- Control root: %s\n", data.Execution.ControlRoot)
+	fmt.Fprintf(out, "- Target project root: %s\n", data.Execution.TargetProjectRoot)
+	fmt.Fprintf(out, "- Visible lead: %s\n", data.Execution.VisibleLead)
+	fmt.Fprintf(out, "- Visible team members: %s\n", strings.Join(data.Execution.VisibleTeamMembers, ", "))
+	fmt.Fprintf(out, "- Mutable actor: %s\n", data.Execution.MutableActor)
+	fmt.Fprintf(out, "- Implementation allowed: %t\n", data.Execution.ImplementationAllowed)
+	fmt.Fprintf(out, "- Boundary: %s\n", data.Execution.Boundary)
+	if data.Execution.ModeError != "" {
+		fmt.Fprintf(out, "- Mode error: %s\n", data.Execution.ModeError)
+	}
+	fmt.Fprintf(out, "- Version compatibility: %s\n", data.Execution.VersionCompatibility.Detail)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "## Task Plan")
 	for _, task := range data.Tasks {

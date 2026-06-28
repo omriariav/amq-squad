@@ -29,6 +29,7 @@ func Member(projectDir, profile, session, role string, paneAlive bool) []Action 
 	return []Action{
 		{Kind: "focus", Label: "focus pane", Scope: "agent", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: paneAlive, Reason: deadReason, Command: "amq-squad focus" + scope + roleArg},
 		{Kind: "send", Label: "send a prompt", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: paneAlive, Reason: deadReason, Command: "amq-squad send" + scope + roleArg + " --body-file -"},
+		{Kind: "goal_deliver", Label: "deliver native /goal", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: paneAlive, Reason: deadReason, Command: "amq-squad goal deliver" + scope + roleArg + " --goal <goal>"},
 		{Kind: "dispatch", Label: "dispatch task", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: true, Command: "amq-squad dispatch" + scope + roleArg + " --subject <subject> --body-file <file>"},
 		{Kind: "resume", Label: "resume session", Scope: "session", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: true, Command: "amq-squad resume" + scope + " --exec"},
 		{Kind: "status", Label: "show session status", Scope: "session", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: true, Command: "amq-squad status" + scope + " --json"},

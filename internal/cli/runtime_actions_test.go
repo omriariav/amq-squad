@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -236,8 +237,8 @@ func TestResolveControlTargetFallbackReturnsPaneID(t *testing.T) {
 
 func TestMemberActions(t *testing.T) {
 	acts := memberActions("/Code/app", team.DefaultProfile, "issue-96", "cto", true)
-	if len(acts) != 6 {
-		t.Fatalf("want 6 actions, got %d", len(acts))
+	if len(acts) != 7 {
+		t.Fatalf("want 7 actions, got %d", len(acts))
 	}
 	byKind := map[string]runtimeActionJSON{}
 	for _, a := range acts {
@@ -246,8 +247,8 @@ func TestMemberActions(t *testing.T) {
 	if !byKind["focus"].Available || !byKind["send"].Available {
 		t.Errorf("focus/send should be available when the pane is alive")
 	}
-	if !byKind["resume"].Available || !byKind["status"].Available || !byKind["dispatch"].Available || !byKind["task_list"].Available {
-		t.Errorf("resume/status/dispatch/task_list should always be available")
+	if !byKind["goal_deliver"].Available || !byKind["resume"].Available || !byKind["status"].Available || !byKind["dispatch"].Available || !byKind["task_list"].Available {
+		t.Errorf("goal_deliver/resume/status/dispatch/task_list should be available")
 	}
 	// #7 schema: each action carries a label, an agent scope, and mutate/confirm
 	// metadata so a client can render a confirm-gated executable action.
@@ -255,12 +256,13 @@ func TestMemberActions(t *testing.T) {
 		mutates, confirm bool
 		scope            string
 	}{
-		"focus":     {false, false, "agent"},   // has --role
-		"send":      {true, true, "agent"},     // has --role
-		"dispatch":  {true, true, "agent"},     // has --role
-		"resume":    {true, true, "session"},   // session resume (no --role)
-		"status":    {false, false, "session"}, // session board (no --role)
-		"task_list": {false, false, "session"},
+		"focus":        {false, false, "agent"},   // has --role
+		"send":         {true, true, "agent"},     // has --role
+		"goal_deliver": {true, true, "agent"},     // has --role
+		"dispatch":     {true, true, "agent"},     // has --role
+		"resume":       {true, true, "session"},   // session resume (no --role)
+		"status":       {false, false, "session"}, // session board (no --role)
+		"task_list":    {false, false, "session"},
 	}
 	for k, want := range wantMeta {
 		a := byKind[k]
@@ -283,11 +285,13 @@ func TestMemberActions(t *testing.T) {
 			t.Errorf("%s is session-scoped but command has --role: %q", k, a.Command)
 		}
 	}
-	for _, k := range []string{"focus", "send", "resume", "status", "dispatch", "task_list"} {
+	for _, k := range []string{"focus", "send", "goal_deliver", "resume", "status", "dispatch", "task_list"} {
 		cmd := byKind[k].Command
 		verb := k
 		if k == "task_list" {
 			verb = "task list"
+		} else if k == "goal_deliver" {
+			verb = "goal deliver"
 		}
 		if !strings.HasPrefix(cmd, "amq-squad "+verb) {
 			t.Errorf("%s command = %q, want it to start with the verb", k, cmd)
@@ -312,7 +316,7 @@ func TestMemberActions(t *testing.T) {
 	dead := memberActions("/Code/app", team.DefaultProfile, "issue-96", "cto", false)
 	for _, a := range dead {
 		switch a.Kind {
-		case "focus", "send":
+		case "focus", "send", "goal_deliver":
 			if a.Available {
 				t.Errorf("%s should be unavailable for a dead pane", a.Kind)
 			}
@@ -433,6 +437,108 @@ func TestSendRequiresRole(t *testing.T) {
 	}
 	if _, ok := err.(UsageError); !ok {
 		t.Fatalf("want UsageError, got %T: %v", err, err)
+	}
+}
+
+func TestGoalDeliverAllowsBusyLeadAndUpdatesGoalBinding(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	})
+	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-96",
+		AgentPID: 4242,
+		Tmux:     &launch.TmuxInfo{PaneID: "%7"},
+	})
+	oldLister := statusPaneLister
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: "codex", Title: "amq:issue-96:cto"}}, nil
+	}
+	oldBusy := paneBusyForSend
+	busyCalls := 0
+	paneBusyForSend = func(string) (bool, error) {
+		busyCalls++
+		return true, nil
+	}
+	oldSend := sendPromptToPane
+	var sent []string
+	sendPromptToPane = func(paneID, prompt string) error {
+		sent = append(sent, paneID+"\x00"+prompt)
+		return nil
+	}
+	t.Cleanup(func() {
+		statusPaneLister = oldLister
+		paneBusyForSend = oldBusy
+		sendPromptToPane = oldSend
+	})
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("goal deliver: %v", err)
+	}
+	if busyCalls != 0 {
+		t.Fatalf("goal deliver must not use ordinary prompt busy guard, busy calls = %d", busyCalls)
+	}
+	if len(sent) != 1 || !strings.Contains(sent[0], "/goal --goal") || !strings.Contains(sent[0], "ship safely") {
+		t.Fatalf("goal deliver sent = %+v", sent)
+	}
+	env := decodeJSONEnvelope[mutationResult](t, stdout)
+	if env.Kind != "goal_deliver" || env.Data.Status != "native_goal_delivered" {
+		t.Fatalf("goal deliver envelope = %+v", env)
+	}
+	if env.Data.DeliveryReceipt == nil ||
+		env.Data.DeliveryReceipt.Kind != "native_goal" ||
+		env.Data.DeliveryReceipt.Method != "native_goal_control" ||
+		env.Data.DeliveryReceipt.Status != "native_goal_delivered" ||
+		env.Data.DeliveryReceipt.PaneID != "%7" {
+		t.Fatalf("goal delivery receipt = %+v", env.Data.DeliveryReceipt)
+	}
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.GoalBinding == nil || rec.GoalBinding.Source != "goal-control" || !rec.GoalBinding.NativeGoal {
+		t.Fatalf("launch goal binding not updated: %+v", rec.GoalBinding)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Probe:            statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()),
+		JSON:             true,
+		RuntimeVersion:   "2.10.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	statusEnv := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if statusEnv.Data.GoalBinding.Mode != "native_goal" ||
+		!statusEnv.Data.GoalBinding.Verified ||
+		statusEnv.Data.GoalBinding.NativeSource != "goal-control" {
+		t.Fatalf("status goal binding = %+v", statusEnv.Data.GoalBinding)
+	}
+
+	sent = nil
+	_, _, err = captureOutput(t, func() error {
+		return runSend([]string{"--session", "issue-96", "--role", "cto", "--body", "ordinary prompt"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "appears busy") {
+		t.Fatalf("ordinary send should still be busy-guarded, got %v", err)
+	}
+	if len(sent) != 0 {
+		t.Fatalf("ordinary busy send must not deliver prompt: %+v", sent)
 	}
 }
 

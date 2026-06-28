@@ -101,6 +101,18 @@ func TestRunDispatchJSONEnvelope(t *testing.T) {
 	if env.Kind != "dispatch" || env.Data.Status != "queued_and_nudged" || env.Data.MessageID != "msg-123" || env.Data.Handle != "qa" {
 		t.Fatalf("bad dispatch envelope: %+v", env)
 	}
+	if env.Data.DeliveryReceipt == nil ||
+		env.Data.DeliveryReceipt.Kind != "dispatch" ||
+		env.Data.DeliveryReceipt.Method != "durable_amq_plus_prompt_fallback" ||
+		env.Data.DeliveryReceipt.MessageID != "msg-123" ||
+		env.Data.DeliveryReceipt.Status != "prompt_fallback_sent" ||
+		env.Data.DeliveryReceipt.PaneID != "%7" ||
+		!env.Data.DeliveryReceipt.Fallback {
+		t.Fatalf("bad dispatch delivery receipt: %+v", env.Data.DeliveryReceipt)
+	}
+	if env.Data.DeliveryReceipt.Path == "" {
+		t.Fatalf("dispatch receipt should be written to disk: %+v", env.Data.DeliveryReceipt)
+	}
 	if strings.Contains(stdout, "Dispatched todo") {
 		t.Fatalf("--json must not include human output:\n%s", stdout)
 	}

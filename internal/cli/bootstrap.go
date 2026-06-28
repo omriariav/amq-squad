@@ -21,20 +21,22 @@ import (
 var defaultBootstrapTemplate string
 
 type bootstrapContext struct {
-	Role          string
-	Handle        string
-	Binary        string
-	Session       string
-	CWD           string
-	Root          string
-	AgentDir      string
-	TeamHome      string
-	TeamRulesPath string
-	RolePath      string
-	LaunchPath    string
-	BriefPath     string
-	Operator      team.OperatorView
-	OperatorGates bool
+	Role             string
+	Handle           string
+	Binary           string
+	Session          string
+	CWD              string
+	Root             string
+	AgentDir         string
+	TeamHome         string
+	TeamRulesPath    string
+	RolePath         string
+	LaunchPath       string
+	BriefPath        string
+	Operator         team.OperatorView
+	OperatorDelivery operatorDeliveryData
+	OperatorGates    bool
+	Execution        *executionModeData
 	// Orchestrated/IsLead/LeadHandle drive the spawned-worker READY handshake:
 	// a non-lead member of an orchestrated team announces readiness to its lead
 	// on startup so the lead can dispatch without guessing the worker's load
@@ -94,6 +96,23 @@ func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
 	ctx.LaunchPath = promptText(ctx.LaunchPath)
 	ctx.BriefPath = promptText(ctx.BriefPath)
 	ctx.Operator.Handle = promptText(ctx.Operator.Handle)
+	ctx.OperatorDelivery.Handle = promptText(ctx.OperatorDelivery.Handle)
+	ctx.OperatorDelivery.Reason = promptText(ctx.OperatorDelivery.Reason)
+	ctx.OperatorDelivery.Guidance = promptText(ctx.OperatorDelivery.Guidance)
+	if ctx.Execution != nil {
+		ctx.Execution.Mode = promptText(ctx.Execution.Mode)
+		ctx.Execution.ControlRoot = promptText(ctx.Execution.ControlRoot)
+		ctx.Execution.TargetProjectRoot = promptText(ctx.Execution.TargetProjectRoot)
+		ctx.Execution.Profile = promptText(ctx.Execution.Profile)
+		ctx.Execution.Session = promptText(ctx.Execution.Session)
+		ctx.Execution.NamespaceID = promptText(ctx.Execution.NamespaceID)
+		ctx.Execution.VisibleLead = promptText(ctx.Execution.VisibleLead)
+		ctx.Execution.MutableActor = promptText(ctx.Execution.MutableActor)
+		ctx.Execution.GoalBinding = promptText(ctx.Execution.GoalBinding)
+		ctx.Execution.VisibilityTopology = promptText(ctx.Execution.VisibilityTopology)
+		ctx.Execution.ModeError = promptText(ctx.Execution.ModeError)
+		ctx.Execution.Boundary = promptText(ctx.Execution.Boundary)
+	}
 	for i := range ctx.CurrentTeam {
 		m := &ctx.CurrentTeam[i]
 		m.Role = promptText(m.Role)
@@ -146,6 +165,7 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 	operator, operatorGates := bootstrapOperator(rec, teamHome)
 	orchestrated, isLead, leadHandle := bootstrapOrchestration(rec, teamHome)
 	currentTeam, warnings := bootstrapCurrentTeam(rec, teamHome)
+	execution := bootstrapExecution(rec, teamHome)
 	return bootstrapContext{
 		Role:          rec.Role,
 		Handle:        rec.Handle,
@@ -161,16 +181,64 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		// Brief resolution uses the same rule as the live-launch ensure
 		// step so bootstrap can never name a path that ensure skipped (or
 		// vice versa).
-		BriefPath:     briefPathForProfile(resolveBriefHome(teamHome, rec.CWD), rec.TeamProfile, rec.Session),
-		Operator:      operator,
-		OperatorGates: operatorGates,
-		Orchestrated:  orchestrated,
-		IsLead:        isLead,
-		LeadHandle:    leadHandle,
-		CurrentTeam:   currentTeam,
-		Workstreams:   siblingWorkstreamSummaries(rec.Root, rec.Session),
-		Warnings:      warnings,
+		BriefPath:        briefPathForProfile(resolveBriefHome(teamHome, rec.CWD), rec.TeamProfile, rec.Session),
+		Operator:         operator,
+		OperatorDelivery: operatorDeliveryForRecord(rec, teamHome),
+		OperatorGates:    operatorGates,
+		Execution:        execution,
+		Orchestrated:     orchestrated,
+		IsLead:           isLead,
+		LeadHandle:       leadHandle,
+		CurrentTeam:      currentTeam,
+		Workstreams:      siblingWorkstreamSummaries(rec.Root, rec.Session),
+		Warnings:         warnings,
 	}
+}
+
+func operatorDeliveryForRecord(rec launch.Record, teamHome string) operatorDeliveryData {
+	home := teamHome
+	if home == "" {
+		home = rec.CWD
+	}
+	t, err := team.ReadProfile(home, rec.TeamProfile)
+	if err != nil {
+		return operatorDeliveryData{}
+	}
+	return operatorDeliveryForTeam(t)
+}
+
+func bootstrapExecution(rec launch.Record, teamHome string) *executionModeData {
+	home := teamHome
+	if home == "" {
+		home = rec.CWD
+	}
+	t, err := team.ReadProfile(home, rec.TeamProfile)
+	if err != nil {
+		return nil
+	}
+	goalBinding := bootstrapGoalBindingMode(rec, t)
+	execution := executionContractForTeam(t, rec.TeamProfile, rec.Session, goalBinding, "", "dev")
+	return &execution
+}
+
+func bootstrapGoalBindingMode(rec launch.Record, t team.Team) string {
+	if bootstrapRecordIsVisibleLead(rec, t) {
+		if rec.GoalBinding != nil && rec.GoalBinding.NativeGoal {
+			return "native_goal"
+		}
+		if projectExecutionModeRequiresNativeGoal(t) {
+			return "native_goal_missing"
+		}
+	}
+	return "amq_task_brief"
+}
+
+func bootstrapRecordIsVisibleLead(rec launch.Record, t team.Team) bool {
+	lead := strings.TrimSpace(t.Lead)
+	if lead == "" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(rec.Role), lead)
 }
 
 // bootstrapOrchestration reports whether this launch belongs to a lead-

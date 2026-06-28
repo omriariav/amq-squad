@@ -229,6 +229,62 @@ func TestExecuteStatusIsolatesForeignProfileLaunchRecord(t *testing.T) {
 	}
 }
 
+func TestExecuteStatusJSONNamedProfileDisablesActionsOnLegacySessionRootConflict(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	seedProfile(t, dir, "release", team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	legacyAgentDir := filepath.Join(dir, ".agent-mail", "main", "agents", "cto")
+	if err := os.MkdirAll(legacyAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyAgentDir, "inbox"), []byte("legacy durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		Profile:          "release",
+		RequestedSession: "main",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.NamespaceConflict == nil || env.Data.NamespaceConflict.Kind != "legacy_session_root" {
+		t.Fatalf("namespace conflict missing: %+v", env.Data.NamespaceConflict)
+	}
+	for _, action := range env.Data.Actions {
+		switch action.Kind {
+		case "resume_current_window", "resume_new_session", "stop", "stop_close_panes", "attach_control":
+			if action.Available || !strings.Contains(action.Reason, "legacy/default session root") {
+				t.Fatalf("action %s should be unavailable with conflict reason: %+v", action.Kind, action)
+			}
+		case "status", "task_list":
+			if !action.Available {
+				t.Fatalf("read-only action %s should remain available: %+v", action.Kind, action)
+			}
+		}
+	}
+	if len(env.Data.Records) != 1 {
+		t.Fatalf("records = %d", len(env.Data.Records))
+	}
+	for _, action := range env.Data.Records[0].Actions {
+		if (action.Kind == "resume" || action.Kind == "focus" || action.Kind == "send") &&
+			(action.Available || !strings.Contains(action.Reason, "legacy/default session root")) {
+			t.Fatalf("member action %s should be unavailable with conflict reason: %+v", action.Kind, action)
+		}
+	}
+}
+
 func TestExecuteStatusJSONIncludesSpawnMetadata(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
@@ -312,6 +368,94 @@ func TestExecuteStatusJSONReportsNativeGoalForLiveLeadRecord(t *testing.T) {
 	}
 	if !strings.Contains(env.Data.GoalBinding.Command, "/goal --goal") {
 		t.Fatalf("goal binding command = %+v", env.Data.GoalBinding)
+	}
+}
+
+func TestExecuteStatusJSONReportsMissingNativeGoalForLiveProjectLead(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-247"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-247"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-247", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
+	})
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-247",
+		ExplicitSession:  true,
+		Probe:            statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()),
+		JSON:             true,
+		RuntimeVersion:   "2.10.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.GoalBinding.Mode != "native_goal_missing" || env.Data.GoalBinding.NativeGoal || env.Data.GoalBinding.Verified {
+		t.Fatalf("goal binding = %+v, want missing native goal", env.Data.GoalBinding)
+	}
+	if env.Data.GoalBinding.NativeSource != "missing" || !strings.Contains(env.Data.GoalBinding.Detail, "without launch-record evidence") {
+		t.Fatalf("goal binding detail = %+v", env.Data.GoalBinding)
+	}
+	if env.Data.Execution.GoalBinding != "native_goal_missing" || !env.Data.Execution.ImplementationAllowed {
+		t.Fatalf("execution goal binding = %+v", env.Data.Execution)
+	}
+}
+
+func TestExecuteStatusJSONIncludesExecutionMode(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-247"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-247"},
+		},
+		Orchestrated:      true,
+		Lead:              "cto",
+		ExecutionMode:     executionModeProjectTeam,
+		ControlRoot:       "/tmp/control",
+		TargetProjectRoot: "/tmp/project",
+		TargetContract:    "2.10.0",
+	})
+	seedAgentRecord(t, base, "issue-247", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
+		Tmux: &launch.TmuxInfo{
+			Session:  "tmux-issue-247",
+			WindowID: "@1",
+			PaneID:   "%1",
+			Target:   "new-window",
+		},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-247",
+		ExplicitSession:  true,
+		Probe:            statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()),
+		JSON:             true,
+		RuntimeVersion:   "2.10.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	exec := env.Data.Execution
+	if exec.Mode != executionModeProjectTeam || exec.MutableActor != "cto" || !exec.ImplementationAllowed {
+		t.Fatalf("execution = %+v, want project_team led by cto", exec)
+	}
+	if strings.Join(exec.VisibleTeamMembers, ",") != "cto,qa" {
+		t.Fatalf("visible members = %v, want cto,qa", exec.VisibleTeamMembers)
+	}
+	if exec.ControlRoot != "/tmp/control" || exec.TargetProjectRoot != "/tmp/project" {
+		t.Fatalf("execution roots = %q/%q", exec.ControlRoot, exec.TargetProjectRoot)
+	}
+	if !exec.VersionCompatibility.Compatible || exec.VersionCompatibility.RunningVersion != "2.10.0" {
+		t.Fatalf("version compatibility = %+v", exec.VersionCompatibility)
 	}
 }
 

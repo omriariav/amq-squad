@@ -23,6 +23,7 @@ type memberRuntime struct {
 	Profile   string
 	Handle    string
 	CWD       string
+	AgentDir  string
 	HasRecord bool
 	Record    launch.Record
 	// ProfileMismatch means the session+handle mailbox currently contains a
@@ -65,7 +66,7 @@ func resolveMemberRuntime(projectDir, profile, session string, explicitSession b
 		handle = env.Me
 	}
 	agentDir := filepath.Join(absoluteAMQRoot(cwd, env.Root), "agents", handle)
-	mr := memberRuntime{Member: m, Profile: profile, Handle: handle, CWD: cwd}
+	mr := memberRuntime{Member: m, Profile: profile, Handle: handle, CWD: cwd, AgentDir: agentDir}
 	if rec, rerr := launch.Read(agentDir); rerr == nil {
 		if !squadnamespace.ProfilesEqual(profile, rec.TeamProfile) {
 			mr.ProfileMismatch = true
@@ -252,6 +253,9 @@ func paneIDForTarget(tgt tmuxpane.TmuxTarget, panes []tmuxpane.TmuxPane) string 
 
 // --- focus / open ---
 
+var paneBusyForSend = tmuxpane.PaneBusy
+var sendPromptToPane = tmuxpane.SendPromptToPane
+
 func runFocus(args []string) error {
 	fs := flag.NewFlagSet("focus", flag.ContinueOnError)
 	sessionFlag := fs.String("session", "", "workstream session of the team to focus")
@@ -334,6 +338,9 @@ func focusTarget(projectDir, profile, session string, explicitSession bool, role
 			}
 			continue
 		}
+		if err := ensureNoNamespaceConflict("focus", projectDir, profile, workstream); err != nil {
+			return err
+		}
 		if _, target, ok := resolveControlTarget(mr, workstream, panes); ok {
 			if err := tmuxpane.SwitchTo(target); err != nil {
 				return err
@@ -401,6 +408,9 @@ Examples:
 	if err != nil {
 		return err
 	}
+	if err := ensureNoNamespaceConflict("send", projectDir, profile, workstream); err != nil {
+		return err
+	}
 	panes, err := statusPaneLister()
 	if err != nil {
 		if tmuxpane.IsPermissionDenied(err) {
@@ -424,11 +434,11 @@ Examples:
 	// --force. A capture error is not treated as busy (never block on a failed
 	// check) — only a positive busy signal refuses.
 	if !*forceFlag {
-		if busy, berr := tmuxpane.PaneBusy(paneID); berr == nil && busy {
+		if busy, berr := paneBusyForSend(paneID); berr == nil && busy {
 			return fmt.Errorf("agent %q at pane %s appears busy (mid-turn); retry when idle, or pass --force to deliver anyway", *roleFlag, paneID)
 		}
 	}
-	if err := tmuxpane.SendPromptToPane(paneID, prompt); err != nil {
+	if err := sendPromptToPane(paneID, prompt); err != nil {
 		return err
 	}
 	quietNotice("Delivered prompt to %s pane %s.\n", *roleFlag, paneID)

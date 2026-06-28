@@ -183,6 +183,54 @@ func TestGoalDraftCustomLeadCarriesThroughPlan(t *testing.T) {
 	}
 }
 
+func TestGoalDraftExecutionModeContract(t *testing.T) {
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoalDraftWithVersion([]string{
+			"--goal", "deliver mode-safe orchestration",
+			"--session", "v2-10-0",
+			"--profile", "codex-v2-10-0",
+			"--lead", "release-lead",
+			"--mode", "global_orchestrator",
+			"--control-root", "/tmp/control",
+			"--target-project-root", "/tmp/project",
+			"--target-contract", "2.10.0",
+			"--json",
+		}, "2.9.0")
+	})
+	if err != nil {
+		t.Fatalf("goal draft: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[goalDraftData](t, stdout)
+	exec := env.Data.Execution
+	if exec.Mode != executionModeGlobalOrchestrator || exec.ImplementationAllowed {
+		t.Fatalf("execution = %+v, want global orchestrator without implementation", exec)
+	}
+	if exec.ControlRoot != "/tmp/control" || exec.TargetProjectRoot != "/tmp/project" {
+		t.Fatalf("execution roots = %q/%q", exec.ControlRoot, exec.TargetProjectRoot)
+	}
+	if exec.MutableActor != "" || exec.ModeError == "" || !exec.PollingRequired {
+		t.Fatalf("global orchestrator boundary missing: %+v", exec)
+	}
+	if exec.VersionCompatibility.Compatible || exec.VersionCompatibility.RunningVersion != "2.9.0" || exec.VersionCompatibility.TargetContract != "2.10.0" {
+		t.Fatalf("version compatibility = %+v, want 2.9.0 older than 2.10.0", exec.VersionCompatibility)
+	}
+	foundInit := false
+	for _, mutation := range env.Data.ApplyableMutations {
+		if mutation.Title == "initialize profile" && !strings.Contains(mutation.Command, "--mode global_orchestrator") {
+			t.Fatalf("initialize profile command dropped mode: %s", mutation.Command)
+		}
+		if mutation.Title == "initialize profile" {
+			foundInit = true
+		}
+	}
+	if !foundInit {
+		t.Fatalf("initialize profile mutation missing: %+v", env.Data.ApplyableMutations)
+	}
+	if !strings.Contains(env.Data.OrchestratorPrompt, "--mode global_orchestrator") || !strings.Contains(env.Data.OrchestratorPrompt, "--target-contract 2.10.0") {
+		t.Fatalf("orchestrator prompt dropped execution metadata: %s", env.Data.OrchestratorPrompt)
+	}
+}
+
 func TestGoalDraftAutonomousPreviewRequiresAndEmitsPolicy(t *testing.T) {
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runGoalDraft([]string{
@@ -224,6 +272,12 @@ func TestGoalDraftJSONIncludesVisibleLaunchMutation(t *testing.T) {
 		t.Fatalf("goal draft: %v\nstderr:\n%s", err, stderr)
 	}
 	env := decodeJSONEnvelope[goalDraftData](t, stdout)
+	if env.Data.GoalBinding.Command != env.Data.OrchestratorPrompt {
+		t.Fatalf("draft binding command should be the visible lead prompt:\n%q\n%q", env.Data.GoalBinding.Command, env.Data.OrchestratorPrompt)
+	}
+	if got := nativeGoalBindingFromArgs([]string{env.Data.OrchestratorPrompt}); got == nil || !got.NativeGoal {
+		t.Fatalf("generated visible lead prompt must be launch-record detectable as native /goal: %+v", got)
+	}
 	found := false
 	for _, mutation := range env.Data.ApplyableMutations {
 		if mutation.Title != "launch visible lead" {
