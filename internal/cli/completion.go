@@ -228,6 +228,7 @@ var completionCommonFlags = []string{
 	"--profile",
 	"--project",
 	"--reason",
+	"--readonly",
 	"--refresh",
 	"--renotify-after",
 	"--repo",
