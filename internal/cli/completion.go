@@ -194,6 +194,7 @@ var completionCommonFlags = []string{
 	"--id",
 	"--include-body",
 	"--idle-reap-minutes",
+	"--interval",
 	"--json",
 	"--keep-panes",
 	"--kind",

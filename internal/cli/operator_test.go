@@ -428,6 +428,195 @@ func TestOperatorPollJSONConflictEmitsHolderAndRuntimeError(t *testing.T) {
 	}
 }
 
+func TestOperatorWatchOnceClaimsLeaseCompactJSON(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyMessage(t, base, "s", team.DefaultOperatorHandle, "new", notifyMsg{
+		ID:      "2026-06-28T22-00-01.000Z_pid1_msg",
+		From:    "cto",
+		To:      team.DefaultOperatorHandle,
+		Thread:  "gate/release",
+		Subject: "APPROVAL: release",
+		Kind:    string(state.KindQuestion),
+		Created: notifyNow,
+	})
+
+	var out bytes.Buffer
+	err := executeOperatorWatch(operatorWatchExecution{
+		operatorExecution: operatorExecution{
+			ProjectDir: project,
+			Profile:    team.DefaultProfile,
+			Session:    "s",
+			BaseRoot:   base,
+			Owner:      "noc",
+			OwnerID:    "noc:host:1",
+			LeaseTTL:   2 * time.Minute,
+			JSON:       true,
+			Out:        &out,
+			Probe: state.Probe{
+				PIDAlive:     func(pid int) bool { return true },
+				ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+				Now:          func() time.Time { return notifyNow },
+			},
+			Now: func() time.Time { return notifyNow },
+		},
+		Interval: 5 * time.Second,
+		Once:     true,
+		Sleep: func(time.Duration) bool {
+			t.Fatal("watch --once must not sleep")
+			return false
+		},
+	})
+	if err != nil {
+		t.Fatalf("operator watch once: %v", err)
+	}
+	raw := out.String()
+	if strings.Count(raw, "\n") != 1 || strings.Contains(raw, "\n  ") {
+		t.Fatalf("watch JSON must be one compact NDJSON line, got:\n%s", raw)
+	}
+	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, raw)
+	if env.Kind != "operator_watch" {
+		t.Fatalf("kind = %q, want operator_watch", env.Kind)
+	}
+	if env.Data.Watch == nil || env.Data.Watch.Tick != 1 || env.Data.Watch.Interval != "5s" || !env.Data.Watch.At.Equal(notifyNow.UTC()) {
+		t.Fatalf("watch metadata = %+v, want tick=1 interval=5s at fixed clock", env.Data.Watch)
+	}
+	if env.Data.Claimed == nil || !*env.Data.Claimed || env.Data.OperatorLoop.OwnerID != "noc:host:1" {
+		t.Fatalf("watch claimed/loop = %v/%+v, want claimed noc lease", env.Data.Claimed, env.Data.OperatorLoop)
+	}
+}
+
+func TestOperatorWatchOnceConflictReturnsTypedError(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	now := notifyNow
+	if err := writeOperatorLoopLease(operatorLoopLeasePath(project, team.DefaultProfile, "s"), operatorLoopLeaseFile{
+		SchemaVersion:  1,
+		Profile:        team.DefaultProfile,
+		Session:        "s",
+		NamespaceID:    "default/s",
+		Mode:           "poll",
+		Owner:          "noc",
+		OwnerID:        "noc:host:1",
+		LeaseTTL:       "2m0s",
+		LeaseExpiresAt: now.Add(time.Minute).UTC(),
+		LastPollAt:     now.Add(-time.Minute).UTC(),
+		Cursor:         "m9",
+		UpdatedAt:      now.Add(-time.Minute).UTC(),
+	}); err != nil {
+		t.Fatalf("write lease: %v", err)
+	}
+
+	var out bytes.Buffer
+	err := executeOperatorWatch(operatorWatchExecution{
+		operatorExecution: operatorExecution{
+			ProjectDir: project,
+			Profile:    team.DefaultProfile,
+			Session:    "s",
+			BaseRoot:   base,
+			Owner:      "cli",
+			OwnerID:    "cli:host:2",
+			LeaseTTL:   2 * time.Minute,
+			JSON:       true,
+			Out:        &out,
+			Probe: state.Probe{
+				PIDAlive:     func(pid int) bool { return true },
+				ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+				Now:          func() time.Time { return now },
+			},
+			Now: func() time.Time { return now },
+		},
+		Interval: 5 * time.Second,
+		Once:     true,
+	})
+	if err == nil || ExitCode(err) != ExitSystem {
+		t.Fatalf("watch once conflict err = %v exit=%d, want runtime conflict", err, ExitCode(err))
+	}
+	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
+	if env.Kind != "operator_watch" || env.Data.Claimed == nil || *env.Data.Claimed || env.Data.Conflict == nil || env.Data.Conflict.Code != "lease_conflict" {
+		t.Fatalf("watch conflict envelope = kind %q claimed %v conflict %+v", env.Kind, env.Data.Claimed, env.Data.Conflict)
+	}
+	if env.Data.Watch == nil || env.Data.Watch.Tick != 1 {
+		t.Fatalf("watch metadata = %+v, want tick=1", env.Data.Watch)
+	}
+}
+
+func TestOperatorWatchContinuesAfterConflictAndReclaimsExpiredLease(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	current := notifyNow
+	if err := writeOperatorLoopLease(operatorLoopLeasePath(project, team.DefaultProfile, "s"), operatorLoopLeaseFile{
+		SchemaVersion:  1,
+		Profile:        team.DefaultProfile,
+		Session:        "s",
+		NamespaceID:    "default/s",
+		Mode:           "poll",
+		Owner:          "noc",
+		OwnerID:        "noc:host:1",
+		LeaseTTL:       "2m0s",
+		LeaseExpiresAt: current.Add(time.Second).UTC(),
+		LastPollAt:     current.Add(-time.Minute).UTC(),
+		UpdatedAt:      current.Add(-time.Minute).UTC(),
+	}); err != nil {
+		t.Fatalf("write lease: %v", err)
+	}
+	sleepCalls := 0
+	var out bytes.Buffer
+	err := executeOperatorWatch(operatorWatchExecution{
+		operatorExecution: operatorExecution{
+			ProjectDir: project,
+			Profile:    team.DefaultProfile,
+			Session:    "s",
+			BaseRoot:   base,
+			Owner:      "cli",
+			OwnerID:    "cli:host:2",
+			LeaseTTL:   4 * time.Second,
+			JSON:       true,
+			Out:        &out,
+			Probe: state.Probe{
+				PIDAlive:     func(pid int) bool { return true },
+				ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+				Now:          func() time.Time { return current },
+			},
+			Now: func() time.Time { return current },
+		},
+		Interval: 2 * time.Second,
+		Sleep: func(d time.Duration) bool {
+			sleepCalls++
+			current = current.Add(d)
+			return sleepCalls < 2
+		},
+	})
+	if err != nil {
+		t.Fatalf("watch long-running conflict/reclaim: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("watch lines = %d, want 2:\n%s", len(lines), out.String())
+	}
+	first := decodeJSONEnvelope[operatorStatusEnvelopeData](t, lines[0])
+	second := decodeJSONEnvelope[operatorStatusEnvelopeData](t, lines[1])
+	if first.Data.Claimed == nil || *first.Data.Claimed || first.Data.Conflict == nil {
+		t.Fatalf("first tick = claimed %v conflict %+v, want conflict", first.Data.Claimed, first.Data.Conflict)
+	}
+	if second.Data.Claimed == nil || !*second.Data.Claimed || second.Data.Conflict != nil || second.Data.OperatorLoop.OwnerID != "cli:host:2" {
+		t.Fatalf("second tick = claimed %v conflict %+v loop %+v, want reclaimed lease", second.Data.Claimed, second.Data.Conflict, second.Data.OperatorLoop)
+	}
+	if first.Data.Watch.Tick != 1 || second.Data.Watch.Tick != 2 {
+		t.Fatalf("watch ticks = %d/%d, want 1/2", first.Data.Watch.Tick, second.Data.Watch.Tick)
+	}
+}
+
+func TestRunOperatorWatchRejectsIntervalTooCloseToTTL(t *testing.T) {
+	chdir(t, t.TempDir())
+	_, _, err := captureOutput(t, func() error {
+		return runOperator([]string{"watch", "--session", "s", "--interval", "2m", "--ttl", "2m"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--interval must be <= --ttl/2") {
+		t.Fatalf("operator watch interval/ttl error = %v, want guard", err)
+	}
+}
+
 func TestOperatorPollClaimsExpiredForeignLease(t *testing.T) {
 	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
 	seedNotifyLaunch(t, project, base, "s", "cto")
