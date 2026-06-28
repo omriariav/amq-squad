@@ -386,6 +386,9 @@ func executeResume(r resumeExecution) error {
 	if len(roleFilter) > 0 {
 		var unknown []string
 		for _, role := range roleFilter {
+			if err := ensureTargetIsNotOperator(t, "resume", role); err != nil {
+				return err
+			}
 			if !memberRoles[role] {
 				unknown = append(unknown, role)
 			}
@@ -583,12 +586,13 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 	}
 
 	plan := tmuxLaunchPlan{
-		Session:    opts.TerminalSession,
-		Workstream: opts.Workstream,
-		Target:     opts.Target,
-		Layout:     opts.Layout,
-		Panes:      panes,
-		StartDelay: opts.Stagger,
+		Session:              opts.TerminalSession,
+		Workstream:           opts.Workstream,
+		Target:               opts.Target,
+		Layout:               opts.Layout,
+		Panes:                panes,
+		StartDelay:           opts.Stagger,
+		AllowExistingSession: true,
 	}
 	if plan.Session == "" {
 		plan.Session = defaultTmuxSessionName(t.Project)

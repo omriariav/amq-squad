@@ -51,6 +51,9 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	if out.Operator == nil || !out.Operator.Enabled || out.Operator.Handle != DefaultOperatorHandle {
 		t.Errorf("Operator = %+v, want enabled default %q", out.Operator, DefaultOperatorHandle)
 	}
+	if !out.Operator.Participant || out.Operator.Kind != "operator" || out.Operator.Runnable || out.Operator.Assignable || out.Operator.WakeSupported || !out.Operator.PollRequired {
+		t.Errorf("Operator participant fields = %+v, want non-runnable mailbox participant", out.Operator)
+	}
 	if !SupportsOperatorGates(out) {
 		t.Errorf("SupportsOperatorGates = false, want true for schema %d", SchemaVersion)
 	}
@@ -196,6 +199,29 @@ func TestWriteDisabledOperator(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsRunnableOperatorConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		op   OperatorConfig
+		want string
+	}{
+		{name: "kind", op: OperatorConfig{Enabled: true, Kind: "agent"}, want: "operator.kind"},
+		{name: "runnable", op: OperatorConfig{Enabled: true, Runnable: true}, want: "operator.runnable"},
+		{name: "assignable", op: OperatorConfig{Enabled: true, Assignable: true}, want: "operator.assignable"},
+		{name: "wake", op: OperatorConfig{Enabled: true, WakeSupported: true}, want: "operator.wake_supported"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Validate(Team{
+				Operator: &tc.op,
+				Members:  []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestWriteIsAtomic(t *testing.T) {
 	// Write must not leave a .tmp file behind on success.
 	dir := t.TempDir()
@@ -264,8 +290,8 @@ func TestValidateRejectsRunnableOperatorHandles(t *testing.T) {
 	if err := Validate(Team{
 		Operator: &custom,
 		Members:  []Member{{Role: "support", Binary: "codex", Handle: DefaultOperatorHandle, Session: "issue-96"}},
-	}); err != nil {
-		t.Fatalf("Validate with custom operator and runnable user handle: %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "conflicts with non-runnable operator") {
+		t.Fatalf("Validate with custom operator and runnable user handle error = %v, want operator conflict", err)
 	}
 }
 

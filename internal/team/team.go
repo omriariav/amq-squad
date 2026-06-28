@@ -86,16 +86,27 @@ func (m Member) ExtraArgs() []string {
 // OperatorConfig describes the optional human/operator participant for a
 // profile. The operator is a mailbox participant only, never a runnable member.
 type OperatorConfig struct {
-	Enabled bool   `json:"enabled"`
-	Handle  string `json:"handle,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	Handle        string `json:"handle,omitempty"`
+	Participant   bool   `json:"participant"`
+	Kind          string `json:"kind,omitempty"`
+	Runnable      bool   `json:"runnable"`
+	Assignable    bool   `json:"assignable"`
+	WakeSupported bool   `json:"wake_supported"`
+	PollRequired  bool   `json:"poll_required"`
 }
 
 // OperatorView is the JSON/output shape used by callers that need the
 // effective operator contract without interpreting on-disk schema details.
 type OperatorView struct {
-	Enabled  bool   `json:"enabled"`
-	Handle   string `json:"handle,omitempty"`
-	Runnable bool   `json:"runnable"`
+	Enabled       bool   `json:"enabled"`
+	Handle        string `json:"handle,omitempty"`
+	Participant   bool   `json:"participant"`
+	Kind          string `json:"kind,omitempty"`
+	Runnable      bool   `json:"runnable"`
+	Assignable    bool   `json:"assignable"`
+	WakeSupported bool   `json:"wake_supported"`
+	PollRequired  bool   `json:"poll_required"`
 }
 
 const (
@@ -209,7 +220,16 @@ type Team struct {
 }
 
 func DefaultOperator() OperatorConfig {
-	return OperatorConfig{Enabled: true, Handle: DefaultOperatorHandle}
+	return OperatorConfig{
+		Enabled:       true,
+		Handle:        DefaultOperatorHandle,
+		Participant:   true,
+		Kind:          "operator",
+		Runnable:      false,
+		Assignable:    false,
+		WakeSupported: false,
+		PollRequired:  true,
+	}
 }
 
 func DisabledOperator() OperatorConfig {
@@ -222,17 +242,34 @@ func DisabledOperator() OperatorConfig {
 // explicitly with operator.enabled=false.
 func EffectiveOperator(t Team) OperatorView {
 	if t.Operator == nil {
-		return OperatorView{Enabled: true, Handle: DefaultOperatorHandle, Runnable: false}
+		return operatorViewFromConfig(DefaultOperator())
 	}
 	op := *t.Operator
 	if !op.Enabled {
-		return OperatorView{Enabled: false, Runnable: false}
+		return OperatorView{Enabled: false, Runnable: false, Assignable: false, WakeSupported: false}
 	}
+	return operatorViewFromConfig(op)
+}
+
+func operatorViewFromConfig(op OperatorConfig) OperatorView {
 	handle := strings.TrimSpace(op.Handle)
 	if handle == "" {
 		handle = DefaultOperatorHandle
 	}
-	return OperatorView{Enabled: true, Handle: handle, Runnable: false}
+	kind := strings.TrimSpace(op.Kind)
+	if kind == "" {
+		kind = "operator"
+	}
+	return OperatorView{
+		Enabled:       true,
+		Handle:        handle,
+		Participant:   true,
+		Kind:          kind,
+		Runnable:      false,
+		Assignable:    false,
+		WakeSupported: false,
+		PollRequired:  true,
+	}
 }
 
 // SupportsOperatorGates reports whether this profile speaks the operator-gate
@@ -382,8 +419,8 @@ func NormalizeForWrite(projectDir, profile string, t Team) (Team, error) {
 	if t.Operator == nil {
 		op := DefaultOperator()
 		t.Operator = &op
-	} else if t.Operator.Enabled && strings.TrimSpace(t.Operator.Handle) == "" {
-		t.Operator.Handle = DefaultOperatorHandle
+	} else if t.Operator.Enabled {
+		*t.Operator = normalizeEnabledOperator(*t.Operator)
 	}
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = time.Now().UTC()
@@ -392,6 +429,21 @@ func NormalizeForWrite(projectDir, profile string, t Team) (Team, error) {
 		return Team{}, fmt.Errorf("validate team: %w", err)
 	}
 	return t, nil
+}
+
+func normalizeEnabledOperator(op OperatorConfig) OperatorConfig {
+	if strings.TrimSpace(op.Handle) == "" {
+		op.Handle = DefaultOperatorHandle
+	}
+	if strings.TrimSpace(op.Kind) == "" {
+		op.Kind = "operator"
+	}
+	op.Participant = true
+	op.Runnable = false
+	op.Assignable = false
+	op.WakeSupported = false
+	op.PollRequired = true
+	return op
 }
 
 // WriteProfile atomically persists a named profile under projectDir. The
@@ -513,6 +565,18 @@ func Validate(t Team) error {
 			if err := ValidateHandle(operatorHandle); err != nil {
 				return fmt.Errorf("operator.handle: %w", err)
 			}
+			if kind := strings.TrimSpace(t.Operator.Kind); kind != "" && kind != "operator" {
+				return fmt.Errorf("operator.kind: must be %q", "operator")
+			}
+			if t.Operator.Runnable {
+				return fmt.Errorf("operator.runnable: operator is mailbox-only and cannot be runnable")
+			}
+			if t.Operator.Assignable {
+				return fmt.Errorf("operator.assignable: operator is mailbox-only and cannot be assignable")
+			}
+			if t.Operator.WakeSupported {
+				return fmt.Errorf("operator.wake_supported: non-runnable operator cannot support wake delivery")
+			}
 		} else if strings.TrimSpace(t.Operator.Handle) != "" {
 			return fmt.Errorf("operator.handle: set enabled=true before handle")
 		}
@@ -542,8 +606,8 @@ func Validate(t Team) error {
 		}
 		if handle != "" {
 			if operatorHandle != "" {
-				conflictsOperator := handle == operatorHandle
-				if operatorHandle == DefaultOperatorHandle && m.Role == DefaultOperatorHandle {
+				conflictsOperator := handle == operatorHandle || handle == DefaultOperatorHandle
+				if m.Role == DefaultOperatorHandle {
 					conflictsOperator = true
 				}
 				if conflictsOperator {

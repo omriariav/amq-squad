@@ -30,6 +30,14 @@ func runStatusExec(t *testing.T, s statusExecution) (string, error) {
 	return buf.String(), err
 }
 
+func actionsByKind(actions []runtimeActionJSON) map[string]runtimeActionJSON {
+	out := map[string]runtimeActionJSON{}
+	for _, action := range actions {
+		out[action.Kind] = action
+	}
+	return out
+}
+
 // TestRunStatusSessionRequiresTeam covers the single-session DETAIL path:
 // status --session NAME still hard-requires a configured team, because it
 // classifies that team's members. The no-selector BOARD path is the one that
@@ -456,6 +464,60 @@ func TestExecuteStatusJSONIncludesExecutionMode(t *testing.T) {
 	}
 	if !exec.VersionCompatibility.Compatible || exec.VersionCompatibility.RunningVersion != "2.10.0" {
 		t.Fatalf("version compatibility = %+v", exec.VersionCompatibility)
+	}
+}
+
+func TestExecuteStatusJSONPolicyDisablesDirectChildControlActions(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"},
+			{Role: "developer", Binary: "claude", Handle: "developer", Session: "v2-11-0"},
+		},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectTeam,
+	})
+	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7001,
+		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@1", PaneID: "%1", Target: "new-window"},
+	})
+	seedAgentRecord(t, base, "v2-11-0", "developer", launch.Record{
+		Binary: "claude", Handle: "developer", Role: "developer", AgentPID: 7002,
+		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@2", PaneID: "%2", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}, {PaneID: "%2"}}, nil)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "v2-11-0",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7001: true, 7002: true}, map[int]bool{7001: true, 7002: true}, time.Now()),
+		RuntimeVersion:   "2.11.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	records := map[string]statusRecord{}
+	for _, r := range env.Data.Records {
+		records[r.Role] = r
+	}
+	leadActions := actionsByKind(records["release-lead"].Actions)
+	childActions := actionsByKind(records["developer"].Actions)
+	for _, kind := range []string{"send", "goal_deliver", "dispatch"} {
+		if !leadActions[kind].Available {
+			t.Fatalf("lead %s action should remain available: %+v", kind, leadActions[kind])
+		}
+		if childActions[kind].Available || !strings.Contains(childActions[kind].Reason, "visible lead") {
+			t.Fatalf("child %s action should be unavailable via execution policy: %+v", kind, childActions[kind])
+		}
+	}
+	for _, kind := range []string{"focus", "status", "task_list"} {
+		if !childActions[kind].Available {
+			t.Fatalf("child read/focus action %s should remain available: %+v", kind, childActions[kind])
+		}
 	}
 }
 

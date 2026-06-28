@@ -71,7 +71,7 @@ type statusEnvelopeData struct {
 	Workstream        string                 `json:"workstream"`
 	Profile           string                 `json:"profile,omitempty"`
 	Namespace         squadnamespace.Ref     `json:"namespace"`
-	Operator          team.OperatorView      `json:"operator"`
+	Operator          statusOperatorView     `json:"operator"`
 	OperatorDelivery  operatorDeliveryData   `json:"operator_delivery"`
 	Capabilities      team.Capabilities      `json:"capabilities"`
 	Orchestrated      bool                   `json:"orchestrated,omitempty"`
@@ -88,6 +88,27 @@ type statusEnvelopeData struct {
 	// counterpart to each record's agent-scope actions. A client renders these
 	// for the session row instead of constructing the commands itself.
 	Actions []runtimeActionJSON `json:"actions"`
+}
+
+type statusOperatorView struct {
+	team.OperatorView
+	CanonicalInbox *statusOperatorInbox `json:"canonical_inbox,omitempty"`
+	Poll           *statusOperatorPoll  `json:"poll,omitempty"`
+}
+
+type statusOperatorInbox struct {
+	Root    string `json:"root,omitempty"`
+	Handle  string `json:"handle"`
+	Session string `json:"session,omitempty"`
+}
+
+type statusOperatorPoll struct {
+	Required     bool   `json:"required"`
+	Owner        string `json:"owner,omitempty"`
+	Cursor       string `json:"cursor,omitempty"`
+	Unread       int    `json:"unread"`
+	OpenGates    int    `json:"open_gates"`
+	OpenBlockers int    `json:"open_blockers"`
 }
 
 type statusRecord struct {
@@ -249,7 +270,7 @@ func executeStatus(s statusExecution) error {
 		for i := range rows {
 			rows[i].Namespace = ns
 			alive := rows[i].Tmux != nil && rows[i].Tmux.PaneAlive
-			rows[i].Actions = disableNamespaceConflictActions(memberActions(t.Project, s.Profile, workstream, rows[i].Role, alive), conflict)
+			rows[i].Actions = disableNamespaceConflictActions(policyAwareMemberActions(t, s.Profile, workstream, rows[i].Role, alive), conflict)
 		}
 		ctx := newSessionStatusContext(t, s.Profile, workstream, firstLiveTmuxSession(rows))
 		ctx.Actions = disableNamespaceConflictActions(ctx.Actions, conflict)
@@ -264,7 +285,7 @@ func executeStatus(s statusExecution) error {
 			Workstream:        workstream,
 			Profile:           s.Profile,
 			Namespace:         ns,
-			Operator:          team.EffectiveOperator(t),
+			Operator:          statusOperatorForTeam(t, ns),
 			OperatorDelivery:  operatorDeliveryForTeam(t),
 			Capabilities:      team.EffectiveCapabilities(t),
 			Orchestrated:      ctx.Orchestrated,
@@ -295,6 +316,35 @@ func executeStatus(s statusExecution) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), r.Detail)
 	}
 	return w.Flush()
+}
+
+func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorView {
+	op := team.EffectiveOperator(t)
+	out := statusOperatorView{OperatorView: op}
+	if !op.Enabled {
+		return out
+	}
+	handle := strings.TrimSpace(op.Handle)
+	if handle == "" {
+		handle = team.DefaultOperatorHandle
+	}
+	root := strings.TrimSpace(ns.AMQRoot)
+	if root == "" {
+		root = strings.TrimSpace(ns.Paths.AMQRoot)
+	}
+	out.CanonicalInbox = &statusOperatorInbox{
+		Root:    root,
+		Handle:  handle,
+		Session: ns.Session,
+	}
+	out.Poll = &statusOperatorPoll{
+		Required:     op.PollRequired,
+		Owner:        "none",
+		Unread:       0,
+		OpenGates:    0,
+		OpenBlockers: 0,
+	}
+	return out
 }
 
 func goalBindingForNamespace(ns squadnamespace.Ref) goalBindingData {

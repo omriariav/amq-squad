@@ -19,12 +19,13 @@ func init() {
 type tmuxTeamLaunchBackend struct{}
 
 type tmuxLaunchPlan struct {
-	Session    string
-	Workstream string
-	Target     string
-	Layout     string
-	Panes      []teamLaunchPane
-	StartDelay time.Duration
+	Session              string
+	Workstream           string
+	Target               string
+	Layout               string
+	Panes                []teamLaunchPane
+	StartDelay           time.Duration
+	AllowExistingSession bool
 }
 
 type tmuxClient struct {
@@ -356,7 +357,7 @@ func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
 // by send-keys exactly like the pane backends, so the runtime metadata/control
 // layer (pane-id capture, status, focus, send) works unchanged.
 func runTmuxWindowsPlan(plan tmuxLaunchPlan) error {
-	session, firstPaneID, err := tmuxWindowsHostSession(plan)
+	session, firstPaneID, createdSession, err := tmuxWindowsHostSession(plan)
 	if err != nil {
 		return err
 	}
@@ -367,7 +368,7 @@ func runTmuxWindowsPlan(plan tmuxLaunchPlan) error {
 			// First agent reuses the window the new session was created with.
 			paneID = firstPaneID
 		} else {
-			out, werr := outputCommand("tmux", "new-window", "-d", "-P", "-F", "#{pane_id}",
+			out, werr := tmuxOutputCommand("tmux", "new-window", "-d", "-P", "-F", "#{pane_id}",
 				"-t", session+":", "-n", tmuxWindowName(pane.Role), "-c", pane.CWD)
 			if werr != nil {
 				return werr
@@ -377,21 +378,23 @@ func runTmuxWindowsPlan(plan tmuxLaunchPlan) error {
 		if paneID == "" {
 			return fmt.Errorf("tmux returned an empty pane id for window %q", pane.Role)
 		}
-		if err := runCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Workstream, pane.Role)); err != nil {
+		if err := tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Workstream, pane.Role)); err != nil {
 			return err
 		}
 		targets = append(targets, paneID)
 	}
 	for i, pane := range plan.Panes {
-		if err := runCommand("tmux", "send-keys", "-t", targets[i], withTmuxTargetEnv("new-window", pane.Command), "C-m"); err != nil {
+		if err := tmuxRunCommand("tmux", "send-keys", "-t", targets[i], withTmuxTargetEnv("new-window", pane.Command), "C-m"); err != nil {
 			return err
 		}
 		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {
 			time.Sleep(plan.StartDelay)
 		}
 	}
-	if firstPaneID != "" {
+	if createdSession {
 		quietNotice("Created tmux session %s with one window per agent. Attach with: tmux attach -t %s\n", plan.Session, shellQuote(plan.Session))
+	} else if os.Getenv("TMUX") == "" {
+		quietNotice("Added %d agent window(s) to existing tmux session %s. Attach with: tmux attach -t %s\n", len(plan.Panes), session, shellQuote(session))
 	} else {
 		quietNotice("Added %d agent window(s) to the current tmux session.\n", len(plan.Panes))
 	}
@@ -402,28 +405,36 @@ func runTmuxWindowsPlan(plan tmuxLaunchPlan) error {
 // tmuxWindowsHostSession resolves the session to add agent windows to. Inside
 // tmux it is the current session (firstPaneID empty: every agent gets a fresh
 // window). Outside tmux it creates a new detached session whose initial window
-// hosts the first agent (firstPaneID is that window's pane).
-func tmuxWindowsHostSession(plan tmuxLaunchPlan) (session, firstPaneID string, err error) {
+// hosts the first agent. Existing detached sessions are reused only for
+// explicit resume/repair plans; fresh up/launch keeps the session-collision
+// guard so it cannot inject a full roster into another project's session.
+func tmuxWindowsHostSession(plan tmuxLaunchPlan) (session, firstPaneID string, createdSession bool, err error) {
+	if len(plan.Panes) == 0 {
+		return "", "", false, fmt.Errorf("tmux new-window plan has no panes")
+	}
 	if os.Getenv("TMUX") != "" {
 		pane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
 		if pane == "" {
-			return "", "", fmt.Errorf("--target new-window inside tmux requires TMUX_PANE; launch from a tmux pane, or use --target new-session")
+			return "", "", false, fmt.Errorf("--target new-window inside tmux requires TMUX_PANE; launch from a tmux pane, or use --target new-session")
 		}
-		s, derr := outputCommand("tmux", "display-message", "-p", "-t", pane, "#{session_name}")
+		s, derr := tmuxOutputCommand("tmux", "display-message", "-p", "-t", pane, "#{session_name}")
 		if derr != nil {
-			return "", "", derr
+			return "", "", false, derr
 		}
-		return strings.TrimSpace(s), "", nil
+		return strings.TrimSpace(s), "", false, nil
+	}
+	if tmuxSessionExists(plan.Session) && plan.AllowExistingSession {
+		return plan.Session, "", false, nil
 	}
 	if err := tmuxEnsureSessionAbsent(plan.Session); err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
-	out, err := outputCommand("tmux", "new-session", "-d", "-P", "-F", "#{pane_id}",
+	out, err := tmuxOutputCommand("tmux", "new-session", "-d", "-P", "-F", "#{pane_id}",
 		"-s", plan.Session, "-n", tmuxWindowName(plan.Panes[0].Role), "-c", plan.Panes[0].CWD)
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
-	return plan.Session, strings.TrimSpace(out), nil
+	return plan.Session, strings.TrimSpace(out), true, nil
 }
 
 // tmuxWindowName is the human-facing window label for an agent (the role).
@@ -502,12 +513,18 @@ func warnTmuxControlModeClients(clients []tmuxClient) {
 }
 
 func tmuxEnsureSessionAbsent(session string) error {
-	err := exec.Command("tmux", "has-session", "-t", session).Run()
-	if err == nil {
+	if tmuxSessionExists(session) {
 		return fmt.Errorf("tmux session %q already exists. Attach with 'tmux attach -t %s' or choose --terminal-session", session, session)
 	}
 	return nil
 }
+
+var tmuxSessionExists = func(session string) bool {
+	return exec.Command("tmux", "has-session", "-t", session).Run() == nil
+}
+
+var tmuxRunCommand = runCommand
+var tmuxOutputCommand = outputCommand
 
 func runCommand(name string, args ...string) error {
 	cmd := exec.Command(name, args...)

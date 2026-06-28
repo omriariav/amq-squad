@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -90,6 +91,136 @@ func TestTmuxDryRunCurrentWindowSplitsPaneForEveryAgent(t *testing.T) {
 		if !strings.Contains(joined, target) {
 			t.Fatalf("current-window plan missing %s:\n%s", target, joined)
 		}
+	}
+}
+
+func TestTmuxWindowsHostSessionReusesExistingDetachedSession(t *testing.T) {
+	t.Setenv("TMUX", "")
+	oldExists := tmuxSessionExists
+	oldOutput := tmuxOutputCommand
+	t.Cleanup(func() {
+		tmuxSessionExists = oldExists
+		tmuxOutputCommand = oldOutput
+	})
+	tmuxSessionExists = func(session string) bool {
+		return session == "amq-squad-proj"
+	}
+	tmuxOutputCommand = func(name string, args ...string) (string, error) {
+		t.Fatalf("existing detached session should not create a new session, got %s %s", name, strings.Join(args, " "))
+		return "", nil
+	}
+
+	session, firstPaneID, created, err := tmuxWindowsHostSession(tmuxLaunchPlan{
+		Session:              "amq-squad-proj",
+		Workstream:           "issue-96",
+		Target:               "new-window",
+		AllowExistingSession: true,
+		Panes: []teamLaunchPane{
+			{Role: "qa", CWD: "/repo", Command: "true"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("tmuxWindowsHostSession: %v", err)
+	}
+	if session != "amq-squad-proj" || firstPaneID != "" || created {
+		t.Fatalf("host = session %q firstPaneID %q created %v, want existing detached session", session, firstPaneID, created)
+	}
+}
+
+func TestTmuxWindowsHostSessionRejectsExistingDetachedSessionForFreshLaunch(t *testing.T) {
+	t.Setenv("TMUX", "")
+	oldExists := tmuxSessionExists
+	oldOutput := tmuxOutputCommand
+	t.Cleanup(func() {
+		tmuxSessionExists = oldExists
+		tmuxOutputCommand = oldOutput
+	})
+	tmuxSessionExists = func(session string) bool {
+		return session == "amq-squad-proj"
+	}
+	tmuxOutputCommand = func(name string, args ...string) (string, error) {
+		t.Fatalf("fresh launch should refuse before running tmux commands, got %s %s", name, strings.Join(args, " "))
+		return "", nil
+	}
+
+	_, _, _, err := tmuxWindowsHostSession(tmuxLaunchPlan{
+		Session:    "amq-squad-proj",
+		Workstream: "issue-96",
+		Target:     "new-window",
+		Panes: []teamLaunchPane{
+			{Role: "cto", CWD: "/repo", Command: "true"},
+			{Role: "qa", CWD: "/repo", Command: "true"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("fresh existing-session error = %v, want collision refusal", err)
+	}
+}
+
+func TestRunTmuxWindowsPlanAddsWindowsToExistingDetachedSession(t *testing.T) {
+	t.Setenv("TMUX", "")
+	oldExists := tmuxSessionExists
+	oldOutput := tmuxOutputCommand
+	oldRun := tmuxRunCommand
+	t.Cleanup(func() {
+		tmuxSessionExists = oldExists
+		tmuxOutputCommand = oldOutput
+		tmuxRunCommand = oldRun
+	})
+	tmuxSessionExists = func(session string) bool {
+		return session == "amq-squad-proj"
+	}
+	var outputCalls []string
+	tmuxOutputCommand = func(name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		outputCalls = append(outputCalls, call)
+		if len(args) > 0 && args[0] == "new-session" {
+			return "", fmt.Errorf("unexpected new-session against existing detached session")
+		}
+		if len(args) > 0 && args[0] == "new-window" {
+			return fmt.Sprintf("%%%d\n", len(outputCalls)), nil
+		}
+		return "", fmt.Errorf("unexpected tmux output command: %s", call)
+	}
+	var runCalls []string
+	tmuxRunCommand = func(name string, args ...string) error {
+		runCalls = append(runCalls, name+" "+strings.Join(args, " "))
+		return nil
+	}
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runTmuxWindowsPlan(tmuxLaunchPlan{
+			Session:              "amq-squad-proj",
+			Workstream:           "issue-96",
+			Target:               "new-window",
+			AllowExistingSession: true,
+			Panes: []teamLaunchPane{
+				{Role: "qa", CWD: "/repo", Command: "cd /repo && amq-squad agent up codex --role qa"},
+				{Role: "reviewer", CWD: "/repo", Command: "cd /repo && amq-squad agent up codex --role reviewer"},
+			},
+		})
+	})
+	if err != nil {
+		t.Fatalf("runTmuxWindowsPlan: %v", err)
+	}
+	joinedOutput := strings.Join(outputCalls, "\n")
+	if strings.Contains(joinedOutput, "new-session") {
+		t.Fatalf("existing detached session must not create a new session:\n%s", joinedOutput)
+	}
+	if got := strings.Count(joinedOutput, "new-window"); got != 2 {
+		t.Fatalf("expected one new-window per pane, got %d:\n%s", got, joinedOutput)
+	}
+	if !strings.Contains(joinedOutput, "-t amq-squad-proj:") {
+		t.Fatalf("new windows should target existing detached session:\n%s", joinedOutput)
+	}
+	joinedRun := strings.Join(runCalls, "\n")
+	for _, want := range []string{"select-pane -t %1 -T amq:issue-96:qa", "select-pane -t %2 -T amq:issue-96:reviewer", "send-keys -t %1", "send-keys -t %2"} {
+		if !strings.Contains(joinedRun, want) {
+			t.Fatalf("missing run call %q in:\n%s", want, joinedRun)
+		}
+	}
+	if !strings.Contains(stderr, "existing tmux session amq-squad-proj") {
+		t.Fatalf("operator notice should identify existing detached session, got:\n%s", stderr)
 	}
 }
 
