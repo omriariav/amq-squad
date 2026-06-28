@@ -161,7 +161,7 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		// Brief resolution uses the same rule as the live-launch ensure
 		// step so bootstrap can never name a path that ensure skipped (or
 		// vice versa).
-		BriefPath:     briefPath(resolveBriefHome(teamHome, rec.CWD), rec.Session),
+		BriefPath:     briefPathForProfile(resolveBriefHome(teamHome, rec.CWD), rec.TeamProfile, rec.Session),
 		Operator:      operator,
 		OperatorGates: operatorGates,
 		Orchestrated:  orchestrated,

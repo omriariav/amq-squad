@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -18,13 +19,17 @@ var taskNow = func() time.Time { return time.Now().UTC() }
 // tasksEnvelopeData is the `task list --json` payload (typed, matching the
 // other JSON envelopes rather than a raw map).
 type tasksEnvelopeData struct {
-	Session string      `json:"session"`
-	Tasks   []task.Task `json:"tasks"`
+	Session   string             `json:"session"`
+	Profile   string             `json:"profile,omitempty"`
+	Namespace squadnamespace.Ref `json:"namespace"`
+	Tasks     []task.Task        `json:"tasks"`
 }
 
 type taskEnvelopeData struct {
-	Session string    `json:"session"`
-	Task    task.Task `json:"task"`
+	Session   string             `json:"session"`
+	Profile   string             `json:"profile,omitempty"`
+	Namespace squadnamespace.Ref `json:"namespace"`
+	Task      task.Task          `json:"task"`
 }
 
 // runTask dispatches `amq-squad task <add|list|show|claim|done|fail|block|reset>`: the
@@ -35,18 +40,19 @@ func runTask(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad task - native pull-based task store for a workstream
 
 Usage:
-  amq-squad task add --title T [--desc D] [--depends-on id,…] [--assign role] --session S
-  amq-squad task list [--status S] [--json] --session S
-  amq-squad task show <id> [--json] --session S
-  amq-squad task claim <id> --me <handle> --session S
-  amq-squad task done  <id> --me <handle> [--evidence E] --session S
-  amq-squad task fail  <id> --me <handle> [--reason R] --session S
-  amq-squad task block <id> --me <handle> [--reason R] --session S
-  amq-squad task reset <id> --me <handle> [--reason R] --session S
+  amq-squad task add --title T [--desc D] [--depends-on id,…] [--assign role] --session S [--profile P]
+  amq-squad task list [--status S] [--json] --session S [--profile P]
+  amq-squad task show <id> [--json] --session S [--profile P]
+  amq-squad task claim <id> --me <handle> --session S [--profile P]
+  amq-squad task done  <id> --me <handle> [--evidence E] --session S [--profile P]
+  amq-squad task fail  <id> --me <handle> [--reason R] --session S [--profile P]
+  amq-squad task block <id> --me <handle> [--reason R] --session S [--profile P]
+  amq-squad task reset <id> --me <handle> [--reason R] --session S [--profile P]
 
-Tasks live under .amq-squad/tasks/<session>/. A task is claimable only when all
-its --depends-on tasks are completed (dependency gating). All mutations are
-atomic and lock-serialized.
+Tasks live under .amq-squad/tasks/<session>/ for the default profile, or
+.amq-squad/tasks/<profile>/<session>/ for named profiles. A task is claimable
+only when all its --depends-on tasks are completed (dependency gating). All
+mutations are atomic and lock-serialized.
 `)
 		if len(args) == 0 {
 			return usageErrorf("task requires a subcommand (add, list, show, claim, done, fail, block, reset)")
@@ -75,30 +81,45 @@ atomic and lock-serialized.
 	}
 }
 
-// taskSessionProject resolves --session (required) and --project (default cwd).
-func taskSessionProject(sessionFlag, projectFlag string, fs *flag.FlagSet) (string, string, error) {
+// taskNamespace resolves --session (required), --project (default cwd), and
+// --profile (default profile). Storage is profile/session-scoped for named
+// profiles and legacy session-scoped for the default profile.
+func taskNamespace(sessionFlag, projectFlag, profileFlag string, fs *flag.FlagSet) (string, string, string, squadnamespace.Ref, error) {
 	session := strings.TrimSpace(sessionFlag)
 	if session == "" {
-		return "", "", usageErrorf("--session is required (tasks are per-workstream)")
+		return "", "", "", squadnamespace.Ref{}, usageErrorf("--session is required (tasks are per-workstream)")
 	}
 	// Validate the session name with the same rules as the rest of the
 	// workstream model, so it can't carry path separators or `..` and escape
-	// .amq-squad/tasks/<session>/ into an arbitrary directory.
+	// the resolved task namespace into an arbitrary directory.
 	if err := team.ValidateSessionName(session); err != nil {
-		return "", "", usageErrorf("invalid --session: %v", err)
+		return "", "", "", squadnamespace.Ref{}, usageErrorf("invalid --session: %v", err)
 	}
 	if fs.NArg() > 0 {
-		return "", "", usageErrorf("unexpected argument %q", fs.Arg(0))
+		return "", "", "", squadnamespace.Ref{}, usageErrorf("unexpected argument %q", fs.Arg(0))
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", "", fmt.Errorf("getwd: %w", err)
+		return "", "", "", squadnamespace.Ref{}, fmt.Errorf("getwd: %w", err)
 	}
 	projectDir, err := resolveProjectDirFlag(cwd, projectFlag, flagWasSet(fs, "project"))
 	if err != nil {
-		return "", "", err
+		return "", "", "", squadnamespace.Ref{}, err
 	}
-	return session, projectDir, nil
+	profile, err := resolveProfileFlag(profileFlag)
+	if err != nil {
+		return "", "", "", squadnamespace.Ref{}, err
+	}
+	return session, projectDir, profile, squadnamespace.Resolve(projectDir, profile, session), nil
+}
+
+func taskScope(projectDir, profile, session string) string {
+	scope := " --project " + shellQuote(projectDir)
+	if profile != "" && profile != team.DefaultProfile {
+		scope += " --profile " + shellQuote(profile)
+	}
+	scope += " --session " + shellQuote(session)
+	return scope
 }
 
 func runTaskAdd(args []string) error {
@@ -109,15 +130,16 @@ func runTaskAdd(args []string) error {
 	assign := fs.String("assign", "", "pre-assign to a role/handle (optional)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
+	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	session, projectDir, err := taskSessionProject(*sessionFlag, *projectFlag, fs)
+	session, projectDir, profile, ns, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
 	if err != nil {
 		return err
 	}
-	t, err := task.Add(projectDir, session, task.AddInput{
+	t, err := task.AddForProfile(projectDir, profile, session, task.AddInput{
 		Title:       *title,
 		Description: *desc,
 		DependsOn:   splitCommaList(*dependsOn),
@@ -128,15 +150,17 @@ func runTaskAdd(args []string) error {
 	}
 	if *jsonOut {
 		return printJSONEnvelope("task_add", mutationResult{
-			Command: "task add",
-			Status:  "created",
-			Project: projectDir,
-			Session: session,
-			ID:      t.ID,
-			Role:    t.AssignedTo,
+			Command:   "task add",
+			Status:    "created",
+			Project:   projectDir,
+			Session:   session,
+			Profile:   profile,
+			Namespace: ns,
+			ID:        t.ID,
+			Role:      t.AssignedTo,
 			Actions: []mutationAction{
-				followUp("list", "list tasks", "amq-squad task list --project "+shellQuote(projectDir)+" --session "+shellQuote(session)),
-				followUp("claim", "claim task", "amq-squad task claim "+shellQuote(t.ID)+" --me <handle> --project "+shellQuote(projectDir)+" --session "+shellQuote(session)),
+				followUp("list", "list tasks", "amq-squad task list"+taskScope(projectDir, profile, session)),
+				followUp("claim", "claim task", "amq-squad task claim "+shellQuote(t.ID)+" --me <handle>"+taskScope(projectDir, profile, session)),
 			},
 		})
 	}
@@ -149,15 +173,16 @@ func runTaskList(args []string) error {
 	statusFlag := fs.String("status", "", "filter by status (pending|in_progress|completed|failed|blocked)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned tasks envelope")
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
+	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	session, projectDir, err := taskSessionProject(*sessionFlag, *projectFlag, fs)
+	session, projectDir, profile, ns, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
 	if err != nil {
 		return err
 	}
-	tasks, err := task.List(projectDir, session)
+	tasks, err := task.ListForProfile(projectDir, profile, session)
 	if err != nil {
 		return err
 	}
@@ -171,7 +196,7 @@ func runTaskList(args []string) error {
 		tasks = filtered
 	}
 	if *jsonOut {
-		return printJSONEnvelope("tasks", tasksEnvelopeData{Session: session, Tasks: tasks})
+		return printJSONEnvelope("tasks", tasksEnvelopeData{Session: session, Profile: profile, Namespace: ns, Tasks: tasks})
 	}
 	if len(tasks) == 0 {
 		fmt.Println("(no tasks)")
@@ -201,20 +226,21 @@ func runTaskShow(args []string) error {
 	fs := flag.NewFlagSet("task show", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned task envelope")
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
+	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	if err := parseFlags(fs, rest); err != nil {
 		return err
 	}
-	session, projectDir, err := taskSessionProject(*sessionFlag, *projectFlag, fs)
+	session, projectDir, profile, ns, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
 	if err != nil {
 		return err
 	}
-	t, err := task.Show(projectDir, session, id)
+	t, err := task.ShowForProfile(projectDir, profile, session, id)
 	if err != nil {
 		return err
 	}
 	if *jsonOut {
-		return printJSONEnvelope("task", taskEnvelopeData{Session: session, Task: t})
+		return printJSONEnvelope("task", taskEnvelopeData{Session: session, Profile: profile, Namespace: ns, Task: t})
 	}
 	printTaskDetails(t)
 	return nil
@@ -271,11 +297,12 @@ func runTaskTransition(args []string, verb string) error {
 		fs.StringVar(&reason, "reason", "", "reason")
 	}
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
+	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	if err := parseFlags(fs, rest); err != nil {
 		return err
 	}
-	session, projectDir, err := taskSessionProject(*sessionFlag, *projectFlag, fs)
+	session, projectDir, profile, ns, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
 	if err != nil {
 		return err
 	}
@@ -283,30 +310,32 @@ func runTaskTransition(args []string, verb string) error {
 	var t task.Task
 	switch verb {
 	case "claim":
-		t, err = task.Claim(projectDir, session, id, me, now)
+		t, err = task.ClaimForProfile(projectDir, profile, session, id, me, now)
 	case "done":
-		t, err = task.Done(projectDir, session, id, me, evidence, now)
+		t, err = task.DoneForProfile(projectDir, profile, session, id, me, evidence, now)
 	case "fail":
-		t, err = task.Fail(projectDir, session, id, me, reason, now)
+		t, err = task.FailForProfile(projectDir, profile, session, id, me, reason, now)
 	case "block":
-		t, err = task.Block(projectDir, session, id, me, reason, now)
+		t, err = task.BlockForProfile(projectDir, profile, session, id, me, reason, now)
 	case "reset":
-		t, err = task.Reset(projectDir, session, id, me, reason, now)
+		t, err = task.ResetForProfile(projectDir, profile, session, id, me, reason, now)
 	}
 	if err != nil {
 		return err
 	}
 	if *jsonOut {
 		return printJSONEnvelope("task_"+verb, mutationResult{
-			Command: "task " + verb,
-			Status:  t.Status,
-			Project: projectDir,
-			Session: session,
-			ID:      t.ID,
-			Role:    t.AssignedTo,
+			Command:   "task " + verb,
+			Status:    t.Status,
+			Project:   projectDir,
+			Session:   session,
+			Profile:   profile,
+			Namespace: ns,
+			ID:        t.ID,
+			Role:      t.AssignedTo,
 			Actions: []mutationAction{
-				followUp("show", "show task", "amq-squad task show "+shellQuote(t.ID)+" --project "+shellQuote(projectDir)+" --session "+shellQuote(session)+" --json"),
-				followUp("list", "list tasks", "amq-squad task list --project "+shellQuote(projectDir)+" --session "+shellQuote(session)+" --json"),
+				followUp("show", "show task", "amq-squad task show "+shellQuote(t.ID)+taskScope(projectDir, profile, session)+" --json"),
+				followUp("list", "list tasks", "amq-squad task list"+taskScope(projectDir, profile, session)+" --json"),
 			},
 		})
 	}

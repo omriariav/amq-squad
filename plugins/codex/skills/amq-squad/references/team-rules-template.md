@@ -8,7 +8,7 @@ This project follows the 1.0 three-layer context model:
 
 - **`.amq-squad/team-rules.md`** (this file) - durable team norms. Source of truth for every member.
 - **`<agent-dir>/role.md`** - per-agent persona / system prompt. Seeded on launch; user-editable. Never duplicates content from this file.
-- **`.amq-squad/briefs/<session>.md`** - workstream brief: goal, scope, source-of-truth pointers for the current AMQ session. Lives at team-home so every member points at the same file. Seed with `amq-squad up --seed-from REF`.
+- **Active brief** - workstream brief: goal, scope, source-of-truth pointers for the current profile/session namespace. The default profile uses `.amq-squad/briefs/<session>.md`; named profiles use `.amq-squad/briefs/<profile>/<session>.md`. Seed with `amq-squad up --seed-from REF`.
 
 `CLAUDE.md` and `AGENTS.md` carry a pointer stub managed by `amq-squad team sync --apply`. The stub only links to the files above; do not paste team-rules content into root instruction files.
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -19,10 +20,15 @@ import (
 // agent was launched into.
 type memberRuntime struct {
 	Member    team.Member
+	Profile   string
 	Handle    string
 	CWD       string
 	HasRecord bool
 	Record    launch.Record
+	// ProfileMismatch means the session+handle mailbox currently contains a
+	// launch record for another profile. Runtime control must fail closed rather
+	// than falling back to title/cwd matching, whose identity is only session+role.
+	ProfileMismatch bool
 }
 
 // resolveMemberRuntime finds the team member with the given role for a session
@@ -50,7 +56,7 @@ func resolveMemberRuntime(projectDir, profile, session string, explicitSession b
 		return memberRuntime{}, workstream, fmt.Errorf("no team member with role %q in this team", role)
 	}
 	cwd := m.EffectiveCWD(t.Project)
-	env, err := resolveAMQEnvInDir(cwd, "", workstream, m.Handle)
+	env, err := resolveAMQEnvForTeamProfile(cwd, profile, workstream, m.Handle)
 	if err != nil {
 		return memberRuntime{}, workstream, fmt.Errorf("resolve amq env for %s: %w", role, err)
 	}
@@ -59,8 +65,12 @@ func resolveMemberRuntime(projectDir, profile, session string, explicitSession b
 		handle = env.Me
 	}
 	agentDir := filepath.Join(absoluteAMQRoot(cwd, env.Root), "agents", handle)
-	mr := memberRuntime{Member: m, Handle: handle, CWD: cwd}
+	mr := memberRuntime{Member: m, Profile: profile, Handle: handle, CWD: cwd}
 	if rec, rerr := launch.Read(agentDir); rerr == nil {
+		if !squadnamespace.ProfilesEqual(profile, rec.TeamProfile) {
+			mr.ProfileMismatch = true
+			return mr, workstream, nil
+		}
 		mr.Record = rec
 		mr.HasRecord = true
 		mr.CWD = compareCWD(cwd, rec.CWD)
@@ -99,6 +109,12 @@ func (mr memberRuntime) recordedPaneID() string {
 // restart), otherwise the neutral resolver (title-first, then engine+cwd).
 // Returns the pane id plus a focus target.
 func resolveControlTarget(mr memberRuntime, workstream string, panes []tmuxpane.TmuxPane) (paneID string, target tmuxpane.TmuxTarget, ok bool) {
+	if mr.ProfileMismatch {
+		return "", tmuxpane.TmuxTarget{}, false
+	}
+	if !mr.HasRecord && squadnamespace.NormalizeProfile(mr.Profile) != team.DefaultProfile {
+		return "", tmuxpane.TmuxTarget{}, false
+	}
 	// When we know the agent's exact recorded pane, it is the authoritative
 	// identity: use it only if that pane is still live and in the member's cwd.
 	// If the recorded pane is gone, the agent's pane is gone — do NOT fall back

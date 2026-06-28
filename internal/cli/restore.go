@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/role"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -134,6 +135,16 @@ func matchesRestoreFilters(rec launch.Record, roleFilter, handleFilter, sessionF
 		return false
 	}
 	return true
+}
+
+func matchesRestoreFiltersForProfile(rec launch.Record, roleFilter, handleFilter, sessionFilter, conversationFilter, profileFilter string) bool {
+	if !matchesRestoreFilters(rec, roleFilter, handleFilter, sessionFilter, conversationFilter) {
+		return false
+	}
+	if strings.TrimSpace(profileFilter) == "" {
+		return true
+	}
+	return squadnamespace.ProfilesEqual(profileFilter, rec.TeamProfile)
 }
 
 func printRestoreCandidates(out *os.File, records []restoreCandidate) {

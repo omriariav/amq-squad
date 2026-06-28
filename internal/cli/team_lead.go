@@ -247,7 +247,7 @@ func runLeadRegister(args []string) error {
 	}
 	cwd := member.EffectiveCWD(t.Project)
 	handle := memberHandle(member)
-	env, err := resolveAMQEnvInDir(cwd, "", workstream, handle)
+	env, err := resolveAMQEnvForTeamProfile(cwd, profile, workstream, handle)
 	if err != nil {
 		return fmt.Errorf("resolve amq env: %w", err)
 	}

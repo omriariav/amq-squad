@@ -184,7 +184,7 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 // returned root is the first existing AMQ root found (empty when the only
 // signal is a restorable record), purely for human-facing messages. No
 // message bodies are inspected.
-func teamWorkstreamExistsOrRestorable(t team.Team, workstream string) (bool, string, error) {
+func teamWorkstreamExistsOrRestorable(t team.Team, profile, workstream string) (bool, string, error) {
 	if exists, root, err := teamWorkstreamExists(t, workstream); err != nil {
 		return false, "", err
 	} else if exists {
@@ -195,7 +195,7 @@ func teamWorkstreamExistsOrRestorable(t team.Team, workstream string) (bool, str
 		if err != nil || baseRoot == "" {
 			continue
 		}
-		if _, found := findMemberRestoreRecord(baseRoot, t.Project, m.EffectiveCWD(t.Project), workstream, m.Role, m.Handle); found {
+		if _, found := findMemberRestoreRecord(baseRoot, t.Project, m.EffectiveCWD(t.Project), profile, workstream, m.Role, m.Handle); found {
 			return true, "", nil
 		}
 	}

@@ -73,9 +73,9 @@ send-keys flows keep working; edit the stub or pass --seed-from to set the goal.
   gh:<owner>/<repo>#<n>  gh issue view <n> --repo owner/repo
 
 With --seed-from --dry-run the candidate brief is printed to stdout and
-nothing is written. With --seed-from alone, the brief is written to
-.amq-squad/briefs/<session>.md before the backend launches. --force
-overwrites an existing brief; --force without --seed-from (and without
+nothing is written. With --seed-from alone, the selected namespace's brief is
+written before the backend launches. --force overwrites an existing brief;
+--force without --seed-from (and without
 --reset) is an error. --force-duplicate remains the separate
 duplicate-agent flag.
 
@@ -229,7 +229,7 @@ Examples:
 		return err
 	}
 
-	exists, root, err := teamWorkstreamExistsOrRestorable(t, workstream)
+	exists, root, err := teamWorkstreamExistsOrRestorable(t, profile, workstream)
 	if err != nil {
 		return err
 	}

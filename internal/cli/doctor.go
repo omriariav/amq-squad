@@ -1033,7 +1033,7 @@ func doctorCheckWake(d doctorExecution) ([]doctorCheck, string) {
 	probe := d.Probe
 	checks := make([]doctorCheck, 0, len(t.Members))
 	for _, m := range orderedTeamMembers(t.Members) {
-		rec := classifyMemberStatus(t, m, workstream, probe)
+		rec := classifyMemberStatus(t, profile, m, workstream, probe)
 		checks = append(checks, doctorCheckFromStatus(rec))
 	}
 	return checks, workstream

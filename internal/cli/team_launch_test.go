@@ -79,6 +79,15 @@ func TestRegisteredTeamLaunchTerminalsIncludesTmux(t *testing.T) {
 	}
 }
 
+func TestCommandProfileArgOmitsDefaultAndQuotesNamedProfile(t *testing.T) {
+	if got := commandProfileArg(team.DefaultProfile); got != "" {
+		t.Fatalf("default profile arg = %q, want empty", got)
+	}
+	if got := commandProfileArg("release review"); got != " --profile 'release review'" {
+		t.Fatalf("named profile arg = %q", got)
+	}
+}
+
 func TestRunTeamLaunchRejectsUnsupportedTerminalWithRegistry(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runTeamLaunch([]string{"--terminal", "iterm2", "--dry-run"})

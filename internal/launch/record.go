@@ -55,6 +55,11 @@ type Record struct {
 	// one-shot launch decision.
 	NoRequireWake bool `json:"no_require_wake,omitempty"`
 	External      bool `json:"external,omitempty"`
+	// GoalBinding records launch-time evidence that this agent was started with
+	// a native goal command. It is optional and additive: older records omit it,
+	// and NOC/status surfaces must fall back to AMQ task + brief binding unless
+	// a visible lead record carries native evidence.
+	GoalBinding *GoalBinding `json:"goal_binding,omitempty"`
 	// WakeInjectVia and WakeInjectArgs record AMQ 0.37.0 external wake
 	// injector settings so resume/replay can repair and restart the same
 	// digest-bound wake target later.
@@ -73,6 +78,15 @@ type Record struct {
 	// tmux metadata could not be resolved). Clients detect runtime-control
 	// availability by the presence of this object, not by Schema.
 	Tmux *TmuxInfo `json:"tmux,omitempty"`
+}
+
+// GoalBinding is launch-time evidence for a visible lead's goal binding.
+type GoalBinding struct {
+	Mode       string `json:"mode"`
+	NativeGoal bool   `json:"native_goal"`
+	Source     string `json:"source"`
+	Command    string `json:"command,omitempty"`
+	Detail     string `json:"detail,omitempty"`
 }
 
 // TmuxInfo is the exact tmux identity of the pane an agent was launched into.
@@ -179,8 +193,10 @@ func Read(agentDir string) (Record, error) {
 
 // ScanEntries walks a projectRoot for launch.json records across AMQ layouts:
 //
+//	<projectRoot>/.agent-mail/<profile>/<session>/agents/<handle>/extensions/<layer>/launch.json
 //	<projectRoot>/.agent-mail/<session>/agents/<handle>/extensions/<layer>/launch.json
 //	<projectRoot>/.agent-mail/agents/<handle>/extensions/<layer>/launch.json
+//	<projectRoot>/.agent-mail/<profile>/<session>/agents/<handle>/launch.json
 //	<projectRoot>/.agent-mail/<session>/agents/<handle>/launch.json
 //	<projectRoot>/.agent-mail/agents/<handle>/launch.json
 //
@@ -198,6 +214,12 @@ func ScanEntriesInRoot(projectRoot, baseRoot string) ([]Entry, error) {
 		agentDir func(string) string
 	}{
 		{
+			glob: filepath.Join(baseRoot, "*", "*", "agents", "*", "extensions", LayerName, FileName),
+			agentDir: func(path string) string {
+				return filepath.Dir(filepath.Dir(filepath.Dir(path)))
+			},
+		},
+		{
 			glob: filepath.Join(baseRoot, "*", "agents", "*", "extensions", LayerName, FileName),
 			agentDir: func(path string) string {
 				return filepath.Dir(filepath.Dir(filepath.Dir(path)))
@@ -211,6 +233,12 @@ func ScanEntriesInRoot(projectRoot, baseRoot string) ([]Entry, error) {
 		},
 		{
 			glob: filepath.Join(baseRoot, "*", "agents", "*", FileName),
+			agentDir: func(path string) string {
+				return filepath.Dir(path)
+			},
+		},
+		{
+			glob: filepath.Join(baseRoot, "*", "*", "agents", "*", FileName),
 			agentDir: func(path string) string {
 				return filepath.Dir(path)
 			},
@@ -316,6 +344,7 @@ func ScanLegacyEntriesInRoot(projectRoot, baseRoot string) ([]Entry, error) {
 
 func legacyAgentDirs(baseRoot string) ([]string, error) {
 	patterns := []string{
+		filepath.Join(baseRoot, "*", "*", "agents", "*"),
 		filepath.Join(baseRoot, "*", "agents", "*"),
 		filepath.Join(baseRoot, "agents", "*"),
 	}
@@ -380,11 +409,16 @@ func legacyRecord(projectRoot, baseRoot, agentDir string) (Record, error) {
 		return Record{}, fmt.Errorf("cannot infer binary for legacy handle: %s", handle)
 	}
 	if parts[0] != "agents" {
-		session = parts[0]
-		root = filepath.Join(baseRoot, session)
+		if len(parts) >= 4 && parts[2] == "agents" {
+			session = parts[1]
+			root = filepath.Join(baseRoot, parts[0], session)
+		} else {
+			session = parts[0]
+			root = filepath.Join(baseRoot, session)
+		}
 	}
 
-	return Record{
+	rec := Record{
 		CWD:       projectRoot,
 		Binary:    binary,
 		Session:   session,
@@ -393,7 +427,11 @@ func legacyRecord(projectRoot, baseRoot, agentDir string) (Record, error) {
 		Root:      root,
 		BaseRoot:  baseRoot,
 		StartedAt: legacyActivityTime(agentDir),
-	}, nil
+	}
+	if len(parts) >= 4 && parts[2] == "agents" {
+		rec.TeamProfile = parts[0]
+	}
+	return rec, nil
 }
 
 func inferLegacyBinary(handle string) (string, bool) {

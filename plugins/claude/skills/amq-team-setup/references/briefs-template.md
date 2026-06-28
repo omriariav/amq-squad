@@ -1,15 +1,15 @@
 # Brief Template
 
-Canonical shape for `.amq-squad/briefs/<session>.md`. Every member of the
-workstream reads this same file, so the brief stays short, concrete, and
+Canonical shape for the selected namespace's brief. Every member of the
+workstream namespace reads this same file, so the brief stays short, concrete, and
 **uniform regardless of where the goal came from** — a Jira ticket, a GitHub
 issue or PR, a doc URL, a local `.md`, or a one-line operator prompt. The wizard
 DRAFTS this from your source and shows it for confirmation before saving: a raw
 ticket description is not a brief.
 
-The brief lives at team-home and is **per-session** — author or refresh it at the
-start of each workstream, not only at first team creation. Point at the source of
-truth; do not paste its full contents here.
+The brief lives at team-home and is **per profile/session namespace** — author or
+refresh it at the start of each workstream, not only at first team creation.
+Point at the source of truth; do not paste its full contents here.
 
 ---
 
