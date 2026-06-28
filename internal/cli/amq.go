@@ -64,6 +64,7 @@ func defaultRunAMQCommand(req amqCommandRequest) ([]byte, error) {
 
 type amqContext struct {
 	ProjectDir string
+	Profile    string
 	Env        amqEnv
 	Root       string
 	Me         string
@@ -134,6 +135,7 @@ func resolveAMQContextForProject(projectDir, session, me string) (amqContext, er
 	}
 	return amqContext{
 		ProjectDir: projectDir,
+		Profile:    team.DefaultProfile,
 		Env:        env,
 		Root:       absoluteAMQRoot(projectDir, env.Root),
 		Me:         handle,
@@ -158,10 +160,48 @@ func resolveAMQContextForNamespace(projectDir, profile, session, me string) (amq
 	}
 	return amqContext{
 		ProjectDir: projectDir,
+		Profile:    squadnamespace.NormalizeProfile(profile),
 		Env:        env,
 		Root:       absoluteAMQRoot(projectDir, env.Root),
 		Me:         handle,
 	}, nil
+}
+
+func inferAMQContextProfileFromRoot(ctx amqContext, profileExplicit bool) amqContext {
+	if profileExplicit {
+		return ctx
+	}
+	if profile, ok := profileFromResolvedAMQRoot(ctx.ProjectDir, ctx.Root); ok {
+		ctx.Profile = profile
+	}
+	return ctx
+}
+
+func profileFromResolvedAMQRoot(projectDir, root string) (string, bool) {
+	root = absoluteAMQRoot(projectDir, root)
+	if root == "" {
+		return "", false
+	}
+	base := filepath.Join(filepath.Clean(projectDir), ".agent-mail")
+	rel, err := filepath.Rel(base, root)
+	if err != nil || rel == "." || rel == "" || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", false
+	}
+	parts := strings.Split(filepath.Clean(rel), string(os.PathSeparator))
+	switch len(parts) {
+	case 1:
+		return team.DefaultProfile, true
+	case 2:
+		// AMQRoot stores the profile name verbatim as this path segment; keep
+		// inference in lockstep so ReadProfile targets the same on-disk name.
+		profile := squadnamespace.NormalizeProfile(parts[0])
+		if err := team.ValidateProfileName(profile); err != nil {
+			return "", false
+		}
+		return profile, true
+	default:
+		return "", false
+	}
 }
 
 func resolveAMQBaseRootForProject(projectDir, session, me string) (string, error) {
@@ -366,14 +406,19 @@ func runAMQPassthrough(sub string, args []string) error {
 		fmt.Fprint(os.Stderr, amqPassthroughUsage(sub))
 		return nil
 	}
-	project, session, me, projectSet, passthrough, opts, err := splitAMQPassthroughArgsWithOptions(sub, args)
+	project, profile, session, me, projectSet, passthrough, opts, err := splitAMQPassthroughArgsWithOptions(sub, args)
 	if err != nil {
 		return err
 	}
-	ctx, err := resolveAMQContext(project, session, me, projectSet)
+	projectDir, resolvedProfile, err := resolveProjectProfile(project, profile, projectSet)
 	if err != nil {
 		return err
 	}
+	ctx, err := resolveAMQContextForNamespace(projectDir, resolvedProfile, session, me)
+	if err != nil {
+		return err
+	}
+	ctx = inferAMQContextProfileFromRoot(ctx, strings.TrimSpace(profile) != "")
 	cmd := append([]string{sub, "--root", ctx.Root}, passthrough...)
 	if err := guardAMQPassthrough(sub, ctx, passthrough, opts); err != nil {
 		return err
@@ -427,7 +472,7 @@ func guardAMQMailboxConsume(sub string, ctx amqContext, opts amqPassthroughOptio
 	if target == "" {
 		return nil
 	}
-	t, err := team.ReadProfile(ctx.ProjectDir, team.DefaultProfile)
+	t, err := team.ReadProfile(ctx.ProjectDir, ctx.Profile)
 	if err != nil {
 		return nil
 	}
@@ -585,11 +630,11 @@ func passthroughNeedsStdin(args []string) bool {
 // root); an explicit `--` terminator forces the boundary so wrapper-shaped target
 // flags can be passed through. Pure and table-testable.
 func splitAMQPassthroughArgs(sub string, args []string) (project, session, me string, projectSet bool, passthrough []string, err error) {
-	project, session, me, projectSet, passthrough, _, err = splitAMQPassthroughArgsWithOptions(sub, args)
+	project, _, session, me, projectSet, passthrough, _, err = splitAMQPassthroughArgsWithOptions(sub, args)
 	return project, session, me, projectSet, passthrough, err
 }
 
-func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, session, me string, projectSet bool, passthrough []string, opts amqPassthroughOptions, err error) {
+func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, profile, session, me string, projectSet bool, passthrough []string, opts amqPassthroughOptions, err error) {
 	i := 0
 	for i < len(args) {
 		a := args[i]
@@ -599,12 +644,12 @@ func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, ses
 		}
 		name, inlineVal, hasInline := amqFlagName(a)
 		switch name {
-		case "project", "session", "me":
+		case "project", "profile", "session", "me":
 			val := inlineVal
 			next := i + 1
 			if !hasInline {
 				if next >= len(args) {
-					return "", "", "", false, nil, opts, usageErrorf("flag --%s needs a value", name)
+					return "", "", "", "", false, nil, opts, usageErrorf("flag --%s needs a value", name)
 				}
 				val = args[next]
 				next++
@@ -612,6 +657,8 @@ func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, ses
 			switch name {
 			case "project":
 				project, projectSet = val, true
+			case "profile":
+				profile = val
 			case "session":
 				session = val
 			case "me":
@@ -630,7 +677,7 @@ func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, ses
 			next := i + 1
 			if !hasInline {
 				if next >= len(args) {
-					return "", "", "", false, nil, opts, usageErrorf("flag --from needs a value")
+					return "", "", "", "", false, nil, opts, usageErrorf("flag --from needs a value")
 				}
 				val = args[next]
 				next++
@@ -639,7 +686,7 @@ func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, ses
 			i = next
 			continue
 		case "root", "from-root":
-			return "", "", "", false, nil, opts, usageErrorf(
+			return "", "", "", "", false, nil, opts, usageErrorf(
 				"do not pass --%s to 'amq-squad amq %s'; amq-squad resolves the queue root from --project/--session. Use bare 'amq %s' for manual root control.",
 				name, sub, sub)
 		case "override-boundary":
@@ -657,7 +704,7 @@ func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, ses
 			next := i + 1
 			if !hasInline {
 				if next >= len(args) {
-					return "", "", "", false, nil, opts, usageErrorf("flag --reason needs a value")
+					return "", "", "", "", false, nil, opts, usageErrorf("flag --reason needs a value")
 				}
 				val = args[next]
 				next++
@@ -676,7 +723,7 @@ func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, ses
 	if sub == "send" || sub == "reply" {
 		passthrough = normalizeBodyFileFlag(passthrough)
 	}
-	return project, session, me, projectSet, passthrough, opts, nil
+	return project, profile, session, me, projectSet, passthrough, opts, nil
 }
 
 // normalizeBodyFileFlag rewrites every --body-file <path> or --body-file=<path>
