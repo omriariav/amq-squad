@@ -202,6 +202,11 @@ func TestTranslateAgentUpArgs(t *testing.T) {
 		{"claude-args consumes dash-prefixed value", []string{"claude", "--dry-run", "--no-bootstrap", "--claude-args", "--chrome"}, []string{"--dry-run", "--no-bootstrap", "--claude-args", "--chrome", "claude"}},
 		{"trailing codex-args with no value is child", []string{"codex", "--dry-run", "--no-bootstrap", "--codex-args"}, []string{"--dry-run", "--no-bootstrap", "codex", "--", "--codex-args"}},
 		{"post-binary --no-require-wake is a launch flag", []string{"codex", "--dry-run", "--no-require-wake"}, []string{"--dry-run", "--no-require-wake", "codex"}},
+		{
+			"post-binary named profile explicit root with spawn metadata",
+			[]string{"claude", "--project", "/repo", "--team-home", "/repo", "--team-profile", "review", "--session", "issue-96", "--team-workstream", "--role", "qa", "--me", "release-reviewer", "--spawn-origin", "release-lead", "--spawn-depth", "1", "--root", "/repo/.agent-mail/review/issue-96"},
+			[]string{"--project", "/repo", "--team-home", "/repo", "--team-profile", "review", "--session", "issue-96", "--team-workstream", "--role", "qa", "--me", "release-reviewer", "--spawn-origin", "release-lead", "--spawn-depth", "1", "--root", "/repo/.agent-mail/review/issue-96", "claude"},
+		},
 		{"post-binary --help routes to runLaunch help", []string{"codex", "--dry-run", "--help"}, []string{"--dry-run", "--help", "codex"}},
 		{"post-binary -h routes to runLaunch help", []string{"codex", "--dry-run", "-h"}, []string{"--dry-run", "-h", "codex"}},
 		{"explicit -- --help is child", []string{"codex", "--dry-run", "--", "--help"}, []string{"--dry-run", "codex", "--", "--help"}},
@@ -220,6 +225,80 @@ func TestTranslateAgentUpArgs(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+func TestAgentUpPostBinaryNamedProfileRootDoesNotBecomeChildArg(t *testing.T) {
+	withOutputPolicy(t, outputPolicy{})
+	project := t.TempDir()
+	chdir(t, project)
+	namedRoot := filepath.Join(project, ".agent-mail", "review", "issue-96")
+	script := `#!/bin/sh
+if [ "$1" = "env" ]; then
+  shift
+  saw_root=""
+  saw_session=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --root)
+        saw_root="$2"
+        shift 2
+        ;;
+      --session)
+        saw_session="$2"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  if [ "$saw_root" != "$AMQ_EXPECT_ROOT" ]; then
+    echo "missing expected root: $saw_root" >&2
+    exit 17
+  fi
+  if [ -n "$saw_session" ]; then
+    echo "session should not be passed to amq env when named-profile root is explicit: $saw_session" >&2
+    exit 18
+  fi
+  printf '{"root":"%s","base_root":"%s","session_name":"issue-96","me":"release-reviewer","amq_version":"0.38.0"}\n' "$AMQ_EXPECT_ROOT" "$AMQ_BASE_ROOT"
+  exit 0
+fi
+echo "unexpected amq command: $*" >&2
+exit 1
+`
+	setupFakeAMQScript(t, script)
+	t.Setenv("AMQ_EXPECT_ROOT", namedRoot)
+	t.Setenv("AMQ_BASE_ROOT", filepath.Join(project, ".agent-mail"))
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runAgentUp([]string{
+			"claude",
+			"--project", project,
+			"--team-home", project,
+			"--team-profile", "review",
+			"--session", "issue-96",
+			"--team-workstream",
+			"--role", "qa",
+			"--me", "release-reviewer",
+			"--spawn-origin", "release-lead",
+			"--spawn-depth", "1",
+			"--root", namedRoot,
+			"--dry-run",
+			"--no-bootstrap",
+		})
+	})
+	if err != nil {
+		t.Fatalf("agent up named-profile explicit root dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "amq coop exec --root "+shellQuote(namedRoot)) {
+		t.Fatalf("dry-run should use explicit named-profile root, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "-- claude") || strings.Contains(stdout, "-- --spawn-origin") || strings.Contains(stdout, "-- --root") {
+		t.Fatalf("launch flags leaked into child argv:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "--session issue-96") {
+		t.Fatalf("named-profile explicit root should not also pass --session to coop exec:\n%s", stdout)
 	}
 }
 

@@ -501,6 +501,95 @@ func TestResumeFooterCarriesProfile(t *testing.T) {
 	}
 }
 
+func TestResumeNamedProfileBlocksLegacySessionRootConflict(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	seedProfile(t, dir, "review", team.Team{
+		Workstream: "main",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+		},
+	})
+	legacyAgentDir := filepath.Join(dir, ".agent-mail", "main", "agents", "cto")
+	if err := os.MkdirAll(legacyAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyAgentDir, "inbox"), []byte("legacy durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := captureOutput(t, func() error {
+		return runResume([]string{"--profile", "review", "--session", "main"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "legacy/default session root") {
+		t.Fatalf("resume should fail closed on legacy conflict, got %v", err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runResume([]string{"--profile", "review", "--session", "main", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("resume --json should expose conflict without mutating: %v", err)
+	}
+	env := decodeJSONEnvelope[resumeEnvelopeData](t, stdout)
+	if env.Data.NamespaceConflict == nil || env.Data.NamespaceConflict.Kind != "legacy_session_root" {
+		t.Fatalf("namespace conflict missing: %+v", env.Data.NamespaceConflict)
+	}
+	if len(env.Data.Plan) != 1 || env.Data.Plan[0].Action != string(resumeBlocked) || env.Data.Plan[0].Command != "" {
+		t.Fatalf("resume plan should be blocked without command: %+v", env.Data.Plan)
+	}
+}
+
+func TestNamedProfileConflictBlocksDirectRuntimeCommands(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	seedProfile(t, dir, "review", team.Team{
+		Workstream:   "main",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+		},
+	})
+	legacyAgentDir := filepath.Join(dir, ".agent-mail", "main", "agents", "cto")
+	if err := os.MkdirAll(legacyAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyAgentDir, "inbox"), []byte("legacy durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		run  func() error
+	}{
+		{"focus", func() error { return runFocus([]string{"--profile", "review", "--session", "main", "--role", "cto"}) }},
+		{"send", func() error {
+			return runSend([]string{"--profile", "review", "--session", "main", "--role", "cto", "--body", "hello"})
+		}},
+		{"dispatch", func() error {
+			return runDispatch([]string{"--profile", "review", "--session", "main", "--role", "cto", "--subject", "X", "--body", "y"})
+		}},
+		{"goal deliver", func() error {
+			return runGoal([]string{"deliver", "--profile", "review", "--session", "main", "--role", "cto", "--goal", "ship"})
+		}},
+		{"stop", func() error { return runStop([]string{"--profile", "review", "--session", "main", "--all"}) }},
+		{"up", func() error {
+			return runUp([]string{"--profile", "review", "--session", "main", "--terminal", "fake", "--no-bootstrap"})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := captureOutput(t, tc.run)
+			if err == nil || !strings.Contains(err.Error(), "legacy/default session root") {
+				t.Fatalf("%s should fail closed on namespace conflict, got %v", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestForkFooterCarriesProfile(t *testing.T) {
 	dir := t.TempDir()
 	base := setupFakeAMQSessionRoots(t)

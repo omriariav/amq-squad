@@ -1130,6 +1130,36 @@ func TestRunTeamInitDryRunJSONIncludesOrchestration(t *testing.T) {
 	}
 }
 
+func TestRunTeamInitDryRunJSONIncludesExecutionMode(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--roles", "cto,qa",
+			"--orchestrated", "--lead", "cto",
+			"--mode", "project_team",
+			"--control-root", "/tmp/control",
+			"--target-project-root", "/tmp/project",
+			"--target-contract", "2.10.0",
+			"--dry-run", "--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("team init --dry-run --json --mode: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	exec := env.Data.Execution
+	if exec.Mode != executionModeProjectTeam || exec.MutableActor != "cto" || !exec.ImplementationAllowed {
+		t.Fatalf("execution = %+v, want project_team led by cto", exec)
+	}
+	if strings.Join(exec.VisibleTeamMembers, ",") != "cto,qa" {
+		t.Fatalf("visible members = %v, want cto,qa", exec.VisibleTeamMembers)
+	}
+	if exec.ControlRoot != "/tmp/control" || exec.TargetProjectRoot != "/tmp/project" {
+		t.Fatalf("execution roots = %q/%q", exec.ControlRoot, exec.TargetProjectRoot)
+	}
+}
+
 func TestRunTeamInitJSONRequiresDryRun(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runTeamInit([]string{"--roles", "cto", "--json"})
@@ -1342,6 +1372,8 @@ func TestRunTeamInitSeedsTeamRules(t *testing.T) {
 		"ACK or mirror it on the matching `gate/<topic>` thread without spoofing the operator handle",
 		"Before declaring a gate blocked",
 		"Operator gates are structural observability and handoff, not an authorization or security boundary.",
+		"The operator mailbox is virtual/non-runnable",
+		"status --json.operator_delivery.poll_required=true",
 		"Direct operator-to-worker messages are exceptional",
 		"operator-held",
 		"On first session run, start the first response by stating your role, handle, and amq-squad skill version",
@@ -1431,6 +1463,8 @@ func TestRunTeamInitOrchestratedInjectsNorm(t *testing.T) {
 	for _, want := range []string{
 		"## Orchestration",
 		"The lead is `cto`",
+		"Execution mode is `project_lead`",
+		"Mutable actor: `cto`",
 		"loads the `amq-squad-orchestrator` skill",
 		"`--kind status`",
 		"`--kind question`",

@@ -136,7 +136,7 @@ func TestWriteResumeJSONShapeAndPaneAlive(t *testing.T) {
 		{Role: "qa", Handle: "qa", Action: resumeFresh, Wake: "-", Command: "cd /r && amq-squad agent up claude --role qa"},
 	}
 	var buf bytes.Buffer
-	if err := writeResumeJSON(&buf, team.Team{Project: "/r"}, "issue-96", resumeModeDefault, team.DefaultProfile, plans); err != nil {
+	if err := writeResumeJSON(&buf, team.Team{Project: "/r"}, "issue-96", resumeModeDefault, team.DefaultProfile, nil, plans); err != nil {
 		t.Fatalf("writeResumeJSON: %v", err)
 	}
 	env := decodeJSONEnvelope[resumeEnvelopeData](t, buf.String())

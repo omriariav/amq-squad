@@ -142,11 +142,17 @@ Examples:
 	if err != nil {
 		return err
 	}
+	if err := ensureNoNamespaceConflict("dispatch", projectDir, profile, workstream); err != nil {
+		return err
+	}
 	ns := squadnamespace.Resolve(projectDir, profile, workstream)
 	from, err := resolveDispatchSender(t, *fromFlag)
 	if err != nil {
 		return err
 	}
+	receipt := newDeliveryReceipt(projectDir, profile, workstream, member.Role, member.Handle, effectiveTeamExecutionMode(t), "dispatch")
+	receipt.Method = "durable_amq"
+	receipt.addStage("queued", "dispatch accepted by amq-squad")
 	// Option 3 (#176): warn when the dispatcher handle differs from the
 	// team.json configured lead. Children report to the task's From field
 	// (the dispatcher), not the configured lead, so the operator needs to
@@ -195,6 +201,11 @@ Examples:
 		return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
 	}
 	msgID := parseSentMessageID(string(out))
+	receipt.MessageID = msgID
+	receipt.Root = ctx.Root
+	receipt.Thread = strings.TrimSpace(*threadFlag)
+	receipt.Status = "written_to_amq"
+	receipt.addStage("written_to_amq", "durable AMQ message written to recipient inbox")
 	if taskID != "" {
 		linked, lerr := dispatchLinkTask(projectDir, profile, workstream, taskID, taskstore.Dispatch{
 			Assignee:  member.Handle,
@@ -232,53 +243,85 @@ Examples:
 
 	outcome := dispatchOutcome{}
 	if *noWakeFlag {
+		receipt.TaskID = taskID
+		receipt.Method = "durable_amq_only"
+		receipt.addStage("wake_skipped", "--no-wake requested; recipient must drain without pane nudge")
+		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+			return err
+		}
 		if *jsonOut {
 			return printJSONEnvelope("dispatch", mutationResult{
-				Command:   "dispatch",
-				Status:    "queued",
-				Project:   projectDir,
-				Session:   workstream,
-				Profile:   profile,
-				Namespace: ns,
-				ID:        taskID,
-				TaskID:    taskID,
-				Role:      member.Role,
-				Assignee:  member.Handle,
-				Handle:    member.Handle,
-				MessageID: msgID,
-				Root:      ctx.Root,
-				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				Command:         "dispatch",
+				Status:          "queued",
+				Project:         projectDir,
+				Session:         workstream,
+				Profile:         profile,
+				Namespace:       ns,
+				ID:              taskID,
+				TaskID:          taskID,
+				Role:            member.Role,
+				Assignee:        member.Handle,
+				Handle:          member.Handle,
+				MessageID:       msgID,
+				Root:            ctx.Root,
+				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				DeliveryReceipt: &receipt,
 			})
 		}
 		quietNotice("Skipped pane nudge (--no-wake); %s drains the task on its next turn.\n", *roleFlag)
 		return nil
 	}
 
+	receipt.addStage("wake_requested", "requested pane prompt fallback nudge for recipient")
 	outcome, werr := dispatchWakePane(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag, *forceFlag)
 	if werr != nil {
+		receipt.TaskID = taskID
+		receipt.Status = "wake_failed"
+		receipt.Method = "durable_amq_wake_failed"
+		receipt.Detail = werr.Error()
+		receipt.addStage("failed", "pane nudge failed after durable AMQ write: "+werr.Error())
+		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+			return err
+		}
 		// The durable task is already queued; a wake failure is advisory, not a
 		// dispatch failure. Surface it (warnings bypass quietNotice) so the
 		// operator can nudge or resume manually, but exit 0.
 		fmt.Fprintf(os.Stderr, "warning: task queued, but the pane nudge failed: %v\n", werr)
 		if *jsonOut {
 			return printJSONEnvelope("dispatch", mutationResult{
-				Command:   "dispatch",
-				Status:    "queued_nudge_failed",
-				Project:   projectDir,
-				Session:   workstream,
-				Profile:   profile,
-				Namespace: ns,
-				ID:        taskID,
-				TaskID:    taskID,
-				Role:      member.Role,
-				Assignee:  member.Handle,
-				Handle:    member.Handle,
-				MessageID: msgID,
-				Root:      ctx.Root,
-				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				Command:         "dispatch",
+				Status:          "queued_nudge_failed",
+				Project:         projectDir,
+				Session:         workstream,
+				Profile:         profile,
+				Namespace:       ns,
+				ID:              taskID,
+				TaskID:          taskID,
+				Role:            member.Role,
+				Assignee:        member.Handle,
+				Handle:          member.Handle,
+				MessageID:       msgID,
+				Root:            ctx.Root,
+				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				DeliveryReceipt: &receipt,
 			})
 		}
 		return nil
+	}
+	receipt.TaskID = taskID
+	if outcome.PaneID != "" {
+		receipt.PaneID = outcome.PaneID
+		receipt.Fallback = true
+		receipt.Method = "durable_amq_plus_prompt_fallback"
+		receipt.Status = "prompt_fallback_sent"
+		receipt.addStage("prompt_fallback_sent", "fixed drain-only pane prompt sent; this is fallback delivery, not an AMQ acknowledgement")
+	} else {
+		receipt.Status = "wake_pending"
+		receipt.Detail = outcome.Skipped
+		receipt.addStage("wake_pending", "pane nudge skipped: "+outcome.Skipped)
+	}
+	if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+		return err
 	}
 	if *jsonOut {
 		status := "queued"
@@ -286,20 +329,21 @@ Examples:
 			status = "queued_and_nudged"
 		}
 		return printJSONEnvelope("dispatch", mutationResult{
-			Command:   "dispatch",
-			Status:    status,
-			Project:   projectDir,
-			Session:   workstream,
-			Profile:   profile,
-			Namespace: ns,
-			ID:        taskID,
-			TaskID:    taskID,
-			Role:      member.Role,
-			Assignee:  member.Handle,
-			Handle:    member.Handle,
-			MessageID: msgID,
-			Root:      ctx.Root,
-			Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+			Command:         "dispatch",
+			Status:          status,
+			Project:         projectDir,
+			Session:         workstream,
+			Profile:         profile,
+			Namespace:       ns,
+			ID:              taskID,
+			TaskID:          taskID,
+			Role:            member.Role,
+			Assignee:        member.Handle,
+			Handle:          member.Handle,
+			MessageID:       msgID,
+			Root:            ctx.Root,
+			Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+			DeliveryReceipt: &receipt,
 		})
 	}
 	if outcome.PaneID != "" {

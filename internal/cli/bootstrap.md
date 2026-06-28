@@ -19,6 +19,20 @@ Startup files:
 - Active brief: {{.BriefPath}}
 {{- end }}
 
+{{- if .Execution }}
+Execution mode:
+- Mode: {{.Execution.Mode}}
+- Control root: {{.Execution.ControlRoot}}
+- Target project root: {{.Execution.TargetProjectRoot}}
+- Mutable actor: {{orDefault .Execution.MutableActor "(none)"}}
+- Implementation allowed: {{.Execution.ImplementationAllowed}}
+- Goal binding: {{.Execution.GoalBinding}}
+- Boundary: {{.Execution.Boundary}}
+{{- if .Execution.ModeError }}
+- Mode error: {{.Execution.ModeError}}
+{{- end }}
+
+{{- end }}
 {{- if .CurrentTeam }}
 Current team routing:
 These entries come from the current `.amq-squad/team.json` and are authoritative for live routing. Treat `amq-squad history` records as history only unless the user explicitly asks to resume an old session.
@@ -35,6 +49,7 @@ These entries come from the current `.amq-squad/team.json` and are authoritative
 {{- if .OperatorGates }}
 Operator gate routing:
 The human/operator is mailbox handle {{.Operator.Handle}}. This participant is not a runnable agent. AMQ 0.38 reserves the conventional `user` handle for this role; custom operator handles follow the same protocol. Use the operator handle only for human-only decisions or manual actions, not ordinary peer coordination. Gates are structural observability and handoff, not an authorization or security boundary.
+Operator delivery: durable AMQ is authoritative; wake_supported={{.OperatorDelivery.WakeSupported}}; poll_required={{.OperatorDelivery.PollRequired}}. If poll_required is true, the operator or parent orchestrator must poll/drain the operator mailbox, gate threads, and status JSON instead of waiting for wake delivery.
 
 - ask: `amq send --to {{.Operator.Handle}} --thread gate/<topic> --kind question --subject "APPROVAL: <decision>"`
 - done/manual closeout: `amq send --to {{.Operator.Handle}} --thread gate/<topic> --kind decision --subject "DONE: <goal>"`
