@@ -80,7 +80,7 @@ Examples:
 	if len(t.Members) == 0 {
 		return fmt.Errorf("team has no members")
 	}
-	if !forkSourceHasState(t, *from) {
+	if !forkSourceHasState(t, profile, *from) {
 		return fmt.Errorf("--from %q: no local workstream state or restorable launch records for this team; nothing to fork from", *from)
 	}
 
@@ -112,7 +112,7 @@ Examples:
 // message bodies are inspected. This is the same "exists-or-restorable"
 // condition `up` refuses by default; both share
 // teamWorkstreamExistsOrRestorable so the two can never drift.
-func forkSourceHasState(t team.Team, source string) bool {
-	exists, _, err := teamWorkstreamExistsOrRestorable(t, source)
+func forkSourceHasState(t team.Team, profile, source string) bool {
+	exists, _, err := teamWorkstreamExistsOrRestorable(t, profile, source)
 	return err == nil && exists
 }

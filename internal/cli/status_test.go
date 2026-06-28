@@ -187,6 +187,48 @@ func TestExecuteStatusLiveAgent(t *testing.T) {
 	}
 }
 
+func TestExecuteStatusIsolatesForeignProfileLaunchRecord(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	for _, profile := range []string{"product", "release"} {
+		if err := team.WriteProfile(dir, profile, team.Team{
+			Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedAgentRecord(t, base, "main", "cto", launch.Record{
+		Binary:      "codex",
+		Handle:      "cto",
+		Role:        "cto",
+		Session:     "main",
+		AgentPID:    5555,
+		TeamProfile: "product",
+		Tmux:        &launch.TmuxInfo{Session: "tmux-product", PaneID: "%5"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%5"}}, nil)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		Profile:          "release",
+		RequestedSession: "main",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	got := env.Data.Records[0]
+	if got.Status != statusStateMissing || got.RecordState != "missing" || got.Tmux != nil {
+		t.Fatalf("foreign-profile launch record should be isolated from release profile, got %+v", got)
+	}
+	if got.Root == filepath.Join(base, "main") {
+		t.Fatalf("release profile should not inspect legacy session root %s", got.Root)
+	}
+}
+
 func TestExecuteStatusJSONIncludesSpawnMetadata(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
@@ -220,6 +262,56 @@ func TestExecuteStatusJSONIncludesSpawnMetadata(t *testing.T) {
 	}
 	if !env.Data.Capabilities.AutonomousGuardrails {
 		t.Fatalf("status capabilities must advertise autonomous guardrails")
+	}
+	if env.Data.GoalBinding.Mode != "amq_task_brief" || env.Data.GoalBinding.NativeGoal {
+		t.Fatalf("goal binding = %+v", env.Data.GoalBinding)
+	}
+	if env.Data.GoalBinding.BriefPath == "" || env.Data.GoalBinding.TasksPath == "" {
+		t.Fatalf("status goal binding should expose brief/tasks paths: %+v", env.Data.GoalBinding)
+	}
+}
+
+func TestExecuteStatusJSONReportsNativeGoalForLiveLeadRecord(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
+		GoalBinding: &launch.GoalBinding{
+			Mode:       "native_goal",
+			NativeGoal: true,
+			Source:     "launch-argv",
+			Command:    `/goal --goal "ship"`,
+		},
+	})
+	seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
+		Binary: "codex", Handle: "qa", Role: "qa", AgentPID: 3131,
+	})
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Probe:            statusProbe(map[int]bool{4242: true, 3131: true}, map[int]bool{4242: true, 3131: true}, time.Now()),
+		JSON:             true,
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.GoalBinding.Mode != "native_goal" || !env.Data.GoalBinding.NativeGoal || !env.Data.GoalBinding.Verified {
+		t.Fatalf("goal binding = %+v", env.Data.GoalBinding)
+	}
+	if env.Data.GoalBinding.Source != "launch-record" || env.Data.GoalBinding.NativeSource != "launch-argv" {
+		t.Fatalf("goal binding source = %+v", env.Data.GoalBinding)
+	}
+	if !strings.Contains(env.Data.GoalBinding.Command, "/goal --goal") {
+		t.Fatalf("goal binding command = %+v", env.Data.GoalBinding)
 	}
 }
 

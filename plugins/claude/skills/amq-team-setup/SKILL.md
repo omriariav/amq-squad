@@ -27,8 +27,9 @@ Setup creates and aligns four durable things; ongoing coordination consumes them
 
 - **Protocol** — the `amq-squad-orchestrator` skill (only when the squad is
   orchestrated): the lead-agent playbook over the runtime primitives.
-- **Goal** — `.amq-squad/briefs/<session>.md`: the per-session brief. Lives at
-  team-home so every member of the workstream reads the same file.
+- **Goal** — the selected namespace's brief: `.amq-squad/briefs/<session>.md`
+  for the default profile, or `.amq-squad/briefs/<profile>/<session>.md` for a
+  named profile. Every member of that workstream namespace reads the same file.
 - **Norms** — `.amq-squad/team-rules.md`: durable team norms, the single source
   of truth. **Generated** by amq-squad; never hand-duplicated into other files.
 - **Persona** — `<agent-dir>/role.md`: per-agent system prompt. Seeded on first
@@ -38,7 +39,7 @@ Setup creates and aligns four durable things; ongoing coordination consumes them
 
 ```
 <!-- amq-squad:managed:begin -->
-... pointers to team-rules.md, role.md, briefs/<session>.md ...
+... pointers to team-rules.md, role.md, and the active brief path ...
 <!-- amq-squad:managed:end -->
 ```
 
@@ -86,8 +87,8 @@ Normalize whatever you fetched into the **canonical brief shape** from
 A raw ticket description is **not** a brief — distill it. DRAFT the brief, then
 SHOW it to the user and let them edit before accepting. Do not auto-accept a
 raw ticket. Pick the workstream/session name now (lowercase `a-z`, `0-9`, `-`,
-`_`; e.g. `issue-96`, `v1-7-0`); the brief is per-session and is saved to
-`.amq-squad/briefs/<session>.md` in step 5.
+`_`; e.g. `issue-96`, `v1-7-0`); the brief is saved under the selected
+profile/session namespace in step 5.
 
 You can also preview a candidate from a deterministic source with
 `amq-squad up --dry-run --seed-from issue:<n>` / `file:./brief.md` /
@@ -207,10 +208,9 @@ orchestrated?/lead, brief) and confirm. Then create:
    `$CODEX_HOME/<name>.config.toml` profile wired via
    `codex_args: ["--profile", "<name>"]`.
 
-3. **The brief**: save the confirmed step-2 draft to
-   `.amq-squad/briefs/<session>.md` (a plain file write; the first live `up`
-   preserves an existing brief). This kills the auto-stub the status board warns
-   about.
+3. **The brief**: save the confirmed step-2 draft to the selected namespace's
+   brief path (a plain file write; the first live `up` preserves an existing
+   brief). This kills the auto-stub the status board warns about.
 
 4. **Pointer stubs**: `amq-squad team sync --apply` writes the managed block in
    `CLAUDE.md` / `AGENTS.md` (add `--sync` to `new team` to do it in one shot).
@@ -273,9 +273,9 @@ Global output flags work before or after the subcommand: `--quiet`,
 
 - One source of truth per layer. Team rules live only in
   `.amq-squad/team-rules.md`. Pointer stubs link, never copy.
-- The brief is the goal layer and is **per-session**. Draft from the source,
-  confirm with the user, then save to `.amq-squad/briefs/<session>.md`. A raw
-  ticket is not a brief.
+- The brief is the goal layer and is **per profile/session namespace**. Draft
+  from the source, confirm with the user, then save to the selected namespace's
+  brief path. A raw ticket is not a brief.
 - amq-squad core is **tracker-neutral**: fetch Jira/Confluence/URLs with the
   agent's own tools here in the skill; amq-squad takes no tracker dependency.
 - Orchestration is **opt-in, default off**. Exactly one lead; the lead is a team

@@ -374,8 +374,10 @@ coordination consumes:</p>
 <li><strong>Norms</strong> — <code>.amq-squad/team-rules.md</code>
 (generated; the single source of truth).</li>
 <li><strong>Goal</strong> —
-<code>.amq-squad/briefs/&lt;session&gt;.md</code> (one per
-workstream/AMQ session).</li>
+<code>.amq-squad/briefs/&lt;session&gt;.md</code> for the default
+profile, or
+<code>.amq-squad/briefs/&lt;profile&gt;/&lt;session&gt;.md</code> for a
+named profile.</li>
 <li><strong>Persona</strong> — <code>&lt;agent-dir&gt;/role.md</code>
 (seeded at launch, then user-editable).</li>
 </ul>
@@ -569,8 +571,8 @@ machine:</p>
                   +----- resume -----+</code></pre>
 <h3 id="the-daily-loop">The daily loop</h3>
 <ol type="1">
-<li><strong>Orient.</strong> Confirm the team-home + workstream, read
-the brief (<code>.amq-squad/briefs/&lt;session&gt;.md</code>).</li>
+<li><strong>Orient.</strong> Confirm the team-home + profile +
+workstream, then read the selected namespace's brief.</li>
 <li><strong>Discover live state.</strong> <code>amq-squad status</code>
 (board), <code>status --session &lt;name&gt;</code> (detail),
 <code>amq-squad console</code> (live TUI), <code>amq-squad doctor</code>
@@ -693,6 +695,37 @@ them, handle their reports, and own the deliverable to the human.</p>
 <p>This is the discipline on top of the shipped runtime primitives.
 Routine member coordination still belongs to <code>amq-squad</code>;
 this skill is specifically the lead's playbook.</p>
+<p>For <code>/goal</code> runs, keep the operator interface as a
+three-step flow:</p>
+<ol type="1">
+<li>Preview the goal, repo, source issues, profile/session namespace,
+visible lead, proposed mutations, topology, spawn policy, validation,
+and gates.</li>
+<li>Create or register exactly one operator-visible goal lead. Use
+<code>--lead ROLE</code> when generated commands should route through a
+non-<code>cto</code> lead.</li>
+<li>Monitor through that lead. Child agents stay implementation details
+unless an approval gate, blocker, release risk, or final evidence needs
+surfacing. Leads must surface blockers and approval requests immediately
+to the operator/orchestrator-visible surface, not only in a child pane
+or internal worker thread.</li>
+</ol>
+<p>Team rules and custom role contracts remain part of the prompt and
+handoff contract throughout the flow.</p>
+<p>When wake is unavailable for the parent orchestrator or NOC, use a
+polling contract: one <code>/goal</code> per visible lead; each lead
+pushes status, blockers, approval requests, and final evidence to
+AMQ/NOC-visible surfaces; the parent polls lead inboxes, gate threads,
+and <code>status --json</code> on a cadence. Child agents remain
+internal unless the lead escalates them. Use <code>goal_binding</code>
+in <code>goal draft --json</code> and <code>status --json</code> to
+distinguish a generated native <code>/goal</code> plan
+(<code>native_goal_pending</code>), verified launch-record native
+binding (<code>native_goal</code>), and the explicit AMQ task + active
+brief + task-store fallback (<code>amq_task_brief</code>). Recovery
+sends a durable AMQ directive first; managed-pane <code>/goal</code>
+injection is only a follow-up when the pane is idle, and force-interrupt
+requires an operator gate.</p>
 <h3 id="the-loop-spawn--dispatch--monitor--coordinate--recover">The
 loop: spawn → dispatch → monitor → coordinate → recover</h3>
 <div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. SPAWN — window-per-agent (captures each child&#39;s pane id into the record)</span></span>

@@ -11,7 +11,7 @@ Launch priming is automatic. `up` / `agent up` inject the bootstrap prompt; agen
 
 This skill is named `amq-squad`; the binary is also named `amq-squad`.
 
-**Skill version: 2.8.1** — on your FIRST response of a session, print the line `amq-squad skill v2.8.1` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
+**Skill version: 2.9.0** — on your FIRST response of a session, print the line `amq-squad skill v2.9.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
 
 ## Context model
 
@@ -19,7 +19,7 @@ The context model has three durable layers. The skill never asks you to duplicat
 
 - **Team rules (`.amq-squad/team-rules.md`)** - the project's durable norms (skills, workflow, approvals, communication, escalation, style). Source of truth for every member.
 - **Per-agent role (`<agent-dir>/role.md`)** - persona/system-prompt for one role. Seeded by `agent up` / `up`; the user can edit freely; later launches preserve user edits.
-- **Workstream brief (`.amq-squad/briefs/<session>.md`)** - the active workstream's goal, scope, and pointers to source-of-truth issues/PRs. Lives at team-home so every member points at the same file. Created on first live `up`; preserved on reruns. `up --seed-from REF` writes a fresh brief from `file:<path>`, `issue:<n>`, or `gh:<owner>/<repo>#<n>`.
+- **Workstream brief** - the active workstream's goal, scope, and pointers to source-of-truth issues/PRs. The default profile uses `.amq-squad/briefs/<session>.md`; named profiles use `.amq-squad/briefs/<profile>/<session>.md`. Created on first live `up`; preserved on reruns. `up --seed-from REF` writes a fresh brief from `file:<path>`, `issue:<n>`, or `gh:<owner>/<repo>#<n>`.
 
 `CLAUDE.md` and `AGENTS.md` carry a small **pointer stub** that links to the three files above - never a copy of team-rules content. `amq-squad team sync --apply` writes/updates that stub.
 
@@ -62,7 +62,7 @@ Pass `--profile NAME` to operate on a named profile under `.amq-squad/teams/<nam
 
 **Lifecycle safety contract:** before any lifecycle mutation (`stop`, `resume --exec`, `send`, `focus`, `rm`, `archive`, `up --reset`, `team member rm --stop`), resolve the active project, profile, and session explicitly. Run `amq-squad team profiles --json`, the multi-session `amq-squad status`, then `amq-squad status --project <repo> --profile <profile> --session <session> --json`. If more than one profile exists, never run a lifecycle command without `--profile`; omitting it can inspect or mutate the default roster while the active squad lives in a named profile. Prefer the exact commands from `.data.actions[]` and per-record `actions[]` in the scoped `status --json` output instead of hand-assembling `stop`/`resume`/`focus`/`send` commands.
 
-`team member`, `team lead`, `lead register`, and `task` are the dynamic-team primitives. `team member add/rm` mutates `team.json` atomically under an exclusive lock and re-validates it (the new member is NOT launched — run the launch command `team member add` prints: a managed pane via `resume --exec --target new-window`, or `agent up` for an unmanaged one-off). `team lead set/clear/show` mutates or inspects profile orchestration state for an existing roster. `lead register` adopts the current tmux pane as an operator-owned external lead for the session: status/action JSON can render and target it, but lifecycle commands do not own the pane, so `stop`/`rm`/`archive`/`resume` will not kill, close, or replay it. `task` is a native pull-based store under `.amq-squad/tasks/<session>/`: a task is claimable only once all its `--depends-on` tasks are completed, and every mutation is atomic and lock-serialized. Runtime mutations take `--session` where applicable (tasks require it).
+`team member`, `team lead`, `lead register`, and `task` are the dynamic-team primitives. `team member add/rm` mutates `team.json` atomically under an exclusive lock and re-validates it (the new member is NOT launched — run the launch command `team member add` prints: a managed pane via `resume --exec --target new-window`, or `agent up` for an unmanaged one-off). `team lead set/clear/show` mutates or inspects profile orchestration state for an existing roster. `lead register` adopts the current tmux pane as an operator-owned external lead for the session: status/action JSON can render and target it, but lifecycle commands do not own the pane, so `stop`/`rm`/`archive`/`resume` will not kill, close, or replay it. `task` is a native pull-based store under `.amq-squad/tasks/<session>/` for the default profile or `.amq-squad/tasks/<profile>/<session>/` for named profiles: a task is claimable only once all its `--depends-on` tasks are completed, and every mutation is atomic and lock-serialized. Runtime mutations take `--session` where applicable (tasks require it).
 
 Every command accepts `--json` where machine-readable output makes sense (`status`, `history`, `resume`, `doctor`, `team profiles`, `version`, and `up --dry-run`). JSON outputs are schema-versioned envelopes `{ schema_version, kind, data }`. Diagnostics stay on stderr; stdout under `--json` is pure JSON. For machine clients, the per-member records in `status --session <name> --json` (kind `status`), `history --json`, and `resume --json` (kind `resume_plan`) carry a `tmux` runtime block (`session`, `window_id`, `window_name`, `pane_id`, `target`) plus a computed `pane_alive` — **present only for agents launched in tmux**, so detect by presence. `status --session <name> --json` records additionally carry an `actions` array (`focus`/`send`/`resume`/`status`) with the exact runnable command and an `available` flag, so a client (e.g. amq-noc) renders/copies stable commands instead of inferring tmux state. (The bare `amq-squad status --json` is the multi-session board envelope `kind: sessions` — it has no per-member records or actions; use `--session <name>` for member detail.)
 
@@ -105,7 +105,7 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
    - Read `.amq-squad/ACTIVE-EPIC.md` if present.
 
 2. **Read the workstream brief.**
-   - `.amq-squad/briefs/<session>.md` carries the workstream's goal, scope, and source-of-truth pointers. Skim it before drains.
+   - The selected namespace's brief carries the workstream's goal, scope, and source-of-truth pointers. Skim it before drains.
    - If it is a stub, seed it with `amq-squad up --dry-run --seed-from issue:<n>` (or `file:`/`gh:`), inspect the candidate envelope, then `up --seed-from issue:<n>` to write it live (use `--force` to overwrite an existing brief).
 
 3. **Discover live state and history.**

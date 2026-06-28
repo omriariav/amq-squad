@@ -69,6 +69,9 @@ func TestGoalDraftJSONIncludesMilestoneIssues(t *testing.T) {
 	if data.Session != "v2-7-0" || data.Profile != "codex-v2-7-0" {
 		t.Fatalf("session/profile mismatch: %+v", data)
 	}
+	if data.GoalBinding.Mode != "native_goal_pending" || !data.GoalBinding.NativeGoal || data.GoalBinding.Verified {
+		t.Fatalf("goal binding mismatch: %+v", data.GoalBinding)
+	}
 	if len(data.IssueSources) != 2 || data.IssueSources[0].Number != 215 || data.IssueSources[1].Number != 216 {
 		t.Fatalf("issues not sorted/included: %+v", data.IssueSources)
 	}
@@ -96,14 +99,87 @@ func TestGoalDraftMarkdownIsPreviewOnly(t *testing.T) {
 		"## Brief Skeleton",
 		"amq send --to user --thread gate/spawn-fullstack",
 		"amq-squad team init",
-		"amq-squad up issue-225 --profile issue-225 --visibility sibling-tabs",
-		"amq-squad dispatch --session issue-225",
+		"amq-squad agent up codex",
+		"-- '/goal --goal",
+		"amq-squad dispatch --profile issue-225 --session issue-225",
 		"Default visibility is sibling-tabs",
 		"Seeded composition remains the default",
+		"Visible lead binding: native_goal_pending",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("markdown missing %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestGoalDraftNamedProfileCommandsCarryNamespace(t *testing.T) {
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoalDraft([]string{
+			"--goal", "ship deterministic namespaces",
+			"--session", "main",
+			"--profile", "release",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("goal draft: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[goalDraftData](t, stdout)
+	if env.Data.Namespace.ID != "release/main" {
+		t.Fatalf("namespace = %+v, want release/main", env.Data.Namespace)
+	}
+	if env.Data.GoalBinding.Mode != "native_goal_pending" || env.Data.GoalBinding.Source != "orchestrator-prompt" {
+		t.Fatalf("goal binding = %+v", env.Data.GoalBinding)
+	}
+	for _, dispatch := range env.Data.Dispatches {
+		for _, want := range []string{"--profile release", "--session main"} {
+			if !strings.Contains(dispatch.Command, want) {
+				t.Fatalf("dispatch command missing %q: %s", want, dispatch.Command)
+			}
+		}
+	}
+	for _, mutation := range env.Data.ApplyableMutations {
+		switch mutation.Title {
+		case "write brief", "add t1", "add t2", "add t3":
+			if !strings.Contains(mutation.Command, "--profile release") {
+				t.Fatalf("%s mutation dropped profile: %s", mutation.Title, mutation.Command)
+			}
+		}
+	}
+}
+
+func TestGoalDraftCustomLeadCarriesThroughPlan(t *testing.T) {
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoalDraft([]string{
+			"--goal", "ship release through visible lead",
+			"--session", "v2-9-0-release",
+			"--profile", "codex-v2-9-0",
+			"--lead", "release-lead",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("goal draft: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[goalDraftData](t, stdout)
+	if env.Data.Lead != "release-lead" {
+		t.Fatalf("lead = %q, want release-lead", env.Data.Lead)
+	}
+	if env.Data.Roster[0].Role != "release-lead" {
+		t.Fatalf("first roster member = %+v, want release-lead lead", env.Data.Roster[0])
+	}
+	for _, mutation := range env.Data.ApplyableMutations {
+		if mutation.Title == "initialize profile" && !strings.Contains(mutation.Command, "--lead release-lead") {
+			t.Fatalf("team init mutation dropped lead: %s", mutation.Command)
+		}
+	}
+	for _, dispatch := range env.Data.Dispatches {
+		if !strings.Contains(dispatch.Thread, "release-lead") || !strings.Contains(dispatch.Body, "release-lead over AMQ") {
+			t.Fatalf("dispatch does not route reports to lead: %+v", dispatch)
+		}
+	}
+	if !strings.Contains(env.Data.OrchestratorPrompt, "--lead release-lead") {
+		t.Fatalf("orchestrator prompt dropped custom lead: %s", env.Data.OrchestratorPrompt)
 	}
 }
 
@@ -150,14 +226,25 @@ func TestGoalDraftJSONIncludesVisibleLaunchMutation(t *testing.T) {
 	env := decodeJSONEnvelope[goalDraftData](t, stdout)
 	found := false
 	for _, mutation := range env.Data.ApplyableMutations {
-		if mutation.Title != "launch visible team" {
+		if mutation.Title != "launch visible lead" {
 			continue
 		}
 		found = true
-		if !strings.Contains(mutation.Command, "amq-squad up visible-setup --profile codex-visible-setup --visibility sibling-tabs") {
+		for _, want := range []string{
+			"amq-squad agent up codex",
+			"--session visible-setup",
+			"--root .agent-mail/codex-visible-setup/visible-setup",
+			"--team-profile codex-visible-setup",
+			"-- '/goal --goal",
+		} {
+			if !strings.Contains(mutation.Command, want) {
+				t.Fatalf("visible launch command missing %q: %q", want, mutation.Command)
+			}
+		}
+		if !strings.Contains(mutation.Command, "ship visible setup handoff") {
 			t.Fatalf("visible launch command = %q", mutation.Command)
 		}
-		if !strings.Contains(mutation.Reason, "sibling tmux windows") {
+		if !strings.Contains(mutation.Reason, "native /goal prompt") {
 			t.Fatalf("visible launch reason = %q", mutation.Reason)
 		}
 	}
@@ -172,9 +259,9 @@ func TestGoalDraftVisibilityOverrides(t *testing.T) {
 		wantTitle  string
 		wantCmd    string
 	}{
-		{"detached", "launch detached team", "amq-squad up topo --profile topo --visibility detached"},
-		{"current", "launch in current window", "amq-squad up topo --profile topo --visibility current"},
-		{"plan", "preview visible launch", "amq-squad up topo --profile topo --visibility sibling-tabs --dry-run"},
+		{"detached", "launch detached visible lead", "-- '/goal --goal"},
+		{"current", "launch visible lead in current pane", "-- '/goal --goal"},
+		{"plan", "preview visible lead launch", "--dry-run"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.visibility, func(t *testing.T) {
@@ -197,8 +284,8 @@ func TestGoalDraftVisibilityOverrides(t *testing.T) {
 			for _, mutation := range env.Data.ApplyableMutations {
 				if mutation.Title == tc.wantTitle {
 					found = true
-					if mutation.Command != tc.wantCmd {
-						t.Fatalf("command = %q, want %q", mutation.Command, tc.wantCmd)
+					if !strings.Contains(mutation.Command, tc.wantCmd) || !strings.Contains(mutation.Command, "amq-squad agent up codex") {
+						t.Fatalf("command = %q, want containing %q", mutation.Command, tc.wantCmd)
 					}
 				}
 			}

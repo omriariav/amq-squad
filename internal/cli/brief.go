@@ -7,30 +7,36 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 )
 
 // briefEnvelopeData is the kind="brief" payload.
 type briefEnvelopeData struct {
-	ProjectDir string `json:"project_dir"`
-	Session    string `json:"session"`
-	Path       string `json:"path"`
-	Kind       string `json:"kind"`
-	Exists     bool   `json:"exists"`
-	Content    string `json:"content,omitempty"`
+	ProjectDir string             `json:"project_dir"`
+	Session    string             `json:"session"`
+	Profile    string             `json:"profile,omitempty"`
+	Namespace  squadnamespace.Ref `json:"namespace"`
+	Path       string             `json:"path"`
+	Kind       string             `json:"kind"`
+	Exists     bool               `json:"exists"`
+	Content    string             `json:"content,omitempty"`
 }
 
 // briefSeedEnvelopeData is the kind="brief_seed" payload.
 type briefSeedEnvelopeData struct {
-	ProjectDir  string `json:"project_dir"`
-	Session     string `json:"session"`
-	Path        string `json:"path"`
-	Source      string `json:"source"`
-	GeneratedAt string `json:"generated_at"`
-	Generator   string `json:"generator"`
-	Force       bool   `json:"force,omitempty"`
-	DryRun      bool   `json:"dry_run,omitempty"`
-	Written     bool   `json:"written,omitempty"`
-	Content     string `json:"content"`
+	ProjectDir  string             `json:"project_dir"`
+	Session     string             `json:"session"`
+	Profile     string             `json:"profile,omitempty"`
+	Namespace   squadnamespace.Ref `json:"namespace"`
+	Path        string             `json:"path"`
+	Source      string             `json:"source"`
+	GeneratedAt string             `json:"generated_at"`
+	Generator   string             `json:"generator"`
+	Force       bool               `json:"force,omitempty"`
+	DryRun      bool               `json:"dry_run,omitempty"`
+	Written     bool               `json:"written,omitempty"`
+	Content     string             `json:"content"`
 }
 
 func runBrief(args []string) error {
@@ -43,17 +49,18 @@ func runBrief(args []string) error {
 	fs := flag.NewFlagSet("brief", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name")
+	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned brief envelope instead of the human report")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad brief - print a workstream brief
 
 Usage:
-  amq-squad brief --session NAME [--project DIR] [--json]
-  amq-squad brief seed --session NAME --seed-from REF [--project DIR] [--force] [--dry-run] [--json]
-  amq-squad brief decision --session NAME --title TEXT --body TEXT [--project DIR]
+  amq-squad brief --session NAME [--project DIR] [--profile P] [--json]
+  amq-squad brief seed --session NAME --seed-from REF [--project DIR] [--profile P] [--force] [--dry-run] [--json]
+  amq-squad brief decision --session NAME --title TEXT --body TEXT [--project DIR] [--profile P]
 
-Reads .amq-squad/briefs/<session>.md from the selected team-home and reports
-whether the brief is missing, still the generated stub, or filled in.
+Reads the selected namespace's brief from the team-home and reports whether the
+brief is missing, still the generated stub, or filled in.
 
 Examples:
   amq-squad brief --session issue-96
@@ -80,7 +87,11 @@ Examples:
 	if err != nil {
 		return err
 	}
-	data, err := readBriefData(projectDir, *sessionFlag)
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
+	data, err := readBriefData(projectDir, profile, *sessionFlag)
 	if err != nil {
 		return err
 	}
@@ -95,6 +106,7 @@ func runBriefSeed(args []string) error {
 	fs := flag.NewFlagSet("brief seed", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name")
+	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	seedFrom := fs.String("seed-from", "", "brief seed source: file:<path>, issue:<n>, or gh:owner/repo#<n>")
 	force := fs.Bool("force", false, "overwrite an existing brief")
 	dryRun := fs.Bool("dry-run", false, "print the candidate brief without writing it")
@@ -103,7 +115,7 @@ func runBriefSeed(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad brief seed - write a workstream brief from a deterministic source
 
 Usage:
-  amq-squad brief seed --session NAME --seed-from REF [--project DIR] [--force] [--dry-run] [--json]
+  amq-squad brief seed --session NAME --seed-from REF [--project DIR] [--profile P] [--force] [--dry-run] [--json]
 
 Seed sources:
   file:<path>            literal file body
@@ -139,7 +151,11 @@ Examples:
 	if err != nil {
 		return err
 	}
-	data, err := seedBriefData(projectDir, *sessionFlag, *seedFrom, *force, *dryRun)
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
+	data, err := seedBriefData(projectDir, profile, *sessionFlag, *seedFrom, *force, *dryRun)
 	if err != nil {
 		return err
 	}
@@ -150,8 +166,9 @@ Examples:
 	return nil
 }
 
-func readBriefData(projectDir, session string) (briefEnvelopeData, error) {
+func readBriefData(projectDir, profile, session string) (briefEnvelopeData, error) {
 	projectDir = strings.TrimSpace(projectDir)
+	profile = squadnamespace.NormalizeProfile(profile)
 	session = strings.TrimSpace(session)
 	if projectDir == "" {
 		return briefEnvelopeData{}, fmt.Errorf("project dir cannot be empty")
@@ -162,10 +179,12 @@ func readBriefData(projectDir, session string) (briefEnvelopeData, error) {
 	if err := validateWorkstreamName(session); err != nil {
 		return briefEnvelopeData{}, fmt.Errorf("invalid session: %w", err)
 	}
-	path := briefPath(projectDir, session)
+	path := briefPathForProfile(projectDir, profile, session)
 	data := briefEnvelopeData{
 		ProjectDir: projectDir,
 		Session:    session,
+		Profile:    profile,
+		Namespace:  squadnamespace.Resolve(projectDir, profile, session),
 		Path:       path,
 		Kind:       briefKindString(briefNone),
 	}
@@ -176,15 +195,16 @@ func readBriefData(projectDir, session string) (briefEnvelopeData, error) {
 		}
 		return briefEnvelopeData{}, fmt.Errorf("read brief %s: %w", path, err)
 	}
-	_, kind := classifyBrief(projectDir, session)
+	_, kind := classifyBriefForProfile(projectDir, profile, session)
 	data.Kind = briefKindString(kind)
 	data.Exists = true
 	data.Content = string(content)
 	return data, nil
 }
 
-func seedBriefData(projectDir, session, source string, force, dryRun bool) (briefSeedEnvelopeData, error) {
+func seedBriefData(projectDir, profile, session, source string, force, dryRun bool) (briefSeedEnvelopeData, error) {
 	projectDir = strings.TrimSpace(projectDir)
+	profile = squadnamespace.NormalizeProfile(profile)
 	session = strings.TrimSpace(session)
 	source = strings.TrimSpace(source)
 	if projectDir == "" {
@@ -205,10 +225,12 @@ func seedBriefData(projectDir, session, source string, force, dryRun bool) (brie
 	}
 	now := seedNow()
 	content := buildSeedBrief(source, body, now)
-	path := briefPath(projectDir, session)
+	path := briefPathForProfile(projectDir, profile, session)
 	data := briefSeedEnvelopeData{
 		ProjectDir:  projectDir,
 		Session:     session,
+		Profile:     profile,
+		Namespace:   squadnamespace.Resolve(projectDir, profile, session),
 		Path:        path,
 		Source:      source,
 		GeneratedAt: now.UTC().Format(time.RFC3339),
@@ -220,7 +242,7 @@ func seedBriefData(projectDir, session, source string, force, dryRun bool) (brie
 	if dryRun {
 		return data, nil
 	}
-	writtenPath, err := writeSeedBrief(projectDir, session, content, force)
+	writtenPath, err := writeSeedBriefForProfile(projectDir, profile, session, content, force)
 	if err != nil {
 		return briefSeedEnvelopeData{}, err
 	}
@@ -232,7 +254,9 @@ func seedBriefData(projectDir, session, source string, force, dryRun bool) (brie
 func writeBriefReport(out io.Writer, data briefEnvelopeData) {
 	fmt.Fprintln(out, "# amq-squad brief")
 	fmt.Fprintf(out, "# project: %s\n", data.ProjectDir)
+	fmt.Fprintf(out, "# profile: %s\n", data.Profile)
 	fmt.Fprintf(out, "# session: %s\n", data.Session)
+	fmt.Fprintf(out, "# namespace: %s\n", data.Namespace.ID)
 	fmt.Fprintf(out, "# path: %s\n", data.Path)
 	fmt.Fprintf(out, "# kind: %s\n", data.Kind)
 	fmt.Fprintln(out)
@@ -246,7 +270,9 @@ func writeBriefReport(out io.Writer, data briefEnvelopeData) {
 func writeBriefSeedReport(out io.Writer, data briefSeedEnvelopeData) {
 	fmt.Fprintln(out, "# amq-squad brief seed")
 	fmt.Fprintf(out, "# project: %s\n", data.ProjectDir)
+	fmt.Fprintf(out, "# profile: %s\n", data.Profile)
 	fmt.Fprintf(out, "# session: %s\n", data.Session)
+	fmt.Fprintf(out, "# namespace: %s\n", data.Namespace.ID)
 	fmt.Fprintf(out, "# path: %s\n", data.Path)
 	fmt.Fprintf(out, "# source: %s\n", data.Source)
 	fmt.Fprintf(out, "# generated_at: %s\n", data.GeneratedAt)
@@ -264,16 +290,18 @@ func runBriefDecision(args []string) error {
 	fs := flag.NewFlagSet("brief decision", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name")
+	profileFlag := fs.String("profile", "", "team profile namespace (accepted for namespace consistency)")
 	titleFlag := fs.String("title", "", "short label for the decision entry heading (optional)")
 	bodyFlag := fs.String("body", "", "decision prose to append")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad brief decision - append a dated decision entry to the workstream brief
 
 Usage:
-  amq-squad brief decision --session NAME --body TEXT [--title TEXT] [--project DIR]
+  amq-squad brief decision --session NAME --body TEXT [--title TEXT] [--project DIR] [--profile P]
 
-Atomically appends a dated "## Decisions" entry to .amq-squad/briefs/<session>.md.
-The section is created if it does not already exist. Entries are never rewritten.
+Atomically appends a dated "## Decisions" entry to the selected namespace's
+brief. The section is created if it does not already exist. Entries are never
+rewritten.
 
 Format appended:
   ### YYYY-MM-DD [— title]
@@ -290,6 +318,10 @@ Examples:
 	if fs.NArg() != 0 {
 		return usageErrorf("brief decision takes no positional arguments; use --session NAME --body TEXT")
 	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
 	if !flagWasSet(fs, "session") || strings.TrimSpace(*sessionFlag) == "" {
 		return usageErrorf("brief decision requires --session NAME")
 	}
@@ -304,7 +336,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	path, err := appendBriefDecision(projectDir, *sessionFlag, *titleFlag, *bodyFlag, decisionNow())
+	path, err := appendBriefDecisionForProfile(projectDir, profile, *sessionFlag, *titleFlag, *bodyFlag, decisionNow())
 	if err != nil {
 		return err
 	}

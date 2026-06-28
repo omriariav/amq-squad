@@ -11,6 +11,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -68,11 +70,13 @@ type statusEnvelopeData struct {
 	TeamHome     string                `json:"team_home"`
 	Workstream   string                `json:"workstream"`
 	Profile      string                `json:"profile,omitempty"`
+	Namespace    squadnamespace.Ref    `json:"namespace"`
 	Operator     team.OperatorView     `json:"operator"`
 	Capabilities team.Capabilities     `json:"capabilities"`
 	Orchestrated bool                  `json:"orchestrated,omitempty"`
 	Lead         string                `json:"lead,omitempty"`
 	LeadHandle   string                `json:"lead_handle,omitempty"`
+	GoalBinding  goalBindingData       `json:"goal_binding"`
 	Autonomous   team.AutonomousStatus `json:"autonomous"`
 	Topology     *statusTopology       `json:"topology,omitempty"`
 	Records      []statusRecord        `json:"records"`
@@ -84,19 +88,21 @@ type statusEnvelopeData struct {
 }
 
 type statusRecord struct {
-	Role        string        `json:"role"`
-	Handle      string        `json:"handle"`
-	Binary      string        `json:"binary"`
-	Session     string        `json:"session"`
-	CWD         string        `json:"cwd"`
-	SpawnOrigin string        `json:"spawn_origin,omitempty"`
-	SpawnDepth  int           `json:"spawn_depth,omitempty"`
-	Root        string        `json:"root,omitempty"`
-	AgentDir    string        `json:"agent_dir,omitempty"`
-	Status      statusState   `json:"status"`
-	RecordState string        `json:"record_state"`
-	Detail      string        `json:"detail,omitempty"`
-	Signals     statusSignals `json:"signals"`
+	Role        string             `json:"role"`
+	Handle      string             `json:"handle"`
+	Binary      string             `json:"binary"`
+	Session     string             `json:"session"`
+	Namespace   squadnamespace.Ref `json:"namespace"`
+	CWD         string             `json:"cwd"`
+	SpawnOrigin string             `json:"spawn_origin,omitempty"`
+	SpawnDepth  int                `json:"spawn_depth,omitempty"`
+	Root        string             `json:"root,omitempty"`
+	AgentDir    string             `json:"agent_dir,omitempty"`
+	Status      statusState        `json:"status"`
+	RecordState string             `json:"record_state"`
+	Detail      string             `json:"detail,omitempty"`
+	Signals     statusSignals      `json:"signals"`
+	goalBinding *launch.GoalBinding
 	// Tmux is the persisted tmux runtime identity (exact pane/window ids) plus
 	// a computed pane_alive, so clients can target follow-up control. Omitted
 	// when the agent's launch record carried no tmux identity.
@@ -226,10 +232,12 @@ func executeStatus(s statusExecution) error {
 		return err
 	}
 
-	rows := buildStatusRows(t, workstream, s.Probe)
+	rows := buildStatusRows(t, s.Profile, workstream, s.Probe)
 	if s.JSON {
+		ns := squadnamespace.Resolve(t.Project, s.Profile, workstream)
 		// Attach the stable action commands a client can render/copy per member.
 		for i := range rows {
+			rows[i].Namespace = ns
 			alive := rows[i].Tmux != nil && rows[i].Tmux.PaneAlive
 			rows[i].Actions = memberActions(t.Project, s.Profile, workstream, rows[i].Role, alive)
 		}
@@ -238,11 +246,13 @@ func executeStatus(s statusExecution) error {
 			TeamHome:     t.Project,
 			Workstream:   workstream,
 			Profile:      s.Profile,
+			Namespace:    ns,
 			Operator:     team.EffectiveOperator(t),
 			Capabilities: team.EffectiveCapabilities(t),
 			Orchestrated: ctx.Orchestrated,
 			Lead:         ctx.Lead,
 			LeadHandle:   ctx.LeadHandle,
+			GoalBinding:  goalBindingForStatus(ns, ctx, rows),
 			Autonomous:   team.EffectiveAutonomousStatus(t),
 			Topology:     statusTopologyForRows(rows, ctx.Orchestrated),
 			Records:      rows,
@@ -263,7 +273,52 @@ func executeStatus(s statusExecution) error {
 	return w.Flush()
 }
 
-func buildStatusRows(t team.Team, workstream string, probe duplicateLaunchProbe) []statusRecord {
+func goalBindingForNamespace(ns squadnamespace.Ref) goalBindingData {
+	binding := goalBindingData{
+		Mode:       "amq_task_brief",
+		NativeGoal: false,
+		Verified:   false,
+		Source:     "amq-task-brief",
+		Detail:     "This runtime does not set a native /goal value; the visible lead is bound by the durable AMQ task, active brief, and task store for the namespace.",
+	}
+	if ns.Paths.Brief != "" {
+		binding.BriefPath = ns.Paths.Brief
+	}
+	if ns.Paths.Tasks != "" {
+		binding.TasksPath = ns.Paths.Tasks
+	}
+	return binding
+}
+
+func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows []statusRecord) goalBindingData {
+	binding := goalBindingForNamespace(ns)
+	if !ctx.Orchestrated || strings.TrimSpace(ctx.Lead) == "" {
+		return binding
+	}
+	for _, row := range rows {
+		if row.Role != ctx.Lead || row.goalBinding == nil || !row.goalBinding.NativeGoal {
+			continue
+		}
+		if row.Status != statusStateLive && row.Status != statusStateWakeLive {
+			continue
+		}
+		binding.Mode = "native_goal"
+		binding.NativeGoal = true
+		binding.Verified = true
+		binding.Source = "launch-record"
+		binding.NativeSource = row.goalBinding.Source
+		binding.Command = row.goalBinding.Command
+		if detail := strings.TrimSpace(row.goalBinding.Detail); detail != "" {
+			binding.Detail = detail
+		} else {
+			binding.Detail = "configured visible lead launch record carries native /goal binding evidence"
+		}
+		return binding
+	}
+	return binding
+}
+
+func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLaunchProbe) []statusRecord {
 	// Share one tmux pane snapshot across this whole command: live-replacement
 	// detection inside classifyMemberStatus and pane_alive resolution below
 	// both read statusPaneLister, so memoize it for the command's duration.
@@ -274,7 +329,7 @@ func buildStatusRows(t team.Team, workstream string, probe duplicateLaunchProbe)
 	members := orderedTeamMembers(t.Members)
 	rows := make([]statusRecord, 0, len(members))
 	for _, m := range members {
-		rows = append(rows, classifyMemberStatus(t, m, workstream, probe))
+		rows = append(rows, classifyMemberStatus(t, profile, m, workstream, probe))
 	}
 	// #95: adopt a live tmux pane for live agents with no recorded tmux identity
 	// (launched outside amq-squad's tmux backend, e.g. a raw `tmux new-window`),
@@ -325,7 +380,7 @@ func firstStatusRoot(rows []statusRecord) string {
 	return ""
 }
 
-func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe duplicateLaunchProbe) statusRecord {
+func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe) statusRecord {
 	rec := statusRecord{
 		Role:        m.Role,
 		Handle:      m.Handle,
@@ -335,7 +390,7 @@ func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe d
 		SpawnOrigin: m.SpawnOrigin,
 		SpawnDepth:  m.SpawnDepth,
 	}
-	env, err := resolveAMQEnvInDir(rec.CWD, "", workstream, m.Handle)
+	env, err := resolveAMQEnvForTeamProfile(rec.CWD, profile, workstream, m.Handle)
 	if err != nil {
 		rec.Status = statusStateMissing
 		rec.RecordState = "missing"
@@ -354,9 +409,10 @@ func classifyMemberStatus(t team.Team, m team.Member, workstream string, probe d
 	// checks and returns the verdict, signals, detail, status state, and the
 	// persisted tmux identity. classifyMemberStatus then just adopts them; the
 	// verdict->statusState mapping lives in the classifier (Status field).
-	live := classifyAgentLiveness(rec.AgentDir, root, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe)
+	live := classifyAgentLiveness(rec.AgentDir, root, profile, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe)
 	rec.Tmux = tmuxRuntimeFromInfo(live.Tmux)
 	if live.LaunchFound {
+		rec.goalBinding = live.LaunchRecord.GoalBinding
 		if origin := strings.TrimSpace(live.LaunchRecord.SpawnOrigin); origin != "" {
 			rec.SpawnOrigin = origin
 		}

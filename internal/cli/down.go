@@ -240,7 +240,7 @@ func executeDown(d downExecution) error {
 
 	reports := make([]downReport, 0, len(targets))
 	for _, m := range targets {
-		reports = append(reports, terminateMember(t, m, workstream, d.Terminator, d.Probe))
+		reports = append(reports, terminateMember(t, d.Profile, m, workstream, d.Terminator, d.Probe))
 	}
 	if d.ClosePanes {
 		closeDownedPanes(reports, workstream)
@@ -297,10 +297,10 @@ func selectDownMembers(t team.Team, role string, all bool) ([]team.Member, error
 	return nil, fmt.Errorf("unknown role %q; team has: %s", role, strings.Join(names, ", "))
 }
 
-func terminateMember(t team.Team, m team.Member, workstream string, term processTerminator, probe duplicateLaunchProbe) downReport {
+func terminateMember(t team.Team, profile string, m team.Member, workstream string, term processTerminator, probe duplicateLaunchProbe) downReport {
 	report := downReport{Role: m.Role, Handle: m.Handle, Binary: m.Binary}
 	cwd := m.EffectiveCWD(t.Project)
-	env, err := resolveAMQEnvInDir(cwd, "", workstream, m.Handle)
+	env, err := resolveAMQEnvForTeamProfile(cwd, profile, workstream, m.Handle)
 	if err != nil {
 		report.Status = downStatusNotLive
 		report.Detail = "amq env unresolved: " + err.Error()

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -47,7 +48,9 @@ type notifyEnvelopeData struct {
 
 type operatorAttention struct {
 	Key         string           `json:"key"`
+	Profile     string           `json:"profile"`
 	Session     string           `json:"session"`
+	NamespaceID string           `json:"namespace_id"`
 	Thread      string           `json:"thread"`
 	LatestID    string           `json:"latest_id"`
 	From        string           `json:"from,omitempty"`
@@ -179,7 +182,7 @@ func executeNotify(n notifyExecution) error {
 	if err != nil {
 		return fmt.Errorf("scan AMQ base root: %w", err)
 	}
-	items := collectOperatorAttention(n.ProjectDir, snap, operator.Handle, strings.TrimSpace(n.Session), now())
+	items := collectOperatorAttention(n.ProjectDir, profile, snap, operator.Handle, strings.TrimSpace(n.Session), now())
 	statePath := strings.TrimSpace(n.StatePath)
 	if statePath == "" {
 		statePath = defaultNotifyStatePath(n.ProjectDir)
@@ -211,9 +214,13 @@ func executeNotify(n notifyExecution) error {
 	return renderNotify(out, data)
 }
 
-func collectOperatorAttention(projectDir string, snap state.Snapshot, operatorHandle, onlySession string, now time.Time) []operatorAttention {
+func collectOperatorAttention(projectDir, profile string, snap state.Snapshot, operatorHandle, onlySession string, now time.Time) []operatorAttention {
 	var out []operatorAttention
+	profile = squadnamespace.NormalizeProfile(profile)
 	for _, sess := range snap.Sessions {
+		if !squadnamespace.ProfilesEqual(profile, sess.TeamProfile) {
+			continue
+		}
 		if onlySession != "" && sess.Name != onlySession {
 			continue
 		}
@@ -224,13 +231,18 @@ func collectOperatorAttention(projectDir string, snap state.Snapshot, operatorHa
 			if !notifyStructuralOperatorAttention(th, operatorHandle) {
 				continue
 			}
+			if !notifyThreadMatchesSessionAgents(th, operatorHandle, sess.Agents) {
+				continue
+			}
 			age := now.Sub(th.LastEventAt)
 			if age < 0 {
 				age = 0
 			}
 			item := operatorAttention{
-				Key:         notifyKey(sess.Name, th.ID),
+				Key:         notifyKey(profile, sess.Name, th.ID),
+				Profile:     profile,
 				Session:     sess.Name,
+				NamespaceID: squadnamespace.ID(profile, sess.Name),
 				Thread:      th.ID,
 				LatestID:    th.LatestID,
 				Subject:     th.Subject,
@@ -238,7 +250,7 @@ func collectOperatorAttention(projectDir string, snap state.Snapshot, operatorHa
 				Reason:      th.AttnReason,
 				Age:         roundDuration(age).String(),
 				LastEventAt: th.LastEventAt,
-				Inspect:     notifyInspectCommand(projectDir, sess.Name, th.ID),
+				Inspect:     notifyInspectCommand(projectDir, profile, sess.Name, th.ID),
 				Respond:     notifyRespondCommand(operatorHandle, firstNonOperatorParticipant(th, operatorHandle), th.ID, th.AttnReason),
 			}
 			if len(th.Participants) > 0 {
@@ -278,6 +290,25 @@ func notifyStructuralOperatorAttention(th state.ThreadSummary, operatorHandle st
 	}
 }
 
+func notifyThreadMatchesSessionAgents(th state.ThreadSummary, operatorHandle string, agents []state.Agent) bool {
+	handles := map[string]bool{}
+	for _, a := range agents {
+		if h := strings.TrimSpace(a.Handle); h != "" {
+			handles[h] = true
+		}
+	}
+	for _, p := range th.Participants {
+		p = strings.TrimSpace(p)
+		if p == "" || p == operatorHandle {
+			continue
+		}
+		if handles[p] {
+			return true
+		}
+	}
+	return false
+}
+
 func notifyUnreadBy(th state.ThreadSummary, handle string) bool {
 	for _, unread := range th.UnreadBy {
 		if unread == handle {
@@ -289,6 +320,9 @@ func notifyUnreadBy(th state.ThreadSummary, handle string) bool {
 
 func selectNotifications(items []operatorAttention, prior notifyStateFile, renotifyAfter time.Duration, now time.Time) ([]operatorAttention, int, notifyStateFile) {
 	next := notifyStateFile{Schema: 1, Items: map[string]notifyStateRecord{}}
+	for key, rec := range prior.Items {
+		next.Items[key] = rec
+	}
 	var selected []operatorAttention
 	suppressed := 0
 	for _, item := range items {
@@ -380,12 +414,17 @@ func writeNotifyState(path string, st notifyStateFile) error {
 	return nil
 }
 
-func notifyKey(session, thread string) string {
-	return session + "\x00" + thread
+func notifyKey(profile, session, thread string) string {
+	return squadnamespace.ID(profile, session) + "\x00" + thread
 }
 
-func notifyInspectCommand(projectDir, session, thread string) string {
-	return fmt.Sprintf("amq-squad thread --project %s --session %s --id %s --include-body", notifyShellQuote(projectDir), notifyShellQuote(session), notifyShellQuote(thread))
+func notifyInspectCommand(projectDir, profile, session, thread string) string {
+	profile = squadnamespace.NormalizeProfile(profile)
+	profileArg := ""
+	if profile != team.DefaultProfile {
+		profileArg = " --profile " + notifyShellQuote(profile)
+	}
+	return fmt.Sprintf("amq-squad thread --project %s%s --session %s --id %s --include-body", notifyShellQuote(projectDir), profileArg, notifyShellQuote(session), notifyShellQuote(thread))
 }
 
 func notifyRespondCommand(operatorHandle, to, thread string, reason state.AttnReason) string {

@@ -630,17 +630,24 @@ if [ "$1" != "env" ]; then
   exit 1
 fi
 session=""
+root_arg=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --session)
       shift
       session="$1"
       ;;
+    --root)
+      shift
+      root_arg="$1"
+      ;;
   esac
   shift
 done
 root="$AMQ_FAKE_BASE"
-if [ "$session" != "" ]; then
+if [ "$root_arg" != "" ]; then
+  root="$root_arg"
+elif [ "$session" != "" ]; then
   root="$root/$session"
 fi
 printf '{"root":"%s"}\n' "$root"

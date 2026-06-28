@@ -12,6 +12,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/catalog"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/role"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -206,13 +207,15 @@ Examples:
 		return fmt.Errorf("getwd: %w", err)
 	}
 
+	teamProfileValue := strings.TrimSpace(*teamProfile)
+
 	// Resolve the AMQ env via the amq CLI so launch.json and the actual
 	// mailbox agree. resolveAMQEnv respects .amqrc and AMQ's validated
 	// sender identity exactly as coop exec will. If both --session and
 	// --root were passed, the boundary policy in amq_env.go drops --root
 	// (and warns), since amq treats --session NAME as shorthand for
 	// --root .agent-mail/<name> and rejects the pair.
-	env, err := resolveAMQEnv(*rootFlag, *session, handle)
+	env, err := resolveAMQEnvForLaunch(cwd, *rootFlag, *session, teamProfileValue, handle)
 	if err != nil {
 		return fmt.Errorf("resolve amq env: %w", err)
 	}
@@ -245,12 +248,13 @@ Examples:
 		SpawnOrigin:      strings.TrimSpace(*spawnOrigin),
 		SpawnDepth:       *spawnDepth,
 		NoRequireWake:    *noRequireWake,
+		GoalBinding:      nativeGoalBindingFromArgs(childArgs),
 		WakeInjectVia:    wakeInjectViaValue,
 		WakeInjectArgs:   wakeInjectArgValues,
 		AgentPID:         os.Getpid(),
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
-		TeamProfile:      strings.TrimSpace(*teamProfile),
+		TeamProfile:      teamProfileValue,
 	}
 
 	// Capture exact tmux identity (session/window/pane ids) when launched
@@ -286,7 +290,9 @@ Examples:
 	// fires once at env resolution time, so this branch stays silent to
 	// avoid duplicating the message.
 	coopArgs := []string{"coop", "exec"}
-	if *session != "" {
+	if launchUsesExplicitRoot(*rootFlag, *session, teamProfileValue) {
+		coopArgs = append(coopArgs, "--root", *rootFlag)
+	} else if *session != "" {
 		coopArgs = append(coopArgs, "--session", *session)
 	} else if *rootFlag != "" {
 		coopArgs = append(coopArgs, "--root", *rootFlag)
@@ -369,7 +375,7 @@ Examples:
 	// applies the same skip rule bootstrap uses (explicit --team-home or
 	// cwd-with-team-rules-md only) so the two sources stay aligned.
 	if briefHome := resolveBriefHome(*teamHome, cwd); briefHome != "" {
-		if _, _, err := ensureBriefStub(briefHome, rec.Session); err != nil {
+		if _, _, err := ensureBriefStubForProfile(briefHome, rec.TeamProfile, rec.Session); err != nil {
 			return fmt.Errorf("ensure brief: %w", err)
 		}
 	}
@@ -436,6 +442,42 @@ func ensureLauncherExecutable(path string) error {
 	}
 	if info.Mode()&0o111 == 0 {
 		return fmt.Errorf("launcher %q is not executable (chmod +x it)", path)
+	}
+	return nil
+}
+
+func resolveAMQEnvForLaunch(cwd, rootFlag, session, profile, handle string) (amqEnv, error) {
+	if launchUsesExplicitRoot(rootFlag, session, profile) {
+		env, err := resolveAMQEnvInDir(cwd, rootFlag, "", handle)
+		if err != nil {
+			return amqEnv{}, err
+		}
+		if strings.TrimSpace(env.SessionName) == "" {
+			env.SessionName = strings.TrimSpace(session)
+		}
+		return env, nil
+	}
+	return resolveAMQEnvInDir(cwd, rootFlag, session, handle)
+}
+
+func launchUsesExplicitRoot(rootFlag, session, profile string) bool {
+	return strings.TrimSpace(rootFlag) != "" &&
+		strings.TrimSpace(session) != "" &&
+		squadnamespace.NormalizeProfile(profile) != team.DefaultProfile
+}
+
+func nativeGoalBindingFromArgs(args []string) *launch.GoalBinding {
+	for _, arg := range args {
+		cmd := strings.TrimSpace(arg)
+		if cmd == "/goal" || strings.HasPrefix(cmd, "/goal ") {
+			return &launch.GoalBinding{
+				Mode:       "native_goal",
+				NativeGoal: true,
+				Source:     "launch-argv",
+				Command:    cmd,
+				Detail:     "launch argv included a native /goal command for the visible lead",
+			}
+		}
 	}
 	return nil
 }
