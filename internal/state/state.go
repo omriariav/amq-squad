@@ -130,6 +130,8 @@ type TmuxRuntime struct {
 // per-agent mailboxes; PR1's discovery + liveness fields are unchanged.
 type Session struct {
 	Name         string // workstream/session name; "" for the rootless layout
+	TeamProfile  string // launch team profile; empty means the default profile
+	NamespaceID  string // canonical profile/session identity for clients
 	Root         string // the session root directory (base root or base root/<name>)
 	Agents       []Agent
 	Coordination Coordination // derived threads/edges/timeline/triage for this session

@@ -137,6 +137,39 @@ func TestRunTeamResumeAllFreshWhenNoRecords(t *testing.T) {
 	}
 }
 
+func TestPlanMemberResumeIsolatesForeignProfileLaunchRecord(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	writeMemberLaunchRecord(t, base, "main", "cto", launch.Record{
+		CWD:         dir,
+		Binary:      "codex",
+		Role:        "cto",
+		AgentPID:    5555,
+		TeamProfile: "product",
+		StartedAt:   time.Now(),
+	})
+	probe := duplicateLaunchProbe{
+		PIDAlive:     func(pid int) bool { return pid == 5555 },
+		ProcessMatch: func(pid int, _ func(args string) bool) bool { return pid == 5555 },
+		Now:          time.Now,
+	}
+	member := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}
+	plan, err := planMemberResume(memberPlanInput{
+		Member:     member,
+		Team:       team.Team{Project: dir, Members: []team.Member{member}},
+		Workstream: "main",
+		Profile:    "release",
+		SquadBin:   "amq-squad",
+		Probe:      probe,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Action != resumeFresh || !strings.Contains(plan.Command, ".agent-mail/release/main") {
+		t.Fatalf("foreign-profile launch should be isolated and plan fresh in release namespace, got %+v", plan)
+	}
+}
+
 func TestRunTeamResumeProjectTargetsOtherDir(t *testing.T) {
 	project := t.TempDir()
 	other := t.TempDir()

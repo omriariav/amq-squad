@@ -10,22 +10,25 @@ import (
 	"text/tabwriter"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
 const defaultThreadsLimit = 20
 
 type threadsEnvelopeData struct {
-	ProjectDir    string            `json:"project_dir"`
-	BaseRoot      string            `json:"base_root"`
-	Session       string            `json:"session"`
-	Root          string            `json:"root"`
-	ThreadCount   int               `json:"thread_count"`
-	ReturnedCount int               `json:"returned_count"`
-	Limit         int               `json:"limit,omitempty"`
-	Threads       []threadRow       `json:"threads"`
-	Warnings      []threadWarning   `json:"warnings,omitempty"`
-	Rollup        threadsRollupData `json:"rollup"`
+	ProjectDir    string             `json:"project_dir"`
+	BaseRoot      string             `json:"base_root"`
+	Profile       string             `json:"profile,omitempty"`
+	Namespace     squadnamespace.Ref `json:"namespace"`
+	Session       string             `json:"session"`
+	Root          string             `json:"root"`
+	ThreadCount   int                `json:"thread_count"`
+	ReturnedCount int                `json:"returned_count"`
+	Limit         int                `json:"limit,omitempty"`
+	Threads       []threadRow        `json:"threads"`
+	Warnings      []threadWarning    `json:"warnings,omitempty"`
+	Rollup        threadsRollupData  `json:"rollup"`
 }
 
 type threadRow struct {
@@ -74,6 +77,7 @@ type threadsRollupData struct {
 
 type threadsExecution struct {
 	ProjectDir      string
+	Profile         string
 	Session         string
 	Limit           int
 	BaseRoot        string
@@ -87,6 +91,7 @@ type threadsExecution struct {
 func runThreads(args []string) error {
 	fs := flag.NewFlagSet("threads", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name to inspect")
 	limitFlag := fs.Int("limit", defaultThreadsLimit, "maximum thread rows to show (0 = all)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned threads envelope instead of the human table")
@@ -94,7 +99,7 @@ func runThreads(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad threads - list derived AMQ thread summaries for one session
 
 Usage:
-  amq-squad threads --session NAME [--project DIR] [--limit N] [--json]
+  amq-squad threads --session NAME [--project DIR] [--profile P] [--limit N] [--json]
 
 Reads the existing amq-squad snapshot model and prints one collapsed row per
 thread in the selected workstream. This is read-only: it scans mailboxes and
@@ -102,7 +107,7 @@ does not move unread mail.
 
 Examples:
   amq-squad threads --session issue-96
-  amq-squad threads --project ~/Code/app --session issue-96 --limit 50
+  amq-squad threads --project ~/Code/app --profile review --session issue-96 --limit 50
   amq-squad threads --session issue-96 --json
 `)
 	}
@@ -123,8 +128,13 @@ Examples:
 	if err != nil {
 		return err
 	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
 	return executeThreads(threadsExecution{
 		ProjectDir: projectDir,
+		Profile:    profile,
 		Session:    *sessionFlag,
 		Limit:      *limitFlag,
 		Out:        os.Stdout,
@@ -148,6 +158,7 @@ func executeThreads(s threadsExecution) error {
 	if s.Limit < 0 {
 		return usageErrorf("--limit must be >= 0")
 	}
+	profile := squadnamespace.NormalizeProfile(s.Profile)
 	resolve := s.ResolveBaseRoot
 	if resolve == nil {
 		resolve = scanBaseRootForProject
@@ -167,9 +178,9 @@ func executeThreads(s threadsExecution) error {
 	if err != nil {
 		return fmt.Errorf("scan AMQ base root: %w", err)
 	}
-	sess, ok := findThreadsSession(snap.Sessions, session)
+	sess, ok := findThreadsSession(snap.Sessions, profile, session)
 	if !ok {
-		return fmt.Errorf("session %q not found under %s", session, baseRoot)
+		return fmt.Errorf("session %q for profile %q not found under %s", session, profile, baseRoot)
 	}
 	rows := threadRows(sess.Coordination.Threads)
 	total := len(rows)
@@ -179,6 +190,8 @@ func executeThreads(s threadsExecution) error {
 	env := threadsEnvelopeData{
 		ProjectDir:    s.ProjectDir,
 		BaseRoot:      snap.BaseRoot,
+		Profile:       profile,
+		Namespace:     squadnamespace.Resolve(s.ProjectDir, profile, sess.Name),
 		Session:       sess.Name,
 		Root:          sess.Root,
 		ThreadCount:   total,
@@ -194,9 +207,10 @@ func executeThreads(s threadsExecution) error {
 	return renderThreadsTable(out, env, now())
 }
 
-func findThreadsSession(sessions []state.Session, name string) (state.Session, bool) {
+func findThreadsSession(sessions []state.Session, profile, name string) (state.Session, bool) {
+	profile = squadnamespace.NormalizeProfile(profile)
 	for _, sess := range sessions {
-		if sess.Name == name {
+		if sess.Name == name && squadnamespace.ProfilesEqual(profile, sess.TeamProfile) {
 			return sess, true
 		}
 	}

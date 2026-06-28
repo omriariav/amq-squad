@@ -109,22 +109,25 @@ func TestBuildDiscoversSessionsAndAgents(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	if len(snap.Sessions) != 2 {
-		t.Fatalf("want 2 sessions, got %d: %+v", len(snap.Sessions), snap.Sessions)
+	if len(snap.Sessions) != 3 {
+		t.Fatalf("want 3 profile/session namespaces, got %d: %+v", len(snap.Sessions), snap.Sessions)
 	}
-	// Sessions are sorted by name: drive-fix before issue-96.
-	if snap.Sessions[0].Name != "drive-fix" || snap.Sessions[1].Name != "issue-96" {
-		t.Fatalf("session order wrong: %q, %q", snap.Sessions[0].Name, snap.Sessions[1].Name)
+	// Sessions are sorted by canonical namespace id: default/drive-fix,
+	// default/issue-96, review/issue-96.
+	if snap.Sessions[0].NamespaceID != "default/drive-fix" || snap.Sessions[1].NamespaceID != "default/issue-96" || snap.Sessions[2].NamespaceID != "review/issue-96" {
+		t.Fatalf("namespace order wrong: %q, %q, %q", snap.Sessions[0].NamespaceID, snap.Sessions[1].NamespaceID, snap.Sessions[2].NamespaceID)
 	}
-	if got := len(snap.Sessions[1].Agents); got != 2 {
-		t.Fatalf("issue-96 want 2 agents, got %d", got)
+	if got := len(snap.Sessions[1].Agents); got != 1 {
+		t.Fatalf("default/issue-96 want 1 agent, got %d", got)
+	}
+	if got := len(snap.Sessions[2].Agents); got != 1 {
+		t.Fatalf("review/issue-96 want 1 agent, got %d", got)
 	}
 	if got := findAgent(t, snap, "cto").TeamProfile; got != "review" {
 		t.Fatalf("TeamProfile = %q, want review", got)
 	}
-	// Agents sorted by role: cto before fullstack.
-	if snap.Sessions[1].Agents[0].Handle != "cto" || snap.Sessions[1].Agents[1].Handle != "fullstack" {
-		t.Fatalf("agent order wrong: %+v", snap.Sessions[1].Agents)
+	if snap.Sessions[1].Agents[0].Handle != "fullstack" || snap.Sessions[2].Agents[0].Handle != "cto" {
+		t.Fatalf("namespace agent grouping wrong: default=%+v review=%+v", snap.Sessions[1].Agents, snap.Sessions[2].Agents)
 	}
 	if snap.BaseRoot != base {
 		t.Fatalf("BaseRoot = %q, want %q", snap.BaseRoot, base)

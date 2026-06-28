@@ -13,9 +13,15 @@ import (
 
 func runThreadExec(t *testing.T, base, projectDir, session, threadID string, jsonOut bool, run func(threadAMQRequest) ([]byte, error)) (string, error) {
 	t.Helper()
+	return runThreadExecProfile(t, base, projectDir, "", session, threadID, jsonOut, run)
+}
+
+func runThreadExecProfile(t *testing.T, base, projectDir, profile, session, threadID string, jsonOut bool, run func(threadAMQRequest) ([]byte, error)) (string, error) {
+	t.Helper()
 	var out bytes.Buffer
 	err := executeThread(threadExecution{
 		ProjectDir:  projectDir,
+		Profile:     profile,
 		Session:     session,
 		Thread:      threadID,
 		IncludeBody: true,
@@ -97,6 +103,23 @@ func TestRunThreadJSONEnvelopeWrapsAMQEntries(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0]["id"] != "m1" || entries[0]["thread"] != "decision/ship" {
 		t.Fatalf("thread entries mismatch: %+v", entries)
+	}
+}
+
+func TestRunThreadProfileSelectsNamespace(t *testing.T) {
+	base, project := seedThreadSession(t)
+	seedAgentRecord(t, base, "issue-96", "reviewer", launch.Record{
+		Binary: "codex", Handle: "reviewer", Role: "reviewer", Session: "issue-96", AgentPID: 222, TeamProfile: "release",
+	})
+	out, err := runThreadExecProfile(t, base, project, "release", "issue-96", "gate/release", true, func(req threadAMQRequest) ([]byte, error) {
+		return []byte(`[{"id":"m1","thread":"gate/release"}]`), nil
+	})
+	if err != nil {
+		t.Fatalf("thread --profile: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[threadEnvelopeData](t, out)
+	if env.Data.Profile != "release" || env.Data.Namespace.ID != "release/issue-96" {
+		t.Fatalf("thread namespace = profile %q ns %+v", env.Data.Profile, env.Data.Namespace)
 	}
 }
 

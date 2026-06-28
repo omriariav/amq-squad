@@ -247,7 +247,7 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	// rejection, model/trust validation failure, or duplicate-live
 	// preflight refusal does not mutate the brief.
 	if opts.SeedBriefContent != "" {
-		if _, err := writeSeedBrief(t.Project, opts.Workstream, opts.SeedBriefContent, opts.SeedBriefForce); err != nil {
+		if _, err := writeSeedBriefForProfile(t.Project, opts.Profile, opts.Workstream, opts.SeedBriefContent, opts.SeedBriefForce); err != nil {
 			return err
 		}
 	}
@@ -255,7 +255,7 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	// opens panes. ensureBriefStub is idempotent and preserves any existing
 	// brief content (including the seed we may have just written), so this
 	// is safe across reruns and parallel member launches.
-	if _, _, err := ensureBriefStub(t.Project, opts.Workstream); err != nil {
+	if _, _, err := ensureBriefStubForProfile(t.Project, opts.Profile, opts.Workstream); err != nil {
 		return fmt.Errorf("ensure brief: %w", err)
 	}
 	if err := backend.Launch(t, opts); err != nil {
@@ -265,20 +265,29 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if len(preflights) > 0 && preflights[0].Root != "" {
 		quietNotice("AM_ROOT: %s\n", preflights[0].Root)
 	}
-	quietNotice("next: amq-squad status --session %s | amq-squad console --session %s | amq-squad stop --all --session %s\n",
-		shellQuote(opts.Workstream), shellQuote(opts.Workstream), shellQuote(opts.Workstream))
+	profileArg := commandProfileArg(opts.Profile)
+	quietNotice("next: amq-squad status%s --session %s | amq-squad console%s --session %s | amq-squad stop%s --all --session %s\n",
+		profileArg, shellQuote(opts.Workstream), profileArg, shellQuote(opts.Workstream), profileArg, shellQuote(opts.Workstream))
 	// Post-launch warn-if-stub nudge: `up` without a brief source auto-stubs
 	// the brief above and asks us to flag it so non-interactive automation
 	// keeps working while still being told to set the goal. Only fire when the
 	// brief on disk is genuinely an untouched stub (a --seed-from authored
 	// brief, or one the operator already edited, classifies as briefReal).
 	if opts.WarnStubBrief {
-		if _, kind := classifyBrief(t.Project, opts.Workstream); kind == briefStub {
+		if _, kind := classifyBriefForProfile(t.Project, opts.Profile, opts.Workstream); kind == briefStub {
 			quietNotice("notice: started %s with a stub brief — edit %s or pass --seed-from to set the goal.\n",
-				opts.Workstream, briefPath(t.Project, opts.Workstream))
+				opts.Workstream, briefPathForProfile(t.Project, opts.Profile, opts.Workstream))
 		}
 	}
 	return nil
+}
+
+func commandProfileArg(profile string) string {
+	profile = strings.TrimSpace(profile)
+	if profile == "" || profile == team.DefaultProfile {
+		return ""
+	}
+	return " --profile " + shellQuote(profile)
 }
 
 // buildTeamPreflights computes the agent-identity tuples team launch would
@@ -290,7 +299,7 @@ func buildTeamPreflights(t team.Team, opts teamLaunchOptions) ([]agentLaunchPref
 	out := make([]agentLaunchPreflight, 0, len(members))
 	for _, m := range members {
 		cwd := m.EffectiveCWD(t.Project)
-		env, err := resolveAMQEnvInDir(cwd, "", opts.Workstream, m.Handle)
+		env, err := resolveAMQEnvForTeamProfile(cwd, opts.Profile, opts.Workstream, m.Handle)
 		if err != nil {
 			return nil, fmt.Errorf("resolve amq env for %s: %w", m.Handle, err)
 		}
@@ -365,7 +374,7 @@ func maybeFilterCurrentExternalLead(t team.Team, workstream, profile, trustMode 
 	}
 	cwd := lead.EffectiveCWD(t.Project)
 	handle := memberHandle(lead)
-	env, err := resolveAMQEnvInDir(cwd, "", workstream, handle)
+	env, err := resolveAMQEnvForTeamProfile(cwd, profile, workstream, handle)
 	if err != nil {
 		if !write {
 			return t, false, nil

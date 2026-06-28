@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -228,6 +229,7 @@ type resumeExecLaunchCheck struct {
 	Workstream string
 	Root       string
 	Binary     string
+	Profile    string
 	Force      bool
 }
 
@@ -470,7 +472,7 @@ func executeResume(r resumeExecution) error {
 	}
 
 	if r.Exec.Enabled {
-		return execResumePlan(t, workstream, plans, r.Exec, r.Force)
+		return execResumePlan(t, r.Profile, workstream, plans, r.Exec, r.Force)
 	}
 
 	style := r.Style
@@ -489,7 +491,7 @@ func executeResume(r resumeExecution) error {
 // requested. The contract matches operator expectation that `resume --exec`
 // is the inverse of `down`: it brings what is down back, leaves what is up
 // alone, and refuses to silently sidestep duplicate-launch protection.
-func execResumePlan(t team.Team, workstream string, plans []resumePlan, exec resumeExecOptions, force bool) error {
+func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan, exec resumeExecOptions, force bool) error {
 	backend, ok := teamLaunchBackends[exec.Terminal]
 	if !ok {
 		return fmt.Errorf("unsupported terminal %q: supported terminals: %s", exec.Terminal, strings.Join(registeredTeamLaunchTerminals(), ", "))
@@ -588,7 +590,7 @@ func execResumePlan(t team.Team, workstream string, plans []resumePlan, exec res
 	// AFTER tmux has split panes. Run the same aggregate check now so a
 	// blocked member aborts cleanly before any backend side effects, and
 	// honor --force-duplicate by stamping it into each plan.
-	checks, err := buildResumeExecLaunchChecks(t, panes, workstream, force)
+	checks, err := buildResumeExecLaunchChecks(t, panes, profile, workstream, force)
 	if err != nil {
 		return err
 	}
@@ -613,15 +615,15 @@ func execResumePlan(t team.Team, workstream string, plans []resumePlan, exec res
 // buildResumeExecPreflights resolves the AMQ identity for each runnable
 // pane and constructs an agentLaunchPreflight tuple that preflightTeam can
 // use to refuse a blocked roster before tmux opens any pane.
-func buildResumeExecPreflights(t team.Team, panes []teamLaunchPane, workstream string, force bool) ([]agentLaunchPreflight, error) {
-	checks, err := buildResumeExecLaunchChecks(t, panes, workstream, force)
+func buildResumeExecPreflights(t team.Team, panes []teamLaunchPane, profile, workstream string, force bool) ([]agentLaunchPreflight, error) {
+	checks, err := buildResumeExecLaunchChecks(t, panes, profile, workstream, force)
 	if err != nil {
 		return nil, err
 	}
 	return resumeExecLaunchPreflights(checks), nil
 }
 
-func buildResumeExecLaunchChecks(t team.Team, panes []teamLaunchPane, workstream string, force bool) ([]resumeExecLaunchCheck, error) {
+func buildResumeExecLaunchChecks(t team.Team, panes []teamLaunchPane, profile, workstream string, force bool) ([]resumeExecLaunchCheck, error) {
 	byRole := make(map[string]team.Member, len(t.Members))
 	for _, m := range t.Members {
 		byRole[strings.ToLower(m.Role)] = m
@@ -636,7 +638,7 @@ func buildResumeExecLaunchChecks(t team.Team, panes []teamLaunchPane, workstream
 			continue
 		}
 		cwd := m.EffectiveCWD(t.Project)
-		env, err := resolveAMQEnvInDir(cwd, "", workstream, m.Handle)
+		env, err := resolveAMQEnvForTeamProfile(cwd, profile, workstream, m.Handle)
 		if err != nil {
 			return nil, fmt.Errorf("resolve amq env for %s: %w", m.Handle, err)
 		}
@@ -653,6 +655,7 @@ func buildResumeExecLaunchChecks(t team.Team, panes []teamLaunchPane, workstream
 			Workstream: env.SessionName,
 			Root:       root,
 			Binary:     m.Binary,
+			Profile:    profile,
 			Force:      force,
 		})
 	}
@@ -742,6 +745,12 @@ func inspectResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots ma
 			results = append(results, res)
 			continue
 		}
+		if !squadnamespace.ProfilesEqual(c.Profile, rec.TeamProfile) {
+			res.State = resumeExecLaunchStateFailed
+			res.Detail = fmt.Sprintf("launch record profile %q does not match requested profile %q", squadnamespace.NormalizeProfile(rec.TeamProfile), squadnamespace.NormalizeProfile(c.Profile))
+			results = append(results, res)
+			continue
+		}
 		if rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) == "" {
 			res.State = resumeExecLaunchStateFailed
 			res.Detail = "launch record did not capture a tmux pane id"
@@ -822,7 +831,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	plan := resumePlan{Role: m.Role, Wake: "-"}
 
 	// Resolve the AMQ env per-member so multi-cwd teams work.
-	env, err := resolveAMQEnvInDir(cwd, "", in.Workstream, m.Handle)
+	env, err := resolveAMQEnvForTeamProfile(cwd, in.Profile, in.Workstream, m.Handle)
 	if err != nil {
 		// Without the AMQ env we cannot inspect restore history, wake
 		// locks, presence, or duplicate risk. A safety-oriented planner
@@ -852,7 +861,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	// same role/handle/session would let team resume emit the wrong
 	// repo's restore command.
 	baseRoot := absoluteAMQRoot(cwd, env.BaseRoot)
-	rec, recFound := findMemberRestoreRecord(baseRoot, in.Team.Project, cwd, env.SessionName, m.Role, handle)
+	rec, recFound := findMemberRestoreRecord(baseRoot, in.Team.Project, cwd, in.Profile, env.SessionName, m.Role, handle)
 	plan.HasRestoreRecord = recFound
 	plan.Handle = handle
 	if recFound {
@@ -870,7 +879,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	// #79 fix: status and resume can never disagree). Computed up front so EVERY
 	// return path below — including the forced preflight-error path — carries a
 	// liveness block.
-	live := classifyAgentLiveness(agentDir, root, handle, m.Role, m.Binary, env.SessionName, cwd, probe)
+	live := classifyAgentLiveness(agentDir, root, in.Profile, handle, m.Role, m.Binary, env.SessionName, cwd, probe)
 	plan.Liveness = &live
 
 	// #95: a live agent launched outside amq-squad's tmux backend has no recorded
@@ -900,7 +909,8 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		Force:      false,
 		DryRun:     true,
 	}
-	if _, perr := pf.check(probe); perr != nil {
+	blocker, perr := pf.check(probe)
+	if perr != nil {
 		// I/O error reading state: treat as blocked unless forced.
 		plan.Action = resumeBlocked
 		plan.Note = fmt.Sprintf("preflight error: %v", perr)
@@ -939,6 +949,15 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		plan.Note = note
 		// Suppress the command by default.
 		plan.Command = ""
+		return plan, nil
+	}
+	if blocker != nil && !in.Force {
+		plan.Action = resumeBlocked
+		plan.Command = ""
+		plan.Note = "preflight blocker: " + strings.ReplaceAll(blocker.Error(), "\n", "; ")
+		if strings.Contains(live.Detail, "profile") {
+			plan.Note = live.Detail + "; " + plan.Note
+		}
 		return plan, nil
 	}
 
@@ -982,7 +1001,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 // leak its restore command into this team's plan. Records with empty
 // CWD (legacy AMQ-only inference) are accepted as fallback only when no
 // CWD-matching record exists.
-func findMemberRestoreRecord(baseRoot, projectDir, memberCWD, workstream, role, handle string) (launch.Record, bool) {
+func findMemberRestoreRecord(baseRoot, projectDir, memberCWD, profile, workstream, role, handle string) (launch.Record, bool) {
 	if baseRoot == "" {
 		return launch.Record{}, false
 	}
@@ -994,7 +1013,7 @@ func findMemberRestoreRecord(baseRoot, projectDir, memberCWD, workstream, role, 
 	var bestExact, bestLegacy *launch.Entry
 	for i := range entries {
 		rec := entries[i].Record
-		if !matchesRestoreFilters(rec, role, handle, workstream, "") {
+		if !matchesRestoreFiltersForProfile(rec, role, handle, workstream, "", profile) {
 			continue
 		}
 		recCWD := canonicalPath(rec.CWD)

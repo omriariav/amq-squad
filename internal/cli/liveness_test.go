@@ -57,7 +57,7 @@ func TestStatusAndResumeAgreeOnStaleAgent(t *testing.T) {
 	probe := livenessProbe(map[int]bool{}, map[int]bool{}, now)
 
 	// 1) The shared classifier verdict is stale.
-	live := classifyAgentLiveness(agentDir, filepath.Join(base, "issue-96"), "cto", "cto", "codex", "issue-96", dir, probe)
+	live := classifyAgentLiveness(agentDir, filepath.Join(base, "issue-96"), "default", "cto", "cto", "codex", "issue-96", dir, probe)
 	if live.Verdict != livenessStale {
 		t.Fatalf("classifier verdict = %q, want %q", live.Verdict, livenessStale)
 	}
@@ -73,7 +73,7 @@ func TestStatusAndResumeAgreeOnStaleAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
-	rec := classifyMemberStatus(tm, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateStale {
 		t.Fatalf("status = %q, want stale (detail %q)", rec.Status, rec.Detail)
 	}
@@ -131,7 +131,7 @@ func TestStatusAndResumeAgreeOnMissingAgent(t *testing.T) {
 	now := time.Now()
 	probe := livenessProbe(map[int]bool{}, map[int]bool{}, now)
 
-	live := classifyAgentLiveness(agentDir, filepath.Join(base, "issue-96"), "cto", "cto", "codex", "issue-96", dir, probe)
+	live := classifyAgentLiveness(agentDir, filepath.Join(base, "issue-96"), "default", "cto", "cto", "codex", "issue-96", dir, probe)
 	if live.Verdict != livenessMissing {
 		t.Fatalf("classifier verdict = %q, want missing", live.Verdict)
 	}
@@ -140,7 +140,7 @@ func TestStatusAndResumeAgreeOnMissingAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
-	rec := classifyMemberStatus(tm, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateMissing {
 		t.Fatalf("status = %q, want missing", rec.Status)
 	}
@@ -187,7 +187,7 @@ func TestStatusAndResumeAgreeOnLiveAgentPID(t *testing.T) {
 	now := time.Now()
 	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, now)
 
-	live := classifyAgentLiveness(agentDir, filepath.Join(base, "issue-96"), "cto", "cto", "codex", "issue-96", dir, probe)
+	live := classifyAgentLiveness(agentDir, filepath.Join(base, "issue-96"), "default", "cto", "cto", "codex", "issue-96", dir, probe)
 	if live.Verdict != livenessAgentLive {
 		t.Fatalf("classifier verdict = %q, want agent-live", live.Verdict)
 	}
@@ -199,7 +199,7 @@ func TestStatusAndResumeAgreeOnLiveAgentPID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
-	rec := classifyMemberStatus(tm, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateLive {
 		t.Fatalf("status = %q, want live", rec.Status)
 	}
@@ -253,7 +253,7 @@ func TestStatusAndResumeAgreeOnLiveWakeOnly(t *testing.T) {
 		Now: func() time.Time { return now },
 	}
 
-	live := classifyAgentLiveness(agentDir, root, "cto", "cto", "codex", "issue-96", dir, probe)
+	live := classifyAgentLiveness(agentDir, root, "default", "cto", "cto", "codex", "issue-96", dir, probe)
 	if live.Verdict != livenessWakeLive {
 		t.Fatalf("classifier verdict = %q, want wake-live", live.Verdict)
 	}
@@ -265,7 +265,7 @@ func TestStatusAndResumeAgreeOnLiveWakeOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
-	rec := classifyMemberStatus(tm, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateWakeLive {
 		t.Fatalf("status = %q, want wake-live", rec.Status)
 	}
@@ -312,7 +312,7 @@ func TestClassifierReplacementLive(t *testing.T) {
 	now := time.Now()
 	probe := livenessProbe(map[int]bool{}, map[int]bool{}, now)
 
-	live := classifyAgentLiveness(agentDir, filepath.Join(base, "issue-96"), "cto", "cto", "codex", "issue-96", dir, probe)
+	live := classifyAgentLiveness(agentDir, filepath.Join(base, "issue-96"), "default", "cto", "cto", "codex", "issue-96", dir, probe)
 	if live.Verdict != livenessReplacementLive {
 		t.Fatalf("classifier verdict = %q, want replacement-live", live.Verdict)
 	}
@@ -365,7 +365,7 @@ func TestStatusAndResumeAgreeOnZombiePresence(t *testing.T) {
 	probe := livenessProbe(map[int]bool{}, map[int]bool{}, now)
 
 	// 1) Classifier: zombie presence demotes to stale (NOT presence-live).
-	live := classifyAgentLiveness(agentDir, root, "cto", "cto", "codex", "issue-96", dir, probe)
+	live := classifyAgentLiveness(agentDir, root, "default", "cto", "cto", "codex", "issue-96", dir, probe)
 	if live.Verdict != livenessStale {
 		t.Fatalf("zombie presence verdict = %q, want stale", live.Verdict)
 	}
@@ -381,7 +381,7 @@ func TestStatusAndResumeAgreeOnZombiePresence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
-	rec := classifyMemberStatus(tm, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateStale {
 		t.Fatalf("status = %q, want stale (detail %q)", rec.Status, rec.Detail)
 	}
@@ -440,7 +440,7 @@ func TestClassifierPresenceLiveWhenWriterUnknown(t *testing.T) {
 	withStubPaneLister(t, nil, nil)
 	probe := livenessProbe(map[int]bool{}, map[int]bool{}, now)
 
-	live := classifyAgentLiveness(agentDir, root, "cto", "cto", "codex", "issue-96", dir, probe)
+	live := classifyAgentLiveness(agentDir, root, "default", "cto", "cto", "codex", "issue-96", dir, probe)
 	if live.Verdict != livenessPresenceLive {
 		t.Fatalf("presence with unknown writers verdict = %q, want presence-live", live.Verdict)
 	}
@@ -607,7 +607,7 @@ func TestStatusDoctorResumeAgreeWhenAgentAndWakeLive(t *testing.T) {
 	m := tm.Members[0]
 
 	// 1) status
-	rec := classifyMemberStatus(tm, m, "issue-96", probe)
+	rec := classifyMemberStatus(tm, team.DefaultProfile, m, "issue-96", probe)
 	if rec.Status != statusStateLive {
 		t.Fatalf("status = %q, want live (agent+wake both alive); detail=%q", rec.Status, rec.Detail)
 	}

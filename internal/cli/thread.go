@@ -9,25 +9,29 @@ import (
 	"os/exec"
 	"strings"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
 const defaultThreadTranscriptLimit = 20
 
 type threadEnvelopeData struct {
-	ProjectDir  string          `json:"project_dir"`
-	BaseRoot    string          `json:"base_root"`
-	Session     string          `json:"session"`
-	Root        string          `json:"root"`
-	Thread      string          `json:"thread"`
-	IncludeBody bool            `json:"include_body"`
-	Limit       int             `json:"limit,omitempty"`
-	Entries     json.RawMessage `json:"entries,omitempty"`
-	Output      string          `json:"output,omitempty"`
+	ProjectDir  string             `json:"project_dir"`
+	BaseRoot    string             `json:"base_root"`
+	Profile     string             `json:"profile,omitempty"`
+	Namespace   squadnamespace.Ref `json:"namespace"`
+	Session     string             `json:"session"`
+	Root        string             `json:"root"`
+	Thread      string             `json:"thread"`
+	IncludeBody bool               `json:"include_body"`
+	Limit       int                `json:"limit,omitempty"`
+	Entries     json.RawMessage    `json:"entries,omitempty"`
+	Output      string             `json:"output,omitempty"`
 }
 
 type threadExecution struct {
 	ProjectDir      string
+	Profile         string
 	Session         string
 	Thread          string
 	IncludeBody     bool
@@ -51,6 +55,7 @@ type threadAMQRequest struct {
 func runThread(args []string) error {
 	fs := flag.NewFlagSet("thread", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name to inspect")
 	threadFlag := fs.String("id", "", "thread id to read")
 	includeBody := fs.Bool("include-body", true, "include message bodies in the transcript")
@@ -60,7 +65,7 @@ func runThread(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad thread - read one AMQ thread by project and session
 
 Usage:
-  amq-squad thread --session NAME --id THREAD [--project DIR] [--limit N] [--include-body=false] [--json]
+  amq-squad thread --session NAME --id THREAD [--project DIR] [--profile P] [--limit N] [--include-body=false] [--json]
 
 Resolves the selected amq-squad workstream to its AMQ root, then reads the
 thread transcript without moving unread mail. This is a project/session wrapper
@@ -69,7 +74,7 @@ the .agent-mail path.
 
 Examples:
   amq-squad thread --session issue-96 --id p2p/cto__fullstack
-  amq-squad thread --project ~/Code/app --session issue-96 --id decision/ship --limit 50
+  amq-squad thread --project ~/Code/app --profile review --session issue-96 --id decision/ship --limit 50
   amq-squad thread --session issue-96 --id decision/ship --json
 `)
 	}
@@ -93,8 +98,13 @@ Examples:
 	if err != nil {
 		return err
 	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
 	return executeThread(threadExecution{
 		ProjectDir:  projectDir,
+		Profile:     profile,
 		Session:     *sessionFlag,
 		Thread:      *threadFlag,
 		IncludeBody: *includeBody,
@@ -120,6 +130,7 @@ func executeThread(s threadExecution) error {
 	if s.Limit < 0 {
 		return usageErrorf("--limit must be >= 0")
 	}
+	profile := squadnamespace.NormalizeProfile(s.Profile)
 	resolve := s.ResolveBaseRoot
 	if resolve == nil {
 		resolve = scanBaseRootForProject
@@ -139,9 +150,9 @@ func executeThread(s threadExecution) error {
 	if err != nil {
 		return fmt.Errorf("scan AMQ base root: %w", err)
 	}
-	sess, ok := findThreadsSession(snap.Sessions, session)
+	sess, ok := findThreadsSession(snap.Sessions, profile, session)
 	if !ok {
-		return fmt.Errorf("session %q not found under %s", session, baseRoot)
+		return fmt.Errorf("session %q for profile %q not found under %s", session, profile, baseRoot)
 	}
 	run := s.RunAMQThread
 	if run == nil {
@@ -161,6 +172,8 @@ func executeThread(s threadExecution) error {
 	env := threadEnvelopeData{
 		ProjectDir:  s.ProjectDir,
 		BaseRoot:    snap.BaseRoot,
+		Profile:     profile,
+		Namespace:   squadnamespace.Resolve(s.ProjectDir, profile, sess.Name),
 		Session:     sess.Name,
 		Root:        sess.Root,
 		Thread:      threadID,

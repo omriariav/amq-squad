@@ -8,6 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 type amqEnv struct {
@@ -25,6 +28,14 @@ type amqEnv struct {
 
 func resolveAMQEnv(rootFlag, session, handle string) (amqEnv, error) {
 	return resolveAMQEnvInDir("", rootFlag, session, handle)
+}
+
+func resolveAMQEnvForTeamProfile(cwd, profile, session, handle string) (amqEnv, error) {
+	if squadnamespace.NormalizeProfile(profile) == team.DefaultProfile {
+		return resolveAMQEnvInDir(cwd, "", session, handle)
+	}
+	root := squadnamespace.AMQRoot(cwd, profile, session)
+	return resolveAMQEnvForLaunch(cwd, root, session, profile, handle)
 }
 
 // minRequireWakeAMQVersion is the first AMQ release whose `coop exec` accepts

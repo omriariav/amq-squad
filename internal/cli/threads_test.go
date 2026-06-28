@@ -17,9 +17,15 @@ var threadsNow = time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
 
 func runThreadsExec(t *testing.T, base, projectDir, session string, limit int, jsonOut bool) (string, error) {
 	t.Helper()
+	return runThreadsExecProfile(t, base, projectDir, "", session, limit, jsonOut)
+}
+
+func runThreadsExecProfile(t *testing.T, base, projectDir, profile, session string, limit int, jsonOut bool) (string, error) {
+	t.Helper()
 	var out bytes.Buffer
 	err := executeThreads(threadsExecution{
 		ProjectDir: projectDir,
+		Profile:    profile,
 		Session:    session,
 		Limit:      limit,
 		BaseRoot:   base,
@@ -134,6 +140,33 @@ func TestRunThreadsJSONEnvelope(t *testing.T) {
 	}
 }
 
+func TestRunThreadsProfileSelectsNamespaceRows(t *testing.T) {
+	base := t.TempDir()
+	project := t.TempDir()
+	ctoDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96", AgentPID: 111,
+	})
+	reviewerDir := seedAgentRecord(t, base, "issue-96", "reviewer", launch.Record{
+		Binary: "codex", Handle: "reviewer", Role: "reviewer", Session: "issue-96", AgentPID: 222, TeamProfile: "release",
+	})
+	seedThreadMessage(t, ctoDir, "new", "default", "cto", []string{"user"},
+		"gate/default", "APPROVAL: default", string(state.KindQuestion), threadsNow.Add(-10*time.Minute))
+	seedThreadMessage(t, reviewerDir, "new", "release", "reviewer", []string{"user"},
+		"gate/release", "APPROVAL: release", string(state.KindQuestion), threadsNow.Add(-5*time.Minute))
+
+	out, err := runThreadsExecProfile(t, base, project, "release", "issue-96", defaultThreadsLimit, true)
+	if err != nil {
+		t.Fatalf("threads --profile: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[threadsEnvelopeData](t, out)
+	if env.Data.Profile != "release" || env.Data.Namespace.ID != "release/issue-96" {
+		t.Fatalf("threads namespace = profile %q ns %+v", env.Data.Profile, env.Data.Namespace)
+	}
+	if len(env.Data.Threads) != 1 || env.Data.Threads[0].ID != "gate/release" {
+		t.Fatalf("threads rows = %+v, want only release gate", env.Data.Threads)
+	}
+}
+
 func TestRunThreadsRequiresSession(t *testing.T) {
 	_, err := runThreadsExec(t, t.TempDir(), t.TempDir(), "", defaultThreadsLimit, false)
 	if err == nil {
@@ -150,7 +183,7 @@ func TestRunThreadsMissingSession(t *testing.T) {
 	if err == nil {
 		t.Fatal("missing session should fail")
 	}
-	if !strings.Contains(err.Error(), "session \"missing\" not found") {
+	if !strings.Contains(err.Error(), "session \"missing\"") || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("error should mention missing session, got %v", err)
 	}
 }

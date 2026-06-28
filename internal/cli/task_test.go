@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func withFixedTaskNow(t *testing.T) {
@@ -77,6 +79,87 @@ func TestTaskListJSONEnvelope(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "\"kind\": \"tasks\"") && !strings.Contains(stdout, "\"kind\":\"tasks\"") {
 		t.Errorf("expected a tasks envelope, got:\n%s", stdout)
+	}
+	env := decodeJSONEnvelope[tasksEnvelopeData](t, stdout)
+	if env.Data.Namespace.ID != "default/s" {
+		t.Fatalf("task list namespace = %+v, want default/s", env.Data.Namespace)
+	}
+}
+
+func TestTaskNamedProfileJSONCarriesNamespace(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	withFixedTaskNow(t)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runTask([]string{"add", "--title", "x", "--assign", "worker", "--profile", "release", "--session", "s", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("task add --profile --json: %v", err)
+	}
+	added := decodeJSONEnvelope[mutationResult](t, stdout)
+	if added.Data.Profile != "release" || added.Data.Namespace.ID != "release/s" {
+		t.Fatalf("task_add namespace/profile mismatch: %+v", added.Data)
+	}
+	for _, action := range added.Data.Actions {
+		if !strings.Contains(action.Command, "--profile release") || !strings.Contains(action.Command, "--session s") {
+			t.Fatalf("follow-up action missing named namespace scope: %+v", action)
+		}
+	}
+
+	stdout, _, err = captureOutput(t, func() error {
+		return runTask([]string{"list", "--profile", "release", "--json", "--session", "s"})
+	})
+	if err != nil {
+		t.Fatalf("task list --profile --json: %v", err)
+	}
+	listed := decodeJSONEnvelope[tasksEnvelopeData](t, stdout)
+	if listed.Data.Profile != "release" || listed.Data.Namespace.ID != "release/s" || len(listed.Data.Tasks) != 1 {
+		t.Fatalf("tasks envelope namespace/profile mismatch: %+v", listed.Data)
+	}
+
+	stdout, _, err = captureOutput(t, func() error {
+		return runTask([]string{"show", "t1", "--profile", "release", "--json", "--session", "s"})
+	})
+	if err != nil {
+		t.Fatalf("task show --profile --json: %v", err)
+	}
+	shown := decodeJSONEnvelope[taskEnvelopeData](t, stdout)
+	if shown.Data.Profile != "release" || shown.Data.Namespace.ID != "release/s" || shown.Data.Task.ID != "t1" {
+		t.Fatalf("task envelope namespace/profile mismatch: %+v", shown.Data)
+	}
+}
+
+func TestTaskDuplicateProfileSessionUsesNamespacedStore(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	for _, profile := range []string{"product", "release"} {
+		if err := team.WriteProfile(dir, profile, team.Team{
+			Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, _, err := captureOutput(t, func() error {
+		return runTask([]string{"add", "--profile", "product", "--session", "main", "--title", "product task"})
+	})
+	if err != nil {
+		t.Fatalf("product task add: %v", err)
+	}
+	_, _, err = captureOutput(t, func() error {
+		return runTask([]string{"add", "--profile", "release", "--session", "main", "--title", "release task"})
+	})
+	if err != nil {
+		t.Fatalf("release task add: %v", err)
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return runTask([]string{"list", "--profile", "release", "--session", "main"})
+	})
+	if err != nil {
+		t.Fatalf("release task list: %v", err)
+	}
+	if !strings.Contains(stdout, "release task") || strings.Contains(stdout, "product task") {
+		t.Fatalf("release task list used wrong store:\n%s", stdout)
 	}
 }
 

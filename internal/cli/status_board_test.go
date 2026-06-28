@@ -367,6 +367,9 @@ func TestStatusBoardJSONCarriesProfileActionsAndOrchestration(t *testing.T) {
 	if row.Profile != team.DefaultProfile {
 		t.Fatalf("board profile = %q, want default", row.Profile)
 	}
+	if row.Namespace.ID != "default/running-ws" {
+		t.Fatalf("board namespace = %+v, want default/running-ws", row.Namespace)
+	}
 	if !row.Orchestrated || row.Lead != "cto" || row.LeadHandle != "lead-handle" {
 		t.Fatalf("board orchestration = orchestrated:%v lead:%q lead_handle:%q, want true/cto/lead-handle", row.Orchestrated, row.Lead, row.LeadHandle)
 	}
@@ -385,6 +388,14 @@ func TestStatusBoardJSONCarriesProfileActionsAndOrchestration(t *testing.T) {
 		t.Fatalf("status --json: %v\n%s", err, statusOut)
 	}
 	statusEnv := decodeJSONEnvelope[statusEnvelopeData](t, statusOut)
+	if statusEnv.Data.Namespace.ID != "default/running-ws" {
+		t.Fatalf("status namespace = %+v, want default/running-ws", statusEnv.Data.Namespace)
+	}
+	for _, record := range statusEnv.Data.Records {
+		if record.Namespace.ID != "default/running-ws" {
+			t.Fatalf("status record namespace = %+v, want default/running-ws", record.Namespace)
+		}
+	}
 	if !reflect.DeepEqual(row.Actions, statusEnv.Data.Actions) {
 		t.Fatalf("board actions differ from single-session actions\nboard:  %+v\nstatus: %+v", row.Actions, statusEnv.Data.Actions)
 	}

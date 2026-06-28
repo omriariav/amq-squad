@@ -10,6 +10,19 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 )
 
+func TestNativeGoalBindingFromArgsDetectsGoalPrompt(t *testing.T) {
+	got := nativeGoalBindingFromArgs([]string{"--enable", "goals", `/goal --goal "ship"`})
+	if got == nil || !got.NativeGoal || got.Mode != "native_goal" || got.Source != "launch-argv" {
+		t.Fatalf("native goal binding = %+v", got)
+	}
+	if got.Command != `/goal --goal "ship"` {
+		t.Fatalf("command = %q", got.Command)
+	}
+	if none := nativeGoalBindingFromArgs([]string{"--enable", "goals", "plain prompt"}); none != nil {
+		t.Fatalf("plain prompt should not create native binding: %+v", none)
+	}
+}
+
 func TestRunLaunchDryRunSandboxedCodexOmitsBypassDefault(t *testing.T) {
 	setupFakeAMQ(t)
 

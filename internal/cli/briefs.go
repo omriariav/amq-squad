@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/flock"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // decisionNow is the clock for decision entry timestamps. Overridable in tests.
@@ -29,7 +31,11 @@ const decisionsHeader = "## Decisions"
 //	### YYYY-MM-DD — <title>
 //	<body>
 func appendBriefDecision(teamHome, session, title, body string, now time.Time) (string, error) {
-	path := briefPath(teamHome, session)
+	return appendBriefDecisionForProfile(teamHome, team.DefaultProfile, session, title, body, now)
+}
+
+func appendBriefDecisionForProfile(teamHome, profile, session, title, body string, now time.Time) (string, error) {
+	path := briefPathForProfile(teamHome, profile, session)
 	if path == "" {
 		return "", fmt.Errorf("cannot resolve brief path: team-home or session is empty")
 	}
@@ -85,6 +91,10 @@ const briefsDirName = "briefs"
 // the absolute path bootstrap names in the priming prompt. Returns "" when
 // either input is empty.
 func briefPath(teamHome, session string) string {
+	return briefPathForProfile(teamHome, team.DefaultProfile, session)
+}
+
+func briefPathForProfile(teamHome, profile, session string) string {
 	teamHome = strings.TrimSpace(teamHome)
 	session = strings.TrimSpace(session)
 	if teamHome == "" || session == "" {
@@ -94,7 +104,7 @@ func briefPath(teamHome, session string) string {
 	if err != nil {
 		abs = filepath.Clean(teamHome)
 	}
-	return filepath.Join(abs, ".amq-squad", briefsDirName, session+".md")
+	return squadnamespace.BriefPath(abs, profile, session)
 }
 
 // resolveBriefHome returns the directory under which the active brief lives,
@@ -161,7 +171,11 @@ func briefStubContent(session string) string {
 // returns created=false rather than racing to overwrite. The first writer
 // genuinely wins.
 func ensureBriefStub(teamHome, session string) (string, bool, error) {
-	path := briefPath(teamHome, session)
+	return ensureBriefStubForProfile(teamHome, team.DefaultProfile, session)
+}
+
+func ensureBriefStubForProfile(teamHome, profile, session string) (string, bool, error) {
+	path := briefPathForProfile(teamHome, profile, session)
 	if path == "" {
 		return "", false, nil
 	}

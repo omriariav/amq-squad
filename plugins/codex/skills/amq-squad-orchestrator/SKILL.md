@@ -67,6 +67,47 @@ milestone or issue-delivery runs where the source repo, milestone, session, and
 profile are known. For unusual work with special constraints, hand-write the
 long-form `/goal` prompt and still follow the seeded flow below.
 
+### Operator-facing Step 1 / Step 2 / Step 3
+
+For `/goal` runs, keep the operator interface simple and lead-centered:
+
+- **Step 1: Preview the run.** Show the goal, repo, milestone or issue source,
+  profile/session namespace, proposed visible lead, source issues, proposed
+  mutations, visibility/topology, spawned-child policy, validation plan, and
+  approval gates before new side effects.
+- **Step 2: Create or register the visible goal lead.** The top-level
+  orchestrator should create the profile/session and either launch or register
+  exactly one operator-visible goal lead. Prefer launching that lead with the
+  generated native `/goal` prompt so its launch record can prove the binding.
+  Use `--lead <role>` in generated `/goal` commands when the visible lead is not
+  `cto`; use `lead register` for an existing operator-owned pane and disclose
+  AMQ task + brief fallback until native binding is verified.
+- **Step 3: Monitor through the lead.** The goal lead owns implementation
+  decomposition, child dispatch, evidence, blockers, review reconciliation, and
+  release readiness. Child agents are implementation details unless an approval
+  gate, blocker, release risk, or final evidence requires surfacing them. Leads
+  must immediately report any blocker or approval request to the
+  operator/orchestrator-visible surface; do not leave it only in a child pane,
+  internal worker thread, or hidden gate.
+
+Preserve team rules and custom role contracts across this flow. A `/goal`
+preview or directive may steer the lead, but it does not authorize merge, push,
+release, destructive filesystem actions, provider side effects, external
+communications, or unapproved seeded spawns.
+
+When the top-level orchestrator or NOC is not wake-enabled, use an explicit
+polling contract: one `/goal` maps to one visible lead; leads push status,
+blockers, approval requests, and final evidence to AMQ/NOC-visible surfaces; the
+parent orchestrator or NOC polls each lead's inbox, gate threads, and
+`status --json` on a cadence. Child agents remain internal unless the lead
+escalates them.
+Use `goal_binding` in `goal draft --json` and `status --json` to distinguish a
+generated native `/goal` plan (`native_goal_pending`), verified launch-record
+native binding (`native_goal`), and the explicit AMQ task + active brief +
+task-store fallback (`amq_task_brief`). Recovery sends a durable AMQ directive
+first; managed-pane `/goal` injection is only a follow-up when the pane is idle,
+and force-interrupt requires an operator gate.
+
 The fast path is a **draft**, not an apply loop. If the `amq-squad goal draft`
 CLI is available, call it first and show the resulting Markdown or JSON to the
 operator before any durable mutation:
@@ -78,6 +119,7 @@ amq-squad goal draft \
   --milestone v2.7.0 \
   --session v2-7-0 \
   --profile codex-v2-7-0 \
+  --lead cto \
   --visibility sibling-tabs \
   --codex-only
 
@@ -108,35 +150,36 @@ $amq-squad:amq-squad-orchestrator /goal \
   --milestone v2.7.0 \
   --session v2-7-0 \
   --profile codex-v2-7-0 \
+  --lead cto \
   --visibility sibling-tabs \
   --codex-only
 ```
 
 The preview must include: workstream/profile, source-of-truth links, preflight
-checks, roster, coordination constraints, implementation/review constraints,
-dogfood requirements where relevant, visibility/topology choice, task-store
-plan, spawn gates, dispatch prompts, and done criteria. Preserve v2.6.0
+checks, visible goal lead, namespace identity, roster, coordination
+constraints, implementation/review constraints, dogfood requirements where
+relevant, visibility/topology choice, task-store plan, spawn gates, dispatch
+prompts, and done criteria. Preserve v2.6.0
 guardrails: AMQ-first reporting, seeded spawn gates, live approval mirroring,
 autonomous policy/audit details when explicitly requested, Codex-only deviation
 when requested, and exact-head CI/review/verify evidence before merge-ready
 claims.
 
-Default visibility is `sibling-tabs`: run the launch from an existing visible
-tmux control-mode pane, so the lead and workers open as sibling tmux windows in
-that same tmux session. Use `--visibility detached` only when a separate tmux
-session is intentional, `--visibility current` for split panes in the current
-window, and `--visibility plan` for commands only. The visible default refuses
-outside tmux before worker spawn; it must not silently create hidden detached
-workers.
+Default visibility is `sibling-tabs`: run the visible-lead launch from an
+existing visible tmux control-mode pane, then spawn workers only after their
+gates are approved. Use `--visibility detached` only when a separate tmux session
+is intentional, `--visibility current` for the current pane/window, and
+`--visibility plan` for commands only. The visible default must not silently
+create hidden detached workers.
 
 After showing the preview, ask for explicit operator confirmation before writing
 briefs, mutating team/profile state, adding tasks, raising spawn gates, or
 launching workers. A short goal never authorizes autonomous dogfood, worker
 spawning, merges, releases, destructive actions, or external communications.
 
-**1. Read the goal, propose a minimal team.** Read the brief
-(`.amq-squad/briefs/<session>.md`), then pick the smallest team that covers the
-goal, drawing roles from the library: built-ins (`amq-squad roles`) plus any
+**1. Read the goal, propose a minimal team.** Read the selected namespace's
+brief, then pick the smallest team that covers the goal, drawing roles from the
+library: built-ins (`amq-squad roles`) plus any
 staged custom roles under `.amq-squad/roles/` (author new ones with the
 `amq-squad-role-creator` skill). Bias to **fewer** agents; add more only when
 the work is actually serializing.
@@ -514,6 +557,16 @@ Treat directives differently from child reports:
   `gate/<topic>` thread instead of opening an interactive prompt in your pane.
   If an interactive prompt is already pending, cancel it and re-raise the
   question as a gate so external clients can see and answer it.
+- **Blockers and approval requests must surface immediately.** If you or a
+  child discover a blocker, or any action needs operator approval, report it on
+  the operator/orchestrator-visible surface right away. Approval requests use a
+  stable `gate/<topic>` thread; blockers use an operator-visible status/question
+  with enough context for the NOC to show it. Do not leave either only in a pane,
+  child thread, or private note.
+- **No wake means polling the lead.** If the parent orchestrator or NOC is not
+  wake-enabled, it should poll lead inboxes, gate threads, and `status --json` on
+  a cadence. Your job as the lead is to keep those surfaces current; do not rely
+  on pane-only updates to wake the parent.
 
 ## 5. Recover
 

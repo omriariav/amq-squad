@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // seedNow is the clock used for the provenance frontmatter. Overridable
@@ -176,7 +178,11 @@ func buildSeedBrief(ref, body string, now time.Time) string {
 // force=true: the target is replaced via a temp-file + rename so a
 // partially-written file never appears at the brief path.
 func writeSeedBrief(teamHome, session, content string, force bool) (string, error) {
-	path := briefPath(teamHome, session)
+	return writeSeedBriefForProfile(teamHome, team.DefaultProfile, session, content, force)
+}
+
+func writeSeedBriefForProfile(teamHome, profile, session, content string, force bool) (string, error) {
+	path := briefPathForProfile(teamHome, profile, session)
 	if path == "" {
 		return "", fmt.Errorf("seed brief: team-home or session is empty (cannot resolve target path)")
 	}
