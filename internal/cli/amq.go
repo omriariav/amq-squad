@@ -9,6 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 type amqCommandRequest struct {
@@ -105,6 +108,30 @@ func resolveAMQContextForProject(projectDir, session, me string) (amqContext, er
 	env, err := resolveAMQEnvForAMQCommand(projectDir, "", session, me)
 	if err != nil {
 		return amqContext{}, err
+	}
+	handle := strings.TrimSpace(env.Me)
+	if handle == "" {
+		handle = strings.TrimSpace(me)
+	}
+	return amqContext{
+		ProjectDir: projectDir,
+		Env:        env,
+		Root:       absoluteAMQRoot(projectDir, env.Root),
+		Me:         handle,
+	}, nil
+}
+
+func resolveAMQContextForNamespace(projectDir, profile, session, me string) (amqContext, error) {
+	if squadnamespace.NormalizeProfile(profile) == team.DefaultProfile {
+		return resolveAMQContextForProject(projectDir, session, me)
+	}
+	root := squadnamespace.AMQRoot(projectDir, profile, session)
+	env, err := resolveAMQEnvForAMQCommand(projectDir, root, "", me)
+	if err != nil {
+		return amqContext{}, err
+	}
+	if strings.TrimSpace(env.SessionName) == "" {
+		env.SessionName = strings.TrimSpace(session)
 	}
 	handle := strings.TrimSpace(env.Me)
 	if handle == "" {

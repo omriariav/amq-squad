@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -35,6 +36,9 @@ type goalDraftData struct {
 	Milestone          string                 `json:"milestone,omitempty"`
 	Session            string                 `json:"session"`
 	Profile            string                 `json:"profile"`
+	Lead               string                 `json:"lead"`
+	Namespace          squadnamespace.Ref     `json:"namespace"`
+	GoalBinding        goalBindingData        `json:"goal_binding"`
 	Composition        string                 `json:"composition"`
 	Visibility         string                 `json:"visibility"`
 	AutonomousPolicy   *team.AutonomousPolicy `json:"autonomous_policy,omitempty"`
@@ -56,6 +60,18 @@ type goalIssueSource struct {
 	Title  string `json:"title"`
 	URL    string `json:"url"`
 	State  string `json:"state,omitempty"`
+}
+
+type goalBindingData struct {
+	Mode         string `json:"mode"`
+	NativeGoal   bool   `json:"native_goal"`
+	Verified     bool   `json:"verified"`
+	Source       string `json:"source"`
+	Detail       string `json:"detail"`
+	BriefPath    string `json:"brief_path,omitempty"`
+	TasksPath    string `json:"tasks_path,omitempty"`
+	NativeSource string `json:"native_source,omitempty"`
+	Command      string `json:"command,omitempty"`
 }
 
 type goalRosterMember struct {
@@ -111,7 +127,7 @@ func printGoalUsage() {
 	fmt.Fprint(os.Stderr, `amq-squad goal - draft or apply a preview-first goal setup plan
 
 Usage:
-  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
+  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
 
 Examples:
   amq-squad goal draft --goal "deliver GitHub milestone v2.7.0" --repo omriariav/amq-squad --milestone v2.7.0 --session v2-7-0 --profile codex-v2-7-0
@@ -126,6 +142,7 @@ func runGoalDraft(args []string) error {
 	milestoneFlag := fs.String("milestone", "", "GitHub milestone title to include issue titles and URLs")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name")
 	profileFlag := fs.String("profile", "", "team profile name for the proposed setup")
+	leadFlag := fs.String("lead", "cto", "operator-visible goal lead role")
 	compositionFlag := fs.String("composition", team.CompositionSeeded, "composition mode: seeded (default) or autonomous")
 	maxAgentsFlag := fs.Int("max-agents", 0, "autonomous guardrail: maximum active agents")
 	maxTotalSpawnsFlag := fs.Int("max-total-spawns", 0, "autonomous guardrail: maximum total autonomous spawns")
@@ -140,7 +157,7 @@ func runGoalDraft(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad goal draft - produce a preview-only setup plan from a goal
 
 Usage:
-  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
+  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
 
 The draft is read-only. It prints proposed briefs, roster entries, task-store
 items, spawn gates, dispatches, and the orchestrator prompt, but it does not
@@ -170,6 +187,7 @@ Examples:
 		Milestone:          strings.TrimSpace(*milestoneFlag),
 		Session:            strings.TrimSpace(*sessionFlag),
 		Profile:            strings.TrimSpace(*profileFlag),
+		Lead:               strings.TrimSpace(*leadFlag),
 		CodexOnly:          *codexOnly,
 		Composition:        strings.TrimSpace(*compositionFlag),
 		MaxAgents:          *maxAgentsFlag,
@@ -196,6 +214,7 @@ type goalDraftOptions struct {
 	Milestone          string
 	Session            string
 	Profile            string
+	Lead               string
 	CodexOnly          bool
 	Composition        string
 	MaxAgents          int
@@ -230,6 +249,13 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 	if err := validateProfileName(profile); err != nil {
 		return goalDraftData{}, fmt.Errorf("invalid profile: %w", err)
 	}
+	lead := strings.TrimSpace(opts.Lead)
+	if lead == "" {
+		lead = "cto"
+	}
+	if err := validateProfileName(lead); err != nil {
+		return goalDraftData{}, fmt.Errorf("invalid lead: %w", err)
+	}
 	composition := strings.TrimSpace(opts.Composition)
 	if composition == "" {
 		composition = team.CompositionSeeded
@@ -252,28 +278,49 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 		Milestone:        opts.Milestone,
 		Session:          session,
 		Profile:          profile,
+		Lead:             lead,
+		Namespace:        squadnamespace.Resolve("", profile, session),
 		Composition:      composition,
 		Visibility:       visibility,
 		AutonomousPolicy: autonomousPolicy,
 		PreviewOnly:      true,
 		CodexOnly:        opts.CodexOnly,
 		IssueSources:     issues,
-		Roster:           defaultGoalRoster(opts.CodexOnly, len(issues)),
+		Roster:           defaultGoalRoster(lead, opts.CodexOnly, len(issues)),
 		Notes: []string{
 			"Seeded composition remains the default; autonomous composition requires explicit opt-in and policy limits.",
 			"This draft is preview-only and does not mutate team.json, briefs, task files, AMQ mailboxes, launch records, wake locks, or panes.",
-			"Default visibility is sibling-tabs: launch from an existing visible tmux pane so the lead and workers open as sibling tmux windows in that same session.",
+			"Default visibility is sibling-tabs: launch the visible lead from an existing visible tmux pane with the generated native /goal prompt; workers remain behind spawn gates.",
+			"Step 1 / Step 2 / Step 3: preview first, create or register the visible goal lead, then monitor the run through that lead.",
+			"The top-level orchestrator dispatches to the visible goal lead; child agents stay implementation details unless an approval gate, blocker, release risk, or final evidence requires surfacing them.",
+			"Leads must immediately surface any blocker or approval request to the operator/orchestrator-visible surface; never leave it only in an internal pane or hidden gate.",
+			"When wake is unavailable, the parent orchestrator or NOC polls each visible lead's inbox, gates, and status on a cadence; one /goal maps to one visible lead.",
+			"Visible lead binding is explicit: launch the visible lead with the generated native /goal prompt when possible; status falls back to AMQ task + active brief + task store until launch evidence exists.",
+			"Generated prompts preserve team rules and custom role contracts across profile/session namespaces.",
 			"Use --visibility detached only when a separate tmux session is intentional; use --visibility current for split panes in the current window; use --visibility plan when you want commands only.",
 			"Merge, push, release, destructive filesystem actions, external communications, and provider side effects remain operator-owned.",
 		},
 	}
+	data.OrchestratorPrompt = renderGoalOrchestratorPrompt(data)
+	data.GoalBinding = goalBindingForDraft(data.Namespace, data.OrchestratorPrompt)
 	data.BriefSkeleton = renderGoalBriefSkeleton(data)
 	data.Tasks = defaultGoalTasks(data)
 	data.SpawnGates = defaultGoalSpawnGates(data)
 	data.Dispatches = defaultGoalDispatches(data)
 	data.ApplyableMutations = defaultGoalMutations(data)
-	data.OrchestratorPrompt = renderGoalOrchestratorPrompt(data)
 	return data, nil
+}
+
+func goalBindingForDraft(ns squadnamespace.Ref, command string) goalBindingData {
+	binding := goalBindingForNamespace(ns)
+	binding.Mode = "native_goal_pending"
+	binding.NativeGoal = true
+	binding.Verified = false
+	binding.Source = "orchestrator-prompt"
+	binding.NativeSource = "generated-/goal"
+	binding.Command = command
+	binding.Detail = "The generated visible-lead prompt is a native /goal command; status reports native_goal only after the lead launch record records that command, otherwise AMQ task + brief fallback remains explicit."
+	return binding
 }
 
 func validateProfileName(name string) error {
@@ -308,37 +355,47 @@ func resolveGoalMilestoneIssues(repo, milestone string) ([]goalIssueSource, erro
 	return issues, nil
 }
 
-func defaultGoalRoster(codexOnly bool, issueCount int) []goalRosterMember {
+func defaultGoalRoster(lead string, codexOnly bool, issueCount int) []goalRosterMember {
 	binary := func(defaultBinary string) string {
 		if codexOnly {
 			return "codex"
 		}
 		return defaultBinary
 	}
-	roster := []goalRosterMember{
-		{
-			Role:      "cto",
-			Handle:    "cto",
-			Binary:    "codex",
-			Reason:    "Lead orchestration, scope control, architecture, final sign-off, and operator escalation.",
-			CodexArgs: []string{"-c", "model_reasoning_effort=high"},
-		},
-		{
-			Role:   "fullstack",
-			Handle: "fullstack",
-			Binary: binary("claude"),
-			Reason: "Primary implementation owner for the drafted task plan.",
-		},
-		{
-			Role:      "senior-dev",
-			Handle:    "senior-dev",
-			Binary:    "codex",
-			Reason:    "Independent implementation-shape and risk review before merge-ready claims.",
-			CodexArgs: []string{"-c", "model_reasoning_effort=high"},
-		},
+	leadReason := "Visible goal lead: owns Step 1 preview, Step 2 setup/register, Step 3 monitoring, final evidence, and operator escalation."
+	if lead == "cto" {
+		leadReason = "Lead orchestration, scope control, architecture, final sign-off, and operator escalation."
 	}
+	roster := []goalRosterMember{{
+		Role:      lead,
+		Handle:    lead,
+		Binary:    "codex",
+		Reason:    leadReason,
+		CodexArgs: []string{"-c", "model_reasoning_effort=high"},
+	}}
+	appendWorker := func(member goalRosterMember) {
+		for _, existing := range roster {
+			if existing.Role == member.Role {
+				return
+			}
+		}
+		roster = append(roster, member)
+	}
+	appendWorker(goalRosterMember{
+		Role:   "fullstack",
+		Handle: "fullstack",
+		Binary: binary("claude"),
+		Reason: "Primary implementation owner for the drafted task plan.",
+	})
+	appendWorker(goalRosterMember{
+		Role:      "senior-dev",
+		Handle:    "senior-dev",
+		Binary:    "codex",
+		Reason:    "Independent implementation-shape and risk review before merge-ready claims.",
+		CodexArgs: []string{"-c", "model_reasoning_effort=high"},
+	})
 	if issueCount > 3 {
-		roster = append(roster, goalRosterMember{
+		appendWorker(goalRosterMember{
 			Role:   "qa",
 			Handle: "qa",
 			Binary: binary("claude"),
@@ -371,6 +428,7 @@ func renderGoalBriefSkeleton(data goalDraftData) string {
 		b.WriteString("\n")
 	}
 	b.WriteString("## Scope\n- Deliver the goal through amq-squad orchestration.\n- Keep AMQ, the task store, and the workstream brief as durable coordination records.\n")
+	fmt.Fprintf(&b, "- Visible lead binding: %s (%s).\n", data.GoalBinding.Mode, data.GoalBinding.Source)
 	fmt.Fprintf(&b, "- Composition mode: %s.\n\n", data.Composition)
 	fmt.Fprintf(&b, "- Visibility: %s.\n\n", data.Visibility)
 	if data.AutonomousPolicy != nil {
@@ -382,14 +440,14 @@ func renderGoalBriefSkeleton(data goalDraftData) string {
 		fmt.Fprintf(&b, "- Budget turns: %d\n\n", data.AutonomousPolicy.BudgetTurns)
 	}
 	b.WriteString("## Out of scope\n- No autonomous action outside the declared policy envelope.\n- No child-authored spawn or prune authority.\n- No merge, release, destructive filesystem action, external communication, or provider side effect without operator approval.\n\n")
-	b.WriteString("## Acceptance\n- Preview is reviewed before any setup mutation.\n- Spawn gates are explicit and durable.\n- Tasks, dispatches, review evidence, and final verification are recorded before merge-ready claims.\n")
+	b.WriteString("## Acceptance\n- Preview is reviewed before any setup mutation.\n- Spawn gates are explicit and durable.\n- Visible lead binding is declared as native /goal when available, otherwise AMQ task + active brief + task store.\n- Tasks, dispatches, review evidence, and final verification are recorded before merge-ready claims.\n")
 	return b.String()
 }
 
 func defaultGoalTasks(data goalDraftData) []goalTaskPlan {
 	if len(data.IssueSources) == 0 {
 		return []goalTaskPlan{
-			{ID: "t1", Title: "Confirm scope and acceptance from the goal", Assignee: "cto"},
+			{ID: "t1", Title: "Confirm scope and acceptance from the goal", Assignee: data.Lead},
 			{ID: "t2", Title: "Implement the goal against the agreed scope", Assignee: "fullstack", DependsOn: []string{"t1"}},
 			{ID: "t3", Title: "Review implementation and test evidence", Assignee: "senior-dev", DependsOn: []string{"t2"}},
 		}
@@ -419,7 +477,7 @@ func defaultGoalTasks(data goalDraftData) []goalTaskPlan {
 func defaultGoalSpawnGates(data goalDraftData) []goalCommandPlan {
 	gates := make([]goalCommandPlan, 0, len(data.Roster))
 	for _, member := range data.Roster {
-		if member.Role == "cto" {
+		if member.Role == data.Lead {
 			continue
 		}
 		gates = append(gates, goalCommandPlan{
@@ -434,12 +492,12 @@ func defaultGoalSpawnGates(data goalDraftData) []goalCommandPlan {
 func defaultGoalDispatches(data goalDraftData) []goalDispatchPlan {
 	dispatches := make([]goalDispatchPlan, 0, len(data.Tasks))
 	for _, task := range data.Tasks {
-		if task.Assignee == "cto" {
+		if task.Assignee == data.Lead {
 			continue
 		}
-		thread := canonicalP2PThread("cto", task.Assignee)
+		thread := canonicalP2PThread(data.Lead, task.Assignee)
 		subject := "Task: " + task.Title
-		body := task.Title + "\n\nPush progress, blockers, review requests, and DONE reports to cto over AMQ. Treat this durable AMQ task as the source of truth."
+		body := task.Title + "\n\nPush progress, blockers, review requests, and DONE reports to " + data.Lead + " over AMQ. Treat this durable AMQ task as the source of truth."
 		if task.SourceURL != "" {
 			body += "\n\nSource: " + task.SourceURL
 		}
@@ -449,7 +507,7 @@ func defaultGoalDispatches(data goalDraftData) []goalDispatchPlan {
 			Thread:  thread,
 			Subject: subject,
 			Body:    body,
-			Command: fmt.Sprintf("amq-squad dispatch --session %s --role %s --thread %s --kind todo --subject %q --body %q", data.Session, task.Assignee, thread, subject, body),
+			Command: fmt.Sprintf("amq-squad dispatch --profile %s --session %s --role %s --thread %s --kind todo --subject %q --body %q", data.Profile, data.Session, task.Assignee, thread, subject, body),
 		})
 	}
 	return dispatches
@@ -480,17 +538,17 @@ func defaultGoalMutations(data goalDraftData) []goalCommandPlan {
 	mutations := []goalCommandPlan{
 		{
 			Title:   "initialize profile",
-			Command: fmt.Sprintf("amq-squad team init --profile %s --session %s --roles %s --binary %s --orchestrated --lead cto%s --dry-run", data.Profile, data.Session, strings.Join(roles, ","), strings.Join(binaries, ","), compositionArgs),
+			Command: fmt.Sprintf("amq-squad team init --profile %s --session %s --roles %s --binary %s --orchestrated --lead %s%s --dry-run", data.Profile, data.Session, strings.Join(roles, ","), strings.Join(binaries, ","), data.Lead, compositionArgs),
 			Reason:  "Preview the proposed roster and orchestration metadata before writing team config.",
 		},
 		{
 			Title:   "write brief",
-			Command: fmt.Sprintf("amq-squad brief seed --session %s --seed-from file:<approved-brief.md> --dry-run", data.Session),
+			Command: fmt.Sprintf("amq-squad brief seed --profile %s --session %s --seed-from file:<approved-brief.md> --dry-run", data.Profile, data.Session),
 			Reason:  "Preview the workstream brief before writing .amq-squad/briefs.",
 		},
 	}
 	for _, task := range data.Tasks {
-		cmd := fmt.Sprintf("amq-squad task add --session %s --title %q --assign %s", data.Session, task.Title, task.Assignee)
+		cmd := fmt.Sprintf("amq-squad task add --profile %s --session %s --title %q --assign %s", data.Profile, data.Session, task.Title, task.Assignee)
 		if len(task.DependsOn) > 0 {
 			cmd += " --depends-on " + strings.Join(task.DependsOn, ",")
 		}
@@ -501,36 +559,80 @@ func defaultGoalMutations(data goalDraftData) []goalCommandPlan {
 }
 
 func goalVisibilityMutation(data goalDraftData) goalCommandPlan {
+	command := visibleLeadLaunchCommand(data, false)
 	switch data.Visibility {
 	case visibilityDetached:
 		return goalCommandPlan{
-			Title:   "launch detached team",
-			Command: fmt.Sprintf("amq-squad up %s --profile %s --visibility detached", data.Session, data.Profile),
-			Reason:  "Explicitly create a detached tmux session for background work; attach/open it deliberately before treating the team as visible.",
+			Title:   "launch detached visible lead",
+			Command: command,
+			Reason:  "Start the operator-visible lead with the native /goal prompt, then attach/open its pane deliberately before treating the run as observable.",
 		}
 	case visibilityCurrent:
 		return goalCommandPlan{
-			Title:   "launch in current window",
-			Command: fmt.Sprintf("amq-squad up %s --profile %s --visibility current", data.Session, data.Profile),
-			Reason:  "Split the current visible tmux window into agent panes; this is compact but not the default sibling-window topology.",
+			Title:   "launch visible lead in current pane",
+			Command: command,
+			Reason:  "Start the visible goal lead from the current operator pane with the native /goal prompt; workers remain gated/internal.",
 		}
 	case visibilityPlan:
 		return goalCommandPlan{
-			Title:   "preview visible launch",
-			Command: fmt.Sprintf("amq-squad up %s --profile %s --visibility sibling-tabs --dry-run", data.Session, data.Profile),
-			Reason:  "Preview launch commands only; do not open panes or windows until the operator approves a concrete visibility mode.",
+			Title:   "preview visible lead launch",
+			Command: visibleLeadLaunchCommand(data, true),
+			Reason:  "Preview the native /goal lead launch command only; do not open a pane until the operator approves a concrete visibility mode.",
 		}
 	default:
 		return goalCommandPlan{
-			Title:   "launch visible team",
-			Command: fmt.Sprintf("amq-squad up %s --profile %s --visibility sibling-tabs", data.Session, data.Profile),
-			Reason:  "Run from a visible tmux pane; opens the lead and workers as sibling tmux windows in the same session and refuses outside tmux before spawning hidden workers.",
+			Title:   "launch visible lead",
+			Command: command,
+			Reason:  "Run from a visible tmux pane so the lead receives the native /goal prompt; workers are launched later only after their spawn gates are approved.",
 		}
 	}
 }
 
+func visibleLeadLaunchCommand(data goalDraftData, dryRun bool) string {
+	lead := data.Roster[0]
+	for _, member := range data.Roster {
+		if member.Role == data.Lead {
+			lead = member
+			break
+		}
+	}
+	args := []string{
+		"agent", "up", lead.Binary,
+		"--role", lead.Role,
+		"--session", data.Session,
+	}
+	if dryRun {
+		args = append(args, "--dry-run")
+	}
+	if root := launchRootForProfile(".", data.Profile, data.Session); root != "" {
+		args = append(args, "--root", root)
+	}
+	args = append(args, "--team-workstream", "--team-home", ".")
+	if data.Profile != "" && data.Profile != team.DefaultProfile {
+		args = append(args, "--team-profile", data.Profile)
+	}
+	if lead.Handle != "" {
+		args = append(args, "--me", lead.Handle)
+	}
+	if len(lead.CodexArgs) > 0 && normalizedAgentBinary(lead.Binary) == "codex" {
+		args = append(args, "--codex-args="+joinedAgentArgs(lead.CodexArgs))
+	}
+	if data.OrchestratorPrompt != "" {
+		args = append(args, "--", data.OrchestratorPrompt)
+	}
+	quoted := make([]string, 0, len(args)+1)
+	quoted = append(quoted, "amq-squad")
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
 func renderGoalOrchestratorPrompt(data goalDraftData) string {
 	args := []string{"/goal", "--goal", strconv.Quote(data.Goal), "--session", data.Session, "--profile", data.Profile}
+	if data.Lead != "" && data.Lead != "cto" {
+		args = append(args, "--lead", data.Lead)
+	}
 	if data.Repo != "" {
 		args = append(args, "--repo", data.Repo)
 	}
@@ -553,6 +655,8 @@ func writeGoalDraftMarkdown(out *os.File, data goalDraftData) {
 	fmt.Fprintf(out, "# visibility: %s\n", data.Visibility)
 	fmt.Fprintf(out, "# session: %s\n", data.Session)
 	fmt.Fprintf(out, "# profile: %s\n", data.Profile)
+	fmt.Fprintf(out, "# lead: %s\n", data.Lead)
+	fmt.Fprintf(out, "# namespace: %s\n", data.Namespace.ID)
 	if data.Repo != "" {
 		fmt.Fprintf(out, "# repo: %s\n", data.Repo)
 	}

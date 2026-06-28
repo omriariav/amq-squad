@@ -33,7 +33,7 @@ Composition is a spectrum, and **manual stays the floor**:
 Three binary-neutral primitives make it work, and all of them round-trip through stop/resume so a resumed session rebuilds the team the lead **built**, not the seed:
 
 - **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted). Add `--launch --dry-run` or `rm --stop --dry-run` to preview exact runtime actions before running them.
-- **Native task store** — `amq-squad task add/list/show/claim/done/fail/block/reset`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/`, so a lead of either binary decomposes the goal into claimable work.
+- **Native task store** — `amq-squad task add/list/show/claim/done/fail/block/reset`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/` for the default profile, or `.amq-squad/tasks/<profile>/<session>/` for named profiles, so a lead of either binary decomposes the goal into claimable work.
 - **Compose-from-goal playbook** — the `amq-squad-orchestrator` skill (in both the Claude and Codex marketplaces) drives propose → approve → `team member add` → `task add` → prune.
 
 AMQ `swarm` interop is supported as an external notification/adoption boundary,
@@ -76,7 +76,7 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 Install the 2.0 line (note the `/v2` module path):
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.8.1
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.9.0
 amq-squad version
 ```
 
@@ -322,7 +322,7 @@ The context model is three durable layers. Each layer has exactly one source of 
 | --- | --- | --- |
 | Team norms | `.amq-squad/team-rules.md` | shared, hand-edited |
 | Per-agent persona | `<agent-dir>/role.md` | seeded by launch, then user-editable |
-| Workstream brief | `.amq-squad/briefs/<session>.md` | one per AMQ session |
+| Workstream brief | `.amq-squad/briefs/<session>.md` or `.amq-squad/briefs/<profile>/<session>.md` | one per profile/session namespace |
 
 `CLAUDE.md` and `AGENTS.md` carry a small managed pointer block that links to the three layers above; they never duplicate team-rules content. `amq-squad team sync --apply` writes and refreshes that block. Anything outside the markers is yours and is preserved.
 
@@ -340,7 +340,10 @@ These files are the source of truth. Do not duplicate their content here.
 
 ### Workstream briefs
 
-A brief lives at `.amq-squad/briefs/<session>.md` and carries the goal, scope, and source-of-truth pointers for one AMQ session. Every team member reads the same file.
+A brief lives at `.amq-squad/briefs/<session>.md` for the default profile, or
+`.amq-squad/briefs/<profile>/<session>.md` for a named profile, and carries the
+goal, scope, and source-of-truth pointers for one profile/session namespace.
+Every team member in that namespace reads the same file.
 
 ```sh
 amq-squad up --dry-run --seed-from file:./brief.md     # preview candidate (no write)
@@ -358,7 +361,7 @@ amq-squad brief seed --session issue-96 --seed-from issue:31
 `--seed-from` semantics:
 
 - With `--dry-run`: prints the candidate brief envelope and writes nothing.
-- Without `--dry-run`: writes `.amq-squad/briefs/<session>.md` and brings the team up in the same call. `--seed-from` needs `--force` to overwrite an existing brief; a bare `up` (no `--seed-from`) keeps it.
+- Without `--dry-run`: writes the selected namespace's brief and brings the team up in the same call. `--seed-from` needs `--force` to overwrite an existing brief; a bare `up` (no `--seed-from`) keeps it.
 
 The `amq-team-setup` skill wraps this in a wizard: it captures a goal from **any** source you have — an inline prompt, a local `.md`, a GitHub issue or PR, a Jira key, or a doc URL — fetches it agent-side (amq-squad core stays tracker-neutral), and drafts a **canonical brief** (Goal / Source / Scope / Out of scope / Acceptance) for you to confirm before it is saved. The brief is per-session.
 
@@ -386,6 +389,13 @@ spawn-gate prompts, initial dispatch prompts, and the equivalent orchestrator
 `amq-squad-orchestrator` skill when you want a fast starting point, then review
 and explicitly approve any real setup mutations. Manual setup remains the right
 path when the team shape is already known or the goal needs unusual constraints.
+The JSON envelope and generated brief also include `goal_binding`. Drafts prefer
+native binding (`mode: "native_goal_pending"`) by emitting a visible-lead
+`agent up ... -- '/goal ...'` command; `status --json` reports
+`mode: "native_goal"` only after the configured lead's launch record proves that
+native command was used. Until then it reports the explicit fallback,
+`mode: "amq_task_brief"`, where the binding is the durable AMQ task, active
+brief, and task store.
 
 For an Autonomous preview, opt in explicitly and include a bounded policy:
 
@@ -443,6 +453,15 @@ amq-squad doctor --profile release           # check that profile's config, wake
 
 New `team.json` writes use `schema: 3` (the JSON key in persisted team profiles is `schema`; `schema_version` is reserved for the read-only JSON command envelopes documented below). Schema 1/2 profiles without an `operator` field are still supported and treated as implicit non-runnable `user` operator-gate teams until they are rewritten. Omit `--profile` (or pass `--profile default`) for the default profile.
 
+Default-profile storage remains backward compatible: `.agent-mail/<session>`,
+`.amq-squad/briefs/<session>.md`, and `.amq-squad/tasks/<session>`. Named
+profiles are storage-isolated under `.agent-mail/<profile>/<session>`,
+`.amq-squad/briefs/<profile>/<session>.md`, and
+`.amq-squad/tasks/<profile>/<session>`. Status, thread/threads, notify,
+dispatch, task, brief, launch, resume, and lifecycle commands resolve against
+the selected profile/session namespace rather than scanning a sibling legacy
+session root.
+
 Schema 3 adds an optional virtual operator participant for human gates:
 
 ```sh
@@ -466,6 +485,26 @@ amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto
 This records `orchestrated`/`lead` in `team.json` and injects a generated `## Orchestration` reporting norm into `.amq-squad/team-rules.md`: the lead loads the `amq-squad-orchestrator` skill, dispatches durable AMQ tasks, and children push ACK/start, progress, blockers, review requests, and DONE reports back to the sender/lead over AMQ. Default off; **exactly one lead**; the lead is a team member, **never the operator**. `--lead ROLE` implies `--orchestrated`; with `--orchestrated` alone a single-member team self-selects and a team with a `cto` defaults to `cto`. The `team_profile_plan` / `team_plan` JSON envelopes carry `orchestrated`/`lead`. If `team-rules.md` already exists, `new team` leaves it untouched, so regenerate with `amq-squad team rules init --force` to pick up the norm.
 
 The operator normally steers the workstream through the lead/orchestrator. The operator can steer the lead directly from amq-noc (v0.8.0+), or with plain AMQ: a **directive** arrives on the lead's operator p2p thread as a `--kind todo` message whose subject starts with `DIRECTIVE:`. The lead treats directives as operator steering with priority over child reports, acknowledges on the same thread, and never treats one as a gate answer (a directive never clears a `gate/<topic>` thread). Direct operator-to-worker messages are exceptional; when they affect scope, priority, merge readiness, release state, or external actions, the worker reports them to the lead before acting or includes the lead/thread metadata in the AMQ report.
+
+For NOC and orchestrator visibility, leads must surface blockers and approval
+requests immediately on the operator/orchestrator-visible surface. Approval
+requests use stable `gate/<topic>` threads; blockers use an operator-visible
+status or question. A blocker or approval request is not complete if it exists
+only in a child pane, internal worker thread, or hidden gate.
+
+When the top-level orchestrator or NOC is not wake-enabled, it must poll the
+visible goal leads instead of waiting for wake delivery. The operating contract
+is one `/goal` per visible lead; leads push status, blockers, approval requests,
+and final evidence to AMQ/NOC-visible surfaces; the parent orchestrator or NOC
+polls each lead's inbox, gate threads, and `status --json` on a cadence; child
+agents remain internal unless the lead escalates them.
+`status --json` exposes `goal_binding` so the NOC can tell whether a visible
+lead has verified native `/goal` launch binding (`native_goal`), a generated but
+not-yet-launched native plan (`native_goal_pending` in `goal draft --json`), or
+the explicit AMQ task + brief + task-store fallback (`amq_task_brief`). Recovery
+for a missing or fallback-bound visible lead sends a durable AMQ directive first;
+managed-pane `/goal` injection is only a follow-up when the pane is idle, and any
+force-interrupt path requires an operator gate.
 
 For an existing profile, use `amq-squad team lead set <role>` to opt into orchestration without rebuilding the roster, `team lead clear` to return to a flat squad, and `team lead show --json` for discovery. A lead that is already running in an operator-owned pane can register itself with `amq-squad lead register --role <role> --session <session>`; this writes an explicit external launch record so `status` / `focus` / `send` can target the pane. External lead records are visible and directable, but lifecycle commands do not own them: `stop` reports that the pane must be stopped manually, `rm` / `archive` leave it open, and `resume` asks the operator to run `lead register` again instead of replaying the pane.
 
@@ -639,7 +678,10 @@ amq-squad task done <id> --me HANDLE [--evidence E] [--json] --session S
 amq-squad task fail|block <id> --me HANDLE [--reason R] [--json] --session S
 amq-squad task reset <id> --me HANDLE [--reason R] [--json] --session S
                                   Native pull-based, dependency-gated task store
-                                  under .amq-squad/tasks/<session>/. A task is
+                                  under .amq-squad/tasks/<session>/ for the
+                                  default profile or
+                                  .amq-squad/tasks/<profile>/<session>/ for
+                                  named profiles. A task is
                                   claimable only once its --depends-on tasks are
                                   completed. Terminal/reset transitions on an
                                   assigned task require the assignee's --me.
@@ -760,7 +802,7 @@ It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--o
 
 `amq-squad amq ...` is a project-aware wrapper around AMQ diagnostics. It resolves the same AMQ root, base root, session, and handle that the squad launcher uses, then delegates to AMQ.
 
-amq-squad v2.8.1 requires AMQ 0.38.0 or newer. That floor includes eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
+amq-squad v2.9.0 requires AMQ 0.38.0 or newer. That floor includes eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
 
 Read-only diagnostics run directly:
 
@@ -981,7 +1023,7 @@ amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
 amq-squad agent up codex --model gpt-5
 ```
 
-amq-squad v2.8.1 requires amq **0.38.0+**. Launches pass `--require-wake` to
+amq-squad v2.9.0 requires amq **0.38.0+**. Launches pass `--require-wake` to
 `amq coop exec`, so a launch **fails at the door** when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale or
 orphaned wake. `--no-require-wake` opts out for environments where wake cannot
@@ -1053,7 +1095,15 @@ Inside an amq-squad-launched shell, use bare `amq` commands. The launcher alread
 <project>/.amq-squad/team.json           Default team profile (schema: 3 on new writes).
 <project>/.amq-squad/teams/<name>.json   Named team profiles (schema: 3 on new writes).
 <project>/.amq-squad/team-rules.md       Durable team norms (user-edited).
-<project>/.amq-squad/briefs/<session>.md Workstream brief, one per AMQ session.
+<project>/.amq-squad/briefs/<session>.md Workstream brief for the default profile.
+<project>/.amq-squad/briefs/<profile>/<session>.md
+                                         Workstream brief for a named profile.
+<project>/.amq-squad/tasks/<session>/     Task store for the default profile.
+<project>/.amq-squad/tasks/<profile>/<session>/
+                                         Task store for a named profile.
+<project>/.agent-mail/<session>/          AMQ root for the default profile.
+<project>/.agent-mail/<profile>/<session>/
+                                         AMQ root for a named profile.
 <project>/CLAUDE.md, AGENTS.md           Managed pointer block; user content outside markers preserved.
 <AM_ROOT>/agents/<handle>/extensions/io.github.omriariav.amq-squad/
                                          Per-agent launch.json and role.md inside the

@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -67,14 +68,15 @@ const (
 // distinct "(stub brief)" / "(no brief)" labels in the table without changing
 // the JSON `brief` contract.
 type sessionBoardRow struct {
-	Name        string     `json:"name"`
-	Root        string     `json:"root"`
-	Profile     string     `json:"profile,omitempty"`
-	State       boardState `json:"state"`
-	AgentsTotal int        `json:"agents_total"`
-	AgentsAlive int        `json:"agents_alive"`
-	WakeLive    int        `json:"wake_live,omitempty"`
-	AtRisk      int        `json:"at_risk"`
+	Name        string             `json:"name"`
+	Root        string             `json:"root"`
+	Profile     string             `json:"profile,omitempty"`
+	Namespace   squadnamespace.Ref `json:"namespace"`
+	State       boardState         `json:"state"`
+	AgentsTotal int                `json:"agents_total"`
+	AgentsAlive int                `json:"agents_alive"`
+	WakeLive    int                `json:"wake_live,omitempty"`
+	AtRisk      int                `json:"at_risk"`
 	// AgentsStale counts leftover (stale/dead/missing) records that were aged
 	// OUT of the health rollup because their last activity is older than
 	// boardStaleRecordAge. They are excluded from AgentsTotal so a pile of old
@@ -238,9 +240,10 @@ func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicate
 	if !ok {
 		return
 	}
-	statusRows := buildStatusRows(t, sess.Name, probe)
+	statusRows := buildStatusRows(t, profile, sess.Name, probe)
 	ctx := newSessionStatusContext(t, profile, sess.Name, firstLiveTmuxSession(statusRows))
 	row.Profile = ctx.Profile
+	row.Namespace = squadnamespace.Resolve(t.Project, ctx.Profile, sess.Name)
 	row.Actions = ctx.Actions
 	row.Orchestrated = ctx.Orchestrated
 	row.Lead = ctx.Lead
@@ -249,6 +252,13 @@ func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicate
 }
 
 func boardProfileForSession(profiles []boardProfile, sess state.Session) (string, team.Team, bool) {
+	if profile := strings.TrimSpace(sess.TeamProfile); profile != "" {
+		for _, p := range profiles {
+			if p.Name == profile {
+				return p.Name, p.Team, true
+			}
+		}
+	}
 	if profile, ok := launchProfileForSession(sess); ok {
 		for _, p := range profiles {
 			if p.Name == profile {
@@ -299,9 +309,12 @@ const boardStaleRecordAge = state.DefaultStaleAfter
 // prior session do not pin a quiet session at "degraded" (#157). now is the
 // reference clock for that aging.
 func boardRowFor(projectDir string, sess state.Session, now time.Time) sessionBoardRow {
+	profile := squadnamespace.NormalizeProfile(sess.TeamProfile)
 	row := sessionBoardRow{
-		Name: sess.Name,
-		Root: sess.Root,
+		Name:      sess.Name,
+		Root:      sess.Root,
+		Profile:   profile,
+		Namespace: squadnamespace.Resolve(projectDir, profile, sess.Name),
 	}
 	var latest time.Time
 	for _, a := range sess.Agents {
@@ -334,7 +347,7 @@ func boardRowFor(projectDir string, sess state.Session, now time.Time) sessionBo
 	}
 	row.LastActivity = latest
 	row.State = rollupBoardState(row.AgentsAlive, row.WakeLive, row.AtRisk, row.AgentsTotal)
-	row.Brief, row.briefKind = classifyBrief(projectDir, sess.Name)
+	row.Brief, row.briefKind = classifyBriefForProfile(projectDir, sess.TeamProfile, sess.Name)
 	return row
 }
 
@@ -378,7 +391,11 @@ func rollupBoardState(alive, wakeLive, atRisk, total int) boardState {
 // if it were an operator-authored brief. A missing file is briefNone; any other
 // meaningful first line is briefReal.
 func classifyBrief(projectDir, session string) (string, briefKind) {
-	path := briefPath(projectDir, session)
+	return classifyBriefForProfile(projectDir, team.DefaultProfile, session)
+}
+
+func classifyBriefForProfile(projectDir, profile, session string) (string, briefKind) {
+	path := briefPathForProfile(projectDir, profile, session)
 	if path == "" {
 		return "", briefNone
 	}

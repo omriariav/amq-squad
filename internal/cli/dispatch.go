@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -50,7 +51,7 @@ var dispatchWakePane = defaultDispatchWakePane
 
 // dispatchLinkTask is a seam for partial-failure tests around post-send task
 // metadata linkage. Production uses taskstore.LinkDispatch directly.
-var dispatchLinkTask = taskstore.LinkDispatch
+var dispatchLinkTask = taskstore.LinkDispatchForProfile
 
 func runDispatch(args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
@@ -141,6 +142,7 @@ Examples:
 	if err != nil {
 		return err
 	}
+	ns := squadnamespace.Resolve(projectDir, profile, workstream)
 	from, err := resolveDispatchSender(t, *fromFlag)
 	if err != nil {
 		return err
@@ -164,7 +166,7 @@ Examples:
 	// instead of the default .agent-mail (#152's misroute, the root cause #153
 	// builds on).
 	cwd := member.EffectiveCWD(t.Project)
-	ctx, err := resolveAMQContextForProject(cwd, workstream, from)
+	ctx, err := resolveAMQContextForNamespace(cwd, profile, workstream, from)
 	if err != nil {
 		return fmt.Errorf("resolve amq root for dispatch: %w", err)
 	}
@@ -172,7 +174,7 @@ Examples:
 
 	taskID := strings.TrimSpace(*taskIDFlag)
 	if *createTaskFlag {
-		created, err := taskstore.Add(projectDir, workstream, taskstore.AddInput{
+		created, err := taskstore.AddForProfile(projectDir, profile, workstream, taskstore.AddInput{
 			Title:       *subjectFlag,
 			Description: taskBody,
 			AssignTo:    member.Handle,
@@ -182,7 +184,7 @@ Examples:
 		}
 		taskID = created.ID
 	} else if taskID != "" {
-		if _, err := taskstore.Show(projectDir, workstream, taskID); err != nil {
+		if _, err := taskstore.ShowForProfile(projectDir, profile, workstream, taskID); err != nil {
 			return fmt.Errorf("link native task for dispatch: %w", err)
 		}
 	}
@@ -194,7 +196,7 @@ Examples:
 	}
 	msgID := parseSentMessageID(string(out))
 	if taskID != "" {
-		linked, lerr := dispatchLinkTask(projectDir, workstream, taskID, taskstore.Dispatch{
+		linked, lerr := dispatchLinkTask(projectDir, profile, workstream, taskID, taskstore.Dispatch{
 			Assignee:  member.Handle,
 			Thread:    *threadFlag,
 			Kind:      *kindFlag,
@@ -237,6 +239,7 @@ Examples:
 				Project:   projectDir,
 				Session:   workstream,
 				Profile:   profile,
+				Namespace: ns,
 				ID:        taskID,
 				TaskID:    taskID,
 				Role:      member.Role,
@@ -264,6 +267,7 @@ Examples:
 				Project:   projectDir,
 				Session:   workstream,
 				Profile:   profile,
+				Namespace: ns,
 				ID:        taskID,
 				TaskID:    taskID,
 				Role:      member.Role,
@@ -287,6 +291,7 @@ Examples:
 			Project:   projectDir,
 			Session:   workstream,
 			Profile:   profile,
+			Namespace: ns,
 			ID:        taskID,
 			TaskID:    taskID,
 			Role:      member.Role,

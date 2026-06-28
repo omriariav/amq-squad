@@ -356,6 +356,7 @@ func TestExecResumePlanRefusesBlockedMembersUnlessForced(t *testing.T) {
 	t.Run("blocked aborts without force", func(t *testing.T) {
 		err := execResumePlan(
 			team.Team{Project: t.TempDir(), Members: []team.Member{{Role: "cto"}}},
+			team.DefaultProfile,
 			"issue-96",
 			[]resumePlan{
 				{Role: "cto", Action: resumeBlocked, Note: "wake+presence", Command: ""},
@@ -381,6 +382,7 @@ func TestExecResumePlanNothingToLaunch(t *testing.T) {
 	stdout, _, err := captureOutput(t, func() error {
 		return execResumePlan(
 			team.Team{Project: dir, Members: []team.Member{{Role: "cto"}, {Role: "qa"}}},
+			team.DefaultProfile,
 			"issue-96",
 			[]resumePlan{
 				{Role: "cto", Action: resumeLive, Note: "wake"},
@@ -446,6 +448,7 @@ func TestExecResumePlanReportsPartialLaunchRecordFailure(t *testing.T) {
 					{Role: "frontend-dev", Binary: "codex", Handle: "frontend-dev", Session: "issue-96"},
 				},
 			},
+			team.DefaultProfile,
 			"issue-96",
 			[]resumePlan{
 				{Role: "cto", Action: resumeFresh, Command: "amq-squad agent up codex --role cto"},
@@ -474,6 +477,7 @@ func TestExecResumePlanReportsPartialLaunchRecordFailure(t *testing.T) {
 func TestExecResumePlanRejectsUnknownTerminal(t *testing.T) {
 	err := execResumePlan(
 		team.Team{Project: t.TempDir(), Members: []team.Member{{Role: "cto"}}},
+		team.DefaultProfile,
 		"issue-96",
 		[]resumePlan{{Role: "cto", Action: resumeRestore, Command: "echo hi"}},
 		resumeExecOptions{Enabled: true, Terminal: "screen", Target: "current-window", Layout: "vertical"},

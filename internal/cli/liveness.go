@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -93,11 +94,11 @@ func (l agentLiveness) Live() bool {
 //     applied by the caller's freshness check exactly as before — see below),
 //   - the live-replacement-pane fallback (relaunched-outside-amq-squad).
 //
-// agentDir is the resolved mailbox dir; root is its AMQ root; handle is the
-// resolved handle; role/binary/workstream identify the member for the
-// replacement-pane resolver. probe abstracts liveness/process inspection so
-// tests inject deterministic behavior.
-func classifyAgentLiveness(agentDir, root, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe) agentLiveness {
+// agentDir is the resolved mailbox dir; root is its AMQ root; expectedProfile
+// is the selected team profile; handle is the resolved handle; role/binary/
+// workstream identify the member for the replacement-pane resolver. probe
+// abstracts liveness/process inspection so tests inject deterministic behavior.
+func classifyAgentLiveness(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe) agentLiveness {
 	out := agentLiveness{}
 
 	launchRec, launchErr := launch.Read(agentDir)
@@ -105,6 +106,13 @@ func classifyAgentLiveness(agentDir, root, handle, role, binary, workstream, cwd
 		out.LaunchFound = true
 		out.LaunchRecord = launchRec
 		out.Tmux = launchRec.Tmux
+		if !squadnamespace.ProfilesEqual(expectedProfile, launchRec.TeamProfile) {
+			out.Tmux = nil
+			out.Verdict = livenessStale
+			out.Status = statusStateStale
+			out.Detail = fmt.Sprintf("launch record profile %q does not match requested profile %q", squadnamespace.NormalizeProfile(launchRec.TeamProfile), squadnamespace.NormalizeProfile(expectedProfile))
+			return out
+		}
 	}
 	wakeLock, wakeErr := readWakeLock(agentDir)
 	presence, presenceErr := readPresenceForEntry(agentDir)

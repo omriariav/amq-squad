@@ -1,8 +1,8 @@
 // Package task is amq-squad's native, binary-neutral pull-based task store:
-// the lead decomposes a goal into tasks under .amq-squad/tasks/<session>/, and
-// workers (any binary) claim them and self-schedule around dependencies. It is
-// the amq-squad-native analog of the amq swarm task list — but with a create
-// path (Add), so a Codex or Claude lead can decompose the goal. See
+// the lead decomposes a goal into profile/session-scoped tasks, and workers
+// (any binary) claim them and self-schedule around dependencies. It is the
+// amq-squad-native analog of the amq swarm task list — but with a create path
+// (Add), so a Codex or Claude lead can decompose the goal. See
 // docs/task-store-design.md.
 package task
 
@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/flock"
+	"github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // Status values for the five-state machine.
@@ -63,19 +65,27 @@ type Dispatch struct {
 	DispatchedAt time.Time `json:"dispatched_at,omitempty"`
 }
 
-// Dir is the task directory for a workstream: .amq-squad/tasks/<session>.
+// Dir is the default-profile task directory for a workstream.
 func Dir(projectDir, session string) string {
-	return filepath.Join(projectDir, ".amq-squad", "tasks", session)
+	return DirForProfile(projectDir, team.DefaultProfile, session)
+}
+
+func DirForProfile(projectDir, profile, session string) string {
+	return namespace.TasksPath(projectDir, profile, session)
 }
 
 // Add creates a new pending task and returns it. The id is allocated under the
 // store lock so concurrent adds never collide.
 func Add(projectDir, session string, in AddInput, now time.Time) (Task, error) {
+	return AddForProfile(projectDir, team.DefaultProfile, session, in, now)
+}
+
+func AddForProfile(projectDir, profile, session string, in AddInput, now time.Time) (Task, error) {
 	if strings.TrimSpace(in.Title) == "" {
 		return Task{}, fmt.Errorf("task title is required")
 	}
 	var created Task
-	err := withLock(projectDir, session, func(dir string) error {
+	err := withLockForProfile(projectDir, profile, session, func(dir string) error {
 		tasks, err := readAll(dir)
 		if err != nil {
 			return err
@@ -110,7 +120,11 @@ func Add(projectDir, session string, in AddInput, now time.Time) (Task, error) {
 
 // List returns all tasks in the workstream, sorted by id.
 func List(projectDir, session string) ([]Task, error) {
-	tasks, err := readAll(Dir(projectDir, session))
+	return ListForProfile(projectDir, team.DefaultProfile, session)
+}
+
+func ListForProfile(projectDir, profile, session string) ([]Task, error) {
+	tasks, err := readAll(DirForProfile(projectDir, profile, session))
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +134,11 @@ func List(projectDir, session string) ([]Task, error) {
 
 // Show returns one task by id.
 func Show(projectDir, session, id string) (Task, error) {
-	tasks, err := readAll(Dir(projectDir, session))
+	return ShowForProfile(projectDir, team.DefaultProfile, session, id)
+}
+
+func ShowForProfile(projectDir, profile, session, id string) (Task, error) {
+	tasks, err := readAll(DirForProfile(projectDir, profile, session))
 	if err != nil {
 		return Task{}, err
 	}
@@ -135,10 +153,14 @@ func Show(projectDir, session, id string) (Task, error) {
 // Claim moves a pending task to in_progress for handle, but only when every
 // dependency is completed (dependency gating).
 func Claim(projectDir, session, id, handle string, now time.Time) (Task, error) {
+	return ClaimForProfile(projectDir, team.DefaultProfile, session, id, handle, now)
+}
+
+func ClaimForProfile(projectDir, profile, session, id, handle string, now time.Time) (Task, error) {
 	if strings.TrimSpace(handle) == "" {
 		return Task{}, fmt.Errorf("--me handle is required to claim a task")
 	}
-	return mutate(projectDir, session, id, func(t *Task, all map[string]*Task) error {
+	return mutateForProfile(projectDir, profile, session, id, func(t *Task, all map[string]*Task) error {
 		if t.Status != StatusPending {
 			return fmt.Errorf("task %s is %s, not pending; only pending tasks can be claimed", id, t.Status)
 		}
@@ -161,20 +183,36 @@ func Claim(projectDir, session, id, handle string, now time.Time) (Task, error) 
 
 // Done / Fail / Block are the in_progress → terminal transitions.
 func Done(projectDir, session, id, actor, evidence string, now time.Time) (Task, error) {
-	return terminal(projectDir, session, id, actor, StatusCompleted, func(t *Task) { t.Evidence = strings.TrimSpace(evidence) }, now)
+	return DoneForProfile(projectDir, team.DefaultProfile, session, id, actor, evidence, now)
+}
+
+func DoneForProfile(projectDir, profile, session, id, actor, evidence string, now time.Time) (Task, error) {
+	return terminalForProfile(projectDir, profile, session, id, actor, StatusCompleted, func(t *Task) { t.Evidence = strings.TrimSpace(evidence) }, now)
 }
 
 func Fail(projectDir, session, id, actor, reason string, now time.Time) (Task, error) {
-	return terminal(projectDir, session, id, actor, StatusFailed, func(t *Task) { t.FailureReason = strings.TrimSpace(reason) }, now)
+	return FailForProfile(projectDir, team.DefaultProfile, session, id, actor, reason, now)
+}
+
+func FailForProfile(projectDir, profile, session, id, actor, reason string, now time.Time) (Task, error) {
+	return terminalForProfile(projectDir, profile, session, id, actor, StatusFailed, func(t *Task) { t.FailureReason = strings.TrimSpace(reason) }, now)
 }
 
 func Block(projectDir, session, id, actor, reason string, now time.Time) (Task, error) {
-	return terminal(projectDir, session, id, actor, StatusBlocked, func(t *Task) { t.BlockReason = strings.TrimSpace(reason) }, now)
+	return BlockForProfile(projectDir, team.DefaultProfile, session, id, actor, reason, now)
+}
+
+func BlockForProfile(projectDir, profile, session, id, actor, reason string, now time.Time) (Task, error) {
+	return terminalForProfile(projectDir, profile, session, id, actor, StatusBlocked, func(t *Task) { t.BlockReason = strings.TrimSpace(reason) }, now)
 }
 
 // Reset returns a non-pending task to pending so it can be claimed again.
 func Reset(projectDir, session, id, actor, reason string, now time.Time) (Task, error) {
-	return mutate(projectDir, session, id, func(t *Task, _ map[string]*Task) error {
+	return ResetForProfile(projectDir, team.DefaultProfile, session, id, actor, reason, now)
+}
+
+func ResetForProfile(projectDir, profile, session, id, actor, reason string, now time.Time) (Task, error) {
+	return mutateForProfile(projectDir, profile, session, id, func(t *Task, _ map[string]*Task) error {
 		if t.Status == StatusPending {
 			return fmt.Errorf("task %s is already pending; reset requires a non-pending task", id)
 		}
@@ -196,7 +234,11 @@ func Reset(projectDir, session, id, actor, reason string, now time.Time) (Task, 
 
 // LinkDispatch records durable AMQ metadata on a task.
 func LinkDispatch(projectDir, session, id string, dispatch Dispatch, now time.Time) (Task, error) {
-	return mutate(projectDir, session, id, func(t *Task, _ map[string]*Task) error {
+	return LinkDispatchForProfile(projectDir, team.DefaultProfile, session, id, dispatch, now)
+}
+
+func LinkDispatchForProfile(projectDir, profile, session, id string, dispatch Dispatch, now time.Time) (Task, error) {
+	return mutateForProfile(projectDir, profile, session, id, func(t *Task, _ map[string]*Task) error {
 		d := dispatch
 		d.Assignee = strings.TrimSpace(d.Assignee)
 		d.Thread = strings.TrimSpace(d.Thread)
@@ -214,7 +256,11 @@ func LinkDispatch(projectDir, session, id string, dispatch Dispatch, now time.Ti
 
 // terminal applies an in_progress → completed/failed/blocked transition.
 func terminal(projectDir, session, id, actor, to string, set func(*Task), now time.Time) (Task, error) {
-	return mutate(projectDir, session, id, func(t *Task, _ map[string]*Task) error {
+	return terminalForProfile(projectDir, team.DefaultProfile, session, id, actor, to, set, now)
+}
+
+func terminalForProfile(projectDir, profile, session, id, actor, to string, set func(*Task), now time.Time) (Task, error) {
+	return mutateForProfile(projectDir, profile, session, id, func(t *Task, _ map[string]*Task) error {
 		if t.Status != StatusInProgress {
 			return fmt.Errorf("task %s is %s, not in_progress; claim it before marking it %s", id, t.Status, to)
 		}
@@ -247,9 +293,13 @@ func requireAssignee(t *Task, actor, verb string) error {
 // mutate locks the store, loads all tasks, applies fn to the target task (with
 // the full set available for dependency checks), and persists just that task.
 func mutate(projectDir, session, id string, fn func(t *Task, all map[string]*Task) error) (Task, error) {
+	return mutateForProfile(projectDir, team.DefaultProfile, session, id, fn)
+}
+
+func mutateForProfile(projectDir, profile, session, id string, fn func(t *Task, all map[string]*Task) error) (Task, error) {
 	id = strings.TrimSpace(id)
 	var out Task
-	err := withLock(projectDir, session, func(dir string) error {
+	err := withLockForProfile(projectDir, profile, session, func(dir string) error {
 		tasks, err := readAll(dir)
 		if err != nil {
 			return err
@@ -269,7 +319,11 @@ func mutate(projectDir, session, id string, fn func(t *Task, all map[string]*Tas
 }
 
 func withLock(projectDir, session string, fn func(dir string) error) error {
-	dir := Dir(projectDir, session)
+	return withLockForProfile(projectDir, team.DefaultProfile, session, fn)
+}
+
+func withLockForProfile(projectDir, profile, session string, fn func(dir string) error) error {
+	dir := DirForProfile(projectDir, profile, session)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("ensure task dir %s: %w", dir, err)
 	}

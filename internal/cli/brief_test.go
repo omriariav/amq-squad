@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func TestRunBriefReadsExisting(t *testing.T) {
@@ -71,6 +73,51 @@ func TestRunBriefJSON(t *testing.T) {
 	}
 	if env.Data.Kind != "real" || !env.Data.Exists || env.Data.Content != content {
 		t.Fatalf("brief JSON classification/content mismatch: %+v", env.Data)
+	}
+}
+
+func TestRunBriefJSONCarriesNamedProfileNamespace(t *testing.T) {
+	project := t.TempDir()
+	content := "# issue-96\n\nShip the profile-aware JSON reader.\n"
+	writeTestBrief(t, project, "issue-96", content)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runBrief([]string{"--project", project, "--profile", "release", "--session", "issue-96", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("runBrief --profile --json: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[briefEnvelopeData](t, stdout)
+	if env.Data.Profile != "release" || env.Data.Namespace.ID != "release/issue-96" {
+		t.Fatalf("brief namespace/profile mismatch: %+v", env.Data)
+	}
+}
+
+func TestRunBriefDuplicateProfileSessionUsesNamespacedStore(t *testing.T) {
+	project := t.TempDir()
+	for _, profile := range []string{"product", "release"} {
+		if err := team.WriteProfile(project, profile, team.Team{
+			Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	releasePath := briefPathForProfile(project, "release", "main")
+	if err := os.MkdirAll(filepath.Dir(releasePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(releasePath, []byte("# main\n\nRelease profile brief.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return runBrief([]string{"--project", project, "--profile", "release", "--session", "main", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("duplicate profile/session should use namespaced brief store: %v", err)
+	}
+	env := decodeJSONEnvelope[briefEnvelopeData](t, stdout)
+	if env.Data.Path != releasePath || !strings.Contains(env.Data.Content, "Release profile brief.") {
+		t.Fatalf("brief envelope used wrong store: %+v", env.Data)
 	}
 }
 
@@ -171,6 +218,25 @@ func TestRunBriefSeedJSON(t *testing.T) {
 	}
 	if !strings.Contains(env.Data.Content, "# Seeded JSON") {
 		t.Fatalf("brief_seed content missing body: %+v", env.Data)
+	}
+}
+
+func TestRunBriefSeedJSONCarriesNamedProfileNamespace(t *testing.T) {
+	swapSeedClock(t)
+	project := t.TempDir()
+	source := filepath.Join(project, "brief.md")
+	if err := os.WriteFile(source, []byte("# Seeded Profile JSON\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runBrief([]string{"seed", "--project", project, "--profile", "release", "--session", "issue-96", "--seed-from", "file:" + source, "--dry-run", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("brief seed --profile --json: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[briefSeedEnvelopeData](t, stdout)
+	if env.Data.Profile != "release" || env.Data.Namespace.ID != "release/issue-96" {
+		t.Fatalf("brief_seed namespace/profile mismatch: %+v", env.Data)
 	}
 }
 

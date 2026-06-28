@@ -267,6 +267,9 @@ func TestMemberActions(t *testing.T) {
 		if a.Label == "" || a.Scope != want.scope {
 			t.Errorf("%s action label/scope wrong: got scope %q label %q", k, a.Scope, a.Label)
 		}
+		if a.NamespaceID != "default/issue-96" {
+			t.Errorf("%s namespace_id = %q, want default/issue-96", k, a.NamespaceID)
+		}
 		if a.Mutates != want.mutates || a.NeedsConfirmation != want.confirm {
 			t.Errorf("%s mutates/needs_confirmation = %v/%v, want %v/%v", k, a.Mutates, a.NeedsConfirmation, want.mutates, want.confirm)
 		}
@@ -301,6 +304,9 @@ func TestMemberActions(t *testing.T) {
 	if !strings.Contains(named[0].Command, "--profile review") {
 		t.Errorf("named profile not in command: %q", named[0].Command)
 	}
+	if named[0].NamespaceID != "review/issue-96" {
+		t.Errorf("named action namespace_id = %q, want review/issue-96", named[0].NamespaceID)
+	}
 	// Dead pane -> focus/send unavailable WITH a reason; other actions stay
 	// available with no reason.
 	dead := memberActions("/Code/app", team.DefaultProfile, "issue-96", "cto", false)
@@ -318,6 +324,38 @@ func TestMemberActions(t *testing.T) {
 				t.Errorf("%s should stay available with no reason: %+v", a.Kind, a)
 			}
 		}
+	}
+}
+
+func TestResolveControlTargetRefusesForeignProfileRecord(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	for _, profile := range []string{"product", "release"} {
+		if err := team.WriteProfile(dir, profile, team.Team{
+			Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedAgentRecord(t, base, "main", "cto", launch.Record{
+		CWD:         dir,
+		Binary:      "codex",
+		Handle:      "cto",
+		Role:        "cto",
+		Session:     "main",
+		TeamProfile: "product",
+		Tmux:        &launch.TmuxInfo{PaneID: "%5"},
+	})
+	mr, workstream, err := resolveMemberRuntime(dir, "release", "main", true, "cto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mr.HasRecord || mr.ProfileMismatch {
+		t.Fatalf("foreign launch record should be isolated from release profile runtime: %+v", mr)
+	}
+	panes := []tmuxpane.TmuxPane{{PaneID: "%5", CWD: dir, Command: "codex", Title: "amq:main:cto"}}
+	if paneID, _, ok := resolveControlTarget(mr, workstream, panes); ok || paneID != "" {
+		t.Fatalf("foreign-profile record must not fall back to fuzzy pane resolution, got ok=%v pane=%q", ok, paneID)
 	}
 }
 
@@ -363,7 +401,7 @@ func TestResumeExecRejectsNonTmuxTerminal(t *testing.T) {
 	// tmux backend). Window-per-agent on resume is via --target new-window.
 	tm := team.Team{Project: "/p", Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto"}}}
 	plans := []resumePlan{{Role: "cto", Action: resumeRestore, Command: "cd /p && amq-squad agent up codex --role cto"}}
-	err := execResumePlan(tm, "issue-96", plans,
+	err := execResumePlan(tm, team.DefaultProfile, "issue-96", plans,
 		resumeExecOptions{Enabled: true, Terminal: "tmux-session", Target: "current-window", Layout: "vertical"}, false)
 	if err == nil || !strings.Contains(err.Error(), "not supported on resume") {
 		t.Fatalf("want rejection of tmux-session terminal on resume --exec, got %v", err)
@@ -416,6 +454,9 @@ func TestSessionActions(t *testing.T) {
 		if a.Scope != "session" || a.Label == "" {
 			t.Errorf("%s scope/label wrong: scope=%q label=%q", k, a.Scope, a.Label)
 		}
+		if a.NamespaceID != "default/issue-96" {
+			t.Errorf("%s namespace_id = %q, want default/issue-96", k, a.NamespaceID)
+		}
 		if !strings.Contains(a.Command, "--session issue-96") || !strings.Contains(a.Command, "--project /Code/app") {
 			t.Errorf("%s command missing scope: %q", k, a.Command)
 		}
@@ -446,8 +487,12 @@ func TestSessionActions(t *testing.T) {
 	if strings.Contains(byKind["status"].Command, "--profile") {
 		t.Errorf("default profile must be omitted: %q", byKind["status"].Command)
 	}
-	if !strings.Contains(sessionActions("/Code/app", "review", "issue-96", "")[0].Command, "--profile review") {
+	namedSession := sessionActions("/Code/app", "review", "issue-96", "")
+	if !strings.Contains(namedSession[0].Command, "--profile review") {
 		t.Error("named profile must appear in session action commands")
+	}
+	if namedSession[0].NamespaceID != "review/issue-96" {
+		t.Errorf("named session action namespace_id = %q, want review/issue-96", namedSession[0].NamespaceID)
 	}
 	// With no live tmux session, attach_control is ABSENT (no target to attach).
 	if _, ok := byKind["attach_control"]; ok {

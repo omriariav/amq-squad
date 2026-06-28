@@ -350,7 +350,7 @@ func TestRunDispatchCreateTaskLinkFailureLeavesQueuedMessageAndTask(t *testing.T
 	writeDispatchTeam(t, dir)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-link to qa\n")
 	prevLink := dispatchLinkTask
-	dispatchLinkTask = func(projectDir, session, id string, dispatch taskstore.Dispatch, now time.Time) (taskstore.Task, error) {
+	dispatchLinkTask = func(projectDir, profile, session, id string, dispatch taskstore.Dispatch, now time.Time) (taskstore.Task, error) {
 		return taskstore.Task{}, errors.New("link failed")
 	}
 	t.Cleanup(func() { dispatchLinkTask = prevLink })

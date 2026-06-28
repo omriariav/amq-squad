@@ -87,6 +87,63 @@ func TestNotifyUsesCustomOperatorHandle(t *testing.T) {
 	}
 }
 
+func TestNotifyProfileScopesOperatorAttentionAndStateKeys(t *testing.T) {
+	project, base, statePath := seedNotifyProject(t, team.OperatorConfig{Enabled: true, Handle: team.DefaultOperatorHandle})
+	if err := team.WriteProfile(project, "release", team.Team{
+		Project:    project,
+		Workstream: "s",
+		Members: []team.Member{
+			{Role: "reviewer", Binary: "codex", Handle: "reviewer", Session: "s"},
+		},
+		Operator: &team.OperatorConfig{Enabled: true, Handle: team.DefaultOperatorHandle},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedNotifyLaunchProfile(t, project, base, team.DefaultProfile, "s", "cto")
+	seedNotifyLaunchProfile(t, project, base, "release", "s", "reviewer")
+	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
+		ID: "default-gate", From: "cto", To: "user", Thread: "gate/default",
+		Subject: "APPROVAL: default", Kind: "question", Created: notifyNow.Add(-10 * time.Minute),
+	})
+	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
+		ID: "release-gate", From: "reviewer", To: "user", Thread: "gate/release",
+		Subject: "APPROVAL: release", Kind: "question", Created: notifyNow.Add(-5 * time.Minute),
+	})
+
+	releaseOut := executeNotifyForTest(t, notifyExecution{
+		ProjectDir: project, Profile: "release", BaseRoot: base, StatePath: statePath,
+		RenotifyAfter: time.Hour, Now: func() time.Time { return notifyNow },
+	})
+	if !strings.Contains(releaseOut, "gate/release") || !strings.Contains(releaseOut, "--profile release") {
+		t.Fatalf("release notify missing profile-scoped gate/inspect command:\n%s", releaseOut)
+	}
+	if strings.Contains(releaseOut, "gate/default") || strings.Contains(releaseOut, "APPROVAL: default") {
+		t.Fatalf("release notify leaked default profile gate:\n%s", releaseOut)
+	}
+
+	defaultOut := executeNotifyForTest(t, notifyExecution{
+		ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath,
+		RenotifyAfter: time.Hour, Now: func() time.Time { return notifyNow },
+	})
+	if !strings.Contains(defaultOut, "gate/default") {
+		t.Fatalf("default notify missing default profile gate:\n%s", defaultOut)
+	}
+	if strings.Contains(defaultOut, "gate/release") {
+		t.Fatalf("default notify leaked release profile gate:\n%s", defaultOut)
+	}
+
+	st, err := readNotifyState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Items["release/s\x00gate/release"]; !ok {
+		t.Fatalf("notify state missing release namespace key: %#v", st.Items)
+	}
+	if _, ok := st.Items["default/s\x00gate/default"]; !ok {
+		t.Fatalf("notify state missing default namespace key: %#v", st.Items)
+	}
+}
+
 func TestNotifyIgnoresP2PProseOnlyNeedsYou(t *testing.T) {
 	project, base, statePath := seedNotifyProject(t, team.OperatorConfig{Enabled: true, Handle: team.DefaultOperatorHandle})
 	ctoDir := seedNotifyLaunch(t, project, base, "s", "cto")
@@ -169,10 +226,15 @@ func seedNotifyProject(t *testing.T, op team.OperatorConfig) (project, base, sta
 
 func seedNotifyLaunch(t *testing.T, project, base, session, handle string) string {
 	t.Helper()
+	return seedNotifyLaunchProfile(t, project, base, team.DefaultProfile, session, handle)
+}
+
+func seedNotifyLaunchProfile(t *testing.T, project, base, profile, session, handle string) string {
+	t.Helper()
 	agentDir := filepath.Join(base, session, "agents", handle)
 	if err := launch.Write(agentDir, launch.Record{
 		CWD: project, Binary: "codex", Handle: handle, Role: handle, Session: session,
-		Root: filepath.Join(base, session), AgentPID: 42, StartedAt: notifyNow,
+		Root: filepath.Join(base, session), AgentPID: 42, StartedAt: notifyNow, TeamProfile: profile,
 	}); err != nil {
 		t.Fatal(err)
 	}

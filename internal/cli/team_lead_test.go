@@ -307,7 +307,8 @@ func TestStartExternalLeadWakeNonRequiredFailureStopsSpawnedProcessAndReportsNoP
 	if result.PID != 0 || result.Started {
 		t.Fatalf("failure result = %+v, want no pid and not started", result)
 	}
-	if !strings.Contains(result.Detail, "wake not ready") || !strings.Contains(result.Detail, "stopped spawned wake process") {
+	hasFailureReason := strings.Contains(result.Detail, "wake not ready") || strings.Contains(result.Detail, "did not become ready")
+	if !hasFailureReason || !strings.Contains(result.Detail, "stopped spawned wake process") {
 		t.Fatalf("failure detail = %q, want stopped-process detail", result.Detail)
 	}
 	assertLateReadyMarkerAbsent(t, marker)

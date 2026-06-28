@@ -166,10 +166,9 @@ Examples:
 Usage:
   amq-squad rm <session> [--project DIR] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
 
-Deletes the session's AMQ root dir (<baseRoot>/<session>/) and its brief
-(.amq-squad/briefs/<session>.md). This session-destructive verb is confined to
-the session: it never touches a sibling session or anything outside that one
-root and brief.
+Deletes the resolved session AMQ root and brief for the selected profile/session
+namespace. This session-destructive verb is confined to that namespace: it never
+touches a sibling session or anything outside that resolved root and brief.
 --project targets another team-home without changing directories.
 
 By default rm PREVIEWS exactly what will be removed (the resolved paths + agent

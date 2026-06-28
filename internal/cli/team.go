@@ -12,6 +12,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/omriariav/amq-squad/v2/internal/catalog"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/role"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -1094,6 +1095,10 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 	b.WriteString(shellQuote(m.Role))
 	b.WriteString(" --session ")
 	b.WriteString(shellQuote(in.Workstream))
+	if root := launchRootForProfile(in.TeamHome, in.Profile, in.Workstream); root != "" {
+		b.WriteString(" --root ")
+		b.WriteString(shellQuote(root))
+	}
 	b.WriteString(" --team-workstream")
 	if in.TrustMode != "" {
 		b.WriteString(" --trust ")
@@ -1172,6 +1177,14 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 		}
 	}
 	return b.String()
+}
+
+func launchRootForProfile(teamHome, profile, session string) string {
+	profile = squadnamespace.NormalizeProfile(profile)
+	if profile == team.DefaultProfile {
+		return ""
+	}
+	return squadnamespace.AMQRoot(teamHome, profile, session)
 }
 
 func promptPersonaSelection(reader *bufio.Reader, out io.Writer, customDefs map[string]role.Definition) ([]string, error) {

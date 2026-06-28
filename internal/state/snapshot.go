@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/procinfo"
 )
 
@@ -40,21 +41,28 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 		return Snapshot{}, err
 	}
 
-	// Group entries by session, preserving a stable session root per name.
+	// Group entries by canonical profile/session namespace, preserving a stable
+	// legacy session root per namespace. Profiles may intentionally reuse a
+	// human session label; the snapshot must not merge their launch records.
 	type bucket struct {
-		root   string
-		agents []Agent
+		root        string
+		session     string
+		teamProfile string
+		namespaceID string
+		agents      []Agent
 	}
 	bySession := map[string]*bucket{}
 	var order []string
 	for _, e := range entries {
 		name := e.Record.Session
+		profile := namespace.NormalizeProfile(e.Record.TeamProfile)
+		namespaceID := namespace.ID(profile, name)
 		root := sessionRoot(projectRoot, baseRoot, e.Record)
-		b, ok := bySession[name]
+		b, ok := bySession[namespaceID]
 		if !ok {
-			b = &bucket{root: root}
-			bySession[name] = b
-			order = append(order, name)
+			b = &bucket{root: root, session: name, teamProfile: profile, namespaceID: namespaceID}
+			bySession[namespaceID] = b
+			order = append(order, namespaceID)
 		}
 		b.agents = append(b.agents, classifyAgent(e, probe))
 	}
@@ -63,13 +71,15 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 	now := probe.Now()
 	sessions := make([]Session, 0, len(order))
 	var snapRollup TriageRollup
-	for _, name := range order {
-		b := bySession[name]
+	for _, key := range order {
+		b := bySession[key]
 		sortAgents(b.agents)
 
 		coord := coordinateSession(b.root, b.agents, now, th)
 		sessions = append(sessions, Session{
-			Name:         name,
+			Name:         b.session,
+			TeamProfile:  b.teamProfile,
+			NamespaceID:  b.namespaceID,
 			Root:         b.root,
 			Agents:       b.agents,
 			Coordination: coord,
