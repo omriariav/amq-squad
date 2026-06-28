@@ -344,6 +344,57 @@ func TestValidateOrchestration(t *testing.T) {
 	}
 }
 
+func TestValidateLeadExecution(t *testing.T) {
+	base := []Member{{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"}}
+	if err := Validate(Team{
+		Members: base,
+		LeadExecution: &LeadExecution{
+			Posture:             LeadExecutionVisibleTeam,
+			DecisionTime:        "2026-06-28T23:00:00Z",
+			Reason:              "visible reviewer available",
+			ChildBudget:         2,
+			PlannedDelegations:  []string{"developer reviews release gates"},
+			ReviewPlan:          "developer reviews status contract",
+			IndependentReview:   &IndependentReview{Status: IndependentReviewComplete, Reviewer: "developer"},
+			FinalRecommendation: "ready after tests",
+		},
+	}); err != nil {
+		t.Fatalf("valid lead execution should validate, got %v", err)
+	}
+
+	err := Validate(Team{
+		Members:       base,
+		LeadExecution: &LeadExecution{Posture: "solo-ish"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "lead_execution.posture") {
+		t.Fatalf("invalid posture error = %v, want posture validation", err)
+	}
+
+	err = Validate(Team{
+		Members:       base,
+		LeadExecution: &LeadExecution{Posture: LeadExecutionSolo, IndependentReview: &IndependentReview{Status: "maybe"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "lead_execution.independent_review") {
+		t.Fatalf("invalid independent review error = %v, want review validation", err)
+	}
+
+	err = Validate(Team{
+		Members:       base,
+		LeadExecution: &LeadExecution{Posture: LeadExecutionSolo, GoalSignificance: "massive"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "lead_execution.goal_significance") {
+		t.Fatalf("invalid goal significance error = %v, want significance validation", err)
+	}
+
+	err = Validate(Team{
+		Members:       base,
+		LeadExecution: &LeadExecution{Posture: LeadExecutionSolo, ChildBudget: -1},
+	})
+	if err == nil || !strings.Contains(err.Error(), "lead_execution.child_budget") {
+		t.Fatalf("negative child budget error = %v, want child budget validation", err)
+	}
+}
+
 func TestValidateMemberLauncher(t *testing.T) {
 	base := Member{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"}
 

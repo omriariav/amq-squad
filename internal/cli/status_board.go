@@ -257,6 +257,7 @@ func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicate
 	ns := squadnamespace.Resolve(t.Project, ctx.Profile, sess.Name)
 	binding := goalBindingForStatus(ns, ctx, statusRows)
 	topology := statusTopologyForRows(statusRows, ctx.Orchestrated)
+	invariantErrors := annotateVisibilityInvariants(statusRows, ctx)
 	row.Profile = ctx.Profile
 	row.Namespace = ns
 	row.Actions = ctx.Actions
@@ -265,6 +266,10 @@ func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicate
 	row.LeadHandle = ctx.LeadHandle
 	row.Autonomous = team.EffectiveAutonomousStatus(t)
 	execution := executionContractForTeam(t, profile, sess.Name, binding.Mode, topologyMode(topology), version)
+	execution.InvariantsEvaluated = true
+	execution.InvariantOK = len(invariantErrors) == 0
+	execution.InvariantErrors = invariantErrors
+	applyLeadExecutionContract(&execution, t.LeadExecution)
 	row.Execution = &execution
 	delivery := operatorDeliveryForTeam(t)
 	row.OperatorDelivery = &delivery

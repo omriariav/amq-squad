@@ -110,8 +110,17 @@ type OperatorView struct {
 }
 
 const (
-	CompositionSeeded     = "seeded"
-	CompositionAutonomous = "autonomous"
+	CompositionSeeded         = "seeded"
+	CompositionAutonomous     = "autonomous"
+	GoalSignificanceTrivial   = "trivial"
+	GoalSignificanceStandard  = "standard"
+	GoalSignificanceRelease   = "release"
+	LeadExecutionSolo         = "solo"
+	LeadExecutionDelegated    = "delegated"
+	LeadExecutionVisibleTeam  = "visible_team"
+	IndependentReviewRequired = "required"
+	IndependentReviewWaived   = "waived"
+	IndependentReviewComplete = "complete"
 )
 
 type AutonomousPolicy struct {
@@ -145,6 +154,31 @@ type AutonomousStatus struct {
 	BudgetTurns      int               `json:"budget_turns,omitempty"`
 	BudgetTurnsLeft  int               `json:"budget_turns_left,omitempty"`
 	OperatorRequired []string          `json:"operator_required,omitempty"`
+}
+
+// LeadExecution records the lead's declared delegation and review posture for
+// release/milestone work. The declaration is persisted with the team profile so
+// status/NOC clients can machine-check release readiness instead of inferring it
+// from prose in AMQ messages.
+type LeadExecution struct {
+	Posture             string             `json:"posture"`
+	GoalSignificance    string             `json:"goal_significance,omitempty"`
+	DecisionTime        string             `json:"decision_time,omitempty"`
+	Reason              string             `json:"reason,omitempty"`
+	ChildBudget         int                `json:"child_budget,omitempty"`
+	PlannedDelegations  []string           `json:"planned_delegations,omitempty"`
+	ReviewPlan          string             `json:"review_plan,omitempty"`
+	IndependentReview   *IndependentReview `json:"independent_review,omitempty"`
+	FinalRecommendation string             `json:"final_recommendation,omitempty"`
+}
+
+type IndependentReview struct {
+	Status    string `json:"status"`
+	Evidence  string `json:"evidence,omitempty"`
+	Reviewer  string `json:"reviewer,omitempty"`
+	ThreadID  string `json:"thread_id,omitempty"`
+	Reference string `json:"reference,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // Capabilities is derived client metadata. It is intentionally not persisted
@@ -208,10 +242,11 @@ type Team struct {
 	Autonomous   *AutonomousPolicy `json:"autonomous,omitempty"`
 	// ExecutionMode records the operator-visible ownership contract for this
 	// profile. Empty means callers apply the compatibility default.
-	ExecutionMode     string `json:"execution_mode,omitempty"`
-	ControlRoot       string `json:"control_root,omitempty"`
-	TargetProjectRoot string `json:"target_project_root,omitempty"`
-	TargetContract    string `json:"target_contract,omitempty"`
+	ExecutionMode     string         `json:"execution_mode,omitempty"`
+	ControlRoot       string         `json:"control_root,omitempty"`
+	TargetProjectRoot string         `json:"target_project_root,omitempty"`
+	TargetContract    string         `json:"target_contract,omitempty"`
+	LeadExecution     *LeadExecution `json:"lead_execution,omitempty"`
 	// MaxSpawnDepth caps runtime composition fan-out. Zero means the safe
 	// default of 1: the operator-launched lead may add direct children, but
 	// children cannot add grandchildren.
@@ -553,6 +588,9 @@ func Validate(t Team) error {
 	if err := validateComposition(t); err != nil {
 		return err
 	}
+	if err := validateLeadExecution(t.LeadExecution); err != nil {
+		return err
+	}
 	operatorHandle := ""
 	if t.Operator == nil {
 		operatorHandle = DefaultOperatorHandle
@@ -618,6 +656,85 @@ func Validate(t Team) error {
 				return fmt.Errorf("%s: duplicate handle %q", prefix, handle)
 			}
 			seenHandles[handle] = true
+		}
+	}
+	return nil
+}
+
+func validateLeadExecution(exec *LeadExecution) error {
+	if exec == nil {
+		return nil
+	}
+	switch strings.TrimSpace(exec.Posture) {
+	case LeadExecutionSolo, LeadExecutionDelegated, LeadExecutionVisibleTeam:
+	default:
+		return fmt.Errorf("lead_execution.posture: invalid mode %q: use %s, %s, or %s", exec.Posture, LeadExecutionSolo, LeadExecutionDelegated, LeadExecutionVisibleTeam)
+	}
+	if exec.GoalSignificance != "" {
+		switch strings.TrimSpace(exec.GoalSignificance) {
+		case GoalSignificanceTrivial, GoalSignificanceStandard, GoalSignificanceRelease:
+		default:
+			return fmt.Errorf("lead_execution.goal_significance: invalid value %q: use %s, %s, or %s", exec.GoalSignificance, GoalSignificanceTrivial, GoalSignificanceStandard, GoalSignificanceRelease)
+		}
+	}
+	if exec.DecisionTime != "" {
+		if err := ValidateDisplayValue("lead_execution.decision_time", exec.DecisionTime); err != nil {
+			return err
+		}
+	}
+	if exec.Reason != "" {
+		if err := ValidateDisplayValue("lead_execution.reason", exec.Reason); err != nil {
+			return err
+		}
+	}
+	if exec.ChildBudget < 0 {
+		return fmt.Errorf("lead_execution.child_budget: cannot be negative")
+	}
+	for i, delegation := range exec.PlannedDelegations {
+		if err := ValidateDisplayValue(fmt.Sprintf("lead_execution.planned_delegations[%d]", i), delegation); err != nil {
+			return err
+		}
+	}
+	if exec.ReviewPlan != "" {
+		if err := ValidateDisplayValue("lead_execution.review_plan", exec.ReviewPlan); err != nil {
+			return err
+		}
+	}
+	if err := validateIndependentReview(exec.IndependentReview); err != nil {
+		return err
+	}
+	if exec.FinalRecommendation != "" {
+		if err := ValidateDisplayValue("lead_execution.final_recommendation", exec.FinalRecommendation); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateIndependentReview(review *IndependentReview) error {
+	if review == nil {
+		return nil
+	}
+	switch strings.TrimSpace(review.Status) {
+	case IndependentReviewRequired, IndependentReviewWaived, IndependentReviewComplete:
+	default:
+		return fmt.Errorf("lead_execution.independent_review.status: invalid status %q: use %s, %s, or %s", review.Status, IndependentReviewRequired, IndependentReviewWaived, IndependentReviewComplete)
+	}
+	for _, field := range []struct {
+		label string
+		value string
+	}{
+		{"lead_execution.independent_review.evidence", review.Evidence},
+		{"lead_execution.independent_review.reviewer", review.Reviewer},
+		{"lead_execution.independent_review.thread_id", review.ThreadID},
+		{"lead_execution.independent_review.reference", review.Reference},
+		{"lead_execution.independent_review.reason", review.Reason},
+	} {
+		if field.value == "" {
+			continue
+		}
+		if err := ValidateDisplayValue(field.label, field.value); err != nil {
+			return err
 		}
 	}
 	return nil

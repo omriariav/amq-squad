@@ -410,6 +410,55 @@ func TestStatusBoardJSONCarriesProfileActionsAndOrchestration(t *testing.T) {
 	}
 }
 
+func TestStatusBoardJSONReleaseReadinessBlockedByVisibleLeadInvariant(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	proj := t.TempDir()
+	if err := team.Write(proj, team.Team{
+		Members: []team.Member{
+			{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"},
+			{Role: "developer", Binary: "claude", Handle: "developer", Session: "v2-11-0"},
+		},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectTeam,
+		LeadExecution: &team.LeadExecution{
+			Posture:             team.LeadExecutionVisibleTeam,
+			IndependentReview:   &team.IndependentReview{Status: team.IndependentReviewComplete, Reviewer: "developer"},
+			FinalRecommendation: "ready except visibility",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", Session: "v2-11-0", AgentPID: 2222,
+		TeamProfile:  team.DefaultProfile,
+		AdoptionMode: "managed_session", LauncherPaneID: "%launcher",
+		Tmux: &launch.TmuxInfo{Session: "detached", PaneID: "%222", Target: "new-session"},
+	})
+	seedBoardPresence(t, base, "v2-11-0", "release-lead", "active", boardNow.Add(-30*time.Second))
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%222"}}, nil)
+
+	out, err := runBoardExec(t, base, proj, boardProbe(map[int]bool{2222: true}, map[int]bool{2222: true}), true)
+	if err != nil {
+		t.Fatalf("board --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[sessionsEnvelopeData](t, out)
+	if len(env.Data.Sessions) != 1 || env.Data.Sessions[0].Execution == nil {
+		t.Fatalf("board sessions = %+v, want one row with execution", env.Data.Sessions)
+	}
+	exec := env.Data.Sessions[0].Execution
+	if !exec.InvariantsEvaluated || exec.InvariantOK {
+		t.Fatalf("board execution invariants = evaluated:%v ok:%v errors:%v, want evaluated false invariant", exec.InvariantsEvaluated, exec.InvariantOK, exec.InvariantErrors)
+	}
+	if exec.ReleaseReadiness.Ready {
+		t.Fatalf("board release readiness = %+v, want blocked by visible lead invariant", exec.ReleaseReadiness)
+	}
+	gate := readinessGatesByCode(exec.ReleaseReadiness.Gates)["visible_lead_invariants_ok"]
+	if gate.Passed || !strings.Contains(gate.Evidence, "no_visible_lead") {
+		t.Fatalf("visible lead gate = %+v, want failed no_visible_lead evidence", gate)
+	}
+}
+
 func TestStatusBoardJSONOmitsOrchestrationForFlatTeams(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	proj := t.TempDir()
