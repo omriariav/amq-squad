@@ -131,6 +131,19 @@ type statusRecord struct {
 	// a computed pane_alive, so clients can target follow-up control. Omitted
 	// when the agent's launch record carried no tmux identity.
 	Tmux *tmuxRuntimeJSON `json:"tmux,omitempty"`
+	// Visibility fields distinguish "agent process is live" from "this member
+	// is the operator-visible project lead". operator_visible is fail-closed:
+	// it is true only when persisted launch-origin evidence proves visibility.
+	OperatorVisible         bool                `json:"operator_visible"`
+	AdoptionMode            string              `json:"adoption_mode,omitempty"`
+	RoleBoundary            string              `json:"role_boundary,omitempty"`
+	LauncherPaneID          string              `json:"launcher_pane_id,omitempty"`
+	AgentPaneID             string              `json:"agent_pane_id,omitempty"`
+	ManagedTarget           string              `json:"managed_target,omitempty"`
+	CurrentPaneConflict     bool                `json:"current_pane_conflict"`
+	VisibilityProblem       string              `json:"visibility_problem,omitempty"`
+	VisibilityRepairActions []runtimeActionJSON `json:"visibility_repair_actions,omitempty"`
+	launchExternal          bool
 	// Actions are the stable, project-scoped commands a client can render/copy
 	// for this member (focus/send/resume/status). Populated for --json only.
 	Actions []runtimeActionJSON `json:"actions,omitempty"`
@@ -280,6 +293,10 @@ func executeStatus(s statusExecution) error {
 		if version == "" {
 			version = "dev"
 		}
+		invariantErrors := annotateVisibilityInvariants(rows, ctx)
+		execution := executionContractForTeam(t, s.Profile, workstream, binding.Mode, topologyMode(topology), version)
+		execution.InvariantOK = len(invariantErrors) == 0
+		execution.InvariantErrors = invariantErrors
 		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
 			TeamHome:          t.Project,
 			Workstream:        workstream,
@@ -293,7 +310,7 @@ func executeStatus(s statusExecution) error {
 			LeadHandle:        ctx.LeadHandle,
 			GoalBinding:       binding,
 			Autonomous:        team.EffectiveAutonomousStatus(t),
-			Execution:         executionContractForTeam(t, s.Profile, workstream, binding.Mode, topologyMode(topology), version),
+			Execution:         execution,
 			NamespaceConflict: conflict,
 			Topology:          topology,
 			Records:           rows,
@@ -343,6 +360,186 @@ func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorVie
 		Unread:       0,
 		OpenGates:    0,
 		OpenBlockers: 0,
+	}
+	return out
+}
+
+func annotateVisibilityInvariants(rows []statusRecord, ctx sessionStatusContext) []executionInvariantError {
+	mode := effectiveTeamExecutionMode(ctx.Team)
+	requiresVisibleLead := mode == executionModeProjectLead || mode == executionModeProjectTeam
+	lead := strings.TrimSpace(ctx.Lead)
+	if lead == "" && len(ctx.Team.Members) == 1 {
+		lead = ctx.Team.Members[0].Role
+	}
+	leadSeen := false
+	leadVisible := false
+	var leadError executionInvariantError
+
+	for i := range rows {
+		rows[i].RoleBoundary = roleBoundaryForStatus(ctx, rows[i], lead)
+		if strings.TrimSpace(rows[i].AdoptionMode) == "" {
+			rows[i].AdoptionMode = adoptionModeForStatus(rows[i])
+		}
+		if rows[i].RoleBoundary != "lead" {
+			rows[i].OperatorVisible = false
+			continue
+		}
+		leadSeen = true
+		visible, code := operatorVisibilityForLead(&rows[i])
+		rows[i].OperatorVisible = visible
+		rows[i].VisibilityProblem = code
+		if !visible {
+			rows[i].VisibilityRepairActions = visibilityRepairActions(ctx, rows[i])
+		}
+		if visible {
+			leadVisible = true
+		} else if leadError.Code == "" {
+			leadError = invariantErrorForVisibilityProblem(rows[i], code)
+		}
+	}
+
+	if !requiresVisibleLead {
+		return nil
+	}
+	switch {
+	case lead == "":
+		return []executionInvariantError{{Code: "no_visible_lead", Message: "project execution mode requires a configured visible lead"}}
+	case !leadSeen:
+		return []executionInvariantError{{Code: "no_visible_lead", Role: lead, Message: fmt.Sprintf("configured visible lead %q is not a team member", lead)}}
+	case !leadVisible:
+		if leadError.Code == "" {
+			leadError = executionInvariantError{Code: "no_visible_lead", Role: lead, Message: "configured visible lead is not operator-visible"}
+		}
+		return []executionInvariantError{leadError}
+	default:
+		return nil
+	}
+}
+
+func roleBoundaryForStatus(ctx sessionStatusContext, row statusRecord, lead string) string {
+	mode := effectiveTeamExecutionMode(ctx.Team)
+	if mode == executionModeGlobalOrchestrator {
+		return "orchestrator"
+	}
+	if mode != executionModeProjectLead && mode != executionModeProjectTeam {
+		if row.SpawnDepth > 0 || strings.TrimSpace(row.SpawnOrigin) != "" {
+			return "child"
+		}
+		return "member"
+	}
+	if strings.TrimSpace(lead) != "" {
+		if row.Role == lead {
+			return "lead"
+		}
+		return "child"
+	}
+	if row.SpawnDepth > 0 || strings.TrimSpace(row.SpawnOrigin) != "" {
+		return "child"
+	}
+	return "member"
+}
+
+func adoptionModeForStatus(row statusRecord) string {
+	if row.launchExternal {
+		return "external"
+	}
+	if row.Tmux == nil {
+		if row.RecordState == "missing" {
+			return "missing"
+		}
+		return "unmanaged"
+	}
+	switch strings.TrimSpace(row.Tmux.Target) {
+	case "current-window":
+		return "managed_current_window"
+	case "new-window":
+		return "managed_window"
+	case "new-session":
+		return "managed_session"
+	case "":
+		if row.LauncherPaneID != "" && row.LauncherPaneID == row.AgentPaneID {
+			return "bare_agent_up"
+		}
+		return "unmanaged"
+	default:
+		return "tmux_" + strings.TrimSpace(row.Tmux.Target)
+	}
+}
+
+func operatorVisibilityForLead(row *statusRecord) (bool, string) {
+	if row.Status != statusStateLive {
+		return false, "lead_pane_dead"
+	}
+	if row.Tmux == nil {
+		return false, "no_pane"
+	}
+	if !row.Tmux.PaneAlive {
+		return false, "pane_dead"
+	}
+	if row.launchExternal || row.AdoptionMode == "external" {
+		return true, ""
+	}
+	if strings.TrimSpace(row.LauncherPaneID) == "" {
+		return false, "pane_origin_unprovable"
+	}
+	row.CurrentPaneConflict = row.LauncherPaneID == row.AgentPaneID
+	if row.CurrentPaneConflict {
+		return false, "current_pane_collapse"
+	}
+	switch strings.TrimSpace(row.AdoptionMode) {
+	case "managed_window", "managed_current_window":
+		return true, ""
+	case "managed_session":
+		return false, "detached_session"
+	case "bare_agent_up":
+		return false, "unmanaged_agent_up"
+	case "":
+		return false, "pane_origin_unprovable"
+	default:
+		return false, "unmanaged_agent_up"
+	}
+}
+
+func invariantErrorForVisibilityProblem(row statusRecord, code string) executionInvariantError {
+	switch code {
+	case "current_pane_collapse":
+		return executionInvariantError{Code: "lead_pane_collapsed", Role: row.Role, Message: "visible lead is running in the launcher pane; relaunch in a managed visible pane or register an explicit external lead"}
+	case "lead_pane_dead", "pane_dead", "no_pane":
+		return executionInvariantError{Code: "lead_pane_dead", Role: row.Role, Message: "visible lead has no live operator-addressable pane"}
+	case "detached_session":
+		return executionInvariantError{Code: "no_visible_lead", Role: row.Role, Message: "visible lead is live in a detached tmux session, not an operator-visible pane"}
+	case "pane_origin_unprovable":
+		return executionInvariantError{Code: "no_visible_lead", Role: row.Role, Message: "visible lead launch record does not prove launcher pane origin"}
+	default:
+		return executionInvariantError{Code: "no_visible_lead", Role: row.Role, Message: "configured visible lead is not operator-visible"}
+	}
+}
+
+func visibilityRepairActions(ctx sessionStatusContext, row statusRecord) []runtimeActionJSON {
+	out := []runtimeActionJSON{}
+	for _, action := range row.Actions {
+		switch action.Kind {
+		case "focus", "status":
+			out = append(out, action)
+		}
+	}
+	for _, action := range ctx.Actions {
+		switch action.Kind {
+		case "resume_preview", "resume_current_window":
+			out = append(out, action)
+		}
+	}
+	if row.Tmux != nil && strings.TrimSpace(row.Tmux.Session) != "" {
+		out = append(out, runtimeActionJSON{
+			Kind:              "attach_control",
+			Label:             "open in iTerm2 (tmux -CC)",
+			Scope:             "session",
+			NamespaceID:       row.Namespace.ID,
+			Command:           "tmux -CC attach -t " + shellQuote(row.Tmux.Session),
+			Mutates:           false,
+			NeedsConfirmation: false,
+			Available:         true,
+		})
 	}
 	return out
 }
@@ -453,6 +650,8 @@ func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLau
 				livePanes = livePaneIDSet(statusPaneLister)
 			}
 			fillPaneAliveFromLiveness(rows[i].Tmux, livePanes, &agentLiveness{Signals: rows[i].Signals})
+			rows[i].AgentPaneID = strings.TrimSpace(rows[i].Tmux.PaneID)
+			rows[i].ManagedTarget = strings.TrimSpace(rows[i].Tmux.Target)
 		}
 	}
 	return rows
@@ -515,6 +714,9 @@ func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream
 	rec.Tmux = tmuxRuntimeFromInfo(live.Tmux)
 	if live.LaunchFound {
 		rec.goalBinding = live.LaunchRecord.GoalBinding
+		rec.launchExternal = live.LaunchRecord.External
+		rec.AdoptionMode = strings.TrimSpace(live.LaunchRecord.AdoptionMode)
+		rec.LauncherPaneID = strings.TrimSpace(live.LaunchRecord.LauncherPaneID)
 		if origin := strings.TrimSpace(live.LaunchRecord.SpawnOrigin); origin != "" {
 			rec.SpawnOrigin = origin
 		}
@@ -526,6 +728,10 @@ func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream
 	rec.Status = live.Status
 	rec.RecordState = statusRecordState(live)
 	rec.Detail = live.Detail
+	if rec.Tmux != nil {
+		rec.AgentPaneID = strings.TrimSpace(rec.Tmux.PaneID)
+		rec.ManagedTarget = strings.TrimSpace(rec.Tmux.Target)
+	}
 	return rec
 }
 

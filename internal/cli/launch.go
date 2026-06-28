@@ -25,6 +25,11 @@ import (
 // unset and record an empty target.
 const envTmuxTarget = "AMQ_SQUAD_TMUX_TARGET"
 
+// envTmuxLauncherPane carries the pane id that initiated a managed tmux launch.
+// The child process runs in the agent pane, so it cannot recover this later
+// from TMUX_PANE. Status uses it to detect same-pane lead collapse.
+const envTmuxLauncherPane = "AMQ_SQUAD_TMUX_LAUNCHER_PANE"
+
 var launchStdinIsTerminal = stdinIsTerminal
 
 type stringListFlag []string
@@ -266,12 +271,19 @@ Examples:
 	// must never block the launch. This runs before exec while $TMUX/$TMUX_PANE
 	// still describe this agent's pane.
 	if id, err := tmuxpane.CurrentPaneIdentity(); err == nil && id != nil {
+		target := strings.TrimSpace(os.Getenv(envTmuxTarget))
+		launcherPane := strings.TrimSpace(os.Getenv(envTmuxLauncherPane))
+		if launcherPane == "" && target == "" {
+			launcherPane = id.PaneID
+		}
+		rec.AdoptionMode = launchAdoptionMode(target, launcherPane, id.PaneID)
+		rec.LauncherPaneID = launcherPane
 		rec.Tmux = &launch.TmuxInfo{
 			Session:    id.Session,
 			WindowID:   id.WindowID,
 			WindowName: id.WindowName,
 			PaneID:     id.PaneID,
-			Target:     strings.TrimSpace(os.Getenv(envTmuxTarget)),
+			Target:     target,
 		}
 	}
 	// Keep generated bootstrap out of launch.json so restore stays compact
@@ -422,6 +434,24 @@ func validateManagedTmuxLaunch(rec launch.Record) error {
 		return fmt.Errorf("managed tmux launch for %s could not resolve a pane id; refusing to write launch.json", target)
 	}
 	return nil
+}
+
+func launchAdoptionMode(target, launcherPaneID, agentPaneID string) string {
+	switch strings.TrimSpace(target) {
+	case "new-window":
+		return "managed_window"
+	case "current-window":
+		return "managed_current_window"
+	case "new-session":
+		return "managed_session"
+	case "":
+		if strings.TrimSpace(launcherPaneID) != "" && strings.TrimSpace(launcherPaneID) == strings.TrimSpace(agentPaneID) {
+			return "bare_agent_up"
+		}
+		return "unmanaged"
+	default:
+		return "unmanaged"
+	}
 }
 
 func stdinIsTerminal() bool {
