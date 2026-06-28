@@ -228,6 +228,9 @@ Examples:
 	if err != nil {
 		return err
 	}
+	if err := ensureNoNamespaceConflict("up", cwd, profile, workstream); err != nil {
+		return err
+	}
 
 	exists, root, err := teamWorkstreamExistsOrRestorable(t, profile, workstream)
 	if err != nil {

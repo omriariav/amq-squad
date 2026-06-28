@@ -76,7 +76,7 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 Install the 2.0 line (note the `/v2` module path):
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.9.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.10.0
 amq-squad version
 ```
 
@@ -389,13 +389,33 @@ spawn-gate prompts, initial dispatch prompts, and the equivalent orchestrator
 `amq-squad-orchestrator` skill when you want a fast starting point, then review
 and explicitly approve any real setup mutations. Manual setup remains the right
 path when the team shape is already known or the goal needs unusual constraints.
+Execution ownership is explicit in the draft. `--mode project_lead` is the
+default: a visible project-root lead owns implementation and evidence.
+`--mode project_team` makes multiple project-root agents visible to the
+operator. `--mode direct_lead_session` is the explicit single-session exception
+where the current project-root lead may code directly. `--mode
+global_orchestrator` is a control-plane session only; it previews, creates or
+registers a project lead/team, routes approvals, and monitors evidence, but it
+does not inspect or edit project code. `--control-root`, `--target-project-root`,
+and `--target-contract` are emitted in the JSON `execution` object and generated
+prompts so amq-noc can show the mutable actor and version-compatibility state.
 The JSON envelope and generated brief also include `goal_binding`. Drafts prefer
 native binding (`mode: "native_goal_pending"`) by emitting a visible-lead
 `agent up ... -- '/goal ...'` command; `status --json` reports
 `mode: "native_goal"` only after the configured lead's launch record proves that
-native command was used. Until then it reports the explicit fallback,
+native command was used or after `amq-squad goal deliver` records a successful
+native goal-control delivery. A live project lead without native evidence reports
+`mode: "native_goal_missing"`; older/runtime-fallback flows report the explicit
 `mode: "amq_task_brief"`, where the binding is the durable AMQ task, active
 brief, and task store.
+
+`amq-squad goal deliver --goal TEXT --session S --role LEAD` is the
+first-class control path for native Codex `/goal` delivery. It is not the same
+as ordinary `amq-squad send`: normal prompts keep the busy guard, while native
+`/goal` delivery may target a busy Codex lead because the runtime accepts goal
+control messages safely. Successful delivery writes a delivery receipt and
+updates the lead launch record's `goal_binding` source to `goal-control`, so
+`status --json` can report verified native binding.
 
 For an Autonomous preview, opt in explicitly and include a bounded policy:
 
@@ -484,6 +504,15 @@ amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto
 
 This records `orchestrated`/`lead` in `team.json` and injects a generated `## Orchestration` reporting norm into `.amq-squad/team-rules.md`: the lead loads the `amq-squad-orchestrator` skill, dispatches durable AMQ tasks, and children push ACK/start, progress, blockers, review requests, and DONE reports back to the sender/lead over AMQ. Default off; **exactly one lead**; the lead is a team member, **never the operator**. `--lead ROLE` implies `--orchestrated`; with `--orchestrated` alone a single-member team self-selects and a team with a `cto` defaults to `cto`. The `team_profile_plan` / `team_plan` JSON envelopes carry `orchestrated`/`lead`. If `team-rules.md` already exists, `new team` leaves it untouched, so regenerate with `amq-squad team rules init --force` to pick up the norm.
 
+Execution modes make the ownership boundary machine-readable:
+
+- `global_orchestrator`: control-plane only. It may preview, select a target project/profile/session, create or register a project lead/team, route gates, poll when wake is unavailable, and report evidence. It must not inspect or edit project code directly unless explicitly converted to `direct_lead_session`.
+- `project_lead`: one visible project-root lead owns implementation, tests, child delegation, blockers, and final evidence. This is the default orchestrated project execution mode.
+- `project_team`: a visible project-root team with a visible lead and visible members. Use it only when the operator intentionally wants to inspect multiple project agents.
+- `direct_lead_session`: the current session is explicitly the project lead and may mutate the target project. This is appropriate for single-project quick work from the project root, not for NOC/control-root workflows.
+
+`team init --mode ...` persists this contract in the profile, and `goal draft` generates matching `team init` and visible-lead prompts. `status --json` and the multi-session board JSON expose `execution.mode`, `control_root`, `target_project_root`, `visible_lead`, `visible_team_members`, `mutable_actor`, `implementation_allowed`, `goal_binding`, `visibility_topology`, `polling_required`, `mode_error`, and `version_compatibility` so clients do not infer who is allowed to mutate files. They also expose `operator_delivery.poll_required`, `operator_delivery.durable_amq`, and `operator_delivery.wake_supported`; a virtual/non-runnable operator handle always has `wake_supported=false`, so operator-facing updates and gates require polling/draining instead of wake delivery.
+
 The operator normally steers the workstream through the lead/orchestrator. The operator can steer the lead directly from amq-noc (v0.8.0+), or with plain AMQ: a **directive** arrives on the lead's operator p2p thread as a `--kind todo` message whose subject starts with `DIRECTIVE:`. The lead treats directives as operator steering with priority over child reports, acknowledges on the same thread, and never treats one as a gate answer (a directive never clears a `gate/<topic>` thread). Direct operator-to-worker messages are exceptional; when they affect scope, priority, merge readiness, release state, or external actions, the worker reports them to the lead before acting or includes the lead/thread metadata in the AMQ report.
 
 For NOC and orchestrator visibility, leads must surface blockers and approval
@@ -498,13 +527,18 @@ is one `/goal` per visible lead; leads push status, blockers, approval requests,
 and final evidence to AMQ/NOC-visible surfaces; the parent orchestrator or NOC
 polls each lead's inbox, gate threads, and `status --json` on a cadence; child
 agents remain internal unless the lead escalates them.
+When `operator_delivery.poll_required=true`, the same polling rule applies to
+the virtual operator mailbox: lead reports, blockers, and approval gates are
+durable AMQ records, and no client should claim wake support for the
+non-runnable operator recipient.
 `status --json` exposes `goal_binding` so the NOC can tell whether a visible
-lead has verified native `/goal` launch binding (`native_goal`), a generated but
-not-yet-launched native plan (`native_goal_pending` in `goal draft --json`), or
-the explicit AMQ task + brief + task-store fallback (`amq_task_brief`). Recovery
-for a missing or fallback-bound visible lead sends a durable AMQ directive first;
-managed-pane `/goal` injection is only a follow-up when the pane is idle, and any
-force-interrupt path requires an operator gate.
+lead has verified native `/goal` binding (`native_goal`), a generated but
+not-yet-launched native plan (`native_goal_pending` in `goal draft --json`), a
+live project lead missing native evidence (`native_goal_missing`), or the
+explicit AMQ task + brief + task-store fallback (`amq_task_brief`). Recovery for
+a missing visible lead uses `amq-squad goal deliver`, which is a first-class
+native `/goal` control action with delivery receipt evidence; ordinary
+`amq-squad send` remains busy-guarded for normal prompts.
 
 For an existing profile, use `amq-squad team lead set <role>` to opt into orchestration without rebuilding the roster, `team lead clear` to return to a flat squad, and `team lead show --json` for discovery. A lead that is already running in an operator-owned pane can register itself with `amq-squad lead register --role <role> --session <session>`; this writes an explicit external launch record so `status` / `focus` / `send` can target the pane. External lead records are visible and directable, but lifecycle commands do not own them: `stop` reports that the pane must be stopped manually, `rm` / `archive` leave it open, and `resume` asks the operator to run `lead register` again instead of replaying the pane.
 
@@ -548,6 +582,7 @@ amq-squad new session [--project DIR] [--profile NAME] [<session>] [up options]
 
 amq-squad team init [--project DIR] [--profile NAME] [--roles a,b|numbers|all] [--binary role=bin,...]
                      [--session ws] [--trust sandboxed|approve-for-me|trusted] [--orchestrated [--lead ROLE]]
+                     [--mode project_lead|project_team|direct_lead_session|global_orchestrator]
                      [--model role=model,...] [--codex-args ...] [--claude-args ...] [--dry-run [--json]]
                                   Write a team profile and seed .amq-squad/team-rules.md.
                                   --dry-run builds and prints the profile plan
@@ -802,7 +837,7 @@ It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--o
 
 `amq-squad amq ...` is a project-aware wrapper around AMQ diagnostics. It resolves the same AMQ root, base root, session, and handle that the squad launcher uses, then delegates to AMQ.
 
-amq-squad v2.9.0 requires AMQ 0.38.0 or newer. That floor includes eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
+amq-squad v2.10.0 requires AMQ 0.38.0 or newer. That floor includes eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
 
 Read-only diagnostics run directly:
 
@@ -831,6 +866,12 @@ Use route diagnostics before uncertain cross-project sends, receipt waits for im
 amq-squad's own verbs that produce machine-readable output accept `--json` and emit a schema-versioned envelope on stdout. Diagnostics stay on stderr; stdout under `--json` is pure JSON. (Some `amq-squad amq …` wrappers emit an amq-squad envelope — e.g. `amq env --json` is kind `amq_env` — while others delegate to AMQ's own JSON.)
 
 Team discovery payloads include derived operator metadata for external clients: `operator.enabled`, `operator.handle` when enabled, `operator.runnable=false`, and `capabilities.operator_gates`.
+
+Goal, team-plan, status, and board payloads also include an `execution` object
+when execution ownership is relevant. The mode-safe fields name the control
+root, target project root, profile/session namespace, visible lead/team,
+mutable actor, whether implementation is allowed, goal binding, topology,
+polling requirement, mode errors, and runtime-vs-target version compatibility.
 
 ```sh
 amq-squad status --json | jq .
@@ -895,6 +936,7 @@ for #223:
   "actions": [
     { "kind": "focus",  "available": true, "command": "amq-squad focus --project DIR --session issue-96 --role cto" },
     { "kind": "send",   "available": true, "command": "amq-squad send --project DIR --session issue-96 --role cto --body-file -" },
+    { "kind": "goal_deliver", "available": true, "command": "amq-squad goal deliver --project DIR --session issue-96 --role cto --goal <goal>" },
     { "kind": "resume", "available": true, "command": "amq-squad resume --project DIR --session issue-96 --exec" }
   ]
 }
@@ -1023,7 +1065,7 @@ amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
 amq-squad agent up codex --model gpt-5
 ```
 
-amq-squad v2.9.0 requires amq **0.38.0+**. Launches pass `--require-wake` to
+amq-squad v2.10.0 requires amq **0.38.0+**. Launches pass `--require-wake` to
 `amq coop exec`, so a launch **fails at the door** when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale or
 orphaned wake. `--no-require-wake` opts out for environments where wake cannot

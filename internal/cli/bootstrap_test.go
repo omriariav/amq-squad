@@ -94,6 +94,93 @@ func TestBootstrapWorkerReadyHandshake(t *testing.T) {
 	}
 }
 
+func TestBootstrapPromptIncludesExecutionMode(t *testing.T) {
+	teamHome := t.TempDir()
+	if err := team.Write(teamHome, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-247"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-247"},
+		},
+		Orchestrated:      true,
+		Lead:              "cto",
+		ExecutionMode:     executionModeProjectTeam,
+		ControlRoot:       "/tmp/control",
+		TargetProjectRoot: "/tmp/project",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(teamHome, ".agent-mail", "issue-247")
+	rec := launch.Record{
+		CWD:              teamHome,
+		Role:             "cto",
+		Handle:           "cto",
+		Binary:           "codex",
+		Session:          "issue-247",
+		Root:             root,
+		SharedWorkstream: true,
+	}
+	ctx := bootstrapContextFor(rec, filepath.Join(root, "agents", "cto"), teamHome)
+	got, err := buildBootstrapPrompt(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Execution mode:",
+		"Mode: project_team",
+		"Control root: /tmp/control",
+		"Target project root: /tmp/project",
+		"Mutable actor: cto",
+		"Implementation allowed: true",
+		"Goal binding: native_goal_missing",
+		"visible project team",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("bootstrap execution mode missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestBootstrapPromptReportsNativeGoalBindingForVisibleLead(t *testing.T) {
+	teamHome := t.TempDir()
+	if err := team.Write(teamHome, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-247"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-247"},
+		},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(teamHome, ".agent-mail", "issue-247")
+	rec := launch.Record{
+		CWD:              teamHome,
+		Role:             "cto",
+		Handle:           "cto",
+		Binary:           "codex",
+		Session:          "issue-247",
+		Root:             root,
+		SharedWorkstream: true,
+		GoalBinding: &launch.GoalBinding{
+			Mode:       "native_goal",
+			NativeGoal: true,
+			Source:     "launch-argv",
+			Command:    `/goal --goal "ship"`,
+		},
+	}
+	got, err := buildBootstrapPrompt(bootstrapContextFor(rec, filepath.Join(root, "agents", "cto"), teamHome))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "Goal binding: native_goal") {
+		t.Fatalf("bootstrap prompt should expose verified native launch binding:\n%s", got)
+	}
+	if strings.Contains(got, "Goal binding: native_goal_missing") {
+		t.Fatalf("bootstrap prompt should not report missing native goal when launch record has it:\n%s", got)
+	}
+}
+
 // TestBootstrapWorkerFromFieldGuidance is the production-path half of the #176
 // fix: the bootstrap for a worker on an orchestrated squad must instruct it to
 // reply to the task's From field, so that when the dispatcher and the team.json
@@ -230,6 +317,8 @@ func TestBootstrapPromptIncludesCurrentTeamRouting(t *testing.T) {
 		"--thread p2p/cpo__qa`",
 		"Operator gate routing:",
 		"The human/operator is mailbox handle user",
+		"Operator delivery: durable AMQ is authoritative; wake_supported=false; poll_required=true",
+		"must poll/drain the operator mailbox, gate threads, and status JSON",
 		"Gates are structural observability and handoff",
 		"amq send --to user --thread gate/<topic> --kind question",
 		"amq send --me user --to <agent-handle> --thread gate/<topic> --kind answer",

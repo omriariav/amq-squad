@@ -96,6 +96,10 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	noOperator := fs.Bool("no-operator", false, "disable the virtual operator participant for this profile")
 	orchestratedFlag := fs.Bool("orchestrated", false, "wire the squad for lead-agent orchestration: inject the reporting norm into team-rules.md and mark the lead role")
 	leadFlag := fs.String("lead", "", "role that leads an orchestrated squad (must be a team member; implies --orchestrated)")
+	modeFlag := fs.String("mode", "", "execution mode: global_orchestrator, project_lead, project_team, or direct_lead_session")
+	controlRootFlag := fs.String("control-root", "", "control-plane root directory for the execution contract (default: project/team-home)")
+	targetProjectRootFlag := fs.String("target-project-root", "", "target project root for the execution contract (default: project/team-home)")
+	targetContractFlag := fs.String("target-contract", "", "target amq-squad contract version for compatibility checks")
 	compositionFlag := fs.String("composition", team.CompositionSeeded, "composition mode: seeded (default) or autonomous")
 	maxAgentsFlag := fs.Int("max-agents", 0, "autonomous guardrail: maximum active agents")
 	maxTotalSpawnsFlag := fs.Int("max-total-spawns", 0, "autonomous guardrail: maximum total autonomous spawns")
@@ -112,8 +116,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
-  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes the team config under
@@ -409,6 +413,13 @@ Examples:
 	if err != nil {
 		return err
 	}
+	executionMode, err := normalizeExecutionMode(*modeFlag)
+	if err != nil {
+		return err
+	}
+	if !flagWasSet(fs, "mode") {
+		executionMode = defaultExecutionModeForTeam(orchestrated)
+	}
 	composition := strings.TrimSpace(*compositionFlag)
 	autonomousPolicy, err := resolveAutonomousPolicy(composition, *maxAgentsFlag, *maxTotalSpawnsFlag, *allowedRolesFlag, *allowedRoleClassesFlag, *budgetTurnsFlag, *idleReapMinutesFlag)
 	if err != nil {
@@ -422,14 +433,18 @@ Examples:
 		// one. Live session resolution infers a shared member session or falls
 		// back to the project basename. The field remains readable for old
 		// team.json files. Member sessions still carry the chosen workstream.
-		Trust:        trustMode,
-		Operator:     &operator,
-		BinaryArgs:   binaryArgs,
-		Members:      members,
-		Orchestrated: orchestrated,
-		Lead:         leadRole,
-		Composition:  composition,
-		Autonomous:   autonomousPolicy,
+		Trust:             trustMode,
+		Operator:          &operator,
+		BinaryArgs:        binaryArgs,
+		Members:           members,
+		Orchestrated:      orchestrated,
+		Lead:              leadRole,
+		Composition:       composition,
+		Autonomous:        autonomousPolicy,
+		ExecutionMode:     executionMode,
+		ControlRoot:       cleanRootOrDefault(*controlRootFlag, cwd),
+		TargetProjectRoot: cleanRootOrDefault(*targetProjectRootFlag, cwd),
+		TargetContract:    strings.TrimPrefix(strings.TrimSpace(*targetContractFlag), "v"),
 	}
 	rulesContent, err := renderTeamRules(t)
 	if err != nil {
@@ -520,23 +535,25 @@ type teamProfilePlanMember struct {
 }
 
 type teamProfilePlan struct {
-	TeamHome        string                  `json:"team_home"`
-	Project         string                  `json:"project"`
-	Profile         string                  `json:"profile"`
-	ProfilePath     string                  `json:"profile_path"`
-	RulesPath       string                  `json:"rules_path"`
-	Workstream      string                  `json:"workstream"`
-	Trust           string                  `json:"trust"`
-	Orchestrated    bool                    `json:"orchestrated"`
-	Lead            string                  `json:"lead,omitempty"`
-	ExistingProfile bool                    `json:"existing_profile"`
-	Members         int                     `json:"members"`
-	BinaryArgs      map[string][]string     `json:"binary_args,omitempty"`
-	Operator        team.OperatorView       `json:"operator"`
-	Capabilities    team.Capabilities       `json:"capabilities"`
-	Autonomous      team.AutonomousStatus   `json:"autonomous"`
-	SyncCommand     string                  `json:"sync_command,omitempty"`
-	Plan            []teamProfilePlanMember `json:"plan"`
+	TeamHome         string                  `json:"team_home"`
+	Project          string                  `json:"project"`
+	Profile          string                  `json:"profile"`
+	ProfilePath      string                  `json:"profile_path"`
+	RulesPath        string                  `json:"rules_path"`
+	Workstream       string                  `json:"workstream"`
+	Trust            string                  `json:"trust"`
+	Orchestrated     bool                    `json:"orchestrated"`
+	Lead             string                  `json:"lead,omitempty"`
+	ExistingProfile  bool                    `json:"existing_profile"`
+	Members          int                     `json:"members"`
+	BinaryArgs       map[string][]string     `json:"binary_args,omitempty"`
+	Operator         team.OperatorView       `json:"operator"`
+	OperatorDelivery operatorDeliveryData    `json:"operator_delivery"`
+	Capabilities     team.Capabilities       `json:"capabilities"`
+	Autonomous       team.AutonomousStatus   `json:"autonomous"`
+	Execution        executionModeData       `json:"execution"`
+	SyncCommand      string                  `json:"sync_command,omitempty"`
+	Plan             []teamProfilePlanMember `json:"plan"`
 }
 
 func printTeamInitDryRun(p teamInitDryRun) error {
@@ -556,6 +573,16 @@ func printTeamInitDryRun(p teamInitDryRun) error {
 		fmt.Fprintln(os.Stdout, "# orchestrated: no")
 	}
 	fmt.Fprintf(os.Stdout, "# composition: %s\n", team.EffectiveComposition(p.Team))
+	execution := executionContractForTeam(p.Team, p.Profile, p.Workstream, goalBindingForNamespace(squadnamespace.Resolve(p.Team.Project, p.Profile, p.Workstream)).Mode, "", "dev")
+	fmt.Fprintf(os.Stdout, "# mode: %s\n", execution.Mode)
+	if execution.MutableActor != "" {
+		fmt.Fprintf(os.Stdout, "# mutable-actor: %s\n", execution.MutableActor)
+	}
+	fmt.Fprintf(os.Stdout, "# implementation-allowed: %t\n", execution.ImplementationAllowed)
+	delivery := operatorDeliveryForTeam(p.Team)
+	if delivery.Enabled {
+		fmt.Fprintf(os.Stdout, "# operator-delivery: %s\n", operatorDeliverySummary(delivery))
+	}
 	if p.Exists {
 		fmt.Fprintln(os.Stdout, "# existing-profile: yes (live run requires --force to overwrite)")
 	} else {
@@ -609,23 +636,25 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 		})
 	}
 	return teamProfilePlan{
-		TeamHome:        p.TeamHome,
-		Project:         p.Team.Project,
-		Profile:         p.Profile,
-		ProfilePath:     p.ProfilePath,
-		RulesPath:       p.RulesPath,
-		Workstream:      p.Workstream,
-		Trust:           p.Trust,
-		Orchestrated:    p.Team.Orchestrated,
-		Lead:            p.Team.Lead,
-		ExistingProfile: p.Exists,
-		Members:         len(rows),
-		BinaryArgs:      p.Team.BinaryArgs,
-		Operator:        team.EffectiveOperator(p.Team),
-		Capabilities:    team.EffectiveCapabilities(p.Team),
-		Autonomous:      team.EffectiveAutonomousStatus(p.Team),
-		SyncCommand:     p.SyncCommand,
-		Plan:            rows,
+		TeamHome:         p.TeamHome,
+		Project:          p.Team.Project,
+		Profile:          p.Profile,
+		ProfilePath:      p.ProfilePath,
+		RulesPath:        p.RulesPath,
+		Workstream:       p.Workstream,
+		Trust:            p.Trust,
+		Orchestrated:     p.Team.Orchestrated,
+		Lead:             p.Team.Lead,
+		ExistingProfile:  p.Exists,
+		Members:          len(rows),
+		BinaryArgs:       p.Team.BinaryArgs,
+		Operator:         team.EffectiveOperator(p.Team),
+		OperatorDelivery: operatorDeliveryForTeam(p.Team),
+		Capabilities:     team.EffectiveCapabilities(p.Team),
+		Autonomous:       team.EffectiveAutonomousStatus(p.Team),
+		Execution:        executionContractForTeam(p.Team, p.Profile, p.Workstream, goalBindingForNamespace(squadnamespace.Resolve(p.Team.Project, p.Profile, p.Workstream)).Mode, "", "dev"),
+		SyncCommand:      p.SyncCommand,
+		Plan:             rows,
 	}
 }
 

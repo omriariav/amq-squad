@@ -487,7 +487,7 @@ func TestResumePlanJSONCarriesLiveness(t *testing.T) {
 		Command:  "amq-squad agent up codex --role cto",
 		Liveness: &agentLiveness{Status: statusStateStale, Detail: "agent pid dead", Signals: statusSignals{AgentPID: 7777}, LaunchFound: true},
 	}}
-	if err := writeResumeJSON(&buf, team.Team{Project: "/p"}, "issue-96", resumeModeDefault, "", plans); err != nil {
+	if err := writeResumeJSON(&buf, team.Team{Project: "/p"}, "issue-96", resumeModeDefault, "", nil, plans); err != nil {
 		t.Fatal(err)
 	}
 	var env struct {
@@ -538,7 +538,7 @@ func TestPlainAndJSONResumeRenderSameAction(t *testing.T) {
 	tm := team.Team{Project: "/p"}
 	var plain, jsonBuf bytes.Buffer
 	writeResumePlan(&plain, tm, "issue-96", resumeModeDefault, plans, false, false, resumePrinterStyle{Label: "resume", FooterVerb: "up"})
-	if err := writeResumeJSON(&jsonBuf, tm, "issue-96", resumeModeDefault, "", plans); err != nil {
+	if err := writeResumeJSON(&jsonBuf, tm, "issue-96", resumeModeDefault, "", nil, plans); err != nil {
 		t.Fatal(err)
 	}
 
@@ -628,7 +628,7 @@ func TestStatusDoctorResumeAgreeWhenAgentAndWakeLive(t *testing.T) {
 	}
 	// 4) resume --json liveness
 	var buf bytes.Buffer
-	if err := writeResumeJSON(&buf, tm, "issue-96", resumeModeDefault, "", []resumePlan{plan}); err != nil {
+	if err := writeResumeJSON(&buf, tm, "issue-96", resumeModeDefault, "", nil, []resumePlan{plan}); err != nil {
 		t.Fatalf("writeResumeJSON: %v", err)
 	}
 	var env struct {

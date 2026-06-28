@@ -541,6 +541,9 @@ func TestRunStatusJSONHasNoHumanComments(t *testing.T) {
 	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != team.DefaultOperatorHandle {
 		t.Errorf("status operator = %+v, want default enabled user", env.Data.Operator)
 	}
+	if !env.Data.OperatorDelivery.Enabled || env.Data.OperatorDelivery.Handle != team.DefaultOperatorHandle || !env.Data.OperatorDelivery.PollRequired || env.Data.OperatorDelivery.WakeSupported || !env.Data.OperatorDelivery.DurableAMQ {
+		t.Errorf("status operator_delivery = %+v, want virtual operator poll-required durable AMQ", env.Data.OperatorDelivery)
+	}
 	if !env.Data.Capabilities.OperatorGates {
 		t.Errorf("status capabilities = %+v, want operator_gates", env.Data.Capabilities)
 	}
