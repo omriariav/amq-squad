@@ -24,23 +24,31 @@ type versionCompatibilityData struct {
 	Detail         string `json:"detail"`
 }
 
+type executionInvariantError struct {
+	Code    string `json:"code"`
+	Role    string `json:"role,omitempty"`
+	Message string `json:"message"`
+}
+
 type executionModeData struct {
-	Mode                  string                   `json:"mode"`
-	ControlRoot           string                   `json:"control_root,omitempty"`
-	TargetProjectRoot     string                   `json:"target_project_root,omitempty"`
-	Profile               string                   `json:"profile,omitempty"`
-	Session               string                   `json:"session,omitempty"`
-	NamespaceID           string                   `json:"namespace_id,omitempty"`
-	VisibleLead           string                   `json:"visible_lead,omitempty"`
-	VisibleTeamMembers    []string                 `json:"visible_team_members,omitempty"`
-	MutableActor          string                   `json:"mutable_actor,omitempty"`
-	ImplementationAllowed bool                     `json:"implementation_allowed"`
-	GoalBinding           string                   `json:"goal_binding,omitempty"`
-	VisibilityTopology    string                   `json:"visibility_topology,omitempty"`
-	PollingRequired       bool                     `json:"polling_required"`
-	ModeError             string                   `json:"mode_error,omitempty"`
-	Boundary              string                   `json:"boundary,omitempty"`
-	VersionCompatibility  versionCompatibilityData `json:"version_compatibility"`
+	Mode                  string                    `json:"mode"`
+	ControlRoot           string                    `json:"control_root,omitempty"`
+	TargetProjectRoot     string                    `json:"target_project_root,omitempty"`
+	Profile               string                    `json:"profile,omitempty"`
+	Session               string                    `json:"session,omitempty"`
+	NamespaceID           string                    `json:"namespace_id,omitempty"`
+	VisibleLead           string                    `json:"visible_lead,omitempty"`
+	VisibleTeamMembers    []string                  `json:"visible_team_members,omitempty"`
+	MutableActor          string                    `json:"mutable_actor,omitempty"`
+	ImplementationAllowed bool                      `json:"implementation_allowed"`
+	GoalBinding           string                    `json:"goal_binding,omitempty"`
+	VisibilityTopology    string                    `json:"visibility_topology,omitempty"`
+	PollingRequired       bool                      `json:"polling_required"`
+	InvariantOK           bool                      `json:"invariant_ok"`
+	InvariantErrors       []executionInvariantError `json:"invariant_errors,omitempty"`
+	ModeError             string                    `json:"mode_error,omitempty"`
+	Boundary              string                    `json:"boundary,omitempty"`
+	VersionCompatibility  versionCompatibilityData  `json:"version_compatibility"`
 }
 
 func normalizeExecutionMode(mode string) (string, error) {
@@ -135,6 +143,7 @@ func executionContract(mode, controlRoot, targetRoot, profile, session, namespac
 		VisibleTeamMembers:   append([]string(nil), visible...),
 		GoalBinding:          goalBinding,
 		VisibilityTopology:   topology,
+		InvariantOK:          true,
 		VersionCompatibility: versionCompatibility(runningVersion, targetContract),
 	}
 	switch mode {
@@ -180,7 +189,7 @@ func effectiveTeamExecutionMode(t team.Team) string {
 func executionContractForTeam(t team.Team, profile, session, goalBinding, topology, runningVersion string) executionModeData {
 	mode := effectiveTeamExecutionMode(t)
 	lead := strings.TrimSpace(t.Lead)
-	if lead == "" && len(t.Members) == 1 {
+	if lead == "" && len(t.Members) == 1 && (mode == executionModeProjectLead || mode == executionModeProjectTeam) {
 		lead = t.Members[0].Role
 	}
 	controlRoot := strings.TrimSpace(t.ControlRoot)

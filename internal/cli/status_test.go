@@ -521,6 +521,213 @@ func TestExecuteStatusJSONPolicyDisablesDirectChildControlActions(t *testing.T) 
 	}
 }
 
+func TestExecuteStatusJSONMarksOperatorVisibleLead(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"},
+			{Role: "developer", Binary: "claude", Handle: "developer", Session: "v2-11-0"},
+		},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectTeam,
+	})
+	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7101,
+		AdoptionMode: "managed_window", LauncherPaneID: "%launcher",
+		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@1", PaneID: "%1", Target: "new-window"},
+	})
+	seedAgentRecord(t, base, "v2-11-0", "developer", launch.Record{
+		Binary: "claude", Handle: "developer", Role: "developer", AgentPID: 7102,
+		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@2", PaneID: "%2", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}, {PaneID: "%2"}}, nil)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "v2-11-0",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7101: true, 7102: true}, map[int]bool{7101: true, 7102: true}, time.Now()),
+		RuntimeVersion:   "2.11.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if !env.Data.Execution.InvariantOK || len(env.Data.Execution.InvariantErrors) != 0 {
+		t.Fatalf("execution invariants = ok:%v errors:%v, want clean", env.Data.Execution.InvariantOK, env.Data.Execution.InvariantErrors)
+	}
+	records := map[string]statusRecord{}
+	for _, r := range env.Data.Records {
+		records[r.Role] = r
+	}
+	lead := records["release-lead"]
+	if !lead.OperatorVisible || lead.RoleBoundary != "lead" || lead.AdoptionMode != "managed_window" || lead.VisibilityProblem != "" {
+		t.Fatalf("lead visibility fields = %+v, want visible managed lead", lead)
+	}
+	child := records["developer"]
+	if child.OperatorVisible || child.RoleBoundary != "child" || child.AdoptionMode != "managed_window" {
+		t.Fatalf("child visibility fields = %+v, want non-visible child", child)
+	}
+}
+
+func TestExecuteStatusJSONFlagsDetachedVisibleLeadInvariant(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"}},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectLead,
+	})
+	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7201,
+		AdoptionMode: "managed_session", LauncherPaneID: "%launcher",
+		Tmux: &launch.TmuxInfo{Session: "detached-squad", WindowID: "@1", PaneID: "%1", Target: "new-session"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "v2-11-0",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7201: true}, map[int]bool{7201: true}, time.Now()),
+		RuntimeVersion:   "2.11.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.Execution.InvariantOK || len(env.Data.Execution.InvariantErrors) != 1 {
+		t.Fatalf("execution invariants = ok:%v errors:%v, want one detached-lead error", env.Data.Execution.InvariantOK, env.Data.Execution.InvariantErrors)
+	}
+	if env.Data.Execution.InvariantErrors[0].Code != "no_visible_lead" || !strings.Contains(env.Data.Execution.InvariantErrors[0].Message, "detached") {
+		t.Fatalf("invariant error = %+v, want detached no_visible_lead detail", env.Data.Execution.InvariantErrors[0])
+	}
+	lead := env.Data.Records[0]
+	if lead.OperatorVisible || lead.RoleBoundary != "lead" || lead.AdoptionMode != "managed_session" {
+		t.Fatalf("lead visibility fields = %+v, want detached non-visible lead", lead)
+	}
+	if lead.VisibilityProblem != "detached_session" {
+		t.Fatalf("visibility problem = %q, want detached_session", lead.VisibilityProblem)
+	}
+	repair := actionsByKind(lead.VisibilityRepairActions)
+	if repair["attach_control"].Command != "tmux -CC attach -t detached-squad" {
+		t.Fatalf("repair actions = %+v, want attach_control for detached session", repair)
+	}
+	if !repair["resume_current_window"].Available {
+		t.Fatalf("repair actions = %+v, want resume_current_window available", repair)
+	}
+}
+
+func TestExecuteStatusJSONFlagsCurrentPaneCollapsedLead(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"}},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectLead,
+	})
+	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7301,
+		AdoptionMode: "bare_agent_up", LauncherPaneID: "%1",
+		Tmux: &launch.TmuxInfo{Session: "root", WindowID: "@1", PaneID: "%1"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "v2-11-0",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7301: true}, map[int]bool{7301: true}, time.Now()),
+		RuntimeVersion:   "2.11.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	lead := env.Data.Records[0]
+	if lead.OperatorVisible || !lead.CurrentPaneConflict || lead.VisibilityProblem != "current_pane_collapse" {
+		t.Fatalf("lead visibility fields = %+v, want collapsed non-visible lead", lead)
+	}
+	if env.Data.Execution.InvariantOK || env.Data.Execution.InvariantErrors[0].Code != "lead_pane_collapsed" {
+		t.Fatalf("execution invariants = %+v, want lead_pane_collapsed", env.Data.Execution)
+	}
+}
+
+func TestExecuteStatusJSONFailClosedWhenPaneOriginUnprovable(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"}},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectLead,
+	})
+	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7351,
+		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@1", PaneID: "%1", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "v2-11-0",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7351: true}, map[int]bool{7351: true}, time.Now()),
+		RuntimeVersion:   "2.11.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	lead := env.Data.Records[0]
+	if lead.OperatorVisible || lead.VisibilityProblem != "pane_origin_unprovable" {
+		t.Fatalf("lead visibility fields = %+v, want fail-closed pane_origin_unprovable", lead)
+	}
+	if env.Data.Execution.InvariantOK || env.Data.Execution.InvariantErrors[0].Code != "no_visible_lead" {
+		t.Fatalf("execution invariants = %+v, want no_visible_lead", env.Data.Execution)
+	}
+}
+
+func TestExecuteStatusJSONAllowsExternalLeadInCurrentPane(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"}},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectLead,
+	})
+	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7401,
+		External: true, AdoptionMode: "external", LauncherPaneID: "%1",
+		Tmux: &launch.TmuxInfo{Session: "root", WindowID: "@1", PaneID: "%1", Target: "external"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "v2-11-0",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7401: true}, map[int]bool{7401: true}, time.Now()),
+		RuntimeVersion:   "2.11.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	lead := env.Data.Records[0]
+	if !lead.OperatorVisible || lead.CurrentPaneConflict || lead.AdoptionMode != "external" || lead.VisibilityProblem != "" {
+		t.Fatalf("lead visibility fields = %+v, want visible external lead without conflict", lead)
+	}
+	if !env.Data.Execution.InvariantOK {
+		t.Fatalf("execution invariants = %+v, want clean", env.Data.Execution)
+	}
+}
+
 func TestExecuteStatusStaleWhenPIDDead(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
