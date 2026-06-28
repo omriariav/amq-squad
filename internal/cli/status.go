@@ -422,6 +422,20 @@ func roleBoundaryForStatus(ctx sessionStatusContext, row statusRecord, lead stri
 		return "orchestrator"
 	}
 	if mode != executionModeProjectLead && mode != executionModeProjectTeam {
+		// direct_lead_session: classify a DECLARED direct lead (registered as an
+		// external lead, or a configured orchestration lead running in direct
+		// mode) as role_boundary=lead so operatorVisibilityForLead can judge it.
+		// Visibility stays fail-closed (external/managed-visible -> visible;
+		// bare/collapsed/detached/unprovable -> not). A bare flat team that merely
+		// defaults to direct_lead_session has no declared lead and stays
+		// member/child, so flat output is unchanged. invariant_required stays
+		// limited to project_lead/project_team (no no_visible_lead for direct leads).
+		if mode == executionModeDirectLeadSession {
+			configuredLead := strings.TrimSpace(ctx.Lead)
+			if row.launchExternal || (configuredLead != "" && row.Role == configuredLead) {
+				return "lead"
+			}
+		}
 		if row.SpawnDepth > 0 || strings.TrimSpace(row.SpawnOrigin) != "" {
 			return "child"
 		}
