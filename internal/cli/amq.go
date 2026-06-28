@@ -356,6 +356,9 @@ func runAMQPassthrough(sub string, args []string) error {
 		return err
 	}
 	cmd := append([]string{sub, "--root", ctx.Root}, passthrough...)
+	if err := guardAMQPassthrough(sub, ctx, passthrough); err != nil {
+		return err
+	}
 	if sub == "watch" {
 		return runAMQStreaming(ctx, cmd)
 	}
@@ -363,6 +366,63 @@ func runAMQPassthrough(sub string, args []string) error {
 		return runAndWriteAMQWithStdin(os.Stdout, ctx, cmd, os.Stdin)
 	}
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
+}
+
+func guardAMQPassthrough(sub string, ctx amqContext, passthrough []string) error {
+	if sub != "send" {
+		return nil
+	}
+	me := strings.TrimSpace(ctx.Me)
+	if me == "" {
+		return nil
+	}
+	to := strings.TrimSpace(amqFlagValue(passthrough, "to"))
+	if to == "" || to != me {
+		return nil
+	}
+	thread := strings.TrimSpace(amqFlagValue(passthrough, "thread"))
+	a, b, ok := parseP2PThread(thread)
+	if !ok {
+		return nil
+	}
+	if (a == me && b != me) || (b == me && a != me) {
+		other := a
+		if other == me {
+			other = b
+		}
+		return usageErrorf("refusing self-send on p2p thread %q: --me/AM_ME and --to are both %q. Reply to the other participant with --to %s, or use a non-p2p/private thread for an intentional self-note.", thread, me, other)
+	}
+	return nil
+}
+
+func amqFlagValue(args []string, name string) string {
+	for i := 0; i < len(args); i++ {
+		n, val, hasVal := amqFlagName(args[i])
+		if n != name {
+			continue
+		}
+		if hasVal {
+			return val
+		}
+		if i+1 < len(args) {
+			return args[i+1]
+		}
+		return ""
+	}
+	return ""
+}
+
+func parseP2PThread(thread string) (string, string, bool) {
+	thread = strings.TrimSpace(thread)
+	if !strings.HasPrefix(thread, "p2p/") {
+		return "", "", false
+	}
+	pair := strings.TrimPrefix(thread, "p2p/")
+	parts := strings.Split(pair, "__")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return "", "", false
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
 }
 
 // passthroughNeedsStdin reports whether the passthrough args include a --body

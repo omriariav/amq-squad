@@ -148,6 +148,9 @@ func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != team.DefaultOperatorHandle || env.Data.Operator.Runnable {
 		t.Errorf("operator metadata = %+v, want enabled non-runnable %q", env.Data.Operator, team.DefaultOperatorHandle)
 	}
+	if !env.Data.Operator.Participant || env.Data.Operator.Kind != "operator" || env.Data.Operator.Assignable || env.Data.Operator.WakeSupported || !env.Data.Operator.PollRequired {
+		t.Errorf("operator participant = %+v, want first-class mailbox operator", env.Data.Operator)
+	}
 	if !env.Data.Capabilities.OperatorGates {
 		t.Errorf("operator_gates capability missing from team_plan: %+v", env.Data.Capabilities)
 	}
@@ -227,6 +230,9 @@ func TestRunUpDryRunJSONUsesCustomOperator(t *testing.T) {
 	env := decodeJSONEnvelope[teamPlan](t, stdout)
 	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != "operator" || env.Data.Operator.Runnable {
 		t.Fatalf("operator metadata = %+v, want enabled non-runnable operator", env.Data.Operator)
+	}
+	if !env.Data.Operator.Participant || env.Data.Operator.Kind != "operator" || env.Data.Operator.Assignable || env.Data.Operator.WakeSupported || !env.Data.Operator.PollRequired {
+		t.Fatalf("operator participant = %+v, want first-class mailbox operator", env.Data.Operator)
 	}
 	if !env.Data.Capabilities.OperatorGates {
 		t.Fatal("custom operator should advertise operator_gates")
@@ -390,6 +396,9 @@ func TestRunTeamProfilesJSONEnvelope(t *testing.T) {
 		if !p.Operator.Enabled || p.Operator.Handle != team.DefaultOperatorHandle || p.Operator.Runnable {
 			t.Errorf("profile %s operator = %+v, want default non-runnable user", p.Profile, p.Operator)
 		}
+		if !p.Operator.Participant || p.Operator.Kind != "operator" || p.Operator.Assignable || p.Operator.WakeSupported || !p.Operator.PollRequired {
+			t.Errorf("profile %s operator participant = %+v, want first-class mailbox operator", p.Profile, p.Operator)
+		}
 		if !p.Capabilities.OperatorGates {
 			t.Errorf("profile %s missing operator_gates capability", p.Profile)
 		}
@@ -422,6 +431,9 @@ func TestRunTeamProfilesJSONLegacySchema2AdvertisesImplicitOperatorGates(t *test
 	p := env.Data.Profiles[0]
 	if !p.Operator.Enabled || p.Operator.Handle != team.DefaultOperatorHandle || p.Operator.Runnable {
 		t.Fatalf("legacy operator = %+v, want enabled compatibility handle user", p.Operator)
+	}
+	if !p.Operator.Participant || p.Operator.Kind != "operator" || p.Operator.Assignable || p.Operator.WakeSupported || !p.Operator.PollRequired {
+		t.Fatalf("legacy operator participant = %+v, want compatibility mailbox operator", p.Operator)
 	}
 	if !p.Capabilities.OperatorGates {
 		t.Fatal("legacy schema 2 profile must advertise implicit operator_gates")
@@ -540,6 +552,15 @@ func TestRunStatusJSONHasNoHumanComments(t *testing.T) {
 	}
 	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != team.DefaultOperatorHandle {
 		t.Errorf("status operator = %+v, want default enabled user", env.Data.Operator)
+	}
+	if !env.Data.Operator.Participant || env.Data.Operator.Kind != "operator" || env.Data.Operator.Runnable || env.Data.Operator.Assignable || env.Data.Operator.WakeSupported || !env.Data.Operator.PollRequired {
+		t.Errorf("status operator participant = %+v, want first-class mailbox operator", env.Data.Operator)
+	}
+	if env.Data.Operator.CanonicalInbox == nil || env.Data.Operator.CanonicalInbox.Handle != team.DefaultOperatorHandle || env.Data.Operator.CanonicalInbox.Session != "issue-96" || env.Data.Operator.CanonicalInbox.Root == "" {
+		t.Errorf("status operator canonical_inbox = %+v, want routeable user inbox for issue-96", env.Data.Operator.CanonicalInbox)
+	}
+	if env.Data.Operator.Poll == nil || !env.Data.Operator.Poll.Required || env.Data.Operator.Poll.Owner != "none" {
+		t.Errorf("status operator poll = %+v, want required unowned poll contract", env.Data.Operator.Poll)
 	}
 	if !env.Data.OperatorDelivery.Enabled || env.Data.OperatorDelivery.Handle != team.DefaultOperatorHandle || !env.Data.OperatorDelivery.PollRequired || env.Data.OperatorDelivery.WakeSupported || !env.Data.OperatorDelivery.DurableAMQ {
 		t.Errorf("status operator_delivery = %+v, want virtual operator poll-required durable AMQ", env.Data.OperatorDelivery)

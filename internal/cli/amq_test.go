@@ -244,6 +244,36 @@ func TestAMQSendResolvesRootAndForwards(t *testing.T) {
 	}
 }
 
+func TestAMQSendRejectsSelfSendOnP2PThread(t *testing.T) {
+	chdir(t, t.TempDir())
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "sent\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "release-lead", "--to", "release-lead", "--thread", "p2p/release-lead__user", "--kind", "status", "--subject", "ACK"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing self-send on p2p thread") || !strings.Contains(err.Error(), "--to user") {
+		t.Fatalf("self-send error = %v, want actionable rejection", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("self-send should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestAMQSendAllowsOrdinaryP2PReplyToOtherParticipant(t *testing.T) {
+	chdir(t, t.TempDir())
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "sent\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "release-lead", "--to", "user", "--thread", "p2p/release-lead__user", "--kind", "status", "--subject", "ACK"})
+	})
+	if err != nil {
+		t.Fatalf("send to other participant should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(*calls))
+	}
+}
+
 func TestAMQDrainResolvesRootAndForwards(t *testing.T) {
 	chdir(t, t.TempDir())
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")

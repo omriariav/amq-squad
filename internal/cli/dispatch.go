@@ -134,6 +134,9 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}
+	if err := ensureTargetIsNotOperator(t, "dispatch", *roleFlag); err != nil {
+		return err
+	}
 	member, ok := teamMemberByRole(t, *roleFlag)
 	if !ok {
 		return fmt.Errorf("no team member with role %q in this team", *roleFlag)

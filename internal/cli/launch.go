@@ -223,6 +223,9 @@ Examples:
 	if env.Me != "" {
 		handle = env.Me
 	}
+	if err := ensureLaunchTargetIsNotOperator(cwd, teamProfileValue, "agent up", *roleFlag, handle); err != nil {
+		return err
+	}
 
 	agentDir := filepath.Join(root, "agents", handle)
 	rec := launch.Record{
