@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func withAMQCommandSeams(t *testing.T, env amqEnv, output string) *[]amqCommandRequest {
@@ -289,6 +293,155 @@ func TestAMQDrainResolvesRootAndForwards(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("drain args missing %q: %s", want, got)
 		}
+	}
+}
+
+func TestAMQDrainAllowsMailboxOwnerInProjectTeam(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeam(t, dir)
+	t.Setenv("AM_ME", "qa")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--session", "issue-96", "--me", "qa", "--include-body"})
+	})
+	if err != nil {
+		t.Fatalf("owner drain should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("owner drain calls = %d, want 1", len(*calls))
+	}
+}
+
+func TestAMQDrainAllowsExternalLeadMailboxInProjectTeam(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeam(t, dir)
+	t.Setenv("AM_ME", "")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--session", "issue-96", "--me", "cto", "--include-body"})
+	})
+	if err != nil {
+		t.Fatalf("external lead drain should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("external lead drain calls = %d, want 1", len(*calls))
+	}
+}
+
+func TestAMQDrainBlocksNonOwnerMailboxInProjectTeam(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeam(t, dir)
+	t.Setenv("AM_ME", "cto")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--session", "issue-96", "--me", "qa", "--include-body"})
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "refusing amq drain") ||
+		!strings.Contains(err.Error(), "lead-owned mailbox") ||
+		!strings.Contains(err.Error(), "list/read/thread") ||
+		!strings.Contains(err.Error(), "--override-boundary --reason") {
+		t.Fatalf("boundary error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("blocked drain should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestAMQDrainOverrideRequiresReason(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeam(t, dir)
+	t.Setenv("AM_ME", "cto")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--session", "issue-96", "--me", "qa", "--override-boundary"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--override-boundary requires --reason") {
+		t.Fatalf("override without reason error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("missing-reason override should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestAMQDrainOverrideWritesAuditAndExecutes(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeam(t, dir)
+	t.Setenv("AM_ME", "cto")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--session", "issue-96", "--me", "qa", "--override-boundary", "--reason", "recover stuck report", "--include-body"})
+	})
+	if err != nil {
+		t.Fatalf("audited override drain should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("override drain calls = %d, want 1", len(*calls))
+	}
+	got := strings.Join((*calls)[0].Arg, " ")
+	if strings.Contains(got, "override-boundary") || strings.Contains(got, "recover stuck report") {
+		t.Fatalf("wrapper override flags must not be forwarded to amq: %s", got)
+	}
+	auditPath := filepath.Join(dir, team.DirName, "boundary-audit", "issue-96.jsonl")
+	b, err := os.ReadFile(auditPath)
+	if err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	for _, want := range []string{`"subcommand":"drain"`, `"actor":"cto"`, `"target":"qa"`, `"reason":"recover stuck report"`} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("audit missing %q:\n%s", want, string(b))
+		}
+	}
+}
+
+func TestAMQWatchBlocksNonOwnerMailboxInProjectTeam(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeam(t, dir)
+	t.Setenv("AM_ME", "cto")
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+	var streamed []string
+	prev := runAMQStreaming
+	runAMQStreaming = func(ctx amqContext, cmd []string) error {
+		streamed = cmd
+		return nil
+	}
+	t.Cleanup(func() { runAMQStreaming = prev })
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"watch", "--session", "issue-96", "--me", "qa", "--poll"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing amq watch") {
+		t.Fatalf("watch boundary error = %v", err)
+	}
+	if len(streamed) != 0 {
+		t.Fatalf("blocked watch should not stream, got %v", streamed)
+	}
+}
+
+func writeAMQBoundaryTeam(t *testing.T, dir string) {
+	t.Helper()
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Project:       dir,
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectTeam,
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 

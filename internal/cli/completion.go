@@ -222,6 +222,7 @@ var completionCommonFlags = []string{
 	"--older-than",
 	"--operator",
 	"--orchestrated",
+	"--override-boundary",
 	"--personas",
 	"--priority",
 	"--profile",
