@@ -46,6 +46,8 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"agent", "--help"},
 		{"agent", "up", "--help"},
 		{"agent", "resume", "--help"},
+		{"goal", "--help"},
+		{"operator", "--help"},
 	}
 	for _, args := range cases {
 		stdout, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
@@ -99,6 +101,8 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		{name: "agent --help", args: []string{"agent", "--help"}, want: "amq-squad agent"},
 		{name: "agent up --help", args: []string{"agent", "up", "--help"}, want: "amq-squad agent up"},
 		{name: "agent resume --help", args: []string{"agent", "resume", "--help"}, want: "amq-squad agent resume"},
+		{name: "goal --help", args: []string{"goal", "--help"}, want: "amq-squad goal"},
+		{name: "operator --help", args: []string{"operator", "--help"}, want: "amq-squad operator"},
 	}
 	for _, tc := range cases {
 		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })
@@ -215,6 +219,117 @@ func TestLifecycleHelpDocumentsProject(t *testing.T) {
 				t.Fatalf("%s --help should mention %q, got:\n%s", tc.name, want, stderr)
 			}
 		}
+	}
+}
+
+func TestGoalGroupHelp(t *testing.T) {
+	for _, args := range [][]string{{"goal", "--help"}, {"goal", "-h"}} {
+		_, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
+		if err != nil {
+			t.Errorf("Run %v: returned %v, want nil", args, err)
+			continue
+		}
+		for _, want := range []string{
+			"amq-squad goal",
+			"Subcommands:",
+			"apply",
+			"deliver",
+			"draft",
+			"start",
+			"Examples:",
+			"amq-squad goal apply",
+			"amq-squad goal draft",
+			"amq-squad goal deliver",
+			"amq-squad goal start",
+		} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("Run %v: missing %q in help output:\n%s", args, want, stderr)
+			}
+		}
+		subcommands := helpSection(t, stderr, "Subcommands:", "Run 'amq-squad")
+		// Subcommands must appear in alphabetical order.
+		applyPos := strings.Index(subcommands, "apply")
+		deliverPos := strings.Index(subcommands, "deliver")
+		draftPos := strings.Index(subcommands, "draft")
+		startPos := strings.Index(subcommands, "start")
+		if applyPos < 0 || deliverPos < 0 || draftPos < 0 || startPos < 0 {
+			t.Errorf("Run %v: all goal subcommands must appear in help output", args)
+		} else if !(applyPos < deliverPos && deliverPos < draftPos && draftPos < startPos) {
+			t.Errorf("Run %v: subcommands must be alphabetical (apply, deliver, draft, start)", args)
+		}
+	}
+}
+
+func TestOperatorGroupHelp(t *testing.T) {
+	for _, args := range [][]string{{"operator", "--help"}, {"operator", "-h"}, {"operator"}} {
+		_, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
+		if err != nil {
+			t.Errorf("Run %v: returned %v, want nil", args, err)
+			continue
+		}
+		for _, want := range []string{
+			"amq-squad operator",
+			"Subcommands:",
+			"answer",
+			"directive",
+			"poll",
+			"status",
+			"watch",
+			"Examples:",
+			"amq-squad operator answer",
+			"amq-squad operator directive",
+			"amq-squad operator status",
+		} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("Run %v: missing %q in help output:\n%s", args, want, stderr)
+			}
+		}
+		subcommands := helpSection(t, stderr, "Subcommands:", "Run 'amq-squad")
+		// Subcommands must appear in alphabetical order.
+		answerPos := strings.Index(subcommands, "answer")
+		directivePos := strings.Index(subcommands, "directive")
+		pollPos := strings.Index(subcommands, "poll")
+		statusPos := strings.Index(subcommands, "status")
+		watchPos := strings.Index(subcommands, "watch")
+		if answerPos < 0 || directivePos < 0 || pollPos < 0 || statusPos < 0 || watchPos < 0 {
+			t.Errorf("Run %v: all operator subcommands must appear in help output", args)
+		} else if !(answerPos < directivePos && directivePos < pollPos && pollPos < statusPos && statusPos < watchPos) {
+			t.Errorf("Run %v: subcommands must be alphabetical (answer < directive < poll < status < watch)", args)
+		}
+	}
+}
+
+func helpSection(t *testing.T, body, startMarker, endMarker string) string {
+	t.Helper()
+	start := strings.Index(body, startMarker)
+	if start < 0 {
+		t.Fatalf("help output missing start marker %q:\n%s", startMarker, body)
+	}
+	rest := body[start:]
+	end := strings.Index(rest, endMarker)
+	if end < 0 {
+		t.Fatalf("help output missing end marker %q after %q:\n%s", endMarker, startMarker, body)
+	}
+	return rest[:end]
+}
+
+func TestGoalUnknownSubcommandMentionsHelp(t *testing.T) {
+	_, _, err := captureOutput(t, func() error { return Run([]string{"goal", "bogus"}, "test") })
+	if err == nil {
+		t.Fatal("goal bogus: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "--help") {
+		t.Errorf("goal unknown subcommand error should mention --help, got: %v", err)
+	}
+}
+
+func TestOperatorUnknownSubcommandMentionsHelp(t *testing.T) {
+	_, _, err := captureOutput(t, func() error { return Run([]string{"operator", "bogus"}, "test") })
+	if err == nil {
+		t.Fatal("operator bogus: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "--help") {
+		t.Errorf("operator unknown subcommand error should mention --help, got: %v", err)
 	}
 }
 

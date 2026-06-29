@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 func fakeGoalGh(t *testing.T, body string, returnErr error, captured *[]string) {
@@ -109,6 +113,266 @@ func TestGoalDraftMarkdownIsPreviewOnly(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("markdown missing %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestGoalStartDryRunJSONIsReadOnlyPlan(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	})
+	oldSend := sendPromptToPane
+	sendPromptToPane = func(string, string) error {
+		t.Fatal("goal start --dry-run must not send to a pane")
+		return nil
+	}
+	t.Cleanup(func() { sendPromptToPane = oldSend })
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--goal", "ship safely", "--dry-run", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("goal start dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[goalStartData](t, stdout)
+	if env.Kind != "goal_start" || !env.Data.DryRun || env.Data.Status != "planned" {
+		t.Fatalf("goal start envelope = %+v", env)
+	}
+	if env.Data.Project != dir || env.Data.Profile != team.DefaultProfile || env.Data.Session != "issue-96" || env.Data.Role != "cto" {
+		t.Fatalf("goal start plan fields = %+v", env.Data)
+	}
+	if env.Data.Mode != executionModeProjectLead || env.Data.Goal != "ship safely" {
+		t.Fatalf("goal start mode/goal = %+v", env.Data)
+	}
+	if len(env.Data.Actions) != 1 || env.Data.Actions[0].ID != "goal_deliver" || env.Data.Actions[0].ActionKind != "run" || !env.Data.Actions[0].Available {
+		t.Fatalf("goal start actions = %+v", env.Data.Actions)
+	}
+	for _, want := range []string{"amq-squad goal deliver", "--project " + dir, "--session issue-96", "--role cto", "--goal 'ship safely'", "--json"} {
+		if !strings.Contains(env.Data.DeliverCmd, want) {
+			t.Fatalf("deliver command missing %q: %q", want, env.Data.DeliverCmd)
+		}
+	}
+}
+
+func TestGoalStartRequiresYesForDelivery(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	_, _, err := captureOutput(t, func() error {
+		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--goal", "ship safely"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("goal start without --yes should be confirm-gated, got %v", err)
+	}
+}
+
+func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	})
+	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-96",
+		AgentPID: 4242,
+		Tmux:     &launch.TmuxInfo{PaneID: "%7"},
+	})
+	oldLister := statusPaneLister
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: "codex", Title: "amq:issue-96:cto"}}, nil
+	}
+	oldSend := sendPromptToPane
+	var sent []string
+	sendPromptToPane = func(paneID, prompt string) error {
+		sent = append(sent, paneID+"\x00"+prompt)
+		return nil
+	}
+	t.Cleanup(func() {
+		statusPaneLister = oldLister
+		sendPromptToPane = oldSend
+	})
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--yes", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("goal start --yes: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(sent) != 1 || !strings.Contains(sent[0], "/goal --goal") || !strings.Contains(sent[0], "ship safely") {
+		t.Fatalf("goal start sent = %+v", sent)
+	}
+	env := decodeJSONEnvelope[goalStartData](t, stdout)
+	if env.Kind != "goal_start" || env.Data.DryRun || env.Data.Status != "native_goal_delivered" {
+		t.Fatalf("goal start delivery envelope = %+v", env)
+	}
+	if env.Data.DeliveryReceipt == nil || env.Data.DeliveryReceipt.PaneID != "%7" || env.Data.DeliveryReceipt.Status != "native_goal_delivered" {
+		t.Fatalf("goal start delivery receipt = %+v", env.Data.DeliveryReceipt)
+	}
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.GoalBinding == nil || rec.GoalBinding.Source != "goal-control" || !rec.GoalBinding.NativeGoal {
+		t.Fatalf("launch goal binding not updated: %+v", rec.GoalBinding)
+	}
+}
+
+func TestGoalApplyRefusesWithoutApprovedGate(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	})
+	tm := team.Team{ExecutionMode: executionModeProjectLead}
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-96",
+		AgentPID: 4242,
+		Tmux:     &launch.TmuxInfo{PaneID: "%7"},
+		GoalBinding: &launch.GoalBinding{
+			Mode:       "native_goal",
+			NativeGoal: true,
+			Source:     "goal-control",
+			Command:    nativeGoalControlPrompt("ship safely", tm, team.DefaultProfile, "issue-96", "cto"),
+		},
+	})
+	_, _, err := captureOutput(t, func() error {
+		return runGoal([]string{"apply", "--project", dir, "--session", "issue-96", "--gate", "release", "--yes"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "APPROVED") {
+		t.Fatalf("goal apply without approved gate should fail, got %v", err)
+	}
+}
+
+func TestGoalApplyRequiresYesAfterApprovedGate(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	})
+	tm := team.Team{ExecutionMode: executionModeProjectLead}
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-96",
+		AgentPID: 4242,
+		Tmux:     &launch.TmuxInfo{PaneID: "%7"},
+		GoalBinding: &launch.GoalBinding{
+			Mode:       "native_goal",
+			NativeGoal: true,
+			Source:     "goal-control",
+			Command:    nativeGoalControlPrompt("ship safely", tm, team.DefaultProfile, "issue-96", "cto"),
+		},
+	})
+	seedNotifyMessage(t, base, "issue-96", "cto", "new", notifyMsg{
+		ID: "approval-1", From: team.DefaultOperatorHandle, To: "cto", Thread: "gate/release",
+		Subject: "APPROVED: release", Kind: "answer", Created: notifyNow,
+	})
+
+	oldSend := sendPromptToPane
+	sendPromptToPane = func(string, string) error {
+		t.Fatal("goal apply without --yes must not deliver")
+		return nil
+	}
+	t.Cleanup(func() { sendPromptToPane = oldSend })
+
+	_, _, err := captureOutput(t, func() error {
+		return runGoal([]string{"apply", "--project", dir, "--session", "issue-96", "--gate", "release"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("goal apply without --yes should fail after approval check, got %v", err)
+	}
+}
+
+func TestGoalApplyYesJSONVerifiesGateAndDelivers(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	})
+	tm := team.Team{ExecutionMode: executionModeProjectLead}
+	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-96",
+		AgentPID: 4242,
+		Tmux:     &launch.TmuxInfo{PaneID: "%7"},
+		GoalBinding: &launch.GoalBinding{
+			Mode:       "native_goal",
+			NativeGoal: true,
+			Source:     "goal-control",
+			Command:    nativeGoalControlPrompt("ship safely", tm, team.DefaultProfile, "issue-96", "cto"),
+		},
+	})
+	seedNotifyMessage(t, base, "issue-96", "cto", "new", notifyMsg{
+		ID: "approval-1", From: team.DefaultOperatorHandle, To: "cto", Thread: "gate/release",
+		Subject: "APPROVED: release", Kind: "answer", Created: notifyNow,
+	})
+	oldLister := statusPaneLister
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: "codex", Title: "amq:issue-96:cto"}}, nil
+	}
+	oldSend := sendPromptToPane
+	var sent []string
+	sendPromptToPane = func(paneID, prompt string) error {
+		sent = append(sent, paneID+"\x00"+prompt)
+		return nil
+	}
+	t.Cleanup(func() {
+		statusPaneLister = oldLister
+		sendPromptToPane = oldSend
+	})
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoal([]string{"apply", "--project", dir, "--session", "issue-96", "--gate", "release", "--goal-id", "g1", "--yes", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("goal apply --yes: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(sent) != 1 || !strings.Contains(sent[0], "/goal --goal") || !strings.Contains(sent[0], "ship safely") {
+		t.Fatalf("goal apply sent = %+v", sent)
+	}
+	env := decodeJSONEnvelope[goalApplyData](t, stdout)
+	if env.Kind != "goal_apply" || env.Data.Status != "native_goal_delivered" || env.Data.GoalID != "g1" {
+		t.Fatalf("goal apply envelope = %+v", env)
+	}
+	if env.Data.ApprovalEvidence == nil || env.Data.ApprovalEvidence.MessageID != "approval-1" || env.Data.Gate != "gate/release" {
+		t.Fatalf("approval evidence = %+v gate=%q", env.Data.ApprovalEvidence, env.Data.Gate)
+	}
+	if env.Data.DeliveryReceipt == nil || env.Data.DeliveryReceipt.PaneID != "%7" {
+		t.Fatalf("delivery receipt = %+v", env.Data.DeliveryReceipt)
+	}
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.GoalBinding == nil || rec.GoalBinding.Source != "goal-control" || !rec.GoalBinding.NativeGoal {
+		t.Fatalf("launch goal binding not preserved/updated: %+v", rec.GoalBinding)
 	}
 }
 

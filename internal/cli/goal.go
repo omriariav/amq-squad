@@ -10,9 +10,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -112,6 +114,61 @@ type goalDispatchPlan struct {
 	Command string `json:"command"`
 }
 
+type goalStartData struct {
+	Command         string               `json:"command"`
+	Status          string               `json:"status"`
+	DryRun          bool                 `json:"dry_run"`
+	Project         string               `json:"project"`
+	Profile         string               `json:"profile"`
+	Session         string               `json:"session"`
+	Mode            string               `json:"mode"`
+	Role            string               `json:"role"`
+	Handle          string               `json:"handle"`
+	Goal            string               `json:"goal"`
+	Namespace       squadnamespace.Ref   `json:"namespace"`
+	Actions         []mutationAction     `json:"actions,omitempty"`
+	DeliverCmd      string               `json:"deliver_command,omitempty"`
+	DeliveryReceipt *deliveryReceiptData `json:"delivery_receipt,omitempty"`
+}
+
+type goalApplyData struct {
+	Command          string                `json:"command"`
+	Status           string                `json:"status"`
+	Project          string                `json:"project"`
+	Profile          string                `json:"profile"`
+	Session          string                `json:"session"`
+	Mode             string                `json:"mode"`
+	Role             string                `json:"role"`
+	Handle           string                `json:"handle"`
+	GoalID           string                `json:"goal_id,omitempty"`
+	Gate             string                `json:"gate"`
+	Goal             string                `json:"goal"`
+	Namespace        squadnamespace.Ref    `json:"namespace"`
+	ApprovalEvidence *goalApprovalEvidence `json:"approval_evidence,omitempty"`
+	DeliveryReceipt  *deliveryReceiptData  `json:"delivery_receipt,omitempty"`
+}
+
+type goalApprovalEvidence struct {
+	MessageID string    `json:"message_id"`
+	From      string    `json:"from"`
+	To        []string  `json:"to"`
+	Thread    string    `json:"thread"`
+	Subject   string    `json:"subject"`
+	Created   time.Time `json:"created"`
+}
+
+type goalDeliveryOptions struct {
+	Project   string
+	Profile   string
+	Session   string
+	Role      string
+	Goal      string
+	Team      team.Team
+	Member    team.Member
+	Namespace squadnamespace.Ref
+	Mode      string
+}
+
 func runGoal(args []string) error {
 	return runGoalWithVersion(args, "dev")
 }
@@ -129,24 +186,180 @@ func runGoalWithVersion(args []string, version string) error {
 		return runGoalDraftWithVersion(args[1:], version)
 	case "deliver":
 		return runGoalDeliver(args[1:])
+	case "start":
+		return runGoalStart(args[1:])
 	case "apply":
-		return usageErrorf("goal apply is not implemented yet; run `amq-squad goal draft` and review the preview first")
+		return runGoalApply(args[1:])
 	default:
-		return usageErrorf("unknown 'goal' subcommand: %q. Try 'draft'.", args[0])
+		return usageErrorf("unknown 'goal' subcommand %q. Run 'amq-squad goal --help' for available subcommands.", args[0])
 	}
 }
 
 func printGoalUsage() {
-	fmt.Fprint(os.Stderr, `amq-squad goal - draft or apply a preview-first goal setup plan
+	fmt.Fprint(os.Stderr, `amq-squad goal - manage preview-first goal setup plans
 
 Usage:
-  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
-  amq-squad goal deliver --goal TEXT --session NAME [--profile NAME] [--role ROLE] [--json]
+  amq-squad goal <subcommand> [options]
+
+Subcommands:
+  apply     apply an operator-approved visible lead goal
+  deliver   deliver a native /goal to the resolved visible lead
+  draft     produce a preview-only goal setup plan from a goal description
+  start     preview or deliver a goal to the current visible lead
+
+Run 'amq-squad goal <subcommand> --help' for subcommand options and flags.
 
 Examples:
-  amq-squad goal draft --goal "deliver GitHub milestone v2.7.0" --repo omriariav/amq-squad --milestone v2.7.0 --session v2-7-0 --profile codex-v2-7-0
-  amq-squad goal draft --goal "fix issue 96" --session issue-96 --json
+  amq-squad goal draft --goal "fix issue #96" --session issue-96
+  amq-squad goal draft --goal "deliver milestone v2.7.0" --repo omriariav/amq-squad --milestone v2.7.0 --session v2-7-0
+  amq-squad goal apply --session issue-96 --gate release --yes --json
+  amq-squad goal deliver --session issue-96 --goal "fix issue #96" --json
+  amq-squad goal start --session issue-96 --goal "fix issue #96" --dry-run --json
 `)
+}
+
+func runGoalApply(args []string) error {
+	fs := flag.NewFlagSet("goal apply", flag.ContinueOnError)
+	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	sessionFlag := fs.String("session", "", "workstream session of the visible lead")
+	roleFlag := fs.String("role", "", "role to apply through (default: configured lead)")
+	goalIDFlag := fs.String("goal-id", "", "approved goal identifier (recorded in JSON output)")
+	gateFlag := fs.String("gate", "", "gate topic carrying the operator APPROVED answer")
+	yes := fs.Bool("yes", false, "confirm apply without an interactive prompt")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned goal_apply envelope")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad goal apply - apply an operator-approved visible lead goal
+
+Usage:
+  amq-squad goal apply [--project DIR] [--profile NAME] [--session S] [--role ROLE] [--goal-id ID] --gate TOPIC --yes [--json]
+
+Verifies that gate/<topic> contains a real operator APPROVED answer to the
+resolved visible lead, reads the native goal already recorded on that lead's
+launch record, and delivers it through the native /goal control path. This
+command is confirm-gated; pass --yes after reviewing the gate and lead state.
+`)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return usageErrorf("goal apply takes no positional arguments")
+	}
+	gate := normalizeGateTopic(*gateFlag)
+	if gate == "" {
+		return usageErrorf("goal apply requires --gate <topic>")
+	}
+	target, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal apply")
+	if err != nil {
+		return err
+	}
+	goal, err := approvedGoalFromLeadBinding(target)
+	if err != nil {
+		return err
+	}
+	evidence, err := verifyGoalApplyApproval(target, gate)
+	if err != nil {
+		return err
+	}
+	if !*yes {
+		return usageErrorf("goal apply requires --yes after verifying approved gate %s", gate)
+	}
+	target.Goal = goal
+	result, err := executeGoalDelivery(target)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSONEnvelope("goal_apply", goalApplyData{
+			Command:          "goal apply",
+			Status:           result.Status,
+			Project:          result.Project,
+			Profile:          result.Profile,
+			Session:          result.Session,
+			Mode:             target.Mode,
+			Role:             result.Role,
+			Handle:           result.Handle,
+			GoalID:           strings.TrimSpace(*goalIDFlag),
+			Gate:             gate,
+			Goal:             goal,
+			Namespace:        result.Namespace,
+			ApprovalEvidence: &evidence,
+			DeliveryReceipt:  result.DeliveryReceipt,
+		})
+	}
+	fmt.Printf("Applied approved goal on %s for session %s.\n", result.Role, result.Session)
+	return nil
+}
+
+func runGoalStart(args []string) error {
+	fs := flag.NewFlagSet("goal start", flag.ContinueOnError)
+	goalFlag := fs.String("goal", "", "goal text to deliver as a native /goal control command")
+	sessionFlag := fs.String("session", "", "workstream session of the visible lead")
+	roleFlag := fs.String("role", "", "role to receive the native /goal command (default: configured lead)")
+	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	dryRun := fs.Bool("dry-run", false, "preview the inferred start plan without delivering")
+	yes := fs.Bool("yes", false, "confirm delivery without an interactive prompt")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned goal_start envelope")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad goal start - preview or deliver a goal to the visible lead
+
+Usage:
+  amq-squad goal start [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--dry-run] [--yes] [--json]
+
+Infers the current team profile, session, execution mode, and visible lead target
+from the project. Use --dry-run to inspect the plan. Non-dry-run delivery is
+confirm-gated and requires --yes in this first implementation slice.
+`)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return usageErrorf("goal start takes no positional arguments; use --goal TEXT")
+	}
+	goal := strings.TrimSpace(*goalFlag)
+	if goal == "" {
+		return usageErrorf("goal start requires --goal TEXT")
+	}
+	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal start")
+	if err != nil {
+		return err
+	}
+	plan := goalStartPlan(opts)
+	if *dryRun {
+		if *jsonOut {
+			return printJSONEnvelope("goal_start", plan)
+		}
+		writeGoalStartPlan(os.Stdout, plan)
+		return nil
+	}
+	if !*yes {
+		return usageErrorf("goal start delivery requires --yes (or run --dry-run to preview first)")
+	}
+	result, err := executeGoalDelivery(opts)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSONEnvelope("goal_start", goalStartData{
+			Command:         "goal start",
+			Status:          result.Status,
+			DryRun:          false,
+			Project:         result.Project,
+			Profile:         result.Profile,
+			Session:         result.Session,
+			Mode:            effectiveTeamExecutionMode(opts.Team),
+			Role:            result.Role,
+			Handle:          result.Handle,
+			Goal:            opts.Goal,
+			Namespace:       result.Namespace,
+			DeliveryReceipt: result.DeliveryReceipt,
+		})
+	}
+	fmt.Printf("Started goal on %s for session %s.\n", result.Role, result.Session)
+	return nil
 }
 
 func runGoalDeliver(args []string) error {
@@ -176,57 +389,246 @@ runtime accepts goal control messages safely.
 	if goal == "" {
 		return usageErrorf("goal deliver requires --goal TEXT")
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal deliver")
 	if err != nil {
 		return err
 	}
+	result, err := executeGoalDelivery(opts)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSONEnvelope("goal_deliver", result)
+	}
+	fmt.Printf("Delivered native /goal to %s pane %s (attempt %s).\n", result.Role, result.DeliveryReceipt.PaneID, result.DeliveryReceipt.AttemptID)
+	return nil
+}
+
+func resolveGoalDeliveryOptions(projectFlag, profileFlag, sessionFlag, roleFlag, goal string, projectSet, sessionSet bool, command string) (goalDeliveryOptions, error) {
+	opts, err := resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag, projectSet, sessionSet, command)
+	if err != nil {
+		return goalDeliveryOptions{}, err
+	}
+	opts.Goal = goal
+	return opts, nil
+}
+
+func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag string, projectSet, sessionSet bool, command string) (goalDeliveryOptions, error) {
+	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	if err != nil {
+		return goalDeliveryOptions{}, err
+	}
 	if !team.ExistsProfile(projectDir, profile) {
-		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+		return goalDeliveryOptions{}, fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
 	t, err := team.ReadProfile(projectDir, profile)
 	if err != nil {
-		return fmt.Errorf("read team: %w", err)
+		return goalDeliveryOptions{}, fmt.Errorf("read team: %w", err)
 	}
-	workstream, err := resolveTeamWorkstreamName(t, *sessionFlag, flagWasSet(fs, "session"))
+	workstream, err := resolveTeamWorkstreamName(t, sessionFlag, sessionSet)
 	if err != nil {
-		return err
+		return goalDeliveryOptions{}, err
 	}
-	if err := ensureNoNamespaceConflict("goal deliver", projectDir, profile, workstream); err != nil {
-		return err
+	if err := ensureNoNamespaceConflict(command, projectDir, profile, workstream); err != nil {
+		return goalDeliveryOptions{}, err
 	}
-	role := strings.TrimSpace(*roleFlag)
+	role := strings.TrimSpace(roleFlag)
 	if role == "" {
 		role = strings.TrimSpace(t.Lead)
 	}
 	if role == "" {
-		return usageErrorf("goal deliver requires --role when the team has no configured lead")
+		return goalDeliveryOptions{}, usageErrorf("%s requires --role when the team has no configured lead", command)
 	}
-	if err := ensureTargetIsNotOperator(t, "goal deliver", role); err != nil {
-		return err
+	if err := ensureTargetIsNotOperator(t, command, role); err != nil {
+		return goalDeliveryOptions{}, err
 	}
 	member, ok := teamMemberByRole(t, role)
 	if !ok {
-		return fmt.Errorf("no team member with role %q in this team", role)
+		return goalDeliveryOptions{}, fmt.Errorf("no team member with role %q in this team", role)
 	}
-	prompt := nativeGoalControlPrompt(goal, t, profile, workstream, role)
-	receipt := newDeliveryReceipt(projectDir, profile, workstream, role, member.Handle, effectiveTeamExecutionMode(t), "native_goal")
+	return goalDeliveryOptions{
+		Project:   projectDir,
+		Profile:   profile,
+		Session:   workstream,
+		Role:      role,
+		Team:      t,
+		Member:    member,
+		Namespace: squadnamespace.Resolve(projectDir, profile, workstream),
+		Mode:      effectiveTeamExecutionMode(t),
+	}, nil
+}
+
+func approvedGoalFromLeadBinding(opts goalDeliveryOptions) (string, error) {
+	mr, _, err := resolveMemberRuntime(opts.Project, opts.Profile, opts.Session, true, opts.Role)
+	if err != nil {
+		return "", err
+	}
+	if mr.ProfileMismatch {
+		return "", fmt.Errorf("goal apply refused: launch record for role %q belongs to a different profile", opts.Role)
+	}
+	if !mr.HasRecord {
+		return "", fmt.Errorf("goal apply requires a launch record for visible lead role %q", opts.Role)
+	}
+	if mr.Record.GoalBinding == nil || !mr.Record.GoalBinding.NativeGoal {
+		return "", fmt.Errorf("goal apply requires role %q to have a native goal binding", opts.Role)
+	}
+	goal, ok := extractNativeGoalText(mr.Record.GoalBinding.Command)
+	if !ok || strings.TrimSpace(goal) == "" {
+		return "", fmt.Errorf("goal apply could not read native goal text from role %q launch record", opts.Role)
+	}
+	return strings.TrimSpace(goal), nil
+}
+
+func extractNativeGoalText(command string) (string, bool) {
+	command = strings.TrimSpace(command)
+	const flagText = "--goal"
+	idx := strings.Index(command, flagText)
+	if idx < 0 {
+		return "", false
+	}
+	rest := strings.TrimSpace(command[idx+len(flagText):])
+	if rest == "" {
+		return "", false
+	}
+	if rest[0] == '"' {
+		for end := 1; end < len(rest); end++ {
+			if rest[end] != '"' || rest[end-1] == '\\' {
+				continue
+			}
+			candidate := rest[:end+1]
+			if parsed, err := strconv.Unquote(candidate); err == nil {
+				return parsed, true
+			}
+		}
+		return "", false
+	}
+	if end := strings.IndexAny(rest, " \t\n"); end >= 0 {
+		return rest[:end], true
+	}
+	return rest, true
+}
+
+func verifyGoalApplyApproval(opts goalDeliveryOptions, gate string) (goalApprovalEvidence, error) {
+	operator := statusOperatorForTeam(opts.Team, opts.Namespace)
+	if !operator.Enabled || strings.TrimSpace(operator.Handle) == "" {
+		return goalApprovalEvidence{}, usageErrorf("goal apply requires an enabled operator handle")
+	}
+	ctx, err := resolveAMQContextForNamespace(opts.Project, opts.Profile, opts.Session, operator.Handle)
+	if err != nil {
+		return goalApprovalEvidence{}, fmt.Errorf("resolve approval gate state: %w", err)
+	}
+	msgs, warnings := state.ScanSessionMessages(ctx.Root, time.Now)
+	if len(warnings) > 0 {
+		return goalApprovalEvidence{}, fmt.Errorf("approval gate state has unreadable messages; inspect %s before applying", gate)
+	}
+	var latest *state.Message
+	for i := range msgs {
+		msg := msgs[i]
+		if msg.Thread != gate || msg.Kind != state.KindAnswer || msg.From != operator.Handle {
+			continue
+		}
+		if !messageToContains(msg, opts.Member.Handle) {
+			continue
+		}
+		if latest == nil || latest.Created.Before(msg.Created) || (latest.Created.Equal(msg.Created) && latest.ID < msg.ID) {
+			latest = &msgs[i]
+		}
+	}
+	if latest == nil {
+		return goalApprovalEvidence{}, fmt.Errorf("goal apply requires an operator APPROVED answer on %s to %s", gate, opts.Member.Handle)
+	}
+	if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(latest.Subject)), "APPROVED:") {
+		return goalApprovalEvidence{}, fmt.Errorf("latest operator answer on %s to %s is not APPROVED: %s", gate, opts.Member.Handle, latest.Subject)
+	}
+	return goalApprovalEvidence{
+		MessageID: latest.ID,
+		From:      latest.From,
+		To:        append([]string(nil), latest.To...),
+		Thread:    latest.Thread,
+		Subject:   latest.Subject,
+		Created:   latest.Created,
+	}, nil
+}
+
+func messageToContains(msg state.Message, handle string) bool {
+	for _, to := range msg.To {
+		if to == handle {
+			return true
+		}
+	}
+	return false
+}
+
+func goalStartPlan(opts goalDeliveryOptions) goalStartData {
+	cmd := goalDeliverCommand(opts, true)
+	return goalStartData{
+		Command:    "goal start",
+		Status:     "planned",
+		DryRun:     true,
+		Project:    opts.Project,
+		Profile:    opts.Profile,
+		Session:    opts.Session,
+		Mode:       opts.Mode,
+		Role:       opts.Role,
+		Handle:     opts.Member.Handle,
+		Goal:       opts.Goal,
+		Namespace:  opts.Namespace,
+		DeliverCmd: cmd,
+		Actions: []mutationAction{
+			followUp("goal_deliver", "deliver goal to visible lead", cmd),
+		},
+	}
+}
+
+func goalDeliverCommand(opts goalDeliveryOptions, jsonOut bool) string {
+	parts := []string{
+		"amq-squad", "goal", "deliver",
+		"--project", shellQuote(opts.Project),
+		"--profile", shellQuote(opts.Profile),
+		"--session", shellQuote(opts.Session),
+		"--role", shellQuote(opts.Role),
+		"--goal", shellQuote(opts.Goal),
+	}
+	if jsonOut {
+		parts = append(parts, "--json")
+	}
+	return strings.Join(parts, " ")
+}
+
+func writeGoalStartPlan(out *os.File, data goalStartData) {
+	fmt.Fprintln(out, "# amq-squad goal start")
+	fmt.Fprintln(out, "# dry_run: true")
+	fmt.Fprintf(out, "# project: %s\n", data.Project)
+	fmt.Fprintf(out, "# profile: %s\n", data.Profile)
+	fmt.Fprintf(out, "# session: %s\n", data.Session)
+	fmt.Fprintf(out, "# mode: %s\n", data.Mode)
+	fmt.Fprintf(out, "# role: %s\n", data.Role)
+	fmt.Fprintf(out, "# handle: %s\n", data.Handle)
+	fmt.Fprintf(out, "# namespace: %s\n\n", data.Namespace.ID)
+	fmt.Fprintf(out, "Goal: %s\n\n", data.Goal)
+	fmt.Fprintf(out, "Run: %s\n", data.DeliverCmd)
+}
+
+func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
+	prompt := nativeGoalControlPrompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role)
+	receipt := newDeliveryReceipt(opts.Project, opts.Profile, opts.Session, opts.Role, opts.Member.Handle, opts.Mode, "native_goal")
 	receipt.Method = "native_goal_control"
 	receipt.addStage("queued", "native /goal control delivery accepted by amq-squad")
 
-	mr, resolvedWorkstream, err := resolveMemberRuntime(projectDir, profile, workstream, true, role)
+	mr, resolvedWorkstream, err := resolveMemberRuntime(opts.Project, opts.Profile, opts.Session, true, opts.Role)
 	if err != nil {
-		return err
+		return mutationResult{}, err
 	}
 	panes, err := statusPaneLister()
 	if err != nil {
 		if tmuxpane.IsPermissionDenied(err) {
-			return errTmuxAccessDenied()
+			return mutationResult{}, errTmuxAccessDenied()
 		}
 		panes = nil
 	}
 	paneID, _, ok := resolveControlTarget(mr, resolvedWorkstream, panes)
 	if !ok || strings.TrimSpace(paneID) == "" {
-		return fmt.Errorf("no live tmux pane found for role %q; cannot deliver native /goal", role)
+		return mutationResult{}, fmt.Errorf("no live tmux pane found for role %q; cannot deliver native /goal", opts.Role)
 	}
 	receipt.PaneID = paneID
 	receipt.addStage("control_delivery_started", "resolved exact target pane for native /goal control")
@@ -234,8 +636,8 @@ runtime accepts goal control messages safely.
 		receipt.Status = "failed"
 		receipt.Detail = err.Error()
 		receipt.addStage("failed", err.Error())
-		_ = writeDeliveryReceipt(projectDir, profile, workstream, &receipt)
-		return err
+		_ = writeDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &receipt)
+		return mutationResult{}, err
 	}
 	receipt.Status = "native_goal_delivered"
 	receipt.addStage("native_goal_delivered", "native /goal command delivered without ordinary prompt busy-guard semantics")
@@ -249,28 +651,24 @@ runtime accepts goal control messages safely.
 			Detail:     "native /goal delivered as a first-class control action",
 		}
 		if err := launch.Write(mr.AgentDir, rec); err != nil {
-			return fmt.Errorf("update launch goal binding: %w", err)
+			return mutationResult{}, fmt.Errorf("update launch goal binding: %w", err)
 		}
 		receipt.addStage("launch_record_updated", "launch record goal_binding updated from native /goal control delivery")
 	}
-	if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
-		return err
+	if err := writeDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &receipt); err != nil {
+		return mutationResult{}, err
 	}
-	if *jsonOut {
-		return printJSONEnvelope("goal_deliver", mutationResult{
-			Command:         "goal deliver",
-			Status:          receipt.Status,
-			Project:         projectDir,
-			Session:         workstream,
-			Profile:         profile,
-			Namespace:       squadnamespace.Resolve(projectDir, profile, workstream),
-			Role:            role,
-			Handle:          member.Handle,
-			DeliveryReceipt: &receipt,
-		})
-	}
-	fmt.Printf("Delivered native /goal to %s pane %s (attempt %s).\n", role, paneID, receipt.AttemptID)
-	return nil
+	return mutationResult{
+		Command:         "goal deliver",
+		Status:          receipt.Status,
+		Project:         opts.Project,
+		Session:         opts.Session,
+		Profile:         opts.Profile,
+		Namespace:       opts.Namespace,
+		Role:            opts.Role,
+		Handle:          opts.Member.Handle,
+		DeliveryReceipt: &receipt,
+	}, nil
 }
 
 func nativeGoalControlPrompt(goal string, t team.Team, profile, session, role string) string {

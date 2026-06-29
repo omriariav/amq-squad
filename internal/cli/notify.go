@@ -183,6 +183,7 @@ func executeNotify(n notifyExecution) error {
 		return fmt.Errorf("scan AMQ base root: %w", err)
 	}
 	items := collectOperatorAttention(n.ProjectDir, profile, snap, operator.Handle, strings.TrimSpace(n.Session), now())
+	items = mergeOperatorAttention(items, collectRawOpenGateAttention(n.ProjectDir, profile, snap, operator.Handle, strings.TrimSpace(n.Session), now()))
 	statePath := strings.TrimSpace(n.StatePath)
 	if statePath == "" {
 		statePath = defaultNotifyStatePath(n.ProjectDir)
@@ -273,6 +274,137 @@ func collectOperatorAttention(projectDir, profile string, snap state.Snapshot, o
 		return out[i].Thread < out[j].Thread
 	})
 	return out
+}
+
+type rawGateState struct {
+	pending state.Message
+}
+
+func collectRawOpenGateAttention(projectDir, profile string, snap state.Snapshot, operatorHandle, onlySession string, now time.Time) []operatorAttention {
+	var out []operatorAttention
+	profile = squadnamespace.NormalizeProfile(profile)
+	for _, sess := range snap.Sessions {
+		if !squadnamespace.ProfilesEqual(profile, sess.TeamProfile) {
+			continue
+		}
+		if onlySession != "" && sess.Name != onlySession {
+			continue
+		}
+		msgs, _ := state.ScanSessionMessages(sess.Root, func() time.Time { return now })
+		byThread := map[string]rawGateState{}
+		seen := map[string]bool{}
+		for _, msg := range msgs {
+			if msg.ID != "" {
+				if seen[msg.ID] {
+					continue
+				}
+				seen[msg.ID] = true
+			}
+			if !strings.HasPrefix(msg.Thread, "gate/") {
+				continue
+			}
+			gate := byThread[msg.Thread]
+			switch msg.Kind {
+			case state.KindQuestion:
+				if operatorMessageToContains(msg, operatorHandle) && sessionHasAgentHandle(sess.Agents, msg.From) {
+					gate.pending = msg
+				}
+			case state.KindAnswer:
+				if msg.From == operatorHandle {
+					gate.pending = state.Message{}
+				}
+			}
+			byThread[msg.Thread] = gate
+		}
+		for thread, gate := range byThread {
+			msg := gate.pending
+			if msg.ID == "" {
+				continue
+			}
+			age := now.Sub(msg.Created)
+			if age < 0 {
+				age = 0
+			}
+			out = append(out, operatorAttention{
+				Key:         notifyKey(profile, sess.Name, thread),
+				Profile:     profile,
+				Session:     sess.Name,
+				NamespaceID: sess.NamespaceID,
+				Thread:      thread,
+				LatestID:    msg.ID,
+				From:        msg.From,
+				Subject:     msg.Subject,
+				Kind:        msg.Kind,
+				Reason:      state.AttnApprove,
+				Age:         roundDuration(age).String(),
+				LastEventAt: msg.Created,
+				Inspect:     notifyInspectCommand(projectDir, profile, sess.Name, thread),
+				Respond:     notifyRespondCommand(operatorHandle, msg.From, thread, state.AttnApprove),
+			})
+		}
+	}
+	sortOperatorAttention(out)
+	return out
+}
+
+func mergeOperatorAttention(base, extra []operatorAttention) []operatorAttention {
+	if len(extra) == 0 {
+		return base
+	}
+	merged := make([]operatorAttention, 0, len(base)+len(extra))
+	index := map[string]int{}
+	for _, item := range base {
+		index[item.Key] = len(merged)
+		merged = append(merged, item)
+	}
+	for _, item := range extra {
+		if i, ok := index[item.Key]; ok {
+			merged[i] = item
+			continue
+		}
+		index[item.Key] = len(merged)
+		merged = append(merged, item)
+	}
+	sortOperatorAttention(merged)
+	return merged
+}
+
+func sortOperatorAttention(items []operatorAttention) {
+	sort.SliceStable(items, func(i, j int) bool {
+		ri, rj := items[i].Reason.Rank(), items[j].Reason.Rank()
+		if ri != rj {
+			return ri < rj
+		}
+		if !items[i].LastEventAt.Equal(items[j].LastEventAt) {
+			return items[i].LastEventAt.Before(items[j].LastEventAt)
+		}
+		if items[i].Session != items[j].Session {
+			return items[i].Session < items[j].Session
+		}
+		return items[i].Thread < items[j].Thread
+	})
+}
+
+func operatorMessageToContains(msg state.Message, handle string) bool {
+	for _, to := range msg.To {
+		if to == handle {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionHasAgentHandle(agents []state.Agent, handle string) bool {
+	handle = strings.TrimSpace(handle)
+	if handle == "" {
+		return false
+	}
+	for _, agent := range agents {
+		if agent.Handle == handle {
+			return true
+		}
+	}
+	return false
 }
 
 func notifyStructuralOperatorAttention(th state.ThreadSummary, operatorHandle string) bool {

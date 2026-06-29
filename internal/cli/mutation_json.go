@@ -6,6 +6,11 @@ type mutationAction struct {
 	Kind    string `json:"kind"`
 	Label   string `json:"label"`
 	Command string `json:"command"`
+	// Canonical action-object contract fields (v2.12.0).
+	ID                string `json:"id,omitempty"`
+	ActionKind        string `json:"action_kind,omitempty"`
+	Available         bool   `json:"available"`
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
 }
 
 type mutationResult struct {
@@ -21,11 +26,17 @@ type mutationResult struct {
 	Assignee        string               `json:"assignee,omitempty"`
 	Handle          string               `json:"handle,omitempty"`
 	MessageID       string               `json:"message_id,omitempty"`
+	Thread          string               `json:"thread,omitempty"`
 	Root            string               `json:"root,omitempty"`
 	Actions         []mutationAction     `json:"actions,omitempty"`
 	DeliveryReceipt *deliveryReceiptData `json:"delivery_receipt,omitempty"`
 }
 
 func followUp(kind, label, command string) mutationAction {
-	return mutationAction{Kind: kind, Label: label, Command: command}
+	actionKind := "run"
+	switch kind {
+	case "status", "receipts":
+		actionKind = "display"
+	}
+	return mutationAction{Kind: kind, Label: label, Command: command, ID: kind, ActionKind: actionKind, Available: true}
 }

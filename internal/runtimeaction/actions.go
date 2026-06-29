@@ -16,6 +16,53 @@ type Action struct {
 	NeedsConfirmation bool   `json:"needs_confirmation"`
 	Available         bool   `json:"available"`
 	Reason            string `json:"reason,omitempty"`
+	// Canonical action-object contract fields (v2.12.0).
+	// ID mirrors Kind so consumers reading either field get the stable action
+	// type identifier. ActionKind classifies execution semantics ("run" vs
+	// "display"). UnavailableReason carries Reason when Available is false.
+	// Existing consumers may continue to read Kind/NeedsConfirmation/Reason.
+	ID                string `json:"id,omitempty"`
+	ActionKind        string `json:"action_kind,omitempty"`
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+}
+
+// classifyActionKind returns the canonical action_kind for a known action type.
+// "run" means an executable CLI command (may mutate, check needs_confirmation).
+// "display" means read-only or navigational and never mutates.
+func classifyActionKind(kind string) string {
+	switch kind {
+	case "focus", "status", "resume_preview", "task_list", "thread", "attach_control":
+		return "display"
+	default:
+		return "run"
+	}
+}
+
+// ApplyCanonical fills the canonical contract fields (ID, ActionKind,
+// UnavailableReason) on a slice of actions. It is called by each constructor
+// so consumers always receive a fully-populated canonical object. Callers that
+// modify Available/Reason after construction (e.g. policy filters) must call
+// SyncUnavailableReason on the affected actions.
+func ApplyCanonical(actions []Action) []Action {
+	for i := range actions {
+		actions[i].ID = actions[i].Kind
+		actions[i].ActionKind = classifyActionKind(actions[i].Kind)
+		if !actions[i].Available && actions[i].Reason != "" {
+			actions[i].UnavailableReason = actions[i].Reason
+		}
+	}
+	return actions
+}
+
+// SyncUnavailableReason updates UnavailableReason to match Reason when
+// Available is false. Call this after mutating Available or Reason on an
+// already-constructed action (e.g. inside a policy filter).
+func SyncUnavailableReason(a *Action) {
+	if !a.Available && a.Reason != "" {
+		a.UnavailableReason = a.Reason
+	} else if a.Available {
+		a.UnavailableReason = ""
+	}
 }
 
 func Member(projectDir, profile, session, role string, paneAlive bool) []Action {
@@ -26,7 +73,7 @@ func Member(projectDir, profile, session, role string, paneAlive bool) []Action 
 	if !paneAlive {
 		deadReason = "agent pane is not live"
 	}
-	return []Action{
+	return ApplyCanonical([]Action{
 		{Kind: "focus", Label: "focus pane", Scope: "agent", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: paneAlive, Reason: deadReason, Command: "amq-squad focus" + scope + roleArg},
 		{Kind: "send", Label: "send a prompt", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: paneAlive, Reason: deadReason, Command: "amq-squad send" + scope + roleArg + " --body-file -"},
 		{Kind: "goal_deliver", Label: "deliver native /goal", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: paneAlive, Reason: deadReason, Command: "amq-squad goal deliver" + scope + roleArg + " --goal <goal>"},
@@ -34,7 +81,7 @@ func Member(projectDir, profile, session, role string, paneAlive bool) []Action 
 		{Kind: "resume", Label: "resume session", Scope: "session", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: true, Command: "amq-squad resume" + scope + " --exec"},
 		{Kind: "status", Label: "show session status", Scope: "session", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: true, Command: "amq-squad status" + scope + " --json"},
 		{Kind: "task_list", Label: "list tasks", Scope: "session", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: true, Command: "amq-squad task list" + scope},
-	}
+	})
 }
 
 func Session(projectDir, profile, session, tmuxSession string) []Action {
@@ -61,16 +108,16 @@ func Session(projectDir, profile, session, tmuxSession string) []Action {
 			Command:           "tmux -CC attach -t " + ShellQuote(tmuxSession),
 		})
 	}
-	return actions
+	return ApplyCanonical(actions)
 }
 
 func Thread(projectDir, profile, session, threadID string) []Action {
 	scope := commandScope(projectDir, profile, session)
 	namespaceID := squadnamespace.ID(profile, session)
-	return []Action{
+	return ApplyCanonical([]Action{
 		{Kind: "thread", Label: "read thread", Scope: "thread", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: true, Command: "amq-squad thread" + scope + " --id " + ShellQuote(threadID)},
 		{Kind: "task_list", Label: "list tasks", Scope: "session", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: true, Command: "amq-squad task list" + scope},
-	}
+	})
 }
 
 func commandScope(projectDir, profile, session string) string {

@@ -140,18 +140,287 @@ func (e *operatorPollLeaseConflictError) Error() string {
 
 func runOperator(args []string) error {
 	if len(args) == 0 {
-		return usageErrorf("operator requires a subcommand (status, poll, or watch)")
+		printOperatorUsage()
+		return nil
 	}
 	switch args[0] {
-	case "status":
-		return runOperatorStatus(args[1:])
+	case "-h", "--help":
+		printOperatorUsage()
+		return nil
+	case "answer":
+		return runOperatorAnswer(args[1:])
+	case "directive":
+		return runOperatorDirective(args[1:])
 	case "poll":
 		return runOperatorPoll(args[1:])
+	case "status":
+		return runOperatorStatus(args[1:])
 	case "watch":
 		return runOperatorWatch(args[1:])
 	default:
-		return usageErrorf("unknown 'operator' subcommand: %q. Try 'status', 'poll', or 'watch'.", args[0])
+		return usageErrorf("unknown 'operator' subcommand %q. Run 'amq-squad operator --help' for available subcommands.", args[0])
 	}
+}
+
+func printOperatorUsage() {
+	fmt.Fprint(os.Stderr, `amq-squad operator - operator polling and inbox visibility
+
+Usage:
+  amq-squad operator <subcommand> [options]
+
+Subcommands:
+  answer    answer an operator gate on gate/<topic>
+  directive send a DIRECTIVE message to a visible lead
+  poll     read the operator polling workload and claim a poll lease
+  status   show the operator polling contract and inbox state
+  watch    run the reference operator polling loop
+
+Run 'amq-squad operator <subcommand> --help' for subcommand options and flags.
+
+Examples:
+  amq-squad operator answer --gate release --to cto --approved
+  amq-squad operator directive --to cto --subject "ship it" --body "Proceed after checks."
+  amq-squad operator status --json
+  amq-squad operator poll --readonly --json
+  amq-squad operator watch --once
+`)
+}
+
+func runOperatorAnswer(args []string) error {
+	fs := flag.NewFlagSet("operator answer", flag.ContinueOnError)
+	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	sessionFlag := fs.String("session", "", "AMQ workstream/session to answer in")
+	gateFlag := fs.String("gate", "", "gate topic, with or without the gate/ prefix")
+	toFlag := fs.String("to", "", "lead or agent handle that asked the gate")
+	approved := fs.Bool("approved", false, "send APPROVED answer")
+	denied := fs.Bool("denied", false, "send DENIED answer")
+	reasonFlag := fs.String("reason", "", "optional reason to include in the answer body")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad operator answer - answer an operator gate
+
+Usage:
+  amq-squad operator answer [--project DIR] [--profile NAME] [--session S] --gate TOPIC --to HANDLE (--approved|--denied) [--reason TEXT] [--json]
+
+Sends an AMQ answer from the configured operator handle on gate/<topic>. This
+first-class command avoids hand-writing the operator protocol. The --to handle
+is required for this release slice so the answer cannot accidentally target the
+non-runnable operator mailbox.
+`)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if *approved == *denied {
+		return usageErrorf("operator answer requires exactly one of --approved or --denied")
+	}
+	topic := normalizeGateTopic(*gateFlag)
+	if topic == "" {
+		return usageErrorf("operator answer requires --gate <topic>")
+	}
+	to := strings.TrimSpace(*toFlag)
+	if to == "" {
+		return usageErrorf("operator answer requires --to <handle> for the gate owner")
+	}
+	projectDir, profile, t, workstream, operatorHandle, err := resolveOperatorCommandContext(*projectFlag, *profileFlag, *sessionFlag, flagWasSet(fs, "project"), flagWasSet(fs, "session"))
+	if err != nil {
+		return err
+	}
+	if err := ensureOperatorCommandTarget(t, to, "operator answer"); err != nil {
+		return err
+	}
+	decision := "APPROVED"
+	if *denied {
+		decision = "DENIED"
+	}
+	subject := decision + ": " + strings.TrimPrefix(topic, "gate/")
+	body := strings.TrimSpace(*reasonFlag)
+	thread := topic
+	return sendOperatorAMQ(operatorSendOptions{
+		Command:  "operator answer",
+		Project:  projectDir,
+		Profile:  profile,
+		Session:  workstream,
+		From:     operatorHandle,
+		To:       to,
+		Thread:   thread,
+		Kind:     string(state.KindAnswer),
+		Subject:  subject,
+		Body:     body,
+		JSON:     *jsonOut,
+		Out:      os.Stdout,
+		FollowUp: "amq-squad operator status --project " + shellQuote(projectDir) + operatorProfileArg(profile) + " --session " + shellQuote(workstream) + " --json",
+	})
+}
+
+func runOperatorDirective(args []string) error {
+	fs := flag.NewFlagSet("operator directive", flag.ContinueOnError)
+	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	sessionFlag := fs.String("session", "", "AMQ workstream/session to send in")
+	toFlag := fs.String("to", "", "visible lead handle to receive the directive")
+	subjectFlag := fs.String("subject", "", "directive subject text, without the DIRECTIVE: prefix")
+	bodyFlag := fs.String("body", "", "directive body")
+	bodyFileFlag := fs.String("body-file", "", "read directive body from file ('-' for stdin)")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad operator directive - send a directive to a visible lead
+
+Usage:
+  amq-squad operator directive [--project DIR] [--profile NAME] [--session S] --to HANDLE --subject TEXT (--body TEXT | --body-file FILE) [--json]
+
+Sends a DIRECTIVE todo from the configured operator handle on the canonical
+p2p/<lead>__<operator> thread. Directives are steering data; they do not answer
+or clear gate/<topic> threads.
+`)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	to := strings.TrimSpace(*toFlag)
+	if to == "" {
+		return usageErrorf("operator directive requires --to <lead-handle>")
+	}
+	subjectText := strings.TrimSpace(*subjectFlag)
+	if subjectText == "" {
+		return usageErrorf("operator directive requires --subject TEXT")
+	}
+	body, err := readPromptBody(*bodyFlag, *bodyFileFlag, flagWasSet(fs, "body"), flagWasSet(fs, "body-file"), os.Stdin, stdinIsInteractive())
+	if err != nil {
+		return err
+	}
+	projectDir, profile, t, workstream, operatorHandle, err := resolveOperatorCommandContext(*projectFlag, *profileFlag, *sessionFlag, flagWasSet(fs, "project"), flagWasSet(fs, "session"))
+	if err != nil {
+		return err
+	}
+	if err := ensureOperatorCommandTarget(t, to, "operator directive"); err != nil {
+		return err
+	}
+	thread := canonicalP2PThread(to, operatorHandle)
+	subject := "DIRECTIVE: " + strings.TrimPrefix(subjectText, "DIRECTIVE: ")
+	return sendOperatorAMQ(operatorSendOptions{
+		Command:  "operator directive",
+		Project:  projectDir,
+		Profile:  profile,
+		Session:  workstream,
+		From:     operatorHandle,
+		To:       to,
+		Thread:   thread,
+		Kind:     string(state.KindTodo),
+		Subject:  subject,
+		Body:     body,
+		JSON:     *jsonOut,
+		Out:      os.Stdout,
+		FollowUp: "amq-squad operator status --project " + shellQuote(projectDir) + operatorProfileArg(profile) + " --session " + shellQuote(workstream) + " --json",
+	})
+}
+
+type operatorSendOptions struct {
+	Command  string
+	Project  string
+	Profile  string
+	Session  string
+	From     string
+	To       string
+	Thread   string
+	Kind     string
+	Subject  string
+	Body     string
+	JSON     bool
+	Out      io.Writer
+	FollowUp string
+}
+
+func resolveOperatorCommandContext(projectFlag, profileFlag, sessionFlag string, projectSet, sessionSet bool) (string, string, team.Team, string, string, error) {
+	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	if err != nil {
+		return "", "", team.Team{}, "", "", err
+	}
+	if !team.ExistsProfile(projectDir, profile) {
+		return "", "", team.Team{}, "", "", fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	}
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return "", "", team.Team{}, "", "", fmt.Errorf("read team: %w", err)
+	}
+	if !team.SupportsOperatorGates(t) {
+		return "", "", team.Team{}, "", "", usageErrorf("operator gates are disabled for profile %q", profile)
+	}
+	workstream, err := resolveTeamWorkstreamName(t, sessionFlag, sessionSet)
+	if err != nil {
+		return "", "", team.Team{}, "", "", err
+	}
+	operator := statusOperatorForTeam(t, squadnamespace.Resolve(projectDir, profile, workstream))
+	if !operator.Enabled || strings.TrimSpace(operator.Handle) == "" {
+		return "", "", team.Team{}, "", "", usageErrorf("operator handle is not configured for profile %q", profile)
+	}
+	return projectDir, profile, t, workstream, operator.Handle, nil
+}
+
+func ensureOperatorCommandTarget(t team.Team, target, action string) error {
+	if err := ensureTargetIsNotOperator(t, action, target); err != nil {
+		return err
+	}
+	return nil
+}
+
+func sendOperatorAMQ(o operatorSendOptions) error {
+	out := o.Out
+	if out == nil {
+		out = os.Stdout
+	}
+	ctx, err := resolveAMQContextForNamespace(o.Project, o.Profile, o.Session, o.From)
+	if err != nil {
+		return fmt.Errorf("resolve amq root for %s: %w", o.Command, err)
+	}
+	ctx.Me = o.From
+	args := dispatchSendArgs(ctx.Root, o.From, o.To, o.Thread, o.Kind, o.Subject, o.Body, "")
+	raw, err := runAMQCommand(amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
+	if err != nil {
+		return fmt.Errorf("%s send to %s: %w", o.Command, o.To, err)
+	}
+	msgID := parseSentMessageID(string(raw))
+	if o.JSON {
+		return printJSONEnvelope("operator_send", mutationResult{
+			Command:   o.Command,
+			Status:    "sent",
+			Project:   o.Project,
+			Session:   o.Session,
+			Profile:   o.Profile,
+			Namespace: squadnamespace.Resolve(o.Project, o.Profile, o.Session),
+			Handle:    o.To,
+			MessageID: msgID,
+			Thread:    o.Thread,
+			Root:      ctx.Root,
+			Actions: []mutationAction{
+				followUp("status", "show operator status", o.FollowUp),
+			},
+		})
+	}
+	if msgID != "" {
+		fmt.Fprintf(out, "Sent %s to %s on %s: %s\n", o.Command, o.To, o.Thread, msgID)
+	} else if msg := strings.TrimSpace(string(raw)); msg != "" {
+		fmt.Fprintln(out, msg)
+	}
+	return nil
+}
+
+func normalizeGateTopic(gate string) string {
+	gate = strings.TrimSpace(gate)
+	gate = strings.TrimPrefix(gate, "gate/")
+	gate = strings.Trim(gate, "/")
+	if gate == "" {
+		return ""
+	}
+	return "gate/" + gate
+}
+
+func operatorProfileArg(profile string) string {
+	if squadnamespace.NormalizeProfile(profile) == team.DefaultProfile {
+		return ""
+	}
+	return " --profile " + shellQuote(profile)
 }
 
 func runOperatorStatus(args []string) error {
@@ -505,6 +774,7 @@ func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, e
 	}
 	data.BaseRoot = snap.BaseRoot
 	items := collectOperatorAttention(o.ProjectDir, o.Profile, snap, operator.Handle, workstream, now())
+	items = mergeOperatorAttention(items, collectRawOpenGateAttention(o.ProjectDir, o.Profile, snap, operator.Handle, workstream, now()))
 	session, sessionOK := operatorSessionSnapshot(snap, o.Profile, workstream)
 	backlog := 0
 	directivesUnacked := 0
