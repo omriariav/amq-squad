@@ -3,12 +3,15 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -26,6 +29,22 @@ type amqCommandRunner func(amqCommandRequest) ([]byte, error)
 var runAMQCommand amqCommandRunner = defaultRunAMQCommand
 
 var resolveAMQEnvForAMQCommand = resolveAMQEnvInDir
+
+type amqPassthroughOptions struct {
+	OverrideBoundary bool
+	BoundaryReason   string
+}
+
+type amqBoundaryAuditRecord struct {
+	At         time.Time `json:"at"`
+	Subcommand string    `json:"subcommand"`
+	ProjectDir string    `json:"project_dir"`
+	Session    string    `json:"session,omitempty"`
+	Actor      string    `json:"actor,omitempty"`
+	Target     string    `json:"target"`
+	Root       string    `json:"root"`
+	Reason     string    `json:"reason"`
+}
 
 func defaultRunAMQCommand(req amqCommandRequest) ([]byte, error) {
 	cmd := exec.Command("amq", req.Arg...)
@@ -45,6 +64,7 @@ func defaultRunAMQCommand(req amqCommandRequest) ([]byte, error) {
 
 type amqContext struct {
 	ProjectDir string
+	Profile    string
 	Env        amqEnv
 	Root       string
 	Me         string
@@ -115,6 +135,7 @@ func resolveAMQContextForProject(projectDir, session, me string) (amqContext, er
 	}
 	return amqContext{
 		ProjectDir: projectDir,
+		Profile:    team.DefaultProfile,
 		Env:        env,
 		Root:       absoluteAMQRoot(projectDir, env.Root),
 		Me:         handle,
@@ -139,10 +160,48 @@ func resolveAMQContextForNamespace(projectDir, profile, session, me string) (amq
 	}
 	return amqContext{
 		ProjectDir: projectDir,
+		Profile:    squadnamespace.NormalizeProfile(profile),
 		Env:        env,
 		Root:       absoluteAMQRoot(projectDir, env.Root),
 		Me:         handle,
 	}, nil
+}
+
+func inferAMQContextProfileFromRoot(ctx amqContext, profileExplicit bool) amqContext {
+	if profileExplicit {
+		return ctx
+	}
+	if profile, ok := profileFromResolvedAMQRoot(ctx.ProjectDir, ctx.Root); ok {
+		ctx.Profile = profile
+	}
+	return ctx
+}
+
+func profileFromResolvedAMQRoot(projectDir, root string) (string, bool) {
+	root = absoluteAMQRoot(projectDir, root)
+	if root == "" {
+		return "", false
+	}
+	base := filepath.Join(filepath.Clean(projectDir), ".agent-mail")
+	rel, err := filepath.Rel(base, root)
+	if err != nil || rel == "." || rel == "" || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", false
+	}
+	parts := strings.Split(filepath.Clean(rel), string(os.PathSeparator))
+	switch len(parts) {
+	case 1:
+		return team.DefaultProfile, true
+	case 2:
+		// AMQRoot stores the profile name verbatim as this path segment; keep
+		// inference in lockstep so ReadProfile targets the same on-disk name.
+		profile := squadnamespace.NormalizeProfile(parts[0])
+		if err := team.ValidateProfileName(profile); err != nil {
+			return "", false
+		}
+		return profile, true
+	default:
+		return "", false
+	}
 }
 
 func resolveAMQBaseRootForProject(projectDir, session, me string) (string, error) {
@@ -347,15 +406,23 @@ func runAMQPassthrough(sub string, args []string) error {
 		fmt.Fprint(os.Stderr, amqPassthroughUsage(sub))
 		return nil
 	}
-	project, session, me, projectSet, passthrough, err := splitAMQPassthroughArgs(sub, args)
+	project, profile, session, me, projectSet, passthrough, opts, err := splitAMQPassthroughArgsWithOptions(sub, args)
 	if err != nil {
 		return err
 	}
-	ctx, err := resolveAMQContext(project, session, me, projectSet)
+	projectDir, resolvedProfile, err := resolveProjectProfile(project, profile, projectSet)
 	if err != nil {
 		return err
 	}
+	ctx, err := resolveAMQContextForNamespace(projectDir, resolvedProfile, session, me)
+	if err != nil {
+		return err
+	}
+	ctx = inferAMQContextProfileFromRoot(ctx, strings.TrimSpace(profile) != "")
 	cmd := append([]string{sub, "--root", ctx.Root}, passthrough...)
+	if err := guardAMQPassthrough(sub, ctx, passthrough, opts); err != nil {
+		return err
+	}
 	if sub == "watch" {
 		return runAMQStreaming(ctx, cmd)
 	}
@@ -363,6 +430,176 @@ func runAMQPassthrough(sub string, args []string) error {
 		return runAndWriteAMQWithStdin(os.Stdout, ctx, cmd, os.Stdin)
 	}
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
+}
+
+func guardAMQPassthrough(sub string, ctx amqContext, passthrough []string, opts amqPassthroughOptions) error {
+	switch sub {
+	case "send":
+		return guardAMQSelfSend(ctx, passthrough)
+	case "drain", "watch":
+		return guardAMQMailboxConsume(sub, ctx, opts)
+	default:
+		return nil
+	}
+}
+
+func guardAMQSelfSend(ctx amqContext, passthrough []string) error {
+	me := strings.TrimSpace(ctx.Me)
+	if me == "" {
+		return nil
+	}
+	to := strings.TrimSpace(amqFlagValue(passthrough, "to"))
+	if to == "" || to != me {
+		return nil
+	}
+	thread := strings.TrimSpace(amqFlagValue(passthrough, "thread"))
+	a, b, ok := parseP2PThread(thread)
+	if !ok {
+		return nil
+	}
+	if (a == me && b != me) || (b == me && a != me) {
+		other := a
+		if other == me {
+			other = b
+		}
+		return usageErrorf("refusing self-send on p2p thread %q: --me/AM_ME and --to are both %q. Reply to the other participant with --to %s, or use a non-p2p/private thread for an intentional self-note.", thread, me, other)
+	}
+	return nil
+}
+
+func guardAMQMailboxConsume(sub string, ctx amqContext, opts amqPassthroughOptions) error {
+	target := strings.TrimSpace(ctx.Me)
+	if target == "" {
+		return nil
+	}
+	t, err := team.ReadProfile(ctx.ProjectDir, ctx.Profile)
+	if err != nil {
+		return nil
+	}
+	mode := effectiveTeamExecutionMode(t)
+	if mode != executionModeProjectLead && mode != executionModeProjectTeam {
+		return nil
+	}
+	member, ok := teamMemberByHandleOrRole(t, target)
+	if !ok {
+		return nil
+	}
+	leadHandle := teamLeadHandle(t)
+	actor := strings.TrimSpace(os.Getenv("AM_ME"))
+	if actor == target {
+		return nil
+	}
+	if actor == "" && target == leadHandle {
+		return nil
+	}
+	if opts.OverrideBoundary {
+		reason := strings.TrimSpace(opts.BoundaryReason)
+		if reason == "" {
+			return usageErrorf("%s --override-boundary requires --reason <why>", boundaryCommandLabel(sub))
+		}
+		return writeAMQBoundaryAudit(ctx, sub, actor, target, reason)
+	}
+	role := member.Role
+	if strings.TrimSpace(role) == "" {
+		role = target
+	}
+	return usageErrorf("refusing %s of lead-owned mailbox %q (role %s) in %s mode: only the mailbox owner may consume it. Use amq list/read/thread for read-only inspection, or pass --override-boundary --reason <why> to audit an emergency drain.", boundaryCommandLabel(sub), target, role, mode)
+}
+
+func boundaryCommandLabel(sub string) string {
+	if sub == "collect" {
+		return "collect"
+	}
+	return "amq " + sub
+}
+
+func teamMemberByHandleOrRole(t team.Team, handleOrRole string) (team.Member, bool) {
+	want := strings.TrimSpace(handleOrRole)
+	for _, m := range orderedTeamMembers(t.Members) {
+		if strings.TrimSpace(m.Handle) == want || strings.TrimSpace(m.Role) == want {
+			return m, true
+		}
+	}
+	return team.Member{}, false
+}
+
+func teamLeadHandle(t team.Team) string {
+	lead := strings.TrimSpace(t.Lead)
+	if lead == "" && len(t.Members) == 1 {
+		lead = t.Members[0].Role
+	}
+	if m, ok := teamMemberByRole(t, lead); ok {
+		if h := strings.TrimSpace(m.Handle); h != "" {
+			return h
+		}
+		return strings.TrimSpace(m.Role)
+	}
+	return lead
+}
+
+func writeAMQBoundaryAudit(ctx amqContext, sub, actor, target, reason string) error {
+	dir := filepath.Join(ctx.ProjectDir, team.DirName, "boundary-audit")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("ensure boundary audit dir: %w", err)
+	}
+	session := strings.TrimSpace(ctx.Env.SessionName)
+	if session == "" {
+		session = "unknown-session"
+	}
+	rec := amqBoundaryAuditRecord{
+		At:         time.Now().UTC(),
+		Subcommand: sub,
+		ProjectDir: ctx.ProjectDir,
+		Session:    session,
+		Actor:      strings.TrimSpace(actor),
+		Target:     target,
+		Root:       ctx.Root,
+		Reason:     strings.TrimSpace(reason),
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("marshal boundary audit: %w", err)
+	}
+	path := filepath.Join(dir, sanitizeWorkstreamName(session)+".jsonl")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("open boundary audit: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		return fmt.Errorf("write boundary audit: %w", err)
+	}
+	return nil
+}
+
+func amqFlagValue(args []string, name string) string {
+	for i := 0; i < len(args); i++ {
+		n, val, hasVal := amqFlagName(args[i])
+		if n != name {
+			continue
+		}
+		if hasVal {
+			return val
+		}
+		if i+1 < len(args) {
+			return args[i+1]
+		}
+		return ""
+	}
+	return ""
+}
+
+func parseP2PThread(thread string) (string, string, bool) {
+	thread = strings.TrimSpace(thread)
+	if !strings.HasPrefix(thread, "p2p/") {
+		return "", "", false
+	}
+	pair := strings.TrimPrefix(thread, "p2p/")
+	parts := strings.Split(pair, "__")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return "", "", false
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
 }
 
 // passthroughNeedsStdin reports whether the passthrough args include a --body
@@ -393,6 +630,11 @@ func passthroughNeedsStdin(args []string) bool {
 // root); an explicit `--` terminator forces the boundary so wrapper-shaped target
 // flags can be passed through. Pure and table-testable.
 func splitAMQPassthroughArgs(sub string, args []string) (project, session, me string, projectSet bool, passthrough []string, err error) {
+	project, _, session, me, projectSet, passthrough, _, err = splitAMQPassthroughArgsWithOptions(sub, args)
+	return project, session, me, projectSet, passthrough, err
+}
+
+func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, profile, session, me string, projectSet bool, passthrough []string, opts amqPassthroughOptions, err error) {
 	i := 0
 	for i < len(args) {
 		a := args[i]
@@ -402,12 +644,12 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 		}
 		name, inlineVal, hasInline := amqFlagName(a)
 		switch name {
-		case "project", "session", "me":
+		case "project", "profile", "session", "me":
 			val := inlineVal
 			next := i + 1
 			if !hasInline {
 				if next >= len(args) {
-					return "", "", "", false, nil, usageErrorf("flag --%s needs a value", name)
+					return "", "", "", "", false, nil, opts, usageErrorf("flag --%s needs a value", name)
 				}
 				val = args[next]
 				next++
@@ -415,6 +657,8 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 			switch name {
 			case "project":
 				project, projectSet = val, true
+			case "profile":
+				profile = val
 			case "session":
 				session = val
 			case "me":
@@ -433,7 +677,7 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 			next := i + 1
 			if !hasInline {
 				if next >= len(args) {
-					return "", "", "", false, nil, usageErrorf("flag --from needs a value")
+					return "", "", "", "", false, nil, opts, usageErrorf("flag --from needs a value")
 				}
 				val = args[next]
 				next++
@@ -442,9 +686,32 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 			i = next
 			continue
 		case "root", "from-root":
-			return "", "", "", false, nil, usageErrorf(
+			return "", "", "", "", false, nil, opts, usageErrorf(
 				"do not pass --%s to 'amq-squad amq %s'; amq-squad resolves the queue root from --project/--session. Use bare 'amq %s' for manual root control.",
 				name, sub, sub)
+		case "override-boundary":
+			if sub != "drain" && sub != "watch" {
+				break
+			}
+			opts.OverrideBoundary = true
+			i++
+			continue
+		case "reason":
+			if sub != "drain" && sub != "watch" {
+				break
+			}
+			val := inlineVal
+			next := i + 1
+			if !hasInline {
+				if next >= len(args) {
+					return "", "", "", "", false, nil, opts, usageErrorf("flag --reason needs a value")
+				}
+				val = args[next]
+				next++
+			}
+			opts.BoundaryReason = val
+			i = next
+			continue
 		}
 		// First non-wrapper token: stop here and forward the rest untouched.
 		break
@@ -456,7 +723,7 @@ func splitAMQPassthroughArgs(sub string, args []string) (project, session, me st
 	if sub == "send" || sub == "reply" {
 		passthrough = normalizeBodyFileFlag(passthrough)
 	}
-	return project, session, me, projectSet, passthrough, nil
+	return project, profile, session, me, projectSet, passthrough, opts, nil
 }
 
 // normalizeBodyFileFlag rewrites every --body-file <path> or --body-file=<path>

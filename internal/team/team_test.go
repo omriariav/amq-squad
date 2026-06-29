@@ -51,6 +51,9 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	if out.Operator == nil || !out.Operator.Enabled || out.Operator.Handle != DefaultOperatorHandle {
 		t.Errorf("Operator = %+v, want enabled default %q", out.Operator, DefaultOperatorHandle)
 	}
+	if !out.Operator.Participant || out.Operator.Kind != "operator" || out.Operator.Runnable || out.Operator.Assignable || out.Operator.WakeSupported || !out.Operator.PollRequired {
+		t.Errorf("Operator participant fields = %+v, want non-runnable mailbox participant", out.Operator)
+	}
 	if !SupportsOperatorGates(out) {
 		t.Errorf("SupportsOperatorGates = false, want true for schema %d", SchemaVersion)
 	}
@@ -196,6 +199,29 @@ func TestWriteDisabledOperator(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsRunnableOperatorConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		op   OperatorConfig
+		want string
+	}{
+		{name: "kind", op: OperatorConfig{Enabled: true, Kind: "agent"}, want: "operator.kind"},
+		{name: "runnable", op: OperatorConfig{Enabled: true, Runnable: true}, want: "operator.runnable"},
+		{name: "assignable", op: OperatorConfig{Enabled: true, Assignable: true}, want: "operator.assignable"},
+		{name: "wake", op: OperatorConfig{Enabled: true, WakeSupported: true}, want: "operator.wake_supported"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Validate(Team{
+				Operator: &tc.op,
+				Members:  []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestWriteIsAtomic(t *testing.T) {
 	// Write must not leave a .tmp file behind on success.
 	dir := t.TempDir()
@@ -264,8 +290,8 @@ func TestValidateRejectsRunnableOperatorHandles(t *testing.T) {
 	if err := Validate(Team{
 		Operator: &custom,
 		Members:  []Member{{Role: "support", Binary: "codex", Handle: DefaultOperatorHandle, Session: "issue-96"}},
-	}); err != nil {
-		t.Fatalf("Validate with custom operator and runnable user handle: %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "conflicts with non-runnable operator") {
+		t.Fatalf("Validate with custom operator and runnable user handle error = %v, want operator conflict", err)
 	}
 }
 
@@ -315,6 +341,57 @@ func TestValidateOrchestration(t *testing.T) {
 	// A non-orchestrated team (zero values, as old team.json files load) passes.
 	if err := Validate(Team{Members: members}); err != nil {
 		t.Fatalf("non-orchestrated team should validate, got %v", err)
+	}
+}
+
+func TestValidateLeadExecution(t *testing.T) {
+	base := []Member{{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"}}
+	if err := Validate(Team{
+		Members: base,
+		LeadExecution: &LeadExecution{
+			Posture:             LeadExecutionVisibleTeam,
+			DecisionTime:        "2026-06-28T23:00:00Z",
+			Reason:              "visible reviewer available",
+			ChildBudget:         2,
+			PlannedDelegations:  []string{"developer reviews release gates"},
+			ReviewPlan:          "developer reviews status contract",
+			IndependentReview:   &IndependentReview{Status: IndependentReviewComplete, Reviewer: "developer"},
+			FinalRecommendation: "ready after tests",
+		},
+	}); err != nil {
+		t.Fatalf("valid lead execution should validate, got %v", err)
+	}
+
+	err := Validate(Team{
+		Members:       base,
+		LeadExecution: &LeadExecution{Posture: "solo-ish"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "lead_execution.posture") {
+		t.Fatalf("invalid posture error = %v, want posture validation", err)
+	}
+
+	err = Validate(Team{
+		Members:       base,
+		LeadExecution: &LeadExecution{Posture: LeadExecutionSolo, IndependentReview: &IndependentReview{Status: "maybe"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "lead_execution.independent_review") {
+		t.Fatalf("invalid independent review error = %v, want review validation", err)
+	}
+
+	err = Validate(Team{
+		Members:       base,
+		LeadExecution: &LeadExecution{Posture: LeadExecutionSolo, GoalSignificance: "massive"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "lead_execution.goal_significance") {
+		t.Fatalf("invalid goal significance error = %v, want significance validation", err)
+	}
+
+	err = Validate(Team{
+		Members:       base,
+		LeadExecution: &LeadExecution{Posture: LeadExecutionSolo, ChildBudget: -1},
+	})
+	if err == nil || !strings.Contains(err.Error(), "lead_execution.child_budget") {
+		t.Fatalf("negative child budget error = %v, want child budget validation", err)
 	}
 }
 

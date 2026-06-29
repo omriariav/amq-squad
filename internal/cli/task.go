@@ -139,6 +139,12 @@ func runTaskAdd(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The operator is a non-runnable, non-assignable mailbox participant, so
+	// it must never be pre-assigned work in the pull queue. Refuse before the
+	// store is written.
+	if err := ensureLaunchTargetIsNotOperator(projectDir, profile, "task add", strings.TrimSpace(*assign), ""); err != nil {
+		return err
+	}
 	t, err := task.AddForProfile(projectDir, profile, session, task.AddInput{
 		Title:       *title,
 		Description: *desc,
@@ -304,6 +310,12 @@ func runTaskTransition(args []string, verb string) error {
 	}
 	session, projectDir, profile, ns, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
 	if err != nil {
+		return err
+	}
+	// The operator is a non-runnable mailbox participant and never acts as a
+	// task agent, so it cannot claim or transition queued work. Refuse before
+	// the store is mutated.
+	if err := ensureLaunchTargetIsNotOperator(projectDir, profile, "task "+verb, "", me); err != nil {
 		return err
 	}
 	now := taskNow()

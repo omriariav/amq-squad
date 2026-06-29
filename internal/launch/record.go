@@ -49,6 +49,14 @@ type Record struct {
 	NoDefaultArgs    bool     `json:"no_default_args,omitempty"`
 	SpawnOrigin      string   `json:"spawn_origin,omitempty"`
 	SpawnDepth       int      `json:"spawn_depth,omitempty"`
+	// AdoptionMode records how this agent became part of the visible runtime:
+	// managed_window, managed_current_window, managed_session, bare_agent_up,
+	// external, unmanaged. Status treats missing/unknown values fail-closed for
+	// operator-visible lead claims.
+	AdoptionMode string `json:"adoption_mode,omitempty"`
+	// LauncherPaneID is the tmux pane that initiated the launch when known.
+	// Comparing it to Tmux.PaneID lets status detect same-pane collapse.
+	LauncherPaneID string `json:"launcher_pane_id,omitempty"`
 	// NoRequireWake records the --no-require-wake opt-out so resume/replay
 	// reproduces it: the constraint it answers (wake cannot acquire its lock
 	// in this environment) is a property of the execution environment, not a

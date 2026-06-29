@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func withAMQCommandSeams(t *testing.T, env amqEnv, output string) *[]amqCommandRequest {
@@ -12,7 +16,11 @@ func withAMQCommandSeams(t *testing.T, env amqEnv, output string) *[]amqCommandR
 	prevRun := runAMQCommand
 	resolveAMQEnvForAMQCommand = func(cwd, rootFlag, session, handle string) (amqEnv, error) {
 		got := env
-		got.Root = strings.ReplaceAll(got.Root, "{session}", session)
+		if strings.TrimSpace(rootFlag) != "" {
+			got.Root = rootFlag
+		} else {
+			got.Root = strings.ReplaceAll(got.Root, "{session}", session)
+		}
 		got.SessionName = session
 		got.Me = handle
 		if got.BaseRoot == "" {
@@ -244,6 +252,36 @@ func TestAMQSendResolvesRootAndForwards(t *testing.T) {
 	}
 }
 
+func TestAMQSendRejectsSelfSendOnP2PThread(t *testing.T) {
+	chdir(t, t.TempDir())
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "sent\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "release-lead", "--to", "release-lead", "--thread", "p2p/release-lead__user", "--kind", "status", "--subject", "ACK"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing self-send on p2p thread") || !strings.Contains(err.Error(), "--to user") {
+		t.Fatalf("self-send error = %v, want actionable rejection", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("self-send should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestAMQSendAllowsOrdinaryP2PReplyToOtherParticipant(t *testing.T) {
+	chdir(t, t.TempDir())
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "sent\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "release-lead", "--to", "user", "--thread", "p2p/release-lead__user", "--kind", "status", "--subject", "ACK"})
+	})
+	if err != nil {
+		t.Fatalf("send to other participant should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(*calls))
+	}
+}
+
 func TestAMQDrainResolvesRootAndForwards(t *testing.T) {
 	chdir(t, t.TempDir())
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
@@ -259,6 +297,200 @@ func TestAMQDrainResolvesRootAndForwards(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("drain args missing %q: %s", want, got)
 		}
+	}
+}
+
+func TestAMQDrainAllowsMailboxOwnerInProjectTeam(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeam(t, dir)
+	t.Setenv("AM_ME", "qa")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--session", "issue-96", "--me", "qa", "--include-body"})
+	})
+	if err != nil {
+		t.Fatalf("owner drain should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("owner drain calls = %d, want 1", len(*calls))
+	}
+}
+
+func TestAMQDrainAllowsExternalLeadMailboxInProjectTeam(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeam(t, dir)
+	t.Setenv("AM_ME", "")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--session", "issue-96", "--me", "cto", "--include-body"})
+	})
+	if err != nil {
+		t.Fatalf("external lead drain should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("external lead drain calls = %d, want 1", len(*calls))
+	}
+}
+
+func TestAMQDrainBlocksNonOwnerMailboxInProjectTeam(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeam(t, dir)
+	t.Setenv("AM_ME", "cto")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--session", "issue-96", "--me", "qa", "--include-body"})
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "refusing amq drain") ||
+		!strings.Contains(err.Error(), "lead-owned mailbox") ||
+		!strings.Contains(err.Error(), "list/read/thread") ||
+		!strings.Contains(err.Error(), "--override-boundary --reason") {
+		t.Fatalf("boundary error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("blocked drain should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestAMQDrainBlocksNonOwnerMailboxInNamedProfile(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeamProfile(t, dir, "review")
+	t.Setenv("AM_ME", "cto")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--profile", "review", "--session", "issue-96", "--me", "qa", "--include-body"})
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "refusing amq drain") ||
+		!strings.Contains(err.Error(), "lead-owned mailbox") {
+		t.Fatalf("named-profile boundary error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("blocked named-profile drain should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestAMQDrainInfersNamedProfileFromResolvedRoot(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeamProfile(t, dir, "review")
+	t.Setenv("AM_ME", "cto")
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(".agent-mail", "review", "issue-96"), BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--me", "qa", "--include-body"})
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "refusing amq drain") ||
+		!strings.Contains(err.Error(), "lead-owned mailbox") {
+		t.Fatalf("root-inferred named-profile boundary error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("blocked root-inferred named-profile drain should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestAMQDrainOverrideRequiresReason(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeam(t, dir)
+	t.Setenv("AM_ME", "cto")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--session", "issue-96", "--me", "qa", "--override-boundary"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--override-boundary requires --reason") {
+		t.Fatalf("override without reason error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("missing-reason override should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestAMQDrainOverrideWritesAuditAndExecutes(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeam(t, dir)
+	t.Setenv("AM_ME", "cto")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"drain", "--session", "issue-96", "--me", "qa", "--override-boundary", "--reason", "recover stuck report", "--include-body"})
+	})
+	if err != nil {
+		t.Fatalf("audited override drain should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("override drain calls = %d, want 1", len(*calls))
+	}
+	got := strings.Join((*calls)[0].Arg, " ")
+	if strings.Contains(got, "override-boundary") || strings.Contains(got, "recover stuck report") {
+		t.Fatalf("wrapper override flags must not be forwarded to amq: %s", got)
+	}
+	auditPath := filepath.Join(dir, team.DirName, "boundary-audit", "issue-96.jsonl")
+	b, err := os.ReadFile(auditPath)
+	if err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	for _, want := range []string{`"subcommand":"drain"`, `"actor":"cto"`, `"target":"qa"`, `"reason":"recover stuck report"`} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("audit missing %q:\n%s", want, string(b))
+		}
+	}
+}
+
+func TestAMQWatchBlocksNonOwnerMailboxInProjectTeam(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeam(t, dir)
+	t.Setenv("AM_ME", "cto")
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+	var streamed []string
+	prev := runAMQStreaming
+	runAMQStreaming = func(ctx amqContext, cmd []string) error {
+		streamed = cmd
+		return nil
+	}
+	t.Cleanup(func() { runAMQStreaming = prev })
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"watch", "--session", "issue-96", "--me", "qa", "--poll"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing amq watch") {
+		t.Fatalf("watch boundary error = %v", err)
+	}
+	if len(streamed) != 0 {
+		t.Fatalf("blocked watch should not stream, got %v", streamed)
+	}
+}
+
+func writeAMQBoundaryTeam(t *testing.T, dir string) {
+	t.Helper()
+	writeAMQBoundaryTeamProfile(t, dir, team.DefaultProfile)
+}
+
+func writeAMQBoundaryTeamProfile(t *testing.T, dir, profile string) {
+	t.Helper()
+	if err := team.WriteProfile(dir, profile, team.Team{
+		Project:       dir,
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectTeam,
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -296,6 +528,30 @@ func TestAMQReadVerbsResolveRootAndForward(t *testing.T) {
 				t.Fatalf("resolution flags must not be forwarded: %s", got)
 			}
 		})
+	}
+}
+
+func TestAMQReadOnlyVerbAllowsNamedProfileInspection(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeAMQBoundaryTeamProfile(t, dir, "review")
+	t.Setenv("AM_ME", "cto")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"read", "--profile", "review", "--session", "issue-96", "--me", "qa", "--id", "msg1"})
+	})
+	if err != nil {
+		t.Fatalf("named-profile read-only inspection should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("read calls = %d, want 1", len(*calls))
+	}
+	got := strings.Join((*calls)[0].Arg, " ")
+	for _, want := range []string{"read", filepath.Join(".agent-mail", "review", "issue-96"), "--id msg1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("named-profile read args missing %q: %s", want, got)
+		}
 	}
 }
 
@@ -364,6 +620,12 @@ func TestSplitAMQPassthroughArgs(t *testing.T) {
 			args:        []string{"--project", "/repo", "--to", "x"},
 			wantProject: "/repo", wantSet: true,
 			wantPass: []string{"--to", "x"},
+		},
+		{
+			name:        "profile consumed for wrapper resolution",
+			args:        []string{"--profile", "review", "--session", "work", "--to", "x"},
+			wantSession: "work",
+			wantPass:    []string{"--to", "x"},
 		},
 		{
 			name:        "terminator forwards target flags verbatim",

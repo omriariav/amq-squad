@@ -112,6 +112,76 @@ func TestLeadRegisterWritesExternalRecordAndSetsLead(t *testing.T) {
 	}
 }
 
+func TestLeadRegisterPreservesExistingNativeGoalBinding(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
+		GoalBinding: &launch.GoalBinding{
+			Mode:       "native_goal",
+			NativeGoal: true,
+			Source:     "goal-control",
+			Command:    `/goal --goal "ship"`,
+			Detail:     "native /goal delivered as a first-class control action",
+		},
+	})
+	prev := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "lead", PaneID: "%5"}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prev })
+	prevWake := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		return leadWakeResult{PID: 2222, Started: true, Detail: "ready"}, nil
+	}
+	t.Cleanup(func() { leadWakeStarter = prevWake })
+	prevInspector := statusPaneInspector
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		if id == "%5" {
+			return tmuxpane.TmuxPane{PaneID: "%5"}, true
+		}
+		return tmuxpane.TmuxPane{}, false
+	}
+	t.Cleanup(func() { statusPaneInspector = prevInspector })
+
+	if _, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96"})
+	}); err != nil {
+		t.Fatalf("lead register: %v", err)
+	}
+	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "cto"))
+	if err != nil {
+		t.Fatalf("read external launch record: %v", err)
+	}
+	if rec.GoalBinding == nil || !rec.GoalBinding.NativeGoal || rec.GoalBinding.Source != "goal-control" || rec.GoalBinding.Command == "" {
+		t.Fatalf("goal binding was not preserved: %+v", rec.GoalBinding)
+	}
+	if !rec.External || rec.Tmux == nil || rec.Tmux.Target != "external" {
+		t.Fatalf("external registration fields = %+v", rec)
+	}
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{}, map[int]bool{}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status after lead register: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.GoalBinding.Mode != "native_goal" || !env.Data.GoalBinding.Verified || env.Data.GoalBinding.NativeSource != "goal-control" {
+		t.Fatalf("status goal binding after lead register = %+v, want preserved native goal", env.Data.GoalBinding)
+	}
+	if len(env.Data.Records) != 1 || !env.Data.Records[0].OperatorVisible || env.Data.Records[0].AdoptionMode != "external" {
+		t.Fatalf("status record after lead register = %+v, want operator-visible external lead", env.Data.Records)
+	}
+}
+
 func TestLeadRegisterWriteFailurePreservesTeamLeadConfig(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{

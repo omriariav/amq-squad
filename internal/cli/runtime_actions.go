@@ -304,6 +304,15 @@ func errTmuxAccessDenied() error {
 }
 
 func focusTarget(projectDir, profile, session string, explicitSession bool, role string) error {
+	if strings.TrimSpace(role) != "" {
+		t, err := team.ReadProfile(projectDir, profile)
+		if err != nil {
+			return fmt.Errorf("read team: %w", err)
+		}
+		if err := ensureTargetIsNotOperator(t, "focus", role); err != nil {
+			return err
+		}
+	}
 	panes, err := statusPaneLister()
 	if err != nil {
 		if tmuxpane.IsPermissionDenied(err) {
@@ -403,6 +412,13 @@ Examples:
 	}
 	if !team.ExistsProfile(projectDir, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	}
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return fmt.Errorf("read team: %w", err)
+	}
+	if err := ensureTargetIsNotOperator(t, "send", *roleFlag); err != nil {
+		return err
 	}
 	mr, workstream, err := resolveMemberRuntime(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag)
 	if err != nil {

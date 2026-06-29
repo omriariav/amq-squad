@@ -140,6 +140,34 @@ func memberActions(projectDir, profile, session, role string, paneAlive bool) []
 	return runtimeaction.Member(projectDir, profile, session, role, paneAlive)
 }
 
+func policyAwareMemberActions(t team.Team, profile, session, role string, paneAlive bool) []runtimeActionJSON {
+	return applyMemberActionPolicy(t, role, memberActions(t.Project, profile, session, role, paneAlive))
+}
+
+func applyMemberActionPolicy(t team.Team, role string, actions []runtimeActionJSON) []runtimeActionJSON {
+	mode := effectiveTeamExecutionMode(t)
+	if mode != executionModeProjectLead && mode != executionModeProjectTeam {
+		return actions
+	}
+	lead := strings.TrimSpace(t.Lead)
+	if lead == "" && len(t.Members) == 1 {
+		lead = t.Members[0].Role
+	}
+	if strings.TrimSpace(role) == "" || role == lead {
+		return actions
+	}
+	reason := "execution policy routes mutating child control through the visible lead"
+	out := append([]runtimeActionJSON(nil), actions...)
+	for i := range out {
+		switch out[i].Kind {
+		case "send", "goal_deliver", "dispatch":
+			out[i].Available = false
+			out[i].Reason = reason
+		}
+	}
+	return out
+}
+
 // sessionActions builds the SESSION-scope operator action catalog for a
 // workstream: the lifecycle controls a client renders for a session row. They
 // map to real amq-squad verbs (no synthetic "restart" — a client composes that

@@ -6,9 +6,10 @@ import (
 )
 
 func TestWithTmuxTargetEnvPrefixesExportedTarget(t *testing.T) {
+	t.Setenv("TMUX_PANE", "%9")
 	cmd := "cd /repo && amq-squad agent up codex --role cto"
 	got := withTmuxTargetEnv("current-window", cmd)
-	want := "(export " + envTmuxTarget + "=current-window; " + cmd + ")"
+	want := "(export " + envTmuxTarget + "=current-window " + envTmuxLauncherPane + "='%9'; " + cmd + ")"
 	if got != want {
 		t.Fatalf("withTmuxTargetEnv = %q, want %q", got, want)
 	}
@@ -33,8 +34,9 @@ func TestWithTmuxTargetEnvEmptyTargetUnchanged(t *testing.T) {
 func TestWithTmuxTargetEnvQuotesValue(t *testing.T) {
 	// Defense in depth: the value is a controlled enum, but it is shell-quoted
 	// so it can never inject shell syntax into the sent command.
+	t.Setenv("TMUX_PANE", "%9")
 	got := withTmuxTargetEnv("new-session", "cmd")
-	if !strings.Contains(got, envTmuxTarget+"=new-session; ") {
+	if !strings.Contains(got, envTmuxTarget+"=new-session "+envTmuxLauncherPane+"='%9'; ") {
 		t.Fatalf("unexpected quoting/shape: %q", got)
 	}
 }

@@ -569,8 +569,10 @@ Treat directives differently from child reports:
 - **Acknowledge on the same thread.** Reply on the directive's p2p thread with
   `--kind status` (accepted / what you will do) or `--kind answer` (when the
   directive asks a question). The operator is watching the thread from the NOC;
-  an unacknowledged directive looks ignored. The thread name is the
-  alphabetically sorted handle pair, e.g.:
+  an unacknowledged directive looks ignored. Send the reply to the operator
+  handle, not to yourself, even if the drained message's `From` metadata appears
+  to be your own handle. The thread name is the alphabetically sorted handle
+  pair, e.g.:
 
   ```sh
   amq send --to user --thread p2p/copilot__user --kind status \
