@@ -116,6 +116,125 @@ func TestOperatorStatusDisabledProfileIsUnconfigured(t *testing.T) {
 	}
 }
 
+func TestOperatorAnswerSendsApprovedGateAnswer(t *testing.T) {
+	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-answer to cto\n")
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runOperator([]string{
+			"answer",
+			"--project", project,
+			"--session", "s",
+			"--gate", "release",
+			"--to", "cto",
+			"--approved",
+			"--reason", "checks passed",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("operator answer: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("amq calls = %d, want 1", len(*calls))
+	}
+	args := (*calls)[0].Arg
+	for _, want := range []string{"send", "--me", "user", "--to", "cto", "--thread", "gate/release", "--kind", "answer", "--subject", "APPROVED: release", "--body", "checks passed"} {
+		if !argListContains(args, want) {
+			t.Fatalf("operator answer args missing %q: %v", want, args)
+		}
+	}
+	env := decodeJSONEnvelope[mutationResult](t, stdout)
+	if env.Kind != "operator_send" || env.Data.MessageID != "msg-answer" || env.Data.Thread != "gate/release" {
+		t.Fatalf("operator answer json = %+v", env)
+	}
+}
+
+func TestOperatorAnswerSendsDeniedGateAnswerWithGatePrefix(t *testing.T) {
+	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-denied to cto\n")
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runOperator([]string{
+			"answer",
+			"--project", project,
+			"--session", "s",
+			"--gate", "gate/release",
+			"--to", "cto",
+			"--denied",
+		})
+	})
+	if err != nil {
+		t.Fatalf("operator denied answer: %v\nstderr:\n%s", err, stderr)
+	}
+	args := (*calls)[0].Arg
+	for _, want := range []string{"--thread", "gate/release", "--subject", "DENIED: release", "--body", ""} {
+		if !argListContains(args, want) {
+			t.Fatalf("operator denied args missing %q: %v", want, args)
+		}
+	}
+}
+
+func TestOperatorDirectiveSendsTodoOnCanonicalThread(t *testing.T) {
+	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-directive to cto\n")
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runOperator([]string{
+			"directive",
+			"--project", project,
+			"--session", "s",
+			"--to", "cto",
+			"--subject", "ship it",
+			"--body", "Proceed after checks.",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("operator directive: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("amq calls = %d, want 1", len(*calls))
+	}
+	args := (*calls)[0].Arg
+	for _, want := range []string{"send", "--me", "user", "--to", "cto", "--thread", "p2p/cto__user", "--kind", "todo", "--subject", "DIRECTIVE: ship it", "--body", "Proceed after checks."} {
+		if !argListContains(args, want) {
+			t.Fatalf("operator directive args missing %q: %v", want, args)
+		}
+	}
+	env := decodeJSONEnvelope[mutationResult](t, stdout)
+	if env.Data.MessageID != "msg-directive" || env.Data.Thread != "p2p/cto__user" {
+		t.Fatalf("operator directive json = %+v", env)
+	}
+}
+
+func TestOperatorCommandsRefuseOperatorTarget(t *testing.T) {
+	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg to user\n")
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "answer", args: []string{"answer", "--project", project, "--session", "s", "--gate", "release", "--to", "user", "--approved"}},
+		{name: "directive", args: []string{"directive", "--project", project, "--session", "s", "--to", "user", "--subject", "x", "--body", "body"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := captureOutput(t, func() error { return runOperator(tc.args) })
+			assertOperatorMailboxOnlyError(t, err)
+		})
+	}
+}
+
+func argListContains(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestOperatorPollReadOnlyJSONUsesOperatorLoopContract(t *testing.T) {
 	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
 	seedNotifyLaunch(t, project, base, "s", "cto")
@@ -157,6 +276,110 @@ func TestOperatorPollReadOnlyJSONUsesOperatorLoopContract(t *testing.T) {
 	}
 	if env.Data.OperatorLoop.Backlog != 1 || env.Data.OperatorLoop.GatesOpen != 1 || env.Data.OperatorLoop.Owner != "none" {
 		t.Fatalf("operator loop = %+v, want read-only unowned poll counts", env.Data.OperatorLoop)
+	}
+}
+
+func TestOperatorStatusKeepsGateOpenAfterStatusUpdate(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyMessage(t, base, "s", team.DefaultOperatorHandle, "cur", notifyMsg{
+		ID:      "2026-06-28T22-00-01.000Z_pid1_gate",
+		From:    "cto",
+		To:      team.DefaultOperatorHandle,
+		Thread:  "gate/release",
+		Subject: "APPROVAL: release",
+		Kind:    string(state.KindQuestion),
+		Created: notifyNow,
+	})
+	seedNotifyMessage(t, base, "s", team.DefaultOperatorHandle, "new", notifyMsg{
+		ID:      "2026-06-28T22-00-02.000Z_pid1_status",
+		From:    "cto",
+		To:      team.DefaultOperatorHandle,
+		Thread:  "gate/release",
+		Subject: "STATUS: validation evidence added",
+		Kind:    string(state.KindStatus),
+		Created: notifyNow.Add(time.Minute),
+	})
+
+	var out bytes.Buffer
+	err := executeOperatorStatus(operatorExecution{
+		ProjectDir: project,
+		Profile:    team.DefaultProfile,
+		Session:    "s",
+		BaseRoot:   base,
+		JSON:       true,
+		Out:        &out,
+		Probe: state.Probe{
+			PIDAlive:     func(pid int) bool { return true },
+			ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+			Now:          func() time.Time { return notifyNow },
+		},
+		Now: func() time.Time { return notifyNow.Add(2 * time.Minute) },
+	})
+	if err != nil {
+		t.Fatalf("operator status: %v", err)
+	}
+	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
+	if env.Data.OperatorLoop.GatesOpen != 1 || env.Data.Operator.Poll.OpenGates != 1 {
+		t.Fatalf("open gate counts = loop:%d poll:%d, want 1/1", env.Data.OperatorLoop.GatesOpen, env.Data.Operator.Poll.OpenGates)
+	}
+	if len(env.Data.Attention) != 1 || env.Data.Attention[0].Thread != "gate/release" || env.Data.Attention[0].LatestID != "2026-06-28T22-00-01.000Z_pid1_gate" {
+		t.Fatalf("attention = %+v, want pending gate question despite later status", env.Data.Attention)
+	}
+}
+
+func TestOperatorStatusClosesGateAfterOperatorAnswer(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyMessage(t, base, "s", team.DefaultOperatorHandle, "cur", notifyMsg{
+		ID:      "2026-06-28T22-00-01.000Z_pid1_gate",
+		From:    "cto",
+		To:      team.DefaultOperatorHandle,
+		Thread:  "gate/release",
+		Subject: "APPROVAL: release",
+		Kind:    string(state.KindQuestion),
+		Created: notifyNow,
+	})
+	seedNotifyMessage(t, base, "s", team.DefaultOperatorHandle, "new", notifyMsg{
+		ID:      "2026-06-28T22-00-02.000Z_pid1_status",
+		From:    "cto",
+		To:      team.DefaultOperatorHandle,
+		Thread:  "gate/release",
+		Subject: "STATUS: validation evidence added",
+		Kind:    string(state.KindStatus),
+		Created: notifyNow.Add(time.Minute),
+	})
+	seedNotifyMessage(t, base, "s", "cto", "cur", notifyMsg{
+		ID:      "2026-06-28T22-00-03.000Z_pid1_answer",
+		From:    team.DefaultOperatorHandle,
+		To:      "cto",
+		Thread:  "gate/release",
+		Subject: "APPROVED: release",
+		Kind:    string(state.KindAnswer),
+		Created: notifyNow.Add(2 * time.Minute),
+	})
+
+	var out bytes.Buffer
+	err := executeOperatorStatus(operatorExecution{
+		ProjectDir: project,
+		Profile:    team.DefaultProfile,
+		Session:    "s",
+		BaseRoot:   base,
+		JSON:       true,
+		Out:        &out,
+		Probe: state.Probe{
+			PIDAlive:     func(pid int) bool { return true },
+			ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+			Now:          func() time.Time { return notifyNow },
+		},
+		Now: func() time.Time { return notifyNow.Add(3 * time.Minute) },
+	})
+	if err != nil {
+		t.Fatalf("operator status: %v", err)
+	}
+	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
+	if env.Data.OperatorLoop.GatesOpen != 0 || len(env.Data.Attention) != 0 {
+		t.Fatalf("operator status after answer = gates:%d attention:%+v, want closed gate", env.Data.OperatorLoop.GatesOpen, env.Data.Attention)
 	}
 }
 
