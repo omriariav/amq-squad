@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -92,6 +93,11 @@ type doctorExecution struct {
 	// amq-squad skill bundle. Injectable so tests do not read the operator's
 	// home directory.
 	CodexSkillCacheRoot func() string
+	// SkillMDContent reads the body and path of the installed amq-squad skill's
+	// SKILL.md for the given running version (e.g. "v2.11.0"). found=false when
+	// no matching skill bundle is available. Injectable so tests do not read the
+	// operator's home directory.
+	SkillMDContent func(runningVersion string) (content, path string, found bool)
 	// PaneLister lists tmux panes for orphan-pane detection. ResolveBaseRoot
 	// resolves the AMQ base root whose launch records are treated as current.
 	PaneLister      tmuxpane.PaneLister
@@ -112,6 +118,7 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		TmuxShowOptions:     defaultTmuxShowServerOption,
 		PathBinaryVersion:   defaultPathBinaryVersion,
 		CodexSkillCacheRoot: defaultCodexSkillCacheRoot,
+		SkillMDContent:      defaultSkillMDContent,
 		PaneLister:          statusPaneLister,
 		ResolveBaseRoot:     scanBaseRootForProject,
 	}
@@ -123,6 +130,26 @@ func defaultCodexSkillCacheRoot() string {
 		return ""
 	}
 	return filepath.Join(home, ".codex", "plugins", "cache", "amq-squad", "amq-squad")
+}
+
+// defaultSkillMDContent reads the amq-squad SKILL.md from the Codex plugin
+// cache for the given running version. found=false when the cache root is
+// unavailable or the versioned bundle does not contain a SKILL.md.
+func defaultSkillMDContent(runningVersion string) (string, string, bool) {
+	root := defaultCodexSkillCacheRoot()
+	if strings.TrimSpace(root) == "" {
+		return "", "", false
+	}
+	ver := strings.TrimPrefix(strings.TrimSpace(runningVersion), "v")
+	if ver == "" {
+		return "", "", false
+	}
+	skillPath := filepath.Join(root, ver, "skills", "amq-squad", "SKILL.md")
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		return "", "", false
+	}
+	return string(data), skillPath, true
 }
 
 // defaultPathBinaryVersion resolves the `amq-squad` on PATH and runs
@@ -254,6 +281,46 @@ func doctorCheckCodexSkillCache(d doctorExecution) doctorCheck {
 		Status: doctorOK,
 		Detail: fmt.Sprintf("released skill bundle %s is cached directly at %s", want, wantPath),
 	}
+}
+
+var skillVersionMarkerRE = regexp.MustCompile(`\bSkill version:\s*v?([0-9]+\.[0-9]+\.[0-9]+)`)
+
+// doctorCheckSkillVersion verifies that the installed amq-squad skill's
+// "Skill version: X.Y.Z" marker matches the running binary. Agents load the
+// cached skill on session start; if skill and binary differ they silently
+// diverge in capability. Complements doctorCheckCodexSkillCache (which checks
+// for structural presence) by verifying content alignment.
+func doctorCheckSkillVersion(d doctorExecution) doctorCheck {
+	const name = "skill version"
+	running := strings.TrimSpace(d.RunningVersion)
+	if running == "" || running == "dev" || running == "(devel)" {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "running a dev build; skill-version check skipped"}
+	}
+	reader := d.SkillMDContent
+	if reader == nil {
+		reader = defaultSkillMDContent
+	}
+	content, skillPath, found := reader(running)
+	if !found {
+		return doctorCheck{Name: name, Status: doctorWarn,
+			Detail: fmt.Sprintf("no installed skill bundle found for %s; cannot verify skill/binary alignment. The skill must be installed so each agent session loads the matching build.", running)}
+	}
+	m := skillVersionMarkerRE.FindStringSubmatch(content)
+	if m == nil {
+		return doctorCheck{Name: name, Status: doctorWarn,
+			Detail: fmt.Sprintf("installed skill at %s has no 'Skill version:' marker; cannot verify alignment. The skill bundle may be stale or incomplete.", skillPath)}
+	}
+	installed := "v" + m[1]
+	want := running
+	if !strings.HasPrefix(want, "v") {
+		want = "v" + want
+	}
+	if installed == want {
+		return doctorCheck{Name: name, Status: doctorOK,
+			Detail: fmt.Sprintf("skill %s matches binary %s (%s)", installed, running, skillPath)}
+	}
+	return doctorCheck{Name: name, Status: doctorWarn,
+		Detail: fmt.Sprintf("skill/binary version skew: installed skill is %s but binary is %s (%s); agents load the cached skill on session start, so they may use outdated behavior. Refresh the Codex plugin cache to align.", installed, running, skillPath)}
 }
 
 // defaultTmuxShowServerOption reads a server-scoped tmux option via
@@ -505,6 +572,7 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckAMQOps(d))
 	checks = append(checks, doctorCheckVersionSkew(d))
 	checks = append(checks, doctorCheckCodexSkillCache(d))
+	checks = append(checks, doctorCheckSkillVersion(d))
 	checks = append(checks, doctorCheckTeamConfig(d))
 	checks = append(checks, doctorCheckTeamRulesRoster(d))
 	checks = append(checks, doctorCheckTmux(d))

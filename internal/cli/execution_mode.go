@@ -24,10 +24,26 @@ type versionCompatibilityData struct {
 	Detail         string `json:"detail"`
 }
 
+// faultRemedy is a structured recovery action that follows the canonical
+// action-object contract (docs/action-object-contract.md). ActionKind is
+// always "repair" for fault remedy objects emitted alongside invariant errors.
+type faultRemedy struct {
+	Kind              string `json:"kind,omitempty"`
+	ID                string `json:"id"`
+	Label             string `json:"label"`
+	ActionKind        string `json:"action_kind"` // always "repair"
+	Command           string `json:"command,omitempty"`
+	Available         bool   `json:"available"`
+	Reason            string `json:"reason,omitempty"`
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+}
+
 type executionInvariantError struct {
-	Code    string `json:"code"`
-	Role    string `json:"role,omitempty"`
-	Message string `json:"message"`
+	Code    string       `json:"code"`
+	Role    string       `json:"role,omitempty"`
+	Message string       `json:"message"`
+	DocRef  string       `json:"doc_ref,omitempty"`
+	Remedy  *faultRemedy `json:"remedy,omitempty"`
 }
 
 type leadExecutionData struct {

@@ -396,7 +396,7 @@ func annotateVisibilityInvariants(rows []statusRecord, ctx sessionStatusContext)
 		if visible {
 			leadVisible = true
 		} else if leadError.Code == "" {
-			leadError = invariantErrorForVisibilityProblem(rows[i], code)
+			leadError = invariantErrorForVisibilityProblem(rows[i], code, faultRepairScopeForStatus(ctx))
 		}
 	}
 
@@ -516,19 +516,121 @@ func operatorVisibilityForLead(row *statusRecord) (bool, string) {
 	}
 }
 
-func invariantErrorForVisibilityProblem(row statusRecord, code string) executionInvariantError {
+type faultRepairScope struct {
+	Project string
+	Profile string
+	Session string
+}
+
+func faultRepairScopeForStatus(ctx sessionStatusContext) faultRepairScope {
+	return faultRepairScope{
+		Project: ctx.Team.Project,
+		Profile: ctx.Profile,
+		Session: ctx.Workstream,
+	}
+}
+
+func invariantErrorForVisibilityProblem(row statusRecord, code string, scope faultRepairScope) executionInvariantError {
+	const docRef = "docs/v2.12.0-plan.md#repair-first-ux-for-topology-and-launch-failures"
 	switch code {
 	case "current_pane_collapse":
-		return executionInvariantError{Code: "lead_pane_collapsed", Role: row.Role, Message: "visible lead is running in the launcher pane; relaunch in a managed visible pane or register an explicit external lead"}
+		return executionInvariantError{
+			Code:    "lead_pane_collapsed",
+			Role:    row.Role,
+			Message: "visible lead is running in the launcher pane; relaunch in a managed visible pane or register an explicit external lead",
+			DocRef:  docRef,
+			Remedy:  faultRemedyRelaunch(scope),
+		}
 	case "lead_pane_dead", "pane_dead", "no_pane":
-		return executionInvariantError{Code: "lead_pane_dead", Role: row.Role, Message: "visible lead has no live operator-addressable pane"}
+		return executionInvariantError{
+			Code:    "lead_pane_dead",
+			Role:    row.Role,
+			Message: "visible lead has no live operator-addressable pane",
+			DocRef:  docRef,
+			Remedy:  faultRemedyResume(row.Role, scope),
+		}
 	case "detached_session":
-		return executionInvariantError{Code: "no_visible_lead", Role: row.Role, Message: "visible lead is live in a detached tmux session, not an operator-visible pane"}
+		return executionInvariantError{
+			Code:    "no_visible_lead",
+			Role:    row.Role,
+			Message: "visible lead is live in a detached tmux session, not an operator-visible pane",
+			DocRef:  docRef,
+			Remedy:  faultRemedyResume(row.Role, scope),
+		}
 	case "pane_origin_unprovable":
-		return executionInvariantError{Code: "no_visible_lead", Role: row.Role, Message: "visible lead launch record does not prove launcher pane origin"}
+		return executionInvariantError{
+			Code:    "no_visible_lead",
+			Role:    row.Role,
+			Message: "visible lead launch record does not prove launcher pane origin",
+			DocRef:  docRef,
+			Remedy:  faultRemedyRelaunch(scope),
+		}
 	default:
-		return executionInvariantError{Code: "no_visible_lead", Role: row.Role, Message: "configured visible lead is not operator-visible"}
+		return executionInvariantError{
+			Code:    "no_visible_lead",
+			Role:    row.Role,
+			Message: "configured visible lead is not operator-visible",
+			DocRef:  docRef,
+			Remedy:  faultRemedyRelaunch(scope),
+		}
 	}
+}
+
+// faultRemedyRelaunch returns a repair action that relaunches the team in a
+// managed visible pane. Available when the session is known.
+func faultRemedyRelaunch(scope faultRepairScope) *faultRemedy {
+	r := &faultRemedy{
+		Kind:       "up",
+		ID:         "up",
+		Label:      "relaunch lead in a managed visible pane",
+		ActionKind: "repair",
+	}
+	if strings.TrimSpace(scope.Session) == "" {
+		r.Available = false
+		r.Reason = "session name unknown; supply --session to build the repair command"
+		r.UnavailableReason = r.Reason
+		return r
+	}
+	r.Command = "amq-squad up" + faultRemedyScopeArgs(scope)
+	r.Available = true
+	return r
+}
+
+// faultRemedyResume returns a repair action that resumes a stale or detached
+// lead. Available when both role and session are known.
+func faultRemedyResume(role string, scope faultRepairScope) *faultRemedy {
+	r := &faultRemedy{
+		Kind:       "resume",
+		ID:         "resume",
+		Label:      "resume the lead session in a visible pane",
+		ActionKind: "repair",
+	}
+	if strings.TrimSpace(role) == "" || strings.TrimSpace(scope.Session) == "" {
+		r.Available = false
+		r.Reason = "role or session unknown; supply --role and --session to build the repair command"
+		r.UnavailableReason = r.Reason
+		return r
+	}
+	r.Command = "amq-squad resume --role " + shellQuote(role) + faultRemedyScopeArgs(scope)
+	r.Available = true
+	return r
+}
+
+func faultRemedyScopeArgs(scope faultRepairScope) string {
+	var args []string
+	if strings.TrimSpace(scope.Project) != "" {
+		args = append(args, "--project", shellQuote(scope.Project))
+	}
+	if strings.TrimSpace(scope.Profile) != "" && squadnamespace.NormalizeProfile(scope.Profile) != team.DefaultProfile {
+		args = append(args, "--profile", shellQuote(scope.Profile))
+	}
+	if strings.TrimSpace(scope.Session) != "" {
+		args = append(args, "--session", shellQuote(scope.Session))
+	}
+	if len(args) == 0 {
+		return ""
+	}
+	return " " + strings.Join(args, " ")
 }
 
 func visibilityRepairActions(ctx sessionStatusContext, row statusRecord) []runtimeActionJSON {
