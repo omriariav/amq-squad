@@ -201,6 +201,9 @@ runtime accepts goal control messages safely.
 	if role == "" {
 		return usageErrorf("goal deliver requires --role when the team has no configured lead")
 	}
+	if err := ensureTargetIsNotOperator(t, "goal deliver", role); err != nil {
+		return err
+	}
 	member, ok := teamMemberByRole(t, role)
 	if !ok {
 		return fmt.Errorf("no team member with role %q in this team", role)

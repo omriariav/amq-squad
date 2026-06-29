@@ -866,6 +866,9 @@ func TestRunTeamInitPersonasAliasAndBinaryOverride(t *testing.T) {
 	if got.Operator == nil || !got.Operator.Enabled || got.Operator.Handle != team.DefaultOperatorHandle {
 		t.Fatalf("operator = %+v, want default enabled %q", got.Operator, team.DefaultOperatorHandle)
 	}
+	if !got.Operator.Participant || got.Operator.Kind != "operator" || got.Operator.Runnable || got.Operator.Assignable || got.Operator.WakeSupported || !got.Operator.PollRequired {
+		t.Fatalf("operator participant = %+v, want non-runnable mailbox operator", got.Operator)
+	}
 }
 
 func TestRunTeamInitOperatorFlags(t *testing.T) {
@@ -893,6 +896,9 @@ func TestRunTeamInitOperatorFlags(t *testing.T) {
 			}
 			if got.Operator.Enabled != tc.wantEnable || got.Operator.Handle != tc.wantHandle {
 				t.Fatalf("operator = %+v, want enabled=%v handle=%q", got.Operator, tc.wantEnable, tc.wantHandle)
+			}
+			if tc.wantEnable && (!got.Operator.Participant || got.Operator.Kind != "operator" || got.Operator.Runnable || got.Operator.Assignable || got.Operator.WakeSupported || !got.Operator.PollRequired) {
+				t.Fatalf("operator participant = %+v, want non-runnable mailbox operator", got.Operator)
 			}
 			if team.SupportsOperatorGates(got) != tc.wantEnable {
 				t.Fatalf("SupportsOperatorGates = %v, want %v", team.SupportsOperatorGates(got), tc.wantEnable)
@@ -1081,6 +1087,9 @@ func TestRunTeamInitDryRunJSONEnvelope(t *testing.T) {
 	}
 	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != team.DefaultOperatorHandle || env.Data.Operator.Runnable {
 		t.Fatalf("operator = %+v, want default non-runnable user", env.Data.Operator)
+	}
+	if !env.Data.Operator.Participant || env.Data.Operator.Kind != "operator" || env.Data.Operator.Assignable || env.Data.Operator.WakeSupported || !env.Data.Operator.PollRequired {
+		t.Fatalf("operator participant = %+v, want first-class mailbox operator", env.Data.Operator)
 	}
 	if !env.Data.Capabilities.OperatorGates {
 		t.Fatal("team_profile_plan should advertise operator_gates")

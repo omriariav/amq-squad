@@ -19,11 +19,15 @@ func runCollect(args []string) error {
 	timeoutFlag := fs.String("timeout", "0", "maximum time to wait for one message after an empty drain (0 = do not wait)")
 	includeBody := fs.Bool("include-body", false, "include message bodies in drain output")
 	projectFlag := fs.String("project", "", "project/team-home directory to resolve AMQ from (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	overrideBoundary := fs.Bool("override-boundary", false, "allow collecting another project-team member's mailbox and write an audit record")
+	boundaryReason := fs.String("reason", "", "required reason when --override-boundary is set")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad collect - drain once, optionally wait once, then drain once
 
 Usage:
   amq-squad collect --session S --me HANDLE [--timeout D] [--include-body] [--project DIR]
+                    [--profile NAME] [--override-boundary --reason WHY]
 
 Resolves the workstream AMQ root like 'amq-squad amq drain', then performs the
 fixed report-collection procedure:
@@ -56,8 +60,19 @@ Examples:
 	if timeout < 0 {
 		return usageErrorf("--timeout must be non-negative")
 	}
-	ctx, err := resolveAMQContext(*projectFlag, *sessionFlag, *meFlag, flagWasSet(fs, "project"))
+	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {
+		return err
+	}
+	ctx, err := resolveAMQContextForNamespace(projectDir, profile, *sessionFlag, *meFlag)
+	if err != nil {
+		return err
+	}
+	ctx = inferAMQContextProfileFromRoot(ctx, flagWasSet(fs, "profile"))
+	if err := guardAMQMailboxConsume("collect", ctx, amqPassthroughOptions{
+		OverrideBoundary: *overrideBoundary,
+		BoundaryReason:   *boundaryReason,
+	}); err != nil {
 		return err
 	}
 	return executeCollect(os.Stdout, ctx, timeout, *includeBody)

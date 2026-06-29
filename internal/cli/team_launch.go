@@ -429,6 +429,8 @@ func externalLeadRecordForLaunch(m team.Member, cwd, handle, root string, env am
 		Model:            memberResolvedModel(m, modelOverrides, binaryArgs),
 		Trust:            trustMode,
 		External:         true,
+		AdoptionMode:     "external",
+		LauncherPaneID:   pane.PaneID,
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
 		TeamProfile:      profile,
@@ -477,7 +479,11 @@ func withTmuxTargetEnv(target, command string) string {
 	if target == "" {
 		return command
 	}
-	return "(export " + envTmuxTarget + "=" + shellQuote(target) + "; " + command + ")"
+	assignments := []string{envTmuxTarget + "=" + shellQuote(target)}
+	if launcherPane := strings.TrimSpace(os.Getenv("TMUX_PANE")); launcherPane != "" {
+		assignments = append(assignments, envTmuxLauncherPane+"="+shellQuote(launcherPane))
+	}
+	return "(export " + strings.Join(assignments, " ") + "; " + command + ")"
 }
 
 func teamSquadBin() string {

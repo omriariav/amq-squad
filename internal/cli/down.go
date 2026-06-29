@@ -229,6 +229,11 @@ func executeDown(d downExecution) error {
 	if len(t.Members) == 0 {
 		return fmt.Errorf("team has no members")
 	}
+	if strings.TrimSpace(d.Role) != "" {
+		if err := ensureTargetIsNotOperator(t, verb, d.Role); err != nil {
+			return err
+		}
+	}
 	workstream, err := resolveTeamWorkstreamName(t, d.RequestedSession, d.ExplicitSession)
 	if err != nil {
 		return err

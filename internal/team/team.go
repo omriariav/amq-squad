@@ -86,21 +86,41 @@ func (m Member) ExtraArgs() []string {
 // OperatorConfig describes the optional human/operator participant for a
 // profile. The operator is a mailbox participant only, never a runnable member.
 type OperatorConfig struct {
-	Enabled bool   `json:"enabled"`
-	Handle  string `json:"handle,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	Handle        string `json:"handle,omitempty"`
+	Participant   bool   `json:"participant"`
+	Kind          string `json:"kind,omitempty"`
+	Runnable      bool   `json:"runnable"`
+	Assignable    bool   `json:"assignable"`
+	WakeSupported bool   `json:"wake_supported"`
+	PollRequired  bool   `json:"poll_required"`
 }
 
 // OperatorView is the JSON/output shape used by callers that need the
 // effective operator contract without interpreting on-disk schema details.
 type OperatorView struct {
-	Enabled  bool   `json:"enabled"`
-	Handle   string `json:"handle,omitempty"`
-	Runnable bool   `json:"runnable"`
+	Enabled       bool   `json:"enabled"`
+	Handle        string `json:"handle,omitempty"`
+	Participant   bool   `json:"participant"`
+	Kind          string `json:"kind,omitempty"`
+	Runnable      bool   `json:"runnable"`
+	Assignable    bool   `json:"assignable"`
+	WakeSupported bool   `json:"wake_supported"`
+	PollRequired  bool   `json:"poll_required"`
 }
 
 const (
-	CompositionSeeded     = "seeded"
-	CompositionAutonomous = "autonomous"
+	CompositionSeeded         = "seeded"
+	CompositionAutonomous     = "autonomous"
+	GoalSignificanceTrivial   = "trivial"
+	GoalSignificanceStandard  = "standard"
+	GoalSignificanceRelease   = "release"
+	LeadExecutionSolo         = "solo"
+	LeadExecutionDelegated    = "delegated"
+	LeadExecutionVisibleTeam  = "visible_team"
+	IndependentReviewRequired = "required"
+	IndependentReviewWaived   = "waived"
+	IndependentReviewComplete = "complete"
 )
 
 type AutonomousPolicy struct {
@@ -134,6 +154,31 @@ type AutonomousStatus struct {
 	BudgetTurns      int               `json:"budget_turns,omitempty"`
 	BudgetTurnsLeft  int               `json:"budget_turns_left,omitempty"`
 	OperatorRequired []string          `json:"operator_required,omitempty"`
+}
+
+// LeadExecution records the lead's declared delegation and review posture for
+// release/milestone work. The declaration is persisted with the team profile so
+// status/NOC clients can machine-check release readiness instead of inferring it
+// from prose in AMQ messages.
+type LeadExecution struct {
+	Posture             string             `json:"posture"`
+	GoalSignificance    string             `json:"goal_significance,omitempty"`
+	DecisionTime        string             `json:"decision_time,omitempty"`
+	Reason              string             `json:"reason,omitempty"`
+	ChildBudget         int                `json:"child_budget,omitempty"`
+	PlannedDelegations  []string           `json:"planned_delegations,omitempty"`
+	ReviewPlan          string             `json:"review_plan,omitempty"`
+	IndependentReview   *IndependentReview `json:"independent_review,omitempty"`
+	FinalRecommendation string             `json:"final_recommendation,omitempty"`
+}
+
+type IndependentReview struct {
+	Status    string `json:"status"`
+	Evidence  string `json:"evidence,omitempty"`
+	Reviewer  string `json:"reviewer,omitempty"`
+	ThreadID  string `json:"thread_id,omitempty"`
+	Reference string `json:"reference,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // Capabilities is derived client metadata. It is intentionally not persisted
@@ -197,10 +242,11 @@ type Team struct {
 	Autonomous   *AutonomousPolicy `json:"autonomous,omitempty"`
 	// ExecutionMode records the operator-visible ownership contract for this
 	// profile. Empty means callers apply the compatibility default.
-	ExecutionMode     string `json:"execution_mode,omitempty"`
-	ControlRoot       string `json:"control_root,omitempty"`
-	TargetProjectRoot string `json:"target_project_root,omitempty"`
-	TargetContract    string `json:"target_contract,omitempty"`
+	ExecutionMode     string         `json:"execution_mode,omitempty"`
+	ControlRoot       string         `json:"control_root,omitempty"`
+	TargetProjectRoot string         `json:"target_project_root,omitempty"`
+	TargetContract    string         `json:"target_contract,omitempty"`
+	LeadExecution     *LeadExecution `json:"lead_execution,omitempty"`
 	// MaxSpawnDepth caps runtime composition fan-out. Zero means the safe
 	// default of 1: the operator-launched lead may add direct children, but
 	// children cannot add grandchildren.
@@ -209,7 +255,16 @@ type Team struct {
 }
 
 func DefaultOperator() OperatorConfig {
-	return OperatorConfig{Enabled: true, Handle: DefaultOperatorHandle}
+	return OperatorConfig{
+		Enabled:       true,
+		Handle:        DefaultOperatorHandle,
+		Participant:   true,
+		Kind:          "operator",
+		Runnable:      false,
+		Assignable:    false,
+		WakeSupported: false,
+		PollRequired:  true,
+	}
 }
 
 func DisabledOperator() OperatorConfig {
@@ -222,17 +277,34 @@ func DisabledOperator() OperatorConfig {
 // explicitly with operator.enabled=false.
 func EffectiveOperator(t Team) OperatorView {
 	if t.Operator == nil {
-		return OperatorView{Enabled: true, Handle: DefaultOperatorHandle, Runnable: false}
+		return operatorViewFromConfig(DefaultOperator())
 	}
 	op := *t.Operator
 	if !op.Enabled {
-		return OperatorView{Enabled: false, Runnable: false}
+		return OperatorView{Enabled: false, Runnable: false, Assignable: false, WakeSupported: false}
 	}
+	return operatorViewFromConfig(op)
+}
+
+func operatorViewFromConfig(op OperatorConfig) OperatorView {
 	handle := strings.TrimSpace(op.Handle)
 	if handle == "" {
 		handle = DefaultOperatorHandle
 	}
-	return OperatorView{Enabled: true, Handle: handle, Runnable: false}
+	kind := strings.TrimSpace(op.Kind)
+	if kind == "" {
+		kind = "operator"
+	}
+	return OperatorView{
+		Enabled:       true,
+		Handle:        handle,
+		Participant:   true,
+		Kind:          kind,
+		Runnable:      false,
+		Assignable:    false,
+		WakeSupported: false,
+		PollRequired:  true,
+	}
 }
 
 // SupportsOperatorGates reports whether this profile speaks the operator-gate
@@ -382,8 +454,8 @@ func NormalizeForWrite(projectDir, profile string, t Team) (Team, error) {
 	if t.Operator == nil {
 		op := DefaultOperator()
 		t.Operator = &op
-	} else if t.Operator.Enabled && strings.TrimSpace(t.Operator.Handle) == "" {
-		t.Operator.Handle = DefaultOperatorHandle
+	} else if t.Operator.Enabled {
+		*t.Operator = normalizeEnabledOperator(*t.Operator)
 	}
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = time.Now().UTC()
@@ -392,6 +464,21 @@ func NormalizeForWrite(projectDir, profile string, t Team) (Team, error) {
 		return Team{}, fmt.Errorf("validate team: %w", err)
 	}
 	return t, nil
+}
+
+func normalizeEnabledOperator(op OperatorConfig) OperatorConfig {
+	if strings.TrimSpace(op.Handle) == "" {
+		op.Handle = DefaultOperatorHandle
+	}
+	if strings.TrimSpace(op.Kind) == "" {
+		op.Kind = "operator"
+	}
+	op.Participant = true
+	op.Runnable = false
+	op.Assignable = false
+	op.WakeSupported = false
+	op.PollRequired = true
+	return op
 }
 
 // WriteProfile atomically persists a named profile under projectDir. The
@@ -501,6 +588,9 @@ func Validate(t Team) error {
 	if err := validateComposition(t); err != nil {
 		return err
 	}
+	if err := validateLeadExecution(t.LeadExecution); err != nil {
+		return err
+	}
 	operatorHandle := ""
 	if t.Operator == nil {
 		operatorHandle = DefaultOperatorHandle
@@ -512,6 +602,18 @@ func Validate(t Team) error {
 			}
 			if err := ValidateHandle(operatorHandle); err != nil {
 				return fmt.Errorf("operator.handle: %w", err)
+			}
+			if kind := strings.TrimSpace(t.Operator.Kind); kind != "" && kind != "operator" {
+				return fmt.Errorf("operator.kind: must be %q", "operator")
+			}
+			if t.Operator.Runnable {
+				return fmt.Errorf("operator.runnable: operator is mailbox-only and cannot be runnable")
+			}
+			if t.Operator.Assignable {
+				return fmt.Errorf("operator.assignable: operator is mailbox-only and cannot be assignable")
+			}
+			if t.Operator.WakeSupported {
+				return fmt.Errorf("operator.wake_supported: non-runnable operator cannot support wake delivery")
 			}
 		} else if strings.TrimSpace(t.Operator.Handle) != "" {
 			return fmt.Errorf("operator.handle: set enabled=true before handle")
@@ -542,8 +644,8 @@ func Validate(t Team) error {
 		}
 		if handle != "" {
 			if operatorHandle != "" {
-				conflictsOperator := handle == operatorHandle
-				if operatorHandle == DefaultOperatorHandle && m.Role == DefaultOperatorHandle {
+				conflictsOperator := handle == operatorHandle || handle == DefaultOperatorHandle
+				if m.Role == DefaultOperatorHandle {
 					conflictsOperator = true
 				}
 				if conflictsOperator {
@@ -554,6 +656,85 @@ func Validate(t Team) error {
 				return fmt.Errorf("%s: duplicate handle %q", prefix, handle)
 			}
 			seenHandles[handle] = true
+		}
+	}
+	return nil
+}
+
+func validateLeadExecution(exec *LeadExecution) error {
+	if exec == nil {
+		return nil
+	}
+	switch strings.TrimSpace(exec.Posture) {
+	case LeadExecutionSolo, LeadExecutionDelegated, LeadExecutionVisibleTeam:
+	default:
+		return fmt.Errorf("lead_execution.posture: invalid mode %q: use %s, %s, or %s", exec.Posture, LeadExecutionSolo, LeadExecutionDelegated, LeadExecutionVisibleTeam)
+	}
+	if exec.GoalSignificance != "" {
+		switch strings.TrimSpace(exec.GoalSignificance) {
+		case GoalSignificanceTrivial, GoalSignificanceStandard, GoalSignificanceRelease:
+		default:
+			return fmt.Errorf("lead_execution.goal_significance: invalid value %q: use %s, %s, or %s", exec.GoalSignificance, GoalSignificanceTrivial, GoalSignificanceStandard, GoalSignificanceRelease)
+		}
+	}
+	if exec.DecisionTime != "" {
+		if err := ValidateDisplayValue("lead_execution.decision_time", exec.DecisionTime); err != nil {
+			return err
+		}
+	}
+	if exec.Reason != "" {
+		if err := ValidateDisplayValue("lead_execution.reason", exec.Reason); err != nil {
+			return err
+		}
+	}
+	if exec.ChildBudget < 0 {
+		return fmt.Errorf("lead_execution.child_budget: cannot be negative")
+	}
+	for i, delegation := range exec.PlannedDelegations {
+		if err := ValidateDisplayValue(fmt.Sprintf("lead_execution.planned_delegations[%d]", i), delegation); err != nil {
+			return err
+		}
+	}
+	if exec.ReviewPlan != "" {
+		if err := ValidateDisplayValue("lead_execution.review_plan", exec.ReviewPlan); err != nil {
+			return err
+		}
+	}
+	if err := validateIndependentReview(exec.IndependentReview); err != nil {
+		return err
+	}
+	if exec.FinalRecommendation != "" {
+		if err := ValidateDisplayValue("lead_execution.final_recommendation", exec.FinalRecommendation); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateIndependentReview(review *IndependentReview) error {
+	if review == nil {
+		return nil
+	}
+	switch strings.TrimSpace(review.Status) {
+	case IndependentReviewRequired, IndependentReviewWaived, IndependentReviewComplete:
+	default:
+		return fmt.Errorf("lead_execution.independent_review.status: invalid status %q: use %s, %s, or %s", review.Status, IndependentReviewRequired, IndependentReviewWaived, IndependentReviewComplete)
+	}
+	for _, field := range []struct {
+		label string
+		value string
+	}{
+		{"lead_execution.independent_review.evidence", review.Evidence},
+		{"lead_execution.independent_review.reviewer", review.Reviewer},
+		{"lead_execution.independent_review.thread_id", review.ThreadID},
+		{"lead_execution.independent_review.reference", review.Reference},
+		{"lead_execution.independent_review.reason", review.Reason},
+	} {
+		if field.value == "" {
+			continue
+		}
+		if err := ValidateDisplayValue(field.label, field.value); err != nil {
+			return err
 		}
 	}
 	return nil

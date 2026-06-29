@@ -1,6 +1,6 @@
 {
   "name": "amq-squad",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "description": "amq-squad agent-team coordination skills for Codex: live coordination (amq-squad), first-time team setup (amq-team-setup), custom role authoring (amq-squad-role-creator), and lead-agent orchestration (amq-squad-orchestrator).",
   "skills": "./skills/"
 }
