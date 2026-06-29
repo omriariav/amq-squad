@@ -14,6 +14,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 // resumeAction labels what `team resume` would do for one member.
@@ -713,11 +714,89 @@ func verifyResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots map
 	deadline := time.Now().Add(resumeExecLaunchVerifyTimeout)
 	for {
 		results := inspectResumeExecLaunchRecords(checks, snapshots)
-		if allResumeExecLaunchesDone(results) || !time.Now().Before(deadline) {
+		if allResumeExecLaunchesDone(results) {
+			return results
+		}
+		if !time.Now().Before(deadline) {
+			if adoptResumeExecLaunchRecords(results) {
+				return inspectResumeExecLaunchRecords(checks, snapshots)
+			}
 			return results
 		}
 		time.Sleep(resumeExecLaunchVerifyInterval)
 	}
+}
+
+func adoptResumeExecLaunchRecords(results []resumeExecLaunchResult) bool {
+	panes, err := statusPaneLister()
+	if err != nil || len(panes) == 0 {
+		return false
+	}
+	adopted := false
+	for _, r := range results {
+		if r.State != resumeExecLaunchStateStaleRecord {
+			continue
+		}
+		pane, ok := resumeExecAdoptionPane(r.Check, panes)
+		if !ok {
+			continue
+		}
+		rec, err := launch.Read(r.Check.AgentDir)
+		if err != nil {
+			continue
+		}
+		rec.Role = r.Check.Role
+		rec.Handle = r.Check.Handle
+		rec.Session = r.Check.Workstream
+		rec.Root = r.Check.Root
+		rec.CWD = r.Check.CWD
+		rec.Binary = r.Check.Binary
+		rec.TeamProfile = r.Check.Profile
+		rec.StartedAt = time.Now().UTC()
+		rec.Tmux = &launch.TmuxInfo{
+			Session:    pane.Session,
+			WindowID:   pane.WindowID,
+			WindowName: pane.WindowName,
+			PaneID:     pane.PaneID,
+			Target:     "adopted",
+		}
+		if err := launch.Write(r.Check.AgentDir, rec); err == nil {
+			adopted = true
+		}
+	}
+	return adopted
+}
+
+func resumeExecAdoptionPane(c resumeExecLaunchCheck, panes []tmuxpane.TmuxPane) (tmuxpane.TmuxPane, bool) {
+	wantTitle := paneTitleToken(c.Workstream, c.Role)
+	for _, p := range panes {
+		if strings.TrimSpace(p.PaneID) == "" || p.Title != wantTitle {
+			continue
+		}
+		if strings.TrimSpace(c.CWD) != "" && canonicalPath(p.CWD) != canonicalPath(c.CWD) {
+			continue
+		}
+		if !resumeExecPaneCommandMatchesBinary(p.Command, c.Binary) {
+			continue
+		}
+		return p, true
+	}
+	return tmuxpane.TmuxPane{}, false
+}
+
+func resumeExecPaneCommandMatchesBinary(command, binary string) bool {
+	b := strings.ToLower(strings.TrimSpace(binary))
+	if b == "" {
+		return false
+	}
+	cmd := strings.ToLower(strings.TrimSpace(command))
+	if cmd == "" {
+		return false
+	}
+	if i := strings.LastIndexByte(cmd, '/'); i >= 0 {
+		cmd = cmd[i+1:]
+	}
+	return cmd == b || strings.HasPrefix(cmd, b)
 }
 
 func inspectResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {

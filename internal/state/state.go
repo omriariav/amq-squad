@@ -26,6 +26,7 @@ package state
 import (
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/procinfo"
 )
 
@@ -110,8 +111,9 @@ type Agent struct {
 	Presence     string // raw presence.status as found on disk (informational)
 	Conversation string
 	AgentDir     string
-	Source       string // launch source label, e.g. "launch.json" or "amq history"
-	TeamProfile  string // launch team profile; empty means the default profile
+	Source       string              // launch source label, e.g. "launch.json" or "amq history"
+	TeamProfile  string              // launch team profile; empty means the default profile
+	GoalBinding  *launch.GoalBinding `json:"-"`
 	Tmux         *TmuxRuntime
 }
 

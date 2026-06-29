@@ -181,6 +181,10 @@ func classifyAgent(e launch.Entry, probe Probe) Agent {
 		Source:       e.Source,
 		TeamProfile:  rec.TeamProfile,
 	}
+	if rec.GoalBinding != nil {
+		gb := *rec.GoalBinding
+		a.GoalBinding = &gb
+	}
 	if rec.Tmux != nil && (rec.Tmux.PaneID != "" || rec.Tmux.WindowID != "" || rec.Tmux.Session != "" || rec.Tmux.WindowName != "" || rec.Tmux.Target != "") {
 		a.Tmux = &TmuxRuntime{
 			Session:    rec.Tmux.Session,

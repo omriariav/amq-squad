@@ -785,6 +785,7 @@ func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, e
 		operatorCursor = operatorInboxHighWater(session.Coordination.Threads, operator.Handle)
 	}
 	gatesOpen := operatorOpenGates(items)
+	blockedGoals := blockedNativeGoalsInSnapshot(t, o.Profile, workstream, snap)
 	data.Attention = items
 	data.operatorCursor = operatorCursor
 	data.OperatorLoop = operatorLoopStatus{
@@ -799,6 +800,7 @@ func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, e
 	if data.Operator.Poll != nil {
 		data.Operator.Poll.Unread = backlog
 		data.Operator.Poll.OpenGates = gatesOpen
+		data.Operator.Poll.OpenBlockers = blockedGoals
 	}
 	lease, err := readOperatorLoopLease(operatorLoopLeasePath(t.Project, data.Profile, workstream))
 	if err != nil {

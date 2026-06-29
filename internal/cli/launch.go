@@ -213,14 +213,14 @@ Examples:
 	}
 
 	teamProfileValue := strings.TrimSpace(*teamProfile)
+	rootForLaunch := launchRootFromFlags(cwd, *rootFlag, *session, teamProfileValue)
 
 	// Resolve the AMQ env via the amq CLI so launch.json and the actual
-	// mailbox agree. resolveAMQEnv respects .amqrc and AMQ's validated
-	// sender identity exactly as coop exec will. If both --session and
-	// --root were passed, the boundary policy in amq_env.go drops --root
-	// (and warns), since amq treats --session NAME as shorthand for
-	// --root .agent-mail/<name> and rejects the pair.
-	env, err := resolveAMQEnvForLaunch(cwd, *rootFlag, *session, teamProfileValue, handle)
+	// mailbox agree. Named profiles use their isolated profile root even when
+	// the launcher only supplied --team-profile and --session; otherwise AMQ's
+	// --session shorthand recreates the legacy/default .agent-mail/<session>
+	// root before the agent can bootstrap.
+	env, err := resolveAMQEnvForLaunch(cwd, rootForLaunch, *session, teamProfileValue, handle)
 	if err != nil {
 		return fmt.Errorf("resolve amq env: %w", err)
 	}
@@ -305,12 +305,12 @@ Examples:
 	// fires once at env resolution time, so this branch stays silent to
 	// avoid duplicating the message.
 	coopArgs := []string{"coop", "exec"}
-	if launchUsesExplicitRoot(*rootFlag, *session, teamProfileValue) {
-		coopArgs = append(coopArgs, "--root", *rootFlag)
+	if launchUsesExplicitRoot(rootForLaunch, *session, teamProfileValue) {
+		coopArgs = append(coopArgs, "--root", rootForLaunch)
 	} else if *session != "" {
 		coopArgs = append(coopArgs, "--session", *session)
-	} else if *rootFlag != "" {
-		coopArgs = append(coopArgs, "--root", *rootFlag)
+	} else if rootForLaunch != "" {
+		coopArgs = append(coopArgs, "--root", rootForLaunch)
 	}
 	if *me != "" {
 		coopArgs = append(coopArgs, "--me", *me)
@@ -497,6 +497,17 @@ func launchUsesExplicitRoot(rootFlag, session, profile string) bool {
 	return strings.TrimSpace(rootFlag) != "" &&
 		strings.TrimSpace(session) != "" &&
 		squadnamespace.NormalizeProfile(profile) != team.DefaultProfile
+}
+
+func launchRootFromFlags(cwd, rootFlag, session, profile string) string {
+	rootFlag = strings.TrimSpace(rootFlag)
+	if rootFlag != "" {
+		return rootFlag
+	}
+	if strings.TrimSpace(session) == "" || squadnamespace.NormalizeProfile(profile) == team.DefaultProfile {
+		return ""
+	}
+	return squadnamespace.AMQRoot(cwd, profile, session)
 }
 
 func nativeGoalBindingFromArgs(args []string) *launch.GoalBinding {

@@ -1,7 +1,9 @@
 ---
-name: "amq-squad"
-description: "Project-aware skill for amq-squad setup, custom role authoring, and live team coordination. Use it to capture a goal, draft the brief, choose roles/profiles, sync pointer stubs, bring teams up, drain inboxes, route handoffs, request reviews, inspect status/console/history, manage lifecycle, and operate tmux runtime controls. For lead-agent bootstrap and child-agent orchestration, use amq-squad-orchestrator."
+name: amq-squad
+description: Project-aware skill for amq-squad setup, custom role authoring, and live team coordination. Use it to capture a goal, draft the brief, choose roles/profiles, sync pointer stubs, bring teams up, drain inboxes, route handoffs, request reviews, inspect status/console/history, manage lifecycle, and operate tmux runtime controls. For lead-agent bootstrap and child-agent orchestration, use amq-squad-orchestrator.
 ---
+
+
 # amq-squad
 
 Use this skill to operate amq-squad end to end. Before a team exists, use the Setup and Role Authoring sections to capture the goal, pick roles, write the brief, and sync pointer stubs. Once a team is configured (`.amq-squad/team.json` exists), use the live coordination sections to drain inboxes, route handoffs, request reviews, bring members up and down, plan fresh forks, and check live state with `status`/`doctor`.
