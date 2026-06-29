@@ -1,21 +1,20 @@
 ---
-name: amq-squad
-description: Project-aware skill for live amq-squad team coordination after `.amq-squad/team.json` exists. Covers inbox drains, routing, review/handoff, status board/console/history, up/stop/resume/fork/rm/archive, agent up/resume, doctor, workstream briefs, ACTIVE-EPIC startup, and tmux runtime control — focus/open/send to exact panes, deterministic prompt delivery, --target new-window window-per-agent, and tmux runtime metadata (pane ids, pane_alive, action commands) in status/history/resume --json for clients like amq-noc. For first-time team design (personas, profile choice, team rules, pointer stubs, brief authoring, sync), prefer the companion `amq-team-setup` skill. Use raw `amq-cli` only for AMQ debugging outside the squad.
-allowed-tools: Bash, Read, Write, Edit, MultiEdit, Glob, Grep
+name: "amq-squad"
+description: "Project-aware skill for amq-squad setup, custom role authoring, and live team coordination. Use it to capture a goal, draft the brief, choose roles/profiles, sync pointer stubs, bring teams up, drain inboxes, route handoffs, request reviews, inspect status/console/history, manage lifecycle, and operate tmux runtime controls. For lead-agent bootstrap and child-agent orchestration, use amq-squad-orchestrator."
+allowed-tools: "Bash, Read, Write, Edit, MultiEdit, Glob, Grep"
 argument-hint: "[drain | review | handoff | status | console | up | focus | send | resume | fork | rm | doctor]"
 user-invocable: true
-trigger: /amq-squad
+trigger: "/amq-squad"
 ---
-
 # amq-squad
 
-Use this skill once a team is configured (`.amq-squad/team.json` exists) to run live coordination: drain inboxes, route handoffs, request reviews, bring members up and down, plan fresh forks, and check live state with `status`/`doctor`. For first-time setup work - choosing personas, writing team rules, syncing pointer stubs, authoring the workstream brief - switch to the companion `amq-team-setup` skill.
+Use this skill to operate amq-squad end to end. Before a team exists, use the Setup and Role Authoring sections to capture the goal, pick roles, write the brief, and sync pointer stubs. Once a team is configured (`.amq-squad/team.json` exists), use the live coordination sections to drain inboxes, route handoffs, request reviews, bring members up and down, plan fresh forks, and check live state with `status`/`doctor`.
 
 Launch priming is automatic. `up` / `agent up` inject the bootstrap prompt; agents do not paste it by hand.
 
 This skill is named `amq-squad`; the binary is also named `amq-squad`.
 
-**Skill version: 2.12.0** — on your FIRST response of a session, print the line `amq-squad skill v2.12.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
+**Skill version: 2.13.0** — on your FIRST response of a session, print the line `amq-squad skill v2.13.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
 
 ## Context model
 
@@ -295,4 +294,495 @@ amq-squad team sync               # pointer-stub drift preview (exit 1 if drift)
 amq-squad team sync --apply       # write pointer stub into CLAUDE.md/AGENTS.md
 ```
 
-For first-time setup (no team yet, or designing one from scratch) use the companion `amq-team-setup` skill.
+For first-time setup (no team yet, or designing one from scratch), continue with the Setup section below.
+
+## Setup
+
+Use this section before the team runs, to design and lock in the team's
+shape: **what the work is** (the goal/brief), who is on the team, where they
+work, what norms they share, and whether one agent leads the others. It is a
+guided wizard: walk the steps in order and **ask the user, then act** at each
+gate. Setup ends when `amq-squad up --dry-run` looks right and
+`amq-squad team sync` reports no drift. After that, continue with the live coordination sections above.
+
+This section does not replace live coordination. It targets the one-time decisions that
+survive across workstreams, plus the per-session goal/brief that kicks off each
+workstream.
+
+### Context model
+
+Setup creates and aligns four durable things; ongoing coordination consumes them.
+
+- **Protocol** — the `amq-squad-orchestrator` skill (only when the squad is
+  orchestrated): the lead-agent playbook over the runtime primitives.
+- **Goal** — the selected namespace's brief: `.amq-squad/briefs/<session>.md`
+  for the default profile, or `.amq-squad/briefs/<profile>/<session>.md` for a
+  named profile. Every member of that workstream namespace reads the same file.
+- **Norms** — `.amq-squad/team-rules.md`: durable team norms, the single source
+  of truth. **Generated** by amq-squad; never hand-duplicated into other files.
+- **Persona** — `<agent-dir>/role.md`: per-agent system prompt. Seeded on first
+  `up`; the user can edit freely; later launches preserve user edits.
+
+`CLAUDE.md` / `AGENTS.md` carry only a small managed pointer block:
+
+```
+<!-- amq-squad:managed:begin -->
+... pointers to team-rules.md, role.md, and the active brief path ...
+<!-- amq-squad:managed:end -->
+```
+
+`amq-squad team sync --apply` writes and refreshes that block. Hand-editing
+inside the markers is unsupported.
+
+### The wizard
+
+Run these five steps in order. At each gate, **ask the user the question, wait
+for the answer, then act** — do not assume. Setup stays read-only until step 5
+(no live launch).
+
+#### Step 1 — Capture the goal (any source)
+
+Ask the user where the goal lives, then **fetch it with whatever tool you
+have** and detect the source type. amq-squad core is tracker-neutral: all
+fetching happens here in the skill, never as an amq-squad dependency.
+
+| Source the user gives | How to fetch (agent-side) |
+| --- | --- |
+| A one-line prompt / inline text | use it directly as the Goal seed |
+| A local file or path (`./design.md`, a path) | read the file |
+| A GitHub issue (`#96`, a URL, `owner/repo#96`) | `gh issue view <n> --json title,body` (shell) |
+| A GitHub PR (`#96`, a PR URL) | `gh pr view <n> --json title,body` (shell) |
+| A Jira key (`PROJ-123`) | an Atlassian MCP `getJiraIssue` tool if available, else a `jira issue view PROJ-123` CLI, else ask the user to paste |
+| A URL (Confluence / doc / spec) | an Atlassian MCP `getConfluencePage` tool for Confluence, else a fetch tool, else ask the user to paste |
+
+If no integration is available for the source, say so plainly and ask the user
+to paste the content rather than inventing it. Capture the source link/id — it
+becomes the brief's `## Source` line.
+
+#### Step 2 — Draft and confirm the brief
+
+Normalize whatever you fetched into the **canonical brief shape** from
+`references/briefs-template.md`:
+
+```md
+# <session> brief
+### Goal          # the outcome, 1-2 sentences
+### Source        # JIRA PROJ-123 / gh#96 / URL / file: / "operator prompt"
+### Scope
+### Out of scope
+### Acceptance     # how we know it's done; who signs off
+```
+
+A raw ticket description is **not** a brief — distill it. DRAFT the brief, then
+SHOW it to the user and let them edit before accepting. Do not auto-accept a
+raw ticket. Pick the workstream/session name now (lowercase `a-z`, `0-9`, `-`,
+`_`; e.g. `issue-96`, `v1-7-0`); the brief is saved under the selected
+profile/session namespace in step 5.
+
+You can also preview a candidate from a deterministic source with
+`amq-squad up --dry-run --seed-from issue:<n>` / `file:./brief.md` /
+`gh:owner/repo#<n>` (read-only) and paste it into the draft.
+
+#### Step 3 — Roles and profile
+
+- Use `references/team-archetypes.md` as a starting menu (solo, pair, classic
+  squad, design-led, qa-led).
+- For each role decide binary (`codex` / `claude`), handle, cwd, and scope.
+  Keep the roster minimal; you can add roles later by re-running `team init`.
+- Custom (non-catalog) roles enter via `--role-file <path>` (comma-separated,
+  or an inline path in `--roles`); author them with the Role Authoring section
+  below. Two beats that matter in practice:
+  - **Show, then create**: before creating the team, show the user every
+    custom role's full body and let them edit — skill lists and hard rules
+    get most of their fixes at this gate.
+  - **Staging normalizes the file**: `new team --role-file` stages a copy
+    under `.amq-squad/roles/<id>.md` with the YAML frontmatter absorbed into
+    `team.json` and only the Markdown body kept. Expected behavior, not
+    corruption; the authored source file is untouched.
+- `--binary` takes ONE comma-separated list
+  (`--binary copilot=claude,analyst=claude,...`). Repeating the flag does NOT
+  accumulate — only one list survives, and the resulting error ("custom role X
+  requires --binary x=<cli>") reads like a contradiction when you did pass it.
+  A role file's `binary:` frontmatter satisfies the requirement for that role,
+  so an all-role-file team usually needs no `--binary` at all.
+- Choose the profile: default at `.amq-squad/team.json`, or a named profile at
+  `.amq-squad/teams/<name>.json` for parallel team shapes (release vs research).
+- **Per-member native args** (v1.8.0+): a member entry in `team.json` may
+  carry `claude_args` / `codex_args` — extra native CLI args for that member
+  only, appended after the team-level `binary_args` so the member value wins.
+  The field must match the member's binary (`team sync` rejects a mismatch).
+  Flagship use: a same-cwd squad where only the lead needs the full
+  plugin/hook surface — give each worker
+  `"claude_args": ["--settings", ".amq-squad/overlays/<role>.claude.json"]`
+  pointing at a Claude Code settings overlay (`enabledPlugins`,
+  `disableAllHooks`, ...) that trims plugins and hooks the worker never uses,
+  cutting its per-prompt context cost. Do not hand-edit this: step 5 generates
+  and wires it with `amq-squad team overlay init` (v1.9.0+). Plan emission
+  validates that every referenced `--settings` file exists.
+- Pick the team-home (where `.amq-squad/` lives): the cwd by default; for a
+  monorepo, usually the repo root. Confirm if the choice is non-obvious.
+
+#### Step 4 — Orchestrated? (opt-in, default off)
+
+Ask: **"Run this as an orchestrated squad? If so, who leads?"**
+
+- **Default is no.** A flat squad coordinates peer-to-peer over AMQ and needs no
+  lead. Only opt in when one agent should spawn, dispatch, and monitor the
+  others and own the deliverable.
+- If **yes**, the user names exactly **one** lead role (a team member — commonly
+  `cto`). The lead is an agent; it is **never** the operator/NOC handle.
+- This is wired by a **structured flag**, not by hand-editing prose. In step 5
+  you pass `--orchestrated --lead <role>` so amq-squad records the lead in
+  `team.json` and the **generated** `team-rules.md` carries the orchestration
+  reporting norm (the lead loads the `amq-squad-orchestrator` skill; children
+  push `status`/`question`/`review_request` to the lead over AMQ). The norm is
+  written when `team-rules.md` is first seeded; if the file already exists,
+  `new team` leaves it untouched, so regenerate with `amq-squad team rules init
+  --force` to pick up the orchestration norm. Do **not** hand-edit
+  `team-rules.md` or `role.md` to describe orchestration — the flag owns it so
+  it cannot drift.
+
+#### Step 5 — Review and create
+
+Show the user a summary (team-home, roles + binaries, profile, workstream,
+orchestrated?/lead, brief) and confirm. Then create:
+
+1. **Team profile + rules** (one command writes both):
+
+   ```sh
+   amq-squad new team --roles cto,fullstack,qa --binary cto=codex \
+     --session <workstream>
+   # orchestrated variant:
+   amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto \
+     --session <workstream>
+   ```
+
+   Pass `--session <workstream>` explicitly — the session name you confirmed
+   earlier does not apply itself. A brand-new profile has no member-session
+   pin yet, so without the flag the workstream falls back to the sanitized
+   team-home directory name, and the brief you write next lands under a
+   session the team never boots into. (Once members carry a session pin,
+   later resolution infers it from them.)
+
+   `new team` writes `.amq-squad/team.json` and seeds the generated
+   `.amq-squad/team-rules.md` **if it does not already exist** (an existing
+   rules file is left untouched; use `amq-squad team rules init --force` to
+   regenerate it). Preview first with `--dry-run` (add `--json` for
+   the machine-readable `team_profile_plan`, which now carries
+   `orchestrated`/`lead`). `--orchestrated [--lead ROLE]` is the orchestration
+   opt-in from step 4; without `--lead`, a single-member team self-selects and a
+   team with a `cto` defaults to `cto`.
+
+2. **Worker overlays** (optional; ask whenever the team has two or more
+   claude members — same-cwd squads are the flagship case): "Should the
+   workers run with a trimmed plugin/hook surface?"
+   Only the lead usually needs the full project configuration; workers on
+   smaller-context models burn context on plugins and per-prompt hook output
+   they never use. If yes, generate and wire the overlays in one command:
+
+   ```sh
+   amq-squad team overlay init --workers --disable-all-hooks \
+     --disable-plugins <id@marketplace,...>
+   # or one member at a time:
+   amq-squad team overlay init --role <role> --disable-all-hooks
+   ```
+
+   This writes `.amq-squad/overlays/<role>.claude.json` (human-editable
+   afterwards; re-runs never clobber it) and wires the member's
+   `claude_args: ["--settings", <path>]` in `team.json`. `--workers` targets
+   every claude member (on an orchestrated team the lead is excluded; a flat
+   team has no lead to exclude). To find plugin ids for
+   `--disable-plugins`, ask the user or check `claude plugin list` output.
+   Codex members use the native equivalent instead: a
+   `$CODEX_HOME/<name>.config.toml` profile wired via
+   `codex_args: ["--profile", "<name>"]`.
+
+3. **The brief**: save the confirmed step-2 draft to the selected namespace's
+   brief path (a plain file write; the first live `up` preserves an existing
+   brief). This kills the auto-stub the status board warns about.
+
+4. **Pointer stubs**: `amq-squad team sync --apply` writes the managed block in
+   `CLAUDE.md` / `AGENTS.md` (add `--sync` to `new team` to do it in one shot).
+
+5. **Validate**: `amq-squad up --dry-run` (one launch command per member),
+   `amq-squad team sync` (no drift), `amq-squad doctor` (AMQ / tmux / wake /
+   markers).
+
+6. **Print the next commands** and hand off:
+
+   ```sh
+   amq-squad up <workstream> --visibility sibling-tabs  # default visible sibling windows
+   amq-squad up <workstream> --visibility detached      # explicit detached tmux session
+   amq-squad up <workstream> --visibility current       # split the current window
+   ```
+
+   First live launch belongs to the `amq-squad` skill (or, for an orchestrated
+   squad, the lead drives spawn/dispatch/monitor via `amq-squad-orchestrator`).
+   The default handoff must keep the team visible to the operator:
+   `--visibility sibling-tabs` opens one window per agent in the current visible
+   tmux session and refuses outside tmux before spawning hidden workers. Use
+   `--visibility detached` only when a separate tmux session is intentional and
+   attach/open it before considering the team handed off.
+
+   **Launch-name consistency (read before handing off):** the configured
+   workstream applies only when the launch command carries NO `--session`
+   override. Launching under a different free-typed name (e.g. in a NOC
+   new-session form) boots a brand-new workstream with an auto-stub brief —
+   the brief from this step is invisible to those agents. If the status board
+   shows `(stub brief)` right after launch, the session name diverged: stop
+   the squad, `rm` the accidental session, and relaunch with the configured
+   workstream name explicitly (`amq-squad up <workstream>`).
+
+### Verbs you will use
+
+| Goal | Command |
+| --- | --- |
+| Create the default team profile + rules | `amq-squad new team --roles cto,fullstack,qa` |
+| Create an orchestrated squad | `amq-squad new team --roles ... --orchestrated --lead cto` |
+| Create a named profile | `amq-squad new profile release --roles cto` |
+| Preview the profile without writing | `amq-squad new team --dry-run [--json] --roles ...` |
+| Initialize interactively (prompts for roles/CLIs) | `amq-squad team init` |
+| Seed/refresh `.amq-squad/team-rules.md` | `amq-squad team rules init` |
+| Trim worker plugin/hook surface | `amq-squad team overlay init --workers [--disable-plugins id@market,...] [--disable-all-hooks]` |
+| Preview pointer-stub drift | `amq-squad team sync` |
+| Apply the pointer stub | `amq-squad team sync --apply` |
+| Inspect the planned launch (dry-run) | `amq-squad up --dry-run [--json]` |
+| Preview a candidate brief from a source | `amq-squad up --dry-run --seed-from issue:<n>` (or `file:./brief.md` / `gh:owner/repo#<n>`) |
+| Diagnose environment / config / wake / markers | `amq-squad doctor` |
+
+Most profile-aware commands accept `--profile NAME` to scope to
+`.amq-squad/teams/<name>.json` (omit, or pass `--profile default`, for
+`.amq-squad/team.json`). Exception: `new profile NAME` sets the profile via the
+positional `NAME` and rejects an explicit `--profile`.
+
+Global output flags work before or after the subcommand: `--quiet`,
+`--verbose`, `--color auto|always|never`. `NO_COLOR` wins over `--color=always`.
+
+### Rules
+
+- One source of truth per layer. Team rules live only in
+  `.amq-squad/team-rules.md`. Pointer stubs link, never copy.
+- The brief is the goal layer and is **per profile/session namespace**. Draft
+  from the source, confirm with the user, then save to the selected namespace's
+  brief path. A raw ticket is not a brief.
+- amq-squad core is **tracker-neutral**: fetch Jira/Confluence/URLs with the
+  agent's own tools here in the skill; amq-squad takes no tracker dependency.
+- Orchestration is **opt-in, default off**. Exactly one lead; the lead is a team
+  member, never the operator/NOC. Wire it with `--orchestrated --lead`, never by
+  hand-editing `team-rules.md` / `role.md` prose.
+- Workstream = AMQ `--session`. Session names are strict: lowercase `a-z`,
+  digits, `-`, `_`. Use `v1-7-0`, not `v1.7.0`.
+- Default profile is `default` (`.amq-squad/team.json`); named profiles live
+  under `.amq-squad/teams/<name>.json` and are addressed with `--profile NAME`.
+- New profiles default to an enabled virtual operator handle `user`. Use
+  `--operator HANDLE` for a custom human-gate mailbox or `--no-operator` to opt
+  out. Schema 1/2 profiles keep implicit `user` gates until rewritten.
+- Setup never executes a live launch. Use `--dry-run` until the user explicitly
+  approves going live; live launches happen via the `amq-squad` skill's `up`
+  flow. (Writing the brief, the profile, and the overlays in step 5 are file
+  writes, not a launch.)
+- Codex trusted mode (`--trust trusted`) is the only path that prepends
+  `--dangerously-bypass-approvals-and-sandbox`. The default `sandboxed` mode
+  emits no implicit bypass; pick the mode deliberately if non-default.
+- Do not touch `README.md` or unrelated repo files during setup.
+  Stay inside `.amq-squad/`, `CLAUDE.md`, and `AGENTS.md`.
+
+### References
+
+- `references/briefs-template.md` - the canonical per-session brief shape
+  (Goal / Source / Scope / Out of scope / Acceptance) the wizard normalizes to.
+- `references/team-archetypes.md` - common team shapes (solo / pair / classic
+  squad / design-led / qa-led).
+- `references/pointer-stub-template.md` - the exact managed block written by
+  `amq-squad team sync --apply` (for reference; do not hand-author).
+- `../amq-squad/references/team-rules-template.md` - a static mirror of the
+  team-rules content. The CLI generates `team-rules.md` from its own Go template
+  (`amq-squad team rules init`); this file mirrors that output for reference.
+
+### Exit codes
+
+- `0` success
+- `1` usage / user error (unknown flag, bad argument, missing required input)
+- `2` system / runtime error (IO, process, config, environment)
+- `3` partial success (some targets succeeded, some failed)
+
+### Related sections and skills
+
+- The live coordination sections above cover drains, routing, status
+  board/console/history, up/stop/resume/fork/rm/archive, agent up/resume, and
+  doctor. Use them as soon as `up --dry-run` is clean and the user is ready to
+  launch.
+- `amq-squad-orchestrator` - the lead-agent playbook for an orchestrated squad
+  (spawn / dispatch / monitor / the `[AGENT-EVENT]`-over-AMQ reporting protocol /
+  recover). The lead loads it; this section only wires the opt-in.
+- The Role Authoring section below covers custom non-catalog roles.
+
+## Role Authoring
+
+Use this section to add a **custom role** — one that is not in the built-in
+persona catalog (`cpo, cto, senior-dev, fullstack, frontend-dev, backend-dev,
+mobile-dev, junior-dev, qa, pm, designer, scribe`). Custom roles are first-class team
+members: they appear in `team.json`, `team-rules.md`, the bootstrap prompt,
+status/history, and launch/resume exactly like built-ins.
+
+Requires amq-squad **v2.0.0+**. Check with `amq-squad version`.
+
+There are two ways to add a custom role. Pick by how much role guidance you want.
+
+### A. Inline (quick, minimal role.md)
+
+For a role that only needs an id + CLI, with the generic custom-role fallback
+text seeded into its `role.md`:
+
+```sh
+amq-squad new team --roles researcher --binary researcher=codex
+amq-squad new team --roles researcher,reviewer --binary researcher=codex,reviewer=claude
+amq-squad new profile discovery --roles researcher --binary researcher=codex
+amq-squad team init --roles cto,researcher --binary researcher=codex
+```
+
+Rules:
+- A `--roles`/`--personas` entry that is not a built-in persona is a custom role.
+- Each custom role **must** be a valid slug (lowercase `a-z`, `0-9`, `-`, `_`)
+  and **must** have an explicit `--binary <role>=<cli>` entry (there is no
+  catalog default to fall back to). Built-in roles keep their catalog defaults
+  unless overridden.
+- Missing binary fails clearly:
+  `custom role "researcher" requires --binary researcher=<cli>`.
+
+### B. From a role file (rich, authored role.md)
+
+When you want a real persona description, peers, and skills, author a role file
+and pass it with `--role-file` (comma-separated) or inline in `--roles`:
+
+```sh
+amq-squad new team --role-file ./roles/researcher.md --roles cto
+amq-squad team init --roles "cto,./roles/researcher.md"
+amq-squad new profile discovery --role-file ./roles/researcher.md,./roles/sre.yaml
+```
+
+What happens:
+- The role id is taken from the file (`id:` field, a `# Role: <name>` heading,
+  or the filename).
+- The binary comes from the file's `binary:` field; `--binary` overrides it.
+  If neither is present the command fails with the same binary guidance as above.
+- The authored document is staged at `.amq-squad/roles/<id>.md`. At launch,
+  `up` / `agent up` seeds that agent's `role.md` from it verbatim (and never
+  overwrites later user edits).
+- A role file named via `--role-file` is added to the team even if it is not
+  also listed in `--roles`.
+
+#### File formats
+
+**Markdown with YAML frontmatter** (recommended — frontmatter for metadata,
+body becomes `role.md` verbatim):
+
+```markdown
+---
+id: researcher
+label: Research Engineer
+binary: codex
+peers: [cto, qa]
+skills:
+  - /deep-research
+---
+# Role: Research Engineer
+
+### Description
+Owns deep technical investigation, prototypes, and written findings. Turns
+open questions into evidence the team can act on.
+
+### Peers
+- cto
+- qa
+
+### Skills
+- /deep-research
+
+### System Prompt
+Stay within the research scope; hand implementation to developer roles. Use the
+amq-squad protocol for handoffs.
+
+### Priming Template
+At launch, state your role and handle, summarize relevant context, then wait
+for instruction.
+```
+
+**Plain Markdown, no frontmatter** (whole file is `role.md`; id from the
+`# Role:` heading or filename; supply the binary with `--binary`):
+
+```markdown
+# Role: Archivist
+
+### Description
+Captures decisions and keeps the team's written record.
+```
+
+```sh
+amq-squad new team --roles "cto,./roles/archivist.md" --binary archivist=claude
+```
+
+**Metadata-only YAML or JSON** (no body; `role.md` is rendered from the
+fields):
+
+```yaml
+id: sre
+label: Site Reliability Engineer
+binary: claude
+description: Owns reliability, on-call, and incident response.
+skills:
+  - /run
+peers:
+  - cto
+  - backend-dev
+```
+
+```json
+{ "id": "analyst", "label": "Analyst", "binary": "codex",
+  "description": "Owns reporting and data pulls.", "peers": ["pm"] }
+```
+
+#### Supported metadata fields
+
+| Field | Meaning |
+| --- | --- |
+| `id` (or `role`) | role slug + default handle (lowercase `a-z 0-9 - _`) |
+| `label` | human title shown in listings and `role.md` |
+| `binary` | `codex` or `claude` (any non-control value is accepted) |
+| `description` | one-line summary seeded into the rendered `role.md` |
+| `skills` | list of slash commands for this role |
+| `peers` | list of role ids this role talks to most |
+| `body` (JSON only) | optional verbatim `role.md` content |
+
+### Authoring workflow
+
+1. Decide the role id, CLI (`codex`/`claude`), and whether you need rich
+   guidance (file) or just an id (inline).
+2. For a file: write it under `./roles/<id>.md` (frontmatter + body is the
+   sweet spot). Keep the `# Role:`, `## Description`, `## Peers`, `## Skills`,
+   `## System Prompt`, `## Priming Template` sections so it matches what the
+   binary renders for built-ins.
+3. Preview before writing anything:
+   ```sh
+   amq-squad new team --role-file ./roles/<id>.md --roles cto --dry-run --json
+   ```
+   Confirm the member shows the right `role`, `handle`, and `binary`.
+4. Create the team for real (drop `--dry-run`), or add `--sync` to also write
+   the `CLAUDE.md`/`AGENTS.md` pointer stubs.
+5. Edit `.amq-squad/roles/<id>.md` later to refine the persona; re-running
+   `team init --force` re-stages it, and launch never clobbers an agent's
+   already-seeded `role.md`.
+
+### Verification
+
+- `amq-squad new team --role-file ... --dry-run --json` succeeds and the plan
+  lists the custom member with the expected binary.
+- After a live create, `.amq-squad/roles/<id>.md` exists and `team.json`
+  includes the member.
+- `amq-squad up --dry-run` shows a launch command for the custom role.
+
+### When NOT to use this section
+
+- Built-in personas or general team design → Setup section above.
+- Live coordination (drain, route, review, up/stop/resume) → live coordination sections above.
+- Raw AMQ debugging → `amq-cli`.

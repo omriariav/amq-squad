@@ -161,7 +161,7 @@ func runLead(args []string) error {
 
 Usage:
   amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
-                          [--no-wake] [--require-wake|--no-require-wake]
+                          [--wake|--no-wake] [--require-wake|--no-require-wake]
                           [--wake-inject-via PATH] [--wake-inject-arg ARG]
 
 register adopts the current tmux pane as the external lead for an existing team
@@ -189,6 +189,7 @@ func runLeadRegister(args []string) error {
 	sessionFlag := fs.String("session", "", "AMQ workstream session (default: team workstream)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to mutate (default: default profile)")
+	wake := fs.Bool("wake", false, "start or repair amq wake for the external lead (default)")
 	noWake := fs.Bool("no-wake", false, "write the external lead record without starting amq wake")
 	requireWake := fs.Bool("require-wake", false, "fail if the external lead wake sidecar cannot become ready (default)")
 	noRequireWake := fs.Bool("no-require-wake", false, "warn instead of failing if the external lead wake sidecar cannot become ready")
@@ -200,6 +201,9 @@ func runLeadRegister(args []string) error {
 	}
 	if fs.NArg() > 0 {
 		return usageErrorf("unexpected argument %q", fs.Arg(0))
+	}
+	if *wake && *noWake {
+		return usageErrorf("--wake and --no-wake are mutually exclusive")
 	}
 	if *requireWake && *noRequireWake {
 		return usageErrorf("--require-wake and --no-require-wake are mutually exclusive")

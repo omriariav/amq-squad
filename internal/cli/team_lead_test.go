@@ -255,6 +255,47 @@ func TestLeadRegisterNoWakeSkipsWakeStarter(t *testing.T) {
 	}
 }
 
+func TestLeadRegisterExplicitWakeStartsWakeStarter(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	prevPane := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "lead", PaneID: "%5"}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prevPane })
+	var got leadWakeOptions
+	prevWake := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		got = opts
+		return leadWakeResult{PID: 2222, Started: true, Detail: "ready"}, nil
+	}
+	t.Cleanup(func() { leadWakeStarter = prevWake })
+
+	out, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--wake"})
+	})
+	if err != nil {
+		t.Fatalf("lead register --wake: %v\n%s", err, out)
+	}
+	if got.Root != filepath.Join(base, "issue-96") || got.Handle != "cto" || !got.Require {
+		t.Fatalf("--wake opts = %+v", got)
+	}
+	if !strings.Contains(out, "wake: ready") {
+		t.Fatalf("output should report wake readiness:\n%s", out)
+	}
+}
+
+func TestLeadRegisterWakeAndNoWakeConflict(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--wake", "--no-wake"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--wake and --no-wake are mutually exclusive") {
+		t.Fatalf("lead register --wake --no-wake err = %v", err)
+	}
+}
+
 func TestLeadRegisterWakeFailureCanBeNonRequired(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	seedTeam(t, team.Team{

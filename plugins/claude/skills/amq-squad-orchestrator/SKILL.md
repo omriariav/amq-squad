@@ -1,17 +1,16 @@
 ---
-name: amq-squad-orchestrator
-description: Playbook for a LEAD agent to spawn, drive, and monitor CHILD agents over amq-squad's runtime primitives. Use this when you are the lead/CTO/driver running a squad as an orchestrator - spin up children to parallelize work, dispatch tasks to them over durable AMQ, monitor to completion, and own the deliverable. Covers spawn topology (up --target new-window/new-session, agent up), deterministic dispatch (amq-squad dispatch = durable AMQ plus a drain-only pane nudge in one root-correct command; amq-squad send/--force is the manual nudge/interrupt), liveness monitoring (status --json), the AMQ reporting protocol (children push messages to the lead), recovery (resume), and a worked example. Goal-first composition (v2.0+) - read a goal and compose the team to fit it (team member add/rm), with per-spawn operator approval on gate/<topic> and pull-based tasks (task add). For routine member coordination (drains, routing, review/handoff) use the companion amq-squad skill; for first-time team design use amq-team-setup.
-allowed-tools: Bash, Read, Write, Edit, Glob, Grep
+name: "amq-squad-orchestrator"
+description: "Playbook for a LEAD agent to spawn, drive, and monitor CHILD agents over amq-squad's runtime primitives. Use this when you are the lead/CTO/driver running a squad as an orchestrator - spin up children to parallelize work, dispatch tasks to them over durable AMQ, monitor to completion, and own the deliverable. Covers spawn topology (up --target new-window/new-session, agent up), deterministic dispatch (amq-squad dispatch = durable AMQ plus a drain-only pane nudge in one root-correct command; amq-squad send/--force is the manual nudge/interrupt), liveness monitoring (status --json), the AMQ reporting protocol (children push messages to the lead), recovery (resume), and a worked example. Goal-first composition (v2.0+) - read a goal and compose the team to fit it (team member add/rm), with per-spawn operator approval on gate/<topic> and pull-based tasks (task add). Operators use amq-squad for setup, role authoring, and routine coordination; lead agents use this skill at bootstrap."
+allowed-tools: "Bash, Read, Write, Edit, Glob, Grep"
 argument-hint: "[compose | spawn | dispatch | monitor | coordinate | recover | example]"
 user-invocable: true
-trigger: /amq-squad-orchestrator
+trigger: "/amq-squad-orchestrator"
 ---
-
 # amq-squad-orchestrator
 
 Use this skill when you are the **lead** agent driving a squad: you spawn child agents to parallelize work, dispatch tasks to them over durable AMQ, monitor them to completion, handle their reports, and stand behind the deliverable to the human. The children work in their own panes/windows and **push** structured reports back to you.
 
-This is the amq-squad-native equivalent of a hand-rolled tmux spawn protocol. The runtime primitives already exist; this skill is the **protocol and discipline** on top of them. For routine member coordination after a team is up (drains, routing, review/handoff, status/console) use the companion `amq-squad` skill; for first-time team design use `amq-team-setup`.
+This is the amq-squad-native equivalent of a hand-rolled tmux spawn protocol. The runtime primitives already exist; this skill is the **protocol and discipline** on top of them. For setup, role authoring, and routine member coordination after a team is up (drains, routing, review/handoff, status/console), use `amq-squad`.
 
 Requires amq-squad **v2.0.0+** (`amq-squad version`): it drives the 2.0 dynamic-team primitives (`team member`, `task`, managed `resume`).
 
@@ -140,10 +139,14 @@ also polling-only: reports, blockers, and approval gates are durable AMQ records
 and the orchestrator or NOC must drain/poll them instead of waiting for wake.
 Use `goal_binding` in `goal draft --json` and `status --json` to distinguish a
 generated native `/goal` plan (`native_goal_pending`), verified launch-record
-native binding (`native_goal`), and the explicit AMQ task + active brief +
-task-store fallback (`amq_task_brief`). Recovery sends a durable AMQ directive
-first; managed-pane `/goal` injection is only a follow-up when the pane is idle,
-and force-interrupt requires an operator gate.
+native binding (`native_goal`), blocked native goal state
+(`native_goal_blocked`), and the explicit AMQ task + active brief + task-store
+fallback (`amq_task_brief`). When `status --json.goal_binding.mode` is
+`native_goal_blocked` or `operator.poll.open_blockers` is non-zero, surface the
+blocked goal to the operator/NOC, inspect the lead state, and resume through the
+native `/goal resume` path only after the blocker is understood. Recovery sends
+a durable AMQ directive first; managed-pane `/goal` injection is only a
+follow-up when the pane is idle, and force-interrupt requires an operator gate.
 
 The fast path is a **draft**, not an apply loop. If the `amq-squad goal draft`
 CLI is available, call it first and show the resulting Markdown or JSON to the
@@ -158,7 +161,8 @@ amq-squad goal draft \
   --profile codex-v2-7-0 \
   --lead cto \
   --visibility sibling-tabs \
-  --codex-only
+  --codex-only \
+  --skill-invocation
 
 # Optional autonomous preview: still read-only, still requires later approval.
 amq-squad goal draft \
@@ -171,6 +175,9 @@ amq-squad goal draft \
   --allowed-roles goal-dev,runtime-dev,cli-dev \
   --budget-turns 20
 ```
+
+Use `--skill-invocation` when the operator wants a ready-to-paste
+`/amq-squad-orchestrator` block instead of the full Markdown draft.
 
 Operator-facing shorthand:
 
@@ -218,7 +225,7 @@ spawning, merges, releases, destructive actions, or external communications.
 brief, then pick the smallest team that covers the goal, drawing roles from the
 library: built-ins (`amq-squad roles`) plus any
 staged custom roles under `.amq-squad/roles/` (author new ones with the
-`amq-squad-role-creator` skill). Bias to **fewer** agents; add more only when
+Role Authoring section in the `amq-squad` skill). Bias to **fewer** agents; add more only when
 the work is actually serializing.
 
 **Brief `## Decisions` convention (append-only).** A brief may contain a `## Decisions` section — an ordered log of dated, append-only entries recording choices the team has resolved. Never edit or delete prior entries. To record a new decision use the helper:
@@ -237,7 +244,7 @@ This atomically appends a `### YYYY-MM-DD [— title]\nbody` block, creating the
   not catalog membership), so `team member add data-wrangler --binary codex` is
   legal. An ad-hoc role with no staged persona gets a **generic** one — fine for
   a one-off; when the role recurs or needs sharp scope, author a real persona
-  with the `amq-squad-role-creator` skill and reuse it.
+  with the `amq-squad` Role Authoring section and reuse it.
 - **Horsepower: match binary + model + effort to difficulty.** `--model` selects
   the model for EITHER binary. Codex reasoning **effort** is a *separate* dial
   from the model — pass it via `--codex-args "-c model_reasoning_effort=<level>"`.
@@ -690,6 +697,6 @@ These are the traps that actually bit real runs — scan them before you spawn.
 ## When NOT to use this skill
 
 - Routine member coordination once a team is up (drains, routing, review/handoff, status board/console, up/stop/resume/fork) -> `amq-squad`.
-- First-time team design (personas, profile, team rules, brief) -> `amq-team-setup`.
-- Authoring a custom (non-catalog) role -> `amq-squad-role-creator`.
+- First-time team design (personas, profile, team rules, brief) -> `amq-squad` Setup section.
+- Authoring a custom (non-catalog) role -> `amq-squad` Role Authoring section.
 - Raw AMQ debugging outside a squad -> `amq-cli`.
