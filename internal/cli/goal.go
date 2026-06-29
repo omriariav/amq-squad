@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,6 +62,7 @@ type goalDraftData struct {
 	Dispatches         []goalDispatchPlan     `json:"dispatches"`
 	ApplyableMutations []goalCommandPlan      `json:"applyable_mutations"`
 	OrchestratorPrompt string                 `json:"orchestrator_prompt"`
+	SkillInvocation    string                 `json:"skill_invocation,omitempty"`
 	Notes              []string               `json:"notes"`
 }
 
@@ -169,6 +171,11 @@ type goalDeliveryOptions struct {
 	Mode      string
 }
 
+const (
+	goalOrchestratorRole          = "orchestrator"
+	defaultGoalOrchestratorHandle = "orchestrator"
+)
+
 func runGoal(args []string) error {
 	return runGoalWithVersion(args, "dev")
 }
@@ -193,6 +200,24 @@ func runGoalWithVersion(args []string, version string) error {
 	default:
 		return usageErrorf("unknown 'goal' subcommand %q. Run 'amq-squad goal --help' for available subcommands.", args[0])
 	}
+}
+
+func normalizeOptionalStringFlag(args []string, name, defaultValue string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == name {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				out = append(out, name+"="+args[i+1])
+				i++
+			} else {
+				out = append(out, name+"="+defaultValue)
+			}
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 func printGoalUsage() {
@@ -293,12 +318,14 @@ command is confirm-gated; pass --yes after reviewing the gate and lead state.
 }
 
 func runGoalStart(args []string) error {
+	args = normalizeOptionalStringFlag(args, "--register-orchestrator", defaultGoalOrchestratorHandle)
 	fs := flag.NewFlagSet("goal start", flag.ContinueOnError)
 	goalFlag := fs.String("goal", "", "goal text to deliver as a native /goal control command")
 	sessionFlag := fs.String("session", "", "workstream session of the visible lead")
 	roleFlag := fs.String("role", "", "role to receive the native /goal command (default: configured lead)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	registerOrchestrator := fs.String("register-orchestrator", "", "before delivery, register the current pane as external orchestrator handle (default: orchestrator)")
 	dryRun := fs.Bool("dry-run", false, "preview the inferred start plan without delivering")
 	yes := fs.Bool("yes", false, "confirm delivery without an interactive prompt")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned goal_start envelope")
@@ -306,7 +333,7 @@ func runGoalStart(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad goal start - preview or deliver a goal to the visible lead
 
 Usage:
-  amq-squad goal start [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--dry-run] [--yes] [--json]
+  amq-squad goal start [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE]] [--dry-run] [--yes] [--json]
 
 Infers the current team profile, session, execution mode, and visible lead target
 from the project. Use --dry-run to inspect the plan. Non-dry-run delivery is
@@ -323,6 +350,13 @@ confirm-gated and requires --yes in this first implementation slice.
 	if goal == "" {
 		return usageErrorf("goal start requires --goal TEXT")
 	}
+	if flagWasSet(fs, "register-orchestrator") && !*dryRun {
+		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal start")
+		if err != nil {
+			return err
+		}
+		*roleFlag = role
+	}
 	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal start")
 	if err != nil {
 		return err
@@ -337,6 +371,11 @@ confirm-gated and requires --yes in this first implementation slice.
 	}
 	if !*yes {
 		return usageErrorf("goal start delivery requires --yes (or run --dry-run to preview first)")
+	}
+	if flagWasSet(fs, "register-orchestrator") {
+		if err := registerGoalOrchestrator(opts, *registerOrchestrator); err != nil {
+			return err
+		}
 	}
 	result, err := executeGoalDelivery(opts)
 	if err != nil {
@@ -363,18 +402,20 @@ confirm-gated and requires --yes in this first implementation slice.
 }
 
 func runGoalDeliver(args []string) error {
+	args = normalizeOptionalStringFlag(args, "--register-orchestrator", defaultGoalOrchestratorHandle)
 	fs := flag.NewFlagSet("goal deliver", flag.ContinueOnError)
 	goalFlag := fs.String("goal", "", "goal text to deliver as a native /goal control command")
 	sessionFlag := fs.String("session", "", "workstream session of the visible lead")
 	roleFlag := fs.String("role", "", "role to receive the native /goal command (default: configured lead)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	registerOrchestrator := fs.String("register-orchestrator", "", "before delivery, register the current pane as external orchestrator handle (default: orchestrator)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad goal deliver - deliver native /goal as a control action
 
 Usage:
-  amq-squad goal deliver [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--json]
+  amq-squad goal deliver [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE]] [--json]
 
 Delivers a native Codex /goal command to the visible lead as a first-class
 control action. This is not an ordinary prompt send: it preserves the busy guard
@@ -389,9 +430,21 @@ runtime accepts goal control messages safely.
 	if goal == "" {
 		return usageErrorf("goal deliver requires --goal TEXT")
 	}
+	if flagWasSet(fs, "register-orchestrator") {
+		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal deliver")
+		if err != nil {
+			return err
+		}
+		*roleFlag = role
+	}
 	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal deliver")
 	if err != nil {
 		return err
+	}
+	if flagWasSet(fs, "register-orchestrator") {
+		if err := registerGoalOrchestrator(opts, *registerOrchestrator); err != nil {
+			return err
+		}
 	}
 	result, err := executeGoalDelivery(opts)
 	if err != nil {
@@ -595,6 +648,160 @@ func goalDeliverCommand(opts goalDeliveryOptions, jsonOut bool) string {
 	return strings.Join(parts, " ")
 }
 
+func registerGoalOrchestrator(opts goalDeliveryOptions, handle string) error {
+	handle = strings.TrimSpace(handle)
+	if handle == "" {
+		handle = defaultGoalOrchestratorHandle
+	}
+	if _, err := currentPaneIdentity(); err != nil {
+		return err
+	}
+	if err := ensureGoalOrchestratorMember(opts.Project, opts.Profile, opts.Session, handle); err != nil {
+		return err
+	}
+	t, err := team.ReadProfile(opts.Project, opts.Profile)
+	if err != nil {
+		return fmt.Errorf("read team after orchestrator registration: %w", err)
+	}
+	member, ok := memberByRole(t, goalOrchestratorRole)
+	if !ok {
+		return fmt.Errorf("registered orchestrator member missing from team profile")
+	}
+	id, err := currentPaneIdentity()
+	if err != nil {
+		return err
+	}
+	if id == nil {
+		return fmt.Errorf("goal delivery --register-orchestrator requires a current tmux pane (TMUX/TMUX_PANE unset)")
+	}
+	cwd := member.EffectiveCWD(t.Project)
+	env, err := resolveAMQEnvForTeamProfile(cwd, opts.Profile, opts.Session, handle)
+	if err != nil {
+		return fmt.Errorf("resolve orchestrator amq env: %w", err)
+	}
+	if env.Me != "" {
+		handle = env.Me
+	}
+	root := absoluteAMQRoot(cwd, env.Root)
+	agentDir := filepath.Join(root, "agents", handle)
+	wakeResult, err := leadWakeStarter(leadWakeOptions{
+		ProjectDir: cwd,
+		Root:       root,
+		Handle:     handle,
+		Require:    true,
+	})
+	if err != nil {
+		return fmt.Errorf("start external orchestrator wake: %w", err)
+	}
+	wakePID := wakeResult.PID
+	if lock, lockErr := readWakeLock(agentDir); lockErr == nil && lock.PID > 0 {
+		wakePID = lock.PID
+	}
+	rec := launch.Record{
+		CWD:              cwd,
+		Binary:           member.Binary,
+		Session:          env.SessionName,
+		SharedWorkstream: true,
+		Handle:           handle,
+		Role:             goalOrchestratorRole,
+		Root:             root,
+		BaseRoot:         absoluteAMQRoot(cwd, env.BaseRoot),
+		RootSource:       env.RootSource,
+		AMQVersion:       env.AMQVersion,
+		Model:            strings.TrimSpace(member.Model),
+		Trust:            strings.TrimSpace(t.Trust),
+		External:         true,
+		WakePID:          wakePID,
+		AgentTTY:         currentLaunchTTY(),
+		StartedAt:        time.Now().UTC(),
+		TeamProfile:      opts.Profile,
+		Tmux: &launch.TmuxInfo{
+			Session:    id.Session,
+			WindowID:   id.WindowID,
+			WindowName: id.WindowName,
+			PaneID:     id.PaneID,
+			Target:     "external",
+		},
+	}
+	if err := launch.Write(agentDir, rec); err != nil {
+		return fmt.Errorf("write external orchestrator launch record: %w", err)
+	}
+	if err := setTeamLeadForProfile(opts.Project, opts.Profile, goalOrchestratorRole); err != nil {
+		return err
+	}
+	return nil
+}
+
+func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, roleFlag, handle string, projectSet, sessionSet bool, command string) (string, error) {
+	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	if err != nil {
+		return "", err
+	}
+	if !team.ExistsProfile(projectDir, profile) {
+		return "", fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	}
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return "", fmt.Errorf("read team: %w", err)
+	}
+	workstream, err := resolveTeamWorkstreamName(t, sessionFlag, sessionSet)
+	if err != nil {
+		return "", err
+	}
+	if err := ensureNoNamespaceConflict(command, projectDir, profile, workstream); err != nil {
+		return "", err
+	}
+	if err := ensureGoalOrchestratorMember(projectDir, profile, workstream, strings.TrimSpace(handle)); err != nil {
+		return "", err
+	}
+	role := strings.TrimSpace(roleFlag)
+	if role == "" {
+		role = goalOrchestratorRole
+	}
+	return role, nil
+}
+
+func ensureGoalOrchestratorMember(project, profile, session, handle string) error {
+	handle = strings.TrimSpace(handle)
+	if handle == "" {
+		handle = defaultGoalOrchestratorHandle
+	}
+	return withProfileLock(project, profile, func() error {
+		t, err := team.ReadProfile(project, profile)
+		if err != nil {
+			return fmt.Errorf("read team: %w", err)
+		}
+		if existing, ok := memberByRole(t, goalOrchestratorRole); ok {
+			existingHandle := strings.TrimSpace(existing.Handle)
+			if existingHandle != "" && existingHandle != handle {
+				return fmt.Errorf("orchestrator member already uses handle %q; requested %q", existingHandle, handle)
+			}
+			for i := range t.Members {
+				if strings.EqualFold(t.Members[i].Role, goalOrchestratorRole) {
+					if strings.TrimSpace(t.Members[i].Handle) == "" {
+						t.Members[i].Handle = handle
+					}
+					if strings.TrimSpace(t.Members[i].Binary) == "" {
+						t.Members[i].Binary = "codex"
+					}
+					if strings.TrimSpace(t.Members[i].Session) == "" {
+						t.Members[i].Session = session
+					}
+					break
+				}
+			}
+		} else {
+			t.Members = append(t.Members, team.Member{
+				Role:    goalOrchestratorRole,
+				Binary:  "codex",
+				Handle:  handle,
+				Session: session,
+			})
+		}
+		return team.WriteProfile(project, profile, t)
+	})
+}
+
 func writeGoalStartPlan(out *os.File, data goalStartData) {
 	fmt.Fprintln(out, "# amq-squad goal start")
 	fmt.Fprintln(out, "# dry_run: true")
@@ -707,12 +914,13 @@ func runGoalDraftWithVersion(args []string, version string) error {
 	idleReapMinutesFlag := fs.Int("idle-reap-minutes", 0, "autonomous guardrail: idle minutes before prune is allowed")
 	visibilityFlag := fs.String("visibility", visibilitySiblingTabs, "launch topology: sibling-tabs (default), detached, current, or plan")
 	codexOnly := fs.Bool("codex-only", false, "propose Codex binaries for every role")
+	skillInvocation := fs.Bool("skill-invocation", false, "print a ready-to-paste /amq-squad-orchestrator invocation block")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned goal_draft envelope instead of Markdown")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad goal draft - produce a preview-only setup plan from a goal
 
 Usage:
-  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--json]
+  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--skill-invocation] [--json]
 
 The draft is read-only. It prints proposed briefs, roster entries, task-store
 items, spawn gates, dispatches, and the orchestrator prompt, but it does not
@@ -763,6 +971,10 @@ Examples:
 	}
 	if *jsonOut {
 		return printJSONEnvelope("goal_draft", data)
+	}
+	if *skillInvocation {
+		fmt.Fprint(os.Stdout, data.SkillInvocation)
+		return nil
 	}
 	writeGoalDraftMarkdown(os.Stdout, data)
 	return nil
@@ -886,7 +1098,65 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 	data.SpawnGates = defaultGoalSpawnGates(data)
 	data.Dispatches = defaultGoalDispatches(data)
 	data.ApplyableMutations = defaultGoalMutations(data)
+	data.SkillInvocation = renderGoalSkillInvocation(data)
 	return data, nil
+}
+
+func renderGoalSkillInvocation(data goalDraftData) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "/amq-squad-orchestrator --goal %s --session %s --profile %s --mode %s --lead %s",
+		quoteSkillInvocationArg(data.Goal),
+		quoteSkillInvocationArg(data.Session),
+		quoteSkillInvocationArg(data.Profile),
+		quoteSkillInvocationArg(data.Mode),
+		quoteSkillInvocationArg(data.Lead),
+	)
+	if data.Repo != "" {
+		fmt.Fprintf(&b, " --repo %s", quoteSkillInvocationArg(data.Repo))
+	}
+	if data.Milestone != "" {
+		fmt.Fprintf(&b, " --milestone %s", quoteSkillInvocationArg(data.Milestone))
+	}
+	if data.TargetContract != "" {
+		fmt.Fprintf(&b, " --target-contract %s", quoteSkillInvocationArg(data.TargetContract))
+	}
+	if data.Composition != "" {
+		fmt.Fprintf(&b, " --composition %s", quoteSkillInvocationArg(data.Composition))
+	}
+	if data.Visibility != "" {
+		fmt.Fprintf(&b, " --visibility %s", quoteSkillInvocationArg(data.Visibility))
+	}
+	if data.CodexOnly {
+		b.WriteString(" --codex-only")
+	}
+	b.WriteString("\n\n")
+	b.WriteString(data.OrchestratorPrompt)
+	if !strings.HasSuffix(data.OrchestratorPrompt, "\n") {
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func quoteSkillInvocationArg(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return `""`
+	}
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\', '"':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case '\n', '\r', '\t':
+			b.WriteByte(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 func goalBindingForDraft(ns squadnamespace.Ref, command string) goalBindingData {

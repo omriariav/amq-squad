@@ -278,18 +278,18 @@ model</a></li>
 id="toc-which-skill-do-i-reach-for">Which skill do I reach for?</a></li>
 <li><a href="#installing-and-invoking"
 id="toc-installing-and-invoking">Installing and invoking</a></li>
-<li><a href="#amq-team-setup--design-and-set-up-a-team"
-id="toc-amq-team-setup--design-and-set-up-a-team"><code>amq-team-setup</code>
-— design and set up a team</a></li>
+<li><a href="#setup-inside-amq-squad"
+id="toc-setup-inside-amq-squad">Setup Inside
+<code>amq-squad</code></a></li>
 <li><a href="#amq-squad--coordinate-a-live-team"
 id="toc-amq-squad--coordinate-a-live-team"><code>amq-squad</code> —
 coordinate a live team</a></li>
 <li><a href="#amq-squad-orchestrator--lead-a-squad"
 id="toc-amq-squad-orchestrator--lead-a-squad"><code>amq-squad-orchestrator</code>
 — lead a squad</a></li>
-<li><a href="#amq-squad-role-creator--author-a-custom-role"
-id="toc-amq-squad-role-creator--author-a-custom-role"><code>amq-squad-role-creator</code>
-— author a custom role</a></li>
+<li><a href="#role-authoring-inside-amq-squad"
+id="toc-role-authoring-inside-amq-squad">Role Authoring Inside
+<code>amq-squad</code></a></li>
 <li><a href="#end-to-end-walkthrough"
 id="toc-end-to-end-walkthrough">End-to-end walkthrough</a></li>
 <li><a href="#troubleshooting"
@@ -298,13 +298,13 @@ id="toc-troubleshooting">Troubleshooting</a></li>
 </ul>
 </nav>
 <h1 id="using-the-amq-squad-skills">Using the amq-squad skills</h1>
-<p>amq-squad ships <strong>four skills</strong> to two plugin
+<p>amq-squad ships <strong>two primary skills</strong> to two plugin
 marketplaces — one for <strong>Claude Code</strong> and one for
-<strong>Codex</strong>. The skills are the human-facing front door: you
-invoke one, and the agent drives the <code>amq-squad</code> binary for
-you (designing a team, bringing it up, coordinating it, or leading it).
-This guide is the deep reference for <strong>when to reach for each
-skill and how to drive it</strong>.</p>
+<strong>Codex</strong>. The primary skills are <code>amq-squad</code>
+for operator/member workflows and <code>amq-squad-orchestrator</code>
+for lead-agent bootstrap. The older <code>amq-team-setup</code> and
+<code>amq-squad-role-creator</code> entries remain as redirect stubs so
+existing invocations point back to <code>amq-squad</code>.</p>
 <p>For the binary's full verb/flag reference, see the main <a
 href="../README.md">README</a>. This document is about the skills.</p>
 <ul>
@@ -312,26 +312,20 @@ href="../README.md">README</a>. This document is about the skills.</p>
 <li><a href="#which-skill-do-i-reach-for">Which skill do I reach
 for?</a></li>
 <li><a href="#installing-and-invoking">Installing and invoking</a></li>
-<li><a
-href="#amq-team-setup--design-and-set-up-a-team"><code>amq-team-setup</code>
-— design and set up a team</a></li>
 <li><a href="#amq-squad--coordinate-a-live-team"><code>amq-squad</code>
 — coordinate a live team</a></li>
 <li><a
 href="#amq-squad-orchestrator--lead-a-squad"><code>amq-squad-orchestrator</code>
 — lead a squad</a></li>
-<li><a
-href="#amq-squad-role-creator--author-a-custom-role"><code>amq-squad-role-creator</code>
-— author a custom role</a></li>
+<li><a href="#setup-inside-amq-squad">Setup inside
+<code>amq-squad</code></a></li>
+<li><a href="#role-authoring-inside-amq-squad">Role authoring inside
+<code>amq-squad</code></a></li>
 <li><a href="#end-to-end-walkthrough">End-to-end walkthrough</a></li>
 <li><a href="#troubleshooting">Troubleshooting</a></li>
 </ul>
 <h2 id="the-mental-model">The mental model</h2>
-<p>The four skills map onto the lifecycle of a team: you <strong>set one
-up</strong> once, then <strong>coordinate</strong> it day to day,
-optionally with one agent <strong>leading</strong> the rest. A fourth
-skill exists only when you need a <strong>role the catalog doesn't
-ship</strong>.</p>
+<p>The two primary skills map onto the actor model:</p>
 <table>
 <thead>
 <tr>
@@ -342,17 +336,12 @@ ship</strong>.</p>
 </thead>
 <tbody>
 <tr>
-<td>Design / setup</td>
-<td><strong><code>amq-team-setup</code></strong></td>
-<td>once, before the team runs: capture the goal, draft the brief, pick
-roles, optionally wire orchestration, write <code>team.json</code> +
-<code>team-rules.md</code> + the brief + pointer stubs.</td>
-</tr>
-<tr>
-<td>Live coordination</td>
+<td>Setup, role authoring, live coordination</td>
 <td><strong><code>amq-squad</code></strong></td>
-<td>every day after the team exists: bring members up, drain inboxes,
-route handoffs, request reviews, check status, stop/resume/fork.</td>
+<td>operators and member agents use it to capture a goal, draft the
+brief, pick roles/profile, author custom roles, bring members up, drain
+inboxes, route handoffs, request reviews, check status,
+stop/resume/fork.</td>
 </tr>
 <tr>
 <td>Lead orchestration</td>
@@ -361,10 +350,11 @@ route handoffs, request reviews, check status, stop/resume/fork.</td>
 and monitors the others and owns the deliverable.</td>
 </tr>
 <tr>
-<td>Custom roles</td>
-<td><strong><code>amq-squad-role-creator</code></strong></td>
-<td>when you need a role the built-in catalog doesn't ship (researcher,
-sre, archivist, ...).</td>
+<td>Deprecated redirects</td>
+<td><code>amq-team-setup</code>,
+<code>amq-squad-role-creator</code></td>
+<td>kept for compatibility; both tell you to use <code>amq-squad</code>
+and its Setup / Role Authoring sections.</td>
 </tr>
 </tbody>
 </table>
@@ -395,15 +385,15 @@ duplicate the content.</p>
 <tbody>
 <tr>
 <td>Start from a ticket / prompt / doc and stand up a new team</td>
-<td><code>amq-team-setup</code></td>
+<td><code>amq-squad</code> Setup section</td>
 </tr>
 <tr>
 <td>Turn a Jira/GitHub/URL goal into a confirmed brief</td>
-<td><code>amq-team-setup</code> (step 1–2)</td>
+<td><code>amq-squad</code> Setup section</td>
 </tr>
 <tr>
 <td>Decide who leads an orchestrated squad</td>
-<td><code>amq-team-setup</code> (step 4) wires it;
+<td><code>amq-squad</code> Setup section wires it;
 <code>amq-squad-orchestrator</code> runs it</td>
 </tr>
 <tr>
@@ -424,7 +414,7 @@ duplicate the content.</p>
 </tr>
 <tr>
 <td>Add a role that isn't in the catalog</td>
-<td><code>amq-squad-role-creator</code></td>
+<td><code>amq-squad</code> Role Authoring section</td>
 </tr>
 <tr>
 <td>Debug raw AMQ outside a squad</td>
@@ -432,9 +422,9 @@ duplicate the content.</p>
 </tr>
 </tbody>
 </table>
-<p>Rule of thumb: <strong><code>amq-team-setup</code> before the team
-exists; <code>amq-squad</code> after.</strong> The orchestrator skill is
-only for the lead agent; everyone else uses <code>amq-squad</code>.</p>
+<p>Rule of thumb: <strong>operators use <code>amq-squad</code>; lead
+agents use <code>amq-squad-orchestrator</code> at bootstrap</strong>. Do
+not collapse the two further.</p>
 <h2 id="installing-and-invoking">Installing and invoking</h2>
 <p>Install the marketplace once; the skills are then discovered
 automatically.</p>
@@ -442,27 +432,25 @@ automatically.</p>
 <li><strong>Claude Code:</strong>
 <code>/plugin install amq-squad@amq-squad</code>, then invoke a skill as
 <code>/amq-squad:&lt;skill&gt;</code> — e.g.
-<code>/amq-squad:amq-team-setup</code>.</li>
+<code>/amq-squad:amq-squad</code>.</li>
 <li><strong>Codex:</strong> install the Codex marketplace, then invoke a
 skill as <code>$&lt;skill&gt;</code> — e.g.
-<code>$amq-team-setup</code>.</li>
+<code>$amq-squad</code>.</li>
 </ul>
-<p>All four skills are user-invocable and require the
+<p>The primary skills are user-invocable and require the
 <code>amq-squad</code> binary on <code>PATH</code>
 (<code>go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</code>).
 Their workflows are equivalent across the two marketplaces; the platform
 metadata differs (a Claude skill carries <code>trigger</code> /
 <code>allowed-tools</code> / <code>argument-hint</code>; the Codex skill
-omits them) and so does tool wording (a Claude skill says "use the Read
-tool", a Codex skill says "read the file").</p>
+omits them).</p>
 <hr />
-<h2
-id="amq-team-setup--design-and-set-up-a-team"><code>amq-team-setup</code>
-— design and set up a team</h2>
-<p><strong>Invoke:</strong> <code>/amq-squad:amq-team-setup</code>
-(Claude) · <code>$amq-team-setup</code> (Codex) <strong>Use
-when:</strong> no team exists yet, or you are starting a new piece of
-work and want a real goal/brief in place before launch.</p>
+<h2 id="setup-inside-amq-squad">Setup Inside <code>amq-squad</code></h2>
+<p><strong>Invoke:</strong> <code>/amq-squad:amq-squad</code> (Claude) ·
+<code>$amq-squad</code> (Codex), then use the <code>## Setup</code>
+section. <strong>Use when:</strong> no team exists yet, or you are
+starting a new piece of work and want a real goal/brief in place before
+launch.</p>
 <p>It is a <strong>wizard</strong>: it walks five steps and confirms
 with you at each gate. Setup stays read-only until the final create step
 (no live launch).</p>
@@ -555,7 +543,7 @@ flag, not pasted prose, so it can't drift. (An existing
 <code>team-rules.md</code> is left untouched; regenerate with
 <code>amq-squad team rules init --force</code>.) Default off; exactly
 one lead; the lead is a team member, never the operator.</p>
-<p>When the wizard is done, hand off to
+<p>When the wizard is done, continue in
 <strong><code>amq-squad</code></strong> for the first live launch.</p>
 <hr />
 <h2 id="amq-squad--coordinate-a-live-team"><code>amq-squad</code> —
@@ -798,17 +786,16 @@ Orchestrated teams carry the convention as a generated line in their
 <div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96      <span class="co"># re-orient a stalled/stopped session</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent resume fullstack         <span class="co"># revive one child from its saved record</span></span></code></pre></div>
 <hr />
-<h2
-id="amq-squad-role-creator--author-a-custom-role"><code>amq-squad-role-creator</code>
-— author a custom role</h2>
-<p><strong>Invoke:</strong>
-<code>/amq-squad:amq-squad-role-creator</code> (Claude) ·
-<code>$amq-squad-role-creator</code> (Codex) <strong>Use when:</strong>
-you need a role the built-in catalog doesn't ship
-(<code>researcher</code>, <code>sre</code>, <code>archivist</code>,
-<code>data-scientist</code>, ...). Custom roles are first-class — they
-appear in <code>team.json</code>, <code>team-rules.md</code>, the
-bootstrap prompt, and status/launch exactly like built-ins.</p>
+<h2 id="role-authoring-inside-amq-squad">Role Authoring Inside
+<code>amq-squad</code></h2>
+<p><strong>Invoke:</strong> <code>/amq-squad:amq-squad</code> (Claude) ·
+<code>$amq-squad</code> (Codex), then use the
+<code>## Role Authoring</code> section. <strong>Use when:</strong> you
+need a role the built-in catalog doesn't ship (<code>researcher</code>,
+<code>sre</code>, <code>archivist</code>, <code>data-scientist</code>,
+...). Custom roles are first-class — they appear in
+<code>team.json</code>, <code>team-rules.md</code>, the bootstrap
+prompt, and status/launch exactly like built-ins.</p>
 <p>Two ways, by how much role guidance you want:</p>
 <p><strong>A. Inline (quick, minimal <code>role.md</code>)</strong> —
 just an id + CLI:</p>
@@ -847,8 +834,8 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span></code></pre></div>
 <ol type="1">
 <li><p><strong>Set up the team</strong> — invoke
-<code>/amq-squad:amq-team-setup</code> and say <em>"the goal is GitHub
-issue #96."</em> The wizard runs <code>gh issue view 96</code>, drafts a
+<code>/amq-squad:amq-squad</code> and say <em>"the goal is GitHub issue
+#96."</em> The wizard runs <code>gh issue view 96</code>, drafts a
 canonical brief, shows it for your edit, asks for roles
 (<code>cto</code>, <code>fullstack</code>, <code>qa</code>), asks
 <em>"orchestrated? who leads?"</em> (yes, <code>cto</code>), and creates
@@ -888,8 +875,8 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#
 <tbody>
 <tr>
 <td>"no team configured"</td>
-<td>No <code>team.json</code> yet — use <code>amq-team-setup</code> (or
-<code>amq-squad new team</code>) first.</td>
+<td>No <code>team.json</code> yet — use the <code>amq-squad</code> Setup
+section (or <code>amq-squad new team</code>) first.</td>
 </tr>
 <tr>
 <td><code>up</code> refuses the session</td>
@@ -910,8 +897,8 @@ deliberately.</td>
 </tr>
 <tr>
 <td>The brief is a stub the board warns about</td>
-<td>Author a real brief via the <code>amq-team-setup</code> wizard. For
-an existing session use
+<td>Author a real brief via the <code>amq-squad</code> Setup section.
+For an existing session use
 <code>amq-squad brief seed --session &lt;session&gt; --seed-from issue:&lt;n&gt; --force</code>;
 <code>up --seed-from</code> is for a not-yet-launched session.</td>
 </tr>

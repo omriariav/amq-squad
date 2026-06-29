@@ -145,6 +145,45 @@ func TestRunLaunchDryRunRequireWakeWithSessionShape(t *testing.T) {
 	}
 }
 
+func TestRunLaunchNamedProfileDerivesProfileRoot(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.34.1")
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{
+			"--dry-run", "--no-bootstrap",
+			"--team-profile", "review",
+			"--session", "issue-96",
+			"--trust", "sandboxed",
+			"codex", "test-prompt",
+		})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	wantRoot := filepath.Join(dir, ".agent-mail", "review", "issue-96")
+	wantCommand := "amq coop exec --root " + wantRoot + " --require-wake codex -- test-prompt"
+	privateWantCommand := "amq coop exec --root /private" + wantRoot + " --require-wake codex -- test-prompt"
+	if !strings.Contains(stdout, wantCommand) && !strings.Contains(stdout, privateWantCommand) {
+		t.Fatalf("named-profile launch should use derived profile root %q, got:\n%s", wantRoot, stdout)
+	}
+	if strings.Contains(stdout, "--session issue-96") {
+		t.Fatalf("named-profile launch must not exec AMQ by legacy --session shorthand:\n%s", stdout)
+	}
+}
+
 func TestRunLaunchDryRunWakeInjectVersionGate(t *testing.T) {
 	setupFakeAMQWithVersion(t, "0.37.0")
 	stdout, stderr, err := captureOutput(t, func() error {

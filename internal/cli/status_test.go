@@ -301,6 +301,41 @@ func TestExecuteStatusJSONNamedProfileDisablesActionsOnLegacySessionRootConflict
 	}
 }
 
+func TestExecuteStatusJSONNamedProfileAllowsPresenceOnlyLegacyRoot(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	seedProfile(t, dir, "release", team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	legacyAgentDir := filepath.Join(dir, ".agent-mail", "main", "agents", "cto")
+	if err := os.MkdirAll(legacyAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyAgentDir, "presence.json"), []byte(`{"status":"active"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		Profile:          "release",
+		RequestedSession: "main",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.NamespaceConflict != nil {
+		t.Fatalf("presence-only legacy root should not block named profile actions: %+v", env.Data.NamespaceConflict)
+	}
+}
+
 func TestExecuteStatusJSONIncludesSpawnMetadata(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
@@ -384,6 +419,48 @@ func TestExecuteStatusJSONReportsNativeGoalForLiveLeadRecord(t *testing.T) {
 	}
 	if !strings.Contains(env.Data.GoalBinding.Command, "/goal --goal") {
 		t.Fatalf("goal binding command = %+v", env.Data.GoalBinding)
+	}
+}
+
+func TestExecuteStatusJSONReportsBlockedNativeGoalForLiveLeadRecord(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-274"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-274"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-274", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
+		GoalBinding: &launch.GoalBinding{
+			Mode:       "native_goal_blocked",
+			NativeGoal: true,
+			Source:     "goal-runtime",
+			Command:    `/goal --goal "ship"`,
+			Detail:     "Goal blocked (/goal resume)",
+		},
+	})
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-274",
+		ExplicitSession:  true,
+		Probe:            statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()),
+		JSON:             true,
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.GoalBinding.Mode != "native_goal_blocked" || !env.Data.GoalBinding.NativeGoal || !env.Data.GoalBinding.Verified {
+		t.Fatalf("goal binding = %+v, want blocked native goal", env.Data.GoalBinding)
+	}
+	if env.Data.Operator.Poll == nil || env.Data.Operator.Poll.OpenBlockers != 1 {
+		t.Fatalf("operator poll = %+v, want open_blockers=1", env.Data.Operator.Poll)
+	}
+	if env.Data.Execution.GoalBinding != "native_goal_blocked" {
+		t.Fatalf("execution goal binding = %q, want native_goal_blocked", env.Data.Execution.GoalBinding)
 	}
 }
 
@@ -990,6 +1067,56 @@ func TestExecuteStatusJSONAllowsExternalLeadInCurrentPane(t *testing.T) {
 	lead := env.Data.Records[0]
 	if !lead.OperatorVisible || lead.CurrentPaneConflict || lead.AdoptionMode != "external" || lead.VisibilityProblem != "" {
 		t.Fatalf("lead visibility fields = %+v, want visible external lead without conflict", lead)
+	}
+	if !env.Data.Execution.InvariantOK {
+		t.Fatalf("execution invariants = %+v, want clean", env.Data.Execution)
+	}
+}
+
+func TestExecuteStatusJSONRechecksExternalLeadPaneForVisibility(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"}},
+		Orchestrated:  true,
+		Lead:          "release-lead",
+		ExecutionMode: executionModeProjectLead,
+	})
+	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+		Binary: "codex", Handle: "release-lead", Role: "release-lead",
+		External: true, AdoptionMode: "external", LauncherPaneID: "%1",
+		Tmux: &launch.TmuxInfo{Session: "root", WindowID: "@1", PaneID: "%1", Target: "external"},
+	})
+	prevLister := statusPaneLister
+	prevInspector := statusPaneInspector
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) { return nil, nil }
+	inspectCalls := 0
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		inspectCalls++
+		if id == "%1" && inspectCalls >= 2 {
+			return tmuxpane.TmuxPane{PaneID: "%1", WindowID: "@1", Session: "root"}, true
+		}
+		return tmuxpane.TmuxPane{}, false
+	}
+	t.Cleanup(func() { statusPaneLister = prevLister; statusPaneInspector = prevInspector })
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "v2-11-0",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, time.Now()),
+		RuntimeVersion:   "2.11.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	lead := env.Data.Records[0]
+	if lead.Status != statusStateLive || lead.Tmux == nil || !lead.Tmux.PaneAlive {
+		t.Fatalf("lead status = %+v, want live external pane after visibility recheck", lead)
+	}
+	if !lead.OperatorVisible || lead.VisibilityProblem != "" {
+		t.Fatalf("lead visibility fields = %+v, want visible external lead", lead)
 	}
 	if !env.Data.Execution.InvariantOK {
 		t.Fatalf("execution invariants = %+v, want clean", env.Data.Execution)

@@ -76,7 +76,7 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 Install the 2.0 line (note the `/v2` module path):
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.12.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.13.0
 amq-squad version
 ```
 
@@ -90,9 +90,11 @@ Requires Go 1.25+, the `amq` binary on `PATH` (v0.38.0+), and `tmux` on `PATH` f
 
 ### Skills (plugin marketplaces)
 
-This repo doubles as a plugin marketplace that ships the amq-squad skills
-(`amq-squad`, `amq-squad-orchestrator`, `amq-team-setup`, `amq-squad-role-creator`)
-for both Claude Code and Codex. The CLI and the skills are versioned together.
+This repo doubles as a plugin marketplace that ships the amq-squad skills for
+both Claude Code and Codex. The primary skills are `amq-squad` and
+`amq-squad-orchestrator`; the older `amq-team-setup` and
+`amq-squad-role-creator` entries remain as redirect stubs. The CLI and the
+skills are versioned together.
 
 Claude Code:
 
@@ -111,9 +113,8 @@ codex plugin add amq-squad@amq-squad
 The Claude marketplace manifest lives at `.claude-plugin/marketplace.json` and
 the Codex one at `.agents/plugins/marketplace.json`; each points at the
 binary-specific plugin under `plugins/claude` and `plugins/codex`. In Claude
-Code, skills are namespaced by plugin, e.g.
-`/amq-squad:amq-squad-role-creator`. In Codex, invoke them by skill name, e.g.
-`$amq-squad-role-creator`.
+Code, skills are namespaced by plugin, e.g. `/amq-squad:amq-squad`. In Codex,
+invoke them by skill name, e.g. `$amq-squad`.
 
 To dogfood the skills from this working tree (instead of the marketplace
 snapshot), run `make dogfood-claude` here: it launches Claude Code with
@@ -155,14 +156,14 @@ session — use `resume` to continue), **`stop` preserves state** (resumable),
 and **control targets the recorded pane id**, never window names. Full surface:
 [Quick start](#quick-start), [Verbs](#verbs), [Runtime control](#runtime-control-tmux).
 
-### The four skills, and when to use each
+### The skills, and when to use each
 
 | Skill | Audience | Reach for it when |
 | --- | --- | --- |
-| **`amq-squad`** | an agent on a live team | day-to-day coordination: inbox drains, routing, review/handoff, `status`/`console`/`history`, `up`/`stop`/`resume`/`fork`, `agent up`/`resume`, and tmux runtime control (`focus`/`send`). |
-| **`amq-team-setup`** | designing a team | wizard-style first-time setup: capture a goal from any source (prompt / `.md` / GitHub issue or PR / Jira / URL) into a canonical brief, pick personas + profile, optionally wire orchestration (who leads), team rules, pointer stubs, `sync`, validation. |
-| **`amq-squad-role-creator`** | adding a role type | authoring a new custom role (persona + `role.md`), inline or as a reusable role file. |
+| **`amq-squad`** | operator-facing and member agents | setup, role authoring, and day-to-day coordination: capture a goal, draft the brief, pick roles/profile, sync pointer stubs, drain inboxes, route review/handoff, inspect `status`/`console`/`history`, run `up`/`stop`/`resume`/`fork`, and use tmux runtime control (`focus`/`send`). |
 | **`amq-squad-orchestrator`** | a **lead** agent | running a squad as a *driver*: spawn child agents, dispatch tasks to them over durable AMQ (the busy-guarded pane `send` is the fallback), monitor liveness via `status --json`, collect children's `[AGENT-EVENT]`-over-AMQ reports, and recover. The amq-squad-native equivalent of a hand-rolled tmux spawn protocol. |
+| `amq-team-setup` | redirect stub | deprecated; use `amq-squad` and its Setup section. |
+| `amq-squad-role-creator` | redirect stub | deprecated; use `amq-squad` and its Role Authoring section. |
 
 Invoke a skill in Claude Code as `/amq-squad:<skill>` (e.g.
 `/amq-squad:amq-squad-orchestrator`); in Codex as `$<skill>` (e.g.
@@ -363,7 +364,12 @@ amq-squad brief seed --session issue-96 --seed-from issue:31
 - With `--dry-run`: prints the candidate brief envelope and writes nothing.
 - Without `--dry-run`: writes the selected namespace's brief and brings the team up in the same call. `--seed-from` needs `--force` to overwrite an existing brief; a bare `up` (no `--seed-from`) keeps it.
 
-The `amq-team-setup` skill wraps this in a wizard: it captures a goal from **any** source you have — an inline prompt, a local `.md`, a GitHub issue or PR, a Jira key, or a doc URL — fetches it agent-side (amq-squad core stays tracker-neutral), and drafts a **canonical brief** (Goal / Source / Scope / Out of scope / Acceptance) for you to confirm before it is saved. The brief is per-session.
+The `amq-squad` skill's Setup section wraps this in a wizard: it captures a
+goal from **any** source you have — an inline prompt, a local `.md`, a GitHub
+issue or PR, a Jira key, or a doc URL — fetches it agent-side (amq-squad core
+stays tracker-neutral), and drafts a **canonical brief** (Goal / Source / Scope
+/ Out of scope / Acceptance) for you to confirm before it is saved. The brief
+is per-session.
 
 ### Goal draft
 
@@ -385,7 +391,7 @@ amq-squad goal draft --goal "fix issue 96" --session issue-96 --json
 
 The draft includes a brief skeleton, proposed roster, task-store plan, seeded
 spawn-gate prompts, initial dispatch prompts, and the equivalent orchestrator
-`/goal --goal` prompt. Use it before `amq-team-setup` or the
+`/goal --goal` prompt. Use it before the `amq-squad` Setup section or the
 `amq-squad-orchestrator` skill when you want a fast starting point, then review
 and explicitly approve any real setup mutations. Manual setup remains the right
 path when the team shape is already known or the goal needs unusual constraints.
@@ -415,7 +421,11 @@ as ordinary `amq-squad send`: normal prompts keep the busy guard, while native
 `/goal` delivery may target a busy Codex lead because the runtime accepts goal
 control messages safely. Successful delivery writes a delivery receipt and
 updates the lead launch record's `goal_binding` source to `goal-control`, so
-`status --json` can report verified native binding.
+`status --json` can report verified native binding. When delivery starts from a
+non-agent operator/global-orchestrator pane, pass
+`--register-orchestrator[=HANDLE]` to add an `orchestrator` team member
+(default handle `orchestrator`), register the current pane as an external lead,
+and start/repair its wake sidecar before delivering the goal.
 
 For an Autonomous preview, opt in explicitly and include a bounded policy:
 
@@ -540,7 +550,7 @@ a missing visible lead uses `amq-squad goal deliver`, which is a first-class
 native `/goal` control action with delivery receipt evidence; ordinary
 `amq-squad send` remains busy-guarded for normal prompts.
 
-For an existing profile, use `amq-squad team lead set <role>` to opt into orchestration without rebuilding the roster, `team lead clear` to return to a flat squad, and `team lead show --json` for discovery. A lead that is already running in an operator-owned pane can register itself with `amq-squad lead register --role <role> --session <session>`; this writes an explicit external launch record so `status` / `focus` / `send` can target the pane. External lead records are visible and directable, but lifecycle commands do not own them: `stop` reports that the pane must be stopped manually, `rm` / `archive` leave it open, and `resume` asks the operator to run `lead register` again instead of replaying the pane.
+For an existing profile, use `amq-squad team lead set <role>` to opt into orchestration without rebuilding the roster, `team lead clear` to return to a flat squad, and `team lead show --json` for discovery. A lead that is already running in an operator-owned pane can register itself with `amq-squad lead register --role <role> --session <session>`; this writes an explicit external launch record so `status` / `focus` / `send` can target the pane. By default, registration also starts or repairs the lead's AMQ wake sidecar; pass `--wake` to make that default explicit, `--no-wake` to opt out, `--no-require-wake` to warn instead of failing, or `--wake-inject-via` with repeated `--wake-inject-arg` for external wake injectors. External lead records are visible and directable, but lifecycle commands do not own them: `stop` reports that the pane must be stopped manually, `rm` / `archive` leave it open, and `resume` asks the operator to run `lead register` again instead of replaying the pane.
 
 ## Verbs
 
@@ -727,6 +737,8 @@ amq-squad dispatch --session S --role R --subject SUBJ --body BODY [--create-tas
                                   --create-task creates and links a native task,
                                   while --task links an existing task id.
 amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
+                         [--wake|--no-wake] [--require-wake|--no-require-wake]
+                         [--wake-inject-via PATH] [--wake-inject-arg ARG]
                                   Adopt the current tmux pane as an
                                   operator-owned external lead for an
                                   orchestrated profile. The pane becomes
@@ -837,7 +849,7 @@ It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--o
 
 `amq-squad amq ...` is a project-aware wrapper around AMQ diagnostics. It resolves the same AMQ root, base root, session, and handle that the squad launcher uses, then delegates to AMQ.
 
-amq-squad v2.12.0 requires AMQ 0.38.0 or newer. That floor includes eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
+amq-squad v2.13.0 requires AMQ 0.38.0 or newer. That floor includes eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
 
 Read-only diagnostics run directly:
 
@@ -1044,8 +1056,8 @@ peers: [cto, qa]
 Owns deep technical investigation, prototypes, and written findings.
 ```
 
-The `/amq-squad-role-creator` skill walks through authoring role files and
-wiring them into a team.
+The `amq-squad` skill's Role Authoring section walks through authoring role
+files and wiring them into a team.
 
 ## Trust and binary defaults
 
@@ -1065,7 +1077,7 @@ amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
 amq-squad agent up codex --model gpt-5
 ```
 
-amq-squad v2.12.0 requires amq **0.38.0+**. Launches pass `--require-wake` to
+amq-squad v2.13.0 requires amq **0.38.0+**. Launches pass `--require-wake` to
 `amq coop exec`, so a launch **fails at the door** when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale or
 orphaned wake. `--no-require-wake` opts out for environments where wake cannot
@@ -1073,8 +1085,11 @@ run; the opt-out is persisted in the launch record so resume reproduces it.
 
 For external-injector wake setups, pass `--wake-inject-via /absolute/injector`
 and repeat `--wake-inject-arg=value` as needed on `agent up`, `up`, or
-`up --dry-run` launch-plan output. These flags are forwarded to
-`amq coop exec`, persisted in `launch.json`, and replayed by `agent resume`.
+`up --dry-run` launch-plan output. `lead register` accepts the same injector
+flags for externally registered orchestrator panes. For spawned agents, these
+flags are forwarded to `amq coop exec`, persisted in `launch.json`, and replayed
+by `agent resume`; for external leads, they are passed to `amq wake` and stored
+on the external launch record.
 Use the `--flag=value` form for dash-prefixed injector arguments such as
 `--wake-inject-arg=--pane`.
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -86,6 +87,53 @@ func TestOperatorStatusJSONReportsPollContractAndAttention(t *testing.T) {
 	}
 	if len(data.Attention) != 1 || data.Attention[0].Thread != "gate/release" {
 		t.Fatalf("attention = %+v, want gate/release", data.Attention)
+	}
+}
+
+func TestOperatorStatusJSONCountsBlockedNativeGoal(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	cfg, err := team.ReadProfile(project, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Orchestrated = true
+	cfg.Lead = "cto"
+	if err := team.Write(project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	seedAgentRecord(t, base, "s", "cto", launch.Record{
+		CWD: project, Binary: "codex", Handle: "cto", Role: "cto", Session: "s",
+		Root: filepath.Join(base, "s"), AgentPID: 42, StartedAt: notifyNow,
+		GoalBinding: &launch.GoalBinding{
+			Mode:       "native_goal_blocked",
+			NativeGoal: true,
+			Source:     "goal-runtime",
+			Command:    `/goal --goal "ship"`,
+			Detail:     "Goal blocked (/goal resume)",
+		},
+	})
+
+	var out bytes.Buffer
+	err = executeOperatorStatus(operatorExecution{
+		ProjectDir: project,
+		Profile:    team.DefaultProfile,
+		Session:    "s",
+		BaseRoot:   base,
+		JSON:       true,
+		Out:        &out,
+		Probe: state.Probe{
+			PIDAlive:     func(pid int) bool { return true },
+			ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+			Now:          func() time.Time { return notifyNow },
+		},
+		Now: func() time.Time { return notifyNow },
+	})
+	if err != nil {
+		t.Fatalf("operator status: %v", err)
+	}
+	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
+	if env.Data.Operator.Poll == nil || env.Data.Operator.Poll.OpenBlockers != 1 {
+		t.Fatalf("operator poll = %+v, want open_blockers=1", env.Data.Operator.Poll)
 	}
 }
 

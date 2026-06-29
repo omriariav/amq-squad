@@ -2,12 +2,14 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 func TestRunResumeRequiresTeam(t *testing.T) {
@@ -468,6 +470,64 @@ func TestExecResumePlanReportsPartialLaunchRecordFailure(t *testing.T) {
 		if !strings.Contains(stderr, want) && !strings.Contains(err.Error(), want) {
 			t.Errorf("missing %q in stderr/error\nstdout:\n%s\nstderr:\n%s\nerr:\n%v", want, stdout, stderr, err)
 		}
+	}
+}
+
+func TestVerifyResumeExecLaunchRecordsAdoptsStaleRecordByPaneTitle(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	oldStarted := time.Now().Add(-5 * time.Minute).UTC()
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD:       dir,
+		Binary:    "codex",
+		Role:      "cto",
+		Handle:    "cto",
+		Session:   "issue-96",
+		StartedAt: oldStarted,
+		Tmux:      &launch.TmuxInfo{PaneID: "%old", Session: "squad", Target: "current-window"},
+	})
+	checks := []resumeExecLaunchCheck{{
+		Role:       "cto",
+		CWD:        dir,
+		AgentDir:   filepath.Join(base, "issue-96", "agents", "cto"),
+		Handle:     "cto",
+		Workstream: "issue-96",
+		Root:       filepath.Join(base, "issue-96"),
+		Binary:     "codex",
+		Profile:    team.DefaultProfile,
+	}}
+	snapshots := snapshotResumeExecLaunchRecords(checks)
+	withStubPaneLister(t, []tmuxpane.TmuxPane{{
+		Session:    "squad",
+		WindowID:   "@9",
+		WindowName: "issue-96",
+		PaneID:     "%77",
+		Title:      paneTitleToken("issue-96", "cto"),
+		Command:    "codex",
+		CWD:        dir,
+	}}, nil)
+	oldTimeout := resumeExecLaunchVerifyTimeout
+	oldInterval := resumeExecLaunchVerifyInterval
+	resumeExecLaunchVerifyTimeout = time.Millisecond
+	resumeExecLaunchVerifyInterval = time.Millisecond
+	t.Cleanup(func() {
+		resumeExecLaunchVerifyTimeout = oldTimeout
+		resumeExecLaunchVerifyInterval = oldInterval
+	})
+
+	results := verifyResumeExecLaunchRecords(checks, snapshots)
+	if len(results) != 1 || results[0].State != resumeExecLaunchStateLaunched {
+		t.Fatalf("verify results = %+v, want launched after pane adoption", results)
+	}
+	rec, err := launch.Read(checks[0].AgentDir)
+	if err != nil {
+		t.Fatalf("read adopted record: %v", err)
+	}
+	if rec.Tmux == nil || rec.Tmux.PaneID != "%77" || rec.Tmux.WindowID != "@9" || rec.Tmux.Target != "adopted" {
+		t.Fatalf("adopted tmux = %+v", rec.Tmux)
+	}
+	if !rec.StartedAt.After(oldStarted) {
+		t.Fatalf("StartedAt was not refreshed: got %s, old %s", rec.StartedAt, oldStarted)
 	}
 }
 
