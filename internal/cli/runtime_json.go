@@ -163,6 +163,7 @@ func applyMemberActionPolicy(t team.Team, role string, actions []runtimeActionJS
 		case "send", "goal_deliver", "dispatch":
 			out[i].Available = false
 			out[i].Reason = reason
+			runtimeaction.SyncUnavailableReason(&out[i])
 		}
 	}
 	return out

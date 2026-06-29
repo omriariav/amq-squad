@@ -120,3 +120,90 @@ func TestDoctorCheckCodexSkillCacheWarnsOnSymlink(t *testing.T) {
 		t.Fatalf("symlink cache check = %+v, want warning", got)
 	}
 }
+
+func TestDoctorCheckSkillVersion(t *testing.T) {
+	// skillReader returns a reader that serves the given SKILL.md body as if it
+	// were found at skillPath.
+	skillReader := func(body, skillPath string) func(string) (string, string, bool) {
+		return func(_ string) (string, string, bool) { return body, skillPath, true }
+	}
+	noBundle := func(_ string) (string, string, bool) { return "", "", false }
+
+	aligned := "# amq-squad\n\n**Skill version: 2.12.0** - echo\n\nsome content\n"
+	alignedWithV := "# amq-squad\n\n**Skill version: v2.12.0** - echo\n\nsome content\n"
+	skewed := "# amq-squad\n\n**Skill version: 2.11.0** - old\n\n"
+	noMarker := "# amq-squad\n\nno version here\n"
+
+	cases := []struct {
+		name         string
+		running      string
+		reader       func(string) (string, string, bool)
+		wantStatus   doctorStatus
+		wantInDetail string
+	}{
+		{"dev build skipped", "dev", skillReader(aligned, "/x/SKILL.md"), doctorOK, "dev build"},
+		{"empty running version skipped", "", skillReader(aligned, "/x/SKILL.md"), doctorOK, "dev build"},
+		{"no bundle warns", "v2.12.0", noBundle, doctorWarn, "no installed skill bundle"},
+		{"aligned versions ok", "v2.12.0", skillReader(aligned, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorOK, "matches binary"},
+		{"aligned v-prefixed marker ok", "v2.12.0", skillReader(alignedWithV, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorOK, "matches binary"},
+		{"aligned without leading v", "2.12.0", skillReader(aligned, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorOK, "matches binary"},
+		{"skewed warns with both versions", "v2.12.0", skillReader(skewed, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorWarn, "skew"},
+		{"missing marker warns", "v2.12.0", skillReader(noMarker, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorWarn, "no 'Skill version:'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := doctorCheckSkillVersion(doctorExecution{
+				RunningVersion: tc.running,
+				SkillMDContent: tc.reader,
+			})
+			if got.Status != tc.wantStatus {
+				t.Errorf("status = %q, want %q\ndetail: %s", got.Status, tc.wantStatus, got.Detail)
+			}
+			if !strings.Contains(got.Detail, tc.wantInDetail) {
+				t.Errorf("detail %q does not contain %q", got.Detail, tc.wantInDetail)
+			}
+		})
+	}
+
+	// The skew case must name both versions.
+	skewCheck := doctorCheckSkillVersion(doctorExecution{
+		RunningVersion: "v2.12.0",
+		SkillMDContent: skillReader(skewed, "/SKILL.md"),
+	})
+	if !strings.Contains(skewCheck.Detail, "v2.11.0") || !strings.Contains(skewCheck.Detail, "v2.12.0") {
+		t.Errorf("skew detail must name both versions, got: %q", skewCheck.Detail)
+	}
+
+	// Dev build must NOT call the reader.
+	called := false
+	doctorCheckSkillVersion(doctorExecution{
+		RunningVersion: "dev",
+		SkillMDContent: func(_ string) (string, string, bool) { called = true; return "", "", false },
+	})
+	if called {
+		t.Error("dev build must not consult the skill reader")
+	}
+}
+
+func TestDoctorSkillVersionAppearsInFullDoctorJSON(t *testing.T) {
+	dir := t.TempDir()
+	d := newDoctorExec(t, dir)
+	d.RunningVersion = "v2.12.0"
+	d.SkillMDContent = func(_ string) (string, string, bool) {
+		return "**Skill version: 2.12.0** - ok", "/fake/SKILL.md", true
+	}
+	var buf strings.Builder
+	d.Out = &buf
+	d.JSON = true
+	if err := executeDoctor(d); err != nil {
+		t.Fatalf("executeDoctor: %v\n%s", err, buf.String())
+	}
+	env := decodeJSONEnvelope[doctorEnvelopeData](t, buf.String())
+	got := findCheck(env.Data.Checks, "skill version")
+	if got == nil {
+		t.Fatal("skill version check missing from doctor --json output")
+	}
+	if got.Status != doctorOK {
+		t.Errorf("skill version check status = %q, want ok; detail: %s", got.Status, got.Detail)
+	}
+}

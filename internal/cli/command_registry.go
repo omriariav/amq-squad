@@ -41,6 +41,7 @@ var commandCatalog = []struct {
 	{Name: "rm", Summary: "Permanently remove a finished session (root dir + brief; confirm-gated)"},
 	{Name: "archive", Summary: "Move a finished session aside instead of deleting (confirm-gated)"},
 	{Name: "completion", Summary: "Emit a shell completion script (bash, zsh, fish)"},
+	{Name: "next", Summary: "Get the highest-priority operator action for this session"},
 	{Name: "doctor", Summary: "Check amq-squad / AMQ setup (use --project and --profile for other teams)"},
 	{Name: "agent", Summary: "Launch or resume a single agent (agent up / agent resume)"},
 }
@@ -85,6 +86,7 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "rm", Summary: commandSummary("rm"), Run: func(args []string) error { return runRm(args, rmModeDelete) }},
 		{Name: "archive", Summary: commandSummary("archive"), Run: func(args []string) error { return runRm(args, rmModeArchive) }},
 		{Name: "completion", Summary: commandSummary("completion"), Run: runCompletion},
+		{Name: "next", Summary: commandSummary("next"), Run: runNext},
 		{Name: "doctor", Summary: commandSummary("doctor"), Run: func(args []string) error { return runDoctor(args, version) }},
 		{Name: "agent", Summary: commandSummary("agent"), Run: runAgent},
 	}
@@ -101,9 +103,18 @@ func lookupCommand(name, version string) (commandMeta, bool) {
 
 func commandNames(version string) []string {
 	names := make([]string, 0, len(commandCatalog)+2)
+	seen := map[string]bool{}
 	for _, cmd := range commandCatalog {
-		names = append(names, cmd.Name)
+		if !seen[cmd.Name] {
+			names = append(names, cmd.Name)
+			seen[cmd.Name] = true
+		}
 	}
-	names = append(names, "version", "help")
+	for _, name := range []string{"version", "help"} {
+		if !seen[name] {
+			names = append(names, name)
+			seen[name] = true
+		}
+	}
 	return names
 }
