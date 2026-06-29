@@ -1,10 +1,10 @@
 # Using the amq-squad skills
 
-amq-squad ships **four skills** to two plugin marketplaces — one for **Claude
-Code** and one for **Codex**. The skills are the human-facing front door: you
-invoke one, and the agent drives the `amq-squad` binary for you (designing a
-team, bringing it up, coordinating it, or leading it). This guide is the deep
-reference for **when to reach for each skill and how to drive it**.
+amq-squad ships **two primary skills** to two plugin marketplaces — one for
+**Claude Code** and one for **Codex**. The primary skills are `amq-squad` for
+operator/member workflows and `amq-squad-orchestrator` for lead-agent bootstrap.
+The older `amq-team-setup` and `amq-squad-role-creator` entries remain as
+redirect stubs so existing invocations point back to `amq-squad`.
 
 For the binary's full verb/flag reference, see the main [README](../README.md).
 This document is about the skills.
@@ -12,25 +12,22 @@ This document is about the skills.
 - [The mental model](#the-mental-model)
 - [Which skill do I reach for?](#which-skill-do-i-reach-for)
 - [Installing and invoking](#installing-and-invoking)
-- [`amq-team-setup` — design and set up a team](#amq-team-setup--design-and-set-up-a-team)
 - [`amq-squad` — coordinate a live team](#amq-squad--coordinate-a-live-team)
 - [`amq-squad-orchestrator` — lead a squad](#amq-squad-orchestrator--lead-a-squad)
-- [`amq-squad-role-creator` — author a custom role](#amq-squad-role-creator--author-a-custom-role)
+- [Setup inside `amq-squad`](#setup-inside-amq-squad)
+- [Role authoring inside `amq-squad`](#role-authoring-inside-amq-squad)
 - [End-to-end walkthrough](#end-to-end-walkthrough)
 - [Troubleshooting](#troubleshooting)
 
 ## The mental model
 
-The four skills map onto the lifecycle of a team: you **set one up** once, then
-**coordinate** it day to day, optionally with one agent **leading** the rest.
-A fourth skill exists only when you need a **role the catalog doesn't ship**.
+The two primary skills map onto the actor model:
 
 | Phase | Skill | You use it... |
 | --- | --- | --- |
-| Design / setup | **`amq-team-setup`** | once, before the team runs: capture the goal, draft the brief, pick roles, optionally wire orchestration, write `team.json` + `team-rules.md` + the brief + pointer stubs. |
-| Live coordination | **`amq-squad`** | every day after the team exists: bring members up, drain inboxes, route handoffs, request reviews, check status, stop/resume/fork. |
+| Setup, role authoring, live coordination | **`amq-squad`** | operators and member agents use it to capture a goal, draft the brief, pick roles/profile, author custom roles, bring members up, drain inboxes, route handoffs, request reviews, check status, stop/resume/fork. |
 | Lead orchestration | **`amq-squad-orchestrator`** | when one agent is the **lead** that spawns, dispatches, and monitors the others and owns the deliverable. |
-| Custom roles | **`amq-squad-role-creator`** | when you need a role the built-in catalog doesn't ship (researcher, sre, archivist, ...). |
+| Deprecated redirects | `amq-team-setup`, `amq-squad-role-creator` | kept for compatibility; both tell you to use `amq-squad` and its Setup / Role Authoring sections. |
 
 They sit on top of three durable layers that setup creates and coordination
 consumes:
@@ -47,42 +44,41 @@ those three; they never duplicate the content.
 
 | If you want to... | Reach for |
 | --- | --- |
-| Start from a ticket / prompt / doc and stand up a new team | `amq-team-setup` |
-| Turn a Jira/GitHub/URL goal into a confirmed brief | `amq-team-setup` (step 1–2) |
-| Decide who leads an orchestrated squad | `amq-team-setup` (step 4) wires it; `amq-squad-orchestrator` runs it |
+| Start from a ticket / prompt / doc and stand up a new team | `amq-squad` Setup section |
+| Turn a Jira/GitHub/URL goal into a confirmed brief | `amq-squad` Setup section |
+| Decide who leads an orchestrated squad | `amq-squad` Setup section wires it; `amq-squad-orchestrator` runs it |
 | Bring the configured team up and coordinate it | `amq-squad` |
 | Drain your inbox, route a handoff, request a review | `amq-squad` |
 | Check the status board / Mission Control / health | `amq-squad` |
 | Spawn child agents and drive them to completion as the lead | `amq-squad-orchestrator` |
-| Add a role that isn't in the catalog | `amq-squad-role-creator` |
+| Add a role that isn't in the catalog | `amq-squad` Role Authoring section |
 | Debug raw AMQ outside a squad | the separate `amq-cli` skill |
 
-Rule of thumb: **`amq-team-setup` before the team exists; `amq-squad` after.**
-The orchestrator skill is only for the lead agent; everyone else uses `amq-squad`.
+Rule of thumb: **operators use `amq-squad`; lead agents use
+`amq-squad-orchestrator` at bootstrap**. Do not collapse the two further.
 
 ## Installing and invoking
 
 Install the marketplace once; the skills are then discovered automatically.
 
 - **Claude Code:** `/plugin install amq-squad@amq-squad`, then invoke a skill as
-  `/amq-squad:<skill>` — e.g. `/amq-squad:amq-team-setup`.
+  `/amq-squad:<skill>` — e.g. `/amq-squad:amq-squad`.
 - **Codex:** install the Codex marketplace, then invoke a skill as `$<skill>` —
-  e.g. `$amq-team-setup`.
+  e.g. `$amq-squad`.
 
-All four skills are user-invocable and require the `amq-squad` binary on `PATH`
-(`go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest`). Their
-workflows are equivalent across the two marketplaces; the platform metadata
-differs (a Claude skill carries `trigger` / `allowed-tools` / `argument-hint`;
-the Codex skill omits them) and so does tool wording (a Claude skill says "use
-the Read tool", a Codex skill says "read the file").
+The primary skills are user-invocable and require the `amq-squad` binary on
+`PATH` (`go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest`).
+Their workflows are equivalent across the two marketplaces; the platform
+metadata differs (a Claude skill carries `trigger` / `allowed-tools` /
+`argument-hint`; the Codex skill omits them).
 
 ---
 
-## `amq-team-setup` — design and set up a team
+## Setup Inside `amq-squad`
 
-**Invoke:** `/amq-squad:amq-team-setup` (Claude) · `$amq-team-setup` (Codex)
-**Use when:** no team exists yet, or you are starting a new piece of work and
-want a real goal/brief in place before launch.
+**Invoke:** `/amq-squad:amq-squad` (Claude) · `$amq-squad` (Codex), then use
+the `## Setup` section. **Use when:** no team exists yet, or you are starting a
+new piece of work and want a real goal/brief in place before launch.
 
 It is a **wizard**: it walks five steps and confirms with you at each gate.
 Setup stays read-only until the final create step (no live launch).
@@ -153,7 +149,7 @@ existing `team-rules.md` is left untouched; regenerate with `amq-squad team
 rules init --force`.) Default off; exactly one lead; the lead is a team member,
 never the operator.
 
-When the wizard is done, hand off to **`amq-squad`** for the first live launch.
+When the wizard is done, continue in **`amq-squad`** for the first live launch.
 
 ---
 
@@ -347,14 +343,13 @@ amq-squad agent resume fullstack         # revive one child from its saved recor
 
 ---
 
-## `amq-squad-role-creator` — author a custom role
+## Role Authoring Inside `amq-squad`
 
-**Invoke:** `/amq-squad:amq-squad-role-creator` (Claude) ·
-`$amq-squad-role-creator` (Codex)
-**Use when:** you need a role the built-in catalog doesn't ship (`researcher`,
-`sre`, `archivist`, `data-scientist`, ...). Custom roles are first-class — they
-appear in `team.json`, `team-rules.md`, the bootstrap prompt, and status/launch
-exactly like built-ins.
+**Invoke:** `/amq-squad:amq-squad` (Claude) · `$amq-squad` (Codex), then use
+the `## Role Authoring` section. **Use when:** you need a role the built-in
+catalog doesn't ship (`researcher`, `sre`, `archivist`, `data-scientist`, ...).
+Custom roles are first-class — they appear in `team.json`, `team-rules.md`, the
+bootstrap prompt, and status/launch exactly like built-ins.
 
 Two ways, by how much role guidance you want:
 
@@ -404,7 +399,7 @@ Shipping GitHub issue #96 with an orchestrated squad, start to finish.
 cd ~/Code/my-project
 ```
 
-1. **Set up the team** — invoke `/amq-squad:amq-team-setup` and say *"the goal is
+1. **Set up the team** — invoke `/amq-squad:amq-squad` and say *"the goal is
    GitHub issue #96."* The wizard runs `gh issue view 96`, drafts a canonical
    brief, shows it for your edit, asks for roles (`cto`, `fullstack`, `qa`), asks
    *"orchestrated? who leads?"* (yes, `cto`), and creates everything:
@@ -445,11 +440,11 @@ cd ~/Code/my-project
 
 | Symptom | Likely cause / fix |
 | --- | --- |
-| "no team configured" | No `team.json` yet — use `amq-team-setup` (or `amq-squad new team`) first. |
+| "no team configured" | No `team.json` yet — use the `amq-squad` Setup section (or `amq-squad new team`) first. |
 | `up` refuses the session | `up` is NEW work and refuses an existing session — use `resume` to continue, or `up --reset` to start over. |
 | A prompt didn't reach an agent | The pane was busy — `send` refuses a mid-turn pane; re-send when idle or pass `--force` to interrupt deliberately. |
 | `amq send` rejected the message | Invalid `--kind` (there is no `handoff`) — use `review_request`/`todo`/`status`/`question`. |
-| The brief is a stub the board warns about | Author a real brief via the `amq-team-setup` wizard. For an existing session use `amq-squad brief seed --session <session> --seed-from issue:<n> --force`; `up --seed-from` is for a not-yet-launched session. |
+| The brief is a stub the board warns about | Author a real brief via the `amq-squad` Setup section. For an existing session use `amq-squad brief seed --session <session> --seed-from issue:<n> --force`; `up --seed-from` is for a not-yet-launched session. |
 | Orchestration norm missing after adding `--orchestrated` | `new team` leaves an existing `team-rules.md` untouched — regenerate with `amq-squad team rules init --force`. |
 | Codex loads an old amq-squad skill after upgrade | Run `amq-squad doctor`; the Codex skill-cache check warns when the released bundle is missing, stale, or only present through a compatibility symlink. Refresh the plugin/skill cache instead of relying on manual symlinks. |
 | Shift+Enter doesn't submit in a tmux window | `doctor` warns when tmux `extended-keys` is off; opening under iTerm2 `tmux -CC` (the `attach_control` action) makes it work natively. |

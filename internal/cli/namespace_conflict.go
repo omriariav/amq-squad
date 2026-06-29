@@ -76,10 +76,35 @@ func rootHasDurableState(root string) bool {
 		if strings.HasSuffix(path, ".lock") || strings.HasSuffix(path, ".tmp") {
 			return nil
 		}
+		if !legacyRootEntryIsDurable(root, path, d) {
+			return nil
+		}
 		found = true
 		return filepath.SkipAll
 	})
 	return found
+}
+
+func legacyRootEntryIsDurable(root, path string, d os.DirEntry) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return true
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == "." || rel == "agents" {
+		return false
+	}
+	if d.IsDir() {
+		parts := strings.Split(rel, "/")
+		if len(parts) <= 2 && parts[0] == "agents" {
+			return false
+		}
+		return true
+	}
+	if strings.HasSuffix(rel, "/presence.json") {
+		return false
+	}
+	return true
 }
 
 func disableNamespaceConflictActions(actions []runtimeActionJSON, conflict *namespaceConflictData) []runtimeActionJSON {

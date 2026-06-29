@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -83,6 +84,19 @@ func TestGoalDraftJSONIncludesMilestoneIssues(t *testing.T) {
 		if !strings.Contains(data.BriefSkeleton+data.OrchestratorPrompt, want) {
 			t.Errorf("draft missing %q:\n%+v", want, data)
 		}
+	}
+}
+
+func TestNormalizeOptionalStringFlagDefaultsAndConsumesValue(t *testing.T) {
+	got := normalizeOptionalStringFlag([]string{"deliver", "--register-orchestrator", "--json"}, "--register-orchestrator", "orchestrator")
+	want := []string{"deliver", "--register-orchestrator=orchestrator", "--json"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("bare optional flag = %v, want %v", got, want)
+	}
+	got = normalizeOptionalStringFlag([]string{"deliver", "--register-orchestrator", "global", "--json"}, "--register-orchestrator", "orchestrator")
+	want = []string{"deliver", "--register-orchestrator=global", "--json"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("valued optional flag = %v, want %v", got, want)
 	}
 }
 
@@ -226,6 +240,85 @@ func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
 	}
 	if rec.GoalBinding == nil || rec.GoalBinding.Source != "goal-control" || !rec.GoalBinding.NativeGoal {
 		t.Fatalf("launch goal binding not updated: %+v", rec.GoalBinding)
+	}
+}
+
+func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-96",
+		AgentPID: 4242,
+		Tmux:     &launch.TmuxInfo{PaneID: "%7"},
+	})
+	prevPane := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "global", WindowID: "@1", WindowName: "orch", PaneID: "%99"}, nil
+	}
+	prevWake := leadWakeStarter
+	var wakeOpts []leadWakeOptions
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		wakeOpts = append(wakeOpts, opts)
+		return leadWakeResult{PID: 9876, Started: true, Detail: "ready"}, nil
+	}
+	oldLister := statusPaneLister
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: "codex", Title: "amq:issue-96:cto"}}, nil
+	}
+	oldSend := sendPromptToPane
+	var sent []string
+	sendPromptToPane = func(paneID, prompt string) error {
+		sent = append(sent, paneID+"\x00"+prompt)
+		return nil
+	}
+	t.Cleanup(func() {
+		currentPaneIdentity = prevPane
+		leadWakeStarter = prevWake
+		statusPaneLister = oldLister
+		sendPromptToPane = oldSend
+	})
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("goal deliver --register-orchestrator: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[mutationResult](t, stdout)
+	if env.Kind != "goal_deliver" || env.Data.Status != "native_goal_delivered" {
+		t.Fatalf("goal deliver envelope = %+v", env)
+	}
+	if len(sent) != 1 || !strings.HasPrefix(sent[0], "%7\x00/goal --goal") {
+		t.Fatalf("delivery should still target explicit cto pane, sent = %+v", sent)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if cfg.Lead != goalOrchestratorRole || !cfg.Orchestrated {
+		t.Fatalf("team lead/orchestrated = %q/%v, want orchestrator/true", cfg.Lead, cfg.Orchestrated)
+	}
+	orch, ok := teamMemberByRole(cfg, goalOrchestratorRole)
+	if !ok || orch.Handle != "global-orch" || orch.Binary != "codex" || orch.Session != "issue-96" {
+		t.Fatalf("orchestrator member = %+v, ok=%v", orch, ok)
+	}
+	if len(wakeOpts) != 1 || wakeOpts[0].Handle != "global-orch" || !wakeOpts[0].Require {
+		t.Fatalf("wake opts = %+v", wakeOpts)
+	}
+	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
+	if err != nil {
+		t.Fatalf("read orchestrator launch record: %v", err)
+	}
+	if !rec.External || rec.Role != goalOrchestratorRole || rec.Handle != "global-orch" || rec.WakePID != 9876 || rec.Tmux == nil || rec.Tmux.PaneID != "%99" {
+		t.Fatalf("orchestrator launch record = %+v", rec)
 	}
 }
 
@@ -568,6 +661,51 @@ func TestGoalDraftJSONIncludesVisibleLaunchMutation(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("visible launch mutation missing: %+v", env.Data.ApplyableMutations)
+	}
+}
+
+func TestGoalDraftSkillInvocationOutput(t *testing.T) {
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoalDraft([]string{
+			"--goal", "ship visible setup handoff",
+			"--session", "visible-setup",
+			"--profile", "codex-visible-setup",
+			"--skill-invocation",
+		})
+	})
+	if err != nil {
+		t.Fatalf("goal draft --skill-invocation: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		`/amq-squad-orchestrator --goal "ship visible setup handoff" --session "visible-setup" --profile "codex-visible-setup"`,
+		`--mode "project_lead"`,
+		`/goal --goal "ship visible setup handoff"`,
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("skill invocation missing %q in:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "# amq-squad goal draft") {
+		t.Fatalf("--skill-invocation should print only the invocation block, got markdown:\n%s", stdout)
+	}
+}
+
+func TestGoalDraftJSONIncludesSkillInvocation(t *testing.T) {
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoalDraft([]string{
+			"--goal", "ship visible setup handoff",
+			"--session", "visible-setup",
+			"--profile", "codex-visible-setup",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("goal draft --json: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[goalDraftData](t, stdout)
+	if !strings.Contains(env.Data.SkillInvocation, `/amq-squad-orchestrator`) ||
+		!strings.Contains(env.Data.SkillInvocation, env.Data.OrchestratorPrompt) {
+		t.Fatalf("skill invocation missing orchestrator wrapper/prompt:\n%s", env.Data.SkillInvocation)
 	}
 }
 

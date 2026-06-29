@@ -288,6 +288,8 @@ func executeStatus(s statusExecution) error {
 		ctx := newSessionStatusContext(t, s.Profile, workstream, firstLiveTmuxSession(rows))
 		ctx.Actions = disableNamespaceConflictActions(ctx.Actions, conflict)
 		binding := goalBindingForStatus(ns, ctx, rows)
+		operatorView := statusOperatorForTeam(t, ns)
+		applyGoalBindingOpenBlockers(&operatorView, binding)
 		topology := statusTopologyForRows(rows, ctx.Orchestrated)
 		version := strings.TrimSpace(s.RuntimeVersion)
 		if version == "" {
@@ -304,7 +306,7 @@ func executeStatus(s statusExecution) error {
 			Workstream:        workstream,
 			Profile:           s.Profile,
 			Namespace:         ns,
-			Operator:          statusOperatorForTeam(t, ns),
+			Operator:          operatorView,
 			OperatorDelivery:  operatorDeliveryForTeam(t),
 			Capabilities:      team.EffectiveCapabilities(t),
 			Orchestrated:      ctx.Orchestrated,
@@ -483,6 +485,24 @@ func adoptionModeForStatus(row statusRecord) string {
 }
 
 func operatorVisibilityForLead(row *statusRecord) (bool, string) {
+	if row != nil && (row.launchExternal || row.AdoptionMode == "external") {
+		if row.Tmux == nil {
+			return false, "no_pane"
+		}
+		if !row.Tmux.PaneAlive && strings.TrimSpace(row.Tmux.PaneID) != "" {
+			if _, ok := statusPaneInspector(row.Tmux.PaneID); ok {
+				row.Tmux.PaneAlive = true
+			}
+		}
+		if row.Tmux.PaneAlive {
+			row.Status = statusStateLive
+			if strings.TrimSpace(row.Detail) == "" || strings.Contains(row.Detail, "no live signals") {
+				row.Detail = fmt.Sprintf("external pane %s live (registered lead)", row.Tmux.PaneID)
+			}
+			return true, ""
+		}
+		return false, "pane_dead"
+	}
 	if row.Status != statusStateLive {
 		return false, "lead_pane_dead"
 	}
@@ -491,9 +511,6 @@ func operatorVisibilityForLead(row *statusRecord) (bool, string) {
 	}
 	if !row.Tmux.PaneAlive {
 		return false, "pane_dead"
-	}
-	if row.launchExternal || row.AdoptionMode == "external" {
-		return true, ""
 	}
 	if strings.TrimSpace(row.LauncherPaneID) == "" {
 		return false, "pane_origin_unprovable"
@@ -691,6 +708,20 @@ func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows 
 		if row.Status != statusStateLive && row.Status != statusStateWakeLive {
 			continue
 		}
+		if nativeGoalBindingBlocked(row.goalBinding) {
+			binding.Mode = "native_goal_blocked"
+			binding.NativeGoal = true
+			binding.Verified = true
+			binding.Source = "launch-record"
+			binding.NativeSource = row.goalBinding.Source
+			binding.Command = row.goalBinding.Command
+			if detail := strings.TrimSpace(row.goalBinding.Detail); detail != "" {
+				binding.Detail = detail
+			} else {
+				binding.Detail = "visible lead native /goal is blocked; operator or orchestrator should inspect and resume with /goal resume"
+			}
+			return binding
+		}
 		if row.goalBinding != nil && row.goalBinding.NativeGoal {
 			binding.Mode = "native_goal"
 			binding.NativeGoal = true
@@ -710,6 +741,39 @@ func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows 
 		}
 	}
 	return binding
+}
+
+func nativeGoalBindingBlocked(binding *launch.GoalBinding) bool {
+	return binding != nil && binding.NativeGoal && strings.TrimSpace(binding.Mode) == "native_goal_blocked"
+}
+
+func applyGoalBindingOpenBlockers(operatorView *statusOperatorView, binding goalBindingData) {
+	if operatorView == nil || operatorView.Poll == nil {
+		return
+	}
+	if binding.Mode == "native_goal_blocked" {
+		operatorView.Poll.OpenBlockers++
+	}
+}
+
+func blockedNativeGoalsInSnapshot(t team.Team, profile, workstream string, snap state.Snapshot) int {
+	leadRole := strings.TrimSpace(t.Lead)
+	if leadRole == "" {
+		return 0
+	}
+	profile = squadnamespace.NormalizeProfile(profile)
+	count := 0
+	for _, session := range snap.Sessions {
+		if session.Name != workstream || squadnamespace.NormalizeProfile(session.TeamProfile) != profile {
+			continue
+		}
+		for _, agent := range session.Agents {
+			if agent.Role == leadRole && nativeGoalBindingBlocked(agent.GoalBinding) {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 func projectExecutionModeRequiresNativeGoal(t team.Team) bool {
