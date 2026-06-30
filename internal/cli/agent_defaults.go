@@ -18,6 +18,78 @@ var (
 	codexTrustedArgs      = []string{"--dangerously-bypass-approvals-and-sandbox"}
 )
 
+// claudeInScopePreauthAllowlist returns the Claude --allowedTools patterns that
+// pre-authorize a worker's in-scope deliverable action (#296): creating its PR.
+//
+// It deliberately authorizes ONLY `gh pr create`. Feature-branch `git push` is
+// intentionally NOT pre-authorized: Claude's --allowedTools prefix match
+// (`Bash(<prefix>:*)`) cannot be bounded, so any `git push origin codex/...:*`
+// pattern would also match the same command with `--tags`/`--follow-tags` or an
+// extra refspec appended — which would defeat the guardrail that tags/main/broad
+// push stay gated. There is no safe pattern form for "this feature branch and
+// nothing else" (the branch name is itself a dynamic suffix). Pre-authorizing
+// push therefore needs a constrained wrapper command and is tracked as a
+// follow-up; until then a feature-branch push still prompts (safe degradation),
+// while the recurring `gh pr create` stall is removed. By keeping this list to a
+// single PR-domain pattern, it cannot — by construction — authorize push, tags,
+// releases, or destructive git.
+func claudeInScopePreauthAllowlist(session string) []string {
+	if strings.TrimSpace(session) == "" {
+		return nil
+	}
+	return []string{
+		"Bash(gh pr create:*)",
+	}
+}
+
+// claudePreauthChildArgs turns a Claude allowlist into the child flags appended
+// at launch. Empty allowlist yields no args (so non-enabled launches are
+// untouched and back-compatible).
+func claudePreauthChildArgs(allow []string) []string {
+	if len(allow) == 0 {
+		return nil
+	}
+	return []string{"--allowedTools", strings.Join(allow, ",")}
+}
+
+// claudeWorkerPreauthEligible reports whether an `agent up` launch is an
+// amq-squad-launched orchestrated NON-LEAD worker on the Claude binary — the
+// only case #296 pre-authorizes. cto/global-lead (the lead role), operator, and
+// non-orchestrated/standalone launches are excluded, so their permission posture
+// is unchanged. Codex is out of scope for this slice and always returns false.
+func claudeWorkerPreauthEligible(projectDir, profile, role, binary string) bool {
+	if defaultHandleFor(binary) != "claude" {
+		return false
+	}
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return false
+	}
+	if !team.ExistsProfile(projectDir, profile) {
+		return false
+	}
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil || !t.Orchestrated {
+		return false
+	}
+	lead := strings.TrimSpace(t.Lead)
+	if lead == "" || strings.EqualFold(role, lead) {
+		return false
+	}
+	// Require a CONFIGURED active team member for this role, and require that
+	// member to be a Claude binary. This rejects unknown/ad-hoc roles (e.g. a
+	// `scratch` launch in an orchestrated profile) and a role configured for a
+	// different binary that happens to be launched as claude.
+	m, ok := teamMemberByRole(t, role)
+	if !ok {
+		return false
+	}
+	if defaultHandleFor(strings.TrimSpace(m.Binary)) != "claude" {
+		return false
+	}
+	return true
+}
+
 func normalizeTrustMode(mode string) (string, error) {
 	switch mode {
 	case "":

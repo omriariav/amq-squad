@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func TestNativeGoalBindingFromArgsDetectsGoalPrompt(t *testing.T) {
@@ -63,6 +64,73 @@ func TestRunLaunchDryRunApproveForMeCodexPreset(t *testing.T) {
 	if strings.Contains(stdout, "--dangerously-bypass-approvals-and-sandbox") {
 		t.Fatalf("approve-for-me must not imply trusted bypass:\n%s", stdout)
 	}
+}
+
+func TestRunLaunchPreauthorizesInScopeClaudeWorker(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "v2-14-0"}, {Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "v2-14-0"}},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--role", "fullstack", "--session", "v2-14-0", "claude", "test-prompt"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{"--allowedTools", "gh pr create"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("eligible claude worker missing %q in:\n%s", want, stdout)
+		}
+	}
+	// Narrowed slice (#296): PR creation only — push/main/tags/releases never pre-authorized.
+	for _, forbidden := range []string{"git push", "origin main", "git tag", "gh release", "--tags", "--follow-tags"} {
+		if strings.Contains(stdout, forbidden) {
+			t.Fatalf("pre-auth must never include %q:\n%s", forbidden, stdout)
+		}
+	}
+}
+
+func TestRunLaunchPreauthOptOutAndScope(t *testing.T) {
+	seed := func(t *testing.T) {
+		seedTeam(t, team.Team{
+			Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "v2-14-0"}, {Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "v2-14-0"}},
+			Orchestrated: true,
+			Lead:         "cto",
+		})
+		setupFakeAMQ(t)
+	}
+	run := func(t *testing.T, args ...string) string {
+		stdout, stderr, err := captureOutput(t, func() error { return runLaunch(args) })
+		if err != nil {
+			t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+		}
+		return stdout
+	}
+
+	t.Run("opt-out flag disables pre-auth", func(t *testing.T) {
+		seed(t)
+		out := run(t, "--dry-run", "--no-bootstrap", "--no-preauthorize-inscope", "--role", "fullstack", "--session", "v2-14-0", "claude", "p")
+		if strings.Contains(out, "--allowedTools") {
+			t.Fatalf("--no-preauthorize-inscope must suppress pre-auth:\n%s", out)
+		}
+	})
+	t.Run("lead role not pre-authorized", func(t *testing.T) {
+		seed(t)
+		out := run(t, "--dry-run", "--no-bootstrap", "--role", "cto", "--session", "v2-14-0", "claude", "p")
+		if strings.Contains(out, "--allowedTools") {
+			t.Fatalf("lead role must not be pre-authorized:\n%s", out)
+		}
+	})
+	t.Run("codex worker unchanged", func(t *testing.T) {
+		seed(t)
+		out := run(t, "--dry-run", "--no-bootstrap", "--role", "fullstack", "--session", "v2-14-0", "codex", "p")
+		if strings.Contains(out, "--allowedTools") {
+			t.Fatalf("codex worker is out of scope and must be unchanged:\n%s", out)
+		}
+	})
 }
 
 func TestValidateManagedTmuxLaunchRejectsNonTTY(t *testing.T) {

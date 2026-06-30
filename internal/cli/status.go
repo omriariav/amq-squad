@@ -156,6 +156,11 @@ type statusRecord struct {
 	// (wake_alive) and status to know whether the sidecar is actually running,
 	// so a dead sidecar surfaces as degraded rather than silently lost.
 	WakeAutoDrain bool `json:"wake_auto_drain,omitempty"`
+	// PreauthorizedActions surfaces the in-scope worker actions amq-squad
+	// pre-authorized at launch (#296) so the active allowlist is auditable from
+	// status --json. Empty/omitted for legacy records and launches with no
+	// pre-authorization. Mirrors launch.Record.PreauthorizedActions.
+	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
 	// Actions are the stable, project-scoped commands a client can render/copy
 	// for this member (focus/send/resume/status). Populated for --json only.
 	Actions []runtimeActionJSON `json:"actions,omitempty"`
@@ -910,6 +915,7 @@ func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream
 		rec.goalBinding = live.LaunchRecord.GoalBinding
 		rec.External = live.LaunchRecord.External
 		rec.WakeAutoDrain = strings.TrimSpace(live.LaunchRecord.WakeInjectCmd) != ""
+		rec.PreauthorizedActions = live.LaunchRecord.PreauthorizedActions
 		rec.AdoptionMode = strings.TrimSpace(live.LaunchRecord.AdoptionMode)
 		rec.LauncherPaneID = strings.TrimSpace(live.LaunchRecord.LauncherPaneID)
 		if origin := strings.TrimSpace(live.LaunchRecord.SpawnOrigin); origin != "" {
