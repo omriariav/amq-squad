@@ -347,6 +347,166 @@ func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
 	}
 }
 
+type orchestratorRegStubs struct {
+	sent     *[]string
+	wakeOpts *[]leadWakeOptions
+}
+
+// setupOrchestratorRegStubs wires the pane identity, wake starter, pane lister,
+// and prompt sender that goal start/deliver --register-orchestrator depends on,
+// so #287 tests exercise the single-command path without touching real tmux.
+func setupOrchestratorRegStubs(t *testing.T, dir string) orchestratorRegStubs {
+	t.Helper()
+	prevPane := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "global", WindowID: "@1", WindowName: "orch", PaneID: "%99"}, nil
+	}
+	prevWake := leadWakeStarter
+	wakeOpts := &[]leadWakeOptions{}
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		*wakeOpts = append(*wakeOpts, opts)
+		return leadWakeResult{PID: 9876, Started: true, Detail: "ready"}, nil
+	}
+	oldLister := statusPaneLister
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: "codex", Title: "amq:issue-96:cto"}}, nil
+	}
+	oldSend := sendPromptToPane
+	sent := &[]string{}
+	sendPromptToPane = func(paneID, prompt string) error {
+		*sent = append(*sent, paneID+"\x00"+prompt)
+		return nil
+	}
+	t.Cleanup(func() {
+		currentPaneIdentity = prevPane
+		leadWakeStarter = prevWake
+		statusPaneLister = oldLister
+		sendPromptToPane = oldSend
+	})
+	return orchestratorRegStubs{sent: sent, wakeOpts: wakeOpts}
+}
+
+func seedCtoLeadTeamForOrchestrator(t *testing.T) (string, string) {
+	t.Helper()
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-96",
+		AgentPID: 4242,
+		Tmux:     &launch.TmuxInfo{PaneID: "%7"},
+	})
+	return base, dir
+}
+
+// TestGoalStartRegisterOrchestratorProducesWakeableIdentity proves #287: a single
+// gated command yields the full wakeable orchestrator identity (durable member +
+// launch record bound to the live pane + lead set + wake sidecar requested).
+func TestGoalStartRegisterOrchestratorProducesWakeableIdentity(t *testing.T) {
+	base, dir := seedCtoLeadTeamForOrchestrator(t)
+	stubs := setupOrchestratorRegStubs(t, dir)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--yes", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("goal start --register-orchestrator --yes: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[goalStartData](t, stdout)
+	if env.Kind != "goal_start" || env.Data.DryRun || env.Data.Status != "native_goal_delivered" {
+		t.Fatalf("goal start envelope = %+v", env)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if cfg.Lead != goalOrchestratorRole || !cfg.Orchestrated {
+		t.Fatalf("team lead/orchestrated = %q/%v", cfg.Lead, cfg.Orchestrated)
+	}
+	orch, ok := teamMemberByRole(cfg, goalOrchestratorRole)
+	if !ok || orch.Handle != "global-orch" {
+		t.Fatalf("orchestrator member = %+v ok=%v", orch, ok)
+	}
+	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
+	if err != nil {
+		t.Fatalf("read orchestrator launch record: %v", err)
+	}
+	if !rec.External || rec.Role != goalOrchestratorRole || rec.WakePID != 9876 || rec.Tmux == nil || rec.Tmux.PaneID != "%99" {
+		t.Fatalf("orchestrator launch record = %+v", rec)
+	}
+	if len(*stubs.wakeOpts) != 1 || (*stubs.wakeOpts)[0].Handle != "global-orch" || !(*stubs.wakeOpts)[0].Require {
+		t.Fatalf("wake opts = %+v", *stubs.wakeOpts)
+	}
+}
+
+// TestGoalStartRegisterOrchestratorIdempotentOnRerun proves #287 idempotency:
+// re-running the same gated command does not error and does not duplicate the
+// orchestrator member or launch record.
+func TestGoalStartRegisterOrchestratorIdempotentOnRerun(t *testing.T) {
+	base, dir := seedCtoLeadTeamForOrchestrator(t)
+	setupOrchestratorRegStubs(t, dir)
+
+	run := func() error {
+		_, _, err := captureOutput(t, func() error {
+			return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--yes", "--json"})
+		})
+		return err
+	}
+	if err := run(); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if err := run(); err != nil {
+		t.Fatalf("rerun must be idempotent, got: %v", err)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	count := 0
+	for _, m := range cfg.Members {
+		if strings.EqualFold(m.Role, goalOrchestratorRole) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("rerun must not duplicate orchestrator member, got %d (members=%+v)", count, cfg.Members)
+	}
+	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
+	if err != nil {
+		t.Fatalf("read orchestrator launch record: %v", err)
+	}
+	if !rec.External || rec.Tmux == nil || rec.Tmux.PaneID != "%99" {
+		t.Fatalf("orchestrator launch record after rerun = %+v", rec)
+	}
+}
+
+// TestGoalStartRegisterOrchestratorWakeFailureIsHonest proves the wake sidecar is
+// required: when the sidecar cannot start, the command surfaces the failure
+// instead of reporting a wakeable identity it did not actually produce.
+func TestGoalStartRegisterOrchestratorWakeFailureIsHonest(t *testing.T) {
+	_, dir := seedCtoLeadTeamForOrchestrator(t)
+	setupOrchestratorRegStubs(t, dir)
+	prevWake := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		return leadWakeResult{}, fmt.Errorf("wake sidecar lock busy")
+	}
+	t.Cleanup(func() { leadWakeStarter = prevWake })
+
+	_, _, err := captureOutput(t, func() error {
+		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--yes", "--json"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "wake") {
+		t.Fatalf("wake sidecar failure must surface honestly, got: %v", err)
+	}
+}
+
 func TestGoalApplyRefusesWithoutApprovedGate(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
