@@ -143,7 +143,11 @@ type statusRecord struct {
 	CurrentPaneConflict     bool                `json:"current_pane_conflict"`
 	VisibilityProblem       string              `json:"visibility_problem,omitempty"`
 	VisibilityRepairActions []runtimeActionJSON `json:"visibility_repair_actions,omitempty"`
-	launchExternal          bool
+	// External reports that this member's launch record is an external pane (for
+	// example a registered global orchestrator). It is surfaced in --json so a
+	// client can positively identify the wakeable orchestrator identity rather
+	// than inferring it from lead role alone. Set from launch.Record.External.
+	External bool `json:"external,omitempty"`
 	// Actions are the stable, project-scoped commands a client can render/copy
 	// for this member (focus/send/resume/status). Populated for --json only.
 	Actions []runtimeActionJSON `json:"actions,omitempty"`
@@ -436,7 +440,7 @@ func roleBoundaryForStatus(ctx sessionStatusContext, row statusRecord, lead stri
 		// limited to project_lead/project_team (no no_visible_lead for direct leads).
 		if mode == executionModeDirectLeadSession {
 			configuredLead := strings.TrimSpace(ctx.Lead)
-			if row.launchExternal || (configuredLead != "" && row.Role == configuredLead) {
+			if row.External || (configuredLead != "" && row.Role == configuredLead) {
 				return "lead"
 			}
 		}
@@ -458,7 +462,7 @@ func roleBoundaryForStatus(ctx sessionStatusContext, row statusRecord, lead stri
 }
 
 func adoptionModeForStatus(row statusRecord) string {
-	if row.launchExternal {
+	if row.External {
 		return "external"
 	}
 	if row.Tmux == nil {
@@ -485,7 +489,7 @@ func adoptionModeForStatus(row statusRecord) string {
 }
 
 func operatorVisibilityForLead(row *statusRecord) (bool, string) {
-	if row != nil && (row.launchExternal || row.AdoptionMode == "external") {
+	if row != nil && (row.External || row.AdoptionMode == "external") {
 		if row.Tmux == nil {
 			return false, "no_pane"
 		}
@@ -896,7 +900,7 @@ func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream
 	rec.Tmux = tmuxRuntimeFromInfo(live.Tmux)
 	if live.LaunchFound {
 		rec.goalBinding = live.LaunchRecord.GoalBinding
-		rec.launchExternal = live.LaunchRecord.External
+		rec.External = live.LaunchRecord.External
 		rec.AdoptionMode = strings.TrimSpace(live.LaunchRecord.AdoptionMode)
 		rec.LauncherPaneID = strings.TrimSpace(live.LaunchRecord.LauncherPaneID)
 		if origin := strings.TrimSpace(live.LaunchRecord.SpawnOrigin); origin != "" {
