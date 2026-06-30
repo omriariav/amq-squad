@@ -507,6 +507,85 @@ func TestGoalStartRegisterOrchestratorWakeFailureIsHonest(t *testing.T) {
 	}
 }
 
+func seedCtoDeliverTeamForOrchestrator(t *testing.T) (string, string) {
+	t.Helper()
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96",
+		AgentPID: 4242, Tmux: &launch.TmuxInfo{PaneID: "%7"},
+	})
+	prevPane := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "global", WindowID: "@1", WindowName: "orch", PaneID: "%99"}, nil
+	}
+	oldLister := statusPaneLister
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: "codex", Title: "amq:issue-96:cto"}}, nil
+	}
+	oldSend := sendPromptToPane
+	sendPromptToPane = func(string, string) error { return nil }
+	t.Cleanup(func() {
+		currentPaneIdentity = prevPane
+		statusPaneLister = oldLister
+		sendPromptToPane = oldSend
+	})
+	return base, dir
+}
+
+// TestGoalDeliverRegisterOrchestratorStartsDrainInjectingWakeSidecar proves the
+// #283/#288 plumbing for the orchestrator caller: the wake sidecar is started
+// with the standard drain inject-cmd and the launch record persists it.
+func TestGoalDeliverRegisterOrchestratorStartsDrainInjectingWakeSidecar(t *testing.T) {
+	base, dir := seedCtoDeliverTeamForOrchestrator(t)
+	var wakeOpts []leadWakeOptions
+	prevWake := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		wakeOpts = append(wakeOpts, opts)
+		return leadWakeResult{PID: 9876, Started: true, Detail: "ready"}, nil
+	}
+	t.Cleanup(func() { leadWakeStarter = prevWake })
+
+	if _, stderr, err := captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--json"})
+	}); err != nil {
+		t.Fatalf("goal deliver --register-orchestrator: %v\n%s", err, stderr)
+	}
+	if len(wakeOpts) != 1 || wakeOpts[0].WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("orchestrator wake sidecar must be started with the drain inject-cmd: %+v", wakeOpts)
+	}
+	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
+	if err != nil {
+		t.Fatalf("read orchestrator launch record: %v", err)
+	}
+	if rec.WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("orchestrator launch record must persist WakeInjectCmd, got %q", rec.WakeInjectCmd)
+	}
+}
+
+// TestGoalDeliverRegisterOrchestratorWakeFailureIsHonest proves the wake sidecar
+// is required: when it cannot start, registration surfaces the failure instead
+// of reporting a drain-injecting identity it did not create.
+func TestGoalDeliverRegisterOrchestratorWakeFailureIsHonest(t *testing.T) {
+	_, dir := seedCtoDeliverTeamForOrchestrator(t)
+	prevWake := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		return leadWakeResult{}, fmt.Errorf("wake sidecar lock busy")
+	}
+	t.Cleanup(func() { leadWakeStarter = prevWake })
+
+	_, _, err := captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--json"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "wake") {
+		t.Fatalf("wake sidecar failure must surface honestly, got: %v", err)
+	}
+}
+
 func TestGoalApplyRefusesWithoutApprovedGate(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
