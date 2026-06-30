@@ -57,6 +57,12 @@ type dispatchEnvelopeData struct {
 // package var so tests can drive runDispatch without a tmux server.
 var dispatchWakePane = defaultDispatchWakePane
 
+// dispatchRecipientWakeLive reports whether the dispatch recipient currently has
+// a positively-live wake sidecar, so dispatch can rely on durable AMQ + wake
+// delivery (#289) instead of injecting pane keystrokes. Package var so tests can
+// drive the wake-first branch without real liveness probing.
+var dispatchRecipientWakeLive = defaultDispatchRecipientWakeLive
+
 // dispatchLinkTask is a seam for partial-failure tests around post-send task
 // metadata linkage. Production uses taskstore.LinkDispatch directly.
 var dispatchLinkTask = taskstore.LinkDispatchForProfile
@@ -283,7 +289,47 @@ Examples:
 		return nil
 	}
 
-	receipt.addStage("nudge_requested", "requested pane prompt fallback nudge for recipient")
+	// Wake-first (#289): if the recipient has a positively-live wake sidecar, the
+	// durable AMQ message wakes and drains it (reinforced by the #283/#288
+	// drain-on-arrival injection). Normal worker direction must NOT inject pane
+	// keystrokes; raw send-keys is last-resort recovery only. --force bypasses
+	// this to force an explicit, clearly-marked pane override.
+	if !*forceFlag && dispatchRecipientWakeLive(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag) {
+		receipt.TaskID = taskID
+		receipt.Method = "durable_amq+wake"
+		receipt.Status = "queued_wake_delivered"
+		receipt.addStage("wake_delivered", "recipient is wake-live; the durable AMQ message wakes and drains it (no pane injection)")
+		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+			return err
+		}
+		if *jsonOut {
+			return printJSONEnvelope("dispatch", mutationResult{
+				Command:         "dispatch",
+				Status:          "queued_wake_delivered",
+				Project:         projectDir,
+				Session:         workstream,
+				Profile:         profile,
+				Namespace:       ns,
+				ID:              taskID,
+				TaskID:          taskID,
+				Role:            member.Role,
+				Assignee:        member.Handle,
+				Handle:          member.Handle,
+				MessageID:       msgID,
+				Root:            ctx.Root,
+				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				DeliveryReceipt: &receipt,
+			})
+		}
+		quietNotice("Dispatched to %s via durable AMQ + wake (recipient wake-live; no pane injection).\n", *roleFlag)
+		return nil
+	}
+
+	if *forceFlag {
+		receipt.addStage("nudge_requested", "explicit --force pane nudge override requested (bypasses wake-first)")
+	} else {
+		receipt.addStage("nudge_requested", "recipient not confidently wake-live; requesting LAST-RESORT pane prompt nudge")
+	}
 	outcome, werr := dispatchWakePane(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag, *forceFlag)
 	if werr != nil {
 		receipt.TaskID = taskID
@@ -323,8 +369,16 @@ Examples:
 	if outcome.PaneID != "" {
 		receipt.PaneID = outcome.PaneID
 		receipt.Fallback = true
+		// Preserve the legacy method + prompt_staged stage for existing pane-fallback
+		// consumers; mark the #289 last-resort / --force semantics ADDITIVELY with an
+		// extra recovery stage so nothing existing is renamed.
 		receipt.Method = "durable_amq_plus_prompt_fallback"
 		receipt.addStage("prompt_staged", "fixed drain-only pane prompt staged; this is fallback delivery, not an AMQ acknowledgement")
+		if *forceFlag {
+			receipt.addStage("forced_pane_injection", "explicit --force pane override (bypasses wake-first); pane injection, not an AMQ acknowledgement")
+		} else {
+			receipt.addStage("last_resort_pane_injection", "LAST-RESORT pane injection: recipient not wake-live, so the durable task got a best-effort pane nudge")
+		}
 		receipt.addStage("submit_attempted", "attempted to submit the staged drain-only prompt")
 		switch outcome.SubmitState {
 		case dispatchSubmitUnconfirmed:
@@ -468,6 +522,24 @@ func teamMemberByRole(t team.Team, role string) (team.Member, bool) {
 		}
 	}
 	return team.Member{}, false
+}
+
+// defaultDispatchRecipientWakeLive resolves the recipient's launch record and
+// reports whether its wake sidecar is verified live (Signals.WakeAlive). Only a
+// positively-live wake helper qualifies for wake-first delivery; anything
+// uncertain (no record, no root, dead sidecar) returns false so dispatch falls
+// back to the explicit last-resort pane nudge. Read-only.
+func defaultDispatchRecipientWakeLive(projectDir, profile, session string, explicitSession bool, role string) bool {
+	mr, workstream, err := resolveMemberRuntime(projectDir, profile, session, explicitSession, role)
+	if err != nil || !mr.HasRecord {
+		return false
+	}
+	root := strings.TrimSpace(mr.Record.Root)
+	if root == "" {
+		return false
+	}
+	live := classifyAgentLiveness(mr.AgentDir, root, mr.Profile, mr.Handle, mr.Member.Role, mr.Member.Binary, workstream, mr.CWD, defaultDuplicateLaunchProbe)
+	return live.Signals.WakeAlive
 }
 
 func defaultDispatchWakePane(projectDir, profile, session string, explicitSession bool, role string, force bool) (dispatchOutcome, error) {

@@ -113,6 +113,7 @@ func TestRunDispatchJSONEnvelope(t *testing.T) {
 	if !receiptHasStage(env.Data.DeliveryReceipt, "queued_amq") ||
 		!receiptHasStage(env.Data.DeliveryReceipt, "nudge_requested") ||
 		!receiptHasStage(env.Data.DeliveryReceipt, "prompt_staged") ||
+		!receiptHasStage(env.Data.DeliveryReceipt, "last_resort_pane_injection") ||
 		!receiptHasStage(env.Data.DeliveryReceipt, "submit_attempted") ||
 		!receiptHasStage(env.Data.DeliveryReceipt, dispatchSubmitConfirmed) {
 		t.Fatalf("dispatch receipt stages = %+v, want explicit submit-confirmed state machine", env.Data.DeliveryReceipt.Stages)
@@ -177,6 +178,7 @@ func TestRunDispatchJSONEnvelopeReportsSubmitUnconfirmed(t *testing.T) {
 	if !receiptHasStage(r, "queued_amq") ||
 		!receiptHasStage(r, "nudge_requested") ||
 		!receiptHasStage(r, "prompt_staged") ||
+		!receiptHasStage(r, "last_resort_pane_injection") ||
 		!receiptHasStage(r, "submit_attempted") ||
 		!receiptHasStage(r, dispatchSubmitUnconfirmed) {
 		t.Fatalf("dispatch receipt stages = %+v, want explicit submit-unconfirmed state machine", r.Stages)
@@ -286,6 +288,129 @@ func withDispatchWakeSeam(t *testing.T, outcome dispatchOutcome, err error) *[]s
 	}
 	t.Cleanup(func() { dispatchWakePane = prev })
 	return &calls
+}
+
+func withDispatchWakeLiveSeam(t *testing.T, live bool) {
+	t.Helper()
+	prev := dispatchRecipientWakeLive
+	dispatchRecipientWakeLive = func(projectDir, profile, session string, explicitSession bool, role string) bool {
+		return live
+	}
+	t.Cleanup(func() { dispatchRecipientWakeLive = prev })
+}
+
+// TestRunDispatchWakeLiveSkipsPaneInjection proves the #289 default: a wake-live
+// recipient is delivered via durable AMQ + wake with NO pane injection and no
+// nudge_requested stage.
+func TestRunDispatchWakeLiveSkipsPaneInjection(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-789 to qa\n")
+	withDispatchWakeLiveSeam(t, true)
+	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch --json: %v", err)
+	}
+	if len(*nudges) != 0 {
+		t.Fatalf("wake-live recipient must NOT be pane-injected, got nudges %v", *nudges)
+	}
+	env := decodeJSONEnvelope[mutationResult](t, stdout)
+	if env.Data.Status != "queued_wake_delivered" {
+		t.Fatalf("status = %q, want queued_wake_delivered", env.Data.Status)
+	}
+	r := env.Data.DeliveryReceipt
+	if r == nil || r.Method != "durable_amq+wake" || r.Fallback || r.PaneID != "" {
+		t.Fatalf("wake-live receipt = %+v, want durable_amq+wake no fallback", r)
+	}
+	if !receiptHasStage(r, "wake_delivered") {
+		t.Fatalf("missing wake_delivered stage: %+v", r.Stages)
+	}
+	if receiptHasStage(r, "nudge_requested") || receiptHasStage(r, "last_resort_pane_injection") {
+		t.Fatalf("wake-live must not have nudge/last-resort stages: %+v", r.Stages)
+	}
+}
+
+// TestRunDispatchNotWakeLiveUsesLastResortPane proves a recipient that is not
+// wake-live falls back to the explicit, clearly-marked last-resort pane nudge.
+func TestRunDispatchNotWakeLiveUsesLastResortPane(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-790 to qa\n")
+	withDispatchWakeLiveSeam(t, false)
+	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch --json: %v", err)
+	}
+	if len(*nudges) != 1 {
+		t.Fatalf("not-wake-live recipient should get one last-resort pane nudge, got %v", *nudges)
+	}
+	r := decodeJSONEnvelope[mutationResult](t, stdout).Data.DeliveryReceipt
+	if r == nil || r.Method != "durable_amq_plus_prompt_fallback" || !r.Fallback {
+		t.Fatalf("not-wake-live receipt = %+v, want last-resort pane injection", r)
+	}
+	if !receiptHasStage(r, "last_resort_pane_injection") {
+		t.Fatalf("missing last_resort_pane_injection stage: %+v", r.Stages)
+	}
+}
+
+// TestRunDispatchForceOverridesWakeFirst proves --force is an explicit pane
+// override even when the recipient is wake-live.
+func TestRunDispatchForceOverridesWakeFirst(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-791 to qa\n")
+	withDispatchWakeLiveSeam(t, true)
+	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y", "--force", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch --force --json: %v", err)
+	}
+	if len(*nudges) != 1 {
+		t.Fatalf("--force must override wake-first and pane-nudge, got %v", *nudges)
+	}
+	r := decodeJSONEnvelope[mutationResult](t, stdout).Data.DeliveryReceipt
+	if r == nil || r.Method != "durable_amq_plus_prompt_fallback" || !receiptHasStage(r, "forced_pane_injection") {
+		t.Fatalf("--force receipt = %+v, want legacy method + additive forced_pane_injection stage", r)
+	}
+}
+
+// TestRunDispatchNoWakeSkipsEverything proves --no-wake queues only, with a
+// wake_skipped stage and no wake-first / pane injection.
+func TestRunDispatchNoWakeSkipsEverything(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-792 to qa\n")
+	withDispatchWakeLiveSeam(t, true)
+	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y", "--no-wake", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch --no-wake --json: %v", err)
+	}
+	if len(*nudges) != 0 {
+		t.Fatalf("--no-wake must not pane-inject, got %v", *nudges)
+	}
+	r := decodeJSONEnvelope[mutationResult](t, stdout).Data.DeliveryReceipt
+	if r == nil || r.Method != "durable_amq_only" || !receiptHasStage(r, "wake_skipped") {
+		t.Fatalf("--no-wake receipt = %+v, want durable_amq_only + wake_skipped", r)
+	}
 }
 
 func TestRunDispatchSendsDurablyThenNudges(t *testing.T) {
