@@ -159,6 +159,76 @@ func mutationsContainTargetRoot(d goalDraftData) bool {
 	return false
 }
 
+func TestGoalDraftSkillInvocationCompleteness(t *testing.T) {
+	control := t.TempDir()
+
+	base := goalDraftOptions{Goal: "g", Mode: executionModeGlobalOrchestrator, ControlRoot: control, Session: "s", Profile: "p", Lead: "cto", Composition: team.CompositionSeeded, Visibility: visibilityPlan}
+	d, err := buildGoalDraft(base)
+	if err != nil {
+		t.Fatalf("buildGoalDraft: %v", err)
+	}
+	inv := d.SkillInvocation
+	if !strings.Contains(inv, "--register-orchestrator") {
+		t.Fatalf("global_orchestrator invocation must include --register-orchestrator:\n%s", inv)
+	}
+	for _, line := range strings.Split(inv, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "/amq-squad-orchestrator") && strings.Contains(line, "--target-project-root") {
+			t.Fatalf("unconfirmed target must not appear as an executable flag:\n%s", line)
+		}
+	}
+	if !strings.Contains(inv, "# recommended for a Codex lead:") {
+		t.Fatalf("effort must be a recommendation comment, not a silent flag:\n%s", inv)
+	}
+	if strings.Contains(inv, "--codex-args") && !strings.Contains(inv, "# recommended") {
+		t.Fatalf("--codex-args must only appear inside a recommendation comment:\n%s", inv)
+	}
+	if !strings.Contains(inv, "# REQUIRED before start: --target-project-root") {
+		t.Fatalf("unresolved global target must be flagged as a required comment:\n%s", inv)
+	}
+
+	provided := base
+	provided.TargetProjectRoot = control
+	provided.ProvidedFields = map[string]bool{"target_project_root": true}
+	d2, err := buildGoalDraft(provided)
+	if err != nil {
+		t.Fatalf("buildGoalDraft provided: %v", err)
+	}
+	if !strings.Contains(d2.SkillInvocation, "--target-project-root") {
+		t.Fatalf("provided target must appear in the invocation:\n%s", d2.SkillInvocation)
+	}
+	if strings.Contains(d2.SkillInvocation, "# REQUIRED before start: --target-project-root") {
+		t.Fatalf("provided target must not also be flagged as required:\n%s", d2.SkillInvocation)
+	}
+}
+
+func TestGoalDraftFieldSourcesAndSteps(t *testing.T) {
+	d, err := buildGoalDraft(goalDraftOptions{
+		Goal: "g", Mode: executionModeProjectLead, Session: "s", Profile: "p", Lead: "cto",
+		Composition: team.CompositionSeeded, Visibility: visibilityPlan,
+		ProvidedFields: map[string]bool{"session": true, "mode": true},
+	})
+	if err != nil {
+		t.Fatalf("buildGoalDraft: %v", err)
+	}
+	if d.FieldSources["session"] != targetRootSourceProvided || d.FieldSources["mode"] != targetRootSourceProvided {
+		t.Fatalf("provided fields mislabeled: %+v", d.FieldSources)
+	}
+	if d.FieldSources["profile"] != targetRootSourceDefault || d.FieldSources["lead"] != targetRootSourceDefault {
+		t.Fatalf("unset fields must be default: %+v", d.FieldSources)
+	}
+	if d.FieldSources["target_project_root"] != targetRootSourceDefault {
+		t.Fatalf("target_project_root source = %q, want default", d.FieldSources["target_project_root"])
+	}
+	if len(d.Steps) != 3 || d.Steps[0].Title != "Preview" || d.Steps[1].Title != "Create / register the visible lead" || d.Steps[2].Title != "Monitor through the lead" {
+		t.Fatalf("steps = %+v, want Preview/Create/Monitor", d.Steps)
+	}
+	for _, s := range d.Steps {
+		if s.AboutToHappen == "" || s.NextGate == "" {
+			t.Fatalf("step %d missing guidance: %+v", s.Number, s)
+		}
+	}
+}
+
 func TestNormalizeOptionalStringFlagDefaultsAndConsumesValue(t *testing.T) {
 	got := normalizeOptionalStringFlag([]string{"deliver", "--register-orchestrator", "--json"}, "--register-orchestrator", "orchestrator")
 	want := []string{"deliver", "--register-orchestrator=orchestrator", "--json"}
