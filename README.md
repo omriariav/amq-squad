@@ -427,6 +427,37 @@ non-agent operator/global-orchestrator pane, pass
 (default handle `orchestrator`), register the current pane as an external lead,
 and start/repair its wake sidecar before delivering the goal.
 
+#### Wakeable orchestrator identity in one command
+
+From a neutral control root (a pane that is not itself a launched team agent),
+a single confirm-gated command gives the orchestrator a fully wakeable AMQ
+identity. No manual `team member add` or separate `lead register` is needed:
+
+```sh
+amq-squad goal start \
+  --project /path/to/repo \
+  --session v2-14-0 \
+  --register-orchestrator=orchestrator \
+  --goal "deliver GitHub milestone v2.14.0" \
+  --yes
+```
+
+In one verified step this produces (1) a durable `orchestrator` team member,
+(2) a launch record bound to the live control pane, (3) the orchestrator set as
+lead where appropriate, and (4) a running wake sidecar targeting that pane. The
+roster write is deferred until after `--yes` is confirmed (run without `--yes`,
+or with `--dry-run`, to preview without mutating anything). Re-running the same
+command is idempotent: it does not duplicate the member or launch record, and
+re-uses the existing wake sidecar. If the wake sidecar cannot start, the command
+fails loudly rather than reporting an identity it did not create.
+
+Verify the binding with `status --json`. The envelope proves it on two surfaces:
+top-level `goal_binding` reports `mode: "native_goal"` with `verified: true`, and
+the orchestrator's per-member record carries `external: true` together with a
+live wake signal (`status: "wake-live"`, `signals.wake_alive: true`, and
+`signals.wake_pid`). The `external` field lets a client positively identify the
+registered orchestrator instead of inferring it from the lead role alone.
+
 For an Autonomous preview, opt in explicitly and include a bounded policy:
 
 ```sh
