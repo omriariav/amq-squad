@@ -69,12 +69,12 @@ type Record struct {
 	// a visible lead record carries native evidence.
 	GoalBinding *GoalBinding `json:"goal_binding,omitempty"`
 	// PreauthorizedActions records the in-scope worker actions amq-squad
-	// pre-authorized at launch (#296), e.g. the Claude --allowedTools patterns
-	// that let an orchestrated worker create its PR and push its own feature
-	// branch without a permission prompt. It is audit evidence of exactly what
-	// was granted; main-branch push, tags, releases, and destructive git are
-	// never in this list. Additive and omitted for legacy records and launches
-	// where no pre-authorization applied.
+	// pre-authorized at launch (#296) — the Claude --allowedTools patterns that
+	// let an orchestrated worker create its PR without a permission prompt. It is
+	// audit evidence of exactly what was granted; feature-branch push (future
+	// work), main-branch push, tags, releases, and destructive git are never in
+	// this list. Additive and omitted for legacy records and launches where no
+	// pre-authorization applied.
 	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
 	// WakeInjectVia and WakeInjectArgs record AMQ 0.37.0 external wake
 	// injector settings so resume/replay can repair and restart the same
