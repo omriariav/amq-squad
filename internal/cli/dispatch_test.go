@@ -103,7 +103,7 @@ func TestRunDispatchJSONEnvelope(t *testing.T) {
 	}
 	if env.Data.DeliveryReceipt == nil ||
 		env.Data.DeliveryReceipt.Kind != "dispatch" ||
-		env.Data.DeliveryReceipt.Method != "durable_amq_plus_last_resort_pane_injection" ||
+		env.Data.DeliveryReceipt.Method != "durable_amq_plus_prompt_fallback" ||
 		env.Data.DeliveryReceipt.MessageID != "msg-123" ||
 		env.Data.DeliveryReceipt.Status != dispatchSubmitConfirmed ||
 		env.Data.DeliveryReceipt.PaneID != "%7" ||
@@ -112,6 +112,7 @@ func TestRunDispatchJSONEnvelope(t *testing.T) {
 	}
 	if !receiptHasStage(env.Data.DeliveryReceipt, "queued_amq") ||
 		!receiptHasStage(env.Data.DeliveryReceipt, "nudge_requested") ||
+		!receiptHasStage(env.Data.DeliveryReceipt, "prompt_staged") ||
 		!receiptHasStage(env.Data.DeliveryReceipt, "last_resort_pane_injection") ||
 		!receiptHasStage(env.Data.DeliveryReceipt, "submit_attempted") ||
 		!receiptHasStage(env.Data.DeliveryReceipt, dispatchSubmitConfirmed) {
@@ -168,7 +169,7 @@ func TestRunDispatchJSONEnvelopeReportsSubmitUnconfirmed(t *testing.T) {
 	r := env.Data.DeliveryReceipt
 	if r == nil ||
 		r.Status != dispatchSubmitUnconfirmed ||
-		r.Method != "durable_amq_plus_last_resort_pane_injection" ||
+		r.Method != "durable_amq_plus_prompt_fallback" ||
 		r.PaneID != "%7" ||
 		!r.Fallback ||
 		!strings.Contains(r.Detail, "could not be confirmed") {
@@ -176,6 +177,7 @@ func TestRunDispatchJSONEnvelopeReportsSubmitUnconfirmed(t *testing.T) {
 	}
 	if !receiptHasStage(r, "queued_amq") ||
 		!receiptHasStage(r, "nudge_requested") ||
+		!receiptHasStage(r, "prompt_staged") ||
 		!receiptHasStage(r, "last_resort_pane_injection") ||
 		!receiptHasStage(r, "submit_attempted") ||
 		!receiptHasStage(r, dispatchSubmitUnconfirmed) {
@@ -353,7 +355,7 @@ func TestRunDispatchNotWakeLiveUsesLastResortPane(t *testing.T) {
 		t.Fatalf("not-wake-live recipient should get one last-resort pane nudge, got %v", *nudges)
 	}
 	r := decodeJSONEnvelope[mutationResult](t, stdout).Data.DeliveryReceipt
-	if r == nil || r.Method != "durable_amq_plus_last_resort_pane_injection" || !r.Fallback {
+	if r == nil || r.Method != "durable_amq_plus_prompt_fallback" || !r.Fallback {
 		t.Fatalf("not-wake-live receipt = %+v, want last-resort pane injection", r)
 	}
 	if !receiptHasStage(r, "last_resort_pane_injection") {
@@ -381,8 +383,8 @@ func TestRunDispatchForceOverridesWakeFirst(t *testing.T) {
 		t.Fatalf("--force must override wake-first and pane-nudge, got %v", *nudges)
 	}
 	r := decodeJSONEnvelope[mutationResult](t, stdout).Data.DeliveryReceipt
-	if r == nil || r.Method != "durable_amq_plus_forced_pane_injection" {
-		t.Fatalf("--force receipt method = %+v, want forced pane injection", r)
+	if r == nil || r.Method != "durable_amq_plus_prompt_fallback" || !receiptHasStage(r, "forced_pane_injection") {
+		t.Fatalf("--force receipt = %+v, want legacy method + additive forced_pane_injection stage", r)
 	}
 }
 

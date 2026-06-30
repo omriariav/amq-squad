@@ -369,12 +369,15 @@ Examples:
 	if outcome.PaneID != "" {
 		receipt.PaneID = outcome.PaneID
 		receipt.Fallback = true
+		// Preserve the legacy method + prompt_staged stage for existing pane-fallback
+		// consumers; mark the #289 last-resort / --force semantics ADDITIVELY with an
+		// extra recovery stage so nothing existing is renamed.
+		receipt.Method = "durable_amq_plus_prompt_fallback"
+		receipt.addStage("prompt_staged", "fixed drain-only pane prompt staged; this is fallback delivery, not an AMQ acknowledgement")
 		if *forceFlag {
-			receipt.Method = "durable_amq_plus_forced_pane_injection"
-			receipt.addStage("last_resort_pane_injection", "explicit --force pane override: drain-only prompt staged; this is fallback delivery, not an AMQ acknowledgement")
+			receipt.addStage("forced_pane_injection", "explicit --force pane override (bypasses wake-first); pane injection, not an AMQ acknowledgement")
 		} else {
-			receipt.Method = "durable_amq_plus_last_resort_pane_injection"
-			receipt.addStage("last_resort_pane_injection", "LAST-RESORT pane injection (recipient not wake-live): drain-only prompt staged; this is fallback delivery, not an AMQ acknowledgement")
+			receipt.addStage("last_resort_pane_injection", "LAST-RESORT pane injection: recipient not wake-live, so the durable task got a best-effort pane nudge")
 		}
 		receipt.addStage("submit_attempted", "attempted to submit the staged drain-only prompt")
 		switch outcome.SubmitState {
