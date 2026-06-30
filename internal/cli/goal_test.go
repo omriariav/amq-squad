@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -84,6 +85,47 @@ func TestGoalDraftJSONIncludesMilestoneIssues(t *testing.T) {
 		if !strings.Contains(data.BriefSkeleton+data.OrchestratorPrompt, want) {
 			t.Errorf("draft missing %q:\n%+v", want, data)
 		}
+	}
+}
+
+func TestBuildGoalDraftTargetRootSource(t *testing.T) {
+	control := t.TempDir()
+	match := filepath.Join(control, "amq-squad")
+	if err := os.MkdirAll(match, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGitConfig(t, match, "git@github.com:omriariav/amq-squad.git")
+
+	base := goalDraftOptions{Goal: "g", Mode: executionModeGlobalOrchestrator, ControlRoot: control, Session: "s", Profile: "p", Lead: "cto", Composition: team.CompositionSeeded, Visibility: visibilityPlan}
+
+	resolved := base
+	resolved.Repo = "omriariav/amq-squad"
+	d, err := buildGoalDraft(resolved)
+	if err != nil {
+		t.Fatalf("buildGoalDraft resolved: %v", err)
+	}
+	if d.TargetProjectRootSource != targetRootSourceResolvedUnconfirmed || d.TargetProjectRoot != match {
+		t.Fatalf("resolved: source=%q target=%q, want resolved_unconfirmed %s", d.TargetProjectRootSource, d.TargetProjectRoot, match)
+	}
+
+	none := base
+	none.Repo = "nobody/nothing"
+	d2, err := buildGoalDraft(none)
+	if err != nil {
+		t.Fatalf("buildGoalDraft unresolved: %v", err)
+	}
+	if d2.TargetProjectRootSource != targetRootSourceUnresolved || d2.TargetProjectRoot != "" {
+		t.Fatalf("unresolved: source=%q target=%q, want unresolved + empty", d2.TargetProjectRootSource, d2.TargetProjectRoot)
+	}
+
+	provided := base
+	provided.TargetProjectRoot = match
+	d3, err := buildGoalDraft(provided)
+	if err != nil {
+		t.Fatalf("buildGoalDraft provided: %v", err)
+	}
+	if d3.TargetProjectRootSource != targetRootSourceProvided {
+		t.Fatalf("provided: source=%q, want provided", d3.TargetProjectRootSource)
 	}
 }
 

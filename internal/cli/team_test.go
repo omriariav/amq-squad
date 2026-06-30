@@ -871,6 +871,60 @@ func TestRunTeamInitPersonasAliasAndBinaryOverride(t *testing.T) {
 	}
 }
 
+// TestRunTeamInitGlobalOrchestratorRequiresExplicitTargetRoot proves #290's hard
+// invariant: a global_orchestrator team cannot be initialized without an explicit
+// --target-project-root, so a run can never silently begin editing from cwd/the
+// control root. Other modes keep the cwd default.
+func TestRunTeamInitGlobalOrchestratorRequiresExplicitTargetRoot(t *testing.T) {
+	chdirTemp := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		old, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(old) })
+		return dir
+	}
+
+	// global_orchestrator without --target-project-root must fail closed.
+	chdirTemp(t)
+	err := runTeamInit([]string{"--roles", "cto", "--lead", "cto", "--orchestrated", "--mode", "global_orchestrator"})
+	if err == nil || !strings.Contains(err.Error(), "target-project-root") {
+		t.Fatalf("global_orchestrator without --target-project-root must fail closed, got %v", err)
+	}
+
+	// With an explicit target it succeeds and persists the path.
+	dir2 := chdirTemp(t)
+	target := t.TempDir()
+	if err := runTeamInit([]string{"--roles", "cto", "--lead", "cto", "--orchestrated", "--mode", "global_orchestrator", "--target-project-root", target}); err != nil {
+		t.Fatalf("explicit target should succeed: %v", err)
+	}
+	got, err := team.Read(dir2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TargetProjectRoot != target {
+		t.Fatalf("target_project_root = %q, want %q", got.TargetProjectRoot, target)
+	}
+
+	// A non-global mode keeps the cwd default (no explicit target required).
+	dir3 := chdirTemp(t)
+	if err := runTeamInit([]string{"--roles", "cto"}); err != nil {
+		t.Fatalf("non-global init should not require explicit target: %v", err)
+	}
+	got3, err := team.Read(dir3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got3.TargetProjectRoot == "" {
+		t.Fatal("non-global init should default target_project_root (cwd), got empty")
+	}
+}
+
 func TestRunTeamInitOperatorFlags(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
