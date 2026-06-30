@@ -145,6 +145,7 @@ var completionTaskSubcommands = []string{
 // completionVerifySubcommands lists the `amq-squad verify` subcommands.
 var completionVerifySubcommands = []string{
 	"merge",
+	"release",
 }
 
 // completionCommonFlags lists every flag registered by the current stdlib
