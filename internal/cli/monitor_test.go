@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,6 +130,45 @@ func TestMonitorIdleLoopIsBoundedByMaxTicks(t *testing.T) {
 	}
 	if ticks != 3 {
 		t.Fatalf("expected exactly 3 bounded idle ticks, got %d:\n%s", ticks, stdout)
+	}
+}
+
+func TestMonitorFailsClosedOnOperatorReadError(t *testing.T) {
+	seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}}})
+	prev := monitorOperatorState
+	monitorOperatorState = func(projectDir, profile, session string) (int, int, error) {
+		return 0, 0, fmt.Errorf("amq scan failed")
+	}
+	t.Cleanup(func() { monitorOperatorState = prev })
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runMonitor([]string{"--session", "s", "--once", "--json"})
+	})
+	if err == nil {
+		t.Fatal("a broken operator-state read must fail closed (non-zero), not report idle")
+	}
+	if !strings.Contains(stdout, `"kind":"monitor_error"`) || strings.Contains(stdout, `"events_found":false`) {
+		t.Fatalf("expected a monitor_error record, not an idle tick:\n%s", stdout)
+	}
+}
+
+func TestMonitorFailsClosedOnEvidenceReadError(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}}})
+	withMonitorOperatorState(t, 0, 0)
+	// Make .amq-squad/evidence a FILE so os.ReadDir fails with a non-not-exist
+	// error: a broken evidence source must fail closed, not look empty/idle.
+	amqDir := filepath.Join(dir, ".amq-squad")
+	if err := os.MkdirAll(amqDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(amqDir, "evidence"), []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := captureOutput(t, func() error {
+		return runMonitor([]string{"--session", "s", "--max-ticks", "2", "--interval", "1ms", "--json"})
+	})
+	if err == nil {
+		t.Fatal("a broken evidence dir read must fail closed (non-zero), not idle out the loop")
 	}
 }
 
