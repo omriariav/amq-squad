@@ -72,6 +72,24 @@ type monitorEvent struct {
 	Path    string `json:"path,omitempty"`
 	Issue   string `json:"issue,omitempty"`
 	Detail  string `json:"detail,omitempty"`
+	// Idle carries the liveness/busy evidence behind an idle_with_active_task
+	// flag (#299), so a consumer can tell a confirmed not-busy idle from any
+	// other state. Present only on idle_with_active_task events.
+	Idle *monitorIdleEvidence `json:"idle_evidence,omitempty"`
+}
+
+// monitorIdleEvidence records exactly why an idle_with_active_task event fired.
+// A live owner is only ever flagged when Busy is positively known false
+// (BusyKnown=true, Busy=false); unknown busy state is never classified as idle.
+type monitorIdleEvidence struct {
+	Owner            string `json:"owner"`
+	OwnerStatus      string `json:"owner_status"`
+	Live             bool   `json:"live"`
+	BusyKnown        bool   `json:"busy_known"`
+	Busy             bool   `json:"busy"`
+	PaneID           string `json:"pane_id,omitempty"`
+	AgeSeconds       int    `json:"age_seconds"`
+	ThresholdSeconds int    `json:"threshold_seconds"`
 }
 
 // monitorTick is the per-tick envelope emitted under --json (one NDJSON object
@@ -366,25 +384,32 @@ func idleWithActiveTaskEvents(o monitorLoopOptions, session string, tasks []task
 		}
 		live := row.Status == statusStateLive || row.Status == statusStateWakeLive
 		age := now.Sub(tk.UpdatedAt)
+		paneID := ""
+		busy, busyKnown := false, false
+		if row.Tmux != nil && row.Tmux.PaneAlive {
+			paneID = row.Tmux.PaneID
+			busy, busyKnown = monitorPaneBusy(paneID)
+		}
 		var reason string
-		switch {
-		case !live:
-			// Halted/dead owner still holding the task — flag regardless of age.
-			reason = fmt.Sprintf("owner %q is %s while owning in_progress task", owner, row.Status)
-		case row.Tmux != nil && row.Tmux.PaneAlive:
-			if busy, known := monitorPaneBusy(row.Tmux.PaneID); known && busy {
-				continue // busy/mid-turn: never flag
+		if live {
+			// A live owner is flagged ONLY with positive evidence it is not busy
+			// (busyKnown && !busy) AND a stale task. Busy/mid-turn is never idle,
+			// and UNKNOWN busy state is treated conservatively as not-idle so an
+			// owner we cannot inspect is never a false positive.
+			if !busyKnown {
+				continue // cannot confirm not-busy: do not classify as idle
+			}
+			if busy {
+				continue // busy/mid-turn
 			}
 			if age < o.StaleAfter {
-				continue // live, idle-or-unknown-busy, but task is fresh
+				continue // confirmed not-busy but task is fresh
 			}
-			reason = fmt.Sprintf("owner %q is live but idle and task untouched for %s", owner, age.Round(time.Second))
-		default:
-			// Live by record but no live pane to gauge busyness: rely on staleness.
-			if age < o.StaleAfter {
-				continue
-			}
-			reason = fmt.Sprintf("owner %q live (no pane busy signal) and task untouched for %s", owner, age.Round(time.Second))
+			reason = fmt.Sprintf("owner %q is live, confirmed not busy, and the task is untouched for %s", owner, age.Round(time.Second))
+		} else {
+			// Not-live owner still holding the task: flag regardless of age; busy
+			// is irrelevant (and was not probed).
+			reason = fmt.Sprintf("owner %q is %s while owning an in_progress task", owner, row.Status)
 		}
 		out = append(out, monitorEvent{
 			Type:    monitorEventIdleActiveTask,
@@ -392,6 +417,16 @@ func idleWithActiveTaskEvents(o monitorLoopOptions, session string, tasks []task
 			Source:  "task:" + tk.ID + " owner:" + owner + " status:" + string(row.Status),
 			Detail: fmt.Sprintf("%s — %s (age %s, threshold %s). Suggested: controlled wake-first re-nudge (amq-squad dispatch) to resume task %s; escalate to operator after repeated no-advance.",
 				tk.Title, reason, age.Round(time.Second), o.StaleAfter, tk.ID),
+			Idle: &monitorIdleEvidence{
+				Owner:            owner,
+				OwnerStatus:      string(row.Status),
+				Live:             live,
+				BusyKnown:        busyKnown,
+				Busy:             busy,
+				PaneID:           paneID,
+				AgeSeconds:       int(age / time.Second),
+				ThresholdSeconds: int(o.StaleAfter / time.Second),
+			},
 		})
 	}
 	return out, nil
