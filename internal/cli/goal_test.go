@@ -107,6 +107,17 @@ func TestBuildGoalDraftTargetRootSource(t *testing.T) {
 	if d.TargetProjectRootSource != targetRootSourceResolvedUnconfirmed || d.TargetProjectRoot != match {
 		t.Fatalf("resolved: source=%q target=%q, want resolved_unconfirmed %s", d.TargetProjectRootSource, d.TargetProjectRoot, match)
 	}
+	// resolved_unconfirmed must NOT leak into actionable start surfaces or the
+	// execution contract target.
+	if strings.Contains(d.OrchestratorPrompt, "--target-project-root") {
+		t.Fatalf("resolved_unconfirmed must not appear in OrchestratorPrompt:\n%s", d.OrchestratorPrompt)
+	}
+	if mutationsContainTargetRoot(d) {
+		t.Fatalf("resolved_unconfirmed must not appear in applyable mutations: %+v", d.ApplyableMutations)
+	}
+	if d.Execution.TargetProjectRoot != "" {
+		t.Fatalf("resolved_unconfirmed execution.target_project_root must be empty, got %q", d.Execution.TargetProjectRoot)
+	}
 
 	none := base
 	none.Repo = "nobody/nothing"
@@ -116,6 +127,9 @@ func TestBuildGoalDraftTargetRootSource(t *testing.T) {
 	}
 	if d2.TargetProjectRootSource != targetRootSourceUnresolved || d2.TargetProjectRoot != "" {
 		t.Fatalf("unresolved: source=%q target=%q, want unresolved + empty", d2.TargetProjectRootSource, d2.TargetProjectRoot)
+	}
+	if strings.Contains(d2.OrchestratorPrompt, "--target-project-root") || mutationsContainTargetRoot(d2) || d2.Execution.TargetProjectRoot != "" {
+		t.Fatalf("unresolved must not leak target into prompt/mutations/execution: prompt=%q mut=%+v exec=%q", d2.OrchestratorPrompt, d2.ApplyableMutations, d2.Execution.TargetProjectRoot)
 	}
 
 	provided := base
@@ -127,6 +141,22 @@ func TestBuildGoalDraftTargetRootSource(t *testing.T) {
 	if d3.TargetProjectRootSource != targetRootSourceProvided {
 		t.Fatalf("provided: source=%q, want provided", d3.TargetProjectRootSource)
 	}
+	// provided DOES carry into start surfaces + the execution contract.
+	if !strings.Contains(d3.OrchestratorPrompt, "--target-project-root") || !mutationsContainTargetRoot(d3) {
+		t.Fatalf("provided must appear in prompt + mutations: prompt=%q mut=%+v", d3.OrchestratorPrompt, d3.ApplyableMutations)
+	}
+	if d3.Execution.TargetProjectRoot == "" {
+		t.Fatal("provided execution.target_project_root must be set")
+	}
+}
+
+func mutationsContainTargetRoot(d goalDraftData) bool {
+	for _, m := range d.ApplyableMutations {
+		if strings.Contains(m.Command, "--target-project-root") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestNormalizeOptionalStringFlagDefaultsAndConsumesValue(t *testing.T) {

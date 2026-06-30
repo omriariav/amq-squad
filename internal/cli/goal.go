@@ -1119,6 +1119,15 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 	data.OrchestratorPrompt = renderGoalOrchestratorPrompt(data)
 	data.GoalBinding = goalBindingForDraft(data.Namespace, data.OrchestratorPrompt)
 	data.Execution = executionContract(mode, controlRoot, targetRoot, profile, session, data.Namespace.ID, lead, data.GoalBinding.Mode, visibility, opts.RuntimeVersion, targetContract, goalVisibleMembers(mode, data.Roster, lead))
+	// For a global_orchestrator goal whose target is only a proposal or
+	// unresolved, the execution contract must NOT report a target_project_root
+	// (executionContract falls back to cwd). Keep it empty so no surface treats an
+	// unconfirmed/guessed path as the place the lead edits (#290); the proposal
+	// stays in target_project_root + target_project_root_source + candidates.
+	if mode == executionModeGlobalOrchestrator &&
+		(targetRootSource == targetRootSourceResolvedUnconfirmed || targetRootSource == targetRootSourceUnresolved) {
+		data.Execution.TargetProjectRoot = ""
+	}
 	data.BriefSkeleton = renderGoalBriefSkeleton(data)
 	data.Tasks = defaultGoalTasks(data)
 	data.SpawnGates = defaultGoalSpawnGates(data)
@@ -1442,7 +1451,12 @@ func defaultGoalMutations(data goalDraftData) []goalCommandPlan {
 	if data.ControlRoot != "" {
 		executionArgs += " --control-root " + shellQuote(data.ControlRoot)
 	}
-	if data.TargetProjectRoot != "" {
+	// Only emit --target-project-root in the generated start command when it was
+	// explicitly PROVIDED (#290). A resolved_unconfirmed proposal or an unresolved
+	// target must NOT be carried into actionable start surfaces; omitting it makes
+	// the generated global_orchestrator team init fail closed until the operator
+	// supplies a confirmed path. default (non-global) omits too and cwd-defaults.
+	if data.TargetProjectRootSource == targetRootSourceProvided && data.TargetProjectRoot != "" {
 		executionArgs += " --target-project-root " + shellQuote(data.TargetProjectRoot)
 	}
 	if data.TargetContract != "" {
@@ -1546,7 +1560,10 @@ func renderGoalOrchestratorPrompt(data goalDraftData) string {
 	if data.ControlRoot != "" {
 		args = append(args, "--control-root", data.ControlRoot)
 	}
-	if data.TargetProjectRoot != "" {
+	// Only carry an explicitly PROVIDED target into the visible-lead /goal prompt
+	// (#290); a resolved_unconfirmed/unresolved target must not appear as a real
+	// flag in an actionable start surface.
+	if data.TargetProjectRootSource == targetRootSourceProvided && data.TargetProjectRoot != "" {
 		args = append(args, "--target-project-root", data.TargetProjectRoot)
 	}
 	if data.TargetContract != "" {
