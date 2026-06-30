@@ -201,15 +201,23 @@ func TestGoalDraftSkillInvocationCompleteness(t *testing.T) {
 	}
 }
 
+// TestGoalDraftLaunchMutationOmitsDefaultReasoningEffort drives the REAL goal
+// draft CLI (not direct struct mutation) to prove: the seeded default reasoning
+// effort is never a live --codex-args in applyable launch mutations, and an
+// operator-supplied --codex-args flows through to the launch mutation (#291).
 func TestGoalDraftLaunchMutationOmitsDefaultReasoningEffort(t *testing.T) {
-	base := goalDraftOptions{Goal: "g", Mode: executionModeGlobalOrchestrator, ControlRoot: t.TempDir(), Session: "s", Profile: "p", Lead: "cto", Composition: team.CompositionSeeded, Visibility: visibilitySiblingTabs}
-
-	// Default (codex args NOT provided): no live --codex-args in any applyable
-	// launch mutation; the effort is surfaced only as an inert recommendation.
-	d, err := buildGoalDraft(base)
-	if err != nil {
-		t.Fatalf("buildGoalDraft: %v", err)
+	draftViaCLI := func(t *testing.T, extra ...string) goalDraftData {
+		t.Helper()
+		args := append([]string{"--goal", "g", "--mode", "global_orchestrator", "--session", "s", "--json"}, extra...)
+		stdout, stderr, err := captureOutput(t, func() error { return runGoalDraft(args) })
+		if err != nil {
+			t.Fatalf("runGoalDraft %v: %v\n%s", args, err, stderr)
+		}
+		return decodeJSONEnvelope[goalDraftData](t, stdout).Data
 	}
+
+	// Default (no --codex-args): no live flag, inert recommendation present.
+	d := draftViaCLI(t)
 	for _, m := range d.ApplyableMutations {
 		if strings.Contains(m.Command, "--codex-args") {
 			t.Fatalf("default effort must not be a live --codex-args in launch mutations: %q", m.Command)
@@ -225,21 +233,20 @@ func TestGoalDraftLaunchMutationOmitsDefaultReasoningEffort(t *testing.T) {
 		t.Fatalf("expected an inert effort recommendation on the launch mutation: %+v", d.ApplyableMutations)
 	}
 
-	// Explicitly provided codex args: the launch mutation carries --codex-args.
-	provided := base
-	provided.ProvidedFields = map[string]bool{"codex_args": true}
-	d2, err := buildGoalDraft(provided)
-	if err != nil {
-		t.Fatalf("buildGoalDraft provided: %v", err)
-	}
+	// Operator explicitly supplies --codex-args via the real CLI: it flows into
+	// the applyable launch command and the recommendation is dropped.
+	d2 := draftViaCLI(t, "--codex-args", "-c model_reasoning_effort=high")
 	var sawFlag bool
 	for _, m := range d2.ApplyableMutations {
-		if strings.Contains(m.Command, "--codex-args") {
+		if strings.Contains(m.Command, "--codex-args") && strings.Contains(m.Command, "model_reasoning_effort=high") {
 			sawFlag = true
+		}
+		if strings.Contains(m.Reason, "Recommended (not applied)") {
+			t.Fatalf("explicit codex args must not also emit the inert recommendation: %+v", m)
 		}
 	}
 	if !sawFlag {
-		t.Fatalf("explicitly provided codex args must appear in the launch mutation: %+v", d2.ApplyableMutations)
+		t.Fatalf("explicitly provided --codex-args must appear in the launch mutation: %+v", d2.ApplyableMutations)
 	}
 }
 
