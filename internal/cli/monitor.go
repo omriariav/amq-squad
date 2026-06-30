@@ -176,6 +176,9 @@ func runMonitorLoop(o monitorLoopOptions) error {
 	for tick := 1; ; tick++ {
 		events, err := collectMonitorEvents(o)
 		if err != nil {
+			// Fail closed: a broken required source is an error, never an idle
+			// tick. Emit a clear error record (JSON or human) and exit non-zero.
+			writeMonitorError(o.Out, tick, err, o.JSON)
 			return err
 		}
 		if err := writeMonitorTick(o.Out, monitorTick{
@@ -219,45 +222,53 @@ func collectMonitorEvents(o monitorLoopOptions) ([]monitorEvent, error) {
 		if session == "" {
 			continue
 		}
-		// 1. Task store: blocked/failed tasks.
+		// 1. Task store: blocked/failed tasks. A missing task dir is empty (nil
+		// error); a real read/parse failure fails closed so a broken source is
+		// never reported as idle.
 		tasks, err := taskstore.ListForProfile(o.ProjectDir, o.Profile, session)
-		if err == nil {
-			for _, tk := range tasks {
-				if tk.Status == taskstore.StatusBlocked || tk.Status == taskstore.StatusFailed {
-					detail := tk.Title
-					if r := strings.TrimSpace(tk.BlockReason + tk.FailureReason); r != "" {
-						detail = tk.Title + " — " + r
-					}
-					events = append(events, monitorEvent{
-						Type:    monitorEventBlockedTask,
-						Session: session,
-						Source:  "task:" + tk.ID + " (" + tk.Status + ")",
-						Detail:  detail,
-					})
+		if err != nil {
+			return nil, fmt.Errorf("monitor: read task store for session %q: %w", session, err)
+		}
+		for _, tk := range tasks {
+			if tk.Status == taskstore.StatusBlocked || tk.Status == taskstore.StatusFailed {
+				detail := tk.Title
+				if r := strings.TrimSpace(tk.BlockReason + tk.FailureReason); r != "" {
+					detail = tk.Title + " — " + r
 				}
+				events = append(events, monitorEvent{
+					Type:    monitorEventBlockedTask,
+					Session: session,
+					Source:  "task:" + tk.ID + " (" + tk.Status + ")",
+					Detail:  detail,
+				})
 			}
 		}
 		// 2. Evidence dir: merge evidence for an unhandled issue.
-		events = append(events, monitorMergeReadyEvents(o, session)...)
+		mergeEvents, err := monitorMergeReadyEvents(o, session)
+		if err != nil {
+			return nil, fmt.Errorf("monitor: scan evidence dir for session %q: %w", session, err)
+		}
+		events = append(events, mergeEvents...)
 		// 3 + 4. Open operator gates and operator inbox (read-only).
 		openGates, unread, err := monitorOperatorState(o.ProjectDir, o.Profile, session)
-		if err == nil {
-			if openGates > 0 {
-				events = append(events, monitorEvent{
-					Type:    monitorEventOpenGate,
-					Session: session,
-					Source:  "operator",
-					Detail:  fmt.Sprintf("%d open operator gate(s) awaiting a decision", openGates),
-				})
-			}
-			if unread > 0 {
-				events = append(events, monitorEvent{
-					Type:    monitorEventInbox,
-					Session: session,
-					Source:  "operator",
-					Detail:  fmt.Sprintf("%d unread operator inbox message(s)", unread),
-				})
-			}
+		if err != nil {
+			return nil, fmt.Errorf("monitor: inspect operator gates/inbox for session %q: %w", session, err)
+		}
+		if openGates > 0 {
+			events = append(events, monitorEvent{
+				Type:    monitorEventOpenGate,
+				Session: session,
+				Source:  "operator",
+				Detail:  fmt.Sprintf("%d open operator gate(s) awaiting a decision", openGates),
+			})
+		}
+		if unread > 0 {
+			events = append(events, monitorEvent{
+				Type:    monitorEventInbox,
+				Session: session,
+				Source:  "operator",
+				Detail:  fmt.Sprintf("%d unread operator inbox message(s)", unread),
+			})
 		}
 	}
 	return events, nil
@@ -266,11 +277,16 @@ func collectMonitorEvents(o monitorLoopOptions) ([]monitorEvent, error) {
 // monitorMergeReadyEvents scans the evidence dir for this session's
 // *-merge-evidence.json files and emits a merge_gate_ready event for each whose
 // issue is not in the handled set. Read-only filesystem scan; no provider calls.
-func monitorMergeReadyEvents(o monitorLoopOptions, session string) []monitorEvent {
+func monitorMergeReadyEvents(o monitorLoopOptions, session string) ([]monitorEvent, error) {
 	dir := filepath.Join(o.ProjectDir, ".amq-squad", "evidence")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			// No evidence dir yet is a legitimately-empty optional source, not a
+			// read failure.
+			return nil, nil
+		}
+		return nil, err
 	}
 	prefix := session + "-"
 	const suffix = "-merge-evidence.json"
@@ -298,7 +314,25 @@ func monitorMergeReadyEvents(o monitorLoopOptions, session string) []monitorEven
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out
+	return out, nil
+}
+
+// writeMonitorError emits a clear, distinct error record (NOT an idle tick) when
+// a required source cannot be read. Best-effort: the non-zero exit comes from the
+// returned error regardless.
+func writeMonitorError(out io.Writer, tick int, err error, jsonOut bool) {
+	if jsonOut {
+		b, mErr := json.Marshal(struct {
+			Kind  string `json:"kind"`
+			Tick  int    `json:"tick"`
+			Error string `json:"error"`
+		}{Kind: "monitor_error", Tick: tick, Error: err.Error()})
+		if mErr == nil {
+			fmt.Fprintln(out, string(b))
+		}
+		return
+	}
+	fmt.Fprintf(out, "tick %d: ERROR (source unavailable, not idle): %v\n", tick, err)
 }
 
 func writeMonitorTick(out io.Writer, tick monitorTick, jsonOut bool) error {
