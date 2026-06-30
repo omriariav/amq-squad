@@ -1,0 +1,154 @@
+package cli
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
+	"github.com/omriariav/amq-squad/v2/internal/team"
+)
+
+func withMonitorStatusRows(t *testing.T, rows []statusRecord) {
+	t.Helper()
+	prev := monitorStatusRows
+	monitorStatusRows = func(projectDir, profile, session string) ([]statusRecord, error) {
+		return rows, nil
+	}
+	t.Cleanup(func() { monitorStatusRows = prev })
+}
+
+func withMonitorPaneBusy(t *testing.T, busy, known bool) {
+	t.Helper()
+	prev := monitorPaneBusy
+	monitorPaneBusy = func(paneID string) (bool, bool) { return busy, known }
+	t.Cleanup(func() { monitorPaneBusy = prev })
+}
+
+func seedInProgressTask(t *testing.T, dir, session, owner string, updatedAt time.Time) string {
+	t.Helper()
+	tk, err := taskstore.AddForProfile(dir, team.DefaultProfile, session, taskstore.AddInput{Title: "ship it"}, updatedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.ClaimForProfile(dir, team.DefaultProfile, session, tk.ID, owner, updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	return tk.ID
+}
+
+func runMonitorOnce(t *testing.T) (string, error) {
+	t.Helper()
+	stdout, _, err := captureOutput(t, func() error {
+		return runMonitor([]string{"--session", "s", "--once", "--json"})
+	})
+	return stdout, err
+}
+
+func TestMonitorIdleFlagsNotLiveOwnerWithActiveTask(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"}}})
+	withMonitorOperatorState(t, 0, 0)
+	withMonitorStatusRows(t, []statusRecord{{Handle: "fullstack", Status: statusStateMissing}})
+	seedInProgressTask(t, dir, "s", "fullstack", time.Now()) // age irrelevant for not-live
+
+	out, err := runMonitorOnce(t)
+	if err != nil {
+		t.Fatalf("monitor: %v", err)
+	}
+	if !strings.Contains(out, monitorEventIdleActiveTask) || !strings.Contains(out, "owner:fullstack") {
+		t.Fatalf("not-live owner with active task must be flagged:\n%s", out)
+	}
+}
+
+func TestMonitorIdleSuppressedForBusyOwner(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"}}})
+	withMonitorOperatorState(t, 0, 0)
+	withMonitorStatusRows(t, []statusRecord{{Handle: "fullstack", Status: statusStateLive, Tmux: &tmuxRuntimeJSON{PaneID: "%5", PaneAlive: true}}})
+	withMonitorPaneBusy(t, true, true) // busy/mid-turn
+	seedInProgressTask(t, dir, "s", "fullstack", time.Now().Add(-2*time.Hour))
+
+	out, err := runMonitorOnce(t)
+	if err != nil {
+		t.Fatalf("monitor: %v", err)
+	}
+	if strings.Contains(out, monitorEventIdleActiveTask) {
+		t.Fatalf("a busy/mid-turn owner must never be flagged idle:\n%s", out)
+	}
+	if !strings.Contains(out, `"events_found":false`) {
+		t.Fatalf("expected idle tick (busy owner suppressed):\n%s", out)
+	}
+}
+
+func TestMonitorIdleFlagsLiveStaleOwner(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"}}})
+	withMonitorOperatorState(t, 0, 0)
+	withMonitorStatusRows(t, []statusRecord{{Handle: "fullstack", Status: statusStateLive, Tmux: &tmuxRuntimeJSON{PaneID: "%5", PaneAlive: true}}})
+	withMonitorPaneBusy(t, false, true) // live, not busy
+	seedInProgressTask(t, dir, "s", "fullstack", time.Now().Add(-1*time.Hour))
+
+	out, err := runMonitorOnce(t)
+	if err != nil {
+		t.Fatalf("monitor: %v", err)
+	}
+	if !strings.Contains(out, monitorEventIdleActiveTask) {
+		t.Fatalf("live-but-idle owner with a stale active task must be flagged:\n%s", out)
+	}
+}
+
+func TestMonitorIdleSuppressedForFreshTask(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"}}})
+	withMonitorOperatorState(t, 0, 0)
+	withMonitorStatusRows(t, []statusRecord{{Handle: "fullstack", Status: statusStateLive, Tmux: &tmuxRuntimeJSON{PaneID: "%5", PaneAlive: true}}})
+	withMonitorPaneBusy(t, false, true)
+	seedInProgressTask(t, dir, "s", "fullstack", time.Now()) // fresh: within --stale-after
+
+	out, err := runMonitorOnce(t)
+	if err != nil {
+		t.Fatalf("monitor: %v", err)
+	}
+	if strings.Contains(out, monitorEventIdleActiveTask) {
+		t.Fatalf("a fresh (within --stale-after) in_progress task must not be flagged:\n%s", out)
+	}
+}
+
+func TestMonitorIdleSuppressedWhenOtherOperatorEvent(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"}}})
+	// An open operator gate (and unread inbox) means the operator is already
+	// being pulled back; idle must not also fire even though the owner is not-live.
+	withMonitorOperatorState(t, 1, 0)
+	withMonitorStatusRows(t, []statusRecord{{Handle: "fullstack", Status: statusStateMissing}})
+	seedInProgressTask(t, dir, "s", "fullstack", time.Now().Add(-2*time.Hour))
+
+	out, err := runMonitorOnce(t)
+	if err != nil {
+		t.Fatalf("monitor: %v", err)
+	}
+	if strings.Contains(out, monitorEventIdleActiveTask) {
+		t.Fatalf("idle must be suppressed when another operator-needed event fired:\n%s", out)
+	}
+	if !strings.Contains(out, monitorEventOpenGate) {
+		t.Fatalf("the open gate event should still fire:\n%s", out)
+	}
+}
+
+func TestMonitorIdleFailsClosedOnStatusReadError(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"}}})
+	withMonitorOperatorState(t, 0, 0)
+	prev := monitorStatusRows
+	monitorStatusRows = func(projectDir, profile, session string) ([]statusRecord, error) {
+		return nil, errMonitorStatusTest
+	}
+	t.Cleanup(func() { monitorStatusRows = prev })
+	seedInProgressTask(t, dir, "s", "fullstack", time.Now())
+
+	_, err := runMonitorOnce(t)
+	if err == nil {
+		t.Fatal("a status/liveness read failure during idle assessment must fail closed")
+	}
+}
+
+var errMonitorStatusTest = errMonitorStatus("status read failed")
+
+type errMonitorStatus string
+
+func (e errMonitorStatus) Error() string { return string(e) }

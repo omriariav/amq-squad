@@ -14,6 +14,8 @@ import (
 	"time"
 
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
+	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 const defaultMonitorInterval = 30 * time.Second
@@ -25,7 +27,40 @@ const (
 	monitorEventMergeReady  = "merge_gate_ready"
 	monitorEventOpenGate    = "open_operator_gate"
 	monitorEventInbox       = "operator_inbox_message"
+	// monitorEventIdleActiveTask (#299) flags an agent that owns an in_progress
+	// task but has halted: either its owner is not live, or it is live-but-idle
+	// past --stale-after with no legitimate wait condition. Read-only signal;
+	// recovery is the orchestrator's job via the existing controlled wake-first
+	// dispatch re-nudge, never monitor itself.
+	monitorEventIdleActiveTask = "idle_with_active_task"
 )
+
+const defaultMonitorStaleAfter = 15 * time.Minute
+
+// monitorStatusRows resolves per-member liveness for a session (read-only),
+// overridable in tests. Returns nil rows when no team/liveness is resolvable;
+// the caller treats absent owner liveness conservatively (no flag).
+var monitorStatusRows = func(projectDir, profile, session string) ([]statusRecord, error) {
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return nil, err
+	}
+	return buildStatusRows(t, profile, session, defaultDuplicateLaunchProbe), nil
+}
+
+// monitorPaneBusy reports whether a pane is busy (mid-turn). Best-effort: the
+// second return is false when busyness cannot be determined (e.g. tmux access
+// denied), in which case the caller must not assume idle. Overridable in tests.
+var monitorPaneBusy = func(paneID string) (busy bool, known bool) {
+	if strings.TrimSpace(paneID) == "" {
+		return false, false
+	}
+	b, err := tmuxpane.PaneBusy(paneID)
+	if err != nil {
+		return false, false
+	}
+	return b, true
+}
 
 // monitorEvent is one operator-needed signal. Fields are populated where
 // available; absent fields are omitted.
@@ -73,6 +108,7 @@ func runMonitor(args []string) error {
 	var sessions stringListFlag
 	fs.Var(&sessions, "session", "workstream session to watch (repeatable)")
 	interval := fs.Duration("interval", defaultMonitorInterval, "poll interval in loop mode")
+	staleAfter := fs.Duration("stale-after", defaultMonitorStaleAfter, "a live owner with an in_progress task untouched for longer than this (and no legitimate wait) is flagged idle_with_active_task")
 	once := fs.Bool("once", false, "run one tick and exit (no loop)")
 	timeout := fs.Duration("timeout", 0, "stop the loop after this long with no operator-needed event (0 = no timeout)")
 	maxTicks := fs.Int("max-ticks", 0, "stop the loop after this many idle ticks (0 = unlimited)")
@@ -120,6 +156,9 @@ Examples:
 	if *interval <= 0 {
 		return usageErrorf("--interval must be > 0")
 	}
+	if *staleAfter <= 0 {
+		return usageErrorf("--stale-after must be > 0")
+	}
 	if *timeout < 0 {
 		return usageErrorf("--timeout must be >= 0")
 	}
@@ -141,6 +180,7 @@ Examples:
 		Sessions:      append([]string(nil), sessions...),
 		Handled:       handled,
 		FeaturePrefix: strings.TrimSpace(*featurePrefix),
+		StaleAfter:    *staleAfter,
 		Interval:      *interval,
 		Once:          *once,
 		Timeout:       *timeout,
@@ -156,6 +196,7 @@ type monitorLoopOptions struct {
 	Sessions      []string
 	Handled       map[string]bool
 	FeaturePrefix string
+	StaleAfter    time.Duration
 	Interval      time.Duration
 	Once          bool
 	Timeout       time.Duration
@@ -222,6 +263,7 @@ func collectMonitorEvents(o monitorLoopOptions) ([]monitorEvent, error) {
 		if session == "" {
 			continue
 		}
+		sessionEventStart := len(events)
 		// 1. Task store: blocked/failed tasks. A missing task dir is empty (nil
 		// error); a real read/parse failure fails closed so a broken source is
 		// never reported as idle.
@@ -270,8 +312,89 @@ func collectMonitorEvents(o monitorLoopOptions) ([]monitorEvent, error) {
 				Detail:  fmt.Sprintf("%d unread operator inbox message(s)", unread),
 			})
 		}
+		// 5. #299 idle-with-active-task. Suppress when this session already has an
+		// operator-needed event (a gate, blocker, merge-ready, or queued inbox
+		// message already pulls the operator/orchestrator back — adding an idle
+		// flag would be noise and the recovery path is already implied).
+		if len(events) == sessionEventStart {
+			idle, err := idleWithActiveTaskEvents(o, session, tasks)
+			if err != nil {
+				return nil, fmt.Errorf("monitor: assess idle-with-active-task for session %q: %w", session, err)
+			}
+			events = append(events, idle...)
+		}
 	}
 	return events, nil
+}
+
+// idleWithActiveTaskEvents flags an agent that owns an in_progress task but has
+// halted (#299). It only reaches here when the session has no other
+// operator-needed event this tick. False-positive controls: a busy/mid-turn
+// owner is never flagged; a fresh in_progress task (within --stale-after) is not
+// flagged; an owner whose liveness cannot be resolved is treated conservatively
+// (not flagged). A not-live owner with an active task is flagged regardless of
+// age; a live-but-idle owner is flagged only when the task is stale past
+// --stale-after. Read-only: it suggests a controlled recovery but performs none.
+func idleWithActiveTaskEvents(o monitorLoopOptions, session string, tasks []taskstore.Task) ([]monitorEvent, error) {
+	var inProgress []taskstore.Task
+	for _, tk := range tasks {
+		if tk.Status == taskstore.StatusInProgress {
+			inProgress = append(inProgress, tk)
+		}
+	}
+	if len(inProgress) == 0 {
+		return nil, nil
+	}
+	rows, err := monitorStatusRows(o.ProjectDir, o.Profile, session)
+	if err != nil {
+		return nil, err
+	}
+	byHandle := make(map[string]statusRecord, len(rows))
+	for _, r := range rows {
+		byHandle[strings.TrimSpace(r.Handle)] = r
+	}
+	now := time.Now()
+	var out []monitorEvent
+	for _, tk := range inProgress {
+		owner := strings.TrimSpace(tk.AssignedTo)
+		if owner == "" {
+			continue // unowned in_progress: cannot attribute a stall conservatively
+		}
+		row, ok := byHandle[owner]
+		if !ok {
+			continue // owner liveness unknown: do not flag
+		}
+		live := row.Status == statusStateLive || row.Status == statusStateWakeLive
+		age := now.Sub(tk.UpdatedAt)
+		var reason string
+		switch {
+		case !live:
+			// Halted/dead owner still holding the task — flag regardless of age.
+			reason = fmt.Sprintf("owner %q is %s while owning in_progress task", owner, row.Status)
+		case row.Tmux != nil && row.Tmux.PaneAlive:
+			if busy, known := monitorPaneBusy(row.Tmux.PaneID); known && busy {
+				continue // busy/mid-turn: never flag
+			}
+			if age < o.StaleAfter {
+				continue // live, idle-or-unknown-busy, but task is fresh
+			}
+			reason = fmt.Sprintf("owner %q is live but idle and task untouched for %s", owner, age.Round(time.Second))
+		default:
+			// Live by record but no live pane to gauge busyness: rely on staleness.
+			if age < o.StaleAfter {
+				continue
+			}
+			reason = fmt.Sprintf("owner %q live (no pane busy signal) and task untouched for %s", owner, age.Round(time.Second))
+		}
+		out = append(out, monitorEvent{
+			Type:    monitorEventIdleActiveTask,
+			Session: session,
+			Source:  "task:" + tk.ID + " owner:" + owner + " status:" + string(row.Status),
+			Detail: fmt.Sprintf("%s — %s (age %s, threshold %s). Suggested: controlled wake-first re-nudge (amq-squad dispatch) to resume task %s; escalate to operator after repeated no-advance.",
+				tk.Title, reason, age.Round(time.Second), o.StaleAfter, tk.ID),
+		})
+	}
+	return out, nil
 }
 
 // monitorMergeReadyEvents scans the evidence dir for this session's
