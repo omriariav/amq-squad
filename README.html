@@ -911,6 +911,22 @@ together with a live wake signal (<code>status: "wake-live"</code>,
 <code>signals.wake_pid</code>). The <code>external</code> field lets a
 client positively identify the registered orchestrator instead of
 inferring it from the lead role alone.</p>
+<p>The registered orchestrator's wake sidecar is started so that each
+inbound durable AMQ message injects a drain instruction (via AMQ's
+<code>amq wake</code> injector, not a raw <code>tmux send-keys</code>).
+The orchestrator therefore drains and acts reactively on wake, with no
+periodic <code>amq drain</code> polling loop, even after its own
+<code>/goal</code> reaches a terminal "achieved" state.
+<code>status --json</code> reports <code>wake_auto_drain: true</code> on
+that member when the drain injection is configured; this is a
+configuration signal, so a dead sidecar still surfaces as degraded
+(<code>status</code> not <code>wake-live</code>,
+<code>signals.wake_alive: false</code>) rather than silently appearing
+healthy. The virtual operator (<code>user</code>) handle is non-runnable
+and stays poll-only
+(<code>operator_delivery.poll_required: true</code>); auto-drain on wake
+applies to the orchestrator and lead handles, not the operator
+mailbox.</p>
 <p>For an Autonomous preview, opt in explicitly and include a bounded
 policy:</p>
 <div class="sourceCode" id="cb17"><pre

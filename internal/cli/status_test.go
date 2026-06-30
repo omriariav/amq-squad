@@ -1570,6 +1570,118 @@ func TestStatusJSONProvesExternalOrchestratorBinding(t *testing.T) {
 	}
 }
 
+func orchestratorStatusRecord(rows []statusRecord) *statusRecord {
+	for i := range rows {
+		if rows[i].Role == goalOrchestratorRole {
+			return &rows[i]
+		}
+	}
+	return nil
+}
+
+// TestStatusJSONOrchestratorWakeDrivenUserPollOnly proves #288: a registered
+// orchestrator whose wake sidecar carries a drain inject-cmd is reported as
+// wake-driven/auto-drain (no periodic amq drain loop), while the virtual
+// operator handle stays poll-only. wake_auto_drain composes with #283's
+// WakeInjectCmd.
+func TestStatusJSONOrchestratorWakeDrivenUserPollOnly(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: goalOrchestratorRole, Binary: "codex", Handle: "global-orch", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          goalOrchestratorRole,
+		ExecutionMode: executionModeProjectLead,
+	})
+	agentDir := seedAgentRecord(t, base, "issue-96", "global-orch", launch.Record{
+		CWD:           dir,
+		Binary:        "codex",
+		Handle:        "global-orch",
+		Role:          goalOrchestratorRole,
+		Session:       "issue-96",
+		External:      true,
+		WakePID:       4321,
+		WakeInjectCmd: wakeDrainInject(),
+		Tmux:          &launch.TmuxInfo{Session: "global", WindowID: "@1", PaneID: "%99", Target: "external"},
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4321, Root: filepath.Join(base, "issue-96"), Started: time.Now()})
+
+	jsonOut, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{4321: true}, map[int]bool{4321: true}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status json: %v\n%s", err, jsonOut)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, jsonOut)
+	row := orchestratorStatusRecord(env.Data.Records)
+	if row == nil {
+		t.Fatalf("no orchestrator record in %+v", env.Data.Records)
+	}
+	// Orchestrator handle: wake-driven auto-drain, reactively live (no polling).
+	if !row.WakeAutoDrain {
+		t.Fatalf("orchestrator must report wake_auto_drain=true: %+v", row)
+	}
+	if row.Status != statusStateWakeLive || !row.Signals.WakeAlive {
+		t.Fatalf("orchestrator must be reactively wake-live: %+v", row)
+	}
+	// Virtual operator handle: stays poll-only, not wakeable (out of scope).
+	if !env.Data.OperatorDelivery.PollRequired || env.Data.OperatorDelivery.WakeSupported {
+		t.Fatalf("operator handle must remain poll-only: %+v", env.Data.OperatorDelivery)
+	}
+}
+
+// TestStatusJSONWakeAutoDrainDegradedWhenSidecarDead proves QA's honest-failure
+// requirement: wake_auto_drain is a CONFIGURATION signal, so when the sidecar
+// process is dead the orchestrator surfaces as degraded (not wake-live) rather
+// than silently appearing healthy.
+func TestStatusJSONWakeAutoDrainDegradedWhenSidecarDead(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: goalOrchestratorRole, Binary: "codex", Handle: "global-orch", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          goalOrchestratorRole,
+		ExecutionMode: executionModeProjectLead,
+	})
+	agentDir := seedAgentRecord(t, base, "issue-96", "global-orch", launch.Record{
+		CWD:           dir,
+		Binary:        "codex",
+		Handle:        "global-orch",
+		Role:          goalOrchestratorRole,
+		Session:       "issue-96",
+		External:      true,
+		WakePID:       4321,
+		WakeInjectCmd: wakeDrainInject(),
+		Tmux:          &launch.TmuxInfo{Session: "global", WindowID: "@1", PaneID: "%99", Target: "external"},
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4321, Root: filepath.Join(base, "issue-96"), Started: time.Now()})
+
+	// Probe reports the wake PID as DEAD.
+	jsonOut, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{4321: false}, map[int]bool{4321: false}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status json: %v\n%s", err, jsonOut)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, jsonOut)
+	row := orchestratorStatusRecord(env.Data.Records)
+	if row == nil {
+		t.Fatalf("no orchestrator record in %+v", env.Data.Records)
+	}
+	if !row.WakeAutoDrain {
+		t.Fatalf("wake_auto_drain (configuration) should stay true even with a dead sidecar: %+v", row)
+	}
+	if row.Status == statusStateWakeLive || row.Signals.WakeAlive {
+		t.Fatalf("dead sidecar must surface as degraded, not wake-live: %+v", row)
+	}
+}
+
 func TestExecuteStatusWakeLockOnlyWakeLive(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
