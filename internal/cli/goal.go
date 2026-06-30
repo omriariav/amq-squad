@@ -350,7 +350,27 @@ confirm-gated and requires --yes in this first implementation slice.
 	if goal == "" {
 		return usageErrorf("goal start requires --goal TEXT")
 	}
-	if flagWasSet(fs, "register-orchestrator") && !*dryRun {
+	// Dry-run previews the plan without any mutation. --register-orchestrator is
+	// intentionally not applied here; the preview resolves against the configured
+	// lead, matching delivery without registration.
+	if *dryRun {
+		opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal start")
+		if err != nil {
+			return err
+		}
+		plan := goalStartPlan(opts)
+		if *jsonOut {
+			return printJSONEnvelope("goal_start", plan)
+		}
+		writeGoalStartPlan(os.Stdout, plan)
+		return nil
+	}
+	// Non-dry-run delivery is confirm-gated. Defer every mutation (including the
+	// --register-orchestrator roster write) until after --yes is confirmed.
+	if !*yes {
+		return usageErrorf("goal start delivery requires --yes (or run --dry-run to preview first)")
+	}
+	if flagWasSet(fs, "register-orchestrator") {
 		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal start")
 		if err != nil {
 			return err
@@ -360,17 +380,6 @@ confirm-gated and requires --yes in this first implementation slice.
 	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal start")
 	if err != nil {
 		return err
-	}
-	plan := goalStartPlan(opts)
-	if *dryRun {
-		if *jsonOut {
-			return printJSONEnvelope("goal_start", plan)
-		}
-		writeGoalStartPlan(os.Stdout, plan)
-		return nil
-	}
-	if !*yes {
-		return usageErrorf("goal start delivery requires --yes (or run --dry-run to preview first)")
 	}
 	if flagWasSet(fs, "register-orchestrator") {
 		if err := registerGoalOrchestrator(opts, *registerOrchestrator); err != nil {
