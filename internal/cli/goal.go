@@ -80,6 +80,11 @@ type goalDraftData struct {
 	// gate. Additive and rendered as the markdown Step 1/2/3 sections.
 	Steps []goalDraftStep `json:"steps,omitempty"`
 	Notes []string        `json:"notes"`
+	// codexArgsProvided is true only when the operator explicitly supplied codex
+	// args/effort (#291). When false, the seeded reasoning-effort default is a
+	// recommendation comment, NOT a live --codex-args flag in any generated or
+	// applyable launch command. Internal; not serialized.
+	codexArgsProvided bool
 }
 
 type goalDraftStep struct {
@@ -1152,6 +1157,7 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 		(targetRootSource == targetRootSourceResolvedUnconfirmed || targetRootSource == targetRootSourceUnresolved) {
 		data.Execution.TargetProjectRoot = ""
 	}
+	data.codexArgsProvided = opts.ProvidedFields["codex_args"]
 	data.FieldSources = goalDraftFieldSources(opts.ProvidedFields, targetRootSource)
 	data.BriefSkeleton = renderGoalBriefSkeleton(data)
 	data.Tasks = defaultGoalTasks(data)
@@ -1618,32 +1624,61 @@ func defaultGoalMutations(data goalDraftData) []goalCommandPlan {
 
 func goalVisibilityMutation(data goalDraftData) goalCommandPlan {
 	command := visibleLeadLaunchCommand(data, false)
+	var plan goalCommandPlan
 	switch data.Visibility {
 	case visibilityDetached:
-		return goalCommandPlan{
+		plan = goalCommandPlan{
 			Title:   "launch detached visible lead",
 			Command: command,
 			Reason:  "Start the operator-visible lead with the native /goal prompt, then attach/open its pane deliberately before treating the run as observable.",
 		}
 	case visibilityCurrent:
-		return goalCommandPlan{
+		plan = goalCommandPlan{
 			Title:   "launch visible lead in current pane",
 			Command: command,
 			Reason:  "Start the visible goal lead from the current operator pane with the native /goal prompt; workers remain gated/internal.",
 		}
 	case visibilityPlan:
-		return goalCommandPlan{
+		plan = goalCommandPlan{
 			Title:   "preview visible lead launch",
 			Command: visibleLeadLaunchCommand(data, true),
 			Reason:  "Preview the native /goal lead launch command only; do not open a pane until the operator approves a concrete visibility mode.",
 		}
 	default:
-		return goalCommandPlan{
+		plan = goalCommandPlan{
 			Title:   "launch visible lead",
 			Command: command,
 			Reason:  "Run from a visible tmux pane so the lead receives the native /goal prompt; workers are launched later only after their spawn gates are approved.",
 		}
 	}
+	// #291: surface the lead reasoning-effort default as an inert recommendation,
+	// since it is intentionally NOT baked into the launch command unless the
+	// operator explicitly provided codex args.
+	if rec := goalLeadEffortRecommendation(data); rec != "" {
+		plan.Reason += " " + rec
+	}
+	return plan
+}
+
+// goalLeadEffortRecommendation returns an inert note recommending the lead's
+// reasoning effort when it was seeded as a default (not operator-provided) for a
+// Codex lead. Empty when codex args were explicitly provided or the lead is not
+// Codex.
+func goalLeadEffortRecommendation(data goalDraftData) string {
+	if data.codexArgsProvided {
+		return ""
+	}
+	lead := data.Roster[0]
+	for _, member := range data.Roster {
+		if member.Role == data.Lead {
+			lead = member
+			break
+		}
+	}
+	if normalizedAgentBinary(lead.Binary) != "codex" || len(lead.CodexArgs) == 0 {
+		return ""
+	}
+	return "Recommended (not applied): add --codex-args=" + joinedAgentArgs(lead.CodexArgs) + " to run the Codex lead at the recommended reasoning effort."
 }
 
 func visibleLeadLaunchCommand(data goalDraftData, dryRun bool) string {
@@ -1672,7 +1707,11 @@ func visibleLeadLaunchCommand(data goalDraftData, dryRun bool) string {
 	if lead.Handle != "" {
 		args = append(args, "--me", lead.Handle)
 	}
-	if len(lead.CodexArgs) > 0 && normalizedAgentBinary(lead.Binary) == "codex" {
+	// #291: do NOT bake the seeded default reasoning effort into the actionable
+	// launch command. Emit --codex-args only when the operator explicitly provided
+	// codex args; otherwise effort stays a recommendation comment so the generated
+	// command never silently changes runtime assumptions.
+	if data.codexArgsProvided && len(lead.CodexArgs) > 0 && normalizedAgentBinary(lead.Binary) == "codex" {
 		args = append(args, "--codex-args="+joinedAgentArgs(lead.CodexArgs))
 	}
 	if data.OrchestratorPrompt != "" {

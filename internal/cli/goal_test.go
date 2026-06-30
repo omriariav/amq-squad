@@ -201,6 +201,48 @@ func TestGoalDraftSkillInvocationCompleteness(t *testing.T) {
 	}
 }
 
+func TestGoalDraftLaunchMutationOmitsDefaultReasoningEffort(t *testing.T) {
+	base := goalDraftOptions{Goal: "g", Mode: executionModeGlobalOrchestrator, ControlRoot: t.TempDir(), Session: "s", Profile: "p", Lead: "cto", Composition: team.CompositionSeeded, Visibility: visibilitySiblingTabs}
+
+	// Default (codex args NOT provided): no live --codex-args in any applyable
+	// launch mutation; the effort is surfaced only as an inert recommendation.
+	d, err := buildGoalDraft(base)
+	if err != nil {
+		t.Fatalf("buildGoalDraft: %v", err)
+	}
+	for _, m := range d.ApplyableMutations {
+		if strings.Contains(m.Command, "--codex-args") {
+			t.Fatalf("default effort must not be a live --codex-args in launch mutations: %q", m.Command)
+		}
+	}
+	var sawRec bool
+	for _, m := range d.ApplyableMutations {
+		if strings.Contains(m.Reason, "Recommended (not applied): add --codex-args") {
+			sawRec = true
+		}
+	}
+	if !sawRec {
+		t.Fatalf("expected an inert effort recommendation on the launch mutation: %+v", d.ApplyableMutations)
+	}
+
+	// Explicitly provided codex args: the launch mutation carries --codex-args.
+	provided := base
+	provided.ProvidedFields = map[string]bool{"codex_args": true}
+	d2, err := buildGoalDraft(provided)
+	if err != nil {
+		t.Fatalf("buildGoalDraft provided: %v", err)
+	}
+	var sawFlag bool
+	for _, m := range d2.ApplyableMutations {
+		if strings.Contains(m.Command, "--codex-args") {
+			sawFlag = true
+		}
+	}
+	if !sawFlag {
+		t.Fatalf("explicitly provided codex args must appear in the launch mutation: %+v", d2.ApplyableMutations)
+	}
+}
+
 func TestGoalDraftFieldSourcesAndSteps(t *testing.T) {
 	d, err := buildGoalDraft(goalDraftOptions{
 		Goal: "g", Mode: executionModeProjectLead, Session: "s", Profile: "p", Lead: "cto",
