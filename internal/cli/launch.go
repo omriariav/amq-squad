@@ -233,10 +233,12 @@ Examples:
 		return err
 	}
 
-	// #296: pre-authorize in-scope deliverable actions for an orchestrated Claude
-	// worker so routine `gh pr create` / own-feature-branch push never block on a
-	// permission prompt (the recurring stall this milestone removes). Scoped to
-	// non-lead orchestrated Claude workers; main push/tags/releases stay gated.
+	// #296: pre-authorize `gh pr create` for an orchestrated Claude worker so
+	// creating its PR never blocks on a permission prompt (the recurring stall this
+	// milestone removes). Scoped to configured non-lead orchestrated Claude
+	// workers. Feature-branch push is intentionally NOT pre-authorized in this
+	// slice (no safe pattern form; see claudeInScopePreauthAllowlist); main push,
+	// tags, and releases always stay gated.
 	var preauthorizedActions []string
 	if !*noPreauthInScope && !containsString(childArgs, "--allowedTools") && claudeWorkerPreauthEligible(cwd, teamProfileValue, *roleFlag, binary) {
 		preauthorizedActions = claudeInScopePreauthAllowlist(env.SessionName)

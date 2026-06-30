@@ -19,23 +19,26 @@ var (
 )
 
 // claudeInScopePreauthAllowlist returns the Claude --allowedTools patterns that
-// pre-authorize a worker's in-scope deliverable actions (#296): creating its PR
-// and pushing its OWN feature branch. It deliberately excludes pushes to main,
-// tags, releases, --tags/--follow-tags, destructive git, and any broad Bash/git/
-// gh pattern, so those stay gated by the worker's normal permission mode. The
-// push patterns are prefix-scoped to the session's feature-branch namespace
-// (codex/<session>-), so `git push origin main` can never match; the trade is a
-// false negative (an unusual push form still prompts), never a false positive.
+// pre-authorize a worker's in-scope deliverable action (#296): creating its PR.
+//
+// It deliberately authorizes ONLY `gh pr create`. Feature-branch `git push` is
+// intentionally NOT pre-authorized: Claude's --allowedTools prefix match
+// (`Bash(<prefix>:*)`) cannot be bounded, so any `git push origin codex/...:*`
+// pattern would also match the same command with `--tags`/`--follow-tags` or an
+// extra refspec appended — which would defeat the guardrail that tags/main/broad
+// push stay gated. There is no safe pattern form for "this feature branch and
+// nothing else" (the branch name is itself a dynamic suffix). Pre-authorizing
+// push therefore needs a constrained wrapper command and is tracked as a
+// follow-up; until then a feature-branch push still prompts (safe degradation),
+// while the recurring `gh pr create` stall is removed. By keeping this list to a
+// single PR-domain pattern, it cannot — by construction — authorize push, tags,
+// releases, or destructive git.
 func claudeInScopePreauthAllowlist(session string) []string {
-	session = strings.TrimSpace(session)
-	if session == "" {
+	if strings.TrimSpace(session) == "" {
 		return nil
 	}
-	feat := "codex/" + session + "-"
 	return []string{
 		"Bash(gh pr create:*)",
-		"Bash(git push origin " + feat + ":*)",
-		"Bash(git push -u origin " + feat + ":*)",
 	}
 }
 
@@ -71,6 +74,17 @@ func claudeWorkerPreauthEligible(projectDir, profile, role, binary string) bool 
 	}
 	lead := strings.TrimSpace(t.Lead)
 	if lead == "" || strings.EqualFold(role, lead) {
+		return false
+	}
+	// Require a CONFIGURED active team member for this role, and require that
+	// member to be a Claude binary. This rejects unknown/ad-hoc roles (e.g. a
+	// `scratch` launch in an orchestrated profile) and a role configured for a
+	// different binary that happens to be launched as claude.
+	m, ok := teamMemberByRole(t, role)
+	if !ok {
+		return false
+	}
+	if defaultHandleFor(strings.TrimSpace(m.Binary)) != "claude" {
 		return false
 	}
 	return true

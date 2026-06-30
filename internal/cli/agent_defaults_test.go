@@ -9,19 +9,15 @@ import (
 
 func TestClaudeInScopePreauthAllowlistContents(t *testing.T) {
 	allow := claudeInScopePreauthAllowlist("v2-14-0")
-	joined := strings.Join(allow, "\n")
-	for _, want := range []string{
-		"Bash(gh pr create:*)",
-		"Bash(git push origin codex/v2-14-0-:*)",
-		"Bash(git push -u origin codex/v2-14-0-:*)",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("allowlist missing %q:\n%s", want, joined)
-		}
+	// Narrowed slice (#296): PR creation ONLY. Feature-branch push is deliberately
+	// not pre-authorized (no safe Claude pattern form), so the list is exactly one
+	// PR-domain pattern and cannot — by construction — authorize push/tags/etc.
+	if len(allow) != 1 || allow[0] != "Bash(gh pr create:*)" {
+		t.Fatalf("allowlist = %v, want exactly [Bash(gh pr create:*)]", allow)
 	}
-	// Must NOT pre-authorize main push, tags, releases, or broad git/gh/Bash.
+	joined := strings.Join(allow, "\n")
 	for _, forbidden := range []string{
-		"origin main", "git tag", "gh release", "--tags", "--follow-tags",
+		"git push", "origin main", "git tag", "gh release", "--tags", "--follow-tags",
 		"Bash(git push:*)", "Bash(git:*)", "Bash(gh:*)", "Bash(:*)", "Bash(*)",
 	} {
 		if strings.Contains(joined, forbidden) {
@@ -48,7 +44,11 @@ func TestClaudePreauthChildArgs(t *testing.T) {
 
 func TestClaudeWorkerPreauthEligible(t *testing.T) {
 	dir := seedTeam(t, team.Team{
-		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}, {Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"}},
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"},
+			{Role: "senior-dev", Binary: "codex", Handle: "senior-dev", Session: "s"},
+		},
 		Orchestrated: true,
 		Lead:         "cto",
 	})
@@ -62,6 +62,10 @@ func TestClaudeWorkerPreauthEligible(t *testing.T) {
 		{"claude lead excluded", "cto", "claude", false},
 		{"codex worker out of scope", "fullstack", "codex", false},
 		{"empty role", "", "claude", false},
+		// Unknown/ad-hoc role not configured as a team member: rejected.
+		{"unknown role rejected", "scratch", "claude", false},
+		// Role configured for codex must not be pre-authorized when launched as claude.
+		{"codex-configured role launched as claude", "senior-dev", "claude", false},
 	}
 	for _, tc := range cases {
 		if got := claudeWorkerPreauthEligible(dir, "", tc.role, tc.binary); got != tc.want {

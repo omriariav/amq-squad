@@ -80,12 +80,13 @@ func TestRunLaunchPreauthorizesInScopeClaudeWorker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	for _, want := range []string{"--allowedTools", "gh pr create", "git push origin codex/v2-14-0-", "git push -u origin codex/v2-14-0-"} {
+	for _, want := range []string{"--allowedTools", "gh pr create"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("eligible claude worker missing %q in:\n%s", want, stdout)
 		}
 	}
-	for _, forbidden := range []string{"origin main", "git tag", "gh release", "--tags", "--follow-tags"} {
+	// Narrowed slice (#296): PR creation only — push/main/tags/releases never pre-authorized.
+	for _, forbidden := range []string{"git push", "origin main", "git tag", "gh release", "--tags", "--follow-tags"} {
 		if strings.Contains(stdout, forbidden) {
 			t.Fatalf("pre-auth must never include %q:\n%s", forbidden, stdout)
 		}
