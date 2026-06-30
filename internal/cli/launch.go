@@ -64,6 +64,7 @@ func runLaunch(args []string) error {
 	conversationID := fs.String("conversation-id", "", "alias for --conversation")
 	noBootstrap := fs.Bool("no-bootstrap", false, "do not pass the generated bootstrap prompt to the agent")
 	noDefaultArgs := fs.Bool("no-default-args", false, "do not prepend Codex or Claude default permission args")
+	noPreauthInScope := fs.Bool("no-preauthorize-inscope", false, "do not pre-authorize gh pr create for an orchestrated Claude worker (#296; feature-branch push is not pre-authorized in this slice)")
 	trustRaw := fs.String("trust", "", "Codex trust profile: approve-for-me (default), sandboxed, or trusted (local power mode)")
 	model := fs.String("model", "", "native model name to pass to the agent binary, e.g. 'gpt-5' or 'sonnet'")
 	spawnOrigin := fs.String("spawn-origin", "", "runtime composition origin recorded in launch.json")
@@ -232,37 +233,50 @@ Examples:
 		return err
 	}
 
+	// #296: pre-authorize `gh pr create` for an orchestrated Claude worker so
+	// creating its PR never blocks on a permission prompt (the recurring stall this
+	// milestone removes). Scoped to configured non-lead orchestrated Claude
+	// workers. Feature-branch push is intentionally NOT pre-authorized in this
+	// slice (no safe pattern form; see claudeInScopePreauthAllowlist); main push,
+	// tags, and releases always stay gated.
+	var preauthorizedActions []string
+	if !*noPreauthInScope && !containsString(childArgs, "--allowedTools") && claudeWorkerPreauthEligible(cwd, teamProfileValue, *roleFlag, binary) {
+		preauthorizedActions = claudeInScopePreauthAllowlist(env.SessionName)
+		childArgs = append(childArgs, claudePreauthChildArgs(preauthorizedActions)...)
+	}
+
 	agentDir := filepath.Join(root, "agents", handle)
 	rec := launch.Record{
-		CWD:              cwd,
-		Binary:           binary,
-		Argv:             childArgs,
-		Session:          env.SessionName,
-		SharedWorkstream: *sharedWorkstream,
-		Conversation:     conversationRef,
-		Handle:           handle,
-		Role:             *roleFlag,
-		Root:             root,
-		BaseRoot:         env.BaseRoot,
-		RootSource:       env.RootSource,
-		AMQVersion:       env.AMQVersion,
-		CodexArgs:        binaryArgs["codex"],
-		ClaudeArgs:       binaryArgs["claude"],
-		Launcher:         launcher,
-		LauncherArgs:     launcherArgs,
-		Model:            resolvedModel,
-		Trust:            trustMode,
-		NoDefaultArgs:    *noDefaultArgs,
-		SpawnOrigin:      strings.TrimSpace(*spawnOrigin),
-		SpawnDepth:       *spawnDepth,
-		NoRequireWake:    *noRequireWake,
-		GoalBinding:      nativeGoalBindingFromArgs(childArgs),
-		WakeInjectVia:    wakeInjectViaValue,
-		WakeInjectArgs:   wakeInjectArgValues,
-		AgentPID:         os.Getpid(),
-		AgentTTY:         currentLaunchTTY(),
-		StartedAt:        time.Now().UTC(),
-		TeamProfile:      teamProfileValue,
+		CWD:                  cwd,
+		Binary:               binary,
+		Argv:                 childArgs,
+		Session:              env.SessionName,
+		SharedWorkstream:     *sharedWorkstream,
+		Conversation:         conversationRef,
+		Handle:               handle,
+		Role:                 *roleFlag,
+		Root:                 root,
+		BaseRoot:             env.BaseRoot,
+		RootSource:           env.RootSource,
+		AMQVersion:           env.AMQVersion,
+		CodexArgs:            binaryArgs["codex"],
+		ClaudeArgs:           binaryArgs["claude"],
+		Launcher:             launcher,
+		LauncherArgs:         launcherArgs,
+		Model:                resolvedModel,
+		Trust:                trustMode,
+		NoDefaultArgs:        *noDefaultArgs,
+		SpawnOrigin:          strings.TrimSpace(*spawnOrigin),
+		SpawnDepth:           *spawnDepth,
+		NoRequireWake:        *noRequireWake,
+		GoalBinding:          nativeGoalBindingFromArgs(childArgs),
+		PreauthorizedActions: preauthorizedActions,
+		WakeInjectVia:        wakeInjectViaValue,
+		WakeInjectArgs:       wakeInjectArgValues,
+		AgentPID:             os.Getpid(),
+		AgentTTY:             currentLaunchTTY(),
+		StartedAt:            time.Now().UTC(),
+		TeamProfile:          teamProfileValue,
 	}
 
 	// Capture exact tmux identity (session/window/pane ids) when launched
