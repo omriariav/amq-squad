@@ -77,8 +77,12 @@ type Record struct {
 	// each durable-message arrival (amq wake --inject-cmd). amq-squad sets it to
 	// the standard drain instruction so an inbound directive re-engages a lead
 	// even after its native /goal reaches a terminal state, via AMQ's sanctioned
-	// injector rather than a raw tmux send-keys. Additive: older records omit it
-	// and resume falls back to the wake default.
+	// injector rather than a raw tmux send-keys. It is set only on the external
+	// wake path (lead register / register-orchestrator); amq coop exec has no
+	// --inject-cmd, so coop-exec restore cannot replay it. Resume repair is via
+	// re-running those register commands, which reapply the instruction; this
+	// persisted value is durable evidence of the configured injection. Additive:
+	// older records omit it.
 	WakeInjectCmd string    `json:"wake_inject_cmd,omitempty"`
 	WakePID       int       `json:"wake_pid,omitempty"`
 	AgentPID      int       `json:"agent_pid,omitempty"`

@@ -114,8 +114,8 @@ func TestLeadRegisterWritesExternalRecordAndSetsLead(t *testing.T) {
 
 // TestLeadRegisterStartsDrainInjectingWakeSidecar proves the #283 plumbing for
 // the lead-register caller: the wake sidecar is started with the standard drain
-// inject-cmd and that instruction is persisted on the launch record so resume
-// repairs the same drain-injecting sidecar.
+// inject-cmd and that instruction is persisted on the launch record as durable
+// evidence (resume repair is via re-register; see the re-register test).
 func TestLeadRegisterStartsDrainInjectingWakeSidecar(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	seedTeam(t, team.Team{
@@ -147,7 +147,59 @@ func TestLeadRegisterStartsDrainInjectingWakeSidecar(t *testing.T) {
 		t.Fatalf("read external launch record: %v", err)
 	}
 	if rec.WakeInjectCmd != wakeDrainInject() {
-		t.Fatalf("launch record must persist WakeInjectCmd for resume repair, got %q", rec.WakeInjectCmd)
+		t.Fatalf("launch record must persist WakeInjectCmd as resume-repair evidence, got %q", rec.WakeInjectCmd)
+	}
+}
+
+// TestLeadRegisterReapplyDrainInjectOnReRegister proves the #283 resume-repair
+// path: re-running lead register (the way an external lead is brought back)
+// reapplies the drain inject-cmd on the new wake start and keeps it persisted.
+// This is the resume mechanism for the external wake path; coop-exec restore
+// deliberately does not carry inject-cmd (see restore_test.go).
+func TestLeadRegisterReapplyDrainInjectOnReRegister(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	prev := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "lead", PaneID: "%5"}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prev })
+	var wakeOpts []leadWakeOptions
+	prevWake := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		wakeOpts = append(wakeOpts, opts)
+		return leadWakeResult{PID: 2222, Started: true, Detail: "ready"}, nil
+	}
+	t.Cleanup(func() { leadWakeStarter = prevWake })
+
+	register := func() error {
+		_, _, err := captureOutput(t, func() error {
+			return runLead([]string{"register", "--role", "cto", "--session", "issue-96"})
+		})
+		return err
+	}
+	if err := register(); err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+	if err := register(); err != nil {
+		t.Fatalf("re-register (resume repair): %v", err)
+	}
+	if len(wakeOpts) != 2 {
+		t.Fatalf("expected two wake starts, got %d", len(wakeOpts))
+	}
+	for i, o := range wakeOpts {
+		if o.WakeInjectCmd != wakeDrainInject() {
+			t.Fatalf("wake start %d must reapply drain inject-cmd, got %q", i, o.WakeInjectCmd)
+		}
+	}
+	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "cto"))
+	if err != nil {
+		t.Fatalf("read external launch record: %v", err)
+	}
+	if rec.WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("re-register must keep WakeInjectCmd persisted, got %q", rec.WakeInjectCmd)
 	}
 }
 
