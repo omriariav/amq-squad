@@ -1083,6 +1083,22 @@ the project lead and may mutate the target project. This is appropriate
 for single-project quick work from the project root, not for
 NOC/control-root workflows.</li>
 </ul>
+<p>Because <code>target_project_root</code> is where the project lead
+actually edits code — and from a neutral control root there is no
+reliable <code>owner/repo</code> → local-path mapping — amq-squad never
+silently guesses it for a <code>global_orchestrator</code> run.
+<code>team init --mode global_orchestrator</code> <strong>requires an
+explicit <code>--target-project-root</code></strong> and refuses to
+default to the current directory. <code>goal draft</code> classifies the
+value in <code>target_project_root_source</code>: <code>provided</code>
+(explicit), <code>resolved_unconfirmed</code> (exactly one local
+checkout matched by git remote <code>owner/repo</code> under the control
+root — a proposal that still must be confirmed or passed explicitly),
+<code>unresolved</code> (no single match; pass
+<code>--target-project-root</code>), or <code>default</code> (non-global
+mode, the lead runs inside the project). A
+<code>resolved_unconfirmed</code> match is a hint, not a
+confirmation.</p>
 <p><code>team init --mode ...</code> persists this contract in the
 profile, and <code>goal draft</code> generates matching
 <code>team init</code> and visible-lead prompts.

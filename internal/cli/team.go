@@ -425,6 +425,16 @@ Examples:
 	if err != nil {
 		return err
 	}
+	// #290: a global_orchestrator run edits code in target_project_root, which is
+	// NOT the control root. From a neutral control root there is no reliable
+	// owner/repo -> local path mapping, so refuse to silently default
+	// target_project_root to cwd. The operator must pass an explicit, confirmed
+	// path; a global_orchestrator run must never begin from an unconfirmed/guessed
+	// project tree. Other modes (the lead runs inside the project) keep the cwd
+	// default.
+	if executionMode == executionModeGlobalOrchestrator && !flagWasSet(fs, "target-project-root") {
+		return usageErrorf("global_orchestrator requires an explicit --target-project-root: the control root is not the project tree, and amq-squad will not silently use the current directory. Pass the confirmed local checkout path.")
+	}
 
 	t := team.Team{
 		Project: cwd,
