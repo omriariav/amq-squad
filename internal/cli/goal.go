@@ -693,11 +693,13 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle string) error {
 	}
 	root := absoluteAMQRoot(cwd, env.Root)
 	agentDir := filepath.Join(root, "agents", handle)
+	wakeInjectCmdValue := wakeDrainInject()
 	wakeResult, err := leadWakeStarter(leadWakeOptions{
-		ProjectDir: cwd,
-		Root:       root,
-		Handle:     handle,
-		Require:    true,
+		ProjectDir:    cwd,
+		Root:          root,
+		Handle:        handle,
+		Require:       true,
+		WakeInjectCmd: wakeInjectCmdValue,
 	})
 	if err != nil {
 		return fmt.Errorf("start external orchestrator wake: %w", err)
@@ -720,6 +722,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle string) error {
 		Model:            strings.TrimSpace(member.Model),
 		Trust:            strings.TrimSpace(t.Trust),
 		External:         true,
+		WakeInjectCmd:    wakeInjectCmdValue,
 		WakePID:          wakePID,
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),

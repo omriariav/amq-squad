@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,6 +74,43 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 	if !out.StartedAt.Equal(in.StartedAt) {
 		t.Errorf("StartedAt = %v, want %v", out.StartedAt, in.StartedAt)
+	}
+}
+
+// TestWakeInjectCmdAdditiveBackCompat proves the #283 WakeInjectCmd field is
+// additive: an older record JSON without wake_inject_cmd loads with an empty
+// value, an empty value is omitted on write, and a set value round-trips.
+func TestWakeInjectCmdAdditiveBackCompat(t *testing.T) {
+	// Older record (no wake_inject_cmd key) must load with empty WakeInjectCmd.
+	legacyJSON := `{"schema":1,"cwd":"/p","binary":"codex","session":"s","handle":"cto","root":"/r","started_at":"2026-06-30T00:00:00Z"}`
+	var legacy Record
+	if err := json.Unmarshal([]byte(legacyJSON), &legacy); err != nil {
+		t.Fatalf("older record must still load: %v", err)
+	}
+	if legacy.WakeInjectCmd != "" {
+		t.Fatalf("missing wake_inject_cmd must decode empty, got %q", legacy.WakeInjectCmd)
+	}
+
+	// Empty value is omitted (omitempty), so no key appears for older writers.
+	emptyRaw, err := json.Marshal(Record{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(emptyRaw), "wake_inject_cmd") {
+		t.Fatalf("empty WakeInjectCmd must be omitted from JSON: %s", emptyRaw)
+	}
+
+	// A set value round-trips.
+	setRaw, err := json.Marshal(Record{WakeInjectCmd: "drain now"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Record
+	if err := json.Unmarshal(setRaw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.WakeInjectCmd != "drain now" {
+		t.Fatalf("WakeInjectCmd round-trip = %q, want %q", back.WakeInjectCmd, "drain now")
 	}
 }
 
