@@ -186,6 +186,31 @@ func TestGoalStartRequiresYesForDelivery(t *testing.T) {
 	}
 }
 
+func TestGoalStartRegisterOrchestratorDefersRosterWriteUntilYes(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	_, _, err := captureOutput(t, func() error {
+		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--goal", "ship safely", "--register-orchestrator=global-orch"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("goal start --register-orchestrator without --yes should be confirm-gated, got %v", err)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if _, ok := teamMemberByRole(cfg, goalOrchestratorRole); ok {
+		t.Fatal("orchestrator roster write must not happen before --yes is confirmed")
+	}
+	if cfg.Lead != "cto" {
+		t.Fatalf("team lead should be unchanged before --yes, got %q", cfg.Lead)
+	}
+}
+
 func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
