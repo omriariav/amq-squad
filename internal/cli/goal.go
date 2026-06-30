@@ -36,34 +36,40 @@ var goalGhRun = func(args ...string) ([]byte, error) {
 }
 
 type goalDraftData struct {
-	Goal               string                 `json:"goal"`
-	Repo               string                 `json:"repo,omitempty"`
-	Milestone          string                 `json:"milestone,omitempty"`
-	TargetContract     string                 `json:"target_contract,omitempty"`
-	Session            string                 `json:"session"`
-	Profile            string                 `json:"profile"`
-	Lead               string                 `json:"lead"`
-	Mode               string                 `json:"mode"`
-	ControlRoot        string                 `json:"control_root,omitempty"`
-	TargetProjectRoot  string                 `json:"target_project_root,omitempty"`
-	Namespace          squadnamespace.Ref     `json:"namespace"`
-	Execution          executionModeData      `json:"execution"`
-	GoalBinding        goalBindingData        `json:"goal_binding"`
-	Composition        string                 `json:"composition"`
-	Visibility         string                 `json:"visibility"`
-	AutonomousPolicy   *team.AutonomousPolicy `json:"autonomous_policy,omitempty"`
-	PreviewOnly        bool                   `json:"preview_only"`
-	CodexOnly          bool                   `json:"codex_only,omitempty"`
-	IssueSources       []goalIssueSource      `json:"issue_sources,omitempty"`
-	BriefSkeleton      string                 `json:"brief_skeleton"`
-	Roster             []goalRosterMember     `json:"roster"`
-	Tasks              []goalTaskPlan         `json:"tasks"`
-	SpawnGates         []goalCommandPlan      `json:"spawn_gates"`
-	Dispatches         []goalDispatchPlan     `json:"dispatches"`
-	ApplyableMutations []goalCommandPlan      `json:"applyable_mutations"`
-	OrchestratorPrompt string                 `json:"orchestrator_prompt"`
-	SkillInvocation    string                 `json:"skill_invocation,omitempty"`
-	Notes              []string               `json:"notes"`
+	Goal              string `json:"goal"`
+	Repo              string `json:"repo,omitempty"`
+	Milestone         string `json:"milestone,omitempty"`
+	TargetContract    string `json:"target_contract,omitempty"`
+	Session           string `json:"session"`
+	Profile           string `json:"profile"`
+	Lead              string `json:"lead"`
+	Mode              string `json:"mode"`
+	ControlRoot       string `json:"control_root,omitempty"`
+	TargetProjectRoot string `json:"target_project_root,omitempty"`
+	// TargetProjectRootSource (#290) classifies how target_project_root was
+	// determined: provided | resolved_unconfirmed | unresolved | default.
+	// resolved_unconfirmed is a proposal, not a confirmation: a global_orchestrator
+	// run still needs an explicit/confirmed path before it edits files.
+	TargetProjectRootSource     string                 `json:"target_project_root_source,omitempty"`
+	TargetProjectRootCandidates []string               `json:"target_project_root_candidates,omitempty"`
+	Namespace                   squadnamespace.Ref     `json:"namespace"`
+	Execution                   executionModeData      `json:"execution"`
+	GoalBinding                 goalBindingData        `json:"goal_binding"`
+	Composition                 string                 `json:"composition"`
+	Visibility                  string                 `json:"visibility"`
+	AutonomousPolicy            *team.AutonomousPolicy `json:"autonomous_policy,omitempty"`
+	PreviewOnly                 bool                   `json:"preview_only"`
+	CodexOnly                   bool                   `json:"codex_only,omitempty"`
+	IssueSources                []goalIssueSource      `json:"issue_sources,omitempty"`
+	BriefSkeleton               string                 `json:"brief_skeleton"`
+	Roster                      []goalRosterMember     `json:"roster"`
+	Tasks                       []goalTaskPlan         `json:"tasks"`
+	SpawnGates                  []goalCommandPlan      `json:"spawn_gates"`
+	Dispatches                  []goalDispatchPlan     `json:"dispatches"`
+	ApplyableMutations          []goalCommandPlan      `json:"applyable_mutations"`
+	OrchestratorPrompt          string                 `json:"orchestrator_prompt"`
+	SkillInvocation             string                 `json:"skill_invocation,omitempty"`
+	Notes                       []string               `json:"notes"`
 }
 
 type goalIssueSource struct {
@@ -1067,26 +1073,28 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 	}
 	targetContract := inferGoalTargetContract(opts.TargetContract, opts.Milestone)
 	controlRoot := cleanRootOrDefault(opts.ControlRoot, cwdOrEmpty())
-	targetRoot := cleanRootOrDefault(opts.TargetProjectRoot, cwdOrEmpty())
+	targetRoot, targetRootSource, targetRootCandidates := classifyDraftTargetProjectRoot(mode, controlRoot, opts.TargetProjectRoot, opts.Repo)
 	data := goalDraftData{
-		Goal:              opts.Goal,
-		Repo:              opts.Repo,
-		Milestone:         opts.Milestone,
-		TargetContract:    targetContract,
-		Session:           session,
-		Profile:           profile,
-		Lead:              lead,
-		Mode:              mode,
-		ControlRoot:       controlRoot,
-		TargetProjectRoot: targetRoot,
-		Namespace:         squadnamespace.Resolve("", profile, session),
-		Composition:       composition,
-		Visibility:        visibility,
-		AutonomousPolicy:  autonomousPolicy,
-		PreviewOnly:       true,
-		CodexOnly:         opts.CodexOnly,
-		IssueSources:      issues,
-		Roster:            defaultGoalRoster(lead, opts.CodexOnly, len(issues)),
+		Goal:                        opts.Goal,
+		Repo:                        opts.Repo,
+		Milestone:                   opts.Milestone,
+		TargetContract:              targetContract,
+		Session:                     session,
+		Profile:                     profile,
+		Lead:                        lead,
+		Mode:                        mode,
+		ControlRoot:                 controlRoot,
+		TargetProjectRoot:           targetRoot,
+		TargetProjectRootSource:     targetRootSource,
+		TargetProjectRootCandidates: targetRootCandidates,
+		Namespace:                   squadnamespace.Resolve("", profile, session),
+		Composition:                 composition,
+		Visibility:                  visibility,
+		AutonomousPolicy:            autonomousPolicy,
+		PreviewOnly:                 true,
+		CodexOnly:                   opts.CodexOnly,
+		IssueSources:                issues,
+		Roster:                      defaultGoalRoster(lead, opts.CodexOnly, len(issues)),
 		Notes: []string{
 			"Seeded composition remains the default; autonomous composition requires explicit opt-in and policy limits.",
 			"This draft is preview-only and does not mutate team.json, briefs, task files, AMQ mailboxes, launch records, wake locks, or panes.",
@@ -1102,9 +1110,24 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 			"Merge, push, release, destructive filesystem actions, external communications, and provider side effects remain operator-owned.",
 		},
 	}
+	switch targetRootSource {
+	case targetRootSourceResolvedUnconfirmed:
+		data.Notes = append(data.Notes, fmt.Sprintf("target_project_root is a PROPOSED single git-remote match (%s), NOT yet confirmed: confirm it or pass --target-project-root before start; team init refuses to start a global_orchestrator run without an explicit --target-project-root.", targetRoot))
+	case targetRootSourceUnresolved:
+		data.Notes = append(data.Notes, "target_project_root is UNRESOLVED for this global_orchestrator goal (no single git-remote match of the repo under the control root); pass an explicit --target-project-root before start. amq-squad will not guess a project tree from the control root.")
+	}
 	data.OrchestratorPrompt = renderGoalOrchestratorPrompt(data)
 	data.GoalBinding = goalBindingForDraft(data.Namespace, data.OrchestratorPrompt)
 	data.Execution = executionContract(mode, controlRoot, targetRoot, profile, session, data.Namespace.ID, lead, data.GoalBinding.Mode, visibility, opts.RuntimeVersion, targetContract, goalVisibleMembers(mode, data.Roster, lead))
+	// For a global_orchestrator goal whose target is only a proposal or
+	// unresolved, the execution contract must NOT report a target_project_root
+	// (executionContract falls back to cwd). Keep it empty so no surface treats an
+	// unconfirmed/guessed path as the place the lead edits (#290); the proposal
+	// stays in target_project_root + target_project_root_source + candidates.
+	if mode == executionModeGlobalOrchestrator &&
+		(targetRootSource == targetRootSourceResolvedUnconfirmed || targetRootSource == targetRootSourceUnresolved) {
+		data.Execution.TargetProjectRoot = ""
+	}
 	data.BriefSkeleton = renderGoalBriefSkeleton(data)
 	data.Tasks = defaultGoalTasks(data)
 	data.SpawnGates = defaultGoalSpawnGates(data)
@@ -1428,7 +1451,12 @@ func defaultGoalMutations(data goalDraftData) []goalCommandPlan {
 	if data.ControlRoot != "" {
 		executionArgs += " --control-root " + shellQuote(data.ControlRoot)
 	}
-	if data.TargetProjectRoot != "" {
+	// Only emit --target-project-root in the generated start command when it was
+	// explicitly PROVIDED (#290). A resolved_unconfirmed proposal or an unresolved
+	// target must NOT be carried into actionable start surfaces; omitting it makes
+	// the generated global_orchestrator team init fail closed until the operator
+	// supplies a confirmed path. default (non-global) omits too and cwd-defaults.
+	if data.TargetProjectRootSource == targetRootSourceProvided && data.TargetProjectRoot != "" {
 		executionArgs += " --target-project-root " + shellQuote(data.TargetProjectRoot)
 	}
 	if data.TargetContract != "" {
@@ -1532,7 +1560,10 @@ func renderGoalOrchestratorPrompt(data goalDraftData) string {
 	if data.ControlRoot != "" {
 		args = append(args, "--control-root", data.ControlRoot)
 	}
-	if data.TargetProjectRoot != "" {
+	// Only carry an explicitly PROVIDED target into the visible-lead /goal prompt
+	// (#290); a resolved_unconfirmed/unresolved target must not appear as a real
+	// flag in an actionable start surface.
+	if data.TargetProjectRootSource == targetRootSourceProvided && data.TargetProjectRoot != "" {
 		args = append(args, "--target-project-root", data.TargetProjectRoot)
 	}
 	if data.TargetContract != "" {
@@ -1606,7 +1637,7 @@ func writeGoalDraftMarkdown(out *os.File, data goalDraftData) {
 	fmt.Fprintln(out, "## Execution Boundary")
 	fmt.Fprintf(out, "- Mode: %s\n", data.Execution.Mode)
 	fmt.Fprintf(out, "- Control root: %s\n", data.Execution.ControlRoot)
-	fmt.Fprintf(out, "- Target project root: %s\n", data.Execution.TargetProjectRoot)
+	fmt.Fprintf(out, "- Target project root: %s\n", goalTargetProjectRootLine(data))
 	fmt.Fprintf(out, "- Visible lead: %s\n", data.Execution.VisibleLead)
 	fmt.Fprintf(out, "- Visible team members: %s\n", strings.Join(data.Execution.VisibleTeamMembers, ", "))
 	fmt.Fprintf(out, "- Mutable actor: %s\n", data.Execution.MutableActor)
