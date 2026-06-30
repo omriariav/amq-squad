@@ -148,6 +148,14 @@ type statusRecord struct {
 	// client can positively identify the wakeable orchestrator identity rather
 	// than inferring it from lead role alone. Set from launch.Record.External.
 	External bool `json:"external,omitempty"`
+	// WakeAutoDrain reports that this member's wake sidecar is configured to
+	// inject a drain instruction on each durable-message arrival (the launch
+	// record carries WakeInjectCmd). It means inbound messages are processed
+	// reactively on wake, with no periodic `amq drain` polling loop. It is a
+	// CONFIGURATION signal, not liveness: a client must still read signals
+	// (wake_alive) and status to know whether the sidecar is actually running,
+	// so a dead sidecar surfaces as degraded rather than silently lost.
+	WakeAutoDrain bool `json:"wake_auto_drain,omitempty"`
 	// Actions are the stable, project-scoped commands a client can render/copy
 	// for this member (focus/send/resume/status). Populated for --json only.
 	Actions []runtimeActionJSON `json:"actions,omitempty"`
@@ -901,6 +909,7 @@ func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream
 	if live.LaunchFound {
 		rec.goalBinding = live.LaunchRecord.GoalBinding
 		rec.External = live.LaunchRecord.External
+		rec.WakeAutoDrain = strings.TrimSpace(live.LaunchRecord.WakeInjectCmd) != ""
 		rec.AdoptionMode = strings.TrimSpace(live.LaunchRecord.AdoptionMode)
 		rec.LauncherPaneID = strings.TrimSpace(live.LaunchRecord.LauncherPaneID)
 		if origin := strings.TrimSpace(live.LaunchRecord.SpawnOrigin); origin != "" {
