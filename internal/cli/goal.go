@@ -955,6 +955,7 @@ func runGoalDraftWithVersion(args []string, version string) error {
 	budgetTurnsFlag := fs.Int("budget-turns", 0, "autonomous guardrail: maximum lead turns before operator review")
 	idleReapMinutesFlag := fs.Int("idle-reap-minutes", 0, "autonomous guardrail: idle minutes before prune is allowed")
 	visibilityFlag := fs.String("visibility", visibilitySiblingTabs, "launch topology: sibling-tabs (default), detached, current, or plan")
+	codexArgsRaw := fs.String("codex-args", "", "explicit Codex args for the visible lead launch command, e.g. '-c model_reasoning_effort=high'; when omitted the recommended effort is shown as a comment only, never a live flag")
 	codexOnly := fs.Bool("codex-only", false, "propose Codex binaries for every role")
 	skillInvocation := fs.Bool("skill-invocation", false, "print a ready-to-paste /amq-squad-orchestrator invocation block")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned goal_draft envelope instead of Markdown")
@@ -962,7 +963,7 @@ func runGoalDraftWithVersion(args []string, version string) error {
 		fmt.Fprint(os.Stderr, `amq-squad goal draft - produce a preview-only setup plan from a goal
 
 Usage:
-  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-only] [--skill-invocation] [--json]
+  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args "..."] [--codex-only] [--skill-invocation] [--json]
 
 The draft is read-only. It prints proposed briefs, roster entries, task-store
 items, spawn gates, dispatches, and the orchestrator prompt, but it does not
@@ -978,6 +979,10 @@ Examples:
 	}
 	if fs.NArg() != 0 {
 		return usageErrorf("goal draft takes no positional arguments; use --goal TEXT")
+	}
+	leadCodexArgs, err := parseAgentArgs(*codexArgsRaw)
+	if err != nil {
+		return fmt.Errorf("parse --codex-args: %w", err)
 	}
 	goal := strings.TrimSpace(*goalFlag)
 	if goal == "" {
@@ -1007,6 +1012,7 @@ Examples:
 		BudgetTurns:        *budgetTurnsFlag,
 		IdleReapMinutes:    *idleReapMinutesFlag,
 		Visibility:         strings.TrimSpace(*visibilityFlag),
+		CodexArgs:          leadCodexArgs,
 		ProvidedFields:     goalDraftProvidedFields(fs),
 	})
 	if err != nil {
@@ -1044,6 +1050,11 @@ type goalDraftOptions struct {
 	BudgetTurns        int
 	IdleReapMinutes    int
 	Visibility         string
+	// CodexArgs are explicit Codex args the operator supplied for the visible
+	// lead (#291). When set, they override the seeded reasoning-effort default and
+	// flow into the applyable launch command; when empty, the default effort stays
+	// an inert recommendation.
+	CodexArgs []string
 	// ProvidedFields records which operator-facing input flags were explicitly
 	// set on the command line (#291), so the preview can label each Step 1 field
 	// PROVIDED vs DEFAULT. Keyed by the field name used in field_sources.
@@ -1158,6 +1169,18 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 		data.Execution.TargetProjectRoot = ""
 	}
 	data.codexArgsProvided = opts.ProvidedFields["codex_args"]
+	// When the operator explicitly supplied --codex-args, override the visible
+	// lead's seeded effort default with their value so it flows into the applyable
+	// launch command (#291). Without it, the seeded default stays an inert
+	// recommendation and is never emitted as a live flag.
+	if data.codexArgsProvided && len(opts.CodexArgs) > 0 {
+		for i := range data.Roster {
+			if data.Roster[i].Role == lead {
+				data.Roster[i].CodexArgs = append([]string(nil), opts.CodexArgs...)
+				break
+			}
+		}
+	}
 	data.FieldSources = goalDraftFieldSources(opts.ProvidedFields, targetRootSource)
 	data.BriefSkeleton = renderGoalBriefSkeleton(data)
 	data.Tasks = defaultGoalTasks(data)
@@ -1178,6 +1201,7 @@ func goalDraftProvidedFields(fs *flag.FlagSet) map[string]bool {
 		"mode": "mode", "visibility": "visibility", "composition": "composition",
 		"target_contract": "target-contract", "control_root": "control-root",
 		"target_project_root": "target-project-root", "codex_only": "codex-only",
+		"codex_args": "codex-args",
 	}
 	out := make(map[string]bool, len(flagByField))
 	for field, flagName := range flagByField {
