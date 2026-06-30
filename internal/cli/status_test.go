@@ -1505,6 +1505,71 @@ func TestExecuteStatusPresenceHandleMismatchIsStaleNotLive(t *testing.T) {
 	}
 }
 
+// TestStatusJSONProvesExternalOrchestratorBinding proves the #287 verification
+// surface: for a registered external orchestrator, status --json exposes the
+// goal_binding plus a per-record identity (external=true) and wake signal, so a
+// client can confirm the wakeable orchestrator identity without inferring it.
+func TestStatusJSONProvesExternalOrchestratorBinding(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: goalOrchestratorRole, Binary: "codex", Handle: "global-orch", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          goalOrchestratorRole,
+		ExecutionMode: executionModeProjectLead,
+	})
+	agentDir := seedAgentRecord(t, base, "issue-96", "global-orch", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "global-orch",
+		Role:     goalOrchestratorRole,
+		Session:  "issue-96",
+		External: true,
+		WakePID:  4321,
+		Tmux:     &launch.TmuxInfo{Session: "global", WindowID: "@1", PaneID: "%99", Target: "external"},
+		GoalBinding: &launch.GoalBinding{
+			Mode:       "native_goal",
+			NativeGoal: true,
+			Source:     "goal-control",
+			Command:    `/goal --goal "ship safely"`,
+		},
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4321, Root: filepath.Join(base, "issue-96"), Started: time.Now()})
+
+	jsonOut, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{4321: true}, map[int]bool{4321: true}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status json: %v\n%s", err, jsonOut)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, jsonOut)
+	if env.Data.GoalBinding.Mode != "native_goal" || !env.Data.GoalBinding.Verified {
+		t.Fatalf("goal_binding = %+v, want verified native_goal", env.Data.GoalBinding)
+	}
+	if env.Data.Lead != goalOrchestratorRole || !env.Data.Orchestrated {
+		t.Fatalf("lead/orchestrated = %q/%v", env.Data.Lead, env.Data.Orchestrated)
+	}
+	var row *statusRecord
+	for i := range env.Data.Records {
+		if env.Data.Records[i].Role == goalOrchestratorRole {
+			row = &env.Data.Records[i]
+			break
+		}
+	}
+	if row == nil {
+		t.Fatalf("no orchestrator record in %+v", env.Data.Records)
+	}
+	if !row.External {
+		t.Fatalf("orchestrator record must expose external=true: %+v", row)
+	}
+	if row.Status != statusStateWakeLive || !row.Signals.WakeAlive || row.Signals.WakePID != 4321 {
+		t.Fatalf("orchestrator record wake/identity = %+v", row)
+	}
+}
+
 func TestExecuteStatusWakeLockOnlyWakeLive(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
