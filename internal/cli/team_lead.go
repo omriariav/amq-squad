@@ -25,6 +25,17 @@ type leadWakeOptions struct {
 	Require        bool
 	WakeInjectVia  string
 	WakeInjectArgs []string
+	WakeInjectCmd  string
+}
+
+// wakeDrainInject is the standard instruction amq-squad asks the wake sidecar to
+// inject on each durable-message arrival (amq wake --inject-cmd). It re-engages a
+// lead or orchestrator even after its native /goal reaches a terminal "achieved"
+// state: the inbound directive drives an inbox drain through AMQ's sanctioned
+// injector instead of a raw tmux send-keys. Shared by lead register --wake (#283)
+// and the goal orchestrator registration (#288) so both use one mechanism.
+func wakeDrainInject() string {
+	return "amq-squad: a durable AMQ message arrived. Run `amq drain --include-body` now and act on the newest item, even if your current goal looks complete. Do not wait to be polled."
 }
 
 type leadWakeResult struct {
@@ -261,6 +272,7 @@ func runLeadRegister(args []string) error {
 	root := absoluteAMQRoot(cwd, env.Root)
 	agentDir := filepath.Join(root, "agents", handle)
 	existingRec, existingRecErr := launch.Read(agentDir)
+	wakeInjectCmdValue := wakeDrainInject()
 	var wakeResult leadWakeResult
 	if !*noWake {
 		wakeResult, err = leadWakeStarter(leadWakeOptions{
@@ -270,6 +282,7 @@ func runLeadRegister(args []string) error {
 			Require:        !*noRequireWake,
 			WakeInjectVia:  wakeInjectViaValue,
 			WakeInjectArgs: wakeInjectArgValues,
+			WakeInjectCmd:  wakeInjectCmdValue,
 		})
 		if err != nil {
 			return fmt.Errorf("start external lead wake: %w", err)
@@ -296,6 +309,7 @@ func runLeadRegister(args []string) error {
 		NoRequireWake:    *noRequireWake,
 		WakeInjectVia:    wakeInjectViaValue,
 		WakeInjectArgs:   wakeInjectArgValues,
+		WakeInjectCmd:    wakeInjectCmdValue,
 		WakePID:          wakePID,
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
@@ -367,6 +381,9 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 		for _, arg := range opts.WakeInjectArgs {
 			args = append(args, "--inject-arg", arg)
 		}
+	}
+	if cmd := strings.TrimSpace(opts.WakeInjectCmd); cmd != "" {
+		args = append(args, "--inject-cmd", cmd)
 	}
 	cmd := externalLeadWakeCommand("amq", args...)
 	cmd.Dir = opts.ProjectDir
