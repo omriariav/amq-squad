@@ -927,6 +927,18 @@ and stays poll-only
 (<code>operator_delivery.poll_required: true</code>); auto-drain on wake
 applies to the orchestrator and lead handles, not the operator
 mailbox.</p>
+<p>To keep that wake-driven loop from stalling on routine permission
+prompts, an amq-squad-launched <strong>orchestrated Claude
+worker</strong> (a non-lead role) is launched with its in-scope
+deliverable actions pre-authorized: it may run <code>gh pr create</code>
+and push its own feature branch (<code>codex/&lt;session&gt;-*</code>)
+without a prompt. Pushes to <code>main</code>, tags, releases
+(<code>--tags</code>/<code>--follow-tags</code>), and destructive git
+stay gated. The active allowlist is recorded on the launch record and
+surfaced in <code>status --json</code> as
+<code>preauthorized_actions</code> for audit. Pass
+<code>--no-preauthorize-inscope</code> to opt out; Codex workers and
+lead/operator sessions are unaffected.</p>
 <p>For an Autonomous preview, opt in explicitly and include a bounded
 policy:</p>
 <div class="sourceCode" id="cb17"><pre

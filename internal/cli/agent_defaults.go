@@ -18,6 +18,64 @@ var (
 	codexTrustedArgs      = []string{"--dangerously-bypass-approvals-and-sandbox"}
 )
 
+// claudeInScopePreauthAllowlist returns the Claude --allowedTools patterns that
+// pre-authorize a worker's in-scope deliverable actions (#296): creating its PR
+// and pushing its OWN feature branch. It deliberately excludes pushes to main,
+// tags, releases, --tags/--follow-tags, destructive git, and any broad Bash/git/
+// gh pattern, so those stay gated by the worker's normal permission mode. The
+// push patterns are prefix-scoped to the session's feature-branch namespace
+// (codex/<session>-), so `git push origin main` can never match; the trade is a
+// false negative (an unusual push form still prompts), never a false positive.
+func claudeInScopePreauthAllowlist(session string) []string {
+	session = strings.TrimSpace(session)
+	if session == "" {
+		return nil
+	}
+	feat := "codex/" + session + "-"
+	return []string{
+		"Bash(gh pr create:*)",
+		"Bash(git push origin " + feat + ":*)",
+		"Bash(git push -u origin " + feat + ":*)",
+	}
+}
+
+// claudePreauthChildArgs turns a Claude allowlist into the child flags appended
+// at launch. Empty allowlist yields no args (so non-enabled launches are
+// untouched and back-compatible).
+func claudePreauthChildArgs(allow []string) []string {
+	if len(allow) == 0 {
+		return nil
+	}
+	return []string{"--allowedTools", strings.Join(allow, ",")}
+}
+
+// claudeWorkerPreauthEligible reports whether an `agent up` launch is an
+// amq-squad-launched orchestrated NON-LEAD worker on the Claude binary — the
+// only case #296 pre-authorizes. cto/global-lead (the lead role), operator, and
+// non-orchestrated/standalone launches are excluded, so their permission posture
+// is unchanged. Codex is out of scope for this slice and always returns false.
+func claudeWorkerPreauthEligible(projectDir, profile, role, binary string) bool {
+	if defaultHandleFor(binary) != "claude" {
+		return false
+	}
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return false
+	}
+	if !team.ExistsProfile(projectDir, profile) {
+		return false
+	}
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil || !t.Orchestrated {
+		return false
+	}
+	lead := strings.TrimSpace(t.Lead)
+	if lead == "" || strings.EqualFold(role, lead) {
+		return false
+	}
+	return true
+}
+
 func normalizeTrustMode(mode string) (string, error) {
 	switch mode {
 	case "":

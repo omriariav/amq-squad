@@ -470,6 +470,16 @@ appearing healthy. The virtual operator (`user`) handle is non-runnable and
 stays poll-only (`operator_delivery.poll_required: true`); auto-drain on wake
 applies to the orchestrator and lead handles, not the operator mailbox.
 
+To keep that wake-driven loop from stalling on routine permission prompts, an
+amq-squad-launched **orchestrated Claude worker** (a non-lead role) is launched
+with its in-scope deliverable actions pre-authorized: it may run `gh pr create`
+and push its own feature branch (`codex/<session>-*`) without a prompt. Pushes
+to `main`, tags, releases (`--tags`/`--follow-tags`), and destructive git stay
+gated. The active allowlist is recorded on the launch record and surfaced in
+`status --json` as `preauthorized_actions` for audit. Pass
+`--no-preauthorize-inscope` to opt out; Codex workers and lead/operator sessions
+are unaffected.
+
 For an Autonomous preview, opt in explicitly and include a bounded policy:
 
 ```sh
