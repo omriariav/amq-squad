@@ -93,6 +93,48 @@ func TestMonitorIdleFlagsLiveStaleOwner(t *testing.T) {
 	if !strings.Contains(out, monitorEventIdleActiveTask) {
 		t.Fatalf("live-but-idle owner with a stale active task must be flagged:\n%s", out)
 	}
+	// Finding #2: the event must carry busy/liveness evidence distinguishing
+	// confirmed-not-busy from unknown.
+	for _, want := range []string{`"idle_evidence"`, `"busy_known":true`, `"busy":false`, `"owner_status":"live"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("idle event missing busy evidence %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestMonitorIdleSuppressedWhenBusyUnknown(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"}}})
+	withMonitorOperatorState(t, 0, 0)
+	withMonitorStatusRows(t, []statusRecord{{Handle: "fullstack", Status: statusStateLive, Tmux: &tmuxRuntimeJSON{PaneID: "%5", PaneAlive: true}}})
+	withMonitorPaneBusy(t, false, false) // busy state UNKNOWN (e.g. tmux access denied)
+	seedInProgressTask(t, dir, "s", "fullstack", time.Now().Add(-2*time.Hour))
+
+	out, err := runMonitorOnce(t)
+	if err != nil {
+		t.Fatalf("monitor: %v", err)
+	}
+	if strings.Contains(out, monitorEventIdleActiveTask) {
+		t.Fatalf("a live owner whose busy state is UNKNOWN must not be classified idle:\n%s", out)
+	}
+	if !strings.Contains(out, `"events_found":false`) {
+		t.Fatalf("expected idle tick when busy is unresolved:\n%s", out)
+	}
+}
+
+func TestMonitorIdleSuppressedWhenLiveOwnerHasNoPane(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"}}})
+	withMonitorOperatorState(t, 0, 0)
+	// Live by record but no live pane → busy cannot be probed → unresolved → no flag.
+	withMonitorStatusRows(t, []statusRecord{{Handle: "fullstack", Status: statusStateWakeLive}})
+	seedInProgressTask(t, dir, "s", "fullstack", time.Now().Add(-2*time.Hour))
+
+	out, err := runMonitorOnce(t)
+	if err != nil {
+		t.Fatalf("monitor: %v", err)
+	}
+	if strings.Contains(out, monitorEventIdleActiveTask) {
+		t.Fatalf("a live owner with no inspectable pane must not be classified idle:\n%s", out)
+	}
 }
 
 func TestMonitorIdleSuppressedForFreshTask(t *testing.T) {
