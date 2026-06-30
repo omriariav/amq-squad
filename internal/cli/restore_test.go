@@ -93,6 +93,34 @@ func TestLaunchArgsFromRecordReplaysWakeInject(t *testing.T) {
 	}
 }
 
+// TestLaunchArgsFromRecordDoesNotReplayWakeInjectCmd guards #283 option B: the
+// drain inject-cmd lives only on the external wake path (amq wake --inject-cmd).
+// amq coop exec has no --inject-cmd, so restore/replay (which rebuilds a
+// coop-exec launch) must NOT emit a --wake-inject-cmd/--inject-cmd flag the
+// launch path cannot consume. Resume repair of the drain injection is via
+// re-running lead register / register-orchestrator, not coop-exec restore. The
+// record still carries WakeInjectCmd as durable evidence, and older records
+// (no field) stay compatible.
+func TestLaunchArgsFromRecordDoesNotReplayWakeInjectCmd(t *testing.T) {
+	rec := launch.Record{
+		Binary:        "codex",
+		Handle:        "cto",
+		Role:          "cto",
+		Session:       "issue-96",
+		WakeInjectCmd: "amq-squad: drain now",
+	}
+	args := launchArgsFromRecord(rec)
+	for _, arg := range args {
+		if strings.Contains(arg, "inject-cmd") {
+			t.Fatalf("restore must not emit an unsupported inject-cmd flag, got args: %v", args)
+		}
+	}
+	cmd := emitCommandWithOptions(rec, emitCommandOptions{})
+	if strings.Contains(cmd, "inject-cmd") {
+		t.Fatalf("restore command-string must not emit an unsupported inject-cmd flag: %s", cmd)
+	}
+}
+
 func TestRunRestoreProjectFlagExpandsHome(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	home := t.TempDir()
