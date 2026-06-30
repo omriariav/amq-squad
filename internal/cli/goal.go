@@ -69,7 +69,26 @@ type goalDraftData struct {
 	ApplyableMutations          []goalCommandPlan      `json:"applyable_mutations"`
 	OrchestratorPrompt          string                 `json:"orchestrator_prompt"`
 	SkillInvocation             string                 `json:"skill_invocation,omitempty"`
-	Notes                       []string               `json:"notes"`
+	// FieldSources (#291) labels each operator-facing Step 1 input as how it was
+	// determined: "provided" (set by the operator) or "default" (auto). The
+	// target_project_root entry keeps the richer #290 source vocabulary
+	// (provided|resolved_unconfirmed|unresolved|default). Additive; clients that
+	// ignore it are unaffected.
+	FieldSources map[string]string `json:"field_sources,omitempty"`
+	// Steps (#291) is the guided operator flow: each step states what just
+	// happened, what is about to happen, what the operator approves, and the next
+	// gate. Additive and rendered as the markdown Step 1/2/3 sections.
+	Steps []goalDraftStep `json:"steps,omitempty"`
+	Notes []string        `json:"notes"`
+}
+
+type goalDraftStep struct {
+	Number        int    `json:"number"`
+	Title         string `json:"title"`
+	JustHappened  string `json:"just_happened,omitempty"`
+	AboutToHappen string `json:"about_to_happen,omitempty"`
+	Approving     string `json:"approving,omitempty"`
+	NextGate      string `json:"next_gate,omitempty"`
 }
 
 type goalIssueSource struct {
@@ -983,6 +1002,7 @@ Examples:
 		BudgetTurns:        *budgetTurnsFlag,
 		IdleReapMinutes:    *idleReapMinutesFlag,
 		Visibility:         strings.TrimSpace(*visibilityFlag),
+		ProvidedFields:     goalDraftProvidedFields(fs),
 	})
 	if err != nil {
 		return err
@@ -1019,6 +1039,10 @@ type goalDraftOptions struct {
 	BudgetTurns        int
 	IdleReapMinutes    int
 	Visibility         string
+	// ProvidedFields records which operator-facing input flags were explicitly
+	// set on the command line (#291), so the preview can label each Step 1 field
+	// PROVIDED vs DEFAULT. Keyed by the field name used in field_sources.
+	ProvidedFields map[string]bool
 }
 
 func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
@@ -1128,13 +1152,86 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 		(targetRootSource == targetRootSourceResolvedUnconfirmed || targetRootSource == targetRootSourceUnresolved) {
 		data.Execution.TargetProjectRoot = ""
 	}
+	data.FieldSources = goalDraftFieldSources(opts.ProvidedFields, targetRootSource)
 	data.BriefSkeleton = renderGoalBriefSkeleton(data)
 	data.Tasks = defaultGoalTasks(data)
 	data.SpawnGates = defaultGoalSpawnGates(data)
 	data.Dispatches = defaultGoalDispatches(data)
 	data.ApplyableMutations = defaultGoalMutations(data)
 	data.SkillInvocation = renderGoalSkillInvocation(data)
+	data.Steps = goalDraftSteps(data)
 	return data, nil
+}
+
+// goalDraftProvidedFields records which operator-facing input flags were set on
+// the command line, so the preview can label each Step 1 field provided/default.
+func goalDraftProvidedFields(fs *flag.FlagSet) map[string]bool {
+	flagByField := map[string]string{
+		"goal": "goal", "repo": "repo", "milestone": "milestone",
+		"session": "session", "profile": "profile", "lead": "lead",
+		"mode": "mode", "visibility": "visibility", "composition": "composition",
+		"target_contract": "target-contract", "control_root": "control-root",
+		"target_project_root": "target-project-root", "codex_only": "codex-only",
+	}
+	out := make(map[string]bool, len(flagByField))
+	for field, flagName := range flagByField {
+		if flagWasSet(fs, flagName) {
+			out[field] = true
+		}
+	}
+	return out
+}
+
+// goalDraftFieldSources labels each operator-facing Step 1 input provided/default
+// (#291). target_project_root keeps its richer #290 source vocabulary.
+func goalDraftFieldSources(provided map[string]bool, targetRootSource string) map[string]string {
+	labeled := []string{"goal", "repo", "milestone", "session", "profile", "lead", "mode", "visibility", "composition", "target_contract", "control_root", "codex_only"}
+	out := make(map[string]string, len(labeled)+1)
+	for _, f := range labeled {
+		if provided[f] {
+			out[f] = targetRootSourceProvided
+		} else {
+			out[f] = targetRootSourceDefault
+		}
+	}
+	out["target_project_root"] = targetRootSource
+	return out
+}
+
+// goalDraftSteps builds the guided operator flow (#291): each step states what
+// just happened, what is about to happen, what the operator approves, and the
+// next gate.
+func goalDraftSteps(data goalDraftData) []goalDraftStep {
+	register := ""
+	if data.Mode == executionModeGlobalOrchestrator {
+		register = " The orchestrator registers its own pane via --register-orchestrator."
+	}
+	return []goalDraftStep{
+		{
+			Number:        1,
+			Title:         "Preview",
+			JustHappened:  "amq-squad turned your goal into a preview-only plan (no files, rosters, AMQ, panes, or tasks were touched).",
+			AboutToHappen: "Review the labeled plan below: each Step 1 field is marked provided (you set it) or default (auto). Override any default by passing its flag.",
+			Approving:     "Nothing yet — this step is read-only.",
+			NextGate:      "Approve the plan, then run Step 2 to create/register the visible lead.",
+		},
+		{
+			Number:        2,
+			Title:         "Create / register the visible lead",
+			JustHappened:  "You approved the preview.",
+			AboutToHappen: "amq-squad will create the profile/session/team and launch the visible lead with the generated native /goal prompt." + register,
+			Approving:     "Creating durable team config and starting the lead (the first mutating step).",
+			NextGate:      "Per-spawn operator approval on gate/spawn-<role> before any worker is brought up.",
+		},
+		{
+			Number:        3,
+			Title:         "Monitor through the lead",
+			JustHappened:  "The visible lead is running and owns the deliverable.",
+			AboutToHappen: "Watch via amq-squad status --json and the lead's reports; only gates, blockers, and DONE are surfaced to you — child detail stays internal unless escalated.",
+			Approving:     "Operator gates the lead raises (merge/release/external actions).",
+			NextGate:      "Operator approvals on gate/<topic>. With wake limits, poll the lead's inbox/gates/status on a cadence.",
+		},
+	}
 }
 
 func renderGoalSkillInvocation(data goalDraftData) string {
@@ -1164,12 +1261,46 @@ func renderGoalSkillInvocation(data goalDraftData) string {
 	if data.CodexOnly {
 		b.WriteString(" --codex-only")
 	}
-	b.WriteString("\n\n")
+	// #291: a global_orchestrator run should register its own control pane.
+	if data.Mode == executionModeGlobalOrchestrator {
+		b.WriteString(" --register-orchestrator")
+	}
+	// #290/#291: carry target_project_root into the invocation ONLY when the
+	// operator explicitly provided it; never emit a resolved_unconfirmed or
+	// unresolved path as an executable flag.
+	if data.FieldSources["target_project_root"] == targetRootSourceProvided && data.TargetProjectRoot != "" {
+		fmt.Fprintf(&b, " --target-project-root %s", quoteSkillInvocationArg(data.TargetProjectRoot))
+	}
+	b.WriteString("\n")
+	// Recommendations and required-but-unprovided inputs are rendered as clearly
+	// marked comments, NOT executable flags, so the pasted command stays safe and
+	// does not silently change runtime assumptions (#291).
+	for _, rec := range goalSkillInvocationRecommendations(data) {
+		b.WriteString(rec)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 	b.WriteString(data.OrchestratorPrompt)
 	if !strings.HasSuffix(data.OrchestratorPrompt, "\n") {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// goalSkillInvocationRecommendations returns clearly-marked comment lines (each
+// starting with "# ") for high-value inputs the operator has not provided. They
+// are advisory, never executable flags (#291): a Codex lead's reasoning effort
+// is recommended, not silently injected, and an unconfirmed global_orchestrator
+// target is flagged as required-before-start rather than smuggled in.
+func goalSkillInvocationRecommendations(data goalDraftData) []string {
+	var recs []string
+	if data.Mode == executionModeGlobalOrchestrator {
+		recs = append(recs, `# recommended for a Codex lead: --codex-args "-c model_reasoning_effort=high"`)
+		if data.FieldSources["target_project_root"] != targetRootSourceProvided {
+			recs = append(recs, "# REQUIRED before start: --target-project-root <confirmed local checkout> (a global_orchestrator run will not begin without an explicit, confirmed project path)")
+		}
+	}
+	return recs
 }
 
 func quoteSkillInvocationArg(s string) string {
@@ -1587,22 +1718,30 @@ func renderGoalOrchestratorPrompt(data goalDraftData) string {
 	return strings.Join(args, " ")
 }
 
+// goalFieldSourceLabel renders the #291 provided/default (or richer #290 target)
+// label for a Step 1 field, e.g. " (provided)". Empty when the field is not
+// labeled.
+func goalFieldSourceLabel(data goalDraftData, field string) string {
+	if src, ok := data.FieldSources[field]; ok && src != "" {
+		return " (" + src + ")"
+	}
+	return ""
+}
+
 func writeGoalDraftMarkdown(out *os.File, data goalDraftData) {
 	fmt.Fprintln(out, "# amq-squad goal draft")
 	fmt.Fprintf(out, "# preview_only: %t\n", data.PreviewOnly)
-	fmt.Fprintf(out, "# composition: %s\n", data.Composition)
-	fmt.Fprintf(out, "# mode: %s\n", data.Mode)
-	fmt.Fprintf(out, "# visibility: %s\n", data.Visibility)
-	fmt.Fprintf(out, "# session: %s\n", data.Session)
-	fmt.Fprintf(out, "# profile: %s\n", data.Profile)
-	fmt.Fprintf(out, "# lead: %s\n", data.Lead)
+	fmt.Fprintf(out, "# composition: %s%s\n", data.Composition, goalFieldSourceLabel(data, "composition"))
+	fmt.Fprintf(out, "# mode: %s%s\n", data.Mode, goalFieldSourceLabel(data, "mode"))
+	fmt.Fprintf(out, "# visibility: %s%s\n", data.Visibility, goalFieldSourceLabel(data, "visibility"))
+	fmt.Fprintf(out, "# session: %s%s\n", data.Session, goalFieldSourceLabel(data, "session"))
+	fmt.Fprintf(out, "# profile: %s%s\n", data.Profile, goalFieldSourceLabel(data, "profile"))
+	fmt.Fprintf(out, "# lead: %s%s\n", data.Lead, goalFieldSourceLabel(data, "lead"))
 	fmt.Fprintf(out, "# namespace: %s\n", data.Namespace.ID)
 	if data.ControlRoot != "" {
-		fmt.Fprintf(out, "# control_root: %s\n", data.ControlRoot)
+		fmt.Fprintf(out, "# control_root: %s%s\n", data.ControlRoot, goalFieldSourceLabel(data, "control_root"))
 	}
-	if data.TargetProjectRoot != "" {
-		fmt.Fprintf(out, "# target_project_root: %s\n", data.TargetProjectRoot)
-	}
+	fmt.Fprintf(out, "# target_project_root: %s\n", goalTargetProjectRootLine(data))
 	if data.Execution.MutableActor != "" {
 		fmt.Fprintf(out, "# mutable_actor: %s\n", data.Execution.MutableActor)
 	}
@@ -1625,6 +1764,25 @@ func writeGoalDraftMarkdown(out *os.File, data goalDraftData) {
 		fmt.Fprintf(out, "# autonomous.budget_turns: %d\n", data.AutonomousPolicy.BudgetTurns)
 	}
 	fmt.Fprintln(out)
+	if len(data.Steps) > 0 {
+		fmt.Fprintln(out, "## Operator Steps")
+		for _, s := range data.Steps {
+			fmt.Fprintf(out, "### Step %d — %s\n", s.Number, s.Title)
+			if s.JustHappened != "" {
+				fmt.Fprintf(out, "- Just happened: %s\n", s.JustHappened)
+			}
+			if s.AboutToHappen != "" {
+				fmt.Fprintf(out, "- About to happen: %s\n", s.AboutToHappen)
+			}
+			if s.Approving != "" {
+				fmt.Fprintf(out, "- You are approving: %s\n", s.Approving)
+			}
+			if s.NextGate != "" {
+				fmt.Fprintf(out, "- Next gate: %s\n", s.NextGate)
+			}
+		}
+		fmt.Fprintln(out)
+	}
 	fmt.Fprintln(out, "## Brief Skeleton")
 	fmt.Fprintln(out)
 	fmt.Fprint(out, data.BriefSkeleton)
