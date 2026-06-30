@@ -1570,6 +1570,59 @@ func TestStatusJSONProvesExternalOrchestratorBinding(t *testing.T) {
 	}
 }
 
+// TestStatusJSONSurfacesPreauthorizedActions proves #296 auditability: the
+// in-scope allowlist granted at launch is visible in status --json, and never
+// includes main push / tag / release.
+func TestStatusJSONSurfacesPreauthorizedActions(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}, {Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96"}},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-96", "fullstack", launch.Record{
+		CWD:                  dir,
+		Binary:               "claude",
+		Handle:               "fullstack",
+		Role:                 "fullstack",
+		Session:              "issue-96",
+		AgentPID:             4242,
+		Tmux:                 &launch.TmuxInfo{PaneID: "%7"},
+		PreauthorizedActions: claudeInScopePreauthAllowlist("issue-96"),
+	})
+
+	jsonOut, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status json: %v\n%s", err, jsonOut)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, jsonOut)
+	var row *statusRecord
+	for i := range env.Data.Records {
+		if env.Data.Records[i].Role == "fullstack" {
+			row = &env.Data.Records[i]
+			break
+		}
+	}
+	if row == nil {
+		t.Fatalf("no fullstack record in %+v", env.Data.Records)
+	}
+	joined := strings.Join(row.PreauthorizedActions, "\n")
+	if len(row.PreauthorizedActions) == 0 || !strings.Contains(joined, "gh pr create") {
+		t.Fatalf("status must surface preauthorized_actions: %+v", row.PreauthorizedActions)
+	}
+	for _, forbidden := range []string{"origin main", "git tag", "gh release"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("preauthorized_actions must never include %q: %+v", forbidden, row.PreauthorizedActions)
+		}
+	}
+}
+
 func orchestratorStatusRecord(rows []statusRecord) *statusRecord {
 	for i := range rows {
 		if rows[i].Role == goalOrchestratorRole {

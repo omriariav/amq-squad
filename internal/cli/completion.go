@@ -238,6 +238,7 @@ var completionCommonFlags = []string{
 	"--no-bootstrap",
 	"--no-default-args",
 	"--no-operator",
+	"--no-preauthorize-inscope",
 	"--no-require-wake",
 	"--no-wake",
 	"--once",
