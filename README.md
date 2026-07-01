@@ -76,7 +76,7 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 Install the 2.0 line (note the `/v2` module path):
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.13.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.14.0
 amq-squad version
 ```
 
@@ -919,7 +919,7 @@ It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--o
 
 `amq-squad amq ...` is a project-aware wrapper around AMQ diagnostics. It resolves the same AMQ root, base root, session, and handle that the squad launcher uses, then delegates to AMQ.
 
-amq-squad v2.13.0 requires AMQ 0.38.0 or newer. That floor includes eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
+amq-squad v2.14.0 requires AMQ 0.38.0 or newer. That floor includes eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
 
 Read-only diagnostics run directly:
 
@@ -1147,7 +1147,7 @@ amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
 amq-squad agent up codex --model gpt-5
 ```
 
-amq-squad v2.13.0 requires amq **0.38.0+**. Launches pass `--require-wake` to
+amq-squad v2.14.0 requires amq **0.38.0+**. Launches pass `--require-wake` to
 `amq coop exec`, so a launch **fails at the door** when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale or
 orphaned wake. `--no-require-wake` opts out for environments where wake cannot
