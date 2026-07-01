@@ -1,0 +1,16 @@
+{
+  "subject": "PR #305 / issue #299 — idle_with_active_task watchdog (retargeted to main and merged)",
+  "head_sha": "390d8ecd24e281f06f8c51343d668b4b3820a2b8",
+  "ci": {
+    "state": "success",
+    "sha": "390d8ecd24e281f06f8c51343d668b4b3820a2b8",
+    "source": "GitHub Actions CI (make ci) run 28482808677 job 84422737874 (main-based after retarget) + local make ci on exact head",
+    "checked_at": "2026-07-01T07:00:00Z"
+  },
+  "review": {
+    "state": "clean",
+    "sha": "390d8ecd24e281f06f8c51343d668b4b3820a2b8",
+    "source": "senior-dev approved + QA green after retarget to main (relayed by cto on AMQ); merged to main at 3c54e333d1a5d109ee0b333234985772eb9f0bee",
+    "checked_at": "2026-07-01T07:00:00Z"
+  }
+}
