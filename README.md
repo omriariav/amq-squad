@@ -521,6 +521,19 @@ measured idle age, explicit evidence that active task linkage was checked, and
 no linked active tasks; `--idle-reap-minutes` sets the minimum idle age before
 pruning is allowed.
 
+Releases carry one more gate. Before any publish step (`git push` of the release
+commit, `git tag`, `gh release create`), `amq-squad verify release --evidence
+<file>` requires the **final assembled release commit SHA** to carry both a
+**developer co-sign** (a second actor, `cosign.distinct_from_release_lead: true`,
+`cosign.sha` equal to the release commit SHA — a co-sign on an earlier per-delta
+SHA is rejected as stale) and an **approved operator release gate**. The two are
+non-substitutable: an "APPROVED to release" operator decision alone never
+authorizes publish without the exact-SHA developer co-sign, and the co-sign never
+substitutes for the operator gate. `verify release` only validates normalized
+evidence; it never pushes, tags, or releases — those remain operator-performed.
+The release commit's own final SHA must pass this gate before it becomes
+immutable.
+
 ### Profiles (schema 3)
 
 Profiles let one team-home hold parallel team shapes (for example a release team and a research team).
