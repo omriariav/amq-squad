@@ -77,21 +77,29 @@ func runVerify(args []string) error {
 
 Usage:
   amq-squad verify merge --evidence <file|-> [--json]
+  amq-squad verify release --evidence <file|-> [--json]
 
-The merge preflight validates normalized lead-supplied evidence. It does not
-query providers, infer PR state, merge, or mutate remote state. Failed evidence
-prints the failed conditions and exits non-zero.
+The merge preflight validates normalized per-PR evidence (CI + review at a head
+SHA). The release preflight validates a final-release-commit co-sign gate: an
+exact-SHA developer co-sign AND an operator release approval before publish.
+Neither queries providers, infers state, merges, or mutates remote state.
+'APPROVED to release' alone never authorizes publish: push/tag/release require
+the final release commit SHA to carry a developer co-sign and an approved
+operator release gate, and remain operator-performed. Failed evidence prints the
+failed conditions and exits non-zero.
 `)
 		if len(args) == 0 {
-			return usageErrorf("verify requires a subcommand (merge)")
+			return usageErrorf("verify requires a subcommand (merge or release)")
 		}
 		return nil
 	}
 	switch args[0] {
 	case "merge":
 		return runVerifyMerge(args[1:])
+	case "release":
+		return runVerifyRelease(args[1:])
 	default:
-		return usageErrorf("unknown 'verify' subcommand: %q. Try merge.", args[0])
+		return usageErrorf("unknown 'verify' subcommand: %q. Try merge or release.", args[0])
 	}
 }
 
@@ -274,4 +282,207 @@ func displaySubject(e verifyMergeEvidence) string {
 		return s
 	}
 	return "change"
+}
+
+const verifyReleaseStateApproved = "approved"
+
+// verifyReleaseEvidence is the normalized evidence for the #285 final-release
+// co-sign gate. It is a DIFFERENT artifact from merge evidence: it binds release
+// CI, a developer co-sign, and an operator release approval to the exact final
+// assembled release commit SHA before publish.
+type verifyReleaseEvidence struct {
+	Subject          string                        `json:"subject"`
+	Version          string                        `json:"version"`
+	ReleaseCommitSHA string                        `json:"release_commit_sha"`
+	CI               verifyMergeCheck              `json:"ci"`
+	Cosign           verifyReleaseCosign           `json:"cosign"`
+	OperatorApproval verifyReleaseOperatorApproval `json:"operator_release_approval"`
+}
+
+type verifyReleaseCosign struct {
+	State string `json:"state"`
+	SHA   string `json:"sha"`
+	// Reviewer is the developer co-signing the final release commit; must be a
+	// SECOND actor, not the release-lead.
+	Reviewer string `json:"reviewer"`
+	// DistinctFromReleaseLead asserts the co-signer is a different actor than the
+	// release-lead. amq-squad cannot infer this from git alone, so the evidence
+	// must assert it and the gate validates the assertion.
+	DistinctFromReleaseLead bool   `json:"distinct_from_release_lead"`
+	Source                  string `json:"source"`
+	CheckedAt               string `json:"checked_at"`
+	URL                     string `json:"url,omitempty"`
+}
+
+type verifyReleaseOperatorApproval struct {
+	Approved  bool   `json:"approved"`
+	Gate      string `json:"gate"`
+	Source    string `json:"source"`
+	CheckedAt string `json:"checked_at"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type verifyReleaseResult struct {
+	OK               bool                          `json:"ok"`
+	Subject          string                        `json:"subject,omitempty"`
+	Version          string                        `json:"version,omitempty"`
+	ReleaseCommitSHA string                        `json:"release_commit_sha,omitempty"`
+	EvidenceSummary  *verifyReleaseEvidenceSummary `json:"evidence_summary,omitempty"`
+	Failures         []verifyMergeFailure          `json:"failures,omitempty"`
+}
+
+type verifyReleaseEvidenceSummary struct {
+	CI               verifyMergeCheckSummary       `json:"ci"`
+	Cosign           verifyReleaseCosign           `json:"cosign"`
+	OperatorApproval verifyReleaseOperatorApproval `json:"operator_release_approval"`
+}
+
+func runVerifyRelease(args []string) error {
+	fs := flag.NewFlagSet("verify release", flag.ContinueOnError)
+	evidencePath := fs.String("evidence", "", "path to normalized release evidence JSON, or '-' for stdin (required)")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned JSON envelope")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad verify release - validate the final-release-commit co-sign gate (#285)
+
+Usage:
+  amq-squad verify release --evidence <file|->
+  amq-squad verify release --evidence <file|-> --json
+
+Evidence schema:
+  {
+    "subject": "release vX.Y.Z",
+    "version": "vX.Y.Z",
+    "release_commit_sha": "<final assembled release commit SHA>",
+    "ci": {"state": "success", "sha": "<release_commit_sha>", "source": "...", "checked_at": "..."},
+    "cosign": {"state": "approved", "sha": "<release_commit_sha>", "reviewer": "<dev, not release-lead>", "distinct_from_release_lead": true, "source": "...", "checked_at": "..."},
+    "operator_release_approval": {"approved": true, "gate": "gate/<topic>", "source": "...", "checked_at": "..."}
+  }
+
+Publish-ready requires BOTH an exact-SHA developer co-sign and an approved
+operator release gate; neither substitutes for the other. The command never
+pushes, tags, or releases. Failed evidence prints the failed conditions and
+exits non-zero.
+`)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return usageErrorf("unexpected argument %q", fs.Arg(0))
+	}
+	path := strings.TrimSpace(*evidencePath)
+	if path == "" {
+		return usageErrorf("--evidence is required")
+	}
+	evidence, err := readVerifyReleaseEvidence(path, os.Stdin)
+	if err != nil {
+		return err
+	}
+	result := validateVerifyReleaseEvidence(evidence)
+	if *jsonOut {
+		if err := printJSONEnvelope("verify_release", result); err != nil {
+			return err
+		}
+		if !result.OK {
+			return UsageError("release preflight failed")
+		}
+		return nil
+	}
+	subject := strings.TrimSpace(evidence.Subject)
+	if subject == "" {
+		subject = "release"
+	}
+	if result.OK {
+		fmt.Printf("release preflight passed for %s at %s\n", subject, strings.TrimSpace(evidence.ReleaseCommitSHA))
+		return nil
+	}
+	fmt.Printf("release preflight failed for %s at %s\n", subject, strings.TrimSpace(evidence.ReleaseCommitSHA))
+	for _, f := range result.Failures {
+		fmt.Printf("- %s: %s\n", f.Code, f.Detail)
+	}
+	return UsageError("release preflight failed")
+}
+
+func readVerifyReleaseEvidence(path string, stdin io.Reader) (verifyReleaseEvidence, error) {
+	var r io.Reader
+	if path == "-" {
+		r = stdin
+	} else {
+		f, err := os.Open(path)
+		if err != nil {
+			return verifyReleaseEvidence{}, fmt.Errorf("read evidence: %w", err)
+		}
+		defer f.Close()
+		r = f
+	}
+	var evidence verifyReleaseEvidence
+	dec := json.NewDecoder(r)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&evidence); err != nil {
+		return verifyReleaseEvidence{}, fmt.Errorf("decode evidence: %w", err)
+	}
+	var extra struct{}
+	if err := dec.Decode(&extra); err != io.EOF {
+		return verifyReleaseEvidence{}, fmt.Errorf("decode evidence: multiple JSON values")
+	}
+	return evidence, nil
+}
+
+func validateVerifyReleaseEvidence(e verifyReleaseEvidence) verifyReleaseResult {
+	result := verifyReleaseResult{
+		Subject:          strings.TrimSpace(e.Subject),
+		Version:          strings.TrimSpace(e.Version),
+		ReleaseCommitSHA: strings.TrimSpace(e.ReleaseCommitSHA),
+	}
+	sha := result.ReleaseCommitSHA
+	if sha == "" {
+		result.Failures = append(result.Failures, verifyMergeFailure{
+			Code:   "missing_release_commit_sha",
+			Detail: "release_commit_sha is required",
+		})
+	}
+	// Release CI must be green and bound to the exact final release commit.
+	result.Failures = append(result.Failures, validateVerifyMergeCheck("ci", e.CI, sha, verifyMergeStateSuccess)...)
+
+	// Developer co-sign on the exact final release commit (a SECOND actor).
+	cs := e.Cosign
+	state := strings.TrimSpace(cs.State)
+	switch {
+	case state == "":
+		result.Failures = append(result.Failures, verifyMergeFailure{Code: "cosign_missing_state", Detail: "cosign.state is required"})
+	case state != verifyReleaseStateApproved:
+		result.Failures = append(result.Failures, verifyMergeFailure{Code: "cosign_state_not_approved", Detail: fmt.Sprintf("cosign.state is %q, want %q", state, verifyReleaseStateApproved)})
+	}
+	csSHA := strings.TrimSpace(cs.SHA)
+	if csSHA == "" {
+		result.Failures = append(result.Failures, verifyMergeFailure{Code: "cosign_missing_sha", Detail: "cosign.sha is required"})
+	} else if sha != "" && csSHA != sha {
+		result.Failures = append(result.Failures, verifyMergeFailure{Code: "cosign_stale_sha", Detail: fmt.Sprintf("cosign.sha is %q, want release_commit_sha %q (the co-sign must be on the exact final release commit)", csSHA, sha)})
+	}
+	if strings.TrimSpace(cs.Reviewer) == "" {
+		result.Failures = append(result.Failures, verifyMergeFailure{Code: "cosign_missing_reviewer", Detail: "cosign.reviewer is required (the developer co-signing the final release commit)"})
+	}
+	if !cs.DistinctFromReleaseLead {
+		result.Failures = append(result.Failures, verifyMergeFailure{Code: "cosign_not_distinct_actor", Detail: "cosign.distinct_from_release_lead must be true: the co-signer must be a second actor, not the release-lead"})
+	}
+
+	// Operator release approval is a SEPARATE required gate; it never substitutes
+	// for the co-sign, and the co-sign never substitutes for it.
+	op := e.OperatorApproval
+	if !op.Approved {
+		result.Failures = append(result.Failures, verifyMergeFailure{Code: "operator_approval_not_approved", Detail: "operator_release_approval.approved must be true"})
+	}
+	if strings.TrimSpace(op.Gate) == "" && strings.TrimSpace(op.Source) == "" {
+		result.Failures = append(result.Failures, verifyMergeFailure{Code: "operator_approval_missing_reference", Detail: "operator_release_approval requires a gate or source reference"})
+	}
+
+	result.OK = len(result.Failures) == 0
+	if result.OK {
+		result.EvidenceSummary = &verifyReleaseEvidenceSummary{
+			CI:               summarizeVerifyMergeCheck(e.CI),
+			Cosign:           cs,
+			OperatorApproval: op,
+		}
+	}
+	return result
 }

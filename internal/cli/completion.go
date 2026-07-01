@@ -145,6 +145,7 @@ var completionTaskSubcommands = []string{
 // completionVerifySubcommands lists the `amq-squad verify` subcommands.
 var completionVerifySubcommands = []string{
 	"merge",
+	"release",
 }
 
 // completionCommonFlags lists every flag registered by the current stdlib
@@ -202,6 +203,7 @@ var completionCommonFlags = []string{
 	"--dry-run",
 	"--evidence",
 	"--exec",
+	"--feature-prefix",
 	"--filter",
 	"--force",
 	"--force-duplicate",
@@ -209,6 +211,7 @@ var completionCommonFlags = []string{
 	"--from",
 	"--gate",
 	"--goal",
+	"--handled-issue",
 	"--goal-id",
 	"--handle",
 	"--hide-stale",
@@ -231,6 +234,7 @@ var completionCommonFlags = []string{
 	"--milestone",
 	"--mode",
 	"--max-agents",
+	"--max-ticks",
 	"--max-total-spawns",
 	"--mutating",
 	"--no-attach",
