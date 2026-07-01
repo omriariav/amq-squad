@@ -137,6 +137,16 @@ escalates them.
 If `status --json.operator_delivery.poll_required=true`, the operator mailbox is
 also polling-only: reports, blockers, and approval gates are durable AMQ records,
 and the orchestrator or NOC must drain/poll them instead of waiting for wake.
+**No-wake companion:** do not hand-roll a polling shell loop. `amq-squad monitor
+--session S [--once | --interval D --timeout D | --max-ticks N] [--json]` is the
+first-class no-wake poller: it watches (read-only) the task store, the evidence
+dir, open operator gates, and the operator inbox, and **exits on the first
+operator-needed event** (blocked/failed task, `merge_gate_ready`,
+`open_operator_gate`, `operator_inbox_message`) so you are pulled back exactly
+when something needs you. It only surfaces work — it never answers gates, marks
+messages read, or mutates anything. Pass `--handled-issue N` to suppress a
+merge-ready event you have already actioned. This is the no-wake fallback to the
+wake path, not a replacement for wake delivery or operator gates.
 Use `goal_binding` in `goal draft --json` and `status --json` to distinguish a
 generated native `/goal` plan (`native_goal_pending`), verified launch-record
 native binding (`native_goal`), blocked native goal state
