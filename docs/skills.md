@@ -198,9 +198,37 @@ Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
 CLI args for one member only — the overlay verb above generates the flagship
 case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it
 for you. Plan emission fails fast when a referenced `--settings` file is
-missing. In v2.6.0 with AMQ 0.38.0+, launches also pass `--require-wake` so a launch
-fails immediately when the wake sidecar cannot acquire its lock
-(`--no-require-wake` opts out and persists into resume).
+missing. AMQ floor (v2.15.0+): amq-squad requires amq 0.39.0+. Launches pass
+`--require-wake` so a launch fails immediately when the wake sidecar cannot
+acquire its lock (`--no-require-wake` opts out and persists into resume).
+Claude-binary agents launched in tmux also get a best-effort delayed
+`/rename <role>-<session>` injection, including managed `resume --exec` /
+`agent resume` replay. Failure to deliver the rename does not block launch.
+Codex agents are unaffected because Codex has no matching slash command.
+
+Model/binary guidance (context-stamped 2026-07-02, current operator setup):
+defaults are not limits; escalate model or effort when output quality misses the
+bar. For shippable work, `intelligence > taste > cost`, with cost only a
+tie-breaker. Bulk/mechanical work defaults to Codex CLI on `gpt-5.5`; UI, copy,
+API, and product design need taste `>= 7`; plan/implementation reviews should
+use `fable-5` or `opus-4.8` with optional `gpt-5.5` as an independent extra
+perspective. Never use Haiku. Configure direct agents with `binary`, `model`,
+Codex effort through `codex_args` (`-c model_reasoning_effort=<level>`), and
+Claude effort/settings through `claude_args` (for example `--effort high`).
+amq-squad does not maintain an Anthropic whitelist: Claude member `model` is
+passed through to installed `claude --model <model>`, with aliases such as
+`default`, `opus`, `fable`, `sonnet`, `haiku`, and full names such as
+`claude-fable-5` depending on CLI/account support. Mentioning `haiku` here is
+mechanical pass-through support only; the policy remains never choose Haiku for
+amq-squad work. Use a thin Claude wrapper for `gpt-5.5` only when a Claude-only
+workflow/subagent slot forces that shape; a Claude workflow/agent `model:`
+parameter still selects a Claude model only. Prefer an explicit Codex-binary
+member otherwise. Exact override paths include
+`amq-squad team init --model cto=gpt-5.5,fullstack=fable-5`,
+`amq-squad team member add plan-reviewer --binary claude --model claude-fable-5 --claude-args "--effort high"`,
+`amq-squad up issue-96 --model plan-reviewer=claude-fable-5,implementer=sonnet`,
+and
+`amq-squad resume --session issue-96 --model plan-reviewer=opus,implementer=sonnet --exec`.
 
 ### Runtime control (tmux)
 
@@ -258,8 +286,11 @@ For `/goal` runs, keep the operator interface as a three-step flow:
 
 1. Preview the goal, repo, source issues, profile/session namespace, visible
    lead, proposed mutations, topology, spawn policy, validation, and gates.
-2. Create or register exactly one operator-visible goal lead. Use `--lead ROLE`
-   when generated commands should route through a non-`cto` lead.
+2. Create or launch exactly one operator-visible project lead. Use `--lead ROLE`
+   when generated commands should route through a non-`cto` lead. Register an
+   existing pane only when it already proves the exact project/profile/session
+   lead identity, or with explicit safe project-lead adoption from that pane;
+   never adopt a global-orchestrator pane as project `cto`.
 3. Monitor through that lead. Child agents stay implementation details unless an
    approval gate, blocker, release risk, or final evidence needs surfacing.
    Leads must surface blockers and approval requests immediately to the

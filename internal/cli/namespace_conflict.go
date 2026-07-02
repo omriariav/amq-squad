@@ -73,6 +73,9 @@ func rootHasDurableState(root string) bool {
 		if err != nil || path == root {
 			return nil
 		}
+		if immediateChildNamespaceRoot(root, path, d) {
+			return filepath.SkipDir
+		}
 		if strings.HasSuffix(path, ".lock") || strings.HasSuffix(path, ".tmp") {
 			return nil
 		}
@@ -83,6 +86,24 @@ func rootHasDurableState(root string) bool {
 		return filepath.SkipAll
 	})
 	return found
+}
+
+// immediateChildNamespaceRoot reports whether an immediate child is another
+// AMQ namespace root, not durable state for the legacy/default session root.
+func immediateChildNamespaceRoot(root, path string, d os.DirEntry) bool {
+	if !d.IsDir() {
+		return false
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	if rel == "." || rel == "agents" || strings.Contains(rel, "/") {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(path, "agents"))
+	return err == nil && info.IsDir()
 }
 
 func legacyRootEntryIsDurable(root, path string, d os.DirEntry) bool {

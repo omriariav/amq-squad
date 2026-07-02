@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -33,6 +34,7 @@ var resolveAMQEnvForAMQCommand = resolveAMQEnvInDir
 type amqPassthroughOptions struct {
 	OverrideBoundary bool
 	BoundaryReason   string
+	UnsafeSendAs     bool
 }
 
 type amqBoundaryAuditRecord struct {
@@ -393,9 +395,12 @@ func defaultRunAMQStreaming(ctx amqContext, cmd []string) error {
 // It consumes ONLY --project/--session/--me (to resolve the queue root + acting
 // handle, exactly like every other `amq-squad amq` subcommand), injects them as
 // AM_ROOT/AM_BASE_ROOT/AM_ME plus an explicit --root, and forwards every other
-// argument to `amq` verbatim. It deliberately does NOT reimplement amq's flag
-// surface; unknown flags flow straight through. A user-supplied --root is
-// rejected so the resolved root can never be silently overridden into ambiguity.
+// argument to `amq` verbatim. For send, actor/audit guard flags (--me/--from,
+// --unsafe-send-as, --reason) are also extracted from the forwarded tail before
+// context resolution so they cannot bypass amq-squad's authority checks. It
+// deliberately does NOT reimplement amq's flag surface; unknown flags flow
+// straight through. A user-supplied --root is rejected so the resolved root can
+// never be silently overridden into ambiguity.
 //
 // Because the wrapper OWNS --project/--session/--me as resolution inputs, amq's
 // own --project/--session TARGET flags (cross-project / cross-session delivery)
@@ -409,6 +414,12 @@ func runAMQPassthrough(sub string, args []string) error {
 	project, profile, session, me, projectSet, passthrough, opts, err := splitAMQPassthroughArgsWithOptions(sub, args)
 	if err != nil {
 		return err
+	}
+	if sub == "send" {
+		passthrough, me, opts, err = consumeAMQSendGuardFlags(passthrough, me, opts)
+		if err != nil {
+			return err
+		}
 	}
 	projectDir, resolvedProfile, err := resolveProjectProfile(project, profile, projectSet)
 	if err != nil {
@@ -435,12 +446,65 @@ func runAMQPassthrough(sub string, args []string) error {
 func guardAMQPassthrough(sub string, ctx amqContext, passthrough []string, opts amqPassthroughOptions) error {
 	switch sub {
 	case "send":
-		return guardAMQSelfSend(ctx, passthrough)
+		if err := guardAMQSelfSend(ctx, passthrough); err != nil {
+			return err
+		}
+		return guardAMQSendAsAuthority(ctx, opts)
 	case "drain", "watch":
 		return guardAMQMailboxConsume(sub, ctx, opts)
 	default:
 		return nil
 	}
+}
+
+func guardAMQSendAsAuthority(ctx amqContext, opts amqPassthroughOptions) error {
+	me := strings.TrimSpace(ctx.Me)
+	if me == "" {
+		return nil
+	}
+	t, err := team.ReadProfile(ctx.ProjectDir, ctx.Profile)
+	if err != nil {
+		return nil
+	}
+	member, ok := teamMemberByHandleOrRole(t, me)
+	if !ok {
+		return nil
+	}
+	if currentEnvProvesTeamRole(memberHandle(member), member.Role, ctx.Root) {
+		return nil
+	}
+	if teamRoleRecordAuthorizesSendAs(t, member, ctx) {
+		return nil
+	}
+	if opts.UnsafeSendAs {
+		reason := strings.TrimSpace(opts.BoundaryReason)
+		if reason == "" {
+			return usageErrorf("amq send --unsafe-send-as requires --reason <why>")
+		}
+		return writeAMQBoundaryAudit(ctx, "send-as", strings.TrimSpace(os.Getenv("AM_ME")), me, reason)
+	}
+	return usageErrorf("refusing amq send as team role %q: current runtime is not verified live/bound for this namespace. Launch/resume the role first, or pass --unsafe-send-as --reason <why> for an audited recovery send.", me)
+}
+
+func teamRoleRecordAuthorizesSendAs(t team.Team, member team.Member, ctx amqContext) bool {
+	handle := memberHandle(member)
+	if handle == "" {
+		handle = member.Role
+	}
+	agentDir := filepath.Join(ctx.Root, "agents", handle)
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		return false
+	}
+	mode := effectiveTeamExecutionMode(t)
+	session := strings.TrimSpace(ctx.Env.SessionName)
+	if session == "" {
+		session = strings.TrimSpace(member.Session)
+	}
+	if projectExecutionMode(mode) && strings.TrimSpace(member.Role) == strings.TrimSpace(t.Lead) {
+		return launchRecordAuthorizesProjectLead(rec, member.Role, handle, ctx.Profile, session, ctx.Root)
+	}
+	return launchRecordMatchesIdentity(rec, member.Role, handle, ctx.Profile, session, ctx.Root)
 }
 
 func guardAMQSelfSend(ctx amqContext, passthrough []string) error {
@@ -696,8 +760,15 @@ func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, pro
 			opts.OverrideBoundary = true
 			i++
 			continue
+		case "unsafe-send-as":
+			if sub != "send" {
+				break
+			}
+			opts.UnsafeSendAs = true
+			i++
+			continue
 		case "reason":
-			if sub != "drain" && sub != "watch" {
+			if sub != "drain" && sub != "watch" && sub != "send" {
 				break
 			}
 			val := inlineVal
@@ -724,6 +795,71 @@ func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, pro
 		passthrough = normalizeBodyFileFlag(passthrough)
 	}
 	return project, profile, session, me, projectSet, passthrough, opts, nil
+}
+
+func consumeAMQSendGuardFlags(args []string, initialMe string, opts amqPassthroughOptions) ([]string, string, amqPassthroughOptions, error) {
+	me := strings.TrimSpace(initialMe)
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		name, inlineVal, hasInline := amqFlagName(args[i])
+		switch name {
+		case "me", "from":
+			val := inlineVal
+			if !hasInline {
+				if i+1 >= len(args) {
+					return nil, "", opts, usageErrorf("flag --%s needs a value", name)
+				}
+				i++
+				val = args[i]
+			}
+			val = strings.TrimSpace(val)
+			if val == "" {
+				return nil, "", opts, usageErrorf("flag --%s needs a non-empty value", name)
+			}
+			if me != "" && me != val {
+				return nil, "", opts, usageErrorf("conflicting amq send actor: wrapper --me/--from is %q but passthrough --%s is %q", me, name, val)
+			}
+			me = val
+			continue
+		case "unsafe-send-as":
+			opts.UnsafeSendAs = true
+			continue
+		case "reason":
+			val := inlineVal
+			if !hasInline {
+				if i+1 >= len(args) {
+					return nil, "", opts, usageErrorf("flag --reason needs a value")
+				}
+				i++
+				val = args[i]
+			}
+			val = strings.TrimSpace(val)
+			if opts.BoundaryReason != "" && opts.BoundaryReason != val {
+				return nil, "", opts, usageErrorf("conflicting --reason values for amq send")
+			}
+			opts.BoundaryReason = val
+			continue
+		}
+		out = append(out, args[i])
+		if amqSendPassthroughFlagConsumesValue(name, hasInline) && i+1 < len(args) {
+			i++
+			out = append(out, args[i])
+		}
+	}
+	return out, me, opts, nil
+}
+
+func amqSendPassthroughFlagConsumesValue(name string, hasInline bool) bool {
+	if name == "" || hasInline {
+		return false
+	}
+	switch name {
+	case "to", "thread", "kind", "subject", "body", "body-file", "wait-for", "wait-timeout",
+		"project", "session", "profile", "root", "from-root", "target-project", "target-session":
+		return true
+	default:
+		return false
+	}
 }
 
 // normalizeBodyFileFlag rewrites every --body-file <path> or --body-file=<path>
@@ -781,9 +917,11 @@ Usage:
 amq-squad consumes --project/--session/--me (pass them FIRST, before the amq
 flags) to resolve the queue root — so an external lead reaches
 .agent-mail/<session> instead of the default .agent-mail — and forwards every
-remaining flag to 'amq %s'. Do not pass --root; it is resolved for you. For a
-cross-project/cross-session target, use inline addressing
-(--to handle@project:session) or place amq's own target flags after '--'.
+remaining flag to 'amq %s'. For 'send', passthrough --me/--from and
+--unsafe-send-as/--reason are treated as amq-squad guard flags wherever they
+appear. Do not pass --root; it is resolved for you. For a cross-project/
+cross-session target, use inline addressing (--to handle@project:session) or
+place amq's own target flags after '--'.
 
 See 'amq %s --help' for the full flag surface.
 `, sub, sub, sub, sub, sub, sub)

@@ -1247,9 +1247,9 @@ func goalDraftSteps(data goalDraftData) []goalDraftStep {
 		},
 		{
 			Number:        2,
-			Title:         "Create / register the visible lead",
+			Title:         "Create / launch the visible lead",
 			JustHappened:  "You approved the preview.",
-			AboutToHappen: "amq-squad will create the profile/session/team and launch the visible lead with the generated native /goal prompt." + register,
+			AboutToHappen: "amq-squad will create the profile/session/team and launch or resume a real visible project lead with the generated native /goal prompt. Use lead registration only from an already verified project-lead pane, never to adopt a global orchestrator pane as the project lead." + register,
 			Approving:     "Creating durable team config and starting the lead (the first mutating step).",
 			NextGate:      "Per-spawn operator approval on gate/spawn-<role> before any worker is brought up.",
 		},

@@ -180,6 +180,9 @@ func TestCompletionFlagsCoverDispatcher(t *testing.T) {
 		if name == "completion.go" {
 			continue
 		}
+		if name == "claude_rename.go" {
+			continue
+		}
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatal(err)

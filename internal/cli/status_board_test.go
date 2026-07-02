@@ -333,6 +333,69 @@ func TestStatusBoardSessionsJSONEnvelope(t *testing.T) {
 	}
 }
 
+func TestStatusBoardSameProfileSessionContainerNotDoubleCounted(t *testing.T) {
+	project := t.TempDir()
+	base := filepath.Join(project, ".agent-mail")
+	seedProfile(t, project, "review", team.Team{
+		Project:      project,
+		Workstream:   "review",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"},
+		},
+	})
+	for i, session := range []string{"review", "other"} {
+		handle := "codex-" + session
+		agentDir := filepath.Join(base, "review", session, "agents", handle)
+		if err := os.MkdirAll(agentDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		pid := 4100 + i
+		if err := launch.Write(agentDir, launch.Record{
+			CWD:         project,
+			Binary:      "codex",
+			Handle:      handle,
+			Role:        handle,
+			Session:     session,
+			TeamProfile: "review",
+			Root:        filepath.Join(base, "review", session),
+			BaseRoot:    filepath.Join(base, "review"),
+			AgentPID:    pid,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		seedBoardPresence(t, filepath.Join(base, "review"), session, handle, "active", boardNow.Add(-time.Minute))
+	}
+
+	out, err := runBoardExec(t, base, project, boardProbe(map[int]bool{4100: true, 4101: true}, map[int]bool{4100: true, 4101: true}), true)
+	if err != nil {
+		t.Fatalf("board --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[sessionsEnvelopeData](t, out)
+	if len(env.Data.Sessions) != 2 {
+		t.Fatalf("sessions = %+v, want exactly review/review and review/other", env.Data.Sessions)
+	}
+	ids := map[string]bool{}
+	for _, row := range env.Data.Sessions {
+		ids[row.Namespace.ID] = true
+		if row.Profile != "review" {
+			t.Fatalf("row profile = %q, want review: %+v", row.Profile, row)
+		}
+		if row.Root == filepath.Join(base, "review") {
+			t.Fatalf("profile container was double-counted as default session root: %+v", row)
+		}
+	}
+	for _, want := range []string{"review/other", "review/review"} {
+		if !ids[want] {
+			t.Fatalf("board namespaces = %+v, missing %s", ids, want)
+		}
+	}
+	if ids["default/review"] {
+		t.Fatalf("board double-counted profile container as default/review: %+v", ids)
+	}
+}
+
 func TestStatusBoardJSONCarriesProfileActionsAndOrchestration(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	proj := t.TempDir()

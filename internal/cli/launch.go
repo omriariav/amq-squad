@@ -73,7 +73,7 @@ func runLaunch(args []string) error {
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args to treat as launch defaults, e.g. '--chrome'")
 	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent for the same handle/workstream is detected")
 	noRequireWake := fs.Bool("no-require-wake", false, "do not pass --require-wake to amq coop exec (allows launching when the wake sidecar cannot acquire its lock)")
-	wakeInjectVia := fs.String("wake-inject-via", "", "absolute executable passed to amq coop exec --wake-inject-via (amq 0.37.1+)")
+	wakeInjectVia := fs.String("wake-inject-via", "", "absolute executable passed to amq coop exec --wake-inject-via")
 	var wakeInjectArgs stringListFlag
 	fs.Var(&wakeInjectArgs, "wake-inject-arg", "argument passed to amq coop exec --wake-inject-arg (repeatable; requires --wake-inject-via)")
 	dryRun := fs.Bool("dry-run", false, "print the coop exec command without executing")
@@ -110,7 +110,7 @@ Side effects before exec:
   9. Adds a generated bootstrap prompt unless --no-bootstrap is set or
      non-default binary args were provided.
  10. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
-     With amq 0.37.1+, --require-wake is passed so the launch fails at the
+     With supported amq versions, --require-wake is passed so the launch fails at the
      door when the wake sidecar cannot start and acquire its lock (instead
      of surfacing as a stale/orphaned wake later). --no-require-wake opts
      out for environments where wake cannot run but the agent should.
@@ -420,6 +420,9 @@ Examples:
 		if err := seedRoleStub(agentDir, *roleFlag, roleHome); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: seed role.md: %v\n", err)
 		}
+	}
+	if err := maybeScheduleClaudeSessionRename(rec); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: schedule Claude session rename: %v\n", err)
 	}
 
 	amqBin, err := exec.LookPath("amq")

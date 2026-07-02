@@ -38,6 +38,15 @@ func actionsByKind(actions []runtimeActionJSON) map[string]runtimeActionJSON {
 	return out
 }
 
+func assertNoLegacyNamespaceConflictReason(t *testing.T, actions []runtimeActionJSON) {
+	t.Helper()
+	for _, action := range actions {
+		if strings.Contains(action.Reason, "legacy/default session root") {
+			t.Fatalf("action %s unexpectedly carries namespace-conflict reason: %+v", action.Kind, action)
+		}
+	}
+}
+
 func readinessGatesByCode(gates []releaseReadinessGateData) map[string]releaseReadinessGateData {
 	out := map[string]releaseReadinessGateData{}
 	for _, gate := range gates {
@@ -334,6 +343,172 @@ func TestExecuteStatusJSONNamedProfileAllowsPresenceOnlyLegacyRoot(t *testing.T)
 	if env.Data.NamespaceConflict != nil {
 		t.Fatalf("presence-only legacy root should not block named profile actions: %+v", env.Data.NamespaceConflict)
 	}
+}
+
+func TestExecuteStatusJSONSameProfileSessionAllowsNestedNamedNamespaceOnly(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	seedProfile(t, dir, "review", team.Team{
+		Workstream: "review",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	namedAgentDir := filepath.Join(dir, ".agent-mail", "review", "review", "agents", "cto")
+	if err := os.MkdirAll(namedAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(namedAgentDir, "inbox"), []byte("named durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		Profile:          "review",
+		RequestedSession: "review",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.NamespaceConflict != nil {
+		t.Fatalf("nested named namespace should not be treated as legacy conflict: %+v", env.Data.NamespaceConflict)
+	}
+	assertNoLegacyNamespaceConflictReason(t, env.Data.Actions)
+	if len(env.Data.Records) != 1 {
+		t.Fatalf("records = %d, want 1", len(env.Data.Records))
+	}
+	assertNoLegacyNamespaceConflictReason(t, env.Data.Records[0].Actions)
+}
+
+func TestExecuteStatusJSONSameProfileSessionKeepsLegacyAgentDurableConflict(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	seedProfile(t, dir, "review", team.Team{
+		Workstream: "review",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	namedAgentDir := filepath.Join(dir, ".agent-mail", "review", "review", "agents", "cto")
+	if err := os.MkdirAll(namedAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(namedAgentDir, "presence.json"), []byte(`{"status":"active"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacyAgentDir := filepath.Join(dir, ".agent-mail", "review", "agents", "cto")
+	if err := os.MkdirAll(legacyAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyAgentDir, "inbox"), []byte("legacy durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		Profile:          "review",
+		RequestedSession: "review",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.NamespaceConflict == nil || env.Data.NamespaceConflict.Kind != "legacy_session_root" {
+		t.Fatalf("legacy durable state should still conflict: %+v", env.Data.NamespaceConflict)
+	}
+}
+
+func TestExecuteStatusJSONSameProfileSessionKeepsLegacyAgentsHandleDurableConflict(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	seedProfile(t, dir, "review", team.Team{
+		Workstream: "review",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	namedAgentDir := filepath.Join(dir, ".agent-mail", "review", "review", "agents", "cto")
+	if err := os.MkdirAll(namedAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(namedAgentDir, "presence.json"), []byte(`{"status":"active"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacyAgentDir := filepath.Join(dir, ".agent-mail", "review", "agents", "agents")
+	if err := os.MkdirAll(legacyAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyAgentDir, "inbox"), []byte("legacy durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		Profile:          "review",
+		RequestedSession: "review",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.NamespaceConflict == nil || env.Data.NamespaceConflict.Kind != "legacy_session_root" {
+		t.Fatalf("legacy agent handle named agents should still conflict: %+v", env.Data.NamespaceConflict)
+	}
+}
+
+func TestExecuteStatusJSONSameProfileSessionAllowsSiblingNamedNamespaces(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	seedProfile(t, dir, "review", team.Team{
+		Workstream: "review",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	for _, session := range []string{"review", "other"} {
+		namedAgentDir := filepath.Join(dir, ".agent-mail", "review", session, "agents", "cto")
+		if err := os.MkdirAll(namedAgentDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(namedAgentDir, "inbox"), []byte("named durable state\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		Profile:          "review",
+		RequestedSession: "review",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.NamespaceConflict != nil {
+		t.Fatalf("sibling named namespaces should not be treated as legacy conflict: %+v", env.Data.NamespaceConflict)
+	}
+	assertNoLegacyNamespaceConflictReason(t, env.Data.Actions)
 }
 
 func TestExecuteStatusJSONIncludesSpawnMetadata(t *testing.T) {
@@ -1047,7 +1222,7 @@ func TestExecuteStatusJSONAllowsExternalLeadInCurrentPane(t *testing.T) {
 	})
 	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
 		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7401,
-		External: true, AdoptionMode: "external", LauncherPaneID: "%1",
+		External: true, AdoptionMode: adoptionModeExternalProjectLead, LauncherPaneID: "%1",
 		Tmux: &launch.TmuxInfo{Session: "root", WindowID: "@1", PaneID: "%1", Target: "external"},
 	})
 	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
@@ -1065,7 +1240,7 @@ func TestExecuteStatusJSONAllowsExternalLeadInCurrentPane(t *testing.T) {
 	}
 	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
 	lead := env.Data.Records[0]
-	if !lead.OperatorVisible || lead.CurrentPaneConflict || lead.AdoptionMode != "external" || lead.VisibilityProblem != "" {
+	if !lead.OperatorVisible || lead.CurrentPaneConflict || lead.AdoptionMode != adoptionModeExternalProjectLead || lead.VisibilityProblem != "" {
 		t.Fatalf("lead visibility fields = %+v, want visible external lead without conflict", lead)
 	}
 	if !env.Data.Execution.InvariantOK {
@@ -1083,7 +1258,7 @@ func TestExecuteStatusJSONRechecksExternalLeadPaneForVisibility(t *testing.T) {
 	})
 	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
 		Binary: "codex", Handle: "release-lead", Role: "release-lead",
-		External: true, AdoptionMode: "external", LauncherPaneID: "%1",
+		External: true, AdoptionMode: adoptionModeExternalProjectLead, LauncherPaneID: "%1",
 		Tmux: &launch.TmuxInfo{Session: "root", WindowID: "@1", PaneID: "%1", Target: "external"},
 	})
 	prevLister := statusPaneLister
@@ -1120,6 +1295,46 @@ func TestExecuteStatusJSONRechecksExternalLeadPaneForVisibility(t *testing.T) {
 	}
 	if !env.Data.Execution.InvariantOK {
 		t.Fatalf("execution invariants = %+v, want clean", env.Data.Execution)
+	}
+}
+
+func TestExecuteStatusJSONFlagsGenericExternalProjectLeadBoundary(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 7777,
+		External: true, AdoptionMode: adoptionModeExternal,
+		Tmux: &launch.TmuxInfo{Session: "root", WindowID: "@1", PaneID: "%1", Target: "external"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7777: true}, map[int]bool{7777: true}, time.Now()),
+		RuntimeVersion:   "2.15.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	lead := env.Data.Records[0]
+	if lead.OperatorVisible || lead.VisibilityProblem != "role_boundary_violation" {
+		t.Fatalf("lead visibility = %+v, want boundary violation", lead)
+	}
+	if env.Data.Execution.InvariantOK || len(env.Data.Execution.InvariantErrors) != 1 {
+		t.Fatalf("execution invariants = %+v, want one boundary error", env.Data.Execution)
+	}
+	inv := env.Data.Execution.InvariantErrors[0]
+	if inv.Code != "lead_role_boundary_violation" || inv.Remedy == nil || !strings.Contains(inv.Remedy.Command, "resume") {
+		t.Fatalf("invariant = %+v, want lead boundary repair", inv)
 	}
 }
 

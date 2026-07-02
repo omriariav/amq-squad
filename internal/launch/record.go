@@ -62,7 +62,12 @@ type Record struct {
 	// in this environment) is a property of the execution environment, not a
 	// one-shot launch decision.
 	NoRequireWake bool `json:"no_require_wake,omitempty"`
-	External      bool `json:"external,omitempty"`
+	// NoWakeReason records the explicit compatibility reason for adopting a
+	// project lead without wake. It is intentionally separate from
+	// NoRequireWake: --no-require-wake weakens wake startup strictness, while
+	// --no-wake skips the sidecar entirely and needs an auditable reason.
+	NoWakeReason string `json:"no_wake_reason,omitempty"`
+	External     bool   `json:"external,omitempty"`
 	// GoalBinding records launch-time evidence that this agent was started with
 	// a native goal command. It is optional and additive: older records omit it,
 	// and NOC/status surfaces must fall back to AMQ task + brief binding unless

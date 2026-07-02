@@ -173,6 +173,7 @@ func runLead(args []string) error {
 Usage:
   amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
                           [--wake|--no-wake] [--require-wake|--no-require-wake]
+                          [--adopt-project-lead] [--compat-no-wake --reason TEXT]
                           [--wake-inject-via PATH] [--wake-inject-arg ARG]
 
 register adopts the current tmux pane as the external lead for an existing team
@@ -202,6 +203,9 @@ func runLeadRegister(args []string) error {
 	profileFlag := fs.String("profile", "", "team profile to mutate (default: default profile)")
 	wake := fs.Bool("wake", false, "start or repair amq wake for the external lead (default)")
 	noWake := fs.Bool("no-wake", false, "write the external lead record without starting amq wake")
+	adoptProjectLead := fs.Bool("adopt-project-lead", false, "explicitly adopt the current pane as an external project lead after identity checks")
+	compatNoWake := fs.Bool("compat-no-wake", false, "allow --no-wake for project-lead adoption when paired with --reason")
+	reason := fs.String("reason", "", "required compatibility reason when adopting a project lead with --no-wake")
 	requireWake := fs.Bool("require-wake", false, "fail if the external lead wake sidecar cannot become ready (default)")
 	noRequireWake := fs.Bool("no-require-wake", false, "warn instead of failing if the external lead wake sidecar cannot become ready")
 	wakeInjectVia := fs.String("wake-inject-via", "", "absolute executable passed to amq wake --inject-via for external lead notifications")
@@ -218,6 +222,12 @@ func runLeadRegister(args []string) error {
 	}
 	if *requireWake && *noRequireWake {
 		return usageErrorf("--require-wake and --no-require-wake are mutually exclusive")
+	}
+	if *compatNoWake && !*noWake {
+		return usageErrorf("--compat-no-wake requires --no-wake")
+	}
+	if strings.TrimSpace(*reason) != "" && !*compatNoWake {
+		return usageErrorf("--reason applies only with --compat-no-wake")
 	}
 	wakeInjectViaValue := strings.TrimSpace(*wakeInjectVia)
 	wakeInjectArgValues := append([]string(nil), wakeInjectArgs...)
@@ -272,6 +282,28 @@ func runLeadRegister(args []string) error {
 	root := absoluteAMQRoot(cwd, env.Root)
 	agentDir := filepath.Join(root, "agents", handle)
 	existingRec, existingRecErr := launch.Read(agentDir)
+	targetMode := leadRegisterTargetMode(t, role)
+	auth, err := authorizeLeadRegister(leadRegisterAuthInput{
+		Team:               t,
+		Member:             member,
+		Role:               role,
+		Handle:             handle,
+		Profile:            profile,
+		Workstream:         env.SessionName,
+		Root:               root,
+		CWD:                cwd,
+		PaneID:             id.PaneID,
+		TargetMode:         targetMode,
+		ExistingRecord:     existingRec,
+		ExistingRecordErr:  existingRecErr,
+		AdoptProjectLead:   *adoptProjectLead,
+		NoWake:             *noWake,
+		CompatNoWake:       *compatNoWake,
+		CompatNoWakeReason: strings.TrimSpace(*reason),
+	})
+	if err != nil {
+		return err
+	}
 	wakeInjectCmdValue := wakeDrainInject()
 	var wakeResult leadWakeResult
 	if !*noWake {
@@ -306,7 +338,9 @@ func runLeadRegister(args []string) error {
 		Model:            strings.TrimSpace(member.Model),
 		Trust:            strings.TrimSpace(t.Trust),
 		External:         true,
+		AdoptionMode:     auth.AdoptionMode,
 		NoRequireWake:    *noRequireWake,
+		NoWakeReason:     auth.NoWakeReason,
 		WakeInjectVia:    wakeInjectViaValue,
 		WakeInjectArgs:   wakeInjectArgValues,
 		WakeInjectCmd:    wakeInjectCmdValue,
@@ -351,6 +385,87 @@ func preserveExternalGoalBinding(rec launch.Record, err error, role, session str
 	}
 	recSession := strings.TrimSpace(rec.Session)
 	return recSession == "" || recSession == strings.TrimSpace(session)
+}
+
+type leadRegisterAuthInput struct {
+	Team               team.Team
+	Member             team.Member
+	Role               string
+	Handle             string
+	Profile            string
+	Workstream         string
+	Root               string
+	CWD                string
+	PaneID             string
+	TargetMode         string
+	ExistingRecord     launch.Record
+	ExistingRecordErr  error
+	AdoptProjectLead   bool
+	NoWake             bool
+	CompatNoWake       bool
+	CompatNoWakeReason string
+}
+
+type leadRegisterAuthResult struct {
+	AdoptionMode string
+	NoWakeReason string
+}
+
+func authorizeLeadRegister(in leadRegisterAuthInput) (leadRegisterAuthResult, error) {
+	mode := strings.TrimSpace(in.TargetMode)
+	result := leadRegisterAuthResult{AdoptionMode: adoptionModeExternal}
+	projectMode := projectExecutionMode(mode)
+	if projectMode {
+		result.AdoptionMode = adoptionModeExternalProjectLead
+	}
+	if mode == executionModeGlobalOrchestrator && strings.TrimSpace(in.Role) != goalOrchestratorRole {
+		return leadRegisterAuthResult{}, usageErrorf("refusing to register %q from a global_orchestrator profile: keep this pane as global orchestrator only, and launch/resume a real project lead in a sibling tab or managed pane", in.Role)
+	}
+	if in.NoWake && projectMode {
+		if !in.CompatNoWake || strings.TrimSpace(in.CompatNoWakeReason) == "" {
+			return leadRegisterAuthResult{}, usageErrorf("lead register --no-wake for project lead %q requires --compat-no-wake --reason <why>; use --wake by default for worker-facing leads", in.Role)
+		}
+		result.NoWakeReason = strings.TrimSpace(in.CompatNoWakeReason)
+	}
+
+	if _, rec, ok := findLaunchRecordByPane(in.Root, in.PaneID); ok {
+		if !launchRecordMatchesIdentity(rec, in.Role, in.Handle, in.Profile, in.Workstream, in.Root) {
+			return leadRegisterAuthResult{}, usageErrorf("refusing to register current pane as %q: pane already has launch identity role=%q handle=%q session=%q profile=%q. Keep this pane as its existing control-plane identity, or launch/resume %q in a sibling tab/new managed pane.", in.Role, rec.Role, rec.Handle, rec.Session, rec.TeamProfile, in.Role)
+		}
+		if projectMode && !launchRecordAuthorizesProjectLead(rec, in.Role, in.Handle, in.Profile, in.Workstream, in.Root) {
+			return leadRegisterAuthResult{}, usageErrorf("refusing to register current pane as project lead %q: existing pane record is not verified as external_project_lead or native-goal-bound. Relaunch/resume the project lead in a managed pane, or use --adopt-project-lead from the actual project lead pane.", in.Role)
+		}
+		return result, nil
+	}
+
+	if in.ExistingRecordErr == nil {
+		if projectMode {
+			if launchRecordAuthorizesProjectLeadPane(in.ExistingRecord, in.Role, in.Handle, in.Profile, in.Workstream, in.Root, in.PaneID) {
+				return result, nil
+			}
+		} else if launchRecordMatchesSamePaneIdentity(in.ExistingRecord, in.Role, in.Handle, in.Profile, in.Workstream, in.Root, in.PaneID) {
+			return result, nil
+		}
+	}
+
+	if currentEnvProvesTeamRole(in.Handle, in.Role, in.Root) {
+		return result, nil
+	}
+
+	if in.AdoptProjectLead {
+		if !projectMode {
+			return leadRegisterAuthResult{}, usageErrorf("--adopt-project-lead is valid only for project_lead or project_team execution modes")
+		}
+		if !currentWorkingDirMatches(in.CWD) {
+			return leadRegisterAuthResult{}, usageErrorf("refusing --adopt-project-lead for %q: current directory does not match the member project root %s", in.Role, in.CWD)
+		}
+		return result, nil
+	}
+
+	if projectMode {
+		return leadRegisterAuthResult{}, usageErrorf("refusing to adopt current pane as project lead %q without verifiable identity for profile/session/role. Launch or resume the project lead in a sibling tab/new managed pane, or rerun from the actual project lead pane with --adopt-project-lead.", in.Role)
+	}
+	return result, nil
 }
 
 func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {

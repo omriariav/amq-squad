@@ -22,7 +22,7 @@ import (
 // expects to interoperate with. Bumped manually when amq-squad starts to
 // depend on newer AMQ behavior; the doctor check compares the running amq
 // binary's reported version against this floor.
-const doctorMinAMQVersion = "0.38.0"
+const doctorMinAMQVersion = "0.39.0"
 
 type doctorStatus string
 
@@ -637,7 +637,7 @@ func doctorCheckAMQVersion(d doctorExecution) doctorCheck {
 		return doctorCheck{
 			Name:   "amq version",
 			Status: doctorFail,
-			Detail: fmt.Sprintf("amq %s is older than required %s", got, doctorMinAMQVersion),
+			Detail: fmt.Sprintf("amq %s is older than required %s; run `amq upgrade` to update", got, doctorMinAMQVersion),
 		}
 	}
 	return doctorCheck{

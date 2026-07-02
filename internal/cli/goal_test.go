@@ -268,7 +268,7 @@ func TestGoalDraftFieldSourcesAndSteps(t *testing.T) {
 	if d.FieldSources["target_project_root"] != targetRootSourceDefault {
 		t.Fatalf("target_project_root source = %q, want default", d.FieldSources["target_project_root"])
 	}
-	if len(d.Steps) != 3 || d.Steps[0].Title != "Preview" || d.Steps[1].Title != "Create / register the visible lead" || d.Steps[2].Title != "Monitor through the lead" {
+	if len(d.Steps) != 3 || d.Steps[0].Title != "Preview" || d.Steps[1].Title != "Create / launch the visible lead" || d.Steps[2].Title != "Monitor through the lead" {
 		t.Fatalf("steps = %+v, want Preview/Create/Monitor", d.Steps)
 	}
 	for _, s := range d.Steps {
