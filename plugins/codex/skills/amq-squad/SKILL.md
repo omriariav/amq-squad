@@ -10,7 +10,7 @@ Launch priming is automatic. `up` / `agent up` inject the bootstrap prompt; agen
 
 This skill is named `amq-squad`; the binary is also named `amq-squad`.
 
-**Skill version: 2.14.0** — on your FIRST response of a session, print the line `amq-squad skill v2.14.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
+**Skill version: 2.15.0** — on your FIRST response of a session, print the line `amq-squad skill v2.15.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
 
 ## Context model
 
@@ -52,7 +52,7 @@ The lifecycle is one small state machine: `(none) --up--> running --stop--> stop
 | Sync the pointer stub into `CLAUDE.md` / `AGENTS.md` | `amq-squad team sync --apply` |
 | Mutate the live roster at runtime | `amq-squad team member add <role> --binary B` / `team member rm <role>` / `team member list` |
 | Set or inspect the orchestrated lead | `amq-squad team lead set <role>` / `team lead clear` / `team lead show --json` |
-| Register this pane as an external lead | `amq-squad lead register --role <role> --session S` |
+| Register this pane as an external lead | `amq-squad lead register --role <role> --session S` (project leads require verified identity or `--adopt-project-lead`) |
 | Native pull-based task queue for a workstream | `amq-squad task add --title T --session S` / `task list --session S` / `task claim <id> --me H --session S` / `task done <id> --session S` |
 
 `up` means NEW work and **refuses** a session that already exists — use `resume` to continue it, or `up --reset` to start over. `stop` is the primary teardown (the `down` alias was removed in 2.0). With no `--seed-from`, `up` AUTO-STUBS the brief and prints a one-line notice — so before `up`, decide whether to author the brief first (`up --dry-run --seed-from ...`) or let `up` stub it and edit afterward. `rm`/`archive` are the only destructive ops; both confirm-gate (default No, `--yes` to skip) and refuse a live session unless `--force`.
@@ -61,7 +61,7 @@ Pass `--profile NAME` to operate on a named profile under `.amq-squad/teams/<nam
 
 **Lifecycle safety contract:** before any lifecycle mutation (`stop`, `resume --exec`, `send`, `focus`, `rm`, `archive`, `up --reset`, `team member rm --stop`), resolve the active project, profile, and session explicitly. Run `amq-squad team profiles --json`, the multi-session `amq-squad status`, then `amq-squad status --project <repo> --profile <profile> --session <session> --json`. If more than one profile exists, never run a lifecycle command without `--profile`; omitting it can inspect or mutate the default roster while the active squad lives in a named profile. Prefer the exact commands from `.data.actions[]` and per-record `actions[]` in the scoped `status --json` output instead of hand-assembling `stop`/`resume`/`focus`/`send` commands.
 
-`team member`, `team lead`, `lead register`, and `task` are the dynamic-team primitives. `team member add/rm` mutates `team.json` atomically under an exclusive lock and re-validates it (the new member is NOT launched — run the launch command `team member add` prints: a managed pane via `resume --exec --target new-window`, or `agent up` for an unmanaged one-off). `team lead set/clear/show` mutates or inspects profile orchestration state for an existing roster. `lead register` adopts the current tmux pane as an operator-owned external lead for the session: status/action JSON can render and target it, but lifecycle commands do not own the pane, so `stop`/`rm`/`archive`/`resume` will not kill, close, or replay it. `task` is a native pull-based store under `.amq-squad/tasks/<session>/` for the default profile or `.amq-squad/tasks/<profile>/<session>/` for named profiles: a task is claimable only once all its `--depends-on` tasks are completed, and every mutation is atomic and lock-serialized. Runtime mutations take `--session` where applicable (tasks require it).
+`team member`, `team lead`, `lead register`, and `task` are the dynamic-team primitives. `team member add/rm` mutates `team.json` atomically under an exclusive lock and re-validates it (the new member is NOT launched — run the launch command `team member add` prints: a managed pane via `resume --exec --target new-window`, or `agent up` for an unmanaged one-off). `team lead set/clear/show` mutates or inspects profile orchestration state for an existing roster. `lead register` adopts the current tmux pane as an operator-owned external lead for the session: status/action JSON can render and target it, but lifecycle commands do not own the pane, so `stop`/`rm`/`archive`/`resume` will not kill, close, or replay it. Project-lead registration is fail-closed: the pane must prove exact project/profile/session/role identity, or the operator must use explicit `--adopt-project-lead` from the actual lead pane; a global orchestrator cannot become project `cto` by passing `--role cto`. Project-lead `--no-wake` requires `--compat-no-wake --reason <why>`, while global orchestrator/NOC no-wake remains a polling mode. `amq-squad amq send --me <team-role>` also requires verified role identity unless `--unsafe-send-as --reason <why>` is used for audited recovery. `task` is a native pull-based store under `.amq-squad/tasks/<session>/` for the default profile or `.amq-squad/tasks/<profile>/<session>/` for named profiles: a task is claimable only once all its `--depends-on` tasks are completed, and every mutation is atomic and lock-serialized. Runtime mutations take `--session` where applicable (tasks require it).
 
 Every command accepts `--json` where machine-readable output makes sense (`status`, `history`, `resume`, `doctor`, `team profiles`, `version`, and `up --dry-run`). JSON outputs are schema-versioned envelopes `{ schema_version, kind, data }`. Diagnostics stay on stderr; stdout under `--json` is pure JSON. For machine clients, the per-member records in `status --session <name> --json` (kind `status`), `history --json`, and `resume --json` (kind `resume_plan`) carry a `tmux` runtime block (`session`, `window_id`, `window_name`, `pane_id`, `target`) plus a computed `pane_alive` — **present only for agents launched in tmux**, so detect by presence. `status --session <name> --json` records additionally carry an `actions` array (`focus`/`send`/`resume`/`status`) with the exact runnable command and an `available` flag, so a client (e.g. amq-noc) renders/copies stable commands instead of inferring tmux state. (The bare `amq-squad status --json` is the multi-session board envelope `kind: sessions` — it has no per-member records or actions; use `--session <name>` for member detail.)
 
@@ -241,12 +241,16 @@ Plan emission fails fast when a referenced `--settings` file is missing;
 `up --dry-run` shows the args on each member's command. Codex members use a `$CODEX_HOME/<name>.config.toml` profile wired
 via `codex_args: ["--profile", "<name>"]` instead.
 
-AMQ floor (v2.6.0+): amq-squad requires amq 0.38.0+. The launch wake
+AMQ floor (v2.15.0+): amq-squad requires amq 0.39.0+. The launch wake
 gate introduced in v2.5.0 passes `--require-wake` to `amq coop exec`, so a
 launch fails at the door when the AMQ wake sidecar cannot start and acquire its
 lock (instead of surfacing later as a stale wake). `--no-require-wake` opts out
 for wake-hostile environments and persists into the launch record, so `agent
 resume` reproduces it.
+Claude-binary agents launched in tmux also get a best-effort delayed
+`/rename <role>-<session>` injection, including managed `resume --exec` /
+`agent resume` replay. Failure to deliver the rename does not block launch.
+Codex agents are unaffected because Codex has no matching slash command.
 External-injector wake setups can pass `--wake-inject-via /absolute/injector`
 and repeat `--wake-inject-arg=value`; these flags are forwarded to
 `amq coop exec`, persisted in launch.json, and replayed by resume. Use the
@@ -415,6 +419,31 @@ You can also preview a candidate from a deterministic source with
   cutting its per-prompt context cost. Do not hand-edit this: step 5 generates
   and wires it with `amq-squad team overlay init` (v1.9.0+). Plan emission
   validates that every referenced `--settings` file exists.
+- **Model/binary/effort choice** (context stamp: 2026-07-02, current operator
+  setup): defaults are not limits; escalate when output quality misses the bar.
+  For shippable work use `intelligence > taste > cost`, with cost only as a
+  tie-breaker. Bulk/mechanical work defaults to Codex CLI on `gpt-5.5`; UI,
+  copy, API shape, and product design need taste `>= 7`; plan/implementation
+  reviews should use `fable-5` or `opus-4.8`, optionally with `gpt-5.5` as an
+  independent extra perspective. Never use Haiku. Direct agent config separates
+  `binary`, `model`, Codex effort through `codex_args`
+  (`-c model_reasoning_effort=<level>`), and Claude effort/settings through
+  `claude_args` (for example `--effort high`). amq-squad does not maintain an
+  Anthropic model whitelist: Claude member `model` is passed through to the
+  installed `claude --model <model>`, with accepted aliases depending on the
+  Claude CLI build and account. Current expected aliases include `default`,
+  `opus`, `fable`, `sonnet`, and `haiku`, plus full names such as
+  `claude-fable-5`. That is mechanical support only; the policy remains never
+  choose Haiku for amq-squad work. A thin Claude wrapper that delegates to Codex
+  CLI on `gpt-5.5` is a compatibility pattern for Claude-only workflow/subagent
+  slots; a Claude workflow/agent `model:` parameter still selects a Claude
+  model only. Prefer an explicit Codex-binary member when amq-squad controls the
+  roster. Exact override examples:
+  `amq-squad team init --model cto=gpt-5.5,fullstack=fable-5`,
+  `amq-squad team member add plan-reviewer --binary claude --model claude-fable-5 --claude-args "--effort high"`,
+  `amq-squad up issue-96 --model plan-reviewer=claude-fable-5,implementer=sonnet`,
+  and
+  `amq-squad resume --session issue-96 --model plan-reviewer=opus,implementer=sonnet --exec`.
 - Pick the team-home (where `.amq-squad/` lives): the cwd by default; for a
   monorepo, usually the repo root. Confirm if the choice is non-obvious.
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -279,6 +280,159 @@ func TestAMQSendAllowsOrdinaryP2PReplyToOtherParticipant(t *testing.T) {
 	}
 	if len(*calls) != 1 {
 		t.Fatalf("calls = %d, want 1", len(*calls))
+	}
+}
+
+func TestAMQSendAsTeamRoleRequiresBoundIdentity(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	base := filepath.Join(dir, ".agent-mail")
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "sent\n")
+	t.Setenv("AM_ME", "orchestrator")
+	t.Setenv("AM_ROOT", filepath.Join(base, "issue-96"))
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "cto", "--to", "user", "--kind", "status", "--subject", "gate"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing amq send as team role") {
+		t.Fatalf("send-as error = %v, want authority rejection", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("rejected send-as should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestAMQSendAsRejectsNonLeadingMeWithoutAuthority(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	base := filepath.Join(dir, ".agent-mail")
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "sent\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--to", "user", "--me", "cto", "--kind", "status", "--subject", "gate"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing amq send as team role") {
+		t.Fatalf("send-as error = %v, want authority rejection", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("rejected send-as should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestAMQSendAsRejectsNonLeadingFromWithoutAuthority(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	base := filepath.Join(dir, ".agent-mail")
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "sent\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--to", "user", "--from", "cto", "--kind", "status", "--subject", "gate"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing amq send as team role") {
+		t.Fatalf("send-as error = %v, want authority rejection", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("rejected send-as should not call amq, calls = %d", len(*calls))
+	}
+}
+
+func TestAMQSendAsTeamRolePassesWithVerifiedRecord(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	base := filepath.Join(dir, ".agent-mail")
+	root := filepath.Join(base, "issue-96")
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD:          dir,
+		Binary:       "codex",
+		Handle:       "cto",
+		Role:         "cto",
+		Session:      "issue-96",
+		Root:         root,
+		TeamProfile:  team.DefaultProfile,
+		External:     true,
+		AdoptionMode: adoptionModeExternalProjectLead,
+	})
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "sent\n")
+
+	if _, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "cto", "--to", "user", "--kind", "status", "--subject", "gate"})
+	}); err != nil {
+		t.Fatalf("verified send-as should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(*calls))
+	}
+}
+
+func TestAMQSendAsUnsafeOverrideRequiresReasonAndAudits(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	base := filepath.Join(dir, ".agent-mail")
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "sent\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--to", "user", "--kind", "status", "--subject", "gate"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--unsafe-send-as requires --reason") {
+		t.Fatalf("unsafe send-as without reason err = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("unsafe send-as without reason should not call amq, calls = %d", len(*calls))
+	}
+
+	if _, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover stuck gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+	}); err != nil {
+		t.Fatalf("unsafe send-as with reason should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(*calls))
+	}
+	audit := filepath.Join(dir, ".amq-squad", "boundary-audit", "issue-96.jsonl")
+	b, err := os.ReadFile(audit)
+	if err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	if !strings.Contains(string(b), `"subcommand":"send-as"`) || !strings.Contains(string(b), "recover stuck gate") {
+		t.Fatalf("audit record = %s", b)
+	}
+
+	if _, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--to", "user", "--me", "cto", "--unsafe-send-as", "--reason", "recover stuck gate again", "--kind", "status", "--subject", "gate"})
+	}); err != nil {
+		t.Fatalf("unsafe send-as with non-leading actor should pass: %v", err)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("calls = %d, want 2", len(*calls))
+	}
+	got := strings.Join((*calls)[1].Arg, " ")
+	if strings.Contains(got, "--me cto") {
+		t.Fatalf("passthrough actor flag should be stripped before bare amq call: %s", got)
+	}
+	if !envHas((*calls)[1].Env, "AM_ME", "cto") {
+		t.Fatalf("AM_ME=cto not injected for non-leading actor: %v", (*calls)[1].Env)
+	}
+	b, err = os.ReadFile(audit)
+	if err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	if !strings.Contains(string(b), "recover stuck gate again") {
+		t.Fatalf("audit record missing non-leading unsafe reason = %s", b)
 	}
 }
 

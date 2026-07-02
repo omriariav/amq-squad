@@ -56,7 +56,7 @@ bypassing live/operator gates. Use
 require a fresh operator gate before any dogfood run that would actually spawn
 or prune agents.
 
-If you are leading from an existing operator-owned pane, make the runtime model explicit before spawning: `amq-squad team lead set <role>` records the profile's orchestrated lead, and `amq-squad lead register --role <role> --session <S>` adopts your current tmux pane as the external lead. That makes status/action JSON directable without pretending amq-squad spawned or owns your pane.
+If you are leading from an existing operator-owned project-lead pane, make the runtime model explicit before spawning: `amq-squad team lead set <role>` records the profile's orchestrated lead, and `amq-squad lead register --role <role> --session <S>` adopts your current tmux pane as the external lead only when that pane already proves the exact project/profile/session/role identity, or when you explicitly use `--adopt-project-lead` from the actual lead pane. A global orchestrator/NOC pane must launch or resume the project lead; it must not register itself as project `cto`.
 
 ### `/goal --goal` fast path
 
@@ -74,13 +74,15 @@ For `/goal` runs, keep the operator interface simple and lead-centered:
   profile/session namespace, proposed visible lead, source issues, proposed
   mutations, visibility/topology, spawned-child policy, validation plan, and
   approval gates before new side effects.
-- **Step 2: Create or register the visible goal lead.** The top-level
-  orchestrator should create the profile/session and either launch or register
-  exactly one operator-visible goal lead. Prefer launching that lead with the
+- **Step 2: Create or launch the visible goal lead.** The top-level
+  orchestrator should create the profile/session and launch or resume exactly
+  one operator-visible project lead. Prefer launching that lead with the
   generated native `/goal` prompt so its launch record can prove the binding.
   Use `--lead <role>` in generated `/goal` commands when the visible lead is not
-  `cto`; use `lead register` for an existing operator-owned pane and disclose
-  AMQ task + brief fallback until native binding is verified.
+  `cto`. Use `lead register` only from an existing pane that already proves the
+  exact project/profile/session/role identity, or with explicit
+  `--adopt-project-lead` from the actual project lead pane. Never register a
+  global-orchestrator pane as project `cto`.
 - **Step 3: Monitor through the lead.** The goal lead owns implementation
   decomposition, child dispatch, evidence, blockers, review reconciliation, and
   release readiness. Child agents are implementation details unless an approval
@@ -261,27 +263,69 @@ This atomically appends a `### YYYY-MM-DD [— title]\nbody` block, creating the
   legal. An ad-hoc role with no staged persona gets a **generic** one — fine for
   a one-off; when the role recurs or needs sharp scope, author a real persona
   with the `amq-squad` Role Authoring section and reuse it.
-- **Horsepower: match binary + model + effort to difficulty.** `--model` selects
-  the model for EITHER binary. Codex reasoning **effort** is a *separate* dial
-  from the model — pass it via `--codex-args "-c model_reasoning_effort=<level>"`.
-  Spend the least that does the job:
+- **Horsepower: match binary + model + effort to quality needs.** Context
+  stamp: this guidance reflects the current operator setup as of 2026-07-02.
+  Availability, aliases, and cost are setup-dependent, not universal prices.
+  Defaults are not limits: if the child output is not good enough, escalate the
+  model, effort, or reviewer. For shippable work, optimize for
+  `intelligence > taste > cost`; cost is only a tie-breaker after quality is
+  acceptable.
 
-  | Task difficulty | binary · model | codex effort |
+  Direct amq-squad config separates the dials:
+
+  - `binary` chooses the runtime CLI (`codex` or `claude`).
+  - `--model` / member `model` chooses that runtime's native model.
+  - Codex reasoning effort is separate from model; pass it through
+    `--codex-args "-c model_reasoning_effort=<level>"` or member
+    `codex_args`.
+  - Claude effort is also native pass-through; use
+    `--claude-args "--effort <level>"` or member `claude_args`.
+  - amq-squad has first-class `--model`, but no first-class `--effort`.
+
+  | Work type | default in this operator setup | notes |
   | --- | --- | --- |
-  | trivial / mechanical (rename, format, boilerplate) | claude · haiku  /  codex · gpt-5 | low |
-  | standard build or review (the default) | claude · sonnet  /  codex · gpt-5 | medium |
-  | hard reasoning (architecture, gnarly bug, security) | claude · opus  /  codex · gpt-5 | high / xhigh |
+  | bulk / mechanical edits | codex · gpt-5.5 | low or medium effort; raise when tests or diff quality show reasoning gaps |
+  | user-facing UI, copy, API, product design | model with taste `>= 7` | do not assign to a purely mechanical worker just because it is cheap |
+  | plan / implementation review | claude · fable-5 or opus-4.8 | optionally add codex · gpt-5.5 as an independent extra perspective |
+  | hard architecture / debugging / security | strongest available reviewer/implementer | escalate quickly when the first answer is shallow |
+
+  Never use Haiku for amq-squad work.
+
+  amq-squad does not maintain an Anthropic model whitelist. For Claude members,
+  `model` is forwarded to installed `claude --model <model>`, so accepted
+  aliases depend on the Claude CLI build and account. Current expected aliases
+  include `default`, `opus`, `fable`, `sonnet`, and `haiku`, plus full names
+  such as `claude-fable-5`. Mentioning `haiku` here is mechanical pass-through
+  support only; the selection policy still says never choose Haiku for
+  amq-squad work. Model config surfaces are `team init --model role=model`,
+  `up --model role=model`, `resume --model role=model`,
+  `team member add <role> --binary claude --model <alias>`, and the persisted
+  member `model` field in `team.json`.
 
   ```sh
-  # a cheap mechanical worker, and a heavyweight reviewer:
-  amq-squad team member add formatter --binary claude --model haiku
-  amq-squad team member add security-reviewer --binary codex \
-    --codex-args "-c model_reasoning_effort=high"
+  amq-squad team member add plan-reviewer --binary claude --model claude-fable-5 \
+    --claude-args "--effort high" --session <S>
+  amq-squad team member add implementer --binary claude --model sonnet \
+    --claude-args "--effort medium" --session <S>
+  amq-squad team member add opus-reviewer --binary claude --model opus \
+    --claude-args "--effort high" --session <S>
+  amq-squad team member add codex-worker --binary codex \
+    --codex-args "-c model_reasoning_effort=xhigh" --session <S>
   ```
 
-  Right-sizing is also *why* you would mint an ad-hoc role: a one-line cleanup
-  does not need a full senior-dev persona on opus — a generic `formatter` on
-  haiku is cheaper and just as good.
+  For a durable roster, override launch/resume model choices by role:
+
+  ```sh
+  amq-squad up <S> --model plan-reviewer=claude-fable-5,implementer=sonnet
+  amq-squad resume --session <S> --model plan-reviewer=opus,implementer=sonnet --exec
+  ```
+
+  Prefer an explicit Codex-binary member when the job needs `gpt-5.5`. The
+  thin Claude wrapper pattern exists only for Claude-only workflow/subagent
+  systems: create a minimal Claude-shaped wrapper whose sole job is to delegate
+  the real task to Codex CLI on `gpt-5.5`, and disclose that indirection in the
+  role/scope. A Claude workflow/agent `model:` parameter selects a Claude model
+  only; it cannot select a Codex model or Codex effort level.
 
 **2. Get operator approval per spawn (seeded).** For each proposed agent, raise
 a gate on the operator's approval thread and wait for the answer — this reuses
@@ -524,7 +568,7 @@ Diagnose before nudging: a stalled child with an intact plan and no progress is 
 
 When you are an **external lead** (no `AM_ROOT` injected), use the root-correct wrapped forms — bare `amq` flag-guessing burns turns:
 
-If the profile has not already been marked orchestrated, run `amq-squad team lead set <lead>`. From the lead pane, run `amq-squad lead register --role <lead> --session S` so `status`, `focus`, and `send` can see the operator-owned pane. `stop`, `rm`, `archive`, and `resume` intentionally do not kill, close, or replay external lead panes.
+If the profile has not already been marked orchestrated, run `amq-squad team lead set <lead>`. From the actual lead pane, run `amq-squad lead register --role <lead> --session S` so `status`, `focus`, and `send` can see the operator-owned pane. Project-lead registration requires verified project/profile/session/role identity or explicit `--adopt-project-lead`; a global orchestrator must launch/resume the project lead instead of registering itself as `cto`. Project-lead `--no-wake` requires `--compat-no-wake --reason <why>`. `amq-squad amq send --me <team-role>` requires verified role identity unless `--unsafe-send-as --reason <why>` is used for audited recovery. `stop`, `rm`, `archive`, and `resume` intentionally do not kill, close, or replay external lead panes.
 
 ```sh
 # List new messages for the lead mailbox.

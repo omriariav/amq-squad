@@ -1872,7 +1872,7 @@ func TestRenderTeamRulesTemplatesIncludeRequiredSections(t *testing.T) {
 			{Role: "qa", Binary: "codex", Handle: "qa", Session: "shared"},
 		},
 	}
-	for _, template := range []string{"dev-only", "product-squad", "scrum"} {
+	for _, template := range []string{"dev-only", "product-squad", "scrum", "custom"} {
 		t.Run(template, func(t *testing.T) {
 			body, err := renderTeamRulesWithTemplate(tm, template)
 			if err != nil {
@@ -1890,6 +1890,9 @@ func TestRenderTeamRulesTemplatesIncludeRequiredSections(t *testing.T) {
 				"pm (Project Manager / Product Owner): handle `pm`",
 				"fullstack (Fullstack Developer): handle `fullstack`",
 				"cwd `" + tm.Project + "`",
+				"two independent reviewers must verify the exact PR head SHA",
+				"`amq-squad verify merge`",
+				"operator replies `APPROVED:` on the exact PR gate thread",
 			} {
 				if !strings.Contains(body, want) {
 					t.Errorf("%s template missing %q:\n%s", template, want, body)

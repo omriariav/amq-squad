@@ -1047,7 +1047,7 @@ func TestExecuteStatusJSONAllowsExternalLeadInCurrentPane(t *testing.T) {
 	})
 	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
 		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7401,
-		External: true, AdoptionMode: "external", LauncherPaneID: "%1",
+		External: true, AdoptionMode: adoptionModeExternalProjectLead, LauncherPaneID: "%1",
 		Tmux: &launch.TmuxInfo{Session: "root", WindowID: "@1", PaneID: "%1", Target: "external"},
 	})
 	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
@@ -1065,7 +1065,7 @@ func TestExecuteStatusJSONAllowsExternalLeadInCurrentPane(t *testing.T) {
 	}
 	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
 	lead := env.Data.Records[0]
-	if !lead.OperatorVisible || lead.CurrentPaneConflict || lead.AdoptionMode != "external" || lead.VisibilityProblem != "" {
+	if !lead.OperatorVisible || lead.CurrentPaneConflict || lead.AdoptionMode != adoptionModeExternalProjectLead || lead.VisibilityProblem != "" {
 		t.Fatalf("lead visibility fields = %+v, want visible external lead without conflict", lead)
 	}
 	if !env.Data.Execution.InvariantOK {
@@ -1083,7 +1083,7 @@ func TestExecuteStatusJSONRechecksExternalLeadPaneForVisibility(t *testing.T) {
 	})
 	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
 		Binary: "codex", Handle: "release-lead", Role: "release-lead",
-		External: true, AdoptionMode: "external", LauncherPaneID: "%1",
+		External: true, AdoptionMode: adoptionModeExternalProjectLead, LauncherPaneID: "%1",
 		Tmux: &launch.TmuxInfo{Session: "root", WindowID: "@1", PaneID: "%1", Target: "external"},
 	})
 	prevLister := statusPaneLister
@@ -1120,6 +1120,46 @@ func TestExecuteStatusJSONRechecksExternalLeadPaneForVisibility(t *testing.T) {
 	}
 	if !env.Data.Execution.InvariantOK {
 		t.Fatalf("execution invariants = %+v, want clean", env.Data.Execution)
+	}
+}
+
+func TestExecuteStatusJSONFlagsGenericExternalProjectLeadBoundary(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 7777,
+		External: true, AdoptionMode: adoptionModeExternal,
+		Tmux: &launch.TmuxInfo{Session: "root", WindowID: "@1", PaneID: "%1", Target: "external"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{7777: true}, map[int]bool{7777: true}, time.Now()),
+		RuntimeVersion:   "2.15.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	lead := env.Data.Records[0]
+	if lead.OperatorVisible || lead.VisibilityProblem != "role_boundary_violation" {
+		t.Fatalf("lead visibility = %+v, want boundary violation", lead)
+	}
+	if env.Data.Execution.InvariantOK || len(env.Data.Execution.InvariantErrors) != 1 {
+		t.Fatalf("execution invariants = %+v, want one boundary error", env.Data.Execution)
+	}
+	inv := env.Data.Execution.InvariantErrors[0]
+	if inv.Code != "lead_role_boundary_violation" || inv.Remedy == nil || !strings.Contains(inv.Remedy.Command, "resume") {
+		t.Fatalf("invariant = %+v, want lead boundary repair", inv)
 	}
 }
 

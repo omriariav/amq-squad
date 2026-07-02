@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -88,6 +90,7 @@ type monitorIdleEvidence struct {
 	BusyKnown        bool   `json:"busy_known"`
 	Busy             bool   `json:"busy"`
 	PaneID           string `json:"pane_id,omitempty"`
+	UnreadInbox      int    `json:"unread_inbox,omitempty"`
 	AgeSeconds       int    `json:"age_seconds"`
 	ThresholdSeconds int    `json:"threshold_seconds"`
 }
@@ -372,6 +375,7 @@ func idleWithActiveTaskEvents(o monitorLoopOptions, session string, tasks []task
 		byHandle[strings.TrimSpace(r.Handle)] = r
 	}
 	now := time.Now()
+	unreadByOwner := monitorUnreadInboxCounts(o.ProjectDir, o.Profile, session, now)
 	var out []monitorEvent
 	for _, tk := range inProgress {
 		owner := strings.TrimSpace(tk.AssignedTo)
@@ -411,12 +415,17 @@ func idleWithActiveTaskEvents(o monitorLoopOptions, session string, tasks []task
 			// is irrelevant (and was not probed).
 			reason = fmt.Sprintf("owner %q is %s while owning an in_progress task", owner, row.Status)
 		}
+		unread := unreadByOwner[owner]
+		inboxDetail := ""
+		if unread > 0 {
+			inboxDetail = fmt.Sprintf("; owner has %d unread inbox message(s)", unread)
+		}
 		out = append(out, monitorEvent{
 			Type:    monitorEventIdleActiveTask,
 			Session: session,
 			Source:  "task:" + tk.ID + " owner:" + owner + " status:" + string(row.Status),
-			Detail: fmt.Sprintf("%s — %s (age %s, threshold %s). Suggested: controlled wake-first re-nudge (amq-squad dispatch) to resume task %s; escalate to operator after repeated no-advance.",
-				tk.Title, reason, age.Round(time.Second), o.StaleAfter, tk.ID),
+			Detail: fmt.Sprintf("%s — %s%s (age %s, threshold %s). Suggested: controlled wake-first re-nudge (amq-squad dispatch) to resume task %s; escalate to operator after repeated no-advance.",
+				tk.Title, reason, inboxDetail, age.Round(time.Second), o.StaleAfter, tk.ID),
 			Idle: &monitorIdleEvidence{
 				Owner:            owner,
 				OwnerStatus:      string(row.Status),
@@ -424,12 +433,35 @@ func idleWithActiveTaskEvents(o monitorLoopOptions, session string, tasks []task
 				BusyKnown:        busyKnown,
 				Busy:             busy,
 				PaneID:           paneID,
+				UnreadInbox:      unread,
 				AgeSeconds:       int(age / time.Second),
 				ThresholdSeconds: int(o.StaleAfter / time.Second),
 			},
 		})
 	}
 	return out, nil
+}
+
+// monitorUnreadInboxCounts records durable messages still sitting unread in
+// member inboxes. It is evidence for #309's pane-nudge corruption shape: the
+// worker is idle while the AMQ message that should have been drained remains in
+// inbox/new. This intentionally does not try to prevent terminal/model
+// tool-call emission corruption; monitor's read-only contract is to surface the
+// recoverable stalled state. Liveness and busy checks still decide whether the
+// owner is idle.
+func monitorUnreadInboxCounts(projectDir, profile, session string, now time.Time) map[string]int {
+	root := squadnamespace.AMQRoot(projectDir, profile, session)
+	if root == "" {
+		return nil
+	}
+	msgs, _ := state.ScanSessionMessages(root, func() time.Time { return now })
+	out := make(map[string]int)
+	for _, m := range msgs {
+		if m.State == state.MailboxNew {
+			out[strings.TrimSpace(m.Owner)]++
+		}
+	}
+	return out
 }
 
 // monitorMergeReadyEvents scans the evidence dir for this session's

@@ -15,3 +15,16 @@ coverage.txt
 amq-squad-rc-*
 .pm-os/
 .claude/worktrees/
+
+# amq-squad local runtime/session state. Commit durable project files explicitly.
+.amq-squad/briefs/
+.amq-squad/evidence/
+.amq-squad/notify-state.json
+.amq-squad/receipts/
+.amq-squad/reviews/
+.amq-squad/roles/
+.amq-squad/smoke-bin/
+.amq-squad/tasks/
+.amq-squad/team.json.lock
+.amq-squad/teams/
+.worktrees/

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +37,32 @@ func seedInProgressTask(t *testing.T, dir, session, owner string, updatedAt time
 		t.Fatal(err)
 	}
 	return tk.ID
+}
+
+func seedUnreadMonitorInboxMessage(t *testing.T, dir, session, owner string) {
+	t.Helper()
+	inbox := filepath.Join(dir, ".agent-mail", session, "agents", owner, "inbox", "new")
+	if err := os.MkdirAll(inbox, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	msg := `---json
+{
+  "schema": 1,
+  "id": "undrained-1",
+  "from": "cto",
+  "to": ["fullstack"],
+  "thread": "p2p/cto__fullstack",
+  "subject": "Task: drain me",
+  "created": "2026-07-01T10:17:00Z",
+  "priority": "normal",
+  "kind": "todo"
+}
+---
+durable task body that should have been drained
+`
+	if err := os.WriteFile(filepath.Join(inbox, "undrained-1.md"), []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func runMonitorOnce(t *testing.T) (string, error) {
@@ -98,6 +126,30 @@ func TestMonitorIdleFlagsLiveStaleOwner(t *testing.T) {
 	for _, want := range []string{`"idle_evidence"`, `"busy_known":true`, `"busy":false`, `"owner_status":"live"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("idle event missing busy evidence %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestMonitorIdleFlagsUndrainedInboxWithLiveStaleOwner(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"}}})
+	withMonitorOperatorState(t, 0, 0)
+	withMonitorStatusRows(t, []statusRecord{{Handle: "fullstack", Status: statusStateLive, Tmux: &tmuxRuntimeJSON{PaneID: "%5", PaneAlive: true}}})
+	withMonitorPaneBusy(t, false, true) // live, not busy
+	seedInProgressTask(t, dir, "s", "fullstack", time.Now().Add(-1*time.Hour))
+	seedUnreadMonitorInboxMessage(t, dir, "s", "fullstack")
+
+	out, err := runMonitorOnce(t)
+	if err != nil {
+		t.Fatalf("monitor: %v", err)
+	}
+	for _, want := range []string{
+		monitorEventIdleActiveTask,
+		`"unread_inbox":1`,
+		"owner has 1 unread inbox message",
+		"owner:fullstack",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("undrained inbox + idle active task event missing %q:\n%s", want, out)
 		}
 	}
 }

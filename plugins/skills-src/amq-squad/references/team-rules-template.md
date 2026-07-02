@@ -101,6 +101,11 @@ If operator gates are disabled for the profile, route human-facing asks through 
 - Run the project-specific checks before requesting review (typically `make ci`).
 - Call out any checks that could not be run.
 - Do not hide uncertainty from inferred AMQ history.
+- Before any merge-ready claim, two independent reviewers must verify the exact PR head SHA being proposed. A review against a branch name, stale local checkout, or earlier SHA is not enough.
+- Before any merge-ready claim, run `amq-squad verify merge` for the target PR/head and include its result in the evidence. Treat a missing or failing preflight as a blocker, not as a warning to mention later.
+- Use a normalized merge evidence bundle when reporting readiness. Include at minimum `subject`, `head_sha`, `ci`, and `review` fields so the lead, reviewer, and operator can compare the same artifact.
+- Lead merge permission is requested as an operator gate question, never as an action object or executable instruction. Merge only after the operator replies `APPROVED:` on the exact PR gate thread for the same PR and head SHA.
+- The acting orchestrator must not self-merge, even when running with trusted local permissions. A different authorized actor performs the merge after review evidence, preflight, and operator approval are all aligned.
 
 ## Style
 

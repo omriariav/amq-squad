@@ -462,12 +462,12 @@ workstream)</li>
 mailbox). AMQ itself stays unchanged.</p>
 <h2 id="install">Install</h2>
 <p>Install the 2.0 line (note the <code>/v2</code> module path):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.14.0</span>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.15.0</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For the latest 2.x build:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span></code></pre></div>
 <p>Requires Go 1.25+, the <code>amq</code> binary on <code>PATH</code>
-(v0.38.0+), and <code>tmux</code> on <code>PATH</code> for
+(v0.39.0+), and <code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code>.</p>
 <h3 id="skills-plugin-marketplaces">Skills (plugin marketplaces)</h3>
 <p>This repo doubles as a plugin marketplace that ships the amq-squad
@@ -690,6 +690,13 @@ alongside.</p>
 <div class="sourceCode" id="cb10"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--role</span> cto <span class="at">--session</span> issue-96</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent resume fullstack</span></code></pre></div>
+<p>For Claude-binary agents launched in a tmux pane,
+<code>agent up</code>, <code>up</code>, and managed resume/replay
+schedule a best-effort <code>/rename &lt;role&gt;-&lt;session&gt;</code>
+injection after launch so Claude Code's resume picker shows the squad
+role/workstream. The launch is not blocked if that pane delivery fails.
+Codex has no equivalent slash command, so Codex agents are intentionally
+unaffected.</p>
 <p>The legacy verbs (<code>down</code>, <code>launch</code>,
 <code>restore</code>, <code>list</code>, <code>team show</code>,
 <code>team launch</code>) are <strong>removed in 2.0</strong>. Invoking
@@ -878,7 +885,10 @@ operator/global-orchestrator pane, pass
 <code>--register-orchestrator[=HANDLE]</code> to add an
 <code>orchestrator</code> team member (default handle
 <code>orchestrator</code>), register the current pane as an external
-lead, and start/repair its wake sidecar before delivering the goal.</p>
+lead, and start/repair its wake sidecar before delivering the goal. This
+registers the control-plane orchestrator identity only; it does not
+adopt that pane as the project <code>cto</code> or other project
+lead.</p>
 <h4 id="wakeable-orchestrator-identity-in-one-command">Wakeable
 orchestrator identity in one command</h4>
 <p>From a neutral control root (a pane that is not itself a launched
@@ -888,9 +898,9 @@ separate <code>lead register</code> is needed:</p>
 <div class="sourceCode" id="cb16"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> goal start <span class="dt">\</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> /path/to/repo <span class="dt">\</span></span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> v2-14-0 <span class="dt">\</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> v2-15-0 <span class="dt">\</span></span>
 <span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--register-orchestrator</span><span class="op">=</span>orchestrator <span class="dt">\</span></span>
-<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal</span> <span class="st">&quot;deliver GitHub milestone v2.14.0&quot;</span> <span class="dt">\</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal</span> <span class="st">&quot;deliver GitHub milestone v2.15.0&quot;</span> <span class="dt">\</span></span>
 <span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--yes</span></span></code></pre></div>
 <p>In one verified step this produces (1) a durable
 <code>orchestrator</code> team member, (2) a launch record bound to the
@@ -1032,12 +1042,13 @@ gates:</p>
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa                 <span class="co"># default operator handle: user</span></span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--operator</span> ops  <span class="co"># custom operator handle</span></span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--no-operator</span>   <span class="co"># explicit opt-out</span></span></code></pre></div>
-<p>The operator is not a runnable team member. AMQ 0.38.0 reserves the
-conventional <code>user</code> mailbox for this human/operator role;
-custom operator handles use the same amq-squad protocol. JSON discovery
-derives <code>operator</code> and
-<code>capabilities.operator_gates</code>; <code>capabilities</code> is
-not persisted in <code>team.json</code>.</p>
+<p>The operator is not a runnable team member. AMQ 0.38.0+ reserves the
+conventional <code>user</code> mailbox for this human/operator role, and
+amq-squad v2.15.0 still requires AMQ 0.39.0+ overall; custom operator
+handles use the same amq-squad protocol. JSON discovery derives
+<code>operator</code> and <code>capabilities.operator_gates</code>;
+<code>capabilities</code> is not persisted in
+<code>team.json</code>.</p>
 <p>Operator gates are structural AMQ handoffs, not authentication. Send
 human-only decisions or manual actions to the configured operator handle
 on stable <code>gate/&lt;topic&gt;</code> threads, with
@@ -1180,17 +1191,30 @@ orchestration without rebuilding the roster,
 running in an operator-owned pane can register itself with
 <code>amq-squad lead register --role &lt;role&gt; --session &lt;session&gt;</code>;
 this writes an explicit external launch record so <code>status</code> /
-<code>focus</code> / <code>send</code> can target the pane. By default,
-registration also starts or repairs the lead's AMQ wake sidecar; pass
-<code>--wake</code> to make that default explicit,
-<code>--no-wake</code> to opt out, <code>--no-require-wake</code> to
-warn instead of failing, or <code>--wake-inject-via</code> with repeated
-<code>--wake-inject-arg</code> for external wake injectors. External
-lead records are visible and directable, but lifecycle commands do not
-own them: <code>stop</code> reports that the pane must be stopped
-manually, <code>rm</code> / <code>archive</code> leave it open, and
-<code>resume</code> asks the operator to run <code>lead register</code>
-again instead of replaying the pane.</p>
+<code>focus</code> / <code>send</code> can target the pane. Project-lead
+registration is fail-closed: the current pane must already prove the
+exact project/profile/session/role through runtime identity, matching
+launch record, native goal binding, or explicit
+<code>--adopt-project-lead</code> from the actual project-lead pane. A
+global-orchestrator/NOC pane cannot be adopted as project
+<code>cto</code> merely by passing <code>--role cto</code>;
+status/resume report <code>lead_role_boundary_violation</code> and tell
+the operator to launch/resume a real project lead in a sibling tab/new
+managed pane, or keep the current pane as global orchestrator only. By
+default, registration also starts or repairs the lead's AMQ wake
+sidecar; pass <code>--wake</code> to make that default explicit,
+<code>--no-require-wake</code> to warn instead of failing, or
+<code>--wake-inject-via</code> with repeated
+<code>--wake-inject-arg</code> for external wake injectors.
+<code>--no-wake</code> remains normal for global orchestrator/NOC
+pollers, but project-lead <code>--no-wake</code> requires the explicit
+escape hatch <code>--compat-no-wake --reason &lt;why&gt;</code> and
+records that reason. External lead records are visible and directable,
+but lifecycle commands do not own them: <code>stop</code> reports that
+the pane must be stopped manually, <code>rm</code> /
+<code>archive</code> leave it open, and <code>resume</code> asks the
+operator to run <code>lead register</code> again instead of replaying
+the pane.</p>
 <h2 id="verbs">Verbs</h2>
 <p>Team-level verbs:</p>
 <pre class="text"><code>amq-squad new team [--project DIR] [--sync] [--dry-run [--json]] [team init options]
@@ -1374,6 +1398,7 @@ amq-squad dispatch --session S --role R --subject SUBJ --body BODY [--create-tas
                                   while --task links an existing task id.
 amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
                          [--wake|--no-wake] [--require-wake|--no-require-wake]
+                         [--adopt-project-lead] [--compat-no-wake --reason TEXT]
                          [--wake-inject-via PATH] [--wake-inject-arg ARG]
                                   Adopt the current tmux pane as an
                                   operator-owned external lead for an
@@ -1512,9 +1537,11 @@ attached.</p>
 <p><code>amq-squad amq ...</code> is a project-aware wrapper around AMQ
 diagnostics. It resolves the same AMQ root, base root, session, and
 handle that the squad launcher uses, then delegates to AMQ.</p>
-<p>amq-squad v2.14.0 requires AMQ 0.38.0 or newer. That floor includes
-eval-safe <code>amq env --export</code> and the reserved human
-<code>user</code> mailbox behavior used by operator gates and
+<p>amq-squad v2.15.0 requires AMQ 0.39.0 or newer. That floor includes
+the wake-inject stale-process fix (AMQ-owned <code>--inject-via</code>
+wake processes exit when their recorded owner is gone or no longer
+matches), plus eval-safe <code>amq env --export</code> and the reserved
+human <code>user</code> mailbox behavior used by operator gates and
 notification surfaces.</p>
 <p>Read-only diagnostics run directly:</p>
 <div class="sourceCode" id="cb25"><pre
@@ -1761,12 +1788,95 @@ Codex config (<code>$CODEX_HOME/config.toml</code>, profile config when
 <code>~/.codex/config.toml</code>). Supported amq-squad config keys are
 <code>model</code>, <code>codex_model</code>, <code>claude_model</code>,
 or a <code>models</code> map keyed by binary name.</p>
+<h3 id="model-binary-and-effort-guidance">Model, binary, and effort
+guidance</h3>
+<p>Context stamp: this guidance reflects the current operator setup as
+of 2026-07-02. Availability, aliases, and pricing are
+deployment-dependent; treat cost as a local tie-breaker, not as
+universal list-price guidance.</p>
+<p>Defaults are not limits. Agents should escalate binary, model, or
+effort when the output does not meet the bar. For shippable work,
+optimize for <code>intelligence &gt; taste &gt; cost</code>; cost
+matters only after the work is good enough.</p>
+<ul>
+<li>Bulk or mechanical work defaults to Codex CLI on
+<code>gpt-5.5</code> in the current operator setup. Use lower effort for
+truly mechanical edits, but raise effort when the diff or tests show
+reasoning gaps.</li>
+<li>User-facing UI, copy, API shape, or product design needs taste
+<code>&gt;= 7</code>; do not hand it to a purely mechanical worker just
+because it is cheaper.</li>
+<li>Plan and implementation reviews should use <code>fable-5</code> or
+<code>opus-4.8</code>, with <code>gpt-5.5</code> as an optional
+independent extra perspective.</li>
+<li>Never use Haiku for amq-squad work.</li>
+</ul>
+<p>Direct amq-squad configuration keeps three decisions separate:</p>
+<ul>
+<li><code>binary</code> chooses the runtime CLI (<code>codex</code> or
+<code>claude</code>).</li>
+<li><code>model</code> chooses the native model for that runtime.</li>
+<li>Codex reasoning effort is separate from model and rides through
+<code>codex_args</code>, for example
+<code>-c model_reasoning_effort=high</code>. Claude has no Codex effort
+dial; use model choice plus <code>claude_args</code> such as settings
+overlays.</li>
+</ul>
+<p>amq-squad does not maintain an Anthropic model whitelist. For Claude
+members, <code>model</code> is passed through to the installed
+<code>claude --model &lt;model&gt;</code>, so accepted aliases depend on
+that Claude CLI build and account. Current expected aliases include
+<code>default</code>, <code>opus</code>, <code>fable</code>,
+<code>sonnet</code>, and <code>haiku</code>, plus full names the Claude
+CLI accepts such as <code>claude-fable-5</code>. That is mechanical
+support only: the amq-squad policy above still says never choose Haiku
+for amq-squad work.</p>
+<p>amq-squad has first-class <code>--model</code>, but no first-class
+<code>--effort</code>. Effort stays native to the target CLI: Claude
+effort rides through <code>--claude-args</code>, for example
+<code>--effort high</code>, and Codex effort rides through
+<code>--codex-args</code>, for example
+<code>-c model_reasoning_effort=xhigh</code>. The same model surface is
+available on <code>team init --model role=model</code>,
+<code>up --model role=model</code>,
+<code>resume --model role=model</code>, the <code>team member add</code>
+<code>--model &lt;alias&gt;</code> flag, and the persisted member
+<code>model</code> field in <code>team.json</code>.</p>
 <div class="sourceCode" id="cb35"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> trusted</span>
-<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> approve-for-me</span>
-<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5,fullstack=sonnet</span>
-<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5</span></code></pre></div>
-<p>amq-squad v2.14.0 requires amq <strong>0.38.0+</strong>. Launches
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add plan-reviewer <span class="at">--binary</span> claude <span class="at">--model</span> claude-fable-5 <span class="dt">\</span></span>
+<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--claude-args</span> <span class="st">&quot;--effort high&quot;</span> <span class="at">--session</span> issue-96</span>
+<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add implementer <span class="at">--binary</span> claude <span class="at">--model</span> sonnet <span class="dt">\</span></span>
+<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--claude-args</span> <span class="st">&quot;--effort medium&quot;</span> <span class="at">--session</span> issue-96</span>
+<span id="cb35-5"><a href="#cb35-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add opus-reviewer <span class="at">--binary</span> claude <span class="at">--model</span> opus <span class="dt">\</span></span>
+<span id="cb35-6"><a href="#cb35-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--claude-args</span> <span class="st">&quot;--effort high&quot;</span> <span class="at">--session</span> issue-96</span>
+<span id="cb35-7"><a href="#cb35-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add codex-worker <span class="at">--binary</span> codex <span class="dt">\</span></span>
+<span id="cb35-8"><a href="#cb35-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=xhigh&quot;</span> <span class="at">--session</span> issue-96</span></code></pre></div>
+<p>Use <code>up</code> and <code>resume</code> overrides when the
+profile is durable but a launch needs session-specific model choices.
+Resume overrides apply to members launched fresh during that resume
+plan; already-live members keep their running process.</p>
+<div class="sourceCode" id="cb36"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up issue-96 <span class="at">--model</span> plan-reviewer=claude-fable-5,implementer=sonnet</span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--model</span> plan-reviewer=opus,implementer=sonnet <span class="at">--exec</span></span></code></pre></div>
+<p>For durable rosters, the same values live in <code>team.json</code>:
+<code>binary</code>, <code>model</code>, per-member
+<code>codex_args</code> / <code>claude_args</code>, or team-level
+<code>binary_args</code> for every member of one binary. Prefer an
+explicit Codex-binary member when the job needs <code>gpt-5.5</code>. A
+thin Claude wrapper is only a compatibility pattern for Claude-only
+workflow or subagent systems. In those systems, a Claude workflow/agent
+<code>model:</code> parameter selects a Claude model only; it does not
+select a Codex model or effort level. Keep the wrapper minimal, have it
+delegate the real task to Codex CLI on <code>gpt-5.5</code>, and make
+that indirection visible in the role/scope so reviewers do not mistake
+it for a native Claude model choice.</p>
+<div class="sourceCode" id="cb37"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> trusted</span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> approve-for-me</span>
+<span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5.5,fullstack=fable-5 <span class="dt">\</span></span>
+<span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span>
+<span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5.5 <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span></code></pre></div>
+<p>amq-squad v2.15.0 requires amq <strong>0.39.0+</strong>. Launches
 pass <code>--require-wake</code> to <code>amq coop exec</code>, so a
 launch <strong>fails at the door</strong> when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale
@@ -1807,9 +1917,9 @@ positional) or rely on inference instead.</p>
 <p>Members do not have to share a working directory. The dir where you
 run <code>team init</code> becomes the team-home; individual members can
 live in other repos.</p>
-<div class="sourceCode" id="cb36"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/project-a</span>
-<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack,qa <span class="at">--cwd</span> qa=~/Code/project-b</span></code></pre></div>
+<div class="sourceCode" id="cb38"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/project-a</span>
+<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack,qa <span class="at">--cwd</span> qa=~/Code/project-b</span></code></pre></div>
 <p><code>up --dry-run</code> emits a <code>cd &lt;member-cwd&gt;</code>
 per launch command, and <code>team sync --apply --allow-outside</code>
 walks each unique member cwd and writes <code>CLAUDE.md</code> /
@@ -1822,30 +1932,30 @@ surprise.</p>
 needs a <code>peers</code> entry pointing at the other project's
 <code>.agent-mail/</code>. <code>team sync</code> does not touch
 <code>.amqrc</code>; that step is manual today.</p>
-<div class="sourceCode" id="cb37"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;root&quot;</span><span class="fu">:</span> <span class="st">&quot;.agent-mail&quot;</span><span class="fu">,</span></span>
-<span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;project&quot;</span><span class="fu">:</span> <span class="st">&quot;project-a&quot;</span><span class="fu">,</span></span>
-<span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;peers&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;project-b&quot;</span><span class="fu">:</span> <span class="st">&quot;/Users/you/Code/project-b/.agent-mail&quot;</span></span>
-<span id="cb37-6"><a href="#cb37-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb37-7"><a href="#cb37-7" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb39"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;root&quot;</span><span class="fu">:</span> <span class="st">&quot;.agent-mail&quot;</span><span class="fu">,</span></span>
+<span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;project&quot;</span><span class="fu">:</span> <span class="st">&quot;project-a&quot;</span><span class="fu">,</span></span>
+<span id="cb39-4"><a href="#cb39-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;peers&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb39-5"><a href="#cb39-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;project-b&quot;</span><span class="fu">:</span> <span class="st">&quot;/Users/you/Code/project-b/.agent-mail&quot;</span></span>
+<span id="cb39-6"><a href="#cb39-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb39-7"><a href="#cb39-7" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <h2 id="messaging-inside-a-squad">Messaging inside a squad</h2>
 <p>Once launched, agents use plain AMQ commands. <code>amq-squad</code>
 injects a routing block into each agent's bootstrap prompt with the live
 roster, handles, threads, and per-agent project context.</p>
-<div class="sourceCode" id="cb38"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> list <span class="at">--new</span></span>
-<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> read <span class="at">--id</span> <span class="op">&lt;</span>id<span class="op">&gt;</span></span>
-<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span></span>
-<span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb38-5"><a href="#cb38-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="dt">\</span></span>
-<span id="cb38-6"><a href="#cb38-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> fullstack <span class="dt">\</span></span>
-<span id="cb38-7"><a href="#cb38-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--thread</span> p2p/cto__fullstack <span class="dt">\</span></span>
-<span id="cb38-8"><a href="#cb38-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> review_request <span class="dt">\</span></span>
-<span id="cb38-9"><a href="#cb38-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Review: PR&quot;</span> <span class="dt">\</span></span>
-<span id="cb38-10"><a href="#cb38-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--body</span> <span class="st">&quot;Please review tests and framing.&quot;</span> <span class="dt">\</span></span>
-<span id="cb38-11"><a href="#cb38-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--wait-for</span> drained <span class="at">--wait-timeout</span> 60s</span></code></pre></div>
+<div class="sourceCode" id="cb40"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> list <span class="at">--new</span></span>
+<span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> read <span class="at">--id</span> <span class="op">&lt;</span>id<span class="op">&gt;</span></span>
+<span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span></span>
+<span id="cb40-4"><a href="#cb40-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb40-5"><a href="#cb40-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="dt">\</span></span>
+<span id="cb40-6"><a href="#cb40-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> fullstack <span class="dt">\</span></span>
+<span id="cb40-7"><a href="#cb40-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--thread</span> p2p/cto__fullstack <span class="dt">\</span></span>
+<span id="cb40-8"><a href="#cb40-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> review_request <span class="dt">\</span></span>
+<span id="cb40-9"><a href="#cb40-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Review: PR&quot;</span> <span class="dt">\</span></span>
+<span id="cb40-10"><a href="#cb40-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--body</span> <span class="st">&quot;Please review tests and framing.&quot;</span> <span class="dt">\</span></span>
+<span id="cb40-11"><a href="#cb40-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--wait-for</span> drained <span class="at">--wait-timeout</span> 60s</span></code></pre></div>
 <p><code>amq send</code> reads stdin when <code>--body</code> is
 omitted. There is no <code>--body-file</code> flag.</p>
 <p>Inside an amq-squad-launched shell, use bare <code>amq</code>
@@ -1856,6 +1966,14 @@ important handoffs, use
 <code>--wait-for drained --wait-timeout 60s</code> and keep the AMQ
 message id. If routing is unclear, run <code>amq route explain</code> or
 <code>amq-squad amq route --to &lt;handle&gt;</code> first.</p>
+<p>From an external lead or operator-owned pane, prefer the root-correct
+wrapper:
+<code>amq-squad amq send --session &lt;S&gt; --me &lt;handle&gt; ...</code>.
+When <code>--me</code> names a team role/handle, the wrapper verifies
+that role is bound in the namespace before sending; a global
+orchestrator cannot raise gates as <code>cto</code> before a real
+<code>cto</code> exists. Emergency recovery sends require the explicit
+audited override <code>--unsafe-send-as --reason &lt;why&gt;</code>.</p>
 <h2 id="files-amq-squad-writes">Files amq-squad writes</h2>
 <pre class="text"><code>&lt;project&gt;/.amq-squad/team.json           Default team profile (schema: 3 on new writes).
 &lt;project&gt;/.amq-squad/teams/&lt;name&gt;.json   Named team profiles (schema: 3 on new writes).
@@ -1940,7 +2058,7 @@ project's <code>.amqrc</code> for cross-project AMQ routing.
 <h2 id="requires">Requires</h2>
 <ul>
 <li>Go 1.25+</li>
-<li><code>amq</code> binary on <code>PATH</code> (v0.38.0+)</li>
+<li><code>amq</code> binary on <code>PATH</code> (v0.39.0+)</li>
 <li><code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code></li>
 </ul>

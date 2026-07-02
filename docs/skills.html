@@ -633,10 +633,45 @@ drain your inbox.</li>
 only — the overlay verb above generates the flagship case (a
 <code>--settings</code> overlay that trims a worker's plugins/hooks) and
 wires it for you. Plan emission fails fast when a referenced
-<code>--settings</code> file is missing. In v2.6.0 with AMQ 0.38.0+,
-launches also pass <code>--require-wake</code> so a launch fails
-immediately when the wake sidecar cannot acquire its lock
-(<code>--no-require-wake</code> opts out and persists into resume).</p>
+<code>--settings</code> file is missing. AMQ floor (v2.15.0+): amq-squad
+requires amq 0.39.0+. Launches pass <code>--require-wake</code> so a
+launch fails immediately when the wake sidecar cannot acquire its lock
+(<code>--no-require-wake</code> opts out and persists into resume).
+Claude-binary agents launched in tmux also get a best-effort delayed
+<code>/rename &lt;role&gt;-&lt;session&gt;</code> injection, including
+managed <code>resume --exec</code> / <code>agent resume</code> replay.
+Failure to deliver the rename does not block launch. Codex agents are
+unaffected because Codex has no matching slash command.</p>
+<p>Model/binary guidance (context-stamped 2026-07-02, current operator
+setup): defaults are not limits; escalate model or effort when output
+quality misses the bar. For shippable work,
+<code>intelligence &gt; taste &gt; cost</code>, with cost only a
+tie-breaker. Bulk/mechanical work defaults to Codex CLI on
+<code>gpt-5.5</code>; UI, copy, API, and product design need taste
+<code>&gt;= 7</code>; plan/implementation reviews should use
+<code>fable-5</code> or <code>opus-4.8</code> with optional
+<code>gpt-5.5</code> as an independent extra perspective. Never use
+Haiku. Configure direct agents with <code>binary</code>,
+<code>model</code>, Codex effort through <code>codex_args</code>
+(<code>-c model_reasoning_effort=&lt;level&gt;</code>), and Claude
+effort/settings through <code>claude_args</code> (for example
+<code>--effort high</code>). amq-squad does not maintain an Anthropic
+whitelist: Claude member <code>model</code> is passed through to
+installed <code>claude --model &lt;model&gt;</code>, with aliases such
+as <code>default</code>, <code>opus</code>, <code>fable</code>,
+<code>sonnet</code>, <code>haiku</code>, and full names such as
+<code>claude-fable-5</code> depending on CLI/account support. Mentioning
+<code>haiku</code> here is mechanical pass-through support only; the
+policy remains never choose Haiku for amq-squad work. Use a thin Claude
+wrapper for <code>gpt-5.5</code> only when a Claude-only
+workflow/subagent slot forces that shape; a Claude workflow/agent
+<code>model:</code> parameter still selects a Claude model only. Prefer
+an explicit Codex-binary member otherwise. Exact override paths include
+<code>amq-squad team init --model cto=gpt-5.5,fullstack=fable-5</code>,
+<code>amq-squad team member add plan-reviewer --binary claude --model claude-fable-5 --claude-args "--effort high"</code>,
+<code>amq-squad up issue-96 --model plan-reviewer=claude-fable-5,implementer=sonnet</code>,
+and
+<code>amq-squad resume --session issue-96 --model plan-reviewer=opus,implementer=sonnet --exec</code>.</p>
 <h3 id="runtime-control-tmux">Runtime control (tmux)</h3>
 <p>amq-squad owns the tmux control contract — drive agents by stable
 command, never raw <code>tmux send-keys</code>. Control targets the
@@ -689,9 +724,12 @@ three-step flow:</p>
 <li>Preview the goal, repo, source issues, profile/session namespace,
 visible lead, proposed mutations, topology, spawn policy, validation,
 and gates.</li>
-<li>Create or register exactly one operator-visible goal lead. Use
+<li>Create or launch exactly one operator-visible project lead. Use
 <code>--lead ROLE</code> when generated commands should route through a
-non-<code>cto</code> lead.</li>
+non-<code>cto</code> lead. Register an existing pane only when it
+already proves the exact project/profile/session lead identity, or with
+explicit safe project-lead adoption from that pane; never adopt a
+global-orchestrator pane as project <code>cto</code>.</li>
 <li>Monitor through that lead. Child agents stay implementation details
 unless an approval gate, blocker, release risk, or final evidence needs
 surfacing. Leads must surface blockers and approval requests immediately

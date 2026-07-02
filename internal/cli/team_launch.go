@@ -389,6 +389,10 @@ func maybeFilterCurrentExternalLead(t team.Team, workstream, profile, trustMode 
 	if rec, err := launch.Read(agentDir); err == nil && externalRecordMatchesPane(rec, id.PaneID) {
 		return filterLaunchMember(t, lead.Role, id.PaneID), true, nil
 	}
+	if _, rec, ok := findLaunchRecordByPane(root, id.PaneID); ok &&
+		!launchRecordMatchesIdentity(rec, lead.Role, handle, profile, env.SessionName, root) {
+		return t, false, nil
+	}
 	if !write || !currentEnvIdentifiesExternalLead(lead, handle, root) {
 		return t, false, nil
 	}
@@ -408,7 +412,8 @@ func currentEnvIdentifiesExternalLead(m team.Member, handle, root string) bool {
 	if me == "" || (me != handle && me != m.Role) {
 		return false
 	}
-	if envRoot := strings.TrimSpace(os.Getenv("AM_ROOT")); envRoot != "" && root != "" && !rootsMatch(envRoot, root) {
+	envRoot := strings.TrimSpace(os.Getenv("AM_ROOT"))
+	if envRoot == "" || strings.TrimSpace(root) == "" || !rootsMatch(envRoot, root) {
 		return false
 	}
 	return true
@@ -429,7 +434,7 @@ func externalLeadRecordForLaunch(m team.Member, cwd, handle, root string, env am
 		Model:            memberResolvedModel(m, modelOverrides, binaryArgs),
 		Trust:            trustMode,
 		External:         true,
-		AdoptionMode:     "external",
+		AdoptionMode:     adoptionModeForExternalLeadRecord(m),
 		LauncherPaneID:   pane.PaneID,
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
@@ -450,6 +455,13 @@ func externalLeadRecordForLaunch(m team.Member, cwd, handle, root string, env am
 		rec.ClaudeArgs = extra
 	}
 	return rec
+}
+
+func adoptionModeForExternalLeadRecord(m team.Member) string {
+	if strings.TrimSpace(m.Role) == goalOrchestratorRole {
+		return adoptionModeExternal
+	}
+	return adoptionModeExternalProjectLead
 }
 
 func filterLaunchMember(t team.Team, role, paneID string) team.Team {
