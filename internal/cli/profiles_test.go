@@ -590,6 +590,84 @@ func TestNamedProfileConflictBlocksDirectRuntimeCommands(t *testing.T) {
 	}
 }
 
+func TestSameProfileSessionUpStatusDispatchNoNamespaceConflict(t *testing.T) {
+	backend := useFakeBackend(t)
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	resumeChdir(t, dir)
+	seedProfile(t, dir, "review", team.Team{
+		Project:      dir,
+		Workstream:   "review",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "review"},
+		},
+	})
+
+	_, _, err := captureOutput(t, func() error {
+		return runUp([]string{"--profile", "review", "--session", "review", "--terminal", "fake", "--no-bootstrap", "--no-attach"})
+	})
+	if err != nil {
+		t.Fatalf("up profile==session: %v", err)
+	}
+	if len(backend.launches) != 1 {
+		t.Fatalf("backend.Launch calls = %d, want 1", len(backend.launches))
+	}
+	if got := backend.launches[0].Workstream; got != "review" {
+		t.Fatalf("up workstream = %q, want review", got)
+	}
+	if got := backend.launches[0].Profile; got != "review" {
+		t.Fatalf("up profile = %q, want review", got)
+	}
+
+	namedRoot := filepath.Join(dir, ".agent-mail", "review", "review")
+	namedAgentDir := filepath.Join(namedRoot, "agents", "qa")
+	if err := os.MkdirAll(namedAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(namedAgentDir, "inbox"), []byte("named durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolvedNamedRoot, err := filepath.EvalSymlinks(namedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runStatus([]string{"--profile", "review", "--session", "review", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("status profile==session: %v\n%s", err, stdout)
+	}
+	statusEnv := decodeJSONEnvelope[statusEnvelopeData](t, stdout)
+	if statusEnv.Data.NamespaceConflict != nil {
+		t.Fatalf("status should not report namespace conflict: %+v", statusEnv.Data.NamespaceConflict)
+	}
+
+	calls := withAMQCommandSeams(t, amqEnv{Root: namedRoot, BaseRoot: filepath.Dir(namedRoot)}, "Sent msg-same to qa\n")
+	stdout, _, err = captureOutput(t, func() error {
+		return runDispatch([]string{"--profile", "review", "--session", "review", "--role", "qa", "--subject", "X", "--body", "y", "--no-wake", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch profile==session: %v\n%s", err, stdout)
+	}
+	dispatchEnv := decodeJSONEnvelope[mutationResult](t, stdout)
+	if dispatchEnv.Data.Status != "queued" || dispatchEnv.Data.MessageID != "msg-same" {
+		t.Fatalf("bad dispatch result: %+v", dispatchEnv.Data)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("amq calls = %d, want 1", len(*calls))
+	}
+	gotArgs := strings.Join((*calls)[0].Arg, " ")
+	for _, want := range []string{"send", "--root " + resolvedNamedRoot, "--me cto", "--to qa"} {
+		if !strings.Contains(gotArgs, want) {
+			t.Fatalf("dispatch args missing %q: %s", want, gotArgs)
+		}
+	}
+}
+
 func TestForkFooterCarriesProfile(t *testing.T) {
 	dir := t.TempDir()
 	base := setupFakeAMQSessionRoots(t)
