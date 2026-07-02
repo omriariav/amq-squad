@@ -973,6 +973,13 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	if recFound {
 		plan.Tmux = rec.Tmux
 	}
+	if recFound && projectLeadExternalRecordBoundaryViolation(in.Team, m, rec, in.Profile, env.SessionName, root, handle) {
+		plan.Action = resumeBlocked
+		plan.Command = ""
+		plan.Note = fmt.Sprintf("role boundary violation: current external record for %s is not verified as a project lead; launch/resume %s in a sibling tab/new managed pane, or keep the current pane as global orchestrator only", m.Role, m.Role)
+		plan.Liveness = &agentLiveness{Verdict: livenessMissing, Status: statusStateMissing, Detail: plan.Note}
+		return plan, nil
+	}
 	wakeLabel := wakeHealthForMember(agentDir, root, handle, rec, recFound)
 	plan.Wake = wakeLabel
 
@@ -1097,6 +1104,23 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	plan.Action = resumeFresh
 	plan.Command = freshLaunchCommand(in)
 	return plan, nil
+}
+
+func projectLeadExternalRecordBoundaryViolation(t team.Team, m team.Member, rec launch.Record, profile, session, root, handle string) bool {
+	if !projectExecutionMode(effectiveTeamExecutionMode(t)) {
+		return false
+	}
+	lead := strings.TrimSpace(t.Lead)
+	if lead == "" && len(t.Members) == 1 {
+		lead = t.Members[0].Role
+	}
+	if strings.TrimSpace(m.Role) != lead {
+		return false
+	}
+	if !rec.External {
+		return false
+	}
+	return !launchRecordAuthorizesProjectLead(rec, m.Role, handle, profile, session, root)
 }
 
 // findMemberRestoreRecord returns the most recent launch.Record for the

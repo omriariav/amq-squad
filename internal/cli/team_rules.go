@@ -121,7 +121,12 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 	b.WriteString("## Quality Gates\n\n")
 	b.WriteString("- Run the project-specific checks before requesting review; for code this normally includes formatting, tests, and CI.\n")
 	b.WriteString("- Call out any checks that could not be run.\n")
-	b.WriteString("- Do not hide uncertainty from inferred AMQ history.\n\n")
+	b.WriteString("- Do not hide uncertainty from inferred AMQ history.\n")
+	b.WriteString("- Before any merge-ready claim, two independent reviewers must verify the exact PR head SHA being proposed. A review against a branch name, stale local checkout, or earlier SHA is not enough.\n")
+	b.WriteString("- Before any merge-ready claim, run `amq-squad verify merge` for the target PR/head and include its result in the evidence. Treat a missing or failing preflight as a blocker, not as a warning to mention later.\n")
+	b.WriteString("- Use a normalized merge evidence bundle when reporting readiness. Include at minimum `subject`, `head_sha`, `ci`, and `review` fields so the lead, reviewer, and operator can compare the same artifact.\n")
+	b.WriteString("- Lead merge permission is requested as an operator gate question, never as an action object or executable instruction. Merge only after the operator replies `APPROVED:` on the exact PR gate thread for the same PR and head SHA.\n")
+	b.WriteString("- The acting orchestrator must not self-merge, even when running with trusted local permissions. A different authorized actor performs the merge after review evidence, preflight, and operator approval are all aligned.\n\n")
 
 	b.WriteString("## Conflict Protocol\n\n")
 	b.WriteString("- Surface disagreement on the relevant AMQ thread with the concrete risk, evidence, and proposed decision owner.\n")

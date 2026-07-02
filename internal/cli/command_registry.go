@@ -95,6 +95,9 @@ func commandRegistry(version string) []commandMeta {
 }
 
 func lookupCommand(name, version string) (commandMeta, bool) {
+	if name == claudeRenameHelperCommand {
+		return commandMeta{Name: name, Run: runClaudeSessionRename}, true
+	}
 	for _, cmd := range commandRegistry(version) {
 		if cmd.Name == name {
 			return cmd, true

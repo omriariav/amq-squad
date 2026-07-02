@@ -406,7 +406,7 @@ func annotateVisibilityInvariants(rows []statusRecord, ctx sessionStatusContext)
 			continue
 		}
 		leadSeen = true
-		visible, code := operatorVisibilityForLead(&rows[i])
+		visible, code := operatorVisibilityForLead(&rows[i], mode)
 		rows[i].OperatorVisible = visible
 		rows[i].VisibilityProblem = code
 		if !visible {
@@ -501,8 +501,13 @@ func adoptionModeForStatus(row statusRecord) string {
 	}
 }
 
-func operatorVisibilityForLead(row *statusRecord) (bool, string) {
+func operatorVisibilityForLead(row *statusRecord, mode string) (bool, string) {
 	if row != nil && (row.External || row.AdoptionMode == "external") {
+		if projectExecutionMode(mode) &&
+			strings.TrimSpace(row.AdoptionMode) != adoptionModeExternalProjectLead &&
+			!launchRecordHasNativeGoal(launch.Record{GoalBinding: row.goalBinding}) {
+			return false, "role_boundary_violation"
+		}
 		if row.Tmux == nil {
 			return false, "no_pane"
 		}
@@ -598,6 +603,14 @@ func invariantErrorForVisibilityProblem(row statusRecord, code string, scope fau
 			Message: "visible lead launch record does not prove launcher pane origin",
 			DocRef:  docRef,
 			Remedy:  faultRemedyRelaunch(scope),
+		}
+	case "role_boundary_violation":
+		return executionInvariantError{
+			Code:    "lead_role_boundary_violation",
+			Role:    row.Role,
+			Message: fmt.Sprintf("current pane is registered as a control-plane/external identity, not verified project lead %q", row.Role),
+			DocRef:  docRef,
+			Remedy:  faultRemedyResume(row.Role, scope),
 		}
 	default:
 		return executionInvariantError{

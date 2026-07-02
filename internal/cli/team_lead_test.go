@@ -79,7 +79,7 @@ func TestLeadRegisterWritesExternalRecordAndSetsLead(t *testing.T) {
 	t.Cleanup(func() { leadWakeStarter = prevWake })
 
 	out, _, err := captureOutput(t, func() error {
-		return runLead([]string{"register", "--role", "cto", "--session", "issue-96"})
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
 	})
 	if err != nil {
 		t.Fatalf("lead register: %v\n%s", err, out)
@@ -98,6 +98,9 @@ func TestLeadRegisterWritesExternalRecordAndSetsLead(t *testing.T) {
 	if !rec.External || rec.AgentPID != 0 || rec.Tmux == nil || rec.Tmux.PaneID != "%5" || rec.Tmux.Target != "external" {
 		t.Fatalf("external record = %+v", rec)
 	}
+	if rec.AdoptionMode != adoptionModeExternalProjectLead {
+		t.Fatalf("AdoptionMode = %q, want %q", rec.AdoptionMode, adoptionModeExternalProjectLead)
+	}
 	if rec.WakePID != 2222 {
 		t.Fatalf("WakePID = %d, want 2222", rec.WakePID)
 	}
@@ -109,6 +112,107 @@ func TestLeadRegisterWritesExternalRecordAndSetsLead(t *testing.T) {
 	}
 	if !strings.Contains(out, "wake: ready") {
 		t.Fatalf("lead register output should report wake readiness:\n%s", out)
+	}
+}
+
+func TestLeadRegisterRejectsGlobalPaneAsProjectLead(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: goalOrchestratorRole, Binary: "codex", Handle: "orchestrator", Session: "issue-96"},
+		},
+	})
+	seedAgentRecord(t, base, "issue-96", "orchestrator", launch.Record{
+		CWD:          dir,
+		Binary:       "codex",
+		Handle:       "orchestrator",
+		Role:         goalOrchestratorRole,
+		Session:      "issue-96",
+		Root:         filepath.Join(base, "issue-96"),
+		TeamProfile:  team.DefaultProfile,
+		External:     true,
+		AdoptionMode: adoptionModeExternal,
+		Tmux:         &launch.TmuxInfo{Session: "tmux-main", WindowID: "@7", WindowName: "noc", PaneID: "%99", Target: "external"},
+	})
+	prev := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "noc", PaneID: "%99"}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prev })
+	prevWake := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		t.Fatal("wake must not start for rejected adoption")
+		return leadWakeResult{}, nil
+	}
+	t.Cleanup(func() { leadWakeStarter = prevWake })
+
+	_, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "pane already has launch identity") || !strings.Contains(err.Error(), goalOrchestratorRole) {
+		t.Fatalf("lead register global pane err = %v, want boundary rejection", err)
+	}
+	if _, err := launch.Read(filepath.Join(base, "issue-96", "agents", "cto")); err == nil {
+		t.Fatal("rejected adoption must not write cto launch record")
+	}
+}
+
+func TestLeadRegisterProjectLeadNoWakeRequiresCompatReason(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	prev := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "lead", PaneID: "%5"}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prev })
+
+	_, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead", "--no-wake"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--compat-no-wake --reason") {
+		t.Fatalf("lead register --no-wake err = %v, want compat reason rejection", err)
+	}
+}
+
+func TestLeadRegisterGlobalOrchestratorNoWakeAllowed(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{
+		Orchestrated:  true,
+		Lead:          goalOrchestratorRole,
+		ExecutionMode: executionModeGlobalOrchestrator,
+		Members:       []team.Member{{Role: goalOrchestratorRole, Binary: "codex", Handle: "orchestrator", Session: "issue-96"}},
+	})
+	prev := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "noc", PaneID: "%5"}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prev })
+	called := false
+	prevWake := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		called = true
+		return leadWakeResult{}, nil
+	}
+	t.Cleanup(func() { leadWakeStarter = prevWake })
+
+	out, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", goalOrchestratorRole, "--session", "issue-96", "--no-wake"})
+	})
+	if err != nil {
+		t.Fatalf("global orchestrator --no-wake should pass: %v\n%s", err, out)
+	}
+	if called {
+		t.Fatal("global orchestrator --no-wake must not start wake")
+	}
+	if !strings.Contains(out, "wake: skipped") {
+		t.Fatalf("output should report skipped wake:\n%s", out)
 	}
 }
 
@@ -135,7 +239,7 @@ func TestLeadRegisterStartsDrainInjectingWakeSidecar(t *testing.T) {
 	t.Cleanup(func() { leadWakeStarter = prevWake })
 
 	if _, _, err := captureOutput(t, func() error {
-		return runLead([]string{"register", "--role", "cto", "--session", "issue-96"})
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
 	}); err != nil {
 		t.Fatalf("lead register: %v", err)
 	}
@@ -176,7 +280,7 @@ func TestLeadRegisterReapplyDrainInjectOnReRegister(t *testing.T) {
 
 	register := func() error {
 		_, _, err := captureOutput(t, func() error {
-			return runLead([]string{"register", "--role", "cto", "--session", "issue-96"})
+			return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
 		})
 		return err
 	}
@@ -240,7 +344,7 @@ func TestLeadRegisterPreservesExistingNativeGoalBinding(t *testing.T) {
 	t.Cleanup(func() { statusPaneInspector = prevInspector })
 
 	if _, _, err := captureOutput(t, func() error {
-		return runLead([]string{"register", "--role", "cto", "--session", "issue-96"})
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
 	}); err != nil {
 		t.Fatalf("lead register: %v", err)
 	}
@@ -268,7 +372,7 @@ func TestLeadRegisterPreservesExistingNativeGoalBinding(t *testing.T) {
 	if env.Data.GoalBinding.Mode != "native_goal" || !env.Data.GoalBinding.Verified || env.Data.GoalBinding.NativeSource != "goal-control" {
 		t.Fatalf("status goal binding after lead register = %+v, want preserved native goal", env.Data.GoalBinding)
 	}
-	if len(env.Data.Records) != 1 || !env.Data.Records[0].OperatorVisible || env.Data.Records[0].AdoptionMode != "external" {
+	if len(env.Data.Records) != 1 || !env.Data.Records[0].OperatorVisible || env.Data.Records[0].AdoptionMode != adoptionModeExternalProjectLead {
 		t.Fatalf("status record after lead register = %+v, want operator-visible external lead", env.Data.Records)
 	}
 }
@@ -301,7 +405,7 @@ func TestLeadRegisterWriteFailurePreservesTeamLeadConfig(t *testing.T) {
 	t.Cleanup(func() { leadWakeStarter = prevWake })
 
 	if _, _, err := captureOutput(t, func() error {
-		return runLead([]string{"register", "--role", "cto", "--session", "issue-96"})
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
 	}); err == nil || !strings.Contains(err.Error(), "write external launch record") {
 		t.Fatalf("lead register err = %v, want launch record write failure", err)
 	}
@@ -333,7 +437,7 @@ func TestLeadRegisterNoWakeSkipsWakeStarter(t *testing.T) {
 	t.Cleanup(func() { leadWakeStarter = prevWake })
 
 	out, _, err := captureOutput(t, func() error {
-		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--no-wake"})
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead", "--no-wake", "--compat-no-wake", "--reason", "polling via NOC cadence"})
 	})
 	if err != nil {
 		t.Fatalf("lead register --no-wake: %v\n%s", err, out)
@@ -343,6 +447,13 @@ func TestLeadRegisterNoWakeSkipsWakeStarter(t *testing.T) {
 	}
 	if !strings.Contains(out, "wake: skipped") {
 		t.Fatalf("output should report skipped wake:\n%s", out)
+	}
+	rec, err := launch.Read(filepath.Join(os.Getenv("AMQ_FAKE_BASE"), "issue-96", "agents", "cto"))
+	if err != nil {
+		t.Fatalf("read record: %v", err)
+	}
+	if rec.NoWakeReason != "polling via NOC cadence" {
+		t.Fatalf("NoWakeReason = %q", rec.NoWakeReason)
 	}
 }
 
@@ -365,7 +476,7 @@ func TestLeadRegisterExplicitWakeStartsWakeStarter(t *testing.T) {
 	t.Cleanup(func() { leadWakeStarter = prevWake })
 
 	out, _, err := captureOutput(t, func() error {
-		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--wake"})
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--wake", "--adopt-project-lead"})
 	})
 	if err != nil {
 		t.Fatalf("lead register --wake: %v\n%s", err, out)
@@ -406,7 +517,7 @@ func TestLeadRegisterWakeFailureCanBeNonRequired(t *testing.T) {
 	t.Cleanup(func() { leadWakeStarter = prevWake })
 
 	out, _, err := captureOutput(t, func() error {
-		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--no-require-wake", "--wake-inject-via", "/opt/inject", "--wake-inject-arg", "--pane", "--wake-inject-arg", "%5"})
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead", "--no-require-wake", "--wake-inject-via", "/opt/inject", "--wake-inject-arg", "--pane", "--wake-inject-arg", "%5"})
 	})
 	if err != nil {
 		t.Fatalf("lead register --no-require-wake: %v\n%s", err, out)
@@ -538,7 +649,7 @@ func TestLeadRegisterWakeFailureRequiredErrorsBeforeTeamMutation(t *testing.T) {
 	t.Cleanup(func() { leadWakeStarter = prevWake })
 
 	if _, _, err := captureOutput(t, func() error {
-		return runLead([]string{"register", "--role", "cto", "--session", "issue-96"})
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
 	}); err == nil || !strings.Contains(err.Error(), "start external lead wake") {
 		t.Fatalf("lead register wake err = %v", err)
 	}
@@ -837,8 +948,8 @@ func TestResumeDoesNotRestoreDeadExternalLeadRecord(t *testing.T) {
 		t.Fatalf("resume plan length = %d", len(env.Data.Plan))
 	}
 	plan := env.Data.Plan[0]
-	if plan.Action != string(resumeBlocked) || plan.Command != "" || !strings.Contains(plan.Note, "lead register") {
-		t.Fatalf("external resume plan = %+v, want blocked/no command/re-register note", plan)
+	if plan.Action != string(resumeBlocked) || plan.Command != "" || !strings.Contains(plan.Note, "role boundary violation") || !strings.Contains(plan.Note, "sibling tab") {
+		t.Fatalf("external resume plan = %+v, want blocked/no command/boundary repair note", plan)
 	}
 }
 
@@ -918,5 +1029,39 @@ func TestTeamLaunchAutoRegistersCurrentPaneExternalLead(t *testing.T) {
 	}
 	if !rec.External || rec.Tmux == nil || rec.Tmux.PaneID != "%5" || rec.Trust != trustModeApproveForMe {
 		t.Fatalf("external record = %+v", rec)
+	}
+}
+
+func TestTeamLaunchDoesNotAutoRegisterProjectLeadWithoutAMRoot(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	prev := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "shell", PaneID: "%5"}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prev })
+	t.Setenv("AM_ME", "cto")
+	t.Setenv("AM_ROOT", "")
+
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filtered, skipped, err := maybeFilterCurrentExternalLead(cfg, "issue-96", team.DefaultProfile, trustModeApproveForMe, nil, nil, true)
+	if err != nil {
+		t.Fatalf("filter external lead: %v", err)
+	}
+	if skipped || len(filtered.Members) != 2 {
+		t.Fatalf("filtered = skipped:%v members:%+v, want original team", skipped, filtered.Members)
+	}
+	if _, err := launch.Read(filepath.Join(base, "issue-96", "agents", "cto")); err == nil {
+		t.Fatalf("project lead record should not be written without AM_ROOT proof")
 	}
 }

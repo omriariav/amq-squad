@@ -76,7 +76,7 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 Install the 2.0 line (note the `/v2` module path):
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.14.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.15.0
 amq-squad version
 ```
 
@@ -86,7 +86,7 @@ For the latest 2.x build:
 go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest
 ```
 
-Requires Go 1.25+, the `amq` binary on `PATH` (v0.38.0+), and `tmux` on `PATH` for `amq-squad up`.
+Requires Go 1.25+, the `amq` binary on `PATH` (v0.39.0+), and `tmux` on `PATH` for `amq-squad up`.
 
 ### Skills (plugin marketplaces)
 
@@ -268,6 +268,12 @@ amq-squad agent up codex --role cto --session issue-96
 amq-squad agent resume fullstack
 ```
 
+For Claude-binary agents launched in a tmux pane, `agent up`, `up`, and managed
+resume/replay schedule a best-effort `/rename <role>-<session>` injection after
+launch so Claude Code's resume picker shows the squad role/workstream. The
+launch is not blocked if that pane delivery fails. Codex has no equivalent
+slash command, so Codex agents are intentionally unaffected.
+
 The legacy verbs (`down`, `launch`, `restore`, `list`, `team show`, `team launch`) are **removed in 2.0**. Invoking one returns a usage error (exit 1); the replacements are listed in [Removed legacy verbs](#removed-legacy-verbs) and [`MIGRATION.md`](MIGRATION.md).
 
 ### Custom launchers
@@ -425,7 +431,9 @@ updates the lead launch record's `goal_binding` source to `goal-control`, so
 non-agent operator/global-orchestrator pane, pass
 `--register-orchestrator[=HANDLE]` to add an `orchestrator` team member
 (default handle `orchestrator`), register the current pane as an external lead,
-and start/repair its wake sidecar before delivering the goal.
+and start/repair its wake sidecar before delivering the goal. This registers
+the control-plane orchestrator identity only; it does not adopt that pane as the
+project `cto` or other project lead.
 
 #### Wakeable orchestrator identity in one command
 
@@ -436,9 +444,9 @@ identity. No manual `team member add` or separate `lead register` is needed:
 ```sh
 amq-squad goal start \
   --project /path/to/repo \
-  --session v2-14-0 \
+  --session v2-15-0 \
   --register-orchestrator=orchestrator \
-  --goal "deliver GitHub milestone v2.14.0" \
+  --goal "deliver GitHub milestone v2.15.0" \
   --yes
 ```
 
@@ -568,7 +576,7 @@ amq-squad new team --roles cto,qa --operator ops  # custom operator handle
 amq-squad new team --roles cto,qa --no-operator   # explicit opt-out
 ```
 
-The operator is not a runnable team member. AMQ 0.38.0 reserves the conventional `user` mailbox for this human/operator role; custom operator handles use the same amq-squad protocol. JSON discovery derives `operator` and `capabilities.operator_gates`; `capabilities` is not persisted in `team.json`.
+The operator is not a runnable team member. AMQ 0.38.0+ reserves the conventional `user` mailbox for this human/operator role, and amq-squad v2.15.0 still requires AMQ 0.39.0+ overall; custom operator handles use the same amq-squad protocol. JSON discovery derives `operator` and `capabilities.operator_gates`; `capabilities` is not persisted in `team.json`.
 
 Operator gates are structural AMQ handoffs, not authentication. Send human-only decisions or manual actions to the configured operator handle on stable `gate/<topic>` threads, with `--kind question --subject "APPROVAL: <decision>"` for approvals and `--kind decision --subject "DONE: <goal>"` for manual closeout. The operator replies on the same thread with `--kind answer` and subjects such as `APPROVED:`, `DENIED:`, or `ANSWER:`. If the operator answers a pending gate in a live pane/chat instead of AMQ, the lead treats it as operator input, immediately ACKs or mirrors it on the matching `gate/<topic>` thread without spoofing the operator handle, and checks both the live channel and AMQ gate/inbox state before declaring the gate blocked. P2P prose like "pending operator" is evidence only; it is not a gate. `amq-squad notify` surfaces new or stale needs-you gates with inspect/respond commands and de-duplicates unchanged items, but notification output never authorizes or clears a gate.
 
@@ -620,7 +628,29 @@ a missing visible lead uses `amq-squad goal deliver`, which is a first-class
 native `/goal` control action with delivery receipt evidence; ordinary
 `amq-squad send` remains busy-guarded for normal prompts.
 
-For an existing profile, use `amq-squad team lead set <role>` to opt into orchestration without rebuilding the roster, `team lead clear` to return to a flat squad, and `team lead show --json` for discovery. A lead that is already running in an operator-owned pane can register itself with `amq-squad lead register --role <role> --session <session>`; this writes an explicit external launch record so `status` / `focus` / `send` can target the pane. By default, registration also starts or repairs the lead's AMQ wake sidecar; pass `--wake` to make that default explicit, `--no-wake` to opt out, `--no-require-wake` to warn instead of failing, or `--wake-inject-via` with repeated `--wake-inject-arg` for external wake injectors. External lead records are visible and directable, but lifecycle commands do not own them: `stop` reports that the pane must be stopped manually, `rm` / `archive` leave it open, and `resume` asks the operator to run `lead register` again instead of replaying the pane.
+For an existing profile, use `amq-squad team lead set <role>` to opt into
+orchestration without rebuilding the roster, `team lead clear` to return to a
+flat squad, and `team lead show --json` for discovery. A lead that is already
+running in an operator-owned pane can register itself with
+`amq-squad lead register --role <role> --session <session>`; this writes an
+explicit external launch record so `status` / `focus` / `send` can target the
+pane. Project-lead registration is fail-closed: the current pane must already
+prove the exact project/profile/session/role through runtime identity, matching
+launch record, native goal binding, or explicit `--adopt-project-lead` from the
+actual project-lead pane. A global-orchestrator/NOC pane cannot be adopted as
+project `cto` merely by passing `--role cto`; status/resume report
+`lead_role_boundary_violation` and tell the operator to launch/resume a real
+project lead in a sibling tab/new managed pane, or keep the current pane as
+global orchestrator only. By default, registration also starts or repairs the
+lead's AMQ wake sidecar; pass `--wake` to make that default explicit,
+`--no-require-wake` to warn instead of failing, or `--wake-inject-via` with
+repeated `--wake-inject-arg` for external wake injectors. `--no-wake` remains
+normal for global orchestrator/NOC pollers, but project-lead `--no-wake`
+requires the explicit escape hatch `--compat-no-wake --reason <why>` and
+records that reason. External lead records are visible and directable, but
+lifecycle commands do not own them: `stop` reports that the pane must be stopped
+manually, `rm` / `archive` leave it open, and `resume` asks the operator to run
+`lead register` again instead of replaying the pane.
 
 ## Verbs
 
@@ -808,6 +838,7 @@ amq-squad dispatch --session S --role R --subject SUBJ --body BODY [--create-tas
                                   while --task links an existing task id.
 amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
                          [--wake|--no-wake] [--require-wake|--no-require-wake]
+                         [--adopt-project-lead] [--compat-no-wake --reason TEXT]
                          [--wake-inject-via PATH] [--wake-inject-arg ARG]
                                   Adopt the current tmux pane as an
                                   operator-owned external lead for an
@@ -919,7 +950,7 @@ It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--o
 
 `amq-squad amq ...` is a project-aware wrapper around AMQ diagnostics. It resolves the same AMQ root, base root, session, and handle that the squad launcher uses, then delegates to AMQ.
 
-amq-squad v2.14.0 requires AMQ 0.38.0 or newer. That floor includes eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
+amq-squad v2.15.0 requires AMQ 0.39.0 or newer. That floor includes the wake-inject stale-process fix (AMQ-owned `--inject-via` wake processes exit when their recorded owner is gone or no longer matches), plus eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
 
 Read-only diagnostics run directly:
 
@@ -1140,14 +1171,88 @@ Explicit `--trust sandboxed`, `--trust approve-for-me`, and `--trust trusted` se
 
 Pass `--model NAME` to set the native `--model` flag on Codex or Claude. `team init --model role=model,...` persists per-member models. If no explicit model is set, amq-squad looks for a global default in `AMQ_SQUAD_CONFIG`, then `$XDG_CONFIG_HOME/amq-squad/config.json`, then `~/.amq-squad/config.json`; Codex also falls back to local Codex config (`$CODEX_HOME/config.toml`, profile config when `--profile` is present, or `~/.codex/config.toml`). Supported amq-squad config keys are `model`, `codex_model`, `claude_model`, or a `models` map keyed by binary name.
 
+### Model, binary, and effort guidance
+
+Context stamp: this guidance reflects the current operator setup as of
+2026-07-02. Availability, aliases, and pricing are deployment-dependent; treat
+cost as a local tie-breaker, not as universal list-price guidance.
+
+Defaults are not limits. Agents should escalate binary, model, or effort when
+the output does not meet the bar. For shippable work, optimize for
+`intelligence > taste > cost`; cost matters only after the work is good enough.
+
+- Bulk or mechanical work defaults to Codex CLI on `gpt-5.5` in the current
+  operator setup. Use lower effort for truly mechanical edits, but raise effort
+  when the diff or tests show reasoning gaps.
+- User-facing UI, copy, API shape, or product design needs taste `>= 7`; do
+  not hand it to a purely mechanical worker just because it is cheaper.
+- Plan and implementation reviews should use `fable-5` or `opus-4.8`, with
+  `gpt-5.5` as an optional independent extra perspective.
+- Never use Haiku for amq-squad work.
+
+Direct amq-squad configuration keeps three decisions separate:
+
+- `binary` chooses the runtime CLI (`codex` or `claude`).
+- `model` chooses the native model for that runtime.
+- Codex reasoning effort is separate from model and rides through
+  `codex_args`, for example `-c model_reasoning_effort=high`. Claude has no
+  Codex effort dial; use model choice plus `claude_args` such as settings
+  overlays.
+
+amq-squad does not maintain an Anthropic model whitelist. For Claude members,
+`model` is passed through to the installed `claude --model <model>`, so accepted
+aliases depend on that Claude CLI build and account. Current expected aliases
+include `default`, `opus`, `fable`, `sonnet`, and `haiku`, plus full names the
+Claude CLI accepts such as `claude-fable-5`. That is mechanical support only:
+the amq-squad policy above still says never choose Haiku for amq-squad work.
+
+amq-squad has first-class `--model`, but no first-class `--effort`. Effort stays
+native to the target CLI: Claude effort rides through `--claude-args`, for
+example `--effort high`, and Codex effort rides through `--codex-args`, for
+example `-c model_reasoning_effort=xhigh`. The same model surface is available
+on `team init --model role=model`, `up --model role=model`,
+`resume --model role=model`, the `team member add` `--model <alias>` flag, and
+the persisted member `model` field in `team.json`.
+
+```sh
+amq-squad team member add plan-reviewer --binary claude --model claude-fable-5 \
+  --claude-args "--effort high" --session issue-96
+amq-squad team member add implementer --binary claude --model sonnet \
+  --claude-args "--effort medium" --session issue-96
+amq-squad team member add opus-reviewer --binary claude --model opus \
+  --claude-args "--effort high" --session issue-96
+amq-squad team member add codex-worker --binary codex \
+  --codex-args "-c model_reasoning_effort=xhigh" --session issue-96
+```
+
+Use `up` and `resume` overrides when the profile is durable but a launch needs
+session-specific model choices. Resume overrides apply to members launched fresh
+during that resume plan; already-live members keep their running process.
+
+```sh
+amq-squad up issue-96 --model plan-reviewer=claude-fable-5,implementer=sonnet
+amq-squad resume --session issue-96 --model plan-reviewer=opus,implementer=sonnet --exec
+```
+
+For durable rosters, the same values live in `team.json`: `binary`, `model`,
+per-member `codex_args` / `claude_args`, or team-level `binary_args` for every
+member of one binary. Prefer an explicit Codex-binary member when the job needs
+`gpt-5.5`. A thin Claude wrapper is only a compatibility pattern for
+Claude-only workflow or subagent systems. In those systems, a Claude
+workflow/agent `model:` parameter selects a Claude model only; it does not
+select a Codex model or effort level. Keep the wrapper minimal, have it delegate
+the real task to Codex CLI on `gpt-5.5`, and make that indirection visible in
+the role/scope so reviewers do not mistake it for a native Claude model choice.
+
 ```sh
 amq-squad team init --personas cto,fullstack --trust trusted
 amq-squad team init --personas cto,fullstack --trust approve-for-me
-amq-squad team init --personas cto,fullstack --model cto=gpt-5,fullstack=sonnet
-amq-squad agent up codex --model gpt-5
+amq-squad team init --personas cto,fullstack --model cto=gpt-5.5,fullstack=fable-5 \
+  --codex-args "-c model_reasoning_effort=medium"
+amq-squad agent up codex --model gpt-5.5 --codex-args "-c model_reasoning_effort=medium"
 ```
 
-amq-squad v2.14.0 requires amq **0.38.0+**. Launches pass `--require-wake` to
+amq-squad v2.15.0 requires amq **0.39.0+**. Launches pass `--require-wake` to
 `amq coop exec`, so a launch **fails at the door** when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale or
 orphaned wake. `--no-require-wake` opts out for environments where wake cannot
@@ -1216,6 +1321,13 @@ amq send \
 
 Inside an amq-squad-launched shell, use bare `amq` commands. The launcher already injected `AM_ROOT`, `AM_BASE_ROOT`, and `AM_ME`; override them only when intentionally inspecting a different project or handle. For important handoffs, use `--wait-for drained --wait-timeout 60s` and keep the AMQ message id. If routing is unclear, run `amq route explain` or `amq-squad amq route --to <handle>` first.
 
+From an external lead or operator-owned pane, prefer the root-correct wrapper:
+`amq-squad amq send --session <S> --me <handle> ...`. When `--me` names a
+team role/handle, the wrapper verifies that role is bound in the namespace
+before sending; a global orchestrator cannot raise gates as `cto` before a real
+`cto` exists. Emergency recovery sends require the explicit audited override
+`--unsafe-send-as --reason <why>`.
+
 ## Files amq-squad writes
 
 ```text
@@ -1265,5 +1377,5 @@ Replay paths that emit copy-paste commands use the modern `agent up <binary>` co
 ## Requires
 
 - Go 1.25+
-- `amq` binary on `PATH` (v0.38.0+)
+- `amq` binary on `PATH` (v0.39.0+)
 - `tmux` on `PATH` for `amq-squad up`
