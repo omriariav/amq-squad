@@ -66,6 +66,7 @@ Each agent should summarize the prior context it used before taking new work.
 - Raise role-shape ambiguity early on the team thread.
 - Prefer small, reviewable changes.
 - Bring members up via `amq-squad up`; preview via `amq-squad up --dry-run`. Use `resume` for recovery plans and `fork --from <current> --as <new>` for branching workstreams.
+- If a worker environment cannot rebase safely or lacks the tooling to do it, use merge-style reconciliation instead: fetch the current base, merge it into the work branch, resolve conflicts without discarding user/agent changes, and report the fallback plus conflict evidence in the review handoff. Do not force-push, rewrite history, or treat rebase failure as permission to drop local work.
 
 ## Approvals
 

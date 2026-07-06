@@ -94,6 +94,7 @@ type statusEnvelopeData struct {
 	GoalBinding       goalBindingData        `json:"goal_binding"`
 	Autonomous        team.AutonomousStatus  `json:"autonomous"`
 	Execution         executionModeData      `json:"execution"`
+	Versions          versionAlignmentData   `json:"versions"`
 	NamespaceConflict *namespaceConflictData `json:"namespace_conflict,omitempty"`
 	Warnings          []statusWarning        `json:"warnings,omitempty"`
 	Topology          *statusTopology        `json:"topology,omitempty"`
@@ -318,6 +319,7 @@ type statusExecution struct {
 	Out              io.Writer
 	JSON             bool
 	RuntimeVersion   string
+	VersionSources   versionAlignmentSources
 }
 
 func executeStatus(s statusExecution) error {
@@ -362,6 +364,10 @@ func executeStatus(s statusExecution) error {
 		if version == "" {
 			version = "dev"
 		}
+		versionSources := s.VersionSources
+		if strings.TrimSpace(versionSources.RunningVersion) == "" {
+			versionSources.RunningVersion = version
+		}
 		invariantErrors := annotateVisibilityInvariants(rows, ctx)
 		execution := executionContractForTeam(t, s.Profile, workstream, binding.Mode, topologyMode(topology), version)
 		execution.InvariantsEvaluated = true
@@ -382,6 +388,7 @@ func executeStatus(s statusExecution) error {
 			GoalBinding:       binding,
 			Autonomous:        team.EffectiveAutonomousStatus(t),
 			Execution:         execution,
+			Versions:          buildVersionAlignment(versionSources),
 			NamespaceConflict: conflict,
 			Warnings:          warnings,
 			Topology:          topology,

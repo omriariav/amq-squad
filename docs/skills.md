@@ -172,7 +172,10 @@ This is the everyday skill. The lifecycle is one small state machine:
    selected namespace's brief.
 2. **Discover live state.** `amq-squad status` (board), `status --session <name>`
    (detail), `amq-squad console` (live TUI), `amq-squad doctor` (health,
-   including PATH and Codex skill-cache alignment).
+   including PATH binary, Codex/Claude plugin cache, and skill-marker
+   alignment). `status --json` and `doctor --json` expose the same alignment in
+   `data.versions`, and `up` warns before launch when a detectable mismatch
+   would make workers inherit different instructions or binaries.
 3. **Bring members up.** `amq-squad up <session>` (NEW work; refuses an existing
    session), or `resume` to continue one.
 4. **Route + drain.** Hand off over AMQ, request reviews, drain your inbox.

@@ -112,7 +112,11 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
    - `amq-squad status` (or bare `amq-squad`) for the multi-session board; `status --session <name>` for the single-session detail.
    - Before lifecycle mutations, resolve the exact profile and session: `amq-squad team profiles --json`, `amq-squad status`, then `amq-squad status --project <repo> --profile <profile> --session <session> --json`. Treat the action commands in that JSON as the source of truth for follow-up control.
    - `amq-squad console` for the live read-only Mission Control TUI (`--once` for a static board in CI / no-TTY).
-   - `amq-squad doctor` for AMQ version / tmux / wake / marker integrity.
+   - `amq-squad doctor` for AMQ version, PATH binary skew, Codex/Claude plugin
+     cache + skill-marker alignment, tmux, wake, and marker integrity. JSON
+     `doctor` and `status` expose the same `data.versions` alignment object,
+     and `up` warns before launch when detectable binary/plugin/skill versions
+     diverge.
    - `amq-squad history` for restorable records in this project (use `--project a,b` to widen scope only when the user explicitly asks).
 
 4. **Bring members up / stop / back.**

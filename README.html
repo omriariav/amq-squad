@@ -1468,9 +1468,10 @@ amq-squad thread --session NAME --id THREAD [--project DIR] [--include-body=fals
 amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
                                   AMQ version, AMQ ops diagnostics, the amq-squad
                                   on PATH vs this build (version skew — spawned
-                                  agents inherit the PATH binary), Codex plugin
-                                  skill-cache alignment, profile config, tmux,
-                                  wake, marker integrity, and pointer-sync drift.
+                                  agents inherit the PATH binary), Codex/Claude
+                                  plugin cache and skill-version alignment,
+                                  profile config, tmux, wake, marker integrity,
+                                  and pointer-sync drift.
 amq-squad amq env [--project DIR] [--session NAME] [--me HANDLE] [--json]
                                   Show the AMQ context amq-squad resolved for
                                   this project/session.
@@ -1647,7 +1648,14 @@ external clients: <code>operator.enabled</code>,
 mode-safe fields name the control root, target project root,
 profile/session namespace, visible lead/team, mutable actor, whether
 implementation is allowed, goal binding, topology, polling requirement,
-mode errors, and runtime-vs-target version compatibility.</p>
+mode errors, and runtime-vs-target version compatibility.
+<code>status --json</code> and <code>doctor --json</code> also include a
+<code>versions</code> object with the running binary, the
+<code>amq-squad</code> found on <code>PATH</code>, Codex and Claude
+plugin-cache manifest versions, the loaded skill marker where
+detectable, and per-source <code>matches_running</code> / warning
+details. <code>up</code> emits the same mismatch warnings before launch
+when it can detect them.</p>
 <div class="sourceCode" id="cb27"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> history <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>

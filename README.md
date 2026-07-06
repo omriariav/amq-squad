@@ -891,9 +891,10 @@ amq-squad thread --session NAME --id THREAD [--project DIR] [--include-body=fals
 amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
                                   AMQ version, AMQ ops diagnostics, the amq-squad
                                   on PATH vs this build (version skew — spawned
-                                  agents inherit the PATH binary), Codex plugin
-                                  skill-cache alignment, profile config, tmux,
-                                  wake, marker integrity, and pointer-sync drift.
+                                  agents inherit the PATH binary), Codex/Claude
+                                  plugin cache and skill-version alignment,
+                                  profile config, tmux, wake, marker integrity,
+                                  and pointer-sync drift.
 amq-squad amq env [--project DIR] [--session NAME] [--me HANDLE] [--json]
                                   Show the AMQ context amq-squad resolved for
                                   this project/session.
@@ -1015,6 +1016,11 @@ when execution ownership is relevant. The mode-safe fields name the control
 root, target project root, profile/session namespace, visible lead/team,
 mutable actor, whether implementation is allowed, goal binding, topology,
 polling requirement, mode errors, and runtime-vs-target version compatibility.
+`status --json` and `doctor --json` also include a `versions` object with the
+running binary, the `amq-squad` found on `PATH`, Codex and Claude plugin-cache
+manifest versions, the loaded skill marker where detectable, and per-source
+`matches_running` / warning details. `up` emits the same mismatch warnings before
+launch when it can detect them.
 
 ```sh
 amq-squad status --json | jq .

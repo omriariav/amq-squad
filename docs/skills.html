@@ -564,7 +564,12 @@ workstream, then read the selected namespace's brief.</li>
 <li><strong>Discover live state.</strong> <code>amq-squad status</code>
 (board), <code>status --session &lt;name&gt;</code> (detail),
 <code>amq-squad console</code> (live TUI), <code>amq-squad doctor</code>
-(health, including PATH and Codex skill-cache alignment).</li>
+(health, including PATH binary, Codex/Claude plugin cache, and
+skill-marker alignment). <code>status --json</code> and
+<code>doctor --json</code> expose the same alignment in
+<code>data.versions</code>, and <code>up</code> warns before launch when
+a detectable mismatch would make workers inherit different instructions
+or binaries.</li>
 <li><strong>Bring members up.</strong>
 <code>amq-squad up &lt;session&gt;</code> (NEW work; refuses an existing
 session), or <code>resume</code> to continue one.</li>
