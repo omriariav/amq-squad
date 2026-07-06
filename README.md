@@ -77,7 +77,7 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 Install the 2.0 line (note the `/v2` module path):
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.15.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.16.0
 amq-squad version
 ```
 
@@ -447,7 +447,7 @@ amq-squad goal start \
   --project /path/to/repo \
   --session v2-15-0 \
   --register-orchestrator=orchestrator \
-  --goal "deliver GitHub milestone v2.15.0" \
+  --goal "deliver GitHub milestone v2.16.0" \
   --yes
 ```
 
