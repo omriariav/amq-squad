@@ -691,6 +691,176 @@ func findStatusWarning(warnings []statusWarning, kind string) *statusWarning {
 	return nil
 }
 
+func swapStatusLocalInputDetector(t *testing.T, fn func(string) (tmuxpane.LocalInputBlocker, bool)) {
+	t.Helper()
+	prev := statusLocalInputDetector
+	statusLocalInputDetector = fn
+	t.Cleanup(func() { statusLocalInputDetector = prev })
+}
+
+func TestStatusJSONSurfacesManagedChildLocalInputBlocker(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-320"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-320"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-320", "cto", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-320",
+		AgentPID: 1001,
+		Tmux:     &launch.TmuxInfo{Session: "squad", WindowID: "@1", PaneID: "%1", Target: "new-window"},
+	})
+	seedAgentRecord(t, base, "issue-320", "qa", launch.Record{
+		CWD:      dir,
+		Binary:   "claude",
+		Handle:   "qa",
+		Role:     "qa",
+		Session:  "issue-320",
+		AgentPID: 1002,
+		Tmux:     &launch.TmuxInfo{Session: "squad", WindowID: "@2", PaneID: "%2", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}, {PaneID: "%2"}}, nil)
+	var calls []string
+	swapStatusLocalInputDetector(t, func(paneID string) (tmuxpane.LocalInputBlocker, bool) {
+		calls = append(calls, paneID)
+		if paneID != "%2" {
+			return tmuxpane.LocalInputBlocker{}, false
+		}
+		return tmuxpane.LocalInputBlocker{
+			Kind:        "approval_prompt",
+			Summary:     "Permission rule Bash(rm -rf *) requires confirmation",
+			Destructive: true,
+			Recovery:    "operator decision required, or ask the worker to use a non-destructive alternative before proceeding",
+		}, true
+	})
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-320",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{1001: true, 1002: true}, map[int]bool{1001: true, 1002: true}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	if strings.Join(calls, ",") != "%2" {
+		t.Fatalf("local input detector calls = %v, want only managed child pane %%2", calls)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	qa := findStatusRecord(env.Data.Records, "qa")
+	if qa == nil || qa.LocalInput == nil {
+		t.Fatalf("qa local_input missing: %+v", env.Data.Records)
+	}
+	if qa.LocalInput.Status != "blocked" || qa.LocalInput.Kind != "approval_prompt" ||
+		qa.LocalInput.PaneID != "%2" || !qa.LocalInput.Destructive ||
+		qa.LocalInput.Source != "tmux-pane-tail" {
+		t.Fatalf("qa local_input = %+v", qa.LocalInput)
+	}
+	if cto := findStatusRecord(env.Data.Records, "cto"); cto == nil || cto.LocalInput != nil {
+		t.Fatalf("lead row must not get local_input: %+v", cto)
+	}
+	warning := findStatusWarning(env.Data.Warnings, "local_input_blocked")
+	if warning == nil {
+		t.Fatalf("local_input_blocked warning missing: %+v", env.Data.Warnings)
+	}
+	for _, want := range []string{"role qa", "pane %2", "local prompt waits", "AMQ may stay silent", "non-destructive alternative"} {
+		if !strings.Contains(warning.Detail, want) {
+			t.Fatalf("warning detail missing %q: %q", want, warning.Detail)
+		}
+	}
+	if !strings.Contains(warning.SuggestedCommand, "amq-squad focus") || !strings.Contains(warning.SuggestedCommand, "--role qa") {
+		t.Fatalf("warning suggested command should focus the blocked child: %+v", warning)
+	}
+	for _, forbidden := range []string{"auto-approve", "--force"} {
+		if strings.Contains(strings.ToLower(qa.LocalInput.Recovery), forbidden) ||
+			strings.Contains(strings.ToLower(warning.Detail), forbidden) ||
+			strings.Contains(strings.ToLower(warning.SuggestedCommand), forbidden) {
+			t.Fatalf("local input recovery surfaces unsafe suggestion %q: local=%q warning=%+v", forbidden, qa.LocalInput.Recovery, warning)
+		}
+	}
+}
+
+func TestStatusLocalInputSkipsExternalUnmanagedAndDeadPanes(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-320"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-320"},
+			{Role: "docs", Binary: "codex", Handle: "docs", Session: "issue-320"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-320", "cto", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-320",
+		External: true,
+		Tmux:     &launch.TmuxInfo{Session: "operator", WindowID: "@1", PaneID: "%1", Target: "external"},
+	})
+	seedAgentRecord(t, base, "issue-320", "qa", launch.Record{
+		CWD:      dir,
+		Binary:   "claude",
+		Handle:   "qa",
+		Role:     "qa",
+		Session:  "issue-320",
+		AgentPID: 1002,
+		Tmux:     &launch.TmuxInfo{Session: "adopted", WindowID: "@2", PaneID: "%2"},
+	})
+	seedAgentRecord(t, base, "issue-320", "docs", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "docs",
+		Role:     "docs",
+		Session:  "issue-320",
+		AgentPID: 1003,
+		Tmux:     &launch.TmuxInfo{Session: "squad", WindowID: "@3", PaneID: "%3", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}, {PaneID: "%2"}}, nil)
+	var calls []string
+	swapStatusLocalInputDetector(t, func(paneID string) (tmuxpane.LocalInputBlocker, bool) {
+		calls = append(calls, paneID)
+		return tmuxpane.LocalInputBlocker{
+			Kind:     "approval_prompt",
+			Summary:  "Do you want to allow this command?",
+			Recovery: "operator decision required",
+		}, true
+	})
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-320",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{1002: true, 1003: false}, map[int]bool{1002: true, 1003: false}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("detector should skip external lead, unmanaged/adopted pane, and dead pane; calls=%v", calls)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	for _, row := range env.Data.Records {
+		if row.LocalInput != nil {
+			t.Fatalf("no row should carry local_input: %+v", row)
+		}
+	}
+	if warning := findStatusWarning(env.Data.Warnings, "local_input_blocked"); warning != nil {
+		t.Fatalf("no local_input_blocked warning expected: %+v", warning)
+	}
+}
+
 func TestExecuteStatusJSONSameProfileSessionKeepsLegacyAgentDurableConflict(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	dir := t.TempDir()

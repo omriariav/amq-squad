@@ -949,6 +949,8 @@ Global output flags work before or after the subcommand: `--quiet`, `--verbose`,
 
 Per-agent rows may include activity from `<amq-root>/agents/<handle>/activity.json`, written by `amq-squad activity set` or cheap task-transition stamps. `status --json` exposes this under `records[].activity` with `source` (`heartbeat-file`, `task-store`, or `unknown`) and `quality` (`fresh`, `stale`, or `unknown`) so clients can distinguish an agent-written heartbeat from task-store ownership fallback.
 
+Managed child rows may also include `records[].local_input` when a read-only pane-tail blind-spot detection heuristic sees a local approval/input prompt. This is not a coordination or progress primitive: capture failures, dead panes, and unparseable tails produce no field, so absence means "not observed", not "not blocked". When present, `data.warnings[]` includes `kind:"local_input_blocked"` with the role, pane, prompt summary, and recovery guidance; destructive prompts require an operator decision or a non-destructive alternative.
+
 `amq-squad console` is the project-scoped Mission Control TUI for the current team-home.
 
 ```sh

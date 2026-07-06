@@ -33,6 +33,18 @@ var statusPaneLister = tmuxpane.DefaultPaneLister
 // control mode). Injected as a package var so tests supply a fake.
 var statusPaneInspector = tmuxpane.InspectPaneByID
 
+// statusLocalInputDetector is best-effort and intentionally error-suppressing:
+// capture failures, dead panes, and unparseable tails should mean "no heuristic
+// signal", never a status command failure or proof that the agent is not
+// blocked locally.
+var statusLocalInputDetector = func(paneID string) (tmuxpane.LocalInputBlocker, bool) {
+	blocker, ok, err := tmuxpane.DetectLocalInputBlocker(paneID)
+	if err != nil {
+		return tmuxpane.LocalInputBlocker{}, false
+	}
+	return blocker, ok
+}
+
 // paneCloser closes an agent's tmux pane on teardown (kill-pane). Injected as a
 // package var so tests record the call instead of killing a real pane. It
 // MUTATES tmux, so callers gate it on the agent being down.
@@ -171,6 +183,10 @@ type statusRecord struct {
 	// entries come from an agent-written activity.json; task-store entries only
 	// seed current-task ownership and must not be treated as liveness.
 	Activity *activity.Snapshot `json:"activity,omitempty"`
+	// LocalInput is an additive best-effort hint that a managed child pane is
+	// waiting on a local approval/input prompt. Absence means "not observed",
+	// not "not blocked".
+	LocalInput *statusLocalInput `json:"local_input,omitempty"`
 	// PreauthorizedActions surfaces the in-scope worker actions amq-squad
 	// pre-authorized at launch (#296) so the active allowlist is auditable from
 	// status --json. Empty/omitted for legacy records and launches with no
@@ -179,6 +195,16 @@ type statusRecord struct {
 	// Actions are the stable, project-scoped commands a client can render/copy
 	// for this member (focus/send/resume/status). Populated for --json only.
 	Actions []runtimeActionJSON `json:"actions,omitempty"`
+}
+
+type statusLocalInput struct {
+	Status      string `json:"status"`
+	Kind        string `json:"kind"`
+	PaneID      string `json:"pane_id,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+	Destructive bool   `json:"destructive,omitempty"`
+	Recovery    string `json:"recovery"`
+	Source      string `json:"source"`
 }
 
 type statusTopology struct {
@@ -312,6 +338,7 @@ func executeStatus(s statusExecution) error {
 	}
 
 	rows := buildStatusRows(t, s.Profile, workstream, s.Probe)
+	warnings = append(warnings, statusLocalInputWarnings(t.Project, s.Profile, workstream, rows)...)
 	if s.JSON {
 		ns := squadnamespace.Resolve(t.Project, s.Profile, workstream)
 		conflict := namespaceConflictForProfileSession(t.Project, s.Profile, workstream)
@@ -1131,6 +1158,7 @@ func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLau
 		}
 	}
 	attachStatusActivities(t.Project, profile, workstream, rows, probe.Now())
+	attachStatusLocalInputs(t, rows)
 	return rows
 }
 
@@ -1178,6 +1206,71 @@ func taskStoreActivity(t taskstore.Task, now time.Time) *activity.Snapshot {
 	}
 	act := activity.TaskStoreSnapshot(t.AssignedTo, t.ID, detail, t.UpdatedAt, now, activity.DefaultStaleAfter)
 	return &act
+}
+
+func attachStatusLocalInputs(t team.Team, rows []statusRecord) {
+	for i := range rows {
+		if !statusLocalInputCandidate(t, rows[i]) {
+			continue
+		}
+		blocker, ok := statusLocalInputDetector(rows[i].Tmux.PaneID)
+		if !ok {
+			continue
+		}
+		rows[i].LocalInput = &statusLocalInput{
+			Status:      "blocked",
+			Kind:        blocker.Kind,
+			PaneID:      rows[i].Tmux.PaneID,
+			Summary:     blocker.Summary,
+			Destructive: blocker.Destructive,
+			Recovery:    blocker.Recovery,
+			Source:      "tmux-pane-tail",
+		}
+	}
+}
+
+func statusLocalInputCandidate(t team.Team, row statusRecord) bool {
+	if !t.Orchestrated {
+		return false
+	}
+	lead := strings.TrimSpace(t.Lead)
+	if lead == "" || row.Role == lead {
+		return false
+	}
+	if row.External || row.Tmux == nil || strings.TrimSpace(row.Tmux.PaneID) == "" || !row.Tmux.PaneAlive {
+		return false
+	}
+	switch strings.TrimSpace(row.Tmux.Target) {
+	case "current-window", "new-window", "new-session":
+		return true
+	default:
+		return false
+	}
+}
+
+func statusLocalInputWarnings(projectDir, profile, session string, rows []statusRecord) []statusWarning {
+	var warnings []statusWarning
+	for _, row := range rows {
+		if row.LocalInput == nil {
+			continue
+		}
+		cmd := "amq-squad focus --role " + shellQuote(row.Role) + taskScope(projectDir, profile, session)
+		detail := fmt.Sprintf(
+			"role %s (handle %s) appears blocked on local UI input in pane %s: %s; AMQ may stay silent while the local prompt waits; recovery: %s",
+			row.Role,
+			printableHandle(row.Handle),
+			row.LocalInput.PaneID,
+			row.LocalInput.Summary,
+			row.LocalInput.Recovery,
+		)
+		warnings = append(warnings, statusWarning{
+			Kind:             "local_input_blocked",
+			Session:          session,
+			Detail:           detail,
+			SuggestedCommand: cmd,
+		})
+	}
+	return warnings
 }
 
 func orchestrationStatusFields(t team.Team) (bool, string, string) {
