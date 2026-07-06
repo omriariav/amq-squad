@@ -8,7 +8,7 @@
 //
 // Architectural invariants this package upholds:
 //
-//   - internal/state stays stdlib-only. This package is the ONLY place that
+//   - internal/state stays TUI-free. This package is the ONLY place that
 //     imports bubbletea / bubbles / lipgloss / fsnotify; the read-only state
 //     model never learns about the TUI.
 //

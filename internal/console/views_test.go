@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
@@ -95,6 +96,38 @@ func richFixture() state.Snapshot {
 	roll.Add(sB.Rollup)
 	// Order deliberately NOT attention-first on disk, so the board's sort is tested.
 	return state.Snapshot{BaseRoot: "/base", Sessions: []state.Session{sB, sA}, Rollup: roll}
+}
+
+func TestStaticBoardShowsAgentActivity(t *testing.T) {
+	snap := state.Snapshot{
+		BaseRoot: "/base",
+		Sessions: []state.Session{{
+			Name: "issue-326",
+			Agents: []state.Agent{{
+				Handle:   "qa",
+				Engine:   "codex",
+				Liveness: state.LivenessAlive,
+				Activity: &activity.Snapshot{
+					Source:    activity.SourceHeartbeat,
+					Quality:   activity.StateFresh,
+					Handle:    "qa",
+					TaskID:    "t11",
+					Phase:     "testing",
+					Detail:    "make ci",
+					WrittenAt: viewNow.Add(-30 * time.Second),
+				},
+			}},
+		}},
+	}
+	out := staticBoardBody(snap, func() time.Time { return viewNow })
+	if !strings.Contains(out, "task:t11 testing fresh") {
+		t.Fatalf("static board missing activity:\n%s", out)
+	}
+
+	peek := peekAgent(snap.Sessions[0], true, "qa", func() time.Time { return viewNow })
+	if !strings.Contains(peek, "activity: task:t11 testing fresh") || !strings.Contains(peek, "make ci") {
+		t.Fatalf("agent peek missing activity detail:\n%s", peek)
+	}
 }
 
 // keyMsg builds a tea.KeyMsg for a single-rune or named key.

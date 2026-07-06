@@ -239,6 +239,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"task":        true,
 		"verify":      true,
 		"operator":    true,
+		"activity":    true,
 		"up":          true,
 		"stop":        true,
 		"brief":       true,

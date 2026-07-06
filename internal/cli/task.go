@@ -4,10 +4,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/activity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -341,6 +343,7 @@ func runTaskTransition(args []string, verb string) error {
 	if err != nil {
 		return err
 	}
+	stampTaskActivity(projectDir, profile, session, me, verb, t, now)
 	if *jsonOut {
 		return printJSONEnvelope("task_"+verb, mutationResult{
 			Command:   "task " + verb,
@@ -363,4 +366,39 @@ func runTaskTransition(args []string, verb string) error {
 	}
 	fmt.Println()
 	return nil
+}
+
+func stampTaskActivity(projectDir, profile, session, actor, verb string, t task.Task, now time.Time) {
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return
+	}
+	ctx, err := resolveAMQContextForNamespace(projectDir, profile, session, actor)
+	if err != nil {
+		return
+	}
+	phase := "task_" + verb
+	switch verb {
+	case "claim":
+		phase = "task_claimed"
+	case "done":
+		phase = "task_done"
+	case "fail":
+		phase = "task_failed"
+	case "block":
+		phase = "task_blocked"
+	case "reset":
+		phase = "task_reset"
+	}
+	detail := strings.TrimSpace(t.Title)
+	if detail == "" {
+		detail = "task " + t.ID
+	}
+	_ = activity.Write(filepath.Join(ctx.Root, "agents", ctx.Me), activity.File{
+		Handle:    ctx.Me,
+		TaskID:    t.ID,
+		Phase:     phase,
+		Detail:    detail,
+		WrittenAt: now,
+	})
 }
