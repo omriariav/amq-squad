@@ -93,6 +93,41 @@ amq-squad operator answer --project <project> --profile <profile> --session <ses
 If `next` reports idle with exit code 1, there is no current operator action for
 that scoped profile/session.
 
+## Command Primitive Decision Table
+
+When steering a live squad, choose the command family by intent:
+
+| Intent | Use | Why |
+| --- | --- | --- |
+| Supervise a run | `amq-squad status`, `operator status`, `operator watch`, `next`, `task`, `collect` | These commands resolve the project/profile/session and show the squad model. Use `collect` for lead-side reports when raw AMQ would say `refusing collect` of a `lead-owned mailbox`; it follows the #322 collect-vs-drain contract. |
+| Tell the visible lead something now | `amq-squad send --project <project> --profile <profile> --session <session> --role <lead-role> --body "..."` | This is live tmux pane delivery to the recorded agent pane. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
+| Assign durable work and wake a recipient | `amq-squad dispatch --project <project> --profile <profile> --session <session> --role <role> --kind todo --subject "..." --body "..."` | Dispatch sends a durable AMQ task to the resolved workstream root and wakes or nudges the agent to drain it. This is the usual lead-to-worker path. |
+| Read or write AMQ mailboxes directly | Raw `amq send/read/drain/thread` only from the correct coop/session shell, or with an explicit `--root`. From an external pane, prefer `amq-squad amq ...`. | Raw AMQ is mailbox plumbing, not squad routing. If the profile/session root is wrong, you can reproduce #328-style namespace mistakes: `implicit default-profile mutation`, `legacy/default session root`, or `refusing before write`. |
+
+Typical orchestrated flow: the operator uses `amq-squad send` or
+`operator directive` to steer the visible lead; the lead uses `task`,
+`dispatch`, and `collect` to coordinate workers. Do not use raw AMQ from an
+external operator pane unless the mailbox root is explicit.
+
+Ambiguous from an external pane:
+
+```sh
+amq send --session <session> --to <worker-handle> --thread p2p/<lead>__<worker> \
+  --kind todo --subject "Task" --body "..."
+```
+
+Root-resolving alternatives:
+
+```sh
+amq-squad amq send --project <project> --profile <profile> --session <session> \
+  --to <worker-handle> --thread p2p/<lead>__<worker> \
+  --kind todo --subject "Task" --body "..."
+
+amq send --root <project>/.agent-mail/<profile>/<session> \
+  --to <worker-handle> --thread p2p/<lead>__<worker> \
+  --kind todo --subject "Task" --body "..."
+```
+
 ## Issue Or Dogfood Run
 
 Start with a dry run, then confirm delivery:

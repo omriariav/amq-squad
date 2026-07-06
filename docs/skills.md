@@ -217,6 +217,25 @@ the configured operator handle escalate from `initial` to `reminder` after 30m
 and `strong-warning` after 2h. `amq-squad notify` bypasses its normal throttle
 when the escalation band advances, while `status --json` warnings and
 `console --once` make aged gates visually distinct.
+
+### Operator primitive decision table
+
+| Intent | Use | Why |
+| --- | --- | --- |
+| Supervise a squad | `amq-squad status`, `console`, `task`, `collect` | Resolves the project/profile/session and shows the squad model. Use `collect` for lead-side reports when raw AMQ would say `refusing collect` of a `lead-owned mailbox`; it follows the #322 collect-vs-drain contract. |
+| Tell a live visible lead something now | `amq-squad send --session S --role lead --body "..."` | Tmux pane delivery to the recorded pane. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
+| Assign durable work and wake the recipient | `amq-squad dispatch --session S --role worker --kind todo --subject "..." --body "..."` | Queues durable AMQ in the resolved workstream root and wakes or nudges the agent to drain it. This is the usual lead-to-worker path. |
+| Read or write AMQ mailboxes directly | Raw `amq send/read/drain/thread` only inside the correct coop/session shell, or with explicit `--root`; otherwise prefer `amq-squad amq ...`. | Raw AMQ is mailbox plumbing. From an external pane, the wrong root can trigger the same class of namespace problem as #328: `implicit default-profile mutation`, `legacy/default session root`, or `refusing before write`. |
+
+For orchestrated squads, the operator normally talks to the visible lead with
+`amq-squad send` or an operator directive; the lead uses `task`, `dispatch`, and
+`collect` for workers. A raw `amq send --session ...` from an external pane is
+ambiguous for named-profile squads because it may write the default
+`.agent-mail/<session>` while workers drain `.agent-mail/<profile>/<session>`.
+Use `amq-squad amq send --project <project> --profile <profile> --session <S>
+...` or raw `amq send --root <project>/.agent-mail/<profile>/<session> ...`
+when direct mailbox plumbing is intentional.
+
 Claude-binary agents launched in tmux also get a best-effort delayed
 `/rename <role>-<session>` injection, including managed `resume --exec` /
 `agent resume` replay. Failure to deliver the rename does not block launch.

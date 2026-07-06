@@ -2055,6 +2055,77 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb40-1"><a href="#
 <span id="cb40-11"><a href="#cb40-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--wait-for</span> drained <span class="at">--wait-timeout</span> 60s</span></code></pre></div>
 <p><code>amq send</code> reads stdin when <code>--body</code> is
 omitted. There is no <code>--body-file</code> flag.</p>
+<h3 id="which-messaging-primitive-should-i-use">Which messaging
+primitive should I use?</h3>
+<table>
+<thead>
+<tr>
+<th>Intent</th>
+<th>Use</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Supervise a squad</td>
+<td><code>amq-squad status</code>, <code>console</code>,
+<code>task</code>, <code>collect</code></td>
+<td>These resolve the project/profile/session and show the squad model.
+Use <code>collect</code> for lead-side reports when raw AMQ would say
+<code>refusing collect</code> of a <code>lead-owned mailbox</code>; it
+follows the #322 collect-vs-drain contract.</td>
+</tr>
+<tr>
+<td>Tell a live visible lead something now</td>
+<td><code>amq-squad send --session S --role lead --body "..."</code></td>
+<td>This is tmux pane delivery to the recorded live pane. It is
+<strong>not</strong> a durable AMQ protocol message: no
+<code>--kind</code>, no <code>--thread</code>, no mailbox receipt.</td>
+</tr>
+<tr>
+<td>Assign durable work and wake a recipient</td>
+<td><code>amq-squad dispatch --session S --role worker --kind todo --subject "..." --body "..."</code></td>
+<td>Dispatch queues durable AMQ in the resolved workstream root and
+wakes or nudges the agent to drain it, especially for lead-to-worker
+tasks.</td>
+</tr>
+<tr>
+<td>Read or write AMQ mailboxes directly</td>
+<td>Raw <code>amq send/read/drain/thread</code> only inside the correct
+coop/session shell, or with explicit <code>--root</code>; otherwise
+prefer <code>amq-squad amq ...</code>.</td>
+<td>Raw AMQ is mailbox plumbing. From an external pane, the wrong root
+can reproduce the #328 class of namespace mistakes:
+<code>implicit default-profile mutation</code>,
+<code>legacy/default session root</code>, or
+<code>refusing before write</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>In an orchestrated squad, the operator normally steers the visible
+lead with <code>amq-squad send</code> or an operator directive; the lead
+uses <code>task</code>, <code>dispatch</code>, and <code>collect</code>
+to coordinate workers. A raw <code>amq send --session ...</code> from an
+external pane is ambiguous for named-profile squads because it may write
+the default <code>.agent-mail/&lt;session&gt;</code> while workers drain
+<code>.agent-mail/&lt;profile&gt;/&lt;session&gt;</code>. Use the
+<code>amq-squad amq</code> wrapper or an explicit raw
+<code>--root</code> only when direct mailbox plumbing is
+intentional:</p>
+<div class="sourceCode" id="cb41"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Ambiguous from an external pane:</span></span>
+<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--session</span> issue-96 <span class="at">--to</span> developer <span class="at">--thread</span> p2p/cto__developer <span class="dt">\</span></span>
+<span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> todo <span class="at">--subject</span> <span class="st">&quot;Task&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span>
+<span id="cb41-4"><a href="#cb41-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-5"><a href="#cb41-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Root-resolving wrapper:</span></span>
+<span id="cb41-6"><a href="#cb41-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq send <span class="at">--project</span> /path/to/repo <span class="at">--profile</span> release <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb41-7"><a href="#cb41-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> developer <span class="at">--thread</span> p2p/cto__developer <span class="dt">\</span></span>
+<span id="cb41-8"><a href="#cb41-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> todo <span class="at">--subject</span> <span class="st">&quot;Task&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span>
+<span id="cb41-9"><a href="#cb41-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-10"><a href="#cb41-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Explicit raw AMQ root:</span></span>
+<span id="cb41-11"><a href="#cb41-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /path/to/repo/.agent-mail/release/issue-96 <span class="dt">\</span></span>
+<span id="cb41-12"><a href="#cb41-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> developer <span class="at">--thread</span> p2p/cto__developer <span class="dt">\</span></span>
+<span id="cb41-13"><a href="#cb41-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> todo <span class="at">--subject</span> <span class="st">&quot;Task&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span></code></pre></div>
 <p>Inside an amq-squad-launched shell, use bare <code>amq</code>
 commands. The launcher already injected <code>AM_ROOT</code>,
 <code>AM_BASE_ROOT</code>, and <code>AM_ME</code>; override them only

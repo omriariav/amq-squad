@@ -657,8 +657,66 @@ operator handle escalate from <code>initial</code> to
 <code>reminder</code> after 30m and <code>strong-warning</code> after
 2h. <code>amq-squad notify</code> bypasses its normal throttle when the
 escalation band advances, while <code>status --json</code> warnings and
-<code>console --once</code> make aged gates visually distinct.
-Claude-binary agents launched in tmux also get a best-effort delayed
+<code>console --once</code> make aged gates visually distinct.</p>
+<h3 id="operator-primitive-decision-table">Operator primitive decision
+table</h3>
+<table>
+<thead>
+<tr>
+<th>Intent</th>
+<th>Use</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Supervise a squad</td>
+<td><code>amq-squad status</code>, <code>console</code>,
+<code>task</code>, <code>collect</code></td>
+<td>Resolves the project/profile/session and shows the squad model. Use
+<code>collect</code> for lead-side reports when raw AMQ would say
+<code>refusing collect</code> of a <code>lead-owned mailbox</code>; it
+follows the #322 collect-vs-drain contract.</td>
+</tr>
+<tr>
+<td>Tell a live visible lead something now</td>
+<td><code>amq-squad send --session S --role lead --body "..."</code></td>
+<td>Tmux pane delivery to the recorded pane. It is <strong>not</strong>
+a durable AMQ protocol message: no <code>--kind</code>, no
+<code>--thread</code>, no mailbox receipt.</td>
+</tr>
+<tr>
+<td>Assign durable work and wake the recipient</td>
+<td><code>amq-squad dispatch --session S --role worker --kind todo --subject "..." --body "..."</code></td>
+<td>Queues durable AMQ in the resolved workstream root and wakes or
+nudges the agent to drain it. This is the usual lead-to-worker
+path.</td>
+</tr>
+<tr>
+<td>Read or write AMQ mailboxes directly</td>
+<td>Raw <code>amq send/read/drain/thread</code> only inside the correct
+coop/session shell, or with explicit <code>--root</code>; otherwise
+prefer <code>amq-squad amq ...</code>.</td>
+<td>Raw AMQ is mailbox plumbing. From an external pane, the wrong root
+can trigger the same class of namespace problem as #328:
+<code>implicit default-profile mutation</code>,
+<code>legacy/default session root</code>, or
+<code>refusing before write</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>For orchestrated squads, the operator normally talks to the visible
+lead with <code>amq-squad send</code> or an operator directive; the lead
+uses <code>task</code>, <code>dispatch</code>, and <code>collect</code>
+for workers. A raw <code>amq send --session ...</code> from an external
+pane is ambiguous for named-profile squads because it may write the
+default <code>.agent-mail/&lt;session&gt;</code> while workers drain
+<code>.agent-mail/&lt;profile&gt;/&lt;session&gt;</code>. Use
+<code>amq-squad amq send --project &lt;project&gt; --profile &lt;profile&gt; --session &lt;S&gt; ...</code>
+or raw
+<code>amq send --root &lt;project&gt;/.agent-mail/&lt;profile&gt;/&lt;session&gt; ...</code>
+when direct mailbox plumbing is intentional.</p>
+<p>Claude-binary agents launched in tmux also get a best-effort delayed
 <code>/rename &lt;role&gt;-&lt;session&gt;</code> injection, including
 managed <code>resume --exec</code> / <code>agent resume</code> replay.
 Failure to deliver the rename does not block launch. Codex agents are

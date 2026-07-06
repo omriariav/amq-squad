@@ -1361,6 +1361,39 @@ amq send \
 
 `amq send` reads stdin when `--body` is omitted. There is no `--body-file` flag.
 
+### Which messaging primitive should I use?
+
+| Intent | Use | Why |
+| --- | --- | --- |
+| Supervise a squad | `amq-squad status`, `console`, `task`, `collect` | These resolve the project/profile/session and show the squad model. Use `collect` for lead-side reports when raw AMQ would say `refusing collect` of a `lead-owned mailbox`; it follows the #322 collect-vs-drain contract. |
+| Tell a live visible lead something now | `amq-squad send --session S --role lead --body "..."` | This is tmux pane delivery to the recorded live pane. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
+| Assign durable work and wake a recipient | `amq-squad dispatch --session S --role worker --kind todo --subject "..." --body "..."` | Dispatch queues durable AMQ in the resolved workstream root and wakes or nudges the agent to drain it, especially for lead-to-worker tasks. |
+| Read or write AMQ mailboxes directly | Raw `amq send/read/drain/thread` only inside the correct coop/session shell, or with explicit `--root`; otherwise prefer `amq-squad amq ...`. | Raw AMQ is mailbox plumbing. From an external pane, the wrong root can reproduce the #328 class of namespace mistakes: `implicit default-profile mutation`, `legacy/default session root`, or `refusing before write`. |
+
+In an orchestrated squad, the operator normally steers the visible lead with
+`amq-squad send` or an operator directive; the lead uses `task`, `dispatch`, and
+`collect` to coordinate workers. A raw `amq send --session ...` from an external
+pane is ambiguous for named-profile squads because it may write the default
+`.agent-mail/<session>` while workers drain
+`.agent-mail/<profile>/<session>`. Use the `amq-squad amq` wrapper or an
+explicit raw `--root` only when direct mailbox plumbing is intentional:
+
+```sh
+# Ambiguous from an external pane:
+amq send --session issue-96 --to developer --thread p2p/cto__developer \
+  --kind todo --subject "Task" --body "..."
+
+# Root-resolving wrapper:
+amq-squad amq send --project /path/to/repo --profile release --session issue-96 \
+  --to developer --thread p2p/cto__developer \
+  --kind todo --subject "Task" --body "..."
+
+# Explicit raw AMQ root:
+amq send --root /path/to/repo/.agent-mail/release/issue-96 \
+  --to developer --thread p2p/cto__developer \
+  --kind todo --subject "Task" --body "..."
+```
+
 Inside an amq-squad-launched shell, use bare `amq` commands. The launcher already injected `AM_ROOT`, `AM_BASE_ROOT`, and `AM_ME`; override them only when intentionally inspecting a different project or handle. For important handoffs, use `--wait-for drained --wait-timeout 60s` and keep the AMQ message id. If routing is unclear, run `amq route explain` or `amq-squad amq route --to <handle>` first.
 
 From an external lead or operator-owned pane, prefer the root-correct wrapper:
