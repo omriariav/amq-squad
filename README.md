@@ -1340,6 +1340,16 @@ before sending; a global orchestrator cannot raise gates as `cto` before a real
 `cto` exists. Emergency recovery sends require the explicit audited override
 `--unsafe-send-as --reason <why>`.
 
+For lead-side report collection, prefer `amq-squad collect --session <S> --me
+<lead> --timeout 120s --include-body` over raw `amq drain`. Raw AMQ `drain`
+is intentionally destructive: it moves unread files from `inbox/new` to
+`inbox/cur` and emits drained receipts before the caller has necessarily
+persisted or displayed the body. `collect` is the kill-safe path for
+orchestrators: it snapshots unread bodies into a
+profile/session/recipient-scoped journal before acknowledging each message.
+The contract is at-least-once, not exactly-once: an interrupted output may replay
+a body on the next collect, but it should not lose the body.
+
 ## Files amq-squad writes
 
 ```text
@@ -1352,6 +1362,11 @@ before sending; a global orchestrator cannot raise gates as `cto` before a real
 <project>/.amq-squad/tasks/<session>/     Task store for the default profile.
 <project>/.amq-squad/tasks/<profile>/<session>/
                                          Task store for a named profile.
+<project>/.amq-squad/collect-journal/<profile>/<session>/<handle>/
+                                         Kill-safe collect journal. Pending
+                                         entries replay until delivered; delivered
+                                         entries are retained for 7 days or the
+                                         latest 200 entries per recipient.
 <project>/.agent-mail/<session>/          AMQ root for the default profile.
 <project>/.agent-mail/<profile>/<session>/
                                          AMQ root for a named profile.

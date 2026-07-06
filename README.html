@@ -1989,6 +1989,17 @@ that role is bound in the namespace before sending; a global
 orchestrator cannot raise gates as <code>cto</code> before a real
 <code>cto</code> exists. Emergency recovery sends require the explicit
 audited override <code>--unsafe-send-as --reason &lt;why&gt;</code>.</p>
+<p>For lead-side report collection, prefer
+<code>amq-squad collect --session &lt;S&gt; --me &lt;lead&gt; --timeout 120s --include-body</code>
+over raw <code>amq drain</code>. Raw AMQ <code>drain</code> is
+intentionally destructive: it moves unread files from
+<code>inbox/new</code> to <code>inbox/cur</code> and emits drained
+receipts before the caller has necessarily persisted or displayed the
+body. <code>collect</code> is the kill-safe path for orchestrators: it
+snapshots unread bodies into a profile/session/recipient-scoped journal
+before acknowledging each message. The contract is at-least-once, not
+exactly-once: an interrupted output may replay a body on the next
+collect, but it should not lose the body.</p>
 <h2 id="files-amq-squad-writes">Files amq-squad writes</h2>
 <pre class="text"><code>&lt;project&gt;/.amq-squad/team.json           Default team profile (schema: 3 on new writes).
 &lt;project&gt;/.amq-squad/teams/&lt;name&gt;.json   Named team profiles (schema: 3 on new writes).
@@ -1999,6 +2010,11 @@ audited override <code>--unsafe-send-as --reason &lt;why&gt;</code>.</p>
 &lt;project&gt;/.amq-squad/tasks/&lt;session&gt;/     Task store for the default profile.
 &lt;project&gt;/.amq-squad/tasks/&lt;profile&gt;/&lt;session&gt;/
                                          Task store for a named profile.
+&lt;project&gt;/.amq-squad/collect-journal/&lt;profile&gt;/&lt;session&gt;/&lt;handle&gt;/
+                                         Kill-safe collect journal. Pending
+                                         entries replay until delivered; delivered
+                                         entries are retained for 7 days or the
+                                         latest 200 entries per recipient.
 &lt;project&gt;/.agent-mail/&lt;session&gt;/          AMQ root for the default profile.
 &lt;project&gt;/.agent-mail/&lt;profile&gt;/&lt;session&gt;/
                                          AMQ root for a named profile.

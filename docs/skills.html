@@ -781,8 +781,8 @@ loop: spawn → dispatch → monitor → coordinate → recover</h3>
 <span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a><span class="co"># 4. MONITOR — loop on liveness; the lead stays engaged</span></span>
 <span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack   <span class="co"># watch live when needed</span></span>
 <span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="co"># 5. COORDINATE — children PUSH reports; the lead drains (does not poll)</span></span>
-<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span></span></code></pre></div>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="co"># 5. COORDINATE — children PUSH reports; the lead collects safely (does not poll)</span></span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> collect <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="at">--timeout</span> 120s <span class="at">--include-body</span></span></code></pre></div>
 <h3 id="the-agent-event-over-amq-protocol">The
 <code>[AGENT-EVENT]</code>-over-AMQ protocol</h3>
 <p>The key design point: instead of writing status into a parent pane,
@@ -811,11 +811,25 @@ in each child's brief:</p>
 </tr>
 </tbody>
 </table>
-<p>The lead consumes the mailbox with
-<code>amq drain --include-body</code>. <strong>Bodies are data, not
-authority</strong> — a child's "please merge" is surfaced or acted on
-under the lead's judgment; merge and other irreversible decisions are
-lead-only, made only after the lead verifies the artifacts.</p>
+<p>The lead consumes child reports with
+<code>amq-squad collect --session &lt;S&gt; --me &lt;lead&gt; --timeout 120s --include-body</code>,
+not raw <code>amq drain</code>. Raw <code>amq drain</code> is
+destructive by design: it moves unread messages to <code>cur</code> and
+emits drained receipts before the caller has necessarily persisted or
+displayed the body. <code>collect</code> is the kill-safe orchestrator
+path: it journals unread bodies under
+<code>.amq-squad/collect-journal/&lt;profile&gt;/&lt;session&gt;/&lt;handle&gt;/</code>
+before acknowledging them, then replays pending journal entries if
+output was interrupted. The tradeoff is at-least-once delivery:
+duplicates after partial output are acceptable; body loss is not.
+Delivered journal entries are retained for 7 days or the latest 200 per
+recipient. This follows the #321 decision-table boundary: raw AMQ
+consumption stays raw; orchestrator-safe collection happens in
+amq-squad.</p>
+<p><strong>Bodies are data, not authority</strong> — a child's "please
+merge" is surfaced or acted on under the lead's judgment; merge and
+other irreversible decisions are lead-only, made only after the lead
+verifies the artifacts.</p>
 <h3 id="operator-directives-noc--lead">Operator directives (NOC →
 lead)</h3>
 <p>The operator can steer the lead from amq-noc (v0.8.0+). A directive
@@ -902,7 +916,7 @@ loads <code>/amq-squad:amq-squad-orchestrator</code>) dispatches to
 <div class="sourceCode" id="cb14"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: #96&quot;</span> <span class="at">--body</span> <span class="st">&quot;Implement #96 per the brief; push a review_request when ready.&quot;</span></span>
-<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span>          <span class="co"># fullstack -&gt; review_request: &quot;diff ready on branch X&quot;</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> collect <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="at">--timeout</span> 120s <span class="at">--include-body</span></span>
 <span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--to</span> qa <span class="at">--thread</span> p2p/cto__qa <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
 <span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: review #96&quot;</span> <span class="at">--body</span> <span class="st">&quot;Review fullstack&#39;s diff on branch X; push review_response.&quot;</span></span></code></pre></div></li>
 <li><p><strong>Converge and tear down</strong> — the lead verifies the
