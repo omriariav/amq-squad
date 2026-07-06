@@ -93,6 +93,31 @@ func TestRunLaunchPreauthorizesInScopeClaudeWorker(t *testing.T) {
 	}
 }
 
+func TestRunLaunchPreauthDoesNotSuppressBootstrap(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "v2-14-0"}, {Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "v2-14-0"}},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--role", "fullstack", "--session", "v2-14-0", "claude"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"--allowedTools",
+		"Bash(gh pr create:*)",
+		"You are a fresh amq-squad agent.",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("eligible claude worker dry-run missing %q in:\n%s", want, stdout)
+		}
+	}
+}
+
 func TestRunLaunchPreauthOptOutAndScope(t *testing.T) {
 	seed := func(t *testing.T) {
 		seedTeam(t, team.Team{
@@ -179,6 +204,22 @@ func TestAMQSupportsWakeInject(t *testing.T) {
 	} {
 		if got := amqSupportsWakeInject(version); got != want {
 			t.Errorf("amqSupportsWakeInject(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
+func TestAMQSupportsNoGitignore(t *testing.T) {
+	for version, want := range map[string]bool{
+		"":         false,
+		"garbage":  false,
+		"0.39.9":   false,
+		"0.40.0":   true,
+		"v0.40.0":  true,
+		"0.41.0":   true,
+		" 0.40.0 ": true,
+	} {
+		if got := amqSupportsNoGitignore(version); got != want {
+			t.Errorf("amqSupportsNoGitignore(%q) = %v, want %v", version, got, want)
 		}
 	}
 }
@@ -301,6 +342,21 @@ func TestRunLaunchWakeInjectValidatesShape(t *testing.T) {
 	}
 }
 
+func TestEnsureLauncherExecutableAcceptsSymlinkedExecutable(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "injector")
+	if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "injector-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported in this environment: %v", err)
+	}
+	if err := ensureLauncherExecutable(link); err != nil {
+		t.Fatalf("symlinked executable should validate: %v", err)
+	}
+}
+
 func TestLaunchArgsFromRecordReplaysNoRequireWake(t *testing.T) {
 	// The opt-out answers an environment constraint (wake cannot acquire its
 	// lock), so resume/replay must reproduce it, not silently re-enable the
@@ -328,6 +384,30 @@ func TestRunLaunchDryRunNoRequireWakeOptOut(t *testing.T) {
 	}
 	if strings.Contains(stdout, "--require-wake") {
 		t.Fatalf("--no-require-wake must omit the flag:\n%s", stdout)
+	}
+}
+
+func TestRunLaunchDryRunNoGitignore(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.40.0")
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--no-gitignore", "codex", "test-prompt"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "amq coop exec --require-wake --no-gitignore codex --") ||
+		!strings.Contains(stdout, "test-prompt") {
+		t.Fatalf("no-gitignore launch should pass through to coop exec:\n%s", stdout)
+	}
+}
+
+func TestRunLaunchNoGitignoreRejectsOldAMQ(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.39.1")
+	_, _, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--no-gitignore", "codex"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires amq 0.40.0 or newer") {
+		t.Fatalf("no-gitignore old amq error = %v", err)
 	}
 }
 

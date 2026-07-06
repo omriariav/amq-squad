@@ -288,7 +288,7 @@ Examples:
 	if !team.ExistsProfile(projectDir, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
-	return focusTarget(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag)
+	return focusTarget(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), flagWasSet(fs, "profile"), *roleFlag)
 }
 
 // focusTarget resolves and switches to the pane for a role (or the session's
@@ -303,7 +303,7 @@ func errTmuxAccessDenied() error {
 		"`amq-squad status`/`focus`/`send`/`resume`; or launch the lead unsandboxed), then retry")
 }
 
-func focusTarget(projectDir, profile, session string, explicitSession bool, role string) error {
+func focusTarget(projectDir, profile, session string, explicitSession bool, explicitProfile bool, role string) error {
 	if strings.TrimSpace(role) != "" {
 		t, err := team.ReadProfile(projectDir, profile)
 		if err != nil {
@@ -347,7 +347,7 @@ func focusTarget(projectDir, profile, session string, explicitSession bool, role
 			}
 			continue
 		}
-		if err := ensureNoNamespaceConflict("focus", projectDir, profile, workstream); err != nil {
+		if err := ensureNoNamespaceConflict("focus", projectDir, profile, workstream, explicitProfile); err != nil {
 			return err
 		}
 		if _, target, ok := resolveControlTarget(mr, workstream, panes); ok {
@@ -424,7 +424,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflict("send", projectDir, profile, workstream); err != nil {
+	if err := ensureNoNamespaceConflict("send", projectDir, profile, workstream, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
 	panes, err := statusPaneLister()

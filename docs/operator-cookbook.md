@@ -93,6 +93,77 @@ amq-squad operator answer --project <project> --profile <profile> --session <ses
 If `next` reports idle with exit code 1, there is no current operator action for
 that scoped profile/session.
 
+## Multi-Run Global Orchestrator Board
+
+When one `global_orchestrator` conversation owns more than one active or
+recently active run, keep a compact board in the conversation and update it
+after every poll, gate answer, spawn, stop, final report, or recovery action.
+
+Minimum fields:
+
+| Field | What to record |
+| --- | --- |
+| Name / repo | Short run label and target repo or project root. |
+| Profile / session | Exact namespace for commands. |
+| Lead / pane | Visible lead role/handle and pane id when known. |
+| State | `running`, `gated`, `blocked`, `paused`, `stale`, `done`, or `closed`. |
+| Last checked / next poll | Absolute check time and the next poll or wake source. |
+| Gate / blocker | Current `gate/<topic>`, operator decision, or blocker. |
+| Last action / next action | Last step taken and one concrete next action. |
+| Polling commands | Exact commands for the next check. |
+
+For `poll_required=true`, use deterministic commands such as:
+
+```sh
+amq-squad monitor --project <project> --profile <profile> --session <session> --once --json
+amq-squad status --project <project> --profile <profile> --session <session> --json
+amq-squad operator status --project <project> --profile <profile> --session <session> --json
+amq-squad next --project <project> --profile <profile> --session <session> --json
+```
+
+Demote finished workstreams to `closed` with `next action: none - closed` so
+they stop competing with `gated`, `blocked`, or `stale` rows. Recovery should
+use native amq-squad paths first: inspect `status`/`monitor`/gates/tasks,
+re-nudge queued work with `dispatch` or drain-only `send`, resume stale agents
+from `status --json.actions[]` or `resume --json`, and mark native `/goal`
+blockers as `paused`. Raw `tmux send-keys Enter` is a recorded last resort only
+after operator direction or when native recovery is unavailable.
+
+## Command Primitive Decision Table
+
+When steering a live squad, choose the command family by intent:
+
+| Intent | Use | Why |
+| --- | --- | --- |
+| Supervise a run | `amq-squad status`, `operator status`, `operator watch`, `next`, `task`, `collect` | These commands resolve the project/profile/session and show the squad model. Use `collect` for lead-side reports when raw AMQ would say `refusing collect` of a `lead-owned mailbox`; it follows the #322 collect-vs-drain contract. |
+| Tell the visible lead something now | `amq-squad send --project <project> --profile <profile> --session <session> --role <lead-role> --body "..."` | This is live tmux pane delivery to the recorded agent pane. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
+| Assign durable work and wake a recipient | `amq-squad dispatch --project <project> --profile <profile> --session <session> --role <role> --kind todo --subject "..." --body "..."` | Dispatch sends a durable AMQ task to the resolved workstream root and wakes or nudges the agent to drain it. This is the usual lead-to-worker path. |
+| Read or write AMQ mailboxes directly | Raw `amq send/read/drain/thread` only from the correct coop/session shell, or with an explicit `--root`. From an external pane, prefer `amq-squad amq ...`. | Raw AMQ is mailbox plumbing, not squad routing. If the profile/session root is wrong, you can reproduce #328-style namespace mistakes: `implicit default-profile mutation`, `legacy/default session root`, or `refusing before write`. |
+
+Typical orchestrated flow: the operator uses `amq-squad send` or
+`operator directive` to steer the visible lead; the lead uses `task`,
+`dispatch`, and `collect` to coordinate workers. Do not use raw AMQ from an
+external operator pane unless the mailbox root is explicit.
+
+Ambiguous from an external pane:
+
+```sh
+amq send --session <session> --to <worker-handle> --thread p2p/<lead>__<worker> \
+  --kind todo --subject "Task" --body "..."
+```
+
+Root-resolving alternatives:
+
+```sh
+amq-squad amq send --project <project> --profile <profile> --session <session> \
+  --to <worker-handle> --thread p2p/<lead>__<worker> \
+  --kind todo --subject "Task" --body "..."
+
+amq send --root <project>/.agent-mail/<profile>/<session> \
+  --to <worker-handle> --thread p2p/<lead>__<worker> \
+  --kind todo --subject "Task" --body "..."
+```
+
 ## Issue Or Dogfood Run
 
 Start with a dry run, then confirm delivery:
@@ -133,13 +204,18 @@ after verifying it targets the intended profile and session.
 
 ### Version Or Skill Skew
 
-Run the doctor against the same profile and project:
+Run the doctor against the same profile and project, or inspect the scoped
+status JSON:
 
 ```sh
 amq-squad doctor --project <project> --profile <profile> --json
+amq-squad status --project <project> --profile <profile> --session <session> --json
 ```
 
-Fix the reported binary, AMQ, or skill version before launching more agents.
+Read `data.versions`: it names the running binary, the `amq-squad` on `PATH`,
+Codex and Claude plugin-cache manifests, and the skill marker where detectable.
+Fix reported binary, AMQ, plugin, or skill mismatches before launching more
+agents; `up` repeats detectable version-alignment warnings before launch.
 
 ### Missing Live Lead
 

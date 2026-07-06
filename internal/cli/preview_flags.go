@@ -20,6 +20,7 @@ type previewFlags struct {
 	codexArgsRaw   *string
 	claudeArgsRaw  *string
 	forceDuplicate *bool
+	noGitignore    *bool
 	wakeInjectVia  *string
 	wakeInjectArgs stringListFlag
 }
@@ -34,6 +35,7 @@ func registerPreviewFlags(fs *flag.FlagSet) *previewFlags {
 		codexArgsRaw:   fs.String("codex-args", "", "extra Codex args for this run, e.g. '--enable goals'"),
 		claudeArgsRaw:  fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'"),
 		forceDuplicate: fs.Bool("force-duplicate", false, "include --force-duplicate in emitted launch commands"),
+		noGitignore:    fs.Bool("no-gitignore", false, "forward --no-gitignore to every amq coop exec launch"),
 		wakeInjectVia:  fs.String("wake-inject-via", "", "absolute executable forwarded to every agent launch as amq coop exec --wake-inject-via"),
 	}
 	fs.Var(&p.wakeInjectArgs, "wake-inject-arg", "argument forwarded to every agent launch as amq coop exec --wake-inject-arg (repeatable; requires --wake-inject-via)")
@@ -72,6 +74,7 @@ func (p *previewFlags) toEmitOptions(fs *flag.FlagSet) (emitTeamOptions, error) 
 		ExplicitTrust:    flagWasSet(fs, "trust"),
 		ModelOverrides:   modelOverrides,
 		ForceDuplicate:   *p.forceDuplicate,
+		NoGitignore:      *p.noGitignore,
 		WakeInjectVia:    wakeInjectVia,
 		WakeInjectArgs:   wakeInjectArgs,
 	}, nil
@@ -124,6 +127,7 @@ func buildLiveLaunchOptions(fs *flag.FlagSet, pf *previewFlags, lf *liveLaunchFl
 		Trust:           emit.RequestedTrust,
 		ModelOverrides:  emit.ModelOverrides,
 		ForceDuplicate:  emit.ForceDuplicate,
+		NoGitignore:     emit.NoGitignore,
 		WakeInjectVia:   emit.WakeInjectVia,
 		WakeInjectArgs:  emit.WakeInjectArgs,
 	}, nil

@@ -22,7 +22,7 @@ import (
 // expects to interoperate with. Bumped manually when amq-squad starts to
 // depend on newer AMQ behavior; the doctor check compares the running amq
 // binary's reported version against this floor.
-const doctorMinAMQVersion = "0.39.0"
+const doctorMinAMQVersion = "0.40.0"
 
 type doctorStatus string
 
@@ -46,6 +46,7 @@ type doctorEnvelopeData struct {
 	TeamHome   string                      `json:"team_home"`
 	Profile    string                      `json:"profile,omitempty"`
 	Workstream string                      `json:"workstream,omitempty"`
+	Versions   versionAlignmentData        `json:"versions"`
 	Checks     []doctorCheck               `json:"checks"`
 	Profiles   []doctorProfileEnvelopeData `json:"profiles,omitempty"`
 }
@@ -93,6 +94,10 @@ type doctorExecution struct {
 	// amq-squad skill bundle. Injectable so tests do not read the operator's
 	// home directory.
 	CodexSkillCacheRoot func() string
+	// ClaudeSkillCacheRoot returns the local Claude plugin cache directory for
+	// the amq-squad skill bundle. Injectable so tests do not read the operator's
+	// home directory.
+	ClaudeSkillCacheRoot func() string
 	// SkillMDContent reads the body and path of the installed amq-squad skill's
 	// SKILL.md for the given running version (e.g. "v2.11.0"). found=false when
 	// no matching skill bundle is available. Injectable so tests do not read the
@@ -111,16 +116,17 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		ResolveAMQEnv: func(projectDir string) (amqEnv, error) {
 			return resolveAMQEnvInDir(projectDir, "", "", "amq-squad")
 		},
-		RunAMQOps:           defaultDoctorAMQOps,
-		LookPath:            exec.LookPath,
-		Probe:               defaultDuplicateLaunchProbe,
-		Getenv:              os.Getenv,
-		TmuxShowOptions:     defaultTmuxShowServerOption,
-		PathBinaryVersion:   defaultPathBinaryVersion,
-		CodexSkillCacheRoot: defaultCodexSkillCacheRoot,
-		SkillMDContent:      defaultSkillMDContent,
-		PaneLister:          statusPaneLister,
-		ResolveBaseRoot:     scanBaseRootForProject,
+		RunAMQOps:            defaultDoctorAMQOps,
+		LookPath:             exec.LookPath,
+		Probe:                defaultDuplicateLaunchProbe,
+		Getenv:               os.Getenv,
+		TmuxShowOptions:      defaultTmuxShowServerOption,
+		PathBinaryVersion:    defaultPathBinaryVersion,
+		CodexSkillCacheRoot:  defaultCodexSkillCacheRoot,
+		ClaudeSkillCacheRoot: defaultClaudeSkillCacheRoot,
+		SkillMDContent:       defaultSkillMDContent,
+		PaneLister:           statusPaneLister,
+		ResolveBaseRoot:      scanBaseRootForProject,
 	}
 }
 
@@ -428,6 +434,7 @@ func executeDoctor(d doctorExecution) error {
 			TeamHome:   d.ProjectDir,
 			Profile:    doctorProfile(d),
 			Workstream: workstream,
+			Versions:   buildVersionAlignment(versionAlignmentSourcesFromDoctor(d)),
 			Checks:     checks,
 		}); err != nil {
 			return err
@@ -472,6 +479,7 @@ func executeDoctorAllProfiles(d doctorExecution) error {
 		if err := writeJSONEnvelope(d.Out, "doctor", doctorEnvelopeData{
 			TeamHome: d.ProjectDir,
 			Profile:  "all",
+			Versions: buildVersionAlignment(versionAlignmentSourcesFromDoctor(d)),
 			Checks:   summaries,
 			Profiles: results,
 		}); err != nil {

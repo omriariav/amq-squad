@@ -14,7 +14,7 @@ Launch priming is automatic. `up` / `agent up` inject the bootstrap prompt; agen
 
 This skill is named `amq-squad`; the binary is also named `amq-squad`.
 
-**Skill version: 2.15.0** — on your FIRST response of a session, print the line `amq-squad skill v2.15.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
+**Skill version: 2.16.0** — on your FIRST response of a session, print the line `amq-squad skill v2.16.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
 
 ## Context model
 
@@ -58,18 +58,55 @@ The lifecycle is one small state machine: `(none) --up--> running --stop--> stop
 | Set or inspect the orchestrated lead | `amq-squad team lead set <role>` / `team lead clear` / `team lead show --json` |
 | Register this pane as an external lead | `amq-squad lead register --role <role> --session S` (project leads require verified identity or `--adopt-project-lead`) |
 | Native pull-based task queue for a workstream | `amq-squad task add --title T --session S` / `task list --session S` / `task claim <id> --me H --session S` / `task done <id> --session S` |
+| Worker activity heartbeat | `amq-squad activity set --session S --me H --phase testing --task t1` / `activity clear --session S --me H` |
 
 `up` means NEW work and **refuses** a session that already exists — use `resume` to continue it, or `up --reset` to start over. `stop` is the primary teardown (the `down` alias was removed in 2.0). With no `--seed-from`, `up` AUTO-STUBS the brief and prints a one-line notice — so before `up`, decide whether to author the brief first (`up --dry-run --seed-from ...`) or let `up` stub it and edit afterward. `rm`/`archive` are the only destructive ops; both confirm-gate (default No, `--yes` to skip) and refuse a live session unless `--force`.
 
 Pass `--profile NAME` to operate on a named profile under `.amq-squad/teams/<name>.json`. Omit (or pass `--profile default`) for `.amq-squad/team.json`.
 
-**Lifecycle safety contract:** before any lifecycle mutation (`stop`, `resume --exec`, `send`, `focus`, `rm`, `archive`, `up --reset`, `team member rm --stop`), resolve the active project, profile, and session explicitly. Run `amq-squad team profiles --json`, the multi-session `amq-squad status`, then `amq-squad status --project <repo> --profile <profile> --session <session> --json`. If more than one profile exists, never run a lifecycle command without `--profile`; omitting it can inspect or mutate the default roster while the active squad lives in a named profile. Prefer the exact commands from `.data.actions[]` and per-record `actions[]` in the scoped `status --json` output instead of hand-assembling `stop`/`resume`/`focus`/`send` commands.
+**Lifecycle safety contract:** before any lifecycle mutation (`stop`, `resume --exec`, `send`, `focus`, `rm`, `archive`, `up --reset`, `team member rm --stop`), resolve the active project, profile, and session explicitly. Run `amq-squad team profiles --json`, the multi-session `amq-squad status`, then `amq-squad status --project <repo> --profile <profile> --session <session> --json`. If more than one profile exists, never run a lifecycle command without `--profile`; omitting it can inspect or mutate the default roster while the active squad lives in a named profile. Mutating commands with `--session` fail closed when an unprofiled default-profile write would collide with a named profile that already owns that session; rerun with `--profile <name>` or the deliberate escape hatch `--profile default`. Prefer the exact commands from `.data.actions[]` and per-record `actions[]` in the scoped `status --json` output instead of hand-assembling `stop`/`resume`/`focus`/`send` commands.
 
 `team member`, `team lead`, `lead register`, and `task` are the dynamic-team primitives. `team member add/rm` mutates `team.json` atomically under an exclusive lock and re-validates it (the new member is NOT launched — run the launch command `team member add` prints: a managed pane via `resume --exec --target new-window`, or `agent up` for an unmanaged one-off). `team lead set/clear/show` mutates or inspects profile orchestration state for an existing roster. `lead register` adopts the current tmux pane as an operator-owned external lead for the session: status/action JSON can render and target it, but lifecycle commands do not own the pane, so `stop`/`rm`/`archive`/`resume` will not kill, close, or replay it. Project-lead registration is fail-closed: the pane must prove exact project/profile/session/role identity, or the operator must use explicit `--adopt-project-lead` from the actual lead pane; a global orchestrator cannot become project `cto` by passing `--role cto`. Project-lead `--no-wake` requires `--compat-no-wake --reason <why>`, while global orchestrator/NOC no-wake remains a polling mode. `amq-squad amq send --me <team-role>` also requires verified role identity unless `--unsafe-send-as --reason <why>` is used for audited recovery. `task` is a native pull-based store under `.amq-squad/tasks/<session>/` for the default profile or `.amq-squad/tasks/<profile>/<session>/` for named profiles: a task is claimable only once all its `--depends-on` tasks are completed, and every mutation is atomic and lock-serialized. Runtime mutations take `--session` where applicable (tasks require it).
 
-Every command accepts `--json` where machine-readable output makes sense (`status`, `history`, `resume`, `doctor`, `team profiles`, `version`, and `up --dry-run`). JSON outputs are schema-versioned envelopes `{ schema_version, kind, data }`. Diagnostics stay on stderr; stdout under `--json` is pure JSON. For machine clients, the per-member records in `status --session <name> --json` (kind `status`), `history --json`, and `resume --json` (kind `resume_plan`) carry a `tmux` runtime block (`session`, `window_id`, `window_name`, `pane_id`, `target`) plus a computed `pane_alive` — **present only for agents launched in tmux**, so detect by presence. `status --session <name> --json` records additionally carry an `actions` array (`focus`/`send`/`resume`/`status`) with the exact runnable command and an `available` flag, so a client (e.g. amq-noc) renders/copies stable commands instead of inferring tmux state. (The bare `amq-squad status --json` is the multi-session board envelope `kind: sessions` — it has no per-member records or actions; use `--session <name>` for member detail.)
+Every command accepts `--json` where machine-readable output makes sense (`status`, `history`, `resume`, `doctor`, `team profiles`, `version`, and `up --dry-run`). JSON outputs are schema-versioned envelopes `{ schema_version, kind, data }`. Diagnostics stay on stderr; stdout under `--json` is pure JSON. For machine clients, the per-member records in `status --session <name> --json` (kind `status`), `history --json`, and `resume --json` (kind `resume_plan`) carry a `tmux` runtime block (`session`, `window_id`, `window_name`, `pane_id`, `target`) plus a computed `pane_alive` — **present only for agents launched in tmux**, so detect by presence. `status --session <name> --json` records additionally carry an `actions` array (`focus`/`send`/`resume`/`status`) with the exact runnable command and an `available` flag, so a client (e.g. amq-noc) renders/copies stable commands instead of inferring tmux state. Managed child rows may also carry `local_input` and a `local_input_blocked` warning when a read-only pane-tail blind-spot detection heuristic sees a local approval/input prompt; this is not a coordination or progress primitive, and absence only means "not observed". (The bare `amq-squad status --json` is the multi-session board envelope `kind: sessions` — it has no per-member records or actions; use `--session <name>` for member detail.)
 
 Global output flags work before or after the subcommand: `--quiet`, `--verbose`, `--color auto|always|never`. `NO_COLOR` wins over `--color=always`. `--quiet` and `--verbose` are mutually exclusive.
+
+## Operator Primitive Decision Table
+
+When an operator sees both `amq-squad ...` and raw `amq ...`, choose by intent:
+
+| Intent | Use | Why |
+| --- | --- | --- |
+| Supervise a squad | `amq-squad status`, `amq-squad console`, `amq-squad task`, `amq-squad collect` | These commands resolve the project/profile/session and expose the squad model. `collect` is the lead-safe report collector; use it when raw AMQ would say `refusing collect` of a `lead-owned mailbox` unless an audited override is supplied. |
+| Give a live agent an instruction now | `amq-squad send --session S --role R --body "..."` | This is tmux pane delivery to the recorded live pane, best for operator-to-visible-lead prompts. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
+| Assign durable work and wake the recipient | `amq-squad dispatch --session S --role R --kind todo --subject "..." --body "..."` | Dispatch queues a durable AMQ task in the resolved workstream root and wakes or nudges the agent to drain it, especially lead-to-worker. |
+| Inspect or write mailbox messages directly | Raw `amq send/read/drain/thread` only inside the correct coop/session shell, or with an explicit root/session contract. Prefer `amq-squad amq ...` when operating from an external pane. | Raw AMQ is mailbox plumbing. Outside the right `amq coop exec` context it can target the wrong `.agent-mail` tree. This is the same namespace rule as #328 errors such as `implicit default-profile mutation`, `legacy/default session root`, and `refusing before write`. |
+
+For orchestrated squads, the operator normally talks to the visible lead with
+`amq-squad send`; the lead then uses `amq-squad task`, `dispatch`, and
+`collect` to coordinate workers. Do not send ordinary worker instructions from
+an external operator pane with raw AMQ unless the root/profile/session contract
+is explicit.
+
+Failing example from an external pane:
+
+```sh
+# Ambiguous/wrong for a named-profile squad: may use the external pane's cwd or
+# default .agent-mail/issue-96 while the worker drains .agent-mail/release/issue-96.
+amq send --session issue-96 --to developer --thread p2p/cto__developer \
+  --kind todo --subject "Task" --body "..."
+
+# Root-resolving squad wrapper:
+amq-squad amq send --project /path/to/repo --profile release --session issue-96 \
+  --to developer --thread p2p/cto__developer --kind todo \
+  --subject "Task" --body "..."
+
+# Raw AMQ is acceptable only when the mailbox root contract is explicit:
+amq send --root /path/to/repo/.agent-mail/release/issue-96 \
+  --to developer --thread p2p/cto__developer --kind todo \
+  --subject "Task" --body "..."
+```
 
 ## Runtime control (tmux)
 
@@ -115,7 +152,11 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
    - `amq-squad status` (or bare `amq-squad`) for the multi-session board; `status --session <name>` for the single-session detail.
    - Before lifecycle mutations, resolve the exact profile and session: `amq-squad team profiles --json`, `amq-squad status`, then `amq-squad status --project <repo> --profile <profile> --session <session> --json`. Treat the action commands in that JSON as the source of truth for follow-up control.
    - `amq-squad console` for the live read-only Mission Control TUI (`--once` for a static board in CI / no-TTY).
-   - `amq-squad doctor` for AMQ version / tmux / wake / marker integrity.
+   - `amq-squad doctor` for AMQ version, PATH binary skew, Codex/Claude plugin
+     cache + skill-marker alignment, tmux, wake, and marker integrity. JSON
+     `doctor` and `status` expose the same `data.versions` alignment object,
+     and `up` warns before launch when detectable binary/plugin/skill versions
+     diverge.
    - `amq-squad history` for restorable records in this project (use `--project a,b` to widen scope only when the user explicitly asks).
 
 4. **Bring members up / stop / back.**
@@ -157,11 +198,12 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
    amq drain --include-body
    ```
    Acknowledge briefly on the same thread when useful - one factual line, not a status update.
-   - Leads collecting child reports should prefer `amq-squad collect --session <S> --me <lead> --timeout 120s --include-body` over raw `amq drain`; `collect` resolves the correct workstream root for external leads, drains once, waits once when requested, then drains once more.
+   - Leads collecting child reports should prefer `amq-squad collect --session <S> --me <lead> --timeout 120s --include-body` over raw `amq drain`; `collect` resolves the correct workstream root for external leads, snapshots unread bodies to `.amq-squad/collect-journal/<profile>/<session>/<handle>/` before acknowledging them, waits once when requested, then collects once more. Raw `amq drain` remains destructive by design (new -> cur + drained receipt before caller persistence); `collect` is the kill-safe path. Its contract is at-least-once, so interrupted output can replay but should not lose a body. Delivered journal entries are cleaned after 7 days or the latest 200 per recipient, matching the #321 decision-table boundary between raw AMQ consumption and orchestrator-safe collection.
 
 9. **Work the task store (when one drives the workstream).**
    - When the lead has posted work as tasks (`amq-squad task list --session <S>`), the store is the durable source of truth for who-owns-what — keep it in sync; do not just prose-ACK over AMQ.
-   - Before you START a piece of dispatched work, claim its task: `amq-squad task claim <id> --me <handle> --session <S>`. A claim is gated until the task's `--depends-on` tasks are `completed`, so a successful claim also confirms your dependencies are met.
+   - Before you START a pull-style task that is still `pending`, claim it: `amq-squad task claim <id> --me <handle> --session <S>`. A task-backed `amq-squad dispatch --create-task/--task` auto-claims pending tasks for the target handle after the durable AMQ send and task link succeed; if the task already shows `in_progress` for you, do not re-claim it.
+   - Keep worker activity current while you work: `amq-squad activity set --session <S> --me <handle> --task <id> --phase <reading|testing|waiting-on-command> [--detail "..."]` on task claim, meaningful phase changes, and long-running commands. `status --json` and `console` show the heartbeat as `fresh`, `stale`, or `unknown`; task-store ownership is only a weaker fallback, not proof of active progress.
    - When you FINISH, close it: `amq-squad task done <id> --session <S>`. If you cannot finish, record `task fail <id>` (with a reason) or `task block <id>` rather than leaving it `in_progress`.
    - The pushed AMQ report and the task transition are complementary, not redundant: the message tells the lead; the store records the state. Do both.
 
@@ -175,6 +217,8 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
 - If a new message arrives mid-task, finish or pause cleanly, then acknowledge before redirecting.
 
 Human escalations follow the current team rules. When operator gates are enabled, send approval questions or manual-action requests to the virtual operator handle and do not treat it as a runnable peer. When operator gates are disabled, route through the role named by team rules.
+
+Operator-gate escalation (v2.16.0+): unanswered `gate/<topic>` asks addressed to the configured operator handle escalate from `initial` to `reminder` after 30m and `strong-warning` after 2h, measured from the last unanswered operator-facing gate message. `amq-squad notify` bypasses its normal de-duplication when a gate crosses into a stronger band; `status --json` warnings and `console --once` labels make aged gates distinct.
 
 ## Common command patterns
 
@@ -198,6 +242,7 @@ amq-squad send  --session issue-96 --role cto --body "please review PR #69"
 cat prompt.md | amq-squad send --session issue-96 --role qa --body-file -
 amq-squad dispatch --session issue-96 --role qa --from cto --subject "Validate" --body-file ./task.md
 amq-squad collect --session issue-96 --me cto --timeout 120s --include-body
+amq-squad activity set --session issue-96 --me qa --task t1 --phase testing --detail "make ci"
 amq-squad team profiles --json
 amq-squad status
 amq-squad status --project /Code/app --profile review --session issue-96 --json | jq '.data.records[] | {role, tmux, actions}'
@@ -245,12 +290,20 @@ Plan emission fails fast when a referenced `--settings` file is missing;
 `up --dry-run` shows the args on each member's command. Codex members use a `$CODEX_HOME/<name>.config.toml` profile wired
 via `codex_args: ["--profile", "<name>"]` instead.
 
-AMQ floor (v2.15.0+): amq-squad requires amq 0.39.0+. The launch wake
+AMQ floor (v2.16.0+): amq-squad requires amq 0.40.0+. The launch wake
 gate introduced in v2.5.0 passes `--require-wake` to `amq coop exec`, so a
 launch fails at the door when the AMQ wake sidecar cannot start and acquire its
 lock (instead of surfacing later as a stale wake). `--no-require-wake` opts out
 for wake-hostile environments and persists into the launch record, so `agent
 resume` reproduces it.
+Use `--no-gitignore` on `agent up`, `up`, or `up --dry-run` when AMQ coop
+auto-init should leave `.gitignore` unchanged; the opt-out is persisted in the
+launch record and replayed by `agent resume`.
+Operator-gate escalation (v2.16.0+): unanswered `gate/<topic>` asks addressed to
+the configured operator handle escalate from `initial` to `reminder` after 30m
+and `strong-warning` after 2h. `amq-squad notify` bypasses its normal throttle
+when the escalation band advances, while `status --json` warnings and
+`console --once` make aged gates visually distinct.
 Claude-binary agents launched in tmux also get a best-effort delayed
 `/rename <role>-<session>` injection, including managed `resume --exec` /
 `agent resume` replay. Failure to deliver the rename does not block launch.

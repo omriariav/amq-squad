@@ -2,10 +2,12 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -190,6 +192,32 @@ func TestTaskMutationJSONEnvelopes(t *testing.T) {
 	claimed := decodeJSONEnvelope[mutationResult](t, stdout)
 	if claimed.Kind != "task_claim" || claimed.Data.Status != "in_progress" || claimed.Data.Role != "worker" {
 		t.Fatalf("bad task_claim envelope: %+v", claimed)
+	}
+}
+
+func TestTaskClaimStampsActivity(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	withFixedTaskNow(t)
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "")
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"add", "--title", "wire activity", "--session", "s"})
+	}); err != nil {
+		t.Fatalf("task add: %v", err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"claim", "t1", "--me", "worker", "--session", "s"})
+	}); err != nil {
+		t.Fatalf("task claim: %v", err)
+	}
+
+	snap, ok, err := activity.Read(filepath.Join(dir, ".agent-mail", "s", "agents", "worker"), taskNow(), activity.DefaultStaleAfter)
+	if err != nil {
+		t.Fatalf("read activity: %v", err)
+	}
+	if !ok || snap.Source != activity.SourceHeartbeat || snap.TaskID != "t1" ||
+		snap.Phase != "task_claimed" || snap.Detail != "wire activity" {
+		t.Fatalf("task activity = %+v ok=%v", snap, ok)
 	}
 }
 

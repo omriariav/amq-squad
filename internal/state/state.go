@@ -26,6 +26,7 @@ package state
 import (
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/procinfo"
 )
@@ -109,6 +110,7 @@ type Agent struct {
 	WakeHealth   WakeHealth
 	LastSeen     time.Time
 	Presence     string // raw presence.status as found on disk (informational)
+	Activity     *activity.Snapshot
 	Conversation string
 	AgentDir     string
 	Source       string              // launch source label, e.g. "launch.json" or "amq history"

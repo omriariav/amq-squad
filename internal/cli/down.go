@@ -158,6 +158,7 @@ func runStop(args []string) error {
 		ProjectDir:       projectDir,
 		RequestedSession: *sessionName,
 		ExplicitSession:  flagWasSet(fs, "session"),
+		ExplicitProfile:  flagWasSet(fs, "profile"),
 		Role:             *role,
 		All:              *all,
 		Profile:          profile,
@@ -206,6 +207,7 @@ type downExecution struct {
 	ProjectDir       string
 	RequestedSession string
 	ExplicitSession  bool
+	ExplicitProfile  bool
 	Role             string
 	All              bool
 	Profile          string
@@ -238,7 +240,7 @@ func executeDown(d downExecution) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflict(verb, d.ProjectDir, d.Profile, workstream); err != nil {
+	if err := ensureNoNamespaceConflict(verb, d.ProjectDir, d.Profile, workstream, d.ExplicitProfile); err != nil {
 		return err
 	}
 	targets, err := selectDownMembers(t, d.Role, d.All)

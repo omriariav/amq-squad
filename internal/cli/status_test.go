@@ -9,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/state"
+	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -45,6 +48,15 @@ func assertNoLegacyNamespaceConflictReason(t *testing.T, actions []runtimeAction
 			t.Fatalf("action %s unexpectedly carries namespace-conflict reason: %+v", action.Kind, action)
 		}
 	}
+}
+
+func findStatusRecord(records []statusRecord, handle string) *statusRecord {
+	for i := range records {
+		if records[i].Handle == handle {
+			return &records[i]
+		}
+	}
+	return nil
 }
 
 func readinessGatesByCode(gates []releaseReadinessGateData) map[string]releaseReadinessGateData {
@@ -345,6 +357,61 @@ func TestExecuteStatusJSONNamedProfileAllowsPresenceOnlyLegacyRoot(t *testing.T)
 	}
 }
 
+func TestRunStatusDefaultProfileWarnsWhenNamedProfileHasSameSession(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	chdir(t, dir)
+	seedProfile(t, dir, team.DefaultProfile, team.Team{
+		Workstream: "main",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+		},
+	})
+	seedProfile(t, dir, "release", team.Team{
+		Workstream: "main",
+		Members: []team.Member{
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "main"},
+		},
+	})
+	namedRoot := filepath.Join(dir, ".agent-mail", "release", "main")
+	if err := os.MkdirAll(filepath.Join(namedRoot, "agents", "qa"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(namedRoot, "agents", "qa", "inbox.md"), []byte("named durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runStatus([]string{"--session", "main"})
+	})
+	if err != nil {
+		t.Fatalf("status --session main: %v\n%s", err, stdout)
+	}
+	for _, want := range []string{"warning: showing default-profile data", "--profile release", "--session main"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("status warning missing %q:\n%s", want, stdout)
+		}
+	}
+
+	jsonOut, _, err := captureOutput(t, func() error {
+		return runStatus([]string{"--session", "main", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, jsonOut)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, jsonOut)
+	if len(env.Data.Warnings) != 1 {
+		t.Fatalf("warnings = %+v, want one shadow warning", env.Data.Warnings)
+	}
+	got := env.Data.Warnings[0]
+	if got.Kind != "default_profile_shadowed" || got.Session != "main" ||
+		!strings.Contains(got.Detail, "showing default-profile data") ||
+		!strings.Contains(got.SuggestedCommand, "--profile release") ||
+		len(got.Conflicts) != 1 || got.Conflicts[0].Profile != "release" {
+		t.Fatalf("bad status warning: %+v", got)
+	}
+}
+
 func TestExecuteStatusJSONSameProfileSessionAllowsNestedNamedNamespaceOnly(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	dir := t.TempDir()
@@ -384,6 +451,450 @@ func TestExecuteStatusJSONSameProfileSessionAllowsNestedNamedNamespaceOnly(t *te
 		t.Fatalf("records = %d, want 1", len(env.Data.Records))
 	}
 	assertNoLegacyNamespaceConflictReason(t, env.Data.Records[0].Actions)
+}
+
+func TestStatusWarnsDispatchedPendingTask(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{
+		Title:    "pending dispatch",
+		AssignTo: "qa",
+	}, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "issue-96", created.ID, taskstore.Dispatch{
+		Sender:    "cto",
+		Assignee:  "qa",
+		Thread:    "p2p/cto__qa",
+		Kind:      "todo",
+		Subject:   "Validate",
+		MessageID: "msg-pending",
+	}, now.Add(-30*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	w := findStatusWarning(env.Data.Warnings, "task_dispatched_pending")
+	if w == nil ||
+		!strings.Contains(w.Detail, "task t1 is still pending after dispatch to qa") ||
+		!strings.Contains(w.Detail, "message msg-pending") ||
+		!strings.Contains(w.SuggestedCommand, "task claim t1 --me qa") {
+		t.Fatalf("missing dispatched-pending task warning: %+v", env.Data.Warnings)
+	}
+}
+
+func TestStatusWarnsWorkerCompletionReportForInProgressTask(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{
+		Title:    "review result",
+		AssignTo: "qa",
+	}, now.Add(-2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "issue-96", created.ID, taskstore.Dispatch{
+		Sender:    "cto",
+		Assignee:  "qa",
+		Kind:      "todo",
+		Subject:   "Validate",
+		MessageID: "msg-dispatch",
+	}, now.Add(-90*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.ClaimForProfile(dir, team.DefaultProfile, "issue-96", created.ID, "qa", now.Add(-80*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	ctoDir := filepath.Join(dir, ".agent-mail", "issue-96", "agents", "cto")
+	seedThreadMessage(t, ctoDir, "new", "msg-done", "qa", []string{"cto"},
+		"p2p/qa__cto", "DONE t1", string(state.KindStatus), now.Add(-5*time.Minute))
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	w := findStatusWarning(env.Data.Warnings, "task_report_pending_completion")
+	if w == nil ||
+		!strings.Contains(w.Detail, "task t1 is still in_progress after qa reported completion") ||
+		!strings.Contains(w.Detail, "message msg-done") ||
+		!strings.Contains(w.SuggestedCommand, "task done t1 --me qa") ||
+		!strings.Contains(w.SuggestedCommand, "accepted msg-done") {
+		t.Fatalf("missing completion-report task warning: %+v", env.Data.Warnings)
+	}
+}
+
+func TestStatusWarnsAgedOperatorGate(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyMessage(t, base, "s", team.DefaultOperatorHandle, "new", notifyMsg{
+		ID:      "gate-1",
+		From:    "cto",
+		To:      team.DefaultOperatorHandle,
+		Thread:  "gate/release",
+		Subject: "APPROVAL: release",
+		Kind:    string(state.KindQuestion),
+		Created: notifyNow.Add(-125 * time.Minute),
+	})
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       project,
+		RequestedSession: "s",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, notifyNow),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	w := findStatusWarning(env.Data.Warnings, "operator_gate_strong_warning")
+	if w == nil ||
+		!strings.Contains(w.Detail, "gate/release") ||
+		!strings.Contains(w.Detail, "strong-warning") ||
+		!strings.Contains(w.Detail, "poll-required/no-wake") ||
+		!strings.Contains(w.SuggestedCommand, "amq-squad thread") ||
+		!strings.Contains(w.SuggestedCommand, "gate/release") {
+		t.Fatalf("missing aged operator-gate warning: %+v", env.Data.Warnings)
+	}
+}
+
+func TestStatusJSONIncludesHeartbeatActivity(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	agentDir := seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
+		Binary:  "codex",
+		Handle:  "qa",
+		Role:    "qa",
+		Session: "issue-96",
+		CWD:     dir,
+	})
+	if err := activity.Write(agentDir, activity.File{
+		Handle:    "qa",
+		TaskID:    "t11",
+		Phase:     "testing",
+		Detail:    "make ci",
+		WrittenAt: now.Add(-30 * time.Second),
+	}); err != nil {
+		t.Fatalf("seed activity: %v", err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	rec := findStatusRecord(env.Data.Records, "qa")
+	if rec == nil || rec.Activity == nil {
+		t.Fatalf("qa activity missing: %+v", env.Data.Records)
+	}
+	if rec.Activity.Source != activity.SourceHeartbeat || rec.Activity.Quality != activity.StateFresh ||
+		rec.Activity.TaskID != "t11" || rec.Activity.Phase != "testing" || rec.Activity.Detail != "make ci" {
+		t.Fatalf("status activity = %+v", rec.Activity)
+	}
+}
+
+func TestStatusJSONToleratesMalformedActivity(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	agentDir := seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
+		Binary:  "codex",
+		Handle:  "qa",
+		Role:    "qa",
+		Session: "issue-96",
+		CWD:     dir,
+	})
+	if err := os.WriteFile(filepath.Join(agentDir, activity.Filename), []byte("{not-json"), 0o600); err != nil {
+		t.Fatalf("seed malformed activity: %v", err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json should tolerate malformed activity: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	rec := findStatusRecord(env.Data.Records, "qa")
+	if rec == nil || rec.Activity == nil {
+		t.Fatalf("qa malformed activity should degrade to unknown: %+v", env.Data.Records)
+	}
+	if rec.Activity.Quality != activity.StateUnknown || rec.Activity.Source != activity.SourceUnknown ||
+		!strings.Contains(rec.Activity.Detail, "unreadable") {
+		t.Fatalf("malformed activity = %+v", rec.Activity)
+	}
+}
+
+func TestStatusJSONUsesTaskStoreActivityFallback(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{
+		Title:    "review fix",
+		AssignTo: "qa",
+	}, now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.ClaimForProfile(dir, team.DefaultProfile, "issue-96", created.ID, "qa", now.Add(-30*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	rec := findStatusRecord(env.Data.Records, "qa")
+	if rec == nil || rec.Activity == nil {
+		t.Fatalf("qa task-store activity missing: %+v", env.Data.Records)
+	}
+	if rec.Activity.Source != activity.SourceTaskStore || rec.Activity.Quality != activity.StateUnknown ||
+		rec.Activity.TaskID != "t1" || rec.Activity.Phase != "task_in_progress" ||
+		rec.Activity.Detail != "review fix" {
+		t.Fatalf("task-store activity = %+v", rec.Activity)
+	}
+}
+
+func findStatusWarning(warnings []statusWarning, kind string) *statusWarning {
+	for i := range warnings {
+		if warnings[i].Kind == kind {
+			return &warnings[i]
+		}
+	}
+	return nil
+}
+
+func swapStatusLocalInputDetector(t *testing.T, fn func(string) (tmuxpane.LocalInputBlocker, bool)) {
+	t.Helper()
+	prev := statusLocalInputDetector
+	statusLocalInputDetector = fn
+	t.Cleanup(func() { statusLocalInputDetector = prev })
+}
+
+func TestStatusJSONSurfacesManagedChildLocalInputBlocker(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-320"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-320"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-320", "cto", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-320",
+		AgentPID: 1001,
+		Tmux:     &launch.TmuxInfo{Session: "squad", WindowID: "@1", PaneID: "%1", Target: "new-window"},
+	})
+	seedAgentRecord(t, base, "issue-320", "qa", launch.Record{
+		CWD:      dir,
+		Binary:   "claude",
+		Handle:   "qa",
+		Role:     "qa",
+		Session:  "issue-320",
+		AgentPID: 1002,
+		Tmux:     &launch.TmuxInfo{Session: "squad", WindowID: "@2", PaneID: "%2", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}, {PaneID: "%2"}}, nil)
+	var calls []string
+	swapStatusLocalInputDetector(t, func(paneID string) (tmuxpane.LocalInputBlocker, bool) {
+		calls = append(calls, paneID)
+		if paneID != "%2" {
+			return tmuxpane.LocalInputBlocker{}, false
+		}
+		return tmuxpane.LocalInputBlocker{
+			Kind:        "approval_prompt",
+			Summary:     "Permission rule Bash(rm -rf *) requires confirmation",
+			Destructive: true,
+			Recovery:    "operator decision required, or ask the worker to use a non-destructive alternative before proceeding",
+		}, true
+	})
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-320",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{1001: true, 1002: true}, map[int]bool{1001: true, 1002: true}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	if strings.Join(calls, ",") != "%2" {
+		t.Fatalf("local input detector calls = %v, want only managed child pane %%2", calls)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	qa := findStatusRecord(env.Data.Records, "qa")
+	if qa == nil || qa.LocalInput == nil {
+		t.Fatalf("qa local_input missing: %+v", env.Data.Records)
+	}
+	if qa.LocalInput.Status != "blocked" || qa.LocalInput.Kind != "approval_prompt" ||
+		qa.LocalInput.PaneID != "%2" || !qa.LocalInput.Destructive ||
+		qa.LocalInput.Source != "tmux-pane-tail" {
+		t.Fatalf("qa local_input = %+v", qa.LocalInput)
+	}
+	if cto := findStatusRecord(env.Data.Records, "cto"); cto == nil || cto.LocalInput != nil {
+		t.Fatalf("lead row must not get local_input: %+v", cto)
+	}
+	warning := findStatusWarning(env.Data.Warnings, "local_input_blocked")
+	if warning == nil {
+		t.Fatalf("local_input_blocked warning missing: %+v", env.Data.Warnings)
+	}
+	for _, want := range []string{"role qa", "pane %2", "local prompt waits", "AMQ may stay silent", "non-destructive alternative"} {
+		if !strings.Contains(warning.Detail, want) {
+			t.Fatalf("warning detail missing %q: %q", want, warning.Detail)
+		}
+	}
+	if !strings.Contains(warning.SuggestedCommand, "amq-squad focus") || !strings.Contains(warning.SuggestedCommand, "--role qa") {
+		t.Fatalf("warning suggested command should focus the blocked child: %+v", warning)
+	}
+	for _, forbidden := range []string{"auto-approve", "--force"} {
+		if strings.Contains(strings.ToLower(qa.LocalInput.Recovery), forbidden) ||
+			strings.Contains(strings.ToLower(warning.Detail), forbidden) ||
+			strings.Contains(strings.ToLower(warning.SuggestedCommand), forbidden) {
+			t.Fatalf("local input recovery surfaces unsafe suggestion %q: local=%q warning=%+v", forbidden, qa.LocalInput.Recovery, warning)
+		}
+	}
+}
+
+func TestStatusLocalInputSkipsExternalUnmanagedAndDeadPanes(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-320"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-320"},
+			{Role: "docs", Binary: "codex", Handle: "docs", Session: "issue-320"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	seedAgentRecord(t, base, "issue-320", "cto", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-320",
+		External: true,
+		Tmux:     &launch.TmuxInfo{Session: "operator", WindowID: "@1", PaneID: "%1", Target: "external"},
+	})
+	seedAgentRecord(t, base, "issue-320", "qa", launch.Record{
+		CWD:      dir,
+		Binary:   "claude",
+		Handle:   "qa",
+		Role:     "qa",
+		Session:  "issue-320",
+		AgentPID: 1002,
+		Tmux:     &launch.TmuxInfo{Session: "adopted", WindowID: "@2", PaneID: "%2"},
+	})
+	seedAgentRecord(t, base, "issue-320", "docs", launch.Record{
+		CWD:      dir,
+		Binary:   "codex",
+		Handle:   "docs",
+		Role:     "docs",
+		Session:  "issue-320",
+		AgentPID: 1003,
+		Tmux:     &launch.TmuxInfo{Session: "squad", WindowID: "@3", PaneID: "%3", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}, {PaneID: "%2"}}, nil)
+	var calls []string
+	swapStatusLocalInputDetector(t, func(paneID string) (tmuxpane.LocalInputBlocker, bool) {
+		calls = append(calls, paneID)
+		return tmuxpane.LocalInputBlocker{
+			Kind:     "approval_prompt",
+			Summary:  "Do you want to allow this command?",
+			Recovery: "operator decision required",
+		}, true
+	})
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-320",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{1002: true, 1003: false}, map[int]bool{1002: true, 1003: false}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("detector should skip external lead, unmanaged/adopted pane, and dead pane; calls=%v", calls)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	for _, row := range env.Data.Records {
+		if row.LocalInput != nil {
+			t.Fatalf("no row should carry local_input: %+v", row)
+		}
+	}
+	if warning := findStatusWarning(env.Data.Warnings, "local_input_blocked"); warning != nil {
+		t.Fatalf("no local_input_blocked warning expected: %+v", warning)
+	}
 }
 
 func TestExecuteStatusJSONSameProfileSessionKeepsLegacyAgentDurableConflict(t *testing.T) {
@@ -819,6 +1330,26 @@ func TestExecuteStatusJSONReleaseReadyWithVisibleTeamAndReview(t *testing.T) {
 	}
 	if !exec.ReleaseReadiness.Ready || exec.ReleaseReadiness.State != "ready" {
 		t.Fatalf("release readiness = %+v, want ready", exec.ReleaseReadiness)
+	}
+	mergeAuthority := exec.ReleaseReadiness.MergeAuthority
+	if mergeAuthority.DefaultActor != "visible_lead" {
+		t.Fatalf("merge authority default actor = %q, want visible_lead", mergeAuthority.DefaultActor)
+	}
+	if mergeAuthority.WorkerPolicy != "workers_do_not_merge_by_default" {
+		t.Fatalf("merge authority worker policy = %q, want workers_do_not_merge_by_default", mergeAuthority.WorkerPolicy)
+	}
+	if !strings.Contains(mergeAuthority.Detail, "workers escalate merge") {
+		t.Fatalf("merge authority detail = %q, want worker escalation guidance", mergeAuthority.Detail)
+	}
+	hasReleaseAction := false
+	for _, action := range mergeAuthority.LifecycleActions {
+		if action == "release" {
+			hasReleaseAction = true
+			break
+		}
+	}
+	if !hasReleaseAction {
+		t.Fatalf("merge authority lifecycle actions = %v, want release action listed", mergeAuthority.LifecycleActions)
 	}
 	for _, gate := range exec.ReleaseReadiness.Gates {
 		if gate.Required && !gate.Passed {

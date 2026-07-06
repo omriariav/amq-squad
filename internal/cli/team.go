@@ -680,7 +680,7 @@ func runTeamShow(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
 
 Usage:
-  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--json]
+  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--no-gitignore] [--json]
 
 Examples:
   amq-squad team show
@@ -716,6 +716,7 @@ type emitTeamOptions struct {
 	ExplicitTrust    bool
 	ModelOverrides   map[string]string
 	ForceDuplicate   bool
+	NoGitignore      bool
 	WakeInjectVia    string
 	WakeInjectArgs   []string
 	Profile          string
@@ -726,14 +727,17 @@ type emitTeamOptions struct {
 
 // teamPlanMember is the per-member entry inside a JSON team plan.
 type teamPlanMember struct {
-	Role       string   `json:"role"`
-	Handle     string   `json:"handle"`
-	Binary     string   `json:"binary"`
-	Model      string   `json:"model,omitempty"`
-	CWD        string   `json:"cwd"`
-	ClaudeArgs []string `json:"claude_args,omitempty"`
-	CodexArgs  []string `json:"codex_args,omitempty"`
-	Command    string   `json:"command"`
+	Role                 string   `json:"role"`
+	Handle               string   `json:"handle"`
+	Binary               string   `json:"binary"`
+	Model                string   `json:"model,omitempty"`
+	CWD                  string   `json:"cwd"`
+	ClaudeArgs           []string `json:"claude_args,omitempty"`
+	CodexArgs            []string `json:"codex_args,omitempty"`
+	ChildArgs            []string `json:"child_args,omitempty"`
+	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
+	Bootstrap            string   `json:"bootstrap"`
+	Command              string   `json:"command"`
 }
 
 // teamPlan is the JSON-friendly representation of a launch-plan preview.
@@ -859,29 +863,35 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		for _, m := range members {
 			effectiveModel := memberResolvedModel(m, opts.ModelOverrides, binaryArgs)
 			cwd := m.EffectiveCWD(t.Project)
+			input := emitTeamCommandInput{
+				CWD:            cwd,
+				SquadBin:       squadBin,
+				TeamHome:       t.Project,
+				Member:         m,
+				NoBootstrap:    opts.NoBootstrap,
+				Workstream:     workstream,
+				BinaryArgs:     binaryArgs,
+				TrustMode:      trustMode,
+				Model:          effectiveModel,
+				ForceDuplicate: opts.ForceDuplicate,
+				NoGitignore:    opts.NoGitignore,
+				Profile:        opts.Profile,
+				WakeInjectVia:  opts.WakeInjectVia,
+				WakeInjectArgs: opts.WakeInjectArgs,
+			}
+			preview := teamCommandPreview(input)
 			plan.Plan = append(plan.Plan, teamPlanMember{
-				Role:       m.Role,
-				Handle:     m.Handle,
-				Binary:     m.Binary,
-				Model:      effectiveModel,
-				CWD:        cwd,
-				ClaudeArgs: m.ClaudeArgs,
-				CodexArgs:  m.CodexArgs,
-				Command: emitTeamCommand(emitTeamCommandInput{
-					CWD:            cwd,
-					SquadBin:       squadBin,
-					TeamHome:       t.Project,
-					Member:         m,
-					NoBootstrap:    opts.NoBootstrap,
-					Workstream:     workstream,
-					BinaryArgs:     binaryArgs,
-					TrustMode:      trustMode,
-					Model:          effectiveModel,
-					ForceDuplicate: opts.ForceDuplicate,
-					Profile:        opts.Profile,
-					WakeInjectVia:  opts.WakeInjectVia,
-					WakeInjectArgs: opts.WakeInjectArgs,
-				}),
+				Role:                 m.Role,
+				Handle:               m.Handle,
+				Binary:               m.Binary,
+				Model:                effectiveModel,
+				CWD:                  cwd,
+				ClaudeArgs:           m.ClaudeArgs,
+				CodexArgs:            m.CodexArgs,
+				ChildArgs:            preview.ChildArgs,
+				PreauthorizedActions: preview.PreauthorizedActions,
+				Bootstrap:            preview.Bootstrap,
+				Command:              emitTeamCommandWithPreview(input, preview),
 			})
 		}
 		return printJSONEnvelope("team_plan", plan)
@@ -927,7 +937,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			modelLabel = "(default)"
 		}
 		fmt.Printf("# %d. %s - %s (workstream: %s, model: %s, cwd: %s)\n", i+1, label, m.Binary, workstream, modelLabel, cwd)
-		fmt.Println(emitTeamCommand(emitTeamCommandInput{
+		input := emitTeamCommandInput{
 			CWD:            cwd,
 			SquadBin:       squadBin,
 			TeamHome:       t.Project,
@@ -939,9 +949,16 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			Model:          effectiveModel,
 			Profile:        opts.Profile,
 			ForceDuplicate: opts.ForceDuplicate,
+			NoGitignore:    opts.NoGitignore,
 			WakeInjectVia:  opts.WakeInjectVia,
 			WakeInjectArgs: opts.WakeInjectArgs,
-		}))
+		}
+		preview := teamCommandPreview(input)
+		fmt.Printf("#    bootstrap: %s\n", preview.Bootstrap)
+		if len(preview.LauncherAddedArgs) > 0 {
+			fmt.Printf("#    launcher-added args: %s\n", shellJoin(preview.LauncherAddedArgs))
+		}
+		fmt.Println(emitTeamCommandWithPreview(input, preview))
 		fmt.Println()
 	}
 	return nil
@@ -1113,12 +1130,24 @@ type emitTeamCommandInput struct {
 	TrustMode      string
 	Model          string
 	ForceDuplicate bool
+	NoGitignore    bool
 	WakeInjectVia  string
 	WakeInjectArgs []string
 	Profile        string
 }
 
+type teamCommandPreviewData struct {
+	ChildArgs            []string
+	LauncherAddedArgs    []string
+	PreauthorizedActions []string
+	Bootstrap            string
+}
+
 func emitTeamCommand(in emitTeamCommandInput) string {
+	return emitTeamCommandWithPreview(in, teamCommandPreview(in))
+}
+
+func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPreviewData) string {
 	m := in.Member
 	var b strings.Builder
 	b.WriteString("cd ")
@@ -1160,6 +1189,9 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 	}
 	if in.ForceDuplicate {
 		b.WriteString(" --force-duplicate")
+	}
+	if in.NoGitignore {
+		b.WriteString(" --no-gitignore")
 	}
 	if origin := strings.TrimSpace(m.SpawnOrigin); origin != "" {
 		b.WriteString(" --spawn-origin ")
@@ -1207,15 +1239,39 @@ func emitTeamCommand(in emitTeamCommandInput) string {
 			b.WriteString(shellQuote(joinedAgentArgs(extraDefaultArgs)))
 		}
 	}
-	modelArgs := modelArgsForBinary(m.Binary, in.Model)
-	if defaultArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, extraDefaultArgs, in.TrustMode); len(defaultArgs) > 0 {
+	if len(preview.ChildArgs) > 0 {
 		b.WriteString(" --")
-		for _, arg := range defaultArgs {
+		for _, arg := range preview.ChildArgs {
 			b.WriteString(" ")
 			b.WriteString(shellQuote(arg))
 		}
 	}
 	return b.String()
+}
+
+func teamCommandPreview(in emitTeamCommandInput) teamCommandPreviewData {
+	m := in.Member
+	extraDefaultArgs := append(binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs()...)
+	modelArgs := modelArgsForBinary(m.Binary, in.Model)
+	defaultArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, extraDefaultArgs, in.TrustMode)
+	childArgs, preauthorized, added := applyClaudeWorkerPreauth(in.TeamHome, in.Profile, m.Role, m.Binary, in.Workstream, defaultArgs)
+	bootstrapArgs := stripTrailingLauncherPreauthArgs(childArgs, preauthorized)
+	bootstrap := "suppressed"
+	if in.NoBootstrap {
+		bootstrap = "disabled"
+	} else if shouldAppendBootstrapWithDefaults(bootstrapArgs, defaultArgs) {
+		bootstrap = "appended"
+	}
+	var launcherAdded []string
+	if added {
+		launcherAdded = claudePreauthChildArgs(preauthorized)
+	}
+	return teamCommandPreviewData{
+		ChildArgs:            childArgs,
+		LauncherAddedArgs:    launcherAdded,
+		PreauthorizedActions: preauthorized,
+		Bootstrap:            bootstrap,
+	}
 }
 
 func launchRootForProfile(teamHome, profile, session string) string {

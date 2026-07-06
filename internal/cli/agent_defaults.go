@@ -52,6 +52,70 @@ func claudePreauthChildArgs(allow []string) []string {
 	return []string{"--allowedTools", strings.Join(allow, ",")}
 }
 
+func applyClaudeWorkerPreauth(projectDir, profile, role, binary, session string, childArgs []string) ([]string, []string, bool) {
+	out := append([]string(nil), childArgs...)
+	if !claudeWorkerPreauthEligible(projectDir, profile, role, binary) {
+		return out, nil, false
+	}
+	actions := claudeInScopePreauthAllowlist(session)
+	preauthArgs := claudePreauthChildArgs(actions)
+	if len(preauthArgs) == 0 {
+		return out, nil, false
+	}
+	if childArgsHasAllowedTools(out) {
+		if childArgsAllowedToolsEquals(out, strings.Join(actions, ",")) {
+			// Team launch previews emit launcher-owned preauth into the copied
+			// command. Treat the exact allowlist as ours so bootstrap eligibility
+			// and launch-record audit fields stay aligned with live launch.
+			return out, actions, false
+		}
+		return out, nil, false
+	}
+	return append(out, preauthArgs...), actions, true
+}
+
+func stripTrailingLauncherPreauthArgs(childArgs, preauthorizedActions []string) []string {
+	preauthArgs := claudePreauthChildArgs(preauthorizedActions)
+	if len(preauthArgs) == 0 || !hasTrailingArgs(childArgs, preauthArgs) {
+		return childArgs
+	}
+	return append([]string(nil), childArgs[:len(childArgs)-len(preauthArgs)]...)
+}
+
+func childArgsHasAllowedTools(args []string) bool {
+	for _, arg := range args {
+		if arg == "--allowedTools" || strings.HasPrefix(arg, "--allowedTools=") {
+			return true
+		}
+	}
+	return false
+}
+
+func childArgsAllowedToolsEquals(args []string, want string) bool {
+	for i, arg := range args {
+		if arg == "--allowedTools" && i+1 < len(args) && args[i+1] == want {
+			return true
+		}
+		if strings.TrimPrefix(arg, "--allowedTools=") != arg && strings.TrimPrefix(arg, "--allowedTools=") == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTrailingArgs(args, suffix []string) bool {
+	if len(suffix) == 0 || len(args) < len(suffix) {
+		return false
+	}
+	offset := len(args) - len(suffix)
+	for i := range suffix {
+		if args[offset+i] != suffix[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // claudeWorkerPreauthEligible reports whether an `agent up` launch is an
 // amq-squad-launched orchestrated NON-LEAD worker on the Claude binary — the
 // only case #296 pre-authorizes. cto/global-lead (the lead role), operator, and

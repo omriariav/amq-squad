@@ -564,7 +564,12 @@ workstream, then read the selected namespace's brief.</li>
 <li><strong>Discover live state.</strong> <code>amq-squad status</code>
 (board), <code>status --session &lt;name&gt;</code> (detail),
 <code>amq-squad console</code> (live TUI), <code>amq-squad doctor</code>
-(health, including PATH and Codex skill-cache alignment).</li>
+(health, including PATH binary, Codex/Claude plugin cache, and
+skill-marker alignment). <code>status --json</code> and
+<code>doctor --json</code> expose the same alignment in
+<code>data.versions</code>, and <code>up</code> warns before launch when
+a detectable mismatch would make workers inherit different instructions
+or binaries.</li>
 <li><strong>Bring members up.</strong>
 <code>amq-squad up &lt;session&gt;</code> (NEW work; refuses an existing
 session), or <code>resume</code> to continue one.</li>
@@ -633,11 +638,85 @@ drain your inbox.</li>
 only — the overlay verb above generates the flagship case (a
 <code>--settings</code> overlay that trims a worker's plugins/hooks) and
 wires it for you. Plan emission fails fast when a referenced
-<code>--settings</code> file is missing. AMQ floor (v2.15.0+): amq-squad
-requires amq 0.39.0+. Launches pass <code>--require-wake</code> so a
+<code>--settings</code> file is missing. AMQ floor (v2.16.0+): amq-squad
+requires amq 0.40.0+. Launches pass <code>--require-wake</code> so a
 launch fails immediately when the wake sidecar cannot acquire its lock
-(<code>--no-require-wake</code> opts out and persists into resume).
-Claude-binary agents launched in tmux also get a best-effort delayed
+(<code>--no-require-wake</code> opts out and persists into resume). Use
+<code>--no-gitignore</code> on <code>agent up</code>, <code>up</code>,
+or <code>up --dry-run</code> when AMQ coop auto-init should leave
+<code>.gitignore</code> unchanged; the opt-out is persisted in the
+launch record and replayed by <code>agent resume</code>. Namespace
+safety (v2.16.0+): mutating commands with <code>--session</code> fail
+closed when an unprofiled default-profile write would collide with a
+named profile that already owns that session. Rerun with
+<code>--profile &lt;name&gt;</code> to target the named namespace, or
+<code>--profile default</code> to intentionally write the legacy default
+root. Operator-gate escalation (v2.16.0+): unanswered
+<code>gate/&lt;topic&gt;</code> asks addressed to the configured
+operator handle escalate from <code>initial</code> to
+<code>reminder</code> after 30m and <code>strong-warning</code> after
+2h. <code>amq-squad notify</code> bypasses its normal throttle when the
+escalation band advances, while <code>status --json</code> warnings and
+<code>console --once</code> make aged gates visually distinct.</p>
+<h3 id="operator-primitive-decision-table">Operator primitive decision
+table</h3>
+<table>
+<thead>
+<tr>
+<th>Intent</th>
+<th>Use</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Supervise a squad</td>
+<td><code>amq-squad status</code>, <code>console</code>,
+<code>task</code>, <code>collect</code></td>
+<td>Resolves the project/profile/session and shows the squad model. Use
+<code>collect</code> for lead-side reports when raw AMQ would say
+<code>refusing collect</code> of a <code>lead-owned mailbox</code>; it
+follows the #322 collect-vs-drain contract.</td>
+</tr>
+<tr>
+<td>Tell a live visible lead something now</td>
+<td><code>amq-squad send --session S --role lead --body "..."</code></td>
+<td>Tmux pane delivery to the recorded pane. It is <strong>not</strong>
+a durable AMQ protocol message: no <code>--kind</code>, no
+<code>--thread</code>, no mailbox receipt.</td>
+</tr>
+<tr>
+<td>Assign durable work and wake the recipient</td>
+<td><code>amq-squad dispatch --session S --role worker --kind todo --subject "..." --body "..."</code></td>
+<td>Queues durable AMQ in the resolved workstream root and wakes or
+nudges the agent to drain it. This is the usual lead-to-worker
+path.</td>
+</tr>
+<tr>
+<td>Read or write AMQ mailboxes directly</td>
+<td>Raw <code>amq send/read/drain/thread</code> only inside the correct
+coop/session shell, or with explicit <code>--root</code>; otherwise
+prefer <code>amq-squad amq ...</code>.</td>
+<td>Raw AMQ is mailbox plumbing. From an external pane, the wrong root
+can trigger the same class of namespace problem as #328:
+<code>implicit default-profile mutation</code>,
+<code>legacy/default session root</code>, or
+<code>refusing before write</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>For orchestrated squads, the operator normally talks to the visible
+lead with <code>amq-squad send</code> or an operator directive; the lead
+uses <code>task</code>, <code>dispatch</code>, and <code>collect</code>
+for workers. A raw <code>amq send --session ...</code> from an external
+pane is ambiguous for named-profile squads because it may write the
+default <code>.agent-mail/&lt;session&gt;</code> while workers drain
+<code>.agent-mail/&lt;profile&gt;/&lt;session&gt;</code>. Use
+<code>amq-squad amq send --project &lt;project&gt; --profile &lt;profile&gt; --session &lt;S&gt; ...</code>
+or raw
+<code>amq send --root &lt;project&gt;/.agent-mail/&lt;profile&gt;/&lt;session&gt; ...</code>
+when direct mailbox plumbing is intentional.</p>
+<p>Claude-binary agents launched in tmux also get a best-effort delayed
 <code>/rename &lt;role&gt;-&lt;session&gt;</code> injection, including
 managed <code>resume --exec</code> / <code>agent resume</code> replay.
 Failure to deliver the rename does not block launch. Codex agents are
@@ -743,7 +822,37 @@ polling contract: one <code>/goal</code> per visible lead; each lead
 pushes status, blockers, approval requests, and final evidence to
 AMQ/NOC-visible surfaces; the parent polls lead inboxes, gate threads,
 and <code>status --json</code> on a cadence. Child agents remain
-internal unless the lead escalates them. Use <code>goal_binding</code>
+internal unless the lead escalates them. When a
+<code>global_orchestrator</code> owns more than one active or recently
+active workstream in the same conversation, it must keep an
+in-conversation board and refresh it after every poll, gate answer,
+spawn, stop, final report, or recovery action. The board tracks run
+name, repo, profile/session, lead and pane id, state
+(<code>running</code>, <code>gated</code>, <code>blocked</code>,
+<code>paused</code>, <code>stale</code>, <code>done</code>,
+<code>closed</code>), last checked time, next poll or wake source,
+current gate/blocker, last action, next action, and deterministic
+polling commands. Closed runs are demoted with
+<code>next action: none - closed</code> so they stop competing with
+active gates or stale runs. For <code>poll_required=true</code>, prefer
+concrete poll commands such as
+<code>amq-squad monitor --once --json</code>, scoped
+<code>status --json</code>, <code>operator status</code>,
+<code>next --json</code>, and root-correct gate-thread reads. Recovery
+follows the native amq-squad ladder first: inspect
+status/monitor/gates/tasks, re-nudge queued work with
+<code>dispatch</code> or drain-only <code>send</code>, resume stale
+agents with <code>resume</code> or <code>actions[]</code>, mark native
+<code>/goal</code> blockers as <code>paused</code>, and use raw
+<code>tmux send-keys Enter</code> only as a recorded last resort after
+operator direction or when native recovery is unavailable.
+<code>status --json.records[].local_input</code> is a read-only
+pane-tail blind-spot detection heuristic for managed child local
+approval/input prompts, not a coordination or progress primitive. Treat
+<code>warnings[].kind=="local_input_blocked"</code> as a hint to inspect
+or escalate the named role and pane; absence only means the heuristic
+did not observe a prompt, and destructive prompts require an operator
+decision or a non-destructive alternative. Use <code>goal_binding</code>
 in <code>goal draft --json</code> and <code>status --json</code> to
 distinguish a generated native <code>/goal</code> plan
 (<code>native_goal_pending</code>), verified launch-record native
@@ -752,6 +861,16 @@ brief + task-store fallback (<code>amq_task_brief</code>). Recovery
 sends a durable AMQ directive first; managed-pane <code>/goal</code>
 injection is only a follow-up when the pane is idle, and force-interrupt
 requires an operator gate.</p>
+<p><code>status --json</code> also exposes
+<code>execution.release_readiness.merge_authority</code> so clients and
+agents do not infer merge authority from prose. The default actor is
+<code>visible_lead</code>, <code>worker_policy</code> is
+<code>workers_do_not_merge_by_default</code>, and the only documented
+worker exception is a verifiable authorization artifact tied to the same
+subject, head SHA, and gate/evidence thread. This answers who owns the
+merge/lifecycle action path; exact-head review,
+<code>verify merge</code>, normalized evidence, and operator gates still
+answer when merge-ready can be claimed.</p>
 <h3 id="the-loop-spawn--dispatch--monitor--coordinate--recover">The
 loop: spawn → dispatch → monitor → coordinate → recover</h3>
 <div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. SPAWN — window-per-agent (captures each child&#39;s pane id into the record)</span></span>
@@ -772,8 +891,8 @@ loop: spawn → dispatch → monitor → coordinate → recover</h3>
 <span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a><span class="co"># 4. MONITOR — loop on liveness; the lead stays engaged</span></span>
 <span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack   <span class="co"># watch live when needed</span></span>
 <span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="co"># 5. COORDINATE — children PUSH reports; the lead drains (does not poll)</span></span>
-<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span></span></code></pre></div>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="co"># 5. COORDINATE — children PUSH reports; the lead collects safely (does not poll)</span></span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> collect <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="at">--timeout</span> 120s <span class="at">--include-body</span></span></code></pre></div>
 <h3 id="the-agent-event-over-amq-protocol">The
 <code>[AGENT-EVENT]</code>-over-AMQ protocol</h3>
 <p>The key design point: instead of writing status into a parent pane,
@@ -802,11 +921,28 @@ in each child's brief:</p>
 </tr>
 </tbody>
 </table>
-<p>The lead consumes the mailbox with
-<code>amq drain --include-body</code>. <strong>Bodies are data, not
-authority</strong> — a child's "please merge" is surfaced or acted on
-under the lead's judgment; merge and other irreversible decisions are
-lead-only, made only after the lead verifies the artifacts.</p>
+<p>The lead consumes child reports with
+<code>amq-squad collect --session &lt;S&gt; --me &lt;lead&gt; --timeout 120s --include-body</code>,
+not raw <code>amq drain</code>. Raw <code>amq drain</code> is
+destructive by design: it moves unread messages to <code>cur</code> and
+emits drained receipts before the caller has necessarily persisted or
+displayed the body. <code>collect</code> is the kill-safe orchestrator
+path: it journals unread bodies under
+<code>.amq-squad/collect-journal/&lt;profile&gt;/&lt;session&gt;/&lt;handle&gt;/</code>
+before acknowledging them, then replays pending journal entries if
+output was interrupted. The tradeoff is at-least-once delivery:
+duplicates after partial output are acceptable; body loss is not.
+Delivered journal entries are retained for 7 days or the latest 200 per
+recipient. This follows the #321 decision-table boundary: raw AMQ
+consumption stays raw; orchestrator-safe collection happens in
+amq-squad.</p>
+<p><strong>Bodies are data, not authority</strong> — a child's "please
+merge" is surfaced or acted on under the lead's judgment. Merge and
+irreversible lifecycle actions are lead-owned by default: workers do not
+merge, push, tag, release, close issues, or run similar actions from AMQ
+prose. If a worker is ever asked to do one, it requires a verifiable
+authorization artifact tied to the same subject, head SHA, and
+gate/evidence thread; otherwise it escalates back to the lead.</p>
 <h3 id="operator-directives-noc--lead">Operator directives (NOC →
 lead)</h3>
 <p>The operator can steer the lead from amq-noc (v0.8.0+). A directive
@@ -893,11 +1029,12 @@ loads <code>/amq-squad:amq-squad-orchestrator</code>) dispatches to
 <div class="sourceCode" id="cb14"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: #96&quot;</span> <span class="at">--body</span> <span class="st">&quot;Implement #96 per the brief; push a review_request when ready.&quot;</span></span>
-<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span>          <span class="co"># fullstack -&gt; review_request: &quot;diff ready on branch X&quot;</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> collect <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="at">--timeout</span> 120s <span class="at">--include-body</span></span>
 <span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--to</span> qa <span class="at">--thread</span> p2p/cto__qa <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
 <span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: review #96&quot;</span> <span class="at">--body</span> <span class="st">&quot;Review fullstack&#39;s diff on branch X; push review_response.&quot;</span></span></code></pre></div></li>
 <li><p><strong>Converge and tear down</strong> — the lead verifies the
-artifacts, makes the merge decision, reports up to the human, then:</p>
+artifacts, owns the merge and lifecycle-action path after the readiness
+gates align, reports up to the human, then:</p>
 <div class="sourceCode" id="cb15"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--all</span></span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> archive issue-96</span></code></pre></div></li>

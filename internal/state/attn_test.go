@@ -1,6 +1,7 @@
 package state
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +143,137 @@ func TestNeedsYouThreads_SortedByReasonThenAge(t *testing.T) {
 	// TopAttnReason leads with the most urgent reason (APPROVE here).
 	if top := snap.Sessions[0].Coordination.TopAttnReason(); top != AttnApprove {
 		t.Errorf("TopAttnReason = %q, want %q", top, AttnApprove)
+	}
+}
+
+func TestOperatorGateSignalUsesLastUnansweredOperatorMessage(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	userDir := filepath.Join(base, "s", "agents", "user")
+	_ = seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+
+	seedMessage(t, userDir, "new", msgSpec{
+		id: "old", from: "cto", to: []string{"user"}, thread: "gate/spawn-dev",
+		kind: "question", subject: "APPROVAL: spawn dev?", createdAt: coordNow.Add(-3 * time.Hour),
+	})
+	seedMessage(t, userDir, "new", msgSpec{
+		id: "new", from: "cto", to: []string{"user"}, thread: "gate/spawn-dev",
+		kind: "question", subject: "APPROVAL: updated spawn dev?", createdAt: coordNow.Add(-20 * time.Minute),
+	})
+
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	th := findThread(t, snap.Sessions[0].Coordination, "gate/spawn-dev")
+	if th.Triage != TriageNeedsYou || th.OperatorGate == nil {
+		t.Fatalf("gate triage/operator signal = %q/%+v, want needs-you signal", th.Triage, th.OperatorGate)
+	}
+	if th.OperatorGate.LatestID != "new" || th.OperatorGate.Age != 20*time.Minute {
+		t.Fatalf("operator gate signal = %+v, want latest new age 20m", th.OperatorGate)
+	}
+	if th.OperatorGate.Escalation != OperatorGateEscalationInitial {
+		t.Fatalf("gate escalation = %q, want initial from the updated gate age", th.OperatorGate.Escalation)
+	}
+}
+
+func TestOperatorGateSignalClearsAnsweredGateAcrossMailboxOrder(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	userDir := filepath.Join(base, "s", "agents", "user")
+	ctoDir := seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+
+	// The cto mailbox is scanned before the virtual operator mailbox, so this
+	// answer is observed before the older question unless gate replay sorts by
+	// message creation time.
+	seedMessage(t, ctoDir, "new", msgSpec{
+		id: "answer", from: "user", to: []string{"cto"}, thread: "gate/release",
+		kind: "answer", subject: "APPROVED: release", createdAt: coordNow.Add(-55 * time.Minute),
+	})
+	seedMessage(t, userDir, "new", msgSpec{
+		id: "question", from: "cto", to: []string{"user"}, thread: "gate/release",
+		kind: "question", subject: "APPROVAL: release?", createdAt: coordNow.Add(-1 * time.Hour),
+	})
+
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	th := findThread(t, snap.Sessions[0].Coordination, "gate/release")
+	if th.OperatorGate != nil {
+		t.Fatalf("operator gate signal = %+v, want nil for answered gate", th.OperatorGate)
+	}
+	if th.Triage == TriageNeedsYou {
+		t.Fatalf("answered gate should not need operator attention")
+	}
+}
+
+func TestOperatorGateSignalReraisedGateUsesFreshClockAfterAnswer(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	userDir := filepath.Join(base, "s", "agents", "user")
+	ctoDir := seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+
+	// Scan order observes the answer first, then both operator-mailbox
+	// questions. Chronological replay should clear the old gate and leave only
+	// the newer re-raised gate pending.
+	seedMessage(t, ctoDir, "new", msgSpec{
+		id: "answer", from: "user", to: []string{"cto"}, thread: "gate/release",
+		kind: "answer", subject: "APPROVED: previous release gate", createdAt: coordNow.Add(-55 * time.Minute),
+	})
+	seedMessage(t, userDir, "new", msgSpec{
+		id: "old-question", from: "cto", to: []string{"user"}, thread: "gate/release",
+		kind: "question", subject: "APPROVAL: release?", createdAt: coordNow.Add(-1 * time.Hour),
+	})
+	seedMessage(t, userDir, "new", msgSpec{
+		id: "new-question", from: "cto", to: []string{"user"}, thread: "gate/release",
+		kind: "question", subject: "APPROVAL: release with hotfix?", createdAt: coordNow.Add(-20 * time.Minute),
+	})
+
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	th := findThread(t, snap.Sessions[0].Coordination, "gate/release")
+	if th.Triage != TriageNeedsYou || th.OperatorGate == nil {
+		t.Fatalf("gate triage/operator signal = %q/%+v, want needs-you signal", th.Triage, th.OperatorGate)
+	}
+	if th.OperatorGate.LatestID != "new-question" || th.OperatorGate.Age != 20*time.Minute {
+		t.Fatalf("operator gate signal = %+v, want latest new-question age 20m", th.OperatorGate)
+	}
+	if th.OperatorGate.Escalation != OperatorGateEscalationInitial {
+		t.Fatalf("gate escalation = %q, want initial from the re-raised gate age", th.OperatorGate.Escalation)
+	}
+}
+
+func TestOperatorGateSignalSurvivesLaterNonAnswerChatter(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	userDir := filepath.Join(base, "s", "agents", "user")
+	_ = seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+
+	seedMessage(t, userDir, "new", msgSpec{
+		id: "gate", from: "cto", to: []string{"user"}, thread: "gate/release",
+		kind: "question", subject: "APPROVAL: release?", createdAt: coordNow.Add(-3 * time.Hour),
+	})
+	seedMessage(t, userDir, "new", msgSpec{
+		id: "note", from: "cto", to: []string{"user"}, thread: "gate/release",
+		kind: "status", subject: "status: checks still passing", createdAt: coordNow.Add(-5 * time.Minute),
+	})
+
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	th := findThread(t, snap.Sessions[0].Coordination, "gate/release")
+	if th.Triage != TriageNeedsYou || th.OperatorGate == nil {
+		t.Fatalf("gate triage/operator signal = %q/%+v, want needs-you signal", th.Triage, th.OperatorGate)
+	}
+	if th.OperatorGate.LatestID != "gate" || th.OperatorGate.Age != 3*time.Hour {
+		t.Fatalf("operator gate signal = %+v, want pending gate age 3h despite later status", th.OperatorGate)
+	}
+	if th.OperatorGate.Escalation != OperatorGateEscalationStrongWarning {
+		t.Fatalf("gate escalation = %q, want strong-warning", th.OperatorGate.Escalation)
 	}
 }
 

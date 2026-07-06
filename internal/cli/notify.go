@@ -59,6 +59,7 @@ type operatorAttention struct {
 	Reason      state.AttnReason `json:"reason"`
 	Age         string           `json:"age"`
 	LastEventAt time.Time        `json:"last_event_at,omitempty"`
+	Escalation  string           `json:"escalation,omitempty"`
 	Inspect     string           `json:"inspect"`
 	Respond     string           `json:"respond"`
 }
@@ -69,8 +70,9 @@ type notifyStateFile struct {
 }
 
 type notifyStateRecord struct {
-	LatestID     string    `json:"latest_id"`
-	LastNotified time.Time `json:"last_notified"`
+	LatestID       string    `json:"latest_id"`
+	LastNotified   time.Time `json:"last_notified"`
+	LastEscalation string    `json:"last_escalation,omitempty"`
 }
 
 func runNotify(args []string) error {
@@ -239,6 +241,7 @@ func collectOperatorAttention(projectDir, profile string, snap state.Snapshot, o
 			if age < 0 {
 				age = 0
 			}
+			from := firstNonOperatorParticipant(th, operatorHandle)
 			item := operatorAttention{
 				Key:         notifyKey(profile, sess.Name, th.ID),
 				Profile:     profile,
@@ -246,17 +249,17 @@ func collectOperatorAttention(projectDir, profile string, snap state.Snapshot, o
 				NamespaceID: squadnamespace.ID(profile, sess.Name),
 				Thread:      th.ID,
 				LatestID:    th.LatestID,
+				From:        from,
 				Subject:     th.Subject,
 				Kind:        th.Kind,
 				Reason:      th.AttnReason,
 				Age:         roundDuration(age).String(),
 				LastEventAt: th.LastEventAt,
 				Inspect:     notifyInspectCommand(projectDir, profile, sess.Name, th.ID),
-				Respond:     notifyRespondCommand(operatorHandle, firstNonOperatorParticipant(th, operatorHandle), th.ID, th.AttnReason),
+				Respond:     notifyRespondCommand(operatorHandle, from, th.ID, th.AttnReason),
 			}
-			if len(th.Participants) > 0 {
-				item.From = firstNonOperatorParticipant(th, operatorHandle)
-			}
+			applyThreadOperatorGateAttention(&item, th)
+			item.Respond = notifyRespondCommand(operatorHandle, item.From, th.ID, item.Reason)
 			out = append(out, item)
 		}
 	}
@@ -305,8 +308,8 @@ func collectRawOpenGateAttention(projectDir, profile string, snap state.Snapshot
 			}
 			gate := byThread[msg.Thread]
 			switch msg.Kind {
-			case state.KindQuestion:
-				if operatorMessageToContains(msg, operatorHandle) && sessionHasAgentHandle(sess.Agents, msg.From) {
+			case state.KindQuestion, state.KindReviewRequest, state.KindDecision:
+				if rawOperatorGateRequestMessage(msg, operatorHandle, sess.Agents) {
 					gate.pending = msg
 				}
 			case state.KindAnswer:
@@ -335,16 +338,36 @@ func collectRawOpenGateAttention(projectDir, profile string, snap state.Snapshot
 				From:        msg.From,
 				Subject:     msg.Subject,
 				Kind:        msg.Kind,
-				Reason:      state.AttnApprove,
+				Reason:      state.ClassifyAttnSubject(msg.Subject),
 				Age:         roundDuration(age).String(),
 				LastEventAt: msg.Created,
+				Escalation:  string(state.OperatorGateEscalationForAge(age)),
 				Inspect:     notifyInspectCommand(projectDir, profile, sess.Name, thread),
-				Respond:     notifyRespondCommand(operatorHandle, msg.From, thread, state.AttnApprove),
+				Respond:     notifyRespondCommand(operatorHandle, msg.From, thread, state.ClassifyAttnSubject(msg.Subject)),
 			})
 		}
 	}
 	sortOperatorAttention(out)
 	return out
+}
+
+func applyThreadOperatorGateAttention(item *operatorAttention, th state.ThreadSummary) {
+	if item == nil || th.OperatorGate == nil {
+		return
+	}
+	gate := th.OperatorGate
+	item.LatestID = gate.LatestID
+	item.From = gate.From
+	item.Subject = gate.Subject
+	item.Kind = gate.Kind
+	item.Reason = gate.Reason
+	item.Age = roundDuration(gate.Age).String()
+	item.LastEventAt = gate.Since
+	item.Escalation = string(gate.Escalation)
+}
+
+func rawOperatorGateRequestMessage(msg state.Message, operatorHandle string, agents []state.Agent) bool {
+	return operatorMessageToContains(msg, operatorHandle) && sessionHasAgentHandle(agents, msg.From)
 }
 
 func mergeOperatorAttention(base, extra []operatorAttention) []operatorAttention {
@@ -460,18 +483,32 @@ func selectNotifications(items []operatorAttention, prior notifyStateFile, renot
 	for _, item := range items {
 		rec := prior.Items[item.Key]
 		notify := rec.LatestID != item.LatestID || rec.LastNotified.IsZero()
+		if !notify && operatorAttentionEscalated(item, rec) {
+			notify = true
+		}
 		if !notify && renotifyAfter > 0 && now.Sub(rec.LastNotified) >= renotifyAfter {
 			notify = true
 		}
 		if notify {
 			selected = append(selected, item)
-			rec = notifyStateRecord{LatestID: item.LatestID, LastNotified: now}
+			rec = notifyStateRecord{LatestID: item.LatestID, LastNotified: now, LastEscalation: item.Escalation}
 		} else {
 			suppressed++
 		}
 		next.Items[item.Key] = rec
 	}
 	return selected, suppressed, next
+}
+
+func operatorAttentionEscalated(item operatorAttention, rec notifyStateRecord) bool {
+	current := state.OperatorGateEscalation(item.Escalation)
+	if current == "" {
+		return false
+	}
+	previous := state.OperatorGateEscalation(rec.LastEscalation)
+	currentRank := state.OperatorGateEscalationRank(current)
+	return currentRank >= state.OperatorGateEscalationRank(state.OperatorGateEscalationReminder) &&
+		currentRank > state.OperatorGateEscalationRank(previous)
 }
 
 func renderNotify(out io.Writer, data notifyEnvelopeData) error {
@@ -489,7 +526,11 @@ func renderNotify(out io.Writer, data notifyEnvelopeData) error {
 		if reason == "" {
 			reason = "generic"
 		}
-		fmt.Fprintf(out, "- %s %s %s (%s, age %s)\n", n.Session, n.Thread, n.Subject, reason, n.Age)
+		escalation := ""
+		if n.Escalation != "" {
+			escalation = ", " + n.Escalation
+		}
+		fmt.Fprintf(out, "- %s %s %s (%s%s, age %s)\n", n.Session, n.Thread, n.Subject, reason, escalation, n.Age)
 		fmt.Fprintf(out, "  inspect: %s\n", n.Inspect)
 		fmt.Fprintf(out, "  respond: %s\n", n.Respond)
 	}

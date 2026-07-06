@@ -407,6 +407,12 @@ pull-based, dependency-gated queue under
 or <code>.amq-squad/tasks/&lt;profile&gt;/&lt;session&gt;/</code> for
 named profiles, so a lead of either binary decomposes the goal into
 claimable work.</li>
+<li><strong>Agent activity heartbeats</strong> —
+<code>amq-squad activity set/clear</code>: workers can atomically
+publish current task/phase activity under their AMQ agent directory.
+<code>status --json</code> and <code>console</code> show
+fresh/stale/unknown activity, with task-store ownership as a weaker
+source-separated fallback.</li>
 <li><strong>Compose-from-goal playbook</strong> — the
 <code>amq-squad-orchestrator</code> skill (in both the Claude and Codex
 marketplaces) drives propose → approve → <code>team member add</code> →
@@ -462,12 +468,12 @@ workstream)</li>
 mailbox). AMQ itself stays unchanged.</p>
 <h2 id="install">Install</h2>
 <p>Install the 2.0 line (note the <code>/v2</code> module path):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.15.0</span>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.16.0</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For the latest 2.x build:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span></code></pre></div>
 <p>Requires Go 1.25+, the <code>amq</code> binary on <code>PATH</code>
-(v0.39.0+), and <code>tmux</code> on <code>PATH</code> for
+(v0.40.0+), and <code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code>.</p>
 <h3 id="skills-plugin-marketplaces">Skills (plugin marketplaces)</h3>
 <p>This repo doubles as a plugin marketplace that ships the amq-squad
@@ -900,7 +906,7 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> /path/to/repo <span class="dt">\</span></span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> v2-15-0 <span class="dt">\</span></span>
 <span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--register-orchestrator</span><span class="op">=</span>orchestrator <span class="dt">\</span></span>
-<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal</span> <span class="st">&quot;deliver GitHub milestone v2.15.0&quot;</span> <span class="dt">\</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal</span> <span class="st">&quot;deliver GitHub milestone v2.16.0&quot;</span> <span class="dt">\</span></span>
 <span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--yes</span></span></code></pre></div>
 <p>In one verified step this produces (1) a durable
 <code>orchestrator</code> team member, (2) a launch record bound to the
@@ -1036,6 +1042,14 @@ storage-isolated under
 thread/threads, notify, dispatch, task, brief, launch, resume, and
 lifecycle commands resolve against the selected profile/session
 namespace rather than scanning a sibling legacy session root.</p>
+<p>Namespace-safety rule: mutating commands with <code>--session</code>
+in a multi-profile project should pass <code>--profile</code>. If an
+unprofiled mutation would write the default profile while a named
+profile already owns that session, amq-squad fails closed before writing
+and tells you to rerun with <code>--profile &lt;name&gt;</code> or the
+explicit escape hatch <code>--profile default</code>.
+<code>status --session &lt;name&gt;</code> stays read-only and warns
+when the default view is shadowed by a named profile.</p>
 <p>Schema 3 adds an optional virtual operator participant for human
 gates:</p>
 <div class="sourceCode" id="cb20"><pre
@@ -1044,8 +1058,8 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--no-operator</span>   <span class="co"># explicit opt-out</span></span></code></pre></div>
 <p>The operator is not a runnable team member. AMQ 0.38.0+ reserves the
 conventional <code>user</code> mailbox for this human/operator role, and
-amq-squad v2.15.0 still requires AMQ 0.39.0+ overall; custom operator
-handles use the same amq-squad protocol. JSON discovery derives
+amq-squad v2.16.0 requires AMQ 0.40.0+ overall; custom operator handles
+use the same amq-squad protocol. JSON discovery derives
 <code>operator</code> and <code>capabilities.operator_gates</code>;
 <code>capabilities</code> is not persisted in
 <code>team.json</code>.</p>
@@ -1067,6 +1081,19 @@ evidence only; it is not a gate. <code>amq-squad notify</code> surfaces
 new or stale needs-you gates with inspect/respond commands and
 de-duplicates unchanged items, but notification output never authorizes
 or clears a gate.</p>
+<p>Unanswered operator gates age through visible escalation bands:
+<code>initial</code> immediately, <code>reminder</code> after 30
+minutes, and <code>strong-warning</code> after 2 hours. The age is
+measured from the last unanswered operator-facing gate message on the
+<code>gate/&lt;topic&gt;</code> thread, so re-raising a decision starts
+a fresh clock while later status chatter does not hide the pending gate.
+<code>notify</code> records the last emitted escalation band and
+bypasses normal de-duplication when a gate crosses into
+<code>reminder</code> or <code>strong-warning</code>;
+<code>status --json</code> emits <code>data.warnings[]</code> for aged
+gates, and <code>console</code> labels them as
+<code>needs-you/reminder</code> or
+<code>needs-you/strong-warning</code>.</p>
 <h3 id="orchestration-opt-in">Orchestration (opt-in)</h3>
 <p>By default a squad is flat: members coordinate peer-to-peer over AMQ.
 You can instead run an <strong>orchestrated</strong> squad, where one
@@ -1143,6 +1170,19 @@ clients do not infer who is allowed to mutate files. They also expose
 operator handle always has <code>wake_supported=false</code>, so
 operator-facing updates and gates require polling/draining instead of
 wake delivery.</p>
+<p>Merge and lifecycle authority is explicit in the same status surface.
+<code>execution.release_readiness.merge_authority.default_actor</code>
+is <code>visible_lead</code>, and <code>worker_policy</code> is
+<code>workers_do_not_merge_by_default</code>: workers can report
+readiness evidence, but they do not merge, push, tag, release, close
+issues, or run other irreversible lifecycle actions from AMQ prose. The
+documented alternative is a verifiable authorization artifact that binds
+the operator/lead approval to the same subject, head SHA, and
+gate/evidence thread; otherwise a worker escalates the request back to
+the visible lead. This answers <strong>who</strong> owns the action
+path, while the exact-head review, <code>verify merge</code>, normalized
+evidence, and operator gate rules still answer <strong>when</strong>
+merge-ready can be claimed.</p>
 <p>The operator normally steers the workstream through the
 lead/orchestrator. The operator can steer the lead directly from amq-noc
 (v0.8.0+), or with plain AMQ: a <strong>directive</strong> arrives on
@@ -1167,11 +1207,31 @@ operating contract is one <code>/goal</code> per visible lead; leads
 push status, blockers, approval requests, and final evidence to
 AMQ/NOC-visible surfaces; the parent orchestrator or NOC polls each
 lead's inbox, gate threads, and <code>status --json</code> on a cadence;
-child agents remain internal unless the lead escalates them. When
-<code>operator_delivery.poll_required=true</code>, the same polling rule
-applies to the virtual operator mailbox: lead reports, blockers, and
-approval gates are durable AMQ records, and no client should claim wake
-support for the non-runnable operator recipient.
+child agents remain internal unless the lead escalates them. When a
+<code>global_orchestrator</code> owns more than one active or recently
+active workstream in one conversation, it keeps an in-conversation board
+and refreshes it after every poll, gate answer, spawn, stop, final
+report, or recovery action. The board records run name, repo,
+profile/session, lead and pane id, state (<code>running</code>,
+<code>gated</code>, <code>blocked</code>, <code>paused</code>,
+<code>stale</code>, <code>done</code>, <code>closed</code>), last
+checked time, next poll or wake source, current gate/blocker, last
+action, next action, and deterministic polling commands. Closed runs are
+demoted with <code>next action: none - closed</code> so they stop
+competing with active gates or stale runs. For
+<code>poll_required=true</code>, use deterministic commands such as
+<code>amq-squad monitor --once --json</code>, scoped
+<code>status --json</code>, <code>operator status</code>,
+<code>next --json</code>, and root-correct gate-thread reads. Recovery
+uses native amq-squad paths first (<code>dispatch</code> or drain-only
+<code>send</code> re-nudges, <code>resume</code> or
+<code>actions[]</code>, native <code>/goal resume</code> for understood
+blockers); raw <code>tmux send-keys Enter</code> is a recorded last
+resort after operator direction or when native recovery is unavailable.
+When <code>operator_delivery.poll_required=true</code>, the same polling
+rule applies to the virtual operator mailbox: lead reports, blockers,
+and approval gates are durable AMQ records, and no client should claim
+wake support for the non-runnable operator recipient.
 <code>status --json</code> exposes <code>goal_binding</code> so the NOC
 can tell whether a visible lead has verified native <code>/goal</code>
 binding (<code>native_goal</code>), a generated but not-yet-launched
@@ -1305,7 +1365,7 @@ amq-squad up [&lt;session&gt;] [--project DIR] [--profile NAME] [--session ws] [
              [--dry-run [--json]] [--seed-from file:|issue:|gh: [--force]]
              [--terminal tmux] [--target current-window|new-window|new-session]
              [--layout vertical|horizontal|tiled] [--terminal-session name]
-             [--stagger 750ms] [--no-bootstrap] [--force-duplicate]
+             [--stagger 750ms] [--no-bootstrap] [--force-duplicate] [--no-gitignore]
                                   NEW work. Bring the configured team up live (tmux) or
                                   print the plan with --dry-run. REFUSES a session that
                                   already exists (use `resume`, or `up --reset` to start
@@ -1346,20 +1406,22 @@ amq-squad fork --from &lt;current&gt; --as &lt;new&gt; [--project DIR] [--force-
                                   created or preserved by the subsequent
                                   `up --session &lt;new&gt;` (or `agent up`) live launch.
                                   --project targets a team-home without cd.
-amq-squad rm &lt;session&gt; [--project DIR] [--yes] [--force] [--keep-panes]
+amq-squad rm &lt;session&gt; [--project DIR] [--profile NAME] [--yes] [--force] [--keep-panes]
                                   Permanently remove a finished session (its AMQ root dir
                                   + brief). Previews + prompts
                                   (default No) unless --yes; refuses a live session unless
                                   --force; never touches a sibling session. Closes the
                                   torn-down agents&#39; tmux panes by default (live agents
                                   excluded); --keep-panes to leave them. --project
-                                  targets a team-home without cd.
-amq-squad archive &lt;session&gt; [--project DIR] [--yes] [--force] [--keep-panes]
+                                  targets a team-home without cd; --profile selects the
+                                  profile/session namespace.
+amq-squad archive &lt;session&gt; [--project DIR] [--profile NAME] [--yes] [--force] [--keep-panes]
                                   Move a finished session aside instead of deleting it
                                   (to &lt;baseRoot&gt;/.archive/&lt;session&gt;/, recoverable).
                                   Confirm-gated; refuses a live session unless --force.
                                   Closes the agents&#39; tmux panes by default; --keep-panes
-                                  to leave them. --project targets a team-home without cd.
+                                  to leave them. --project targets a team-home without cd;
+                                  --profile selects the profile/session namespace.
 amq-squad status [--project DIR] [--json]
                                   Multi-session BOARD over every discovered session
 amq-squad status --session NAME [--project DIR] [--json]
@@ -1391,11 +1453,22 @@ amq-squad task reset &lt;id&gt; --me HANDLE [--reason R] [--json] --session S
                                   completed. Terminal/reset transitions on an
                                   assigned task require the assignee&#39;s --me.
                                   All subcommands require --session.
+amq-squad activity set --session S --me HANDLE --phase PHASE [--task ID] [--detail TEXT] [--profile P] [--json]
+amq-squad activity clear --session S --me HANDLE [--profile P] [--json]
+                                  Write or clear
+                                  &lt;amq-root&gt;/agents/&lt;handle&gt;/activity.json
+                                  atomically. Status and console surface this as
+                                  an honest busy/current-task signal with
+                                  source and quality; stale or malformed files
+                                  degrade to unknown rather than progress.
 amq-squad dispatch --session S --role R --subject SUBJ --body BODY [--create-task | --task ID] [--json]
                                   Queue a durable AMQ message and best-effort
                                   drain nudge. Plain dispatch stays AMQ-only;
                                   --create-task creates and links a native task,
-                                  while --task links an existing task id.
+                                  while --task links an existing task id. A
+                                  task-backed dispatch auto-claims a pending
+                                  task for the target handle after the durable
+                                  send and task link succeed.
 amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
                          [--wake|--no-wake] [--require-wake|--no-require-wake]
                          [--adopt-project-lead] [--compat-no-wake --reason TEXT]
@@ -1428,9 +1501,10 @@ amq-squad thread --session NAME --id THREAD [--project DIR] [--include-body=fals
 amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
                                   AMQ version, AMQ ops diagnostics, the amq-squad
                                   on PATH vs this build (version skew — spawned
-                                  agents inherit the PATH binary), Codex plugin
-                                  skill-cache alignment, profile config, tmux,
-                                  wake, marker integrity, and pointer-sync drift.
+                                  agents inherit the PATH binary), Codex/Claude
+                                  plugin cache and skill-version alignment,
+                                  profile config, tmux, wake, marker integrity,
+                                  and pointer-sync drift.
 amq-squad amq env [--project DIR] [--session NAME] [--me HANDLE] [--json]
                                   Show the AMQ context amq-squad resolved for
                                   this project/session.
@@ -1465,7 +1539,7 @@ amq-squad completion &lt;bash|zsh|fish&gt;
                             [--conversation ref] [--no-bootstrap]
                             [--trust sandboxed|approve-for-me|trusted] [--model NAME]
                             [--codex-args ...] [--claude-args ...]
-                            [--force-duplicate] [-- &lt;native flags&gt;]
+                            [--force-duplicate] [--no-gitignore] [-- &lt;native flags&gt;]
                                   Launch one agent. Writes launch.json + role.md
                                   in the AMQ mailbox, injects bootstrap, then execs
                                   amq coop exec. --project targets a team-home
@@ -1497,6 +1571,31 @@ session — docker-ps / <code>git branch -v</code> style: session name,
 rolled-up state (running / stopped / degraded), agent health (N/M alive
 + at-risk), a one-line brief, and last-activity. Add
 <code>--session NAME</code> for the single-session detail table.</p>
+<p>Per-agent rows may include activity from
+<code>&lt;amq-root&gt;/agents/&lt;handle&gt;/activity.json</code>,
+written by <code>amq-squad activity set</code> or cheap task-transition
+stamps. <code>status --json</code> exposes this under
+<code>records[].activity</code> with <code>source</code>
+(<code>heartbeat-file</code>, <code>task-store</code>, or
+<code>unknown</code>) and <code>quality</code> (<code>fresh</code>,
+<code>stale</code>, or <code>unknown</code>) so clients can distinguish
+an agent-written heartbeat from task-store ownership fallback.</p>
+<p>Managed child rows may also include
+<code>records[].local_input</code> when a read-only pane-tail blind-spot
+detection heuristic sees a local approval/input prompt. This is not a
+coordination or progress primitive: capture failures, dead panes, and
+unparseable tails produce no field, so absence means "not observed", not
+"not blocked". When present, <code>data.warnings[]</code> includes
+<code>kind:"local_input_blocked"</code> with the role, pane, prompt
+summary, and recovery guidance; destructive prompts require an operator
+decision or a non-destructive alternative.</p>
+<p>Status warnings also include aged operator gates when a poll-required
+operator decision would otherwise sit silently. Gate escalation bands
+are <code>initial</code>, <code>reminder</code> at 30 minutes, and
+<code>strong-warning</code> at 2 hours; warning kinds are
+<code>operator_gate_reminder</code> and
+<code>operator_gate_strong_warning</code>, with a suggested
+<code>amq-squad thread ... --include-body</code> inspection command.</p>
 <p><code>amq-squad console</code> is the project-scoped Mission Control
 TUI for the current team-home.</p>
 <div class="sourceCode" id="cb24"><pre
@@ -1513,6 +1612,10 @@ stopped),</li>
 <li>per-session <strong>detail</strong> with each agent's liveness and a
 <strong>collapsed-thread bus</strong> ("qa ↔︎ cto blocked · subject N
 msgs · 7m"),</li>
+<li>aged operator gates rendered distinctly as
+<code>needs-you/reminder</code> or
+<code>needs-you/strong-warning</code>, using the pending gate age rather
+than later thread chatter,</li>
 <li><strong>peek</strong> (<code>space</code>) for a read-only view of
 an agent's recent output, unread inbox, and what it is blocked on,</li>
 <li>an <strong>action palette</strong> (<code>a</code>) with copy-ready
@@ -1537,12 +1640,13 @@ attached.</p>
 <p><code>amq-squad amq ...</code> is a project-aware wrapper around AMQ
 diagnostics. It resolves the same AMQ root, base root, session, and
 handle that the squad launcher uses, then delegates to AMQ.</p>
-<p>amq-squad v2.15.0 requires AMQ 0.39.0 or newer. That floor includes
+<p>amq-squad v2.16.0 requires AMQ 0.40.0 or newer. That floor includes
 the wake-inject stale-process fix (AMQ-owned <code>--inject-via</code>
 wake processes exit when their recorded owner is gone or no longer
-matches), plus eval-safe <code>amq env --export</code> and the reserved
-human <code>user</code> mailbox behavior used by operator gates and
-notification surfaces.</p>
+matches), eval-safe <code>amq env --export</code>, the reserved human
+<code>user</code> mailbox behavior used by operator gates and
+notification surfaces, and AMQ 0.40.0's stricter queue/DLQ/receipt/wake
+metadata file hardening.</p>
 <p>Read-only diagnostics run directly:</p>
 <div class="sourceCode" id="cb25"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq env <span class="at">--session</span> issue-96</span>
@@ -1577,7 +1681,14 @@ external clients: <code>operator.enabled</code>,
 mode-safe fields name the control root, target project root,
 profile/session namespace, visible lead/team, mutable actor, whether
 implementation is allowed, goal binding, topology, polling requirement,
-mode errors, and runtime-vs-target version compatibility.</p>
+mode errors, and runtime-vs-target version compatibility.
+<code>status --json</code> and <code>doctor --json</code> also include a
+<code>versions</code> object with the running binary, the
+<code>amq-squad</code> found on <code>PATH</code>, Codex and Claude
+plugin-cache manifest versions, the loaded skill marker where
+detectable, and per-source <code>matches_running</code> / warning
+details. <code>up</code> emits the same mismatch warnings before launch
+when it can detect them.</p>
 <div class="sourceCode" id="cb27"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> history <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
@@ -1588,11 +1699,12 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb27-1"><a href="#
 <span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--subject</span> <span class="st">&quot;Review&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
 <span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--title</span> <span class="st">&quot;Review PR&quot;</span> <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
 <span id="cb27-9"><a href="#cb27-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task claim t1 <span class="at">--me</span> qa <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add qa <span class="at">--binary</span> codex <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-11"><a href="#cb27-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-12"><a href="#cb27-12" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--sync</span> <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-13"><a href="#cb27-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--dry-run</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-14"><a href="#cb27-14" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span></code></pre></div>
+<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> activity set <span class="at">--session</span> issue-96 <span class="at">--me</span> qa <span class="at">--task</span> t1 <span class="at">--phase</span> testing <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb27-11"><a href="#cb27-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add qa <span class="at">--binary</span> codex <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb27-12"><a href="#cb27-12" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb27-13"><a href="#cb27-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--sync</span> <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb27-14"><a href="#cb27-14" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--dry-run</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb27-15"><a href="#cb27-15" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span></code></pre></div>
 <p>Envelope shape:</p>
 <div class="sourceCode" id="cb28"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
@@ -1604,9 +1716,10 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb28-1"><a href=
 orchestrators and NOC tooling. Initial stable mutator envelopes include
 <code>dispatch</code>, <code>task add</code>, task transitions
 (<code>claim</code>, <code>done</code>, <code>fail</code>,
-<code>block</code>), and <code>team member add/rm</code>. Human output
-remains unchanged when <code>--json</code> is not passed. This is the
-user-facing closure for #222.</p>
+<code>block</code>), <code>activity set/clear</code>, and
+<code>team member add/rm</code>. Human output remains unchanged when
+<code>--json</code> is not passed. This is the user-facing closure for
+#222.</p>
 <h2 id="runtime-control-tmux">Runtime control (tmux)</h2>
 <p>amq-squad owns the tmux execution/control contract for a team so
 external clients (such as amq-noc) can make agents actionable without
@@ -1876,13 +1989,17 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb37-1"><a href="#
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5.5,fullstack=fable-5 <span class="dt">\</span></span>
 <span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span>
 <span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5.5 <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span></code></pre></div>
-<p>amq-squad v2.15.0 requires amq <strong>0.39.0+</strong>. Launches
+<p>amq-squad v2.16.0 requires amq <strong>0.40.0+</strong>. Launches
 pass <code>--require-wake</code> to <code>amq coop exec</code>, so a
 launch <strong>fails at the door</strong> when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale
 or orphaned wake. <code>--no-require-wake</code> opts out for
 environments where wake cannot run; the opt-out is persisted in the
-launch record so resume reproduces it.</p>
+launch record so resume reproduces it. Use <code>--no-gitignore</code>
+on <code>agent up</code>, <code>up</code>, or <code>up --dry-run</code>
+when AMQ coop auto-init should leave <code>.gitignore</code> unchanged;
+the opt-out is persisted in the launch record and replayed by
+<code>agent resume</code>.</p>
 <p>For external-injector wake setups, pass
 <code>--wake-inject-via /absolute/injector</code> and repeat
 <code>--wake-inject-arg=value</code> as needed on <code>agent up</code>,
@@ -1958,6 +2075,77 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb40-1"><a href="#
 <span id="cb40-11"><a href="#cb40-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--wait-for</span> drained <span class="at">--wait-timeout</span> 60s</span></code></pre></div>
 <p><code>amq send</code> reads stdin when <code>--body</code> is
 omitted. There is no <code>--body-file</code> flag.</p>
+<h3 id="which-messaging-primitive-should-i-use">Which messaging
+primitive should I use?</h3>
+<table>
+<thead>
+<tr>
+<th>Intent</th>
+<th>Use</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Supervise a squad</td>
+<td><code>amq-squad status</code>, <code>console</code>,
+<code>task</code>, <code>collect</code></td>
+<td>These resolve the project/profile/session and show the squad model.
+Use <code>collect</code> for lead-side reports when raw AMQ would say
+<code>refusing collect</code> of a <code>lead-owned mailbox</code>; it
+follows the #322 collect-vs-drain contract.</td>
+</tr>
+<tr>
+<td>Tell a live visible lead something now</td>
+<td><code>amq-squad send --session S --role lead --body "..."</code></td>
+<td>This is tmux pane delivery to the recorded live pane. It is
+<strong>not</strong> a durable AMQ protocol message: no
+<code>--kind</code>, no <code>--thread</code>, no mailbox receipt.</td>
+</tr>
+<tr>
+<td>Assign durable work and wake a recipient</td>
+<td><code>amq-squad dispatch --session S --role worker --kind todo --subject "..." --body "..."</code></td>
+<td>Dispatch queues durable AMQ in the resolved workstream root and
+wakes or nudges the agent to drain it, especially for lead-to-worker
+tasks.</td>
+</tr>
+<tr>
+<td>Read or write AMQ mailboxes directly</td>
+<td>Raw <code>amq send/read/drain/thread</code> only inside the correct
+coop/session shell, or with explicit <code>--root</code>; otherwise
+prefer <code>amq-squad amq ...</code>.</td>
+<td>Raw AMQ is mailbox plumbing. From an external pane, the wrong root
+can reproduce the #328 class of namespace mistakes:
+<code>implicit default-profile mutation</code>,
+<code>legacy/default session root</code>, or
+<code>refusing before write</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>In an orchestrated squad, the operator normally steers the visible
+lead with <code>amq-squad send</code> or an operator directive; the lead
+uses <code>task</code>, <code>dispatch</code>, and <code>collect</code>
+to coordinate workers. A raw <code>amq send --session ...</code> from an
+external pane is ambiguous for named-profile squads because it may write
+the default <code>.agent-mail/&lt;session&gt;</code> while workers drain
+<code>.agent-mail/&lt;profile&gt;/&lt;session&gt;</code>. Use the
+<code>amq-squad amq</code> wrapper or an explicit raw
+<code>--root</code> only when direct mailbox plumbing is
+intentional:</p>
+<div class="sourceCode" id="cb41"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Ambiguous from an external pane:</span></span>
+<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--session</span> issue-96 <span class="at">--to</span> developer <span class="at">--thread</span> p2p/cto__developer <span class="dt">\</span></span>
+<span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> todo <span class="at">--subject</span> <span class="st">&quot;Task&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span>
+<span id="cb41-4"><a href="#cb41-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-5"><a href="#cb41-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Root-resolving wrapper:</span></span>
+<span id="cb41-6"><a href="#cb41-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq send <span class="at">--project</span> /path/to/repo <span class="at">--profile</span> release <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb41-7"><a href="#cb41-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> developer <span class="at">--thread</span> p2p/cto__developer <span class="dt">\</span></span>
+<span id="cb41-8"><a href="#cb41-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> todo <span class="at">--subject</span> <span class="st">&quot;Task&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span>
+<span id="cb41-9"><a href="#cb41-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-10"><a href="#cb41-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Explicit raw AMQ root:</span></span>
+<span id="cb41-11"><a href="#cb41-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /path/to/repo/.agent-mail/release/issue-96 <span class="dt">\</span></span>
+<span id="cb41-12"><a href="#cb41-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> developer <span class="at">--thread</span> p2p/cto__developer <span class="dt">\</span></span>
+<span id="cb41-13"><a href="#cb41-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> todo <span class="at">--subject</span> <span class="st">&quot;Task&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span></code></pre></div>
 <p>Inside an amq-squad-launched shell, use bare <code>amq</code>
 commands. The launcher already injected <code>AM_ROOT</code>,
 <code>AM_BASE_ROOT</code>, and <code>AM_ME</code>; override them only
@@ -1974,6 +2162,17 @@ that role is bound in the namespace before sending; a global
 orchestrator cannot raise gates as <code>cto</code> before a real
 <code>cto</code> exists. Emergency recovery sends require the explicit
 audited override <code>--unsafe-send-as --reason &lt;why&gt;</code>.</p>
+<p>For lead-side report collection, prefer
+<code>amq-squad collect --session &lt;S&gt; --me &lt;lead&gt; --timeout 120s --include-body</code>
+over raw <code>amq drain</code>. Raw AMQ <code>drain</code> is
+intentionally destructive: it moves unread files from
+<code>inbox/new</code> to <code>inbox/cur</code> and emits drained
+receipts before the caller has necessarily persisted or displayed the
+body. <code>collect</code> is the kill-safe path for orchestrators: it
+snapshots unread bodies into a profile/session/recipient-scoped journal
+before acknowledging each message. The contract is at-least-once, not
+exactly-once: an interrupted output may replay a body on the next
+collect, but it should not lose the body.</p>
 <h2 id="files-amq-squad-writes">Files amq-squad writes</h2>
 <pre class="text"><code>&lt;project&gt;/.amq-squad/team.json           Default team profile (schema: 3 on new writes).
 &lt;project&gt;/.amq-squad/teams/&lt;name&gt;.json   Named team profiles (schema: 3 on new writes).
@@ -1984,6 +2183,11 @@ audited override <code>--unsafe-send-as --reason &lt;why&gt;</code>.</p>
 &lt;project&gt;/.amq-squad/tasks/&lt;session&gt;/     Task store for the default profile.
 &lt;project&gt;/.amq-squad/tasks/&lt;profile&gt;/&lt;session&gt;/
                                          Task store for a named profile.
+&lt;project&gt;/.amq-squad/collect-journal/&lt;profile&gt;/&lt;session&gt;/&lt;handle&gt;/
+                                         Kill-safe collect journal. Pending
+                                         entries replay until delivered; delivered
+                                         entries are retained for 7 days or the
+                                         latest 200 entries per recipient.
 &lt;project&gt;/.agent-mail/&lt;session&gt;/          AMQ root for the default profile.
 &lt;project&gt;/.agent-mail/&lt;profile&gt;/&lt;session&gt;/
                                          AMQ root for a named profile.
@@ -2058,7 +2262,7 @@ project's <code>.amqrc</code> for cross-project AMQ routing.
 <h2 id="requires">Requires</h2>
 <ul>
 <li>Go 1.25+</li>
-<li><code>amq</code> binary on <code>PATH</code> (v0.39.0+)</li>
+<li><code>amq</code> binary on <code>PATH</code> (v0.40.0+)</li>
 <li><code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code></li>
 </ul>
