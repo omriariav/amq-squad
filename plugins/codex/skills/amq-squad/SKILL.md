@@ -68,6 +68,42 @@ Every command accepts `--json` where machine-readable output makes sense (`statu
 
 Global output flags work before or after the subcommand: `--quiet`, `--verbose`, `--color auto|always|never`. `NO_COLOR` wins over `--color=always`. `--quiet` and `--verbose` are mutually exclusive.
 
+## Operator Primitive Decision Table
+
+When an operator sees both `amq-squad ...` and raw `amq ...`, choose by intent:
+
+| Intent | Use | Why |
+| --- | --- | --- |
+| Supervise a squad | `amq-squad status`, `amq-squad console`, `amq-squad task`, `amq-squad collect` | These commands resolve the project/profile/session and expose the squad model. `collect` is the lead-safe report collector; use it when raw AMQ would say `refusing collect` of a `lead-owned mailbox` unless an audited override is supplied. |
+| Give a live agent an instruction now | `amq-squad send --session S --role R --body "..."` | This is tmux pane delivery to the recorded live pane, best for operator-to-visible-lead prompts. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
+| Assign durable work and wake the recipient | `amq-squad dispatch --session S --role R --kind todo --subject "..." --body "..."` | Dispatch queues a durable AMQ task in the resolved workstream root and wakes or nudges the agent to drain it, especially lead-to-worker. |
+| Inspect or write mailbox messages directly | Raw `amq send/read/drain/thread` only inside the correct coop/session shell, or with an explicit root/session contract. Prefer `amq-squad amq ...` when operating from an external pane. | Raw AMQ is mailbox plumbing. Outside the right `amq coop exec` context it can target the wrong `.agent-mail` tree. This is the same namespace rule as #328 errors such as `implicit default-profile mutation`, `legacy/default session root`, and `refusing before write`. |
+
+For orchestrated squads, the operator normally talks to the visible lead with
+`amq-squad send`; the lead then uses `amq-squad task`, `dispatch`, and
+`collect` to coordinate workers. Do not send ordinary worker instructions from
+an external operator pane with raw AMQ unless the root/profile/session contract
+is explicit.
+
+Failing example from an external pane:
+
+```sh
+# Ambiguous/wrong for a named-profile squad: may use the external pane's cwd or
+# default .agent-mail/issue-96 while the worker drains .agent-mail/release/issue-96.
+amq send --session issue-96 --to developer --thread p2p/cto__developer \
+  --kind todo --subject "Task" --body "..."
+
+# Root-resolving squad wrapper:
+amq-squad amq send --project /path/to/repo --profile release --session issue-96 \
+  --to developer --thread p2p/cto__developer --kind todo \
+  --subject "Task" --body "..."
+
+# Raw AMQ is acceptable only when the mailbox root contract is explicit:
+amq send --root /path/to/repo/.agent-mail/release/issue-96 \
+  --to developer --thread p2p/cto__developer --kind todo \
+  --subject "Task" --body "..."
+```
+
 ## Runtime control (tmux)
 
 amq-squad owns the tmux execution/control contract, so drive agents by stable command — never raw `tmux send-keys`/`select-window`. Control targets the exact recorded **pane id**, never window names.
