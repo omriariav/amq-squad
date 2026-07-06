@@ -348,6 +348,18 @@ func TestEmitTeamCommandAddsWakeInject(t *testing.T) {
 	}
 }
 
+func TestEmitTeamCommandAddsNoGitignore(t *testing.T) {
+	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p",
+		Member: m, Workstream: "p", TrustMode: trustModeSandboxed,
+		NoGitignore: true,
+	})
+	if !strings.Contains(cmd, "--no-gitignore") {
+		t.Errorf("emitTeamCommand missing --no-gitignore in: %s", cmd)
+	}
+}
+
 func TestValidateMembersTrustRejectsSmuggledBypass(t *testing.T) {
 	// A sandboxed team must not smuggle the Codex bypass flag through one
 	// member's codex_args; the rejection names the member.
@@ -1893,6 +1905,8 @@ func TestRenderTeamRulesTemplatesIncludeRequiredSections(t *testing.T) {
 				"two independent reviewers must verify the exact PR head SHA",
 				"`amq-squad verify merge`",
 				"operator replies `APPROVED:` on the exact PR gate thread",
+				"Workers do not merge, push, tag, release, close issues",
+				"verifiable authorization artifact",
 			} {
 				if !strings.Contains(body, want) {
 					t.Errorf("%s template missing %q:\n%s", template, want, body)

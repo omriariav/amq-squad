@@ -62,6 +62,10 @@ type Record struct {
 	// in this environment) is a property of the execution environment, not a
 	// one-shot launch decision.
 	NoRequireWake bool `json:"no_require_wake,omitempty"`
+	// NoGitignore records the AMQ 0.40.0 --no-gitignore opt-out so resume
+	// reproduces launches that intentionally leave .gitignore untouched during
+	// AMQ coop auto-init.
+	NoGitignore bool `json:"no_gitignore,omitempty"`
 	// NoWakeReason records the explicit compatibility reason for adopting a
 	// project lead without wake. It is intentionally separate from
 	// NoRequireWake: --no-require-wake weakens wake startup strictness, while

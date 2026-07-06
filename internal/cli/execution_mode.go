@@ -67,12 +67,21 @@ type releaseReadinessGateData struct {
 	Evidence string `json:"evidence,omitempty"`
 }
 
+type mergeAuthorityData struct {
+	DefaultActor     string   `json:"default_actor"`
+	WorkerPolicy     string   `json:"worker_policy"`
+	Alternative      string   `json:"alternative,omitempty"`
+	LifecycleActions []string `json:"lifecycle_actions,omitempty"`
+	Detail           string   `json:"detail"`
+}
+
 type releaseReadinessData struct {
-	Ready     bool                       `json:"ready"`
-	State     string                     `json:"state"`
-	Authority string                     `json:"authority"`
-	Detail    string                     `json:"detail"`
-	Gates     []releaseReadinessGateData `json:"gates"`
+	Ready          bool                       `json:"ready"`
+	State          string                     `json:"state"`
+	Authority      string                     `json:"authority"`
+	MergeAuthority mergeAuthorityData         `json:"merge_authority"`
+	Detail         string                     `json:"detail"`
+	Gates          []releaseReadinessGateData `json:"gates"`
 }
 
 type independentReviewData struct {
@@ -408,11 +417,28 @@ func releaseReadinessForExecution(contract executionModeData) releaseReadinessDa
 		state = "not_evaluated"
 	}
 	return releaseReadinessData{
-		Ready:     ready,
-		State:     state,
-		Authority: "declared_evidence_only",
-		Detail:    "release readiness surfaces declared posture and evidence pointers; it does not independently authorize release or verify external evidence",
-		Gates:     gates,
+		Ready:          ready,
+		State:          state,
+		Authority:      "declared_evidence_only",
+		MergeAuthority: defaultMergeAuthority(),
+		Detail:         "release readiness surfaces declared posture and evidence pointers; it does not independently authorize release or verify external evidence",
+		Gates:          gates,
+	}
+}
+
+func defaultMergeAuthority() mergeAuthorityData {
+	return mergeAuthorityData{
+		DefaultActor: "visible_lead",
+		WorkerPolicy: "workers_do_not_merge_by_default",
+		Alternative:  "worker_merge_requires_verifiable_authorization_artifact",
+		LifecycleActions: []string{
+			"merge",
+			"push",
+			"tag",
+			"release",
+			"issue_close",
+		},
+		Detail: "visible lead owns the merge and lifecycle action path by default after exact-head readiness gates and operator approval; workers escalate merge, push, tag, release, or issue-close requests unless an explicit verifiable authorization artifact binds the request to the same subject, head, and gate evidence",
 	}
 }
 

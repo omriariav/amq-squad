@@ -97,6 +97,65 @@ func (a AttnReason) Rank() int {
 	}
 }
 
+// OperatorGateEscalation is the age band for an unanswered operator gate. These
+// named thresholds mirror the operational contract: an initial notify is
+// immediate, a reminder fires around 30m, and a strong warning appears around
+// 2h so poll-required virtual-operator gates cannot sit silently for hours.
+type OperatorGateEscalation string
+
+const (
+	OperatorGateEscalationInitial       OperatorGateEscalation = "initial"
+	OperatorGateEscalationReminder      OperatorGateEscalation = "reminder"
+	OperatorGateEscalationStrongWarning OperatorGateEscalation = "strong-warning"
+)
+
+const (
+	DefaultOperatorGateInitialNotifyAfter = 0 * time.Second
+	DefaultOperatorGateReminderAfter      = 30 * time.Minute
+	DefaultOperatorGateStrongWarningAfter = 2 * time.Hour
+)
+
+func OperatorGateEscalationForAge(age time.Duration) OperatorGateEscalation {
+	if age < 0 {
+		age = 0
+	}
+	switch {
+	case age >= DefaultOperatorGateStrongWarningAfter:
+		return OperatorGateEscalationStrongWarning
+	case age >= DefaultOperatorGateReminderAfter:
+		return OperatorGateEscalationReminder
+	default:
+		return OperatorGateEscalationInitial
+	}
+}
+
+func OperatorGateEscalationRank(e OperatorGateEscalation) int {
+	switch e {
+	case OperatorGateEscalationStrongWarning:
+		return 2
+	case OperatorGateEscalationReminder:
+		return 1
+	case OperatorGateEscalationInitial:
+		return 0
+	default:
+		return -1
+	}
+}
+
+// OperatorGateSignal describes an unanswered operator-facing gate message. Its
+// age is measured from the LAST unanswered operator-facing message on the
+// gate/<topic> thread, so a re-raised or updated gate starts a fresh clock.
+type OperatorGateSignal struct {
+	LatestID   string
+	From       string
+	Subject    string
+	Kind       Kind
+	Since      time.Time
+	Age        time.Duration
+	Reason     AttnReason
+	Escalation OperatorGateEscalation
+}
+
 // FreshnessSource records WHERE a derived time came from, so the console can be
 // honest about how much to trust an age. embedded-time is most trustworthy;
 // mtime is a filesystem fallback; observed is the snapshot clock.
@@ -198,6 +257,10 @@ type ThreadSummary struct {
 	// goal-reached vs a plain question). It is AttnNone on every non-needs-you
 	// thread. See AttnReason.
 	AttnReason AttnReason
+	// OperatorGate is present when this is an unanswered operator-facing
+	// gate/<topic> ask. It is independent of LastEventAt because later chatter in
+	// the thread must not hide the age of the still-unanswered gate.
+	OperatorGate *OperatorGateSignal
 }
 
 // Edge is a directed from->to message count across a session.
@@ -286,12 +349,20 @@ func (c Coordination) NeedsYouThreads() []ThreadSummary {
 		if ri != rj {
 			return ri < rj
 		}
-		if !out[i].LastEventAt.Equal(out[j].LastEventAt) {
-			return out[i].LastEventAt.Before(out[j].LastEventAt)
+		ti, tj := needsYouWaitSince(out[i]), needsYouWaitSince(out[j])
+		if !ti.Equal(tj) {
+			return ti.Before(tj)
 		}
 		return out[i].ID < out[j].ID
 	})
 	return out
+}
+
+func needsYouWaitSince(t ThreadSummary) time.Time {
+	if t.OperatorGate != nil && !t.OperatorGate.Since.IsZero() {
+		return t.OperatorGate.Since
+	}
+	return t.LastEventAt
 }
 
 // countTriage tallies a bare triage tier into the rollup's LIVE buckets. It is

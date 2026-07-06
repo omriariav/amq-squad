@@ -93,6 +93,27 @@ func TestLaunchArgsFromRecordReplaysWakeInject(t *testing.T) {
 	}
 }
 
+func TestLaunchArgsFromRecordReplaysNoGitignore(t *testing.T) {
+	rec := launch.Record{
+		Binary:      "codex",
+		Handle:      "cto",
+		Role:        "cto",
+		Session:     "issue-96",
+		NoGitignore: true,
+	}
+	want := []string{
+		"--role", "cto", "--session", "issue-96",
+		"--no-gitignore",
+		"--trust", "sandboxed", "--me", "cto", "codex",
+	}
+	if got := launchArgsFromRecord(rec); !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord(rec)\n got: %v\nwant: %v", got, want)
+	}
+	if cmd := emitCommandWithOptions(rec, emitCommandOptions{}); !strings.Contains(cmd, "--no-gitignore") {
+		t.Errorf("emit command missing --no-gitignore: %s", cmd)
+	}
+}
+
 func TestLaunchArgsFromRecordPreservesClaudeIdentityForRenameOnResume(t *testing.T) {
 	rec := launch.Record{
 		Binary:  "claude",

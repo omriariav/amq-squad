@@ -73,6 +73,7 @@ type threadAccumulator struct {
 	hasLatest   bool
 	blockActive bool
 	blockOwner  string
+	messages    []Message
 }
 
 // collapseThreads groups messages by canonical thread id and derives a summary
@@ -108,6 +109,7 @@ func collapseThreads(msgs []Message, now time.Time, th Thresholds, agents []Agen
 
 func (a *threadAccumulator) observe(m Message) {
 	a.count++
+	a.messages = append(a.messages, m)
 	if m.From != "" {
 		a.participants[m.From] = true
 	}
@@ -165,12 +167,16 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 	parts := keysSorted(a.participants)
 	labels := keysSorted(a.labels)
 	unread := keysSorted(a.unreadBy)
+	operatorGate := a.operatorGateSignal(th.OperatorHandle, now)
 
 	status := deriveStatus(a)
 	fresh := computeFreshness(a.lastEventAt, a.latest, now, governingThreshold(status, th))
-	triage := computeTriage(a, status, fresh, now, th, agents)
+	triage := computeTriage(a, status, fresh, now, th, agents, operatorGate)
 	stale := isStale(a.lastEventAt, now, th.StaleAfter, triage)
 	reason := classifyAttnReason(a, triage)
+	if operatorGate != nil && triage == TriageNeedsYou {
+		reason = operatorGate.Reason
+	}
 	historical := isHistoricalNeedsYou(triage, fresh, agents, th.OperatorHandle)
 
 	return ThreadSummary{
@@ -192,6 +198,59 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 		Stale:        stale,
 		Historical:   historical,
 		AttnReason:   reason,
+		OperatorGate: operatorGate,
+	}
+}
+
+func (a *threadAccumulator) operatorGateSignal(operatorHandle string, now time.Time) *OperatorGateSignal {
+	if !strings.HasPrefix(a.id, "gate/") {
+		return nil
+	}
+	messages := append([]Message(nil), a.messages...)
+	sort.SliceStable(messages, func(i, j int) bool {
+		if !messages[i].Created.Equal(messages[j].Created) {
+			return messages[i].Created.Before(messages[j].Created)
+		}
+		return messages[i].ID < messages[j].ID
+	})
+	var pending Message
+	for _, m := range messages {
+		if m.Kind == KindAnswer && m.From == operatorHandle {
+			pending = Message{}
+			continue
+		}
+		if operatorGateRequestMessage(m, operatorHandle) {
+			pending = m
+		}
+	}
+	if pending.ID == "" {
+		return nil
+	}
+	age := now.Sub(pending.Created)
+	if age < 0 {
+		age = 0
+	}
+	return &OperatorGateSignal{
+		LatestID:   pending.ID,
+		From:       pending.From,
+		Subject:    pending.Subject,
+		Kind:       pending.Kind,
+		Since:      pending.Created,
+		Age:        age,
+		Reason:     ClassifyAttnSubject(pending.Subject),
+		Escalation: OperatorGateEscalationForAge(age),
+	}
+}
+
+func operatorGateRequestMessage(m Message, operatorHandle string) bool {
+	if !addressedTo(m, operatorHandle) || !operatorMessageNeedsAction(m) {
+		return false
+	}
+	switch m.Kind {
+	case KindQuestion, KindReviewRequest, KindDecision:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -299,7 +358,13 @@ func classifyAttnReason(a *threadAccumulator, triage Triage) AttnReason {
 	if triage != TriageNeedsYou {
 		return AttnNone
 	}
-	subj := strings.ToLower(a.subject)
+	return ClassifyAttnSubject(a.subject)
+}
+
+// ClassifyAttnSubject maps an operator-facing subject line into the attention
+// reason used by status, notify, and console surfaces.
+func ClassifyAttnSubject(subject string) AttnReason {
+	subj := strings.ToLower(subject)
 	for _, mk := range approveMarkers {
 		if strings.Contains(subj, mk) {
 			return AttnApprove
@@ -403,12 +468,15 @@ func latestHeaderCreated(m Message) string {
 
 // computeTriage classifies a thread into a triage tier. Severity order is
 // enforced by checking NeedsYou first, then Blocked, then Gated, then AtRisk.
-func computeTriage(a *threadAccumulator, status ThreadStatus, fresh Freshness, now time.Time, th Thresholds, agents []Agent) Triage {
+func computeTriage(a *threadAccumulator, status ThreadStatus, fresh Freshness, now time.Time, th Thresholds, agents []Agent, operatorGate *OperatorGateSignal) Triage {
 	op := th.OperatorHandle
 
 	// NeedsYou: an unanswered ask addressed TO the operator, a block awaiting
 	// the human, or explicit prose that says the thread is waiting for the
 	// operator/user.
+	if operatorGate != nil {
+		return TriageNeedsYou
+	}
 	if status == ThreadAwaitingReply || status == ThreadBlocked {
 		if addressedTo(a.latest, op) {
 			switch a.latest.Kind {

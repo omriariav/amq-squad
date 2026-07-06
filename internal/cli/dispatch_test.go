@@ -490,7 +490,7 @@ func TestRunDispatchCreateTaskLinksMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("task show: %v", err)
 	}
-	for _, want := range []string{"Assigned: qa", "Dispatch Assignee: qa", "Dispatch Message: msg-abc"} {
+	for _, want := range []string{"Status: in_progress", "Assigned: qa", "Dispatch Assignee: qa", "Dispatch Message: msg-abc"} {
 		if !strings.Contains(show, want) {
 			t.Fatalf("task show missing %q:\n%s", want, show)
 		}
@@ -575,6 +575,135 @@ func TestRunDispatchCreateTaskLinkFailureLeavesQueuedMessageAndTask(t *testing.T
 	}
 }
 
+func TestRunDispatchTaskRejectsMismatchedAssigneeBeforeSend(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"add", "--title", "existing", "--assign", "cto", "--session", "issue-96"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-json to qa\n")
+	_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	_, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--task", "t1"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "task t1 is assigned to cto") {
+		t.Fatalf("dispatch should reject mismatched task owner before send, got %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("mismatched task owner must not send AMQ, got %d calls", len(*calls))
+	}
+}
+
+func TestRunDispatchTaskRejectsBlockedAndTerminalStatusesBeforeSend(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T) string
+		want  string
+	}{
+		{
+			name: "dependency blocked",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				if _, _, err := captureOutput(t, func() error {
+					return runTask([]string{"add", "--title", "dependency", "--assign", "cto", "--session", "issue-96"})
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := captureOutput(t, func() error {
+					return runTask([]string{"add", "--title", "blocked child", "--assign", "qa", "--depends-on", "t1", "--session", "issue-96"})
+				}); err != nil {
+					t.Fatal(err)
+				}
+				return "t2"
+			},
+			want: "task t2 is blocked on t1 (pending); complete it before dispatch",
+		},
+		{
+			name: "completed terminal",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				addClaimedDispatchTask(t)
+				if _, _, err := captureOutput(t, func() error {
+					return runTask([]string{"done", "t1", "--me", "qa", "--evidence", "accepted", "--session", "issue-96"})
+				}); err != nil {
+					t.Fatal(err)
+				}
+				return "t1"
+			},
+			want: "task t1 is completed; dispatch requires pending or in_progress",
+		},
+		{
+			name: "failed terminal",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				addClaimedDispatchTask(t)
+				if _, _, err := captureOutput(t, func() error {
+					return runTask([]string{"fail", "t1", "--me", "qa", "--reason", "failed", "--session", "issue-96"})
+				}); err != nil {
+					t.Fatal(err)
+				}
+				return "t1"
+			},
+			want: "task t1 is failed; dispatch requires pending or in_progress",
+		},
+		{
+			name: "blocked terminal",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				addClaimedDispatchTask(t)
+				if _, _, err := captureOutput(t, func() error {
+					return runTask([]string{"block", "t1", "--me", "qa", "--reason", "blocked", "--session", "issue-96"})
+				}); err != nil {
+					t.Fatal(err)
+				}
+				return "t1"
+			},
+			want: "task t1 is blocked; dispatch requires pending or in_progress",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			chdir(t, dir)
+			writeDispatchTeam(t, dir)
+			taskID := tc.setup(t)
+			calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-json to qa\n")
+			nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+			_, _, err := captureOutput(t, func() error {
+				return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--task", taskID})
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("dispatch error = %v, want %q", err, tc.want)
+			}
+			if len(*calls) != 0 {
+				t.Fatalf("blocked/terminal task must not send AMQ, got %d calls", len(*calls))
+			}
+			if len(*nudges) != 0 {
+				t.Fatalf("blocked/terminal task must not nudge, got %v", *nudges)
+			}
+		})
+	}
+}
+
+func addClaimedDispatchTask(t *testing.T) {
+	t.Helper()
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"add", "--title", "existing", "--assign", "qa", "--session", "issue-96"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"claim", "t1", "--me", "qa", "--session", "issue-96"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunDispatchTaskJSONEnvelope(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -597,6 +726,15 @@ func TestRunDispatchTaskJSONEnvelope(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("dispatch json missing %q:\n%s", want, stdout)
 		}
+	}
+	show, _, err := captureOutput(t, func() error {
+		return runTask([]string{"show", "t1", "--session", "issue-96"})
+	})
+	if err != nil {
+		t.Fatalf("task show: %v", err)
+	}
+	if !strings.Contains(show, "Status: in_progress") || !strings.Contains(show, "Dispatch Message: msg-json") {
+		t.Fatalf("dispatch --task should auto-claim and link task:\n%s", show)
 	}
 }
 

@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/procinfo"
+	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 )
 
 // Build constructs a Snapshot by scanning the filesystem under baseRoot. It
@@ -64,7 +66,7 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 			bySession[namespaceID] = b
 			order = append(order, namespaceID)
 		}
-		b.agents = append(b.agents, classifyAgent(e, probe))
+		b.agents = append(b.agents, classifyAgent(e, probe, th.Heartbeat))
 	}
 
 	sort.Strings(order)
@@ -74,6 +76,7 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 	for _, key := range order {
 		b := bySession[key]
 		sortAgents(b.agents)
+		attachTaskStoreActivities(projectRoot, b.teamProfile, b.session, b.agents, now)
 
 		coord := coordinateSession(b.root, b.agents, now, th)
 		sessions = append(sessions, Session{
@@ -89,6 +92,38 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 	}
 
 	return Snapshot{BaseRoot: baseRoot, Sessions: sessions, Rollup: snapRollup}, nil
+}
+
+func attachTaskStoreActivities(projectRoot, profile, session string, agents []Agent, now time.Time) {
+	tasks, err := taskstore.ListForProfile(projectRoot, profile, session)
+	if err != nil {
+		return
+	}
+	active := map[string]taskstore.Task{}
+	for _, t := range tasks {
+		if t.Status != taskstore.StatusInProgress || strings.TrimSpace(t.AssignedTo) == "" {
+			continue
+		}
+		cur, ok := active[t.AssignedTo]
+		if !ok || t.UpdatedAt.After(cur.UpdatedAt) || (t.UpdatedAt.Equal(cur.UpdatedAt) && t.ID > cur.ID) {
+			active[t.AssignedTo] = t
+		}
+	}
+	for i := range agents {
+		if agents[i].Activity != nil {
+			continue
+		}
+		t, ok := active[agents[i].Handle]
+		if !ok {
+			continue
+		}
+		detail := strings.TrimSpace(t.Title)
+		if detail == "" {
+			detail = "current task from task store; no fresh activity heartbeat"
+		}
+		act := activity.TaskStoreSnapshot(t.AssignedTo, t.ID, detail, t.UpdatedAt, now, activity.DefaultStaleAfter)
+		agents[i].Activity = &act
+	}
 }
 
 // coordinateSession scans every agent's mailbox in a session, then collapses the
@@ -169,7 +204,7 @@ func sortAgents(agents []Agent) {
 // It reads launch.json (already in the entry), presence.json, and .wake.lock
 // from the agent dir, then derives Liveness + WakeHealth via the probe. It
 // performs NO subprocess calls beyond the probe (which the caller controls).
-func classifyAgent(e launch.Entry, probe Probe) Agent {
+func classifyAgent(e launch.Entry, probe Probe, heartbeat time.Duration) Agent {
 	rec := e.Record
 	a := Agent{
 		Handle:       rec.Handle,
@@ -199,6 +234,12 @@ func classifyAgent(e launch.Entry, probe Probe) Agent {
 	if presErr == nil {
 		a.Presence = pres.Status
 		a.LastSeen = pres.LastSeen
+	}
+	if act, ok, err := activity.Read(e.AgentDir, probe.Now(), heartbeat); err == nil && ok {
+		a.Activity = &act
+	} else if err != nil {
+		act := activity.UnknownSnapshot(rec.Handle, "activity heartbeat unreadable")
+		a.Activity = &act
 	}
 
 	// --- Agent PID liveness (the authoritative live signal). ---

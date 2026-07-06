@@ -11,9 +11,11 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
+	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -30,6 +32,18 @@ var statusPaneLister = tmuxpane.DefaultPaneLister
 // path used when the scan misses or fails wholesale (e.g. under iTerm2 tmux -CC
 // control mode). Injected as a package var so tests supply a fake.
 var statusPaneInspector = tmuxpane.InspectPaneByID
+
+// statusLocalInputDetector is best-effort and intentionally error-suppressing:
+// capture failures, dead panes, and unparseable tails should mean "no heuristic
+// signal", never a status command failure or proof that the agent is not
+// blocked locally.
+var statusLocalInputDetector = func(paneID string) (tmuxpane.LocalInputBlocker, bool) {
+	blocker, ok, err := tmuxpane.DetectLocalInputBlocker(paneID)
+	if err != nil {
+		return tmuxpane.LocalInputBlocker{}, false
+	}
+	return blocker, ok
+}
 
 // paneCloser closes an agent's tmux pane on teardown (kill-pane). Injected as a
 // package var so tests record the call instead of killing a real pane. It
@@ -80,7 +94,9 @@ type statusEnvelopeData struct {
 	GoalBinding       goalBindingData        `json:"goal_binding"`
 	Autonomous        team.AutonomousStatus  `json:"autonomous"`
 	Execution         executionModeData      `json:"execution"`
+	Versions          versionAlignmentData   `json:"versions"`
 	NamespaceConflict *namespaceConflictData `json:"namespace_conflict,omitempty"`
+	Warnings          []statusWarning        `json:"warnings,omitempty"`
 	Topology          *statusTopology        `json:"topology,omitempty"`
 	Records           []statusRecord         `json:"records"`
 	// Actions are the SESSION-scope operator actions (status / resume preview /
@@ -88,6 +104,14 @@ type statusEnvelopeData struct {
 	// counterpart to each record's agent-scope actions. A client renders these
 	// for the session row instead of constructing the commands itself.
 	Actions []runtimeActionJSON `json:"actions"`
+}
+
+type statusWarning struct {
+	Kind             string                       `json:"kind"`
+	Session          string                       `json:"session"`
+	Detail           string                       `json:"detail"`
+	SuggestedCommand string                       `json:"suggested_command,omitempty"`
+	Conflicts        []namespaceConflictCandidate `json:"conflicts,omitempty"`
 }
 
 type statusOperatorView struct {
@@ -156,6 +180,14 @@ type statusRecord struct {
 	// (wake_alive) and status to know whether the sidecar is actually running,
 	// so a dead sidecar surfaces as degraded rather than silently lost.
 	WakeAutoDrain bool `json:"wake_auto_drain,omitempty"`
+	// Activity is an additive, honest busy/progress signal. Heartbeat-file
+	// entries come from an agent-written activity.json; task-store entries only
+	// seed current-task ownership and must not be treated as liveness.
+	Activity *activity.Snapshot `json:"activity,omitempty"`
+	// LocalInput is an additive best-effort hint that a managed child pane is
+	// waiting on a local approval/input prompt. Absence means "not observed",
+	// not "not blocked".
+	LocalInput *statusLocalInput `json:"local_input,omitempty"`
 	// PreauthorizedActions surfaces the in-scope worker actions amq-squad
 	// pre-authorized at launch (#296) so the active allowlist is auditable from
 	// status --json. Empty/omitted for legacy records and launches with no
@@ -164,6 +196,16 @@ type statusRecord struct {
 	// Actions are the stable, project-scoped commands a client can render/copy
 	// for this member (focus/send/resume/status). Populated for --json only.
 	Actions []runtimeActionJSON `json:"actions,omitempty"`
+}
+
+type statusLocalInput struct {
+	Status      string `json:"status"`
+	Kind        string `json:"kind"`
+	PaneID      string `json:"pane_id,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+	Destructive bool   `json:"destructive,omitempty"`
+	Recovery    string `json:"recovery"`
+	Source      string `json:"source"`
 }
 
 type statusTopology struct {
@@ -277,6 +319,7 @@ type statusExecution struct {
 	Out              io.Writer
 	JSON             bool
 	RuntimeVersion   string
+	VersionSources   versionAlignmentSources
 }
 
 func executeStatus(s statusExecution) error {
@@ -291,8 +334,17 @@ func executeStatus(s statusExecution) error {
 	if err != nil {
 		return err
 	}
+	now := time.Now()
+	if s.Probe.Now != nil {
+		now = s.Probe.Now()
+	}
+	warnings, err := statusWarnings(t.Project, s.Profile, workstream, now)
+	if err != nil {
+		return fmt.Errorf("scan status warnings: %w", err)
+	}
 
 	rows := buildStatusRows(t, s.Profile, workstream, s.Probe)
+	warnings = append(warnings, statusLocalInputWarnings(t.Project, s.Profile, workstream, rows)...)
 	if s.JSON {
 		ns := squadnamespace.Resolve(t.Project, s.Profile, workstream)
 		conflict := namespaceConflictForProfileSession(t.Project, s.Profile, workstream)
@@ -311,6 +363,10 @@ func executeStatus(s statusExecution) error {
 		version := strings.TrimSpace(s.RuntimeVersion)
 		if version == "" {
 			version = "dev"
+		}
+		versionSources := s.VersionSources
+		if strings.TrimSpace(versionSources.RunningVersion) == "" {
+			versionSources.RunningVersion = version
 		}
 		invariantErrors := annotateVisibilityInvariants(rows, ctx)
 		execution := executionContractForTeam(t, s.Profile, workstream, binding.Mode, topologyMode(topology), version)
@@ -332,7 +388,9 @@ func executeStatus(s statusExecution) error {
 			GoalBinding:       binding,
 			Autonomous:        team.EffectiveAutonomousStatus(t),
 			Execution:         execution,
+			Versions:          buildVersionAlignment(versionSources),
 			NamespaceConflict: conflict,
+			Warnings:          warnings,
 			Topology:          topology,
 			Records:           rows,
 			Actions:           ctx.Actions,
@@ -342,6 +400,9 @@ func executeStatus(s statusExecution) error {
 	fmt.Fprintf(s.Out, "# workstream: %s\n", workstream)
 	if root := firstStatusRoot(rows); root != "" {
 		fmt.Fprintf(s.Out, "# AM_ROOT:    %s\n", root)
+	}
+	for _, warning := range warnings {
+		fmt.Fprintf(s.Out, "warning: %s\n", warning.Detail)
 	}
 	delivery := operatorDeliveryForTeam(t)
 	if delivery.Enabled {
@@ -354,6 +415,304 @@ func executeStatus(s statusExecution) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), r.Detail)
 	}
 	return w.Flush()
+}
+
+func statusWarnings(projectDir, profile, session string, now time.Time) ([]statusWarning, error) {
+	var warnings []statusWarning
+	namespaceWarnings, err := statusNamespaceWarnings(projectDir, profile, session)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, namespaceWarnings...)
+	taskWarnings, err := statusTaskWarnings(projectDir, profile, session)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, taskWarnings...)
+	warnings = append(warnings, statusAgedOperatorGateWarnings(projectDir, profile, session, now)...)
+	return warnings, nil
+}
+
+func statusAgedOperatorGateWarnings(projectDir, profile, session string, now time.Time) []statusWarning {
+	ns := squadnamespace.Resolve(projectDir, profile, session)
+	root := strings.TrimSpace(ns.AMQRoot)
+	if root == "" {
+		return nil
+	}
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	data, err := buildOperatorStatusData(operatorExecution{
+		ProjectDir: projectDir,
+		Profile:    profile,
+		Session:    session,
+		BaseRoot:   root,
+		Probe: state.Probe{
+			Now: func() time.Time { return now },
+		},
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		return nil
+	}
+	return statusWarningsForAgedOperatorGates(data)
+}
+
+func statusWarningsForAgedOperatorGates(data operatorStatusEnvelopeData) []statusWarning {
+	var warnings []statusWarning
+	for _, item := range data.Attention {
+		if !strings.HasPrefix(item.Thread, "gate/") {
+			continue
+		}
+		escalation := state.OperatorGateEscalation(item.Escalation)
+		if state.OperatorGateEscalationRank(escalation) < state.OperatorGateEscalationRank(state.OperatorGateEscalationReminder) {
+			continue
+		}
+		kind := "operator_gate_" + strings.ReplaceAll(string(escalation), "-", "_")
+		delivery := "durable AMQ"
+		switch {
+		case data.OperatorDelivery.PollRequired:
+			delivery = "poll-required/no-wake operator delivery"
+		case data.OperatorDelivery.WakeSupported:
+			delivery = "wake-supported operator delivery"
+		}
+		detail := fmt.Sprintf("operator gate %s aged to %s after %s: %s; %s for handle %s requires visible escalation",
+			item.Thread, escalation, item.Age, item.Subject, delivery, printableHandle(data.Operator.Handle))
+		warnings = append(warnings, statusWarning{
+			Kind:             kind,
+			Session:          item.Session,
+			Detail:           detail,
+			SuggestedCommand: item.Inspect,
+		})
+	}
+	return warnings
+}
+
+func statusNamespaceWarnings(projectDir, profile, session string) ([]statusWarning, error) {
+	if squadnamespace.NormalizeProfile(profile) != team.DefaultProfile || strings.TrimSpace(session) == "" {
+		return nil, nil
+	}
+	profiles, err := team.ListProfiles(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	conflicts := namedProfileSessionConflicts(projectDir, session, profiles, false)
+	if len(conflicts) == 0 {
+		return nil, nil
+	}
+	names := make([]string, 0, len(conflicts))
+	for _, c := range conflicts {
+		names = append(names, c.Profile)
+	}
+	suggested := ""
+	if len(names) == 1 {
+		suggested = "amq-squad status --project " + shellQuote(projectDir) + " --profile " + shellQuote(names[0]) + " --session " + shellQuote(session)
+	}
+	detail := fmt.Sprintf("showing default-profile data; session %s is also live under profile %s - run %s",
+		shellQuote(session), pluralProfileList(names), "amq-squad status --profile <profile> --session "+shellQuote(session))
+	if suggested != "" {
+		detail = fmt.Sprintf("showing default-profile data; session %s is also live under profile %s - run %s",
+			shellQuote(session), pluralProfileList(names), suggested)
+	}
+	return []statusWarning{{
+		Kind:             "default_profile_shadowed",
+		Session:          session,
+		Detail:           detail,
+		SuggestedCommand: suggested,
+		Conflicts:        conflicts,
+	}}, nil
+}
+
+func statusTaskWarnings(projectDir, profile, session string) ([]statusWarning, error) {
+	tasks, err := taskstore.ListForProfile(projectDir, profile, session)
+	if err != nil {
+		return nil, err
+	}
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+	ns := squadnamespace.Resolve(projectDir, profile, session)
+	var messages []state.Message
+	for _, t := range tasks {
+		if t.Status == taskstore.StatusInProgress && t.Dispatch != nil {
+			messages, _ = state.ScanSessionMessages(ns.AMQRoot, time.Now)
+			break
+		}
+	}
+	var warnings []statusWarning
+	for _, t := range tasks {
+		if t.Dispatch == nil {
+			continue
+		}
+		switch t.Status {
+		case taskstore.StatusPending:
+			warnings = append(warnings, pendingDispatchTaskWarning(projectDir, profile, session, t))
+		case taskstore.StatusInProgress:
+			if report, ok := latestTaskCompletionReport(messages, t); ok {
+				warnings = append(warnings, completionReportTaskWarning(projectDir, profile, session, t, report))
+			}
+		}
+	}
+	return warnings, nil
+}
+
+func pendingDispatchTaskWarning(projectDir, profile, session string, t taskstore.Task) statusWarning {
+	assignee := taskDispatchAssignee(t)
+	cmd := "amq-squad task show " + shellQuote(t.ID) + taskScope(projectDir, profile, session)
+	if assignee != "" {
+		cmd = "amq-squad task claim " + shellQuote(t.ID) + " --me " + shellQuote(assignee) + taskScope(projectDir, profile, session)
+	}
+	msg := dispatchMessageID(t)
+	detail := fmt.Sprintf("task %s is still pending after dispatch to %s", t.ID, printableHandle(assignee))
+	if msg != "" {
+		detail += " (message " + msg + ")"
+	}
+	if assignee != "" {
+		detail += "; run " + cmd + " if the worker has started"
+	} else {
+		detail += "; inspect it with " + cmd
+	}
+	return statusWarning{
+		Kind:             "task_dispatched_pending",
+		Session:          session,
+		Detail:           detail,
+		SuggestedCommand: cmd,
+	}
+}
+
+func completionReportTaskWarning(projectDir, profile, session string, t taskstore.Task, report state.Message) statusWarning {
+	assignee := taskDispatchAssignee(t)
+	evidence := strings.TrimSpace(report.ID)
+	if evidence == "" {
+		evidence = strings.TrimSpace(report.Subject)
+	}
+	if evidence == "" {
+		evidence = "worker report"
+	}
+	cmd := "amq-squad task done " + shellQuote(t.ID) + " --me " + shellQuote(assignee) +
+		" --evidence " + shellQuote("accepted "+evidence) + taskScope(projectDir, profile, session)
+	detail := fmt.Sprintf("task %s is still in_progress after %s reported completion on %s",
+		t.ID, printableHandle(assignee), report.Created.UTC().Format(time.RFC3339))
+	if report.ID != "" {
+		detail += " (message " + report.ID + ")"
+	}
+	detail += "; if the lead accepts the report, run " + cmd
+	return statusWarning{
+		Kind:             "task_report_pending_completion",
+		Session:          session,
+		Detail:           detail,
+		SuggestedCommand: cmd,
+	}
+}
+
+func latestTaskCompletionReport(messages []state.Message, t taskstore.Task) (state.Message, bool) {
+	d := t.Dispatch
+	if d == nil {
+		return state.Message{}, false
+	}
+	assignee := taskDispatchAssignee(t)
+	if assignee == "" {
+		return state.Message{}, false
+	}
+	after := t.UpdatedAt
+	if d.DispatchedAt.After(after) {
+		after = d.DispatchedAt
+	}
+	var latest state.Message
+	var ok bool
+	for _, msg := range messages {
+		if strings.TrimSpace(msg.From) != assignee {
+			continue
+		}
+		if !msg.Created.After(after) {
+			continue
+		}
+		if !messageMatchesDispatchThread(msg, d) {
+			continue
+		}
+		if !messageLooksLikeCompletionReport(msg) {
+			continue
+		}
+		if !ok || msg.Created.After(latest.Created) || (msg.Created.Equal(latest.Created) && msg.ID > latest.ID) {
+			latest = msg
+			ok = true
+		}
+	}
+	return latest, ok
+}
+
+func messageMatchesDispatchThread(msg state.Message, d *taskstore.Dispatch) bool {
+	if d == nil {
+		return false
+	}
+	expected := statusCanonicalThread(d.Thread)
+	if expected == "" && strings.TrimSpace(d.Sender) != "" && strings.TrimSpace(d.Assignee) != "" {
+		expected = canonicalP2PThread(strings.TrimSpace(d.Sender), strings.TrimSpace(d.Assignee))
+	}
+	if expected == "" {
+		return false
+	}
+	return statusCanonicalThread(msg.Thread) == expected || statusCanonicalThread(msg.RawThread) == expected
+}
+
+func messageLooksLikeCompletionReport(msg state.Message) bool {
+	if msg.Kind == state.KindReviewRequest {
+		return true
+	}
+	text := strings.ToLower(msg.Subject + "\n" + msg.Body)
+	for _, token := range []string{"done", "complete", "completed", "ready for review", "ready to review", "implemented", "finished"} {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func statusCanonicalThread(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	lower := strings.ToLower(raw)
+	if !strings.HasPrefix(lower, "p2p/") {
+		return raw
+	}
+	pair := strings.TrimPrefix(lower, "p2p/")
+	parts := strings.Split(pair, "__")
+	if len(parts) != 2 {
+		return lower
+	}
+	return canonicalP2PThread(stripThreadRole(parts[0]), stripThreadRole(parts[1]))
+}
+
+func stripThreadRole(handle string) string {
+	handle = strings.TrimSpace(handle)
+	if before, _, ok := strings.Cut(handle, ":"); ok {
+		return before
+	}
+	return handle
+}
+
+func taskDispatchAssignee(t taskstore.Task) string {
+	if t.Dispatch != nil && strings.TrimSpace(t.Dispatch.Assignee) != "" {
+		return strings.TrimSpace(t.Dispatch.Assignee)
+	}
+	return strings.TrimSpace(t.AssignedTo)
+}
+
+func dispatchMessageID(t taskstore.Task) string {
+	if t.Dispatch == nil {
+		return ""
+	}
+	return strings.TrimSpace(t.Dispatch.MessageID)
+}
+
+func printableHandle(handle string) string {
+	if strings.TrimSpace(handle) == "" {
+		return "<unknown>"
+	}
+	return handle
 }
 
 func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorView {
@@ -866,7 +1225,120 @@ func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLau
 			rows[i].ManagedTarget = strings.TrimSpace(rows[i].Tmux.Target)
 		}
 	}
+	attachStatusActivities(t.Project, profile, workstream, rows, probe.Now())
+	attachStatusLocalInputs(t, rows)
 	return rows
+}
+
+func attachStatusActivities(projectDir, profile, workstream string, rows []statusRecord, now time.Time) {
+	activeTasks := activeTasksByAssignee(projectDir, profile, workstream)
+	for i := range rows {
+		if strings.TrimSpace(rows[i].AgentDir) != "" {
+			if act, ok, err := activity.Read(rows[i].AgentDir, now, activity.DefaultStaleAfter); err == nil && ok {
+				rows[i].Activity = &act
+				continue
+			} else if err != nil {
+				act := activity.UnknownSnapshot(rows[i].Handle, "activity heartbeat unreadable")
+				rows[i].Activity = &act
+				continue
+			}
+		}
+		if task, ok := activeTasks[rows[i].Handle]; ok {
+			rows[i].Activity = taskStoreActivity(task, now)
+		}
+	}
+}
+
+func activeTasksByAssignee(projectDir, profile, workstream string) map[string]taskstore.Task {
+	tasks, err := taskstore.ListForProfile(projectDir, profile, workstream)
+	if err != nil {
+		return nil
+	}
+	out := map[string]taskstore.Task{}
+	for _, t := range tasks {
+		if t.Status != taskstore.StatusInProgress || strings.TrimSpace(t.AssignedTo) == "" {
+			continue
+		}
+		cur, ok := out[t.AssignedTo]
+		if !ok || t.UpdatedAt.After(cur.UpdatedAt) || (t.UpdatedAt.Equal(cur.UpdatedAt) && t.ID > cur.ID) {
+			out[t.AssignedTo] = t
+		}
+	}
+	return out
+}
+
+func taskStoreActivity(t taskstore.Task, now time.Time) *activity.Snapshot {
+	detail := strings.TrimSpace(t.Title)
+	if detail == "" {
+		detail = "current task from task store; no fresh activity heartbeat"
+	}
+	act := activity.TaskStoreSnapshot(t.AssignedTo, t.ID, detail, t.UpdatedAt, now, activity.DefaultStaleAfter)
+	return &act
+}
+
+func attachStatusLocalInputs(t team.Team, rows []statusRecord) {
+	for i := range rows {
+		if !statusLocalInputCandidate(t, rows[i]) {
+			continue
+		}
+		blocker, ok := statusLocalInputDetector(rows[i].Tmux.PaneID)
+		if !ok {
+			continue
+		}
+		rows[i].LocalInput = &statusLocalInput{
+			Status:      "blocked",
+			Kind:        blocker.Kind,
+			PaneID:      rows[i].Tmux.PaneID,
+			Summary:     blocker.Summary,
+			Destructive: blocker.Destructive,
+			Recovery:    blocker.Recovery,
+			Source:      "tmux-pane-tail",
+		}
+	}
+}
+
+func statusLocalInputCandidate(t team.Team, row statusRecord) bool {
+	if !t.Orchestrated {
+		return false
+	}
+	lead := strings.TrimSpace(t.Lead)
+	if lead == "" || row.Role == lead {
+		return false
+	}
+	if row.External || row.Tmux == nil || strings.TrimSpace(row.Tmux.PaneID) == "" || !row.Tmux.PaneAlive {
+		return false
+	}
+	switch strings.TrimSpace(row.Tmux.Target) {
+	case "current-window", "new-window", "new-session":
+		return true
+	default:
+		return false
+	}
+}
+
+func statusLocalInputWarnings(projectDir, profile, session string, rows []statusRecord) []statusWarning {
+	var warnings []statusWarning
+	for _, row := range rows {
+		if row.LocalInput == nil {
+			continue
+		}
+		cmd := "amq-squad focus --role " + shellQuote(row.Role) + taskScope(projectDir, profile, session)
+		detail := fmt.Sprintf(
+			"role %s (handle %s) appears blocked on local UI input in pane %s: %s; AMQ may stay silent while the local prompt waits; recovery: %s",
+			row.Role,
+			printableHandle(row.Handle),
+			row.LocalInput.PaneID,
+			row.LocalInput.Summary,
+			row.LocalInput.Recovery,
+		)
+		warnings = append(warnings, statusWarning{
+			Kind:             "local_input_blocked",
+			Session:          session,
+			Detail:           detail,
+			SuggestedCommand: cmd,
+		})
+	}
+	return warnings
 }
 
 func orchestrationStatusFields(t team.Team) (bool, string, string) {

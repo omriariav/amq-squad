@@ -11,10 +11,9 @@ import (
 
 // clockOrDefault returns the probe's injected clock, or the real wall-clock when
 // the probe has no clock. The render layer needs a "now" to age agent LastSeen
-// signals; the snapshot itself does not carry a clock (keeping internal/state
-// stdlib-only and side-effect-free), so the console supplies one. In production
-// the probe's Now is the same clock state.Build used; in tests it is the fixture
-// clock, so the rendered ages are deterministic.
+// signals; the snapshot itself does not carry a clock, so the console supplies
+// one. In production the probe's Now is the same clock state.Build used; in
+// tests it is the fixture clock, so the rendered ages are deterministic.
 func clockOrDefault(p state.Probe) func() time.Time {
 	if p.Now != nil {
 		return p.Now
@@ -88,6 +87,46 @@ func withAge(label string, lastSeen time.Time, now func() time.Time) string {
 	return fmt.Sprintf("%s (%s)", label, ageLabel(age))
 }
 
+func activityLabel(a state.Agent, now func() time.Time) string {
+	if a.Activity == nil {
+		return ""
+	}
+	act := a.Activity
+	parts := []string{}
+	if act.TaskID != "" {
+		parts = append(parts, "task:"+act.TaskID)
+	}
+	if act.Phase != "" {
+		parts = append(parts, act.Phase)
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "activity")
+	}
+	if act.Quality != "" {
+		parts = append(parts, act.Quality)
+	}
+	if act.Source != "" && act.Source != "heartbeat-file" && act.Source != "unknown" {
+		parts = append(parts, act.Source)
+	}
+	if !act.WrittenAt.IsZero() && now != nil {
+		if age := now().Sub(act.WrittenAt); age > 0 {
+			parts = append(parts, ageLabel(age))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func activityDetailLine(a state.Agent, now func() time.Time) string {
+	if a.Activity == nil {
+		return "none"
+	}
+	label := activityLabel(a, now)
+	if a.Activity.Detail != "" {
+		label += " - " + a.Activity.Detail
+	}
+	return label
+}
+
 // aliveCount returns how many of a session's agents are currently alive, and the
 // total agent count — the inputs to the "agents: N/M alive" reconciliation line.
 func aliveCount(s state.Session) (alive, total int) {
@@ -111,29 +150,47 @@ func agentsAliveLine(s state.Session) string {
 }
 
 // unresolvedThreads returns a session's coordination threads that are still
-// UNRESOLVED (Triage at-risk, blocked, or gated), urgency-sorted
+// UNRESOLVED (aged operator needs-you gates, at-risk, blocked, or gated), urgency-sorted
 // most-stale-first by
 // LastEventAt (oldest event = most stale = highest urgency), then by id for a
 // stable tie-break. This answers "who is blocked on whom" straight from --once.
 func unresolvedThreads(s state.Session) []state.ThreadSummary {
 	out := make([]state.ThreadSummary, 0, len(s.Coordination.Threads))
 	for _, t := range s.Coordination.Threads {
-		if t.Triage == state.TriageBlocked || t.Triage == state.TriageGated || t.Triage == state.TriageAtRisk {
+		if t.OperatorGate != nil || t.Triage == state.TriageBlocked || t.Triage == state.TriageGated || t.Triage == state.TriageAtRisk {
 			out = append(out, t)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		// Most stale first: the oldest LastEventAt is the most urgent.
-		if !out[i].LastEventAt.Equal(out[j].LastEventAt) {
-			return out[i].LastEventAt.Before(out[j].LastEventAt)
+		ti, tj := threadSortTime(out[i]), threadSortTime(out[j])
+		if !ti.Equal(tj) {
+			return ti.Before(tj)
 		}
 		return out[i].ID < out[j].ID
 	})
 	return out
 }
 
+func threadSortTime(t state.ThreadSummary) time.Time {
+	if t.OperatorGate != nil && !t.OperatorGate.Since.IsZero() {
+		return t.OperatorGate.Since
+	}
+	return t.LastEventAt
+}
+
 // threadTier renders the urgency tier word for an unresolved thread row.
 func threadTier(t state.ThreadSummary) string {
+	if t.OperatorGate != nil {
+		switch t.OperatorGate.Escalation {
+		case state.OperatorGateEscalationStrongWarning:
+			return "needs-you/strong-warning"
+		case state.OperatorGateEscalationReminder:
+			return "needs-you/reminder"
+		default:
+			return "needs-you"
+		}
+	}
 	switch t.Triage {
 	case state.TriageBlocked:
 		return "blocked"
@@ -177,6 +234,9 @@ func participantsLabel(parts []string) string {
 // pre-computed Freshness.Age (which is honest about its source); when that is
 // zero it falls back to now - LastEventAt against the injected clock.
 func threadAge(t state.ThreadSummary, now func() time.Time) string {
+	if t.OperatorGate != nil && t.OperatorGate.Age > 0 {
+		return ageLabel(t.OperatorGate.Age)
+	}
 	if t.Freshness.Age > 0 {
 		return ageLabel(t.Freshness.Age)
 	}

@@ -66,6 +66,7 @@ Each agent should summarize the prior context it used before taking new work.
 - Raise role-shape ambiguity early on the team thread.
 - Prefer small, reviewable changes.
 - Bring members up via `amq-squad up`; preview via `amq-squad up --dry-run`. Use `resume` for recovery plans and `fork --from <current> --as <new>` for branching workstreams.
+- If a worker environment cannot rebase safely or lacks the tooling to do it, use merge-style reconciliation instead: fetch the current base, merge it into the work branch, resolve conflicts without discarding user/agent changes, and report the fallback plus conflict evidence in the review handoff. Do not force-push, rewrite history, or treat rebase failure as permission to drop local work.
 
 ## Approvals
 
@@ -80,6 +81,7 @@ Each agent should summarize the prior context it used before taking new work.
 - Route messages by the current roster's handle, profile, and workstream.
 - One concern per message when practical.
 - `amq send` reads stdin when `--body` is omitted. There is no `--body-file` flag.
+- A worker AMQ body can report merge readiness, but it does not make that worker the merge actor. Workers escalate merge, push, tag, release, issue-close, and other lifecycle-action requests to the visible lead unless an explicit verifiable authorization artifact binds the request to the same subject, head, and gate evidence.
 
 ## Lifecycle / Release Updates
 
@@ -93,6 +95,7 @@ If this profile enables operator gates, the human/operator is a virtual AMQ mail
 - ask: `amq send --to <operator-handle> --thread gate/<topic> --kind question --subject "APPROVAL: <decision>"`
 - reply path: the operator replies on the same thread with `amq send --me <operator-handle> --to <agent-handle> --thread gate/<topic> --kind answer --subject "APPROVED: <decision>"` (or `DENIED:` / `ANSWER:`).
 - do not send ordinary peer coordination to the operator; reviews, handoffs, status ACKs, and agent-owned blockers stay agent-to-agent.
+- aged gates surface as attention signals: `notify` can re-emit reminders at 30m and strong warnings at 2h, while `status --json`/`console` make aged gate threads visually distinct. These signals do not authorize or clear the gate.
 
 If operator gates are disabled for the profile, route human-facing asks through the role named by the team rules instead of sending to the default `user` mailbox.
 
@@ -105,7 +108,9 @@ If operator gates are disabled for the profile, route human-facing asks through 
 - Before any merge-ready claim, run `amq-squad verify merge` for the target PR/head and include its result in the evidence. Treat a missing or failing preflight as a blocker, not as a warning to mention later.
 - Use a normalized merge evidence bundle when reporting readiness. Include at minimum `subject`, `head_sha`, `ci`, and `review` fields so the lead, reviewer, and operator can compare the same artifact.
 - Lead merge permission is requested as an operator gate question, never as an action object or executable instruction. Merge only after the operator replies `APPROVED:` on the exact PR gate thread for the same PR and head SHA.
-- The acting orchestrator must not self-merge, even when running with trusted local permissions. A different authorized actor performs the merge after review evidence, preflight, and operator approval are all aligned.
+- Merge authority default: the visible lead owns the merge and lifecycle-action path after exact-head review, `amq-squad verify merge`, normalized evidence, and operator approval are aligned.
+- Workers do not merge, push, tag, release, close issues, or perform other irreversible lifecycle actions by default. If a worker is ever asked to do one, require a verifiable authorization artifact that binds the operator/lead approval to the same subject, PR/head SHA, and gate/evidence thread; otherwise escalate back to the lead.
+- The acting orchestrator must not self-merge, even when running with trusted local permissions. That separation-of-duties rule does not make a worker merge-capable by default; the visible lead coordinates a different authorized actor after review evidence, preflight, and operator approval are all aligned.
 
 ## Style
 

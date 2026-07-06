@@ -56,7 +56,7 @@ func TestRunTeamLaunchHelpListsNewDXFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runTeamLaunch --help: %v", err)
 	}
-	for _, want := range []string{"--trust", "--model", "--force-duplicate"} {
+	for _, want := range []string{"--trust", "--model", "--force-duplicate", "--no-gitignore"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("team launch --help missing %q in:\n%s", want, stderr)
 		}

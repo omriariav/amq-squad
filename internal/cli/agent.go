@@ -292,9 +292,9 @@ func launchKnownFlag(name string) string {
 		"-spawn-origin", "-spawn-depth":
 		return "string"
 	case "--team-workstream", "--no-bootstrap", "--no-default-args",
-		"--force-duplicate", "--dry-run", "--no-require-wake",
+		"--force-duplicate", "--dry-run", "--no-require-wake", "--no-gitignore",
 		"-team-workstream", "-no-bootstrap", "-no-default-args",
-		"-force-duplicate", "-dry-run", "-no-require-wake",
+		"-force-duplicate", "-dry-run", "-no-require-wake", "-no-gitignore",
 		// Help flags after the binary should fall through to runLaunch
 		// (which prints amq-squad launch help) rather than flow to the
 		// child binary as `-- --help`. Native child help is still

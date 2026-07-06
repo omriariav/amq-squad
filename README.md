@@ -34,6 +34,7 @@ Three binary-neutral primitives make it work, and all of them round-trip through
 
 - **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted). Add `--launch --dry-run` or `rm --stop --dry-run` to preview exact runtime actions before running them.
 - **Native task store** — `amq-squad task add/list/show/claim/done/fail/block/reset`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/` for the default profile, or `.amq-squad/tasks/<profile>/<session>/` for named profiles, so a lead of either binary decomposes the goal into claimable work.
+- **Agent activity heartbeats** — `amq-squad activity set/clear`: workers can atomically publish current task/phase activity under their AMQ agent directory. `status --json` and `console` show fresh/stale/unknown activity, with task-store ownership as a weaker source-separated fallback.
 - **Compose-from-goal playbook** — the `amq-squad-orchestrator` skill (in both the Claude and Codex marketplaces) drives propose → approve → `team member add` → `task add` → prune.
 
 AMQ `swarm` interop is supported as an external notification/adoption boundary,
@@ -76,7 +77,7 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 Install the 2.0 line (note the `/v2` module path):
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.15.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.16.0
 amq-squad version
 ```
 
@@ -86,7 +87,7 @@ For the latest 2.x build:
 go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest
 ```
 
-Requires Go 1.25+, the `amq` binary on `PATH` (v0.39.0+), and `tmux` on `PATH` for `amq-squad up`.
+Requires Go 1.25+, the `amq` binary on `PATH` (v0.40.0+), and `tmux` on `PATH` for `amq-squad up`.
 
 ### Skills (plugin marketplaces)
 
@@ -446,7 +447,7 @@ amq-squad goal start \
   --project /path/to/repo \
   --session v2-15-0 \
   --register-orchestrator=orchestrator \
-  --goal "deliver GitHub milestone v2.15.0" \
+  --goal "deliver GitHub milestone v2.16.0" \
   --yes
 ```
 
@@ -568,6 +569,13 @@ dispatch, task, brief, launch, resume, and lifecycle commands resolve against
 the selected profile/session namespace rather than scanning a sibling legacy
 session root.
 
+Namespace-safety rule: mutating commands with `--session` in a multi-profile
+project should pass `--profile`. If an unprofiled mutation would write the
+default profile while a named profile already owns that session, amq-squad
+fails closed before writing and tells you to rerun with `--profile <name>` or
+the explicit escape hatch `--profile default`. `status --session <name>` stays
+read-only and warns when the default view is shadowed by a named profile.
+
 Schema 3 adds an optional virtual operator participant for human gates:
 
 ```sh
@@ -576,9 +584,11 @@ amq-squad new team --roles cto,qa --operator ops  # custom operator handle
 amq-squad new team --roles cto,qa --no-operator   # explicit opt-out
 ```
 
-The operator is not a runnable team member. AMQ 0.38.0+ reserves the conventional `user` mailbox for this human/operator role, and amq-squad v2.15.0 still requires AMQ 0.39.0+ overall; custom operator handles use the same amq-squad protocol. JSON discovery derives `operator` and `capabilities.operator_gates`; `capabilities` is not persisted in `team.json`.
+The operator is not a runnable team member. AMQ 0.38.0+ reserves the conventional `user` mailbox for this human/operator role, and amq-squad v2.16.0 requires AMQ 0.40.0+ overall; custom operator handles use the same amq-squad protocol. JSON discovery derives `operator` and `capabilities.operator_gates`; `capabilities` is not persisted in `team.json`.
 
 Operator gates are structural AMQ handoffs, not authentication. Send human-only decisions or manual actions to the configured operator handle on stable `gate/<topic>` threads, with `--kind question --subject "APPROVAL: <decision>"` for approvals and `--kind decision --subject "DONE: <goal>"` for manual closeout. The operator replies on the same thread with `--kind answer` and subjects such as `APPROVED:`, `DENIED:`, or `ANSWER:`. If the operator answers a pending gate in a live pane/chat instead of AMQ, the lead treats it as operator input, immediately ACKs or mirrors it on the matching `gate/<topic>` thread without spoofing the operator handle, and checks both the live channel and AMQ gate/inbox state before declaring the gate blocked. P2P prose like "pending operator" is evidence only; it is not a gate. `amq-squad notify` surfaces new or stale needs-you gates with inspect/respond commands and de-duplicates unchanged items, but notification output never authorizes or clears a gate.
+
+Unanswered operator gates age through visible escalation bands: `initial` immediately, `reminder` after 30 minutes, and `strong-warning` after 2 hours. The age is measured from the last unanswered operator-facing gate message on the `gate/<topic>` thread, so re-raising a decision starts a fresh clock while later status chatter does not hide the pending gate. `notify` records the last emitted escalation band and bypasses normal de-duplication when a gate crosses into `reminder` or `strong-warning`; `status --json` emits `data.warnings[]` for aged gates, and `console` labels them as `needs-you/reminder` or `needs-you/strong-warning`.
 
 ### Orchestration (opt-in)
 
@@ -601,6 +611,8 @@ Because `target_project_root` is where the project lead actually edits code — 
 
 `team init --mode ...` persists this contract in the profile, and `goal draft` generates matching `team init` and visible-lead prompts. `status --json` and the multi-session board JSON expose `execution.mode`, `control_root`, `target_project_root`, `visible_lead`, `visible_team_members`, `mutable_actor`, `implementation_allowed`, `goal_binding`, `visibility_topology`, `polling_required`, `mode_error`, and `version_compatibility` so clients do not infer who is allowed to mutate files. They also expose `operator_delivery.poll_required`, `operator_delivery.durable_amq`, and `operator_delivery.wake_supported`; a virtual/non-runnable operator handle always has `wake_supported=false`, so operator-facing updates and gates require polling/draining instead of wake delivery.
 
+Merge and lifecycle authority is explicit in the same status surface. `execution.release_readiness.merge_authority.default_actor` is `visible_lead`, and `worker_policy` is `workers_do_not_merge_by_default`: workers can report readiness evidence, but they do not merge, push, tag, release, close issues, or run other irreversible lifecycle actions from AMQ prose. The documented alternative is a verifiable authorization artifact that binds the operator/lead approval to the same subject, head SHA, and gate/evidence thread; otherwise a worker escalates the request back to the visible lead. This answers **who** owns the action path, while the exact-head review, `verify merge`, normalized evidence, and operator gate rules still answer **when** merge-ready can be claimed.
+
 The operator normally steers the workstream through the lead/orchestrator. The operator can steer the lead directly from amq-noc (v0.8.0+), or with plain AMQ: a **directive** arrives on the lead's operator p2p thread as a `--kind todo` message whose subject starts with `DIRECTIVE:`. The lead treats directives as operator steering with priority over child reports, acknowledges on the same thread, and never treats one as a gate answer (a directive never clears a `gate/<topic>` thread). Direct operator-to-worker messages are exceptional; when they affect scope, priority, merge readiness, release state, or external actions, the worker reports them to the lead before acting or includes the lead/thread metadata in the AMQ report.
 
 For NOC and orchestrator visibility, leads must surface blockers and approval
@@ -615,6 +627,21 @@ is one `/goal` per visible lead; leads push status, blockers, approval requests,
 and final evidence to AMQ/NOC-visible surfaces; the parent orchestrator or NOC
 polls each lead's inbox, gate threads, and `status --json` on a cadence; child
 agents remain internal unless the lead escalates them.
+When a `global_orchestrator` owns more than one active or recently active
+workstream in one conversation, it keeps an in-conversation board and refreshes
+it after every poll, gate answer, spawn, stop, final report, or recovery action.
+The board records run name, repo, profile/session, lead and pane id, state
+(`running`, `gated`, `blocked`, `paused`, `stale`, `done`, `closed`), last
+checked time, next poll or wake source, current gate/blocker, last action, next
+action, and deterministic polling commands. Closed runs are demoted with
+`next action: none - closed` so they stop competing with active gates or stale
+runs. For `poll_required=true`, use deterministic commands such as
+`amq-squad monitor --once --json`, scoped `status --json`, `operator status`,
+`next --json`, and root-correct gate-thread reads. Recovery uses native
+amq-squad paths first (`dispatch` or drain-only `send` re-nudges, `resume` or
+`actions[]`, native `/goal resume` for understood blockers); raw
+`tmux send-keys Enter` is a recorded last resort after operator direction or
+when native recovery is unavailable.
 When `operator_delivery.poll_required=true`, the same polling rule applies to
 the virtual operator mailbox: lead reports, blockers, and approval gates are
 durable AMQ records, and no client should claim wake support for the
@@ -745,7 +772,7 @@ amq-squad up [<session>] [--project DIR] [--profile NAME] [--session ws] [--rese
              [--dry-run [--json]] [--seed-from file:|issue:|gh: [--force]]
              [--terminal tmux] [--target current-window|new-window|new-session]
              [--layout vertical|horizontal|tiled] [--terminal-session name]
-             [--stagger 750ms] [--no-bootstrap] [--force-duplicate]
+             [--stagger 750ms] [--no-bootstrap] [--force-duplicate] [--no-gitignore]
                                   NEW work. Bring the configured team up live (tmux) or
                                   print the plan with --dry-run. REFUSES a session that
                                   already exists (use `resume`, or `up --reset` to start
@@ -786,20 +813,22 @@ amq-squad fork --from <current> --as <new> [--project DIR] [--force-duplicate]
                                   created or preserved by the subsequent
                                   `up --session <new>` (or `agent up`) live launch.
                                   --project targets a team-home without cd.
-amq-squad rm <session> [--project DIR] [--yes] [--force] [--keep-panes]
+amq-squad rm <session> [--project DIR] [--profile NAME] [--yes] [--force] [--keep-panes]
                                   Permanently remove a finished session (its AMQ root dir
                                   + brief). Previews + prompts
                                   (default No) unless --yes; refuses a live session unless
                                   --force; never touches a sibling session. Closes the
                                   torn-down agents' tmux panes by default (live agents
                                   excluded); --keep-panes to leave them. --project
-                                  targets a team-home without cd.
-amq-squad archive <session> [--project DIR] [--yes] [--force] [--keep-panes]
+                                  targets a team-home without cd; --profile selects the
+                                  profile/session namespace.
+amq-squad archive <session> [--project DIR] [--profile NAME] [--yes] [--force] [--keep-panes]
                                   Move a finished session aside instead of deleting it
                                   (to <baseRoot>/.archive/<session>/, recoverable).
                                   Confirm-gated; refuses a live session unless --force.
                                   Closes the agents' tmux panes by default; --keep-panes
-                                  to leave them. --project targets a team-home without cd.
+                                  to leave them. --project targets a team-home without cd;
+                                  --profile selects the profile/session namespace.
 amq-squad status [--project DIR] [--json]
                                   Multi-session BOARD over every discovered session
 amq-squad status --session NAME [--project DIR] [--json]
@@ -831,11 +860,22 @@ amq-squad task reset <id> --me HANDLE [--reason R] [--json] --session S
                                   completed. Terminal/reset transitions on an
                                   assigned task require the assignee's --me.
                                   All subcommands require --session.
+amq-squad activity set --session S --me HANDLE --phase PHASE [--task ID] [--detail TEXT] [--profile P] [--json]
+amq-squad activity clear --session S --me HANDLE [--profile P] [--json]
+                                  Write or clear
+                                  <amq-root>/agents/<handle>/activity.json
+                                  atomically. Status and console surface this as
+                                  an honest busy/current-task signal with
+                                  source and quality; stale or malformed files
+                                  degrade to unknown rather than progress.
 amq-squad dispatch --session S --role R --subject SUBJ --body BODY [--create-task | --task ID] [--json]
                                   Queue a durable AMQ message and best-effort
                                   drain nudge. Plain dispatch stays AMQ-only;
                                   --create-task creates and links a native task,
-                                  while --task links an existing task id.
+                                  while --task links an existing task id. A
+                                  task-backed dispatch auto-claims a pending
+                                  task for the target handle after the durable
+                                  send and task link succeed.
 amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
                          [--wake|--no-wake] [--require-wake|--no-require-wake]
                          [--adopt-project-lead] [--compat-no-wake --reason TEXT]
@@ -868,9 +908,10 @@ amq-squad thread --session NAME --id THREAD [--project DIR] [--include-body=fals
 amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
                                   AMQ version, AMQ ops diagnostics, the amq-squad
                                   on PATH vs this build (version skew — spawned
-                                  agents inherit the PATH binary), Codex plugin
-                                  skill-cache alignment, profile config, tmux,
-                                  wake, marker integrity, and pointer-sync drift.
+                                  agents inherit the PATH binary), Codex/Claude
+                                  plugin cache and skill-version alignment,
+                                  profile config, tmux, wake, marker integrity,
+                                  and pointer-sync drift.
 amq-squad amq env [--project DIR] [--session NAME] [--me HANDLE] [--json]
                                   Show the AMQ context amq-squad resolved for
                                   this project/session.
@@ -909,7 +950,7 @@ amq-squad agent up <binary> [--project DIR] [--role R] [--session ws] [--team-pr
                             [--conversation ref] [--no-bootstrap]
                             [--trust sandboxed|approve-for-me|trusted] [--model NAME]
                             [--codex-args ...] [--claude-args ...]
-                            [--force-duplicate] [-- <native flags>]
+                            [--force-duplicate] [--no-gitignore] [-- <native flags>]
                                   Launch one agent. Writes launch.json + role.md
                                   in the AMQ mailbox, injects bootstrap, then execs
                                   amq coop exec. --project targets a team-home
@@ -926,6 +967,12 @@ Global output flags work before or after the subcommand: `--quiet`, `--verbose`,
 
 `amq-squad status` (and the bare `amq-squad`) prints a **multi-session board** over every discovered session — docker-ps / `git branch -v` style: session name, rolled-up state (running / stopped / degraded), agent health (N/M alive + at-risk), a one-line brief, and last-activity. Add `--session NAME` for the single-session detail table.
 
+Per-agent rows may include activity from `<amq-root>/agents/<handle>/activity.json`, written by `amq-squad activity set` or cheap task-transition stamps. `status --json` exposes this under `records[].activity` with `source` (`heartbeat-file`, `task-store`, or `unknown`) and `quality` (`fresh`, `stale`, or `unknown`) so clients can distinguish an agent-written heartbeat from task-store ownership fallback.
+
+Managed child rows may also include `records[].local_input` when a read-only pane-tail blind-spot detection heuristic sees a local approval/input prompt. This is not a coordination or progress primitive: capture failures, dead panes, and unparseable tails produce no field, so absence means "not observed", not "not blocked". When present, `data.warnings[]` includes `kind:"local_input_blocked"` with the role, pane, prompt summary, and recovery guidance; destructive prompts require an operator decision or a non-destructive alternative.
+
+Status warnings also include aged operator gates when a poll-required operator decision would otherwise sit silently. Gate escalation bands are `initial`, `reminder` at 30 minutes, and `strong-warning` at 2 hours; warning kinds are `operator_gate_reminder` and `operator_gate_strong_warning`, with a suggested `amq-squad thread ... --include-body` inspection command.
+
 `amq-squad console` is the project-scoped Mission Control TUI for the current team-home.
 
 ```sh
@@ -940,6 +987,7 @@ The console gives you:
 
 - a **board** of all sessions, grouped attention-first (needs-you > blocked > gated > at-risk > running > stopped),
 - per-session **detail** with each agent's liveness and a **collapsed-thread bus** ("qa ↔ cto  blocked · subject  N msgs · 7m"),
+- aged operator gates rendered distinctly as `needs-you/reminder` or `needs-you/strong-warning`, using the pending gate age rather than later thread chatter,
 - **peek** (`space`) for a read-only view of an agent's recent output, unread inbox, and what it is blocked on,
 - an **action palette** (`a`) with copy-ready commands such as `focus`, `send`, `resume`, `stop`, `task list`, and `dispatch`; the console never runs commands directly. This is the user-facing closure for #220.
 - a **triage rollup** headline (`N needs-you threads · N blocked threads · N gated threads · N at-risk threads`) and `/`-filters (`needs-you`, `needs-user`, `gated`, `at-risk`, `blocked`, `stale-blocked`, `unread`, `agent:<h>`, `model:<m>`, `session:<n>`, `label:<l>`, `orchestrator:<o>`).
@@ -950,7 +998,7 @@ It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--o
 
 `amq-squad amq ...` is a project-aware wrapper around AMQ diagnostics. It resolves the same AMQ root, base root, session, and handle that the squad launcher uses, then delegates to AMQ.
 
-amq-squad v2.15.0 requires AMQ 0.39.0 or newer. That floor includes the wake-inject stale-process fix (AMQ-owned `--inject-via` wake processes exit when their recorded owner is gone or no longer matches), plus eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
+amq-squad v2.16.0 requires AMQ 0.40.0 or newer. That floor includes the wake-inject stale-process fix (AMQ-owned `--inject-via` wake processes exit when their recorded owner is gone or no longer matches), eval-safe `amq env --export`, the reserved human `user` mailbox behavior used by operator gates and notification surfaces, and AMQ 0.40.0's stricter queue/DLQ/receipt/wake metadata file hardening.
 
 Read-only diagnostics run directly:
 
@@ -985,6 +1033,11 @@ when execution ownership is relevant. The mode-safe fields name the control
 root, target project root, profile/session namespace, visible lead/team,
 mutable actor, whether implementation is allowed, goal binding, topology,
 polling requirement, mode errors, and runtime-vs-target version compatibility.
+`status --json` and `doctor --json` also include a `versions` object with the
+running binary, the `amq-squad` found on `PATH`, Codex and Claude plugin-cache
+manifest versions, the loaded skill marker where detectable, and per-source
+`matches_running` / warning details. `up` emits the same mismatch warnings before
+launch when it can detect them.
 
 ```sh
 amq-squad status --json | jq .
@@ -996,6 +1049,7 @@ amq-squad roles --json | jq .
 amq-squad dispatch --session issue-96 --role qa --subject "Review" --body "..." --json | jq .
 amq-squad task add --title "Review PR" --session issue-96 --json | jq .
 amq-squad task claim t1 --me qa --session issue-96 --json | jq .
+amq-squad activity set --session issue-96 --me qa --task t1 --phase testing --json | jq .
 amq-squad team member add qa --binary codex --json | jq .
 amq-squad team init --dry-run --json --roles cto,qa | jq .
 amq-squad new team --sync --dry-run --json --roles cto,qa | jq .
@@ -1016,8 +1070,8 @@ Envelope shape:
 High-value mutating commands also support JSON success envelopes for
 orchestrators and NOC tooling. Initial stable mutator envelopes include
 `dispatch`, `task add`, task transitions (`claim`, `done`, `fail`, `block`),
-and `team member add/rm`. Human output remains unchanged when `--json` is not
-passed. This is the user-facing closure for #222.
+`activity set/clear`, and `team member add/rm`. Human output remains unchanged
+when `--json` is not passed. This is the user-facing closure for #222.
 
 ## Runtime control (tmux)
 
@@ -1252,11 +1306,14 @@ amq-squad team init --personas cto,fullstack --model cto=gpt-5.5,fullstack=fable
 amq-squad agent up codex --model gpt-5.5 --codex-args "-c model_reasoning_effort=medium"
 ```
 
-amq-squad v2.15.0 requires amq **0.39.0+**. Launches pass `--require-wake` to
+amq-squad v2.16.0 requires amq **0.40.0+**. Launches pass `--require-wake` to
 `amq coop exec`, so a launch **fails at the door** when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale or
 orphaned wake. `--no-require-wake` opts out for environments where wake cannot
 run; the opt-out is persisted in the launch record so resume reproduces it.
+Use `--no-gitignore` on `agent up`, `up`, or `up --dry-run` when AMQ coop
+auto-init should leave `.gitignore` unchanged; the opt-out is persisted in the
+launch record and replayed by `agent resume`.
 
 For external-injector wake setups, pass `--wake-inject-via /absolute/injector`
 and repeat `--wake-inject-arg=value` as needed on `agent up`, `up`, or
@@ -1319,6 +1376,39 @@ amq send \
 
 `amq send` reads stdin when `--body` is omitted. There is no `--body-file` flag.
 
+### Which messaging primitive should I use?
+
+| Intent | Use | Why |
+| --- | --- | --- |
+| Supervise a squad | `amq-squad status`, `console`, `task`, `collect` | These resolve the project/profile/session and show the squad model. Use `collect` for lead-side reports when raw AMQ would say `refusing collect` of a `lead-owned mailbox`; it follows the #322 collect-vs-drain contract. |
+| Tell a live visible lead something now | `amq-squad send --session S --role lead --body "..."` | This is tmux pane delivery to the recorded live pane. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
+| Assign durable work and wake a recipient | `amq-squad dispatch --session S --role worker --kind todo --subject "..." --body "..."` | Dispatch queues durable AMQ in the resolved workstream root and wakes or nudges the agent to drain it, especially for lead-to-worker tasks. |
+| Read or write AMQ mailboxes directly | Raw `amq send/read/drain/thread` only inside the correct coop/session shell, or with explicit `--root`; otherwise prefer `amq-squad amq ...`. | Raw AMQ is mailbox plumbing. From an external pane, the wrong root can reproduce the #328 class of namespace mistakes: `implicit default-profile mutation`, `legacy/default session root`, or `refusing before write`. |
+
+In an orchestrated squad, the operator normally steers the visible lead with
+`amq-squad send` or an operator directive; the lead uses `task`, `dispatch`, and
+`collect` to coordinate workers. A raw `amq send --session ...` from an external
+pane is ambiguous for named-profile squads because it may write the default
+`.agent-mail/<session>` while workers drain
+`.agent-mail/<profile>/<session>`. Use the `amq-squad amq` wrapper or an
+explicit raw `--root` only when direct mailbox plumbing is intentional:
+
+```sh
+# Ambiguous from an external pane:
+amq send --session issue-96 --to developer --thread p2p/cto__developer \
+  --kind todo --subject "Task" --body "..."
+
+# Root-resolving wrapper:
+amq-squad amq send --project /path/to/repo --profile release --session issue-96 \
+  --to developer --thread p2p/cto__developer \
+  --kind todo --subject "Task" --body "..."
+
+# Explicit raw AMQ root:
+amq send --root /path/to/repo/.agent-mail/release/issue-96 \
+  --to developer --thread p2p/cto__developer \
+  --kind todo --subject "Task" --body "..."
+```
+
 Inside an amq-squad-launched shell, use bare `amq` commands. The launcher already injected `AM_ROOT`, `AM_BASE_ROOT`, and `AM_ME`; override them only when intentionally inspecting a different project or handle. For important handoffs, use `--wait-for drained --wait-timeout 60s` and keep the AMQ message id. If routing is unclear, run `amq route explain` or `amq-squad amq route --to <handle>` first.
 
 From an external lead or operator-owned pane, prefer the root-correct wrapper:
@@ -1327,6 +1417,16 @@ team role/handle, the wrapper verifies that role is bound in the namespace
 before sending; a global orchestrator cannot raise gates as `cto` before a real
 `cto` exists. Emergency recovery sends require the explicit audited override
 `--unsafe-send-as --reason <why>`.
+
+For lead-side report collection, prefer `amq-squad collect --session <S> --me
+<lead> --timeout 120s --include-body` over raw `amq drain`. Raw AMQ `drain`
+is intentionally destructive: it moves unread files from `inbox/new` to
+`inbox/cur` and emits drained receipts before the caller has necessarily
+persisted or displayed the body. `collect` is the kill-safe path for
+orchestrators: it snapshots unread bodies into a
+profile/session/recipient-scoped journal before acknowledging each message.
+The contract is at-least-once, not exactly-once: an interrupted output may replay
+a body on the next collect, but it should not lose the body.
 
 ## Files amq-squad writes
 
@@ -1340,6 +1440,11 @@ before sending; a global orchestrator cannot raise gates as `cto` before a real
 <project>/.amq-squad/tasks/<session>/     Task store for the default profile.
 <project>/.amq-squad/tasks/<profile>/<session>/
                                          Task store for a named profile.
+<project>/.amq-squad/collect-journal/<profile>/<session>/<handle>/
+                                         Kill-safe collect journal. Pending
+                                         entries replay until delivered; delivered
+                                         entries are retained for 7 days or the
+                                         latest 200 entries per recipient.
 <project>/.agent-mail/<session>/          AMQ root for the default profile.
 <project>/.agent-mail/<profile>/<session>/
                                          AMQ root for a named profile.
@@ -1377,5 +1482,5 @@ Replay paths that emit copy-paste commands use the modern `agent up <binary>` co
 ## Requires
 
 - Go 1.25+
-- `amq` binary on `PATH` (v0.39.0+)
+- `amq` binary on `PATH` (v0.40.0+)
 - `tmux` on `PATH` for `amq-squad up`

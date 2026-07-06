@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
@@ -66,6 +67,11 @@ var dispatchRecipientWakeLive = defaultDispatchRecipientWakeLive
 // dispatchLinkTask is a seam for partial-failure tests around post-send task
 // metadata linkage. Production uses taskstore.LinkDispatch directly.
 var dispatchLinkTask = taskstore.LinkDispatchForProfile
+
+// dispatchClaimTask is a seam for post-dispatch auto-claim. Production uses
+// taskstore.Claim directly after the durable message and dispatch link are
+// written, so send/link failures leave the task in its prior audit state.
+var dispatchClaimTask = taskstore.ClaimForProfile
 
 func runDispatch(args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
@@ -159,7 +165,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflict("dispatch", projectDir, profile, workstream); err != nil {
+	if err := ensureNoNamespaceConflict("dispatch", projectDir, profile, workstream, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
 	ns := squadnamespace.Resolve(projectDir, profile, workstream)
@@ -207,8 +213,12 @@ Examples:
 		}
 		taskID = created.ID
 	} else if taskID != "" {
-		if _, err := taskstore.ShowForProfile(projectDir, profile, workstream, taskID); err != nil {
+		task, err := taskstore.ShowForProfile(projectDir, profile, workstream, taskID)
+		if err != nil {
 			return fmt.Errorf("link native task for dispatch: %w", err)
+		}
+		if err := validateDispatchTask(task, member.Handle, projectDir, profile, workstream); err != nil {
+			return err
 		}
 	}
 
@@ -225,6 +235,7 @@ Examples:
 	receipt.addStage("written_to_amq", "durable AMQ message written to recipient inbox")
 	if taskID != "" {
 		linked, lerr := dispatchLinkTask(projectDir, profile, workstream, taskID, taskstore.Dispatch{
+			Sender:    from,
 			Assignee:  member.Handle,
 			Thread:    *threadFlag,
 			Kind:      *kindFlag,
@@ -235,6 +246,15 @@ Examples:
 			return fmt.Errorf("link native task %s to dispatch: %w", taskID, lerr)
 		}
 		taskID = linked.ID
+		claimed, didClaim, cerr := autoClaimDispatchedTask(projectDir, profile, workstream, taskID, member.Handle, taskNow())
+		if cerr != nil {
+			return fmt.Errorf("auto-claim native task %s after dispatch: %w", taskID, cerr)
+		}
+		if didClaim {
+			receipt.addStage("task_claimed", fmt.Sprintf("native task %s marked in_progress for %s", taskID, member.Handle))
+		} else if claimed.Status == taskstore.StatusInProgress {
+			receipt.addStage("task_already_in_progress", fmt.Sprintf("native task %s already in_progress for %s", taskID, member.Handle))
+		}
 	}
 	// Print our OWN authoritative, session-aware summary rather than echoing
 	// `amq send`'s raw line — that line renders an empty "session:" for a
@@ -434,6 +454,60 @@ Examples:
 		quietNotice("Task queued; pane not nudged: %s\n", outcome.Skipped)
 	}
 	return nil
+}
+
+func validateDispatchTask(t taskstore.Task, assignee, projectDir, profile, session string) error {
+	assignee = strings.TrimSpace(assignee)
+	assigned := strings.TrimSpace(t.AssignedTo)
+	if assigned != "" && assigned != assignee {
+		return fmt.Errorf("task %s is assigned to %s; dispatch target uses handle %s", t.ID, assigned, assignee)
+	}
+	switch t.Status {
+	case taskstore.StatusPending:
+		tasks, err := taskstore.ListForProfile(projectDir, profile, session)
+		if err != nil {
+			return err
+		}
+		byID := make(map[string]taskstore.Task, len(tasks))
+		for _, task := range tasks {
+			byID[task.ID] = task
+		}
+		for _, dep := range t.DependsOn {
+			d, ok := byID[dep]
+			if !ok {
+				return fmt.Errorf("task %s depends on %s, which does not exist", t.ID, dep)
+			}
+			if d.Status != taskstore.StatusCompleted {
+				return fmt.Errorf("task %s is blocked on %s (%s); complete it before dispatch", t.ID, dep, d.Status)
+			}
+		}
+		return nil
+	case taskstore.StatusInProgress:
+		return nil
+	case taskstore.StatusCompleted, taskstore.StatusFailed, taskstore.StatusBlocked:
+		return fmt.Errorf("task %s is %s; dispatch requires pending or in_progress", t.ID, t.Status)
+	default:
+		return fmt.Errorf("task %s has unknown status %q; dispatch requires pending or in_progress", t.ID, t.Status)
+	}
+}
+
+func autoClaimDispatchedTask(projectDir, profile, session, taskID, assignee string, now time.Time) (taskstore.Task, bool, error) {
+	current, err := taskstore.ShowForProfile(projectDir, profile, session, taskID)
+	if err != nil {
+		return taskstore.Task{}, false, err
+	}
+	if err := validateDispatchTask(current, assignee, projectDir, profile, session); err != nil {
+		return taskstore.Task{}, false, err
+	}
+	switch current.Status {
+	case taskstore.StatusPending:
+		claimed, err := dispatchClaimTask(projectDir, profile, session, taskID, assignee, now)
+		return claimed, err == nil, err
+	case taskstore.StatusInProgress:
+		return current, false, nil
+	default:
+		return taskstore.Task{}, false, fmt.Errorf("task %s is %s; dispatch requires pending or in_progress", current.ID, current.Status)
+	}
 }
 
 func dispatchCollectCommand(projectDir, session, me string) string {
