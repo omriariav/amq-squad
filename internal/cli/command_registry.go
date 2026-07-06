@@ -68,7 +68,7 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "verify", Summary: commandSummary("verify"), Run: runVerify},
 		{Name: "operator", Summary: commandSummary("operator"), Run: runOperator},
 		{Name: "activity", Summary: commandSummary("activity"), Run: runActivity},
-		{Name: "up", Summary: commandSummary("up"), Run: runUp},
+		{Name: "up", Summary: commandSummary("up"), Run: func(args []string) error { return runUpWithVersion(args, version) }},
 		{Name: "stop", Summary: commandSummary("stop"), Run: runStop},
 		{Name: "brief", Summary: commandSummary("brief"), Run: runBrief},
 		{Name: "threads", Summary: commandSummary("threads"), Run: runThreads},

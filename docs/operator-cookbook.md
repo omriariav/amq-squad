@@ -133,13 +133,18 @@ after verifying it targets the intended profile and session.
 
 ### Version Or Skill Skew
 
-Run the doctor against the same profile and project:
+Run the doctor against the same profile and project, or inspect the scoped
+status JSON:
 
 ```sh
 amq-squad doctor --project <project> --profile <profile> --json
+amq-squad status --project <project> --profile <profile> --session <session> --json
 ```
 
-Fix the reported binary, AMQ, or skill version before launching more agents.
+Read `data.versions`: it names the running binary, the `amq-squad` on `PATH`,
+Codex and Claude plugin-cache manifests, and the skill marker where detectable.
+Fix reported binary, AMQ, plugin, or skill mismatches before launching more
+agents; `up` repeats detectable version-alignment warnings before launch.
 
 ### Missing Live Lead
 

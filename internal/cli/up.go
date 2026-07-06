@@ -13,12 +13,16 @@ import (
 )
 
 func runUp(args []string) error {
+	return runUpWithVersion(args, "dev")
+}
+
+func runUpWithVersion(args []string, version string) error {
 	project, rest, err := peelProjectFlag(args)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(project) != "" {
-		return runInProject(project, func() error { return runUp(rest) })
+		return runInProject(project, func() error { return runUpWithVersion(rest, version) })
 	}
 
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
@@ -205,6 +209,7 @@ Examples:
 		}
 		opts.Profile = profile
 		opts.JSON = *jsonOut
+		warnVersionAlignmentBeforeLaunch(version)
 		return emitTeamCommands(cwd, opts)
 	}
 
@@ -231,6 +236,7 @@ Examples:
 	if err := ensureNoNamespaceConflict("up", cwd, profile, workstream, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
+	warnVersionAlignmentBeforeLaunch(version)
 
 	exists, root, err := teamWorkstreamExistsOrRestorable(t, profile, workstream)
 	if err != nil {
