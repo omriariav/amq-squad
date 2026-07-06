@@ -467,7 +467,7 @@ mailbox). AMQ itself stays unchanged.</p>
 <p>For the latest 2.x build:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span></code></pre></div>
 <p>Requires Go 1.25+, the <code>amq</code> binary on <code>PATH</code>
-(v0.39.0+), and <code>tmux</code> on <code>PATH</code> for
+(v0.40.0+), and <code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code>.</p>
 <h3 id="skills-plugin-marketplaces">Skills (plugin marketplaces)</h3>
 <p>This repo doubles as a plugin marketplace that ships the amq-squad
@@ -1044,8 +1044,8 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--no-operator</span>   <span class="co"># explicit opt-out</span></span></code></pre></div>
 <p>The operator is not a runnable team member. AMQ 0.38.0+ reserves the
 conventional <code>user</code> mailbox for this human/operator role, and
-amq-squad v2.15.0 still requires AMQ 0.39.0+ overall; custom operator
-handles use the same amq-squad protocol. JSON discovery derives
+amq-squad v2.16.0 requires AMQ 0.40.0+ overall; custom operator handles
+use the same amq-squad protocol. JSON discovery derives
 <code>operator</code> and <code>capabilities.operator_gates</code>;
 <code>capabilities</code> is not persisted in
 <code>team.json</code>.</p>
@@ -1305,7 +1305,7 @@ amq-squad up [&lt;session&gt;] [--project DIR] [--profile NAME] [--session ws] [
              [--dry-run [--json]] [--seed-from file:|issue:|gh: [--force]]
              [--terminal tmux] [--target current-window|new-window|new-session]
              [--layout vertical|horizontal|tiled] [--terminal-session name]
-             [--stagger 750ms] [--no-bootstrap] [--force-duplicate]
+             [--stagger 750ms] [--no-bootstrap] [--force-duplicate] [--no-gitignore]
                                   NEW work. Bring the configured team up live (tmux) or
                                   print the plan with --dry-run. REFUSES a session that
                                   already exists (use `resume`, or `up --reset` to start
@@ -1465,7 +1465,7 @@ amq-squad completion &lt;bash|zsh|fish&gt;
                             [--conversation ref] [--no-bootstrap]
                             [--trust sandboxed|approve-for-me|trusted] [--model NAME]
                             [--codex-args ...] [--claude-args ...]
-                            [--force-duplicate] [-- &lt;native flags&gt;]
+                            [--force-duplicate] [--no-gitignore] [-- &lt;native flags&gt;]
                                   Launch one agent. Writes launch.json + role.md
                                   in the AMQ mailbox, injects bootstrap, then execs
                                   amq coop exec. --project targets a team-home
@@ -1537,12 +1537,13 @@ attached.</p>
 <p><code>amq-squad amq ...</code> is a project-aware wrapper around AMQ
 diagnostics. It resolves the same AMQ root, base root, session, and
 handle that the squad launcher uses, then delegates to AMQ.</p>
-<p>amq-squad v2.15.0 requires AMQ 0.39.0 or newer. That floor includes
+<p>amq-squad v2.16.0 requires AMQ 0.40.0 or newer. That floor includes
 the wake-inject stale-process fix (AMQ-owned <code>--inject-via</code>
 wake processes exit when their recorded owner is gone or no longer
-matches), plus eval-safe <code>amq env --export</code> and the reserved
-human <code>user</code> mailbox behavior used by operator gates and
-notification surfaces.</p>
+matches), eval-safe <code>amq env --export</code>, the reserved human
+<code>user</code> mailbox behavior used by operator gates and
+notification surfaces, and AMQ 0.40.0's stricter queue/DLQ/receipt/wake
+metadata file hardening.</p>
 <p>Read-only diagnostics run directly:</p>
 <div class="sourceCode" id="cb25"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq env <span class="at">--session</span> issue-96</span>
@@ -1876,13 +1877,17 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb37-1"><a href="#
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5.5,fullstack=fable-5 <span class="dt">\</span></span>
 <span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span>
 <span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5.5 <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span></code></pre></div>
-<p>amq-squad v2.15.0 requires amq <strong>0.39.0+</strong>. Launches
+<p>amq-squad v2.16.0 requires amq <strong>0.40.0+</strong>. Launches
 pass <code>--require-wake</code> to <code>amq coop exec</code>, so a
 launch <strong>fails at the door</strong> when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale
 or orphaned wake. <code>--no-require-wake</code> opts out for
 environments where wake cannot run; the opt-out is persisted in the
-launch record so resume reproduces it.</p>
+launch record so resume reproduces it. Use <code>--no-gitignore</code>
+on <code>agent up</code>, <code>up</code>, or <code>up --dry-run</code>
+when AMQ coop auto-init should leave <code>.gitignore</code> unchanged;
+the opt-out is persisted in the launch record and replayed by
+<code>agent resume</code>.</p>
 <p>For external-injector wake setups, pass
 <code>--wake-inject-via /absolute/injector</code> and repeat
 <code>--wake-inject-arg=value</code> as needed on <code>agent up</code>,
@@ -2058,7 +2063,7 @@ project's <code>.amqrc</code> for cross-project AMQ routing.
 <h2 id="requires">Requires</h2>
 <ul>
 <li>Go 1.25+</li>
-<li><code>amq</code> binary on <code>PATH</code> (v0.39.0+)</li>
+<li><code>amq</code> binary on <code>PATH</code> (v0.40.0+)</li>
 <li><code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code></li>
 </ul>

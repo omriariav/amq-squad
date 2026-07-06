@@ -29,6 +29,7 @@ type teamLaunchOptions struct {
 	Trust           string
 	ModelOverrides  map[string]string
 	ForceDuplicate  bool
+	NoGitignore     bool
 	WakeInjectVia   string
 	WakeInjectArgs  []string
 	// SeedBriefContent, when non-empty, is the rendered active brief that
@@ -100,7 +101,7 @@ Usage:
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
     [--trust sandboxed|approve-for-me|trusted] [--model role=model,...]
     [--codex-args args] [--claude-args args]
-    [--force-duplicate] [--dry-run]
+    [--force-duplicate] [--no-gitignore] [--dry-run]
 
 Supported terminal backends: %s
 
@@ -351,6 +352,7 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 				TrustMode:      opts.Trust,
 				Model:          memberResolvedModel(m, opts.ModelOverrides, binaryArgs),
 				ForceDuplicate: opts.ForceDuplicate,
+				NoGitignore:    opts.NoGitignore,
 				Profile:        opts.Profile,
 				WakeInjectVia:  opts.WakeInjectVia,
 				WakeInjectArgs: opts.WakeInjectArgs,

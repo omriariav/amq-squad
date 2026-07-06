@@ -45,7 +45,7 @@ Usage:
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
     [--trust sandboxed|approve-for-me|trusted] [--model role=model,...]
     [--codex-args args] [--claude-args args]
-    [--force-duplicate]
+    [--force-duplicate] [--no-gitignore]
     [--seed-from REF [--force]] [--dry-run]
 
 up means NEW work. It REFUSES by default when the target session already

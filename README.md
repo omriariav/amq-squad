@@ -86,7 +86,7 @@ For the latest 2.x build:
 go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest
 ```
 
-Requires Go 1.25+, the `amq` binary on `PATH` (v0.39.0+), and `tmux` on `PATH` for `amq-squad up`.
+Requires Go 1.25+, the `amq` binary on `PATH` (v0.40.0+), and `tmux` on `PATH` for `amq-squad up`.
 
 ### Skills (plugin marketplaces)
 
@@ -576,7 +576,7 @@ amq-squad new team --roles cto,qa --operator ops  # custom operator handle
 amq-squad new team --roles cto,qa --no-operator   # explicit opt-out
 ```
 
-The operator is not a runnable team member. AMQ 0.38.0+ reserves the conventional `user` mailbox for this human/operator role, and amq-squad v2.15.0 still requires AMQ 0.39.0+ overall; custom operator handles use the same amq-squad protocol. JSON discovery derives `operator` and `capabilities.operator_gates`; `capabilities` is not persisted in `team.json`.
+The operator is not a runnable team member. AMQ 0.38.0+ reserves the conventional `user` mailbox for this human/operator role, and amq-squad v2.16.0 requires AMQ 0.40.0+ overall; custom operator handles use the same amq-squad protocol. JSON discovery derives `operator` and `capabilities.operator_gates`; `capabilities` is not persisted in `team.json`.
 
 Operator gates are structural AMQ handoffs, not authentication. Send human-only decisions or manual actions to the configured operator handle on stable `gate/<topic>` threads, with `--kind question --subject "APPROVAL: <decision>"` for approvals and `--kind decision --subject "DONE: <goal>"` for manual closeout. The operator replies on the same thread with `--kind answer` and subjects such as `APPROVED:`, `DENIED:`, or `ANSWER:`. If the operator answers a pending gate in a live pane/chat instead of AMQ, the lead treats it as operator input, immediately ACKs or mirrors it on the matching `gate/<topic>` thread without spoofing the operator handle, and checks both the live channel and AMQ gate/inbox state before declaring the gate blocked. P2P prose like "pending operator" is evidence only; it is not a gate. `amq-squad notify` surfaces new or stale needs-you gates with inspect/respond commands and de-duplicates unchanged items, but notification output never authorizes or clears a gate.
 
@@ -745,7 +745,7 @@ amq-squad up [<session>] [--project DIR] [--profile NAME] [--session ws] [--rese
              [--dry-run [--json]] [--seed-from file:|issue:|gh: [--force]]
              [--terminal tmux] [--target current-window|new-window|new-session]
              [--layout vertical|horizontal|tiled] [--terminal-session name]
-             [--stagger 750ms] [--no-bootstrap] [--force-duplicate]
+             [--stagger 750ms] [--no-bootstrap] [--force-duplicate] [--no-gitignore]
                                   NEW work. Bring the configured team up live (tmux) or
                                   print the plan with --dry-run. REFUSES a session that
                                   already exists (use `resume`, or `up --reset` to start
@@ -909,7 +909,7 @@ amq-squad agent up <binary> [--project DIR] [--role R] [--session ws] [--team-pr
                             [--conversation ref] [--no-bootstrap]
                             [--trust sandboxed|approve-for-me|trusted] [--model NAME]
                             [--codex-args ...] [--claude-args ...]
-                            [--force-duplicate] [-- <native flags>]
+                            [--force-duplicate] [--no-gitignore] [-- <native flags>]
                                   Launch one agent. Writes launch.json + role.md
                                   in the AMQ mailbox, injects bootstrap, then execs
                                   amq coop exec. --project targets a team-home
@@ -950,7 +950,7 @@ It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--o
 
 `amq-squad amq ...` is a project-aware wrapper around AMQ diagnostics. It resolves the same AMQ root, base root, session, and handle that the squad launcher uses, then delegates to AMQ.
 
-amq-squad v2.15.0 requires AMQ 0.39.0 or newer. That floor includes the wake-inject stale-process fix (AMQ-owned `--inject-via` wake processes exit when their recorded owner is gone or no longer matches), plus eval-safe `amq env --export` and the reserved human `user` mailbox behavior used by operator gates and notification surfaces.
+amq-squad v2.16.0 requires AMQ 0.40.0 or newer. That floor includes the wake-inject stale-process fix (AMQ-owned `--inject-via` wake processes exit when their recorded owner is gone or no longer matches), eval-safe `amq env --export`, the reserved human `user` mailbox behavior used by operator gates and notification surfaces, and AMQ 0.40.0's stricter queue/DLQ/receipt/wake metadata file hardening.
 
 Read-only diagnostics run directly:
 
@@ -1252,11 +1252,14 @@ amq-squad team init --personas cto,fullstack --model cto=gpt-5.5,fullstack=fable
 amq-squad agent up codex --model gpt-5.5 --codex-args "-c model_reasoning_effort=medium"
 ```
 
-amq-squad v2.15.0 requires amq **0.39.0+**. Launches pass `--require-wake` to
+amq-squad v2.16.0 requires amq **0.40.0+**. Launches pass `--require-wake` to
 `amq coop exec`, so a launch **fails at the door** when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale or
 orphaned wake. `--no-require-wake` opts out for environments where wake cannot
 run; the opt-out is persisted in the launch record so resume reproduces it.
+Use `--no-gitignore` on `agent up`, `up`, or `up --dry-run` when AMQ coop
+auto-init should leave `.gitignore` unchanged; the opt-out is persisted in the
+launch record and replayed by `agent resume`.
 
 For external-injector wake setups, pass `--wake-inject-via /absolute/injector`
 and repeat `--wake-inject-arg=value` as needed on `agent up`, `up`, or
@@ -1377,5 +1380,5 @@ Replay paths that emit copy-paste commands use the modern `agent up <binary>` co
 ## Requires
 
 - Go 1.25+
-- `amq` binary on `PATH` (v0.39.0+)
+- `amq` binary on `PATH` (v0.40.0+)
 - `tmux` on `PATH` for `amq-squad up`

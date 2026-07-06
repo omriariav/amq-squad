@@ -22,7 +22,7 @@ import (
 // expects to interoperate with. Bumped manually when amq-squad starts to
 // depend on newer AMQ behavior; the doctor check compares the running amq
 // binary's reported version against this floor.
-const doctorMinAMQVersion = "0.39.0"
+const doctorMinAMQVersion = "0.40.0"
 
 type doctorStatus string
 

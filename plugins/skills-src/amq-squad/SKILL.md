@@ -243,12 +243,15 @@ Plan emission fails fast when a referenced `--settings` file is missing;
 `up --dry-run` shows the args on each member's command. Codex members use a `$CODEX_HOME/<name>.config.toml` profile wired
 via `codex_args: ["--profile", "<name>"]` instead.
 
-AMQ floor (v2.15.0+): amq-squad requires amq 0.39.0+. The launch wake
+AMQ floor (v2.16.0+): amq-squad requires amq 0.40.0+. The launch wake
 gate introduced in v2.5.0 passes `--require-wake` to `amq coop exec`, so a
 launch fails at the door when the AMQ wake sidecar cannot start and acquire its
 lock (instead of surfacing later as a stale wake). `--no-require-wake` opts out
 for wake-hostile environments and persists into the launch record, so `agent
 resume` reproduces it.
+Use `--no-gitignore` on `agent up`, `up`, or `up --dry-run` when AMQ coop
+auto-init should leave `.gitignore` unchanged; the opt-out is persisted in the
+launch record and replayed by `agent resume`.
 Claude-binary agents launched in tmux also get a best-effort delayed
 `/rename <role>-<session>` injection, including managed `resume --exec` /
 `agent resume` replay. Failure to deliver the rename does not block launch.

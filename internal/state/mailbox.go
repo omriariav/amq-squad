@@ -48,6 +48,15 @@ func scanMailbox(agentDir, owner string, now func() time.Time) ([]Message, []War
 				continue
 			}
 			path := filepath.Join(dirPath, e.Name())
+			info, infoErr := e.Info()
+			if infoErr != nil {
+				warns = append(warns, Warning{Path: path, Reason: "skipped message file: " + infoErr.Error()})
+				continue
+			}
+			if !info.Mode().IsRegular() {
+				warns = append(warns, Warning{Path: path, Reason: "skipped non-regular message file"})
+				continue
+			}
 			m, ok, perr := parseMessageFile(path, owner, sub.state, now)
 			if !ok {
 				reason := "skipped malformed message"
