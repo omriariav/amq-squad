@@ -240,9 +240,8 @@ Examples:
 	// slice (no safe pattern form; see claudeInScopePreauthAllowlist); main push,
 	// tags, and releases always stay gated.
 	var preauthorizedActions []string
-	if !*noPreauthInScope && !containsString(childArgs, "--allowedTools") && claudeWorkerPreauthEligible(cwd, teamProfileValue, *roleFlag, binary) {
-		preauthorizedActions = claudeInScopePreauthAllowlist(env.SessionName)
-		childArgs = append(childArgs, claudePreauthChildArgs(preauthorizedActions)...)
+	if !*noPreauthInScope {
+		childArgs, preauthorizedActions, _ = applyClaudeWorkerPreauth(launchPreauthProjectDir(cwd, *teamHome), teamProfileValue, *roleFlag, binary, env.SessionName, childArgs)
 	}
 
 	agentDir := filepath.Join(root, "agents", handle)
@@ -303,7 +302,8 @@ Examples:
 	// Keep generated bootstrap out of launch.json so restore stays compact
 	// and does not replay stale startup text.
 	effectiveChildArgs := append([]string(nil), childArgs...)
-	if !*noBootstrap && shouldAppendBootstrapWithDefaults(childArgs, defaultArgs) {
+	bootstrapEligibilityArgs := stripTrailingLauncherPreauthArgs(childArgs, preauthorizedActions)
+	if !*noBootstrap && shouldAppendBootstrapWithDefaults(bootstrapEligibilityArgs, defaultArgs) {
 		prompt, err := buildBootstrapPrompt(bootstrapContextFor(rec, agentDir, *teamHome))
 		if err != nil {
 			return err
@@ -451,6 +451,17 @@ func validateManagedTmuxLaunch(rec launch.Record) error {
 		return fmt.Errorf("managed tmux launch for %s could not resolve a pane id; refusing to write launch.json", target)
 	}
 	return nil
+}
+
+func launchPreauthProjectDir(cwd, teamHome string) string {
+	teamHome = strings.TrimSpace(teamHome)
+	if teamHome == "" {
+		return cwd
+	}
+	if abs, err := filepath.Abs(teamHome); err == nil {
+		return abs
+	}
+	return filepath.Clean(teamHome)
 }
 
 func launchAdoptionMode(target, launcherPaneID, agentPaneID string) string {

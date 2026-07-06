@@ -93,6 +93,31 @@ func TestRunLaunchPreauthorizesInScopeClaudeWorker(t *testing.T) {
 	}
 }
 
+func TestRunLaunchPreauthDoesNotSuppressBootstrap(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "v2-14-0"}, {Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "v2-14-0"}},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--role", "fullstack", "--session", "v2-14-0", "claude"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"--allowedTools",
+		"Bash(gh pr create:*)",
+		"You are a fresh amq-squad agent.",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("eligible claude worker dry-run missing %q in:\n%s", want, stdout)
+		}
+	}
+}
+
 func TestRunLaunchPreauthOptOutAndScope(t *testing.T) {
 	seed := func(t *testing.T) {
 		seedTeam(t, team.Team{
