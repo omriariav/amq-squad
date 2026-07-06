@@ -135,6 +135,126 @@ func TestUpDryRunDefaultsToSiblingTabsVisibility(t *testing.T) {
 	}
 }
 
+func TestUpDryRunJSONIncludesClaudeWorkerPreauthAndBootstrapStatus(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "v2-14-0"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "v2-14-0"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runUp([]string{"v2-14-0", "--dry-run", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --json: %v", err)
+	}
+	env := decodeJSONEnvelope[teamPlan](t, stdout)
+	var worker *teamPlanMember
+	for i := range env.Data.Plan {
+		if env.Data.Plan[i].Role == "fullstack" {
+			worker = &env.Data.Plan[i]
+			break
+		}
+	}
+	if worker == nil {
+		t.Fatalf("fullstack worker missing from plan: %+v", env.Data.Plan)
+	}
+	if worker.Bootstrap != "appended" {
+		t.Fatalf("worker bootstrap = %q, want appended", worker.Bootstrap)
+	}
+	joinedArgs := strings.Join(worker.ChildArgs, " ")
+	for _, want := range []string{"--permission-mode auto", "--allowedTools", "Bash(gh pr create:*)"} {
+		if !strings.Contains(joinedArgs, want) {
+			t.Fatalf("worker child_args missing %q: %v", want, worker.ChildArgs)
+		}
+		if !strings.Contains(worker.Command, want) {
+			t.Fatalf("worker command missing %q: %s", want, worker.Command)
+		}
+	}
+	if len(worker.PreauthorizedActions) != 1 || !strings.Contains(worker.PreauthorizedActions[0], "gh pr create") {
+		t.Fatalf("worker preauthorized_actions = %v, want gh pr create", worker.PreauthorizedActions)
+	}
+}
+
+func TestUpDryRunCrossCWDClaudeWorkerPreauthMatchesLiveLaunch(t *testing.T) {
+	teamHome := t.TempDir()
+	workerDir := t.TempDir()
+	chdir(t, teamHome)
+	if err := team.Write(teamHome, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "v2-14-0"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "v2-14-0", CWD: workerDir},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	jsonOut, _, err := captureOutput(t, func() error {
+		return runUp([]string{"v2-14-0", "--dry-run", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --json: %v", err)
+	}
+	env := decodeJSONEnvelope[teamPlan](t, jsonOut)
+	var worker *teamPlanMember
+	for i := range env.Data.Plan {
+		if env.Data.Plan[i].Role == "fullstack" {
+			worker = &env.Data.Plan[i]
+			break
+		}
+	}
+	if worker == nil {
+		t.Fatalf("fullstack worker missing from plan: %+v", env.Data.Plan)
+	}
+	if worker.CWD != workerDir {
+		t.Fatalf("worker cwd = %q, want %q", worker.CWD, workerDir)
+	}
+	planTeamHome := env.Data.TeamHome
+	if worker.Bootstrap != "appended" || !strings.Contains(worker.Command, "--allowedTools") || !strings.Contains(worker.Command, "--team-home "+planTeamHome) {
+		t.Fatalf("preview did not show cross-cwd preauth+bootstrap correctly: %+v", *worker)
+	}
+
+	textOut, _, err := captureOutput(t, func() error {
+		return runUp([]string{"v2-14-0", "--dry-run"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run text: %v", err)
+	}
+	for _, want := range []string{"#    bootstrap: appended", "#    launcher-added args: --allowedTools 'Bash(gh pr create:*)'"} {
+		if !strings.Contains(textOut, want) {
+			t.Fatalf("text dry-run missing %q in:\n%s", want, textOut)
+		}
+	}
+
+	setupFakeAMQ(t)
+	chdir(t, workerDir)
+	liveOut, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{
+			"--dry-run",
+			"--role", "fullstack",
+			"--session", "v2-14-0",
+			"--team-home", planTeamHome,
+			"claude",
+			"--",
+			"--permission-mode", "auto",
+			"--allowedTools", "Bash(gh pr create:*)",
+		})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch cross-cwd dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	for _, want := range []string{"--allowedTools", "Bash(gh pr create:*)", "You are a fresh amq-squad agent."} {
+		if !strings.Contains(liveOut, want) {
+			t.Fatalf("live cross-cwd dry-run missing %q in:\n%s", want, liveOut)
+		}
+	}
+}
+
 func TestRunUpProjectDryRunTargetsOtherDir(t *testing.T) {
 	project := t.TempDir()
 	other := t.TempDir()
