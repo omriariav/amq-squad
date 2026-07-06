@@ -209,6 +209,11 @@ when an unprofiled default-profile write would collide with a named profile
 that already owns that session. Rerun with `--profile <name>` to target the
 named namespace, or `--profile default` to intentionally write the legacy
 default root.
+Operator-gate escalation (v2.16.0+): unanswered `gate/<topic>` asks addressed to
+the configured operator handle escalate from `initial` to `reminder` after 30m
+and `strong-warning` after 2h. `amq-squad notify` bypasses its normal throttle
+when the escalation band advances, while `status --json` warnings and
+`console --once` make aged gates visually distinct.
 Claude-binary agents launched in tmux also get a best-effort delayed
 `/rename <role>-<session>` injection, including managed `resume --exec` /
 `agent resume` replay. Failure to deliver the rename does not block launch.

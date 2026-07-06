@@ -588,6 +588,8 @@ The operator is not a runnable team member. AMQ 0.38.0+ reserves the conventiona
 
 Operator gates are structural AMQ handoffs, not authentication. Send human-only decisions or manual actions to the configured operator handle on stable `gate/<topic>` threads, with `--kind question --subject "APPROVAL: <decision>"` for approvals and `--kind decision --subject "DONE: <goal>"` for manual closeout. The operator replies on the same thread with `--kind answer` and subjects such as `APPROVED:`, `DENIED:`, or `ANSWER:`. If the operator answers a pending gate in a live pane/chat instead of AMQ, the lead treats it as operator input, immediately ACKs or mirrors it on the matching `gate/<topic>` thread without spoofing the operator handle, and checks both the live channel and AMQ gate/inbox state before declaring the gate blocked. P2P prose like "pending operator" is evidence only; it is not a gate. `amq-squad notify` surfaces new or stale needs-you gates with inspect/respond commands and de-duplicates unchanged items, but notification output never authorizes or clears a gate.
 
+Unanswered operator gates age through visible escalation bands: `initial` immediately, `reminder` after 30 minutes, and `strong-warning` after 2 hours. The age is measured from the last unanswered operator-facing gate message on the `gate/<topic>` thread, so re-raising a decision starts a fresh clock while later status chatter does not hide the pending gate. `notify` records the last emitted escalation band and bypasses normal de-duplication when a gate crosses into `reminder` or `strong-warning`; `status --json` emits `data.warnings[]` for aged gates, and `console` labels them as `needs-you/reminder` or `needs-you/strong-warning`.
+
 ### Orchestration (opt-in)
 
 By default a squad is flat: members coordinate peer-to-peer over AMQ. You can instead run an **orchestrated** squad, where one lead agent spawns, dispatches, and monitors the others and owns the deliverable. It is wired by a structured flag, not by hand-edited prose, so it cannot drift:
@@ -951,6 +953,8 @@ Per-agent rows may include activity from `<amq-root>/agents/<handle>/activity.js
 
 Managed child rows may also include `records[].local_input` when a read-only pane-tail blind-spot detection heuristic sees a local approval/input prompt. This is not a coordination or progress primitive: capture failures, dead panes, and unparseable tails produce no field, so absence means "not observed", not "not blocked". When present, `data.warnings[]` includes `kind:"local_input_blocked"` with the role, pane, prompt summary, and recovery guidance; destructive prompts require an operator decision or a non-destructive alternative.
 
+Status warnings also include aged operator gates when a poll-required operator decision would otherwise sit silently. Gate escalation bands are `initial`, `reminder` at 30 minutes, and `strong-warning` at 2 hours; warning kinds are `operator_gate_reminder` and `operator_gate_strong_warning`, with a suggested `amq-squad thread ... --include-body` inspection command.
+
 `amq-squad console` is the project-scoped Mission Control TUI for the current team-home.
 
 ```sh
@@ -965,6 +969,7 @@ The console gives you:
 
 - a **board** of all sessions, grouped attention-first (needs-you > blocked > gated > at-risk > running > stopped),
 - per-session **detail** with each agent's liveness and a **collapsed-thread bus** ("qa ↔ cto  blocked · subject  N msgs · 7m"),
+- aged operator gates rendered distinctly as `needs-you/reminder` or `needs-you/strong-warning`, using the pending gate age rather than later thread chatter,
 - **peek** (`space`) for a read-only view of an agent's recent output, unread inbox, and what it is blocked on,
 - an **action palette** (`a`) with copy-ready commands such as `focus`, `send`, `resume`, `stop`, `task list`, and `dispatch`; the console never runs commands directly. This is the user-facing closure for #220.
 - a **triage rollup** headline (`N needs-you threads · N blocked threads · N gated threads · N at-risk threads`) and `/`-filters (`needs-you`, `needs-user`, `gated`, `at-risk`, `blocked`, `stale-blocked`, `unread`, `agent:<h>`, `model:<m>`, `session:<n>`, `label:<l>`, `orchestrator:<o>`).

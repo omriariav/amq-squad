@@ -332,7 +332,11 @@ func executeStatus(s statusExecution) error {
 	if err != nil {
 		return err
 	}
-	warnings, err := statusWarnings(t.Project, s.Profile, workstream)
+	now := time.Now()
+	if s.Probe.Now != nil {
+		now = s.Probe.Now()
+	}
+	warnings, err := statusWarnings(t.Project, s.Profile, workstream, now)
 	if err != nil {
 		return fmt.Errorf("scan status warnings: %w", err)
 	}
@@ -406,7 +410,7 @@ func executeStatus(s statusExecution) error {
 	return w.Flush()
 }
 
-func statusWarnings(projectDir, profile, session string) ([]statusWarning, error) {
+func statusWarnings(projectDir, profile, session string, now time.Time) ([]statusWarning, error) {
 	var warnings []statusWarning
 	namespaceWarnings, err := statusNamespaceWarnings(projectDir, profile, session)
 	if err != nil {
@@ -418,7 +422,64 @@ func statusWarnings(projectDir, profile, session string) ([]statusWarning, error
 		return nil, err
 	}
 	warnings = append(warnings, taskWarnings...)
+	warnings = append(warnings, statusAgedOperatorGateWarnings(projectDir, profile, session, now)...)
 	return warnings, nil
+}
+
+func statusAgedOperatorGateWarnings(projectDir, profile, session string, now time.Time) []statusWarning {
+	ns := squadnamespace.Resolve(projectDir, profile, session)
+	root := strings.TrimSpace(ns.AMQRoot)
+	if root == "" {
+		return nil
+	}
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	data, err := buildOperatorStatusData(operatorExecution{
+		ProjectDir: projectDir,
+		Profile:    profile,
+		Session:    session,
+		BaseRoot:   root,
+		Probe: state.Probe{
+			Now: func() time.Time { return now },
+		},
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		return nil
+	}
+	return statusWarningsForAgedOperatorGates(data)
+}
+
+func statusWarningsForAgedOperatorGates(data operatorStatusEnvelopeData) []statusWarning {
+	var warnings []statusWarning
+	for _, item := range data.Attention {
+		if !strings.HasPrefix(item.Thread, "gate/") {
+			continue
+		}
+		escalation := state.OperatorGateEscalation(item.Escalation)
+		if state.OperatorGateEscalationRank(escalation) < state.OperatorGateEscalationRank(state.OperatorGateEscalationReminder) {
+			continue
+		}
+		kind := "operator_gate_" + strings.ReplaceAll(string(escalation), "-", "_")
+		delivery := "durable AMQ"
+		switch {
+		case data.OperatorDelivery.PollRequired:
+			delivery = "poll-required/no-wake operator delivery"
+		case data.OperatorDelivery.WakeSupported:
+			delivery = "wake-supported operator delivery"
+		}
+		detail := fmt.Sprintf("operator gate %s aged to %s after %s: %s; %s for handle %s requires visible escalation",
+			item.Thread, escalation, item.Age, item.Subject, delivery, printableHandle(data.Operator.Handle))
+		warnings = append(warnings, statusWarning{
+			Kind:             kind,
+			Session:          item.Session,
+			Detail:           detail,
+			SuggestedCommand: item.Inspect,
+		})
+	}
+	return warnings
 }
 
 func statusNamespaceWarnings(projectDir, profile, session string) ([]statusWarning, error) {

@@ -1081,6 +1081,19 @@ evidence only; it is not a gate. <code>amq-squad notify</code> surfaces
 new or stale needs-you gates with inspect/respond commands and
 de-duplicates unchanged items, but notification output never authorizes
 or clears a gate.</p>
+<p>Unanswered operator gates age through visible escalation bands:
+<code>initial</code> immediately, <code>reminder</code> after 30
+minutes, and <code>strong-warning</code> after 2 hours. The age is
+measured from the last unanswered operator-facing gate message on the
+<code>gate/&lt;topic&gt;</code> thread, so re-raising a decision starts
+a fresh clock while later status chatter does not hide the pending gate.
+<code>notify</code> records the last emitted escalation band and
+bypasses normal de-duplication when a gate crosses into
+<code>reminder</code> or <code>strong-warning</code>;
+<code>status --json</code> emits <code>data.warnings[]</code> for aged
+gates, and <code>console</code> labels them as
+<code>needs-you/reminder</code> or
+<code>needs-you/strong-warning</code>.</p>
 <h3 id="orchestration-opt-in">Orchestration (opt-in)</h3>
 <p>By default a squad is flat: members coordinate peer-to-peer over AMQ.
 You can instead run an <strong>orchestrated</strong> squad, where one
@@ -1542,6 +1555,13 @@ unparseable tails produce no field, so absence means "not observed", not
 <code>kind:"local_input_blocked"</code> with the role, pane, prompt
 summary, and recovery guidance; destructive prompts require an operator
 decision or a non-destructive alternative.</p>
+<p>Status warnings also include aged operator gates when a poll-required
+operator decision would otherwise sit silently. Gate escalation bands
+are <code>initial</code>, <code>reminder</code> at 30 minutes, and
+<code>strong-warning</code> at 2 hours; warning kinds are
+<code>operator_gate_reminder</code> and
+<code>operator_gate_strong_warning</code>, with a suggested
+<code>amq-squad thread ... --include-body</code> inspection command.</p>
 <p><code>amq-squad console</code> is the project-scoped Mission Control
 TUI for the current team-home.</p>
 <div class="sourceCode" id="cb24"><pre
@@ -1558,6 +1578,10 @@ stopped),</li>
 <li>per-session <strong>detail</strong> with each agent's liveness and a
 <strong>collapsed-thread bus</strong> ("qa ↔︎ cto blocked · subject N
 msgs · 7m"),</li>
+<li>aged operator gates rendered distinctly as
+<code>needs-you/reminder</code> or
+<code>needs-you/strong-warning</code>, using the pending gate age rather
+than later thread chatter,</li>
 <li><strong>peek</strong> (<code>space</code>) for a read-only view of
 an agent's recent output, unread inbox, and what it is blocked on,</li>
 <li>an <strong>action palette</strong> (<code>a</code>) with copy-ready

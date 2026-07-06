@@ -1112,9 +1112,13 @@ func writeOrRenderOperatorStatus(out io.Writer, kind, label string, data operato
 	fmt.Fprintf(out, "# inbox: %s handle=%s\n", inboxRoot, data.Operator.Handle)
 	fmt.Fprintf(out, "# loop: %s owner=%s backlog=%d\n\n", data.OperatorLoop.State, data.OperatorLoop.Owner, data.OperatorLoop.Backlog)
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "THREAD\tREASON\tFROM\tSUBJECT")
+	fmt.Fprintln(w, "THREAD\tREASON\tESCALATION\tAGE\tFROM\tSUBJECT")
 	for _, item := range data.Attention {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", item.Thread, item.Reason, item.From, item.Subject)
+		escalation := item.Escalation
+		if escalation == "" {
+			escalation = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", item.Thread, item.Reason, escalation, item.Age, item.From, item.Subject)
 	}
 	return w.Flush()
 }

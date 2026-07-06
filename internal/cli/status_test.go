@@ -555,6 +555,42 @@ func TestStatusWarnsWorkerCompletionReportForInProgressTask(t *testing.T) {
 	}
 }
 
+func TestStatusWarnsAgedOperatorGate(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyMessage(t, base, "s", team.DefaultOperatorHandle, "new", notifyMsg{
+		ID:      "gate-1",
+		From:    "cto",
+		To:      team.DefaultOperatorHandle,
+		Thread:  "gate/release",
+		Subject: "APPROVAL: release",
+		Kind:    string(state.KindQuestion),
+		Created: notifyNow.Add(-125 * time.Minute),
+	})
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       project,
+		RequestedSession: "s",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, notifyNow),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	w := findStatusWarning(env.Data.Warnings, "operator_gate_strong_warning")
+	if w == nil ||
+		!strings.Contains(w.Detail, "gate/release") ||
+		!strings.Contains(w.Detail, "strong-warning") ||
+		!strings.Contains(w.Detail, "poll-required/no-wake") ||
+		!strings.Contains(w.SuggestedCommand, "amq-squad thread") ||
+		!strings.Contains(w.SuggestedCommand, "gate/release") {
+		t.Fatalf("missing aged operator-gate warning: %+v", env.Data.Warnings)
+	}
+}
+
 func TestStatusJSONIncludesHeartbeatActivity(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{

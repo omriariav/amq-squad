@@ -93,6 +93,7 @@ If this profile enables operator gates, the human/operator is a virtual AMQ mail
 - ask: `amq send --to <operator-handle> --thread gate/<topic> --kind question --subject "APPROVAL: <decision>"`
 - reply path: the operator replies on the same thread with `amq send --me <operator-handle> --to <agent-handle> --thread gate/<topic> --kind answer --subject "APPROVED: <decision>"` (or `DENIED:` / `ANSWER:`).
 - do not send ordinary peer coordination to the operator; reviews, handoffs, status ACKs, and agent-owned blockers stay agent-to-agent.
+- aged gates surface as attention signals: `notify` can re-emit reminders at 30m and strong warnings at 2h, while `status --json`/`console` make aged gate threads visually distinct. These signals do not authorize or clear the gate.
 
 If operator gates are disabled for the profile, route human-facing asks through the role named by the team rules instead of sending to the default `user` mailbox.
 
