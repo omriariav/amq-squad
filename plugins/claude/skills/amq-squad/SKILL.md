@@ -157,7 +157,7 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
    amq drain --include-body
    ```
    Acknowledge briefly on the same thread when useful - one factual line, not a status update.
-   - Leads collecting child reports should prefer `amq-squad collect --session <S> --me <lead> --timeout 120s --include-body` over raw `amq drain`; `collect` resolves the correct workstream root for external leads, drains once, waits once when requested, then drains once more.
+   - Leads collecting child reports should prefer `amq-squad collect --session <S> --me <lead> --timeout 120s --include-body` over raw `amq drain`; `collect` resolves the correct workstream root for external leads, snapshots unread bodies to `.amq-squad/collect-journal/<profile>/<session>/<handle>/` before acknowledging them, waits once when requested, then collects once more. Raw `amq drain` remains destructive by design (new -> cur + drained receipt before caller persistence); `collect` is the kill-safe path. Its contract is at-least-once, so interrupted output can replay but should not lose a body. Delivered journal entries are cleaned after 7 days or the latest 200 per recipient, matching the #321 decision-table boundary between raw AMQ consumption and orchestrator-safe collection.
 
 9. **Work the task store (when one drives the workstream).**
    - When the lead has posted work as tasks (`amq-squad task list --session <S>`), the store is the durable source of truth for who-owns-what — keep it in sync; do not just prose-ACK over AMQ.
