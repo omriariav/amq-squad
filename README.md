@@ -844,7 +844,10 @@ amq-squad dispatch --session S --role R --subject SUBJ --body BODY [--create-tas
                                   Queue a durable AMQ message and best-effort
                                   drain nudge. Plain dispatch stays AMQ-only;
                                   --create-task creates and links a native task,
-                                  while --task links an existing task id.
+                                  while --task links an existing task id. A
+                                  task-backed dispatch auto-claims a pending
+                                  task for the target handle after the durable
+                                  send and task link succeed.
 amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
                          [--wake|--no-wake] [--require-wake|--no-require-wake]
                          [--adopt-project-lead] [--compat-no-wake --reason TEXT]

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/state"
+	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -439,6 +441,117 @@ func TestExecuteStatusJSONSameProfileSessionAllowsNestedNamedNamespaceOnly(t *te
 		t.Fatalf("records = %d, want 1", len(env.Data.Records))
 	}
 	assertNoLegacyNamespaceConflictReason(t, env.Data.Records[0].Actions)
+}
+
+func TestStatusWarnsDispatchedPendingTask(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{
+		Title:    "pending dispatch",
+		AssignTo: "qa",
+	}, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "issue-96", created.ID, taskstore.Dispatch{
+		Sender:    "cto",
+		Assignee:  "qa",
+		Thread:    "p2p/cto__qa",
+		Kind:      "todo",
+		Subject:   "Validate",
+		MessageID: "msg-pending",
+	}, now.Add(-30*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	w := findStatusWarning(env.Data.Warnings, "task_dispatched_pending")
+	if w == nil ||
+		!strings.Contains(w.Detail, "task t1 is still pending after dispatch to qa") ||
+		!strings.Contains(w.Detail, "message msg-pending") ||
+		!strings.Contains(w.SuggestedCommand, "task claim t1 --me qa") {
+		t.Fatalf("missing dispatched-pending task warning: %+v", env.Data.Warnings)
+	}
+}
+
+func TestStatusWarnsWorkerCompletionReportForInProgressTask(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{
+		Title:    "review result",
+		AssignTo: "qa",
+	}, now.Add(-2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "issue-96", created.ID, taskstore.Dispatch{
+		Sender:    "cto",
+		Assignee:  "qa",
+		Kind:      "todo",
+		Subject:   "Validate",
+		MessageID: "msg-dispatch",
+	}, now.Add(-90*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.ClaimForProfile(dir, team.DefaultProfile, "issue-96", created.ID, "qa", now.Add(-80*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	ctoDir := filepath.Join(dir, ".agent-mail", "issue-96", "agents", "cto")
+	seedThreadMessage(t, ctoDir, "new", "msg-done", "qa", []string{"cto"},
+		"p2p/qa__cto", "DONE t1", string(state.KindStatus), now.Add(-5*time.Minute))
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	w := findStatusWarning(env.Data.Warnings, "task_report_pending_completion")
+	if w == nil ||
+		!strings.Contains(w.Detail, "task t1 is still in_progress after qa reported completion") ||
+		!strings.Contains(w.Detail, "message msg-done") ||
+		!strings.Contains(w.SuggestedCommand, "task done t1 --me qa") ||
+		!strings.Contains(w.SuggestedCommand, "accepted msg-done") {
+		t.Fatalf("missing completion-report task warning: %+v", env.Data.Warnings)
+	}
+}
+
+func findStatusWarning(warnings []statusWarning, kind string) *statusWarning {
+	for i := range warnings {
+		if warnings[i].Kind == kind {
+			return &warnings[i]
+		}
+	}
+	return nil
 }
 
 func TestExecuteStatusJSONSameProfileSessionKeepsLegacyAgentDurableConflict(t *testing.T) {

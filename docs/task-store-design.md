@@ -37,6 +37,7 @@ create verb**). Ours has `task add`, so an any-binary lead can decompose.
   "block_reason": "",                // set on block
   "reset_reason": "",                // set on reset
   "dispatch": {                       // optional durable AMQ link
+    "sender": "cto",
     "assignee": "fullstack",
     "thread": "p2p/cto__fullstack",
     "kind": "todo",
@@ -103,10 +104,12 @@ Plain `amq-squad dispatch` stays AMQ-only for one-off messages. Task-backed
 dispatch is explicit:
 
 - `dispatch --create-task` creates a native pending task assigned to the target
-  role's handle, sends the durable AMQ message, then records the AMQ message id
-  and thread metadata on the task.
+  role's handle, sends the durable AMQ message, records the AMQ sender/message
+  id/thread metadata on the task, then auto-claims it for the target handle.
 - `dispatch --task <id>` sends the durable AMQ message and links the returned
-  message metadata to an existing task.
+  message metadata to an existing task. The task must be pending or already
+  in_progress for the dispatch target; pending tasks are auto-claimed after the
+  durable send and metadata link succeed.
 - Human and JSON dispatch output include the task id when a native task is
   involved. If the AMQ send fails after a `--create-task`, the task remains in
   the store without dispatch metadata so the lead can inspect or reset it rather
@@ -117,6 +120,10 @@ dispatch is explicit:
   task remains inspectable without dispatch metadata; the lead can reconcile
   from the AMQ send result, manually reset or complete the task, and re-nudge
   the worker if needed.
+- `amq-squad status` warns when older task-backed dispatch records are still
+  pending after dispatch, and when an in-progress task has a completion-like
+  worker report on its dispatch thread. The completion warning suggests the
+  explicit `task done` command; status does not silently complete tasks.
 
 ## Still deferred
 

@@ -57,6 +57,7 @@ type AddInput struct {
 
 // Dispatch records the durable AMQ message linked to a native task.
 type Dispatch struct {
+	Sender       string    `json:"sender,omitempty"`
 	Assignee     string    `json:"assignee,omitempty"`
 	Thread       string    `json:"thread,omitempty"`
 	Kind         string    `json:"kind,omitempty"`
@@ -240,6 +241,7 @@ func LinkDispatch(projectDir, session, id string, dispatch Dispatch, now time.Ti
 func LinkDispatchForProfile(projectDir, profile, session, id string, dispatch Dispatch, now time.Time) (Task, error) {
 	return mutateForProfile(projectDir, profile, session, id, func(t *Task, _ map[string]*Task) error {
 		d := dispatch
+		d.Sender = strings.TrimSpace(d.Sender)
 		d.Assignee = strings.TrimSpace(d.Assignee)
 		d.Thread = strings.TrimSpace(d.Thread)
 		d.Kind = strings.TrimSpace(d.Kind)

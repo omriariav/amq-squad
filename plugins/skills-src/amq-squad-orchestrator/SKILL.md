@@ -392,9 +392,11 @@ amq-squad task add --title "implement" --depends-on t1 --session <S>
 amq-squad task list --session <S>
 ```
 
-Workers `task claim <id> --me <handle> --session <S>` (gated until deps
-complete) and then `task done <id> --session <S>` / `fail` / `block`. You watch
-progress with `task list --session <S>`.
+Workers `task claim <id> --me <handle> --session <S>` for pull-style pending
+tasks (gated until deps complete), then `task done <id> --session <S>` / `fail`
+/ `block`. Task-backed `dispatch --create-task/--task` auto-claims pending
+tasks for the target handle after the durable AMQ send and task link succeed.
+You watch progress with `task list --session <S>`.
 
 **5. Prune as work resolves.** When an agent's work is done and it is idle,
 shrink the team — stop it (closing its pane) and drop it from the roster:
@@ -521,7 +523,7 @@ Track two distinct checkpoints — do not conflate them:
 
 - **Received** = the durable message is queued and the recipient was woken (wake-live), or — as last-resort when not wake-live — the pane nudge fired. dispatch prints the `amq send` result; if you need a hard `drained` receipt, use `amq-squad amq send … --wait-for drained` (below).
 - **Reported** = the lead has run `amq-squad collect --session S --me <lead> --timeout 120s --include-body` and reconciled the worker's pushed `review_request`/`status`/question. A drain receipt only proves the child saw the task; it is not completion evidence.
-- **Acting** = the worker's pushed progress — a `task claim`, or its `review_request`/`status` (Monitor, section 3; event-driven). A worker that **drained but shows no progress** is stuck — ask it "what is blocking you?"; do NOT silently re-dispatch the task (the message already sits in its mailbox; a second copy makes it build twice).
+- **Acting** = the worker's pushed progress — an auto-claimed/in-progress task, a manual `task claim`, or its `review_request`/`status` (Monitor, section 3; event-driven). A worker that **drained but shows no progress** is stuck — ask it "what is blocking you?"; do NOT silently re-dispatch the task (the message already sits in its mailbox; a second copy makes it build twice).
 
 **Lower-level halves (when you need them separately).** `amq-squad dispatch` is `amq-squad amq send` (the root-correct durable send) plus the recipient's wake sidecar — with `amq-squad send` (the pane nudge) only as last-resort. Reach for the pane nudge directly only to (a) re-**nudge** a queued task a worker that is NOT wake-live hasn't drained — deliver the *drain instruction*, NOT a second copy of the body — (b) deliberately interrupt a working agent, or (c) get a hard `drained` receipt via `--wait-for drained`. The pane half needs the tmux socket, so it dies under a sandboxed lead and stutters under `-CC` (that fragility is exactly why dispatch is wake-first and treats the pane nudge as best-effort last-resort).
 
