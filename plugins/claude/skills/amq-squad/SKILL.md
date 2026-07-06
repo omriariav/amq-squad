@@ -161,7 +161,7 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
 
 9. **Work the task store (when one drives the workstream).**
    - When the lead has posted work as tasks (`amq-squad task list --session <S>`), the store is the durable source of truth for who-owns-what — keep it in sync; do not just prose-ACK over AMQ.
-   - Before you START a piece of dispatched work, claim its task: `amq-squad task claim <id> --me <handle> --session <S>`. A claim is gated until the task's `--depends-on` tasks are `completed`, so a successful claim also confirms your dependencies are met.
+   - Before you START a pull-style task that is still `pending`, claim it: `amq-squad task claim <id> --me <handle> --session <S>`. A task-backed `amq-squad dispatch --create-task/--task` auto-claims pending tasks for the target handle after the durable AMQ send and task link succeed; if the task already shows `in_progress` for you, do not re-claim it.
    - When you FINISH, close it: `amq-squad task done <id> --session <S>`. If you cannot finish, record `task fail <id>` (with a reason) or `task block <id>` rather than leaving it `in_progress`.
    - The pushed AMQ report and the task transition are complementary, not redundant: the message tells the lead; the store records the state. Do both.
 

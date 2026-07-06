@@ -14,6 +14,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
+	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -300,9 +301,9 @@ func executeStatus(s statusExecution) error {
 	if err != nil {
 		return err
 	}
-	warnings, err := statusNamespaceWarnings(t.Project, s.Profile, workstream)
+	warnings, err := statusWarnings(t.Project, s.Profile, workstream)
 	if err != nil {
-		return fmt.Errorf("scan namespace warnings: %w", err)
+		return fmt.Errorf("scan status warnings: %w", err)
 	}
 
 	rows := buildStatusRows(t, s.Profile, workstream, s.Probe)
@@ -373,6 +374,21 @@ func executeStatus(s statusExecution) error {
 	return w.Flush()
 }
 
+func statusWarnings(projectDir, profile, session string) ([]statusWarning, error) {
+	var warnings []statusWarning
+	namespaceWarnings, err := statusNamespaceWarnings(projectDir, profile, session)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, namespaceWarnings...)
+	taskWarnings, err := statusTaskWarnings(projectDir, profile, session)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, taskWarnings...)
+	return warnings, nil
+}
+
 func statusNamespaceWarnings(projectDir, profile, session string) ([]statusWarning, error) {
 	if squadnamespace.NormalizeProfile(profile) != team.DefaultProfile || strings.TrimSpace(session) == "" {
 		return nil, nil
@@ -406,6 +422,197 @@ func statusNamespaceWarnings(projectDir, profile, session string) ([]statusWarni
 		SuggestedCommand: suggested,
 		Conflicts:        conflicts,
 	}}, nil
+}
+
+func statusTaskWarnings(projectDir, profile, session string) ([]statusWarning, error) {
+	tasks, err := taskstore.ListForProfile(projectDir, profile, session)
+	if err != nil {
+		return nil, err
+	}
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+	ns := squadnamespace.Resolve(projectDir, profile, session)
+	var messages []state.Message
+	for _, t := range tasks {
+		if t.Status == taskstore.StatusInProgress && t.Dispatch != nil {
+			messages, _ = state.ScanSessionMessages(ns.AMQRoot, time.Now)
+			break
+		}
+	}
+	var warnings []statusWarning
+	for _, t := range tasks {
+		if t.Dispatch == nil {
+			continue
+		}
+		switch t.Status {
+		case taskstore.StatusPending:
+			warnings = append(warnings, pendingDispatchTaskWarning(projectDir, profile, session, t))
+		case taskstore.StatusInProgress:
+			if report, ok := latestTaskCompletionReport(messages, t); ok {
+				warnings = append(warnings, completionReportTaskWarning(projectDir, profile, session, t, report))
+			}
+		}
+	}
+	return warnings, nil
+}
+
+func pendingDispatchTaskWarning(projectDir, profile, session string, t taskstore.Task) statusWarning {
+	assignee := taskDispatchAssignee(t)
+	cmd := "amq-squad task show " + shellQuote(t.ID) + taskScope(projectDir, profile, session)
+	if assignee != "" {
+		cmd = "amq-squad task claim " + shellQuote(t.ID) + " --me " + shellQuote(assignee) + taskScope(projectDir, profile, session)
+	}
+	msg := dispatchMessageID(t)
+	detail := fmt.Sprintf("task %s is still pending after dispatch to %s", t.ID, printableHandle(assignee))
+	if msg != "" {
+		detail += " (message " + msg + ")"
+	}
+	if assignee != "" {
+		detail += "; run " + cmd + " if the worker has started"
+	} else {
+		detail += "; inspect it with " + cmd
+	}
+	return statusWarning{
+		Kind:             "task_dispatched_pending",
+		Session:          session,
+		Detail:           detail,
+		SuggestedCommand: cmd,
+	}
+}
+
+func completionReportTaskWarning(projectDir, profile, session string, t taskstore.Task, report state.Message) statusWarning {
+	assignee := taskDispatchAssignee(t)
+	evidence := strings.TrimSpace(report.ID)
+	if evidence == "" {
+		evidence = strings.TrimSpace(report.Subject)
+	}
+	if evidence == "" {
+		evidence = "worker report"
+	}
+	cmd := "amq-squad task done " + shellQuote(t.ID) + " --me " + shellQuote(assignee) +
+		" --evidence " + shellQuote("accepted "+evidence) + taskScope(projectDir, profile, session)
+	detail := fmt.Sprintf("task %s is still in_progress after %s reported completion on %s",
+		t.ID, printableHandle(assignee), report.Created.UTC().Format(time.RFC3339))
+	if report.ID != "" {
+		detail += " (message " + report.ID + ")"
+	}
+	detail += "; if the lead accepts the report, run " + cmd
+	return statusWarning{
+		Kind:             "task_report_pending_completion",
+		Session:          session,
+		Detail:           detail,
+		SuggestedCommand: cmd,
+	}
+}
+
+func latestTaskCompletionReport(messages []state.Message, t taskstore.Task) (state.Message, bool) {
+	d := t.Dispatch
+	if d == nil {
+		return state.Message{}, false
+	}
+	assignee := taskDispatchAssignee(t)
+	if assignee == "" {
+		return state.Message{}, false
+	}
+	after := t.UpdatedAt
+	if d.DispatchedAt.After(after) {
+		after = d.DispatchedAt
+	}
+	var latest state.Message
+	var ok bool
+	for _, msg := range messages {
+		if strings.TrimSpace(msg.From) != assignee {
+			continue
+		}
+		if !msg.Created.After(after) {
+			continue
+		}
+		if !messageMatchesDispatchThread(msg, d) {
+			continue
+		}
+		if !messageLooksLikeCompletionReport(msg) {
+			continue
+		}
+		if !ok || msg.Created.After(latest.Created) || (msg.Created.Equal(latest.Created) && msg.ID > latest.ID) {
+			latest = msg
+			ok = true
+		}
+	}
+	return latest, ok
+}
+
+func messageMatchesDispatchThread(msg state.Message, d *taskstore.Dispatch) bool {
+	if d == nil {
+		return false
+	}
+	expected := statusCanonicalThread(d.Thread)
+	if expected == "" && strings.TrimSpace(d.Sender) != "" && strings.TrimSpace(d.Assignee) != "" {
+		expected = canonicalP2PThread(strings.TrimSpace(d.Sender), strings.TrimSpace(d.Assignee))
+	}
+	if expected == "" {
+		return false
+	}
+	return statusCanonicalThread(msg.Thread) == expected || statusCanonicalThread(msg.RawThread) == expected
+}
+
+func messageLooksLikeCompletionReport(msg state.Message) bool {
+	if msg.Kind == state.KindReviewRequest {
+		return true
+	}
+	text := strings.ToLower(msg.Subject + "\n" + msg.Body)
+	for _, token := range []string{"done", "complete", "completed", "ready for review", "ready to review", "implemented", "finished"} {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func statusCanonicalThread(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	lower := strings.ToLower(raw)
+	if !strings.HasPrefix(lower, "p2p/") {
+		return raw
+	}
+	pair := strings.TrimPrefix(lower, "p2p/")
+	parts := strings.Split(pair, "__")
+	if len(parts) != 2 {
+		return lower
+	}
+	return canonicalP2PThread(stripThreadRole(parts[0]), stripThreadRole(parts[1]))
+}
+
+func stripThreadRole(handle string) string {
+	handle = strings.TrimSpace(handle)
+	if before, _, ok := strings.Cut(handle, ":"); ok {
+		return before
+	}
+	return handle
+}
+
+func taskDispatchAssignee(t taskstore.Task) string {
+	if t.Dispatch != nil && strings.TrimSpace(t.Dispatch.Assignee) != "" {
+		return strings.TrimSpace(t.Dispatch.Assignee)
+	}
+	return strings.TrimSpace(t.AssignedTo)
+}
+
+func dispatchMessageID(t taskstore.Task) string {
+	if t.Dispatch == nil {
+		return ""
+	}
+	return strings.TrimSpace(t.Dispatch.MessageID)
+}
+
+func printableHandle(handle string) string {
+	if strings.TrimSpace(handle) == "" {
+		return "<unknown>"
+	}
+	return handle
 }
 
 func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorView {
