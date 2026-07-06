@@ -1533,6 +1533,15 @@ stamps. <code>status --json</code> exposes this under
 <code>unknown</code>) and <code>quality</code> (<code>fresh</code>,
 <code>stale</code>, or <code>unknown</code>) so clients can distinguish
 an agent-written heartbeat from task-store ownership fallback.</p>
+<p>Managed child rows may also include
+<code>records[].local_input</code> when a read-only pane-tail blind-spot
+detection heuristic sees a local approval/input prompt. This is not a
+coordination or progress primitive: capture failures, dead panes, and
+unparseable tails produce no field, so absence means "not observed", not
+"not blocked". When present, <code>data.warnings[]</code> includes
+<code>kind:"local_input_blocked"</code> with the role, pane, prompt
+summary, and recovery guidance; destructive prompts require an operator
+decision or a non-destructive alternative.</p>
 <p><code>amq-squad console</code> is the project-scoped Mission Control
 TUI for the current team-home.</p>
 <div class="sourceCode" id="cb24"><pre

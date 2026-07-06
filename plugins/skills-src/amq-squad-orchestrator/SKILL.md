@@ -553,12 +553,13 @@ amq-squad focus --session S --role R
 Stay engaged, but **event-driven — not busy-polling**. A spawned child is the lead's responsibility, not the human's, yet the protocol is **push** (section 4): children send you AMQ messages when they have something to report. Act on collected reports, fresh activity heartbeats, and the task store, not a tight `status` loop. Check liveness when you have a *reason* — a report is overdue, a task looks stuck — not on a spin:
 
 ```sh
-amq-squad status --session S --json | jq '.data.records[] | {role, status, activity, pane_alive: .tmux.pane_alive}'
+amq-squad status --session S --json | jq '.data.records[] | {role, status, activity, local_input, pane_alive: .tmux.pane_alive}'
 amq-squad status                         # bare command -> no-session multi-session board for the whole fleet
 amq-squad console                        # live read-only Mission Control TUI
 ```
 
 - Per-agent `status`, `activity`, and `tmux.pane_alive` tell you who is actually working vs. dead vs. stalled. Treat `activity.source=="heartbeat-file"` with `quality=="fresh"` as the strongest busy signal; `source=="task-store"` is only ownership fallback, and `quality=="stale"` or `"unknown"` is not progress.
+- `records[].local_input` plus warning kind `local_input_blocked` is a read-only pane-tail blind-spot detection heuristic for managed child local approval/input prompts, not a coordination or progress primitive. Treat it as a hint to inspect or escalate the named role and pane; absence means "not observed", not "not blocked".
 - The bare `amq-squad status` (no `--session`) is the fleet board across all sessions.
 - The single-session `status --json` records also carry an `actions[]` array with the exact runnable `focus`/`send`/`resume` commands; prefer those over hand-built tmux.
 

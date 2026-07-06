@@ -313,6 +313,12 @@ contract: one `/goal` per visible lead; each lead pushes status, blockers,
 approval requests, and final evidence to AMQ/NOC-visible surfaces; the parent
 polls lead inboxes, gate threads, and `status --json` on a cadence. Child agents
 remain internal unless the lead escalates them.
+`status --json.records[].local_input` is a read-only pane-tail blind-spot
+detection heuristic for managed child local approval/input prompts, not a
+coordination or progress primitive. Treat `warnings[].kind=="local_input_blocked"`
+as a hint to inspect or escalate the named role and pane; absence only means the
+heuristic did not observe a prompt, and destructive prompts require an operator
+decision or a non-destructive alternative.
 Use `goal_binding` in `goal draft --json` and `status --json` to distinguish a
 generated native `/goal` plan (`native_goal_pending`), verified launch-record
 native binding (`native_goal`), and the explicit AMQ task + active brief +
