@@ -430,13 +430,17 @@ func busRow(t state.ThreadSummary, _ state.TriageRollup) string {
 	if subj == "" {
 		subj = shortID(t.ID)
 	}
-	statusWord := triageStyle(t.Triage).Render(string(t.Triage))
+	statusWord := triageStyle(t.Triage).Render(threadTier(t))
+	age := ageLabel(t.Freshness.Age)
+	if t.OperatorGate != nil {
+		age = ageLabel(t.OperatorGate.Age)
+	}
 	unread := ""
 	if n := len(t.UnreadBy); n > 0 {
 		unread = fmt.Sprintf(" · %d unread", n)
 	}
 	return fmt.Sprintf("%s %-15s  %s · %s  %d msgs · %s%s",
-		glyph, peers, statusWord, subj, t.MessageCount, ageLabel(t.Freshness.Age), unread)
+		glyph, peers, statusWord, subj, t.MessageCount, age, unread)
 }
 
 // peerPair renders a thread's participants as "qa <-> cto" (or a comma list for
@@ -640,6 +644,9 @@ func peekThread(s state.Session, ok bool, tid string) string {
 			fmt.Fprintf(&b, "  subject: %s\n", t.Subject)
 		}
 		fmt.Fprintf(&b, "  status: %s · kind: %s · %d msgs\n", t.Status, kindLabel(t.Kind), t.MessageCount)
+		if t.OperatorGate != nil {
+			fmt.Fprintf(&b, "  operator gate: %s · age %s · from %s\n", t.OperatorGate.Escalation, ageLabel(t.OperatorGate.Age), t.OperatorGate.From)
+		}
 		// Recent output: the derived latest transition for this thread.
 		if line := latestTransition(s, t.ID); line != "" {
 			fmt.Fprintf(&b, "  recent: %s\n", line)

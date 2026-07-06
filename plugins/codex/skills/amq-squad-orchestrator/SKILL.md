@@ -135,6 +135,10 @@ escalates them.
 If `status --json.operator_delivery.poll_required=true`, the operator mailbox is
 also polling-only: reports, blockers, and approval gates are durable AMQ records,
 and the orchestrator or NOC must drain/poll them instead of waiting for wake.
+Unanswered operator gates escalate with age (`initial`, `reminder` after 30m,
+`strong-warning` after 2h). Treat `notify` escalation output, `status --json`
+`operator_gate_*` warnings, and console `needs-you/*` gate labels as attention
+signals to inspect the gate thread; they do not authorize or clear the gate.
 **No-wake companion:** do not hand-roll a polling shell loop. `amq-squad monitor
 --session S [--once | --interval D --timeout D | --max-ticks N] [--json]` is the
 first-class no-wake poller: it watches (read-only) the task store, the evidence

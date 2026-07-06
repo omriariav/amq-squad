@@ -174,6 +174,8 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
 
 Human escalations follow the current team rules. When operator gates are enabled, send approval questions or manual-action requests to the virtual operator handle and do not treat it as a runnable peer. When operator gates are disabled, route through the role named by team rules.
 
+Operator-gate escalation (v2.16.0+): unanswered `gate/<topic>` asks addressed to the configured operator handle escalate from `initial` to `reminder` after 30m and `strong-warning` after 2h, measured from the last unanswered operator-facing gate message. `amq-squad notify` bypasses its normal de-duplication when a gate crosses into a stronger band; `status --json` warnings and `console --once` labels make aged gates distinct.
+
 ## Common command patterns
 
 ```sh
@@ -253,6 +255,11 @@ resume` reproduces it.
 Use `--no-gitignore` on `agent up`, `up`, or `up --dry-run` when AMQ coop
 auto-init should leave `.gitignore` unchanged; the opt-out is persisted in the
 launch record and replayed by `agent resume`.
+Operator-gate escalation (v2.16.0+): unanswered `gate/<topic>` asks addressed to
+the configured operator handle escalate from `initial` to `reminder` after 30m
+and `strong-warning` after 2h. `amq-squad notify` bypasses its normal throttle
+when the escalation band advances, while `status --json` warnings and
+`console --once` make aged gates visually distinct.
 Claude-binary agents launched in tmux also get a best-effort delayed
 `/rename <role>-<session>` injection, including managed `resume --exec` /
 `agent resume` replay. Failure to deliver the rename does not block launch.

@@ -88,6 +88,50 @@ func TestOperatorStatusJSONReportsPollContractAndAttention(t *testing.T) {
 	if len(data.Attention) != 1 || data.Attention[0].Thread != "gate/release" {
 		t.Fatalf("attention = %+v, want gate/release", data.Attention)
 	}
+	if data.Attention[0].Escalation != string(state.OperatorGateEscalationInitial) {
+		t.Fatalf("attention escalation = %q, want initial", data.Attention[0].Escalation)
+	}
+}
+
+func TestOperatorStatusReportsAgedGateEscalation(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyMessage(t, base, "s", team.DefaultOperatorHandle, "new", notifyMsg{
+		ID:      "gate-1",
+		From:    "cto",
+		To:      team.DefaultOperatorHandle,
+		Thread:  "gate/release",
+		Subject: "APPROVAL: release",
+		Kind:    string(state.KindQuestion),
+		Created: notifyNow.Add(-130 * time.Minute),
+	})
+
+	var out bytes.Buffer
+	err := executeOperatorStatus(operatorExecution{
+		ProjectDir: project,
+		Profile:    team.DefaultProfile,
+		Session:    "s",
+		BaseRoot:   base,
+		JSON:       true,
+		Out:        &out,
+		Probe: state.Probe{
+			PIDAlive:     func(pid int) bool { return true },
+			ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
+			Now:          func() time.Time { return notifyNow },
+		},
+		Now: func() time.Time { return notifyNow },
+	})
+	if err != nil {
+		t.Fatalf("operator status: %v", err)
+	}
+	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
+	if len(env.Data.Attention) != 1 {
+		t.Fatalf("attention = %+v, want one aged gate", env.Data.Attention)
+	}
+	got := env.Data.Attention[0]
+	if got.Escalation != string(state.OperatorGateEscalationStrongWarning) || got.Age != "2h10m0s" {
+		t.Fatalf("aged gate attention = %+v, want strong-warning age 2h10m0s", got)
+	}
 }
 
 func TestOperatorStatusJSONCountsBlockedNativeGoal(t *testing.T) {

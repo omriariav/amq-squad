@@ -42,6 +42,47 @@ func TestNotifyEmitsAndDedupesOperatorGate(t *testing.T) {
 	}
 }
 
+func TestNotifyEscalatesOperatorGateAgeDespiteThrottle(t *testing.T) {
+	project, base, statePath := seedNotifyProject(t, team.OperatorConfig{Enabled: true, Handle: team.DefaultOperatorHandle})
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
+		ID: "m1", From: "cto", To: "user", Thread: "gate/release",
+		Subject: "APPROVAL: release", Kind: "question", Created: notifyNow,
+	})
+
+	first := executeNotifyForTest(t, notifyExecution{
+		ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath,
+		RenotifyAfter: 4 * time.Hour, Now: func() time.Time { return notifyNow },
+	})
+	if !strings.Contains(first, "initial") || !strings.Contains(first, "gate/release") {
+		t.Fatalf("initial notify missing gate escalation:\n%s", first)
+	}
+
+	throttled := executeNotifyForTest(t, notifyExecution{
+		ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath,
+		RenotifyAfter: 4 * time.Hour, Now: func() time.Time { return notifyNow.Add(10 * time.Minute) },
+	})
+	if !strings.Contains(throttled, "suppressed by throttle") {
+		t.Fatalf("unchanged pre-reminder gate should stay throttled:\n%s", throttled)
+	}
+
+	reminder := executeNotifyForTest(t, notifyExecution{
+		ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath,
+		RenotifyAfter: 4 * time.Hour, Now: func() time.Time { return notifyNow.Add(31 * time.Minute) },
+	})
+	if !strings.Contains(reminder, "reminder") || !strings.Contains(reminder, "APPROVAL: release") {
+		t.Fatalf("reminder escalation should bypass throttle:\n%s", reminder)
+	}
+
+	strong := executeNotifyForTest(t, notifyExecution{
+		ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath,
+		RenotifyAfter: 4 * time.Hour, Now: func() time.Time { return notifyNow.Add(2*time.Hour + time.Minute) },
+	})
+	if !strings.Contains(strong, "strong-warning") || !strings.Contains(strong, "APPROVAL: release") {
+		t.Fatalf("strong-warning escalation should bypass throttle:\n%s", strong)
+	}
+}
+
 func TestNotifyRenotifiesAfterThreshold(t *testing.T) {
 	project, base, statePath := seedNotifyProject(t, team.OperatorConfig{Enabled: true, Handle: team.DefaultOperatorHandle})
 	seedNotifyLaunch(t, project, base, "s", "cto")

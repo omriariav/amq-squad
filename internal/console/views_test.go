@@ -130,6 +130,52 @@ func TestStaticBoardShowsAgentActivity(t *testing.T) {
 	}
 }
 
+func TestConsoleSurfacesAgedOperatorGate(t *testing.T) {
+	gateAge := 3 * time.Hour
+	thread := state.ThreadSummary{
+		ID:           "gate/release",
+		Participants: []string{"cto", "user"},
+		Subject:      "APPROVAL: release",
+		Kind:         state.KindQuestion,
+		Status:       state.ThreadAwaitingReply,
+		LastEventAt:  viewNow.Add(-5 * time.Minute),
+		MessageCount: 2,
+		UnreadBy:     []string{"user"},
+		Triage:       state.TriageNeedsYou,
+		Freshness:    state.Freshness{Source: state.SourceEmbedded, Age: 5 * time.Minute},
+		OperatorGate: &state.OperatorGateSignal{
+			LatestID:   "gate-1",
+			From:       "cto",
+			Subject:    "APPROVAL: release",
+			Kind:       state.KindQuestion,
+			Since:      viewNow.Add(-gateAge),
+			Age:        gateAge,
+			Reason:     state.AttnApprove,
+			Escalation: state.OperatorGateEscalationStrongWarning,
+		},
+	}
+	snap := state.Snapshot{
+		BaseRoot: "/base",
+		Sessions: []state.Session{{
+			Name:         "release",
+			Agents:       []state.Agent{{Handle: "cto", Engine: "codex", Liveness: state.LivenessAlive}},
+			Coordination: state.Coordination{Threads: []state.ThreadSummary{thread}},
+			Rollup:       state.TriageRollup{NeedsYou: 1},
+		}},
+		Rollup: state.TriageRollup{NeedsYou: 1},
+	}
+
+	board := staticBoardBody(snap, func() time.Time { return viewNow })
+	if !strings.Contains(board, "needs-you/strong-warning · APPROVAL: release · 3h · 2 msgs") {
+		t.Fatalf("static board missing aged gate escalation row:\n%s", board)
+	}
+
+	peek := peekThread(snap.Sessions[0], true, "gate/release")
+	if !strings.Contains(peek, "operator gate: strong-warning · age 3h · from cto") {
+		t.Fatalf("thread peek missing operator gate detail:\n%s", peek)
+	}
+}
+
 // keyMsg builds a tea.KeyMsg for a single-rune or named key.
 func keyMsg(s string) tea.KeyMsg {
 	switch s {
