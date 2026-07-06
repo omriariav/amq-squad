@@ -330,6 +330,7 @@ func TestUpDryRunMatchesTeamShowWithFlags(t *testing.T) {
 		"--codex-args=--profile fast",
 		"--claude-args=--chrome",
 		"--force-duplicate",
+		"--no-gitignore",
 		"--wake-inject-via", "/opt/amq-inject",
 		"--wake-inject-arg=--pane",
 	}
@@ -355,6 +356,9 @@ func TestUpDryRunMatchesTeamShowWithFlags(t *testing.T) {
 	}
 	if !strings.Contains(upOut, "--force-duplicate") {
 		t.Errorf("--force-duplicate not applied: %s", upOut)
+	}
+	if !strings.Contains(upOut, "--no-gitignore") {
+		t.Errorf("--no-gitignore not applied: %s", upOut)
 	}
 	if !strings.Contains(upOut, "--codex-args='--enable goals --profile fast'") {
 		t.Errorf("--codex-args not merged: %s", upOut)

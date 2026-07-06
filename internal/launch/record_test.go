@@ -27,6 +27,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		BaseRoot:         filepath.Dir(dir),
 		RootSource:       "project_amqrc",
 		AMQVersion:       "0.34.0",
+		NoGitignore:      true,
 		WakeInjectVia:    "/opt/amq-inject",
 		WakeInjectArgs:   []string{"--pane", "%42"},
 		WakePID:          1234,
@@ -58,7 +59,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		out.Handle != in.Handle || out.Role != in.Role || out.Root != in.Root ||
 		out.BaseRoot != in.BaseRoot || out.RootSource != in.RootSource ||
 		out.AMQVersion != in.AMQVersion || out.WakeInjectVia != in.WakeInjectVia ||
-		out.WakePID != in.WakePID {
+		out.NoGitignore != in.NoGitignore || out.WakePID != in.WakePID {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", out, in)
 	}
 	if !reflect.DeepEqual(out.WakeInjectArgs, in.WakeInjectArgs) {

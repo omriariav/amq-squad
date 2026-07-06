@@ -73,6 +73,7 @@ func runLaunch(args []string) error {
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args to treat as launch defaults, e.g. '--chrome'")
 	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent for the same handle/workstream is detected")
 	noRequireWake := fs.Bool("no-require-wake", false, "do not pass --require-wake to amq coop exec (allows launching when the wake sidecar cannot acquire its lock)")
+	noGitignore := fs.Bool("no-gitignore", false, "pass --no-gitignore to amq coop exec (leave .gitignore unchanged during AMQ auto-init)")
 	wakeInjectVia := fs.String("wake-inject-via", "", "absolute executable passed to amq coop exec --wake-inject-via")
 	var wakeInjectArgs stringListFlag
 	fs.Var(&wakeInjectArgs, "wake-inject-arg", "argument passed to amq coop exec --wake-inject-arg (repeatable; requires --wake-inject-via)")
@@ -268,6 +269,7 @@ Examples:
 		SpawnOrigin:          strings.TrimSpace(*spawnOrigin),
 		SpawnDepth:           *spawnDepth,
 		NoRequireWake:        *noRequireWake,
+		NoGitignore:          *noGitignore,
 		GoalBinding:          nativeGoalBindingFromArgs(childArgs),
 		PreauthorizedActions: preauthorizedActions,
 		WakeInjectVia:        wakeInjectViaValue,
@@ -338,6 +340,12 @@ Examples:
 	// operator wants the agent anyway.
 	if !*noRequireWake && amqSupportsRequireWake(env.AMQVersion) {
 		coopArgs = append(coopArgs, "--require-wake")
+	}
+	if *noGitignore {
+		if !amqSupportsNoGitignore(env.AMQVersion) {
+			return fmt.Errorf("--no-gitignore requires amq %s or newer (found %s)", minNoGitignoreAMQVersion, versionOrUnknown(env.AMQVersion))
+		}
+		coopArgs = append(coopArgs, "--no-gitignore")
 	}
 	if wakeInjectViaValue != "" {
 		if !amqSupportsWakeInject(env.AMQVersion) {

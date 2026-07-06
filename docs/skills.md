@@ -198,9 +198,12 @@ Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
 CLI args for one member only — the overlay verb above generates the flagship
 case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it
 for you. Plan emission fails fast when a referenced `--settings` file is
-missing. AMQ floor (v2.15.0+): amq-squad requires amq 0.39.0+. Launches pass
+missing. AMQ floor (v2.16.0+): amq-squad requires amq 0.40.0+. Launches pass
 `--require-wake` so a launch fails immediately when the wake sidecar cannot
 acquire its lock (`--no-require-wake` opts out and persists into resume).
+Use `--no-gitignore` on `agent up`, `up`, or `up --dry-run` when AMQ coop
+auto-init should leave `.gitignore` unchanged; the opt-out is persisted in the
+launch record and replayed by `agent resume`.
 Claude-binary agents launched in tmux also get a best-effort delayed
 `/rename <role>-<session>` injection, including managed `resume --exec` /
 `agent resume` replay. Failure to deliver the rename does not block launch.

@@ -680,7 +680,7 @@ func runTeamShow(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
 
 Usage:
-  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--json]
+  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--no-gitignore] [--json]
 
 Examples:
   amq-squad team show
@@ -716,6 +716,7 @@ type emitTeamOptions struct {
 	ExplicitTrust    bool
 	ModelOverrides   map[string]string
 	ForceDuplicate   bool
+	NoGitignore      bool
 	WakeInjectVia    string
 	WakeInjectArgs   []string
 	Profile          string
@@ -873,6 +874,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 				TrustMode:      trustMode,
 				Model:          effectiveModel,
 				ForceDuplicate: opts.ForceDuplicate,
+				NoGitignore:    opts.NoGitignore,
 				Profile:        opts.Profile,
 				WakeInjectVia:  opts.WakeInjectVia,
 				WakeInjectArgs: opts.WakeInjectArgs,
@@ -947,6 +949,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			Model:          effectiveModel,
 			Profile:        opts.Profile,
 			ForceDuplicate: opts.ForceDuplicate,
+			NoGitignore:    opts.NoGitignore,
 			WakeInjectVia:  opts.WakeInjectVia,
 			WakeInjectArgs: opts.WakeInjectArgs,
 		}
@@ -1127,6 +1130,7 @@ type emitTeamCommandInput struct {
 	TrustMode      string
 	Model          string
 	ForceDuplicate bool
+	NoGitignore    bool
 	WakeInjectVia  string
 	WakeInjectArgs []string
 	Profile        string
@@ -1185,6 +1189,9 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 	}
 	if in.ForceDuplicate {
 		b.WriteString(" --force-duplicate")
+	}
+	if in.NoGitignore {
+		b.WriteString(" --no-gitignore")
 	}
 	if origin := strings.TrimSpace(m.SpawnOrigin); origin != "" {
 		b.WriteString(" --spawn-origin ")
