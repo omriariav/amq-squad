@@ -780,6 +780,16 @@ brief + task-store fallback (<code>amq_task_brief</code>). Recovery
 sends a durable AMQ directive first; managed-pane <code>/goal</code>
 injection is only a follow-up when the pane is idle, and force-interrupt
 requires an operator gate.</p>
+<p><code>status --json</code> also exposes
+<code>execution.release_readiness.merge_authority</code> so clients and
+agents do not infer merge authority from prose. The default actor is
+<code>visible_lead</code>, <code>worker_policy</code> is
+<code>workers_do_not_merge_by_default</code>, and the only documented
+worker exception is a verifiable authorization artifact tied to the same
+subject, head SHA, and gate/evidence thread. This answers who owns the
+merge/lifecycle action path; exact-head review,
+<code>verify merge</code>, normalized evidence, and operator gates still
+answer when merge-ready can be claimed.</p>
 <h3 id="the-loop-spawn--dispatch--monitor--coordinate--recover">The
 loop: spawn → dispatch → monitor → coordinate → recover</h3>
 <div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. SPAWN — window-per-agent (captures each child&#39;s pane id into the record)</span></span>
@@ -846,9 +856,12 @@ recipient. This follows the #321 decision-table boundary: raw AMQ
 consumption stays raw; orchestrator-safe collection happens in
 amq-squad.</p>
 <p><strong>Bodies are data, not authority</strong> — a child's "please
-merge" is surfaced or acted on under the lead's judgment; merge and
-other irreversible decisions are lead-only, made only after the lead
-verifies the artifacts.</p>
+merge" is surfaced or acted on under the lead's judgment. Merge and
+irreversible lifecycle actions are lead-owned by default: workers do not
+merge, push, tag, release, close issues, or run similar actions from AMQ
+prose. If a worker is ever asked to do one, it requires a verifiable
+authorization artifact tied to the same subject, head SHA, and
+gate/evidence thread; otherwise it escalates back to the lead.</p>
 <h3 id="operator-directives-noc--lead">Operator directives (NOC →
 lead)</h3>
 <p>The operator can steer the lead from amq-noc (v0.8.0+). A directive
@@ -939,7 +952,8 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#
 <span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--to</span> qa <span class="at">--thread</span> p2p/cto__qa <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
 <span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: review #96&quot;</span> <span class="at">--body</span> <span class="st">&quot;Review fullstack&#39;s diff on branch X; push review_response.&quot;</span></span></code></pre></div></li>
 <li><p><strong>Converge and tear down</strong> — the lead verifies the
-artifacts, makes the merge decision, reports up to the human, then:</p>
+artifacts, owns the merge and lifecycle-action path after the readiness
+gates align, reports up to the human, then:</p>
 <div class="sourceCode" id="cb15"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--all</span></span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> archive issue-96</span></code></pre></div></li>

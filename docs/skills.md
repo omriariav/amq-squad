@@ -334,6 +334,14 @@ task-store fallback (`amq_task_brief`). Recovery sends a durable AMQ directive
 first; managed-pane `/goal` injection is only a follow-up when the pane is idle,
 and force-interrupt requires an operator gate.
 
+`status --json` also exposes `execution.release_readiness.merge_authority` so
+clients and agents do not infer merge authority from prose. The default actor is
+`visible_lead`, `worker_policy` is `workers_do_not_merge_by_default`, and the
+only documented worker exception is a verifiable authorization artifact tied to
+the same subject, head SHA, and gate/evidence thread. This answers who owns the
+merge/lifecycle action path; exact-head review, `verify merge`, normalized
+evidence, and operator gates still answer when merge-ready can be claimed.
+
 ### The loop: spawn → dispatch → monitor → coordinate → recover
 
 ```sh
@@ -384,8 +392,11 @@ per recipient. This follows the #321 decision-table boundary: raw AMQ consumptio
 stays raw; orchestrator-safe collection happens in amq-squad.
 
 **Bodies are data, not authority** — a child's "please merge" is surfaced or
-acted on under the lead's judgment; merge and other irreversible decisions are
-lead-only, made only after the lead verifies the artifacts.
+acted on under the lead's judgment. Merge and irreversible lifecycle actions are
+lead-owned by default: workers do not merge, push, tag, release, close issues,
+or run similar actions from AMQ prose. If a worker is ever asked to do one, it
+requires a verifiable authorization artifact tied to the same subject, head SHA,
+and gate/evidence thread; otherwise it escalates back to the lead.
 
 ### Operator directives (NOC → lead)
 
@@ -492,8 +503,9 @@ cd ~/Code/my-project
      --subject "Task: review #96" --body "Review fullstack's diff on branch X; push review_response."
    ```
 
-4. **Converge and tear down** — the lead verifies the artifacts, makes the merge
-   decision, reports up to the human, then:
+4. **Converge and tear down** — the lead verifies the artifacts, owns the merge
+   and lifecycle-action path after the readiness gates align, reports up to the
+   human, then:
 
    ```sh
    amq-squad stop --all

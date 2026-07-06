@@ -1905,6 +1905,8 @@ func TestRenderTeamRulesTemplatesIncludeRequiredSections(t *testing.T) {
 				"two independent reviewers must verify the exact PR head SHA",
 				"`amq-squad verify merge`",
 				"operator replies `APPROVED:` on the exact PR gate thread",
+				"Workers do not merge, push, tag, release, close issues",
+				"verifiable authorization artifact",
 			} {
 				if !strings.Contains(body, want) {
 					t.Errorf("%s template missing %q:\n%s", template, want, body)
