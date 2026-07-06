@@ -640,12 +640,17 @@ launch fails immediately when the wake sidecar cannot acquire its lock
 <code>--no-gitignore</code> on <code>agent up</code>, <code>up</code>,
 or <code>up --dry-run</code> when AMQ coop auto-init should leave
 <code>.gitignore</code> unchanged; the opt-out is persisted in the
-launch record and replayed by <code>agent resume</code>. Claude-binary
-agents launched in tmux also get a best-effort delayed
-<code>/rename &lt;role&gt;-&lt;session&gt;</code> injection, including
-managed <code>resume --exec</code> / <code>agent resume</code> replay.
-Failure to deliver the rename does not block launch. Codex agents are
-unaffected because Codex has no matching slash command.</p>
+launch record and replayed by <code>agent resume</code>. Namespace
+safety (v2.16.0+): mutating commands with <code>--session</code> fail
+closed when an unprofiled default-profile write would collide with a
+named profile that already owns that session. Rerun with
+<code>--profile &lt;name&gt;</code> to target the named namespace, or
+<code>--profile default</code> to intentionally write the legacy default
+root. Claude-binary agents launched in tmux also get a best-effort
+delayed <code>/rename &lt;role&gt;-&lt;session&gt;</code> injection,
+including managed <code>resume --exec</code> / <code>agent resume</code>
+replay. Failure to deliver the rename does not block launch. Codex
+agents are unaffected because Codex has no matching slash command.</p>
 <p>Model/binary guidance (context-stamped 2026-07-02, current operator
 setup): defaults are not limits; escalate model or effort when output
 quality misses the bar. For shippable work,

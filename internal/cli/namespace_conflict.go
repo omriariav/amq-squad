@@ -11,14 +11,21 @@ import (
 )
 
 type namespaceConflictData struct {
-	Kind               string   `json:"kind"`
-	Profile            string   `json:"profile"`
-	Session            string   `json:"session"`
-	NamespaceID        string   `json:"namespace_id"`
-	RequestedAMQRoot   string   `json:"requested_amq_root"`
-	ConflictingAMQRoot string   `json:"conflicting_amq_root"`
-	Detail             string   `json:"detail"`
-	RecoveryCommands   []string `json:"recovery_commands,omitempty"`
+	Kind               string                       `json:"kind"`
+	Profile            string                       `json:"profile"`
+	Session            string                       `json:"session"`
+	NamespaceID        string                       `json:"namespace_id"`
+	RequestedAMQRoot   string                       `json:"requested_amq_root"`
+	ConflictingAMQRoot string                       `json:"conflicting_amq_root"`
+	Detail             string                       `json:"detail"`
+	RecoveryCommands   []string                     `json:"recovery_commands,omitempty"`
+	Conflicts          []namespaceConflictCandidate `json:"conflicts,omitempty"`
+}
+
+type namespaceConflictCandidate struct {
+	Profile string   `json:"profile"`
+	AMQRoot string   `json:"amq_root"`
+	Reasons []string `json:"reasons,omitempty"`
 }
 
 func namespaceConflictForProfileSession(projectDir, profile, session string) *namespaceConflictData {
@@ -44,19 +51,124 @@ func namespaceConflictForProfileSession(projectDir, profile, session string) *na
 		RecoveryCommands: []string{
 			"amq-squad status --project " + shellQuote(projectDir) + " --profile " + shellQuote(profile) + " --session " + shellQuote(session) + " --json",
 			"amq-squad status --project " + shellQuote(projectDir) + " --profile default --session " + shellQuote(session) + " --json",
+			"amq-squad archive " + shellQuote(session) + " --project " + shellQuote(projectDir) + " --profile default",
+			"amq-squad rm " + shellQuote(session) + " --project " + shellQuote(projectDir) + " --profile default",
+			"amq send --root " + shellQuote(legacy) + " --me <sender> --to <recipient> --thread <thread> --kind todo --subject <subject> --body <body>",
 		},
 	}
+}
+
+func defaultProfileShadowConflict(projectDir, profile, session string, explicitProfile bool) (*namespaceConflictData, error) {
+	profile = squadnamespace.NormalizeProfile(profile)
+	session = strings.TrimSpace(session)
+	if projectDir == "" || session == "" || profile != team.DefaultProfile || explicitProfile {
+		return nil, nil
+	}
+	profiles, err := team.ListProfiles(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	conflicts := namedProfileSessionConflicts(projectDir, session, profiles, true)
+	if len(conflicts) == 0 {
+		return nil, nil
+	}
+	requested := squadnamespace.AMQRoot(projectDir, team.DefaultProfile, session)
+	ns := squadnamespace.Resolve(projectDir, team.DefaultProfile, session)
+	profileNames := make([]string, 0, len(conflicts))
+	rootDetails := make([]string, 0, len(conflicts))
+	for _, c := range conflicts {
+		profileNames = append(profileNames, c.Profile)
+		rootDetails = append(rootDetails, fmt.Sprintf("%s at %s (%s)", c.Profile, c.AMQRoot, strings.Join(c.Reasons, ", ")))
+	}
+	detail := fmt.Sprintf("implicit default-profile mutation for session %q would write legacy/default root %s, but named profile %s already owns that session: %s; refusing before write. Rerun with --profile %s to target the named namespace, or pass --profile default to intentionally use the legacy/default root",
+		session, requested, pluralProfileList(profileNames), strings.Join(rootDetails, "; "), shellQuote(profileNames[0]))
+	if len(profileNames) > 1 {
+		detail = fmt.Sprintf("implicit default-profile mutation for session %q would write legacy/default root %s, but multiple named profiles already own that session: %s; refusing before write. Rerun with exactly one --profile <name> from this list (%s), or pass --profile default to intentionally use the legacy/default root",
+			session, requested, strings.Join(rootDetails, "; "), strings.Join(profileNames, ", "))
+	}
+	return &namespaceConflictData{
+		Kind:               "default_profile_shadowed",
+		Profile:            team.DefaultProfile,
+		Session:            session,
+		NamespaceID:        ns.ID,
+		RequestedAMQRoot:   requested,
+		ConflictingAMQRoot: conflicts[0].AMQRoot,
+		Detail:             detail,
+		RecoveryCommands: []string{
+			"amq-squad status --project " + shellQuote(projectDir) + " --profile default --session " + shellQuote(session) + " --json",
+		},
+		Conflicts: conflicts,
+	}, nil
+}
+
+func namedProfileSessionConflicts(projectDir, session string, profiles []string, includePins bool) []namespaceConflictCandidate {
+	var conflicts []namespaceConflictCandidate
+	for _, named := range profiles {
+		root := squadnamespace.AMQRoot(projectDir, named, session)
+		var reasons []string
+		if rootHasDurableState(root) {
+			reasons = append(reasons, "durable state")
+		}
+		if includePins && profilePinsSession(projectDir, named, session) {
+			reasons = append(reasons, "profile pins session")
+		}
+		if len(reasons) > 0 {
+			conflicts = append(conflicts, namespaceConflictCandidate{
+				Profile: named,
+				AMQRoot: root,
+				Reasons: reasons,
+			})
+		}
+	}
+	return conflicts
+}
+
+func profilePinsSession(projectDir, profile, session string) bool {
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return false
+	}
+	if strings.TrimSpace(t.Workstream) == session {
+		return true
+	}
+	for _, m := range t.Members {
+		if strings.TrimSpace(m.Session) == session {
+			return true
+		}
+	}
+	return false
+}
+
+func pluralProfileList(profiles []string) string {
+	if len(profiles) == 1 {
+		return fmt.Sprintf("%q", profiles[0])
+	}
+	quoted := make([]string, 0, len(profiles))
+	for _, p := range profiles {
+		quoted = append(quoted, fmt.Sprintf("%q", p))
+	}
+	return strings.Join(quoted, ", ")
 }
 
 func namespaceConflictError(operation string, conflict *namespaceConflictData) error {
 	if conflict == nil {
 		return nil
 	}
-	return fmt.Errorf("%s refused: %s", operation, conflict.Detail)
+	if len(conflict.RecoveryCommands) == 0 {
+		return fmt.Errorf("%s refused: %s", operation, conflict.Detail)
+	}
+	return fmt.Errorf("%s refused: %s\nRecovery commands:\n  %s", operation, conflict.Detail, strings.Join(conflict.RecoveryCommands, "\n  "))
 }
 
-func ensureNoNamespaceConflict(operation, projectDir, profile, session string) error {
-	return namespaceConflictError(operation, namespaceConflictForProfileSession(projectDir, profile, session))
+func ensureNoNamespaceConflict(operation, projectDir, profile, session string, explicitProfile bool) error {
+	if conflict := namespaceConflictForProfileSession(projectDir, profile, session); conflict != nil {
+		return namespaceConflictError(operation, conflict)
+	}
+	conflict, err := defaultProfileShadowConflict(projectDir, profile, session, explicitProfile)
+	if err != nil {
+		return fmt.Errorf("%s refused: scan named profiles for session %q: %w", operation, session, err)
+	}
+	return namespaceConflictError(operation, conflict)
 }
 
 func rootHasDurableState(root string) bool {

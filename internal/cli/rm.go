@@ -13,6 +13,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // archiveDirName is the base-root subdirectory that `archive` MOVES sessions
@@ -75,6 +76,7 @@ type rmExecution struct {
 	// Tests seed this; production leaves it empty and resolves once.
 	BaseRoot        string
 	ResolveBaseRoot func(projectDir string) (string, error)
+	Profile         string
 
 	// Probe drives liveness detection through internal/state. Tests inject a
 	// deterministic probe; production uses state.DefaultProbe.
@@ -96,6 +98,7 @@ func runRm(args []string, mode rmMode) error {
 	stopAgents := fs.Bool("stop-agents", false, "stop the session's live agents (SIGTERM) and close their panes as part of teardown (implies --force)")
 	keepPanes := fs.Bool("keep-panes", false, "do NOT close the torn-down agents' tmux panes (default: close them, since the session is being removed)")
 	projectFlag := fs.String("project", "", "project/team-home directory to target (default: cwd)")
+	profileFlag := fs.String("profile", team.DefaultProfile, "team profile namespace to target (default: default profile)")
 	fs.Usage = rmUsage(fs, mode)
 	args = allowInterspersedFlags(fs, args)
 	if err := parseFlags(fs, args); err != nil {
@@ -115,6 +118,10 @@ func runRm(args []string, mode rmMode) error {
 	if err != nil {
 		return err
 	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
 	return executeRm(rmExecution{
 		ProjectDir: projectDir,
 		Session:    fs.Arg(0),
@@ -127,6 +134,7 @@ func runRm(args []string, mode rmMode) error {
 		Probe:      state.DefaultProbe,
 		Confirm:    os.Stdin,
 		Out:        os.Stdout,
+		Profile:    profile,
 	})
 }
 
@@ -136,12 +144,14 @@ func rmUsage(fs *flag.FlagSet, mode rmMode) func() {
 			fmt.Fprint(os.Stderr, `amq-squad archive - move a finished session aside (non-destructive)
 
 Usage:
-  amq-squad archive <session> [--project DIR] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
+  amq-squad archive <session> [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
 
 Moves the session's AMQ root dir to <baseRoot>/.archive/<session>/ and moves
 its brief alongside it as .archive/<session>/<session>.md. Nothing is deleted.
 The session leaves the board but its mailboxes and brief are recoverable.
 --project targets another team-home without changing directories.
+--profile targets that profile's namespaced AMQ root and brief; default targets
+the legacy/default profile root.
 
 By default archive PREVIEWS exactly what will move and prompts for confirmation
 (default: No). Declining makes zero filesystem changes. Pass --yes/-y to skip
@@ -164,12 +174,14 @@ Examples:
 		fmt.Fprint(os.Stderr, `amq-squad rm - permanently remove a finished session
 
 Usage:
-  amq-squad rm <session> [--project DIR] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
+  amq-squad rm <session> [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
 
 Deletes the resolved session AMQ root and brief for the selected profile/session
 namespace. This session-destructive verb is confined to that namespace: it never
 touches a sibling session or anything outside that resolved root and brief.
 --project targets another team-home without changing directories.
+--profile targets that profile's namespaced AMQ root and brief; default targets
+the legacy/default profile root.
 
 By default rm PREVIEWS exactly what will be removed (the resolved paths + agent
 count) and prompts for confirmation (default: No). Declining makes zero
@@ -293,12 +305,24 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 	if resolve == nil {
 		resolve = scanBaseRootForProject
 	}
+	profile := strings.TrimSpace(e.Profile)
+	if profile == "" {
+		profile = team.DefaultProfile
+	}
+	if profile != team.DefaultProfile {
+		if err := team.ValidateProfileName(profile); err != nil {
+			return false, err
+		}
+	}
 	baseRoot := e.BaseRoot
 	if baseRoot == "" {
 		var err error
 		baseRoot, err = resolve(e.ProjectDir)
 		if err != nil {
 			return false, fmt.Errorf("resolve AMQ base root: %w", err)
+		}
+		if profile != team.DefaultProfile {
+			baseRoot = filepath.Join(baseRoot, profile)
 		}
 	}
 	if strings.TrimSpace(baseRoot) == "" {
@@ -321,7 +345,7 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 		Session:  session,
 		BaseRoot: baseRoot,
 		Root:     root,
-		Brief:    briefPath(e.ProjectDir, session),
+		Brief:    briefPathForProfile(e.ProjectDir, profile, session),
 	}
 	if fi, err := os.Stat(root); err == nil && fi.IsDir() {
 		target.RootExists = true

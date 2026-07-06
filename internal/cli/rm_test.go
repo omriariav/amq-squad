@@ -172,6 +172,40 @@ func TestRunRmProjectTargetsOtherDir(t *testing.T) {
 	}
 }
 
+func TestRunRmProfileTargetsNamedNamespace(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	project := t.TempDir()
+	other := t.TempDir()
+	root := filepath.Join(base, "release", "issue-101")
+	if err := os.MkdirAll(filepath.Join(root, "agents", "cto"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	brief := briefPathForProfile(project, "release", "issue-101")
+	if err := os.MkdirAll(filepath.Dir(brief), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(brief, []byte("# issue-101\nnamed profile brief\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, other)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runRm([]string{"issue-101", "--project", project, "--profile", "release", "--yes"}, rmModeDelete)
+	})
+	if err != nil {
+		t.Fatalf("rm --profile release: %v\nstderr:\n%s", err, stderr)
+	}
+	if _, statErr := os.Stat(root); !os.IsNotExist(statErr) {
+		t.Fatalf("rm --profile should remove named root; stat err = %v\nstdout:\n%s", statErr, stdout)
+	}
+	if _, statErr := os.Stat(brief); !os.IsNotExist(statErr) {
+		t.Fatalf("rm --profile should remove named brief; stat err = %v\nstdout:\n%s", statErr, stdout)
+	}
+	if _, statErr := os.Stat(filepath.Join(base, "issue-101")); !os.IsNotExist(statErr) {
+		t.Fatalf("rm --profile must not touch/create default root; stat err = %v", statErr)
+	}
+}
+
 func TestRunArchiveAcceptsFlagsAfterSession(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	project := t.TempDir()

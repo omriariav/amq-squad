@@ -139,6 +139,9 @@ func runTaskAdd(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureNoNamespaceConflict("task add", projectDir, profile, session, flagWasSet(fs, "profile")); err != nil {
+		return err
+	}
 	// The operator is a non-runnable, non-assignable mailbox participant, so
 	// it must never be pre-assigned work in the pull queue. Refuse before the
 	// store is written.
@@ -310,6 +313,9 @@ func runTaskTransition(args []string, verb string) error {
 	}
 	session, projectDir, profile, ns, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
 	if err != nil {
+		return err
+	}
+	if err := ensureNoNamespaceConflict("task "+verb, projectDir, profile, session, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
 	// The operator is a non-runnable mailbox participant and never acts as a

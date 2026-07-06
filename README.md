@@ -568,6 +568,13 @@ dispatch, task, brief, launch, resume, and lifecycle commands resolve against
 the selected profile/session namespace rather than scanning a sibling legacy
 session root.
 
+Namespace-safety rule: mutating commands with `--session` in a multi-profile
+project should pass `--profile`. If an unprofiled mutation would write the
+default profile while a named profile already owns that session, amq-squad
+fails closed before writing and tells you to rerun with `--profile <name>` or
+the explicit escape hatch `--profile default`. `status --session <name>` stays
+read-only and warns when the default view is shadowed by a named profile.
+
 Schema 3 adds an optional virtual operator participant for human gates:
 
 ```sh
@@ -786,20 +793,22 @@ amq-squad fork --from <current> --as <new> [--project DIR] [--force-duplicate]
                                   created or preserved by the subsequent
                                   `up --session <new>` (or `agent up`) live launch.
                                   --project targets a team-home without cd.
-amq-squad rm <session> [--project DIR] [--yes] [--force] [--keep-panes]
+amq-squad rm <session> [--project DIR] [--profile NAME] [--yes] [--force] [--keep-panes]
                                   Permanently remove a finished session (its AMQ root dir
                                   + brief). Previews + prompts
                                   (default No) unless --yes; refuses a live session unless
                                   --force; never touches a sibling session. Closes the
                                   torn-down agents' tmux panes by default (live agents
                                   excluded); --keep-panes to leave them. --project
-                                  targets a team-home without cd.
-amq-squad archive <session> [--project DIR] [--yes] [--force] [--keep-panes]
+                                  targets a team-home without cd; --profile selects the
+                                  profile/session namespace.
+amq-squad archive <session> [--project DIR] [--profile NAME] [--yes] [--force] [--keep-panes]
                                   Move a finished session aside instead of deleting it
                                   (to <baseRoot>/.archive/<session>/, recoverable).
                                   Confirm-gated; refuses a live session unless --force.
                                   Closes the agents' tmux panes by default; --keep-panes
-                                  to leave them. --project targets a team-home without cd.
+                                  to leave them. --project targets a team-home without cd;
+                                  --profile selects the profile/session namespace.
 amq-squad status [--project DIR] [--json]
                                   Multi-session BOARD over every discovered session
 amq-squad status --session NAME [--project DIR] [--json]
