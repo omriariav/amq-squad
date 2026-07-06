@@ -1207,11 +1207,31 @@ operating contract is one <code>/goal</code> per visible lead; leads
 push status, blockers, approval requests, and final evidence to
 AMQ/NOC-visible surfaces; the parent orchestrator or NOC polls each
 lead's inbox, gate threads, and <code>status --json</code> on a cadence;
-child agents remain internal unless the lead escalates them. When
-<code>operator_delivery.poll_required=true</code>, the same polling rule
-applies to the virtual operator mailbox: lead reports, blockers, and
-approval gates are durable AMQ records, and no client should claim wake
-support for the non-runnable operator recipient.
+child agents remain internal unless the lead escalates them. When a
+<code>global_orchestrator</code> owns more than one active or recently
+active workstream in one conversation, it keeps an in-conversation board
+and refreshes it after every poll, gate answer, spawn, stop, final
+report, or recovery action. The board records run name, repo,
+profile/session, lead and pane id, state (<code>running</code>,
+<code>gated</code>, <code>blocked</code>, <code>paused</code>,
+<code>stale</code>, <code>done</code>, <code>closed</code>), last
+checked time, next poll or wake source, current gate/blocker, last
+action, next action, and deterministic polling commands. Closed runs are
+demoted with <code>next action: none - closed</code> so they stop
+competing with active gates or stale runs. For
+<code>poll_required=true</code>, use deterministic commands such as
+<code>amq-squad monitor --once --json</code>, scoped
+<code>status --json</code>, <code>operator status</code>,
+<code>next --json</code>, and root-correct gate-thread reads. Recovery
+uses native amq-squad paths first (<code>dispatch</code> or drain-only
+<code>send</code> re-nudges, <code>resume</code> or
+<code>actions[]</code>, native <code>/goal resume</code> for understood
+blockers); raw <code>tmux send-keys Enter</code> is a recorded last
+resort after operator direction or when native recovery is unavailable.
+When <code>operator_delivery.poll_required=true</code>, the same polling
+rule applies to the virtual operator mailbox: lead reports, blockers,
+and approval gates are durable AMQ records, and no client should claim
+wake support for the non-runnable operator recipient.
 <code>status --json</code> exposes <code>goal_binding</code> so the NOC
 can tell whether a visible lead has verified native <code>/goal</code>
 binding (<code>native_goal</code>), a generated but not-yet-launched

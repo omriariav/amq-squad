@@ -1329,6 +1329,7 @@ func goalSkillInvocationRecommendations(data goalDraftData) []string {
 		if data.FieldSources["target_project_root"] != targetRootSourceProvided {
 			recs = append(recs, "# REQUIRED before start: --target-project-root <confirmed local checkout> (a global_orchestrator run will not begin without an explicit, confirmed project path)")
 		}
+		recs = append(recs, "# multi-workstream board: if more than one run is active or recently active in this conversation, maintain an in-conversation board with name/repo/profile/session/lead/pane, state, last checked, next poll source, gate/blocker, last action, next action, polling commands, and closed-run demotion")
 	}
 	return recs
 }
@@ -1504,6 +1505,9 @@ func renderGoalBriefSkeleton(data goalDraftData) string {
 	fmt.Fprintf(&b, "- Visible lead binding: %s (%s).\n", data.GoalBinding.Mode, data.GoalBinding.Source)
 	fmt.Fprintf(&b, "- Composition mode: %s.\n\n", data.Composition)
 	fmt.Fprintf(&b, "- Visibility: %s.\n\n", data.Visibility)
+	if data.Execution.Mode == executionModeGlobalOrchestrator {
+		b.WriteString("- Global orchestrator board: when this conversation owns more than one active or recently active workstream, maintain an in-conversation board with run name, repo, profile/session, lead/pane, state, last checked, next poll source, current gate/blocker, last action, next action, polling commands, and closed-run demotion.\n\n")
+	}
 	if data.AutonomousPolicy != nil {
 		b.WriteString("## Autonomous policy\n")
 		fmt.Fprintf(&b, "- Max active agents: %d\n", data.AutonomousPolicy.MaxActiveAgents)
