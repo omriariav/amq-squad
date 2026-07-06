@@ -1331,6 +1331,26 @@ func TestExecuteStatusJSONReleaseReadyWithVisibleTeamAndReview(t *testing.T) {
 	if !exec.ReleaseReadiness.Ready || exec.ReleaseReadiness.State != "ready" {
 		t.Fatalf("release readiness = %+v, want ready", exec.ReleaseReadiness)
 	}
+	mergeAuthority := exec.ReleaseReadiness.MergeAuthority
+	if mergeAuthority.DefaultActor != "visible_lead" {
+		t.Fatalf("merge authority default actor = %q, want visible_lead", mergeAuthority.DefaultActor)
+	}
+	if mergeAuthority.WorkerPolicy != "workers_do_not_merge_by_default" {
+		t.Fatalf("merge authority worker policy = %q, want workers_do_not_merge_by_default", mergeAuthority.WorkerPolicy)
+	}
+	if !strings.Contains(mergeAuthority.Detail, "workers escalate merge") {
+		t.Fatalf("merge authority detail = %q, want worker escalation guidance", mergeAuthority.Detail)
+	}
+	hasReleaseAction := false
+	for _, action := range mergeAuthority.LifecycleActions {
+		if action == "release" {
+			hasReleaseAction = true
+			break
+		}
+	}
+	if !hasReleaseAction {
+		t.Fatalf("merge authority lifecycle actions = %v, want release action listed", mergeAuthority.LifecycleActions)
+	}
 	for _, gate := range exec.ReleaseReadiness.Gates {
 		if gate.Required && !gate.Passed {
 			t.Fatalf("gate %+v should be satisfied in ready state", gate)

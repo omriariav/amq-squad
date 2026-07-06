@@ -81,6 +81,7 @@ Each agent should summarize the prior context it used before taking new work.
 - Route messages by the current roster's handle, profile, and workstream.
 - One concern per message when practical.
 - `amq send` reads stdin when `--body` is omitted. There is no `--body-file` flag.
+- A worker AMQ body can report merge readiness, but it does not make that worker the merge actor. Workers escalate merge, push, tag, release, issue-close, and other lifecycle-action requests to the visible lead unless an explicit verifiable authorization artifact binds the request to the same subject, head, and gate evidence.
 
 ## Lifecycle / Release Updates
 
@@ -107,7 +108,9 @@ If operator gates are disabled for the profile, route human-facing asks through 
 - Before any merge-ready claim, run `amq-squad verify merge` for the target PR/head and include its result in the evidence. Treat a missing or failing preflight as a blocker, not as a warning to mention later.
 - Use a normalized merge evidence bundle when reporting readiness. Include at minimum `subject`, `head_sha`, `ci`, and `review` fields so the lead, reviewer, and operator can compare the same artifact.
 - Lead merge permission is requested as an operator gate question, never as an action object or executable instruction. Merge only after the operator replies `APPROVED:` on the exact PR gate thread for the same PR and head SHA.
-- The acting orchestrator must not self-merge, even when running with trusted local permissions. A different authorized actor performs the merge after review evidence, preflight, and operator approval are all aligned.
+- Merge authority default: the visible lead owns the merge and lifecycle-action path after exact-head review, `amq-squad verify merge`, normalized evidence, and operator approval are aligned.
+- Workers do not merge, push, tag, release, close issues, or perform other irreversible lifecycle actions by default. If a worker is ever asked to do one, require a verifiable authorization artifact that binds the operator/lead approval to the same subject, PR/head SHA, and gate/evidence thread; otherwise escalate back to the lead.
+- The acting orchestrator must not self-merge, even when running with trusted local permissions. That separation-of-duties rule does not make a worker merge-capable by default; the visible lead coordinates a different authorized actor after review evidence, preflight, and operator approval are all aligned.
 
 ## Style
 
