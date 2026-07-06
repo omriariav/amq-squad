@@ -174,6 +174,67 @@ native `/goal resume` path only after the blocker is understood. Recovery sends
 a durable AMQ directive first; managed-pane `/goal` injection is only a
 follow-up when the pane is idle, and force-interrupt requires an operator gate.
 
+### Multi-workstream board protocol for global orchestrators
+
+When you are in `global_orchestrator` mode and more than one workstream is active
+or recently active in this conversation, keep a compact in-conversation board.
+Do not rely on memory, pane order, or old AMQ history to remember which run owns
+the next gate. Refresh the board after every poll, gate answer, spawn, stop,
+final report, or recovery action.
+
+Minimum board columns:
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Short human label for the run. |
+| `repo` | Target repo or local project root. |
+| `profile/session` | Exact amq-squad namespace. |
+| `lead/pane` | Visible lead role/handle and recorded pane id when known. |
+| `state` | One of `running`, `gated`, `blocked`, `paused`, `stale`, `done`, or `closed`. Use `gated` for open operator approvals, `paused` for native `/goal` paused/blocked, `stale` for no fresh activity past the stated poll window, `done` for reported complete but not archived, and `closed` once it should stop competing for attention. |
+| `last checked / next poll` | Last absolute check time plus the next poll source or wake source. |
+| `gate/blocker` | Current `gate/<topic>`, blocker, or operator decision, if any. |
+| `last action` | Last thing you did for this run. |
+| `next action` | One concrete action, or `none - closed`. |
+| `polling commands` | Source-of-truth commands for the next check. |
+
+Example board row:
+
+```text
+| release | omriariav/amq-squad | codex-v2-16-0/v2-16-0 | plan-reviewer/%3 | gated | checked 2026-07-06 16:50; next operator gate poll | gate/merge-v2-16-0 | sent release evidence | wait for APPROVED or DENIED | amq-squad next --project ... --profile codex-v2-16-0 --session v2-16-0 --json |
+```
+
+For `poll_required=true` runs, write deterministic polling commands into the
+row instead of vague reminders. Prefer:
+
+```sh
+amq-squad monitor --project <repo> --profile <profile> --session <session> --once --json
+amq-squad status --project <repo> --profile <profile> --session <session> --json
+amq-squad operator status --project <repo> --profile <profile> --session <session> --json
+amq-squad next --project <repo> --profile <profile> --session <session> --json
+amq-squad amq thread --project <repo> --profile <profile> --session <session> --me <lead> --id gate/<topic> --include-body
+```
+
+Closed-run demotion is part of the protocol: once a run has a final report,
+archive/removal evidence, or explicit stand-down, mark it `closed`, set
+`next action` to `none - closed`, and move it below active rows. Do not let a
+closed run keep the same visual priority as `gated`, `blocked`, or `stale`.
+
+Recovery ladder for a stale or stuck row:
+
+1. Inspect deterministic surfaces first: `status --json`, `monitor --once`,
+   `operator status`, the task store, and relevant `gate/<topic>` threads.
+2. If a durable task or directive is queued but the agent is idle, use
+   `amq-squad dispatch` or a drain-only `amq-squad send` re-nudge. Keep the task
+   body in AMQ; do not paste a second copy into the pane.
+3. If the lead or worker is down/stale, use `amq-squad resume --json` or the
+   exact `actions[]` command from `status --json`, then rerun the relevant poll.
+4. If `/goal` is paused or blocked, mark the board state `paused`, surface the
+   blocker, and resume through native `/goal resume` only after the blocker is
+   understood.
+5. Raw `tmux send-keys Enter` is a documented last resort only after native
+   amq-squad recovery is unavailable or the operator explicitly instructs it for
+   that run. Record the reason and follow with a status poll.
+
 The fast path is a **draft**, not an apply loop. If the `amq-squad goal draft`
 CLI is available, call it first and show the resulting Markdown or JSON to the
 operator before any durable mutation:

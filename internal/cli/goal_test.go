@@ -1041,6 +1041,15 @@ func TestGoalDraftExecutionModeContract(t *testing.T) {
 	if !strings.Contains(env.Data.OrchestratorPrompt, "--mode global_orchestrator") || !strings.Contains(env.Data.OrchestratorPrompt, "--target-contract 2.10.0") {
 		t.Fatalf("orchestrator prompt dropped execution metadata: %s", env.Data.OrchestratorPrompt)
 	}
+	for _, want := range []string{
+		"Global orchestrator board",
+		"name/repo/profile/session/lead/pane",
+		"closed-run demotion",
+	} {
+		if !strings.Contains(env.Data.BriefSkeleton+env.Data.SkillInvocation, want) {
+			t.Fatalf("global orchestrator draft missing board guidance %q:\nbrief:\n%s\nskill invocation:\n%s", want, env.Data.BriefSkeleton, env.Data.SkillInvocation)
+		}
+	}
 }
 
 func TestGoalDraftAutonomousPreviewRequiresAndEmitsPolicy(t *testing.T) {

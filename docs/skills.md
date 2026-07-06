@@ -340,6 +340,23 @@ contract: one `/goal` per visible lead; each lead pushes status, blockers,
 approval requests, and final evidence to AMQ/NOC-visible surfaces; the parent
 polls lead inboxes, gate threads, and `status --json` on a cadence. Child agents
 remain internal unless the lead escalates them.
+When a `global_orchestrator` owns more than one active or recently active
+workstream in the same conversation, it must keep an in-conversation board and
+refresh it after every poll, gate answer, spawn, stop, final report, or recovery
+action. The board tracks run name, repo, profile/session, lead and pane id,
+state (`running`, `gated`, `blocked`, `paused`, `stale`, `done`, `closed`),
+last checked time, next poll or wake source, current gate/blocker, last action,
+next action, and deterministic polling commands. Closed runs are demoted with
+`next action: none - closed` so they stop competing with active gates or stale
+runs.
+For `poll_required=true`, prefer concrete poll commands such as
+`amq-squad monitor --once --json`, scoped `status --json`, `operator status`,
+`next --json`, and root-correct gate-thread reads. Recovery follows the native
+amq-squad ladder first: inspect status/monitor/gates/tasks, re-nudge queued work
+with `dispatch` or drain-only `send`, resume stale agents with `resume` or
+`actions[]`, mark native `/goal` blockers as `paused`, and use raw
+`tmux send-keys Enter` only as a recorded last resort after operator direction
+or when native recovery is unavailable.
 `status --json.records[].local_input` is a read-only pane-tail blind-spot
 detection heuristic for managed child local approval/input prompts, not a
 coordination or progress primitive. Treat `warnings[].kind=="local_input_blocked"`

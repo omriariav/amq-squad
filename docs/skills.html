@@ -822,7 +822,30 @@ polling contract: one <code>/goal</code> per visible lead; each lead
 pushes status, blockers, approval requests, and final evidence to
 AMQ/NOC-visible surfaces; the parent polls lead inboxes, gate threads,
 and <code>status --json</code> on a cadence. Child agents remain
-internal unless the lead escalates them.
+internal unless the lead escalates them. When a
+<code>global_orchestrator</code> owns more than one active or recently
+active workstream in the same conversation, it must keep an
+in-conversation board and refresh it after every poll, gate answer,
+spawn, stop, final report, or recovery action. The board tracks run
+name, repo, profile/session, lead and pane id, state
+(<code>running</code>, <code>gated</code>, <code>blocked</code>,
+<code>paused</code>, <code>stale</code>, <code>done</code>,
+<code>closed</code>), last checked time, next poll or wake source,
+current gate/blocker, last action, next action, and deterministic
+polling commands. Closed runs are demoted with
+<code>next action: none - closed</code> so they stop competing with
+active gates or stale runs. For <code>poll_required=true</code>, prefer
+concrete poll commands such as
+<code>amq-squad monitor --once --json</code>, scoped
+<code>status --json</code>, <code>operator status</code>,
+<code>next --json</code>, and root-correct gate-thread reads. Recovery
+follows the native amq-squad ladder first: inspect
+status/monitor/gates/tasks, re-nudge queued work with
+<code>dispatch</code> or drain-only <code>send</code>, resume stale
+agents with <code>resume</code> or <code>actions[]</code>, mark native
+<code>/goal</code> blockers as <code>paused</code>, and use raw
+<code>tmux send-keys Enter</code> only as a recorded last resort after
+operator direction or when native recovery is unavailable.
 <code>status --json.records[].local_input</code> is a read-only
 pane-tail blind-spot detection heuristic for managed child local
 approval/input prompts, not a coordination or progress primitive. Treat

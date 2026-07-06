@@ -93,6 +93,42 @@ amq-squad operator answer --project <project> --profile <profile> --session <ses
 If `next` reports idle with exit code 1, there is no current operator action for
 that scoped profile/session.
 
+## Multi-Run Global Orchestrator Board
+
+When one `global_orchestrator` conversation owns more than one active or
+recently active run, keep a compact board in the conversation and update it
+after every poll, gate answer, spawn, stop, final report, or recovery action.
+
+Minimum fields:
+
+| Field | What to record |
+| --- | --- |
+| Name / repo | Short run label and target repo or project root. |
+| Profile / session | Exact namespace for commands. |
+| Lead / pane | Visible lead role/handle and pane id when known. |
+| State | `running`, `gated`, `blocked`, `paused`, `stale`, `done`, or `closed`. |
+| Last checked / next poll | Absolute check time and the next poll or wake source. |
+| Gate / blocker | Current `gate/<topic>`, operator decision, or blocker. |
+| Last action / next action | Last step taken and one concrete next action. |
+| Polling commands | Exact commands for the next check. |
+
+For `poll_required=true`, use deterministic commands such as:
+
+```sh
+amq-squad monitor --project <project> --profile <profile> --session <session> --once --json
+amq-squad status --project <project> --profile <profile> --session <session> --json
+amq-squad operator status --project <project> --profile <profile> --session <session> --json
+amq-squad next --project <project> --profile <profile> --session <session> --json
+```
+
+Demote finished workstreams to `closed` with `next action: none - closed` so
+they stop competing with `gated`, `blocked`, or `stale` rows. Recovery should
+use native amq-squad paths first: inspect `status`/`monitor`/gates/tasks,
+re-nudge queued work with `dispatch` or drain-only `send`, resume stale agents
+from `status --json.actions[]` or `resume --json`, and mark native `/goal`
+blockers as `paused`. Raw `tmux send-keys Enter` is a recorded last resort only
+after operator direction or when native recovery is unavailable.
+
 ## Command Primitive Decision Table
 
 When steering a live squad, choose the command family by intent:

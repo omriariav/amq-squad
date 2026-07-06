@@ -627,6 +627,21 @@ is one `/goal` per visible lead; leads push status, blockers, approval requests,
 and final evidence to AMQ/NOC-visible surfaces; the parent orchestrator or NOC
 polls each lead's inbox, gate threads, and `status --json` on a cadence; child
 agents remain internal unless the lead escalates them.
+When a `global_orchestrator` owns more than one active or recently active
+workstream in one conversation, it keeps an in-conversation board and refreshes
+it after every poll, gate answer, spawn, stop, final report, or recovery action.
+The board records run name, repo, profile/session, lead and pane id, state
+(`running`, `gated`, `blocked`, `paused`, `stale`, `done`, `closed`), last
+checked time, next poll or wake source, current gate/blocker, last action, next
+action, and deterministic polling commands. Closed runs are demoted with
+`next action: none - closed` so they stop competing with active gates or stale
+runs. For `poll_required=true`, use deterministic commands such as
+`amq-squad monitor --once --json`, scoped `status --json`, `operator status`,
+`next --json`, and root-correct gate-thread reads. Recovery uses native
+amq-squad paths first (`dispatch` or drain-only `send` re-nudges, `resume` or
+`actions[]`, native `/goal resume` for understood blockers); raw
+`tmux send-keys Enter` is a recorded last resort after operator direction or
+when native recovery is unavailable.
 When `operator_delivery.poll_required=true`, the same polling rule applies to
 the virtual operator mailbox: lead reports, blockers, and approval gates are
 durable AMQ records, and no client should claim wake support for the
