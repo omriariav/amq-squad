@@ -149,6 +149,7 @@ Examples:
 		ProjectDir:       projectDir,
 		RequestedSession: *sessionFlag,
 		ExplicitSession:  flagWasSet(fs, "session"),
+		ExplicitProfile:  flagWasSet(fs, "profile"),
 		Mode:             mode,
 		Force:            *forceDuplicate,
 		NoBootstrap:      *noBootstrap,
@@ -171,6 +172,7 @@ type resumeExecution struct {
 	ProjectDir       string
 	RequestedSession string
 	ExplicitSession  bool
+	ExplicitProfile  bool
 	// RolesRaw is the optional comma-separated subset of roles to resume. Empty
 	// resumes every team member; a non-empty list restricts the plan (and
 	// --exec) to those roles, so a lead can bring up a subset without
@@ -347,6 +349,13 @@ func executeResume(r resumeExecution) error {
 		return err
 	}
 	namespaceConflict := namespaceConflictForProfileSession(t.Project, r.Profile, workstream)
+	if namespaceConflict == nil {
+		var cerr error
+		namespaceConflict, cerr = defaultProfileShadowConflict(t.Project, r.Profile, workstream, r.ExplicitProfile)
+		if cerr != nil {
+			return fmt.Errorf("resume refused: scan named profiles for session %q: %w", workstream, cerr)
+		}
+	}
 	if namespaceConflict != nil && !r.JSON {
 		return namespaceConflictError("resume", namespaceConflict)
 	}

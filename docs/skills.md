@@ -204,6 +204,11 @@ acquire its lock (`--no-require-wake` opts out and persists into resume).
 Use `--no-gitignore` on `agent up`, `up`, or `up --dry-run` when AMQ coop
 auto-init should leave `.gitignore` unchanged; the opt-out is persisted in the
 launch record and replayed by `agent resume`.
+Namespace safety (v2.16.0+): mutating commands with `--session` fail closed
+when an unprofiled default-profile write would collide with a named profile
+that already owns that session. Rerun with `--profile <name>` to target the
+named namespace, or `--profile default` to intentionally write the legacy
+default root.
 Claude-binary agents launched in tmux also get a best-effort delayed
 `/rename <role>-<session>` injection, including managed `resume --exec` /
 `agent resume` replay. Failure to deliver the rename does not block launch.

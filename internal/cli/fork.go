@@ -88,6 +88,7 @@ Examples:
 		ProjectDir:       projectDir,
 		RequestedSession: *as,
 		ExplicitSession:  true,
+		ExplicitProfile:  flagWasSet(fs, "profile"),
 		Mode:             resumeModeFresh,
 		Force:            *forceDuplicate,
 		NoBootstrap:      *noBootstrap,

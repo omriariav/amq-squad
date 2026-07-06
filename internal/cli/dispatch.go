@@ -159,7 +159,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflict("dispatch", projectDir, profile, workstream); err != nil {
+	if err := ensureNoNamespaceConflict("dispatch", projectDir, profile, workstream, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
 	ns := squadnamespace.Resolve(projectDir, profile, workstream)

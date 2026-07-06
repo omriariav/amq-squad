@@ -228,7 +228,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflict("up", cwd, profile, workstream); err != nil {
+	if err := ensureNoNamespaceConflict("up", cwd, profile, workstream, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
 
@@ -243,7 +243,7 @@ Examples:
 		// --reset: tear down + remove the existing session first, reusing the
 		// PR7 rm teardown (confirm-gated; --force for live; --yes skips). A
 		// declined confirm cancels the whole up with zero changes.
-		declined, err := resetExistingSession(cwd, workstream, *yes, *force)
+		declined, err := resetExistingSession(cwd, profile, workstream, *yes, *force)
 		if err != nil {
 			return err
 		}
@@ -294,7 +294,7 @@ func existingSessionRefusal(workstream, root string) error {
 // unless force, and prompts for confirmation (default No) unless yes. It
 // returns declined=true when the operator declined the confirm gate (ZERO
 // filesystem changes), so runUp can cancel the launch too.
-func resetExistingSession(cwd, session string, yes, force bool) (declined bool, err error) {
+func resetExistingSession(cwd, profile, session string, yes, force bool) (declined bool, err error) {
 	var confirm io.Reader = os.Stdin
 	if resetConfirmOverride != nil {
 		confirm = resetConfirmOverride
@@ -306,6 +306,7 @@ func resetExistingSession(cwd, session string, yes, force bool) (declined bool, 
 	return executeRmReportDeclined(rmExecution{
 		ProjectDir: cwd,
 		Session:    session,
+		Profile:    profile,
 		Mode:       rmModeDelete,
 		Yes:        yes,
 		Force:      force,

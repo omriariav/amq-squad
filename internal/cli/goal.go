@@ -305,7 +305,7 @@ command is confirm-gated; pass --yes after reviewing the gate and lead state.
 	if gate == "" {
 		return usageErrorf("goal apply requires --gate <topic>")
 	}
-	target, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal apply")
+	target, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal apply")
 	if err != nil {
 		return err
 	}
@@ -384,7 +384,7 @@ confirm-gated and requires --yes in this first implementation slice.
 	// intentionally not applied here; the preview resolves against the configured
 	// lead, matching delivery without registration.
 	if *dryRun {
-		opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal start")
+		opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start")
 		if err != nil {
 			return err
 		}
@@ -401,13 +401,13 @@ confirm-gated and requires --yes in this first implementation slice.
 		return usageErrorf("goal start delivery requires --yes (or run --dry-run to preview first)")
 	}
 	if flagWasSet(fs, "register-orchestrator") {
-		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal start")
+		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start")
 		if err != nil {
 			return err
 		}
 		*roleFlag = role
 	}
-	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal start")
+	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start")
 	if err != nil {
 		return err
 	}
@@ -470,13 +470,13 @@ runtime accepts goal control messages safely.
 		return usageErrorf("goal deliver requires --goal TEXT")
 	}
 	if flagWasSet(fs, "register-orchestrator") {
-		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal deliver")
+		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver")
 		if err != nil {
 			return err
 		}
 		*roleFlag = role
 	}
-	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "session"), "goal deliver")
+	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver")
 	if err != nil {
 		return err
 	}
@@ -496,8 +496,8 @@ runtime accepts goal control messages safely.
 	return nil
 }
 
-func resolveGoalDeliveryOptions(projectFlag, profileFlag, sessionFlag, roleFlag, goal string, projectSet, sessionSet bool, command string) (goalDeliveryOptions, error) {
-	opts, err := resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag, projectSet, sessionSet, command)
+func resolveGoalDeliveryOptions(projectFlag, profileFlag, sessionFlag, roleFlag, goal string, projectSet, profileSet, sessionSet bool, command string) (goalDeliveryOptions, error) {
+	opts, err := resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag, projectSet, profileSet, sessionSet, command)
 	if err != nil {
 		return goalDeliveryOptions{}, err
 	}
@@ -505,7 +505,7 @@ func resolveGoalDeliveryOptions(projectFlag, profileFlag, sessionFlag, roleFlag,
 	return opts, nil
 }
 
-func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag string, projectSet, sessionSet bool, command string) (goalDeliveryOptions, error) {
+func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag string, projectSet, profileSet, sessionSet bool, command string) (goalDeliveryOptions, error) {
 	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
 	if err != nil {
 		return goalDeliveryOptions{}, err
@@ -521,7 +521,7 @@ func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag st
 	if err != nil {
 		return goalDeliveryOptions{}, err
 	}
-	if err := ensureNoNamespaceConflict(command, projectDir, profile, workstream); err != nil {
+	if err := ensureNoNamespaceConflict(command, projectDir, profile, workstream, profileSet); err != nil {
 		return goalDeliveryOptions{}, err
 	}
 	role := strings.TrimSpace(roleFlag)
@@ -774,7 +774,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle string) error {
 	return nil
 }
 
-func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, roleFlag, handle string, projectSet, sessionSet bool, command string) (string, error) {
+func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, roleFlag, handle string, projectSet, profileSet, sessionSet bool, command string) (string, error) {
 	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
 	if err != nil {
 		return "", err
@@ -790,7 +790,7 @@ func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, 
 	if err != nil {
 		return "", err
 	}
-	if err := ensureNoNamespaceConflict(command, projectDir, profile, workstream); err != nil {
+	if err := ensureNoNamespaceConflict(command, projectDir, profile, workstream, profileSet); err != nil {
 		return "", err
 	}
 	if err := ensureGoalOrchestratorMember(projectDir, profile, workstream, strings.TrimSpace(handle)); err != nil {

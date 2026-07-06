@@ -81,6 +81,7 @@ type statusEnvelopeData struct {
 	Autonomous        team.AutonomousStatus  `json:"autonomous"`
 	Execution         executionModeData      `json:"execution"`
 	NamespaceConflict *namespaceConflictData `json:"namespace_conflict,omitempty"`
+	Warnings          []statusWarning        `json:"warnings,omitempty"`
 	Topology          *statusTopology        `json:"topology,omitempty"`
 	Records           []statusRecord         `json:"records"`
 	// Actions are the SESSION-scope operator actions (status / resume preview /
@@ -88,6 +89,14 @@ type statusEnvelopeData struct {
 	// counterpart to each record's agent-scope actions. A client renders these
 	// for the session row instead of constructing the commands itself.
 	Actions []runtimeActionJSON `json:"actions"`
+}
+
+type statusWarning struct {
+	Kind             string                       `json:"kind"`
+	Session          string                       `json:"session"`
+	Detail           string                       `json:"detail"`
+	SuggestedCommand string                       `json:"suggested_command,omitempty"`
+	Conflicts        []namespaceConflictCandidate `json:"conflicts,omitempty"`
 }
 
 type statusOperatorView struct {
@@ -291,6 +300,10 @@ func executeStatus(s statusExecution) error {
 	if err != nil {
 		return err
 	}
+	warnings, err := statusNamespaceWarnings(t.Project, s.Profile, workstream)
+	if err != nil {
+		return fmt.Errorf("scan namespace warnings: %w", err)
+	}
 
 	rows := buildStatusRows(t, s.Profile, workstream, s.Probe)
 	if s.JSON {
@@ -333,6 +346,7 @@ func executeStatus(s statusExecution) error {
 			Autonomous:        team.EffectiveAutonomousStatus(t),
 			Execution:         execution,
 			NamespaceConflict: conflict,
+			Warnings:          warnings,
 			Topology:          topology,
 			Records:           rows,
 			Actions:           ctx.Actions,
@@ -342,6 +356,9 @@ func executeStatus(s statusExecution) error {
 	fmt.Fprintf(s.Out, "# workstream: %s\n", workstream)
 	if root := firstStatusRoot(rows); root != "" {
 		fmt.Fprintf(s.Out, "# AM_ROOT:    %s\n", root)
+	}
+	for _, warning := range warnings {
+		fmt.Fprintf(s.Out, "warning: %s\n", warning.Detail)
 	}
 	delivery := operatorDeliveryForTeam(t)
 	if delivery.Enabled {
@@ -354,6 +371,41 @@ func executeStatus(s statusExecution) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), r.Detail)
 	}
 	return w.Flush()
+}
+
+func statusNamespaceWarnings(projectDir, profile, session string) ([]statusWarning, error) {
+	if squadnamespace.NormalizeProfile(profile) != team.DefaultProfile || strings.TrimSpace(session) == "" {
+		return nil, nil
+	}
+	profiles, err := team.ListProfiles(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	conflicts := namedProfileSessionConflicts(projectDir, session, profiles, false)
+	if len(conflicts) == 0 {
+		return nil, nil
+	}
+	names := make([]string, 0, len(conflicts))
+	for _, c := range conflicts {
+		names = append(names, c.Profile)
+	}
+	suggested := ""
+	if len(names) == 1 {
+		suggested = "amq-squad status --project " + shellQuote(projectDir) + " --profile " + shellQuote(names[0]) + " --session " + shellQuote(session)
+	}
+	detail := fmt.Sprintf("showing default-profile data; session %s is also live under profile %s - run %s",
+		shellQuote(session), pluralProfileList(names), "amq-squad status --profile <profile> --session "+shellQuote(session))
+	if suggested != "" {
+		detail = fmt.Sprintf("showing default-profile data; session %s is also live under profile %s - run %s",
+			shellQuote(session), pluralProfileList(names), suggested)
+	}
+	return []statusWarning{{
+		Kind:             "default_profile_shadowed",
+		Session:          session,
+		Detail:           detail,
+		SuggestedCommand: suggested,
+		Conflicts:        conflicts,
+	}}, nil
 }
 
 func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorView {

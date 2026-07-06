@@ -345,6 +345,61 @@ func TestExecuteStatusJSONNamedProfileAllowsPresenceOnlyLegacyRoot(t *testing.T)
 	}
 }
 
+func TestRunStatusDefaultProfileWarnsWhenNamedProfileHasSameSession(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	chdir(t, dir)
+	seedProfile(t, dir, team.DefaultProfile, team.Team{
+		Workstream: "main",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+		},
+	})
+	seedProfile(t, dir, "release", team.Team{
+		Workstream: "main",
+		Members: []team.Member{
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "main"},
+		},
+	})
+	namedRoot := filepath.Join(dir, ".agent-mail", "release", "main")
+	if err := os.MkdirAll(filepath.Join(namedRoot, "agents", "qa"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(namedRoot, "agents", "qa", "inbox.md"), []byte("named durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runStatus([]string{"--session", "main"})
+	})
+	if err != nil {
+		t.Fatalf("status --session main: %v\n%s", err, stdout)
+	}
+	for _, want := range []string{"warning: showing default-profile data", "--profile release", "--session main"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("status warning missing %q:\n%s", want, stdout)
+		}
+	}
+
+	jsonOut, _, err := captureOutput(t, func() error {
+		return runStatus([]string{"--session", "main", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, jsonOut)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, jsonOut)
+	if len(env.Data.Warnings) != 1 {
+		t.Fatalf("warnings = %+v, want one shadow warning", env.Data.Warnings)
+	}
+	got := env.Data.Warnings[0]
+	if got.Kind != "default_profile_shadowed" || got.Session != "main" ||
+		!strings.Contains(got.Detail, "showing default-profile data") ||
+		!strings.Contains(got.SuggestedCommand, "--profile release") ||
+		len(got.Conflicts) != 1 || got.Conflicts[0].Profile != "release" {
+		t.Fatalf("bad status warning: %+v", got)
+	}
+}
+
 func TestExecuteStatusJSONSameProfileSessionAllowsNestedNamedNamespaceOnly(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	dir := t.TempDir()

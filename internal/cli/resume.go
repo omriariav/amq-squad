@@ -142,6 +142,7 @@ Examples:
 		ProjectDir:       projectDir,
 		RequestedSession: requestedSession,
 		ExplicitSession:  explicitSession,
+		ExplicitProfile:  flagWasSet(fs, "profile"),
 		RolesRaw:         *roleFlag,
 		Mode:             mode,
 		Force:            *forceDuplicate,
