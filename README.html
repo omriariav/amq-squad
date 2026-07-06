@@ -407,6 +407,12 @@ pull-based, dependency-gated queue under
 or <code>.amq-squad/tasks/&lt;profile&gt;/&lt;session&gt;/</code> for
 named profiles, so a lead of either binary decomposes the goal into
 claimable work.</li>
+<li><strong>Agent activity heartbeats</strong> —
+<code>amq-squad activity set/clear</code>: workers can atomically
+publish current task/phase activity under their AMQ agent directory.
+<code>status --json</code> and <code>console</code> show
+fresh/stale/unknown activity, with task-store ownership as a weaker
+source-separated fallback.</li>
 <li><strong>Compose-from-goal playbook</strong> — the
 <code>amq-squad-orchestrator</code> skill (in both the Claude and Codex
 marketplaces) drives propose → approve → <code>team member add</code> →
@@ -1401,6 +1407,14 @@ amq-squad task reset &lt;id&gt; --me HANDLE [--reason R] [--json] --session S
                                   completed. Terminal/reset transitions on an
                                   assigned task require the assignee&#39;s --me.
                                   All subcommands require --session.
+amq-squad activity set --session S --me HANDLE --phase PHASE [--task ID] [--detail TEXT] [--profile P] [--json]
+amq-squad activity clear --session S --me HANDLE [--profile P] [--json]
+                                  Write or clear
+                                  &lt;amq-root&gt;/agents/&lt;handle&gt;/activity.json
+                                  atomically. Status and console surface this as
+                                  an honest busy/current-task signal with
+                                  source and quality; stale or malformed files
+                                  degrade to unknown rather than progress.
 amq-squad dispatch --session S --role R --subject SUBJ --body BODY [--create-task | --task ID] [--json]
                                   Queue a durable AMQ message and best-effort
                                   drain nudge. Plain dispatch stays AMQ-only;
@@ -1510,6 +1524,15 @@ session — docker-ps / <code>git branch -v</code> style: session name,
 rolled-up state (running / stopped / degraded), agent health (N/M alive
 + at-risk), a one-line brief, and last-activity. Add
 <code>--session NAME</code> for the single-session detail table.</p>
+<p>Per-agent rows may include activity from
+<code>&lt;amq-root&gt;/agents/&lt;handle&gt;/activity.json</code>,
+written by <code>amq-squad activity set</code> or cheap task-transition
+stamps. <code>status --json</code> exposes this under
+<code>records[].activity</code> with <code>source</code>
+(<code>heartbeat-file</code>, <code>task-store</code>, or
+<code>unknown</code>) and <code>quality</code> (<code>fresh</code>,
+<code>stale</code>, or <code>unknown</code>) so clients can distinguish
+an agent-written heartbeat from task-store ownership fallback.</p>
 <p><code>amq-squad console</code> is the project-scoped Mission Control
 TUI for the current team-home.</p>
 <div class="sourceCode" id="cb24"><pre
@@ -1602,11 +1625,12 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb27-1"><a href="#
 <span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--subject</span> <span class="st">&quot;Review&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
 <span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--title</span> <span class="st">&quot;Review PR&quot;</span> <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
 <span id="cb27-9"><a href="#cb27-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task claim t1 <span class="at">--me</span> qa <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add qa <span class="at">--binary</span> codex <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-11"><a href="#cb27-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-12"><a href="#cb27-12" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--sync</span> <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-13"><a href="#cb27-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--dry-run</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-14"><a href="#cb27-14" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span></code></pre></div>
+<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> activity set <span class="at">--session</span> issue-96 <span class="at">--me</span> qa <span class="at">--task</span> t1 <span class="at">--phase</span> testing <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb27-11"><a href="#cb27-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add qa <span class="at">--binary</span> codex <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb27-12"><a href="#cb27-12" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb27-13"><a href="#cb27-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--sync</span> <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb27-14"><a href="#cb27-14" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--dry-run</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb27-15"><a href="#cb27-15" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span></code></pre></div>
 <p>Envelope shape:</p>
 <div class="sourceCode" id="cb28"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
@@ -1618,9 +1642,10 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb28-1"><a href=
 orchestrators and NOC tooling. Initial stable mutator envelopes include
 <code>dispatch</code>, <code>task add</code>, task transitions
 (<code>claim</code>, <code>done</code>, <code>fail</code>,
-<code>block</code>), and <code>team member add/rm</code>. Human output
-remains unchanged when <code>--json</code> is not passed. This is the
-user-facing closure for #222.</p>
+<code>block</code>), <code>activity set/clear</code>, and
+<code>team member add/rm</code>. Human output remains unchanged when
+<code>--json</code> is not passed. This is the user-facing closure for
+#222.</p>
 <h2 id="runtime-control-tmux">Runtime control (tmux)</h2>
 <p>amq-squad owns the tmux execution/control contract for a team so
 external clients (such as amq-noc) can make agents actionable without

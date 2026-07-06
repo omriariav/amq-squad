@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
@@ -166,6 +167,10 @@ type statusRecord struct {
 	// (wake_alive) and status to know whether the sidecar is actually running,
 	// so a dead sidecar surfaces as degraded rather than silently lost.
 	WakeAutoDrain bool `json:"wake_auto_drain,omitempty"`
+	// Activity is an additive, honest busy/progress signal. Heartbeat-file
+	// entries come from an agent-written activity.json; task-store entries only
+	// seed current-task ownership and must not be treated as liveness.
+	Activity *activity.Snapshot `json:"activity,omitempty"`
 	// PreauthorizedActions surfaces the in-scope worker actions amq-squad
 	// pre-authorized at launch (#296) so the active allowlist is auditable from
 	// status --json. Empty/omitted for legacy records and launches with no
@@ -1125,7 +1130,54 @@ func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLau
 			rows[i].ManagedTarget = strings.TrimSpace(rows[i].Tmux.Target)
 		}
 	}
+	attachStatusActivities(t.Project, profile, workstream, rows, probe.Now())
 	return rows
+}
+
+func attachStatusActivities(projectDir, profile, workstream string, rows []statusRecord, now time.Time) {
+	activeTasks := activeTasksByAssignee(projectDir, profile, workstream)
+	for i := range rows {
+		if strings.TrimSpace(rows[i].AgentDir) != "" {
+			if act, ok, err := activity.Read(rows[i].AgentDir, now, activity.DefaultStaleAfter); err == nil && ok {
+				rows[i].Activity = &act
+				continue
+			} else if err != nil {
+				act := activity.UnknownSnapshot(rows[i].Handle, "activity heartbeat unreadable")
+				rows[i].Activity = &act
+				continue
+			}
+		}
+		if task, ok := activeTasks[rows[i].Handle]; ok {
+			rows[i].Activity = taskStoreActivity(task, now)
+		}
+	}
+}
+
+func activeTasksByAssignee(projectDir, profile, workstream string) map[string]taskstore.Task {
+	tasks, err := taskstore.ListForProfile(projectDir, profile, workstream)
+	if err != nil {
+		return nil
+	}
+	out := map[string]taskstore.Task{}
+	for _, t := range tasks {
+		if t.Status != taskstore.StatusInProgress || strings.TrimSpace(t.AssignedTo) == "" {
+			continue
+		}
+		cur, ok := out[t.AssignedTo]
+		if !ok || t.UpdatedAt.After(cur.UpdatedAt) || (t.UpdatedAt.Equal(cur.UpdatedAt) && t.ID > cur.ID) {
+			out[t.AssignedTo] = t
+		}
+	}
+	return out
+}
+
+func taskStoreActivity(t taskstore.Task, now time.Time) *activity.Snapshot {
+	detail := strings.TrimSpace(t.Title)
+	if detail == "" {
+		detail = "current task from task store; no fresh activity heartbeat"
+	}
+	act := activity.TaskStoreSnapshot(t.AssignedTo, t.ID, detail, t.UpdatedAt, now, activity.DefaultStaleAfter)
+	return &act
 }
 
 func orchestrationStatusFields(t team.Team) (bool, string, string) {

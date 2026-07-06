@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
@@ -47,6 +48,15 @@ func assertNoLegacyNamespaceConflictReason(t *testing.T, actions []runtimeAction
 			t.Fatalf("action %s unexpectedly carries namespace-conflict reason: %+v", action.Kind, action)
 		}
 	}
+}
+
+func findStatusRecord(records []statusRecord, handle string) *statusRecord {
+	for i := range records {
+		if records[i].Handle == handle {
+			return &records[i]
+		}
+	}
+	return nil
 }
 
 func readinessGatesByCode(gates []releaseReadinessGateData) map[string]releaseReadinessGateData {
@@ -542,6 +552,133 @@ func TestStatusWarnsWorkerCompletionReportForInProgressTask(t *testing.T) {
 		!strings.Contains(w.SuggestedCommand, "task done t1 --me qa") ||
 		!strings.Contains(w.SuggestedCommand, "accepted msg-done") {
 		t.Fatalf("missing completion-report task warning: %+v", env.Data.Warnings)
+	}
+}
+
+func TestStatusJSONIncludesHeartbeatActivity(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	agentDir := seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
+		Binary:  "codex",
+		Handle:  "qa",
+		Role:    "qa",
+		Session: "issue-96",
+		CWD:     dir,
+	})
+	if err := activity.Write(agentDir, activity.File{
+		Handle:    "qa",
+		TaskID:    "t11",
+		Phase:     "testing",
+		Detail:    "make ci",
+		WrittenAt: now.Add(-30 * time.Second),
+	}); err != nil {
+		t.Fatalf("seed activity: %v", err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	rec := findStatusRecord(env.Data.Records, "qa")
+	if rec == nil || rec.Activity == nil {
+		t.Fatalf("qa activity missing: %+v", env.Data.Records)
+	}
+	if rec.Activity.Source != activity.SourceHeartbeat || rec.Activity.Quality != activity.StateFresh ||
+		rec.Activity.TaskID != "t11" || rec.Activity.Phase != "testing" || rec.Activity.Detail != "make ci" {
+		t.Fatalf("status activity = %+v", rec.Activity)
+	}
+}
+
+func TestStatusJSONToleratesMalformedActivity(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	agentDir := seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
+		Binary:  "codex",
+		Handle:  "qa",
+		Role:    "qa",
+		Session: "issue-96",
+		CWD:     dir,
+	})
+	if err := os.WriteFile(filepath.Join(agentDir, activity.Filename), []byte("{not-json"), 0o600); err != nil {
+		t.Fatalf("seed malformed activity: %v", err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json should tolerate malformed activity: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	rec := findStatusRecord(env.Data.Records, "qa")
+	if rec == nil || rec.Activity == nil {
+		t.Fatalf("qa malformed activity should degrade to unknown: %+v", env.Data.Records)
+	}
+	if rec.Activity.Quality != activity.StateUnknown || rec.Activity.Source != activity.SourceUnknown ||
+		!strings.Contains(rec.Activity.Detail, "unreadable") {
+		t.Fatalf("malformed activity = %+v", rec.Activity)
+	}
+}
+
+func TestStatusJSONUsesTaskStoreActivityFallback(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{
+		Title:    "review fix",
+		AssignTo: "qa",
+	}, now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.ClaimForProfile(dir, team.DefaultProfile, "issue-96", created.ID, "qa", now.Add(-30*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	rec := findStatusRecord(env.Data.Records, "qa")
+	if rec == nil || rec.Activity == nil {
+		t.Fatalf("qa task-store activity missing: %+v", env.Data.Records)
+	}
+	if rec.Activity.Source != activity.SourceTaskStore || rec.Activity.Quality != activity.StateUnknown ||
+		rec.Activity.TaskID != "t1" || rec.Activity.Phase != "task_in_progress" ||
+		rec.Activity.Detail != "review fix" {
+		t.Fatalf("task-store activity = %+v", rec.Activity)
 	}
 }
 

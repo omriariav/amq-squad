@@ -34,6 +34,7 @@ Three binary-neutral primitives make it work, and all of them round-trip through
 
 - **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted). Add `--launch --dry-run` or `rm --stop --dry-run` to preview exact runtime actions before running them.
 - **Native task store** — `amq-squad task add/list/show/claim/done/fail/block/reset`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/` for the default profile, or `.amq-squad/tasks/<profile>/<session>/` for named profiles, so a lead of either binary decomposes the goal into claimable work.
+- **Agent activity heartbeats** — `amq-squad activity set/clear`: workers can atomically publish current task/phase activity under their AMQ agent directory. `status --json` and `console` show fresh/stale/unknown activity, with task-store ownership as a weaker source-separated fallback.
 - **Compose-from-goal playbook** — the `amq-squad-orchestrator` skill (in both the Claude and Codex marketplaces) drives propose → approve → `team member add` → `task add` → prune.
 
 AMQ `swarm` interop is supported as an external notification/adoption boundary,
@@ -840,6 +841,14 @@ amq-squad task reset <id> --me HANDLE [--reason R] [--json] --session S
                                   completed. Terminal/reset transitions on an
                                   assigned task require the assignee's --me.
                                   All subcommands require --session.
+amq-squad activity set --session S --me HANDLE --phase PHASE [--task ID] [--detail TEXT] [--profile P] [--json]
+amq-squad activity clear --session S --me HANDLE [--profile P] [--json]
+                                  Write or clear
+                                  <amq-root>/agents/<handle>/activity.json
+                                  atomically. Status and console surface this as
+                                  an honest busy/current-task signal with
+                                  source and quality; stale or malformed files
+                                  degrade to unknown rather than progress.
 amq-squad dispatch --session S --role R --subject SUBJ --body BODY [--create-task | --task ID] [--json]
                                   Queue a durable AMQ message and best-effort
                                   drain nudge. Plain dispatch stays AMQ-only;
@@ -938,6 +947,8 @@ Global output flags work before or after the subcommand: `--quiet`, `--verbose`,
 
 `amq-squad status` (and the bare `amq-squad`) prints a **multi-session board** over every discovered session — docker-ps / `git branch -v` style: session name, rolled-up state (running / stopped / degraded), agent health (N/M alive + at-risk), a one-line brief, and last-activity. Add `--session NAME` for the single-session detail table.
 
+Per-agent rows may include activity from `<amq-root>/agents/<handle>/activity.json`, written by `amq-squad activity set` or cheap task-transition stamps. `status --json` exposes this under `records[].activity` with `source` (`heartbeat-file`, `task-store`, or `unknown`) and `quality` (`fresh`, `stale`, or `unknown`) so clients can distinguish an agent-written heartbeat from task-store ownership fallback.
+
 `amq-squad console` is the project-scoped Mission Control TUI for the current team-home.
 
 ```sh
@@ -1008,6 +1019,7 @@ amq-squad roles --json | jq .
 amq-squad dispatch --session issue-96 --role qa --subject "Review" --body "..." --json | jq .
 amq-squad task add --title "Review PR" --session issue-96 --json | jq .
 amq-squad task claim t1 --me qa --session issue-96 --json | jq .
+amq-squad activity set --session issue-96 --me qa --task t1 --phase testing --json | jq .
 amq-squad team member add qa --binary codex --json | jq .
 amq-squad team init --dry-run --json --roles cto,qa | jq .
 amq-squad new team --sync --dry-run --json --roles cto,qa | jq .
@@ -1028,8 +1040,8 @@ Envelope shape:
 High-value mutating commands also support JSON success envelopes for
 orchestrators and NOC tooling. Initial stable mutator envelopes include
 `dispatch`, `task add`, task transitions (`claim`, `done`, `fail`, `block`),
-and `team member add/rm`. Human output remains unchanged when `--json` is not
-passed. This is the user-facing closure for #222.
+`activity set/clear`, and `team member add/rm`. Human output remains unchanged
+when `--json` is not passed. This is the user-facing closure for #222.
 
 ## Runtime control (tmux)
 

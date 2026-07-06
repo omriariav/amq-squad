@@ -346,7 +346,11 @@ func agentLivenessSummary(s state.Session, now func() time.Time) string {
 	parts := make([]string, 0, len(s.Agents))
 	for _, a := range detailAgents(s, Filter{}) {
 		g := livenessStyle(a.Liveness).Render(livenessGlyph(a.Liveness))
-		parts = append(parts, fmt.Sprintf("%s %s %s", a.Handle, g, agentStateLabel(a, stopped, now)))
+		activity := activityLabel(a, now)
+		if activity != "" {
+			activity = " " + activity
+		}
+		parts = append(parts, fmt.Sprintf("%s %s %s%s", a.Handle, g, agentStateLabel(a, stopped, now), activity))
 	}
 	return strings.Join(parts, "  ")
 }
@@ -377,7 +381,11 @@ func (m Model) renderDetail() string {
 		if a.WakeHealth != "" {
 			wake = "  wake:" + string(a.WakeHealth)
 		}
-		line := fmt.Sprintf("  %s %-12s %-7s %-18s%s", g, a.Handle, a.Engine, agentStateLabel(a, stopped, now), wake)
+		activity := activityLabel(a, now)
+		if activity != "" {
+			activity = "  activity:" + activity
+		}
+		line := fmt.Sprintf("  %s %-12s %-7s %-18s%s%s", g, a.Handle, a.Engine, agentStateLabel(a, stopped, now), wake, activity)
 		b.WriteString(selectRow(line, id == m.selectedID) + "\n")
 	}
 	b.WriteString("\n")
@@ -560,7 +568,11 @@ func (m Model) peekSession(name string) string {
 			now := m.now()
 			b.WriteString("agents:\n")
 			for _, a := range detailAgents(s, Filter{}) {
-				fmt.Fprintf(&b, "  %s %s (%s): %s\n", livenessGlyph(a.Liveness), a.Handle, a.Engine, agentStateLabel(a, stopped, now))
+				activity := activityLabel(a, now)
+				if activity != "" {
+					activity = " · " + activity
+				}
+				fmt.Fprintf(&b, "  %s %s (%s): %s%s\n", livenessGlyph(a.Liveness), a.Handle, a.Engine, agentStateLabel(a, stopped, now), activity)
 			}
 			return b.String()
 		}
@@ -582,6 +594,7 @@ func peekAgent(s state.Session, ok bool, handle string, now func() time.Time) st
 	if a.WakeHealth != "" {
 		fmt.Fprintf(&b, "  wake: %s\n", a.WakeHealth)
 	}
+	fmt.Fprintf(&b, "  activity: %s\n", activityDetailLine(a, now))
 	fmt.Fprintf(&b, "  freshness: %s (source: %s)\n", freshnessLabel(a.LastSeen, s), agentSource(a))
 
 	// Unread inbox + blocked-on, derived from the agent's threads.
@@ -881,7 +894,11 @@ func sessionBlock(s state.Session, now func() time.Time) string {
 	// Agent liveness is its own labeled line so it never reads as a thread count.
 	fmt.Fprintf(&b, "  %s\n", agentsAliveLine(s))
 	for _, a := range s.Agents {
-		fmt.Fprintf(&b, "  - %s (%s): %s\n", a.Handle, a.Engine, agentStateLabel(a, stopped, now))
+		activity := activityLabel(a, now)
+		if activity != "" {
+			activity = " · " + activity
+		}
+		fmt.Fprintf(&b, "  - %s (%s): %s%s\n", a.Handle, a.Engine, agentStateLabel(a, stopped, now), activity)
 	}
 	// Unresolved coordination threads (at-risk / blocked), urgency-sorted. Omitted
 	// entirely when there is nothing unresolved to surface.

@@ -11,10 +11,9 @@ import (
 
 // clockOrDefault returns the probe's injected clock, or the real wall-clock when
 // the probe has no clock. The render layer needs a "now" to age agent LastSeen
-// signals; the snapshot itself does not carry a clock (keeping internal/state
-// stdlib-only and side-effect-free), so the console supplies one. In production
-// the probe's Now is the same clock state.Build used; in tests it is the fixture
-// clock, so the rendered ages are deterministic.
+// signals; the snapshot itself does not carry a clock, so the console supplies
+// one. In production the probe's Now is the same clock state.Build used; in
+// tests it is the fixture clock, so the rendered ages are deterministic.
 func clockOrDefault(p state.Probe) func() time.Time {
 	if p.Now != nil {
 		return p.Now
@@ -86,6 +85,46 @@ func withAge(label string, lastSeen time.Time, now func() time.Time) string {
 		return label
 	}
 	return fmt.Sprintf("%s (%s)", label, ageLabel(age))
+}
+
+func activityLabel(a state.Agent, now func() time.Time) string {
+	if a.Activity == nil {
+		return ""
+	}
+	act := a.Activity
+	parts := []string{}
+	if act.TaskID != "" {
+		parts = append(parts, "task:"+act.TaskID)
+	}
+	if act.Phase != "" {
+		parts = append(parts, act.Phase)
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "activity")
+	}
+	if act.Quality != "" {
+		parts = append(parts, act.Quality)
+	}
+	if act.Source != "" && act.Source != "heartbeat-file" && act.Source != "unknown" {
+		parts = append(parts, act.Source)
+	}
+	if !act.WrittenAt.IsZero() && now != nil {
+		if age := now().Sub(act.WrittenAt); age > 0 {
+			parts = append(parts, ageLabel(age))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func activityDetailLine(a state.Agent, now func() time.Time) string {
+	if a.Activity == nil {
+		return "none"
+	}
+	label := activityLabel(a, now)
+	if a.Activity.Detail != "" {
+		label += " - " + a.Activity.Detail
+	}
+	return label
 }
 
 // aliveCount returns how many of a session's agents are currently alive, and the

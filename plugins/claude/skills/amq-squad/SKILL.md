@@ -58,6 +58,7 @@ The lifecycle is one small state machine: `(none) --up--> running --stop--> stop
 | Set or inspect the orchestrated lead | `amq-squad team lead set <role>` / `team lead clear` / `team lead show --json` |
 | Register this pane as an external lead | `amq-squad lead register --role <role> --session S` (project leads require verified identity or `--adopt-project-lead`) |
 | Native pull-based task queue for a workstream | `amq-squad task add --title T --session S` / `task list --session S` / `task claim <id> --me H --session S` / `task done <id> --session S` |
+| Worker activity heartbeat | `amq-squad activity set --session S --me H --phase testing --task t1` / `activity clear --session S --me H` |
 
 `up` means NEW work and **refuses** a session that already exists — use `resume` to continue it, or `up --reset` to start over. `stop` is the primary teardown (the `down` alias was removed in 2.0). With no `--seed-from`, `up` AUTO-STUBS the brief and prints a one-line notice — so before `up`, decide whether to author the brief first (`up --dry-run --seed-from ...`) or let `up` stub it and edit afterward. `rm`/`archive` are the only destructive ops; both confirm-gate (default No, `--yes` to skip) and refuse a live session unless `--force`.
 
@@ -162,6 +163,7 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
 9. **Work the task store (when one drives the workstream).**
    - When the lead has posted work as tasks (`amq-squad task list --session <S>`), the store is the durable source of truth for who-owns-what — keep it in sync; do not just prose-ACK over AMQ.
    - Before you START a pull-style task that is still `pending`, claim it: `amq-squad task claim <id> --me <handle> --session <S>`. A task-backed `amq-squad dispatch --create-task/--task` auto-claims pending tasks for the target handle after the durable AMQ send and task link succeed; if the task already shows `in_progress` for you, do not re-claim it.
+   - Keep worker activity current while you work: `amq-squad activity set --session <S> --me <handle> --task <id> --phase <reading|testing|waiting-on-command> [--detail "..."]` on task claim, meaningful phase changes, and long-running commands. `status --json` and `console` show the heartbeat as `fresh`, `stale`, or `unknown`; task-store ownership is only a weaker fallback, not proof of active progress.
    - When you FINISH, close it: `amq-squad task done <id> --session <S>`. If you cannot finish, record `task fail <id>` (with a reason) or `task block <id>` rather than leaving it `in_progress`.
    - The pushed AMQ report and the task transition are complementary, not redundant: the message tells the lead; the store records the state. Do both.
 
@@ -198,6 +200,7 @@ amq-squad send  --session issue-96 --role cto --body "please review PR #69"
 cat prompt.md | amq-squad send --session issue-96 --role qa --body-file -
 amq-squad dispatch --session issue-96 --role qa --from cto --subject "Validate" --body-file ./task.md
 amq-squad collect --session issue-96 --me cto --timeout 120s --include-body
+amq-squad activity set --session issue-96 --me qa --task t1 --phase testing --detail "make ci"
 amq-squad team profiles --json
 amq-squad status
 amq-squad status --project /Code/app --profile review --session issue-96 --json | jq '.data.records[] | {role, tmux, actions}'
