@@ -768,6 +768,23 @@ amq-squad team rm [PROFILE] [--project DIR] [--profile NAME] [--dry-run] [--yes|
                                   default and does not delete AMQ sessions,
                                   briefs, team-rules.md, or pointer stubs.
 
+amq-squad global start [--root DIR] [--agent claude|codex] [--name WINDOW]
+                       [--model M] [--codex-args A] [--claude-args A] [--go]
+                                  Stand up a global/NOC orchestrator: a poller
+                                  (no wake) at a neutral root that supervises
+                                  many runs. Preview by default; --go opens a
+                                  tmux window and launches the agent.
+amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
+                    [--roles r,...] [--binary role=bin,...] [--model role=model,...]
+                    [--codex-args A] [--claude-args A]
+                    [--visibility detached|sibling-tabs|current]
+                    [--goal TEXT] [--seed-from REF] [--go]
+                                  Create one orchestrated run: wraps new team
+                                  (if --roles) then up, so the namespace is typed
+                                  once. Preview by default (runs --dry-run
+                                  validation); --go creates. Visibility defaults
+                                  to detached (hidden); supervise via status/
+                                  console/monitor + wake, attach to intervene.
 amq-squad up [<session>] [--project DIR] [--profile NAME] [--session ws] [--reset [--yes] [--force]]
              [--dry-run [--json]] [--seed-from file:|issue:|gh: [--force]]
              [--terminal tmux] [--target current-window|new-window|new-session]

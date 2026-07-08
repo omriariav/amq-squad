@@ -71,6 +71,16 @@ var completionAgentSubcommands = []string{
 	"resume",
 }
 
+// completionGlobalSubcommands lists the `amq-squad global` subcommands.
+var completionGlobalSubcommands = []string{
+	"start",
+}
+
+// completionRunSubcommands lists the `amq-squad run` subcommands.
+var completionRunSubcommands = []string{
+	"start",
+}
+
 // completionTeamSubcommands lists the `amq-squad team` subcommands.
 var completionTeamSubcommands = []string{
 	"init",
@@ -169,6 +179,7 @@ var completionCommonFlags = []string{
 	"--action",
 	"--action-id",
 	"--actions",
+	"--agent",
 	"--all",
 	"--all-profiles",
 	"--allow-outside",
@@ -205,6 +216,7 @@ var completionCommonFlags = []string{
 	"--disable-plugins",
 	"--dry-run",
 	"--evidence",
+	"--external-lead",
 	"--exec",
 	"--feature-prefix",
 	"--filter",
@@ -213,6 +225,7 @@ var completionCommonFlags = []string{
 	"--fresh",
 	"--from",
 	"--gate",
+	"--go",
 	"--goal",
 	"--handled-issue",
 	"--goal-id",
@@ -232,6 +245,7 @@ var completionCommonFlags = []string{
 	"--launch",
 	"--limit",
 	"--me",
+	"--name",
 	"--model",
 	"--msg-id",
 	"--milestone",
@@ -425,6 +439,18 @@ func buildBashCompletionScript() string {
 	b.WriteString("\" -- \"$cur\") )\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
+	b.WriteString("    if [ \"${words[1]}\" = \"global\" ] && [ \"$cword\" -eq 2 ]; then\n")
+	b.WriteString("        COMPREPLY=( $(compgen -W \"")
+	b.WriteString(strings.Join(completionGlobalSubcommands, " "))
+	b.WriteString("\" -- \"$cur\") )\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
+	b.WriteString("    if [ \"${words[1]}\" = \"run\" ] && [ \"$cword\" -eq 2 ]; then\n")
+	b.WriteString("        COMPREPLY=( $(compgen -W \"")
+	b.WriteString(strings.Join(completionRunSubcommands, " "))
+	b.WriteString("\" -- \"$cur\") )\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
 	b.WriteString("    if [[ \"$cur\" == -* ]]; then\n")
 	b.WriteString("        COMPREPLY=( $(compgen -W \"$common_flags\" -- \"$cur\") )\n")
 	b.WriteString("        return\n")
@@ -591,6 +617,28 @@ func buildZshCompletionScript() string {
 	b.WriteString("\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
+	b.WriteString("    if [[ \"${words[2]}\" == \"global\" && CURRENT -eq 3 ]]; then\n")
+	b.WriteString("        compadd -- ")
+	for i, s := range completionGlobalSubcommands {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(zshQuote(s))
+	}
+	b.WriteString("\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
+	b.WriteString("    if [[ \"${words[2]}\" == \"run\" && CURRENT -eq 3 ]]; then\n")
+	b.WriteString("        compadd -- ")
+	for i, s := range completionRunSubcommands {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(zshQuote(s))
+	}
+	b.WriteString("\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
 	b.WriteString("    if [[ \"${words[CURRENT]}\" == -* ]]; then\n")
 	b.WriteString("        compadd -- \"${common_flags[@]}\"\n")
 	b.WriteString("        return\n")
@@ -658,6 +706,14 @@ func buildFishCompletionScript() string {
 	b.WriteString("\n")
 	for _, sub := range completionLeadSubcommands {
 		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from lead; and not __fish_seen_subcommand_from team\" -a %s\n", fishQuote(sub))
+	}
+	b.WriteString("\n")
+	for _, sub := range completionGlobalSubcommands {
+		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from global\" -a %s\n", fishQuote(sub))
+	}
+	b.WriteString("\n")
+	for _, sub := range completionRunSubcommands {
+		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from run\" -a %s\n", fishQuote(sub))
 	}
 	b.WriteString("\n")
 	for _, f := range completionCommonFlags {

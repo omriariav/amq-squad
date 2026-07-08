@@ -1,0 +1,91 @@
+# Global orchestrator runbook
+
+How to stand up an orchestrator from scratch. The create sequence is wrapped by
+two native CLI verbs so the `--project/--profile/--session` namespace is typed
+once, not per command.
+
+| Mode | You are | Wake | Command |
+| --- | --- | --- | --- |
+| **Global / root** | a multi-run supervisor at a neutral root (e.g. `~/Code`) | none — you poll | `amq-squad global start` |
+| **Project run** | driving one orchestrated run in a repo | yes (managed spawn registers panes) | `amq-squad run start` |
+
+The `scripts/orchestrator/*.sh` files are thin forwarders to these verbs; the
+verbs are the source of truth.
+
+## Preconditions
+
+- Inside **tmux** for visible spawns (`global start --go`, and `run start` with
+  `--visibility sibling-tabs`/`current`). Hidden spawns (`run start` default
+  `--visibility detached`) do not require a visible pane.
+- `amq-squad` + `amq` on `PATH`; AMQ floor is **0.40.0**. `amq-squad doctor`
+  warns on version skew (children inherit the `amq-squad` on `PATH`).
+- In the orchestrator conversation, invoke the **`amq-squad-orchestrator`** skill.
+
+Being inside tmux is **necessary but not sufficient**: a manually started
+`claude`/`codex` pane has no `AM_ROOT`/`AM_ME`/launch record, so the control
+plane can't see it and wake has nothing to bind. Spawning **through** amq-squad
+(`run start`, `up`) is what records the pane → handle → root contract.
+
+## Global / root mode (poller)
+
+Supervises many runs across repos; never `cd`s into a project, never mutates
+code. `--no-wake` is normal — there is no single inbox to wake on. Preview by
+default; `--go` opens the window and launches the agent.
+
+```sh
+amq-squad global start                                   # ~/Code, claude, preview
+amq-squad global start --root ~/work --agent codex --go  # launch a codex supervisor
+amq-squad global start --agent claude --model claude-opus-4-8 --go
+```
+
+Then drive each run by explicit namespace (`goal draft`/`goal start`,
+`monitor --once`, `status`, `next`, `operator answer`). See the skill's
+multi-workstream board protocol.
+
+## Project run mode (create a run)
+
+Wraps `new team` (if `--roles`) → `up`. **Preview by default** (prints the plan
+and runs read-only `--dry-run` validation whose failures surface); `--go`
+creates for real.
+
+```sh
+# preview (no mutation)
+amq-squad run start -p ~/Code/app -s issue-96 -P release --roles "cto,fullstack,qa"
+
+# create it (hidden spawn — the default)
+amq-squad run start -p ~/Code/app -s issue-96 -P release \
+  --roles "cto,fullstack,qa" --binary "fullstack=codex" --goal "fix issue 96" --go
+```
+
+### Choosing binary / model / effort
+
+- **Binary** — `--binary "role=bin,..."` (per role). `global start` uses `--agent`.
+- **Model** — `--model "role=model,..."` (forwarded to `new team` and `up`).
+- **Effort** — no first-class flag; ride `--codex-args`/`--claude-args`
+  (e.g. `--codex-args "..."`). Same convention as the rest of the CLI.
+
+### Visibility (do I see the agents?)
+
+`--visibility` controls the spawn topology; default is **detached (hidden)**:
+
+- `detached` (default) — agents run in a separate tmux session you don't see.
+  Supervise via `status`/`console`/`monitor` + wake; attach only to intervene
+  (`amq-squad focus`, or the `attach_control` action in `status --json`).
+- `sibling-tabs` — one visible tmux tab per agent (requires a visible pane).
+- `current` — split panes in the current window.
+
+Note: this sets the **initial** spawn. Later dynamic spawns by the lead
+(`team member add` → `resume`/`up`) carry their own visibility.
+
+## Wake outside a managed pane
+
+If a lead/orchestrator runs in a plain terminal **outside tmux**, the default
+send-keys injector has no pane to hit. Use AMQ's external injector:
+
+```sh
+amq-squad lead register --role <r> --session <s> --wake \
+  --wake-inject-via /abs/path/to/injector --wake-inject-arg ...
+```
+
+There is no bundled injector — supply one that pokes your terminal. Inside tmux
+this is unnecessary.
