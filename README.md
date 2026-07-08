@@ -8,58 +8,13 @@ Built on [AMQ](https://github.com/avivsinai/agent-message-queue) by [Aviv Sinai]
 
 **Start here:** [Install](#install) · [Using amq-squad](#using-amq-squad) · [Quick start](#quick-start)
 
-**Concepts:** [Goal-first dynamic teams](#goal-first-dynamic-teams) · [Why](#why) · [Context model](#context-model) · [Workstreams &amp; threads](#workstreams-and-threads) · [Cross-project teams](#cross-project-teams)
+**Concepts:** [Why](#why) · [Context model](#context-model) · [Goal-first dynamic teams](#goal-first-dynamic-teams) · [Workstreams &amp; threads](#workstreams-and-threads) · [Cross-project teams](#cross-project-teams)
 
 **Command reference:** [Verbs](#verbs) · [Status board &amp; console](#status-board-and-mission-control-console) · [AMQ diagnostics](#amq-diagnostics) · [Runtime control (tmux)](#runtime-control-tmux) · [JSON envelopes](#json-envelopes) · [Exit codes](#exit-codes) · [Shell completions](#shell-completions) · [Removed legacy verbs](#removed-legacy-verbs)
 
 **Customize:** [Custom roles](#custom-roles) · [Trust &amp; binary defaults](#trust-and-binary-defaults) · [Messaging in a squad](#messaging-inside-a-squad) · [Files amq-squad writes](#files-amq-squad-writes)
 
 **Reference:** [AMQ swarm interop](docs/amq-swarm-interop.md) · [Known gaps](#known-gaps) · [Requires](#requires)
-
-## Goal-first, dynamic teams
-
-**The shift (2.0).** Until now you *designed a team, then ran it*: `team init` authored a static roster, `up` spawned exactly that roster, and composition was frozen for the session. 2.0 inverts it — **you hand a lead a goal and the lead composes the team**, proposing, spawning, and pruning agents at runtime as the work reveals what it needs. Goal-first changes the default *mental model*; manual still works exactly as before.
-
-The load-bearing constraint, and why this is amq-squad-native rather than "just use Claude Code Agent Teams": **orchestration is binary-neutral — a Codex agent can *lead*, not just be led.** No core primitive depends on `~/.claude/`.
-
-Composition is a spectrum, and **manual stays the floor**:
-
-| Mode | Who composes the team | Status |
-| --- | --- | --- |
-| **Manual** | You design the roster up front (`team init` / the setup wizard). | first-class, unchanged |
-| **Seeded** | The lead **proposes** each spawn from the goal; the **operator approves** it over a `gate/<topic>` thread. | shipped |
-| **Autonomous** | The lead spawns/prunes within an explicit policy, no per-spawn approval. | opt-in MVP |
-
-Three binary-neutral primitives make it work, and all of them round-trip through stop/resume so a resumed session rebuilds the team the lead **built**, not the seed:
-
-- **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted). Add `--launch --dry-run` or `rm --stop --dry-run` to preview exact runtime actions before running them.
-- **Native task store** — `amq-squad task add/list/show/claim/done/fail/block/reset`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/` for the default profile, or `.amq-squad/tasks/<profile>/<session>/` for named profiles, so a lead of either binary decomposes the goal into claimable work.
-- **Agent activity heartbeats** — `amq-squad activity set/clear`: workers can atomically publish current task/phase activity under their AMQ agent directory. `status --json` and `console` show fresh/stale/unknown activity, with task-store ownership as a weaker source-separated fallback.
-- **Compose-from-goal playbook** — the `amq-squad-orchestrator` skill (in both the Claude and Codex marketplaces) drives propose → approve → `team member add` → `task add` → prune.
-
-AMQ `swarm` interop is supported as an external notification/adoption boundary,
-not as a replacement task store. See
-[docs/amq-swarm-interop.md](docs/amq-swarm-interop.md) for the v2.7.0 decision.
-
-In practice — you stand up an orchestrated squad, then the lead composes and drives it:
-
-```sh
-# You (operator): create an orchestrated team and bring it up, seeded from a goal.
-amq-squad new team --roles cto --orchestrated --lead cto --session issue-96
-amq-squad new session issue-96 --seed-from issue:96 --target new-window
-
-# The cto lead loads the amq-squad-orchestrator skill and, as the work reveals needs:
-amq-squad team member add fullstack --binary codex --session issue-96  # grow the roster
-amq-squad dispatch --session issue-96 --role fullstack --create-task --subject "implement the fix" --body "..."
-```
-
-### Breaking changes
-
-2.0 is a major version; the breaking surface is small and mechanical (full upgrade notes in [`MIGRATION.md`](MIGRATION.md)):
-
-- **Removed verbs** — `down`, `launch`, `restore`, `list`, `team show`, `team launch` now return a usage error. Use `stop`, `agent up`, `history` / `agent resume`, `status` / `history`, `up --dry-run`, and `up` respectively.
-- **`/v2` module path** — install from `github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest` (note the `/v2`).
-- **No data migration** — existing `team.json` (schema v3) loads unchanged.
 
 ## Why
 
@@ -321,6 +276,51 @@ re-runs) and wires `claude_args: ["--settings", <path>]` into the member.
 fails fast, naming the member, when a referenced `--settings` file is missing. Codex members use
 the native equivalent: a `$CODEX_HOME/<name>.config.toml` profile wired via
 `codex_args: ["--profile", "<name>"]`.
+
+## Goal-first, dynamic teams
+
+**The shift (2.0).** Until now you *designed a team, then ran it*: `team init` authored a static roster, `up` spawned exactly that roster, and composition was frozen for the session. 2.0 inverts it — **you hand a lead a goal and the lead composes the team**, proposing, spawning, and pruning agents at runtime as the work reveals what it needs. Goal-first changes the default *mental model*; manual still works exactly as before.
+
+The load-bearing constraint, and why this is amq-squad-native rather than "just use Claude Code Agent Teams": **orchestration is binary-neutral — a Codex agent can *lead*, not just be led.** No core primitive depends on `~/.claude/`.
+
+Composition is a spectrum, and **manual stays the floor**:
+
+| Mode | Who composes the team | Status |
+| --- | --- | --- |
+| **Manual** | You design the roster up front (`team init` / the setup wizard). | first-class, unchanged |
+| **Seeded** | The lead **proposes** each spawn from the goal; the **operator approves** it over a `gate/<topic>` thread. | shipped |
+| **Autonomous** | The lead spawns/prunes within an explicit policy, no per-spawn approval. | opt-in MVP |
+
+Three binary-neutral primitives make it work, and all of them round-trip through stop/resume so a resumed session rebuilds the team the lead **built**, not the seed:
+
+- **Mutable roster** — `amq-squad team member add/rm/list` grows or shrinks the team mid-session (atomic, file-locked, re-validated, persisted). Add `--launch --dry-run` or `rm --stop --dry-run` to preview exact runtime actions before running them.
+- **Native task store** — `amq-squad task add/list/show/claim/done/fail/block/reset`: a pull-based, dependency-gated queue under `.amq-squad/tasks/<session>/` for the default profile, or `.amq-squad/tasks/<profile>/<session>/` for named profiles, so a lead of either binary decomposes the goal into claimable work.
+- **Agent activity heartbeats** — `amq-squad activity set/clear`: workers can atomically publish current task/phase activity under their AMQ agent directory. `status --json` and `console` show fresh/stale/unknown activity, with task-store ownership as a weaker source-separated fallback.
+- **Compose-from-goal playbook** — the `amq-squad-orchestrator` skill (in both the Claude and Codex marketplaces) drives propose → approve → `team member add` → `task add` → prune.
+
+AMQ `swarm` interop is supported as an external notification/adoption boundary,
+not as a replacement task store. See
+[docs/amq-swarm-interop.md](docs/amq-swarm-interop.md) for the v2.7.0 decision.
+
+In practice — you stand up an orchestrated squad, then the lead composes and drives it:
+
+```sh
+# You (operator): create an orchestrated team and bring it up, seeded from a goal.
+amq-squad new team --roles cto --orchestrated --lead cto --session issue-96
+amq-squad new session issue-96 --seed-from issue:96 --target new-window
+
+# The cto lead loads the amq-squad-orchestrator skill and, as the work reveals needs:
+amq-squad team member add fullstack --binary codex --session issue-96  # grow the roster
+amq-squad dispatch --session issue-96 --role fullstack --create-task --subject "implement the fix" --body "..."
+```
+
+### Breaking changes
+
+2.0 is a major version; the breaking surface is small and mechanical (full upgrade notes in [`MIGRATION.md`](MIGRATION.md)):
+
+- **Removed verbs** — `down`, `launch`, `restore`, `list`, `team show`, `team launch` now return a usage error. Use `stop`, `agent up`, `history` / `agent resume`, `status` / `history`, `up --dry-run`, and `up` respectively.
+- **`/v2` module path** — install from `github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest` (note the `/v2`).
+- **No data migration** — existing `team.json` (schema v3) loads unchanged.
 
 ## Context model
 

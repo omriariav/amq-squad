@@ -272,13 +272,13 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#goal-first-dynamic-teams"
-id="toc-goal-first-dynamic-teams">Goal-first, dynamic teams</a></li>
 <li><a href="#why" id="toc-why">Why</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#using-amq-squad" id="toc-using-amq-squad">Using
 amq-squad</a></li>
 <li><a href="#quick-start" id="toc-quick-start">Quick start</a></li>
+<li><a href="#goal-first-dynamic-teams"
+id="toc-goal-first-dynamic-teams">Goal-first, dynamic teams</a></li>
 <li><a href="#context-model" id="toc-context-model">Context
 model</a></li>
 <li><a href="#verbs" id="toc-verbs">Verbs</a></li>
@@ -328,9 +328,9 @@ workstream.</p>
 <p><strong>Start here:</strong> <a href="#install">Install</a> · <a
 href="#using-amq-squad">Using amq-squad</a> · <a
 href="#quick-start">Quick start</a></p>
-<p><strong>Concepts:</strong> <a
+<p><strong>Concepts:</strong> <a href="#why">Why</a> · <a
+href="#context-model">Context model</a> · <a
 href="#goal-first-dynamic-teams">Goal-first dynamic teams</a> · <a
-href="#why">Why</a> · <a href="#context-model">Context model</a> · <a
 href="#workstreams-and-threads">Workstreams &amp; threads</a> · <a
 href="#cross-project-teams">Cross-project teams</a></p>
 <p><strong>Command reference:</strong> <a href="#verbs">Verbs</a> · <a
@@ -347,6 +347,309 @@ href="#files-amq-squad-writes">Files amq-squad writes</a></p>
 <p><strong>Reference:</strong> <a href="docs/amq-swarm-interop.md">AMQ
 swarm interop</a> · <a href="#known-gaps">Known gaps</a> · <a
 href="#requires">Requires</a></p>
+<h2 id="why">Why</h2>
+<p>AMQ's <code>coop exec</code> is a generic launcher. It sets up a
+mailbox and execs into <code>claude</code> or <code>codex</code>, but it
+does not know:</p>
+<ul>
+<li>Which agent is the "CTO" vs "Fullstack" vs "QA" vs "PM" vs
+"Designer"</li>
+<li>What command originally launched each one (cwd, binary, flags,
+workstream)</li>
+<li>What durable team norms each agent should read at session start</li>
+<li>Which peers a given agent actively talks to</li>
+</ul>
+<p><code>amq-squad</code> captures this at team-setup time
+(<code>.amq-squad/team.json</code>,
+<code>.amq-squad/team-rules.md</code>) and per-agent at launch time
+(<code>launch.json</code> + <code>role.md</code> inside the AMQ
+mailbox). AMQ itself stays unchanged.</p>
+<h2 id="install">Install</h2>
+<p>Install the 2.0 line (note the <code>/v2</code> module path):</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.17.0</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
+<p>For the latest 2.x build:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span></code></pre></div>
+<p>Requires Go 1.25+, the <code>amq</code> binary on <code>PATH</code>
+(v0.40.0+), and <code>tmux</code> on <code>PATH</code> for
+<code>amq-squad up</code>.</p>
+<h3 id="skills-plugin-marketplaces">Skills (plugin marketplaces)</h3>
+<p>This repo doubles as a plugin marketplace that ships the amq-squad
+skills for both Claude Code and Codex. The primary skills are
+<code>amq-squad</code> and <code>amq-squad-orchestrator</code>; the
+older <code>amq-team-setup</code> and
+<code>amq-squad-role-creator</code> entries remain as redirect stubs.
+The CLI and the skills are versioned together.</p>
+<p>Claude Code:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">/plugin</span> marketplace add omriariav/amq-squad</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">/plugin</span> install amq-squad@amq-squad</span></code></pre></div>
+<p>Codex:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">codex</span> plugin marketplace add omriariav/amq-squad</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">codex</span> plugin add amq-squad@amq-squad</span></code></pre></div>
+<p>The Claude marketplace manifest lives at
+<code>.claude-plugin/marketplace.json</code> and the Codex one at
+<code>.agents/plugins/marketplace.json</code>; each points at the
+binary-specific plugin under <code>plugins/claude</code> and
+<code>plugins/codex</code>. In Claude Code, skills are namespaced by
+plugin, e.g. <code>/amq-squad:amq-squad</code>. In Codex, invoke them by
+skill name, e.g. <code>$amq-squad</code>.</p>
+<p>To dogfood the skills from this working tree (instead of the
+marketplace snapshot), run <code>make dogfood-claude</code> here: it
+launches Claude Code with <code>--plugin-dir plugins/claude</code>,
+which loads the plugin live from disk and shadows the
+marketplace-installed copy for that session only. Codex has no
+per-session equivalent; it always serves the marketplace snapshot
+(refresh with <code>codex plugin marketplace upgrade</code> after
+merging skill changes).</p>
+<h2 id="using-amq-squad">Using amq-squad</h2>
+<p>amq-squad has two surfaces, and you use them at different times:</p>
+<ul>
+<li><strong>The <code>amq-squad</code> CLI is for you, the
+operator.</strong> Design a team, bring it up / stop / resume in tmux,
+inspect it (<code>status</code>, <code>console</code>,
+<code>doctor</code>), and control agent panes (<code>focus</code>,
+<code>send</code>). Most commands are <strong>project-scoped</strong>
+(<code>--project DIR</code>, default cwd); the session-oriented ones
+(<code>up</code>, <code>status</code>, <code>send</code>,
+<code>stop</code>, <code>resume</code>, ...) are also
+<strong>session-scoped</strong> (<code>--session NAME</code>, the AMQ
+workstream). A few (<code>roles</code>, <code>doctor</code>) are neither
+or project-only.</li>
+<li><strong>The skills are for the agents.</strong> They teach a Claude
+or Codex agent how to drive amq-squad + AMQ from <em>inside</em> a
+session: coordinate with peers, and (as a lead) orchestrate a whole
+squad. You install them once per marketplace; the agents invoke them by
+name.</li>
+</ul>
+<h3 id="the-cli-in-60-seconds">The CLI in 60 seconds</h3>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--sync</span>   <span class="co"># 1. design the team</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session issue-96                        <span class="co"># 2. bring it up live in tmux</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96                   <span class="co"># 3. see who is live</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--body</span> <span class="st">&quot;run the smoke suite&quot;</span>   <span class="co"># 4. drive a pane</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> qa          <span class="co">#    watch that agent work</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--session</span> issue-96 <span class="at">--all</span>               <span class="co"># 5. tear down (stays resumable)</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span>            <span class="co"># 6. bring it back (bare resume = plan only)</span></span></code></pre></div>
+<p>The golden rules: <strong><code>up</code>/<code>new session</code> is
+for NEW work</strong> (it refuses an existing session — use
+<code>resume</code> to continue), <strong><code>stop</code> preserves
+state</strong> (resumable), and <strong>control targets the recorded
+pane id</strong>, never window names. Full surface: <a
+href="#quick-start">Quick start</a>, <a href="#verbs">Verbs</a>, <a
+href="#runtime-control-tmux">Runtime control</a>.</p>
+<h3 id="the-skills-and-when-to-use-each">The skills, and when to use
+each</h3>
+<table>
+<thead>
+<tr>
+<th>Skill</th>
+<th>Audience</th>
+<th>Reach for it when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>amq-squad</code></strong></td>
+<td>operator-facing and member agents</td>
+<td>setup, role authoring, and day-to-day coordination: capture a goal,
+draft the brief, pick roles/profile, sync pointer stubs, drain inboxes,
+route review/handoff, inspect
+<code>status</code>/<code>console</code>/<code>history</code>, run
+<code>up</code>/<code>stop</code>/<code>resume</code>/<code>fork</code>,
+and use tmux runtime control
+(<code>focus</code>/<code>send</code>).</td>
+</tr>
+<tr>
+<td><strong><code>amq-squad-orchestrator</code></strong></td>
+<td>a <strong>lead</strong> agent</td>
+<td>running a squad as a <em>driver</em>: spawn child agents, dispatch
+tasks to them over durable AMQ (the busy-guarded pane <code>send</code>
+is the fallback), monitor liveness via <code>status --json</code>,
+collect children's <code>[AGENT-EVENT]</code>-over-AMQ reports, and
+recover. The amq-squad-native equivalent of a hand-rolled tmux spawn
+protocol.</td>
+</tr>
+<tr>
+<td><code>amq-team-setup</code></td>
+<td>redirect stub</td>
+<td>deprecated; use <code>amq-squad</code> and its Setup section.</td>
+</tr>
+<tr>
+<td><code>amq-squad-role-creator</code></td>
+<td>redirect stub</td>
+<td>deprecated; use <code>amq-squad</code> and its Role Authoring
+section.</td>
+</tr>
+</tbody>
+</table>
+<p>Invoke a skill in Claude Code as
+<code>/amq-squad:&lt;skill&gt;</code> (e.g.
+<code>/amq-squad:amq-squad-orchestrator</code>); in Codex as
+<code>$&lt;skill&gt;</code> (e.g. <code>$amq-squad-orchestrator</code>).
+For routine member work use <code>amq-squad</code>; only the lead agent
+driving spawnees reaches for <code>amq-squad-orchestrator</code>.</p>
+<p><strong>Deeper guide:</strong> <a
+href="docs/skills.md">docs/skills.md</a> (<a
+href="docs/skills.html">HTML</a>) walks each skill end to end — when to
+reach for it, how to invoke it, worked examples, a decision table, an
+issue-to-merge walkthrough, and troubleshooting.</p>
+<h2 id="quick-start">Quick start</h2>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> roles                      <span class="co"># list role IDs and menu numbers</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--dry-run</span> <span class="at">--roles</span> cto,qa</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--sync</span> <span class="at">--session</span> issue-96</span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new profile review <span class="at">--roles</span> cto,qa <span class="at">--sync</span> <span class="at">--session</span> review</span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--dry-run</span>               <span class="co"># preview the launch plan</span></span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--project</span> ~/Code/other-app <span class="at">--dry-run</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session issue-96       <span class="co"># NEW work: bring the team up live in tmux</span></span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session issue-98 <span class="at">--seed-from</span> issue:31</span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session <span class="at">--project</span> ~/Code/other-app issue-97</span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span>                            <span class="co"># bare command -&gt; multi-session status board</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96  <span class="co"># single-session detail</span></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--project</span> ~/Code/other-app <span class="at">--session</span> issue-97</span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console                    <span class="co"># live read-only Mission Control TUI</span></span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--project</span> ~/Code/other-app <span class="at">--once</span></span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor                     <span class="co"># AMQ / PATH / Codex skill cache / tmux / wake / pointer sync</span></span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--project</span> ~/Code/other-app <span class="at">--profile</span> release</span>
+<span id="cb6-22"><a href="#cb6-22" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--project</span> ~/Code/other-app <span class="at">--all-profiles</span></span>
+<span id="cb6-23"><a href="#cb6-23" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq env <span class="at">--session</span> issue-96 <span class="co"># resolved AMQ root/session/handle</span></span>
+<span id="cb6-24"><a href="#cb6-24" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq ops <span class="at">--session</span> issue-96 <span class="co"># AMQ operational diagnostics</span></span>
+<span id="cb6-25"><a href="#cb6-25" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq route <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="at">--to</span> fullstack</span>
+<span id="cb6-26"><a href="#cb6-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-27"><a href="#cb6-27" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--all</span>                 <span class="co"># SIGTERM the team (--force = SIGKILL); stays resumable</span></span>
+<span id="cb6-28"><a href="#cb6-28" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--project</span> ~/Code/other-app <span class="at">--all</span> <span class="at">--session</span> issue-97</span>
+<span id="cb6-29"><a href="#cb6-29" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume                     <span class="co"># re-orient (plan only; add --exec to relaunch)</span></span>
+<span id="cb6-30"><a href="#cb6-30" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--project</span> ~/Code/other-app <span class="at">--session</span> issue-97</span>
+<span id="cb6-31"><a href="#cb6-31" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> fork <span class="at">--from</span> issue-96 <span class="at">--as</span> issue-96-review  <span class="co"># branch a fresh workstream</span></span>
+<span id="cb6-32"><a href="#cb6-32" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> fork <span class="at">--project</span> ~/Code/other-app <span class="at">--from</span> issue-96 <span class="at">--as</span> issue-96-review</span>
+<span id="cb6-33"><a href="#cb6-33" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> rm issue-96                <span class="co"># remove a finished session (confirm-gated; or `archive`)</span></span></code></pre></div>
+<h3 id="lifecycle">Lifecycle</h3>
+<p>A session moves through one small state machine:</p>
+<pre class="text"><code>(none) --up--&gt; running --stop--&gt; stopped --rm/archive--&gt; (none)
+                  ^                  |
+                  +------ resume ----+</code></pre>
+<ul>
+<li><strong><code>up [&lt;name&gt;]</code></strong> means NEW work. It
+refuses a session that already exists — use <code>resume</code> to
+continue it, <code>up --reset</code> to start it over, or pick a new
+name.</li>
+<li><strong><code>new session [&lt;name&gt;]</code></strong> is the
+create-focused alias for <code>up [&lt;name&gt;]</code>. It follows the
+same NEW-work refusal rules.</li>
+<li><strong><code>new team</code></strong> is the create-focused alias
+for <code>team init</code>.</li>
+<li><strong><code>new profile NAME</code></strong> is the named-profile
+alias for <code>team init --profile NAME</code>.</li>
+<li><strong><code>stop</code></strong> is the primary teardown: SIGTERM
+the live agents (<code>--force</code> = SIGKILL), but PRESERVE all
+on-disk state so the session stays resumable. (The <code>down</code>
+alias was removed in 2.0.)</li>
+<li><strong><code>resume</code></strong> re-orients a stopped session.
+If an agent has a saved conversation, amq-squad reattaches it; otherwise
+it re-runs bootstrap so the agent re-reads its brief and AMQ history. It
+does NOT replay prior hidden reasoning.</li>
+<li><strong><code>rm</code> / <code>archive</code></strong> are the
+session-destructive ops. Both are confirm-gated (<code>--yes</code> to
+skip the prompt) and refuse a session with live agents unless
+<code>--force</code>. <code>rm</code> deletes the session root + brief;
+<code>archive</code> moves them aside, recoverable. <code>team rm</code>
+is separate: it removes one team profile config only.</li>
+<li>A <strong>restart</strong> is just <code>stop</code> then
+<code>up</code> (after <code>rm</code>/<code>archive</code>) or
+<code>resume</code> for the same session.</li>
+</ul>
+<h3 id="tmux-targets">tmux targets</h3>
+<p><code>amq-squad up</code> defaults to
+<code>--target current-window</code>, which splits the tmux window where
+you run the command. To bring a team up inside an existing tmux session
+such as <code>main</code>, switch or attach to the desired window first,
+then run <code>up</code> from that pane:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> switch-client <span class="at">-t</span> main:6</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--session</span> v1-0-0-qa <span class="at">--terminal</span> tmux <span class="at">--target</span> current-window <span class="at">--layout</span> tiled</span></code></pre></div>
+<p>Use <code>--target new-session --terminal-session NAME</code> only
+when you want amq-squad to create a separate tmux session.
+<code>--terminal-session</code> names the new session; it does not
+select an existing tmux session for <code>current-window</code>.</p>
+<p>Panes are anchored to the pane you launch from
+(<code>$TMUX_PANE</code>), not to whatever window happens to be focused,
+so a <code>current-window</code> launch is safe even under iTerm2's
+<code>tmux -CC</code> integration: changing tabs mid-launch will not
+rehome the panes onto an unrelated window. If you launch from outside
+tmux, <code>current-window</code> refuses with a hint rather than
+guessing a target.</p>
+<p><code>up</code> is for NEW work and refuses a session that already
+exists. To continue an existing session use
+<code>amq-squad resume</code>; to start it over use
+<code>amq-squad up --reset</code> (destructive: it tears down and
+removes the session first, with a confirmation prompt unless
+<code>--yes</code>). Add <code>--force-duplicate</code> only when stale
+live-agent signals remain and you deliberately want a second agent
+alongside.</p>
+<p>Single-agent primitives:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--role</span> cto <span class="at">--session</span> issue-96</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent resume fullstack</span></code></pre></div>
+<p>For Claude-binary agents launched in a tmux pane,
+<code>agent up</code>, <code>up</code>, and managed resume/replay
+schedule a best-effort <code>/rename &lt;role&gt;-&lt;session&gt;</code>
+injection after launch so Claude Code's resume picker shows the squad
+role/workstream. The launch is not blocked if that pane delivery fails.
+Codex has no equivalent slash command, so Codex agents are intentionally
+unaffected.</p>
+<p>The legacy verbs (<code>down</code>, <code>launch</code>,
+<code>restore</code>, <code>list</code>, <code>team show</code>,
+<code>team launch</code>) are <strong>removed in 2.0</strong>. Invoking
+one returns a usage error (exit 1); the replacements are listed in <a
+href="#removed-legacy-verbs">Removed legacy verbs</a> and <a
+href="MIGRATION.md"><code>MIGRATION.md</code></a>.</p>
+<h3 id="custom-launchers">Custom launchers</h3>
+<p>A managed member can be launched through a project-specific wrapper
+script while still receiving AMQ identity, bootstrap, a launch record,
+and status/resume. Pass <code>--launcher</code> (and optional
+<code>--launcher-args</code>) on <code>agent up</code>, or set
+<code>launcher</code> / <code>launcher_args</code> on the member in
+<code>team.json</code>:</p>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up claude <span class="at">--role</span> qa <span class="at">--session</span> beta <span class="at">--team-workstream</span> <span class="dt">\</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launcher</span> /path/claude-pm-os-dev.sh <span class="at">--launcher-args</span> <span class="st">&quot;--pull --workspace /ws&quot;</span></span></code></pre></div>
+<p>The launcher is exec'd in place of the binary.
+<code>--launcher-args</code> come first, then amq-squad appends the
+agent's normal child args (bootstrap + defaults), so <strong>the
+launcher script must forward its trailing args to the agent</strong>
+(e.g. end with <code>exec claude "$@"</code>). amq-squad refuses with a
+clear error if the launcher path is missing or not executable.
+<code>up --dry-run</code> prints the resolved launcher command.</p>
+<h3 id="per-member-native-args-and-context-overlays">Per-member native
+args and context overlays</h3>
+<p>A <code>team.json</code> member may carry <code>claude_args</code> /
+<code>codex_args</code> — extra native CLI args applied to <strong>that
+member only</strong>, appended after the team-level
+<code>binary_args</code> so the member value wins by position. The field
+must match the member's binary (<code>team sync</code> rejects a
+mismatch), launch records persist it, and resume reproduces it.</p>
+<p>The flagship use is the <strong>context-budget overlay</strong> for
+same-cwd squads: only the lead needs the full plugin/hook surface, while
+workers on smaller-context models burn tokens on plugins and per-prompt
+hook output they never use. Generate and wire it in one command
+(v1.9.0+):</p>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team overlay init <span class="at">--workers</span> <span class="at">--disable-all-hooks</span> <span class="dt">\</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--disable-plugins</span> gws@workspace,document-skills@anthropics</span></code></pre></div>
+<p>This writes a Claude settings overlay per worker
+(<code>.amq-squad/overlays/&lt;role&gt;.claude.json</code>,
+human-editable, never clobbered on re-runs) and wires
+<code>claude_args: ["--settings", &lt;path&gt;]</code> into the member.
+<code>--workers</code> targets every claude member (the orchestration
+lead is excluded); <code>--role R</code> targets one. Launch planning
+(<code>up</code>, <code>resume</code>, the tmux backend) fails fast,
+naming the member, when a referenced <code>--settings</code> file is
+missing. Codex members use the native equivalent: a
+<code>$CODEX_HOME/&lt;name&gt;.config.toml</code> profile wired via
+<code>codex_args: ["--profile", "&lt;name&gt;"]</code>.</p>
 <h2 id="goal-first-dynamic-teams">Goal-first, dynamic teams</h2>
 <p><strong>The shift (2.0).</strong> Until now you <em>designed a team,
 then ran it</em>: <code>team init</code> authored a static roster,
@@ -424,13 +727,14 @@ href="docs/amq-swarm-interop.md">docs/amq-swarm-interop.md</a> for the
 v2.7.0 decision.</p>
 <p>In practice — you stand up an orchestrated squad, then the lead
 composes and drives it:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># You (operator): create an orchestrated team and bring it up, seeded from a goal.</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--session</span> issue-96</span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session issue-96 <span class="at">--seed-from</span> issue:96 <span class="at">--target</span> new-window</span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="co"># The cto lead loads the amq-squad-orchestrator skill and, as the work reveals needs:</span></span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add fullstack <span class="at">--binary</span> codex <span class="at">--session</span> issue-96  <span class="co"># grow the roster</span></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack <span class="at">--create-task</span> <span class="at">--subject</span> <span class="st">&quot;implement the fix&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># You (operator): create an orchestrated team and bring it up, seeded from a goal.</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--session</span> issue-96</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session issue-96 <span class="at">--seed-from</span> issue:96 <span class="at">--target</span> new-window</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="co"># The cto lead loads the amq-squad-orchestrator skill and, as the work reveals needs:</span></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add fullstack <span class="at">--binary</span> codex <span class="at">--session</span> issue-96  <span class="co"># grow the roster</span></span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack <span class="at">--create-task</span> <span class="at">--subject</span> <span class="st">&quot;implement the fix&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span></code></pre></div>
 <h3 id="breaking-changes">Breaking changes</h3>
 <p>2.0 is a major version; the breaking surface is small and mechanical
 (full upgrade notes in <a
@@ -449,310 +753,6 @@ respectively.</li>
 <li><strong>No data migration</strong> — existing <code>team.json</code>
 (schema v3) loads unchanged.</li>
 </ul>
-<h2 id="why">Why</h2>
-<p>AMQ's <code>coop exec</code> is a generic launcher. It sets up a
-mailbox and execs into <code>claude</code> or <code>codex</code>, but it
-does not know:</p>
-<ul>
-<li>Which agent is the "CTO" vs "Fullstack" vs "QA" vs "PM" vs
-"Designer"</li>
-<li>What command originally launched each one (cwd, binary, flags,
-workstream)</li>
-<li>What durable team norms each agent should read at session start</li>
-<li>Which peers a given agent actively talks to</li>
-</ul>
-<p><code>amq-squad</code> captures this at team-setup time
-(<code>.amq-squad/team.json</code>,
-<code>.amq-squad/team-rules.md</code>) and per-agent at launch time
-(<code>launch.json</code> + <code>role.md</code> inside the AMQ
-mailbox). AMQ itself stays unchanged.</p>
-<h2 id="install">Install</h2>
-<p>Install the 2.0 line (note the <code>/v2</code> module path):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.17.0</span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
-<p>For the latest 2.x build:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span></code></pre></div>
-<p>Requires Go 1.25+, the <code>amq</code> binary on <code>PATH</code>
-(v0.40.0+), and <code>tmux</code> on <code>PATH</code> for
-<code>amq-squad up</code>.</p>
-<h3 id="skills-plugin-marketplaces">Skills (plugin marketplaces)</h3>
-<p>This repo doubles as a plugin marketplace that ships the amq-squad
-skills for both Claude Code and Codex. The primary skills are
-<code>amq-squad</code> and <code>amq-squad-orchestrator</code>; the
-older <code>amq-team-setup</code> and
-<code>amq-squad-role-creator</code> entries remain as redirect stubs.
-The CLI and the skills are versioned together.</p>
-<p>Claude Code:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">/plugin</span> marketplace add omriariav/amq-squad</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">/plugin</span> install amq-squad@amq-squad</span></code></pre></div>
-<p>Codex:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">codex</span> plugin marketplace add omriariav/amq-squad</span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">codex</span> plugin add amq-squad@amq-squad</span></code></pre></div>
-<p>The Claude marketplace manifest lives at
-<code>.claude-plugin/marketplace.json</code> and the Codex one at
-<code>.agents/plugins/marketplace.json</code>; each points at the
-binary-specific plugin under <code>plugins/claude</code> and
-<code>plugins/codex</code>. In Claude Code, skills are namespaced by
-plugin, e.g. <code>/amq-squad:amq-squad</code>. In Codex, invoke them by
-skill name, e.g. <code>$amq-squad</code>.</p>
-<p>To dogfood the skills from this working tree (instead of the
-marketplace snapshot), run <code>make dogfood-claude</code> here: it
-launches Claude Code with <code>--plugin-dir plugins/claude</code>,
-which loads the plugin live from disk and shadows the
-marketplace-installed copy for that session only. Codex has no
-per-session equivalent; it always serves the marketplace snapshot
-(refresh with <code>codex plugin marketplace upgrade</code> after
-merging skill changes).</p>
-<h2 id="using-amq-squad">Using amq-squad</h2>
-<p>amq-squad has two surfaces, and you use them at different times:</p>
-<ul>
-<li><strong>The <code>amq-squad</code> CLI is for you, the
-operator.</strong> Design a team, bring it up / stop / resume in tmux,
-inspect it (<code>status</code>, <code>console</code>,
-<code>doctor</code>), and control agent panes (<code>focus</code>,
-<code>send</code>). Most commands are <strong>project-scoped</strong>
-(<code>--project DIR</code>, default cwd); the session-oriented ones
-(<code>up</code>, <code>status</code>, <code>send</code>,
-<code>stop</code>, <code>resume</code>, ...) are also
-<strong>session-scoped</strong> (<code>--session NAME</code>, the AMQ
-workstream). A few (<code>roles</code>, <code>doctor</code>) are neither
-or project-only.</li>
-<li><strong>The skills are for the agents.</strong> They teach a Claude
-or Codex agent how to drive amq-squad + AMQ from <em>inside</em> a
-session: coordinate with peers, and (as a lead) orchestrate a whole
-squad. You install them once per marketplace; the agents invoke them by
-name.</li>
-</ul>
-<h3 id="the-cli-in-60-seconds">The CLI in 60 seconds</h3>
-<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--sync</span>   <span class="co"># 1. design the team</span></span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session issue-96                        <span class="co"># 2. bring it up live in tmux</span></span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96                   <span class="co"># 3. see who is live</span></span>
-<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--body</span> <span class="st">&quot;run the smoke suite&quot;</span>   <span class="co"># 4. drive a pane</span></span>
-<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> qa          <span class="co">#    watch that agent work</span></span>
-<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--session</span> issue-96 <span class="at">--all</span>               <span class="co"># 5. tear down (stays resumable)</span></span>
-<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span>            <span class="co"># 6. bring it back (bare resume = plan only)</span></span></code></pre></div>
-<p>The golden rules: <strong><code>up</code>/<code>new session</code> is
-for NEW work</strong> (it refuses an existing session — use
-<code>resume</code> to continue), <strong><code>stop</code> preserves
-state</strong> (resumable), and <strong>control targets the recorded
-pane id</strong>, never window names. Full surface: <a
-href="#quick-start">Quick start</a>, <a href="#verbs">Verbs</a>, <a
-href="#runtime-control-tmux">Runtime control</a>.</p>
-<h3 id="the-skills-and-when-to-use-each">The skills, and when to use
-each</h3>
-<table>
-<thead>
-<tr>
-<th>Skill</th>
-<th>Audience</th>
-<th>Reach for it when</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong><code>amq-squad</code></strong></td>
-<td>operator-facing and member agents</td>
-<td>setup, role authoring, and day-to-day coordination: capture a goal,
-draft the brief, pick roles/profile, sync pointer stubs, drain inboxes,
-route review/handoff, inspect
-<code>status</code>/<code>console</code>/<code>history</code>, run
-<code>up</code>/<code>stop</code>/<code>resume</code>/<code>fork</code>,
-and use tmux runtime control
-(<code>focus</code>/<code>send</code>).</td>
-</tr>
-<tr>
-<td><strong><code>amq-squad-orchestrator</code></strong></td>
-<td>a <strong>lead</strong> agent</td>
-<td>running a squad as a <em>driver</em>: spawn child agents, dispatch
-tasks to them over durable AMQ (the busy-guarded pane <code>send</code>
-is the fallback), monitor liveness via <code>status --json</code>,
-collect children's <code>[AGENT-EVENT]</code>-over-AMQ reports, and
-recover. The amq-squad-native equivalent of a hand-rolled tmux spawn
-protocol.</td>
-</tr>
-<tr>
-<td><code>amq-team-setup</code></td>
-<td>redirect stub</td>
-<td>deprecated; use <code>amq-squad</code> and its Setup section.</td>
-</tr>
-<tr>
-<td><code>amq-squad-role-creator</code></td>
-<td>redirect stub</td>
-<td>deprecated; use <code>amq-squad</code> and its Role Authoring
-section.</td>
-</tr>
-</tbody>
-</table>
-<p>Invoke a skill in Claude Code as
-<code>/amq-squad:&lt;skill&gt;</code> (e.g.
-<code>/amq-squad:amq-squad-orchestrator</code>); in Codex as
-<code>$&lt;skill&gt;</code> (e.g. <code>$amq-squad-orchestrator</code>).
-For routine member work use <code>amq-squad</code>; only the lead agent
-driving spawnees reaches for <code>amq-squad-orchestrator</code>.</p>
-<p><strong>Deeper guide:</strong> <a
-href="docs/skills.md">docs/skills.md</a> (<a
-href="docs/skills.html">HTML</a>) walks each skill end to end — when to
-reach for it, how to invoke it, worked examples, a decision table, an
-issue-to-merge walkthrough, and troubleshooting.</p>
-<h2 id="quick-start">Quick start</h2>
-<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> roles                      <span class="co"># list role IDs and menu numbers</span></span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--dry-run</span> <span class="at">--roles</span> cto,qa</span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa</span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--sync</span> <span class="at">--session</span> issue-96</span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new profile review <span class="at">--roles</span> cto,qa <span class="at">--sync</span> <span class="at">--session</span> review</span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--dry-run</span>               <span class="co"># preview the launch plan</span></span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--project</span> ~/Code/other-app <span class="at">--dry-run</span></span>
-<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session issue-96       <span class="co"># NEW work: bring the team up live in tmux</span></span>
-<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session issue-98 <span class="at">--seed-from</span> issue:31</span>
-<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session <span class="at">--project</span> ~/Code/other-app issue-97</span>
-<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span>                            <span class="co"># bare command -&gt; multi-session status board</span></span>
-<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96  <span class="co"># single-session detail</span></span>
-<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--project</span> ~/Code/other-app <span class="at">--session</span> issue-97</span>
-<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console                    <span class="co"># live read-only Mission Control TUI</span></span>
-<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--project</span> ~/Code/other-app <span class="at">--once</span></span>
-<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor                     <span class="co"># AMQ / PATH / Codex skill cache / tmux / wake / pointer sync</span></span>
-<span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--project</span> ~/Code/other-app <span class="at">--profile</span> release</span>
-<span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--project</span> ~/Code/other-app <span class="at">--all-profiles</span></span>
-<span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq env <span class="at">--session</span> issue-96 <span class="co"># resolved AMQ root/session/handle</span></span>
-<span id="cb7-24"><a href="#cb7-24" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq ops <span class="at">--session</span> issue-96 <span class="co"># AMQ operational diagnostics</span></span>
-<span id="cb7-25"><a href="#cb7-25" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq route <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="at">--to</span> fullstack</span>
-<span id="cb7-26"><a href="#cb7-26" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-27"><a href="#cb7-27" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--all</span>                 <span class="co"># SIGTERM the team (--force = SIGKILL); stays resumable</span></span>
-<span id="cb7-28"><a href="#cb7-28" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--project</span> ~/Code/other-app <span class="at">--all</span> <span class="at">--session</span> issue-97</span>
-<span id="cb7-29"><a href="#cb7-29" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume                     <span class="co"># re-orient (plan only; add --exec to relaunch)</span></span>
-<span id="cb7-30"><a href="#cb7-30" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--project</span> ~/Code/other-app <span class="at">--session</span> issue-97</span>
-<span id="cb7-31"><a href="#cb7-31" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> fork <span class="at">--from</span> issue-96 <span class="at">--as</span> issue-96-review  <span class="co"># branch a fresh workstream</span></span>
-<span id="cb7-32"><a href="#cb7-32" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> fork <span class="at">--project</span> ~/Code/other-app <span class="at">--from</span> issue-96 <span class="at">--as</span> issue-96-review</span>
-<span id="cb7-33"><a href="#cb7-33" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> rm issue-96                <span class="co"># remove a finished session (confirm-gated; or `archive`)</span></span></code></pre></div>
-<h3 id="lifecycle">Lifecycle</h3>
-<p>A session moves through one small state machine:</p>
-<pre class="text"><code>(none) --up--&gt; running --stop--&gt; stopped --rm/archive--&gt; (none)
-                  ^                  |
-                  +------ resume ----+</code></pre>
-<ul>
-<li><strong><code>up [&lt;name&gt;]</code></strong> means NEW work. It
-refuses a session that already exists — use <code>resume</code> to
-continue it, <code>up --reset</code> to start it over, or pick a new
-name.</li>
-<li><strong><code>new session [&lt;name&gt;]</code></strong> is the
-create-focused alias for <code>up [&lt;name&gt;]</code>. It follows the
-same NEW-work refusal rules.</li>
-<li><strong><code>new team</code></strong> is the create-focused alias
-for <code>team init</code>.</li>
-<li><strong><code>new profile NAME</code></strong> is the named-profile
-alias for <code>team init --profile NAME</code>.</li>
-<li><strong><code>stop</code></strong> is the primary teardown: SIGTERM
-the live agents (<code>--force</code> = SIGKILL), but PRESERVE all
-on-disk state so the session stays resumable. (The <code>down</code>
-alias was removed in 2.0.)</li>
-<li><strong><code>resume</code></strong> re-orients a stopped session.
-If an agent has a saved conversation, amq-squad reattaches it; otherwise
-it re-runs bootstrap so the agent re-reads its brief and AMQ history. It
-does NOT replay prior hidden reasoning.</li>
-<li><strong><code>rm</code> / <code>archive</code></strong> are the
-session-destructive ops. Both are confirm-gated (<code>--yes</code> to
-skip the prompt) and refuse a session with live agents unless
-<code>--force</code>. <code>rm</code> deletes the session root + brief;
-<code>archive</code> moves them aside, recoverable. <code>team rm</code>
-is separate: it removes one team profile config only.</li>
-<li>A <strong>restart</strong> is just <code>stop</code> then
-<code>up</code> (after <code>rm</code>/<code>archive</code>) or
-<code>resume</code> for the same session.</li>
-</ul>
-<h3 id="tmux-targets">tmux targets</h3>
-<p><code>amq-squad up</code> defaults to
-<code>--target current-window</code>, which splits the tmux window where
-you run the command. To bring a team up inside an existing tmux session
-such as <code>main</code>, switch or attach to the desired window first,
-then run <code>up</code> from that pane:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> switch-client <span class="at">-t</span> main:6</span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--session</span> v1-0-0-qa <span class="at">--terminal</span> tmux <span class="at">--target</span> current-window <span class="at">--layout</span> tiled</span></code></pre></div>
-<p>Use <code>--target new-session --terminal-session NAME</code> only
-when you want amq-squad to create a separate tmux session.
-<code>--terminal-session</code> names the new session; it does not
-select an existing tmux session for <code>current-window</code>.</p>
-<p>Panes are anchored to the pane you launch from
-(<code>$TMUX_PANE</code>), not to whatever window happens to be focused,
-so a <code>current-window</code> launch is safe even under iTerm2's
-<code>tmux -CC</code> integration: changing tabs mid-launch will not
-rehome the panes onto an unrelated window. If you launch from outside
-tmux, <code>current-window</code> refuses with a hint rather than
-guessing a target.</p>
-<p><code>up</code> is for NEW work and refuses a session that already
-exists. To continue an existing session use
-<code>amq-squad resume</code>; to start it over use
-<code>amq-squad up --reset</code> (destructive: it tears down and
-removes the session first, with a confirmation prompt unless
-<code>--yes</code>). Add <code>--force-duplicate</code> only when stale
-live-agent signals remain and you deliberately want a second agent
-alongside.</p>
-<p>Single-agent primitives:</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--role</span> cto <span class="at">--session</span> issue-96</span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent resume fullstack</span></code></pre></div>
-<p>For Claude-binary agents launched in a tmux pane,
-<code>agent up</code>, <code>up</code>, and managed resume/replay
-schedule a best-effort <code>/rename &lt;role&gt;-&lt;session&gt;</code>
-injection after launch so Claude Code's resume picker shows the squad
-role/workstream. The launch is not blocked if that pane delivery fails.
-Codex has no equivalent slash command, so Codex agents are intentionally
-unaffected.</p>
-<p>The legacy verbs (<code>down</code>, <code>launch</code>,
-<code>restore</code>, <code>list</code>, <code>team show</code>,
-<code>team launch</code>) are <strong>removed in 2.0</strong>. Invoking
-one returns a usage error (exit 1); the replacements are listed in <a
-href="#removed-legacy-verbs">Removed legacy verbs</a> and <a
-href="MIGRATION.md"><code>MIGRATION.md</code></a>.</p>
-<h3 id="custom-launchers">Custom launchers</h3>
-<p>A managed member can be launched through a project-specific wrapper
-script while still receiving AMQ identity, bootstrap, a launch record,
-and status/resume. Pass <code>--launcher</code> (and optional
-<code>--launcher-args</code>) on <code>agent up</code>, or set
-<code>launcher</code> / <code>launcher_args</code> on the member in
-<code>team.json</code>:</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up claude <span class="at">--role</span> qa <span class="at">--session</span> beta <span class="at">--team-workstream</span> <span class="dt">\</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launcher</span> /path/claude-pm-os-dev.sh <span class="at">--launcher-args</span> <span class="st">&quot;--pull --workspace /ws&quot;</span></span></code></pre></div>
-<p>The launcher is exec'd in place of the binary.
-<code>--launcher-args</code> come first, then amq-squad appends the
-agent's normal child args (bootstrap + defaults), so <strong>the
-launcher script must forward its trailing args to the agent</strong>
-(e.g. end with <code>exec claude "$@"</code>). amq-squad refuses with a
-clear error if the launcher path is missing or not executable.
-<code>up --dry-run</code> prints the resolved launcher command.</p>
-<h3 id="per-member-native-args-and-context-overlays">Per-member native
-args and context overlays</h3>
-<p>A <code>team.json</code> member may carry <code>claude_args</code> /
-<code>codex_args</code> — extra native CLI args applied to <strong>that
-member only</strong>, appended after the team-level
-<code>binary_args</code> so the member value wins by position. The field
-must match the member's binary (<code>team sync</code> rejects a
-mismatch), launch records persist it, and resume reproduces it.</p>
-<p>The flagship use is the <strong>context-budget overlay</strong> for
-same-cwd squads: only the lead needs the full plugin/hook surface, while
-workers on smaller-context models burn tokens on plugins and per-prompt
-hook output they never use. Generate and wire it in one command
-(v1.9.0+):</p>
-<div class="sourceCode" id="cb12"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team overlay init <span class="at">--workers</span> <span class="at">--disable-all-hooks</span> <span class="dt">\</span></span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--disable-plugins</span> gws@workspace,document-skills@anthropics</span></code></pre></div>
-<p>This writes a Claude settings overlay per worker
-(<code>.amq-squad/overlays/&lt;role&gt;.claude.json</code>,
-human-editable, never clobbered on re-runs) and wires
-<code>claude_args: ["--settings", &lt;path&gt;]</code> into the member.
-<code>--workers</code> targets every claude member (the orchestration
-lead is excluded); <code>--role R</code> targets one. Launch planning
-(<code>up</code>, <code>resume</code>, the tmux backend) fails fast,
-naming the member, when a referenced <code>--settings</code> file is
-missing. Codex members use the native equivalent: a
-<code>$CODEX_HOME/&lt;name&gt;.config.toml</code> profile wired via
-<code>codex_args: ["--profile", "&lt;name&gt;"]</code>.</p>
 <h2 id="context-model">Context model</h2>
 <p>The context model is three durable layers. Each layer has exactly one
 source of truth.</p>
