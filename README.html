@@ -348,22 +348,36 @@ href="#files-amq-squad-writes">Files amq-squad writes</a></p>
 swarm interop</a> · <a href="#known-gaps">Known gaps</a> · <a
 href="#requires">Requires</a></p>
 <h2 id="why">Why</h2>
-<p>AMQ's <code>coop exec</code> is a generic launcher. It sets up a
-mailbox and execs into <code>claude</code> or <code>codex</code>, but it
-does not know:</p>
+<p>AMQ is the messaging and process substrate: it sets up mailboxes,
+routes and threads messages, tracks presence, wakes agents, federates
+across projects, and execs into <code>claude</code> or
+<code>codex</code> via <code>coop exec</code>. What it deliberately
+stays out of is who is on the team and what each agent is for. AMQ does
+not own:</p>
 <ul>
-<li>Which agent is the "CTO" vs "Fullstack" vs "QA" vs "PM" vs
-"Designer"</li>
-<li>What command originally launched each one (cwd, binary, flags,
-workstream)</li>
-<li>What durable team norms each agent should read at session start</li>
-<li>Which peers a given agent actively talks to</li>
+<li><strong>Roles</strong> — which agent is the "CTO" vs "Fullstack" vs
+"QA" vs "PM" vs "Designer"</li>
+<li><strong>The launch contract</strong> — what command originally
+launched each agent (cwd, binary, flags, workstream), so it can be
+stopped, resumed, or forked</li>
+<li><strong>Durable team norms</strong> — the shared rules each agent
+reads at session start</li>
+<li><strong>The declared roster</strong> — the role-mapped set of peers
+each agent is handed up front at bootstrap (AMQ can observe who talks to
+whom after the fact, via presence and threads; it does not declare the
+intended team a priori)</li>
 </ul>
-<p><code>amq-squad</code> captures this at team-setup time
-(<code>.amq-squad/team.json</code>,
-<code>.amq-squad/team-rules.md</code>) and per-agent at launch time
-(<code>launch.json</code> + <code>role.md</code> inside the AMQ
-mailbox). AMQ itself stays unchanged.</p>
+<p><code>amq-squad</code> owns that layer. It captures roles, roster,
+and norms at team-setup time (<code>.amq-squad/team.json</code>,
+<code>.amq-squad/team-rules.md</code>) and per-agent launch state
+(<code>launch.json</code> + <code>role.md</code>) in AMQ's per-agent
+extension-metadata namespace. AMQ stays domain-agnostic: it adds generic
+affordances that layers build on (the
+<code>extensions/&lt;layer&gt;/</code> namespace, external wake
+injection, a reserved <code>user</code>/operator handle,
+<code>env --json</code>), which is why amq-squad v2.17.0 requires amq
+0.40.0+ — but it still knows nothing about CTOs, rosters, or team
+rules.</p>
 <h2 id="install">Install</h2>
 <p>Install the 2.0 line (note the <code>/v2</code> module path):</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.17.0</span>
