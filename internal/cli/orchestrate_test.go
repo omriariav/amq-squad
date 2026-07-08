@@ -169,6 +169,32 @@ func TestRunStartProfileAliasAndExplicitLead(t *testing.T) {
 	}
 }
 
+func TestRunStartExistingProfileWithRolesInfersLead(t *testing.T) {
+	// Regression: --roles + an EXISTING profile whose lead is not cto must not
+	// force cto. new team is skipped, so the run infers the profile's lead.
+	dir := t.TempDir()
+	if _, _, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--project", dir, "--session", "sess", "--roles", "cto,qa", "--orchestrated", "--lead", "qa"})
+	}); err != nil {
+		t.Fatalf("setup new team: %v", err)
+	}
+	out, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "cto,qa", "--goal", "do x"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("preview error: %v", err)
+	}
+	if strings.Contains(out, "lead:    cto") {
+		t.Fatalf("existing qa-led team must not display cto lead:\n%s", out)
+	}
+	if !strings.Contains(out, "inferred from profile") {
+		t.Fatalf("existing team should infer lead:\n%s", out)
+	}
+	if !strings.Contains(out, "already exists") {
+		t.Fatalf("should note the existing profile / skipped roster:\n%s", out)
+	}
+}
+
 func TestRunStartRejectsBadVisibility(t *testing.T) {
 	err := runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto", "--visibility", "bogus"}, "test")
 	if err == nil || !strings.Contains(err.Error(), "unsupported visibility") {

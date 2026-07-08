@@ -272,7 +272,10 @@ func runRunStart(args []string, version string) error {
 		if strings.TrimSpace(*profileFlag) != "" {
 			newTeamArgs = append(newTeamArgs, "--profile", *profileFlag)
 		}
-		newTeamArgs = append(newTeamArgs, "--roles", *rolesFlag, "--orchestrated", "--lead", leadForNewTeam)
+		// Pin the roster to this run's session so the following `up <session>`
+		// finds its members; without --session the members default to another
+		// workstream and `up` refuses them.
+		newTeamArgs = append(newTeamArgs, "--session", session, "--roles", *rolesFlag, "--orchestrated", "--lead", leadForNewTeam)
 		if strings.TrimSpace(*binaryFlag) != "" {
 			newTeamArgs = append(newTeamArgs, "--binary", *binaryFlag)
 		}
@@ -292,30 +295,44 @@ func runRunStart(args []string, version string) error {
 		return usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", profileOrDefault(*profileFlag), project)
 	}
 
+	// freshRoster is true only when --roles is given AND the profile does not
+	// already exist, i.e. this invocation actually creates the roster. When the
+	// profile already exists, --roles is a no-op and we must NOT assume the lead
+	// is cto: goal delivery infers the profile's configured lead instead.
+	freshRoster := len(newTeamArgs) > 0 && !teamPresent
+
+	leadDisplay := explicitLead
+	if explicitLead == "" {
+		if freshRoster {
+			leadDisplay = leadForNewTeam
+		} else {
+			leadDisplay = "(inferred from profile)"
+		}
+	}
+	upStep := 1
+	if freshRoster {
+		upStep = 2
+	}
 	fmt.Printf("orchestrated run (managed model)\n")
 	fmt.Printf("  project: %s\n", project)
 	fmt.Printf("  profile: %s\n", profileOrDefault(*profileFlag))
 	fmt.Printf("  session: %s\n", session)
-	leadDisplay := explicitLead
-	if len(newTeamArgs) > 0 {
-		leadDisplay = leadForNewTeam
-	} else if leadDisplay == "" {
-		leadDisplay = "(inferred from profile)"
-	}
 	fmt.Printf("  lead:    %s\n", leadDisplay)
-	if len(newTeamArgs) > 0 {
+	if freshRoster {
 		fmt.Printf("  step 1:  amq-squad new team --roles %s --orchestrated --lead %s\n", *rolesFlag, leadForNewTeam)
+	} else if len(newTeamArgs) > 0 {
+		fmt.Printf("  note:    profile %s already exists; --roles ignored, using the existing roster\n", profileOrDefault(*profileFlag))
 	}
-	fmt.Printf("  step %d:  amq-squad up %s --visibility %s\n", stepNo(newTeamArgs), session, visibility)
+	fmt.Printf("  step %d:  amq-squad up %s --visibility %s\n", upStep, session, visibility)
 	if visibility == visibilityDetached {
 		fmt.Printf("  (hidden: agents run in a detached tmux session; attach via the `attach_control` action from `status --json`, or `amq-squad focus`, when you want eyes on them)\n")
 	}
 	if strings.TrimSpace(*goalFlag) != "" {
-		fmt.Printf("  step %d:  amq-squad goal start --session %s --goal %q --yes\n", stepNo(newTeamArgs)+1, session, *goalFlag)
+		fmt.Printf("  step %d:  amq-squad goal start --session %s --goal %q --yes\n", upStep+1, session, *goalFlag)
 	}
 
 	if !*goFlag {
-		return runStartPreview(newTeamArgs, upArgs, teamPresent, version)
+		return runStartPreview(newTeamArgs, upArgs, freshRoster, teamPresent, version)
 	}
 
 	if (visibility == visibilitySiblingTabs || visibility == visibilityCurrent) && !insideTmux() {
@@ -323,15 +340,13 @@ func runRunStart(args []string, version string) error {
 	}
 
 	// 1) roster
-	if len(newTeamArgs) > 0 {
-		if teamPresent {
-			quietNotice("profile %q already exists; skipping new team\n", profileOrDefault(*profileFlag))
-		} else {
-			quietNotice("creating roster...\n")
-			if err := runNew(newTeamArgs); err != nil {
-				return err
-			}
+	if freshRoster {
+		quietNotice("creating roster...\n")
+		if err := runNew(newTeamArgs); err != nil {
+			return err
 		}
+	} else if len(newTeamArgs) > 0 {
+		quietNotice("profile %q already exists; skipping new team (using existing roster)\n", profileOrDefault(*profileFlag))
 	}
 	// 2) spawn
 	quietNotice("spawning team (--visibility %s)...\n", visibility)
@@ -345,7 +360,7 @@ func runRunStart(args []string, version string) error {
 		goalArgs := []string{"start", "--project", project, "--session", session, "--goal", *goalFlag, "--yes"}
 		if explicitLead != "" {
 			goalArgs = append(goalArgs, "--role", explicitLead)
-		} else if len(newTeamArgs) > 0 {
+		} else if freshRoster {
 			goalArgs = append(goalArgs, "--role", leadForNewTeam)
 		}
 		if strings.TrimSpace(*profileFlag) != "" {
@@ -364,9 +379,9 @@ func runRunStart(args []string, version string) error {
 // It never claims success over a check it could not run: on a fresh project the
 // roster does not exist yet, so `up --dry-run` cannot validate it and the
 // preview says so instead of printing a misleading OK.
-func runStartPreview(newTeamArgs, upArgs []string, teamPresent bool, version string) error {
+func runStartPreview(newTeamArgs, upArgs []string, freshRoster, teamPresent bool, version string) error {
 	fmt.Print("\nPREVIEW -- running read-only --dry-run validation; nothing is created.\n")
-	if len(newTeamArgs) > 0 {
+	if freshRoster {
 		if err := runNew(append(append([]string{}, newTeamArgs...), "--dry-run")); err != nil {
 			return fmt.Errorf("roster dry-run failed: %w", err)
 		}
@@ -396,13 +411,6 @@ func profileOrDefault(profile string) string {
 		return "default"
 	}
 	return profile
-}
-
-func stepNo(newTeamArgs []string) int {
-	if len(newTeamArgs) > 0 {
-		return 2
-	}
-	return 1
 }
 
 // appendPassthroughArgs forwards model / per-binary arg overrides verbatim to
