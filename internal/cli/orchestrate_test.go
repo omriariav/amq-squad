@@ -128,6 +128,21 @@ func TestRunStartDefaultsToDetachedInPreview(t *testing.T) {
 	}
 }
 
+func TestRunStartProfileAliasAndExplicitLead(t *testing.T) {
+	out, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "-P", "release", "--roles", "cto,qa", "--lead", "qa"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("preview returned error: %v", err)
+	}
+	if !strings.Contains(out, "profile: release") {
+		t.Fatalf("-P alias should set profile release:\n%s", out)
+	}
+	if !strings.Contains(out, "lead:    qa") || !strings.Contains(out, "--lead qa") {
+		t.Fatalf("explicit --lead qa should be honored, not defaulted to cto:\n%s", out)
+	}
+}
+
 func TestRunStartRejectsBadVisibility(t *testing.T) {
 	err := runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto", "--visibility", "bogus"}, "test")
 	if err == nil || !strings.Contains(err.Error(), "unsupported visibility") {

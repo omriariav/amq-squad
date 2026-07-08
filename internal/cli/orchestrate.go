@@ -208,7 +208,8 @@ func runRunStart(args []string, version string) error {
 	sessionFlag := fs.String("session", "", "workstream session name")
 	fs.StringVar(sessionFlag, "s", "", "alias for --session")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
-	leadFlag := fs.String("lead", "cto", "lead role")
+	fs.StringVar(profileFlag, "P", "", "alias for --profile")
+	leadFlag := fs.String("lead", "", "lead role (default: cto when creating a roster; else inferred from the profile)")
 	rolesFlag := fs.String("roles", "", "create the roster first: comma-separated role ids")
 	binaryFlag := fs.String("binary", "", "per-role binary assignments, e.g. \"fullstack=codex,qa=codex\"")
 	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5,fullstack=sonnet\"")
@@ -251,6 +252,16 @@ func runRunStart(args []string, version string) error {
 		return usageErrorf("--visibility plan is not valid for run start; it previews by default and creates with --go")
 	}
 
+	// Lead resolution: when creating a fresh roster, default the lead to cto.
+	// For an existing team, leave --role unset so `goal start` infers the
+	// configured lead from the profile instead of assuming cto (which may not
+	// be that team's lead).
+	explicitLead := strings.TrimSpace(*leadFlag)
+	leadForNewTeam := explicitLead
+	if leadForNewTeam == "" {
+		leadForNewTeam = "cto"
+	}
+
 	// Build the create commands as argument slices we can run in-process. This
 	// keeps one tested implementation (no shell-out, structured errors) and lets
 	// the CLI flag layer own things the scripts got wrong (e.g. --binary is a
@@ -261,7 +272,7 @@ func runRunStart(args []string, version string) error {
 		if strings.TrimSpace(*profileFlag) != "" {
 			newTeamArgs = append(newTeamArgs, "--profile", *profileFlag)
 		}
-		newTeamArgs = append(newTeamArgs, "--roles", *rolesFlag, "--orchestrated", "--lead", *leadFlag)
+		newTeamArgs = append(newTeamArgs, "--roles", *rolesFlag, "--orchestrated", "--lead", leadForNewTeam)
 		if strings.TrimSpace(*binaryFlag) != "" {
 			newTeamArgs = append(newTeamArgs, "--binary", *binaryFlag)
 		}
@@ -285,9 +296,15 @@ func runRunStart(args []string, version string) error {
 	fmt.Printf("  project: %s\n", project)
 	fmt.Printf("  profile: %s\n", profileOrDefault(*profileFlag))
 	fmt.Printf("  session: %s\n", session)
-	fmt.Printf("  lead:    %s\n", *leadFlag)
+	leadDisplay := explicitLead
 	if len(newTeamArgs) > 0 {
-		fmt.Printf("  step 1:  amq-squad new team --roles %s --orchestrated --lead %s\n", *rolesFlag, *leadFlag)
+		leadDisplay = leadForNewTeam
+	} else if leadDisplay == "" {
+		leadDisplay = "(inferred from profile)"
+	}
+	fmt.Printf("  lead:    %s\n", leadDisplay)
+	if len(newTeamArgs) > 0 {
+		fmt.Printf("  step 1:  amq-squad new team --roles %s --orchestrated --lead %s\n", *rolesFlag, leadForNewTeam)
 	}
 	fmt.Printf("  step %d:  amq-squad up %s --visibility %s\n", stepNo(newTeamArgs), session, visibility)
 	if visibility == visibilityDetached {
@@ -317,13 +334,20 @@ func runRunStart(args []string, version string) error {
 		}
 	}
 	// 2) spawn
-	quietNotice("spawning team into sibling tabs...\n")
+	quietNotice("spawning team (--visibility %s)...\n", visibility)
 	if err := runUpWithVersion(upArgs, version); err != nil {
 		return err
 	}
-	// 3) optional goal delivery
+	// 3) optional goal delivery. Pass --role only when we know the lead: an
+	// explicit --lead, or the cto default we just created a roster with.
+	// Otherwise let `goal start` infer the profile's configured lead.
 	if strings.TrimSpace(*goalFlag) != "" {
-		goalArgs := []string{"start", "--project", project, "--session", session, "--role", *leadFlag, "--goal", *goalFlag, "--yes"}
+		goalArgs := []string{"start", "--project", project, "--session", session, "--goal", *goalFlag, "--yes"}
+		if explicitLead != "" {
+			goalArgs = append(goalArgs, "--role", explicitLead)
+		} else if len(newTeamArgs) > 0 {
+			goalArgs = append(goalArgs, "--role", leadForNewTeam)
+		}
 		if strings.TrimSpace(*profileFlag) != "" {
 			goalArgs = append(goalArgs, "--profile", *profileFlag)
 		}
