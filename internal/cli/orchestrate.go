@@ -104,9 +104,6 @@ func runGlobalStart(args []string) error {
 	if info, err := os.Stat(*root); err != nil || !info.IsDir() {
 		return usageErrorf("root directory does not exist: %s", *root)
 	}
-	if _, err := exec.LookPath(*agent); err != nil {
-		return usageErrorf("%s not found on PATH", *agent)
-	}
 
 	fmt.Printf("global orchestrator (poller mode -- no wake by design)\n")
 	fmt.Printf("  root:   %s\n", *root)
@@ -124,6 +121,9 @@ PREVIEW only -- nothing launched. Re-run with --go to open the window.
 
 	if !insideTmux() {
 		return usageErrorf("not inside tmux; global start --go must run from a tmux session (visible spawns require it)")
+	}
+	if _, err := exec.LookPath(*agent); err != nil {
+		return usageErrorf("%s not found on PATH", *agent)
 	}
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return usageErrorf("tmux not found on PATH")
