@@ -1,0 +1,399 @@
+package cli
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/omriariav/amq-squad/v2/internal/team"
+)
+
+// orchestrateTmuxRun executes a tmux command. It is a package var so tests can
+// stub it and assert the launch was invoked with the expected arguments,
+// matching the injectable-runner pattern used elsewhere in this package
+// (externalLeadWakeCommand, runAMQCommand).
+var orchestrateTmuxRun = func(args ...string) error { return exec.Command("tmux", args...).Run() }
+
+func insideTmux() bool { return strings.TrimSpace(os.Getenv("TMUX")) != "" }
+
+func validOrchestrateAgent(agent string) error {
+	switch agent {
+	case "claude", "codex":
+		return nil
+	default:
+		return usageErrorf("--agent must be claude or codex, got %q", agent)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// global: multi-run global / NOC orchestrator (poller, no wake)
+// -----------------------------------------------------------------------------
+
+func runGlobal(args []string) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprint(os.Stderr, `amq-squad global - stand up a global / NOC orchestrator
+
+Usage:
+  amq-squad global start [--root DIR] [--agent claude|codex] [--name WINDOW] [--go]
+
+A global orchestrator is a control-plane conversation that supervises MANY runs
+across repos from a neutral root. It is a POLLER by design: it owns no single
+mailbox, so there is nothing to wake it on. It drives each run by explicit
+--project/--profile/--session and keeps the multi-run board (see the
+amq-squad-orchestrator skill).
+
+Preview by default (prints the plan and the poll/steer cheatsheet); pass --go to
+open the tmux window and launch the agent.
+`)
+		if len(args) == 0 {
+			return usageErrorf("global requires a subcommand (start)")
+		}
+		return nil
+	}
+	switch args[0] {
+	case "start":
+		return runGlobalStart(args[1:])
+	default:
+		return usageErrorf("unknown 'global' subcommand: %q. Try start.", args[0])
+	}
+}
+
+func runGlobalStart(args []string) error {
+	fs := flag.NewFlagSet("global start", flag.ContinueOnError)
+	defaultRoot := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		defaultRoot = filepath.Join(home, "Code")
+	}
+	root := fs.String("root", defaultRoot, "neutral root directory the supervisor runs from")
+	agent := fs.String("agent", "claude", "agent binary to launch: claude or codex")
+	name := fs.String("name", "global-orch", "tmux window name")
+	model := fs.String("model", "", "model to pass to the agent (e.g. claude-opus-4-8, gpt-5)")
+	codexArgs := fs.String("codex-args", "", "extra args when --agent codex (e.g. reasoning effort); space-split")
+	claudeArgs := fs.String("claude-args", "", "extra args when --agent claude; space-split")
+	goFlag := fs.Bool("go", false, "actually open the window and launch the agent (default: preview only)")
+	fs.Usage = func() { _ = runGlobal([]string{"-h"}) }
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return usageErrorf("unexpected argument %q", fs.Arg(0))
+	}
+	if err := validOrchestrateAgent(*agent); err != nil {
+		return err
+	}
+	// Build the agent argv: binary, then model, then the matching per-binary
+	// passthrough (effort etc. rides here, consistent with --codex-args /
+	// --claude-args elsewhere; amq-squad has no first-class --effort flag).
+	agentArgv := []string{*agent}
+	if strings.TrimSpace(*model) != "" {
+		agentArgv = append(agentArgv, "--model", strings.TrimSpace(*model))
+	}
+	extra := *claudeArgs
+	if *agent == "codex" {
+		extra = *codexArgs
+	}
+	if fields := strings.Fields(extra); len(fields) > 0 {
+		agentArgv = append(agentArgv, fields...)
+	}
+	if strings.TrimSpace(*root) == "" {
+		return usageErrorf("global start requires --root (could not infer a home directory)")
+	}
+	if info, err := os.Stat(*root); err != nil || !info.IsDir() {
+		return usageErrorf("root directory does not exist: %s", *root)
+	}
+	if _, err := exec.LookPath(*agent); err != nil {
+		return usageErrorf("%s not found on PATH", *agent)
+	}
+
+	fmt.Printf("global orchestrator (poller mode -- no wake by design)\n")
+	fmt.Printf("  root:   %s\n", *root)
+	fmt.Printf("  agent:  %s\n", *agent)
+	fmt.Printf("  window: %s\n", *name)
+	fmt.Printf("  launch: tmux new-window -c %s -n %s %s\n", *root, *name, strings.Join(agentArgv, " "))
+
+	if !*goFlag {
+		fmt.Print(`
+PREVIEW only -- nothing launched. Re-run with --go to open the window.
+`)
+		printGlobalCheatsheet()
+		return nil
+	}
+
+	if !insideTmux() {
+		return usageErrorf("not inside tmux; global start --go must run from a tmux session (visible spawns require it)")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return usageErrorf("tmux not found on PATH")
+	}
+	tmuxArgs := append([]string{"new-window", "-c", *root, "-n", *name}, agentArgv...)
+	if err := orchestrateTmuxRun(tmuxArgs...); err != nil {
+		return fmt.Errorf("tmux new-window failed: %w", err)
+	}
+	quietNotice("launched %s in tmux window %q at %s\n", *agent, *name, *root)
+	printGlobalCheatsheet()
+	return nil
+}
+
+func printGlobalCheatsheet() {
+	fmt.Print(`
+In the new window, invoke the amq-squad-orchestrator skill, then drive each run
+by explicit namespace (never by cwd):
+
+  amq-squad goal draft  --goal "..." --repo <owner/repo> --session <s> --profile <p> --lead <role> --skill-invocation
+  amq-squad goal start  --project <repo> --profile <p> --session <s> --goal "..." --dry-run --json
+  amq-squad goal start  --project <repo> --profile <p> --session <s> --goal "..." --yes --json
+
+Poll / steer / approve:
+  amq-squad monitor  --project <repo> --profile <p> --session <s> --once --json
+  amq-squad status   --project <repo> --profile <p> --session <s> --json
+  amq-squad next     --project <repo> --profile <p> --session <s> --json
+  amq-squad operator answer   --project <repo> --profile <p> --session <s> --gate <topic> --to <lead> --approved --reason "..."
+
+To drive ONE run wake-first instead of polling it, use 'amq-squad run start --project <repo>'.
+`)
+}
+
+// -----------------------------------------------------------------------------
+// run: create one orchestrated run in a project (managed spawn)
+// -----------------------------------------------------------------------------
+
+func runRunCmd(args []string, version string) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprint(os.Stderr, `amq-squad run - create one orchestrated run in a project
+
+Usage:
+  amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
+      [--roles "a,b,c"] [--binary "role=bin,..."] [--model "role=model,..."]
+      [--codex-args "..."] [--claude-args "..."]
+      [--visibility detached|sibling-tabs|current] [--goal TEXT] [--seed-from REF] [--go]
+
+Managed model: amq-squad spawns the whole team (incl. the lead); panes are
+registered and wake-live automatically. This wraps the create sequence so the
+--project/--profile/--session namespace is typed once:
+
+    new team (if --roles) -> up --visibility <mode>
+
+Visibility defaults to detached (hidden): agents run in a separate tmux session
+you don't see, and you supervise via status/console/monitor + wake, attaching
+only to intervene. Pass --visibility sibling-tabs for visible tabs (requires a
+visible tmux pane). Choose binary via --binary, model via --model, and effort
+via --codex-args/--claude-args (amq-squad has no first-class --effort flag).
+
+Preview by default (prints the plan and runs read-only --dry-run validation, so
+its failures surface honestly); pass --go to create for real.
+
+External-lead mode (your current pane IS the lead) is not yet supported here;
+see issue #339.
+`)
+		if len(args) == 0 {
+			return usageErrorf("run requires a subcommand (start)")
+		}
+		return nil
+	}
+	switch args[0] {
+	case "start":
+		return runRunStart(args[1:], version)
+	default:
+		return usageErrorf("unknown 'run' subcommand: %q. Try start.", args[0])
+	}
+}
+
+func runRunStart(args []string, version string) error {
+	fs := flag.NewFlagSet("run start", flag.ContinueOnError)
+	projectFlag := fs.String("project", "", "project / team-home directory (repo root)")
+	fs.StringVar(projectFlag, "p", "", "alias for --project")
+	sessionFlag := fs.String("session", "", "workstream session name")
+	fs.StringVar(sessionFlag, "s", "", "alias for --session")
+	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	leadFlag := fs.String("lead", "cto", "lead role")
+	rolesFlag := fs.String("roles", "", "create the roster first: comma-separated role ids")
+	binaryFlag := fs.String("binary", "", "per-role binary assignments, e.g. \"fullstack=codex,qa=codex\"")
+	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5,fullstack=sonnet\"")
+	codexArgsFlag := fs.String("codex-args", "", "extra args for every Codex member (e.g. reasoning effort)")
+	claudeArgsFlag := fs.String("claude-args", "", "extra args for every Claude member")
+	visibilityFlag := fs.String("visibility", visibilityDetached, "spawn topology: detached (hidden, default), sibling-tabs (visible tabs), or current")
+	goalFlag := fs.String("goal", "", "after spawn, deliver this goal to the lead")
+	seedFlag := fs.String("seed-from", "", "seed the workstream brief from a reference (e.g. issue:96)")
+	externalLead := fs.Bool("external-lead", false, "(unsupported yet, see #339) your current pane is the lead")
+	goFlag := fs.Bool("go", false, "create for real (default: preview only)")
+	fs.Usage = func() { _ = runRunCmd([]string{"-h"}, version) }
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return usageErrorf("unexpected argument %q", fs.Arg(0))
+	}
+	if *externalLead {
+		return usageErrorf("external-lead mode is not yet supported (see #339); pane binding must be verified against the CLI before it ships. Use the managed model for now.")
+	}
+	project := strings.TrimSpace(*projectFlag)
+	session := strings.TrimSpace(*sessionFlag)
+	if project == "" {
+		return usageErrorf("run start requires --project (-p)")
+	}
+	if session == "" {
+		return usageErrorf("run start requires --session (-s)")
+	}
+	if err := team.ValidateSessionName(session); err != nil {
+		return usageErrorf("invalid --session: %v", err)
+	}
+	if info, err := os.Stat(project); err != nil || !info.IsDir() {
+		return usageErrorf("project directory does not exist: %s", project)
+	}
+	visibility, err := normalizeLaunchVisibility(*visibilityFlag)
+	if err != nil {
+		return usageErrorf("%v", err)
+	}
+	if visibility == visibilityPlan {
+		return usageErrorf("--visibility plan is not valid for run start; it previews by default and creates with --go")
+	}
+
+	// Build the create commands as argument slices we can run in-process. This
+	// keeps one tested implementation (no shell-out, structured errors) and lets
+	// the CLI flag layer own things the scripts got wrong (e.g. --binary is a
+	// single role=bin,... string here, matching `team.go`, not repeatable).
+	var newTeamArgs []string
+	if strings.TrimSpace(*rolesFlag) != "" {
+		newTeamArgs = []string{"team", "--project", project}
+		if strings.TrimSpace(*profileFlag) != "" {
+			newTeamArgs = append(newTeamArgs, "--profile", *profileFlag)
+		}
+		newTeamArgs = append(newTeamArgs, "--roles", *rolesFlag, "--orchestrated", "--lead", *leadFlag)
+		if strings.TrimSpace(*binaryFlag) != "" {
+			newTeamArgs = append(newTeamArgs, "--binary", *binaryFlag)
+		}
+		newTeamArgs = appendPassthroughArgs(newTeamArgs, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
+	}
+	upArgs := []string{session, "--project", project, "--visibility", visibility}
+	if strings.TrimSpace(*profileFlag) != "" {
+		upArgs = append(upArgs, "--profile", *profileFlag)
+	}
+	if strings.TrimSpace(*seedFlag) != "" {
+		upArgs = append(upArgs, "--seed-from", *seedFlag)
+	}
+	upArgs = appendPassthroughArgs(upArgs, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
+
+	teamPresent := teamExistsForProfile(project, *profileFlag)
+	if len(newTeamArgs) == 0 && !teamPresent {
+		return usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", profileOrDefault(*profileFlag), project)
+	}
+
+	fmt.Printf("orchestrated run (managed model)\n")
+	fmt.Printf("  project: %s\n", project)
+	fmt.Printf("  profile: %s\n", profileOrDefault(*profileFlag))
+	fmt.Printf("  session: %s\n", session)
+	fmt.Printf("  lead:    %s\n", *leadFlag)
+	if len(newTeamArgs) > 0 {
+		fmt.Printf("  step 1:  amq-squad new team --roles %s --orchestrated --lead %s\n", *rolesFlag, *leadFlag)
+	}
+	fmt.Printf("  step %d:  amq-squad up %s --visibility %s\n", stepNo(newTeamArgs), session, visibility)
+	if visibility == visibilityDetached {
+		fmt.Printf("  (hidden: agents run in a detached tmux session; attach via the `attach_control` action from `status --json`, or `amq-squad focus`, when you want eyes on them)\n")
+	}
+	if strings.TrimSpace(*goalFlag) != "" {
+		fmt.Printf("  step %d:  amq-squad goal start --session %s --goal %q --yes\n", stepNo(newTeamArgs)+1, session, *goalFlag)
+	}
+
+	if !*goFlag {
+		return runStartPreview(newTeamArgs, upArgs, teamPresent, version)
+	}
+
+	if (visibility == visibilitySiblingTabs || visibility == visibilityCurrent) && !insideTmux() {
+		return usageErrorf("not inside tmux; --visibility %s requires a visible tmux pane. Use --visibility detached to spawn hidden, or attach a tmux session first.", visibility)
+	}
+
+	// 1) roster
+	if len(newTeamArgs) > 0 {
+		if teamPresent {
+			quietNotice("profile %q already exists; skipping new team\n", profileOrDefault(*profileFlag))
+		} else {
+			quietNotice("creating roster...\n")
+			if err := runNew(newTeamArgs); err != nil {
+				return err
+			}
+		}
+	}
+	// 2) spawn
+	quietNotice("spawning team into sibling tabs...\n")
+	if err := runUpWithVersion(upArgs, version); err != nil {
+		return err
+	}
+	// 3) optional goal delivery
+	if strings.TrimSpace(*goalFlag) != "" {
+		goalArgs := []string{"start", "--project", project, "--session", session, "--role", *leadFlag, "--goal", *goalFlag, "--yes"}
+		if strings.TrimSpace(*profileFlag) != "" {
+			goalArgs = append(goalArgs, "--profile", *profileFlag)
+		}
+		quietNotice("delivering goal to lead...\n")
+		if err := runGoalWithVersion(goalArgs, version); err != nil {
+			return err
+		}
+	}
+	quietNotice("done. Attach to the lead window and drive with dispatch/monitor/collect.\n")
+	return nil
+}
+
+// runStartPreview runs the read-only dry-run validation and reports honestly.
+// It never claims success over a check it could not run: on a fresh project the
+// roster does not exist yet, so `up --dry-run` cannot validate it and the
+// preview says so instead of printing a misleading OK.
+func runStartPreview(newTeamArgs, upArgs []string, teamPresent bool, version string) error {
+	fmt.Print("\nPREVIEW -- running read-only --dry-run validation; nothing is created.\n")
+	if len(newTeamArgs) > 0 {
+		if err := runNew(append(append([]string{}, newTeamArgs...), "--dry-run")); err != nil {
+			return fmt.Errorf("roster dry-run failed: %w", err)
+		}
+	}
+	if teamPresent {
+		if err := runUpWithVersion(append(append([]string{}, upArgs...), "--dry-run"), version); err != nil {
+			return fmt.Errorf("spawn dry-run failed: %w", err)
+		}
+		fmt.Print("\nPreview OK. Re-run with --go to create it.\n")
+		return nil
+	}
+	fmt.Print("\nRoster plan validated. Spawn (up) validation is deferred: the team does\n" +
+		"not exist yet, so `up --dry-run` cannot check the roster in preview.\n" +
+		"Re-run with --go to create the team and spawn.\n")
+	return nil
+}
+
+func teamExistsForProfile(project, profile string) bool {
+	if strings.TrimSpace(profile) == "" {
+		return team.Exists(project)
+	}
+	return team.ExistsProfile(project, profile)
+}
+
+func profileOrDefault(profile string) string {
+	if strings.TrimSpace(profile) == "" {
+		return "default"
+	}
+	return profile
+}
+
+func stepNo(newTeamArgs []string) int {
+	if len(newTeamArgs) > 0 {
+		return 2
+	}
+	return 1
+}
+
+// appendPassthroughArgs forwards model / per-binary arg overrides verbatim to
+// `new team` and `up`, which already parse the "role=model,..." and raw-arg
+// formats. Forwarding the strings unchanged keeps one parser and avoids a
+// second, drift-prone format in this layer.
+func appendPassthroughArgs(dst []string, model, codexArgs, claudeArgs string) []string {
+	if strings.TrimSpace(model) != "" {
+		dst = append(dst, "--model", model)
+	}
+	if strings.TrimSpace(codexArgs) != "" {
+		dst = append(dst, "--codex-args", codexArgs)
+	}
+	if strings.TrimSpace(claudeArgs) != "" {
+		dst = append(dst, "--claude-args", claudeArgs)
+	}
+	return dst
+}
