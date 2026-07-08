@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -192,6 +193,47 @@ func TestRunStartExistingProfileWithRolesInfersLead(t *testing.T) {
 	}
 	if !strings.Contains(out, "already exists") {
 		t.Fatalf("should note the existing profile / skipped roster:\n%s", out)
+	}
+}
+
+func TestStripFlagValue(t *testing.T) {
+	got, had := stripFlagValue([]string{"sess", "--project", "p", "--seed-from", "issue:9", "--visibility", "detached"}, "--seed-from")
+	if !had {
+		t.Fatal("expected had=true when flag present")
+	}
+	if strings.Join(got, " ") != "sess --project p --visibility detached" {
+		t.Fatalf("unexpected strip result: %q", strings.Join(got, " "))
+	}
+	if _, had := stripFlagValue([]string{"sess", "--project", "p"}, "--seed-from"); had {
+		t.Fatal("expected had=false when flag absent")
+	}
+}
+
+func TestRunStartPreviewSeedFromValidatesRealSpawn(t *testing.T) {
+	// With --seed-from, the validation dry-run must strip it (else up --dry-run
+	// returns brief-only and skips roster/session validation). Existing team is
+	// pinned to sess, so the real validation passes and the seed note appears.
+	dir := t.TempDir()
+	if _, _, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--project", dir, "--session", "sess", "--roles", "cto,qa", "--orchestrated", "--lead", "cto"})
+	}); err != nil {
+		t.Fatalf("setup new team: %v", err)
+	}
+	brief := filepath.Join(dir, "brief.md")
+	if err := os.WriteFile(brief, []byte("# brief\nwork on it\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--seed-from", "file:" + brief}, "test")
+	})
+	if err != nil {
+		t.Fatalf("preview error: %v", err)
+	}
+	if !strings.Contains(out, "Preview OK") {
+		t.Fatalf("expected Preview OK for a valid pinned team:\n%s", out)
+	}
+	if !strings.Contains(out, "--seed-from brief is written at --go") {
+		t.Fatalf("expected seed-from note:\n%s", out)
 	}
 }
 

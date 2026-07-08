@@ -387,10 +387,18 @@ func runStartPreview(newTeamArgs, upArgs []string, freshRoster, teamPresent bool
 		}
 	}
 	if teamPresent {
-		if err := runUpWithVersion(append(append([]string{}, upArgs...), "--dry-run"), version); err != nil {
+		// Strip --seed-from for the validation dry-run: `up --dry-run --seed-from`
+		// returns early with only a brief-candidate preview and skips roster/
+		// session validation, which would let preview print "OK" for a spawn that
+		// `--go` cannot actually perform. The seed is written at --go regardless.
+		validateArgs, seeded := stripFlagValue(upArgs, "--seed-from")
+		if err := runUpWithVersion(append(validateArgs, "--dry-run"), version); err != nil {
 			return fmt.Errorf("spawn dry-run failed: %w", err)
 		}
 		fmt.Print("\nPreview OK. Re-run with --go to create it.\n")
+		if seeded {
+			fmt.Print("(the --seed-from brief is written at --go; preview validated the roster/session without it.)\n")
+		}
 		return nil
 	}
 	fmt.Print("\nRoster plan validated. Spawn (up) validation is deferred: the team does\n" +
@@ -411,6 +419,21 @@ func profileOrDefault(profile string) string {
 		return "default"
 	}
 	return profile
+}
+
+// stripFlagValue returns args with every `flag value` pair removed, and whether
+// any was present. Used to drop --seed-from from the preview validation dry-run.
+func stripFlagValue(args []string, flag string) (stripped []string, had bool) {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == flag {
+			had = true
+			i++ // skip the value
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out, had
 }
 
 // appendPassthroughArgs forwards model / per-binary arg overrides verbatim to
