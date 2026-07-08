@@ -81,6 +81,32 @@ func TestGlobalUnknownSubcommand(t *testing.T) {
 	}
 }
 
+func TestGlobalDispatchHelpAndEmpty(t *testing.T) {
+	_, _, err := captureOutput(t, func() error { return runGlobal([]string{}) })
+	if err == nil || !strings.Contains(err.Error(), "global requires a subcommand") {
+		t.Fatalf("empty global should require a subcommand, got %v", err)
+	}
+	_, _, err = captureOutput(t, func() error { return runGlobal([]string{"-h"}) })
+	if err != nil {
+		t.Fatalf("global -h should not error, got %v", err)
+	}
+}
+
+func TestRunCmdDispatch(t *testing.T) {
+	_, _, err := captureOutput(t, func() error { return runRunCmd([]string{}, "test") })
+	if err == nil || !strings.Contains(err.Error(), "run requires a subcommand") {
+		t.Fatalf("empty run should require a subcommand, got %v", err)
+	}
+	_, _, err = captureOutput(t, func() error { return runRunCmd([]string{"bogus"}, "test") })
+	if err == nil || !strings.Contains(err.Error(), "unknown 'run' subcommand") {
+		t.Fatalf("expected unknown-subcommand error, got %v", err)
+	}
+	_, _, err = captureOutput(t, func() error { return runRunCmd([]string{"-h"}, "test") })
+	if err != nil {
+		t.Fatalf("run -h should not error, got %v", err)
+	}
+}
+
 func TestRunStartRequiresProjectAndSession(t *testing.T) {
 	if err := runRunStart([]string{"-s", "x"}, "test"); err == nil || !strings.Contains(err.Error(), "requires --project") {
 		t.Fatalf("expected --project error, got %v", err)
