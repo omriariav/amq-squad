@@ -165,6 +165,24 @@ func TestAppendPassthroughArgs(t *testing.T) {
 	}
 }
 
+func TestCompletionCoversGlobalRunSubcommands(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		out, _, err := captureOutput(t, func() error { return runCompletion([]string{shell}) })
+		if err != nil {
+			t.Fatalf("%s completion error: %v", shell, err)
+		}
+		for _, verb := range []string{"global", "run"} {
+			if !strings.Contains(out, verb) {
+				t.Errorf("%s completion missing top command %q", shell, verb)
+			}
+		}
+		// Each verb's sole subcommand is "start"; assert the script wires it.
+		if strings.Count(out, "start") == 0 {
+			t.Errorf("%s completion does not surface the start subcommand:\n%s", shell, out)
+		}
+	}
+}
+
 func TestGlobalAndRunRegistered(t *testing.T) {
 	for _, name := range []string{"global", "run"} {
 		if _, ok := lookupCommand(name, "test"); !ok {
