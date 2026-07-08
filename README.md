@@ -77,7 +77,7 @@ AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `cl
 Install the 2.0 line (note the `/v2` module path):
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.16.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.17.0
 amq-squad version
 ```
 
@@ -447,7 +447,7 @@ amq-squad goal start \
   --project /path/to/repo \
   --session v2-15-0 \
   --register-orchestrator=orchestrator \
-  --goal "deliver GitHub milestone v2.16.0" \
+  --goal "deliver GitHub milestone v2.17.0" \
   --yes
 ```
 
@@ -584,7 +584,7 @@ amq-squad new team --roles cto,qa --operator ops  # custom operator handle
 amq-squad new team --roles cto,qa --no-operator   # explicit opt-out
 ```
 
-The operator is not a runnable team member. AMQ 0.38.0+ reserves the conventional `user` mailbox for this human/operator role, and amq-squad v2.16.0 requires AMQ 0.40.0+ overall; custom operator handles use the same amq-squad protocol. JSON discovery derives `operator` and `capabilities.operator_gates`; `capabilities` is not persisted in `team.json`.
+The operator is not a runnable team member. AMQ 0.38.0+ reserves the conventional `user` mailbox for this human/operator role, and amq-squad v2.17.0 requires AMQ 0.40.0+ overall; custom operator handles use the same amq-squad protocol. JSON discovery derives `operator` and `capabilities.operator_gates`; `capabilities` is not persisted in `team.json`.
 
 Operator gates are structural AMQ handoffs, not authentication. Send human-only decisions or manual actions to the configured operator handle on stable `gate/<topic>` threads, with `--kind question --subject "APPROVAL: <decision>"` for approvals and `--kind decision --subject "DONE: <goal>"` for manual closeout. The operator replies on the same thread with `--kind answer` and subjects such as `APPROVED:`, `DENIED:`, or `ANSWER:`. If the operator answers a pending gate in a live pane/chat instead of AMQ, the lead treats it as operator input, immediately ACKs or mirrors it on the matching `gate/<topic>` thread without spoofing the operator handle, and checks both the live channel and AMQ gate/inbox state before declaring the gate blocked. P2P prose like "pending operator" is evidence only; it is not a gate. `amq-squad notify` surfaces new or stale needs-you gates with inspect/respond commands and de-duplicates unchanged items, but notification output never authorizes or clears a gate.
 
@@ -1015,7 +1015,7 @@ It renders to `/dev/tty`, so `stdout` stays clean for the other verbs. With `--o
 
 `amq-squad amq ...` is a project-aware wrapper around AMQ diagnostics. It resolves the same AMQ root, base root, session, and handle that the squad launcher uses, then delegates to AMQ.
 
-amq-squad v2.16.0 requires AMQ 0.40.0 or newer. That floor includes the wake-inject stale-process fix (AMQ-owned `--inject-via` wake processes exit when their recorded owner is gone or no longer matches), eval-safe `amq env --export`, the reserved human `user` mailbox behavior used by operator gates and notification surfaces, and AMQ 0.40.0's stricter queue/DLQ/receipt/wake metadata file hardening.
+amq-squad v2.17.0 requires AMQ 0.40.0 or newer. That floor includes the wake-inject stale-process fix (AMQ-owned `--inject-via` wake processes exit when their recorded owner is gone or no longer matches), eval-safe `amq env --export`, the reserved human `user` mailbox behavior used by operator gates and notification surfaces, and AMQ 0.40.0's stricter queue/DLQ/receipt/wake metadata file hardening.
 
 Read-only diagnostics run directly:
 
@@ -1323,7 +1323,7 @@ amq-squad team init --personas cto,fullstack --model cto=gpt-5.5,fullstack=fable
 amq-squad agent up codex --model gpt-5.5 --codex-args "-c model_reasoning_effort=medium"
 ```
 
-amq-squad v2.16.0 requires amq **0.40.0+**. Launches pass `--require-wake` to
+amq-squad v2.17.0 requires amq **0.40.0+**. Launches pass `--require-wake` to
 `amq coop exec`, so a launch **fails at the door** when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale or
 orphaned wake. `--no-require-wake` opts out for environments where wake cannot

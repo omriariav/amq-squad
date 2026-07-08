@@ -12,7 +12,7 @@ Launch priming is automatic. `up` / `agent up` inject the bootstrap prompt; agen
 
 This skill is named `amq-squad`; the binary is also named `amq-squad`.
 
-**Skill version: 2.16.0** — on your FIRST response of a session, print the line `amq-squad skill v2.16.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
+**Skill version: 2.17.0** — on your FIRST response of a session, print the line `amq-squad skill v2.17.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
 
 ## Context model
 
@@ -216,7 +216,7 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
 
 Human escalations follow the current team rules. When operator gates are enabled, send approval questions or manual-action requests to the virtual operator handle and do not treat it as a runnable peer. When operator gates are disabled, route through the role named by team rules.
 
-Operator-gate escalation (v2.16.0+): unanswered `gate/<topic>` asks addressed to the configured operator handle escalate from `initial` to `reminder` after 30m and `strong-warning` after 2h, measured from the last unanswered operator-facing gate message. `amq-squad notify` bypasses its normal de-duplication when a gate crosses into a stronger band; `status --json` warnings and `console --once` labels make aged gates distinct.
+Operator-gate escalation (v2.17.0+): unanswered `gate/<topic>` asks addressed to the configured operator handle escalate from `initial` to `reminder` after 30m and `strong-warning` after 2h, measured from the last unanswered operator-facing gate message. `amq-squad notify` bypasses its normal de-duplication when a gate crosses into a stronger band; `status --json` warnings and `console --once` labels make aged gates distinct.
 
 ## Common command patterns
 
@@ -288,7 +288,7 @@ Plan emission fails fast when a referenced `--settings` file is missing;
 `up --dry-run` shows the args on each member's command. Codex members use a `$CODEX_HOME/<name>.config.toml` profile wired
 via `codex_args: ["--profile", "<name>"]` instead.
 
-AMQ floor (v2.16.0+): amq-squad requires amq 0.40.0+. The launch wake
+AMQ floor (v2.17.0+): amq-squad requires amq 0.40.0+. The launch wake
 gate introduced in v2.5.0 passes `--require-wake` to `amq coop exec`, so a
 launch fails at the door when the AMQ wake sidecar cannot start and acquire its
 lock (instead of surfacing later as a stale wake). `--no-require-wake` opts out
@@ -297,7 +297,7 @@ resume` reproduces it.
 Use `--no-gitignore` on `agent up`, `up`, or `up --dry-run` when AMQ coop
 auto-init should leave `.gitignore` unchanged; the opt-out is persisted in the
 launch record and replayed by `agent resume`.
-Operator-gate escalation (v2.16.0+): unanswered `gate/<topic>` asks addressed to
+Operator-gate escalation (v2.17.0+): unanswered `gate/<topic>` asks addressed to
 the configured operator handle escalate from `initial` to `reminder` after 30m
 and `strong-warning` after 2h. `amq-squad notify` bypasses its normal throttle
 when the escalation band advances, while `status --json` warnings and
