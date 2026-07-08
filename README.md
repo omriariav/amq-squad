@@ -18,14 +18,14 @@ Built on [AMQ](https://github.com/avivsinai/agent-message-queue) by [Aviv Sinai]
 
 ## Why
 
-AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `claude` or `codex`, but it does not know:
+AMQ is the messaging and process substrate: it sets up mailboxes, routes and threads messages, tracks presence, wakes agents, federates across projects, and execs into `claude` or `codex` via `coop exec`. What it deliberately stays out of is who is on the team and what each agent is for. AMQ does not own:
 
-- Which agent is the "CTO" vs "Fullstack" vs "QA" vs "PM" vs "Designer"
-- What command originally launched each one (cwd, binary, flags, workstream)
-- What durable team norms each agent should read at session start
-- Which peers a given agent actively talks to
+- **Roles** — which agent is the "CTO" vs "Fullstack" vs "QA" vs "PM" vs "Designer"
+- **The launch contract** — what command originally launched each agent (cwd, binary, flags, workstream), so it can be stopped, resumed, or forked
+- **Durable team norms** — the shared rules each agent reads at session start
+- **The declared roster** — the role-mapped set of peers each agent is handed up front at bootstrap (AMQ can observe who talks to whom after the fact, via presence and threads; it does not declare the intended team a priori)
 
-`amq-squad` captures this at team-setup time (`.amq-squad/team.json`, `.amq-squad/team-rules.md`) and per-agent at launch time (`launch.json` + `role.md` inside the AMQ mailbox). AMQ itself stays unchanged.
+`amq-squad` owns that layer. It captures roles, roster, and norms at team-setup time (`.amq-squad/team.json`, `.amq-squad/team-rules.md`) and per-agent launch state (`launch.json` + `role.md`) in AMQ's per-agent extension-metadata namespace. AMQ stays domain-agnostic: it adds generic affordances that layers build on (the `extensions/<layer>/` namespace, external wake injection, a reserved `user`/operator handle, `env --json`), which is why amq-squad v2.17.0 requires amq 0.40.0+ — but it still knows nothing about CTOs, rosters, or team rules.
 
 ## Install
 
