@@ -22,6 +22,12 @@ const (
 	ExitUser    = 1
 	ExitSystem  = 2
 	ExitPartial = 3
+	// verify action uses stable policy exit codes so wrappers can distinguish
+	// an unresolved gate from an explicit denial without parsing stderr.
+	ExitActionPending = 10
+	ExitActionDenied  = 11
+	ExitActionNoGate  = 12
+	ExitActionUnbound = 13
 )
 
 // PartialError signals partial success: the command made progress on some
@@ -39,6 +45,18 @@ func (e *PartialError) Error() string { return e.Message }
 // Unwrap returns the wrapped cause, if any, so errors.Is/As reach it.
 func (e *PartialError) Unwrap() error { return e.Cause }
 
+type ActionDecisionError struct {
+	Decision string
+	Message  string
+}
+
+func (e *ActionDecisionError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "action authorization " + e.Decision
+}
+
 // ExitCode classifies err into the amq-squad exit-code taxonomy. nil is
 // success; PartialError is partial success; UsageError is user error;
 // anything else is a system/runtime error.
@@ -55,6 +73,20 @@ func ExitCode(err error) int {
 	var pe *PartialError
 	if errors.As(err, &pe) {
 		return ExitPartial
+	}
+	var ade *ActionDecisionError
+	if errors.As(err, &ade) {
+		switch ade.Decision {
+		case "pending":
+			return ExitActionPending
+		case "denied":
+			return ExitActionDenied
+		case "no_gate":
+			return ExitActionNoGate
+		case "unbound":
+			return ExitActionUnbound
+		}
+		return ExitUser
 	}
 	var ue UsageError
 	if errors.As(err, &ue) {
