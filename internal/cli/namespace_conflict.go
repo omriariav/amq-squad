@@ -1,14 +1,18 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
+
+const coldNamespaceMigrationIssueURL = "https://github.com/omriariav/amq-squad/issues/359"
 
 type namespaceConflictData struct {
 	Kind               string                       `json:"kind"`
@@ -93,6 +97,28 @@ func suggestedCollisionProfile(profile, session string) string {
 	return sanitized
 }
 
+type namespaceConflictOverrideOptions struct {
+	Allowed bool
+	Reason  string
+}
+
+type namespaceConflictAuditRecord struct {
+	At                   time.Time `json:"at"`
+	Operation            string    `json:"operation"`
+	ProjectDir           string    `json:"project_dir"`
+	Profile              string    `json:"profile"`
+	Session              string    `json:"session"`
+	NamespaceID          string    `json:"namespace_id"`
+	Kind                 string    `json:"kind"`
+	RequestedAMQRoot     string    `json:"requested_amq_root"`
+	ConflictingAMQRoot   string    `json:"conflicting_amq_root"`
+	Actor                string    `json:"actor"`
+	ActorEnvSet          bool      `json:"actor_env_set"`
+	ActorSource          string    `json:"actor_source"`
+	Reason               string    `json:"reason"`
+	ColdMigrationBacklog string    `json:"cold_migration_backlog"`
+}
+
 func namespaceConflictForProfileSession(projectDir, profile, session string) *namespaceConflictData {
 	profile = squadnamespace.NormalizeProfile(profile)
 	session = strings.TrimSpace(session)
@@ -116,6 +142,10 @@ func namespaceConflictForProfileSession(projectDir, profile, session string) *na
 		RecoveryCommands: []string{
 			"amq-squad status --project " + shellQuote(projectDir) + " --profile " + shellQuote(profile) + " --session " + shellQuote(session) + " --json",
 			"amq-squad status --project " + shellQuote(projectDir) + " --profile default --session " + shellQuote(session) + " --json",
+			"amq-squad goal deliver --project " + shellQuote(projectDir) + " --profile " + shellQuote(profile) + " --session " + shellQuote(session) + " --role <role> --goal <goal> --override-namespace-conflict --reason <why>",
+			"amq-squad dispatch --project " + shellQuote(projectDir) + " --profile " + shellQuote(profile) + " --session " + shellQuote(session) + " --role <role> --subject <subject> --body <body> --override-namespace-conflict --reason <why>",
+			"amq-squad send --project " + shellQuote(projectDir) + " --profile " + shellQuote(profile) + " --session " + shellQuote(session) + " --role <role> --body <prompt> --override-namespace-conflict --reason <why>",
+			"stopped-run namespace migration backlog: " + coldNamespaceMigrationIssueURL,
 			"amq-squad archive " + shellQuote(session) + " --project " + shellQuote(projectDir) + " --profile default",
 			"amq-squad rm " + shellQuote(session) + " --project " + shellQuote(projectDir) + " --profile default",
 			"amq send --root " + shellQuote(legacy) + " --me <sender> --to <recipient> --thread <thread> --kind todo --subject <subject> --body <body>",
@@ -161,6 +191,8 @@ func defaultProfileShadowConflict(projectDir, profile, session string, explicitP
 		Detail:             detail,
 		RecoveryCommands: []string{
 			"amq-squad status --project " + shellQuote(projectDir) + " --profile default --session " + shellQuote(session) + " --json",
+			"explicit default-profile escape (acknowledged, not audited): amq-squad dispatch --project " + shellQuote(projectDir) + " --profile default --session " + shellQuote(session) + " --role <role> --subject <subject> --body <body>",
+			"stopped-run namespace migration backlog: " + coldNamespaceMigrationIssueURL,
 		},
 		Conflicts: conflicts,
 	}, nil
@@ -226,14 +258,75 @@ func namespaceConflictError(operation string, conflict *namespaceConflictData) e
 }
 
 func ensureNoNamespaceConflict(operation, projectDir, profile, session string, explicitProfile bool) error {
+	return ensureNoNamespaceConflictWithOverride(operation, projectDir, profile, session, explicitProfile, namespaceConflictOverrideOptions{})
+}
+
+func ensureNoNamespaceConflictWithOverride(operation, projectDir, profile, session string, explicitProfile bool, override namespaceConflictOverrideOptions) error {
 	if conflict := namespaceConflictForProfileSession(projectDir, profile, session); conflict != nil {
+		if override.Allowed {
+			return writeNamespaceConflictAudit(operation, projectDir, profile, session, conflict, override)
+		}
 		return namespaceConflictError(operation, conflict)
 	}
 	conflict, err := defaultProfileShadowConflict(projectDir, profile, session, explicitProfile)
 	if err != nil {
 		return fmt.Errorf("%s refused: scan named profiles for session %q: %w", operation, session, err)
 	}
+	if conflict != nil && override.Allowed {
+		return writeNamespaceConflictAudit(operation, projectDir, profile, session, conflict, override)
+	}
 	return namespaceConflictError(operation, conflict)
+}
+
+func writeNamespaceConflictAudit(operation, projectDir, profile, session string, conflict *namespaceConflictData, override namespaceConflictOverrideOptions) error {
+	if conflict == nil {
+		return nil
+	}
+	reason := strings.TrimSpace(override.Reason)
+	if reason == "" {
+		return usageErrorf("%s --override-namespace-conflict requires --reason <why>", operation)
+	}
+	actor, actorSet := os.LookupEnv("AM_ME")
+	actor = strings.TrimSpace(actor)
+	actorSource := "AM_ME"
+	if !actorSet || actor == "" {
+		actorSet = false
+		actorSource = "unset"
+	}
+	dir := filepath.Join(projectDir, team.DirName, "namespace-audit")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("ensure namespace audit dir: %w", err)
+	}
+	rec := namespaceConflictAuditRecord{
+		At:                   time.Now().UTC(),
+		Operation:            operation,
+		ProjectDir:           projectDir,
+		Profile:              squadnamespace.NormalizeProfile(profile),
+		Session:              strings.TrimSpace(session),
+		NamespaceID:          conflict.NamespaceID,
+		Kind:                 conflict.Kind,
+		RequestedAMQRoot:     conflict.RequestedAMQRoot,
+		ConflictingAMQRoot:   conflict.ConflictingAMQRoot,
+		Actor:                actor,
+		ActorEnvSet:          actorSet,
+		ActorSource:          actorSource,
+		Reason:               reason,
+		ColdMigrationBacklog: coldNamespaceMigrationIssueURL,
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("marshal namespace audit: %w", err)
+	}
+	path := filepath.Join(dir, sanitizeWorkstreamName(session)+".jsonl")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("open namespace audit: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		return fmt.Errorf("write namespace audit: %w", err)
+	}
+	return nil
 }
 
 func rootHasDurableState(root string) bool {
@@ -293,8 +386,7 @@ func legacyRootEntryIsDurable(root, path string, d os.DirEntry) bool {
 		return false
 	}
 	if d.IsDir() {
-		parts := strings.Split(rel, "/")
-		if len(parts) <= 2 && parts[0] == "agents" {
+		if legacyMailboxSkeletonDir(rel) {
 			return false
 		}
 		return true
@@ -303,6 +395,36 @@ func legacyRootEntryIsDurable(root, path string, d os.DirEntry) bool {
 		return false
 	}
 	return true
+}
+
+func legacyMailboxSkeletonDir(rel string) bool {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) == 0 || parts[0] != "agents" {
+		return false
+	}
+	switch len(parts) {
+	case 1, 2:
+		return true
+	case 3:
+		switch parts[2] {
+		case "inbox", "cur", "new", "tmp":
+			return true
+		default:
+			return false
+		}
+	case 4:
+		if parts[2] != "inbox" {
+			return false
+		}
+		switch parts[3] {
+		case "cur", "new", "tmp":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
 
 func disableNamespaceConflictActions(actions []runtimeActionJSON, conflict *namespaceConflictData) []runtimeActionJSON {

@@ -1316,6 +1316,49 @@ func TestExecuteStatusJSONIncludesExecutionMode(t *testing.T) {
 	}
 }
 
+func TestExecuteStatusJSONIncludesPlannerLeadMode(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-350"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "issue-350"},
+		},
+		Orchestrated:  true,
+		Lead:          "cto",
+		LeadMode:      team.LeadModePlanner,
+		ExecutionMode: executionModeProjectLead,
+	})
+	seedAgentRecord(t, base, "issue-350", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
+		Tmux: &launch.TmuxInfo{
+			Session:  "tmux-issue-350",
+			WindowID: "@1",
+			PaneID:   "%1",
+			Target:   "new-window",
+		},
+	})
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-350",
+		ExplicitSession:  true,
+		Probe:            statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()),
+		JSON:             true,
+		RuntimeVersion:   "2.10.0",
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	exec := decodeJSONEnvelope[statusEnvelopeData](t, out).Data.Execution
+	if exec.LeadMode != team.LeadModePlanner || exec.ImplementationAllowed {
+		t.Fatalf("planner status execution = %+v", exec)
+	}
+	if exec.MutableActor != "fullstack" {
+		t.Fatalf("mutable_actor = %q, want fullstack", exec.MutableActor)
+	}
+}
+
 func TestExecuteStatusJSONBlocksReleaseReadyForSoloWithoutReason(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
