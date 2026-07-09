@@ -785,6 +785,12 @@ amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
                                   validation); --go creates. Visibility defaults
                                   to detached (hidden); supervise via status/
                                   console/monitor + wake, attach to intervene.
+                                  With --goal, --go waits for the lead to be
+                                  status-live with an alive tmux pane before
+                                  delivery. If delivery cannot complete, it
+                                  exits non-zero and prints an exact
+                                  `goal start ... --role <lead> --yes` retry
+                                  command.
 amq-squad up [<session>] [--project DIR] [--profile NAME] [--session ws] [--reset [--yes] [--force]]
              [--dry-run [--json]] [--seed-from file:|issue:|gh: [--force]]
              [--terminal tmux] [--target current-window|new-window|new-session]
