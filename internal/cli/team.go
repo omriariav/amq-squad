@@ -96,6 +96,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	noOperator := fs.Bool("no-operator", false, "disable the virtual operator participant for this profile")
 	orchestratedFlag := fs.Bool("orchestrated", false, "wire the squad for lead-agent orchestration: inject the reporting norm into team-rules.md and mark the lead role")
 	leadFlag := fs.String("lead", "", "role that leads an orchestrated squad (must be a team member; implies --orchestrated)")
+	leadModeFlag := fs.String("lead-mode", "", "lead implementation posture: builder (default) or planner")
 	modeFlag := fs.String("mode", "", "execution mode: global_orchestrator, project_lead, project_team, or direct_lead_session")
 	controlRootFlag := fs.String("control-root", "", "control-plane root directory for the execution contract (default: project/team-home)")
 	targetProjectRootFlag := fs.String("target-project-root", "", "target project root for the execution contract (default: project/team-home)")
@@ -116,8 +117,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
-  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes the team config under
@@ -240,6 +241,9 @@ Examples:
 	}
 	workstream, err := resolveWorkstreamName(cwd, *sessionFlag, flagWasSet(fs, "session"))
 	if err != nil {
+		return err
+	}
+	if err := ensureNoNamespaceCreationCollision("team init", cwd, profile, workstream); err != nil {
 		return err
 	}
 	cwdOverrides, err := parseKV(*cwdFlag)
@@ -417,6 +421,10 @@ Examples:
 	if err != nil {
 		return err
 	}
+	leadMode, err := normalizeLeadMode(*leadModeFlag)
+	if err != nil {
+		return err
+	}
 	if !flagWasSet(fs, "mode") {
 		executionMode = defaultExecutionModeForTeam(orchestrated)
 	}
@@ -455,6 +463,7 @@ Examples:
 		ControlRoot:       cleanRootOrDefault(*controlRootFlag, cwd),
 		TargetProjectRoot: cleanRootOrDefault(*targetProjectRootFlag, cwd),
 		TargetContract:    strings.TrimPrefix(strings.TrimSpace(*targetContractFlag), "v"),
+		LeadMode:          leadModeForPersist(leadMode),
 	}
 	rulesContent, err := renderTeamRules(t)
 	if err != nil {
@@ -554,6 +563,7 @@ type teamProfilePlan struct {
 	Trust            string                  `json:"trust"`
 	Orchestrated     bool                    `json:"orchestrated"`
 	Lead             string                  `json:"lead,omitempty"`
+	LeadMode         string                  `json:"lead_mode"`
 	ExistingProfile  bool                    `json:"existing_profile"`
 	Members          int                     `json:"members"`
 	BinaryArgs       map[string][]string     `json:"binary_args,omitempty"`
@@ -582,6 +592,7 @@ func printTeamInitDryRun(p teamInitDryRun) error {
 	} else {
 		fmt.Fprintln(os.Stdout, "# orchestrated: no")
 	}
+	fmt.Fprintf(os.Stdout, "# lead-mode: %s\n", team.EffectiveLeadMode(p.Team))
 	fmt.Fprintf(os.Stdout, "# composition: %s\n", team.EffectiveComposition(p.Team))
 	execution := executionContractForTeam(p.Team, p.Profile, p.Workstream, goalBindingForNamespace(squadnamespace.Resolve(p.Team.Project, p.Profile, p.Workstream)).Mode, "", "dev")
 	fmt.Fprintf(os.Stdout, "# mode: %s\n", execution.Mode)
@@ -655,6 +666,7 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 		Trust:            p.Trust,
 		Orchestrated:     p.Team.Orchestrated,
 		Lead:             p.Team.Lead,
+		LeadMode:         team.EffectiveLeadMode(p.Team),
 		ExistingProfile:  p.Exists,
 		Members:          len(rows),
 		BinaryArgs:       p.Team.BinaryArgs,

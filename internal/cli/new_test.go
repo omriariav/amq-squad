@@ -231,7 +231,7 @@ func TestRunNewTeamSyncNamedProfilePassesProfileToSync(t *testing.T) {
 			"--allow-outside",
 			"--roles", "cto",
 			"--cwd", "cto=" + memberDir,
-			"--session", "review",
+			"--session", "review-main",
 		})
 	})
 	if err != nil {
@@ -256,7 +256,7 @@ func TestRunNewProfileDelegatesToNamedTeamInit(t *testing.T) {
 			"profile", "review",
 			"--roles", "cto,qa",
 			"--binary", "qa=codex",
-			"--session", "review",
+			"--session", "review-main",
 		})
 	})
 	if err != nil {
@@ -278,6 +278,48 @@ func TestRunNewProfileDelegatesToNamedTeamInit(t *testing.T) {
 	}
 }
 
+func TestRunNewTeamRejectsProfileSessionCollisionBeforeWrite(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	_, _, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--profile", "review", "--roles", "cto", "--session", "review"})
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "team init refused") ||
+		!strings.Contains(err.Error(), "colliding AMQ roots") ||
+		!strings.Contains(err.Error(), "--profile codex-review --session review") {
+		t.Fatalf("expected profile/session collision error, got %v", err)
+	}
+	if _, statErr := os.Stat(team.ProfilePath(dir, "review")); !os.IsNotExist(statErr) {
+		t.Fatalf("refused new team must not write named profile; stat err = %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".agent-mail")); !os.IsNotExist(statErr) {
+		t.Fatalf("refused new team must not write .agent-mail; stat err = %v", statErr)
+	}
+}
+
+func TestRunNewProfileRejectsProfileSessionCollisionBeforeWrite(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	_, _, err := captureOutput(t, func() error {
+		return runNew([]string{"profile", "review", "--roles", "cto", "--session", "review"})
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "team init refused") ||
+		!strings.Contains(err.Error(), "colliding AMQ roots") ||
+		!strings.Contains(err.Error(), "--profile codex-review --session review") {
+		t.Fatalf("expected profile/session collision error, got %v", err)
+	}
+	if _, statErr := os.Stat(team.ProfilePath(dir, "review")); !os.IsNotExist(statErr) {
+		t.Fatalf("refused new profile must not write named profile; stat err = %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".agent-mail")); !os.IsNotExist(statErr) {
+		t.Fatalf("refused new profile must not write .agent-mail; stat err = %v", statErr)
+	}
+}
+
 func TestRunNewProfileWarnsWhenSharedRulesDescribeDifferentRoster(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -292,7 +334,7 @@ func TestRunNewProfileWarnsWhenSharedRulesDescribeDifferentRoster(t *testing.T) 
 	// A second profile with a DIFFERENT roster reuses the shared (no-clobber)
 	// team-rules.md, whose Role Scope still names cto, not pm -> warn (#155).
 	_, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{"profile", "review", "--roles", "pm", "--session", "review"})
+		return runNew([]string{"profile", "review", "--roles", "pm", "--session", "review-main"})
 	})
 	if err != nil {
 		t.Fatalf("new profile review: %v\nstderr:\n%s", err, stderr)
@@ -317,7 +359,7 @@ func TestRunNewProfileNoWarnWhenSharedRulesMatchRoster(t *testing.T) {
 	// A second profile with the SAME roster (cto) reuses the shared file, which
 	// already describes cto -> no roster-drift warning.
 	_, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{"profile", "review", "--roles", "cto", "--session", "review"})
+		return runNew([]string{"profile", "review", "--roles", "cto", "--session", "review-main"})
 	})
 	if err != nil {
 		t.Fatalf("new profile review: %v\nstderr:\n%s", err, stderr)
@@ -344,7 +386,7 @@ func TestRunNewProfileProjectBeforeNameDryRunJSON(t *testing.T) {
 			"--json",
 			"review",
 			"--roles", "2,9",
-			"--session", "review",
+			"--session", "review-main",
 		})
 	})
 	if err != nil {

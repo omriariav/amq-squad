@@ -255,6 +255,7 @@ func paneIDForTarget(tgt tmuxpane.TmuxTarget, panes []tmuxpane.TmuxPane) string 
 
 var paneBusyForSend = tmuxpane.PaneBusy
 var sendPromptToPane = tmuxpane.SendPromptToPane
+var waitPaneSettledForSend = tmuxpane.WaitPaneSettled
 
 func runFocus(args []string) error {
 	fs := flag.NewFlagSet("focus", flag.ContinueOnError)
@@ -374,12 +375,15 @@ func runSend(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	forceFlag := fs.Bool("force", false, "deliver even if the agent appears busy (mid-turn)")
+	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
+	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad send - deliver a prompt to an agent's tmux pane and submit it
 
 Usage:
   amq-squad send [--project DIR] [--profile NAME] --session S --role ROLE
                  (--body TEXT | --body-file FILE | --body-file -) [--force]
+                 [--override-namespace-conflict --reason WHY]
 
 Stages the prompt in a tmux paste buffer (via stdin, never a shell string) and
 pastes it into the agent's exact pane, then submits a single Enter. Multi-line
@@ -424,7 +428,10 @@ Examples:
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflict("send", projectDir, profile, workstream, flagWasSet(fs, "profile")); err != nil {
+	if err := ensureNoNamespaceConflictWithOverride("send", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
+		Allowed: *overrideNamespaceConflict,
+		Reason:  *overrideNamespaceReason,
+	}); err != nil {
 		return err
 	}
 	panes, err := statusPaneLister()
