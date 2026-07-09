@@ -57,6 +57,7 @@ func runThread(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name to inspect")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	threadFlag := fs.String("id", "", "thread id to read")
 	includeBody := fs.Bool("include-body", true, "include message bodies in the transcript")
 	limitFlag := fs.Int("limit", defaultThreadTranscriptLimit, "maximum messages to show (0 = all)")

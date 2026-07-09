@@ -23,6 +23,7 @@ func runResume(args []string) error {
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for fresh members, e.g. '--chrome'")
 	projectFlag := fs.String("project", "", "project/team-home directory to resume (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to resume (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	roleFlag := fs.String("role", "", "comma-separated subset of roles to resume (default: all members)")
 	execMode := fs.Bool("exec", false, "open the planned launch commands in the terminal backend (tmux) instead of printing them")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (liveness + tmux metadata) instead of the human plan")

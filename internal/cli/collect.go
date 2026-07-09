@@ -62,6 +62,7 @@ func runCollect(args []string) error {
 	includeBody := fs.Bool("include-body", false, "include message bodies in collect output")
 	projectFlag := fs.String("project", "", "project/team-home directory to resolve AMQ from (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	overrideBoundary := fs.Bool("override-boundary", false, "allow collecting another project-team member's mailbox and write an audit record")
 	boundaryReason := fs.String("reason", "", "required reason when --override-boundary is set")
 	fs.Usage = func() {

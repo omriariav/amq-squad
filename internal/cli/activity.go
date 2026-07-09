@@ -52,6 +52,7 @@ func runActivitySet(args []string) error {
 	detail := fs.String("detail", "", "short human-readable detail")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, session, profileFlag)
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -102,6 +103,7 @@ func runActivityClear(args []string) error {
 	me := fs.String("me", "", "agent handle clearing the heartbeat")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, session, profileFlag)
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	if err := parseFlags(fs, args); err != nil {
 		return err

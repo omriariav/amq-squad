@@ -134,6 +134,7 @@ func runTaskAdd(args []string) error {
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
 	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -186,6 +187,7 @@ func runTaskList(args []string) error {
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
 	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -239,6 +241,7 @@ func runTaskShow(args []string) error {
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
 	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	if err := parseFlags(fs, rest); err != nil {
 		return err
 	}
@@ -310,6 +313,7 @@ func runTaskTransition(args []string, verb string) error {
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
 	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	if err := parseFlags(fs, rest); err != nil {
 		return err
 	}

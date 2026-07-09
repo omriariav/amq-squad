@@ -104,26 +104,28 @@ func runAMQ(args []string) error {
 	}
 }
 
-func amqCommonFlagSet(name, usage string) (*flag.FlagSet, *string, *string, *string, *bool) {
+func amqCommonFlagSet(name, usage string) (*flag.FlagSet, *string, *string, *string, *string, *bool) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	project := fs.String("project", "", "project/team-home directory to resolve AMQ from (default: cwd)")
+	profile := fs.String("profile", "", "team profile namespace (default: default profile)")
 	session := fs.String("session", "", "AMQ session/workstream name")
 	me := fs.String("me", "", "AMQ handle to resolve as")
+	registerScopedFlagAliases(fs, project, session, profile)
 	jsonOut := fs.Bool("json", false, "emit JSON output when the underlying AMQ command supports it")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
-	return fs, project, session, me, jsonOut
+	return fs, project, profile, session, me, jsonOut
 }
 
-func resolveAMQContext(projectFlag, session, me string, projectSet bool) (amqContext, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return amqContext{}, fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, projectFlag, projectSet)
+func resolveAMQContext(projectFlag, profileFlag, session, me string, projectSet bool) (amqContext, error) {
+	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
 	if err != nil {
 		return amqContext{}, err
 	}
-	return resolveAMQContextForProject(projectDir, session, me)
+	ctx, err := resolveAMQContextForNamespace(projectDir, profile, session, me)
+	if err != nil {
+		return amqContext{}, err
+	}
+	return inferAMQContextProfileFromRoot(ctx, strings.TrimSpace(profileFlag) != ""), nil
 }
 
 func resolveAMQContextForProject(projectDir, session, me string) (amqContext, error) {
@@ -245,15 +247,15 @@ func runAndWriteAMQWithStdin(out io.Writer, ctx amqContext, args []string, stdin
 }
 
 func runAMQEnv(args []string) error {
-	fs, project, session, me, jsonOut := amqCommonFlagSet("amq env", `amq-squad amq env - show resolved AMQ context
+	fs, project, profile, session, me, jsonOut := amqCommonFlagSet("amq env", `amq-squad amq env - show resolved AMQ context
 
 Usage:
-  amq-squad amq env [--project DIR] [--session NAME] [--me HANDLE] [--json]
+  amq-squad amq env [--project DIR] [--profile NAME] [--session NAME] [--me HANDLE] [--json]
 `)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	ctx, err := resolveAMQContext(*project, *session, *me, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
@@ -275,15 +277,15 @@ Usage:
 }
 
 func runAMQOps(args []string) error {
-	fs, project, session, me, jsonOut := amqCommonFlagSet("amq ops", `amq-squad amq ops - run AMQ operational diagnostics
+	fs, project, profile, session, me, jsonOut := amqCommonFlagSet("amq ops", `amq-squad amq ops - run AMQ operational diagnostics
 
 Usage:
-  amq-squad amq ops [--project DIR] [--session NAME] [--me HANDLE] [--json]
+  amq-squad amq ops [--project DIR] [--profile NAME] [--session NAME] [--me HANDLE] [--json]
 `)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	ctx, err := resolveAMQContext(*project, *session, *me, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
@@ -295,10 +297,10 @@ Usage:
 }
 
 func runAMQRoute(args []string) error {
-	fs, project, session, me, jsonOut := amqCommonFlagSet("amq route", `amq-squad amq route - explain an AMQ route from this project/session
+	fs, project, profile, session, me, jsonOut := amqCommonFlagSet("amq route", `amq-squad amq route - explain an AMQ route from this project/session
 
 Usage:
-  amq-squad amq route --to HANDLE [--project DIR] [--session NAME] [--me HANDLE] [--target-project NAME] [--target-session NAME] [--json]
+  amq-squad amq route --to HANDLE [--project DIR] [--profile NAME] [--session NAME] [--me HANDLE] [--target-project NAME] [--target-session NAME] [--json]
 `)
 	to := fs.String("to", "", "target handle or inline AMQ address")
 	targetProject := fs.String("target-project", "", "cross-project AMQ project name")
@@ -309,7 +311,7 @@ Usage:
 	if strings.TrimSpace(*to) == "" {
 		return usageErrorf("amq route requires --to")
 	}
-	ctx, err := resolveAMQContext(*project, *session, *me, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
@@ -330,15 +332,15 @@ Usage:
 }
 
 func runAMQWho(args []string) error {
-	fs, project, session, me, jsonOut := amqCommonFlagSet("amq who", `amq-squad amq who - list AMQ sessions and agents
+	fs, project, profile, session, me, jsonOut := amqCommonFlagSet("amq who", `amq-squad amq who - list AMQ sessions and agents
 
 Usage:
-  amq-squad amq who [--project DIR] [--session NAME] [--me HANDLE] [--json]
+  amq-squad amq who [--project DIR] [--profile NAME] [--session NAME] [--me HANDLE] [--json]
 `)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	ctx, err := resolveAMQContext(*project, *session, *me, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
@@ -350,15 +352,15 @@ Usage:
 }
 
 func runAMQPresence(args []string) error {
-	fs, project, session, me, jsonOut := amqCommonFlagSet("amq presence", `amq-squad amq presence - list AMQ presence for a session
+	fs, project, profile, session, me, jsonOut := amqCommonFlagSet("amq presence", `amq-squad amq presence - list AMQ presence for a session
 
 Usage:
-  amq-squad amq presence [--project DIR] [--session NAME] [--me HANDLE] [--json]
+  amq-squad amq presence [--project DIR] [--profile NAME] [--session NAME] [--me HANDLE] [--json]
 `)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	ctx, err := resolveAMQContext(*project, *session, *me, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
@@ -729,6 +731,7 @@ func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, pro
 			break
 		}
 		name, inlineVal, hasInline := amqFlagName(a)
+		name = normalizeScopedShortFlagName(name)
 		switch name {
 		case "project", "profile", "session", "me":
 			val := inlineVal
@@ -934,9 +937,9 @@ func amqPassthroughUsage(sub string) string {
 	return fmt.Sprintf(`amq-squad amq %s - run 'amq %s' against the resolved workstream root
 
 Usage:
-  amq-squad amq %s [--project DIR] [--session NAME] [--me HANDLE] [amq %s flags...]
+  amq-squad amq %s [--project DIR] [--profile NAME] [--session NAME] [--me HANDLE] [amq %s flags...]
 
-amq-squad consumes --project/--session/--me (pass them FIRST, before the amq
+amq-squad consumes --project/--profile/--session/--me (pass them FIRST, before the amq
 flags) to resolve the queue root — so an external lead reaches
 .agent-mail/<session> instead of the default .agent-mail — and forwards every
 remaining flag to 'amq %s'. For 'send', passthrough --me/--from and
@@ -964,16 +967,16 @@ func runAMQReceipts(args []string) error {
 }
 
 func runAMQReceiptsList(args []string) error {
-	fs, project, session, me, jsonOut := amqCommonFlagSet("amq receipts list", `amq-squad amq receipts list - inspect delivery receipts
+	fs, project, profile, session, me, jsonOut := amqCommonFlagSet("amq receipts list", `amq-squad amq receipts list - inspect delivery receipts
 
 Usage:
-  amq-squad amq receipts list --me HANDLE [--project DIR] [--session NAME] [--msg-id ID] [--json]
+  amq-squad amq receipts list --me HANDLE [--project DIR] [--profile NAME] [--session NAME] [--msg-id ID] [--json]
 `)
 	msgID := fs.String("msg-id", "", "filter receipts for one message id")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	ctx, err := resolveAMQContext(*project, *session, *me, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
@@ -991,10 +994,10 @@ Usage:
 }
 
 func runAMQReceiptsWait(args []string) error {
-	fs, project, session, me, _ := amqCommonFlagSet("amq receipts wait", `amq-squad amq receipts wait - wait for one delivery receipt
+	fs, project, profile, session, me, _ := amqCommonFlagSet("amq receipts wait", `amq-squad amq receipts wait - wait for one delivery receipt
 
 Usage:
-  amq-squad amq receipts wait --me HANDLE --msg-id ID [--stage drained|dlq] [--timeout 60s] [--project DIR] [--session NAME]
+  amq-squad amq receipts wait --me HANDLE --msg-id ID [--stage drained|dlq] [--timeout 60s] [--project DIR] [--profile NAME] [--session NAME]
 `)
 	msgID := fs.String("msg-id", "", "message id to wait for")
 	stage := fs.String("stage", "drained", "receipt stage to wait for: drained or dlq")
@@ -1008,7 +1011,7 @@ Usage:
 	if *stage != "drained" && *stage != "dlq" {
 		return usageErrorf("--stage must be drained or dlq")
 	}
-	ctx, err := resolveAMQContext(*project, *session, *me, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
@@ -1040,15 +1043,15 @@ func runAMQDLQ(args []string) error {
 }
 
 func runAMQDLQList(args []string) error {
-	fs, project, session, me, jsonOut := amqCommonFlagSet("amq dlq list", `amq-squad amq dlq list - inspect one agent's dead-letter queue
+	fs, project, profile, session, me, jsonOut := amqCommonFlagSet("amq dlq list", `amq-squad amq dlq list - inspect one agent's dead-letter queue
 
 Usage:
-  amq-squad amq dlq list --me HANDLE [--project DIR] [--session NAME] [--json]
+  amq-squad amq dlq list --me HANDLE [--project DIR] [--profile NAME] [--session NAME] [--json]
 `)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	ctx, err := resolveAMQContext(*project, *session, *me, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
@@ -1063,10 +1066,10 @@ Usage:
 }
 
 func runAMQDLQRead(args []string) error {
-	fs, project, session, me, jsonOut := amqCommonFlagSet("amq dlq read", `amq-squad amq dlq read - read one DLQ item
+	fs, project, profile, session, me, jsonOut := amqCommonFlagSet("amq dlq read", `amq-squad amq dlq read - read one DLQ item
 
 Usage:
-  amq-squad amq dlq read --me HANDLE --id ID [--project DIR] [--session NAME] [--json]
+  amq-squad amq dlq read --me HANDLE --id ID [--project DIR] [--profile NAME] [--session NAME] [--json]
 `)
 	id := fs.String("id", "", "DLQ id from amq dlq list")
 	if err := parseFlags(fs, args); err != nil {
@@ -1075,7 +1078,7 @@ Usage:
 	if *id == "" {
 		return usageErrorf("amq dlq read requires --id")
 	}
-	ctx, err := resolveAMQContext(*project, *session, *me, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
@@ -1090,12 +1093,12 @@ Usage:
 }
 
 func runAMQDLQMutation(kind string, args []string) error {
-	fs, project, session, me, _ := amqCommonFlagSet("amq dlq "+kind, `amq-squad amq dlq mutation - retry or purge DLQ items with confirmation
+	fs, project, profile, session, me, _ := amqCommonFlagSet("amq dlq "+kind, `amq-squad amq dlq mutation - retry or purge DLQ items with confirmation
 
 Usage:
-  amq-squad amq dlq retry --me HANDLE --id ID [--project DIR] [--session NAME] [--dry-run] [--yes|-y]
-  amq-squad amq dlq retry-all --me HANDLE [--project DIR] [--session NAME] [--dry-run] [--yes|-y]
-  amq-squad amq dlq purge --me HANDLE [--older-than 168h] [--project DIR] [--session NAME] [--dry-run] [--yes|-y]
+  amq-squad amq dlq retry --me HANDLE --id ID [--project DIR] [--profile NAME] [--session NAME] [--dry-run] [--yes|-y]
+  amq-squad amq dlq retry-all --me HANDLE [--project DIR] [--profile NAME] [--session NAME] [--dry-run] [--yes|-y]
+  amq-squad amq dlq purge --me HANDLE [--older-than 168h] [--project DIR] [--profile NAME] [--session NAME] [--dry-run] [--yes|-y]
 `)
 	id := fs.String("id", "", "DLQ id from amq dlq list")
 	olderThan := fs.String("older-than", "168h", "purge DLQ entries older than this duration")
@@ -1108,7 +1111,7 @@ Usage:
 	if kind == "retry" && *id == "" {
 		return usageErrorf("amq dlq retry requires --id")
 	}
-	ctx, err := resolveAMQContext(*project, *session, *me, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
@@ -1132,10 +1135,10 @@ Usage:
 }
 
 func runAMQCleanup(args []string) error {
-	fs, project, session, me, _ := amqCommonFlagSet("amq cleanup", `amq-squad amq cleanup - confirm-gated AMQ tmp cleanup for one session
+	fs, project, profile, session, me, _ := amqCommonFlagSet("amq cleanup", `amq-squad amq cleanup - confirm-gated AMQ tmp cleanup for one session
 
 Usage:
-  amq-squad amq cleanup --session NAME --tmp-older-than 36h [--project DIR] [--me HANDLE] [--dry-run] [--yes|-y]
+  amq-squad amq cleanup --session NAME --tmp-older-than 36h [--project DIR] [--profile NAME] [--me HANDLE] [--dry-run] [--yes|-y]
 `)
 	olderThan := fs.String("tmp-older-than", "", "clean AMQ tmp files older than this duration")
 	dryRun := fs.Bool("dry-run", false, "print the AMQ command without executing it")
@@ -1150,7 +1153,7 @@ Usage:
 	if strings.TrimSpace(*session) == "" {
 		return usageErrorf("amq cleanup requires --session")
 	}
-	ctx, err := resolveAMQContext(*project, *session, *me, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
