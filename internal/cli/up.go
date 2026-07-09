@@ -49,7 +49,7 @@ Usage:
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
     [--trust sandboxed|approve-for-me|trusted] [--model role=model,...]
     [--codex-args args] [--claude-args args]
-    [--force-duplicate] [--no-gitignore]
+    [--force-duplicate] [--no-gitignore] [--symphony]
     [--seed-from REF [--force]] [--dry-run]
 
 up means NEW work. It REFUSES by default when the target session already
@@ -70,6 +70,11 @@ refused unless --force; --reset never silently stops agents.
 Brief: with --seed-from the active brief is authored from the source. With no
 source, up AUTO-STUBS the brief and prints a one-line notice so CI and
 send-keys flows keep working; edit the stub or pass --seed-from to set the goal.
+
+--symphony is an opt-in Codex-only lifecycle hook: each launched Codex member
+patches its existing WORKFLOW.md with AMQ Symphony hooks pinned to the resolved
+AMQ root and handle. If WORKFLOW.md is absent, the AMQ adapter error is
+propagated and launch stops. amq-squad never creates WORKFLOW.md itself.
 
 --seed-from sources (deterministic only in 8A):
   file:<path>            literal file body

@@ -311,6 +311,7 @@ var completionCommonFlags = []string{
 	"--stop-agents",
 	"--subject",
 	"--sync",
+	"--symphony",
 	"--target",
 	"--target-contract",
 	"--target-project-root",
