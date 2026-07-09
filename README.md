@@ -485,11 +485,13 @@ launched with `gh pr create` pre-authorized, so creating its PR never blocks on 
 prompt. In this slice **PR creation only** is pre-authorized; feature-branch
 `git push` may still prompt and is tracked as future work (it needs a constrained
 wrapper that can enforce current-branch / no-tags / no-extra-refs before it can be
-safely allowlisted). Pushes to `main`, tags, releases (`--tags`/`--follow-tags`),
-and destructive git always stay gated. The active allowlist is recorded on the
-launch record and surfaced in `status --json` as `preauthorized_actions` for
-audit. Pass `--no-preauthorize-inscope` to opt out; Codex workers and
-lead/operator sessions are unaffected.
+safely allowlisted). Pushes to default/protected branches, tags, GitHub releases
+(`gh release create`/draft/publish/edit/upload), external sends, and destructive
+git are high-risk actions. Leads must run `amq-squad verify action` with the
+exact action and target before executing them, regardless of trust profile. The
+active allowlist is recorded on the launch record and surfaced in `status --json`
+as `preauthorized_actions` for audit. Pass `--no-preauthorize-inscope` to opt
+out; Codex workers and lead/operator sessions are unaffected.
 
 For an Autonomous preview, opt in explicitly and include a bounded policy:
 
@@ -530,18 +532,50 @@ measured idle age, explicit evidence that active task linkage was checked, and
 no linked active tasks; `--idle-reap-minutes` sets the minimum idle age before
 pruning is allowed.
 
-Releases carry one more gate. Before any publish step (`git push` of the release
-commit, `git tag`, `gh release create`), `amq-squad verify release --evidence
-<file>` requires the **final assembled release commit SHA** to carry both a
-**developer co-sign** (a second actor, `cosign.distinct_from_release_lead: true`,
-`cosign.sha` equal to the release commit SHA — a co-sign on an earlier per-delta
-SHA is rejected as stale) and an **approved operator release gate**. The two are
-non-substitutable: an "APPROVED to release" operator decision alone never
-authorizes publish without the exact-SHA developer co-sign, and the co-sign never
-substitutes for the operator gate. `verify release` only validates normalized
-evidence; it never pushes, tags, or releases — those remain operator-performed.
-The release commit's own final SHA must pass this gate before it becomes
-immutable.
+High-risk actions carry a bound operator gate. Before a default/protected branch
+push, tag creation/push, GitHub release draft/publish action, or external send,
+run:
+
+```sh
+amq-squad verify action \
+  --project <repo> --profile <profile> --session <session> \
+  --gate <topic> --action github_release \
+  --target "draft v1.41.0 release for owner/repo" --json
+```
+
+The matching gate question and operator answer must both reference the same
+`Action:` and `Target:`. `verify action` exits `0` only for an approved bound
+answer from the configured operator handle on that exact `gate/<topic>` thread;
+it exits `10` for pending, `11` for denied, `12` for no matching gate, and `13`
+for an unbound or mismatched answer. Its JSON result includes `action`, `target`,
+`gate`, `decision`, `answered_by`, and `message_id`. If the operator approved in
+a live pane, resolve the board with `amq-squad operator answer --gate <topic>
+--to <lead> --approved --reason "Action: <kind>\nTarget: <exact-target>"`;
+p2p prose and mirrored ACKs do not satisfy the guard.
+
+This is a callable boundary, not command interception. A lead or wrapper that
+never calls `verify action` is not blocked by the operating system, shell, Git,
+or GitHub CLI. The guard's threat model is confused or overreaching agents that
+use the normal amq-squad CLI path; it is not a tamper-proof security boundary
+against an actor with direct filesystem write access to AMQ mailboxes, who can
+forge message bodies, `Created` timestamps, or message IDs. The harder
+enforcement path is a PATH shim or launch-hook
+interceptor that wraps `git`, `gh`, and external-send commands and forces this
+check before execution. That follow-up is tracked separately in #354 and should be
+referenced from release-hardening work.
+
+Releases carry one additional evidence gate. Before any publish step (`git push`
+of the release commit, `git tag`, `gh release create`), `amq-squad verify
+release --evidence <file>` requires the **final assembled release commit SHA** to
+carry both a **developer co-sign** (a second actor,
+`cosign.distinct_from_release_lead: true`, `cosign.sha` equal to the release
+commit SHA — a co-sign on an earlier per-delta SHA is rejected as stale) and an
+**approved operator release gate**. The two are non-substitutable: an "APPROVED
+to release" operator decision alone never authorizes publish without the
+exact-SHA developer co-sign, and the co-sign never substitutes for the operator
+gate. `verify release` only validates normalized evidence; it never pushes,
+tags, or releases — those remain operator-performed. The release commit's own
+final SHA must pass this gate before it becomes immutable.
 
 ### Profiles (schema 3)
 
@@ -1254,6 +1288,15 @@ Generated launch commands include these per-binary defaults:
 
 Explicit `--trust sandboxed`, `--trust approve-for-me`, and `--trust trusted` selections are persisted in the team profile by `team init` and are re-emitted by `up`, `agent up`, `resume`, and `fork`. Combining `--trust trusted` with `--no-default-args` is rejected, as is sandboxed or approve-for-me mode with the bypass flag smuggled through `--codex-args`.
 
+`run start` uses the same launch trust vocabulary, but its default lead autonomy
+is conservative for release work: trust controls local permission prompts, not
+authorization to push default/protected branches, create or push tags, draft or
+publish GitHub releases, or send external communications. Those actions require
+an explicit bound `verify action` approval. Autonomous release actions are an
+opt-in integration concern for wrappers that deliberately call and record that
+guard; they are never implied by `approve-for-me` or by starting a run without a
+goal.
+
 Pass `--model NAME` to set the native `--model` flag on Codex or Claude. `team init --model role=model,...` persists per-member models. If no explicit model is set, amq-squad looks for a global default in `AMQ_SQUAD_CONFIG`, then `$XDG_CONFIG_HOME/amq-squad/config.json`, then `~/.amq-squad/config.json`; Codex also falls back to local Codex config (`$CODEX_HOME/config.toml`, profile config when `--profile` is present, or `~/.codex/config.toml`). Supported amq-squad config keys are `model`, `codex_model`, `claude_model`, or a `models` map keyed by binary name.
 
 ### Model, binary, and effort guidance
@@ -1446,7 +1489,11 @@ From an external lead or operator-owned pane, prefer the root-correct wrapper:
 `amq-squad amq send --session <S> --me <handle> ...`. When `--me` names a
 team role/handle, the wrapper verifies that role is bound in the namespace
 before sending; a global orchestrator cannot raise gates as `cto` before a real
-`cto` exists. Emergency recovery sends require the explicit audited override
+`cto` exists. When `--me` or `--from` names the configured operator handle
+(default `user`), the wrapper refuses the normal send/reply path because the
+operator is mailbox-only; use `amq-squad operator answer/directive` where
+applicable. Emergency recovery sends or replies as a team role or operator
+handle require the explicit audited override
 `--unsafe-send-as --reason <why>`.
 
 For lead-side report collection, prefer `amq-squad collect --session <S> --me
