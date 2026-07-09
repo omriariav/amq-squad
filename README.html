@@ -965,13 +965,15 @@ blocks on a prompt. In this slice <strong>PR creation only</strong> is
 pre-authorized; feature-branch <code>git push</code> may still prompt
 and is tracked as future work (it needs a constrained wrapper that can
 enforce current-branch / no-tags / no-extra-refs before it can be safely
-allowlisted). Pushes to <code>main</code>, tags, releases
-(<code>--tags</code>/<code>--follow-tags</code>), and destructive git
-always stay gated. The active allowlist is recorded on the launch record
-and surfaced in <code>status --json</code> as
-<code>preauthorized_actions</code> for audit. Pass
-<code>--no-preauthorize-inscope</code> to opt out; Codex workers and
-lead/operator sessions are unaffected.</p>
+allowlisted). Pushes to default/protected branches, tags, GitHub
+releases (<code>gh release create</code>/draft/publish/edit/upload),
+external sends, and destructive git are high-risk actions. Leads must
+run <code>amq-squad verify action</code> with the exact action and
+target before executing them, regardless of trust profile. The active
+allowlist is recorded on the launch record and surfaced in
+<code>status --json</code> as <code>preauthorized_actions</code> for
+audit. Pass <code>--no-preauthorize-inscope</code> to opt out; Codex
+workers and lead/operator sessions are unaffected.</p>
 <p>For an Autonomous preview, opt in explicitly and include a bounded
 policy:</p>
 <div class="sourceCode" id="cb17"><pre
@@ -1009,7 +1011,35 @@ decision. Prune requests must include measured idle age, explicit
 evidence that active task linkage was checked, and no linked active
 tasks; <code>--idle-reap-minutes</code> sets the minimum idle age before
 pruning is allowed.</p>
-<p>Releases carry one more gate. Before any publish step
+<p>High-risk actions carry a bound operator gate. Before a
+default/protected branch push, tag creation/push, GitHub release
+draft/publish action, or external send, run:</p>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify action <span class="dt">\</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> <span class="op">&lt;</span>repo<span class="op">&gt;</span> --profile <span class="op">&lt;</span>profile<span class="op">&gt;</span> --session <span class="op">&lt;</span>session<span class="op">&gt;</span> <span class="dt">\</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--gate</span> <span class="op">&lt;</span>topic<span class="op">&gt;</span> --action github_release <span class="dt">\</span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target</span> <span class="st">&quot;draft v1.41.0 release for owner/repo&quot;</span> <span class="at">--json</span></span></code></pre></div>
+<p>The matching gate question and operator answer must both reference
+the same <code>Action:</code> and <code>Target:</code>.
+<code>verify action</code> exits <code>0</code> only for an approved
+bound answer from the configured operator handle on that exact
+<code>gate/&lt;topic&gt;</code> thread; it exits <code>10</code> for
+pending, <code>11</code> for denied, <code>12</code> for no matching
+gate, and <code>13</code> for an unbound or mismatched answer. Its JSON
+result includes <code>action</code>, <code>target</code>,
+<code>gate</code>, <code>decision</code>, <code>answered_by</code>, and
+<code>message_id</code>. If the operator approved in a live pane,
+resolve the board with
+<code>amq-squad operator answer --gate &lt;topic&gt; --to &lt;lead&gt; --approved --reason "Action: &lt;kind&gt;\nTarget: &lt;exact-target&gt;"</code>;
+p2p prose and mirrored ACKs do not satisfy the guard.</p>
+<p>This is a callable boundary, not command interception. A lead or
+wrapper that never calls <code>verify action</code> is not blocked by
+the operating system, shell, Git, or GitHub CLI. The harder enforcement
+path is a PATH shim or launch-hook interceptor that wraps
+<code>git</code>, <code>gh</code>, and external-send commands and forces
+this check before execution. That follow-up is tracked separately and
+should be referenced from release-hardening work.</p>
+<p>Releases carry one additional evidence gate. Before any publish step
 (<code>git push</code> of the release commit, <code>git tag</code>,
 <code>gh release create</code>),
 <code>amq-squad verify release --evidence &lt;file&gt;</code> requires
@@ -1028,15 +1058,15 @@ pass this gate before it becomes immutable.</p>
 <h3 id="profiles-schema-3">Profiles (schema 3)</h3>
 <p>Profiles let one team-home hold parallel team shapes (for example a
 release team and a research team).</p>
-<div class="sourceCode" id="cb19"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--session</span> issue-96        <span class="co"># default profile -&gt; .amq-squad/team.json</span></span>
-<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new profile release <span class="at">--session</span> qa   <span class="co"># named profile -&gt; .amq-squad/teams/release.json</span></span>
-<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team profiles                      <span class="co"># list configured profiles</span></span>
-<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team profiles <span class="at">--project</span> ~/Code/app <span class="co"># list another team-home</span></span>
-<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team profiles <span class="at">--json</span></span>
-<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team rm <span class="at">--profile</span> release          <span class="co"># delete one profile config only</span></span>
-<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--profile</span> release               <span class="co"># operate on a named profile</span></span>
-<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--profile</span> release           <span class="co"># check that profile&#39;s config, wake, and pointer sync</span></span></code></pre></div>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--session</span> issue-96        <span class="co"># default profile -&gt; .amq-squad/team.json</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new profile release <span class="at">--session</span> qa   <span class="co"># named profile -&gt; .amq-squad/teams/release.json</span></span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team profiles                      <span class="co"># list configured profiles</span></span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team profiles <span class="at">--project</span> ~/Code/app <span class="co"># list another team-home</span></span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team profiles <span class="at">--json</span></span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team rm <span class="at">--profile</span> release          <span class="co"># delete one profile config only</span></span>
+<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--profile</span> release               <span class="co"># operate on a named profile</span></span>
+<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--profile</span> release           <span class="co"># check that profile&#39;s config, wake, and pointer sync</span></span></code></pre></div>
 <p>New <code>team.json</code> writes use <code>schema: 3</code> (the
 JSON key in persisted team profiles is <code>schema</code>;
 <code>schema_version</code> is reserved for the read-only JSON command
@@ -1066,10 +1096,10 @@ explicit escape hatch <code>--profile default</code>.
 when the default view is shadowed by a named profile.</p>
 <p>Schema 3 adds an optional virtual operator participant for human
 gates:</p>
-<div class="sourceCode" id="cb20"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa                 <span class="co"># default operator handle: user</span></span>
-<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--operator</span> ops  <span class="co"># custom operator handle</span></span>
-<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--no-operator</span>   <span class="co"># explicit opt-out</span></span></code></pre></div>
+<div class="sourceCode" id="cb21"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa                 <span class="co"># default operator handle: user</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--operator</span> ops  <span class="co"># custom operator handle</span></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--no-operator</span>   <span class="co"># explicit opt-out</span></span></code></pre></div>
 <p>The operator is not a runnable team member. AMQ 0.38.0+ reserves the
 conventional <code>user</code> mailbox for this human/operator role, and
 amq-squad v2.17.0 requires AMQ 0.40.0+ overall; custom operator handles
@@ -1114,8 +1144,8 @@ You can instead run an <strong>orchestrated</strong> squad, where one
 lead agent spawns, dispatches, and monitors the others and owns the
 deliverable. It is wired by a structured flag, not by hand-edited prose,
 so it cannot drift:</p>
-<div class="sourceCode" id="cb21"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto</span></code></pre></div>
+<div class="sourceCode" id="cb22"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto</span></code></pre></div>
 <p>This records <code>orchestrated</code>/<code>lead</code> in
 <code>team.json</code> and injects a generated
 <code>## Orchestration</code> reporting norm into
@@ -1629,12 +1659,12 @@ are <code>initial</code>, <code>reminder</code> at 30 minutes, and
 <code>amq-squad thread ... --include-body</code> inspection command.</p>
 <p><code>amq-squad console</code> is the project-scoped Mission Control
 TUI for the current team-home.</p>
-<div class="sourceCode" id="cb24"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console                    <span class="co"># interactive TUI on /dev/tty</span></span>
-<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--once</span>             <span class="co"># single static board to stdout (CI / no TTY)</span></span>
-<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--project</span> ~/Code/app <span class="at">--once</span></span>
-<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--session</span> issue-96 <span class="at">--at-risk-wait</span> 5m</span>
-<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--filter</span> needs-you</span></code></pre></div>
+<div class="sourceCode" id="cb25"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console                    <span class="co"># interactive TUI on /dev/tty</span></span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--once</span>             <span class="co"># single static board to stdout (CI / no TTY)</span></span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--project</span> ~/Code/app <span class="at">--once</span></span>
+<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--session</span> issue-96 <span class="at">--at-risk-wait</span> 5m</span>
+<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--filter</span> needs-you</span></code></pre></div>
 <p>The console gives you:</p>
 <ul>
 <li>a <strong>board</strong> of all sessions, grouped attention-first
@@ -1679,19 +1709,19 @@ matches), eval-safe <code>amq env --export</code>, the reserved human
 notification surfaces, and AMQ 0.40.0's stricter queue/DLQ/receipt/wake
 metadata file hardening.</p>
 <p>Read-only diagnostics run directly:</p>
-<div class="sourceCode" id="cb25"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq env <span class="at">--session</span> issue-96</span>
-<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq ops <span class="at">--session</span> issue-96 <span class="at">--json</span></span>
-<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq route <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="at">--to</span> fullstack</span>
-<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq who <span class="at">--session</span> issue-96</span>
-<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq presence <span class="at">--session</span> issue-96</span>
-<span id="cb25-6"><a href="#cb25-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq receipts list <span class="at">--session</span> issue-96 <span class="at">--me</span> cto</span></code></pre></div>
-<p>Mutating maintenance stays preview-first and confirm-gated:</p>
 <div class="sourceCode" id="cb26"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq dlq retry <span class="at">--session</span> issue-96 <span class="at">--me</span> qa <span class="at">--id</span> dlq_123</span>
-<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq dlq retry-all <span class="at">--session</span> issue-96 <span class="at">--me</span> qa <span class="at">--dry-run</span></span>
-<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq dlq purge <span class="at">--session</span> issue-96 <span class="at">--me</span> qa <span class="at">--older-than</span> 168h</span>
-<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq cleanup <span class="at">--session</span> issue-96 <span class="at">--tmp-older-than</span> 36h</span></code></pre></div>
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq env <span class="at">--session</span> issue-96</span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq ops <span class="at">--session</span> issue-96 <span class="at">--json</span></span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq route <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="at">--to</span> fullstack</span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq who <span class="at">--session</span> issue-96</span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq presence <span class="at">--session</span> issue-96</span>
+<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq receipts list <span class="at">--session</span> issue-96 <span class="at">--me</span> cto</span></code></pre></div>
+<p>Mutating maintenance stays preview-first and confirm-gated:</p>
+<div class="sourceCode" id="cb27"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq dlq retry <span class="at">--session</span> issue-96 <span class="at">--me</span> qa <span class="at">--id</span> dlq_123</span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq dlq retry-all <span class="at">--session</span> issue-96 <span class="at">--me</span> qa <span class="at">--dry-run</span></span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq dlq purge <span class="at">--session</span> issue-96 <span class="at">--me</span> qa <span class="at">--older-than</span> 168h</span>
+<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq cleanup <span class="at">--session</span> issue-96 <span class="at">--tmp-older-than</span> 36h</span></code></pre></div>
 <p>Use route diagnostics before uncertain cross-project sends, receipt
 waits for important handoffs, and DLQ/cleanup only when debugging stuck
 delivery or stale temporary files.</p>
@@ -1720,29 +1750,29 @@ plugin-cache manifest versions, the loaded skill marker where
 detectable, and per-source <code>matches_running</code> / warning
 details. <code>up</code> emits the same mismatch warnings before launch
 when it can detect them.</p>
-<div class="sourceCode" id="cb27"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> history <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team profiles <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> roles <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--subject</span> <span class="st">&quot;Review&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--title</span> <span class="st">&quot;Review PR&quot;</span> <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-9"><a href="#cb27-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task claim t1 <span class="at">--me</span> qa <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> activity set <span class="at">--session</span> issue-96 <span class="at">--me</span> qa <span class="at">--task</span> t1 <span class="at">--phase</span> testing <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-11"><a href="#cb27-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add qa <span class="at">--binary</span> codex <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-12"><a href="#cb27-12" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-13"><a href="#cb27-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--sync</span> <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-14"><a href="#cb27-14" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--dry-run</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
-<span id="cb27-15"><a href="#cb27-15" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span></code></pre></div>
-<p>Envelope shape:</p>
 <div class="sourceCode" id="cb28"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;schema_version&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
-<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;kind&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;verb&gt;&quot;</span><span class="fu">,</span></span>
-<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;data&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="er">/*</span> <span class="er">verb-specific</span> <span class="er">payload</span> <span class="er">*/</span> <span class="fu">}</span></span>
-<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> history <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> doctor <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team profiles <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> roles <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--subject</span> <span class="st">&quot;Review&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--title</span> <span class="st">&quot;Review PR&quot;</span> <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task claim t1 <span class="at">--me</span> qa <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-10"><a href="#cb28-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> activity set <span class="at">--session</span> issue-96 <span class="at">--me</span> qa <span class="at">--task</span> t1 <span class="at">--phase</span> testing <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-11"><a href="#cb28-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add qa <span class="at">--binary</span> codex <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-12"><a href="#cb28-12" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-13"><a href="#cb28-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--sync</span> <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,qa <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-14"><a href="#cb28-14" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up <span class="at">--dry-run</span> <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span>
+<span id="cb28-15"><a href="#cb28-15" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> .</span></code></pre></div>
+<p>Envelope shape:</p>
+<div class="sourceCode" id="cb29"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;schema_version&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;kind&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;verb&gt;&quot;</span><span class="fu">,</span></span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;data&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="er">/*</span> <span class="er">verb-specific</span> <span class="er">payload</span> <span class="er">*/</span> <span class="fu">}</span></span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>High-value mutating commands also support JSON success envelopes for
 orchestrators and NOC tooling. Initial stable mutator envelopes include
 <code>dispatch</code>, <code>task add</code>, task transitions
@@ -1771,19 +1801,19 @@ can render or copy, each with an <code>available</code> flag. The same
 shared action catalog feeds the console palette, and selected AMQ-facing
 commands resolve project/session/root/identity through the shared AMQ
 context helper; together these are the user-facing closure for #223:</p>
-<div class="sourceCode" id="cb29"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;role&quot;</span><span class="fu">:</span> <span class="st">&quot;cto&quot;</span><span class="fu">,</span></span>
-<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;status&quot;</span><span class="fu">:</span> <span class="st">&quot;live&quot;</span><span class="fu">,</span></span>
-<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;tmux&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;session&quot;</span><span class="fu">:</span> <span class="st">&quot;main&quot;</span><span class="fu">,</span> <span class="dt">&quot;window_id&quot;</span><span class="fu">:</span> <span class="st">&quot;@42&quot;</span><span class="fu">,</span> <span class="dt">&quot;pane_id&quot;</span><span class="fu">:</span> <span class="st">&quot;%265&quot;</span><span class="fu">,</span></span>
-<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a>            <span class="dt">&quot;target&quot;</span><span class="fu">:</span> <span class="st">&quot;current-window&quot;</span><span class="fu">,</span> <span class="dt">&quot;pane_alive&quot;</span><span class="fu">:</span> <span class="kw">true</span> <span class="fu">},</span></span>
-<span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;actions&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
-<span id="cb29-7"><a href="#cb29-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span> <span class="dt">&quot;kind&quot;</span><span class="fu">:</span> <span class="st">&quot;focus&quot;</span><span class="fu">,</span>  <span class="dt">&quot;available&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;amq-squad focus --project DIR --session issue-96 --role cto&quot;</span> <span class="fu">}</span><span class="ot">,</span></span>
-<span id="cb29-8"><a href="#cb29-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span> <span class="dt">&quot;kind&quot;</span><span class="fu">:</span> <span class="st">&quot;send&quot;</span><span class="fu">,</span>   <span class="dt">&quot;available&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;amq-squad send --project DIR --session issue-96 --role cto --body-file -&quot;</span> <span class="fu">}</span><span class="ot">,</span></span>
-<span id="cb29-9"><a href="#cb29-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span> <span class="dt">&quot;kind&quot;</span><span class="fu">:</span> <span class="st">&quot;goal_deliver&quot;</span><span class="fu">,</span> <span class="dt">&quot;available&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;amq-squad goal deliver --project DIR --session issue-96 --role cto --goal &lt;goal&gt;&quot;</span> <span class="fu">}</span><span class="ot">,</span></span>
-<span id="cb29-10"><a href="#cb29-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span> <span class="dt">&quot;kind&quot;</span><span class="fu">:</span> <span class="st">&quot;resume&quot;</span><span class="fu">,</span> <span class="dt">&quot;available&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;amq-squad resume --project DIR --session issue-96 --exec&quot;</span> <span class="fu">}</span></span>
-<span id="cb29-11"><a href="#cb29-11" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
-<span id="cb29-12"><a href="#cb29-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb30"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;role&quot;</span><span class="fu">:</span> <span class="st">&quot;cto&quot;</span><span class="fu">,</span></span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;status&quot;</span><span class="fu">:</span> <span class="st">&quot;live&quot;</span><span class="fu">,</span></span>
+<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;tmux&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;session&quot;</span><span class="fu">:</span> <span class="st">&quot;main&quot;</span><span class="fu">,</span> <span class="dt">&quot;window_id&quot;</span><span class="fu">:</span> <span class="st">&quot;@42&quot;</span><span class="fu">,</span> <span class="dt">&quot;pane_id&quot;</span><span class="fu">:</span> <span class="st">&quot;%265&quot;</span><span class="fu">,</span></span>
+<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a>            <span class="dt">&quot;target&quot;</span><span class="fu">:</span> <span class="st">&quot;current-window&quot;</span><span class="fu">,</span> <span class="dt">&quot;pane_alive&quot;</span><span class="fu">:</span> <span class="kw">true</span> <span class="fu">},</span></span>
+<span id="cb30-6"><a href="#cb30-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;actions&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb30-7"><a href="#cb30-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span> <span class="dt">&quot;kind&quot;</span><span class="fu">:</span> <span class="st">&quot;focus&quot;</span><span class="fu">,</span>  <span class="dt">&quot;available&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;amq-squad focus --project DIR --session issue-96 --role cto&quot;</span> <span class="fu">}</span><span class="ot">,</span></span>
+<span id="cb30-8"><a href="#cb30-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span> <span class="dt">&quot;kind&quot;</span><span class="fu">:</span> <span class="st">&quot;send&quot;</span><span class="fu">,</span>   <span class="dt">&quot;available&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;amq-squad send --project DIR --session issue-96 --role cto --body-file -&quot;</span> <span class="fu">}</span><span class="ot">,</span></span>
+<span id="cb30-9"><a href="#cb30-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span> <span class="dt">&quot;kind&quot;</span><span class="fu">:</span> <span class="st">&quot;goal_deliver&quot;</span><span class="fu">,</span> <span class="dt">&quot;available&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;amq-squad goal deliver --project DIR --session issue-96 --role cto --goal &lt;goal&gt;&quot;</span> <span class="fu">}</span><span class="ot">,</span></span>
+<span id="cb30-10"><a href="#cb30-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span> <span class="dt">&quot;kind&quot;</span><span class="fu">:</span> <span class="st">&quot;resume&quot;</span><span class="fu">,</span> <span class="dt">&quot;available&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;amq-squad resume --project DIR --session issue-96 --exec&quot;</span> <span class="fu">}</span></span>
+<span id="cb30-11"><a href="#cb30-11" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
+<span id="cb30-12"><a href="#cb30-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>The <code>tmux</code> block is present only when the agent has a
 known tmux identity (absent otherwise — e.g. an agent not launched under
 tmux). Its presence means "has a recorded pane", not "is reachable": a
@@ -1803,14 +1833,14 @@ through amq-squad is still preferred (it records the role, binary, and
 brief, not just a pane).</p>
 <p>High-level control verbs target the exact pane id (falling back to a
 neutral title/cwd resolver) and are all project-scoped:</p>
-<div class="sourceCode" id="cb30"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> cto   <span class="co"># bring the agent&#39;s pane into view</span></span>
-<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96              <span class="co"># focus the session</span></span>
-<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> open <span class="at">--session</span> issue-96               <span class="co"># alias for focus</span></span>
-<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send  <span class="at">--session</span> issue-96 <span class="at">--role</span> cto <span class="at">--body</span> <span class="st">&quot;please review PR #65&quot;</span></span>
-<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send  <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--body-file</span> ./prompt.md</span>
-<span id="cb30-6"><a href="#cb30-6" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> prompt.md <span class="kw">|</span> <span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> cto <span class="at">--body-file</span> <span class="at">-</span></span>
-<span id="cb30-7"><a href="#cb30-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span>      <span class="co"># relaunch the team&#39;s panes</span></span></code></pre></div>
+<div class="sourceCode" id="cb31"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> cto   <span class="co"># bring the agent&#39;s pane into view</span></span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96              <span class="co"># focus the session</span></span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> open <span class="at">--session</span> issue-96               <span class="co"># alias for focus</span></span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send  <span class="at">--session</span> issue-96 <span class="at">--role</span> cto <span class="at">--body</span> <span class="st">&quot;please review PR #65&quot;</span></span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send  <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--body-file</span> ./prompt.md</span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> prompt.md <span class="kw">|</span> <span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> cto <span class="at">--body-file</span> <span class="at">-</span></span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span>      <span class="co"># relaunch the team&#39;s panes</span></span></code></pre></div>
 <p><code>send</code> delivers the prompt deterministically: it stages
 the text in a tmux paste buffer (via stdin, never a shell string) and
 pastes it into the exact pane, then submits a single Enter — so
@@ -1851,10 +1881,10 @@ to <code>main</code>. The workflow installs <code>pandoc</code> so
 formatting, tests, generated HTML freshness, and skill frontmatter
 checks run with the same baseline expected locally. This is the
 user-facing closure for #221.</p>
-<div class="sourceCode" id="cb31"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> completion bash <span class="op">&gt;</span> /etc/bash_completion.d/amq-squad</span>
-<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> completion zsh  <span class="op">&gt;</span> <span class="st">&quot;</span><span class="va">${fpath</span><span class="op">[</span><span class="dv">1</span><span class="op">]</span><span class="va">}</span><span class="st">/_amq-squad&quot;</span></span>
-<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> completion fish <span class="op">&gt;</span> ~/.config/fish/completions/amq-squad.fish</span></code></pre></div>
+<div class="sourceCode" id="cb32"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> completion bash <span class="op">&gt;</span> /etc/bash_completion.d/amq-squad</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> completion zsh  <span class="op">&gt;</span> <span class="st">&quot;</span><span class="va">${fpath</span><span class="op">[</span><span class="dv">1</span><span class="op">]</span><span class="va">}</span><span class="st">/_amq-squad&quot;</span></span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> completion fish <span class="op">&gt;</span> ~/.config/fish/completions/amq-squad.fish</span></code></pre></div>
 <p><code>completion zsh</code> is followed by a <code>compinit</code>
 step on most shells.</p>
 <h2 id="custom-roles">Custom roles</h2>
@@ -1868,11 +1898,11 @@ to. Built-in roles keep their catalog defaults unless overridden. Custom
 roles are first-class team members in <code>team.json</code>,
 <code>team-rules.md</code>, the bootstrap prompt, status/history, and
 launch/resume.</p>
-<div class="sourceCode" id="cb32"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="co"># inline: id + CLI, minimal role.md (generic custom-role fallback text)</span></span>
-<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> researcher <span class="at">--binary</span> researcher=codex</span>
-<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> researcher,reviewer <span class="at">--binary</span> researcher=codex,reviewer=claude</span>
-<span id="cb32-4"><a href="#cb32-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new profile discovery <span class="at">--roles</span> researcher <span class="at">--binary</span> researcher=codex</span></code></pre></div>
+<div class="sourceCode" id="cb33"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="co"># inline: id + CLI, minimal role.md (generic custom-role fallback text)</span></span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> researcher <span class="at">--binary</span> researcher=codex</span>
+<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> researcher,reviewer <span class="at">--binary</span> researcher=codex,reviewer=claude</span>
+<span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new profile discovery <span class="at">--roles</span> researcher <span class="at">--binary</span> researcher=codex</span></code></pre></div>
 <p>Missing a binary fails clearly:
 <code>custom role "researcher" requires --binary researcher=&lt;cli&gt;</code>.</p>
 <p>For a richer persona, author a <strong>role file</strong> and pass it
@@ -1885,20 +1915,20 @@ frontmatter, <code>.yaml</code>, or <code>.json</code>. The
 <code>role.md</code> at launch (later user edits are preserved). A role
 file whose id matches a built-in persona is rejected — pick a different
 id for a custom role.</p>
-<div class="sourceCode" id="cb33"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--role-file</span> ./roles/researcher.md <span class="at">--roles</span> cto</span>
-<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--roles</span> <span class="st">&quot;cto,./roles/researcher.md&quot;</span></span></code></pre></div>
 <div class="sourceCode" id="cb34"><pre
-class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
-<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a><span class="an">id:</span><span class="co"> researcher</span></span>
-<span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a><span class="an">label:</span><span class="co"> Research Engineer</span></span>
-<span id="cb34-4"><a href="#cb34-4" aria-hidden="true" tabindex="-1"></a><span class="an">binary:</span><span class="co"> codex</span></span>
-<span id="cb34-5"><a href="#cb34-5" aria-hidden="true" tabindex="-1"></a><span class="an">peers:</span><span class="co"> [cto, qa]</span></span>
-<span id="cb34-6"><a href="#cb34-6" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
-<span id="cb34-7"><a href="#cb34-7" aria-hidden="true" tabindex="-1"></a><span class="fu"># Role: Research Engineer</span></span>
-<span id="cb34-8"><a href="#cb34-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb34-9"><a href="#cb34-9" aria-hidden="true" tabindex="-1"></a><span class="fu">## Description</span></span>
-<span id="cb34-10"><a href="#cb34-10" aria-hidden="true" tabindex="-1"></a>Owns deep technical investigation, prototypes, and written findings.</span></code></pre></div>
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--role-file</span> ./roles/researcher.md <span class="at">--roles</span> cto</span>
+<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--roles</span> <span class="st">&quot;cto,./roles/researcher.md&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb35"><pre
+class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a><span class="an">id:</span><span class="co"> researcher</span></span>
+<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="an">label:</span><span class="co"> Research Engineer</span></span>
+<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a><span class="an">binary:</span><span class="co"> codex</span></span>
+<span id="cb35-5"><a href="#cb35-5" aria-hidden="true" tabindex="-1"></a><span class="an">peers:</span><span class="co"> [cto, qa]</span></span>
+<span id="cb35-6"><a href="#cb35-6" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb35-7"><a href="#cb35-7" aria-hidden="true" tabindex="-1"></a><span class="fu"># Role: Research Engineer</span></span>
+<span id="cb35-8"><a href="#cb35-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb35-9"><a href="#cb35-9" aria-hidden="true" tabindex="-1"></a><span class="fu">## Description</span></span>
+<span id="cb35-10"><a href="#cb35-10" aria-hidden="true" tabindex="-1"></a>Owns deep technical investigation, prototypes, and written findings.</span></code></pre></div>
 <p>The <code>amq-squad</code> skill's Role Authoring section walks
 through authoring role files and wiring them into a team.</p>
 <h2 id="trust-and-binary-defaults">Trust and binary defaults</h2>
@@ -1921,6 +1951,15 @@ and are re-emitted by <code>up</code>, <code>agent up</code>,
 <code>--trust trusted</code> with <code>--no-default-args</code> is
 rejected, as is sandboxed or approve-for-me mode with the bypass flag
 smuggled through <code>--codex-args</code>.</p>
+<p><code>run start</code> uses the same launch trust vocabulary, but its
+default lead autonomy is conservative for release work: trust controls
+local permission prompts, not authorization to push default/protected
+branches, create or push tags, draft or publish GitHub releases, or send
+external communications. Those actions require an explicit bound
+<code>verify action</code> approval. Autonomous release actions are an
+opt-in integration concern for wrappers that deliberately call and
+record that guard; they are never implied by <code>approve-for-me</code>
+or by starting a run without a goal.</p>
 <p>Pass <code>--model NAME</code> to set the native <code>--model</code>
 flag on Codex or Claude. <code>team init --model role=model,...</code>
 persists per-member models. If no explicit model is set, amq-squad looks
@@ -1986,22 +2025,22 @@ available on <code>team init --model role=model</code>,
 <code>resume --model role=model</code>, the <code>team member add</code>
 <code>--model &lt;alias&gt;</code> flag, and the persisted member
 <code>model</code> field in <code>team.json</code>.</p>
-<div class="sourceCode" id="cb35"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add plan-reviewer <span class="at">--binary</span> claude <span class="at">--model</span> claude-fable-5 <span class="dt">\</span></span>
-<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--claude-args</span> <span class="st">&quot;--effort high&quot;</span> <span class="at">--session</span> issue-96</span>
-<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add implementer <span class="at">--binary</span> claude <span class="at">--model</span> sonnet <span class="dt">\</span></span>
-<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--claude-args</span> <span class="st">&quot;--effort medium&quot;</span> <span class="at">--session</span> issue-96</span>
-<span id="cb35-5"><a href="#cb35-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add opus-reviewer <span class="at">--binary</span> claude <span class="at">--model</span> opus <span class="dt">\</span></span>
-<span id="cb35-6"><a href="#cb35-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--claude-args</span> <span class="st">&quot;--effort high&quot;</span> <span class="at">--session</span> issue-96</span>
-<span id="cb35-7"><a href="#cb35-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add codex-worker <span class="at">--binary</span> codex <span class="dt">\</span></span>
-<span id="cb35-8"><a href="#cb35-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=xhigh&quot;</span> <span class="at">--session</span> issue-96</span></code></pre></div>
+<div class="sourceCode" id="cb36"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add plan-reviewer <span class="at">--binary</span> claude <span class="at">--model</span> claude-fable-5 <span class="dt">\</span></span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--claude-args</span> <span class="st">&quot;--effort high&quot;</span> <span class="at">--session</span> issue-96</span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add implementer <span class="at">--binary</span> claude <span class="at">--model</span> sonnet <span class="dt">\</span></span>
+<span id="cb36-4"><a href="#cb36-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--claude-args</span> <span class="st">&quot;--effort medium&quot;</span> <span class="at">--session</span> issue-96</span>
+<span id="cb36-5"><a href="#cb36-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add opus-reviewer <span class="at">--binary</span> claude <span class="at">--model</span> opus <span class="dt">\</span></span>
+<span id="cb36-6"><a href="#cb36-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--claude-args</span> <span class="st">&quot;--effort high&quot;</span> <span class="at">--session</span> issue-96</span>
+<span id="cb36-7"><a href="#cb36-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team member add codex-worker <span class="at">--binary</span> codex <span class="dt">\</span></span>
+<span id="cb36-8"><a href="#cb36-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=xhigh&quot;</span> <span class="at">--session</span> issue-96</span></code></pre></div>
 <p>Use <code>up</code> and <code>resume</code> overrides when the
 profile is durable but a launch needs session-specific model choices.
 Resume overrides apply to members launched fresh during that resume
 plan; already-live members keep their running process.</p>
-<div class="sourceCode" id="cb36"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up issue-96 <span class="at">--model</span> plan-reviewer=claude-fable-5,implementer=sonnet</span>
-<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--model</span> plan-reviewer=opus,implementer=sonnet <span class="at">--exec</span></span></code></pre></div>
+<div class="sourceCode" id="cb37"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up issue-96 <span class="at">--model</span> plan-reviewer=claude-fable-5,implementer=sonnet</span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--model</span> plan-reviewer=opus,implementer=sonnet <span class="at">--exec</span></span></code></pre></div>
 <p>For durable rosters, the same values live in <code>team.json</code>:
 <code>binary</code>, <code>model</code>, per-member
 <code>codex_args</code> / <code>claude_args</code>, or team-level
@@ -2014,12 +2053,12 @@ select a Codex model or effort level. Keep the wrapper minimal, have it
 delegate the real task to Codex CLI on <code>gpt-5.5</code>, and make
 that indirection visible in the role/scope so reviewers do not mistake
 it for a native Claude model choice.</p>
-<div class="sourceCode" id="cb37"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> trusted</span>
-<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> approve-for-me</span>
-<span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5.5,fullstack=fable-5 <span class="dt">\</span></span>
-<span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span>
-<span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5.5 <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb38"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> trusted</span>
+<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> approve-for-me</span>
+<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5.5,fullstack=fable-5 <span class="dt">\</span></span>
+<span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span>
+<span id="cb38-5"><a href="#cb38-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5.5 <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span></code></pre></div>
 <p>amq-squad v2.17.0 requires amq <strong>0.40.0+</strong>. Launches
 pass <code>--require-wake</code> to <code>amq coop exec</code>, so a
 launch <strong>fails at the door</strong> when the AMQ wake sidecar
@@ -2065,9 +2104,9 @@ positional) or rely on inference instead.</p>
 <p>Members do not have to share a working directory. The dir where you
 run <code>team init</code> becomes the team-home; individual members can
 live in other repos.</p>
-<div class="sourceCode" id="cb38"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/project-a</span>
-<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack,qa <span class="at">--cwd</span> qa=~/Code/project-b</span></code></pre></div>
+<div class="sourceCode" id="cb39"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/project-a</span>
+<span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack,qa <span class="at">--cwd</span> qa=~/Code/project-b</span></code></pre></div>
 <p><code>up --dry-run</code> emits a <code>cd &lt;member-cwd&gt;</code>
 per launch command, and <code>team sync --apply --allow-outside</code>
 walks each unique member cwd and writes <code>CLAUDE.md</code> /
@@ -2080,30 +2119,30 @@ surprise.</p>
 needs a <code>peers</code> entry pointing at the other project's
 <code>.agent-mail/</code>. <code>team sync</code> does not touch
 <code>.amqrc</code>; that step is manual today.</p>
-<div class="sourceCode" id="cb39"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;root&quot;</span><span class="fu">:</span> <span class="st">&quot;.agent-mail&quot;</span><span class="fu">,</span></span>
-<span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;project&quot;</span><span class="fu">:</span> <span class="st">&quot;project-a&quot;</span><span class="fu">,</span></span>
-<span id="cb39-4"><a href="#cb39-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;peers&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb39-5"><a href="#cb39-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;project-b&quot;</span><span class="fu">:</span> <span class="st">&quot;/Users/you/Code/project-b/.agent-mail&quot;</span></span>
-<span id="cb39-6"><a href="#cb39-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb39-7"><a href="#cb39-7" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb40"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;root&quot;</span><span class="fu">:</span> <span class="st">&quot;.agent-mail&quot;</span><span class="fu">,</span></span>
+<span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;project&quot;</span><span class="fu">:</span> <span class="st">&quot;project-a&quot;</span><span class="fu">,</span></span>
+<span id="cb40-4"><a href="#cb40-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;peers&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb40-5"><a href="#cb40-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;project-b&quot;</span><span class="fu">:</span> <span class="st">&quot;/Users/you/Code/project-b/.agent-mail&quot;</span></span>
+<span id="cb40-6"><a href="#cb40-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb40-7"><a href="#cb40-7" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <h2 id="messaging-inside-a-squad">Messaging inside a squad</h2>
 <p>Once launched, agents use plain AMQ commands. <code>amq-squad</code>
 injects a routing block into each agent's bootstrap prompt with the live
 roster, handles, threads, and per-agent project context.</p>
-<div class="sourceCode" id="cb40"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> list <span class="at">--new</span></span>
-<span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> read <span class="at">--id</span> <span class="op">&lt;</span>id<span class="op">&gt;</span></span>
-<span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span></span>
-<span id="cb40-4"><a href="#cb40-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-5"><a href="#cb40-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="dt">\</span></span>
-<span id="cb40-6"><a href="#cb40-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> fullstack <span class="dt">\</span></span>
-<span id="cb40-7"><a href="#cb40-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--thread</span> p2p/cto__fullstack <span class="dt">\</span></span>
-<span id="cb40-8"><a href="#cb40-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> review_request <span class="dt">\</span></span>
-<span id="cb40-9"><a href="#cb40-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Review: PR&quot;</span> <span class="dt">\</span></span>
-<span id="cb40-10"><a href="#cb40-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--body</span> <span class="st">&quot;Please review tests and framing.&quot;</span> <span class="dt">\</span></span>
-<span id="cb40-11"><a href="#cb40-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--wait-for</span> drained <span class="at">--wait-timeout</span> 60s</span></code></pre></div>
+<div class="sourceCode" id="cb41"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> list <span class="at">--new</span></span>
+<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> read <span class="at">--id</span> <span class="op">&lt;</span>id<span class="op">&gt;</span></span>
+<span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span></span>
+<span id="cb41-4"><a href="#cb41-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-5"><a href="#cb41-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="dt">\</span></span>
+<span id="cb41-6"><a href="#cb41-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> fullstack <span class="dt">\</span></span>
+<span id="cb41-7"><a href="#cb41-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--thread</span> p2p/cto__fullstack <span class="dt">\</span></span>
+<span id="cb41-8"><a href="#cb41-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> review_request <span class="dt">\</span></span>
+<span id="cb41-9"><a href="#cb41-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Review: PR&quot;</span> <span class="dt">\</span></span>
+<span id="cb41-10"><a href="#cb41-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--body</span> <span class="st">&quot;Please review tests and framing.&quot;</span> <span class="dt">\</span></span>
+<span id="cb41-11"><a href="#cb41-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--wait-for</span> drained <span class="at">--wait-timeout</span> 60s</span></code></pre></div>
 <p><code>amq send</code> reads stdin when <code>--body</code> is
 omitted. There is no <code>--body-file</code> flag.</p>
 <h3 id="which-messaging-primitive-should-i-use">Which messaging
@@ -2163,20 +2202,20 @@ the default <code>.agent-mail/&lt;session&gt;</code> while workers drain
 <code>amq-squad amq</code> wrapper or an explicit raw
 <code>--root</code> only when direct mailbox plumbing is
 intentional:</p>
-<div class="sourceCode" id="cb41"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Ambiguous from an external pane:</span></span>
-<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--session</span> issue-96 <span class="at">--to</span> developer <span class="at">--thread</span> p2p/cto__developer <span class="dt">\</span></span>
-<span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> todo <span class="at">--subject</span> <span class="st">&quot;Task&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span>
-<span id="cb41-4"><a href="#cb41-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb41-5"><a href="#cb41-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Root-resolving wrapper:</span></span>
-<span id="cb41-6"><a href="#cb41-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq send <span class="at">--project</span> /path/to/repo <span class="at">--profile</span> release <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb41-7"><a href="#cb41-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> developer <span class="at">--thread</span> p2p/cto__developer <span class="dt">\</span></span>
-<span id="cb41-8"><a href="#cb41-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> todo <span class="at">--subject</span> <span class="st">&quot;Task&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span>
-<span id="cb41-9"><a href="#cb41-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb41-10"><a href="#cb41-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Explicit raw AMQ root:</span></span>
-<span id="cb41-11"><a href="#cb41-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /path/to/repo/.agent-mail/release/issue-96 <span class="dt">\</span></span>
-<span id="cb41-12"><a href="#cb41-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> developer <span class="at">--thread</span> p2p/cto__developer <span class="dt">\</span></span>
-<span id="cb41-13"><a href="#cb41-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> todo <span class="at">--subject</span> <span class="st">&quot;Task&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb42"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Ambiguous from an external pane:</span></span>
+<span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--session</span> issue-96 <span class="at">--to</span> developer <span class="at">--thread</span> p2p/cto__developer <span class="dt">\</span></span>
+<span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> todo <span class="at">--subject</span> <span class="st">&quot;Task&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span>
+<span id="cb42-4"><a href="#cb42-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-5"><a href="#cb42-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Root-resolving wrapper:</span></span>
+<span id="cb42-6"><a href="#cb42-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq send <span class="at">--project</span> /path/to/repo <span class="at">--profile</span> release <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb42-7"><a href="#cb42-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> developer <span class="at">--thread</span> p2p/cto__developer <span class="dt">\</span></span>
+<span id="cb42-8"><a href="#cb42-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> todo <span class="at">--subject</span> <span class="st">&quot;Task&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span>
+<span id="cb42-9"><a href="#cb42-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-10"><a href="#cb42-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Explicit raw AMQ root:</span></span>
+<span id="cb42-11"><a href="#cb42-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /path/to/repo/.agent-mail/release/issue-96 <span class="dt">\</span></span>
+<span id="cb42-12"><a href="#cb42-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> developer <span class="at">--thread</span> p2p/cto__developer <span class="dt">\</span></span>
+<span id="cb42-13"><a href="#cb42-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--kind</span> todo <span class="at">--subject</span> <span class="st">&quot;Task&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span></code></pre></div>
 <p>Inside an amq-squad-launched shell, use bare <code>amq</code>
 commands. The launcher already injected <code>AM_ROOT</code>,
 <code>AM_BASE_ROOT</code>, and <code>AM_ME</code>; override them only
