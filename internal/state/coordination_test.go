@@ -29,6 +29,8 @@ type msgSpec struct {
 	body      string
 	createdAt time.Time
 	schema    int // 0 => default to 1
+	labels    []string
+	context   string // raw JSON object; empty => omitted
 
 	torn        bool // write an invalid/partial file (must be skipped)
 	badThreadID bool // write the thread id verbatim (caller supplies malformed)
@@ -81,6 +83,19 @@ func seedMessage(t *testing.T, agentDir, state string, s msgSpec) {
 	}
 	if s.kind != "" {
 		b.WriteString(",\n  \"kind\": \"" + s.kind + "\"")
+	}
+	if len(s.labels) > 0 {
+		b.WriteString(",\n  \"labels\": [")
+		for i, label := range s.labels {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString("\"" + label + "\"")
+		}
+		b.WriteString("]")
+	}
+	if strings.TrimSpace(s.context) != "" {
+		b.WriteString(",\n  \"context\": " + s.context)
 	}
 	b.WriteString("\n}\n---\n")
 	b.WriteString(s.body)
@@ -566,6 +581,109 @@ func TestThreadSummaryCarriesAMQIntegrationMetadata(t *testing.T) {
 	th := findThread(t, snap.Sessions[0].Coordination, "handoff/test")
 	if strings.Join(th.Labels, ",") != "blocking,handoff" || th.Orchestrator != "kanban" || th.FromProject != "api" || th.ReplyProject != "web" {
 		t.Fatalf("thread metadata mismatch: %+v", th)
+	}
+}
+
+func TestCoordinationBuildsExternalEvidenceRows(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	ctoDir := seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+
+	seedMessage(t, ctoDir, "cur", msgSpec{
+		id: "swarm1", from: "swarm", to: []string{"cto"},
+		thread: "task/SW-7", subject: "swarm task", kind: "status",
+		createdAt: coordNow.Add(-1 * time.Minute),
+		labels:    []string{"orchestrator", "orchestrator:swarm", "task-state:blocked", "blocking"},
+		context:   `{"orchestrator":{"task":{"id":"SW-7"}}}`,
+	})
+	seedMessage(t, ctoDir, "cur", msgSpec{
+		id: "symphony1", from: "symphony", to: []string{"cto"},
+		thread: "task/SYM-4", subject: "symphony task", kind: "status",
+		createdAt: coordNow.Add(-2 * time.Minute),
+		labels:    []string{"orchestrator", "orchestrator:symphony", "task-state:running", "handoff"},
+		context:   `{"orchestrator":{"task":{"id":"SYM-4"}}}`,
+	})
+	seedMessage(t, ctoDir, "cur", msgSpec{
+		id: "kanban1", from: "kanban", to: []string{"cto"},
+		thread: "task/KAN-2", subject: "kanban task", kind: "status",
+		createdAt: coordNow.Add(-3 * time.Minute),
+		labels:    []string{"orchestrator", "orchestrator:kanban"},
+		context:   `{"orchestrator":{"task":{"id":"KAN-2"}}}`,
+	})
+	seedMessage(t, ctoDir, "cur", msgSpec{
+		id: "native1", from: "cto", to: []string{"qa"},
+		thread: "p2p/cto__qa", subject: "native", kind: "status",
+		createdAt: coordNow.Add(-4 * time.Minute),
+		labels:    []string{"task-state:done"},
+	})
+
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := snap.Sessions[0].Coordination.ExternalEvidence
+	if len(rows) != 3 {
+		t.Fatalf("external evidence rows = %d, want 3: %+v", len(rows), rows)
+	}
+	got := map[string]ExternalEvidenceRow{}
+	for _, row := range rows {
+		got[row.Source] = row
+		if row.Mutable {
+			t.Fatalf("external evidence row must be immutable: %+v", row)
+		}
+	}
+	if got["amq-swarm"].ExternalTaskID != "SW-7" || got["amq-swarm"].State != "blocked" || got["amq-swarm"].SourceLabel != "orchestrator:swarm" {
+		t.Fatalf("swarm row = %+v", got["amq-swarm"])
+	}
+	if got["amq-symphony"].ExternalTaskID != "SYM-4" || got["amq-symphony"].State != "running" {
+		t.Fatalf("symphony row = %+v", got["amq-symphony"])
+	}
+	if got["amq-kanban"].ExternalTaskID != "KAN-2" || got["amq-kanban"].State != "unknown" {
+		t.Fatalf("kanban row = %+v", got["amq-kanban"])
+	}
+}
+
+func TestExternalEvidenceReadsLegacySwarmTaskIDContext(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	ctoDir := seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+	seedMessage(t, ctoDir, "cur", msgSpec{
+		id: "swarm2", from: "swarm", to: []string{"cto"},
+		thread: "task/SW-8", subject: "legacy swarm task", kind: "status",
+		createdAt: coordNow.Add(-1 * time.Minute),
+		labels:    []string{"orchestrator", "orchestrator:amq-swarm", "task-state:done"},
+		context:   `{"task_id":"SW-8","source":"swarm-bridge"}`,
+	})
+
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := snap.Sessions[0].Coordination.ExternalEvidence
+	if len(rows) != 1 || rows[0].ExternalTaskID != "SW-8" || rows[0].Source != "amq-swarm" {
+		t.Fatalf("legacy swarm evidence = %+v", rows)
+	}
+}
+
+func TestExternalEvidenceFormatsNumericTaskIDContext(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	ctoDir := seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+	seedMessage(t, ctoDir, "cur", msgSpec{
+		id: "kanban2", from: "kanban", to: []string{"cto"},
+		thread: "task/42", subject: "numeric kanban task", kind: "status",
+		createdAt: coordNow.Add(-1 * time.Minute),
+		labels:    []string{"orchestrator", "orchestrator:kanban", "task-state:ready"},
+		context:   `{"orchestrator":{"task":{"id":42}}}`,
+	})
+
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := snap.Sessions[0].Coordination.ExternalEvidence
+	if len(rows) != 1 || rows[0].ExternalTaskID != "42" {
+		t.Fatalf("numeric task id evidence = %+v, want external_task_id 42", rows)
 	}
 }
 

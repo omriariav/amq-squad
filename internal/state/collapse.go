@@ -10,11 +10,12 @@ import (
 // threads, edges, timeline, triage rollup, and any scan warnings. It is built
 // purely from scanned mailbox messages plus the injected clock + thresholds.
 type Coordination struct {
-	Threads  []ThreadSummary
-	Edges    []Edge
-	Timeline []TimelineEvent
-	Rollup   TriageRollup
-	Warnings []Warning
+	Threads          []ThreadSummary
+	Edges            []Edge
+	Timeline         []TimelineEvent
+	ExternalEvidence []ExternalEvidenceRow
+	Rollup           TriageRollup
+	Warnings         []Warning
 }
 
 // collapseInput is the raw material for building a session's coordination view:
@@ -36,6 +37,7 @@ func buildCoordination(in collapseInput, now time.Time, th Thresholds) Coordinat
 	threads := collapseThreads(in.messages, now, th, in.agents)
 	edges := buildEdges(in.messages)
 	timeline := buildTimeline(threads, in.messages)
+	externalEvidence := BuildExternalEvidence(threads)
 
 	var rollup TriageRollup
 	for _, t := range threads {
@@ -43,27 +45,29 @@ func buildCoordination(in collapseInput, now time.Time, th Thresholds) Coordinat
 	}
 
 	return Coordination{
-		Threads:  threads,
-		Edges:    edges,
-		Timeline: timeline,
-		Rollup:   rollup,
-		Warnings: in.warnings,
+		Threads:          threads,
+		Edges:            edges,
+		Timeline:         timeline,
+		ExternalEvidence: externalEvidence,
+		Rollup:           rollup,
+		Warnings:         in.warnings,
 	}
 }
 
 // threadAccumulator gathers everything about one canonical thread as messages
 // stream in, so the final summary is a single pass.
 type threadAccumulator struct {
-	id           string
-	participants map[string]bool
-	subject      string
-	lastKind     Kind
-	labels       map[string]bool
-	orchestrator string
-	fromProject  string
-	replyProject string
-	lastEventAt  time.Time
-	count        int
+	id             string
+	participants   map[string]bool
+	subject        string
+	lastKind       Kind
+	labels         map[string]bool
+	orchestrator   string
+	fromProject    string
+	replyProject   string
+	externalTaskID string
+	lastEventAt    time.Time
+	count          int
 	// unreadBy: recipient handle -> still has an unread copy (inbox/new).
 	unreadBy map[string]bool
 	// readBy: recipient handle -> has a read copy (inbox/cur). Used so a later
@@ -149,6 +153,7 @@ func (a *threadAccumulator) observe(m Message) {
 		a.orchestrator = m.Orchestrator
 		a.fromProject = m.FromProject
 		a.replyProject = m.ReplyProject
+		a.externalTaskID = m.ExternalTaskID
 	} else if a.subject == "" && m.Subject != "" {
 		a.subject = m.Subject
 	}
@@ -180,25 +185,26 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 	historical := isHistoricalNeedsYou(triage, fresh, agents, th.OperatorHandle)
 
 	return ThreadSummary{
-		ID:           a.id,
-		LatestID:     a.latest.ID,
-		Participants: parts,
-		Subject:      a.subject,
-		Kind:         a.lastKind,
-		Labels:       labels,
-		Orchestrator: a.orchestrator,
-		FromProject:  a.fromProject,
-		ReplyProject: a.replyProject,
-		Status:       status,
-		LastEventAt:  a.lastEventAt,
-		MessageCount: a.count,
-		UnreadBy:     unread,
-		Triage:       triage,
-		Freshness:    fresh,
-		Stale:        stale,
-		Historical:   historical,
-		AttnReason:   reason,
-		OperatorGate: operatorGate,
+		ID:             a.id,
+		LatestID:       a.latest.ID,
+		Participants:   parts,
+		Subject:        a.subject,
+		Kind:           a.lastKind,
+		Labels:         labels,
+		Orchestrator:   a.orchestrator,
+		FromProject:    a.fromProject,
+		ReplyProject:   a.replyProject,
+		ExternalTaskID: a.externalTaskID,
+		Status:         status,
+		LastEventAt:    a.lastEventAt,
+		MessageCount:   a.count,
+		UnreadBy:       unread,
+		Triage:         triage,
+		Freshness:      fresh,
+		Stale:          stale,
+		Historical:     historical,
+		AttnReason:     reason,
+		OperatorGate:   operatorGate,
 	}
 }
 
