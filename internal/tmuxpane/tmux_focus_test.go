@@ -154,9 +154,9 @@ func TestSwitchTo_DifferentSessionOsascriptFailsFallsBack(t *testing.T) {
 // every tab and matches NO session name. The agent's tmux session is not
 // attached to this iTerm2. The OLD code read only the exit code, saw 0, and
 // reported a false "jumped". The fix reads the MISS stdout sentinel and returns
-// a typed FocusMissError carrying the manual attach command and must NOT fall
-// back to a tmux select-window (there is no tab to raise; that would be another
-// silent no-op pretending to work).
+// a typed FocusMissError carrying the manual in-tmux switch-client command and
+// must NOT fall back to a tmux select-window (there is no tab to raise; that
+// would be another silent no-op pretending to work).
 func TestSwitchTo_DifferentSessionOsascriptMissReturnsFocusMiss(t *testing.T) {
 	var tmuxCalls [][]string
 	var osaCalls [][]string
@@ -174,8 +174,8 @@ func TestSwitchTo_DifferentSessionOsascriptMissReturnsFocusMiss(t *testing.T) {
 	if !errors.As(err, &fm) {
 		t.Fatalf("a MISS must return *FocusMissError (the QA-8 honest-failure fix), got %T (%v)", err, err)
 	}
-	if fm.Command != AttachCommand(target) {
-		t.Errorf("FocusMissError.Command = %q, want the attach hint %q", fm.Command, AttachCommand(target))
+	if fm.Command != SuggestJump(target) {
+		t.Errorf("FocusMissError.Command = %q, want the in-tmux switch hint %q", fm.Command, SuggestJump(target))
 	}
 	if len(osaCalls) != 1 {
 		t.Fatalf("osascript should be attempted exactly once, got %v", osaCalls)
@@ -266,6 +266,12 @@ func TestSwitchTo_OutsideTmuxStillReturnsTypedError(t *testing.T) {
 	}
 	if len(tmuxCalls) != 1 || tmuxCalls[0][1] != "select-window" {
 		t.Fatalf("outside tmux should emit one select-window, got %v", tmuxCalls)
+	}
+	if nit.Command != AttachCommand(target) {
+		t.Fatalf("outside-tmux hint = %q, want attach command %q", nit.Command, AttachCommand(target))
+	}
+	if strings.Contains(nit.Command, "switch-client") {
+		t.Fatalf("outside-tmux hint must not use switch-client: %q", nit.Command)
 	}
 }
 

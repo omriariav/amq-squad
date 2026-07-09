@@ -169,7 +169,7 @@ Usage:
       [--roles "a,b,c"] [--binary "role=bin,..."] [--model "role=model,..."]
       [--lead-mode builder|planner]
       [--codex-args "..."] [--claude-args "..."]
-      [--visibility detached|sibling-tabs|current] [--goal TEXT] [--seed-from REF] [--go]
+      [--visibility sibling-tabs|detached|current] [--goal TEXT] [--seed-from REF] [--go]
 
 Managed model: amq-squad spawns the whole team (incl. the lead); panes are
 registered and wake-live automatically. This wraps the create sequence so the
@@ -177,11 +177,11 @@ registered and wake-live automatically. This wraps the create sequence so the
 
     new team (if --roles) -> up --visibility <mode>
 
-Visibility defaults to detached (hidden): agents run in a separate tmux session
-you don't see, and you supervise via status/console/monitor + wake, attaching
-only to intervene. Pass --visibility sibling-tabs for visible tabs (requires a
-visible tmux pane). Choose binary via --binary, model via --model, and effort
-via --codex-args/--claude-args (amq-squad has no first-class --effort flag).
+Visibility defaults to sibling-tabs: agents open as sibling tmux windows in the
+current visible tmux session (requires a visible tmux pane when --go is used).
+Pass --visibility detached for hidden workers in a separate tmux session. Choose
+binary via --binary, model via --model, and effort via
+--codex-args/--claude-args (amq-squad has no first-class --effort flag).
 
 Preview by default (prints the plan and runs read-only --dry-run validation, so
 its failures surface honestly); pass --go to create for real.
@@ -217,7 +217,7 @@ func runRunStart(args []string, version string) error {
 	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5,fullstack=sonnet\"")
 	codexArgsFlag := fs.String("codex-args", "", "extra args for every Codex member (e.g. reasoning effort)")
 	claudeArgsFlag := fs.String("claude-args", "", "extra args for every Claude member")
-	visibilityFlag := fs.String("visibility", visibilityDetached, "spawn topology: detached (hidden, default), sibling-tabs (visible tabs), or current")
+	visibilityFlag := fs.String("visibility", visibilitySiblingTabs, "spawn topology: sibling-tabs (visible default), detached (hidden), or current")
 	goalFlag := fs.String("goal", "", "after spawn, deliver this goal to the lead")
 	seedFlag := fs.String("seed-from", "", "seed the workstream brief from a reference (e.g. issue:96)")
 	externalLead := fs.Bool("external-lead", false, "(unsupported yet, see #339) your current pane is the lead")
@@ -350,6 +350,9 @@ func runRunStart(args []string, version string) error {
 	if visibility == visibilityDetached {
 		fmt.Printf("  (hidden: agents run in a detached tmux session; attach via the `attach_control` action from `status --json`, or `amq-squad focus`, when you want eyes on them)\n")
 	}
+	if !*goFlag && (visibility == visibilitySiblingTabs || visibility == visibilityCurrent) && !insideTmux() {
+		fmt.Printf("  note:    --go with --visibility %s requires a visible tmux pane; run inside tmux or pass --visibility detached.\n", visibility)
+	}
 	if strings.TrimSpace(*goalFlag) != "" {
 		fmt.Printf("  step %d:  amq-squad goal start --session %s --goal %q --yes\n", upStep+1, session, *goalFlag)
 	}
@@ -359,7 +362,7 @@ func runRunStart(args []string, version string) error {
 	}
 
 	if (visibility == visibilitySiblingTabs || visibility == visibilityCurrent) && !insideTmux() {
-		return usageErrorf("not inside tmux; --visibility %s requires a visible tmux pane. Use --visibility detached to spawn hidden, or attach a tmux session first.", visibility)
+		return usageErrorf("not inside tmux; --visibility %s requires a visible tmux pane. Run inside tmux, or pass --visibility detached to spawn hidden.", visibility)
 	}
 
 	// 1) roster

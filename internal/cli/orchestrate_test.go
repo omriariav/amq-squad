@@ -138,20 +138,71 @@ func TestRunStartRejectsBadSession(t *testing.T) {
 	}
 }
 
-func TestRunStartDefaultsToDetachedInPreview(t *testing.T) {
-	// A fresh project with --roles: preview should describe a detached (hidden)
-	// spawn by default and note the deferred spawn validation.
+func TestRunStartDefaultsToSiblingTabsInPreview(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	// A fresh project with --roles: preview should describe a visible sibling-tab
+	// spawn by default, stay usable outside tmux, and note the deferred spawn
+	// validation.
 	out, _, err := captureOutput(t, func() error {
 		return runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto"}, "test")
 	})
 	if err != nil {
 		t.Fatalf("preview returned error: %v", err)
 	}
-	if !strings.Contains(out, "--visibility detached") {
-		t.Fatalf("default visibility should be detached:\n%s", out)
+	if !strings.Contains(out, "--visibility sibling-tabs") {
+		t.Fatalf("default visibility should be sibling-tabs:\n%s", out)
 	}
-	if !strings.Contains(out, "hidden") {
-		t.Fatalf("preview should explain hidden spawn:\n%s", out)
+	if !strings.Contains(out, "--go with --visibility sibling-tabs requires a visible tmux pane") {
+		t.Fatalf("outside-tmux preview should warn about --go requirements:\n%s", out)
+	}
+	if strings.Contains(out, "hidden") {
+		t.Fatalf("default preview should not describe detached hidden spawn:\n%s", out)
+	}
+}
+
+func TestRunStartGoOutsideTmuxRefusesSiblingTabsDefault(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	_, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto", "--go"}, "test")
+	})
+	if err == nil {
+		t.Fatal("expected outside-tmux --go to fail under sibling-tabs default")
+	}
+	for _, want := range []string{"--visibility sibling-tabs", "Run inside tmux", "--visibility detached"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestRunStartGoInsideTmuxDefaultsToSiblingTabsBackend(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%42")
+	backend := &fakeBackend{}
+	prev, hadPrev := teamLaunchBackends["tmux"]
+	teamLaunchBackends["tmux"] = backend
+	t.Cleanup(func() {
+		if hadPrev {
+			teamLaunchBackends["tmux"] = prev
+			return
+		}
+		delete(teamLaunchBackends, "tmux")
+	})
+
+	_, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto", "--go"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("run start --go inside tmux: %v", err)
+	}
+	if len(backend.launches) != 1 {
+		t.Fatalf("expected one launch, got %+v", backend.launches)
+	}
+	got := backend.launches[0]
+	if got.Terminal != "tmux" || got.Target != "new-window" || got.Workstream != "sess" {
+		t.Fatalf("launch opts = %+v, want tmux new-window for sess", got)
 	}
 }
 
