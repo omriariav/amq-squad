@@ -232,11 +232,9 @@ see issue #339.
 func runRunStart(args []string, version string) error {
 	fs := flag.NewFlagSet("run start", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project / team-home directory (repo root)")
-	fs.StringVar(projectFlag, "p", "", "alias for --project")
 	sessionFlag := fs.String("session", "", "workstream session name")
-	fs.StringVar(sessionFlag, "s", "", "alias for --session")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
-	fs.StringVar(profileFlag, "P", "", "alias for --profile")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	leadFlag := fs.String("lead", "", "lead role (default: cto when creating a roster; else inferred from the profile)")
 	leadModeFlag := fs.String("lead-mode", "", "lead implementation posture when creating a roster: builder (default) or planner")
 	rolesFlag := fs.String("roles", "", "create the roster first: comma-separated role ids")

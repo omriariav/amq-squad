@@ -351,19 +351,23 @@ func runDoctor(args []string, version string) error {
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned doctor envelope instead of the human table")
 	projectFlag := fs.String("project", "", "project/team-home directory to check (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to check (default: default profile)")
+	sessionFlag := fs.String("session", "", "accepted for scoped alias consistency; doctor checks project/profile health")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	allProfiles := fs.Bool("all-profiles", false, "check every configured team profile instead of one selected profile")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad doctor - check this project's amq-squad / AMQ setup
 
 Usage:
-  amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--json]
+  amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--session NAME] [--json]
 
 Checks: AMQ version and ops diagnostics, the amq-squad on PATH vs this build
 (version skew — spawned agents inherit the PATH binary), selected team profile,
 tmux availability, configured members' wake health, and CLAUDE.md / AGENTS.md
 marker integrity plus pointer-sync drift for the selected profile's sync
 targets. Use --all-profiles for project health across every configured profile.
-Read-only. Exits non-zero if any check is "fail".
+--session is accepted for scope-flag consistency; doctor checks project/profile
+health rather than one session's mutable state. Read-only. Exits non-zero if
+any check is "fail".
 
 Examples:
   amq-squad doctor

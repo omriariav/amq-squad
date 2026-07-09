@@ -78,7 +78,7 @@ func TestRunCompletionBashContainsRepresentativeTokens(t *testing.T) {
 		// previously missing flags + root short/version forms
 		"--fresh", "--exec", "--handle", "--root", "--conversation-id",
 		"--no-default-args", "--team-workstream", "--personas", "--roles",
-		"--binary", "--cwd", "-h", "--version", "-v",
+		"--binary", "--cwd", "-p", "-s", "-P", "-h", "--version", "-v",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("bash completion missing %q in:\n%s", want, stdout)
@@ -108,7 +108,7 @@ func TestRunCompletionZshContainsRepresentativeTokens(t *testing.T) {
 		"'--profile'", "'--json'", "'--actions'", "'--action'", "'--action-id'", "'--target-id'", "'--scope'", "'--run-action'", "'--set'", "'--commands'", "'--mutating'", "'--dry-run'", "'--force-duplicate'", "'--approved'", "'--denied'", "'--gate'", "'--goal-id'",
 		"'--fresh'", "'--exec'", "'--handle'", "'--root'", "'--conversation-id'",
 		"'--no-default-args'", "'--team-workstream'", "'--personas'", "'--roles'",
-		"'--binary'", "'--cwd'", "'-h'", "'--version'", "'-v'",
+		"'--binary'", "'--cwd'", "'-p'", "'-s'", "'-P'", "'-h'", "'--version'", "'-v'",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("zsh completion missing %q in:\n%s", want, stdout)
@@ -143,7 +143,7 @@ func TestRunCompletionFishContainsRepresentativeTokens(t *testing.T) {
 		"-l 'fresh'", "-l 'exec'", "-l 'handle'", "-l 'root'", "-l 'conversation-id'",
 		"-l 'no-default-args'", "-l 'team-workstream'", "-l 'personas'", "-l 'roles'",
 		"-l 'binary'", "-l 'cwd'", "-l 'version'",
-		"-s 'h'", "-s 'v'",
+		"-s 'p'", "-s 's'", "-s 'P'", "-s 'h'", "-s 'v'",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("fish completion missing %q in:\n%s", want, stdout)

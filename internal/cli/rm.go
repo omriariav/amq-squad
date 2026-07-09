@@ -98,17 +98,26 @@ func runRm(args []string, mode rmMode) error {
 	stopAgents := fs.Bool("stop-agents", false, "stop the session's live agents (SIGTERM) and close their panes as part of teardown (implies --force)")
 	keepPanes := fs.Bool("keep-panes", false, "do NOT close the torn-down agents' tmux panes (default: close them, since the session is being removed)")
 	projectFlag := fs.String("project", "", "project/team-home directory to target (default: cwd)")
+	sessionFlag := fs.String("session", "", "AMQ workstream session name to remove/archive")
 	profileFlag := fs.String("profile", team.DefaultProfile, "team profile namespace to target (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	fs.Usage = rmUsage(fs, mode)
 	args = allowInterspersedFlags(fs, args)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if fs.NArg() == 0 {
+	session := strings.TrimSpace(*sessionFlag)
+	if fs.NArg() == 0 && session == "" {
 		return usageErrorf("%s requires a session name: %s <session>", verb, verb)
+	}
+	if fs.NArg() == 1 && session != "" {
+		return usageErrorf("pass the session name either positionally or via --session, not both")
 	}
 	if fs.NArg() > 1 {
 		return usageErrorf("%s takes exactly one session; got %d", verb, fs.NArg())
+	}
+	if session == "" {
+		session = fs.Arg(0)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -124,7 +133,7 @@ func runRm(args []string, mode rmMode) error {
 	}
 	return executeRm(rmExecution{
 		ProjectDir: projectDir,
-		Session:    fs.Arg(0),
+		Session:    session,
 		Mode:       mode,
 		Yes:        *yes,
 		Force:      *force || *stopAgents, // --stop-agents is a stronger "tear it down" intent
@@ -145,6 +154,7 @@ func rmUsage(fs *flag.FlagSet, mode rmMode) func() {
 
 Usage:
   amq-squad archive <session> [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
+  amq-squad archive --session NAME [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
 
 Moves the session's AMQ root dir to <baseRoot>/.archive/<session>/ and moves
 its brief alongside it as .archive/<session>/<session>.md. Nothing is deleted.
@@ -175,6 +185,7 @@ Examples:
 
 Usage:
   amq-squad rm <session> [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
+  amq-squad rm --session NAME [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
 
 Deletes the resolved session AMQ root and brief for the selected profile/session
 namespace. This session-destructive verb is confined to that namespace: it never

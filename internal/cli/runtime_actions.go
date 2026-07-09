@@ -263,6 +263,7 @@ func runFocus(args []string) error {
 	roleFlag := fs.String("role", "", "focus a specific agent's pane by role (omit to focus the session)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad focus - bring a team session or agent pane into view (tmux)
 
@@ -374,6 +375,7 @@ func runSend(args []string) error {
 	body := fs.String("body", "", "prompt text (alternative to --body-file)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	forceFlag := fs.Bool("force", false, "deliver even if the agent appears busy (mid-turn)")
 	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
 	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")

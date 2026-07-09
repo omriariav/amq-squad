@@ -209,6 +209,7 @@ func runLeadRegister(args []string) error {
 	sessionFlag := fs.String("session", "", "AMQ workstream session (default: team workstream)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to mutate (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	wake := fs.Bool("wake", false, "start or repair amq wake for the external lead (default)")
 	noWake := fs.Bool("no-wake", false, "write the external lead record without starting amq wake")
 	adoptProjectLead := fs.Bool("adopt-project-lead", false, "explicitly adopt the current pane as an external project lead after identity checks")
