@@ -239,7 +239,7 @@ func decideVerifyAction(msgs []state.Message, gate, action, target, operatorHand
 			continue
 		}
 		text := m.Subject + "\n" + m.Body
-		if m.Kind == state.KindQuestion && bindingMatches(text, action, target) {
+		if m.Kind == state.KindQuestion && strictBindingMatches(text, action, target) {
 			if matchingQuestion == nil || messageAfter(m, *matchingQuestion) {
 				mm := m
 				matchingQuestion = &mm
@@ -252,8 +252,7 @@ func decideVerifyAction(msgs []state.Message, gate, action, target, operatorHand
 	}
 	result.MessageID = matchingQuestion.ID
 
-	var latestBoundAnswer *state.Message
-	var latestUnboundAnswer *state.Message
+	var latestAnswer *state.Message
 	for i := range msgs {
 		m := msgs[i]
 		if m.Thread != gate || m.Kind != state.KindAnswer || m.From != operatorHandle {
@@ -262,34 +261,35 @@ func decideVerifyAction(msgs []state.Message, gate, action, target, operatorHand
 		if !messageAfter(m, *matchingQuestion) {
 			continue
 		}
-		text := m.Subject + "\n" + m.Body
-		if strictBindingMatches(text, action, target) {
-			if latestBoundAnswer == nil || messageAfter(m, *latestBoundAnswer) {
-				mm := m
-				latestBoundAnswer = &mm
-			}
-		} else if strings.Contains(decisionText(text), "approved") || strings.Contains(decisionText(text), "denied") {
-			if latestUnboundAnswer == nil || messageAfter(m, *latestUnboundAnswer) {
-				mm := m
-				latestUnboundAnswer = &mm
-			}
+		if latestAnswer == nil || messageAfter(m, *latestAnswer) {
+			mm := m
+			latestAnswer = &mm
 		}
 	}
-	if latestBoundAnswer == nil {
-		if latestUnboundAnswer != nil {
-			result.Decision = actionDecisionUnbound
-			result.AnsweredBy = latestUnboundAnswer.From
-			result.MessageID = latestUnboundAnswer.ID
-			result.Failures = append(result.Failures, verifyMergeFailure{Code: "answer_not_bound", Detail: "latest operator answer on the gate does not bind the same action and target"})
-			return result
-		}
+	if latestAnswer == nil {
 		result.Decision = actionDecisionPending
 		result.Failures = append(result.Failures, verifyMergeFailure{Code: "gate_pending", Detail: "matching gate exists but has no bound operator answer"})
 		return result
 	}
-	result.AnsweredBy = latestBoundAnswer.From
-	result.MessageID = latestBoundAnswer.ID
-	switch classifyDecision(latestBoundAnswer.Subject + "\n" + latestBoundAnswer.Body) {
+	text := latestAnswer.Subject + "\n" + latestAnswer.Body
+	decision := classifyDecision(text)
+	if !strictBindingMatches(text, action, target) {
+		if decision != actionDecisionPending {
+			result.Decision = actionDecisionUnbound
+			result.AnsweredBy = latestAnswer.From
+			result.MessageID = latestAnswer.ID
+			result.Failures = append(result.Failures, verifyMergeFailure{Code: "answer_not_bound", Detail: "latest operator answer on the gate does not bind the same action and target"})
+			return result
+		}
+		result.Decision = actionDecisionPending
+		result.AnsweredBy = latestAnswer.From
+		result.MessageID = latestAnswer.ID
+		result.Failures = append(result.Failures, verifyMergeFailure{Code: "gate_pending", Detail: "matching gate exists but has no bound operator answer"})
+		return result
+	}
+	result.AnsweredBy = latestAnswer.From
+	result.MessageID = latestAnswer.ID
+	switch decision {
 	case actionDecisionApproved:
 		result.Decision = actionDecisionApproved
 	case actionDecisionDenied:
@@ -300,14 +300,6 @@ func decideVerifyAction(msgs []state.Message, gate, action, target, operatorHand
 		result.Failures = append(result.Failures, verifyMergeFailure{Code: "answer_not_decision", Detail: "bound operator answer is neither APPROVED nor DENIED"})
 	}
 	return result
-}
-
-func bindingMatches(text, action, target string) bool {
-	if strictBindingMatches(text, action, target) {
-		return true
-	}
-	flat := normalizeBindingValue(text)
-	return strings.Contains(flat, normalizeBindingValue(action)) && strings.Contains(flat, normalizeBindingValue(target))
 }
 
 func strictBindingMatches(text, action, target string) bool {
@@ -343,15 +335,27 @@ func normalizeBindingValue(s string) string {
 }
 
 func classifyDecision(text string) string {
-	t := decisionText(text)
-	switch {
-	case strings.Contains(t, "denied"):
-		return actionDecisionDenied
-	case strings.Contains(t, "approved"):
-		return actionDecisionApproved
-	default:
-		return actionDecisionPending
+	for _, line := range strings.Split(decisionText(text), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case hasDecisionPrefixToken(line, "approved"):
+			return actionDecisionApproved
+		case hasDecisionPrefixToken(line, "denied"):
+			return actionDecisionDenied
+		}
 	}
+	return actionDecisionPending
+}
+
+func hasDecisionPrefixToken(line, token string) bool {
+	if !strings.HasPrefix(line, token) {
+		return false
+	}
+	if len(line) == len(token) {
+		return true
+	}
+	r := rune(line[len(token)])
+	return !(r == '_' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
 }
 
 func decisionText(text string) string {

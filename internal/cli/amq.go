@@ -466,6 +466,16 @@ func guardAMQSendAsAuthority(ctx amqContext, opts amqPassthroughOptions) error {
 	if err != nil {
 		return nil
 	}
+	if isOperatorHandle(t, me) {
+		if opts.UnsafeSendAs {
+			reason := strings.TrimSpace(opts.BoundaryReason)
+			if reason == "" {
+				return usageErrorf("amq send --unsafe-send-as requires --reason <why>")
+			}
+			return writeAMQBoundaryAudit(ctx, "send-as", strings.TrimSpace(os.Getenv("AM_ME")), me, reason)
+		}
+		return usageErrorf("refusing amq send as operator handle %q: the operator is mailbox-only and cannot be impersonated through the normal send path. Use amq-squad operator answer/directive where applicable, or pass --unsafe-send-as --reason <why> for an audited recovery send.", me)
+	}
 	member, ok := teamMemberByHandleOrRole(t, me)
 	if !ok {
 		return nil
@@ -484,6 +494,15 @@ func guardAMQSendAsAuthority(ctx amqContext, opts amqPassthroughOptions) error {
 		return writeAMQBoundaryAudit(ctx, "send-as", strings.TrimSpace(os.Getenv("AM_ME")), me, reason)
 	}
 	return usageErrorf("refusing amq send as team role %q: current runtime is not verified live/bound for this namespace. Launch/resume the role first, or pass --unsafe-send-as --reason <why> for an audited recovery send.", me)
+}
+
+func isOperatorHandle(t team.Team, handle string) bool {
+	handle = strings.TrimSpace(handle)
+	if handle == "" {
+		return false
+	}
+	op := team.EffectiveOperator(t)
+	return op.Enabled && strings.TrimSpace(op.Handle) == handle
 }
 
 func teamRoleRecordAuthorizesSendAs(t team.Team, member team.Member, ctx amqContext) bool {

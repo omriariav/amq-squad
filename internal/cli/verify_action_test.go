@@ -67,6 +67,88 @@ func TestVerifyActionPassesBoundOperatorAnswer(t *testing.T) {
 	}
 }
 
+func TestVerifyActionDecisionRequiresPrefixToken(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want string
+	}{
+		{"APPROVED: release", actionDecisionApproved},
+		{"approved", actionDecisionApproved},
+		{"DENIED: hold", actionDecisionDenied},
+		{"ANSWER: not approved yet", actionDecisionPending},
+		{"DISAPPROVED: no", actionDecisionPending},
+		{"unapproved", actionDecisionPending},
+	} {
+		if got := classifyDecision(tc.text); got != tc.want {
+			t.Fatalf("classifyDecision(%q) = %q, want %q", tc.text, got, tc.want)
+		}
+	}
+}
+
+func TestVerifyActionLatestOperatorAnswerWinsOverOlderApproval(t *testing.T) {
+	base, project := seedVerifyActionFixture(t)
+	body := "Action: github_release\nTarget: draft v1.41.0 release for omriariav/workspace-cli"
+	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "user"), "new",
+		"q1", "cto", []string{"user"}, "gate/release-v1-41-0", "APPROVAL: github_release",
+		string(state.KindQuestion), body, verifyActionNow)
+	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "cto"), "cur",
+		"a1", "user", []string{"cto"}, "gate/release-v1-41-0", "APPROVED: github_release",
+		string(state.KindAnswer), body, verifyActionNow.Add(time.Minute))
+	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "cto"), "cur",
+		"a2", "user", []string{"cto"}, "gate/release-v1-41-0", "DENIED: hold",
+		string(state.KindAnswer), "hold this release", verifyActionNow.Add(2*time.Minute))
+
+	out, err := runVerifyActionExec(t, base, project, verifyActionExecution{
+		Session: "issue-349",
+		Gate:    "release-v1-41-0",
+		Action:  "github_release",
+		Target:  "draft v1.41.0 release for omriariav/workspace-cli",
+		JSON:    true,
+	})
+	if err == nil {
+		t.Fatal("newer unbound denial must outrank older bound approval")
+	}
+	if code := ExitCode(err); code != ExitActionUnbound {
+		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionUnbound, err)
+	}
+	env := decodeJSONEnvelope[verifyActionResult](t, out)
+	if env.Data.Decision != actionDecisionUnbound || env.Data.MessageID != "a2" {
+		t.Fatalf("latest unbound answer not reported: %+v", env.Data)
+	}
+}
+
+func TestVerifyActionSameTimestampUsesIDTiebreak(t *testing.T) {
+	base, project := seedVerifyActionFixture(t)
+	body := "Action: tag\nTarget: tag v1.41.0 in omriariav/workspace-cli"
+	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "user"), "new",
+		"q1", "cto", []string{"user"}, "gate/tag-v1-41-0", "APPROVAL: tag",
+		string(state.KindQuestion), body, verifyActionNow)
+	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "cto"), "cur",
+		"a1", "user", []string{"cto"}, "gate/tag-v1-41-0", "APPROVED: tag",
+		string(state.KindAnswer), body, verifyActionNow.Add(time.Minute))
+	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "cto"), "cur",
+		"a2", "user", []string{"cto"}, "gate/tag-v1-41-0", "DENIED: tag",
+		string(state.KindAnswer), body, verifyActionNow.Add(time.Minute))
+
+	out, err := runVerifyActionExec(t, base, project, verifyActionExecution{
+		Session: "issue-349",
+		Gate:    "tag-v1-41-0",
+		Action:  "tag",
+		Target:  "tag v1.41.0 in omriariav/workspace-cli",
+		JSON:    true,
+	})
+	if err == nil {
+		t.Fatal("later same-timestamp ID denial should block")
+	}
+	if code := ExitCode(err); code != ExitActionDenied {
+		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionDenied, err)
+	}
+	env := decodeJSONEnvelope[verifyActionResult](t, out)
+	if env.Data.Decision != actionDecisionDenied || env.Data.MessageID != "a2" {
+		t.Fatalf("same timestamp tiebreak not pinned: %+v", env.Data)
+	}
+}
+
 func TestVerifyActionRejectsApprovedAnswerForDifferentTarget(t *testing.T) {
 	base, project := seedVerifyActionFixture(t)
 	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "user"), "new",
@@ -88,6 +170,29 @@ func TestVerifyActionRejectsApprovedAnswerForDifferentTarget(t *testing.T) {
 	}
 	if code := ExitCode(err); code != ExitActionUnbound {
 		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionUnbound, err)
+	}
+}
+
+func TestVerifyActionQuestionRequiresStrictBindingFields(t *testing.T) {
+	base, project := seedVerifyActionFixture(t)
+	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "user"), "new",
+		"q1", "cto", []string{"user"}, "gate/tag-main", "APPROVAL: do not tag main",
+		string(state.KindQuestion), "Please approve tag only after checking main", verifyActionNow)
+	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "cto"), "cur",
+		"a1", "user", []string{"cto"}, "gate/tag-main", "APPROVED: tag",
+		string(state.KindAnswer), "Action: tag\nTarget: main", verifyActionNow.Add(time.Minute))
+
+	_, err := runVerifyActionExec(t, base, project, verifyActionExecution{
+		Session: "issue-349",
+		Gate:    "tag-main",
+		Action:  "tag",
+		Target:  "main",
+	})
+	if err == nil {
+		t.Fatal("prose question mentioning action/target should not bind without Action/Target fields")
+	}
+	if code := ExitCode(err); code != ExitActionNoGate {
+		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionNoGate, err)
 	}
 }
 

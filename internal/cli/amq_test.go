@@ -345,6 +345,43 @@ func TestAMQSendAsRejectsNonLeadingFromWithoutAuthority(t *testing.T) {
 	}
 }
 
+func TestAMQSendAsOperatorHandleRequiresUnsafeOverride(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	base := filepath.Join(dir, ".agent-mail")
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "sent\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", team.DefaultOperatorHandle, "--to", "cto", "--kind", "answer", "--subject", "APPROVED: tag"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing amq send as operator handle") {
+		t.Fatalf("operator send-as error = %v, want authority rejection", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("rejected operator send-as should not call amq, calls = %d", len(*calls))
+	}
+
+	if _, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", team.DefaultOperatorHandle, "--unsafe-send-as", "--reason", "repair imported gate answer", "--to", "cto", "--kind", "answer", "--subject", "APPROVED: tag"})
+	}); err != nil {
+		t.Fatalf("unsafe operator send-as with reason should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(*calls))
+	}
+	audit := filepath.Join(dir, ".amq-squad", "boundary-audit", "issue-96.jsonl")
+	b, err := os.ReadFile(audit)
+	if err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	if !strings.Contains(string(b), `"target":"user"`) || !strings.Contains(string(b), "repair imported gate answer") {
+		t.Fatalf("operator send-as audit = %s", b)
+	}
+}
+
 func TestAMQSendAsTeamRolePassesWithVerifiedRecord(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Orchestrated: true,

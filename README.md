@@ -555,9 +555,13 @@ p2p prose and mirrored ACKs do not satisfy the guard.
 
 This is a callable boundary, not command interception. A lead or wrapper that
 never calls `verify action` is not blocked by the operating system, shell, Git,
-or GitHub CLI. The harder enforcement path is a PATH shim or launch-hook
+or GitHub CLI. The guard's threat model is confused or overreaching agents that
+use the normal amq-squad CLI path; it is not a tamper-proof security boundary
+against an actor with direct filesystem write access to AMQ mailboxes, who can
+forge message bodies, `Created` timestamps, or message IDs. The harder
+enforcement path is a PATH shim or launch-hook
 interceptor that wraps `git`, `gh`, and external-send commands and forces this
-check before execution. That follow-up is tracked separately and should be
+check before execution. That follow-up is tracked separately in #354 and should be
 referenced from release-hardening work.
 
 Releases carry one additional evidence gate. Before any publish step (`git push`
@@ -1471,7 +1475,10 @@ From an external lead or operator-owned pane, prefer the root-correct wrapper:
 `amq-squad amq send --session <S> --me <handle> ...`. When `--me` names a
 team role/handle, the wrapper verifies that role is bound in the namespace
 before sending; a global orchestrator cannot raise gates as `cto` before a real
-`cto` exists. Emergency recovery sends require the explicit audited override
+`cto` exists. When `--me` names the configured operator handle (default `user`),
+the wrapper refuses the normal send path because the operator is mailbox-only;
+use `amq-squad operator answer/directive` where applicable. Emergency recovery
+sends as a team role or operator handle require the explicit audited override
 `--unsafe-send-as --reason <why>`.
 
 For lead-side report collection, prefer `amq-squad collect --session <S> --me

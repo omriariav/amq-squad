@@ -1034,11 +1034,15 @@ resolve the board with
 p2p prose and mirrored ACKs do not satisfy the guard.</p>
 <p>This is a callable boundary, not command interception. A lead or
 wrapper that never calls <code>verify action</code> is not blocked by
-the operating system, shell, Git, or GitHub CLI. The harder enforcement
-path is a PATH shim or launch-hook interceptor that wraps
-<code>git</code>, <code>gh</code>, and external-send commands and forces
-this check before execution. That follow-up is tracked separately and
-should be referenced from release-hardening work.</p>
+the operating system, shell, Git, or GitHub CLI. The guard's threat
+model is confused or overreaching agents that use the normal amq-squad
+CLI path; it is not a tamper-proof security boundary against an actor
+with direct filesystem write access to AMQ mailboxes, who can forge
+message bodies, <code>Created</code> timestamps, or message IDs. The
+harder enforcement path is a PATH shim or launch-hook interceptor that
+wraps <code>git</code>, <code>gh</code>, and external-send commands and
+forces this check before execution. That follow-up is tracked separately
+in #354 and should be referenced from release-hardening work.</p>
 <p>Releases carry one additional evidence gate. Before any publish step
 (<code>git push</code> of the release commit, <code>git tag</code>,
 <code>gh release create</code>),
@@ -2230,8 +2234,13 @@ wrapper:
 When <code>--me</code> names a team role/handle, the wrapper verifies
 that role is bound in the namespace before sending; a global
 orchestrator cannot raise gates as <code>cto</code> before a real
-<code>cto</code> exists. Emergency recovery sends require the explicit
-audited override <code>--unsafe-send-as --reason &lt;why&gt;</code>.</p>
+<code>cto</code> exists. When <code>--me</code> names the configured
+operator handle (default <code>user</code>), the wrapper refuses the
+normal send path because the operator is mailbox-only; use
+<code>amq-squad operator answer/directive</code> where applicable.
+Emergency recovery sends as a team role or operator handle require the
+explicit audited override
+<code>--unsafe-send-as --reason &lt;why&gt;</code>.</p>
 <p>For lead-side report collection, prefer
 <code>amq-squad collect --session &lt;S&gt; --me &lt;lead&gt; --timeout 120s --include-body</code>
 over raw <code>amq drain</code>. Raw AMQ <code>drain</code> is
