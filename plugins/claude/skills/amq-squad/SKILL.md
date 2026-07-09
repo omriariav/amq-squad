@@ -703,7 +703,7 @@ Global output flags work before or after the subcommand: `--quiet`,
 
 Use this section to add a **custom role** — one that is not in the built-in
 persona catalog (`cpo, cto, senior-dev, fullstack, frontend-dev, backend-dev,
-mobile-dev, junior-dev, qa, pm, designer, scribe`). Custom roles are first-class team
+mobile-dev, junior-dev, qa, pm, designer, scribe, lead, agent`). Custom roles are first-class team
 members: they appear in `team.json`, `team-rules.md`, the bootstrap prompt,
 status/history, and launch/resume exactly like built-ins.
 

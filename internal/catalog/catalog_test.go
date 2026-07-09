@@ -45,6 +45,8 @@ func TestMarketPersonas(t *testing.T) {
 		"backend-dev":  {label: "Backend Developer", binary: "codex"},
 		"mobile-dev":   {label: "Mobile Developer", binary: "claude"},
 		"junior-dev":   {label: "Junior Developer", binary: "codex"},
+		"lead":         {label: "Lead", binary: "codex"},
+		"agent":        {label: "Agent", binary: "codex"},
 	}
 	for id, want := range cases {
 		got := Lookup(id)
@@ -56,6 +58,39 @@ func TestMarketPersonas(t *testing.T) {
 		}
 		if got.Profile == "" || got.Description == "" {
 			t.Errorf("persona %s should have profile and description", id)
+		}
+	}
+}
+
+func TestGenericRolesAreNeutral(t *testing.T) {
+	lead := Lookup("lead")
+	if lead == nil {
+		t.Fatal("lead role missing")
+	}
+	for _, want := range []string{
+		"Generic orchestrator",
+		"raises and tracks operator gates",
+		"Does not assume merge, release, or external-action authority",
+	} {
+		if !strings.Contains(lead.Profile+" "+lead.Description, want) {
+			t.Fatalf("lead role missing %q: %+v", want, *lead)
+		}
+	}
+	if strings.Contains(lead.Description, "handles operator gates") {
+		t.Fatalf("lead role uses ambiguous gate wording: %q", lead.Description)
+	}
+
+	agent := Lookup("agent")
+	if agent == nil {
+		t.Fatal("agent role missing")
+	}
+	for _, want := range []string{
+		"Generic individual contributor",
+		"asks when scope or authority is unclear",
+		"Carries no domain-specific persona",
+	} {
+		if !strings.Contains(agent.Profile+" "+agent.Description, want) {
+			t.Fatalf("agent role missing %q: %+v", want, *agent)
 		}
 	}
 }
@@ -125,6 +160,15 @@ func TestResolveSelection(t *testing.T) {
 	}
 	if _, err := ResolveSelection("banana"); err == nil || !strings.Contains(err.Error(), "banana") {
 		t.Fatalf("ResolveSelection banana error = %v, want unknown persona", err)
+	}
+
+	got, err = ResolveSelection("lead,agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []string{"lead", "agent"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ResolveSelection lead,agent = %v, want %v", got, want)
 	}
 }
 

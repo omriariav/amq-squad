@@ -52,6 +52,86 @@ func TestNewTeamCustomRoleDryRunJSON(t *testing.T) {
 	}
 }
 
+func TestNewTeamGenericBuiltInRolesDoNotRequireBinary(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runNew([]string{
+			"team",
+			"--roles", "lead,agent",
+			"--orchestrated", "--lead", "lead",
+			"--session", "issue-345",
+			"--dry-run", "--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("new team generic roles dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	if env.Data.Members != 2 || len(env.Data.Plan) != 2 {
+		t.Fatalf("members/plan = %d/%d, want 2/2", env.Data.Members, len(env.Data.Plan))
+	}
+	want := map[string]string{"lead": "codex", "agent": "codex"}
+	for _, m := range env.Data.Plan {
+		bin, ok := want[m.Role]
+		if !ok {
+			t.Fatalf("unexpected role in plan: %q", m.Role)
+		}
+		if m.Binary != bin {
+			t.Errorf("role %s binary = %q, want %q", m.Role, m.Binary, bin)
+		}
+		if m.Session != "issue-345" {
+			t.Errorf("role %s session = %q, want issue-345", m.Role, m.Session)
+		}
+	}
+}
+
+func TestSeedGenericRoleStubUsesNeutralCatalogText(t *testing.T) {
+	dir := t.TempDir()
+	if err := seedRoleStub(dir, "lead", ""); err != nil {
+		t.Fatalf("seed lead role: %v", err)
+	}
+	body, err := os.ReadFile(role.Path(dir))
+	if err != nil {
+		t.Fatalf("read lead role.md: %v", err)
+	}
+	got := string(body)
+	for _, want := range []string{
+		"# Role: Lead",
+		"raises and tracks operator gates",
+		"Does not assume merge, release, or external-action authority",
+		"- agent",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("lead role.md missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "handles operator gates") {
+		t.Fatalf("lead role.md uses ambiguous gate wording:\n%s", got)
+	}
+
+	agentDir := t.TempDir()
+	if err := seedRoleStub(agentDir, "agent", ""); err != nil {
+		t.Fatalf("seed agent role: %v", err)
+	}
+	body, err = os.ReadFile(role.Path(agentDir))
+	if err != nil {
+		t.Fatalf("read agent role.md: %v", err)
+	}
+	got = string(body)
+	for _, want := range []string{
+		"# Role: Agent",
+		"asks when scope or authority is unclear",
+		"Carries no domain-specific persona",
+		"- lead",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("agent role.md missing %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestTeamInitCustomRoleLiveWrite confirms a custom role persists to team.json
 // as a first-class member through the `team init` path.
 func TestTeamInitCustomRoleLiveWrite(t *testing.T) {
