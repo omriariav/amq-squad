@@ -881,6 +881,8 @@ func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
 	}
 	receipt.PaneID = paneID
 	receipt.addStage("control_delivery_started", "resolved exact target pane for native /goal control")
+	waitPaneSettledForSend(paneID)
+	receipt.addStage("pane_settled", "waited for target pane output to settle before native /goal control delivery")
 	if err := sendPromptToPane(paneID, prompt); err != nil {
 		receipt.Status = "failed"
 		receipt.Detail = err.Error()

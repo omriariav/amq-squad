@@ -278,6 +278,10 @@ func runRunStart(args []string, version string) error {
 	if visibility == visibilityPlan {
 		return usageErrorf("--visibility plan is not valid for run start; it previews by default and creates with --go")
 	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
 
 	// Lead resolution: when creating a fresh roster, default the lead to cto.
 	// For an existing team, leave --role unset so `goal start` infers the
@@ -355,7 +359,22 @@ func runRunStart(args []string, version string) error {
 		fmt.Printf("  (hidden: agents run in a detached tmux session; attach via the `attach_control` action from `status --json`, or `amq-squad focus`, when you want eyes on them)\n")
 	}
 	if strings.TrimSpace(*goalFlag) != "" {
-		fmt.Printf("  step %d:  amq-squad goal start --session %s --goal %q --yes\n", upStep+1, session, *goalFlag)
+		previewRole := leadDisplay
+		if strings.HasPrefix(previewRole, "(") {
+			resolved, err := resolveRunStartGoalLead(project, profile, explicitLead, freshRoster, leadForNewTeam)
+			if err != nil {
+				return err
+			}
+			previewRole = resolved
+		}
+		previewCmd := runStartGoalRetryCommand(runStartGoalDeliveryOptions{
+			Project: project,
+			Profile: profile,
+			Session: session,
+			Role:    previewRole,
+			Goal:    *goalFlag,
+		})
+		fmt.Printf("  step %d:  %s\n", upStep+1, previewCmd)
 	}
 
 	if !*goFlag {
@@ -384,10 +403,6 @@ func runRunStart(args []string, version string) error {
 	// fallback command is exact and ready to paste if the cold spawn never
 	// reaches a deliverable pane.
 	if strings.TrimSpace(*goalFlag) != "" {
-		profile, err := resolveProfileFlag(*profileFlag)
-		if err != nil {
-			return err
-		}
 		leadRole, err := resolveRunStartGoalLead(project, profile, explicitLead, freshRoster, leadForNewTeam)
 		if err != nil {
 			return err
@@ -514,19 +529,23 @@ func waitForRunStartLeadReady(opts runStartGoalDeliveryOptions) error {
 	}
 	deadline := runStartLeadReadyNow().Add(timeout)
 	lastDetail := "lead is not ready yet"
+	var lastErr error
 	for {
 		ready, err := runStartLeadReadyCheck(opts.Project, opts.Profile, opts.Session, opts.Role)
 		if err != nil {
-			return fmt.Errorf("check lead readiness for role %q: %w", opts.Role, err)
-		}
-		if strings.TrimSpace(ready.Detail) != "" {
+			lastErr = err
+			lastDetail = "readiness check error: " + err.Error()
+		} else if strings.TrimSpace(ready.Detail) != "" {
 			lastDetail = strings.TrimSpace(ready.Detail)
 		}
-		if ready.Ready {
+		if err == nil && ready.Ready {
 			return nil
 		}
 		now := runStartLeadReadyNow()
 		if !now.Before(deadline) {
+			if lastErr != nil {
+				return fmt.Errorf("lead role %q did not become ready within %s: %s: %w", opts.Role, timeout, lastDetail, lastErr)
+			}
 			return fmt.Errorf("lead role %q did not become ready within %s: %s", opts.Role, timeout, lastDetail)
 		}
 		sleepFor := backoff
