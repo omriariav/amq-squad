@@ -230,7 +230,16 @@ func threadMatchesOrchestrator(t state.ThreadSummary, want string) bool {
 	if want == "" {
 		return false
 	}
-	return strings.Contains(strings.ToLower(t.Orchestrator), want)
+	if strings.Contains(strings.ToLower(t.Orchestrator), want) {
+		return true
+	}
+	for _, label := range t.Labels {
+		label = strings.ToLower(strings.TrimSpace(label))
+		if strings.HasPrefix(label, "orchestrator:") && strings.Contains(strings.TrimPrefix(label, "orchestrator:"), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func threadHasLabel(t state.ThreadSummary, want string) bool {

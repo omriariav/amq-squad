@@ -700,6 +700,47 @@ func TestDetailRendersEdgesAndAgents(t *testing.T) {
 	}
 }
 
+func TestDetailRendersExternalEvidenceReadOnly(t *testing.T) {
+	thread := state.ThreadSummary{
+		ID:             "task/KAN-42",
+		LatestID:       "ext1",
+		Participants:   []string{"kanban", "cto"},
+		Subject:        "external kanban evidence",
+		Labels:         []string{"orchestrator", "orchestrator:kanban", "task-state:blocked"},
+		ExternalTaskID: "KAN-42",
+		LastEventAt:    viewNow.Add(-5 * time.Minute),
+		MessageCount:   1,
+		Freshness:      state.Freshness{Source: state.SourceEmbedded, Age: 5 * time.Minute},
+	}
+	s := state.Session{
+		Name:   "issue-96",
+		Agents: []state.Agent{{Handle: "cto", Engine: "codex", Liveness: state.LivenessAlive, LastSeen: viewNow}},
+		Coordination: state.Coordination{
+			Threads:          []state.ThreadSummary{thread},
+			ExternalEvidence: state.BuildExternalEvidence([]state.ThreadSummary{thread}),
+		},
+	}
+	m := newModel(rebuildConfig{BaseRoot: "/base", Probe: state.Probe{Now: func() time.Time { return viewNow }}}, state.Snapshot{Sessions: []state.Session{s}}, "")
+	m.route = routeSession
+	m.session = "issue-96"
+
+	out := m.renderDetail()
+	for _, want := range []string{"external evidence", "amq-kanban", "task=KAN-42", "state=blocked", "mutable=false"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("detail external evidence missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestDetailOmitsExternalEvidenceWhenAbsent(t *testing.T) {
+	m := boardModel()
+	m = press(t, m, "enter")
+	out := m.renderDetail()
+	if strings.Contains(out, "external evidence") {
+		t.Fatalf("detail should omit external evidence section when empty:\n%s", out)
+	}
+}
+
 // TestHelpOverlay proves `?` opens the help overlay listing the keymap.
 func TestHelpOverlay(t *testing.T) {
 	m := boardModel()

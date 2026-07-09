@@ -81,24 +81,25 @@ type statusSignals struct {
 // statusEnvelopeData is the kind="status" payload: resolved team-home,
 // workstream, profile, and the per-member records.
 type statusEnvelopeData struct {
-	TeamHome          string                 `json:"team_home"`
-	Workstream        string                 `json:"workstream"`
-	Profile           string                 `json:"profile,omitempty"`
-	Namespace         squadnamespace.Ref     `json:"namespace"`
-	Operator          statusOperatorView     `json:"operator"`
-	OperatorDelivery  operatorDeliveryData   `json:"operator_delivery"`
-	Capabilities      team.Capabilities      `json:"capabilities"`
-	Orchestrated      bool                   `json:"orchestrated,omitempty"`
-	Lead              string                 `json:"lead,omitempty"`
-	LeadHandle        string                 `json:"lead_handle,omitempty"`
-	GoalBinding       goalBindingData        `json:"goal_binding"`
-	Autonomous        team.AutonomousStatus  `json:"autonomous"`
-	Execution         executionModeData      `json:"execution"`
-	Versions          versionAlignmentData   `json:"versions"`
-	NamespaceConflict *namespaceConflictData `json:"namespace_conflict,omitempty"`
-	Warnings          []statusWarning        `json:"warnings,omitempty"`
-	Topology          *statusTopology        `json:"topology,omitempty"`
-	Records           []statusRecord         `json:"records"`
+	TeamHome          string                      `json:"team_home"`
+	Workstream        string                      `json:"workstream"`
+	Profile           string                      `json:"profile,omitempty"`
+	Namespace         squadnamespace.Ref          `json:"namespace"`
+	Operator          statusOperatorView          `json:"operator"`
+	OperatorDelivery  operatorDeliveryData        `json:"operator_delivery"`
+	Capabilities      team.Capabilities           `json:"capabilities"`
+	Orchestrated      bool                        `json:"orchestrated,omitempty"`
+	Lead              string                      `json:"lead,omitempty"`
+	LeadHandle        string                      `json:"lead_handle,omitempty"`
+	GoalBinding       goalBindingData             `json:"goal_binding"`
+	Autonomous        team.AutonomousStatus       `json:"autonomous"`
+	Execution         executionModeData           `json:"execution"`
+	Versions          versionAlignmentData        `json:"versions"`
+	NamespaceConflict *namespaceConflictData      `json:"namespace_conflict,omitempty"`
+	Warnings          []statusWarning             `json:"warnings,omitempty"`
+	Topology          *statusTopology             `json:"topology,omitempty"`
+	ExternalEvidence  []state.ExternalEvidenceRow `json:"external_evidence,omitempty"`
+	Records           []statusRecord              `json:"records"`
 	// Actions are the SESSION-scope operator actions (status / resume preview /
 	// resume in current window / resume in new tmux session / stop), the catalog
 	// counterpart to each record's agent-scope actions. A client renders these
@@ -361,6 +362,7 @@ func executeStatus(s statusExecution) error {
 		operatorView := statusOperatorForTeam(t, ns)
 		applyGoalBindingOpenBlockers(&operatorView, binding)
 		topology := statusTopologyForRows(rows, ctx.Orchestrated)
+		externalEvidence := statusExternalEvidence(t, s.Profile, workstream, rows, now)
 		version := strings.TrimSpace(s.RuntimeVersion)
 		if version == "" {
 			version = "dev"
@@ -393,6 +395,7 @@ func executeStatus(s statusExecution) error {
 			NamespaceConflict: conflict,
 			Warnings:          warnings,
 			Topology:          topology,
+			ExternalEvidence:  externalEvidence,
 			Records:           rows,
 			Actions:           ctx.Actions,
 		})
@@ -1296,6 +1299,33 @@ func attachStatusLocalInputs(t team.Team, rows []statusRecord) {
 			Source:      "tmux-pane-tail",
 		}
 	}
+}
+
+func statusExternalEvidence(t team.Team, profile, workstream string, rows []statusRecord, now time.Time) []state.ExternalEvidenceRow {
+	root := firstStatusRoot(rows)
+	if strings.TrimSpace(root) == "" {
+		return nil
+	}
+	operatorHandle := team.DefaultOperatorHandle
+	if op := team.EffectiveOperator(t); op.Enabled && strings.TrimSpace(op.Handle) != "" {
+		operatorHandle = strings.TrimSpace(op.Handle)
+	}
+	probe := state.Probe{
+		PIDAlive:     func(int) bool { return false },
+		ProcessMatch: func(int, func(string) bool) bool { return false },
+		Now:          func() time.Time { return now },
+	}
+	snap, err := state.BuildWithThresholds(t.Project, filepath.Dir(root), probe, state.Thresholds{OperatorHandle: operatorHandle})
+	if err != nil {
+		return nil
+	}
+	namespaceID := squadnamespace.ID(profile, workstream)
+	for _, sess := range snap.Sessions {
+		if sess.NamespaceID == namespaceID {
+			return sess.Coordination.ExternalEvidence
+		}
+	}
+	return nil
 }
 
 func statusLocalInputCandidate(t team.Team, row statusRecord) bool {

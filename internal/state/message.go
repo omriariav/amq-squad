@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -55,20 +56,21 @@ const (
 // fields are decoded leniently: `to` is always an array on disk but we tolerate
 // a bare string too; priority/kind may be absent.
 type messageHeader struct {
-	Schema       int      `json:"schema"`
-	ID           string   `json:"id"`
-	From         string   `json:"from"`
-	To           []string `json:"to"`
-	Thread       string   `json:"thread"`
-	Subject      string   `json:"subject"`
-	Created      string   `json:"created"`
-	Priority     string   `json:"priority"`
-	Kind         string   `json:"kind"`
-	ReplyTo      string   `json:"reply_to"`
-	Labels       []string `json:"labels"`
-	Orchestrator string   `json:"orchestrator"`
-	FromProject  string   `json:"from_project"`
-	ReplyProject string   `json:"reply_project"`
+	Schema       int            `json:"schema"`
+	ID           string         `json:"id"`
+	From         string         `json:"from"`
+	To           []string       `json:"to"`
+	Thread       string         `json:"thread"`
+	Subject      string         `json:"subject"`
+	Created      string         `json:"created"`
+	Priority     string         `json:"priority"`
+	Kind         string         `json:"kind"`
+	ReplyTo      string         `json:"reply_to"`
+	Labels       []string       `json:"labels"`
+	Orchestrator string         `json:"orchestrator"`
+	FromProject  string         `json:"from_project"`
+	ReplyProject string         `json:"reply_project"`
+	Context      map[string]any `json:"context"`
 }
 
 // Message is one parsed maildir message: its decoded header fields plus the
@@ -88,10 +90,11 @@ type Message struct {
 	Labels    []string
 	// Integration/routing metadata is optional AMQ context for federated or
 	// orchestrator-originated traffic.
-	Orchestrator string
-	FromProject  string
-	ReplyProject string
-	Body         string
+	Orchestrator   string
+	FromProject    string
+	ReplyProject   string
+	ExternalTaskID string
+	Body           string
 
 	// Owner is the handle whose inbox this copy was found in.
 	Owner string
@@ -182,24 +185,25 @@ func parseMessageFile(path, owner string, state MailboxState, now func() time.Ti
 	}
 
 	m := Message{
-		ID:           strings.TrimSpace(h.ID),
-		From:         strings.TrimSpace(h.From),
-		To:           cleanRecipients(h.To),
-		RawThread:    h.Thread,
-		Thread:       canonicalThreadID(h.Thread),
-		Subject:      strings.TrimSpace(h.Subject),
-		Priority:     normalizePriority(h.Priority),
-		Kind:         normalizeKind(h.Kind),
-		ReplyTo:      strings.TrimSpace(h.ReplyTo),
-		Labels:       cleanLabels(h.Labels),
-		Orchestrator: strings.TrimSpace(h.Orchestrator),
-		FromProject:  strings.TrimSpace(h.FromProject),
-		ReplyProject: strings.TrimSpace(h.ReplyProject),
-		Body:         body,
-		Owner:        owner,
-		State:        state,
-		Path:         path,
-		SchemaOK:     h.Schema == MessageSchema,
+		ID:             strings.TrimSpace(h.ID),
+		From:           strings.TrimSpace(h.From),
+		To:             cleanRecipients(h.To),
+		RawThread:      h.Thread,
+		Thread:         canonicalThreadID(h.Thread),
+		Subject:        strings.TrimSpace(h.Subject),
+		Priority:       normalizePriority(h.Priority),
+		Kind:           normalizeKind(h.Kind),
+		ReplyTo:        strings.TrimSpace(h.ReplyTo),
+		Labels:         cleanLabels(h.Labels),
+		Orchestrator:   strings.TrimSpace(h.Orchestrator),
+		FromProject:    strings.TrimSpace(h.FromProject),
+		ReplyProject:   strings.TrimSpace(h.ReplyProject),
+		ExternalTaskID: externalTaskIDFromContext(h.Context),
+		Body:           body,
+		Owner:          owner,
+		State:          state,
+		Path:           path,
+		SchemaOK:       h.Schema == MessageSchema,
 	}
 	m.Created = parseCreated(h.Created, path, now)
 
@@ -283,6 +287,7 @@ func tryLenientHeader(header string) (messageHeader, bool) {
 		Orchestrator string          `json:"orchestrator"`
 		FromProject  string          `json:"from_project"`
 		ReplyProject string          `json:"reply_project"`
+		Context      map[string]any  `json:"context"`
 	}
 	if err := json.Unmarshal([]byte(header), &raw); err != nil {
 		return messageHeader{}, false
@@ -292,6 +297,7 @@ func tryLenientHeader(header string) (messageHeader, bool) {
 		Subject: raw.Subject, Created: raw.Created, Priority: raw.Priority,
 		Kind: raw.Kind, ReplyTo: raw.ReplyTo, Labels: raw.Labels,
 		Orchestrator: raw.Orchestrator, FromProject: raw.FromProject, ReplyProject: raw.ReplyProject,
+		Context: raw.Context,
 	}
 	if len(raw.To) > 0 {
 		var arr []string
@@ -305,6 +311,41 @@ func tryLenientHeader(header string) (messageHeader, bool) {
 		}
 	}
 	return h, true
+}
+
+func externalTaskIDFromContext(ctx map[string]any) string {
+	if id := stringAtPath(ctx, "orchestrator", "task", "id"); id != "" {
+		return id
+	}
+	return stringAtPath(ctx, "task_id")
+}
+
+func stringAtPath(root map[string]any, path ...string) string {
+	var cur any = root
+	for _, key := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return ""
+		}
+		cur, ok = m[key]
+		if !ok {
+			return ""
+		}
+	}
+	return strings.TrimSpace(stringFromJSONValue(cur))
+}
+
+func stringFromJSONValue(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case json.Number:
+		return x.String()
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	default:
+		return ""
+	}
 }
 
 // cleanRecipients trims and drops empty recipients, preserving order.

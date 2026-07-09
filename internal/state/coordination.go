@@ -229,21 +229,22 @@ func withThresholdDefaults(t Thresholds) Thresholds {
 // ThreadSummary collapses every message sharing a canonical thread id into one
 // derived row. Participants are the union of from+to across the thread.
 type ThreadSummary struct {
-	ID           string
-	LatestID     string
-	Participants []string // union of from + to, sorted
-	Subject      string   // latest non-empty subject
-	Kind         Kind     // latest recognized kind
-	Labels       []string // union of AMQ labels observed on messages in the thread
-	Orchestrator string   // latest orchestrator metadata, when present
-	FromProject  string   // latest cross-project sender metadata, when present
-	ReplyProject string   // latest cross-project reply metadata, when present
-	Status       ThreadStatus
-	LastEventAt  time.Time
-	MessageCount int
-	UnreadBy     []string // recipients still holding a copy in inbox/new
-	Triage       Triage
-	Freshness    Freshness
+	ID             string
+	LatestID       string
+	Participants   []string // union of from + to, sorted
+	Subject        string   // latest non-empty subject
+	Kind           Kind     // latest recognized kind
+	Labels         []string // union of AMQ labels observed on messages in the thread
+	Orchestrator   string   // latest orchestrator metadata, when present
+	FromProject    string   // latest cross-project sender metadata, when present
+	ReplyProject   string   // latest cross-project reply metadata, when present
+	ExternalTaskID string   // latest verified external task id from orchestrator context
+	Status         ThreadStatus
+	LastEventAt    time.Time
+	MessageCount   int
+	UnreadBy       []string // recipients still holding a copy in inbox/new
+	Triage         Triage
+	Freshness      Freshness
 	// Stale is true when now - LastEventAt exceeds Thresholds.StaleAfter. A stale
 	// thread's triage is age-decayed: it is NOT counted as LIVE attention and is
 	// rendered dim/parenthesized. Needs-you uses Historical instead of Stale when

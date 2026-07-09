@@ -274,6 +274,31 @@ func TestStaticBoardOmitsUnresolvedSectionWhenClear(t *testing.T) {
 	}
 }
 
+func TestStaticBoardRendersExternalEvidenceBeforeUnresolved(t *testing.T) {
+	thread := mkUnresolved("task/SW-7", "swarm task", []string{"swarm", "cto"}, state.TriageBlocked, 10*time.Minute, 2)
+	thread.LatestID = "ext1"
+	thread.Labels = []string{"orchestrator", "orchestrator:swarm", "task-state:blocked"}
+	thread.ExternalTaskID = "SW-7"
+	s := state.Session{
+		Name:   "wedged",
+		Agents: []state.Agent{{Handle: "cto", Engine: "codex", Liveness: state.LivenessAlive, LastSeen: runNow}},
+		Coordination: state.Coordination{
+			Threads:          []state.ThreadSummary{thread},
+			ExternalEvidence: state.BuildExternalEvidence([]state.ThreadSummary{thread}),
+		},
+		Rollup: state.TriageRollup{Blocked: 1},
+	}
+	board := StaticBoard(state.Snapshot{BaseRoot: "/base", Sessions: []state.Session{s}, Rollup: s.Rollup}, onceClock)
+	for _, want := range []string{"external evidence", "amq-swarm", "task=SW-7", "state=blocked", "mutable=false"} {
+		if !contains(board, want) {
+			t.Fatalf("--once external evidence missing %q:\n%s", want, board)
+		}
+	}
+	if strings.Index(board, "external evidence") > strings.Index(board, "swarm, cto  blocked") {
+		t.Fatalf("external evidence should render before unresolved rows:\n%s", board)
+	}
+}
+
 // TestStaticBoardStoppedSessionLabelsAgentsStopped proves a session that rolled
 // up to STOPPED (clear triage, no live/degraded agents) renders each agent as
 // "stopped" — NOT the alarming "process-dead"/"stale".

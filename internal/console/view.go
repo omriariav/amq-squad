@@ -390,6 +390,11 @@ func (m Model) renderDetail() string {
 	}
 	b.WriteString("\n")
 
+	if sec := externalEvidenceSection(s, m.filter, m.now()); sec != "" {
+		b.WriteString(sec)
+		b.WriteString("\n")
+	}
+
 	if m.timeline {
 		// TIMELINE pane (state transitions, not raw messages).
 		b.WriteString(styleHeader.Render("timeline") + "\n")
@@ -467,6 +472,36 @@ func renderTimeline(s state.Session) string {
 	for _, ev := range s.Coordination.Timeline {
 		b.WriteString(fmt.Sprintf("  %-6s  %s  %s\n",
 			ageLabel(timeSinceObserved(s, ev)), ev.Summary, styleFaint.Render(shortID(ev.Source))))
+	}
+	return b.String()
+}
+
+func externalEvidenceSection(s state.Session, f Filter, now func() time.Time) string {
+	rows := sortExternalEvidence(s, f)
+	if len(rows) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("external evidence") + "\n")
+	for _, row := range rows {
+		task := strings.TrimSpace(row.ExternalTaskID)
+		if task == "" {
+			task = "(no-task-id)"
+		}
+		subject := strings.TrimSpace(row.Subject)
+		if subject == "" {
+			subject = shortID(row.Thread)
+		}
+		age := ""
+		if now != nil && !row.LastEventAt.IsZero() {
+			d := now().Sub(row.LastEventAt)
+			if d < 0 {
+				d = 0
+			}
+			age = " · " + ageLabel(d)
+		}
+		b.WriteString(fmt.Sprintf("  %-14s task=%-12s state=%-10s mutable=false  %s  %s%s\n",
+			row.Source, task, row.State, subject, styleFaint.Render(shortID(row.Thread)), age))
 	}
 	return b.String()
 }
@@ -906,6 +941,9 @@ func sessionBlock(s state.Session, now func() time.Time) string {
 			activity = " · " + activity
 		}
 		fmt.Fprintf(&b, "  - %s (%s): %s%s\n", a.Handle, a.Engine, agentStateLabel(a, stopped, now), activity)
+	}
+	if sec := externalEvidenceSection(s, Filter{}, now); sec != "" {
+		b.WriteString(sec)
 	}
 	// Unresolved coordination threads (at-risk / blocked), urgency-sorted. Omitted
 	// entirely when there is nothing unresolved to surface.
