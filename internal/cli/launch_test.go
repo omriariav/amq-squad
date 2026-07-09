@@ -580,6 +580,34 @@ func TestRunLaunchDryRunAddsBinaryArgs(t *testing.T) {
 	}
 }
 
+func TestRunLaunchDryRunSymphonyForCodex(t *testing.T) {
+	setupFakeAMQ(t)
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--trust", "sandboxed", "--symphony", "--me", "cto", "codex"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "amq coop exec") || !strings.Contains(stdout, "codex") {
+		t.Fatalf("dry-run stdout missing coop exec command:\n%s", stdout)
+	}
+	for _, want := range []string{"would patch existing", "WORKFLOW.md", "AMQ Symphony hooks", "handle cto"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("dry-run stderr missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
+func TestRunLaunchSymphonyRejectsNonCodex(t *testing.T) {
+	setupFakeAMQ(t)
+	_, _, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--symphony", "claude"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--symphony is only supported for Codex agents; got claude") {
+		t.Fatalf("expected non-Codex symphony error, got %v", err)
+	}
+}
+
 func TestRunLaunchDryRunNoDefaultArgsKeepsExplicitBinaryArgs(t *testing.T) {
 	setupFakeAMQ(t)
 

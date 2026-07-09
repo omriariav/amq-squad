@@ -21,6 +21,7 @@ const (
 	StateUnknown = "unknown"
 
 	SourceHeartbeat = "heartbeat-file"
+	SourceSymphony  = "symphony-hook"
 	SourceTaskStore = "task-store"
 	SourceUnknown   = "unknown"
 )
@@ -114,6 +115,45 @@ func TaskStoreSnapshot(handle, taskID, detail string, updatedAt, now time.Time, 
 		Detail:    strings.TrimSpace(detail),
 		WrittenAt: updatedAt,
 		Stale:     stale,
+	}
+}
+
+func SymphonySnapshot(handle, event, taskID, detail string, observedAt, now time.Time, staleAfter time.Duration) Snapshot {
+	if staleAfter <= 0 {
+		staleAfter = DefaultStaleAfter
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	event = strings.TrimSpace(event)
+	stale := true
+	quality := StateUnknown
+	if !observedAt.IsZero() && symphonyEventClaimsActivity(event) {
+		stale = now.Sub(observedAt) > staleAfter
+		if stale {
+			quality = StateStale
+		} else {
+			quality = StateFresh
+		}
+	}
+	return Snapshot{
+		Source:    SourceSymphony,
+		Quality:   quality,
+		Handle:    strings.TrimSpace(handle),
+		TaskID:    strings.TrimSpace(taskID),
+		Phase:     "symphony_" + event,
+		Detail:    strings.TrimSpace(detail),
+		WrittenAt: observedAt,
+		Stale:     stale,
+	}
+}
+
+func symphonyEventClaimsActivity(event string) bool {
+	switch event {
+	case "after_create", "before_remove":
+		return false
+	default:
+		return true
 	}
 }
 

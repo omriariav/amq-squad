@@ -30,6 +30,7 @@ type teamLaunchOptions struct {
 	ModelOverrides  map[string]string
 	ForceDuplicate  bool
 	NoGitignore     bool
+	Symphony        bool
 	WakeInjectVia   string
 	WakeInjectArgs  []string
 	// SeedBriefContent, when non-empty, is the rendered active brief that
@@ -101,7 +102,7 @@ Usage:
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
     [--trust sandboxed|approve-for-me|trusted] [--model role=model,...]
     [--codex-args args] [--claude-args args]
-    [--force-duplicate] [--no-gitignore] [--dry-run]
+    [--force-duplicate] [--no-gitignore] [--symphony] [--dry-run]
 
 Supported terminal backends: %s
 
@@ -110,6 +111,11 @@ tmux defaults to splitting the current tmux window into one pane per agent. Use
 full-size terminal each, better for many agents. Use --target new-session to
 create a detached squad session. The whole roster is preflighted for live
 duplicates before any tmux command runs; --force-duplicate overrides.
+
+--symphony is an opt-in Codex-only lifecycle hook: each launched Codex member
+patches its existing WORKFLOW.md with AMQ Symphony hooks pinned to the resolved
+AMQ root and handle. If WORKFLOW.md is absent, the AMQ adapter error is
+propagated and launch stops. amq-squad never creates WORKFLOW.md itself.
 
 Examples:
   amq-squad team launch
@@ -207,6 +213,11 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if len(t.Members) == 0 {
 		return fmt.Errorf("no team members to launch after external lead filtering")
 	}
+	if opts.Symphony {
+		if err := validateTeamSymphonyMembers(t, t.Members); err != nil {
+			return err
+		}
+	}
 	if opts.Fresh {
 		exists, root, err := teamWorkstreamExists(t, opts.Workstream)
 		if err != nil {
@@ -291,6 +302,34 @@ func commandProfileArg(profile string) string {
 	return " --profile " + shellQuote(profile)
 }
 
+func validateTeamSymphonyMembers(t team.Team, members []team.Member) error {
+	byCWD := map[string][]string{}
+	codexCount := 0
+	for _, m := range members {
+		if normalizedAgentBinary(m.Binary) != "codex" {
+			continue
+		}
+		codexCount++
+		cwd := filepath.Clean(m.EffectiveCWD(t.Project))
+		label := m.Role
+		if handle := memberHandle(m); handle != "" && handle != m.Role {
+			label += " (" + handle + ")"
+		}
+		byCWD[cwd] = append(byCWD[cwd], label)
+	}
+	if codexCount == 0 {
+		return usageErrorf("--symphony requires at least one Codex member")
+	}
+	for cwd, labels := range byCWD {
+		if len(labels) <= 1 {
+			continue
+		}
+		sort.Strings(labels)
+		return usageErrorf("--symphony cannot launch multiple Codex members sharing cwd %s (%s): AMQ Symphony manages one --me per WORKFLOW.md; launch one Codex member per cwd or run agent up --symphony explicitly", cwd, strings.Join(labels, ", "))
+	}
+	return nil
+}
+
 // buildTeamPreflights computes the agent-identity tuples team launch would
 // produce so preflightTeam can refuse before any pane is created. dryRun
 // passes through to each preflight so a --dry-run team launch never mutates
@@ -353,6 +392,7 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 				Model:          memberResolvedModel(m, opts.ModelOverrides, binaryArgs),
 				ForceDuplicate: opts.ForceDuplicate,
 				NoGitignore:    opts.NoGitignore,
+				Symphony:       opts.Symphony,
 				Profile:        opts.Profile,
 				WakeInjectVia:  opts.WakeInjectVia,
 				WakeInjectArgs: opts.WakeInjectArgs,

@@ -32,6 +32,31 @@ const envTmuxLauncherPane = "AMQ_SQUAD_TMUX_LAUNCHER_PANE"
 
 var launchStdinIsTerminal = stdinIsTerminal
 
+type symphonyInitConfig struct {
+	Workflow string
+	Root     string
+	Me       string
+}
+
+var runSymphonyInit = defaultRunSymphonyInit
+
+func defaultRunSymphonyInit(cfg symphonyInitConfig) error {
+	cmd := exec.Command("amq", "integration", "symphony", "init",
+		"--workflow", cfg.Workflow,
+		"--root", cfg.Root,
+		"--me", cfg.Me,
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	detail := strings.TrimSpace(string(out))
+	if detail != "" {
+		return fmt.Errorf("amq integration symphony init: %s", detail)
+	}
+	return fmt.Errorf("amq integration symphony init: %w", err)
+}
+
 type stringListFlag []string
 
 func (f *stringListFlag) String() string {
@@ -76,6 +101,7 @@ func runLaunch(args []string) error {
 	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent for the same handle/workstream is detected")
 	noRequireWake := fs.Bool("no-require-wake", false, "do not pass --require-wake to amq coop exec (allows launching when the wake sidecar cannot acquire its lock)")
 	noGitignore := fs.Bool("no-gitignore", false, "pass --no-gitignore to amq coop exec (leave .gitignore unchanged during AMQ auto-init)")
+	symphony := fs.Bool("symphony", false, "Codex only: patch the existing WORKFLOW.md with AMQ Symphony lifecycle hooks for this resolved root and handle")
 	wakeInjectVia := fs.String("wake-inject-via", "", "absolute executable passed to amq coop exec --wake-inject-via")
 	var wakeInjectArgs stringListFlag
 	fs.Var(&wakeInjectArgs, "wake-inject-arg", "argument passed to amq coop exec --wake-inject-arg (repeatable; requires --wake-inject-via)")
@@ -112,7 +138,11 @@ Side effects before exec:
   8. Translates --conversation for Codex or Claude resume when provided.
   9. Adds a generated bootstrap prompt unless --no-bootstrap is set or
      non-default binary args were provided.
- 10. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
+ 10. With --symphony (Codex only), patches the existing <cwd>/WORKFLOW.md with
+     AMQ Symphony lifecycle hooks pinned to the resolved AMQ root and handle.
+     If WORKFLOW.md is absent, the AMQ adapter error is returned and launch
+     stops; amq-squad does not create the file itself.
+ 11. Execs 'amq coop exec --session <session> <binary> -- <binary-flags>'.
      With supported amq versions, --require-wake is passed so the launch fails at the
      door when the wake sidecar cannot start and acquire its lock (instead
      of surfacing as a stale/orphaned wake later). --no-require-wake opts
@@ -189,6 +219,9 @@ Examples:
 		return usageErrorf("agent up requires a binary (e.g. 'amq-squad agent up codex --role cpo')")
 	}
 	binary := remaining[0]
+	if *symphony && normalizedAgentBinary(binary) != "codex" {
+		return usageErrorf("--symphony is only supported for Codex agents; got %s", binary)
+	}
 	// Positional args before "--" get folded into childArgs.
 	if len(remaining) > 1 {
 		childArgs = append(remaining[1:], childArgs...)
@@ -272,6 +305,7 @@ Examples:
 		SpawnDepth:           *spawnDepth,
 		NoRequireWake:        *noRequireWake,
 		NoGitignore:          *noGitignore,
+		Symphony:             *symphony,
 		GoalBinding:          nativeGoalBindingFromArgs(childArgs),
 		PreauthorizedActions: preauthorizedActions,
 		WakeInjectVia:        wakeInjectViaValue,
@@ -375,6 +409,10 @@ Examples:
 
 	if *dryRun {
 		fmt.Println(shellCommand("amq", coopArgs...))
+		if *symphony {
+			fmt.Fprintf(os.Stderr, "(dry run - would patch existing %s with AMQ Symphony hooks pinned to root %s and handle %s; no files written)\n",
+				filepath.Join(cwd, "WORKFLOW.md"), root, handle)
+		}
 		quietNotice("(dry run - no files written, not execing)\n")
 		verbosePolicyEcho()
 		return nil
@@ -417,6 +455,14 @@ Examples:
 		if _, _, err := ensureBriefStubForProfile(briefHome, rec.TeamProfile, rec.Session); err != nil {
 			return fmt.Errorf("ensure brief: %w", err)
 		}
+	}
+
+	if rec.Symphony {
+		workflow := filepath.Join(cwd, "WORKFLOW.md")
+		if err := runSymphonyInit(symphonyInitConfig{Workflow: workflow, Root: root, Me: handle}); err != nil {
+			return err
+		}
+		quietNotice("symphony: patched %s with AMQ lifecycle hooks for %s (root %s)\n", workflow, handle, root)
 	}
 
 	if err := launch.Write(agentDir, rec); err != nil {

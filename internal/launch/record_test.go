@@ -115,6 +115,40 @@ func TestWakeInjectCmdAdditiveBackCompat(t *testing.T) {
 	}
 }
 
+// TestSymphonyAdditiveBackCompat proves the #336 Symphony flag is additive:
+// older launch records without the key decode false, false omits the key, and
+// true round-trips for explicit restore/replay.
+func TestSymphonyAdditiveBackCompat(t *testing.T) {
+	legacyJSON := `{"schema":1,"cwd":"/p","binary":"codex","session":"s","handle":"cto","root":"/r","started_at":"2026-06-30T00:00:00Z"}`
+	var legacy Record
+	if err := json.Unmarshal([]byte(legacyJSON), &legacy); err != nil {
+		t.Fatalf("older record must still load: %v", err)
+	}
+	if legacy.Symphony {
+		t.Fatalf("missing symphony must decode false")
+	}
+
+	emptyRaw, err := json.Marshal(Record{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(emptyRaw), "symphony") {
+		t.Fatalf("false Symphony must be omitted from JSON: %s", emptyRaw)
+	}
+
+	setRaw, err := json.Marshal(Record{Symphony: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Record
+	if err := json.Unmarshal(setRaw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !back.Symphony {
+		t.Fatalf("Symphony true did not round-trip")
+	}
+}
+
 func TestWriteReadTmuxMetadata(t *testing.T) {
 	dir := t.TempDir()
 	in := Record{

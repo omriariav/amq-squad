@@ -66,6 +66,10 @@ type Record struct {
 	// reproduces launches that intentionally leave .gitignore untouched during
 	// AMQ coop auto-init.
 	NoGitignore bool `json:"no_gitignore,omitempty"`
+	// Symphony records that this Codex launch opted into AMQ's Symphony
+	// WORKFLOW.md lifecycle hook integration. The hook patches the user's
+	// project working tree and is replayed only when this explicit bit is set.
+	Symphony bool `json:"symphony,omitempty"`
 	// NoWakeReason records the explicit compatibility reason for adopting a
 	// project lead without wake. It is intentionally separate from
 	// NoRequireWake: --no-require-wake weakens wake startup strictness, while

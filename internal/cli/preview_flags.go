@@ -21,6 +21,7 @@ type previewFlags struct {
 	claudeArgsRaw  *string
 	forceDuplicate *bool
 	noGitignore    *bool
+	symphony       *bool
 	wakeInjectVia  *string
 	wakeInjectArgs stringListFlag
 }
@@ -36,6 +37,7 @@ func registerPreviewFlags(fs *flag.FlagSet) *previewFlags {
 		claudeArgsRaw:  fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'"),
 		forceDuplicate: fs.Bool("force-duplicate", false, "include --force-duplicate in emitted launch commands"),
 		noGitignore:    fs.Bool("no-gitignore", false, "forward --no-gitignore to every amq coop exec launch"),
+		symphony:       fs.Bool("symphony", false, "Codex only: emit launch commands that patch the existing WORKFLOW.md with AMQ Symphony lifecycle hooks"),
 		wakeInjectVia:  fs.String("wake-inject-via", "", "absolute executable forwarded to every agent launch as amq coop exec --wake-inject-via"),
 	}
 	fs.Var(&p.wakeInjectArgs, "wake-inject-arg", "argument forwarded to every agent launch as amq coop exec --wake-inject-arg (repeatable; requires --wake-inject-via)")
@@ -75,6 +77,7 @@ func (p *previewFlags) toEmitOptions(fs *flag.FlagSet) (emitTeamOptions, error) 
 		ModelOverrides:   modelOverrides,
 		ForceDuplicate:   *p.forceDuplicate,
 		NoGitignore:      *p.noGitignore,
+		Symphony:         *p.symphony,
 		WakeInjectVia:    wakeInjectVia,
 		WakeInjectArgs:   wakeInjectArgs,
 	}, nil
@@ -128,6 +131,7 @@ func buildLiveLaunchOptions(fs *flag.FlagSet, pf *previewFlags, lf *liveLaunchFl
 		ModelOverrides:  emit.ModelOverrides,
 		ForceDuplicate:  emit.ForceDuplicate,
 		NoGitignore:     emit.NoGitignore,
+		Symphony:        emit.Symphony,
 		WakeInjectVia:   emit.WakeInjectVia,
 		WakeInjectArgs:  emit.WakeInjectArgs,
 	}, nil
