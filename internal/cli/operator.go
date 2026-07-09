@@ -197,18 +197,18 @@ func runOperatorAnswer(args []string) error {
 	denied := fs.Bool("denied", false, "send DENIED answer")
 	reasonFlag := fs.String("reason", "", "optional reason to include in the answer body")
 	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
+	overrideNamespaceReason := fs.String("namespace-reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad operator answer - answer an operator gate
 
 Usage:
-  amq-squad operator answer [--project DIR] [--profile NAME] [--session S] --gate TOPIC --to HANDLE (--approved|--denied) [--reason TEXT] [--override-namespace-conflict] [--json]
+  amq-squad operator answer [--project DIR] [--profile NAME] [--session S] --gate TOPIC --to HANDLE (--approved|--denied) [--reason TEXT] [--override-namespace-conflict --namespace-reason WHY] [--json]
 
 Sends an AMQ answer from the configured operator handle on gate/<topic>. This
 first-class command avoids hand-writing the operator protocol. The --to handle
 is required for this release slice so the answer cannot accidentally target the
-non-runnable operator mailbox. When --override-namespace-conflict is set,
---reason is also the required namespace audit reason.
+non-runnable operator mailbox.
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -231,7 +231,7 @@ non-runnable operator mailbox. When --override-namespace-conflict is set,
 	}
 	if err := ensureNoNamespaceConflictWithOverride("operator answer", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
-		Reason:  *reasonFlag,
+		Reason:  *overrideNamespaceReason,
 	}); err != nil {
 		return err
 	}

@@ -126,7 +126,7 @@ func defaultProfileShadowConflict(projectDir, profile, session string, explicitP
 		Detail:             detail,
 		RecoveryCommands: []string{
 			"amq-squad status --project " + shellQuote(projectDir) + " --profile default --session " + shellQuote(session) + " --json",
-			"amq-squad dispatch --project " + shellQuote(projectDir) + " --profile default --session " + shellQuote(session) + " --role <role> --subject <subject> --body <body> --override-namespace-conflict --reason <why>",
+			"explicit default-profile escape (acknowledged, not audited): amq-squad dispatch --project " + shellQuote(projectDir) + " --profile default --session " + shellQuote(session) + " --role <role> --subject <subject> --body <body>",
 			"stopped-run namespace migration backlog: " + coldNamespaceMigrationIssueURL,
 		},
 		Conflicts: conflicts,
@@ -222,8 +222,10 @@ func writeNamespaceConflictAudit(operation, projectDir, profile, session string,
 		return usageErrorf("%s --override-namespace-conflict requires --reason <why>", operation)
 	}
 	actor, actorSet := os.LookupEnv("AM_ME")
+	actor = strings.TrimSpace(actor)
 	actorSource := "AM_ME"
-	if !actorSet {
+	if !actorSet || actor == "" {
+		actorSet = false
 		actorSource = "unset"
 	}
 	dir := filepath.Join(projectDir, team.DirName, "namespace-audit")
@@ -240,7 +242,7 @@ func writeNamespaceConflictAudit(operation, projectDir, profile, session string,
 		Kind:                 conflict.Kind,
 		RequestedAMQRoot:     conflict.RequestedAMQRoot,
 		ConflictingAMQRoot:   conflict.ConflictingAMQRoot,
-		Actor:                strings.TrimSpace(actor),
+		Actor:                actor,
 		ActorEnvSet:          actorSet,
 		ActorSource:          actorSource,
 		Reason:               reason,

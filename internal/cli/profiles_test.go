@@ -793,6 +793,42 @@ func TestNamedProfileDispatchNamespaceOverrideQueuesAndAudits(t *testing.T) {
 	}
 }
 
+func TestNamespaceOverrideRequiresReasonBeforeDispatch(t *testing.T) {
+	dir := t.TempDir()
+	resumeChdir(t, dir)
+	seedProfile(t, dir, "release", team.Team{
+		Project:      dir,
+		Workstream:   "main",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "main"},
+		},
+	})
+	legacyRoot := filepath.Join(dir, ".agent-mail", "main")
+	if err := os.MkdirAll(filepath.Join(legacyRoot, "agents", "qa"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyRoot, "agents", "qa", "inbox.md"), []byte("legacy durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-override to qa\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--profile", "release", "--session", "main", "--role", "qa", "--subject", "X", "--body", "y", "--override-namespace-conflict"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "dispatch --override-namespace-conflict requires --reason") {
+		t.Fatalf("override without reason should fail closed, got %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("dispatch should not send AMQ before override reason is supplied, calls = %d", len(*calls))
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".amq-squad", "namespace-audit", "main.jsonl")); !os.IsNotExist(statErr) {
+		t.Fatalf("missing-reason override should not write audit, stat err = %v", statErr)
+	}
+}
+
 func TestGoalDeliverNamespaceOverrideDeliversAndAudits(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	dir := t.TempDir()
@@ -861,7 +897,7 @@ func TestGoalDeliverNamespaceOverrideDeliversAndAudits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read namespace audit: %v", err)
 	}
-	for _, want := range []string{`"operation":"goal deliver"`, `"actor":""`, `"actor_env_set":true`, `"reason":"recover visible lead"`} {
+	for _, want := range []string{`"operation":"goal deliver"`, `"actor":""`, `"actor_env_set":false`, `"actor_source":"unset"`, `"reason":"recover visible lead"`} {
 		if !strings.Contains(string(audit), want) {
 			t.Fatalf("audit missing %q:\n%s", want, string(audit))
 		}
@@ -909,6 +945,51 @@ func TestUnprofiledDispatchRefusesMultipleNamedProfileOwners(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, ".agent-mail", "main")); !os.IsNotExist(statErr) {
 		t.Fatalf("refused dispatch must not create default root; stat err = %v", statErr)
+	}
+}
+
+func TestDefaultProfileShadowRecoveryDoesNotAdvertiseInertOverride(t *testing.T) {
+	dir := t.TempDir()
+	resumeChdir(t, dir)
+	seedProfile(t, dir, team.DefaultProfile, team.Team{
+		Workstream:   "main",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "main"},
+		},
+	})
+	seedProfile(t, dir, "release", team.Team{
+		Workstream: "main",
+		Members: []team.Member{
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "main"},
+		},
+	})
+	namedRoot := filepath.Join(dir, ".agent-mail", "release", "main")
+	if err := os.MkdirAll(filepath.Join(namedRoot, "agents", "qa"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(namedRoot, "agents", "qa", "inbox.md"), []byte("named durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "main", "--role", "qa", "--subject", "X", "--body", "y"})
+	})
+	if err == nil {
+		t.Fatal("unprofiled dispatch should refuse when named profile owns session")
+	}
+	for _, want := range []string{
+		"explicit default-profile escape (acknowledged, not audited)",
+		"amq-squad dispatch --project " + shellQuote(resolveDir(dir)) + " --profile default --session main",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("dispatch error missing %q:\n%v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "--profile default --session main --role <role> --subject <subject> --body <body> --override-namespace-conflict") {
+		t.Fatalf("shadow recovery must not print inert override flags:\n%v", err)
 	}
 }
 

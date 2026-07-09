@@ -248,6 +248,7 @@ var completionCommonFlags = []string{
 	"--name",
 	"--model",
 	"--msg-id",
+	"--namespace-reason",
 	"--milestone",
 	"--mode",
 	"--max-agents",
