@@ -383,6 +383,9 @@ Examples:
 	if fs.NArg() > 0 {
 		return usageErrorf("doctor takes no positional arguments; got %d", fs.NArg())
 	}
+	if flagWasSet(fs, "session") {
+		fmt.Fprintln(os.Stderr, "ignoring --session: doctor checks project/profile health, not one session")
+	}
 	if *allProfiles && flagWasSet(fs, "profile") {
 		return usageErrorf("--all-profiles cannot be combined with --profile")
 	}
