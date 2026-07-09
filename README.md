@@ -825,14 +825,14 @@ amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
                     [--roles r,...] [--binary role=bin,...] [--model role=model,...]
                     [--lead-mode builder|planner]
                     [--codex-args A] [--claude-args A]
-                    [--visibility detached|sibling-tabs|current]
+                    [--visibility sibling-tabs|detached|current]
                     [--goal TEXT] [--seed-from REF] [--go]
                                   Create one orchestrated run: wraps new team
                                   (if --roles) then up, so the namespace is typed
                                   once. Preview by default (runs --dry-run
                                   validation); --go creates. Visibility defaults
-                                  to detached (hidden); supervise via status/
-                                  console/monitor + wake, attach to intervene.
+                                  to sibling-tabs in the current tmux session;
+                                  use --visibility detached for hidden workers.
                                   With --goal, --go waits for the lead to be
                                   status-live with an alive tmux pane before
                                   delivery. If delivery cannot complete, it

@@ -289,8 +289,8 @@ func TestSwitchTo_OutsideTmuxReturnsTypedError(t *testing.T) {
 	if !errors.As(err, &nit) {
 		t.Fatalf("error = %T (%v), want *NotInTmuxError", err, err)
 	}
-	if nit.Command != SuggestJump(target) {
-		t.Fatalf("NotInTmuxError.Command = %q, want %q", nit.Command, SuggestJump(target))
+	if nit.Command != AttachCommand(target) {
+		t.Fatalf("NotInTmuxError.Command = %q, want %q", nit.Command, AttachCommand(target))
 	}
 	// Outside tmux we still attempt a best-effort select-window so an iTerm2 -CC
 	// window raises.
