@@ -255,7 +255,6 @@ func paneIDForTarget(tgt tmuxpane.TmuxTarget, panes []tmuxpane.TmuxPane) string 
 
 var paneBusyForSend = tmuxpane.PaneBusy
 var sendPromptToPane = tmuxpane.SendPromptToPane
-var waitPaneSettledForSend = tmuxpane.WaitPaneSettled
 
 func runFocus(args []string) error {
 	fs := flag.NewFlagSet("focus", flag.ContinueOnError)

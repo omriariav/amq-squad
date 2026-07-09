@@ -89,6 +89,28 @@ func TestResolveAMQContextForProjectIsPrimaryResolver(t *testing.T) {
 	}
 }
 
+func TestResolveAMQContextNormalizesRelativeRootsToAbsoluteEnv(t *testing.T) {
+	dir := t.TempDir()
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail", AMQVersion: "0.41.0"}, "ok\n")
+
+	ctx, err := resolveAMQContextForProject(dir, "issue-96", "cto")
+	if err != nil {
+		t.Fatalf("resolveAMQContextForProject: %v", err)
+	}
+	wantRoot := filepath.Join(dir, ".agent-mail", "issue-96")
+	wantBase := filepath.Join(dir, ".agent-mail")
+	if ctx.Root != wantRoot {
+		t.Fatalf("ctx.Root = %q, want absolute %q", ctx.Root, wantRoot)
+	}
+	env := amqCommandEnv(ctx)
+	if !envHas(env, "AM_ROOT", wantRoot) {
+		t.Fatalf("AM_ROOT not injected as absolute root: %v", env)
+	}
+	if !envHas(env, "AM_BASE_ROOT", wantBase) {
+		t.Fatalf("AM_BASE_ROOT not injected as absolute base root: %v", env)
+	}
+}
+
 func TestAMQRouteAddsJSONByDefault(t *testing.T) {
 	chdir(t, t.TempDir())
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, `{"routable":true}`+"\n")

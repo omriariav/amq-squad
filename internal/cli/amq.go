@@ -57,9 +57,9 @@ func defaultRunAMQCommand(req amqCommandRequest) ([]byte, error) {
 	if err != nil {
 		detail := strings.TrimSpace(string(out))
 		if detail != "" {
-			return nil, fmt.Errorf("%w: %s", err, detail)
+			return out, fmt.Errorf("%w: %s", err, detail)
 		}
-		return nil, err
+		return out, err
 	}
 	return out, nil
 }

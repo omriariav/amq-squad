@@ -375,8 +375,8 @@ extension-metadata namespace. AMQ stays domain-agnostic: it adds generic
 affordances that layers build on (the
 <code>extensions/&lt;layer&gt;/</code> namespace, external wake
 injection, a reserved <code>user</code>/operator handle,
-<code>env --json</code>), which is why amq-squad v2.17.0 requires amq
-0.40.0+ — but it still knows nothing about CTOs, rosters, or team
+<code>env --json</code>), which is why amq-squad v2.18.0 requires amq
+0.41.0+ — but it still knows nothing about CTOs, rosters, or team
 rules.</p>
 <h2 id="install">Install</h2>
 <p>Install the 2.0 line (note the <code>/v2</code> module path):</p>
@@ -385,7 +385,7 @@ rules.</p>
 <p>For the latest 2.x build:</p>
 <div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span></code></pre></div>
 <p>Requires Go 1.25+, the <code>amq</code> binary on <code>PATH</code>
-(v0.40.0+), and <code>tmux</code> on <code>PATH</code> for
+(v0.41.0+), and <code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code>.</p>
 <h3 id="skills-plugin-marketplaces">Skills (plugin marketplaces)</h3>
 <p>This repo doubles as a plugin marketplace that ships the amq-squad
@@ -1106,7 +1106,7 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb21-1"><a href="#
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--no-operator</span>   <span class="co"># explicit opt-out</span></span></code></pre></div>
 <p>The operator is not a runnable team member. AMQ 0.38.0+ reserves the
 conventional <code>user</code> mailbox for this human/operator role, and
-amq-squad v2.17.0 requires AMQ 0.40.0+ overall; custom operator handles
+amq-squad v2.18.0 requires AMQ 0.41.0+ overall; custom operator handles
 use the same amq-squad protocol. JSON discovery derives
 <code>operator</code> and <code>capabilities.operator_gates</code>;
 <code>capabilities</code> is not persisted in
@@ -1727,13 +1727,13 @@ attached.</p>
 <p><code>amq-squad amq ...</code> is a project-aware wrapper around AMQ
 diagnostics. It resolves the same AMQ root, base root, session, and
 handle that the squad launcher uses, then delegates to AMQ.</p>
-<p>amq-squad v2.17.0 requires AMQ 0.40.0 or newer. That floor includes
-the wake-inject stale-process fix (AMQ-owned <code>--inject-via</code>
-wake processes exit when their recorded owner is gone or no longer
-matches), eval-safe <code>amq env --export</code>, the reserved human
-<code>user</code> mailbox behavior used by operator gates and
-notification surfaces, and AMQ 0.40.0's stricter queue/DLQ/receipt/wake
-metadata file hardening.</p>
+<p>amq-squad v2.18.0 requires AMQ 0.41.0 or newer. That floor includes
+AMQ wake input-queue draining before CR injection, receipt-confirmed
+send/reply waits, absolute roots from <code>amq env --json</code>, plus
+the earlier wake-inject stale-process fix, eval-safe
+<code>amq env --export</code>, reserved human <code>user</code> mailbox
+behavior, and AMQ 0.40.0's stricter queue/DLQ/receipt/wake metadata file
+hardening.</p>
 <p>Read-only diagnostics run directly:</p>
 <div class="sourceCode" id="cb26"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> amq env <span class="at">--session</span> issue-96</span>
@@ -2088,7 +2088,7 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb38-1"><a href="#
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5.5,fullstack=fable-5 <span class="dt">\</span></span>
 <span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span>
 <span id="cb38-5"><a href="#cb38-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5.5 <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span></code></pre></div>
-<p>amq-squad v2.17.0 requires amq <strong>0.40.0+</strong>. Launches
+<p>amq-squad v2.18.0 requires amq <strong>0.41.0+</strong>. Launches
 pass <code>--require-wake</code> to <code>amq coop exec</code>, so a
 launch <strong>fails at the door</strong> when the AMQ wake sidecar
 cannot start and acquire its lock, instead of surfacing later as a stale
@@ -2366,7 +2366,7 @@ project's <code>.amqrc</code> for cross-project AMQ routing.
 <h2 id="requires">Requires</h2>
 <ul>
 <li>Go 1.25+</li>
-<li><code>amq</code> binary on <code>PATH</code> (v0.40.0+)</li>
+<li><code>amq</code> binary on <code>PATH</code> (v0.41.0+)</li>
 <li><code>tmux</code> on <code>PATH</code> for
 <code>amq-squad up</code></li>
 </ul>

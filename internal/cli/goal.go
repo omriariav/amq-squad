@@ -893,8 +893,6 @@ func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
 	}
 	receipt.PaneID = paneID
 	receipt.addStage("control_delivery_started", "resolved exact target pane for native /goal control")
-	waitPaneSettledForSend(paneID)
-	receipt.addStage("pane_settled", "waited for target pane output to settle before native /goal control delivery")
 	if err := sendPromptToPane(paneID, prompt); err != nil {
 		receipt.Status = "failed"
 		receipt.Detail = err.Error()
@@ -902,6 +900,7 @@ func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
 		_ = writeDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &receipt)
 		return mutationResult{}, err
 	}
+	receipt.addStage("pane_settled", "SendPromptToPane waited for target pane output to settle before native /goal control delivery")
 	receipt.Status = "native_goal_delivered"
 	receipt.addStage("native_goal_delivered", "native /goal command delivered without ordinary prompt busy-guard semantics")
 	if mr.HasRecord {
