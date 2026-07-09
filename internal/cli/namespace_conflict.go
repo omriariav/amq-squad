@@ -32,6 +32,71 @@ type namespaceConflictCandidate struct {
 	Reasons []string `json:"reasons,omitempty"`
 }
 
+func ensureNoNamespaceCreationCollision(operation, projectDir, profile, session string) error {
+	collision := namespaceCreationCollision(projectDir, profile, session)
+	if collision == nil {
+		return nil
+	}
+	return usageErrorf("%s refused: %s", operation, collision.Detail)
+}
+
+func namespaceCreationCollision(projectDir, profile, session string) *namespaceConflictData {
+	profile = squadnamespace.NormalizeProfile(profile)
+	session = strings.TrimSpace(session)
+	if projectDir == "" || session == "" || profile == team.DefaultProfile {
+		return nil
+	}
+	requested := filepath.Clean(squadnamespace.AMQRoot(projectDir, profile, session))
+	legacy := filepath.Clean(squadnamespace.AMQRoot(projectDir, team.DefaultProfile, session))
+	if !sameResolvedDir(requested, legacy) && !pathContains(legacy, requested) && !pathContains(requested, legacy) {
+		return nil
+	}
+	ns := squadnamespace.Resolve(projectDir, profile, session)
+	suggestion := suggestedCollisionProfile(profile, session)
+	return &namespaceConflictData{
+		Kind:               "profile_session_root_collision",
+		Profile:            profile,
+		Session:            session,
+		NamespaceID:        ns.ID,
+		RequestedAMQRoot:   requested,
+		ConflictingAMQRoot: legacy,
+		Detail: fmt.Sprintf("profile %q and session %q create colliding AMQ roots: named profile root %s is nested under or overlaps legacy/default session root %s. Choose distinct names before launching or writing, for example --profile %s --session %s",
+			profile, session, requested, legacy, shellQuote(suggestion), shellQuote(session)),
+	}
+}
+
+func pathContains(parent, child string) bool {
+	parent = filepath.Clean(parent)
+	child = filepath.Clean(child)
+	if sameResolvedDir(parent, child) {
+		return true
+	}
+	rel, err := filepath.Rel(parent, child)
+	if err != nil || rel == "." || rel == "" {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+func suggestedCollisionProfile(profile, session string) string {
+	base := strings.TrimSpace(session)
+	if base == "" {
+		base = strings.TrimSpace(profile)
+	}
+	suggested := "codex-" + base
+	if suggested == profile {
+		suggested = profile + "-profile"
+	}
+	if err := team.ValidateProfileName(suggested); err == nil {
+		return suggested
+	}
+	sanitized := sanitizeWorkstreamName(suggested)
+	if sanitized == "" || sanitized == profile {
+		return "codex-profile"
+	}
+	return sanitized
+}
+
 type namespaceConflictOverrideOptions struct {
 	Allowed bool
 	Reason  string

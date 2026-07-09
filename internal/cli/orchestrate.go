@@ -284,6 +284,9 @@ func runRunStart(args []string, version string) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureNoNamespaceCreationCollision("run start", project, profile, session); err != nil {
+		return err
+	}
 	leadMode, err := normalizeLeadMode(*leadModeFlag)
 	if err != nil {
 		return err
