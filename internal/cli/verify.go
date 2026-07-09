@@ -76,30 +76,35 @@ func runVerify(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad verify - deterministic preflight checks
 
 Usage:
+  amq-squad verify action --project DIR --session S --gate TOPIC --action KIND --target TARGET [--json]
   amq-squad verify merge --evidence <file|-> [--json]
   amq-squad verify release --evidence <file|-> [--json]
 
-The merge preflight validates normalized per-PR evidence (CI + review at a head
+The action guard validates a resolved operator gate for high-risk actions
+(default/protected branch push, tags, GitHub releases, external sends). The
+merge preflight validates normalized per-PR evidence (CI + review at a head
 SHA). The release preflight validates a final-release-commit co-sign gate: an
 exact-SHA developer co-sign AND an operator release approval before publish.
-Neither queries providers, infers state, merges, or mutates remote state.
-'APPROVED to release' alone never authorizes publish: push/tag/release require
-the final release commit SHA to carry a developer co-sign and an approved
-operator release gate, and remain operator-performed. Failed evidence prints the
-failed conditions and exits non-zero.
+None of these commands queries providers, infers state, merges, pushes, tags,
+releases, or mutates remote state. 'APPROVED to release' alone never authorizes
+publish: push/tag/release require bound authorization evidence, and remain
+operator-performed. Failed evidence prints the failed conditions and exits
+non-zero.
 `)
 		if len(args) == 0 {
-			return usageErrorf("verify requires a subcommand (merge or release)")
+			return usageErrorf("verify requires a subcommand (action, merge, or release)")
 		}
 		return nil
 	}
 	switch args[0] {
+	case "action":
+		return runVerifyAction(args[1:])
 	case "merge":
 		return runVerifyMerge(args[1:])
 	case "release":
 		return runVerifyRelease(args[1:])
 	default:
-		return usageErrorf("unknown 'verify' subcommand: %q. Try merge or release.", args[0])
+		return usageErrorf("unknown 'verify' subcommand: %q. Try action, merge, or release.", args[0])
 	}
 }
 
