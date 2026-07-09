@@ -196,7 +196,8 @@ Usage:
       [--roles "a,b,c"] [--binary "role=bin,..."] [--model "role=model,..."]
       [--lead-mode builder|planner]
       [--codex-args "..."] [--claude-args "..."]
-      [--visibility sibling-tabs|detached|current] [--goal TEXT] [--seed-from REF] [--go]
+      [--visibility sibling-tabs|detached|current] [--external-lead]
+      [--goal TEXT] [--seed-from REF] [--go]
 
 Managed model: amq-squad spawns the whole team (incl. the lead); panes are
 registered and wake-live automatically. This wraps the create sequence so the
@@ -213,8 +214,9 @@ binary via --binary, model via --model, and effort via
 Preview by default (prints the plan and runs read-only --dry-run validation, so
 its failures surface honestly); pass --go to create for real.
 
-External-lead mode (your current pane IS the lead) is not yet supported here;
-see issue #339.
+External-lead mode (--external-lead) binds the current tmux pane as the
+configured lead, then spawns only the remaining workers. It never registers a
+separate orchestrator handle or re-points lead state.
 `)
 		if len(args) == 0 {
 			return usageErrorf("run requires a subcommand (start)")
@@ -245,7 +247,7 @@ func runRunStart(args []string, version string) error {
 	visibilityFlag := fs.String("visibility", visibilitySiblingTabs, "spawn topology: sibling-tabs (visible default), detached (hidden), or current")
 	goalFlag := fs.String("goal", "", "after spawn, deliver this goal to the lead")
 	seedFlag := fs.String("seed-from", "", "seed the workstream brief from a reference (e.g. issue:96)")
-	externalLead := fs.Bool("external-lead", false, "(unsupported yet, see #339) your current pane is the lead")
+	externalLead := fs.Bool("external-lead", false, "bind the current pane as the lead and spawn only remaining workers")
 	goFlag := fs.Bool("go", false, "create for real (default: preview only)")
 	fs.Usage = func() { _ = runRunCmd([]string{"-h"}, version) }
 	if err := parseFlags(fs, args); err != nil {
@@ -253,9 +255,6 @@ func runRunStart(args []string, version string) error {
 	}
 	if fs.NArg() > 0 {
 		return usageErrorf("unexpected argument %q", fs.Arg(0))
-	}
-	if *externalLead {
-		return usageErrorf("external-lead mode is not yet supported (see #339); pane binding must be verified against the CLI before it ships. Use the managed model for now.")
 	}
 	project := strings.TrimSpace(*projectFlag)
 	session := strings.TrimSpace(*sessionFlag)
@@ -304,6 +303,20 @@ func runRunStart(args []string, version string) error {
 	leadForNewTeam := explicitLead
 	if leadForNewTeam == "" {
 		leadForNewTeam = "cto"
+	}
+	externalLeadRole := ""
+	if *externalLead {
+		externalLeadRole, err = resolveRunStartExternalLead(project, profile, explicitLead, freshRoster, leadForNewTeam)
+		if err != nil {
+			return err
+		}
+		preflightTeam, err := runStartExternalLeadPreflightTeam(project, profile, session, rolesText, freshRoster, externalLeadRole)
+		if err != nil {
+			return err
+		}
+		if err := validateRunStartExternalLeadPreconditions(project, profile, session, externalLeadRole, preflightTeam); err != nil {
+			return err
+		}
 	}
 
 	// Build the create commands as argument slices we can run in-process. This
@@ -363,11 +376,18 @@ func runRunStart(args []string, version string) error {
 			leadDisplay = "(inferred from profile)"
 		}
 	}
+	if *externalLead {
+		leadDisplay = externalLeadRole
+	}
 	upStep := 1
 	if freshRoster {
 		upStep = 2
 	}
-	fmt.Printf("orchestrated run (managed model)\n")
+	modelLabel := "managed model"
+	if *externalLead {
+		modelLabel = "external lead"
+	}
+	fmt.Printf("orchestrated run (%s)\n", modelLabel)
 	fmt.Printf("  project: %s\n", project)
 	fmt.Printf("  profile: %s\n", profileOrDefault(*profileFlag))
 	fmt.Printf("  session: %s\n", session)
@@ -381,6 +401,10 @@ func runRunStart(args []string, version string) error {
 		fmt.Printf("  step 1:  amq-squad new team --roles %s --orchestrated --lead %s%s\n", *rolesFlag, leadForNewTeam, leadModeSuffix)
 	} else if len(newTeamArgs) > 0 {
 		fmt.Printf("  note:    profile %s already exists; --roles ignored, using the existing roster\n", profileOrDefault(*profileFlag))
+	}
+	if *externalLead {
+		fmt.Printf("  step %d:  bind current pane as external lead %s\n", upStep, externalLeadRole)
+		upStep++
 	}
 	fmt.Printf("  step %d:  amq-squad up %s --visibility %s\n", upStep, session, visibility)
 	if visibility == visibilityDetached {
@@ -409,11 +433,74 @@ func runRunStart(args []string, version string) error {
 	}
 
 	if !*goFlag {
+		if *externalLead {
+			return runStartExternalLeadPreview(runStartExternalLeadPreviewOptions{
+				NewTeamArgs: newTeamArgs,
+				Project:     project,
+				Profile:     profile,
+				Session:     session,
+				Lead:        externalLeadRole,
+				FreshRoster: freshRoster,
+				TeamPresent: teamPresent,
+				Visibility:  visibility,
+				Model:       *modelFlag,
+				CodexArgs:   *codexArgsFlag,
+				ClaudeArgs:  *claudeArgsFlag,
+				Version:     version,
+			})
+		}
 		return runStartPreview(newTeamArgs, upArgs, freshRoster, teamPresent, version)
 	}
 
 	if (visibility == visibilitySiblingTabs || visibility == visibilityCurrent) && !insideTmux() {
 		return usageErrorf("not inside tmux; --visibility %s requires a visible tmux pane. Run inside tmux, or pass --visibility detached to spawn hidden.", visibility)
+	}
+
+	if *externalLead {
+		var externalSeedContent string
+		if strings.TrimSpace(*seedFlag) != "" {
+			body, err := resolveSeed(*seedFlag)
+			if err != nil {
+				return err
+			}
+			externalSeedContent = buildSeedBrief(*seedFlag, body, seedNow())
+		}
+		if freshRoster {
+			quietNotice("creating roster...\n")
+			if err := runNew(newTeamArgs); err != nil {
+				return err
+			}
+		} else if len(newTeamArgs) > 0 {
+			quietNotice("profile %q already exists; skipping new team (using existing roster)\n", profileOrDefault(*profileFlag))
+		}
+		quietNotice("binding current pane as external lead %s...\n", externalLeadRole)
+		if err := runStartRegisterExternalLead(project, profile, session, externalLeadRole); err != nil {
+			return err
+		}
+		opts, err := runStartTeamLaunchOptions(visibility, session, profile, externalSeedContent, false, false, externalLeadRole, true, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
+		if err != nil {
+			return err
+		}
+		quietNotice("spawning remaining workers (--visibility %s)...\n", visibility)
+		if err := runInProject(project, func() error { return executeTeamLaunch(opts, true, false) }); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*goalFlag) != "" {
+			opts := runStartGoalDeliveryOptions{
+				Project: project,
+				Profile: profile,
+				Session: session,
+				Role:    externalLeadRole,
+				Goal:    *goalFlag,
+				Version: version,
+			}
+			quietNotice("waiting for lead readiness before goal delivery...\n")
+			if err := deliverRunStartGoalWhenReady(opts); err != nil {
+				return err
+			}
+		}
+		quietNotice("done. Current pane is the lead; drive remaining workers with dispatch/monitor/collect.\n")
+		return nil
 	}
 
 	// 1) roster
@@ -485,6 +572,182 @@ func runStartPreview(newTeamArgs, upArgs []string, freshRoster, teamPresent bool
 		"not exist yet, so `up --dry-run` cannot check the roster in preview.\n" +
 		"Re-run with --go to create the team and spawn.\n")
 	return nil
+}
+
+type runStartExternalLeadPreviewOptions struct {
+	NewTeamArgs []string
+	Project     string
+	Profile     string
+	Session     string
+	Lead        string
+	FreshRoster bool
+	TeamPresent bool
+	Visibility  string
+	Model       string
+	CodexArgs   string
+	ClaudeArgs  string
+	Version     string
+}
+
+func runStartExternalLeadPreview(opts runStartExternalLeadPreviewOptions) error {
+	fmt.Print("\nPREVIEW -- validating external-lead binding and worker launch; nothing is created.\n")
+	if opts.FreshRoster {
+		if err := runNew(append(append([]string{}, opts.NewTeamArgs...), "--dry-run")); err != nil {
+			return fmt.Errorf("roster dry-run failed: %w", err)
+		}
+		fmt.Print("\nExternal-lead adoption preconditions validated. Spawn validation is deferred: the team does\n" +
+			"not exist yet, so the worker-only launch plan cannot be checked without writing the roster.\n" +
+			"Re-run with --external-lead --go to bind this pane as lead and spawn remaining workers.\n")
+		return nil
+	}
+	if opts.TeamPresent {
+		launchOpts, err := runStartTeamLaunchOptions(opts.Visibility, opts.Session, opts.Profile, "", false, true, opts.Lead, true, opts.Model, opts.CodexArgs, opts.ClaudeArgs)
+		if err != nil {
+			return err
+		}
+		if err := runInProject(opts.Project, func() error {
+			return executeTeamLaunch(launchOpts, true, false)
+		}); err != nil {
+			return fmt.Errorf("worker spawn dry-run failed: %w", err)
+		}
+		fmt.Print("\nPreview OK. Re-run with --external-lead --go to bind this pane as lead and spawn remaining workers.\n")
+		return nil
+	}
+	return usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", opts.Profile, opts.Project)
+}
+
+func runStartTeamLaunchOptions(visibility, session, profile, seedContent string, seedForce, dryRun bool, externalLeadRole string, allowLeadOnly bool, modelRaw, codexArgsRaw, claudeArgsRaw string) (teamLaunchOptions, error) {
+	modelOverrides, err := parseKV(modelRaw)
+	if err != nil {
+		return teamLaunchOptions{}, fmt.Errorf("parse --model: %w", err)
+	}
+	modelOverrides = lowercaseKeys(modelOverrides)
+	binaryArgs, err := parseBinaryArgFlags(codexArgsRaw, claudeArgsRaw)
+	if err != nil {
+		return teamLaunchOptions{}, err
+	}
+	opts := teamLaunchOptions{
+		Terminal:       "tmux",
+		Target:         "current-window",
+		Layout:         "vertical",
+		Workstream:     session,
+		Stagger:        750 * time.Millisecond,
+		SquadBin:       teamSquadBin(),
+		BinaryArgs:     binaryArgs,
+		ModelOverrides: modelOverrides,
+	}
+	if err := applyLaunchVisibility(&opts, visibility, false, false, false, true); err != nil {
+		return teamLaunchOptions{}, err
+	}
+	opts.DryRun = dryRun
+	opts.Fresh = false
+	opts.Workstream = session
+	opts.Profile = profile
+	opts.SeedBriefContent = seedContent
+	opts.SeedBriefForce = seedForce
+	opts.WarnStubBrief = seedContent == "" && !dryRun
+	opts.ExternalLeadRole = externalLeadRole
+	opts.AllowNoMembersAfterExternalLead = allowLeadOnly
+	return opts, nil
+}
+
+func resolveRunStartExternalLead(project, profile, explicitLead string, freshRoster bool, leadForNewTeam string) (string, error) {
+	if freshRoster {
+		lead := strings.TrimSpace(explicitLead)
+		if lead == "" {
+			lead = strings.TrimSpace(leadForNewTeam)
+		}
+		if lead == "" {
+			return "", usageErrorf("--external-lead requires a lead role")
+		}
+		return strings.ToLower(lead), nil
+	}
+	t, err := team.ReadProfile(project, profile)
+	if err != nil {
+		return "", fmt.Errorf("read team profile %q: %w", profile, err)
+	}
+	lead := strings.TrimSpace(t.Lead)
+	if lead == "" && len(t.Members) == 1 {
+		lead = strings.TrimSpace(t.Members[0].Role)
+	}
+	if lead == "" {
+		return "", usageErrorf("--external-lead cannot infer lead role from profile %q; run `amq-squad team lead set <role>` first or pass --lead matching the configured lead", profile)
+	}
+	if explicit := strings.TrimSpace(explicitLead); explicit != "" && explicit != lead {
+		return "", usageErrorf("--external-lead cannot change existing profile lead from %q to %q; run `amq-squad team lead set %s --project %s --profile %s` first", lead, explicit, shellQuote(explicit), shellQuote(project), shellQuote(profile))
+	}
+	return strings.ToLower(lead), nil
+}
+
+func runStartExternalLeadPreflightTeam(project, profile, session, rolesText string, freshRoster bool, lead string) (team.Team, error) {
+	if !freshRoster {
+		t, err := team.ReadProfile(project, profile)
+		if err != nil {
+			return team.Team{}, fmt.Errorf("read team profile %q: %w", profile, err)
+		}
+		return t, nil
+	}
+	if strings.TrimSpace(rolesText) == "" {
+		return team.Team{}, usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", profile, project)
+	}
+	seen := map[string]bool{}
+	var members []team.Member
+	for _, role := range splitCSV(rolesText) {
+		role = strings.ToLower(strings.TrimSpace(role))
+		if role == "" || role == "all" || seen[role] {
+			continue
+		}
+		seen[role] = true
+		members = append(members, team.Member{Role: role, Handle: role, Session: session})
+	}
+	if lead != "" && !seen[lead] && strings.TrimSpace(rolesText) != "all" {
+		return team.Team{}, usageErrorf("run start --external-lead lead %q is not included in --roles %q; include the lead role or change --lead", lead, rolesText)
+	}
+	if lead != "" && !seen[lead] && strings.TrimSpace(rolesText) == "all" {
+		members = append(members, team.Member{Role: lead, Handle: lead, Session: session})
+	}
+	return team.Team{
+		Project:      project,
+		Orchestrated: true,
+		Lead:         lead,
+		Members:      members,
+	}, nil
+}
+
+func validateRunStartExternalLeadPreconditions(project, profile, session, lead string, t team.Team) error {
+	id, err := currentPaneIdentity()
+	if err != nil {
+		return err
+	}
+	if id == nil || strings.TrimSpace(id.PaneID) == "" {
+		return usageErrorf("run start --external-lead requires the current lead pane to be a tmux pane (TMUX/TMUX_PANE unset)")
+	}
+	if !currentWorkingDirMatches(project) {
+		return usageErrorf("run start --external-lead must be executed from the lead member project root %s; current working directory does not match --project", project)
+	}
+	if _, ok := memberByRole(t, lead); !ok {
+		return usageErrorf("run start --external-lead lead %q is not a member of the target roster", lead)
+	}
+	exists, root, err := teamWorkstreamExistsOrRestorable(t, profile, session)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return existingSessionRefusal(session, root)
+	}
+	return nil
+}
+
+func runStartRegisterExternalLead(project, profile, session, lead string) error {
+	args := []string{
+		"register",
+		"--project", project,
+		"--profile", profile,
+		"--session", session,
+		"--role", lead,
+		"--adopt-project-lead",
+	}
+	return runLead(args)
 }
 
 func teamExistsForProfile(project, profile string) bool {
