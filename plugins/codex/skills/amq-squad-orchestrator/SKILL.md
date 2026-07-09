@@ -627,6 +627,85 @@ amq-squad console                        # live read-only Mission Control TUI
 - The bare `amq-squad status` (no `--session`) is the fleet board across all sessions.
 - The single-session `status --json` records also carry an `actions[]` array with the exact runnable `focus`/`send`/`resume` commands; prefer those over hand-built tmux.
 
+### Adopt external evidence into native tasks
+
+`status --json` may include `.data.external_evidence[]` rows from external
+orchestrators such as AMQ swarm, Symphony, or kanban. These rows are read-only
+evidence. Do not treat them as native amq-squad work until the lead explicitly
+adopts one row.
+
+Adoption is a lead-initiated, per-item decision:
+
+- Adopt exactly one external evidence row at a time with `amq-squad task add`.
+- Do not bulk import external evidence.
+- Do not write back to the external orchestrator or tracker.
+- Keep dependencies and assignment as explicit lead choices on `task add`
+  flags; do not infer them from the evidence row.
+- Preserve provenance in the task description as one greppable line:
+  `Provenance: source=<source> external_id=<id> origin=<source_label> thread=<thread>`.
+  Keep every provenance value space-free. If an external team name is known from
+  surrounding context, mention it in prose outside the `Provenance:` line.
+
+Read the row first:
+
+```sh
+amq-squad status --session issue-337 --json \
+  | jq '.data.external_evidence[] | {source, source_label, external_task_id, state, labels, thread, message_id, subject, participants, last_event_at, mutable}'
+```
+
+**AMQ swarm example.** Given this real external evidence row:
+
+```json
+{
+  "source": "amq-swarm",
+  "source_label": "orchestrator:swarm",
+  "external_task_id": "SW-7",
+  "state": "blocked",
+  "labels": ["orchestrator", "orchestrator:swarm", "task-state:blocked"],
+  "thread": "task/SW-7",
+  "message_id": "2026-07-09T10-00-00Z_swarm1",
+  "subject": "Fix flaky checkout test",
+  "participants": ["swarm", "cto"],
+  "last_event_at": "2026-07-09T10:00:00Z",
+  "mutable": false
+}
+```
+
+Derive the native task title from `subject`, prefixing source and external id
+so the adopted task stays recognizable:
+
+```sh
+amq-squad task add --session issue-337 \
+  --title "[swarm SW-7] Fix flaky checkout test" \
+  --desc $'Adopted from amq-swarm external evidence.\n\nProvenance: source=amq-swarm external_id=SW-7 origin=orchestrator:swarm thread=task/SW-7'
+```
+
+**Kanban example.** Given this real external evidence row:
+
+```json
+{
+  "source": "amq-kanban",
+  "source_label": "orchestrator:kanban",
+  "external_task_id": "KAN-42",
+  "state": "unknown",
+  "labels": ["orchestrator", "orchestrator:kanban"],
+  "thread": "task/KAN-42",
+  "message_id": "2026-07-09T10-05-00Z_kanban1",
+  "subject": "Document release smoke owner",
+  "participants": ["kanban", "cto"],
+  "last_event_at": "2026-07-09T10:05:00Z",
+  "mutable": false
+}
+```
+
+Adopt it as a native task with provenance in `--desc`:
+
+```sh
+amq-squad task add --session issue-337 \
+  --title "[kanban KAN-42] Document release smoke owner" \
+  --desc $'Adopted from amq-kanban external evidence.\n\nProvenance: source=amq-kanban external_id=KAN-42 origin=orchestrator:kanban thread=task/KAN-42'
+```
+
 **To collect a worker's report, use `amq-squad collect --session S --me <lead> [--timeout D] [--include-body]`.** It makes collect deterministic: one drain; if empty and you choose to wait, exactly one bounded `amq watch`; then one final drain. Running it is impossible to misuse — no poll loop, no accidental background drain (drain is destructive and races your foreground drains).
 
 If you dispatched a child this turn and a report is expected, collect before answering the operator or making a final claim. The only exception is when the operator explicitly asked you only to queue work.
