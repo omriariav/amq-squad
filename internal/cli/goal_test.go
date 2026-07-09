@@ -463,19 +463,14 @@ func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
 		return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: "codex", Title: "amq:issue-96:cto"}}, nil
 	}
 	oldSend := sendPromptToPane
-	oldWait := waitPaneSettledForSend
 	var events []string
 	sendPromptToPane = func(paneID, prompt string) error {
 		events = append(events, "send:"+paneID+"\x00"+prompt)
 		return nil
 	}
-	waitPaneSettledForSend = func(paneID string) {
-		events = append(events, "settle:"+paneID)
-	}
 	t.Cleanup(func() {
 		statusPaneLister = oldLister
 		sendPromptToPane = oldSend
-		waitPaneSettledForSend = oldWait
 	})
 
 	stdout, stderr, err := captureOutput(t, func() error {
@@ -484,7 +479,7 @@ func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("goal start --yes: %v\nstderr:\n%s", err, stderr)
 	}
-	if len(events) != 2 || events[0] != "settle:%7" || !strings.HasPrefix(events[1], "send:%7\x00/goal --goal") || !strings.Contains(events[1], "ship safely") {
+	if len(events) != 1 || !strings.HasPrefix(events[0], "send:%7\x00/goal --goal") || !strings.Contains(events[0], "ship safely") {
 		t.Fatalf("goal start delivery events = %+v", events)
 	}
 	env := decodeJSONEnvelope[goalStartData](t, stdout)

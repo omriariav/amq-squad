@@ -42,6 +42,12 @@ const (
 	dispatchSubmitUnconfirmed = "submit_unconfirmed"
 )
 
+const (
+	dispatchNoWait                 = "none"
+	dispatchAnswerDefaultWaitFor   = "drained"
+	dispatchAnswerDefaultWaitAfter = 60 * time.Second
+)
+
 type dispatchEnvelopeData struct {
 	Session   string          `json:"session"`
 	Role      string          `json:"role"`
@@ -89,6 +95,8 @@ func runDispatch(args []string) error {
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	forceFlag := fs.Bool("force", false, "nudge the pane even if the agent looks busy (mid-turn)")
 	noWakeFlag := fs.Bool("no-wake", false, "queue the durable task without nudging the pane")
+	waitForFlag := fs.String("wait-for", "", "AMQ receipt stage to wait for after send (default: drained for --kind answer; use none to disable)")
+	waitTimeoutFlag := fs.Duration("wait-timeout", dispatchAnswerDefaultWaitAfter, "maximum time to wait for the AMQ receipt stage")
 	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
 	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	createTaskFlag := fs.Bool("create-task", false, "create and link a native task-store task before dispatch")
@@ -101,7 +109,8 @@ Usage:
   amq-squad dispatch [--project DIR] [--profile NAME] --session S --role ROLE
                      [--from HANDLE] [--thread THREAD] [--kind todo] --subject SUBJ
                      (--body TEXT | --body-file FILE) [--priority P]
-                     [--force] [--no-wake] [--override-namespace-conflict --reason WHY]
+                     [--force] [--no-wake] [--wait-for STAGE] [--wait-timeout DURATION]
+                     [--override-namespace-conflict --reason WHY]
                      [--create-task | --task ID] [--json]
 
 The deterministic lead-to-child dispatch. It does two things, in order:
@@ -229,10 +238,14 @@ Examples:
 		}
 	}
 
-	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag)
+	waitFor := dispatchReceiptWaitFor(*kindFlag, *waitForFlag)
+	waitTimeout := *waitTimeoutFlag
+	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag, waitFor, waitTimeout)
 	out, err := runAMQCommand(amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: sendCmd})
 	if err != nil {
-		return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
+		if !dispatchSendWaitTimedOut(out, err, waitFor) {
+			return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
+		}
 	}
 	msgID := parseSentMessageID(string(out))
 	receipt.MessageID = msgID
@@ -240,6 +253,12 @@ Examples:
 	receipt.Thread = strings.TrimSpace(*threadFlag)
 	receipt.Status = "written_to_amq"
 	receipt.addStage("written_to_amq", "durable AMQ message written to recipient inbox")
+	waitTimedOut := dispatchSendWaitTimedOut(out, err, waitFor)
+	if waitTimedOut {
+		receipt.addStage("amq_wait_timeout", fmt.Sprintf("durable message queued, but %s receipt was not observed before timeout %s; do not re-send", waitFor, waitTimeout))
+	} else if waitFor != "" {
+		receipt.addStage("amq_wait_"+waitFor, fmt.Sprintf("amq send waited for %s receipt with timeout %s", waitFor, waitTimeout))
+	}
 	if taskID != "" {
 		linked, lerr := dispatchLinkTask(projectDir, profile, workstream, taskID, taskstore.Dispatch{
 			Sender:    from,
@@ -274,8 +293,16 @@ Examples:
 			if taskID != "" {
 				taskText = fmt.Sprintf(" — task %s", taskID)
 			}
-			fmt.Printf("Dispatched %s to %s (handle %s) on session %s — msg %s%s (root %s)\n",
-				*kindFlag, *roleFlag, member.Handle, workstream, msgID, taskText, ctx.Root)
+			waitText := ""
+			if waitFor != "" {
+				if waitTimedOut {
+					waitText = fmt.Sprintf("; queued, %s receipt unconfirmed after %s; do NOT re-send, nudge drain instead", waitFor, waitTimeout)
+				} else {
+					waitText = fmt.Sprintf("; waited for %s receipt up to %s", waitFor, waitTimeout)
+				}
+			}
+			fmt.Printf("Dispatched %s to %s (handle %s) on session %s — msg %s%s (root %s%s)\n",
+				*kindFlag, *roleFlag, member.Handle, workstream, msgID, taskText, ctx.Root, waitText)
 		} else {
 			if msg := strings.TrimSpace(string(out)); msg != "" {
 				fmt.Println(msg)
@@ -553,7 +580,7 @@ func parseSentMessageID(out string) string {
 // dispatchSendArgs builds the `amq send` argv for a dispatch: a durable message
 // to the resolved root from the lead handle to the child handle. The body is
 // always passed (it is required and validated upstream). Pure + table-testable.
-func dispatchSendArgs(root, from, to, thread, kind, subject, body, priority string) []string {
+func dispatchSendArgs(root, from, to, thread, kind, subject, body, priority, waitFor string, waitTimeout time.Duration) []string {
 	args := []string{"send", "--root", root, "--me", from, "--to", to}
 	if th := strings.TrimSpace(thread); th != "" {
 		args = append(args, "--thread", th)
@@ -568,7 +595,38 @@ func dispatchSendArgs(root, from, to, thread, kind, subject, body, priority stri
 	if p := strings.TrimSpace(priority); p != "" {
 		args = append(args, "--priority", p)
 	}
+	if w := strings.TrimSpace(waitFor); w != "" {
+		args = append(args, "--wait-for", w)
+		if waitTimeout > 0 {
+			args = append(args, "--wait-timeout", waitTimeout.String())
+		}
+	}
 	return args
+}
+
+func dispatchReceiptWaitFor(kind, explicit string) string {
+	explicit = strings.TrimSpace(explicit)
+	if strings.EqualFold(explicit, dispatchNoWait) {
+		return ""
+	}
+	if explicit != "" {
+		return explicit
+	}
+	if strings.EqualFold(strings.TrimSpace(kind), "answer") {
+		return dispatchAnswerDefaultWaitFor
+	}
+	return ""
+}
+
+func dispatchSendWaitTimedOut(out []byte, err error, waitFor string) bool {
+	if err == nil || strings.TrimSpace(waitFor) == "" {
+		return false
+	}
+	if parseSentMessageID(string(out)) == "" {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timed out waiting")
 }
 
 // resolveDispatchSender picks the AMQ handle the dispatched task is sent FROM.

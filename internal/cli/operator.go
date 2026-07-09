@@ -393,7 +393,7 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 		return fmt.Errorf("resolve amq root for %s: %w", o.Command, err)
 	}
 	ctx.Me = o.From
-	args := dispatchSendArgs(ctx.Root, o.From, o.To, o.Thread, o.Kind, o.Subject, o.Body, "")
+	args := dispatchSendArgs(ctx.Root, o.From, o.To, o.Thread, o.Kind, o.Subject, o.Body, "", "", 0)
 	raw, err := runAMQCommand(amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
 	if err != nil {
 		return fmt.Errorf("%s send to %s: %w", o.Command, o.To, err)

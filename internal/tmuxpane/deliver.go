@@ -110,11 +110,13 @@ func SendKeysToPane(paneID string, keys ...string) error {
 // SendPromptToPane delivers prompt to the exact tmux pane and submits it with an
 // explicit Enter. The prompt is staged into a tmux paste buffer via stdin
 // (`load-buffer -`), never a shell string or argv, so multi-line text, quotes,
-// and shell metacharacters are preserved verbatim. For MULTI-LINE text it pastes
-// with `-p` (bracketed paste) so embedded newlines do not submit the prompt
-// prematurely; the trailing Enter is the single submit event. A SINGLE-LINE
-// prompt is pasted WITHOUT `-p` (see pasteBufferArgs). Returns *DeadPaneError
-// when the pane is gone.
+// and shell metacharacters are preserved verbatim. It first waits, bounded, for
+// the target pane to stop drawing so single-line prompts do not race a cold TUI's
+// input readiness and multi-line bracketed paste is not echoed as literal marker
+// text. For MULTI-LINE text it pastes with `-p` (bracketed paste) so embedded
+// newlines do not submit the prompt prematurely; the trailing Enter is the
+// single submit event. A SINGLE-LINE prompt is pasted WITHOUT `-p` (see
+// pasteBufferArgs). Returns *DeadPaneError when the pane is gone.
 func SendPromptToPane(paneID, prompt string) error {
 	if strings.TrimSpace(paneID) == "" {
 		return fmt.Errorf("send: empty pane id")
@@ -122,16 +124,12 @@ func SendPromptToPane(paneID, prompt string) error {
 	if !PaneExists(paneID) {
 		return &DeadPaneError{PaneID: paneID, Err: fmt.Errorf("display-message returned no pane")}
 	}
+	// Freshly-spawned agent TUIs can accept pane text before their input layer is
+	// ready to submit it. Keep this one bounded wait at the delivery boundary so
+	// all pane prompt paths (dispatch fallback, manual send, /rename, /goal) share
+	// the same cold-pane protection.
+	waitPaneSettled(paneID)
 	bracketed := promptNeedsBracketedPaste(prompt)
-	if bracketed {
-		// A bracketed paste's ESC[200~/ESC[201~ wrappers are only honored once the
-		// agent TUI has enabled bracketed-paste mode (DECSET 2004), which a
-		// freshly-spawned pane does late in its boot. Wait for the pane to finish
-		// drawing (its output stops changing) before pasting, so the markers are
-		// consumed instead of echoed as literal "[200~" text and the body's
-		// embedded newlines are not submitted line-by-line. Best-effort + bounded.
-		waitPaneSettled(paneID)
-	}
 	// Stage the prompt in a unique buffer via stdin — the text never appears on
 	// a command line, so no quoting/metacharacter handling is required, and a
 	// per-send name keeps concurrent sends from clobbering each other.
@@ -176,13 +174,6 @@ func pasteBufferArgs(buf, paneID, prompt string) []string {
 		return []string{"paste-buffer", "-d", "-p", "-b", buf, "-t", paneID}
 	}
 	return []string{"paste-buffer", "-d", "-b", buf, "-t", paneID}
-}
-
-// WaitPaneSettled exposes the same bounded TUI-readiness wait used before
-// bracketed paste, for single-line control deliveries that still need the TUI to
-// be ready before the final Enter is sent.
-func WaitPaneSettled(paneID string) {
-	waitPaneSettled(paneID)
 }
 
 // waitPaneSettled blocks (bounded) until the pane's visible content stops
