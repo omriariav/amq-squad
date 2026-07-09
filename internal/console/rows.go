@@ -197,6 +197,20 @@ func sortThreadsNewest(s state.Session, f Filter) []state.ThreadSummary {
 	return out
 }
 
+func sortExternalEvidence(s state.Session, f Filter) []state.ExternalEvidenceRow {
+	threads := make(map[string]state.ThreadSummary, len(s.Coordination.Threads))
+	for _, t := range s.Coordination.Threads {
+		threads[t.ID] = t
+	}
+	out := make([]state.ExternalEvidenceRow, 0, len(s.Coordination.ExternalEvidence))
+	for _, row := range s.Coordination.ExternalEvidence {
+		if thread, ok := threads[row.Thread]; ok && f.matchThread(thread) {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 // statusRank orders thread statuses by attention within a triage tier.
 func statusRank(s state.ThreadStatus) int {
 	switch s {

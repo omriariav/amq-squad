@@ -33,6 +33,33 @@ func runStatusExec(t *testing.T, s statusExecution) (string, error) {
 	return buf.String(), err
 }
 
+func seedStatusExternalEvidenceMessage(t *testing.T, agentDir string) {
+	t.Helper()
+	dir := filepath.Join(agentDir, "inbox", "cur")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `---json
+{
+  "schema": 1,
+  "id": "ext1",
+  "from": "kanban",
+  "to": ["cto"],
+  "thread": "task/KAN-42",
+  "subject": "external kanban evidence",
+  "created": "2026-06-22T11:55:00Z",
+  "kind": "status",
+  "labels": ["orchestrator", "orchestrator:kanban", "task-state:blocked", "blocking"],
+  "context": {"orchestrator":{"task":{"id":"KAN-42"}}}
+}
+---
+body
+`
+	if err := os.WriteFile(filepath.Join(dir, "ext1.md"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func actionsByKind(actions []runtimeActionJSON) map[string]runtimeActionJSON {
 	out := map[string]runtimeActionJSON{}
 	for _, action := range actions {
@@ -125,6 +152,40 @@ func TestRunStatusProjectTargetsSessionOtherDir(t *testing.T) {
 	}
 	if env.Data.Workstream != "issue-99" {
 		t.Fatalf("status --project workstream = %q, want issue-99", env.Data.Workstream)
+	}
+}
+
+func TestExecuteStatusJSONIncludesExternalEvidence(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	project := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Role: "cto", Handle: "cto", Session: "issue-96", CWD: project, AgentPID: 11,
+	})
+	seedStatusExternalEvidenceMessage(t, agentDir)
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       project,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Profile:          team.DefaultProfile,
+		Probe:            statusProbe(map[int]bool{}, map[int]bool{}, notifyNow),
+		JSON:             true,
+	})
+	if err != nil {
+		t.Fatalf("executeStatus: %v", err)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if len(env.Data.ExternalEvidence) != 1 {
+		t.Fatalf("external_evidence = %+v, want one row", env.Data.ExternalEvidence)
+	}
+	row := env.Data.ExternalEvidence[0]
+	if row.Source != "amq-kanban" || row.SourceLabel != "orchestrator:kanban" || row.ExternalTaskID != "KAN-42" || row.State != "blocked" || row.Mutable {
+		t.Fatalf("external evidence row = %+v", row)
+	}
+	if len(env.Data.Records) != 1 || env.Data.Records[0].Handle != "cto" {
+		t.Fatalf("native status records changed: %+v", env.Data.Records)
 	}
 }
 
