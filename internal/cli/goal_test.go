@@ -465,7 +465,6 @@ func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
 	oldSend := sendPromptToPane
 	var events []string
 	sendPromptToPane = func(paneID, prompt string) error {
-		events = append(events, "settle:"+paneID)
 		events = append(events, "send:"+paneID+"\x00"+prompt)
 		return nil
 	}
@@ -480,7 +479,7 @@ func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("goal start --yes: %v\nstderr:\n%s", err, stderr)
 	}
-	if len(events) != 2 || events[0] != "settle:%7" || !strings.HasPrefix(events[1], "send:%7\x00/goal --goal") || !strings.Contains(events[1], "ship safely") {
+	if len(events) != 1 || !strings.HasPrefix(events[0], "send:%7\x00/goal --goal") || !strings.Contains(events[0], "ship safely") {
 		t.Fatalf("goal start delivery events = %+v", events)
 	}
 	env := decodeJSONEnvelope[goalStartData](t, stdout)

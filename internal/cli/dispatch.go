@@ -243,7 +243,9 @@ Examples:
 	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag, waitFor, waitTimeout)
 	out, err := runAMQCommand(amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: sendCmd})
 	if err != nil {
-		return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
+		if !dispatchSendWaitTimedOut(out, err, waitFor) {
+			return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
+		}
 	}
 	msgID := parseSentMessageID(string(out))
 	receipt.MessageID = msgID
@@ -251,7 +253,10 @@ Examples:
 	receipt.Thread = strings.TrimSpace(*threadFlag)
 	receipt.Status = "written_to_amq"
 	receipt.addStage("written_to_amq", "durable AMQ message written to recipient inbox")
-	if waitFor != "" {
+	waitTimedOut := dispatchSendWaitTimedOut(out, err, waitFor)
+	if waitTimedOut {
+		receipt.addStage("amq_wait_timeout", fmt.Sprintf("durable message queued, but %s receipt was not observed before timeout %s; do not re-send", waitFor, waitTimeout))
+	} else if waitFor != "" {
 		receipt.addStage("amq_wait_"+waitFor, fmt.Sprintf("amq send waited for %s receipt with timeout %s", waitFor, waitTimeout))
 	}
 	if taskID != "" {
@@ -290,7 +295,11 @@ Examples:
 			}
 			waitText := ""
 			if waitFor != "" {
-				waitText = fmt.Sprintf("; waited for %s receipt up to %s", waitFor, waitTimeout)
+				if waitTimedOut {
+					waitText = fmt.Sprintf("; queued, %s receipt unconfirmed after %s; do NOT re-send, nudge drain instead", waitFor, waitTimeout)
+				} else {
+					waitText = fmt.Sprintf("; waited for %s receipt up to %s", waitFor, waitTimeout)
+				}
 			}
 			fmt.Printf("Dispatched %s to %s (handle %s) on session %s — msg %s%s (root %s%s)\n",
 				*kindFlag, *roleFlag, member.Handle, workstream, msgID, taskText, ctx.Root, waitText)
@@ -607,6 +616,17 @@ func dispatchReceiptWaitFor(kind, explicit string) string {
 		return dispatchAnswerDefaultWaitFor
 	}
 	return ""
+}
+
+func dispatchSendWaitTimedOut(out []byte, err error, waitFor string) bool {
+	if err == nil || strings.TrimSpace(waitFor) == "" {
+		return false
+	}
+	if parseSentMessageID(string(out)) == "" {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timed out waiting")
 }
 
 // resolveDispatchSender picks the AMQ handle the dispatched task is sent FROM.

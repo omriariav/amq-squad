@@ -176,13 +176,6 @@ func pasteBufferArgs(buf, paneID, prompt string) []string {
 	return []string{"paste-buffer", "-d", "-b", buf, "-t", paneID}
 }
 
-// WaitPaneSettled exposes the same bounded TUI-readiness wait used before
-// bracketed paste, for single-line control deliveries that still need the TUI to
-// be ready before the final Enter is sent.
-func WaitPaneSettled(paneID string) {
-	waitPaneSettled(paneID)
-}
-
 // waitPaneSettled blocks (bounded) until the pane's visible content stops
 // changing across a capture interval — the signal that a freshly-spawned TUI has
 // finished drawing and (with it) enabled bracketed-paste mode. Best-effort: it
