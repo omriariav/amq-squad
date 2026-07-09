@@ -88,6 +88,8 @@ func runDispatch(args []string) error {
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	forceFlag := fs.Bool("force", false, "nudge the pane even if the agent looks busy (mid-turn)")
 	noWakeFlag := fs.Bool("no-wake", false, "queue the durable task without nudging the pane")
+	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
+	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	createTaskFlag := fs.Bool("create-task", false, "create and link a native task-store task before dispatch")
 	taskIDFlag := fs.String("task", "", "link dispatch metadata to an existing native task id")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
@@ -98,7 +100,8 @@ Usage:
   amq-squad dispatch [--project DIR] [--profile NAME] --session S --role ROLE
                      [--from HANDLE] [--thread THREAD] [--kind todo] --subject SUBJ
                      (--body TEXT | --body-file FILE) [--priority P]
-                     [--force] [--no-wake] [--create-task | --task ID] [--json]
+                     [--force] [--no-wake] [--override-namespace-conflict --reason WHY]
+                     [--create-task | --task ID] [--json]
 
 The deterministic lead-to-child dispatch. It does two things, in order:
   1. Sends a DURABLE AMQ message to the workstream's resolved root (the single
@@ -165,7 +168,10 @@ Examples:
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflict("dispatch", projectDir, profile, workstream, flagWasSet(fs, "profile")); err != nil {
+	if err := ensureNoNamespaceConflictWithOverride("dispatch", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
+		Allowed: *overrideNamespaceConflict,
+		Reason:  *overrideNamespaceReason,
+	}); err != nil {
 		return err
 	}
 	ns := squadnamespace.Resolve(projectDir, profile, workstream)

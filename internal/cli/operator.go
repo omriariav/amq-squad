@@ -196,17 +196,19 @@ func runOperatorAnswer(args []string) error {
 	approved := fs.Bool("approved", false, "send APPROVED answer")
 	denied := fs.Bool("denied", false, "send DENIED answer")
 	reasonFlag := fs.String("reason", "", "optional reason to include in the answer body")
+	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad operator answer - answer an operator gate
 
 Usage:
-  amq-squad operator answer [--project DIR] [--profile NAME] [--session S] --gate TOPIC --to HANDLE (--approved|--denied) [--reason TEXT] [--json]
+  amq-squad operator answer [--project DIR] [--profile NAME] [--session S] --gate TOPIC --to HANDLE (--approved|--denied) [--reason TEXT] [--override-namespace-conflict] [--json]
 
 Sends an AMQ answer from the configured operator handle on gate/<topic>. This
 first-class command avoids hand-writing the operator protocol. The --to handle
 is required for this release slice so the answer cannot accidentally target the
-non-runnable operator mailbox.
+non-runnable operator mailbox. When --override-namespace-conflict is set,
+--reason is also the required namespace audit reason.
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -225,6 +227,12 @@ non-runnable operator mailbox.
 	}
 	projectDir, profile, t, workstream, operatorHandle, err := resolveOperatorCommandContext(*projectFlag, *profileFlag, *sessionFlag, flagWasSet(fs, "project"), flagWasSet(fs, "session"))
 	if err != nil {
+		return err
+	}
+	if err := ensureNoNamespaceConflictWithOverride("operator answer", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
+		Allowed: *overrideNamespaceConflict,
+		Reason:  *reasonFlag,
+	}); err != nil {
 		return err
 	}
 	if err := ensureOperatorCommandTarget(t, to, "operator answer"); err != nil {
@@ -263,12 +271,14 @@ func runOperatorDirective(args []string) error {
 	subjectFlag := fs.String("subject", "", "directive subject text, without the DIRECTIVE: prefix")
 	bodyFlag := fs.String("body", "", "directive body")
 	bodyFileFlag := fs.String("body-file", "", "read directive body from file ('-' for stdin)")
+	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
+	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad operator directive - send a directive to a visible lead
 
 Usage:
-  amq-squad operator directive [--project DIR] [--profile NAME] [--session S] --to HANDLE --subject TEXT (--body TEXT | --body-file FILE) [--json]
+  amq-squad operator directive [--project DIR] [--profile NAME] [--session S] --to HANDLE --subject TEXT (--body TEXT | --body-file FILE) [--override-namespace-conflict --reason WHY] [--json]
 
 Sends a DIRECTIVE todo from the configured operator handle on the canonical
 p2p/<lead>__<operator> thread. Directives are steering data; they do not answer
@@ -292,6 +302,12 @@ or clear gate/<topic> threads.
 	}
 	projectDir, profile, t, workstream, operatorHandle, err := resolveOperatorCommandContext(*projectFlag, *profileFlag, *sessionFlag, flagWasSet(fs, "project"), flagWasSet(fs, "session"))
 	if err != nil {
+		return err
+	}
+	if err := ensureNoNamespaceConflictWithOverride("operator directive", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
+		Allowed: *overrideNamespaceConflict,
+		Reason:  *overrideNamespaceReason,
+	}); err != nil {
 		return err
 	}
 	if err := ensureOperatorCommandTarget(t, to, "operator directive"); err != nil {

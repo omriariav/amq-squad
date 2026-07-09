@@ -268,6 +268,7 @@ var completionCommonFlags = []string{
 	"--operator",
 	"--orchestrated",
 	"--override-boundary",
+	"--override-namespace-conflict",
 	"--owner",
 	"--owner-id",
 	"--personas",

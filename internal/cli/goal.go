@@ -282,12 +282,14 @@ func runGoalApply(args []string) error {
 	goalIDFlag := fs.String("goal-id", "", "approved goal identifier (recorded in JSON output)")
 	gateFlag := fs.String("gate", "", "gate topic carrying the operator APPROVED answer")
 	yes := fs.Bool("yes", false, "confirm apply without an interactive prompt")
+	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
+	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned goal_apply envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad goal apply - apply an operator-approved visible lead goal
 
 Usage:
-  amq-squad goal apply [--project DIR] [--profile NAME] [--session S] [--role ROLE] [--goal-id ID] --gate TOPIC --yes [--json]
+  amq-squad goal apply [--project DIR] [--profile NAME] [--session S] [--role ROLE] [--goal-id ID] --gate TOPIC --yes [--override-namespace-conflict --reason WHY] [--json]
 
 Verifies that gate/<topic> contains a real operator APPROVED answer to the
 resolved visible lead, reads the native goal already recorded on that lead's
@@ -305,7 +307,10 @@ command is confirm-gated; pass --yes after reviewing the gate and lead state.
 	if gate == "" {
 		return usageErrorf("goal apply requires --gate <topic>")
 	}
-	target, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal apply")
+	target, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal apply", namespaceConflictOverrideOptions{
+		Allowed: *overrideNamespaceConflict,
+		Reason:  *overrideNamespaceReason,
+	})
 	if err != nil {
 		return err
 	}
@@ -358,12 +363,14 @@ func runGoalStart(args []string) error {
 	registerOrchestrator := fs.String("register-orchestrator", "", "before delivery, register the current pane as external orchestrator handle (default: orchestrator)")
 	dryRun := fs.Bool("dry-run", false, "preview the inferred start plan without delivering")
 	yes := fs.Bool("yes", false, "confirm delivery without an interactive prompt")
+	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
+	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned goal_start envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad goal start - preview or deliver a goal to the visible lead
 
 Usage:
-  amq-squad goal start [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE]] [--dry-run] [--yes] [--json]
+  amq-squad goal start [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE]] [--dry-run] [--yes] [--override-namespace-conflict --reason WHY] [--json]
 
 Infers the current team profile, session, execution mode, and visible lead target
 from the project. Use --dry-run to inspect the plan. Non-dry-run delivery is
@@ -384,7 +391,7 @@ confirm-gated and requires --yes in this first implementation slice.
 	// intentionally not applied here; the preview resolves against the configured
 	// lead, matching delivery without registration.
 	if *dryRun {
-		opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start")
+		opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", namespaceConflictOverrideOptions{})
 		if err != nil {
 			return err
 		}
@@ -400,14 +407,15 @@ confirm-gated and requires --yes in this first implementation slice.
 	if !*yes {
 		return usageErrorf("goal start delivery requires --yes (or run --dry-run to preview first)")
 	}
+	override := namespaceConflictOverrideOptions{Allowed: *overrideNamespaceConflict, Reason: *overrideNamespaceReason}
 	if flagWasSet(fs, "register-orchestrator") {
-		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start")
+		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", override)
 		if err != nil {
 			return err
 		}
 		*roleFlag = role
 	}
-	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start")
+	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", override)
 	if err != nil {
 		return err
 	}
@@ -449,12 +457,14 @@ func runGoalDeliver(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	registerOrchestrator := fs.String("register-orchestrator", "", "before delivery, register the current pane as external orchestrator handle (default: orchestrator)")
+	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
+	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad goal deliver - deliver native /goal as a control action
 
 Usage:
-  amq-squad goal deliver [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE]] [--json]
+  amq-squad goal deliver [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE]] [--override-namespace-conflict --reason WHY] [--json]
 
 Delivers a native Codex /goal command to the visible lead as a first-class
 control action. This is not an ordinary prompt send: it preserves the busy guard
@@ -469,14 +479,15 @@ runtime accepts goal control messages safely.
 	if goal == "" {
 		return usageErrorf("goal deliver requires --goal TEXT")
 	}
+	override := namespaceConflictOverrideOptions{Allowed: *overrideNamespaceConflict, Reason: *overrideNamespaceReason}
 	if flagWasSet(fs, "register-orchestrator") {
-		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver")
+		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver", override)
 		if err != nil {
 			return err
 		}
 		*roleFlag = role
 	}
-	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver")
+	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver", override)
 	if err != nil {
 		return err
 	}
@@ -496,8 +507,8 @@ runtime accepts goal control messages safely.
 	return nil
 }
 
-func resolveGoalDeliveryOptions(projectFlag, profileFlag, sessionFlag, roleFlag, goal string, projectSet, profileSet, sessionSet bool, command string) (goalDeliveryOptions, error) {
-	opts, err := resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag, projectSet, profileSet, sessionSet, command)
+func resolveGoalDeliveryOptions(projectFlag, profileFlag, sessionFlag, roleFlag, goal string, projectSet, profileSet, sessionSet bool, command string, override namespaceConflictOverrideOptions) (goalDeliveryOptions, error) {
+	opts, err := resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag, projectSet, profileSet, sessionSet, command, override)
 	if err != nil {
 		return goalDeliveryOptions{}, err
 	}
@@ -505,7 +516,7 @@ func resolveGoalDeliveryOptions(projectFlag, profileFlag, sessionFlag, roleFlag,
 	return opts, nil
 }
 
-func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag string, projectSet, profileSet, sessionSet bool, command string) (goalDeliveryOptions, error) {
+func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag string, projectSet, profileSet, sessionSet bool, command string, override namespaceConflictOverrideOptions) (goalDeliveryOptions, error) {
 	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
 	if err != nil {
 		return goalDeliveryOptions{}, err
@@ -521,7 +532,7 @@ func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag st
 	if err != nil {
 		return goalDeliveryOptions{}, err
 	}
-	if err := ensureNoNamespaceConflict(command, projectDir, profile, workstream, profileSet); err != nil {
+	if err := ensureNoNamespaceConflictWithOverride(command, projectDir, profile, workstream, profileSet, override); err != nil {
 		return goalDeliveryOptions{}, err
 	}
 	role := strings.TrimSpace(roleFlag)
@@ -774,7 +785,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle string) error {
 	return nil
 }
 
-func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, roleFlag, handle string, projectSet, profileSet, sessionSet bool, command string) (string, error) {
+func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, roleFlag, handle string, projectSet, profileSet, sessionSet bool, command string, override namespaceConflictOverrideOptions) (string, error) {
 	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
 	if err != nil {
 		return "", err
@@ -790,7 +801,7 @@ func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, 
 	if err != nil {
 		return "", err
 	}
-	if err := ensureNoNamespaceConflict(command, projectDir, profile, workstream, profileSet); err != nil {
+	if err := ensureNoNamespaceConflictWithOverride(command, projectDir, profile, workstream, profileSet, override); err != nil {
 		return "", err
 	}
 	if err := ensureGoalOrchestratorMember(projectDir, profile, workstream, strings.TrimSpace(handle)); err != nil {
