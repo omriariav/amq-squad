@@ -300,6 +300,9 @@ func runRunStart(args []string, version string) error {
 	// profile already exists, --roles is a no-op and we must NOT assume the lead
 	// is cto: goal delivery infers the profile's configured lead instead.
 	freshRoster := len(newTeamArgs) > 0 && !teamPresent
+	if err := ensureRunStartExistingProfileMatchesSession(project, *profileFlag, session, *rolesFlag, teamPresent, freshRoster); err != nil {
+		return err
+	}
 
 	leadDisplay := explicitLead
 	if explicitLead == "" {
@@ -419,6 +422,64 @@ func profileOrDefault(profile string) string {
 		return "default"
 	}
 	return profile
+}
+
+func ensureRunStartExistingProfileMatchesSession(project, profile, session, roles string, teamPresent, freshRoster bool) error {
+	if !teamPresent || freshRoster {
+		return nil
+	}
+	profileName := profileOrDefault(profile)
+	t, err := team.ReadProfile(project, profileName)
+	if err != nil {
+		return fmt.Errorf("read team profile %q: %w", profileName, err)
+	}
+	active, skipped := filterMembersBySession(t.Members, session)
+	if len(active) > 0 || len(t.Members) == 0 || len(skipped) == 0 {
+		return nil
+	}
+	pins := pinnedSessionList(skipped)
+	pinned := strings.Join(pins, ", ")
+	if len(pins) == 1 {
+		pinned = pins[0]
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "run start refused: profile %q in %s is pinned to workstream %s, not %q; no team members would run for the requested session.\n", profileName, project, pinned, session)
+	if strings.TrimSpace(roles) != "" {
+		fmt.Fprintf(&b, "--roles %q would be ignored because profile %q already exists; run start uses the existing roster instead of replacing it.\n", roles, profileName)
+	}
+	firstPinned := pins[0]
+	fmt.Fprintf(&b, "Fixes:\n")
+	fmt.Fprintf(&b, "  - run the existing roster on its pinned session: amq-squad run start --project %s%s --session %s\n", shellQuote(project), runStartProfileFixArg(profile), shellQuote(firstPinned))
+	fmt.Fprintf(&b, "  - create a session-pinned roster under a named profile: amq-squad run start --project %s --profile <name> --session %s --roles %s\n", shellQuote(project), shellQuote(session), runStartRolesFixArg(roles))
+	return usageErrorf("%s", strings.TrimRight(b.String(), "\n"))
+}
+
+func pinnedSessionList(members []team.Member) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, m := range members {
+		session := strings.TrimSpace(m.Session)
+		if session == "" || seen[session] {
+			continue
+		}
+		seen[session] = true
+		out = append(out, session)
+	}
+	return out
+}
+
+func runStartProfileFixArg(profile string) string {
+	if strings.TrimSpace(profile) == "" {
+		return ""
+	}
+	return " --profile " + shellQuote(profile)
+}
+
+func runStartRolesFixArg(roles string) string {
+	if strings.TrimSpace(roles) == "" {
+		return "<roles>"
+	}
+	return shellQuote(roles)
 }
 
 // stripFlagValue returns args with every `flag value` pair removed, and whether

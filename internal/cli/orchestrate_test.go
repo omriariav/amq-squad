@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // withStubbedTmux swaps orchestrateTmuxRun for a recorder and restores it.
@@ -193,6 +195,63 @@ func TestRunStartExistingProfileWithRolesInfersLead(t *testing.T) {
 	}
 	if !strings.Contains(out, "already exists") {
 		t.Fatalf("should note the existing profile / skipped roster:\n%s", out)
+	}
+}
+
+func TestRunStartExistingDefaultProfilePinnedElsewhereFailsFast(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--project", dir, "--session", "workspace-cli", "--roles", "cto,fullstack", "--orchestrated", "--lead", "cto"})
+	}); err != nil {
+		t.Fatalf("setup new team: %v", err)
+	}
+	out, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "dev", "--roles", "cto", "--lead", "cto", "--binary", "cto=codex", "--go"}, "test")
+	})
+	if err == nil {
+		t.Fatal("run start should fail fast when existing profile has zero members for requested session")
+	}
+	for _, want := range []string{
+		`profile "default"`,
+		`pinned to workstream workspace-cli, not "dev"`,
+		`no team members would run`,
+		`--roles "cto" would be ignored`,
+		`amq-squad run start --project ` + shellQuote(dir) + ` --session workspace-cli`,
+		`amq-squad run start --project ` + shellQuote(dir) + ` --profile <name> --session dev --roles cto`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q:\n%v", want, err)
+		}
+	}
+	if strings.Contains(out, "spawning team") || strings.Contains(out, "orchestrated run") {
+		t.Fatalf("failure should happen before preview/spawn output, got:\n%s", out)
+	}
+}
+
+func TestRunStartExistingProfileMixedPinsProceed(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Project:      dir,
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "dev"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "workspace-cli"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "dev", "--roles", "cto,qa"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("mixed pins with one runnable member should proceed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "profile default already exists; --roles ignored") {
+		t.Fatalf("existing profile should still explain --roles is ignored:\n%s", out)
+	}
+	if !strings.Contains(out, "Preview OK") {
+		t.Fatalf("preview should validate the runnable member:\n%s", out)
 	}
 }
 
