@@ -145,6 +145,54 @@ func TestResolveAMQEnvWarnsWhenBothFlagsPresent(t *testing.T) {
 	}
 }
 
+func TestResolveAMQEnvForTeamProfileUsesExplicitRootNotSession(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"env\" ] && [ \"$2\" = \"--json\" ]; then\n" +
+		"  saw_root=0\n" +
+		"  saw_session=0\n" +
+		"  root_value=''\n" +
+		"  while [ \"$#\" -gt 0 ]; do\n" +
+		"    case \"$1\" in\n" +
+		"      --root)\n" +
+		"        saw_root=1\n" +
+		"        shift\n" +
+		"        root_value=\"$1\"\n" +
+		"        ;;\n" +
+		"      --session)\n" +
+		"        saw_session=1\n" +
+		"        ;;\n" +
+		"    esac\n" +
+		"    shift\n" +
+		"  done\n" +
+		"  if [ \"$saw_session\" = \"1\" ]; then\n" +
+		"    echo 'fake amq: named-profile status/liveness must not use --session' >&2\n" +
+		"    exit 2\n" +
+		"  fi\n" +
+		"  if [ \"$saw_root\" != \"1\" ]; then\n" +
+		"    echo 'fake amq: named-profile status/liveness must pass --root' >&2\n" +
+		"    exit 2\n" +
+		"  fi\n" +
+		"  printf '{\"root\":\"%s\",\"base_root\":\"%s/.agent-mail/review\",\"me\":\"cto\"}\\n' \"$root_value\" \"$AMQ_TEST_PROJECT\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"echo \"unexpected amq command: $*\" >&2\n" +
+		"exit 1\n"
+	setupFakeAMQScript(t, script)
+	project := t.TempDir()
+	t.Setenv("AMQ_TEST_PROJECT", project)
+
+	got, err := resolveAMQEnvForTeamProfile(project, "review", "review", "cto")
+	if err != nil {
+		t.Fatalf("resolveAMQEnvForTeamProfile: %v", err)
+	}
+	if got.Root != filepath.Join(project, ".agent-mail", "review", "review") {
+		t.Fatalf("Root = %q", got.Root)
+	}
+	if got.SessionName != "review" {
+		t.Fatalf("SessionName = %q, want backfilled review", got.SessionName)
+	}
+}
+
 // TestResolveAMQEnvIncludesStderrOnFailure covers #46: amq env failures
 // must surface stderr text in the wrapped error. Previously cmd.Output()
 // dropped stderr and operators only saw "amq env: exit status N".

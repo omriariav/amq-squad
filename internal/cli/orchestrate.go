@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -16,6 +17,32 @@ import (
 // matching the injectable-runner pattern used elsewhere in this package
 // (externalLeadWakeCommand, runAMQCommand).
 var orchestrateTmuxRun = func(args ...string) error { return exec.Command("tmux", args...).Run() }
+
+var (
+	runStartUpWithVersion   = runUpWithVersion
+	runStartGoalWithVersion = runGoalWithVersion
+
+	runStartLeadReadyTimeout        = 45 * time.Second
+	runStartLeadReadyInitialBackoff = 250 * time.Millisecond
+	runStartLeadReadyMaxBackoff     = 2 * time.Second
+	runStartLeadReadySleep          = time.Sleep
+	runStartLeadReadyNow            = time.Now
+	runStartLeadReadyCheck          = defaultRunStartLeadReadyCheck
+)
+
+type runStartGoalDeliveryOptions struct {
+	Project string
+	Profile string
+	Session string
+	Role    string
+	Goal    string
+	Version string
+}
+
+type runStartLeadReadiness struct {
+	Ready  bool
+	Detail string
+}
 
 func insideTmux() bool { return strings.TrimSpace(os.Getenv("TMUX")) != "" }
 
@@ -253,6 +280,19 @@ func runRunStart(args []string, version string) error {
 	if visibility == visibilityPlan {
 		return usageErrorf("--visibility plan is not valid for run start; it previews by default and creates with --go")
 	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
+	if err := ensureNoNamespaceCreationCollision("run start", project, profile, session); err != nil {
+		return err
+	}
+	teamPresent := teamExistsForProfile(project, *profileFlag)
+	rolesText := strings.TrimSpace(*rolesFlag)
+	freshRoster := rolesText != "" && !teamPresent
+	if err := ensureRunStartExistingProfileMatchesSession(project, *profileFlag, session, *rolesFlag, teamPresent, freshRoster); err != nil {
+		return err
+	}
 	leadMode, err := normalizeLeadMode(*leadModeFlag)
 	if err != nil {
 		return err
@@ -273,7 +313,7 @@ func runRunStart(args []string, version string) error {
 	// the CLI flag layer own things the scripts got wrong (e.g. --binary is a
 	// single role=bin,... string here, matching `team.go`, not repeatable).
 	var newTeamArgs []string
-	if strings.TrimSpace(*rolesFlag) != "" {
+	if rolesText != "" {
 		newTeamArgs = []string{"team", "--project", project}
 		if strings.TrimSpace(*profileFlag) != "" {
 			newTeamArgs = append(newTeamArgs, "--profile", *profileFlag)
@@ -299,7 +339,6 @@ func runRunStart(args []string, version string) error {
 	}
 	upArgs = appendPassthroughArgs(upArgs, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
 
-	teamPresent := teamExistsForProfile(project, *profileFlag)
 	if len(newTeamArgs) == 0 && !teamPresent {
 		return usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", profileOrDefault(*profileFlag), project)
 	}
@@ -314,7 +353,6 @@ func runRunStart(args []string, version string) error {
 	// already exist, i.e. this invocation actually creates the roster. When the
 	// profile already exists, --roles is a no-op and we must NOT assume the lead
 	// is cto: goal delivery infers the profile's configured lead instead.
-	freshRoster := len(newTeamArgs) > 0 && !teamPresent
 	if flagWasSet(fs, "lead-mode") && !freshRoster {
 		return usageErrorf("--lead-mode applies only when run start creates a new roster; for an existing profile use `amq-squad team lead set <role> --lead-mode %s` first", leadMode)
 	}
@@ -354,7 +392,22 @@ func runRunStart(args []string, version string) error {
 		fmt.Printf("  note:    --go with --visibility %s requires a visible tmux pane; run inside tmux or pass --visibility detached.\n", visibility)
 	}
 	if strings.TrimSpace(*goalFlag) != "" {
-		fmt.Printf("  step %d:  amq-squad goal start --session %s --goal %q --yes\n", upStep+1, session, *goalFlag)
+		previewRole := leadDisplay
+		if strings.HasPrefix(previewRole, "(") {
+			resolved, err := resolveRunStartGoalLead(project, profile, explicitLead, freshRoster, leadForNewTeam)
+			if err != nil {
+				return err
+			}
+			previewRole = resolved
+		}
+		previewCmd := runStartGoalRetryCommand(runStartGoalDeliveryOptions{
+			Project: project,
+			Profile: profile,
+			Session: session,
+			Role:    previewRole,
+			Goal:    *goalFlag,
+		})
+		fmt.Printf("  step %d:  %s\n", upStep+1, previewCmd)
 	}
 
 	if !*goFlag {
@@ -376,24 +429,27 @@ func runRunStart(args []string, version string) error {
 	}
 	// 2) spawn
 	quietNotice("spawning team (--visibility %s)...\n", visibility)
-	if err := runUpWithVersion(upArgs, version); err != nil {
+	if err := runStartUpWithVersion(upArgs, version); err != nil {
 		return err
 	}
-	// 3) optional goal delivery. Pass --role only when we know the lead: an
-	// explicit --lead, or the cto default we just created a roster with.
-	// Otherwise let `goal start` infer the profile's configured lead.
+	// 3) optional goal delivery. Resolve the role before waiting so the
+	// fallback command is exact and ready to paste if the cold spawn never
+	// reaches a deliverable pane.
 	if strings.TrimSpace(*goalFlag) != "" {
-		goalArgs := []string{"start", "--project", project, "--session", session, "--goal", *goalFlag, "--yes"}
-		if explicitLead != "" {
-			goalArgs = append(goalArgs, "--role", explicitLead)
-		} else if freshRoster {
-			goalArgs = append(goalArgs, "--role", leadForNewTeam)
+		leadRole, err := resolveRunStartGoalLead(project, profile, explicitLead, freshRoster, leadForNewTeam)
+		if err != nil {
+			return err
 		}
-		if strings.TrimSpace(*profileFlag) != "" {
-			goalArgs = append(goalArgs, "--profile", *profileFlag)
+		opts := runStartGoalDeliveryOptions{
+			Project: project,
+			Profile: profile,
+			Session: session,
+			Role:    leadRole,
+			Goal:    *goalFlag,
+			Version: version,
 		}
-		quietNotice("delivering goal to lead...\n")
-		if err := runGoalWithVersion(goalArgs, version); err != nil {
+		quietNotice("waiting for lead readiness before goal delivery...\n")
+		if err := deliverRunStartGoalWhenReady(opts); err != nil {
 			return err
 		}
 	}
@@ -418,7 +474,7 @@ func runStartPreview(newTeamArgs, upArgs []string, freshRoster, teamPresent bool
 		// session validation, which would let preview print "OK" for a spawn that
 		// `--go` cannot actually perform. The seed is written at --go regardless.
 		validateArgs, seeded := stripFlagValue(upArgs, "--seed-from")
-		if err := runUpWithVersion(append(validateArgs, "--dry-run"), version); err != nil {
+		if err := runStartUpWithVersion(append(validateArgs, "--dry-run"), version); err != nil {
 			return fmt.Errorf("spawn dry-run failed: %w", err)
 		}
 		fmt.Print("\nPreview OK. Re-run with --go to create it.\n")
@@ -445,6 +501,199 @@ func profileOrDefault(profile string) string {
 		return "default"
 	}
 	return profile
+}
+
+func ensureRunStartExistingProfileMatchesSession(project, profile, session, roles string, teamPresent, freshRoster bool) error {
+	if !teamPresent || freshRoster {
+		return nil
+	}
+	profileName := profileOrDefault(profile)
+	t, err := team.ReadProfile(project, profileName)
+	if err != nil {
+		return fmt.Errorf("read team profile %q: %w", profileName, err)
+	}
+	active, skipped := filterMembersBySession(t.Members, session)
+	if len(active) > 0 || len(t.Members) == 0 || len(skipped) == 0 {
+		return nil
+	}
+	pins := pinnedSessionList(skipped)
+	pinned := strings.Join(pins, ", ")
+	if len(pins) == 1 {
+		pinned = pins[0]
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "run start refused: profile %q in %s is pinned to workstream %s, not %q; no team members would run for the requested session.\n", profileName, project, pinned, session)
+	if strings.TrimSpace(roles) != "" {
+		fmt.Fprintf(&b, "--roles %q would be ignored because profile %q already exists; run start uses the existing roster instead of replacing it.\n", roles, profileName)
+	}
+	firstPinned := pins[0]
+	fmt.Fprintf(&b, "Fixes:\n")
+	fmt.Fprintf(&b, "  - run the existing roster on its pinned session: amq-squad run start --project %s%s --session %s\n", shellQuote(project), runStartProfileFixArg(profile), shellQuote(firstPinned))
+	fmt.Fprintf(&b, "  - create a session-pinned roster under a named profile: amq-squad run start --project %s --profile <name> --session %s --roles %s\n", shellQuote(project), shellQuote(session), runStartRolesFixArg(roles))
+	return usageErrorf("%s", strings.TrimRight(b.String(), "\n"))
+}
+
+func pinnedSessionList(members []team.Member) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, m := range members {
+		session := strings.TrimSpace(m.Session)
+		if session == "" || seen[session] {
+			continue
+		}
+		seen[session] = true
+		out = append(out, session)
+	}
+	return out
+}
+
+func runStartProfileFixArg(profile string) string {
+	if strings.TrimSpace(profile) == "" {
+		return ""
+	}
+	return " --profile " + shellQuote(profile)
+}
+
+func runStartRolesFixArg(roles string) string {
+	if strings.TrimSpace(roles) == "" {
+		return "<roles>"
+	}
+	return shellQuote(roles)
+}
+
+func resolveRunStartGoalLead(project, profile, explicitLead string, freshRoster bool, leadForNewTeam string) (string, error) {
+	if strings.TrimSpace(explicitLead) != "" {
+		return strings.TrimSpace(explicitLead), nil
+	}
+	if freshRoster {
+		return strings.TrimSpace(leadForNewTeam), nil
+	}
+	t, err := team.ReadProfile(project, profile)
+	if err != nil {
+		return "", fmt.Errorf("read team profile %q for goal delivery lead: %w", profile, err)
+	}
+	lead := strings.TrimSpace(t.Lead)
+	if lead == "" && len(t.Members) == 1 {
+		lead = strings.TrimSpace(t.Members[0].Role)
+	}
+	if lead == "" {
+		return "", usageErrorf("cannot infer lead role for goal delivery from profile %q; pass --lead", profile)
+	}
+	return lead, nil
+}
+
+func deliverRunStartGoalWhenReady(opts runStartGoalDeliveryOptions) error {
+	retryCmd := runStartGoalRetryCommand(opts)
+	if err := waitForRunStartLeadReady(opts); err != nil {
+		printRunStartGoalRetry(retryCmd)
+		return err
+	}
+	quietNotice("delivering goal to lead...\n")
+	args := []string{
+		"start",
+		"--project", opts.Project,
+		"--profile", opts.Profile,
+		"--session", opts.Session,
+		"--role", opts.Role,
+		"--goal", opts.Goal,
+		"--yes",
+	}
+	if err := runStartGoalWithVersion(args, opts.Version); err != nil {
+		printRunStartGoalRetry(retryCmd)
+		return fmt.Errorf("goal delivery failed after lead became ready: %w", err)
+	}
+	return nil
+}
+
+func waitForRunStartLeadReady(opts runStartGoalDeliveryOptions) error {
+	timeout := runStartLeadReadyTimeout
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+	backoff := runStartLeadReadyInitialBackoff
+	if backoff <= 0 {
+		backoff = 250 * time.Millisecond
+	}
+	maxBackoff := runStartLeadReadyMaxBackoff
+	if maxBackoff <= 0 {
+		maxBackoff = 2 * time.Second
+	}
+	deadline := runStartLeadReadyNow().Add(timeout)
+	lastDetail := "lead is not ready yet"
+	var lastErr error
+	for {
+		ready, err := runStartLeadReadyCheck(opts.Project, opts.Profile, opts.Session, opts.Role)
+		if err != nil {
+			lastErr = err
+			lastDetail = "readiness check error: " + err.Error()
+		} else if strings.TrimSpace(ready.Detail) != "" {
+			lastDetail = strings.TrimSpace(ready.Detail)
+		}
+		if err == nil && ready.Ready {
+			return nil
+		}
+		now := runStartLeadReadyNow()
+		if !now.Before(deadline) {
+			if lastErr != nil {
+				return fmt.Errorf("lead role %q did not become ready within %s: %s: %w", opts.Role, timeout, lastDetail, lastErr)
+			}
+			return fmt.Errorf("lead role %q did not become ready within %s: %s", opts.Role, timeout, lastDetail)
+		}
+		sleepFor := backoff
+		if remaining := deadline.Sub(now); sleepFor > remaining {
+			sleepFor = remaining
+		}
+		runStartLeadReadySleep(sleepFor)
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
+}
+
+func defaultRunStartLeadReadyCheck(project, profile, session, role string) (runStartLeadReadiness, error) {
+	t, err := team.ReadProfile(project, profile)
+	if err != nil {
+		return runStartLeadReadiness{}, err
+	}
+	rows := buildStatusRows(t, profile, session, defaultDuplicateLaunchProbe)
+	for _, row := range rows {
+		if row.Role != role && row.Handle != role {
+			continue
+		}
+		if row.Status == statusStateLive &&
+			row.Signals.AgentAlive &&
+			row.Signals.BinaryMatch &&
+			row.Tmux != nil &&
+			row.Tmux.PaneAlive {
+			return runStartLeadReadiness{Ready: true, Detail: fmt.Sprintf("role %s live in pane %s", row.Role, row.Tmux.PaneID)}, nil
+		}
+		detail := strings.TrimSpace(row.Detail)
+		if detail == "" {
+			detail = fmt.Sprintf("status=%s agent_alive=%t binary_match=%t pane_alive=%t", row.Status, row.Signals.AgentAlive, row.Signals.BinaryMatch, row.Tmux != nil && row.Tmux.PaneAlive)
+		}
+		return runStartLeadReadiness{Detail: detail}, nil
+	}
+	return runStartLeadReadiness{Detail: fmt.Sprintf("role %s not found in status rows", role)}, nil
+}
+
+func runStartGoalRetryCommand(opts runStartGoalDeliveryOptions) string {
+	parts := []string{
+		"amq-squad", "goal", "start",
+		"--project", shellQuote(opts.Project),
+		"--profile", shellQuote(opts.Profile),
+		"--session", shellQuote(opts.Session),
+		"--role", shellQuote(opts.Role),
+		"--goal", shellQuote(opts.Goal),
+		"--yes",
+	}
+	return strings.Join(parts, " ")
+}
+
+func printRunStartGoalRetry(cmd string) {
+	fmt.Fprintf(os.Stderr, "Goal delivery did not complete. Retry manually with:\n  %s\n", cmd)
 }
 
 // stripFlagValue returns args with every `flag value` pair removed, and whether

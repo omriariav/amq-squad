@@ -243,6 +243,9 @@ Examples:
 	if err != nil {
 		return err
 	}
+	if err := ensureNoNamespaceCreationCollision("team init", cwd, profile, workstream); err != nil {
+		return err
+	}
 	cwdOverrides, err := parseKV(*cwdFlag)
 	if err != nil {
 		return fmt.Errorf("parse --cwd: %w", err)
