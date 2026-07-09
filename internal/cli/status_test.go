@@ -357,6 +357,84 @@ func TestExecuteStatusJSONNamedProfileAllowsPresenceOnlyLegacyRoot(t *testing.T)
 	}
 }
 
+func TestRunStatusExplicitNamedProfileDoesNotCreateLegacySessionInbox(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRootMkdirOnSession(t)
+	chdir(t, dir)
+	seedProfile(t, dir, "review", team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	namedAgentDir := filepath.Join(base, "review", "review", "agents", "cto")
+	if err := os.MkdirAll(namedAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runStatus([]string{"--profile", "review", "--session", "review", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("status explicit named profile: %v\n%s", err, stdout)
+	}
+	legacyInbox := filepath.Join(base, "review", "agents", "cto", "inbox", "new")
+	if _, err := os.Stat(legacyInbox); !os.IsNotExist(err) {
+		t.Fatalf("status must not resolve through legacy --session root or mkdir %s; stat err = %v", legacyInbox, err)
+	}
+}
+
+func setupFakeAMQSessionRootMkdirOnSession(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(dir, ".agent-mail")
+	script := `#!/bin/sh
+if [ "$1" != "env" ]; then
+  echo "unexpected amq command: $*" >&2
+  exit 1
+fi
+session=""
+root_arg=""
+me=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --session)
+      shift
+      session="$1"
+      ;;
+    --root)
+      shift
+      root_arg="$1"
+      ;;
+    --me)
+      shift
+      me="$1"
+      ;;
+  esac
+  shift
+done
+root="$AMQ_FAKE_BASE"
+if [ "$root_arg" != "" ]; then
+  root="$root_arg"
+elif [ "$session" != "" ]; then
+  root="$root/$session"
+  mkdir -p "$root/agents/${me:-cto}/inbox/new"
+fi
+printf '{"root":"%s","base_root":"%s","me":"%s"}\n' "$root" "$AMQ_FAKE_BASE" "${me:-cto}"
+`
+	if err := os.WriteFile(filepath.Join(binDir, "amq"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AMQ_FAKE_BASE", base)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return base
+}
+
 func TestRunStatusDefaultProfileWarnsWhenNamedProfileHasSameSession(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	dir := t.TempDir()
