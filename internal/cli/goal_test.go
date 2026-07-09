@@ -88,6 +88,45 @@ func TestGoalDraftJSONIncludesMilestoneIssues(t *testing.T) {
 	}
 }
 
+func TestGoalDraftPlannerLeadModeSurfacesDelegationContract(t *testing.T) {
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoalDraft([]string{
+			"--goal", "ship planner mode",
+			"--session", "issue-350",
+			"--profile", "planner",
+			"--lead", "cto",
+			"--lead-mode", "planner",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("goal draft planner: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[goalDraftData](t, stdout)
+	if env.Data.LeadMode != team.LeadModePlanner || env.Data.Execution.LeadMode != team.LeadModePlanner {
+		t.Fatalf("lead mode not surfaced in draft: %+v", env.Data)
+	}
+	if env.Data.Execution.ImplementationAllowed {
+		t.Fatalf("planner lead draft must disallow lead implementation: %+v", env.Data.Execution)
+	}
+	if env.Data.Execution.MutableActor != "delegated_workers" {
+		t.Fatalf("mutable_actor = %q, want delegated_workers", env.Data.Execution.MutableActor)
+	}
+	if !strings.Contains(env.Data.OrchestratorPrompt, "--lead-mode planner") {
+		t.Fatalf("orchestrator prompt missing lead mode:\n%s", env.Data.OrchestratorPrompt)
+	}
+	var foundMutation bool
+	for _, mutation := range env.Data.ApplyableMutations {
+		if strings.Contains(mutation.Command, "--lead-mode planner") {
+			foundMutation = true
+			break
+		}
+	}
+	if !foundMutation {
+		t.Fatalf("applyable mutations must persist planner mode: %+v", env.Data.ApplyableMutations)
+	}
+}
+
 func TestBuildGoalDraftTargetRootSource(t *testing.T) {
 	control := t.TempDir()
 	match := filepath.Join(control, "amq-squad")
