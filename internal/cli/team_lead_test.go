@@ -55,8 +55,87 @@ func TestTeamLeadSetShowClear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read cleared team: %v", err)
 	}
-	if cfg.Orchestrated || cfg.Lead != "" {
-		t.Fatalf("cleared lead config = orchestrated:%v lead:%q, want false/empty", cfg.Orchestrated, cfg.Lead)
+	if cfg.Orchestrated || cfg.Lead != "" || cfg.LeadMode != "" {
+		t.Fatalf("cleared lead config = orchestrated:%v lead:%q lead_mode:%q, want false/empty/empty", cfg.Orchestrated, cfg.Lead, cfg.LeadMode)
+	}
+}
+
+func TestTeamLeadSetPlannerLeadMode(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-350"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "issue-350"},
+		},
+	})
+
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamLead([]string{"set", "cto", "--lead-mode", "planner"})
+	}); err != nil {
+		t.Fatalf("team lead set --lead-mode planner: %v", err)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if cfg.LeadMode != team.LeadModePlanner {
+		t.Fatalf("lead_mode = %q, want planner", cfg.LeadMode)
+	}
+	out, _, err := captureOutput(t, func() error {
+		return runTeamLead([]string{"show", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("team lead show: %v", err)
+	}
+	env := decodeJSONEnvelope[teamLeadData](t, out)
+	if env.Data.LeadMode != team.LeadModePlanner {
+		t.Fatalf("team_lead data = %+v, want planner mode", env.Data)
+	}
+}
+
+func TestTeamLeadSetPreservesPlannerLeadModeWhenFlagOmitted(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-350"},
+			{Role: "architect", Binary: "codex", Handle: "architect", Session: "issue-350"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+		LeadMode:     team.LeadModePlanner,
+	})
+
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamLead([]string{"set", "architect"})
+	}); err != nil {
+		t.Fatalf("team lead set without lead-mode: %v", err)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if cfg.Lead != "architect" || cfg.LeadMode != team.LeadModePlanner {
+		t.Fatalf("lead config = lead:%q lead_mode:%q, want architect/planner", cfg.Lead, cfg.LeadMode)
+	}
+}
+
+func TestTeamLeadClearRemovesStaleLeadMode(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-350"}},
+		Orchestrated: true,
+		Lead:         "cto",
+		LeadMode:     team.LeadModePlanner,
+	})
+
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamLead([]string{"clear"})
+	}); err != nil {
+		t.Fatalf("team lead clear: %v", err)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if cfg.LeadMode != "" {
+		t.Fatalf("lead_mode after clear = %q, want empty", cfg.LeadMode)
 	}
 }
 
