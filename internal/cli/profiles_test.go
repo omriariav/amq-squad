@@ -293,7 +293,7 @@ func TestTeamInitProfileWritesToTeamsDir(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	_, _, err := captureOutput(t, func() error {
-		return runTeamInit([]string{"--profile", "review", "--roles", "cto", "--binary", "cto=codex", "--session", "review", "--trust", "sandboxed"})
+		return runTeamInit([]string{"--profile", "review", "--roles", "cto", "--binary", "cto=codex", "--session", "review-main", "--trust", "sandboxed"})
 	})
 	if err != nil {
 		t.Fatalf("team init --profile: %v", err)
@@ -362,7 +362,7 @@ func TestTeamInitExistingProfileRefusedWithoutForce(t *testing.T) {
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"}},
 	})
 	_, _, err := captureOutput(t, func() error {
-		return runTeamInit([]string{"--profile", "review", "--roles", "cto", "--binary", "cto=codex", "--session", "review"})
+		return runTeamInit([]string{"--profile", "review", "--roles", "cto", "--binary", "cto=codex", "--session", "review-main"})
 	})
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("existing profile init without --force should fail, got %v", err)

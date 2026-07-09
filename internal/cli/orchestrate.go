@@ -251,6 +251,13 @@ func runRunStart(args []string, version string) error {
 	if visibility == visibilityPlan {
 		return usageErrorf("--visibility plan is not valid for run start; it previews by default and creates with --go")
 	}
+	profile, err := resolveProfileFlag(*profileFlag)
+	if err != nil {
+		return err
+	}
+	if err := ensureNoNamespaceCreationCollision("run start", project, profile, session); err != nil {
+		return err
+	}
 
 	// Lead resolution: when creating a fresh roster, default the lead to cto.
 	// For an existing team, leave --role unset so `goal start` infers the

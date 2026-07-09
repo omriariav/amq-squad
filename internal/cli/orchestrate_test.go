@@ -138,6 +138,23 @@ func TestRunStartRejectsBadSession(t *testing.T) {
 	}
 }
 
+func TestRunStartRejectsProfileSessionCollisionBeforeWrite(t *testing.T) {
+	dir := t.TempDir()
+	err := runRunStart([]string{"-p", dir, "-P", "review", "-s", "review", "--roles", "cto"}, "test")
+	if err == nil ||
+		!strings.Contains(err.Error(), "run start refused") ||
+		!strings.Contains(err.Error(), "colliding AMQ roots") ||
+		!strings.Contains(err.Error(), "--profile codex-review --session review") {
+		t.Fatalf("expected profile/session collision error, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".amq-squad")); !os.IsNotExist(statErr) {
+		t.Fatalf("refused run start must not write .amq-squad; stat err = %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".agent-mail")); !os.IsNotExist(statErr) {
+		t.Fatalf("refused run start must not write .agent-mail; stat err = %v", statErr)
+	}
+}
+
 func TestRunStartDefaultsToDetachedInPreview(t *testing.T) {
 	// A fresh project with --roles: preview should describe a detached (hidden)
 	// spawn by default and note the deferred spawn validation.
