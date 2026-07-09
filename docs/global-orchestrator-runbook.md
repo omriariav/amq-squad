@@ -14,9 +14,10 @@ verbs are the source of truth.
 
 ## Preconditions
 
-- Inside **tmux** for visible spawns (`global start --go`, and `run start` with
-  `--visibility sibling-tabs`/`current`). Hidden spawns (`run start` default
-  `--visibility detached`) do not require a visible pane.
+- Inside **tmux** for visible spawns (`global start --go`, and `run start --go`
+  with the default `--visibility sibling-tabs` or `--visibility current`).
+  Hidden spawns (`run start --visibility detached --go`) do not require a
+  visible pane.
 - `amq-squad` + `amq` on `PATH`; AMQ floor is **0.40.0**. `amq-squad doctor`
   warns on version skew (children inherit the `amq-squad` on `PATH`).
 - In the orchestrator conversation, invoke the **`amq-squad-orchestrator`** skill.
@@ -66,12 +67,14 @@ amq-squad run start -p ~/Code/app -s issue-96 -P release \
 
 ### Visibility (do I see the agents?)
 
-`--visibility` controls the spawn topology; default is **detached (hidden)**:
+`--visibility` controls the spawn topology; default is **sibling-tabs
+(visible)**:
 
-- `detached` (default) — agents run in a separate tmux session you don't see.
+- `sibling-tabs` (default) — one visible tmux tab per agent in the current tmux
+  session. Preview works outside tmux; `--go` requires a visible tmux pane.
+- `detached` — agents run in a separate tmux session you don't see.
   Supervise via `status`/`console`/`monitor` + wake; attach only to intervene
   (`amq-squad focus`, or the `attach_control` action in `status --json`).
-- `sibling-tabs` — one visible tmux tab per agent (requires a visible pane).
 - `current` — split panes in the current window.
 
 Note: this sets the **initial** spawn. Later dynamic spawns by the lead

@@ -569,10 +569,8 @@ func (e *FocusMissError) Error() string {
 	return "could not raise the agent's iTerm2 tab (its tmux session may not be attached here); run: " + e.Command
 }
 
-// AttachCommand renders the manual command to reach a target session that is not
-// currently a tab in this iTerm2: attach the session in a fresh client. It is
-// the actionable companion to a FocusMiss (whereas SuggestJump's switch-client
-// assumes the session is already attached somewhere).
+// AttachCommand renders the manual command to reach a target session from
+// outside tmux: attach the session in a fresh client.
 func AttachCommand(t TmuxTarget) string {
 	if t.Session == "" {
 		return SuggestJump(t)
@@ -666,7 +664,7 @@ func switchToWithSession(t TmuxTarget, curSession func() string) error {
 		// Not in a tmux client at all: best-effort select-window so an iTerm2 -CC
 		// attached window raises, then report the suggested command.
 		_ = switchExec("tmux", "select-window", "-t", spec)
-		return &NotInTmuxError{Target: t, Command: SuggestJump(t)}
+		return &NotInTmuxError{Target: t, Command: AttachCommand(t)}
 	}
 
 	cur := ""
@@ -697,7 +695,7 @@ func switchToWithSession(t TmuxTarget, curSession func() string) error {
 		// osascript ran cleanly but found no matching tab (out == "MISS" or, defensively,
 		// any non-OK output). The target session is not attached to this iTerm2: no
 		// select-window here can raise a tab that doesn't exist, so do NOT pretend.
-		return &FocusMissError{Target: t, Command: AttachCommand(t)}
+		return &FocusMissError{Target: t, Command: SuggestJump(t)}
 	}
 	// osascript itself failed (not macOS / not iTerm2): degrade to a best-effort
 	// tmux select-window and surface the manual command.
