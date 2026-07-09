@@ -236,11 +236,13 @@ func TestRunStartExternalLeadGoBindsLeadAndSpawnsOnlyWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("external-lead --go: %v", err)
 	}
-	if len(backend.launches) != 1 || len(backend.teams) != 1 {
-		t.Fatalf("expected one worker launch, got launches=%d teams=%d", len(backend.launches), len(backend.teams))
+	if len(backend.dryRuns) != 1 || len(backend.launches) != 1 || len(backend.teams) != 2 {
+		t.Fatalf("expected one worker dry-run and one worker launch, got dryRuns=%d launches=%d teams=%d", len(backend.dryRuns), len(backend.launches), len(backend.teams))
 	}
-	if got := backend.teams[0].Members; len(got) != 1 || got[0].Role != "qa" {
-		t.Fatalf("worker launch members = %+v, want only qa", got)
+	for _, got := range []team.Team{backend.teams[0], backend.teams[1]} {
+		if len(got.Members) != 1 || got.Members[0].Role != "qa" {
+			t.Fatalf("worker launch members = %+v, want only qa", got.Members)
+		}
 	}
 	rec, err := launch.Read(filepath.Join(dir, ".agent-mail", "sess", "agents", "cto"))
 	if err != nil {
@@ -248,6 +250,26 @@ func TestRunStartExternalLeadGoBindsLeadAndSpawnsOnlyWorkers(t *testing.T) {
 	}
 	if !rec.External || rec.AdoptionMode != adoptionModeExternalProjectLead || rec.Tmux == nil || rec.Tmux.PaneID != "%42" {
 		t.Fatalf("external lead record = %+v", rec)
+	}
+}
+
+func TestRunStartExternalLeadAcceptsCaseInsensitiveExplicitLead(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Project:      "",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+		},
+	})
+	useFakeTmuxBackend(t)
+	stubCurrentRunStartPane(t, "%42")
+
+	if _, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--lead", "CTO"}, "test")
+	}); err != nil {
+		t.Fatalf("expected case-insensitive explicit lead to pass, got %v", err)
 	}
 }
 
@@ -274,6 +296,65 @@ func TestRunStartExternalLeadExistingProfileLeadMismatchFailsWithGuidance(t *tes
 	}
 }
 
+func TestRunStartExternalLeadRefusesExistingWorkstreamBeforeWrites(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Project:      "",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+		},
+	})
+	stubCurrentRunStartPane(t, "%42")
+	if err := os.MkdirAll(filepath.Join(base, "sess"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--go"}, "test")
+	})
+	if err == nil || !strings.Contains(err.Error(), "session \"sess\" already exists") {
+		t.Fatalf("expected existing workstream refusal, got %v", err)
+	}
+	if _, err := launch.Read(filepath.Join(base, "sess", "agents", "cto")); err == nil {
+		t.Fatal("existing workstream refusal must not write external lead launch record")
+	}
+}
+
+func TestRunStartExternalLeadMissingTmuxFailsPreviewAndGoBeforeWrites(t *testing.T) {
+	for _, goMode := range []bool{false, true} {
+		t.Run(map[bool]string{false: "preview", true: "go"}[goMode], func(t *testing.T) {
+			dir := seedTeam(t, team.Team{
+				Project:      "",
+				Orchestrated: true,
+				Lead:         "cto",
+				Members: []team.Member{
+					{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+					{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+				},
+			})
+			t.Setenv("TMUX", "")
+			t.Setenv("TMUX_PANE", "")
+
+			args := []string{"-p", dir, "-s", "sess", "--external-lead"}
+			if goMode {
+				args = append(args, "--go")
+			}
+			_, _, err := captureOutput(t, func() error {
+				return runRunStart(args, "test")
+			})
+			if err == nil || !strings.Contains(err.Error(), "requires the current lead pane") {
+				t.Fatalf("expected missing tmux pane refusal, got %v", err)
+			}
+			if _, statErr := os.Stat(filepath.Join(dir, ".agent-mail")); !os.IsNotExist(statErr) {
+				t.Fatalf("missing tmux refusal must not create .agent-mail, stat err=%v", statErr)
+			}
+		})
+	}
+}
+
 func TestRunStartExternalLeadFreshLeadValidationBeforeTeamWrite(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -290,6 +371,116 @@ func TestRunStartExternalLeadFreshLeadValidationBeforeTeamWrite(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, ".agent-mail")); !os.IsNotExist(statErr) {
 		t.Fatalf("failed fresh external-lead preflight must not write .agent-mail, stat err=%v", statErr)
+	}
+}
+
+func TestRunStartExternalLeadGoalDeliveredToBoundLead(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Project:      "",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+		},
+	})
+	useFakeTmuxBackend(t)
+	stubCurrentRunStartPane(t, "%42")
+	stubRunStartLeadWake(t)
+	var goalCalls [][]string
+	stubRunStartGoalDelivery(t,
+		func(args []string, version string) error { return nil },
+		func(args []string, version string) error {
+			goalCalls = append(goalCalls, append([]string{}, args...))
+			return nil
+		},
+		func(project, profile, session, role string) (runStartLeadReadiness, error) {
+			return runStartLeadReadiness{Ready: true, Detail: "live"}, nil
+		},
+		func(time.Duration) {},
+		time.Now,
+	)
+
+	if _, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--goal", "ship it", "--go"}, "test")
+	}); err != nil {
+		t.Fatalf("external-lead --goal --go: %v", err)
+	}
+	if len(goalCalls) != 1 {
+		t.Fatalf("expected one goal call, got %v", goalCalls)
+	}
+	goal := strings.Join(goalCalls[0], " ")
+	for _, want := range []string{"start", "--project " + dir, "--profile default", "--session sess", "--role cto", "--goal ship it", "--yes"} {
+		if !strings.Contains(goal, want) {
+			t.Fatalf("goal args %q missing %q", goal, want)
+		}
+	}
+	if strings.Contains(goal, "--register-orchestrator") {
+		t.Fatalf("external-lead goal delivery must not re-register orchestrator: %q", goal)
+	}
+}
+
+func TestRunStartExternalLeadLeadOnlyRosterReportsSuccess(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Project:      "",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+		},
+	})
+	backend := useFakeTmuxBackend(t)
+	stubCurrentRunStartPane(t, "%42")
+	stubRunStartLeadWake(t)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--go"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("lead-only external-lead --go: %v", err)
+	}
+	if !strings.Contains(stderr, "lead bound; no remaining workers to spawn") {
+		t.Fatalf("lead-only run should report no remaining workers, stderr:\n%s", stderr)
+	}
+	if len(backend.dryRuns) != 0 || len(backend.launches) != 0 {
+		t.Fatalf("lead-only run should not call backend, dryRuns=%d launches=%d", len(backend.dryRuns), len(backend.launches))
+	}
+	if _, err := launch.Read(filepath.Join(dir, ".agent-mail", "sess", "agents", "cto")); err != nil {
+		t.Fatalf("lead-only run should bind current lead: %v", err)
+	}
+}
+
+func TestRunStartExternalLeadWorkerValidationBeforeBind(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Project:      "",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+		},
+	})
+	useFakeTmuxBackend(t)
+	stubCurrentRunStartPane(t, "%42")
+	wakeCalls := 0
+	prev := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		wakeCalls++
+		return leadWakeResult{PID: 1234, Started: true, Detail: "ready"}, nil
+	}
+	t.Cleanup(func() { leadWakeStarter = prev })
+
+	_, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--model", "missing=gpt-5", "--go"}, "test")
+	})
+	if err == nil || !strings.Contains(err.Error(), "--model has unknown role(s): missing") {
+		t.Fatalf("expected worker validation error, got %v", err)
+	}
+	if wakeCalls != 0 {
+		t.Fatalf("worker validation failure must happen before wake start, wakeCalls=%d", wakeCalls)
+	}
+	if _, err := launch.Read(filepath.Join(dir, ".agent-mail", "sess", "agents", "cto")); err == nil {
+		t.Fatal("worker validation failure must not write external lead launch record")
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/role"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -473,6 +475,9 @@ func runRunStart(args []string, version string) error {
 		} else if len(newTeamArgs) > 0 {
 			quietNotice("profile %q already exists; skipping new team (using existing roster)\n", profileOrDefault(*profileFlag))
 		}
+		if err := validateRunStartExternalLeadWorkerLaunch(project, visibility, session, profile, externalLeadRole, *modelFlag, *codexArgsFlag, *claudeArgsFlag); err != nil {
+			return err
+		}
 		quietNotice("binding current pane as external lead %s...\n", externalLeadRole)
 		if err := runStartRegisterExternalLead(project, profile, session, externalLeadRole); err != nil {
 			return err
@@ -601,13 +606,7 @@ func runStartExternalLeadPreview(opts runStartExternalLeadPreviewOptions) error 
 		return nil
 	}
 	if opts.TeamPresent {
-		launchOpts, err := runStartTeamLaunchOptions(opts.Visibility, opts.Session, opts.Profile, "", false, true, opts.Lead, true, opts.Model, opts.CodexArgs, opts.ClaudeArgs)
-		if err != nil {
-			return err
-		}
-		if err := runInProject(opts.Project, func() error {
-			return executeTeamLaunch(launchOpts, true, false)
-		}); err != nil {
+		if err := validateRunStartExternalLeadWorkerLaunch(opts.Project, opts.Visibility, opts.Session, opts.Profile, opts.Lead, opts.Model, opts.CodexArgs, opts.ClaudeArgs); err != nil {
 			return fmt.Errorf("worker spawn dry-run failed: %w", err)
 		}
 		fmt.Print("\nPreview OK. Re-run with --external-lead --go to bind this pane as lead and spawn remaining workers.\n")
@@ -673,10 +672,11 @@ func resolveRunStartExternalLead(project, profile, explicitLead string, freshRos
 	if lead == "" {
 		return "", usageErrorf("--external-lead cannot infer lead role from profile %q; run `amq-squad team lead set <role>` first or pass --lead matching the configured lead", profile)
 	}
-	if explicit := strings.TrimSpace(explicitLead); explicit != "" && explicit != lead {
+	lead = strings.ToLower(lead)
+	if explicit := strings.ToLower(strings.TrimSpace(explicitLead)); explicit != "" && explicit != lead {
 		return "", usageErrorf("--external-lead cannot change existing profile lead from %q to %q; run `amq-squad team lead set %s --project %s --profile %s` first", lead, explicit, shellQuote(explicit), shellQuote(project), shellQuote(profile))
 	}
-	return strings.ToLower(lead), nil
+	return lead, nil
 }
 
 func runStartExternalLeadPreflightTeam(project, profile, session, rolesText string, freshRoster bool, lead string) (team.Team, error) {
@@ -690,21 +690,26 @@ func runStartExternalLeadPreflightTeam(project, profile, session, rolesText stri
 	if strings.TrimSpace(rolesText) == "" {
 		return team.Team{}, usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", profile, project)
 	}
+	customDefs := map[string]role.Definition{}
+	if err := discoverStagedCustomRoleDefs(project, customDefs); err != nil {
+		return team.Team{}, err
+	}
+	picked, err := resolveTeamSelection(rolesText, customDefs)
+	if err != nil {
+		return team.Team{}, err
+	}
 	seen := map[string]bool{}
 	var members []team.Member
-	for _, role := range splitCSV(rolesText) {
+	for _, role := range picked {
 		role = strings.ToLower(strings.TrimSpace(role))
-		if role == "" || role == "all" || seen[role] {
+		if role == "" || seen[role] {
 			continue
 		}
 		seen[role] = true
 		members = append(members, team.Member{Role: role, Handle: role, Session: session})
 	}
-	if lead != "" && !seen[lead] && strings.TrimSpace(rolesText) != "all" {
+	if lead != "" && !seen[lead] {
 		return team.Team{}, usageErrorf("run start --external-lead lead %q is not included in --roles %q; include the lead role or change --lead", lead, rolesText)
-	}
-	if lead != "" && !seen[lead] && strings.TrimSpace(rolesText) == "all" {
-		members = append(members, team.Member{Role: lead, Handle: lead, Session: session})
 	}
 	return team.Team{
 		Project:      project,
@@ -728,6 +733,9 @@ func validateRunStartExternalLeadPreconditions(project, profile, session, lead s
 	if _, ok := memberByRole(t, lead); !ok {
 		return usageErrorf("run start --external-lead lead %q is not a member of the target roster", lead)
 	}
+	if err := authorizeRunStartExternalLeadAdoption(project, profile, session, lead, t, id.PaneID); err != nil {
+		return err
+	}
 	exists, root, err := teamWorkstreamExistsOrRestorable(t, profile, session)
 	if err != nil {
 		return err
@@ -736,6 +744,54 @@ func validateRunStartExternalLeadPreconditions(project, profile, session, lead s
 		return existingSessionRefusal(session, root)
 	}
 	return nil
+}
+
+func authorizeRunStartExternalLeadAdoption(project, profile, session, lead string, t team.Team, paneID string) error {
+	member, ok := memberByRole(t, lead)
+	if !ok {
+		return usageErrorf("run start --external-lead lead %q is not a member of the target roster", lead)
+	}
+	cwd := member.EffectiveCWD(t.Project)
+	if strings.TrimSpace(cwd) == "" {
+		cwd = project
+	}
+	handle := memberHandle(member)
+	env, err := resolveAMQEnvForTeamProfile(cwd, profile, session, handle)
+	if err != nil {
+		return fmt.Errorf("resolve amq env: %w", err)
+	}
+	if env.Me != "" {
+		handle = env.Me
+	}
+	root := absoluteAMQRoot(cwd, env.Root)
+	agentDir := filepath.Join(root, "agents", handle)
+	existingRec, existingRecErr := launch.Read(agentDir)
+	_, err = authorizeLeadRegister(leadRegisterAuthInput{
+		Team:              t,
+		Member:            member,
+		Role:              lead,
+		Handle:            handle,
+		Profile:           profile,
+		Workstream:        env.SessionName,
+		Root:              root,
+		CWD:               cwd,
+		PaneID:            paneID,
+		TargetMode:        leadRegisterTargetMode(t, lead),
+		ExistingRecord:    existingRec,
+		ExistingRecordErr: existingRecErr,
+		AdoptProjectLead:  true,
+	})
+	return err
+}
+
+func validateRunStartExternalLeadWorkerLaunch(project, visibility, session, profile, lead, modelRaw, codexArgsRaw, claudeArgsRaw string) error {
+	launchOpts, err := runStartTeamLaunchOptions(visibility, session, profile, "", false, true, lead, true, modelRaw, codexArgsRaw, claudeArgsRaw)
+	if err != nil {
+		return err
+	}
+	return runInProject(project, func() error {
+		return executeTeamLaunch(launchOpts, true, false)
+	})
 }
 
 func runStartRegisterExternalLead(project, profile, session, lead string) error {
