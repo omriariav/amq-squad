@@ -184,6 +184,49 @@ func TestBootstrapPromptReportsNativeGoalBindingForVisibleLead(t *testing.T) {
 	}
 }
 
+func TestBootstrapPlannerLeadSteersDirectEditsToDelegation(t *testing.T) {
+	teamHome := t.TempDir()
+	if err := team.Write(teamHome, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-350"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "issue-350"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-350"},
+		},
+		Orchestrated:  true,
+		Lead:          "cto",
+		LeadMode:      team.LeadModePlanner,
+		ExecutionMode: executionModeProjectLead,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(teamHome, ".agent-mail", "issue-350")
+	rec := launch.Record{
+		CWD:              teamHome,
+		Role:             "cto",
+		Handle:           "cto",
+		Binary:           "codex",
+		Session:          "issue-350",
+		Root:             root,
+		SharedWorkstream: true,
+	}
+	got, err := buildBootstrapPrompt(bootstrapContextFor(rec, filepath.Join(root, "agents", "cto"), teamHome))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Lead mode: planner",
+		"Mutable actor: delegated_workers",
+		"Implementation allowed: false",
+		"Planner/reviewer lead posture:",
+		"You must not edit files",
+		"Delegate implementation over durable AMQ tasks",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("planner bootstrap missing %q in:\n%s", want, got)
+		}
+	}
+}
+
 // TestBootstrapWorkerFromFieldGuidance is the production-path half of the #176
 // fix: the bootstrap for a worker on an orchestrated squad must instruct it to
 // reply to the task's From field, so that when the dispatcher and the team.json

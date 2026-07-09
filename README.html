@@ -1185,6 +1185,17 @@ the project lead and may mutate the target project. This is appropriate
 for single-project quick work from the project root, not for
 NOC/control-root workflows.</li>
 </ul>
+<p>Lead mode is a separate implementation posture on top of the
+execution mode. <code>--lead-mode builder</code> is the compatibility
+default: the visible project lead may edit and commit within the
+execution boundary. <code>--lead-mode planner</code> makes the lead
+planner/reviewer-only: <code>status --json</code>, bootstrap, and goal
+draft surfaces report <code>implementation_allowed:false</code>, the
+bootstrap explicitly tells the lead not to edit files, run
+write-formatters, or commit, and implementation must be delegated over
+durable AMQ tasks. In planner mode <code>mutable_actor</code> is the
+single non-lead implementer role when there is exactly one; otherwise it
+is the explicit sentinel <code>delegated_workers</code>.</p>
 <p>Because <code>target_project_root</code> is where the project lead
 actually edits code — and from a neutral control root there is no
 reliable <code>owner/repo</code> → local-path mapping — amq-squad never
@@ -1201,17 +1212,18 @@ root — a proposal that still must be confirmed or passed explicitly),
 mode, the lead runs inside the project). A
 <code>resolved_unconfirmed</code> match is a hint, not a
 confirmation.</p>
-<p><code>team init --mode ...</code> persists this contract in the
-profile, and <code>goal draft</code> generates matching
+<p><code>team init --mode ... --lead-mode ...</code> persists this
+contract in the profile, and <code>goal draft</code> generates matching
 <code>team init</code> and visible-lead prompts.
 <code>status --json</code> and the multi-session board JSON expose
 <code>execution.mode</code>, <code>control_root</code>,
 <code>target_project_root</code>, <code>visible_lead</code>,
-<code>visible_team_members</code>, <code>mutable_actor</code>,
-<code>implementation_allowed</code>, <code>goal_binding</code>,
-<code>visibility_topology</code>, <code>polling_required</code>,
-<code>mode_error</code>, and <code>version_compatibility</code> so
-clients do not infer who is allowed to mutate files. They also expose
+<code>visible_team_members</code>, <code>lead_mode</code>,
+<code>mutable_actor</code>, <code>implementation_allowed</code>,
+<code>goal_binding</code>, <code>visibility_topology</code>,
+<code>polling_required</code>, <code>mode_error</code>, and
+<code>version_compatibility</code> so clients do not infer who is
+allowed to mutate files. They also expose
 <code>operator_delivery.poll_required</code>,
 <code>operator_delivery.durable_amq</code>, and
 <code>operator_delivery.wake_supported</code>; a virtual/non-runnable
@@ -1360,6 +1372,7 @@ amq-squad new session [--project DIR] [--profile NAME] [&lt;session&gt;] [up opt
 
 amq-squad team init [--project DIR] [--profile NAME] [--roles a,b|numbers|all] [--binary role=bin,...]
                      [--session ws] [--trust sandboxed|approve-for-me|trusted] [--orchestrated [--lead ROLE]]
+                     [--lead-mode builder|planner]
                      [--mode project_lead|project_team|direct_lead_session|global_orchestrator]
                      [--model role=model,...] [--codex-args ...] [--claude-args ...] [--dry-run [--json]]
                                   Write a team profile and seed .amq-squad/team-rules.md.
@@ -1383,12 +1396,14 @@ amq-squad team rules init [--project DIR] [--profile NAME]
                                   shared per team-home.
 amq-squad team rules show [--project DIR]
                                   Print .amq-squad/team-rules.md.
-amq-squad team lead set &lt;role&gt; [--project DIR] [--profile NAME]
+amq-squad team lead set &lt;role&gt; [--project DIR] [--profile NAME] [--lead-mode builder|planner]
 amq-squad team lead clear [--project DIR] [--profile NAME]
 amq-squad team lead show [--project DIR] [--profile NAME] [--json]
                                   Mutate or inspect the profile&#39;s orchestration
                                   lead. `set` validates that &lt;role&gt; is a team
                                   member and records orchestrated=true.
+                                  --lead-mode planner makes that lead
+                                  planner/reviewer-only; builder is default.
                                   `clear` returns the profile to flat mode.
 amq-squad team overlay init (--role R | --workers) [--disable-plugins id@market,...]
                         [--disable-all-hooks] [--force] [--dry-run]
@@ -1417,6 +1432,7 @@ amq-squad global start [--root DIR] [--agent claude|codex] [--name WINDOW]
                                   tmux window and launches the agent.
 amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
                     [--roles r,...] [--binary role=bin,...] [--model role=model,...]
+                    [--lead-mode builder|planner]
                     [--codex-args A] [--claude-args A]
                     [--visibility detached|sibling-tabs|current]
                     [--goal TEXT] [--seed-from REF] [--go]
