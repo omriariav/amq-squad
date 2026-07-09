@@ -100,12 +100,13 @@ func runTeamLeadSet(args []string) error {
 	if err := parseFlags(fs, rest); err != nil {
 		return err
 	}
+	leadModeSet := flagWasSet(fs, "lead-mode")
 	leadMode, err := normalizeLeadMode(*leadModeFlag)
 	if err != nil {
 		return err
 	}
 	role = strings.ToLower(strings.TrimSpace(role))
-	if err := setTeamLead(*projectFlag, *profileFlag, flagWasSet(fs, "project"), role, leadMode); err != nil {
+	if err := setTeamLead(*projectFlag, *profileFlag, flagWasSet(fs, "project"), role, leadMode, leadModeSet); err != nil {
 		return err
 	}
 	fmt.Printf("orchestrated lead set to %s.\n", role)
@@ -133,6 +134,7 @@ func runTeamLeadClear(args []string) error {
 		}
 		t.Orchestrated = false
 		t.Lead = ""
+		t.LeadMode = ""
 		return team.WriteProfile(projectDir, profile, t)
 	}); err != nil {
 		return err
@@ -369,7 +371,7 @@ func runLeadRegister(args []string) error {
 	if err := launch.Write(agentDir, rec); err != nil {
 		return fmt.Errorf("write external launch record: %w", err)
 	}
-	if err := setTeamLeadForProfile(projectDir, profile, role, team.EffectiveLeadMode(t)); err != nil {
+	if err := setTeamLeadForProfile(projectDir, profile, role, "", false); err != nil {
 		return err
 	}
 	fmt.Printf("registered external lead %s (%s) at pane %s for session %s.\n", role, handle, id.PaneID, env.SessionName)
@@ -604,21 +606,24 @@ func stopExternalLeadWakeProcessGroup(cmd *exec.Cmd) error {
 	return err
 }
 
-func setTeamLead(projectFlag, profileFlag string, projectSet bool, role string, leadMode string) error {
+func setTeamLead(projectFlag, profileFlag string, projectSet bool, role string, leadMode string, leadModeSet bool) error {
 	projectDir, profile, err := resolveExistingTeamProfile(projectFlag, profileFlag, projectSet)
 	if err != nil {
 		return err
 	}
-	return setTeamLeadForProfile(projectDir, profile, role, leadMode)
+	return setTeamLeadForProfile(projectDir, profile, role, leadMode, leadModeSet)
 }
 
-func setTeamLeadForProfile(projectDir, profile, role string, leadMode string) error {
+func setTeamLeadForProfile(projectDir, profile, role string, leadMode string, leadModeSet bool) error {
 	if err := team.ValidateRoleID(role); err != nil {
 		return fmt.Errorf("lead: %w", err)
 	}
-	leadMode, err := normalizeLeadMode(leadMode)
-	if err != nil {
-		return err
+	if leadModeSet {
+		var err error
+		leadMode, err = normalizeLeadMode(leadMode)
+		if err != nil {
+			return err
+		}
 	}
 	return withProfileLock(projectDir, profile, func() error {
 		t, err := team.ReadProfile(projectDir, profile)
@@ -630,7 +635,9 @@ func setTeamLeadForProfile(projectDir, profile, role string, leadMode string) er
 		}
 		t.Orchestrated = true
 		t.Lead = role
-		t.LeadMode = leadModeForPersist(leadMode)
+		if leadModeSet {
+			t.LeadMode = leadModeForPersist(leadMode)
+		}
 		return team.WriteProfile(projectDir, profile, t)
 	})
 }

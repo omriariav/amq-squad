@@ -769,7 +769,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle string) error {
 	if err := launch.Write(agentDir, rec); err != nil {
 		return fmt.Errorf("write external orchestrator launch record: %w", err)
 	}
-	if err := setTeamLeadForProfile(opts.Project, opts.Profile, goalOrchestratorRole, team.EffectiveLeadMode(t)); err != nil {
+	if err := setTeamLeadForProfile(opts.Project, opts.Profile, goalOrchestratorRole, "", false); err != nil {
 		return err
 	}
 	return nil

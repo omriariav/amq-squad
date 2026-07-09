@@ -102,7 +102,7 @@ type executionModeData struct {
 	NamespaceID           string                    `json:"namespace_id,omitempty"`
 	VisibleLead           string                    `json:"visible_lead,omitempty"`
 	VisibleTeamMembers    []string                  `json:"visible_team_members,omitempty"`
-	LeadMode              string                    `json:"lead_mode,omitempty"`
+	LeadMode              string                    `json:"lead_mode"`
 	MutableActor          string                    `json:"mutable_actor,omitempty"`
 	ImplementationAllowed bool                      `json:"implementation_allowed"`
 	GoalBinding           string                    `json:"goal_binding,omitempty"`
