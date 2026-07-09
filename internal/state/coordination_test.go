@@ -665,6 +665,28 @@ func TestExternalEvidenceReadsLegacySwarmTaskIDContext(t *testing.T) {
 	}
 }
 
+func TestExternalEvidenceFormatsNumericTaskIDContext(t *testing.T) {
+	base := t.TempDir()
+	proj := t.TempDir()
+	ctoDir := seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
+	seedMessage(t, ctoDir, "cur", msgSpec{
+		id: "kanban2", from: "kanban", to: []string{"cto"},
+		thread: "task/42", subject: "numeric kanban task", kind: "status",
+		createdAt: coordNow.Add(-1 * time.Minute),
+		labels:    []string{"orchestrator", "orchestrator:kanban", "task-state:ready"},
+		context:   `{"orchestrator":{"task":{"id":42}}}`,
+	})
+
+	snap, err := Build(proj, base, coordProbe())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := snap.Sessions[0].Coordination.ExternalEvidence
+	if len(rows) != 1 || rows[0].ExternalTaskID != "42" {
+		t.Fatalf("numeric task id evidence = %+v, want external_task_id 42", rows)
+	}
+}
+
 // --- triage: at-risk via threshold (deterministic clock) -----------------
 
 func TestTriageAtRiskAgingReview(t *testing.T) {

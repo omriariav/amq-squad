@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -340,6 +341,8 @@ func stringFromJSONValue(v any) string {
 		return x
 	case json.Number:
 		return x.String()
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
 	default:
 		return ""
 	}
