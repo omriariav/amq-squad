@@ -128,7 +128,7 @@ func SymphonySnapshot(handle, event, taskID, detail string, observedAt, now time
 	event = strings.TrimSpace(event)
 	stale := true
 	quality := StateUnknown
-	if !observedAt.IsZero() && event != "before_remove" {
+	if !observedAt.IsZero() && symphonyEventClaimsActivity(event) {
 		stale = now.Sub(observedAt) > staleAfter
 		if stale {
 			quality = StateStale
@@ -145,6 +145,15 @@ func SymphonySnapshot(handle, event, taskID, detail string, observedAt, now time
 		Detail:    strings.TrimSpace(detail),
 		WrittenAt: observedAt,
 		Stale:     stale,
+	}
+}
+
+func symphonyEventClaimsActivity(event string) bool {
+	switch event {
+	case "after_create", "before_remove":
+		return false
+	default:
+		return true
 	}
 }
 

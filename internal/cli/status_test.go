@@ -842,6 +842,44 @@ func TestStatusJSONUsesSymphonyActivityFallback(t *testing.T) {
 	}
 }
 
+func TestStatusJSONSymphonyBeforeRunCanBeFresh(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary:  "codex",
+		Handle:  "cto",
+		Role:    "cto",
+		Session: "issue-96",
+		CWD:     dir,
+	})
+	seedStatusSymphonyMessage(t, agentDir, "symphony-before-run", "before_run", now.Add(-10*time.Second))
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	rec := findStatusRecord(env.Data.Records, "cto")
+	if rec == nil || rec.Activity == nil {
+		t.Fatalf("cto symphony activity missing: %+v", env.Data.Records)
+	}
+	if rec.Activity.Source != activity.SourceSymphony || rec.Activity.Quality != activity.StateFresh ||
+		rec.Activity.Stale || rec.Activity.Phase != "symphony_before_run" {
+		t.Fatalf("before_run symphony activity = %+v", rec.Activity)
+	}
+}
+
 func TestStatusJSONHeartbeatWinsOverSymphony(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
@@ -886,6 +924,44 @@ func TestStatusJSONHeartbeatWinsOverSymphony(t *testing.T) {
 	if rec.Activity.Source != activity.SourceHeartbeat || rec.Activity.TaskID != "t11" ||
 		rec.Activity.Phase != "testing" {
 		t.Fatalf("heartbeat should win over symphony activity, got %+v", rec.Activity)
+	}
+}
+
+func TestStatusJSONSymphonyAfterCreateNeverFresh(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary:  "codex",
+		Handle:  "cto",
+		Role:    "cto",
+		Session: "issue-96",
+		CWD:     dir,
+	})
+	seedStatusSymphonyMessage(t, agentDir, "symphony-after-create", "after_create", now.Add(-10*time.Second))
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	rec := findStatusRecord(env.Data.Records, "cto")
+	if rec == nil || rec.Activity == nil {
+		t.Fatalf("cto symphony activity missing: %+v", env.Data.Records)
+	}
+	if rec.Activity.Source != activity.SourceSymphony || rec.Activity.Quality != activity.StateUnknown ||
+		!rec.Activity.Stale || rec.Activity.Phase != "symphony_after_create" {
+		t.Fatalf("after_create symphony activity = %+v", rec.Activity)
 	}
 }
 
