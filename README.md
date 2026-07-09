@@ -607,9 +607,19 @@ Execution modes make the ownership boundary machine-readable:
 - `project_team`: a visible project-root team with a visible lead and visible members. Use it only when the operator intentionally wants to inspect multiple project agents.
 - `direct_lead_session`: the current session is explicitly the project lead and may mutate the target project. This is appropriate for single-project quick work from the project root, not for NOC/control-root workflows.
 
+Lead mode is a separate implementation posture on top of the execution mode.
+`--lead-mode builder` is the compatibility default: the visible project lead may
+edit and commit within the execution boundary. `--lead-mode planner` makes the
+lead planner/reviewer-only: `status --json`, bootstrap, and goal draft surfaces
+report `implementation_allowed:false`, the bootstrap explicitly tells the lead
+not to edit files, run write-formatters, or commit, and implementation must be
+delegated over durable AMQ tasks. In planner mode `mutable_actor` is the single
+non-lead implementer role when there is exactly one; otherwise it is the
+explicit sentinel `delegated_workers`.
+
 Because `target_project_root` is where the project lead actually edits code — and from a neutral control root there is no reliable `owner/repo` → local-path mapping — amq-squad never silently guesses it for a `global_orchestrator` run. `team init --mode global_orchestrator` **requires an explicit `--target-project-root`** and refuses to default to the current directory. `goal draft` classifies the value in `target_project_root_source`: `provided` (explicit), `resolved_unconfirmed` (exactly one local checkout matched by git remote `owner/repo` under the control root — a proposal that still must be confirmed or passed explicitly), `unresolved` (no single match; pass `--target-project-root`), or `default` (non-global mode, the lead runs inside the project). A `resolved_unconfirmed` match is a hint, not a confirmation.
 
-`team init --mode ...` persists this contract in the profile, and `goal draft` generates matching `team init` and visible-lead prompts. `status --json` and the multi-session board JSON expose `execution.mode`, `control_root`, `target_project_root`, `visible_lead`, `visible_team_members`, `mutable_actor`, `implementation_allowed`, `goal_binding`, `visibility_topology`, `polling_required`, `mode_error`, and `version_compatibility` so clients do not infer who is allowed to mutate files. They also expose `operator_delivery.poll_required`, `operator_delivery.durable_amq`, and `operator_delivery.wake_supported`; a virtual/non-runnable operator handle always has `wake_supported=false`, so operator-facing updates and gates require polling/draining instead of wake delivery.
+`team init --mode ... --lead-mode ...` persists this contract in the profile, and `goal draft` generates matching `team init` and visible-lead prompts. `status --json` and the multi-session board JSON expose `execution.mode`, `control_root`, `target_project_root`, `visible_lead`, `visible_team_members`, `lead_mode`, `mutable_actor`, `implementation_allowed`, `goal_binding`, `visibility_topology`, `polling_required`, `mode_error`, and `version_compatibility` so clients do not infer who is allowed to mutate files. They also expose `operator_delivery.poll_required`, `operator_delivery.durable_amq`, and `operator_delivery.wake_supported`; a virtual/non-runnable operator handle always has `wake_supported=false`, so operator-facing updates and gates require polling/draining instead of wake delivery.
 
 Merge and lifecycle authority is explicit in the same status surface. `execution.release_readiness.merge_authority.default_actor` is `visible_lead`, and `worker_policy` is `workers_do_not_merge_by_default`: workers can report readiness evidence, but they do not merge, push, tag, release, close issues, or run other irreversible lifecycle actions from AMQ prose. The documented alternative is a verifiable authorization artifact that binds the operator/lead approval to the same subject, head SHA, and gate/evidence thread; otherwise a worker escalates the request back to the visible lead. This answers **who** owns the action path, while the exact-head review, `verify merge`, normalized evidence, and operator gate rules still answer **when** merge-ready can be claimed.
 
@@ -719,6 +729,7 @@ amq-squad new session [--project DIR] [--profile NAME] [<session>] [up options]
 
 amq-squad team init [--project DIR] [--profile NAME] [--roles a,b|numbers|all] [--binary role=bin,...]
                      [--session ws] [--trust sandboxed|approve-for-me|trusted] [--orchestrated [--lead ROLE]]
+                     [--lead-mode builder|planner]
                      [--mode project_lead|project_team|direct_lead_session|global_orchestrator]
                      [--model role=model,...] [--codex-args ...] [--claude-args ...] [--dry-run [--json]]
                                   Write a team profile and seed .amq-squad/team-rules.md.
@@ -742,12 +753,14 @@ amq-squad team rules init [--project DIR] [--profile NAME]
                                   shared per team-home.
 amq-squad team rules show [--project DIR]
                                   Print .amq-squad/team-rules.md.
-amq-squad team lead set <role> [--project DIR] [--profile NAME]
+amq-squad team lead set <role> [--project DIR] [--profile NAME] [--lead-mode builder|planner]
 amq-squad team lead clear [--project DIR] [--profile NAME]
 amq-squad team lead show [--project DIR] [--profile NAME] [--json]
                                   Mutate or inspect the profile's orchestration
                                   lead. `set` validates that <role> is a team
                                   member and records orchestrated=true.
+                                  --lead-mode planner makes that lead
+                                  planner/reviewer-only; builder is default.
                                   `clear` returns the profile to flat mode.
 amq-squad team overlay init (--role R | --workers) [--disable-plugins id@market,...]
                         [--disable-all-hooks] [--force] [--dry-run]
@@ -776,6 +789,7 @@ amq-squad global start [--root DIR] [--agent claude|codex] [--name WINDOW]
                                   tmux window and launches the agent.
 amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
                     [--roles r,...] [--binary role=bin,...] [--model role=model,...]
+                    [--lead-mode builder|planner]
                     [--codex-args A] [--claude-args A]
                     [--visibility detached|sibling-tabs|current]
                     [--goal TEXT] [--seed-from REF] [--go]

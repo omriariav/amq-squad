@@ -242,6 +242,7 @@ var completionCommonFlags = []string{
 	"--launcher-args",
 	"--layout",
 	"--lead",
+	"--lead-mode",
 	"--launch",
 	"--limit",
 	"--me",

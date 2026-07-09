@@ -1235,6 +1235,39 @@ func TestRunTeamInitDryRunJSONIncludesExecutionMode(t *testing.T) {
 	}
 }
 
+func TestRunTeamInitPlannerLeadModePersistsAndContractsDelegation(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	_, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--roles", "cto,fullstack",
+			"--session", "issue-350",
+			"--orchestrated", "--lead", "cto",
+			"--lead-mode", "planner",
+		})
+	})
+	if err != nil {
+		t.Fatalf("team init --lead-mode planner: %v\nstderr:\n%s", err, stderr)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if cfg.LeadMode != team.LeadModePlanner || team.EffectiveLeadMode(cfg) != team.LeadModePlanner {
+		t.Fatalf("lead mode = persisted:%q effective:%q, want planner", cfg.LeadMode, team.EffectiveLeadMode(cfg))
+	}
+	exec := executionContractForTeam(cfg, team.DefaultProfile, "issue-350", "amq_task_brief", "", "dev")
+	if exec.LeadMode != team.LeadModePlanner || exec.ImplementationAllowed {
+		t.Fatalf("planner execution = %+v, want lead_mode planner and implementation_allowed=false", exec)
+	}
+	if exec.MutableActor != "fullstack" {
+		t.Fatalf("mutable_actor = %q, want single non-lead implementer fullstack", exec.MutableActor)
+	}
+	if !strings.Contains(exec.Boundary, "implementation must be delegated") {
+		t.Fatalf("planner boundary should steer delegation: %+v", exec)
+	}
+}
+
 func TestRunTeamInitJSONRequiresDryRun(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runTeamInit([]string{"--roles", "cto", "--json"})

@@ -24,6 +24,7 @@ Execution mode:
 - Mode: {{.Execution.Mode}}
 - Control root: {{.Execution.ControlRoot}}
 - Target project root: {{.Execution.TargetProjectRoot}}
+- Lead mode: {{.Execution.LeadMode}}
 - Mutable actor: {{orDefault .Execution.MutableActor "(none)"}}
 - Implementation allowed: {{.Execution.ImplementationAllowed}}
 - Goal binding: {{.Execution.GoalBinding}}
@@ -31,6 +32,12 @@ Execution mode:
 {{- if .Execution.ModeError }}
 - Mode error: {{.Execution.ModeError}}
 {{- end }}
+
+{{- end }}
+{{- if .PlannerLead }}
+Planner/reviewer lead posture:
+- You must not edit files, run write-formatters, commit, or otherwise mutate target project code directly.
+- Delegate implementation over durable AMQ tasks. You may inspect/read, plan, dispatch, review evidence, manage gates, and produce final evidence.
 
 {{- end }}
 {{- if .CurrentTeam }}

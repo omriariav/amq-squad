@@ -55,6 +55,7 @@ type teamLeadData struct {
 	Orchestrated bool   `json:"orchestrated"`
 	Lead         string `json:"lead,omitempty"`
 	LeadHandle   string `json:"lead_handle,omitempty"`
+	LeadMode     string `json:"lead_mode,omitempty"`
 }
 
 func runTeamLead(args []string) error {
@@ -62,7 +63,7 @@ func runTeamLead(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad team lead - manage orchestration lead metadata
 
 Usage:
-  amq-squad team lead set <role> [--project DIR] [--profile NAME]
+  amq-squad team lead set <role> [--project DIR] [--profile NAME] [--lead-mode builder|planner]
   amq-squad team lead clear [--project DIR] [--profile NAME]
   amq-squad team lead show [--json] [--project DIR] [--profile NAME]
 
@@ -95,11 +96,16 @@ func runTeamLeadSet(args []string) error {
 	fs := flag.NewFlagSet("team lead set", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to mutate (default: default profile)")
+	leadModeFlag := fs.String("lead-mode", "", "lead implementation posture: builder (default) or planner")
 	if err := parseFlags(fs, rest); err != nil {
 		return err
 	}
+	leadMode, err := normalizeLeadMode(*leadModeFlag)
+	if err != nil {
+		return err
+	}
 	role = strings.ToLower(strings.TrimSpace(role))
-	if err := setTeamLead(*projectFlag, *profileFlag, flagWasSet(fs, "project"), role); err != nil {
+	if err := setTeamLead(*projectFlag, *profileFlag, flagWasSet(fs, "project"), role, leadMode); err != nil {
 		return err
 	}
 	fmt.Printf("orchestrated lead set to %s.\n", role)
@@ -162,7 +168,7 @@ func runTeamLeadShow(args []string) error {
 		fmt.Println("orchestrated: no")
 		return nil
 	}
-	fmt.Printf("orchestrated: yes\nlead: %s\nlead_handle: %s\n", data.Lead, data.LeadHandle)
+	fmt.Printf("orchestrated: yes\nlead: %s\nlead_handle: %s\nlead_mode: %s\n", data.Lead, data.LeadHandle, data.LeadMode)
 	return nil
 }
 
@@ -363,7 +369,7 @@ func runLeadRegister(args []string) error {
 	if err := launch.Write(agentDir, rec); err != nil {
 		return fmt.Errorf("write external launch record: %w", err)
 	}
-	if err := setTeamLeadForProfile(projectDir, profile, role); err != nil {
+	if err := setTeamLeadForProfile(projectDir, profile, role, team.EffectiveLeadMode(t)); err != nil {
 		return err
 	}
 	fmt.Printf("registered external lead %s (%s) at pane %s for session %s.\n", role, handle, id.PaneID, env.SessionName)
@@ -598,17 +604,21 @@ func stopExternalLeadWakeProcessGroup(cmd *exec.Cmd) error {
 	return err
 }
 
-func setTeamLead(projectFlag, profileFlag string, projectSet bool, role string) error {
+func setTeamLead(projectFlag, profileFlag string, projectSet bool, role string, leadMode string) error {
 	projectDir, profile, err := resolveExistingTeamProfile(projectFlag, profileFlag, projectSet)
 	if err != nil {
 		return err
 	}
-	return setTeamLeadForProfile(projectDir, profile, role)
+	return setTeamLeadForProfile(projectDir, profile, role, leadMode)
 }
 
-func setTeamLeadForProfile(projectDir, profile, role string) error {
+func setTeamLeadForProfile(projectDir, profile, role string, leadMode string) error {
 	if err := team.ValidateRoleID(role); err != nil {
 		return fmt.Errorf("lead: %w", err)
+	}
+	leadMode, err := normalizeLeadMode(leadMode)
+	if err != nil {
+		return err
 	}
 	return withProfileLock(projectDir, profile, func() error {
 		t, err := team.ReadProfile(projectDir, profile)
@@ -620,6 +630,7 @@ func setTeamLeadForProfile(projectDir, profile, role string) error {
 		}
 		t.Orchestrated = true
 		t.Lead = role
+		t.LeadMode = leadModeForPersist(leadMode)
 		return team.WriteProfile(projectDir, profile, t)
 	})
 }
@@ -640,6 +651,7 @@ func buildTeamLeadData(profile string, t team.Team) teamLeadData {
 	}
 	data.Lead = strings.TrimSpace(t.Lead)
 	data.LeadHandle = data.Lead
+	data.LeadMode = team.EffectiveLeadMode(t)
 	if m, ok := memberByRole(t, data.Lead); ok {
 		data.LeadHandle = memberHandle(m)
 	}

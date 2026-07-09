@@ -102,6 +102,7 @@ type executionModeData struct {
 	NamespaceID           string                    `json:"namespace_id,omitempty"`
 	VisibleLead           string                    `json:"visible_lead,omitempty"`
 	VisibleTeamMembers    []string                  `json:"visible_team_members,omitempty"`
+	LeadMode              string                    `json:"lead_mode,omitempty"`
 	MutableActor          string                    `json:"mutable_actor,omitempty"`
 	ImplementationAllowed bool                      `json:"implementation_allowed"`
 	GoalBinding           string                    `json:"goal_binding,omitempty"`
@@ -128,6 +129,26 @@ func normalizeExecutionMode(mode string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported execution mode %q (want global_orchestrator, project_lead, project_team, or direct_lead_session)", mode)
 	}
+}
+
+func normalizeLeadMode(mode string) (string, error) {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		return team.LeadModeBuilder, nil
+	}
+	switch mode {
+	case team.LeadModeBuilder, team.LeadModePlanner:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unsupported lead mode %q (want builder or planner)", mode)
+	}
+}
+
+func leadModeForPersist(mode string) string {
+	if strings.TrimSpace(mode) == "" || strings.TrimSpace(mode) == team.LeadModeBuilder {
+		return ""
+	}
+	return strings.TrimSpace(mode)
 }
 
 func cwdOrEmpty() string {
@@ -207,6 +228,7 @@ func executionContract(mode, controlRoot, targetRoot, profile, session, namespac
 		NamespaceID:          namespaceID,
 		VisibleLead:          lead,
 		VisibleTeamMembers:   append([]string(nil), visible...),
+		LeadMode:             team.LeadModeBuilder,
 		GoalBinding:          goalBinding,
 		VisibilityTopology:   topology,
 		InvariantsEvaluated:  false,
@@ -282,8 +304,83 @@ func executionContractForTeam(t team.Team, profile, session, goalBinding, topolo
 		t.TargetContract,
 		visibleMembersForExecutionMode(mode, t, lead),
 	)
+	applyLeadModeContract(&contract, t, lead)
 	applyLeadExecutionContract(&contract, t.LeadExecution)
 	return contract
+}
+
+func applyLeadModeContract(contract *executionModeData, t team.Team, lead string) {
+	if contract == nil {
+		return
+	}
+	leadMode := team.EffectiveLeadMode(t)
+	contract.LeadMode = leadMode
+	if leadMode != team.LeadModePlanner {
+		return
+	}
+	switch contract.Mode {
+	case executionModeProjectLead, executionModeProjectTeam, executionModeDirectLeadSession:
+	default:
+		return
+	}
+	contract.MutableActor = plannerMutableActor(t, lead)
+	contract.ImplementationAllowed = false
+	contract.Boundary = "planner/reviewer lead owns planning, dispatch, review, gates, and final evidence; implementation must be delegated to workers"
+}
+
+func applyLeadModeToDraftContract(contract *executionModeData, leadMode string, lead string, roster []goalRosterMember) {
+	if contract == nil {
+		return
+	}
+	leadMode = strings.TrimSpace(leadMode)
+	if leadMode == "" {
+		leadMode = team.LeadModeBuilder
+	}
+	contract.LeadMode = leadMode
+	if leadMode != team.LeadModePlanner {
+		return
+	}
+	switch contract.Mode {
+	case executionModeProjectLead, executionModeProjectTeam, executionModeDirectLeadSession:
+	default:
+		return
+	}
+	contract.MutableActor = plannerMutableActorFromRoles(lead, rosterRoles(roster))
+	contract.ImplementationAllowed = false
+	contract.Boundary = "planner/reviewer lead owns planning, dispatch, review, gates, and final evidence; implementation must be delegated to workers"
+	contract.ReleaseReadiness = releaseReadinessForExecution(*contract)
+}
+
+func plannerMutableActor(t team.Team, lead string) string {
+	roles := make([]string, 0, len(t.Members))
+	for _, member := range t.Members {
+		roles = append(roles, member.Role)
+	}
+	return plannerMutableActorFromRoles(lead, roles)
+}
+
+func plannerMutableActorFromRoles(lead string, roles []string) string {
+	lead = strings.TrimSpace(lead)
+	var workers []string
+	for _, role := range roles {
+		role = strings.TrimSpace(role)
+		if role == "" || role == lead {
+			continue
+		}
+		workers = append(workers, role)
+	}
+	if len(workers) == 1 {
+		return workers[0]
+	}
+	return "delegated_workers"
+}
+
+func rosterRoles(roster []goalRosterMember) []string {
+	roles := make([]string, 0, len(roster))
+	for _, member := range roster {
+		roles = append(roles, member.Role)
+	}
+	return roles
 }
 
 func visibleMembersForExecutionMode(mode string, t team.Team, lead string) []string {

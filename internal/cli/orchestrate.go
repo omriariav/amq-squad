@@ -167,6 +167,7 @@ func runRunCmd(args []string, version string) error {
 Usage:
   amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
       [--roles "a,b,c"] [--binary "role=bin,..."] [--model "role=model,..."]
+      [--lead-mode builder|planner]
       [--codex-args "..."] [--claude-args "..."]
       [--visibility detached|sibling-tabs|current] [--goal TEXT] [--seed-from REF] [--go]
 
@@ -210,6 +211,7 @@ func runRunStart(args []string, version string) error {
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	fs.StringVar(profileFlag, "P", "", "alias for --profile")
 	leadFlag := fs.String("lead", "", "lead role (default: cto when creating a roster; else inferred from the profile)")
+	leadModeFlag := fs.String("lead-mode", "", "lead implementation posture when creating a roster: builder (default) or planner")
 	rolesFlag := fs.String("roles", "", "create the roster first: comma-separated role ids")
 	binaryFlag := fs.String("binary", "", "per-role binary assignments, e.g. \"fullstack=codex,qa=codex\"")
 	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5,fullstack=sonnet\"")
@@ -251,6 +253,10 @@ func runRunStart(args []string, version string) error {
 	if visibility == visibilityPlan {
 		return usageErrorf("--visibility plan is not valid for run start; it previews by default and creates with --go")
 	}
+	leadMode, err := normalizeLeadMode(*leadModeFlag)
+	if err != nil {
+		return err
+	}
 
 	// Lead resolution: when creating a fresh roster, default the lead to cto.
 	// For an existing team, leave --role unset so `goal start` infers the
@@ -276,6 +282,9 @@ func runRunStart(args []string, version string) error {
 		// finds its members; without --session the members default to another
 		// workstream and `up` refuses them.
 		newTeamArgs = append(newTeamArgs, "--session", session, "--roles", *rolesFlag, "--orchestrated", "--lead", leadForNewTeam)
+		if flagWasSet(fs, "lead-mode") {
+			newTeamArgs = append(newTeamArgs, "--lead-mode", leadMode)
+		}
 		if strings.TrimSpace(*binaryFlag) != "" {
 			newTeamArgs = append(newTeamArgs, "--binary", *binaryFlag)
 		}
@@ -294,12 +303,21 @@ func runRunStart(args []string, version string) error {
 	if len(newTeamArgs) == 0 && !teamPresent {
 		return usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", profileOrDefault(*profileFlag), project)
 	}
+	leadModeDisplay := leadMode
+	if !flagWasSet(fs, "lead-mode") && teamPresent {
+		if existing, err := team.ReadProfile(project, *profileFlag); err == nil {
+			leadModeDisplay = team.EffectiveLeadMode(existing)
+		}
+	}
 
 	// freshRoster is true only when --roles is given AND the profile does not
 	// already exist, i.e. this invocation actually creates the roster. When the
 	// profile already exists, --roles is a no-op and we must NOT assume the lead
 	// is cto: goal delivery infers the profile's configured lead instead.
 	freshRoster := len(newTeamArgs) > 0 && !teamPresent
+	if flagWasSet(fs, "lead-mode") && !freshRoster {
+		return usageErrorf("--lead-mode applies only when run start creates a new roster; for an existing profile use `amq-squad team lead set <role> --lead-mode %s` first", leadMode)
+	}
 
 	leadDisplay := explicitLead
 	if explicitLead == "" {
@@ -318,8 +336,13 @@ func runRunStart(args []string, version string) error {
 	fmt.Printf("  profile: %s\n", profileOrDefault(*profileFlag))
 	fmt.Printf("  session: %s\n", session)
 	fmt.Printf("  lead:    %s\n", leadDisplay)
+	fmt.Printf("  lead-mode: %s\n", leadModeDisplay)
 	if freshRoster {
-		fmt.Printf("  step 1:  amq-squad new team --roles %s --orchestrated --lead %s\n", *rolesFlag, leadForNewTeam)
+		leadModeSuffix := ""
+		if flagWasSet(fs, "lead-mode") {
+			leadModeSuffix = " --lead-mode " + leadMode
+		}
+		fmt.Printf("  step 1:  amq-squad new team --roles %s --orchestrated --lead %s%s\n", *rolesFlag, leadForNewTeam, leadModeSuffix)
 	} else if len(newTeamArgs) > 0 {
 		fmt.Printf("  note:    profile %s already exists; --roles ignored, using the existing roster\n", profileOrDefault(*profileFlag))
 	}

@@ -60,6 +60,38 @@ func TestTeamLeadSetShowClear(t *testing.T) {
 	}
 }
 
+func TestTeamLeadSetPlannerLeadMode(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-350"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "issue-350"},
+		},
+	})
+
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamLead([]string{"set", "cto", "--lead-mode", "planner"})
+	}); err != nil {
+		t.Fatalf("team lead set --lead-mode planner: %v", err)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if cfg.LeadMode != team.LeadModePlanner {
+		t.Fatalf("lead_mode = %q, want planner", cfg.LeadMode)
+	}
+	out, _, err := captureOutput(t, func() error {
+		return runTeamLead([]string{"show", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("team lead show: %v", err)
+	}
+	env := decodeJSONEnvelope[teamLeadData](t, out)
+	if env.Data.LeadMode != team.LeadModePlanner {
+		t.Fatalf("team_lead data = %+v, want planner mode", env.Data)
+	}
+}
+
 func TestLeadRegisterWritesExternalRecordAndSetsLead(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
