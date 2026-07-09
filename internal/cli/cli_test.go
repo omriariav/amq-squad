@@ -75,6 +75,10 @@ func TestRunRolesListsMarketNumbers(t *testing.T) {
 		"cto",
 		"9",
 		"qa",
+		"lead",
+		"agent",
+		"Generic orchestrator",
+		"Generic individual contributor",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("roles output missing %q:\n%s", want, stdout)

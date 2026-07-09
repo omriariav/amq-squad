@@ -227,6 +227,46 @@ func TestRunStartGoInsideTmuxDefaultsToSiblingTabsBackend(t *testing.T) {
 	}
 }
 
+func TestRunStartGoAcceptsGenericLeadRole(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%42")
+	backend := &fakeBackend{}
+	prev, hadPrev := teamLaunchBackends["tmux"]
+	teamLaunchBackends["tmux"] = backend
+	t.Cleanup(func() {
+		if hadPrev {
+			teamLaunchBackends["tmux"] = prev
+			return
+		}
+		delete(teamLaunchBackends, "tmux")
+	})
+	dir := t.TempDir()
+
+	_, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "lead", "--lead", "lead", "--go"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("run start --roles lead --lead lead --go: %v", err)
+	}
+	if len(backend.launches) != 1 {
+		t.Fatalf("expected one launch, got %+v", backend.launches)
+	}
+	got := backend.launches[0]
+	if got.Workstream != "sess" || got.Terminal != "tmux" || got.Target != "new-window" {
+		t.Fatalf("launch opts = %+v, want tmux new-window for sess", got)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if !cfg.Orchestrated || cfg.Lead != "lead" {
+		t.Fatalf("team orchestration = %v/%q, want true/lead", cfg.Orchestrated, cfg.Lead)
+	}
+	if len(cfg.Members) != 1 || cfg.Members[0].Role != "lead" || cfg.Members[0].Binary != "codex" {
+		t.Fatalf("team members = %+v, want one built-in lead using codex", cfg.Members)
+	}
+}
+
 func TestRunStartProfileAliasAndExplicitLead(t *testing.T) {
 	out, _, err := captureOutput(t, func() error {
 		return runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "-P", "release", "--roles", "cto,qa", "--lead", "qa"}, "test")
