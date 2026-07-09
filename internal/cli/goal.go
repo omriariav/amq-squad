@@ -43,6 +43,7 @@ type goalDraftData struct {
 	Session           string `json:"session"`
 	Profile           string `json:"profile"`
 	Lead              string `json:"lead"`
+	LeadMode          string `json:"lead_mode"`
 	Mode              string `json:"mode"`
 	ControlRoot       string `json:"control_root,omitempty"`
 	TargetProjectRoot string `json:"target_project_root,omitempty"`
@@ -282,12 +283,14 @@ func runGoalApply(args []string) error {
 	goalIDFlag := fs.String("goal-id", "", "approved goal identifier (recorded in JSON output)")
 	gateFlag := fs.String("gate", "", "gate topic carrying the operator APPROVED answer")
 	yes := fs.Bool("yes", false, "confirm apply without an interactive prompt")
+	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
+	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned goal_apply envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad goal apply - apply an operator-approved visible lead goal
 
 Usage:
-  amq-squad goal apply [--project DIR] [--profile NAME] [--session S] [--role ROLE] [--goal-id ID] --gate TOPIC --yes [--json]
+  amq-squad goal apply [--project DIR] [--profile NAME] [--session S] [--role ROLE] [--goal-id ID] --gate TOPIC --yes [--override-namespace-conflict --reason WHY] [--json]
 
 Verifies that gate/<topic> contains a real operator APPROVED answer to the
 resolved visible lead, reads the native goal already recorded on that lead's
@@ -305,7 +308,10 @@ command is confirm-gated; pass --yes after reviewing the gate and lead state.
 	if gate == "" {
 		return usageErrorf("goal apply requires --gate <topic>")
 	}
-	target, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal apply")
+	target, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal apply", namespaceConflictOverrideOptions{
+		Allowed: *overrideNamespaceConflict,
+		Reason:  *overrideNamespaceReason,
+	})
 	if err != nil {
 		return err
 	}
@@ -358,12 +364,14 @@ func runGoalStart(args []string) error {
 	registerOrchestrator := fs.String("register-orchestrator", "", "before delivery, register the current pane as external orchestrator handle (default: orchestrator)")
 	dryRun := fs.Bool("dry-run", false, "preview the inferred start plan without delivering")
 	yes := fs.Bool("yes", false, "confirm delivery without an interactive prompt")
+	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
+	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned goal_start envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad goal start - preview or deliver a goal to the visible lead
 
 Usage:
-  amq-squad goal start [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE]] [--dry-run] [--yes] [--json]
+  amq-squad goal start [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE]] [--dry-run] [--yes] [--override-namespace-conflict --reason WHY] [--json]
 
 Infers the current team profile, session, execution mode, and visible lead target
 from the project. Use --dry-run to inspect the plan. Non-dry-run delivery is
@@ -384,7 +392,7 @@ confirm-gated and requires --yes in this first implementation slice.
 	// intentionally not applied here; the preview resolves against the configured
 	// lead, matching delivery without registration.
 	if *dryRun {
-		opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start")
+		opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", namespaceConflictOverrideOptions{})
 		if err != nil {
 			return err
 		}
@@ -400,14 +408,15 @@ confirm-gated and requires --yes in this first implementation slice.
 	if !*yes {
 		return usageErrorf("goal start delivery requires --yes (or run --dry-run to preview first)")
 	}
+	override := namespaceConflictOverrideOptions{Allowed: *overrideNamespaceConflict, Reason: *overrideNamespaceReason}
 	if flagWasSet(fs, "register-orchestrator") {
-		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start")
+		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", override)
 		if err != nil {
 			return err
 		}
 		*roleFlag = role
 	}
-	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start")
+	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", override)
 	if err != nil {
 		return err
 	}
@@ -449,12 +458,14 @@ func runGoalDeliver(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	registerOrchestrator := fs.String("register-orchestrator", "", "before delivery, register the current pane as external orchestrator handle (default: orchestrator)")
+	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
+	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad goal deliver - deliver native /goal as a control action
 
 Usage:
-  amq-squad goal deliver [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE]] [--json]
+  amq-squad goal deliver [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE]] [--override-namespace-conflict --reason WHY] [--json]
 
 Delivers a native Codex /goal command to the visible lead as a first-class
 control action. This is not an ordinary prompt send: it preserves the busy guard
@@ -469,14 +480,15 @@ runtime accepts goal control messages safely.
 	if goal == "" {
 		return usageErrorf("goal deliver requires --goal TEXT")
 	}
+	override := namespaceConflictOverrideOptions{Allowed: *overrideNamespaceConflict, Reason: *overrideNamespaceReason}
 	if flagWasSet(fs, "register-orchestrator") {
-		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver")
+		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver", override)
 		if err != nil {
 			return err
 		}
 		*roleFlag = role
 	}
-	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver")
+	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver", override)
 	if err != nil {
 		return err
 	}
@@ -496,8 +508,8 @@ runtime accepts goal control messages safely.
 	return nil
 }
 
-func resolveGoalDeliveryOptions(projectFlag, profileFlag, sessionFlag, roleFlag, goal string, projectSet, profileSet, sessionSet bool, command string) (goalDeliveryOptions, error) {
-	opts, err := resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag, projectSet, profileSet, sessionSet, command)
+func resolveGoalDeliveryOptions(projectFlag, profileFlag, sessionFlag, roleFlag, goal string, projectSet, profileSet, sessionSet bool, command string, override namespaceConflictOverrideOptions) (goalDeliveryOptions, error) {
+	opts, err := resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag, projectSet, profileSet, sessionSet, command, override)
 	if err != nil {
 		return goalDeliveryOptions{}, err
 	}
@@ -505,7 +517,7 @@ func resolveGoalDeliveryOptions(projectFlag, profileFlag, sessionFlag, roleFlag,
 	return opts, nil
 }
 
-func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag string, projectSet, profileSet, sessionSet bool, command string) (goalDeliveryOptions, error) {
+func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag string, projectSet, profileSet, sessionSet bool, command string, override namespaceConflictOverrideOptions) (goalDeliveryOptions, error) {
 	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
 	if err != nil {
 		return goalDeliveryOptions{}, err
@@ -521,7 +533,7 @@ func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag st
 	if err != nil {
 		return goalDeliveryOptions{}, err
 	}
-	if err := ensureNoNamespaceConflict(command, projectDir, profile, workstream, profileSet); err != nil {
+	if err := ensureNoNamespaceConflictWithOverride(command, projectDir, profile, workstream, profileSet, override); err != nil {
 		return goalDeliveryOptions{}, err
 	}
 	role := strings.TrimSpace(roleFlag)
@@ -768,13 +780,13 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle string) error {
 	if err := launch.Write(agentDir, rec); err != nil {
 		return fmt.Errorf("write external orchestrator launch record: %w", err)
 	}
-	if err := setTeamLeadForProfile(opts.Project, opts.Profile, goalOrchestratorRole); err != nil {
+	if err := setTeamLeadForProfile(opts.Project, opts.Profile, goalOrchestratorRole, "", false); err != nil {
 		return err
 	}
 	return nil
 }
 
-func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, roleFlag, handle string, projectSet, profileSet, sessionSet bool, command string) (string, error) {
+func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, roleFlag, handle string, projectSet, profileSet, sessionSet bool, command string, override namespaceConflictOverrideOptions) (string, error) {
 	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
 	if err != nil {
 		return "", err
@@ -790,7 +802,7 @@ func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, 
 	if err != nil {
 		return "", err
 	}
-	if err := ensureNoNamespaceConflict(command, projectDir, profile, workstream, profileSet); err != nil {
+	if err := ensureNoNamespaceConflictWithOverride(command, projectDir, profile, workstream, profileSet, override); err != nil {
 		return "", err
 	}
 	if err := ensureGoalOrchestratorMember(projectDir, profile, workstream, strings.TrimSpace(handle)); err != nil {
@@ -927,6 +939,9 @@ func nativeGoalControlPrompt(goal string, t team.Team, profile, session, role st
 	if role != "" && role != "cto" {
 		args = append(args, "--lead", role)
 	}
+	if leadMode := team.EffectiveLeadMode(t); leadMode != team.LeadModeBuilder {
+		args = append(args, "--lead-mode", leadMode)
+	}
 	if target := strings.TrimSpace(t.TargetContract); target != "" {
 		args = append(args, "--target-contract", target)
 	}
@@ -946,6 +961,7 @@ func runGoalDraftWithVersion(args []string, version string) error {
 	sessionFlag := fs.String("session", "", "AMQ workstream session name")
 	profileFlag := fs.String("profile", "", "team profile name for the proposed setup")
 	leadFlag := fs.String("lead", "cto", "operator-visible goal lead role")
+	leadModeFlag := fs.String("lead-mode", "", "lead implementation posture: builder (default) or planner")
 	modeFlag := fs.String("mode", executionModeProjectLead, "execution mode: global_orchestrator, project_lead, project_team, or direct_lead_session")
 	controlRootFlag := fs.String("control-root", "", "control-plane root directory (default: cwd)")
 	targetProjectRootFlag := fs.String("target-project-root", "", "target project root directory (default: cwd)")
@@ -965,7 +981,7 @@ func runGoalDraftWithVersion(args []string, version string) error {
 		fmt.Fprint(os.Stderr, `amq-squad goal draft - produce a preview-only setup plan from a goal
 
 Usage:
-  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args "..."] [--codex-only] [--skill-invocation] [--json]
+  amq-squad goal draft --goal TEXT [--repo owner/repo] [--milestone NAME] [--session NAME] [--profile NAME] [--lead ROLE] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--visibility sibling-tabs|detached|current|plan] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args "..."] [--codex-only] [--skill-invocation] [--json]
 
 The draft is read-only. It prints proposed briefs, roster entries, task-store
 items, spawn gates, dispatches, and the orchestrator prompt, but it does not
@@ -1001,6 +1017,7 @@ Examples:
 		Session:            strings.TrimSpace(*sessionFlag),
 		Profile:            strings.TrimSpace(*profileFlag),
 		Lead:               strings.TrimSpace(*leadFlag),
+		LeadMode:           strings.TrimSpace(*leadModeFlag),
 		Mode:               strings.TrimSpace(*modeFlag),
 		ControlRoot:        strings.TrimSpace(*controlRootFlag),
 		TargetProjectRoot:  strings.TrimSpace(*targetProjectRootFlag),
@@ -1039,6 +1056,7 @@ type goalDraftOptions struct {
 	Session            string
 	Profile            string
 	Lead               string
+	LeadMode           string
 	Mode               string
 	ControlRoot        string
 	TargetProjectRoot  string
@@ -1093,6 +1111,10 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 	if err := validateProfileName(lead); err != nil {
 		return goalDraftData{}, fmt.Errorf("invalid lead: %w", err)
 	}
+	leadMode, err := normalizeLeadMode(opts.LeadMode)
+	if err != nil {
+		return goalDraftData{}, err
+	}
 	mode, err := normalizeExecutionMode(opts.Mode)
 	if err != nil {
 		return goalDraftData{}, err
@@ -1124,6 +1146,7 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 		Session:                     session,
 		Profile:                     profile,
 		Lead:                        lead,
+		LeadMode:                    leadMode,
 		Mode:                        mode,
 		ControlRoot:                 controlRoot,
 		TargetProjectRoot:           targetRoot,
@@ -1161,6 +1184,7 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 	data.OrchestratorPrompt = renderGoalOrchestratorPrompt(data)
 	data.GoalBinding = goalBindingForDraft(data.Namespace, data.OrchestratorPrompt)
 	data.Execution = executionContract(mode, controlRoot, targetRoot, profile, session, data.Namespace.ID, lead, data.GoalBinding.Mode, visibility, opts.RuntimeVersion, targetContract, goalVisibleMembers(mode, data.Roster, lead))
+	applyLeadModeToDraftContract(&data.Execution, leadMode, lead, data.Roster)
 	// For a global_orchestrator goal whose target is only a proposal or
 	// unresolved, the execution contract must NOT report a target_project_root
 	// (executionContract falls back to cwd). Keep it empty so no surface treats an
@@ -1200,7 +1224,7 @@ func goalDraftProvidedFields(fs *flag.FlagSet) map[string]bool {
 	flagByField := map[string]string{
 		"goal": "goal", "repo": "repo", "milestone": "milestone",
 		"session": "session", "profile": "profile", "lead": "lead",
-		"mode": "mode", "visibility": "visibility", "composition": "composition",
+		"lead_mode": "lead-mode", "mode": "mode", "visibility": "visibility", "composition": "composition",
 		"target_contract": "target-contract", "control_root": "control-root",
 		"target_project_root": "target-project-root", "codex_only": "codex-only",
 		"codex_args": "codex-args",
@@ -1217,7 +1241,7 @@ func goalDraftProvidedFields(fs *flag.FlagSet) map[string]bool {
 // goalDraftFieldSources labels each operator-facing Step 1 input provided/default
 // (#291). target_project_root keeps its richer #290 source vocabulary.
 func goalDraftFieldSources(provided map[string]bool, targetRootSource string) map[string]string {
-	labeled := []string{"goal", "repo", "milestone", "session", "profile", "lead", "mode", "visibility", "composition", "target_contract", "control_root", "codex_only"}
+	labeled := []string{"goal", "repo", "milestone", "session", "profile", "lead", "lead_mode", "mode", "visibility", "composition", "target_contract", "control_root", "codex_only"}
 	out := make(map[string]string, len(labeled)+1)
 	for _, f := range labeled {
 		if provided[f] {
@@ -1283,6 +1307,9 @@ func renderGoalSkillInvocation(data goalDraftData) string {
 	}
 	if data.TargetContract != "" {
 		fmt.Fprintf(&b, " --target-contract %s", quoteSkillInvocationArg(data.TargetContract))
+	}
+	if data.LeadMode != "" && data.LeadMode != team.LeadModeBuilder {
+		fmt.Fprintf(&b, " --lead-mode %s", quoteSkillInvocationArg(data.LeadMode))
 	}
 	if data.Composition != "" {
 		fmt.Fprintf(&b, " --composition %s", quoteSkillInvocationArg(data.Composition))
@@ -1629,10 +1656,14 @@ func defaultGoalMutations(data goalDraftData) []goalCommandPlan {
 	if data.TargetContract != "" {
 		executionArgs += " --target-contract " + shellQuote(data.TargetContract)
 	}
+	leadModeArgs := ""
+	if data.LeadMode != "" && data.LeadMode != team.LeadModeBuilder {
+		leadModeArgs = " --lead-mode " + data.LeadMode
+	}
 	mutations := []goalCommandPlan{
 		{
 			Title:   "initialize profile",
-			Command: fmt.Sprintf("amq-squad team init --profile %s --session %s --roles %s --binary %s --orchestrated --lead %s%s%s --dry-run", data.Profile, data.Session, strings.Join(roles, ","), strings.Join(binaries, ","), data.Lead, executionArgs, compositionArgs),
+			Command: fmt.Sprintf("amq-squad team init --profile %s --session %s --roles %s --binary %s --orchestrated --lead %s%s%s%s --dry-run", data.Profile, data.Session, strings.Join(roles, ","), strings.Join(binaries, ","), data.Lead, leadModeArgs, executionArgs, compositionArgs),
 			Reason:  "Preview the proposed roster and orchestration metadata before writing team config.",
 		},
 		{
@@ -1772,6 +1803,9 @@ func renderGoalOrchestratorPrompt(data goalDraftData) string {
 	if data.Lead != "" && data.Lead != "cto" {
 		args = append(args, "--lead", data.Lead)
 	}
+	if data.LeadMode != "" && data.LeadMode != team.LeadModeBuilder {
+		args = append(args, "--lead-mode", data.LeadMode)
+	}
 	if data.Repo != "" {
 		args = append(args, "--repo", data.Repo)
 	}
@@ -1806,6 +1840,7 @@ func writeGoalDraftMarkdown(out *os.File, data goalDraftData) {
 	fmt.Fprintf(out, "# session: %s%s\n", data.Session, goalFieldSourceLabel(data, "session"))
 	fmt.Fprintf(out, "# profile: %s%s\n", data.Profile, goalFieldSourceLabel(data, "profile"))
 	fmt.Fprintf(out, "# lead: %s%s\n", data.Lead, goalFieldSourceLabel(data, "lead"))
+	fmt.Fprintf(out, "# lead_mode: %s%s\n", data.LeadMode, goalFieldSourceLabel(data, "lead_mode"))
 	fmt.Fprintf(out, "# namespace: %s\n", data.Namespace.ID)
 	if data.ControlRoot != "" {
 		fmt.Fprintf(out, "# control_root: %s%s\n", data.ControlRoot, goalFieldSourceLabel(data, "control_root"))
@@ -1866,6 +1901,7 @@ func writeGoalDraftMarkdown(out *os.File, data goalDraftData) {
 	fmt.Fprintf(out, "- Control root: %s\n", data.Execution.ControlRoot)
 	fmt.Fprintf(out, "- Target project root: %s\n", goalTargetProjectRootLine(data))
 	fmt.Fprintf(out, "- Visible lead: %s\n", data.Execution.VisibleLead)
+	fmt.Fprintf(out, "- Lead mode: %s\n", data.Execution.LeadMode)
 	fmt.Fprintf(out, "- Visible team members: %s\n", strings.Join(data.Execution.VisibleTeamMembers, ", "))
 	fmt.Fprintf(out, "- Mutable actor: %s\n", data.Execution.MutableActor)
 	fmt.Fprintf(out, "- Implementation allowed: %t\n", data.Execution.ImplementationAllowed)

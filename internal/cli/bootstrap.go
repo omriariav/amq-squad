@@ -37,6 +37,7 @@ type bootstrapContext struct {
 	OperatorDelivery operatorDeliveryData
 	OperatorGates    bool
 	Execution        *executionModeData
+	PlannerLead      bool
 	// Orchestrated/IsLead/LeadHandle drive the spawned-worker READY handshake:
 	// a non-lead member of an orchestrated team announces readiness to its lead
 	// on startup so the lead can dispatch without guessing the worker's load
@@ -107,6 +108,7 @@ func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
 		ctx.Execution.Session = promptText(ctx.Execution.Session)
 		ctx.Execution.NamespaceID = promptText(ctx.Execution.NamespaceID)
 		ctx.Execution.VisibleLead = promptText(ctx.Execution.VisibleLead)
+		ctx.Execution.LeadMode = promptText(ctx.Execution.LeadMode)
 		ctx.Execution.MutableActor = promptText(ctx.Execution.MutableActor)
 		ctx.Execution.GoalBinding = promptText(ctx.Execution.GoalBinding)
 		ctx.Execution.VisibilityTopology = promptText(ctx.Execution.VisibilityTopology)
@@ -186,6 +188,7 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		OperatorDelivery: operatorDeliveryForRecord(rec, teamHome),
 		OperatorGates:    operatorGates,
 		Execution:        execution,
+		PlannerLead:      isLead && execution != nil && execution.LeadMode == team.LeadModePlanner && !execution.ImplementationAllowed,
 		Orchestrated:     orchestrated,
 		IsLead:           isLead,
 		LeadHandle:       leadHandle,

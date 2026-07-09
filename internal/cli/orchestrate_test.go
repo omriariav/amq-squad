@@ -172,6 +172,41 @@ func TestRunStartProfileAliasAndExplicitLead(t *testing.T) {
 	}
 }
 
+func TestRunStartPreviewSurfacesPlannerLeadModeForFreshRoster(t *testing.T) {
+	out, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto,fullstack", "--lead-mode", "planner"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("preview returned error: %v", err)
+	}
+	for _, want := range []string{
+		"lead-mode: planner",
+		"--lead-mode planner",
+		"# lead-mode: planner",
+		"# implementation-allowed: false",
+		"# mutable-actor: fullstack",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("run start planner preview missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunStartLeadModeExistingProfileRequiresExplicitProfileMutation(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--project", dir, "--session", "sess", "--roles", "cto,qa", "--orchestrated", "--lead", "cto"})
+	}); err != nil {
+		t.Fatalf("setup new team: %v", err)
+	}
+	_, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--lead-mode", "planner"}, "test")
+	})
+	if err == nil || !strings.Contains(err.Error(), "team lead set") {
+		t.Fatalf("expected existing-profile lead-mode error, got %v", err)
+	}
+}
+
 func TestRunStartExistingProfileWithRolesInfersLead(t *testing.T) {
 	// Regression: --roles + an EXISTING profile whose lead is not cto must not
 	// force cto. new team is skipped, so the run infers the profile's lead.

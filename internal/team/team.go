@@ -118,6 +118,8 @@ const (
 	LeadExecutionSolo         = "solo"
 	LeadExecutionDelegated    = "delegated"
 	LeadExecutionVisibleTeam  = "visible_team"
+	LeadModeBuilder           = "builder"
+	LeadModePlanner           = "planner"
 	IndependentReviewRequired = "required"
 	IndependentReviewWaived   = "waived"
 	IndependentReviewComplete = "complete"
@@ -242,11 +244,15 @@ type Team struct {
 	Autonomous   *AutonomousPolicy `json:"autonomous,omitempty"`
 	// ExecutionMode records the operator-visible ownership contract for this
 	// profile. Empty means callers apply the compatibility default.
-	ExecutionMode     string         `json:"execution_mode,omitempty"`
-	ControlRoot       string         `json:"control_root,omitempty"`
-	TargetProjectRoot string         `json:"target_project_root,omitempty"`
-	TargetContract    string         `json:"target_contract,omitempty"`
-	LeadExecution     *LeadExecution `json:"lead_execution,omitempty"`
+	ExecutionMode     string `json:"execution_mode,omitempty"`
+	ControlRoot       string `json:"control_root,omitempty"`
+	TargetProjectRoot string `json:"target_project_root,omitempty"`
+	TargetContract    string `json:"target_contract,omitempty"`
+	// LeadMode records whether the visible lead may implement directly. Empty is
+	// the compatibility default: builder. Planner leads review/dispatch only and
+	// must delegate project mutations to workers.
+	LeadMode      string         `json:"lead_mode,omitempty"`
+	LeadExecution *LeadExecution `json:"lead_execution,omitempty"`
 	// MaxSpawnDepth caps runtime composition fan-out. Zero means the safe
 	// default of 1: the operator-launched lead may add direct children, but
 	// children cannot add grandchildren.
@@ -328,6 +334,13 @@ func EffectiveMaxSpawnDepth(t Team) int {
 		return t.MaxSpawnDepth
 	}
 	return 1
+}
+
+func EffectiveLeadMode(t Team) string {
+	if strings.TrimSpace(t.LeadMode) == "" {
+		return LeadModeBuilder
+	}
+	return strings.TrimSpace(t.LeadMode)
 }
 
 func EffectiveComposition(t Team) string {
@@ -588,6 +601,9 @@ func Validate(t Team) error {
 	if err := validateComposition(t); err != nil {
 		return err
 	}
+	if err := validateLeadMode(t.LeadMode); err != nil {
+		return err
+	}
 	if err := validateLeadExecution(t.LeadExecution); err != nil {
 		return err
 	}
@@ -659,6 +675,15 @@ func Validate(t Team) error {
 		}
 	}
 	return nil
+}
+
+func validateLeadMode(mode string) error {
+	switch strings.TrimSpace(mode) {
+	case "", LeadModeBuilder, LeadModePlanner:
+		return nil
+	default:
+		return fmt.Errorf("lead_mode: invalid mode %q: use %s or %s", mode, LeadModeBuilder, LeadModePlanner)
+	}
 }
 
 func validateLeadExecution(exec *LeadExecution) error {
