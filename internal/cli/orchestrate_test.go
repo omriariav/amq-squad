@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // withStubbedTmux swaps orchestrateTmuxRun for a recorder and restores it.
@@ -229,6 +231,196 @@ func TestRunStartExistingProfileWithRolesInfersLead(t *testing.T) {
 	if !strings.Contains(out, "already exists") {
 		t.Fatalf("should note the existing profile / skipped roster:\n%s", out)
 	}
+}
+
+func TestRunStartGoGoalWaitsForLeadReadiness(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--project", dir, "--session", "sess", "--roles", "cto,qa", "--orchestrated", "--lead", "cto"})
+	}); err != nil {
+		t.Fatalf("setup new team: %v", err)
+	}
+
+	var upCalls [][]string
+	var goalCalls [][]string
+	var sleeps []time.Duration
+	readyChecks := 0
+	stubRunStartGoalDelivery(t,
+		func(args []string, version string) error {
+			upCalls = append(upCalls, append([]string{}, args...))
+			return nil
+		},
+		func(args []string, version string) error {
+			goalCalls = append(goalCalls, append([]string{}, args...))
+			return nil
+		},
+		func(project, profile, session, role string) (runStartLeadReadiness, error) {
+			readyChecks++
+			if readyChecks < 3 {
+				return runStartLeadReadiness{Detail: "still starting"}, nil
+			}
+			return runStartLeadReadiness{Ready: true, Detail: "live"}, nil
+		},
+		func(d time.Duration) { sleeps = append(sleeps, d) },
+		time.Now,
+	)
+
+	_, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--goal", "ship it", "--go"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("run start --go returned error: %v", err)
+	}
+	if len(upCalls) != 1 {
+		t.Fatalf("expected one up call, got %v", upCalls)
+	}
+	if len(goalCalls) != 1 {
+		t.Fatalf("expected one goal call, got %v", goalCalls)
+	}
+	if readyChecks != 3 || len(sleeps) != 2 {
+		t.Fatalf("expected two waits before readiness, checks=%d sleeps=%v", readyChecks, sleeps)
+	}
+	goal := strings.Join(goalCalls[0], " ")
+	for _, want := range []string{"start", "--project " + dir, "--profile default", "--session sess", "--role cto", "--goal ship it", "--yes"} {
+		if !strings.Contains(goal, want) {
+			t.Fatalf("goal args %q missing %q", goal, want)
+		}
+	}
+}
+
+func TestRunStartGoGoalFailurePrintsQuotedRetryCommand(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--project", dir, "--session", "sess", "--roles", "cto", "--orchestrated", "--lead", "cto"})
+	}); err != nil {
+		t.Fatalf("setup new team: %v", err)
+	}
+
+	now := time.Unix(100, 0)
+	goal := "ship 'quotes'\nand $stuff"
+	goalCalled := false
+	stubRunStartGoalDelivery(t,
+		func(args []string, version string) error { return nil },
+		func(args []string, version string) error {
+			goalCalled = true
+			return nil
+		},
+		func(project, profile, session, role string) (runStartLeadReadiness, error) {
+			return runStartLeadReadiness{Detail: "pane not live yet"}, nil
+		},
+		func(d time.Duration) { now = now.Add(d) },
+		func() time.Time { return now },
+	)
+	prevTimeout := runStartLeadReadyTimeout
+	runStartLeadReadyTimeout = time.Millisecond
+	t.Cleanup(func() { runStartLeadReadyTimeout = prevTimeout })
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--goal", goal, "--go"}, "test")
+	})
+	if err == nil {
+		t.Fatal("expected readiness timeout error")
+	}
+	if goalCalled {
+		t.Fatal("goal delivery must not run when readiness never succeeds")
+	}
+	wantCmd := "amq-squad goal start --project " + shellQuote(dir) +
+		" --profile default --session sess --role cto --goal " + shellQuote(goal) + " --yes"
+	if !strings.Contains(stderr, wantCmd) {
+		t.Fatalf("stderr missing quoted retry command\nwant: %s\nstderr:\n%s", wantCmd, stderr)
+	}
+}
+
+func TestRunStartGoGoalDeliveryFailureAfterReadyPrintsRetryCommand(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--project", dir, "--session", "sess", "--roles", "cto", "--orchestrated", "--lead", "cto"})
+	}); err != nil {
+		t.Fatalf("setup new team: %v", err)
+	}
+
+	goalErr := errors.New("pane rejected paste")
+	stubRunStartGoalDelivery(t,
+		func(args []string, version string) error { return nil },
+		func(args []string, version string) error { return goalErr },
+		func(project, profile, session, role string) (runStartLeadReadiness, error) {
+			return runStartLeadReadiness{Ready: true, Detail: "live"}, nil
+		},
+		func(time.Duration) {},
+		time.Now,
+	)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--goal", "ship it", "--go"}, "test")
+	})
+	if !errors.Is(err, goalErr) || !strings.Contains(err.Error(), "goal delivery failed after lead became ready") {
+		t.Fatalf("expected wrapped delivery error, got %v", err)
+	}
+	wantCmd := "amq-squad goal start --project " + shellQuote(dir) +
+		" --profile default --session sess --role cto --goal 'ship it' --yes"
+	if !strings.Contains(stderr, wantCmd) {
+		t.Fatalf("stderr missing retry command\nwant: %s\nstderr:\n%s", wantCmd, stderr)
+	}
+}
+
+func TestRunStartLeadReadinessTransientErrorKeepsPolling(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Unix(100, 0)
+	calls := 0
+	stubRunStartGoalDelivery(t,
+		func(args []string, version string) error { return nil },
+		func(args []string, version string) error { return nil },
+		func(project, profile, session, role string) (runStartLeadReadiness, error) {
+			calls++
+			if calls == 1 {
+				return runStartLeadReadiness{}, errors.New("profile temporarily unreadable")
+			}
+			return runStartLeadReadiness{Ready: true, Detail: "live"}, nil
+		},
+		func(d time.Duration) { now = now.Add(d) },
+		func() time.Time { return now },
+	)
+
+	err := waitForRunStartLeadReady(runStartGoalDeliveryOptions{
+		Project: dir,
+		Profile: "default",
+		Session: "sess",
+		Role:    "cto",
+	})
+	if err != nil {
+		t.Fatalf("transient readiness error should be retried, got %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("readiness calls = %d, want 2", calls)
+	}
+}
+
+func stubRunStartGoalDelivery(
+	t *testing.T,
+	up func([]string, string) error,
+	goal func([]string, string) error,
+	ready func(project, profile, session, role string) (runStartLeadReadiness, error),
+	sleep func(time.Duration),
+	now func() time.Time,
+) {
+	t.Helper()
+	prevUp := runStartUpWithVersion
+	prevGoal := runStartGoalWithVersion
+	prevReady := runStartLeadReadyCheck
+	prevSleep := runStartLeadReadySleep
+	prevNow := runStartLeadReadyNow
+	runStartUpWithVersion = up
+	runStartGoalWithVersion = goal
+	runStartLeadReadyCheck = ready
+	runStartLeadReadySleep = sleep
+	runStartLeadReadyNow = now
+	t.Cleanup(func() {
+		runStartUpWithVersion = prevUp
+		runStartGoalWithVersion = prevGoal
+		runStartLeadReadyCheck = prevReady
+		runStartLeadReadySleep = prevSleep
+		runStartLeadReadyNow = prevNow
+	})
 }
 
 func TestStripFlagValue(t *testing.T) {
