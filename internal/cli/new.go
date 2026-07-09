@@ -338,7 +338,7 @@ func peelProjectFlag(args []string) (string, []string, error) {
 			out = append(out, args[i:]...)
 			break
 		}
-		if a == "--project" {
+		if a == "--project" || a == "-p" {
 			if i+1 >= len(args) {
 				return "", nil, usageErrorf("--project requires a directory")
 			}
@@ -352,11 +352,11 @@ func peelProjectFlag(args []string) (string, []string, error) {
 			i++
 			continue
 		}
-		if strings.HasPrefix(a, "--project=") {
+		if strings.HasPrefix(a, "--project=") || strings.HasPrefix(a, "-p=") {
 			if project != "" {
 				return "", nil, usageErrorf("--project may be passed only once")
 			}
-			project = strings.TrimSpace(strings.TrimPrefix(a, "--project="))
+			project = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(a, "--project="), "-p="))
 			if project == "" {
 				return "", nil, usageErrorf("--project requires a directory")
 			}

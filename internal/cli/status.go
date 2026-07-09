@@ -251,6 +251,7 @@ func runStatusWithVersion(args []string, version string) error {
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned status envelope instead of the human table")
 	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, sessionName, profileFlag)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad status - live state of this project's sessions and team
 

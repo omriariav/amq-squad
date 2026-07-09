@@ -86,6 +86,7 @@ func runDispatch(args []string) error {
 	priorityFlag := fs.String("priority", "", "message priority: urgent, normal, low")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	forceFlag := fs.Bool("force", false, "nudge the pane even if the agent looks busy (mid-turn)")
 	noWakeFlag := fs.Bool("no-wake", false, "queue the durable task without nudging the pane")
 	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")

@@ -49,6 +49,7 @@ func runNext(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	sessionFlag := fs.String("session", "", "AMQ workstream/session to inspect")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned next envelope with a canonical action object")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad next - get the highest-priority operator action for this session

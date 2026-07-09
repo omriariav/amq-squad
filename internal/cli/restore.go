@@ -29,6 +29,8 @@ func runRestore(args []string) error {
 	roleFilter := fs.String("role", "", "only consider records with this role")
 	handleFilter := fs.String("handle", "", "only consider records with this handle")
 	sessionFilter := fs.String("session", "", "only consider records with this session")
+	profileFilter := fs.String("profile", "", "only consider records with this team profile")
+	registerScopedFlagAliases(fs, projectDirs, sessionFilter, profileFilter)
 	conversationFilter := fs.String("conversation", "", "only consider records with this conversation name/id")
 
 	fs.Usage = func() {
@@ -82,7 +84,7 @@ Examples:
 			continue
 		}
 		for _, e := range entries {
-			if !matchesRestoreFilters(e.Record, *roleFilter, *handleFilter, *sessionFilter, *conversationFilter) {
+			if !matchesRestoreFiltersForProfile(e.Record, *roleFilter, *handleFilter, *sessionFilter, *conversationFilter, *profileFilter) {
 				continue
 			}
 			records = append(records, restoreCandidate{entry: e})

@@ -50,6 +50,7 @@ func runBrief(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name")
 	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned brief envelope instead of the human report")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad brief - print a workstream brief
@@ -107,6 +108,7 @@ func runBriefSeed(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name")
 	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	seedFrom := fs.String("seed-from", "", "brief seed source: file:<path>, issue:<n>, or gh:owner/repo#<n>")
 	force := fs.Bool("force", false, "overwrite an existing brief")
 	dryRun := fs.Bool("dry-run", false, "print the candidate brief without writing it")
@@ -291,6 +293,7 @@ func runBriefDecision(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name")
 	profileFlag := fs.String("profile", "", "team profile namespace (accepted for namespace consistency)")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	titleFlag := fs.String("title", "", "short label for the decision entry heading (optional)")
 	bodyFlag := fs.String("body", "", "decision prose to append")
 	fs.Usage = func() {

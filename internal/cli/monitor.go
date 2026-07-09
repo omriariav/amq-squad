@@ -128,6 +128,8 @@ func runMonitor(args []string) error {
 	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
 	var sessions stringListFlag
 	fs.Var(&sessions, "session", "workstream session to watch (repeatable)")
+	fs.Var(&sessions, "s", "alias for --session")
+	registerScopedFlagAliases(fs, projectFlag, nil, profileFlag)
 	interval := fs.Duration("interval", defaultMonitorInterval, "poll interval in loop mode")
 	staleAfter := fs.Duration("stale-after", defaultMonitorStaleAfter, "a live owner with an in_progress task untouched for longer than this (and no legitimate wait) is flagged idle_with_active_task")
 	once := fs.Bool("once", false, "run one tick and exit (no loop)")

@@ -168,12 +168,54 @@ func canonicalP2PThread(a, b string) string {
 
 func flagWasSet(fs *flag.FlagSet, name string) bool {
 	seen := false
+	alias := scopedFlagAlias(name)
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == name {
+		if f.Name == name || (alias != "" && f.Name == alias) {
 			seen = true
 		}
 	})
 	return seen
+}
+
+func scopedFlagAlias(name string) string {
+	switch name {
+	case "project":
+		return "p"
+	case "session":
+		return "s"
+	case "profile":
+		return "P"
+	default:
+		return ""
+	}
+}
+
+func normalizeScopedShortFlagName(name string) string {
+	switch name {
+	case "p":
+		return "project"
+	case "s":
+		return "session"
+	case "P":
+		return "profile"
+	default:
+		return name
+	}
+}
+
+// registerScopedFlagAliases wires the conventional scoped short flags to the
+// same backing variables as their long forms. Keep all -p/-s/-P registrations
+// here so scoped verbs cannot drift.
+func registerScopedFlagAliases(fs *flag.FlagSet, project, session, profile *string) {
+	if project != nil {
+		fs.StringVar(project, "p", *project, "alias for --project")
+	}
+	if session != nil {
+		fs.StringVar(session, "s", *session, "alias for --session")
+	}
+	if profile != nil {
+		fs.StringVar(profile, "P", *profile, "alias for --profile")
+	}
 }
 
 // teamWorkstreamExistsOrRestorable reports whether the named workstream is

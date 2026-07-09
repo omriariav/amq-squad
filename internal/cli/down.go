@@ -124,6 +124,7 @@ func runStop(args []string) error {
 	closePanes := fs.Bool("close-panes", false, "also close each stopped agent's tmux pane (default: keep, so final output stays readable; resume re-creates panes)")
 	projectFlag := fs.String("project", "", "project/team-home directory to target (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to target (default: default profile)")
+	registerScopedFlagAliases(fs, projectFlag, sessionName, profileFlag)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, stopUsage())
 	}
