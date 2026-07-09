@@ -1236,6 +1236,7 @@ func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLau
 
 func attachStatusActivities(projectDir, profile, workstream string, rows []statusRecord, now time.Time) {
 	activeTasks := activeTasksByAssignee(projectDir, profile, workstream)
+	symphony := symphonyActivitiesByHandle(rows, now)
 	for i := range rows {
 		if strings.TrimSpace(rows[i].AgentDir) != "" {
 			if act, ok, err := activity.Read(rows[i].AgentDir, now, activity.DefaultStaleAfter); err == nil && ok {
@@ -1247,10 +1248,62 @@ func attachStatusActivities(projectDir, profile, workstream string, rows []statu
 				continue
 			}
 		}
+		if act, ok := symphony[rows[i].Handle]; ok {
+			rows[i].Activity = &act
+			continue
+		}
 		if task, ok := activeTasks[rows[i].Handle]; ok {
 			rows[i].Activity = taskStoreActivity(task, now)
 		}
 	}
+}
+
+func symphonyActivitiesByHandle(rows []statusRecord, now time.Time) map[string]activity.Snapshot {
+	roots := map[string]bool{}
+	for _, row := range rows {
+		if root := strings.TrimSpace(row.Root); root != "" {
+			roots[root] = true
+		}
+	}
+	out := map[string]activity.Snapshot{}
+	latestID := map[string]string{}
+	for root := range roots {
+		msgs, _ := state.ScanSessionMessages(root, func() time.Time { return now })
+		for _, msg := range msgs {
+			if !isSymphonyLifecycleMessage(msg) {
+				continue
+			}
+			handle := strings.TrimSpace(msg.Owner)
+			if handle == "" {
+				handle = strings.TrimSpace(msg.From)
+			}
+			if handle == "" {
+				continue
+			}
+			act := activity.SymphonySnapshot(handle, msg.OrchestratorEvent, msg.ExternalTaskID, msg.Subject, msg.Created, now, activity.DefaultStaleAfter)
+			prev, ok := out[handle]
+			if !ok || act.WrittenAt.After(prev.WrittenAt) || (act.WrittenAt.Equal(prev.WrittenAt) && msg.ID > latestID[handle]) {
+				out[handle] = act
+				latestID[handle] = msg.ID
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func isSymphonyLifecycleMessage(msg state.Message) bool {
+	if msg.Kind != state.KindStatus || strings.TrimSpace(msg.OrchestratorEvent) == "" {
+		return false
+	}
+	for _, label := range msg.Labels {
+		if strings.EqualFold(strings.TrimSpace(label), "orchestrator:symphony") {
+			return true
+		}
+	}
+	return false
 }
 
 func activeTasksByAssignee(projectDir, profile, workstream string) map[string]taskstore.Task {

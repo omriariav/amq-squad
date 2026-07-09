@@ -692,7 +692,7 @@ func runTeamShow(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
 
 Usage:
-  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--no-gitignore] [--json]
+  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--no-gitignore] [--symphony] [--json]
 
 Examples:
   amq-squad team show
@@ -729,6 +729,7 @@ type emitTeamOptions struct {
 	ModelOverrides   map[string]string
 	ForceDuplicate   bool
 	NoGitignore      bool
+	Symphony         bool
 	WakeInjectVia    string
 	WakeInjectArgs   []string
 	Profile          string
@@ -770,6 +771,7 @@ type teamPlan struct {
 	Capabilities  team.Capabilities     `json:"capabilities"`
 	Autonomous    team.AutonomousStatus `json:"autonomous"`
 	Visibility    string                `json:"visibility,omitempty"`
+	Symphony      bool                  `json:"symphony,omitempty"`
 	LaunchCommand string                `json:"launch_command,omitempty"`
 	Plan          []teamPlanMember      `json:"plan"`
 }
@@ -839,6 +841,11 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		t = filtered
 		members = orderedTeamMembers(t.Members)
 	}
+	if opts.Symphony {
+		if err := validateTeamSymphonyMembers(t, members); err != nil {
+			return err
+		}
+	}
 
 	// Use the running amq-squad's absolute path so emitted commands work
 	// even when amq-squad isn't on PATH.
@@ -869,6 +876,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			Capabilities:  team.EffectiveCapabilities(t),
 			Autonomous:    team.EffectiveAutonomousStatus(t),
 			Visibility:    opts.Visibility,
+			Symphony:      opts.Symphony,
 			LaunchCommand: visibilityPreviewLaunchCommand(workstream, profileName, opts.Visibility),
 			Plan:          make([]teamPlanMember, 0, len(members)),
 		}
@@ -887,6 +895,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 				Model:          effectiveModel,
 				ForceDuplicate: opts.ForceDuplicate,
 				NoGitignore:    opts.NoGitignore,
+				Symphony:       opts.Symphony,
 				Profile:        opts.Profile,
 				WakeInjectVia:  opts.WakeInjectVia,
 				WakeInjectArgs: opts.WakeInjectArgs,
@@ -962,6 +971,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			Profile:        opts.Profile,
 			ForceDuplicate: opts.ForceDuplicate,
 			NoGitignore:    opts.NoGitignore,
+			Symphony:       opts.Symphony,
 			WakeInjectVia:  opts.WakeInjectVia,
 			WakeInjectArgs: opts.WakeInjectArgs,
 		}
@@ -1143,6 +1153,7 @@ type emitTeamCommandInput struct {
 	Model          string
 	ForceDuplicate bool
 	NoGitignore    bool
+	Symphony       bool
 	WakeInjectVia  string
 	WakeInjectArgs []string
 	Profile        string
@@ -1204,6 +1215,9 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 	}
 	if in.NoGitignore {
 		b.WriteString(" --no-gitignore")
+	}
+	if in.Symphony && normalizedAgentBinary(m.Binary) == "codex" {
+		b.WriteString(" --symphony")
 	}
 	if origin := strings.TrimSpace(m.SpawnOrigin); origin != "" {
 		b.WriteString(" --spawn-origin ")

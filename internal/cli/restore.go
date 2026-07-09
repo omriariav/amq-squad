@@ -268,6 +268,9 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if rec.NoGitignore {
 		args = append(args, "--no-gitignore")
 	}
+	if rec.Symphony {
+		args = append(args, "--symphony")
+	}
 	if via := strings.TrimSpace(rec.WakeInjectVia); via != "" {
 		args = append(args, "--wake-inject-via", via)
 		for _, arg := range rec.WakeInjectArgs {
@@ -484,6 +487,9 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	}
 	if rec.NoGitignore {
 		b.WriteString(" --no-gitignore")
+	}
+	if rec.Symphony {
+		b.WriteString(" --symphony")
 	}
 	if via := strings.TrimSpace(rec.WakeInjectVia); via != "" {
 		b.WriteString(" --wake-inject-via ")

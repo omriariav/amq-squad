@@ -291,6 +291,45 @@ func TestEmitTeamCommandAddsConfiguredBinaryArgs(t *testing.T) {
 	}
 }
 
+func TestEmitTeamCommandAddsSymphonyForCodexOnly(t *testing.T) {
+	codex := emitTeamCommand(emitTeamCommandInput{
+		CWD:        "/repo",
+		SquadBin:   "amq-squad",
+		TeamHome:   "/repo",
+		Member:     team.Member{Role: "cto", Binary: "codex", Handle: "cto"},
+		Workstream: "issue-96",
+		Symphony:   true,
+	})
+	if !strings.Contains(codex, "--symphony") {
+		t.Fatalf("codex command missing --symphony:\n%s", codex)
+	}
+	claude := emitTeamCommand(emitTeamCommandInput{
+		CWD:        "/repo",
+		SquadBin:   "amq-squad",
+		TeamHome:   "/repo",
+		Member:     team.Member{Role: "qa", Binary: "claude", Handle: "qa"},
+		Workstream: "issue-96",
+		Symphony:   true,
+	})
+	if strings.Contains(claude, "--symphony") {
+		t.Fatalf("claude command must not include --symphony:\n%s", claude)
+	}
+}
+
+func TestValidateTeamSymphonyRejectsSharedCodexCWD(t *testing.T) {
+	tm := team.Team{
+		Project: "/repo",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto"},
+			{Role: "reviewer", Binary: "codex", Handle: "reviewer"},
+		},
+	}
+	err := validateTeamSymphonyMembers(tm, tm.Members)
+	if err == nil || !strings.Contains(err.Error(), "multiple Codex members sharing cwd") || !strings.Contains(err.Error(), "/repo") {
+		t.Fatalf("expected shared-cwd symphony error, got %v", err)
+	}
+}
+
 func TestEmitTeamCommandAppendsPerMemberArgsAfterTeamArgs(t *testing.T) {
 	// #111: member claude_args ride after the team-level binary_args so the
 	// member-specific value wins by position, and they appear BOTH in the

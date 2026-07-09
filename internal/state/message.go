@@ -90,11 +90,12 @@ type Message struct {
 	Labels    []string
 	// Integration/routing metadata is optional AMQ context for federated or
 	// orchestrator-originated traffic.
-	Orchestrator   string
-	FromProject    string
-	ReplyProject   string
-	ExternalTaskID string
-	Body           string
+	Orchestrator      string
+	FromProject       string
+	ReplyProject      string
+	OrchestratorEvent string
+	ExternalTaskID    string
+	Body              string
 
 	// Owner is the handle whose inbox this copy was found in.
 	Owner string
@@ -185,25 +186,26 @@ func parseMessageFile(path, owner string, state MailboxState, now func() time.Ti
 	}
 
 	m := Message{
-		ID:             strings.TrimSpace(h.ID),
-		From:           strings.TrimSpace(h.From),
-		To:             cleanRecipients(h.To),
-		RawThread:      h.Thread,
-		Thread:         canonicalThreadID(h.Thread),
-		Subject:        strings.TrimSpace(h.Subject),
-		Priority:       normalizePriority(h.Priority),
-		Kind:           normalizeKind(h.Kind),
-		ReplyTo:        strings.TrimSpace(h.ReplyTo),
-		Labels:         cleanLabels(h.Labels),
-		Orchestrator:   strings.TrimSpace(h.Orchestrator),
-		FromProject:    strings.TrimSpace(h.FromProject),
-		ReplyProject:   strings.TrimSpace(h.ReplyProject),
-		ExternalTaskID: externalTaskIDFromContext(h.Context),
-		Body:           body,
-		Owner:          owner,
-		State:          state,
-		Path:           path,
-		SchemaOK:       h.Schema == MessageSchema,
+		ID:                strings.TrimSpace(h.ID),
+		From:              strings.TrimSpace(h.From),
+		To:                cleanRecipients(h.To),
+		RawThread:         h.Thread,
+		Thread:            canonicalThreadID(h.Thread),
+		Subject:           strings.TrimSpace(h.Subject),
+		Priority:          normalizePriority(h.Priority),
+		Kind:              normalizeKind(h.Kind),
+		ReplyTo:           strings.TrimSpace(h.ReplyTo),
+		Labels:            cleanLabels(h.Labels),
+		Orchestrator:      strings.TrimSpace(h.Orchestrator),
+		FromProject:       strings.TrimSpace(h.FromProject),
+		ReplyProject:      strings.TrimSpace(h.ReplyProject),
+		OrchestratorEvent: orchestratorEventFromContext(h.Context),
+		ExternalTaskID:    externalTaskIDFromContext(h.Context),
+		Body:              body,
+		Owner:             owner,
+		State:             state,
+		Path:              path,
+		SchemaOK:          h.Schema == MessageSchema,
 	}
 	m.Created = parseCreated(h.Created, path, now)
 
@@ -318,6 +320,10 @@ func externalTaskIDFromContext(ctx map[string]any) string {
 		return id
 	}
 	return stringAtPath(ctx, "task_id")
+}
+
+func orchestratorEventFromContext(ctx map[string]any) string {
+	return stringAtPath(ctx, "orchestrator", "event")
 }
 
 func stringAtPath(root map[string]any, path ...string) string {
