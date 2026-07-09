@@ -18,7 +18,7 @@ verbs are the source of truth.
   with the default `--visibility sibling-tabs` or `--visibility current`).
   Hidden spawns (`run start --visibility detached --go`) do not require a
   visible pane.
-- `amq-squad` + `amq` on `PATH`; AMQ floor is **0.40.0**. `amq-squad doctor`
+- `amq-squad` + `amq` on `PATH`; AMQ floor is **0.41.0**. `amq-squad doctor`
   warns on version skew (children inherit the `amq-squad` on `PATH`).
 - In the orchestrator conversation, invoke the **`amq-squad-orchestrator`** skill.
 

@@ -463,19 +463,15 @@ func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
 		return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: "codex", Title: "amq:issue-96:cto"}}, nil
 	}
 	oldSend := sendPromptToPane
-	oldWait := waitPaneSettledForSend
 	var events []string
 	sendPromptToPane = func(paneID, prompt string) error {
+		events = append(events, "settle:"+paneID)
 		events = append(events, "send:"+paneID+"\x00"+prompt)
 		return nil
-	}
-	waitPaneSettledForSend = func(paneID string) {
-		events = append(events, "settle:"+paneID)
 	}
 	t.Cleanup(func() {
 		statusPaneLister = oldLister
 		sendPromptToPane = oldSend
-		waitPaneSettledForSend = oldWait
 	})
 
 	stdout, stderr, err := captureOutput(t, func() error {

@@ -12,24 +12,40 @@ import (
 )
 
 func TestDispatchSendArgs(t *testing.T) {
-	got := dispatchSendArgs("/repo/.agent-mail/issue-96", "cto", "qa", "p2p/cto__qa", "todo", "Do X", "details here", "urgent")
+	got := dispatchSendArgs("/repo/.agent-mail/issue-96", "cto", "qa", "p2p/cto__qa", "todo", "Do X", "details here", "urgent", "drained", 60*time.Second)
 	want := []string{
 		"send", "--root", "/repo/.agent-mail/issue-96", "--me", "cto", "--to", "qa",
 		"--thread", "p2p/cto__qa", "--kind", "todo", "--subject", "Do X", "--body", "details here", "--priority", "urgent",
+		"--wait-for", "drained", "--wait-timeout", "1m0s",
 	}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("dispatchSendArgs = %v\nwant %v", got, want)
 	}
 
 	// Optional fields omitted when empty; body always present.
-	got = dispatchSendArgs("/r", "a", "b", "", "", "", "body", "")
-	for _, bad := range []string{"--thread", "--kind", "--subject", "--priority"} {
+	got = dispatchSendArgs("/r", "a", "b", "", "", "", "body", "", "", 0)
+	for _, bad := range []string{"--thread", "--kind", "--subject", "--priority", "--wait-for", "--wait-timeout"} {
 		if containsString(got, bad) {
 			t.Fatalf("empty %s should be omitted: %v", bad, got)
 		}
 	}
 	if !containsString(got, "--body") {
 		t.Fatalf("body must always be sent: %v", got)
+	}
+}
+
+func TestDispatchReceiptWaitForPolicy(t *testing.T) {
+	if got := dispatchReceiptWaitFor("answer", ""); got != "drained" {
+		t.Fatalf("answer default wait = %q, want drained", got)
+	}
+	if got := dispatchReceiptWaitFor("todo", ""); got != "" {
+		t.Fatalf("todo default wait = %q, want none", got)
+	}
+	if got := dispatchReceiptWaitFor("todo", "dlq"); got != "dlq" {
+		t.Fatalf("explicit wait = %q, want dlq", got)
+	}
+	if got := dispatchReceiptWaitFor("answer", "none"); got != "" {
+		t.Fatalf("answer none opt-out = %q, want empty", got)
 	}
 }
 
@@ -141,6 +157,54 @@ func TestRunDispatchJSONEnvelope(t *testing.T) {
 	}
 	if !foundCollect {
 		t.Fatalf("dispatch JSON actions missing collect: %+v", env.Data.Actions)
+	}
+}
+
+func TestRunDispatchAnswerDefaultsToDrainedWait(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"},
+		"Sent msg-answer to qa (session: , root: /x/.agent-mail/issue-96); drained by qa\n")
+	withDispatchWakeLiveSeam(t, true)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--kind", "answer", "--subject", "A", "--body", "resolved", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch answer --json: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("amq calls = %d, want 1", len(*calls))
+	}
+	got := strings.Join((*calls)[0].Arg, " ")
+	for _, want := range []string{"--kind answer", "--wait-for drained", "--wait-timeout 1m0s"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("answer dispatch missing %q: %s", want, got)
+		}
+	}
+	r := decodeJSONEnvelope[mutationResult](t, stdout).Data.DeliveryReceipt
+	if r == nil || !receiptHasStage(r, "amq_wait_drained") {
+		t.Fatalf("answer receipt missing amq_wait_drained stage: %+v", r)
+	}
+}
+
+func TestRunDispatchAnswerWaitCanBeDisabled(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-answer to qa\n")
+	withDispatchWakeLiveSeam(t, true)
+
+	_, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--kind", "answer", "--subject", "A", "--body", "resolved", "--wait-for", "none", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch answer --wait-for none: %v", err)
+	}
+	got := strings.Join((*calls)[0].Arg, " ")
+	if strings.Contains(got, "--wait-for") || strings.Contains(got, "--wait-timeout") {
+		t.Fatalf("answer wait opt-out still passed wait flags: %s", got)
 	}
 }
 

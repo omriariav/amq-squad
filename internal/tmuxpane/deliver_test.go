@@ -127,6 +127,33 @@ func TestSendPromptBracketedPasteOnlyForMultiline(t *testing.T) {
 	}
 }
 
+func TestSendPromptSingleLineWaitsForPaneToSettleBeforePaste(t *testing.T) {
+	calls := swapDeliver(t, nil)
+	seq := []string{"", "booting", "ready", "ready", "│ staged │", "● Working\n>"}
+	var captures []string
+	paneCapturer = func(string) (string, error) {
+		if len(seq) == 0 {
+			return "● Working\n>", nil
+		}
+		got := seq[0]
+		seq = seq[1:]
+		captures = append(captures, got)
+		return got, nil
+	}
+	if err := SendPromptToPane("%7", "run `amq drain --include-body` and act on it"); err != nil {
+		t.Fatalf("SendPromptToPane: %v", err)
+	}
+	if len(captures) < 4 || captures[0] != "" || captures[1] != "booting" || captures[2] != "ready" || captures[3] != "ready" {
+		t.Fatalf("single-line send did not wait through blank/drawing/stable captures: %q", captures)
+	}
+	paste := (*calls)[2].args
+	for _, arg := range paste {
+		if arg == "-p" {
+			t.Fatalf("single-line prompt must still avoid bracketed paste after settle: %v", paste)
+		}
+	}
+}
+
 func TestSendPromptMultilineLeakReturnsError(t *testing.T) {
 	// A multi-line prompt pasted into a not-yet-ready TUI leaves the bracketed-
 	// paste START marker as literal text. We must detect that and FAIL clearly
@@ -283,21 +310,21 @@ func TestSendPromptRetriesEnterWhenInputUnchanged(t *testing.T) {
 	calls := swapDeliver(t, nil)
 	// before/after per attempt: attempt 1 sees the input region UNCHANGED (Enter
 	// dropped) -> retry; attempt 2 sees it CHANGE (submitted).
+	const ready = "> ready"
 	const staged = "│ please review the long set of changes │\n  ? for shortcuts"
 	const cleared = "> \n  ? for shortcuts"
 	n := 0
 	paneCapturer = func(string) (string, error) {
 		n++
 		switch n {
-		case 1, 2, 3: // attempt1 before, attempt1 after, attempt2 before
+		case 1, 2: // settle wait
+			return ready, nil
+		case 3, 4, 5: // attempt1 before, attempt1 after, attempt2 before
 			return staged, nil
 		default: // attempt2 after
 			return cleared, nil
 		}
 	}
-	// Single-line so the only captures are submit's before/after pair (a
-	// multi-line prompt would add the settle + leak-check captures and shift this
-	// counter); the Enter-retry behavior under test is identical either way.
 	if err := SendPromptToPane("%5", "please review the long set of changes"); err != nil {
 		t.Fatalf("SendPromptToPane: %v", err)
 	}
@@ -332,10 +359,14 @@ func TestSendPromptSubmitsOnInputChangeOrFailsOpen(t *testing.T) {
 	n := 0
 	paneCapturer = func(string) (string, error) {
 		n++
-		if n == 1 {
+		switch n {
+		case 1, 2:
+			return "> ready", nil // settle wait
+		case 3:
 			return "│ staged │\n? for shortcuts", nil // before
+		default:
+			return "● Working... esc to interrupt\n>", nil // after: changed
 		}
-		return "● Working… esc to interrupt\n>", nil // after: changed
 	}
 	if err := SendPromptToPane("%5", "go"); err != nil {
 		t.Fatal(err)

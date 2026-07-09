@@ -334,6 +334,8 @@ var completionCommonFlags = []string{
 	"--ttl",
 	"--unsafe-send-as",
 	"--visibility",
+	"--wait-for",
+	"--wait-timeout",
 	"--wake",
 	"--wake-inject-arg",
 	"--wake-inject-via",
