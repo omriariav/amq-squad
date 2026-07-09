@@ -78,6 +78,8 @@ func TestVerifyActionDecisionRequiresPrefixToken(t *testing.T) {
 		{"ANSWER: not approved yet", actionDecisionPending},
 		{"DISAPPROVED: no", actionDecisionPending},
 		{"unapproved", actionDecisionPending},
+		{"Approved? No, denied.", actionDecisionPending},
+		{"APPROVED: ship\nDENIED: hold", actionDecisionDenied},
 	} {
 		if got := classifyDecision(tc.text); got != tc.want {
 			t.Fatalf("classifyDecision(%q) = %q, want %q", tc.text, got, tc.want)

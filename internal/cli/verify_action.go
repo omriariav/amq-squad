@@ -337,11 +337,14 @@ func normalizeBindingValue(s string) string {
 func classifyDecision(text string) string {
 	for _, line := range strings.Split(decisionText(text), "\n") {
 		line = strings.TrimSpace(line)
-		switch {
-		case hasDecisionPrefixToken(line, "approved"):
-			return actionDecisionApproved
-		case hasDecisionPrefixToken(line, "denied"):
+		if hasDecisionPrefixToken(line, "denied") {
 			return actionDecisionDenied
+		}
+	}
+	for _, line := range strings.Split(decisionText(text), "\n") {
+		line = strings.TrimSpace(line)
+		if hasDecisionPrefixToken(line, "approved") {
+			return actionDecisionApproved
 		}
 	}
 	return actionDecisionPending
@@ -354,8 +357,7 @@ func hasDecisionPrefixToken(line, token string) bool {
 	if len(line) == len(token) {
 		return true
 	}
-	r := rune(line[len(token)])
-	return !(r == '_' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	return line[len(token)] == ':'
 }
 
 func decisionText(text string) string {

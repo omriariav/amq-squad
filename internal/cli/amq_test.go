@@ -382,6 +382,67 @@ func TestAMQSendAsOperatorHandleRequiresUnsafeOverride(t *testing.T) {
 	}
 }
 
+func TestAMQReplyAsOperatorHandleRequiresUnsafeOverride(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	base := filepath.Join(dir, ".agent-mail")
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "sent\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"reply", "--session", "issue-96", "--from", team.DefaultOperatorHandle, "--id", "q1", "--subject", "APPROVED: tag", "--body", "Action: tag\nTarget: main"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing amq reply as operator handle") {
+		t.Fatalf("operator reply-as error = %v, want authority rejection", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("rejected operator reply-as should not call amq, calls = %d", len(*calls))
+	}
+
+	if _, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"reply", "--session", "issue-96", "--from", team.DefaultOperatorHandle, "--unsafe-send-as", "--reason", "repair imported gate answer", "--id", "q1", "--subject", "APPROVED: tag", "--body", "Action: tag\nTarget: main"})
+	}); err != nil {
+		t.Fatalf("unsafe operator reply-as with reason should pass: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(*calls))
+	}
+	got := strings.Join((*calls)[0].Arg, " ")
+	if strings.Contains(got, "--unsafe-send-as") || strings.Contains(got, "--reason") {
+		t.Fatalf("guard flags should be stripped before bare amq reply: %s", got)
+	}
+	audit := filepath.Join(dir, ".amq-squad", "boundary-audit", "issue-96.jsonl")
+	b, err := os.ReadFile(audit)
+	if err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	if !strings.Contains(string(b), `"target":"user"`) || !strings.Contains(string(b), "repair imported gate answer") {
+		t.Fatalf("operator reply-as audit = %s", b)
+	}
+}
+
+func TestAMQReplyAsTeamRoleRequiresBoundIdentity(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	base := filepath.Join(dir, ".agent-mail")
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "sent\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"reply", "--session", "issue-96", "--from", "cto", "--id", "q1", "--subject", "APPROVED: tag"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing amq reply as team role") {
+		t.Fatalf("team reply-as error = %v, want authority rejection", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("rejected team reply-as should not call amq, calls = %d", len(*calls))
+	}
+}
+
 func TestAMQSendAsTeamRolePassesWithVerifiedRecord(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Orchestrated: true,

@@ -415,7 +415,7 @@ func runAMQPassthrough(sub string, args []string) error {
 	if err != nil {
 		return err
 	}
-	if sub == "send" {
+	if sub == "send" || sub == "reply" {
 		passthrough, me, opts, err = consumeAMQSendGuardFlags(passthrough, me, opts)
 		if err != nil {
 			return err
@@ -445,11 +445,11 @@ func runAMQPassthrough(sub string, args []string) error {
 
 func guardAMQPassthrough(sub string, ctx amqContext, passthrough []string, opts amqPassthroughOptions) error {
 	switch sub {
-	case "send":
+	case "send", "reply":
 		if err := guardAMQSelfSend(ctx, passthrough); err != nil {
 			return err
 		}
-		return guardAMQSendAsAuthority(ctx, opts)
+		return guardAMQSendAsAuthority(sub, ctx, opts)
 	case "drain", "watch":
 		return guardAMQMailboxConsume(sub, ctx, opts)
 	default:
@@ -457,7 +457,7 @@ func guardAMQPassthrough(sub string, ctx amqContext, passthrough []string, opts 
 	}
 }
 
-func guardAMQSendAsAuthority(ctx amqContext, opts amqPassthroughOptions) error {
+func guardAMQSendAsAuthority(sub string, ctx amqContext, opts amqPassthroughOptions) error {
 	me := strings.TrimSpace(ctx.Me)
 	if me == "" {
 		return nil
@@ -470,11 +470,11 @@ func guardAMQSendAsAuthority(ctx amqContext, opts amqPassthroughOptions) error {
 		if opts.UnsafeSendAs {
 			reason := strings.TrimSpace(opts.BoundaryReason)
 			if reason == "" {
-				return usageErrorf("amq send --unsafe-send-as requires --reason <why>")
+				return usageErrorf("amq %s --unsafe-send-as requires --reason <why>", sub)
 			}
 			return writeAMQBoundaryAudit(ctx, "send-as", strings.TrimSpace(os.Getenv("AM_ME")), me, reason)
 		}
-		return usageErrorf("refusing amq send as operator handle %q: the operator is mailbox-only and cannot be impersonated through the normal send path. Use amq-squad operator answer/directive where applicable, or pass --unsafe-send-as --reason <why> for an audited recovery send.", me)
+		return usageErrorf("refusing amq %s as operator handle %q: the operator is mailbox-only and cannot be impersonated through the normal send/reply path. Use amq-squad operator answer/directive where applicable, or pass --unsafe-send-as --reason <why> for an audited recovery send.", sub, me)
 	}
 	member, ok := teamMemberByHandleOrRole(t, me)
 	if !ok {
@@ -489,11 +489,11 @@ func guardAMQSendAsAuthority(ctx amqContext, opts amqPassthroughOptions) error {
 	if opts.UnsafeSendAs {
 		reason := strings.TrimSpace(opts.BoundaryReason)
 		if reason == "" {
-			return usageErrorf("amq send --unsafe-send-as requires --reason <why>")
+			return usageErrorf("amq %s --unsafe-send-as requires --reason <why>", sub)
 		}
 		return writeAMQBoundaryAudit(ctx, "send-as", strings.TrimSpace(os.Getenv("AM_ME")), me, reason)
 	}
-	return usageErrorf("refusing amq send as team role %q: current runtime is not verified live/bound for this namespace. Launch/resume the role first, or pass --unsafe-send-as --reason <why> for an audited recovery send.", me)
+	return usageErrorf("refusing amq %s as team role %q: current runtime is not verified live/bound for this namespace. Launch/resume the role first, or pass --unsafe-send-as --reason <why> for an audited recovery send.", sub, me)
 }
 
 func isOperatorHandle(t team.Team, handle string) bool {
@@ -502,6 +502,9 @@ func isOperatorHandle(t team.Team, handle string) bool {
 		return false
 	}
 	op := team.EffectiveOperator(t)
+	// When operator gates are disabled, there is no configured mailbox-only
+	// operator identity for this profile; handle the value as an ordinary
+	// non-member unless another guard recognizes it.
 	return op.Enabled && strings.TrimSpace(op.Handle) == handle
 }
 
@@ -780,14 +783,14 @@ func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, pro
 			i++
 			continue
 		case "unsafe-send-as":
-			if sub != "send" {
+			if sub != "send" && sub != "reply" {
 				break
 			}
 			opts.UnsafeSendAs = true
 			i++
 			continue
 		case "reason":
-			if sub != "drain" && sub != "watch" && sub != "send" {
+			if sub != "drain" && sub != "watch" && sub != "send" && sub != "reply" {
 				break
 			}
 			val := inlineVal

@@ -2234,12 +2234,12 @@ wrapper:
 When <code>--me</code> names a team role/handle, the wrapper verifies
 that role is bound in the namespace before sending; a global
 orchestrator cannot raise gates as <code>cto</code> before a real
-<code>cto</code> exists. When <code>--me</code> names the configured
-operator handle (default <code>user</code>), the wrapper refuses the
-normal send path because the operator is mailbox-only; use
-<code>amq-squad operator answer/directive</code> where applicable.
-Emergency recovery sends as a team role or operator handle require the
-explicit audited override
+<code>cto</code> exists. When <code>--me</code> or <code>--from</code>
+names the configured operator handle (default <code>user</code>), the
+wrapper refuses the normal send/reply path because the operator is
+mailbox-only; use <code>amq-squad operator answer/directive</code> where
+applicable. Emergency recovery sends or replies as a team role or
+operator handle require the explicit audited override
 <code>--unsafe-send-as --reason &lt;why&gt;</code>.</p>
 <p>For lead-side report collection, prefer
 <code>amq-squad collect --session &lt;S&gt; --me &lt;lead&gt; --timeout 120s --include-body</code>
