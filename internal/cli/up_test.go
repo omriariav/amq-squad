@@ -49,20 +49,23 @@ type fakeBackend struct {
 	mu       sync.Mutex
 	launches []teamLaunchOptions
 	dryRuns  []teamLaunchOptions
+	teams    []team.Team
 }
 
 func (f *fakeBackend) Name() string                          { return "fake" }
 func (f *fakeBackend) Validate(opts teamLaunchOptions) error { return nil }
-func (f *fakeBackend) DryRun(_ team.Team, opts teamLaunchOptions) error {
+func (f *fakeBackend) DryRun(t team.Team, opts teamLaunchOptions) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.dryRuns = append(f.dryRuns, opts)
+	f.teams = append(f.teams, t)
 	return nil
 }
-func (f *fakeBackend) Launch(_ team.Team, opts teamLaunchOptions) error {
+func (f *fakeBackend) Launch(t team.Team, opts teamLaunchOptions) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.launches = append(f.launches, opts)
+	f.teams = append(f.teams, t)
 	return nil
 }
 

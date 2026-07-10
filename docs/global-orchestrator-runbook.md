@@ -8,6 +8,7 @@ once, not per command.
 | --- | --- | --- | --- |
 | **Global / root** | a multi-run supervisor at a neutral root (e.g. `~/Code`) | none — you poll | `amq-squad global start` |
 | **Project run** | driving one orchestrated run in a repo | yes (managed spawn registers panes) | `amq-squad run start` |
+| **Project run, external lead** | your current project pane is the lead | yes (current pane is registered as lead) | `amq-squad run start --external-lead` |
 
 The `scripts/orchestrator/*.sh` files are thin forwarders to these verbs; the
 verbs are the source of truth.
@@ -53,10 +54,34 @@ creates for real.
 # preview (no mutation)
 amq-squad run start -p ~/Code/app -s issue-96 -P release --roles "cto,fullstack,qa"
 
-# create it (hidden spawn — the default)
+# create it
 amq-squad run start -p ~/Code/app -s issue-96 -P release \
   --roles "cto,fullstack,qa" --binary "fullstack=codex" --goal "fix issue 96" --go
 ```
+
+### External lead mode
+
+Use `--external-lead` when the agent conversation already open in the current
+tmux pane should become the project lead. The command binds the current pane as
+the configured lead, starts or repairs lead wake, then spawns only the remaining
+workers. It does not run `goal start --register-orchestrator`, add an
+`orchestrator` member, or change the profile's configured lead.
+
+```sh
+amq-squad run start -p ~/Code/app -s issue-96 -P release \
+  --roles "cto,fullstack,qa" --external-lead --goal "fix issue 96" --go
+```
+
+Requirements:
+
+- Run from the lead member's project root. Passing `--project` from some other
+  cwd is refused, because the current pane is what is being adopted.
+- Run inside the lead tmux pane (`TMUX` and `TMUX_PANE` set). Preview is
+  read-only and validates this instead of printing a false OK.
+- Existing profiles keep their configured lead. If you need a different lead,
+  run `amq-squad team lead set <role>` first.
+- A lead-only roster is valid: the command binds the current pane and reports
+  that there are no remaining workers to spawn.
 
 ### Choosing binary / model / effort
 

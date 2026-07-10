@@ -51,6 +51,14 @@ type teamLaunchOptions struct {
 	// source (--seed-from) was supplied so CI / send-keys flows keep working
 	// without a hard error, while nudging the operator to fill in the goal.
 	WarnStubBrief bool
+	// ExternalLeadRole names a profile lead that is already bound to the
+	// caller's current pane. Launch backends skip it and spawn only the
+	// remaining workers. This explicit path lets run start --external-lead
+	// validate previews without writing launch records or starting wake.
+	ExternalLeadRole string
+	// AllowNoMembersAfterExternalLead treats a lead-only run as a successful
+	// bind instead of an error after ExternalLeadRole filters out the lead.
+	AllowNoMembersAfterExternalLead bool
 }
 
 type teamLaunchPane struct {
@@ -205,12 +213,37 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if err := validateModelOverrideKeys(opts.ModelOverrides, memberRoles); err != nil {
 		return err
 	}
-	if filtered, skipped, err := maybeFilterCurrentExternalLead(t, opts.Workstream, opts.Profile, trustMode, mergedBinaryArgs, opts.ModelOverrides, !opts.DryRun); err != nil {
+	externalLeadFiltered := false
+	if strings.TrimSpace(opts.ExternalLeadRole) != "" {
+		filtered, skipped, err := filterExplicitExternalLead(t, opts.ExternalLeadRole)
+		if err != nil {
+			return err
+		}
+		if skipped {
+			t = filtered
+			externalLeadFiltered = true
+		}
+	} else if filtered, skipped, err := maybeFilterCurrentExternalLead(t, opts.Workstream, opts.Profile, trustMode, mergedBinaryArgs, opts.ModelOverrides, !opts.DryRun); err != nil {
 		return err
 	} else if skipped {
 		t = filtered
+		externalLeadFiltered = true
 	}
 	if len(t.Members) == 0 {
+		if opts.AllowNoMembersAfterExternalLead && externalLeadFiltered {
+			if !opts.DryRun {
+				if opts.SeedBriefContent != "" {
+					if _, err := writeSeedBriefForProfile(t.Project, opts.Profile, opts.Workstream, opts.SeedBriefContent, opts.SeedBriefForce); err != nil {
+						return err
+					}
+				}
+				if _, _, err := ensureBriefStubForProfile(t.Project, opts.Profile, opts.Workstream); err != nil {
+					return fmt.Errorf("ensure brief: %w", err)
+				}
+			}
+			quietNotice("lead bound; no remaining workers to spawn for session %s.\n", opts.Workstream)
+			return nil
+		}
 		return fmt.Errorf("no team members to launch after external lead filtering")
 	}
 	if opts.Symphony {
@@ -441,6 +474,31 @@ func maybeFilterCurrentExternalLead(t team.Team, workstream, profile, trustMode 
 	rec := externalLeadRecordForLaunch(lead, cwd, handle, root, env, id, profile, trustMode, binaryArgs, modelOverrides)
 	if err := launch.Write(agentDir, rec); err != nil {
 		return t, false, fmt.Errorf("write external lead record: %w", err)
+	}
+	return filterLaunchMember(t, lead.Role, id.PaneID), true, nil
+}
+
+func filterExplicitExternalLead(t team.Team, role string) (team.Team, bool, error) {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "" {
+		return t, false, nil
+	}
+	if !t.Orchestrated {
+		return t, false, usageErrorf("--external-lead requires an orchestrated team profile")
+	}
+	if configured := strings.TrimSpace(t.Lead); configured != "" && configured != role {
+		return t, false, usageErrorf("--external-lead role %q is not the configured profile lead %q", role, configured)
+	}
+	lead, ok := memberByRole(t, role)
+	if !ok {
+		return t, false, fmt.Errorf("lead role %q is not a team member", role)
+	}
+	id, err := currentPaneIdentity()
+	if err != nil {
+		return t, false, err
+	}
+	if id == nil || strings.TrimSpace(id.PaneID) == "" {
+		return t, false, usageErrorf("--external-lead requires a current tmux pane (TMUX/TMUX_PANE unset)")
 	}
 	return filterLaunchMember(t, lead.Role, id.PaneID), true, nil
 }
