@@ -308,7 +308,7 @@ func (m BubbleModel) title() string {
 	case stageSeed:
 		return "Optional brief source"
 	case stageConfirm:
-		return "Review the read-only preview"
+		return "Review answers before canonical preview"
 	default:
 		return "Run start wizard"
 	}
@@ -350,7 +350,7 @@ func (m BubbleModel) note() string {
 		}
 		return "Unavailable capability rows stay visible so the future contract is explicit."
 	case stageConfirm:
-		return "Enter runs the existing canonical preview. It cannot launch agents."
+		return "Enter collects these answers and runs preview. Live launch is a later default-No prompt."
 	case stageSeed:
 		return "Accepted forms: file:path · issue:393 · gh:owner/repo#393"
 	}
@@ -487,7 +487,7 @@ func (m BubbleModel) choices() []choice {
 		}
 		return []choice{{value: "close-after-start", label: "Close after successful start"}, {value: "keep", label: "Keep this launcher pane"}}
 	case stageConfirm:
-		return []choice{{value: "preview", label: "Run the canonical read-only preview"}}
+		return []choice{{value: "preview", label: "Run canonical preview, then decide launch separately"}}
 	default:
 		return nil
 	}

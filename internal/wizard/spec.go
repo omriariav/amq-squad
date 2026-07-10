@@ -8,24 +8,65 @@ import "strings"
 // adapters may add richer choices, but execution must always flow through Args
 // and the existing run start parser.
 type Spec struct {
-	Project      string
-	Profile      string
-	Session      string
-	Roles        string
-	Binary       string
-	Model        string
-	Effort       string
-	OperatorMode string
-	CodexArgs    string
-	ClaudeArgs   string
-	Lead         string
-	LeadMode     string
-	Visibility   string
-	LayoutPreset string
-	LauncherPane string
-	ExternalLead bool
-	Goal         string
-	SeedFrom     string
+	Scope            string
+	Project          string
+	Profile          string
+	Session          string
+	Roles            string
+	Binary           string
+	Model            string
+	Effort           string
+	OperatorMode     string
+	CodexArgs        string
+	ClaudeArgs       string
+	Lead             string
+	LeadMode         string
+	Visibility       string
+	LayoutPreset     string
+	LauncherPane     string
+	ExternalLead     bool
+	Goal             string
+	SeedFrom         string
+	GlobalRoot       string
+	GlobalAgent      string
+	GlobalModel      string
+	GlobalEffort     string
+	GlobalCodexArgs  string
+	GlobalClaudeArgs string
+	GlobalWindow     string
+}
+
+// GlobalArgs renders only global-start flags. Project roster and topology
+// fields can never leak into this argv.
+func (s Spec) GlobalArgs() []string {
+	args := make([]string, 0, 12)
+	appendValue := func(name, value string) {
+		if value = strings.TrimSpace(value); value != "" {
+			args = append(args, name, value)
+		}
+	}
+	appendValue("--root", s.GlobalRoot)
+	appendValue("--agent", s.GlobalAgent)
+	appendValue("--model", s.GlobalModel)
+	effort := strings.ToLower(strings.TrimSpace(s.GlobalEffort))
+	if effort == "automatic" {
+		effort = ""
+	}
+	if strings.EqualFold(strings.TrimSpace(s.GlobalAgent), "codex") {
+		native := strings.TrimSpace(s.GlobalCodexArgs)
+		if effort != "" {
+			native = strings.TrimSpace(native + " -c model_reasoning_effort=" + effort)
+		}
+		appendValue("--codex-args", native)
+	} else {
+		native := strings.TrimSpace(s.GlobalClaudeArgs)
+		if effort != "" {
+			native = strings.TrimSpace(native + " --effort " + effort)
+		}
+		appendValue("--claude-args", native)
+	}
+	appendValue("--name", s.GlobalWindow)
+	return args
 }
 
 // Args renders the canonical run start argv in a stable order. It never emits

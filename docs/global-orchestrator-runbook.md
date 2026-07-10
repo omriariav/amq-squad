@@ -50,6 +50,21 @@ Wraps `new team` (if `--roles`) → `up`. **Preview by default** (prints the pla
 and runs read-only `--dry-run` validation whose failures surface); `--go`
 creates for real.
 
+The interactive wizard can create either this project-run preview or a
+Global/NOC preview. In a TTY, run `amq-squad wizard` (or zero-argument
+`amq-squad run start`), choose the scope, and review the two canonical commands
+it prints. The preview always runs first. `Launch now? [y/N]` defaults to No;
+only explicit `y`/`yes` reruns the identical argv with one trailing `--go`.
+
+Global/NOC scope collects a neutral root, one `claude` or `codex` agent, model,
+validated effort, extra native arguments excluding effort, and a window name.
+Effort is normalized into the selected binary's existing native argument form
+(`--effort` for Claude or `model_reasoning_effort` for Codex); inactive-binary
+arguments and project roster flags are never serialized. The scope selector and
+Global/NOC questions use the accessible line prompt on the same TTY; project
+answers use Bubble Tea when enabled. Both return to the same default-No consent
+boundary after canonical preview.
+
 ```sh
 # preview (no mutation)
 amq-squad run start -p ~/Code/app -s issue-96 -P release --roles "cto,fullstack,qa"

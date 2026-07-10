@@ -164,6 +164,7 @@ var completionVerifySubcommands = []string{
 // guard: `TestCompletionFlagsCoverDispatcher` walks the source tree and
 // fails if a `flag.NewFlagSet` declares a flag missing here.
 var completionCommonFlags = []string{
+	"--accessible",
 	// Root flags (also offered as first-word completions when the user
 	// starts typing `-...` before picking a subcommand).
 	"--help",
@@ -241,6 +242,7 @@ var completionCommonFlags = []string{
 	"--include-body",
 	"--idle-reap-minutes",
 	"--interval",
+	"--interactive",
 	"--json",
 	"--keep-panes",
 	"--kind",
@@ -273,6 +275,7 @@ var completionCommonFlags = []string{
 	"--no-preauthorize-inscope",
 	"--no-require-wake",
 	"--no-wake",
+	"--numbered",
 	"--once",
 	"--older-than",
 	"--operator",
@@ -341,6 +344,7 @@ var completionCommonFlags = []string{
 	"--ttl",
 	"--unsafe-send-as",
 	"--visibility",
+	"--wizard-ui",
 	"--wait-for",
 	"--wait-timeout",
 	"--wake",
