@@ -1,8 +1,13 @@
 package runtimecontrol
 
+import "strings"
+
 const (
-	BackendTmux = "tmux"
+	BackendTmux   = "tmux"
+	BackendITerm2 = "iterm2"
 )
+
+const ITerm2InjectionDisabledReason = "iTerm2 prompt/native-goal injection is disabled until #374 proves safe send/capture/busy support"
 
 type Capability string
 
@@ -57,6 +62,23 @@ func TmuxCapabilities(paneAlive bool) Capabilities {
 		CapabilityFocus:       {Available: paneAlive, Reason: deadReason},
 		CapabilitySendPrompt:  {Available: paneAlive, Reason: deadReason},
 		CapabilityGoalDeliver: {Available: paneAlive, Reason: deadReason},
+		CapabilityDispatch:    {Available: true},
+	})
+}
+
+func ITerm2Capabilities(identity Identity, live Liveness) Capabilities {
+	focusReason := ""
+	focusAvailable := strings.TrimSpace(identity.WindowID) != "" && live.AgentAlive && live.BinaryMatch
+	switch {
+	case strings.TrimSpace(identity.WindowID) == "":
+		focusReason = "iTerm2 window id is unavailable"
+	case !live.AgentAlive || !live.BinaryMatch:
+		focusReason = "iTerm2 focus requires verified agent PID liveness"
+	}
+	return NewCapabilities(map[Capability]CapabilityState{
+		CapabilityFocus:       {Available: focusAvailable, Reason: focusReason},
+		CapabilitySendPrompt:  {Available: false, Reason: ITerm2InjectionDisabledReason},
+		CapabilityGoalDeliver: {Available: false, Reason: ITerm2InjectionDisabledReason},
 		CapabilityDispatch:    {Available: true},
 	})
 }

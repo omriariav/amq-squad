@@ -7,12 +7,16 @@ type Identity struct {
 	Session    string
 	WindowID   string
 	WindowName string
+	TabID      string
+	SessionID  string
 	PaneID     string
 	Target     string
 }
 
 type Liveness struct {
-	PaneAlive bool
+	PaneAlive   bool
+	AgentAlive  bool
+	BinaryMatch bool
 }
 
 type Controller interface {
@@ -21,6 +25,7 @@ type Controller interface {
 }
 
 type TmuxController struct{}
+type ITerm2Controller struct{}
 
 func (TmuxController) Backend() string {
 	return BackendTmux
@@ -28,6 +33,14 @@ func (TmuxController) Backend() string {
 
 func (TmuxController) Capabilities(_ Identity, live Liveness) Capabilities {
 	return TmuxCapabilities(live.PaneAlive)
+}
+
+func (ITerm2Controller) Backend() string {
+	return BackendITerm2
+}
+
+func (ITerm2Controller) Capabilities(identity Identity, live Liveness) Capabilities {
+	return ITerm2Capabilities(identity, live)
 }
 
 type Registry struct {
@@ -65,5 +78,5 @@ func (r *Registry) Lookup(backend string) (Controller, bool) {
 }
 
 func DefaultRegistry() *Registry {
-	return NewRegistry(TmuxController{})
+	return NewRegistry(TmuxController{}, ITerm2Controller{})
 }
