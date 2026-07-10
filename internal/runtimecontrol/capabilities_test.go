@@ -37,3 +37,15 @@ func TestDefaultRegistryIncludesTmuxController(t *testing.T) {
 		t.Fatalf("lookup backend = %q", ctrl.Backend())
 	}
 }
+
+func TestZeroValueRegistryCanRegister(t *testing.T) {
+	var r Registry
+	r.Register(TmuxController{})
+	ctrl, ok := r.Lookup(BackendTmux)
+	if !ok {
+		t.Fatalf("zero-value registry should accept registrations")
+	}
+	if ctrl.Backend() != BackendTmux {
+		t.Fatalf("lookup backend = %q", ctrl.Backend())
+	}
+}

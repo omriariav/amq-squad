@@ -777,6 +777,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle string) error {
 			Target:     "external",
 		},
 	}
+	rec.Terminal = launch.TerminalInfoFromTmux(rec.Tmux)
 	if err := launch.Write(agentDir, rec); err != nil {
 		return fmt.Errorf("write external orchestrator launch record: %w", err)
 	}

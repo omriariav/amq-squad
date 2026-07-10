@@ -50,6 +50,9 @@ func (r *Registry) Register(c Controller) {
 	if backend == "" {
 		return
 	}
+	if r.controllers == nil {
+		r.controllers = map[string]Controller{}
+	}
 	r.controllers[backend] = c
 }
 
