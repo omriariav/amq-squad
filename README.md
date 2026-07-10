@@ -825,7 +825,7 @@ amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
                     [--roles r,...] [--binary role=bin,...] [--model role=model,...]
                     [--lead-mode builder|planner]
                     [--codex-args A] [--claude-args A]
-                    [--visibility sibling-tabs|detached|current]
+                    [--visibility sibling-tabs|detached|current] [--external-lead]
                     [--goal TEXT] [--seed-from REF] [--go]
                                   Create one orchestrated run: wraps new team
                                   (if --roles) then up, so the namespace is typed
@@ -839,6 +839,12 @@ amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
                                   exits non-zero and prints an exact
                                   `goal start ... --role <lead> --yes` retry
                                   command.
+                                  With --external-lead, the current tmux pane is
+                                  bound as the configured lead and only the
+                                  remaining workers are spawned. This mode must
+                                  run from the lead member's project root and
+                                  does not register or re-point a separate
+                                  orchestrator handle.
 amq-squad up [<session>] [--project DIR] [--profile NAME] [--session ws] [--reset [--yes] [--force]]
              [--dry-run [--json]] [--seed-from file:|issue:|gh: [--force]]
              [--terminal tmux] [--target current-window|new-window|new-session]
