@@ -93,7 +93,7 @@ func runLaunch(args []string) error {
 	noDefaultArgs := fs.Bool("no-default-args", false, "do not prepend Codex or Claude default permission args")
 	noPreauthInScope := fs.Bool("no-preauthorize-inscope", false, "do not pre-authorize gh pr create for an orchestrated Claude worker (#296; feature-branch push is not pre-authorized in this slice)")
 	trustRaw := fs.String("trust", "", "Codex trust profile: approve-for-me (default), sandboxed, or trusted (local power mode)")
-	model := fs.String("model", "", "native model name to pass to the agent binary, e.g. 'gpt-5' or 'sonnet'")
+	model := fs.String("model", "", "native model name to pass to the agent binary, e.g. 'gpt-5.6-terra' or 'sonnet'")
 	spawnOrigin := fs.String("spawn-origin", "", "runtime composition origin recorded in launch.json")
 	spawnDepth := fs.Int("spawn-depth", 0, "runtime composition depth recorded in launch.json")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args to treat as launch defaults, e.g. '--enable goals'")

@@ -32,7 +32,7 @@ func registerPreviewFlags(fs *flag.FlagSet) *previewFlags {
 		session:        fs.String("session", "", "AMQ workstream session name (default: sanitized team-home directory name; lowercase a-z, 0-9, -, _)"),
 		fresh:          fs.Bool("fresh", false, "fail if the selected workstream session already exists"),
 		trustRaw:       fs.String("trust", "", "Codex trust profile for this run: approve-for-me (default), sandboxed, or trusted"),
-		model:          fs.String("model", "", "per-persona model overrides for this run, e.g. cto=gpt-5,fullstack=sonnet"),
+		model:          fs.String("model", "", "per-persona model overrides for this run, e.g. cto=gpt-5.6-sol,fullstack=sonnet"),
 		codexArgsRaw:   fs.String("codex-args", "", "extra Codex args for this run, e.g. '--enable goals'"),
 		claudeArgsRaw:  fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'"),
 		forceDuplicate: fs.Bool("force-duplicate", false, "include --force-duplicate in emitted launch commands"),
