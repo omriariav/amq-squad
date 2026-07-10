@@ -3,11 +3,14 @@ package runtimecontrol
 import "strings"
 
 const (
-	BackendTmux   = "tmux"
-	BackendITerm2 = "iterm2"
+	BackendTmux        = "tmux"
+	BackendITerm2      = "iterm2"
+	BackendTerminalApp = "terminal_app"
 )
 
 const ITerm2InjectionDisabledReason = "iTerm2 prompt/native-goal injection is disabled until #374 proves safe send/capture/busy support"
+const TerminalAppInjectionDisabledReason = "Terminal.app prompt/native-goal injection is disabled until #375 proves safe Accessibility-based input"
+const TerminalAppFocusDisabledReason = "Terminal.app focus requires stable window/tab addressing; manual focus is required in v2.18.0"
 
 type Capability string
 
@@ -79,6 +82,15 @@ func ITerm2Capabilities(identity Identity, live Liveness) Capabilities {
 		CapabilityFocus:       {Available: focusAvailable, Reason: focusReason},
 		CapabilitySendPrompt:  {Available: false, Reason: ITerm2InjectionDisabledReason},
 		CapabilityGoalDeliver: {Available: false, Reason: ITerm2InjectionDisabledReason},
+		CapabilityDispatch:    {Available: true},
+	})
+}
+
+func TerminalAppCapabilities() Capabilities {
+	return NewCapabilities(map[Capability]CapabilityState{
+		CapabilityFocus:       {Available: false, Reason: TerminalAppFocusDisabledReason},
+		CapabilitySendPrompt:  {Available: false, Reason: TerminalAppInjectionDisabledReason},
+		CapabilityGoalDeliver: {Available: false, Reason: TerminalAppInjectionDisabledReason},
 		CapabilityDispatch:    {Available: true},
 	})
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -66,13 +67,48 @@ func TestTerminalRuntimeFromITerm2Info(t *testing.T) {
 		WindowName: "amq:issue-331:cto",
 		TabID:      "tab-1",
 		SessionID:  "session-1",
+		TTY:        "/dev/ttys001",
 		Target:     "new-window",
 	})
 	if term == nil {
 		t.Fatalf("terminal runtime should be present")
 	}
-	if term.Backend != "iterm2" || term.WindowID != "101" || term.TabID != "tab-1" || term.SessionID != "session-1" || term.PaneAlive {
+	if term.Backend != "iterm2" || term.WindowID != "101" || term.TabID != "tab-1" || term.SessionID != "session-1" || term.TTY != "/dev/ttys001" || term.PaneAlive {
 		t.Fatalf("terminal runtime = %+v", term)
+	}
+}
+
+func TestPolicyAwareMemberActionsForTerminalAppRow(t *testing.T) {
+	tm := team.Team{Project: "/repo", Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex"}}}
+	row := statusRecord{
+		Role:    "cto",
+		Signals: statusSignals{AgentPID: 1234, AgentAlive: true, BinaryMatch: true},
+		Terminal: &terminalRuntimeJSON{
+			Backend:  "terminal_app",
+			Session:  "issue-332",
+			WindowID: "401",
+			TabID:    "1",
+			TTY:      "/dev/ttys001",
+			Target:   "new-window",
+			PIDAlive: true,
+		},
+	}
+	actions := policyAwareMemberActionsForRow(tm, "default", "issue-332", row)
+	byKind := map[string]runtimeActionJSON{}
+	for _, action := range actions {
+		byKind[action.Kind] = action
+	}
+	if action := byKind["focus"]; action.Available || action.Reason != runtimecontrol.TerminalAppFocusDisabledReason {
+		t.Fatalf("Terminal.app focus action = %+v", action)
+	}
+	for _, kind := range []string{"send", "goal_deliver"} {
+		action := byKind[kind]
+		if action.Available || action.Reason != runtimecontrol.TerminalAppInjectionDisabledReason {
+			t.Fatalf("%s action = %+v", kind, action)
+		}
+	}
+	if !byKind["dispatch"].Available {
+		t.Fatalf("Terminal.app dispatch should be available: %+v", byKind["dispatch"])
 	}
 }
 

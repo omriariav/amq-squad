@@ -37,6 +37,7 @@ const (
 	envTerminalWindowName = "AMQ_SQUAD_TERMINAL_WINDOW_NAME"
 	envTerminalTabID      = "AMQ_SQUAD_TERMINAL_TAB_ID"
 	envTerminalSessionID  = "AMQ_SQUAD_TERMINAL_SESSION_ID"
+	envTerminalTTY        = "AMQ_SQUAD_TERMINAL_TTY"
 	envTerminalTarget     = "AMQ_SQUAD_TERMINAL_TARGET"
 )
 
@@ -517,9 +518,10 @@ func terminalInfoFromEnv() *launch.TerminalInfo {
 		WindowName: strings.TrimSpace(os.Getenv(envTerminalWindowName)),
 		TabID:      strings.TrimSpace(os.Getenv(envTerminalTabID)),
 		SessionID:  strings.TrimSpace(os.Getenv(envTerminalSessionID)),
+		TTY:        strings.TrimSpace(os.Getenv(envTerminalTTY)),
 		Target:     strings.TrimSpace(os.Getenv(envTerminalTarget)),
 	}
-	if info.Backend == "" && info.Session == "" && info.WindowID == "" && info.WindowName == "" && info.TabID == "" && info.SessionID == "" && info.Target == "" {
+	if info.Backend == "" && info.Session == "" && info.WindowID == "" && info.WindowName == "" && info.TabID == "" && info.SessionID == "" && info.TTY == "" && info.Target == "" {
 		return nil
 	}
 	return info

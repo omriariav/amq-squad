@@ -1159,6 +1159,15 @@ injection, capture, busy detection, goal delivery, and pane-nudge dispatch stay
 disabled for iTerm2 until #374 proves safe behavior; durable AMQ dispatch still
 queues normally. Manual smoke steps live in [`docs/iterm2-tier-b-smoke.md`](docs/iterm2-tier-b-smoke.md).
 
+The experimental macOS Terminal.app backend is available with
+`--terminal terminal --target new-window`. It is Tier C launch-only: it records
+backend-neutral Terminal.app metadata when AppleScript exposes it and reports
+PID liveness, but focus, prompt injection, capture, busy detection, goal
+delivery, and safe close remain unavailable until follow-up spikes prove stable
+addressing and safe input semantics. Durable AMQ dispatch still queues normally;
+pane nudges are skipped with the Terminal.app safety reason. Manual smoke steps
+live in [`docs/terminal-app-tier-c-smoke.md`](docs/terminal-app-tier-c-smoke.md).
+
 amq-squad owns the tmux execution/control contract for a team so external
 clients (such as amq-noc) can make agents actionable without scraping tmux or
 reconstructing pane layouts themselves.

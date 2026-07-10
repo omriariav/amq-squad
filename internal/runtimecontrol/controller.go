@@ -10,6 +10,7 @@ type Identity struct {
 	TabID      string
 	SessionID  string
 	PaneID     string
+	TTY        string
 	Target     string
 }
 
@@ -26,6 +27,7 @@ type Controller interface {
 
 type TmuxController struct{}
 type ITerm2Controller struct{}
+type TerminalAppController struct{}
 
 func (TmuxController) Backend() string {
 	return BackendTmux
@@ -41,6 +43,14 @@ func (ITerm2Controller) Backend() string {
 
 func (ITerm2Controller) Capabilities(identity Identity, live Liveness) Capabilities {
 	return ITerm2Capabilities(identity, live)
+}
+
+func (TerminalAppController) Backend() string {
+	return BackendTerminalApp
+}
+
+func (TerminalAppController) Capabilities(_ Identity, _ Liveness) Capabilities {
+	return TerminalAppCapabilities()
 }
 
 type Registry struct {
@@ -78,5 +88,5 @@ func (r *Registry) Lookup(backend string) (Controller, bool) {
 }
 
 func DefaultRegistry() *Registry {
-	return NewRegistry(TmuxController{}, ITerm2Controller{})
+	return NewRegistry(TmuxController{}, ITerm2Controller{}, TerminalAppController{})
 }
