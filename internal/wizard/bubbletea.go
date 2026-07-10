@@ -26,6 +26,7 @@ const (
 	stageRoleEffort
 	stageLead
 	stageLeadMode
+	stageOperator
 	stageTopology
 	stageGoal
 	stageSeed
@@ -242,9 +243,17 @@ func (m BubbleModel) renderPanel() string {
 	for i, item := range choices {
 		cursor := "  "
 		line := item.label
+		if item.disabled {
+			cursor = "× "
+			line = styleWizardMuted.Render(line)
+		}
 		if i == m.cursor {
 			cursor = "› "
-			line = styleWizardPick.Render(line)
+			if item.disabled {
+				line = styleWizardMuted.Render(line)
+			} else {
+				line = styleWizardPick.Render(line)
+			}
 		}
 		b.WriteString(cursor + line + "\n")
 	}
@@ -284,6 +293,8 @@ func (m BubbleModel) title() string {
 		return "Choose the visible lead"
 	case stageLeadMode:
 		return "Choose the lead posture"
+	case stageOperator:
+		return "Choose the operator interaction contract"
 	case stageTopology:
 		return "Choose where agents appear"
 	case stageGoal:
@@ -317,6 +328,11 @@ func (m BubbleModel) note() string {
 		return "Use automatic to let the selected binary choose."
 	case stageTopology:
 		return "The diagram is the topology that the canonical visibility flag selects."
+	case stageOperator:
+		if m.existingIndex >= 0 {
+			return "Existing profile contract is authoritative: " + defaultString(m.spec.OperatorMode, "unspecified")
+		}
+		return "Unavailable capability rows stay visible so the future contract is explicit."
 	case stageConfirm:
 		return "Enter runs the existing canonical preview. It cannot launch agents."
 	case stageSeed:
@@ -349,6 +365,7 @@ func (m BubbleModel) summary() string {
 	if m.spec.Effort != "" {
 		parts = append(parts, "Effort    "+m.spec.Effort+" (launch only)")
 	}
+	parts = append(parts, "Operator  "+defaultString(m.spec.OperatorMode, "unspecified")+" · "+operatorContractSummary(m.spec.OperatorMode))
 	parts = append(parts, "Topology  "+m.spec.Visibility, "", TopologyPreview(m.spec.Visibility))
 	return strings.Join(parts, "\n")
 }
@@ -428,6 +445,18 @@ func (m BubbleModel) choices() []choice {
 		return effortChoices(parseAssignments(m.spec.Binary)[m.currentRole()])
 	case stageLeadMode:
 		return []choice{{value: "builder", label: "Builder · lead may implement and delegate"}, {value: "planner", label: "Planner · lead dispatches and reviews; workers mutate"}}
+	case stageOperator:
+		if m.existingIndex >= 0 {
+			choices := []choice{{value: "continue", label: "Continue with authoritative profile contract · " + defaultString(m.spec.OperatorMode, "unspecified")}}
+			for _, item := range operatorChoices(m.opts.Capabilities) {
+				if item.capability {
+					item.disabled = true
+					choices = append(choices, item)
+				}
+			}
+			return choices
+		}
+		return operatorChoices(m.opts.Capabilities)
 	case stageTopology:
 		return []choice{{value: "sibling-tabs", label: "One window per agent"}, {value: "current", label: "Panes in this window"}, {value: "detached", label: "Detached squad"}}
 	case stageConfirm:
@@ -462,6 +491,12 @@ func (m BubbleModel) defaultCursor() int {
 		want = defaultString(parseAssignments(m.spec.Effort)[m.currentRole()], effortAutomatic)
 	case stageLeadMode:
 		want = defaultString(m.spec.LeadMode, "builder")
+	case stageOperator:
+		if m.existingIndex >= 0 {
+			want = "continue"
+		} else {
+			want = defaultOperatorMode(m.spec.OperatorMode, m.spec.Visibility)
+		}
 	case stageTopology:
 		want = defaultString(m.spec.Visibility, "sibling-tabs")
 	}
@@ -514,6 +549,7 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 		m.spec.Session = value
 		if m.existingIndex >= 0 {
 			m.spec.Roles, m.spec.Binary, m.spec.Model, m.spec.Effort, m.spec.Lead, m.spec.LeadMode = "", "", "", "", "", ""
+			m.spec.OperatorMode = defaultString(m.ctx.Profiles[m.existingIndex].OperatorMode, "unspecified")
 			m.roleIndex = 0
 			if len(m.ctx.Profiles[m.existingIndex].Members) == 0 {
 				m.transition(stageTopology)
@@ -577,6 +613,10 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	selected := choices[minInt(m.cursor, len(choices)-1)].value
+	if choices[minInt(m.cursor, len(choices)-1)].disabled {
+		m.err = fmt.Errorf("%s is not available in this release", selected)
+		return m, nil
+	}
 	m.pushHistory()
 	switch m.stage {
 	case stageProfile:
@@ -614,9 +654,16 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 	case stageLeadMode:
 		m.spec.LeadMode = selected
 		m.transition(stageTopology)
+	case stageOperator:
+		if selected == "continue" {
+			m.transition(stageGoal)
+		} else {
+			m.spec.OperatorMode = selected
+			m.transition(stageGoal)
+		}
 	case stageTopology:
 		m.spec.Visibility = selected
-		m.transition(stageGoal)
+		m.transition(stageOperator)
 	case stageConfirm:
 		m.done = true
 		return m, tea.Quit
@@ -680,12 +727,27 @@ func (m BubbleModel) phaseIndex() int {
 		return 0
 	case stageProfile, stageNewProfile, stageSession, stageExistingOverride, stageExistingModel, stageExistingEffort, stageRoles, stageRoleBinary, stageRoleModel, stageRoleEffort, stageLead, stageLeadMode:
 		return 1
-	case stageTopology:
+	case stageTopology, stageOperator:
 		return 2
 	case stageGoal, stageSeed:
 		return 3
 	default:
 		return 4
+	}
+}
+
+func operatorContractSummary(mode string) string {
+	switch mode {
+	case "lead_pane":
+		return "type in lead pane; mirror to durable gates"
+	case "separate_terminal":
+		return "operator polls and answers durable gates"
+	case "noc":
+		return "NOC/global orchestrator owns polling"
+	case "self_operator":
+		return "forward-known only; #391 authorization unavailable"
+	default:
+		return "legacy poll-required compatibility"
 	}
 }
 

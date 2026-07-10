@@ -15,6 +15,7 @@ type Spec struct {
 	Binary       string
 	Model        string
 	Effort       string
+	OperatorMode string
 	CodexArgs    string
 	ClaudeArgs   string
 	Lead         string
@@ -41,6 +42,9 @@ func (s Spec) Args() []string {
 	appendValue("--binary", s.Binary)
 	appendValue("--model", s.Model)
 	appendValue("--effort", s.Effort)
+	if strings.TrimSpace(s.OperatorMode) != "unspecified" {
+		appendValue("--operator-mode", s.OperatorMode)
+	}
 	appendValue("--codex-args", s.CodexArgs)
 	appendValue("--claude-args", s.ClaudeArgs)
 	appendValue("--lead", s.Lead)

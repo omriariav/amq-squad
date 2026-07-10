@@ -22,6 +22,8 @@ const (
 	runStartPreflightInvalidLeadMode         = "invalid_lead_mode"
 	runStartPreflightExistingProfileLeadMode = "existing_profile_lead_mode"
 	runStartPreflightInvalidEffort           = "invalid_effort"
+	runStartPreflightInvalidOperatorMode     = "invalid_operator_mode"
+	runStartPreflightExistingOperatorMode    = "existing_profile_operator_mode"
 )
 
 type runStartPreflightInput struct {
@@ -36,6 +38,8 @@ type runStartPreflightInput struct {
 	LeadModeSet     bool
 	Effort          string
 	EffortSet       bool
+	OperatorMode    string
+	OperatorModeSet bool
 }
 
 // runStartPreflightIssue is intentionally structured so wizard adapters can
@@ -142,6 +146,25 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 			fmt.Sprintf("--lead-mode applies only when run start creates a new roster; for an existing profile use `amq-squad team lead set <role> --lead-mode %s` first", leadMode),
 			"keep the existing profile lead mode",
 			fmt.Sprintf("run amq-squad team lead set <role> --lead-mode %s before starting", leadMode))
+	}
+	if input.OperatorModeSet {
+		mode, modeErr := validateCanonicalOperatorMode(input.OperatorMode)
+		if modeErr != nil {
+			return add(runStartPreflightInvalidOperatorMode, "invalid --operator-mode: "+modeErr.Error(), "choose lead_pane, separate_terminal, or noc")
+		}
+		if r.TeamPresent && !r.FreshRoster {
+			existing, readErr := team.ReadProfile(r.Project, r.Profile)
+			if readErr != nil {
+				return add(runStartPreflightExistingOperatorMode, fmt.Sprintf("read team profile %q: %v", r.Profile, readErr))
+			}
+			persisted := team.EffectiveOperator(existing).InteractionMode
+			if mode != persisted {
+				return add(runStartPreflightExistingOperatorMode,
+					fmt.Sprintf("--operator-mode %s does not match existing profile %q interaction mode %s; run start never rewrites an existing operator contract", mode, r.Profile, persisted),
+					"omit --operator-mode to use the existing profile contract",
+					"create a new named profile with the requested operator mode")
+			}
+		}
 	}
 	if input.EffortSet {
 		var effortErr error

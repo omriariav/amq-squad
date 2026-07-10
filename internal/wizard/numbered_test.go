@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"bufio"
 	"bytes"
 	"strings"
 	"testing"
@@ -29,11 +30,27 @@ func TestRunNumberedEnterThroughDefaults(t *testing.T) {
 	if got.Binary != "cto=codex,senior-dev=codex,qa=codex" || got.Effort != "" {
 		t.Fatalf("default binary/effort normalization = %+v", got)
 	}
+	if got.OperatorMode != "lead_pane" {
+		t.Fatalf("visible topology operator default = %q", got.OperatorMode)
+	}
 	text := out.String()
 	for _, want := range []string{"Preview only", "Project directory [/repo]", "builder: lead may implement and delegate (default)", "sibling-tabs: one visible tmux window per agent (default)"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("output missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestRunNumberedDetachedDefaultsSeparateOperatorTerminal(t *testing.T) {
+	got, err := RunNumbered(strings.NewReader(strings.Repeat("\n", 24)), &bytes.Buffer{}, NumberedOptions{
+		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s", Visibility: "detached"},
+		ProfileExists: func(string, string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OperatorMode != "separate_terminal" {
+		t.Fatalf("detached operator default = %q", got.OperatorMode)
 	}
 }
 
@@ -55,6 +72,7 @@ func TestRunNumberedAcceptsNumberedChoices(t *testing.T) {
 		"",  // lead
 		"2", // planner
 		"3", // current
+		"",  // lead-pane operator contract
 		"",  // goal
 		"",  // seed
 	}, "\n") + "\n"
@@ -67,6 +85,9 @@ func TestRunNumberedAcceptsNumberedChoices(t *testing.T) {
 	}
 	if got.LeadMode != "planner" || got.Visibility != "current" {
 		t.Fatalf("choices = lead_mode:%q visibility:%q", got.LeadMode, got.Visibility)
+	}
+	if got.OperatorMode != "lead_pane" {
+		t.Fatalf("operator mode = %q", got.OperatorMode)
 	}
 }
 
@@ -128,7 +149,7 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 				SessionSuggestion: "issue-393",
 				Profiles: []ProfileSummary{
 					{Name: "default", MemberCount: 2, PinnedSession: "main-work"},
-					{Name: "review", MemberCount: 3, PinnedSession: "review-work", Lead: "cto", LeadMode: "planner", Members: []MemberSummary{{Role: "cto", Binary: "codex", Effort: "high"}}},
+					{Name: "review", MemberCount: 3, PinnedSession: "review-work", Lead: "cto", LeadMode: "planner", OperatorMode: "noc", Members: []MemberSummary{{Role: "cto", Binary: "codex", Effort: "high"}}},
 				},
 			}, nil
 		},
@@ -139,10 +160,46 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 	if got.Profile != "review" || got.Session != "review-work" || got.Roles != "" || got.LeadMode != "" {
 		t.Fatalf("existing profile result = %+v", got)
 	}
-	for _, want := range []string{"origin omriariav/amq-squad", "review: 3 member(s), session review-work", "cto: codex, model=automatic, effort=high"} {
+	if got.OperatorMode != "noc" {
+		t.Fatalf("existing operator mode = %q", got.OperatorMode)
+	}
+	for _, want := range []string{"origin omriariav/amq-squad", "review: 3 member(s), session review-work", "cto: codex, model=automatic, effort=high", "Operator interaction (authoritative): noc", "ships in v2.19.0: #391"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestPromptOperatorChoiceCapabilityGating(t *testing.T) {
+	var out bytes.Buffer
+	_, err := promptOperatorChoice(bufio.NewReader(strings.NewReader("4\n")), &out, nil, "lead_pane")
+	if err == nil || !strings.Contains(err.Error(), "self_operator") {
+		t.Fatalf("disabled choice error = %v", err)
+	}
+	for _, want := range []string{"Self-operator / delegated approval", "ships in v2.19.0: #391", "Notification add-on", "ships in v2.19.0: #390"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("capability rows missing %q:\n%s", want, out.String())
+		}
+	}
+
+	caps := DefaultCapabilities()
+	self := caps[CapabilitySelfOperator]
+	self.Available = true
+	caps[CapabilitySelfOperator] = self
+	mode, err := promptOperatorChoice(bufio.NewReader(strings.NewReader("4\n")), &bytes.Buffer{}, caps, "lead_pane")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "self_operator" {
+		t.Fatalf("enabled capability result = mode %q", mode)
+	}
+
+	notifyCap := caps[CapabilityOperatorNotifications]
+	notifyCap.Available = true
+	caps[CapabilityOperatorNotifications] = notifyCap
+	_, err = promptOperatorChoice(bufio.NewReader(strings.NewReader("5\n")), &bytes.Buffer{}, caps, "lead_pane")
+	if err == nil || !strings.Contains(err.Error(), "operator_notifications") {
+		t.Fatalf("notification slot must remain blocked without canonical serialization: %v", err)
 	}
 }
 

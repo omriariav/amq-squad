@@ -94,6 +94,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
 	operatorFlag := fs.String("operator", team.DefaultOperatorHandle, "virtual operator mailbox handle for human gates (default: user)")
+	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, or noc (self_operator is reserved for #391)")
 	noOperator := fs.Bool("no-operator", false, "disable the virtual operator participant for this profile")
 	orchestratedFlag := fs.Bool("orchestrated", false, "wire the squad for lead-agent orchestration: inject the reporting norm into team-rules.md and mark the lead role")
 	leadFlag := fs.String("lead", "", "role that leads an orchestrated squad (must be a team member; implies --orchestrated)")
@@ -118,8 +119,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--effort role=level,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
-  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--effort role=level,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--effort role=level,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE] [--operator-mode lead_pane|separate_terminal|noc] [--no-operator] [--orchestrated [--lead ROLE]] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--effort role=level,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE] [--operator-mode lead_pane|separate_terminal|noc] [--no-operator] [--orchestrated [--lead ROLE]] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes the team config under
@@ -145,6 +146,10 @@ also be referenced inline, e.g. --roles cto,./roles/researcher.md. The file's
 'binary:' field satisfies the binary requirement (and --binary overrides it).
 The authored document is staged under .amq-squad/roles/<id>.md and seeds that
 agent's role.md at launch.
+
+Operator interaction: --operator-mode accepts lead_pane, separate_terminal,
+or noc. The forward-known self_operator schema value is reserved and cannot be
+selected until #391 supplies its authorization policy.
 
 Orchestration (opt-in, default off): --orchestrated wires the squad for
 lead-agent orchestration. It records the lead in team.json and injects the
@@ -209,6 +214,9 @@ Examples:
 	if *noOperator && flagWasSet(fs, "operator") {
 		return fmt.Errorf("use either --operator or --no-operator, not both")
 	}
+	if *noOperator && flagWasSet(fs, "operator-mode") {
+		return fmt.Errorf("use either --operator-mode or --no-operator, not both")
+	}
 	operator := team.DefaultOperator()
 	if *noOperator {
 		operator = team.DisabledOperator()
@@ -221,6 +229,13 @@ Examples:
 			return fmt.Errorf("--operator: %w", err)
 		}
 		operator.Handle = handle
+		if flagWasSet(fs, "operator-mode") {
+			mode, modeErr := validateCanonicalOperatorMode(*operatorModeFlag)
+			if modeErr != nil {
+				return fmt.Errorf("--operator-mode: %w", modeErr)
+			}
+			operator.InteractionMode = mode
+		}
 	}
 
 	cwd, err := os.Getwd()
