@@ -41,6 +41,7 @@ type terminalRuntimeJSON struct {
 	TabID      string `json:"tab_id,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
 	PaneID     string `json:"pane_id,omitempty"`
+	TTY        string `json:"tty,omitempty"`
 	Target     string `json:"target,omitempty"`
 	PaneAlive  bool   `json:"pane_alive"`
 	PIDAlive   bool   `json:"pid_alive,omitempty"`
@@ -72,7 +73,7 @@ func terminalRuntimeFromInfo(info *launch.TerminalInfo) *terminalRuntimeJSON {
 	if info == nil {
 		return nil
 	}
-	if info.Backend == "" && info.PaneID == "" && info.WindowID == "" && info.Session == "" && info.WindowName == "" && info.TabID == "" && info.SessionID == "" && info.Target == "" {
+	if info.Backend == "" && info.PaneID == "" && info.WindowID == "" && info.Session == "" && info.WindowName == "" && info.TabID == "" && info.SessionID == "" && info.TTY == "" && info.Target == "" {
 		return nil
 	}
 	return &terminalRuntimeJSON{
@@ -83,6 +84,7 @@ func terminalRuntimeFromInfo(info *launch.TerminalInfo) *terminalRuntimeJSON {
 		TabID:      info.TabID,
 		SessionID:  info.SessionID,
 		PaneID:     info.PaneID,
+		TTY:        info.TTY,
 		Target:     info.Target,
 	}
 }
@@ -234,6 +236,7 @@ func runtimeCapabilitiesForStatusRow(row statusRecord) *runtimecontrol.Capabilit
 		TabID:      row.Terminal.TabID,
 		SessionID:  row.Terminal.SessionID,
 		PaneID:     row.Terminal.PaneID,
+		TTY:        row.Terminal.TTY,
 		Target:     row.Terminal.Target,
 	}, runtimecontrol.Liveness{
 		PaneAlive:   row.Terminal.PaneAlive,

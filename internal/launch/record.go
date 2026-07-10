@@ -162,6 +162,7 @@ type TerminalInfo struct {
 	TabID      string `json:"tab_id,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
 	PaneID     string `json:"pane_id,omitempty"`
+	TTY        string `json:"tty,omitempty"`
 	Target     string `json:"target,omitempty"`
 }
 

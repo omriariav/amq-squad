@@ -7,6 +7,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -212,18 +213,32 @@ func classifyAgentLiveness(agentDir, root, expectedProfile, handle, role, binary
 	// was relaunched OUTSIDE amq-squad, leaving a live replacement process the
 	// launch record never learned about. Look for a live tmux pane that
 	// resolves to this member.
-	if target, ok := classifierReplacementPane(role, handle, binary, cwd, workstream); ok {
-		out.Verdict = livenessReplacementLive
-		out.Status = statusStateLive
-		out.ReplacementTarget = target
-		out.Detail = fmt.Sprintf("recorded pid dead; live %s at %s — relaunch via amq-squad to re-register", binary, target)
-		return out
+	if replacementPaneAllowedForRecord(launchErr, launchRec) {
+		if target, ok := classifierReplacementPane(role, handle, binary, cwd, workstream); ok {
+			out.Verdict = livenessReplacementLive
+			out.Status = statusStateLive
+			out.ReplacementTarget = target
+			out.Detail = fmt.Sprintf("recorded pid dead; live %s at %s — relaunch via amq-squad to re-register", binary, target)
+			return out
+		}
 	}
 
 	out.Verdict = livenessStale
 	out.Status = statusStateStale
 	out.Detail = staleDetail(out.Signals, presenceMismatched) + "; relaunch via amq-squad to re-register"
 	return out
+}
+
+func replacementPaneAllowedForRecord(launchErr error, rec launch.Record) bool {
+	if launchErr != nil || rec.Terminal == nil {
+		return true
+	}
+	switch strings.TrimSpace(rec.Terminal.Backend) {
+	case "", runtimecontrol.BackendTmux:
+		return true
+	default:
+		return false
+	}
 }
 
 // classifierReplacementPane is the verdict-level live-replacement detector. It

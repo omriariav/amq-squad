@@ -9,7 +9,6 @@ import (
 	"time"
 
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -687,8 +686,8 @@ func defaultDispatchWakePane(projectDir, profile, session string, explicitSessio
 	if err != nil {
 		return dispatchOutcome{}, err
 	}
-	if mr.isITerm2Runtime() {
-		return dispatchOutcome{Skipped: runtimecontrol.ITerm2InjectionDisabledReason + "; durable AMQ dispatch was queued"}, nil
+	if reason, disabled := mr.nativePromptInjectionDisabledReason(); disabled {
+		return dispatchOutcome{Skipped: reason + "; durable AMQ dispatch was queued"}, nil
 	}
 	panes, err := statusPaneLister()
 	if err != nil {

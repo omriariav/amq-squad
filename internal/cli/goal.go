@@ -15,7 +15,6 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -882,8 +881,8 @@ func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
 	if err != nil {
 		return mutationResult{}, err
 	}
-	if mr.isITerm2Runtime() {
-		return mutationResult{}, fmt.Errorf("%s", runtimecontrol.ITerm2InjectionDisabledReason)
+	if reason, disabled := mr.nativePromptInjectionDisabledReason(); disabled {
+		return mutationResult{}, fmt.Errorf("%s", reason)
 	}
 	panes, err := statusPaneLister()
 	if err != nil {

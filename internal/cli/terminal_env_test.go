@@ -9,13 +9,14 @@ func TestTerminalInfoFromEnvITerm2(t *testing.T) {
 	t.Setenv(envTerminalWindowName, "amq:issue-331:cto")
 	t.Setenv(envTerminalTabID, "tab-1")
 	t.Setenv(envTerminalSessionID, "session-1")
+	t.Setenv(envTerminalTTY, "/dev/ttys001")
 	t.Setenv(envTerminalTarget, "new-window")
 
 	info := terminalInfoFromEnv()
 	if info == nil {
 		t.Fatal("expected terminal info from env")
 	}
-	if info.Backend != "iterm2" || info.Session != "issue-331" || info.WindowID != "101" || info.WindowName != "amq:issue-331:cto" || info.TabID != "tab-1" || info.SessionID != "session-1" || info.Target != "new-window" {
+	if info.Backend != "iterm2" || info.Session != "issue-331" || info.WindowID != "101" || info.WindowName != "amq:issue-331:cto" || info.TabID != "tab-1" || info.SessionID != "session-1" || info.TTY != "/dev/ttys001" || info.Target != "new-window" {
 		t.Fatalf("terminal info = %+v", info)
 	}
 }
