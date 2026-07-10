@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -321,6 +322,77 @@ func TestClassifierReplacementLive(t *testing.T) {
 	}
 	if !strings.Contains(live.Detail, "recorded pid dead") {
 		t.Fatalf("replacement detail should mention recorded pid dead, got %q", live.Detail)
+	}
+}
+
+func TestNativeTerminalRecordsDoNotUseReplacementPaneFallback(t *testing.T) {
+	for _, backend := range []string{runtimecontrol.BackendTerminalApp, runtimecontrol.BackendITerm2} {
+		t.Run(backend, func(t *testing.T) {
+			base := setupFakeAMQSessionRoots(t)
+			dir := seedTeam(t, team.Team{
+				Workstream: "issue-96",
+				Members: []team.Member{
+					{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+				},
+			})
+			writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+				CWD: dir, Binary: "codex", Role: "cto", AgentPID: 4242, StartedAt: time.Now(),
+				Terminal: &launch.TerminalInfo{
+					Backend:    backend,
+					Session:    "issue-96",
+					WindowName: "amq:issue-96:cto",
+					Target:     "new-window",
+				},
+			})
+			agentDir := filepath.Join(base, "issue-96", "agents", "cto")
+			withStubPaneLister(t, []tmuxpane.TmuxPane{
+				{Session: "main", Window: "0", Pane: "3", Command: "codex", CWD: canonicalPath(dir)},
+			}, nil)
+
+			now := time.Now()
+			probe := livenessProbe(map[int]bool{}, map[int]bool{}, now)
+
+			live := classifyAgentLiveness(agentDir, filepath.Join(base, "issue-96"), "default", "cto", "cto", "codex", "issue-96", dir, probe)
+			if live.Verdict != livenessStale {
+				t.Fatalf("classifier verdict = %q, want stale", live.Verdict)
+			}
+			if live.Status != statusStateStale {
+				t.Fatalf("classifier status = %q, want stale", live.Status)
+			}
+			if live.Live() {
+				t.Fatalf("%s stale native-terminal record must not report Live()", backend)
+			}
+
+			tm, err := team.ReadProfile(dir, team.DefaultProfile)
+			if err != nil {
+				t.Fatalf("read team: %v", err)
+			}
+			rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+			if rec.Status != statusStateStale {
+				t.Fatalf("status = %q, want stale (detail %q)", rec.Status, rec.Detail)
+			}
+			if rec.Terminal == nil || rec.Terminal.Backend != backend || rec.Terminal.PIDAlive {
+				t.Fatalf("terminal runtime = %+v, want backend %q with pid_alive false", rec.Terminal, backend)
+			}
+
+			plan, err := planMemberResume(memberPlanInput{
+				Member:     tm.Members[0],
+				Team:       tm,
+				Workstream: "issue-96",
+				Mode:       resumeModeDefault,
+				SquadBin:   teamSquadBin(),
+				Probe:      probe,
+			})
+			if err != nil {
+				t.Fatalf("planMemberResume: %v", err)
+			}
+			if plan.Action != resumeRestore {
+				t.Fatalf("resume action = %q, want restore (note %q)", plan.Action, plan.Note)
+			}
+			if strings.TrimSpace(plan.Command) == "" {
+				t.Fatalf("restore action must emit a non-empty command")
+			}
+		})
 	}
 }
 
