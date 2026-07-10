@@ -28,6 +28,7 @@ type teamLaunchOptions struct {
 	BinaryArgs      map[string][]string
 	Trust           string
 	ModelOverrides  map[string]string
+	EffortOverrides map[string]string
 	ForceDuplicate  bool
 	NoGitignore     bool
 	Symphony        bool
@@ -187,6 +188,10 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		return fmt.Errorf("no team members are pinned to session %q (all %d member(s) belong to other sessions)", workstream, len(t.Members))
 	}
 	t.Members = active
+	t.Members, err = applyLaunchEffortOverrides(t.Members, opts.EffortOverrides)
+	if err != nil {
+		return err
+	}
 	trustMode, err := resolveTeamTrustMode(t, opts.Trust, explicitTrust)
 	if err != nil {
 		return err

@@ -756,6 +756,34 @@ func TestRunStartExistingProfileMixedPinsProceed(t *testing.T) {
 	}
 }
 
+func TestRunStartExistingProfileEffortOverrideIsLaunchOnly(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Project:      "",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{{
+			Role: "cto", Binary: "codex", Handle: "cto", Session: "sess",
+			CodexArgs: []string{"--profile", "fast", "-c", "model_reasoning_effort=low"},
+		}},
+	})
+	out, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--effort", "cto=xhigh"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("preview error: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "model_reasoning_effort=xhigh") || strings.Contains(out, "model_reasoning_effort=low") {
+		t.Fatalf("preview did not replace stored effort args:\n%s", out)
+	}
+	stored, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := memberEffort(stored.Members[0]); got != "low" {
+		t.Fatalf("stored profile effort changed to %q", got)
+	}
+}
+
 func TestRunStartGoGoalWaitsForLeadReadiness(t *testing.T) {
 	dir := t.TempDir()
 	if _, _, err := captureOutput(t, func() error {

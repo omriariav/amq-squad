@@ -113,6 +113,7 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 		"",  // project
 		"2", // select review profile
 		"",  // pinned session
+		"",  // keep cto profile values
 		"",  // topology
 		"",  // goal
 		"",  // seed
@@ -142,5 +143,41 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestRunNumberedExistingProfileCollectsLaunchOnlyOverrides(t *testing.T) {
+	input := strings.Join([]string{
+		"",             // project
+		"",             // existing profile
+		"",             // pinned session
+		"2",            // override cto
+		"launch-model", // launch-only model
+		"4",            // high effort
+		"",             // topology
+		"",             // goal
+		"",             // seed
+	}, "\n") + "\n"
+	profile := ProfileSummary{
+		Name: "review", MemberCount: 1, PinnedSession: "review-work",
+		Members: []MemberSummary{{Role: "cto", Binary: "codex", Model: "stored-model", Effort: "low"}},
+	}
+	got, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
+		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs"},
+		InspectProject: func(string) (ProjectContext, error) {
+			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Model != "cto=launch-model" || got.Effort != "cto=high" {
+		t.Fatalf("launch overrides = model %q effort %q", got.Model, got.Effort)
+	}
+	if got.Roles != "" || got.Binary != "" || got.Lead != "" || got.LeadMode != "" {
+		t.Fatalf("existing roster mutation leaked into spec: %+v", got)
+	}
+	if profile.Members[0].Model != "stored-model" || profile.Members[0].Effort != "low" {
+		t.Fatalf("profile summary mutated: %+v", profile.Members[0])
 	}
 }

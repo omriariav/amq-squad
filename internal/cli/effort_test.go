@@ -69,3 +69,33 @@ func TestTeamInitEffortRejectsRoleAndBinaryMismatches(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyLaunchEffortOverridesReplacesNativeArgsWithoutMutatingProfile(t *testing.T) {
+	members := []team.Member{
+		{Role: "cto", Binary: "codex", CodexArgs: []string{"--profile", "fast", "-c", "model_reasoning_effort=low", "--search"}},
+		{Role: "qa", Binary: "claude", ClaudeArgs: []string{"--chrome", "--effort=medium", "--debug"}},
+	}
+	got, err := applyLaunchEffortOverrides(members, map[string]string{"cto": "xhigh", "qa": "automatic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"--profile", "fast", "--search", "-c", "model_reasoning_effort=xhigh"}; !reflect.DeepEqual(got[0].CodexArgs, want) {
+		t.Fatalf("cto args = %#v, want %#v", got[0].CodexArgs, want)
+	}
+	if want := []string{"--chrome", "--debug"}; !reflect.DeepEqual(got[1].ClaudeArgs, want) {
+		t.Fatalf("qa args = %#v, want %#v", got[1].ClaudeArgs, want)
+	}
+	if want := []string{"--profile", "fast", "-c", "model_reasoning_effort=low", "--search"}; !reflect.DeepEqual(members[0].CodexArgs, want) {
+		t.Fatalf("stored cto args mutated: %#v", members[0].CodexArgs)
+	}
+	if want := []string{"--chrome", "--effort=medium", "--debug"}; !reflect.DeepEqual(members[1].ClaudeArgs, want) {
+		t.Fatalf("stored qa args mutated: %#v", members[1].ClaudeArgs)
+	}
+}
+
+func TestApplyLaunchEffortOverridesRejectsUnknownProfileRole(t *testing.T) {
+	_, err := applyLaunchEffortOverrides([]team.Member{{Role: "cto", Binary: "codex"}}, map[string]string{"qa": "high"})
+	if err == nil || !strings.Contains(err.Error(), "not present in the selected profile") {
+		t.Fatalf("error = %v", err)
+	}
+}

@@ -19,10 +19,16 @@ var (
 	runStartWizardStderrIsTerminal           = stderrIsTerminal
 	runStartWizardInCI                       = detectedCI
 	runStartWizardRunner           func([]string, string) error
+	runStartWizardTerm             = func() string { return os.Getenv("TERM") }
+	runStartWizardAccessible       = func() bool { return envTruthy("AMQ_SQUAD_WIZARD_ACCESSIBLE") }
+	runStartNumberedAdapter        func([]string, string) error
+	runStartBubbleAdapter          func([]string, string) error
 )
 
 func init() {
-	runStartWizardRunner = runNumberedRunStartWizard
+	runStartNumberedAdapter = runNumberedRunStartWizard
+	runStartBubbleAdapter = runBubbleRunStartWizard
+	runStartWizardRunner = runAdaptiveRunStartWizard
 }
 
 // runWizardCmd is the discoverable alias for run start --interactive. It owns
@@ -33,11 +39,12 @@ func runWizardCmd(args []string, version string) error {
 		fmt.Fprint(os.Stderr, `amq-squad wizard - guided preview for one orchestrated run
 
 Usage:
-  amq-squad wizard [run start prefill flags]
+  amq-squad wizard [run start prefill flags] [--wizard-ui auto|tui|numbered]
 
 This is an alias for 'amq-squad run start --interactive'. It requires an
 interactive terminal, never runs in CI, and is preview-only in this release
 slice. The wizard prints and validates the equivalent flag-form command.
+TERM=dumb and --wizard-ui numbered use the accessible numbered adapter.
 `)
 		return nil
 	}
@@ -103,37 +110,114 @@ func detectedCI() bool {
 	return false
 }
 
-func runNumberedRunStartWizard(args []string, version string) error {
-	prefill, err := parseRunStartWizardPrefill(args)
+func envTruthy(key string) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	return value != "" && value != "0" && value != "false" && value != "no"
+}
+
+func runAdaptiveRunStartWizard(args []string, version string) error {
+	rest, mode, err := stripWizardUIArgs(args)
 	if err != nil {
 		return err
+	}
+	if mode == "numbered" || (mode == "auto" && (strings.EqualFold(strings.TrimSpace(runStartWizardTerm()), "dumb") || runStartWizardAccessible())) {
+		return runStartNumberedAdapter(rest, version)
+	}
+	return runStartBubbleAdapter(rest, version)
+}
+
+func stripWizardUIArgs(args []string) ([]string, string, error) {
+	mode := "auto"
+	rest := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--numbered" || arg == "--accessible":
+			mode = "numbered"
+		case arg == "--wizard-ui":
+			if i+1 >= len(args) {
+				return nil, "", usageErrorf("--wizard-ui requires auto, tui, or numbered")
+			}
+			i++
+			mode = strings.ToLower(strings.TrimSpace(args[i]))
+		case strings.HasPrefix(arg, "--wizard-ui="):
+			mode = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(arg, "--wizard-ui=")))
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if mode != "auto" && mode != "tui" && mode != "numbered" {
+		return nil, "", usageErrorf("unsupported --wizard-ui %q (want auto, tui, or numbered)", mode)
+	}
+	return rest, mode, nil
+}
+
+func runNumberedRunStartWizard(args []string, version string) error {
+	prefill, opts, err := prepareRunStartWizard(args)
+	if err != nil {
+		return err
+	}
+	opts.Defaults = prefill
+	spec, err := runwizard.RunNumbered(runStartWizardInput, runStartWizardOutput, opts)
+	if err != nil {
+		return err
+	}
+	return finishRunStartWizard(spec, version)
+}
+
+func runBubbleRunStartWizard(args []string, version string) error {
+	prefill, opts, err := prepareRunStartWizard(args)
+	if err != nil {
+		return err
+	}
+	opts.Defaults = prefill
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		fmt.Fprintf(runStartWizardOutput, "Full-screen wizard unavailable (%v); using the numbered adapter.\n", err)
+		return runNumberedRunStartWizard(args, version)
+	}
+	defer tty.Close()
+	result, err := runwizard.RunBubbleTea(tty, tty, opts)
+	if err != nil {
+		return err
+	}
+	if result.Cancelled {
+		fmt.Fprintln(runStartWizardOutput, "Wizard cancelled. Nothing changed.")
+		return nil
+	}
+	return finishRunStartWizard(result.Spec, version)
+}
+
+func prepareRunStartWizard(args []string) (runwizard.Spec, runwizard.NumberedOptions, error) {
+	prefill, err := parseRunStartWizardPrefill(args)
+	if err != nil {
+		return runwizard.Spec{}, runwizard.NumberedOptions{}, err
 	}
 	if strings.TrimSpace(prefill.Project) == "" {
 		cwd, getwdErr := os.Getwd()
 		if getwdErr != nil {
-			return fmt.Errorf("getwd: %w", getwdErr)
+			return runwizard.Spec{}, runwizard.NumberedOptions{}, fmt.Errorf("getwd: %w", getwdErr)
 		}
 		prefill.Project = cwd
 	}
 	initialContext, err := inspectRunStartWizardProject(prefill.Project)
 	if err != nil {
-		return err
+		return runwizard.Spec{}, runwizard.NumberedOptions{}, err
 	}
 	prefill.Project = initialContext.Project
 	if strings.TrimSpace(prefill.Profile) == "" {
 		prefill.Profile = team.DefaultProfile
 	}
-
-	spec, err := runwizard.RunNumbered(runStartWizardInput, runStartWizardOutput, runwizard.NumberedOptions{
-		Defaults:       prefill,
+	opts := runwizard.NumberedOptions{
 		InspectProject: inspectRunStartWizardProject,
 		ProfileExists: func(project, profile string) bool {
 			return team.ExistsProfile(strings.TrimSpace(project), strings.TrimSpace(profile))
 		},
-	})
-	if err != nil {
-		return err
 	}
+	return prefill, opts, nil
+}
+
+func finishRunStartWizard(spec runwizard.Spec, version string) error {
 	preflight := runStartPreflight(runStartPreflightInput{
 		Project:         spec.Project,
 		Profile:         spec.Profile,

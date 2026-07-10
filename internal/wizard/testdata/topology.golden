@@ -1,0 +1,12 @@
+## sibling-tabs
+[ lead ]  [ worker 1 ]  [ worker 2 ]  [ worker 3 ]
+
+## current
+┌──── lead ────┬── worker 1 ──┐
+├── worker 2 ──┼── worker 3 ──┤
+└──────────────┴──────────────┘
+
+## detached
+operator terminal
+       │
+       └── [ detached squad · attach to view ]

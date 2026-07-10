@@ -740,6 +740,7 @@ type emitTeamOptions struct {
 	RequestedTrust   string
 	ExplicitTrust    bool
 	ModelOverrides   map[string]string
+	EffortOverrides  map[string]string
 	ForceDuplicate   bool
 	NoGitignore      bool
 	Symphony         bool
@@ -819,6 +820,10 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		return fmt.Errorf("no team members are pinned to session %q (all %d member(s) belong to other sessions)", workstream, len(t.Members))
 	}
 	t.Members = active
+	t.Members, err = applyLaunchEffortOverrides(t.Members, opts.EffortOverrides)
+	if err != nil {
+		return err
+	}
 	members := orderedTeamMembers(t.Members)
 	binaryArgs := mergeBinaryArgs(t.BinaryArgs, opts.ExtraBinaryArgs)
 	trustMode, err := resolveTeamTrustMode(t, opts.RequestedTrust, opts.ExplicitTrust)

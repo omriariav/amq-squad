@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -525,6 +526,7 @@ func TestRunUpLiveHonorsBackendFlags(t *testing.T) {
 			"--no-bootstrap",
 			"--trust", "trusted",
 			"--model", "cto=gpt-5",
+			"--effort", "cto=xhigh",
 			"--codex-args=--profile fast",
 			"--claude-args=--chrome",
 			"--force-duplicate",
@@ -569,6 +571,12 @@ func TestRunUpLiveHonorsBackendFlags(t *testing.T) {
 	}
 	if opts.ModelOverrides["cto"] != "gpt-5" {
 		t.Errorf("ModelOverrides[cto] = %q, want gpt-5", opts.ModelOverrides["cto"])
+	}
+	if opts.EffortOverrides["cto"] != "xhigh" {
+		t.Errorf("EffortOverrides[cto] = %q, want xhigh", opts.EffortOverrides["cto"])
+	}
+	if got := backend.teams[0].Members[0].CodexArgs; !reflect.DeepEqual(got, []string{"-c", "model_reasoning_effort=xhigh"}) {
+		t.Errorf("effective cto CodexArgs = %#v", got)
 	}
 	if got := opts.BinaryArgs["codex"]; len(got) == 0 || got[len(got)-1] != "fast" {
 		t.Errorf("codex BinaryArgs = %v, want trailing 'fast'", got)
