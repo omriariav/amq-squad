@@ -353,7 +353,7 @@ This atomically appends a `### YYYY-MM-DD [— title]\nbody` block, creating the
 
   | Work type | default in this operator setup | notes |
   | --- | --- | --- |
-  | bulk / mechanical edits | codex · gpt-5.6-luna or gpt-5.6-terra | low or medium effort; raise when tests or diff quality show reasoning gaps |
+  | bulk / mechanical edits | codex · gpt-5.6-luna | low or medium effort; raise to terra/sol when tests or diff quality show reasoning gaps |
   | everyday balanced implementation | codex · gpt-5.6-terra | default implementer/reviewer model when frontier depth is not needed |
   | user-facing UI, copy, API, product design | model with taste `>= 7` | do not assign to a purely mechanical worker just because it is cheap |
   | frontier implementation / independent review | codex · gpt-5.6-sol | new default for hardest implementation and review work |

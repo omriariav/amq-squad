@@ -1324,10 +1324,10 @@ Defaults are not limits. Agents should escalate binary, model, or effort when
 the output does not meet the bar. For shippable work, optimize for
 `intelligence > taste > cost`; cost matters only after the work is good enough.
 
-- Bulk or mechanical work defaults to Codex CLI on `gpt-5.6-luna` or
-  `gpt-5.6-terra` in the current operator setup. Use lower effort for truly
-  mechanical edits, but raise effort when the diff or tests show reasoning
-  gaps.
+- Bulk or mechanical work defaults to Codex CLI on `gpt-5.6-luna` in the
+  current operator setup. Use lower effort for truly mechanical edits, but
+  raise effort or escalate to `gpt-5.6-terra` / `gpt-5.6-sol` when the diff or
+  tests show reasoning gaps.
 - Everyday balanced implementation defaults to Codex CLI on `gpt-5.6-terra`.
 - Frontier implementation and independent review default to Codex CLI on
   `gpt-5.6-sol`.

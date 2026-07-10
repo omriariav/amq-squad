@@ -480,14 +480,14 @@ You can also preview a candidate from a deterministic source with
   setup; setup-dependent, not universal): defaults are not limits; escalate
   when output quality misses the bar. For shippable work use
   `intelligence > taste > cost`, with cost only as a tie-breaker. In this
-  setup, bulk/mechanical work defaults to Codex CLI on `gpt-5.6-luna` or
-  `gpt-5.6-terra`; everyday balanced implementation defaults to
-  `gpt-5.6-terra`; frontier implementation and independent review default to
-  `gpt-5.6-sol`. `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini` remain valid choices
-  for previous-frontier, strong everyday, and small/fast work respectively.
-  UI, copy, API shape, and product design still need taste `>= 7`. Never use
-  Haiku. Direct agent config separates `binary`, `model`, Codex effort through
-  `codex_args`
+  setup, bulk/mechanical work defaults to Codex CLI on `gpt-5.6-luna`;
+  everyday balanced implementation defaults to `gpt-5.6-terra`; frontier
+  implementation and independent review default to `gpt-5.6-sol`. Raise to
+  `gpt-5.6-terra` or `gpt-5.6-sol` when quality misses the bar. `gpt-5.5`,
+  `gpt-5.4`, and `gpt-5.4-mini` remain valid choices for previous-frontier,
+  strong everyday, and small/fast work respectively. UI, copy, API shape, and
+  product design still need taste `>= 7`. Never use Haiku. Direct agent config
+  separates `binary`, `model`, Codex effort through `codex_args`
   (`-c model_reasoning_effort=<level>`), and Claude effort/settings through
   `claude_args` (for example `--effort high`). amq-squad does not maintain an
   Anthropic model whitelist: Claude member `model` is passed through to the

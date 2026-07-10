@@ -245,13 +245,13 @@ Model/binary guidance (context-stamped 2026-07-10, current operator setup;
 setup-dependent, not universal): defaults are not limits; escalate model or
 effort when output quality misses the bar. For shippable work,
 `intelligence > taste > cost`, with cost only a tie-breaker. Bulk/mechanical
-work defaults to Codex CLI on `gpt-5.6-luna` or `gpt-5.6-terra`; everyday
-balanced implementation defaults to `gpt-5.6-terra`; frontier implementation
-and independent review default to `gpt-5.6-sol`. `gpt-5.5`, `gpt-5.4`, and
-`gpt-5.4-mini` remain valid Codex choices for previous-frontier, strong
-everyday, and small/fast work respectively. UI, copy, API, and product design
-need taste `>= 7`. Never use Haiku. Configure direct agents with `binary`,
-`model`, Codex effort through `codex_args`
+work defaults to Codex CLI on `gpt-5.6-luna`; everyday balanced implementation
+defaults to `gpt-5.6-terra`; frontier implementation and independent review
+default to `gpt-5.6-sol`. Raise to terra/sol when quality misses the bar.
+`gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini` remain valid Codex choices for
+previous-frontier, strong everyday, and small/fast work respectively. UI, copy,
+API, and product design need taste `>= 7`. Never use Haiku. Configure direct
+agents with `binary`, `model`, Codex effort through `codex_args`
 (`-c model_reasoning_effort=<level>`), and Claude effort/settings through
 `claude_args` (for example `--effort high`).
 amq-squad does not maintain an Anthropic whitelist: Claude member `model` is
