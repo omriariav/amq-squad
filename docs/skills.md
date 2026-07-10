@@ -383,6 +383,52 @@ the same subject, head SHA, and gate/evidence thread. This answers who owns the
 merge/lifecycle action path; exact-head review, `verify merge`, normalized
 evidence, and operator gates still answer when merge-ready can be claimed.
 
+### Composition modes and guardrails
+
+Goal-first composition is opt-in and defaults to seeded mode once selected.
+Manual rosters remain first-class, and a short goal never authorizes worker
+spawning by itself:
+
+| Mode | Contract |
+| --- | --- |
+| **Manual** | The operator defines the roster up front. Runtime composition is not required. |
+| **Seeded** | The lead proposes each worker and waits for explicit operator approval on a stable `gate/spawn-<role>` thread before adding or launching it. |
+| **Autonomous** | The operator explicitly selects `--composition autonomous` and supplies a bounded policy. The runtime may add or prune workers only inside that policy. |
+
+Seeded mode requires a clear `APPROVED:` answer from the configured operator.
+`DENIED:`, silence, emoji, or vague assent means do not spawn. A live-channel
+approval must be acknowledged or mirrored onto the same durable gate thread
+without spoofing the operator handle. Approval covers that spawn only; it does
+not authorize implementation details, merges, releases, or other side effects.
+
+After approval, persist the member with `team member add` and launch it through
+the managed resume/up path so stop, resume, focus, and status retain a stable
+runtime identity. The durable roster and task store must rebuild the team the
+lead created, not merely the initial seed.
+
+Autonomous mode is never inferred. It requires positive `max-agents`,
+`max-total-spawns`, and `budget-turns`, plus an allowed-role or
+allowed-role-class boundary; `idle-reap-minutes` constrains pruning. Before an
+allowed spawn/prune decision returns, the runtime persists policy counters and
+writes `.amq-squad/autonomous/<session>/audit.jsonl`. A prune request must carry
+measured idle age, evidence that active task linkage was checked, and proof that
+no active task remains linked.
+
+Pause, resume, inspect, or permanently disable the policy without editing the
+profile directly:
+
+```sh
+amq-squad team autonomous show --json
+amq-squad team autonomous pause
+amq-squad team autonomous resume
+amq-squad team autonomous disable
+```
+
+Autonomous composition grants no authority to merge, push, tag, release,
+perform destructive filesystem operations, send externally, invoke provider
+side effects, or delegate child self-spawn. Those actions retain their normal
+lead/operator gates and verification preflights.
+
 ### The loop: spawn → dispatch → monitor → coordinate → recover
 
 ```sh
@@ -568,6 +614,7 @@ cd ~/Code/my-project
 | Custom role rejected | A custom role needs an explicit `--binary <role>=<cli>` (no catalog default). |
 
 For anything below the skills — the binary's verbs, JSON envelopes, tmux
-targets, profiles, cross-project teams — see the [README](../README.md). Each
+targets, profiles, and [cross-project teams](../README.md#cross-project-teams)
+— see the [README](../README.md). Each
 skill's full instructions live in its `SKILL.md` under
 `plugins/{claude,codex}/skills/<skill>/`.
