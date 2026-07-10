@@ -16,6 +16,9 @@ func TestTerminalInfoFromTmux(t *testing.T) {
 	if got.Backend != "tmux" || got.Session != "main" || got.WindowID != "@1" || got.WindowName != "lead" || got.PaneID != "%5" || got.Target != "external" {
 		t.Fatalf("terminal info = %+v", got)
 	}
+	if got.TabID != "" || got.SessionID != "" {
+		t.Fatalf("tmux terminal identity should not invent native ids: %+v", got)
+	}
 }
 
 func TestTerminalInfoFromEmptyTmuxIsNil(t *testing.T) {

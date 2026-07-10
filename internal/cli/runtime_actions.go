@@ -10,6 +10,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -102,6 +103,17 @@ func (mr memberRuntime) recordedPaneID() string {
 		return strings.TrimSpace(mr.Record.Tmux.PaneID)
 	}
 	return ""
+}
+
+func (mr memberRuntime) recordedTerminalBackend() string {
+	if mr.HasRecord && mr.Record.Terminal != nil {
+		return strings.TrimSpace(mr.Record.Terminal.Backend)
+	}
+	return ""
+}
+
+func (mr memberRuntime) isITerm2Runtime() bool {
+	return mr.recordedTerminalBackend() == runtimecontrol.BackendITerm2
 }
 
 // resolveControlTarget picks the tmux pane to act on for a member: the exact
@@ -314,19 +326,31 @@ func focusTarget(projectDir, profile, session string, explicitSession bool, expl
 			return err
 		}
 	}
-	panes, err := statusPaneLister()
-	if err != nil {
-		if tmuxpane.IsPermissionDenied(err) {
-			// The tmux socket itself is unreachable because access was denied
-			// (a sandboxed agent). That is NOT "pane gone" — surface the real
-			// cause and how to fix it, instead of the misleading "no live pane".
-			return errTmuxAccessDenied()
+	var (
+		panes       []tmuxpane.TmuxPane
+		panesLoaded bool
+	)
+	loadPanes := func() error {
+		if panesLoaded {
+			return nil
 		}
-		// The global `tmux list-panes -a` scan can fail wholesale under iTerm2
-		// tmux -CC control mode even when a recorded pane is still directly
-		// addressable. Degrade to no scan results and let resolveControlTarget
-		// address the recorded pane id directly rather than aborting the op.
-		panes = nil
+		panesLoaded = true
+		var err error
+		panes, err = statusPaneLister()
+		if err != nil {
+			if tmuxpane.IsPermissionDenied(err) {
+				// The tmux socket itself is unreachable because access was denied
+				// (a sandboxed agent). That is NOT "pane gone" — surface the real
+				// cause and how to fix it, instead of the misleading "no live pane".
+				return errTmuxAccessDenied()
+			}
+			// The global `tmux list-panes -a` scan can fail wholesale under iTerm2
+			// tmux -CC control mode even when a recorded pane is still directly
+			// addressable. Degrade to no scan results and let resolveControlTarget
+			// address the recorded pane id directly rather than aborting the op.
+			panes = nil
+		}
+		return nil
 	}
 	roles := []string{role}
 	if strings.TrimSpace(role) == "" {
@@ -349,6 +373,15 @@ func focusTarget(projectDir, profile, session string, explicitSession bool, expl
 			continue
 		}
 		if err := ensureNoNamespaceConflict("focus", projectDir, profile, workstream, explicitProfile); err != nil {
+			return err
+		}
+		if mr.isITerm2Runtime() {
+			if err := focusITerm2Window(mr.Record.Terminal.WindowID); err != nil {
+				return err
+			}
+			return nil
+		}
+		if err := loadPanes(); err != nil {
 			return err
 		}
 		if _, target, ok := resolveControlTarget(mr, workstream, panes); ok {
@@ -434,6 +467,9 @@ Examples:
 		Reason:  *overrideNamespaceReason,
 	}); err != nil {
 		return err
+	}
+	if mr.isITerm2Runtime() {
+		return fmt.Errorf("%s", runtimecontrol.ITerm2InjectionDisabledReason)
 	}
 	panes, err := statusPaneLister()
 	if err != nil {

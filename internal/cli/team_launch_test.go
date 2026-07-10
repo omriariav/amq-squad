@@ -90,12 +90,12 @@ func TestCommandProfileArgOmitsDefaultAndQuotesNamedProfile(t *testing.T) {
 
 func TestRunTeamLaunchRejectsUnsupportedTerminalWithRegistry(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
-		return runTeamLaunch([]string{"--terminal", "iterm2", "--dry-run"})
+		return runTeamLaunch([]string{"--terminal", "bogus", "--dry-run"})
 	})
 	if err == nil {
 		t.Fatal("runTeamLaunch succeeded, want unsupported terminal error")
 	}
-	for _, want := range []string{`unsupported terminal "iterm2"`, "supported terminals: tmux"} {
+	for _, want := range []string{`unsupported terminal "bogus"`, "supported terminals: "} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q missing %q", err.Error(), want)
 		}

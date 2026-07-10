@@ -159,6 +159,8 @@ type TerminalInfo struct {
 	Session    string `json:"session,omitempty"`
 	WindowID   string `json:"window_id,omitempty"`
 	WindowName string `json:"window_name,omitempty"`
+	TabID      string `json:"tab_id,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
 	PaneID     string `json:"pane_id,omitempty"`
 	Target     string `json:"target,omitempty"`
 }

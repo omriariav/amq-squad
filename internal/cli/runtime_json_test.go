@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
@@ -54,6 +55,56 @@ func TestTerminalRuntimeMirrorsTmuxIdentity(t *testing.T) {
 	}
 	if term.Backend != "tmux" || term.Session != "main" || term.WindowID != "@1" || term.WindowName != "lead" || term.PaneID != "%5" || term.Target != "external" {
 		t.Fatalf("terminal runtime = %+v", term)
+	}
+}
+
+func TestTerminalRuntimeFromITerm2Info(t *testing.T) {
+	term := terminalRuntimeFromInfo(&launch.TerminalInfo{
+		Backend:    "iterm2",
+		Session:    "issue-331",
+		WindowID:   "101",
+		WindowName: "amq:issue-331:cto",
+		TabID:      "tab-1",
+		SessionID:  "session-1",
+		Target:     "new-window",
+	})
+	if term == nil {
+		t.Fatalf("terminal runtime should be present")
+	}
+	if term.Backend != "iterm2" || term.WindowID != "101" || term.TabID != "tab-1" || term.SessionID != "session-1" || term.PaneAlive {
+		t.Fatalf("terminal runtime = %+v", term)
+	}
+}
+
+func TestPolicyAwareMemberActionsForITerm2Row(t *testing.T) {
+	tm := team.Team{Project: "/repo", Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex"}}}
+	row := statusRecord{
+		Role:    "cto",
+		Signals: statusSignals{AgentPID: 1234, AgentAlive: true, BinaryMatch: true},
+		Terminal: &terminalRuntimeJSON{
+			Backend:  "iterm2",
+			Session:  "issue-331",
+			WindowID: "101",
+			Target:   "new-window",
+			PIDAlive: true,
+		},
+	}
+	actions := policyAwareMemberActionsForRow(tm, "default", "issue-331", row)
+	byKind := map[string]runtimeActionJSON{}
+	for _, action := range actions {
+		byKind[action.Kind] = action
+	}
+	if !byKind["focus"].Available {
+		t.Fatalf("iTerm2 focus should be available with window id: %+v", byKind["focus"])
+	}
+	for _, kind := range []string{"send", "goal_deliver"} {
+		action := byKind[kind]
+		if action.Available || !strings.Contains(action.Reason, "disabled until #374") {
+			t.Fatalf("%s action = %+v", kind, action)
+		}
+	}
+	if !byKind["dispatch"].Available {
+		t.Fatalf("iTerm2 dispatch should be available: %+v", byKind["dispatch"])
 	}
 }
 

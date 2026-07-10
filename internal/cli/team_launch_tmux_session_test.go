@@ -179,8 +179,10 @@ func TestTmuxSessionBackendRegistered(t *testing.T) {
 		t.Fatal("tmux-session backend not registered")
 	}
 	got := strings.Join(registeredTeamLaunchTerminals(), ",")
-	if got != "tmux,tmux-session" {
-		t.Fatalf("registeredTeamLaunchTerminals = %q, want tmux,tmux-session", got)
+	for _, want := range []string{"tmux", "tmux-session"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("registeredTeamLaunchTerminals = %q, missing %s", got, want)
+		}
 	}
 }
 

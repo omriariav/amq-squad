@@ -7,6 +7,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/runtimeaction"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -37,9 +38,12 @@ type terminalRuntimeJSON struct {
 	Session    string `json:"session,omitempty"`
 	WindowID   string `json:"window_id,omitempty"`
 	WindowName string `json:"window_name,omitempty"`
+	TabID      string `json:"tab_id,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
 	PaneID     string `json:"pane_id,omitempty"`
 	Target     string `json:"target,omitempty"`
 	PaneAlive  bool   `json:"pane_alive"`
+	PIDAlive   bool   `json:"pid_alive,omitempty"`
 }
 
 // tmuxRuntimeFromInfo converts a persisted launch.TmuxInfo into the JSON block,
@@ -68,7 +72,7 @@ func terminalRuntimeFromInfo(info *launch.TerminalInfo) *terminalRuntimeJSON {
 	if info == nil {
 		return nil
 	}
-	if info.Backend == "" && info.PaneID == "" && info.WindowID == "" && info.Session == "" && info.WindowName == "" && info.Target == "" {
+	if info.Backend == "" && info.PaneID == "" && info.WindowID == "" && info.Session == "" && info.WindowName == "" && info.TabID == "" && info.SessionID == "" && info.Target == "" {
 		return nil
 	}
 	return &terminalRuntimeJSON{
@@ -76,6 +80,8 @@ func terminalRuntimeFromInfo(info *launch.TerminalInfo) *terminalRuntimeJSON {
 		Session:    info.Session,
 		WindowID:   info.WindowID,
 		WindowName: info.WindowName,
+		TabID:      info.TabID,
+		SessionID:  info.SessionID,
 		PaneID:     info.PaneID,
 		Target:     info.Target,
 	}
@@ -194,6 +200,47 @@ func memberActions(projectDir, profile, session, role string, paneAlive bool) []
 
 func policyAwareMemberActions(t team.Team, profile, session, role string, paneAlive bool) []runtimeActionJSON {
 	return applyMemberActionPolicy(t, role, memberActions(t.Project, profile, session, role, paneAlive))
+}
+
+func policyAwareMemberActionsForRow(t team.Team, profile, session string, row statusRecord) []runtimeActionJSON {
+	caps := runtimeCapabilitiesForStatusRow(row)
+	if caps == nil {
+		return policyAwareMemberActions(t, profile, session, row.Role, row.Tmux != nil && row.Tmux.PaneAlive)
+	}
+	return applyMemberActionPolicy(t, row.Role, runtimeaction.MemberForCapabilities(t.Project, profile, session, row.Role, *caps))
+}
+
+func runtimeCapabilitiesForStatusRow(row statusRecord) *runtimecontrol.Capabilities {
+	if row.Terminal == nil || strings.TrimSpace(row.Terminal.Backend) == "" {
+		return nil
+	}
+	backend := strings.TrimSpace(row.Terminal.Backend)
+	ctrl, ok := runtimecontrol.DefaultRegistry().Lookup(backend)
+	if !ok {
+		reason := "runtime backend " + backend + " is unsupported"
+		caps := runtimecontrol.NewCapabilities(map[runtimecontrol.Capability]runtimecontrol.CapabilityState{
+			runtimecontrol.CapabilityFocus:       {Available: false, Reason: reason},
+			runtimecontrol.CapabilitySendPrompt:  {Available: false, Reason: reason},
+			runtimecontrol.CapabilityGoalDeliver: {Available: false, Reason: reason},
+			runtimecontrol.CapabilityDispatch:    {Available: false, Reason: reason},
+		})
+		return &caps
+	}
+	caps := ctrl.Capabilities(runtimecontrol.Identity{
+		Backend:    backend,
+		Session:    row.Terminal.Session,
+		WindowID:   row.Terminal.WindowID,
+		WindowName: row.Terminal.WindowName,
+		TabID:      row.Terminal.TabID,
+		SessionID:  row.Terminal.SessionID,
+		PaneID:     row.Terminal.PaneID,
+		Target:     row.Terminal.Target,
+	}, runtimecontrol.Liveness{
+		PaneAlive:   row.Terminal.PaneAlive,
+		AgentAlive:  row.Signals.AgentAlive,
+		BinaryMatch: row.Signals.BinaryMatch,
+	})
+	return &caps
 }
 
 func applyMemberActionPolicy(t team.Team, role string, actions []runtimeActionJSON) []runtimeActionJSON {
