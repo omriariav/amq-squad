@@ -2009,23 +2009,32 @@ or a <code>models</code> map keyed by binary name.</p>
 <h3 id="model-binary-and-effort-guidance">Model, binary, and effort
 guidance</h3>
 <p>Context stamp: this guidance reflects the current operator setup as
-of 2026-07-02. Availability, aliases, and pricing are
-deployment-dependent; treat cost as a local tie-breaker, not as
-universal list-price guidance.</p>
+of 2026-07-10. Availability, aliases, and pricing are setup-dependent,
+not universal; treat cost as a local tie-breaker, not as list-price
+guidance.</p>
 <p>Defaults are not limits. Agents should escalate binary, model, or
 effort when the output does not meet the bar. For shippable work,
 optimize for <code>intelligence &gt; taste &gt; cost</code>; cost
 matters only after the work is good enough.</p>
 <ul>
 <li>Bulk or mechanical work defaults to Codex CLI on
-<code>gpt-5.5</code> in the current operator setup. Use lower effort for
-truly mechanical edits, but raise effort when the diff or tests show
-reasoning gaps.</li>
+<code>gpt-5.6-luna</code> in the current operator setup. Use lower
+effort for truly mechanical edits, but raise effort or escalate to
+<code>gpt-5.6-terra</code> / <code>gpt-5.6-sol</code> when the diff or
+tests show reasoning gaps.</li>
+<li>Everyday balanced implementation defaults to Codex CLI on
+<code>gpt-5.6-terra</code>.</li>
+<li>Frontier implementation and independent review default to Codex CLI
+on <code>gpt-5.6-sol</code>.</li>
+<li><code>gpt-5.5</code>, <code>gpt-5.4</code>, and
+<code>gpt-5.4-mini</code> remain valid Codex choices for
+previous-frontier, strong everyday, and small/fast work
+respectively.</li>
 <li>User-facing UI, copy, API shape, or product design needs taste
 <code>&gt;= 7</code>; do not hand it to a purely mechanical worker just
 because it is cheaper.</li>
 <li>Plan and implementation reviews should use <code>fable-5</code> or
-<code>opus-4.8</code>, with <code>gpt-5.5</code> as an optional
+<code>opus-4.8</code>, with <code>gpt-5.6-sol</code> as an optional
 independent extra perspective.</li>
 <li>Never use Haiku for amq-squad work.</li>
 </ul>
@@ -2080,20 +2089,21 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb37-1"><a href="#
 <code>binary</code>, <code>model</code>, per-member
 <code>codex_args</code> / <code>claude_args</code>, or team-level
 <code>binary_args</code> for every member of one binary. Prefer an
-explicit Codex-binary member when the job needs <code>gpt-5.5</code>. A
-thin Claude wrapper is only a compatibility pattern for Claude-only
-workflow or subagent systems. In those systems, a Claude workflow/agent
+explicit Codex-binary member when the job needs a Codex model such as
+<code>gpt-5.6-sol</code> or <code>gpt-5.6-terra</code>. A thin Claude
+wrapper is only a compatibility pattern for Claude-only workflow or
+subagent systems. In those systems, a Claude workflow/agent
 <code>model:</code> parameter selects a Claude model only; it does not
 select a Codex model or effort level. Keep the wrapper minimal, have it
-delegate the real task to Codex CLI on <code>gpt-5.5</code>, and make
-that indirection visible in the role/scope so reviewers do not mistake
-it for a native Claude model choice.</p>
+delegate the real task to Codex CLI, and make that indirection visible
+in the role/scope so reviewers do not mistake it for a native Claude
+model choice.</p>
 <div class="sourceCode" id="cb38"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> trusted</span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--trust</span> approve-for-me</span>
-<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5.5,fullstack=fable-5 <span class="dt">\</span></span>
+<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team init <span class="at">--personas</span> cto,fullstack <span class="at">--model</span> cto=gpt-5.6-sol,fullstack=fable-5 <span class="dt">\</span></span>
 <span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span>
-<span id="cb38-5"><a href="#cb38-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5.5 <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span></code></pre></div>
+<span id="cb38-5"><a href="#cb38-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent up codex <span class="at">--model</span> gpt-5.6-terra <span class="at">--codex-args</span> <span class="st">&quot;-c model_reasoning_effort=medium&quot;</span></span></code></pre></div>
 <p>amq-squad v2.18.0 requires amq <strong>0.41.0+</strong>. Launches
 pass <code>--require-wake</code> to <code>amq coop exec</code>, so a
 launch <strong>fails at the door</strong> when the AMQ wake sidecar
