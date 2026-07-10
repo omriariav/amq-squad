@@ -1012,6 +1012,24 @@ func TestRunTeamInitOperatorFlags(t *testing.T) {
 	}
 }
 
+func TestRunTeamInitPersistsOperatorInteractionMode(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := runTeamInit([]string{"--roles", "cto", "--operator-mode", "lead_pane"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Operator == nil || got.Operator.InteractionMode != team.OperatorInteractionLeadPane || got.Operator.PollRequired {
+		t.Fatalf("persisted operator = %+v", got.Operator)
+	}
+	if view := team.EffectiveOperator(got); view.InteractionMode != team.OperatorInteractionLeadPane || view.PollRequired {
+		t.Fatalf("effective operator = %+v", view)
+	}
+}
+
 func TestRunTeamInitRejectsOperatorConflicts(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -1022,6 +1040,14 @@ func TestRunTeamInitRejectsOperatorConflicts(t *testing.T) {
 	err = runTeamInit([]string{"--roles", "cto", "--operator", "omri", "--no-operator"})
 	if err == nil || !strings.Contains(err.Error(), "either --operator or --no-operator") {
 		t.Fatalf("runTeamInit conflicting operator flags error = %v", err)
+	}
+	err = runTeamInit([]string{"--roles", "cto", "--operator-mode", "noc", "--no-operator"})
+	if err == nil || !strings.Contains(err.Error(), "either --operator-mode or --no-operator") {
+		t.Fatalf("runTeamInit conflicting mode error = %v", err)
+	}
+	err = runTeamInit([]string{"--roles", "cto", "--operator-mode", "self_operator"})
+	if err == nil || !strings.Contains(err.Error(), "#391") {
+		t.Fatalf("runTeamInit self_operator error = %v", err)
 	}
 }
 
@@ -1520,7 +1546,8 @@ func TestRunTeamInitSeedsTeamRules(t *testing.T) {
 		"Before declaring a gate blocked",
 		"Operator gates are structural observability and handoff, not an authorization or security boundary.",
 		"The operator mailbox is virtual/non-runnable",
-		"status --json.operator_delivery.poll_required=true",
+		"Interaction mode `unspecified` uses approval surface `legacy operator mailbox`",
+		"poll_required=true; poll_owner=operator_or_parent",
 		"Direct operator-to-worker messages are exceptional",
 		"operator-held",
 		"On first session run, start the first response by stating your role, handle, and amq-squad skill version",

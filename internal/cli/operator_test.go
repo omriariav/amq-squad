@@ -76,7 +76,7 @@ func TestOperatorStatusJSONReportsPollContractAndAttention(t *testing.T) {
 	if data.Operator.CanonicalInbox.Session != "s" || data.Operator.CanonicalInbox.Root == "" {
 		t.Fatalf("canonical inbox = %+v, want session s with root", data.Operator.CanonicalInbox)
 	}
-	if data.OperatorLoop.Mode != "poll" || data.OperatorLoop.State != "poll_required_unowned" || data.OperatorLoop.Owner != "none" {
+	if data.OperatorLoop.Mode != "poll" || data.OperatorLoop.State != "poll_required_unowned" || data.OperatorLoop.Owner != "operator_or_parent" {
 		t.Fatalf("operator loop = %+v, want unowned poll loop", data.OperatorLoop)
 	}
 	if data.OperatorLoop.Backlog != 2 || data.OperatorLoop.GatesOpen != 1 || data.OperatorLoop.DirectivesUnacked != 1 {
@@ -366,7 +366,7 @@ func TestOperatorPollReadOnlyJSONUsesOperatorLoopContract(t *testing.T) {
 	if !env.Data.ReadOnly {
 		t.Fatalf("readonly = false, want true")
 	}
-	if env.Data.OperatorLoop.Backlog != 1 || env.Data.OperatorLoop.GatesOpen != 1 || env.Data.OperatorLoop.Owner != "none" {
+	if env.Data.OperatorLoop.Backlog != 1 || env.Data.OperatorLoop.GatesOpen != 1 || env.Data.OperatorLoop.Owner != "operator_or_parent" {
 		t.Fatalf("operator loop = %+v, want read-only unowned poll counts", env.Data.OperatorLoop)
 	}
 }

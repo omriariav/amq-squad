@@ -809,15 +809,10 @@ func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, e
 	blockedGoals := blockedNativeGoalsInSnapshot(t, o.Profile, workstream, snap)
 	data.Attention = items
 	data.operatorCursor = operatorCursor
-	data.OperatorLoop = operatorLoopStatus{
-		Mode:              "poll",
-		PollRequired:      delivery.PollRequired,
-		State:             operatorLoopState(delivery.PollRequired),
-		Owner:             "none",
-		Backlog:           backlog,
-		GatesOpen:         gatesOpen,
-		DirectivesUnacked: directivesUnacked,
-	}
+	data.OperatorLoop = operatorLoopForDelivery(delivery)
+	data.OperatorLoop.Backlog = backlog
+	data.OperatorLoop.GatesOpen = gatesOpen
+	data.OperatorLoop.DirectivesUnacked = directivesUnacked
 	if data.Operator.Poll != nil {
 		data.Operator.Poll.Unread = backlog
 		data.Operator.Poll.OpenGates = gatesOpen
@@ -895,6 +890,15 @@ func operatorLoopState(pollRequired bool) string {
 		return "poll_required_unowned"
 	}
 	return "unconfigured"
+}
+
+func operatorLoopForDelivery(delivery operatorDeliveryData) operatorLoopStatus {
+	return operatorLoopStatus{
+		Mode:         "poll",
+		PollRequired: delivery.PollRequired,
+		State:        operatorLoopState(delivery.PollRequired),
+		Owner:        delivery.PollOwner,
+	}
 }
 
 func operatorLoopLeasePath(projectDir, profile, session string) string {

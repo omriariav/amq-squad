@@ -559,8 +559,8 @@ func TestRunStatusJSONHasNoHumanComments(t *testing.T) {
 	if env.Data.Operator.CanonicalInbox == nil || env.Data.Operator.CanonicalInbox.Handle != team.DefaultOperatorHandle || env.Data.Operator.CanonicalInbox.Session != "issue-96" || env.Data.Operator.CanonicalInbox.Root == "" {
 		t.Errorf("status operator canonical_inbox = %+v, want routeable user inbox for issue-96", env.Data.Operator.CanonicalInbox)
 	}
-	if env.Data.Operator.Poll == nil || !env.Data.Operator.Poll.Required || env.Data.Operator.Poll.Owner != "none" {
-		t.Errorf("status operator poll = %+v, want required unowned poll contract", env.Data.Operator.Poll)
+	if env.Data.Operator.Poll == nil || !env.Data.Operator.Poll.Required || env.Data.Operator.Poll.Owner != "operator_or_parent" {
+		t.Errorf("status operator poll = %+v, want legacy operator_or_parent poll contract", env.Data.Operator.Poll)
 	}
 	if !env.Data.OperatorDelivery.Enabled || env.Data.OperatorDelivery.Handle != team.DefaultOperatorHandle || !env.Data.OperatorDelivery.PollRequired || env.Data.OperatorDelivery.WakeSupported || !env.Data.OperatorDelivery.DurableAMQ {
 		t.Errorf("status operator_delivery = %+v, want virtual operator poll-required durable AMQ", env.Data.OperatorDelivery)

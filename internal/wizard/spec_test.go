@@ -14,6 +14,7 @@ func TestSpecArgsStableAndPreviewOnly(t *testing.T) {
 		Binary:       "qa=claude",
 		Model:        "cto=gpt-5",
 		Effort:       "cto=high,qa=medium",
+		OperatorMode: "separate_terminal",
 		CodexArgs:    "-c model_reasoning_effort=high",
 		ClaudeArgs:   "--effort high",
 		Lead:         "cto",
@@ -31,6 +32,7 @@ func TestSpecArgsStableAndPreviewOnly(t *testing.T) {
 		"--binary", "qa=claude",
 		"--model", "cto=gpt-5",
 		"--effort", "cto=high,qa=medium",
+		"--operator-mode", "separate_terminal",
 		"--codex-args", "-c model_reasoning_effort=high",
 		"--claude-args", "--effort high",
 		"--lead", "cto",
@@ -52,6 +54,14 @@ func TestSpecArgsStableAndPreviewOnly(t *testing.T) {
 
 func TestSpecArgsOmitsEmptyFields(t *testing.T) {
 	got := (Spec{Project: "/repo", Session: "s"}).Args()
+	want := []string{"--project", "/repo", "--session", "s"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Args() = %#v, want %#v", got, want)
+	}
+}
+
+func TestSpecArgsOmitsLegacyUnspecifiedOperatorMode(t *testing.T) {
+	got := (Spec{Project: "/repo", Session: "s", OperatorMode: "unspecified"}).Args()
 	want := []string{"--project", "/repo", "--session", "s"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Args() = %#v, want %#v", got, want)

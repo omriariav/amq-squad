@@ -363,7 +363,7 @@ func TestBootstrapPromptIncludesCurrentTeamRouting(t *testing.T) {
 		"--thread p2p/cpo__qa`",
 		"Operator gate routing:",
 		"The human/operator is mailbox handle user",
-		"Operator delivery: durable AMQ is authoritative; wake_supported=false; poll_required=true",
+		"Operator delivery: interaction_mode=unspecified; approval_surface=legacy operator mailbox; durable_amq=true; wake_supported=false; poll_required=true; poll_owner=operator_or_parent",
 		"must poll/drain the operator mailbox, gate threads, and status JSON",
 		"Gates are structural observability and handoff",
 		"amq send --to user --thread gate/<topic> --kind question",
@@ -417,6 +417,33 @@ func TestBootstrapPromptUsesCustomOperatorHandle(t *testing.T) {
 	}
 	if strings.Contains(got, "amq send --to user --thread gate/<topic>") {
 		t.Errorf("custom operator bootstrap hard-coded user:\n%s", got)
+	}
+}
+
+func TestBootstrapSeparateTerminalIncludesScopedAnswerCommand(t *testing.T) {
+	teamHome := t.TempDir()
+	op := team.DefaultOperator()
+	op.InteractionMode = team.OperatorInteractionSeparateTerminal
+	if err := team.Write(teamHome, team.Team{Operator: &op, Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-393"}}}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(teamHome, ".agent-mail", "issue-393")
+	rec := launch.Record{Role: "cto", Handle: "cto", Binary: "codex", Session: "issue-393", CWD: teamHome, Root: root}
+	ctx := bootstrapContextFor(rec, filepath.Join(root, "agents", "cto"), teamHome)
+	got, err := buildBootstrapPrompt(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"interaction_mode=separate_terminal", "approval_surface=separate operator terminal", "poll_owner=operator",
+		"Ready answer command: `amq send --root " + shellQuote(root), "--me user --to <agent-handle> --thread gate/<topic>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("bootstrap missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "--root <") || strings.Contains(got, "--session <") || strings.Contains(got, "--project <") {
+		t.Fatalf("answer command contains unresolved namespace placeholder:\n%s", got)
 	}
 }
 

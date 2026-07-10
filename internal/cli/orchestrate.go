@@ -198,6 +198,7 @@ Usage:
   amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
       [--roles "a,b,c"] [--binary "role=bin,..."] [--model "role=model,..."]
       [--effort "role=level,..."]
+      [--operator-mode lead_pane|separate_terminal|noc]
       [--lead-mode builder|planner]
       [--codex-args "..."] [--claude-args "..."]
       [--visibility sibling-tabs|detached|current] [--external-lead]
@@ -220,6 +221,9 @@ binary via --binary and model via --model. --effort normalizes role-specific
 values into the existing per-member CodexArgs or ClaudeArgs fields. For an
 existing profile it is launch-only and never rewrites stored member args; it
 adds no persisted effort field or launch semantics.
+Operator mode accepts lead_pane, separate_terminal, or noc. The forward-known
+self_operator mode remains unavailable until #391 supplies its authorization
+policy.
 
 Preview by default (prints the plan and runs read-only --dry-run validation, so
 its failures surface honestly); pass --go to create for real.
@@ -273,6 +277,7 @@ func runRunStart(args []string, version string) error {
 	binaryFlag := fs.String("binary", "", "per-role binary assignments, e.g. \"fullstack=codex,qa=codex\"")
 	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5.6-sol,fullstack=sonnet\"")
 	effortFlag := fs.String("effort", "", "per-role effort, e.g. \"cto=high,qa=medium\" (launch-only for existing profiles; normalized into native member args)")
+	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, or noc (self_operator is reserved for #391)")
 	codexArgsFlag := fs.String("codex-args", "", "extra args for every Codex member (e.g. reasoning effort)")
 	claudeArgsFlag := fs.String("claude-args", "", "extra args for every Claude member")
 	visibilityFlag := fs.String("visibility", visibilitySiblingTabs, "spawn topology: sibling-tabs (visible default), detached (hidden), or current")
@@ -301,6 +306,8 @@ func runRunStart(args []string, version string) error {
 		LeadModeSet:     flagWasSet(fs, "lead-mode"),
 		Effort:          *effortFlag,
 		EffortSet:       flagWasSet(fs, "effort"),
+		OperatorMode:    *operatorModeFlag,
+		OperatorModeSet: flagWasSet(fs, "operator-mode"),
 	})
 	if err := preflight.Err(); err != nil {
 		return err
@@ -358,6 +365,9 @@ func runRunStart(args []string, version string) error {
 		}
 		if strings.TrimSpace(*effortFlag) != "" {
 			newTeamArgs = append(newTeamArgs, "--effort", *effortFlag)
+		}
+		if flagWasSet(fs, "operator-mode") {
+			newTeamArgs = append(newTeamArgs, "--operator-mode", strings.TrimSpace(*operatorModeFlag))
 		}
 		newTeamArgs = appendPassthroughArgs(newTeamArgs, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
 	}

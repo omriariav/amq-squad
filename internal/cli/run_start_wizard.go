@@ -230,6 +230,8 @@ func finishRunStartWizard(spec runwizard.Spec, version string) error {
 		LeadModeSet:     strings.TrimSpace(spec.LeadMode) != "",
 		Effort:          spec.Effort,
 		EffortSet:       strings.TrimSpace(spec.Effort) != "",
+		OperatorMode:    spec.OperatorMode,
+		OperatorModeSet: strings.TrimSpace(spec.OperatorMode) != "" && strings.TrimSpace(spec.OperatorMode) != team.OperatorInteractionUnspecified,
 	})
 	if len(preflight.Issues) > 0 {
 		issue := preflight.Issues[0]
@@ -256,6 +258,7 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 	binary := fs.String("binary", "", "")
 	model := fs.String("model", "", "")
 	effort := fs.String("effort", "", "")
+	operatorMode := fs.String("operator-mode", "", "")
 	codexArgs := fs.String("codex-args", "", "")
 	claudeArgs := fs.String("claude-args", "", "")
 	lead := fs.String("lead", "", "")
@@ -282,6 +285,7 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 		Binary:       *binary,
 		Model:        *model,
 		Effort:       *effort,
+		OperatorMode: *operatorMode,
 		CodexArgs:    *codexArgs,
 		ClaudeArgs:   *claudeArgs,
 		Lead:         *lead,

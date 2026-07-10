@@ -222,6 +222,43 @@ func TestValidateRejectsRunnableOperatorConfig(t *testing.T) {
 	}
 }
 
+func TestOperatorInteractionModePersistenceAndLegacyCompatibility(t *testing.T) {
+	dir := t.TempDir()
+	op := DefaultOperator()
+	op.InteractionMode = OperatorInteractionSeparateTerminal
+	if err := Write(dir, Team{Operator: &op, Members: []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-393"}}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view := EffectiveOperator(got); view.InteractionMode != OperatorInteractionSeparateTerminal {
+		t.Fatalf("effective operator = %+v", view)
+	}
+	legacy := Team{Members: []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-393"}}}
+	if view := EffectiveOperator(legacy); view.InteractionMode != OperatorInteractionUnspecified {
+		t.Fatalf("legacy effective mode = %q", view.InteractionMode)
+	}
+}
+
+func TestValidateOperatorInteractionModes(t *testing.T) {
+	for _, mode := range []string{OperatorInteractionLeadPane, OperatorInteractionSeparateTerminal, OperatorInteractionNOC, OperatorInteractionSelfOperator} {
+		if err := ValidateOperatorInteractionMode(mode); err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+	}
+	if err := ValidateOperatorInteractionMode(OperatorInteractionUnspecified); err == nil {
+		t.Fatal("explicit unspecified mode must be rejected")
+	}
+	op := DefaultOperator()
+	op.InteractionMode = "future-mode"
+	err := Validate(Team{Operator: &op, Members: []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-393"}}})
+	if err == nil || !strings.Contains(err.Error(), "operator.interaction_mode") {
+		t.Fatalf("invalid persisted mode error = %v", err)
+	}
+}
+
 func TestWriteIsAtomic(t *testing.T) {
 	// Write must not leave a .tmp file behind on success.
 	dir := t.TempDir()

@@ -28,7 +28,7 @@ func TestBubbleModelStartsWithProjectDefaultsAndPhaseRail(t *testing.T) {
 
 func TestBubbleModelExistingProfileOverridesAreLaunchOnly(t *testing.T) {
 	profile := ProfileSummary{
-		Name: "review", MemberCount: 1, PinnedSession: "review-work", Lead: "cto", LeadMode: "planner",
+		Name: "review", MemberCount: 1, PinnedSession: "review-work", Lead: "cto", LeadMode: "planner", OperatorMode: "separate_terminal",
 		Members: []MemberSummary{{Role: "cto", Binary: "codex", Model: "stored-model", Effort: "medium"}},
 	}
 	m, err := NewBubbleModel(NumberedOptions{
@@ -55,14 +55,78 @@ func TestBubbleModelExistingProfileOverridesAreLaunchOnly(t *testing.T) {
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m.cursor = 3 // high
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.stage != stageTopology {
-		t.Fatalf("stage = %v, want topology", m.stage)
+	if m.stage != stageTopology || m.spec.OperatorMode != "separate_terminal" {
+		t.Fatalf("topology stage = %v mode %q", m.stage, m.spec.OperatorMode)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageOperator {
+		t.Fatalf("stage = %v, want operator", m.stage)
+	}
+	operatorView := m.View()
+	for _, want := range []string{"Self-operator / delegated approval", "v2.19.0: #391", "Notification add-on", "v2.19.0: #390"} {
+		if !strings.Contains(operatorView, want) {
+			t.Fatalf("existing operator view missing %q:\n%s", want, operatorView)
+		}
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageGoal {
+		t.Fatalf("stage = %v, want goal", m.stage)
 	}
 	if m.spec.Model != "cto=launch-model" || m.spec.Effort != "cto=high" {
 		t.Fatalf("launch overrides = model %q effort %q", m.spec.Model, m.spec.Effort)
 	}
 	if profile.Members[0].Model != "stored-model" || profile.Members[0].Effort != "medium" {
 		t.Fatalf("source profile mutated: %+v", profile.Members[0])
+	}
+}
+
+func TestBubbleModelCapabilityRowsAreGatedByInjectedCatalog(t *testing.T) {
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.stage = stageOperator
+	m.configureStage()
+	m.cursor = 3
+	view := m.View()
+	if !strings.Contains(view, "Self-operator / delegated approval") || !strings.Contains(view, "v2.19.0: #391") {
+		t.Fatalf("disabled capability missing from view:\n%s", view)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageOperator || m.err == nil || m.spec.OperatorMode != "" {
+		t.Fatalf("disabled selection changed state: stage=%v err=%v spec=%+v", m.stage, m.err, m.spec)
+	}
+
+	caps := DefaultCapabilities()
+	capability := caps[CapabilitySelfOperator]
+	capability.Available = true
+	caps[CapabilitySelfOperator] = capability
+	m, err = NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo"}, Capabilities: caps})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.stage = stageOperator
+	m.configureStage()
+	m.cursor = 3
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageGoal || m.spec.OperatorMode != "self_operator" {
+		t.Fatalf("enabled selection = stage %v mode %q", m.stage, m.spec.OperatorMode)
+	}
+}
+
+func TestBubbleModelDetachedDefaultsSeparateOperatorTerminal(t *testing.T) {
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Visibility: "detached"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.stage = stageOperator
+	m.configureStage()
+	if m.cursor != 1 {
+		t.Fatalf("detached operator cursor = %d, want separate terminal", m.cursor)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.spec.OperatorMode != "separate_terminal" || m.stage != stageGoal {
+		t.Fatalf("detached operator selection = stage %v mode %q", m.stage, m.spec.OperatorMode)
 	}
 }
 
@@ -75,8 +139,8 @@ func TestBubbleModelBackRestoresChoiceCursor(t *testing.T) {
 	m.configureStage()
 	m.cursor = 2
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.stage != stageGoal {
-		t.Fatalf("stage = %v, want goal", m.stage)
+	if m.stage != stageOperator {
+		t.Fatalf("stage = %v, want operator", m.stage)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.stage != stageTopology || m.cursor != 2 || m.spec.Visibility != "sibling-tabs" {
@@ -152,7 +216,7 @@ func TestBubbleModelCancelDoesNotProducePreview(t *testing.T) {
 
 func TestBubbleModelConfirmationShowsCanonicalReadOnlyBoundary(t *testing.T) {
 	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{
-		Project: "/repo", Profile: "review", Session: "issue-393", Visibility: "detached", Effort: "cto=high",
+		Project: "/repo", Profile: "review", Session: "issue-393", Visibility: "detached", Effort: "cto=high", OperatorMode: "noc",
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +226,7 @@ func TestBubbleModelConfirmationShowsCanonicalReadOnlyBoundary(t *testing.T) {
 	view := m.View()
 	for _, want := range []string{
 		"Review the read-only preview", "existing profile (authoritative)", "cto=high (launch only)",
-		"detached squad", "Run the canonical read-only preview",
+		"detached squad", "Operator", "noc · NOC/global orchestrator owns polling", "Run the canonical read-only preview",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("confirmation missing %q:\n%s", want, view)

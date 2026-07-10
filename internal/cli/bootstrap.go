@@ -71,6 +71,7 @@ func buildBootstrapPrompt(ctx bootstrapContext) (string, error) {
 			}
 			return s
 		},
+		"shellQuote": shellQuote,
 	}).Parse(defaultBootstrapTemplate)
 	if err != nil {
 		return "", fmt.Errorf("parse bootstrap template: %w", err)
@@ -97,7 +98,12 @@ func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
 	ctx.LaunchPath = promptText(ctx.LaunchPath)
 	ctx.BriefPath = promptText(ctx.BriefPath)
 	ctx.Operator.Handle = promptText(ctx.Operator.Handle)
+	ctx.Operator.InteractionMode = promptText(ctx.Operator.InteractionMode)
 	ctx.OperatorDelivery.Handle = promptText(ctx.OperatorDelivery.Handle)
+	ctx.OperatorDelivery.InteractionMode = promptText(ctx.OperatorDelivery.InteractionMode)
+	ctx.OperatorDelivery.ApprovalSurface = promptText(ctx.OperatorDelivery.ApprovalSurface)
+	ctx.OperatorDelivery.Contract = promptText(ctx.OperatorDelivery.Contract)
+	ctx.OperatorDelivery.PollOwner = promptText(ctx.OperatorDelivery.PollOwner)
 	ctx.OperatorDelivery.Reason = promptText(ctx.OperatorDelivery.Reason)
 	ctx.OperatorDelivery.Guidance = promptText(ctx.OperatorDelivery.Guidance)
 	if ctx.Execution != nil {
