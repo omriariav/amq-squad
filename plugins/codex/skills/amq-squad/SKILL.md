@@ -10,7 +10,7 @@ Launch priming is automatic. `up` / `agent up` inject the bootstrap prompt; agen
 
 This skill is named `amq-squad`; the binary is also named `amq-squad`.
 
-**Skill version: 2.17.0** — on your FIRST response of a session, print the line `amq-squad skill v2.17.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
+**Skill version: 2.18.0** — on your FIRST response of a session, print the line `amq-squad skill v2.18.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
 
 ## Context model
 
@@ -286,7 +286,7 @@ Plan emission fails fast when a referenced `--settings` file is missing;
 `up --dry-run` shows the args on each member's command. Codex members use a `$CODEX_HOME/<name>.config.toml` profile wired
 via `codex_args: ["--profile", "<name>"]` instead.
 
-AMQ floor (v2.17.0+): amq-squad requires amq 0.40.0+. The launch wake
+AMQ floor (v2.18.0+): amq-squad requires amq 0.41.0+. The launch wake
 gate introduced in v2.5.0 passes `--require-wake` to `amq coop exec`, so a
 launch fails at the door when the AMQ wake sidecar cannot start and acquire its
 lock (instead of surfacing later as a stale wake). `--no-require-wake` opts out
