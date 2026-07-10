@@ -17,9 +17,13 @@ func TestTerminalAppLaunchArgvShape(t *testing.T) {
 		`tell application "Terminal"`,
 		`set targetTab to do script ""`,
 		`set custom title of targetTab to windowName`,
+		`set targetWindow to window of targetTab`,
+		`set targetWindow to front window`,
 		`set winID to (id of targetWindow as string)`,
 		`set tabIndex to (index of targetTab as string)`,
 		`set ttyName to (tty of targetTab as string)`,
+		`set fullCommand to "env AMQ_SQUAD_TERMINAL_BACKEND=terminal_app`,
+		` /bin/sh -c " & quoted form of agentCommand`,
 		`AMQ_SQUAD_TERMINAL_BACKEND=terminal_app`,
 		`AMQ_SQUAD_TERMINAL_TARGET=new-window`,
 		`AMQ_SQUAD_TERMINAL_WINDOW_ID=`,
@@ -30,6 +34,11 @@ func TestTerminalAppLaunchArgvShape(t *testing.T) {
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
+	for _, unwanted := range []string{`(export AMQ_SQUAD_TERMINAL_BACKEND`, `; " & agentCommand`} {
+		if strings.Contains(script, unwanted) {
+			t.Fatalf("script contains shell-specific launch fragment %q:\n%s", unwanted, script)
 		}
 	}
 }

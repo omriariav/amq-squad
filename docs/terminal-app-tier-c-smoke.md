@@ -4,6 +4,12 @@ This checklist covers the Tier C macOS Terminal.app backend added for
 `--terminal terminal`. CI verifies only the emitted AppleScript argv shape; this
 flow needs a macOS desktop with Terminal.app available.
 
+The backend asks Terminal.app to type a shell-agnostic launch line into the new
+tab: `env AMQ_SQUAD_TERMINAL_* ... /bin/sh -c <agent command>`. This lets fish,
+nushell, and POSIX login shells hand off to `/bin/sh` for the generated agent
+command; the terminal metadata is captured by `amq-squad launch` and then
+stripped before the agent process is exec'd.
+
 1. From a project with a configured team, start a fresh workstream:
 
    ```sh

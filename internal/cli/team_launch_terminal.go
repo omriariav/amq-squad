@@ -107,7 +107,11 @@ tell application "Terminal"
 	activate
 	set targetTab to do script ""
 	set custom title of targetTab to windowName
-	set targetWindow to front window
+	try
+		set targetWindow to window of targetTab
+	on error
+		set targetWindow to front window
+	end try
 	set winID to ""
 	try
 		set winID to (id of targetWindow as string)
@@ -120,7 +124,7 @@ tell application "Terminal"
 	try
 		set ttyName to (tty of targetTab as string)
 	end try
-	set fullCommand to "(export AMQ_SQUAD_TERMINAL_BACKEND=terminal_app AMQ_SQUAD_TERMINAL_SESSION=" & quoted form of workstreamName & " AMQ_SQUAD_TERMINAL_TARGET=new-window AMQ_SQUAD_TERMINAL_WINDOW_ID=" & quoted form of winID & " AMQ_SQUAD_TERMINAL_WINDOW_NAME=" & quoted form of windowName & " AMQ_SQUAD_TERMINAL_TAB_ID=" & quoted form of tabIndex & " AMQ_SQUAD_TERMINAL_TTY=" & quoted form of ttyName & "; " & agentCommand & ")"
+	set fullCommand to "env AMQ_SQUAD_TERMINAL_BACKEND=terminal_app AMQ_SQUAD_TERMINAL_SESSION=" & workstreamName & " AMQ_SQUAD_TERMINAL_TARGET=new-window AMQ_SQUAD_TERMINAL_WINDOW_ID=" & winID & " AMQ_SQUAD_TERMINAL_WINDOW_NAME=" & windowName & " AMQ_SQUAD_TERMINAL_TAB_ID=" & tabIndex & " AMQ_SQUAD_TERMINAL_TTY=" & ttyName & " /bin/sh -c " & quoted form of agentCommand
 	do script fullCommand in targetTab
 end tell
 return winID

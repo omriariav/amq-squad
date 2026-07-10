@@ -122,7 +122,7 @@ tell application "iTerm2"
 	end try
 	tell sess
 		set name to windowName
-		set fullCommand to "(export AMQ_SQUAD_TERMINAL_BACKEND=iterm2 AMQ_SQUAD_TERMINAL_SESSION=" & quoted form of workstreamName & " AMQ_SQUAD_TERMINAL_TARGET=new-window AMQ_SQUAD_TERMINAL_WINDOW_ID=" & quoted form of winID & " AMQ_SQUAD_TERMINAL_WINDOW_NAME=" & quoted form of windowName & " AMQ_SQUAD_TERMINAL_TAB_ID=" & quoted form of tabID & " AMQ_SQUAD_TERMINAL_SESSION_ID=" & quoted form of sessID & "; " & agentCommand & ")"
+		set fullCommand to "env AMQ_SQUAD_TERMINAL_BACKEND=iterm2 AMQ_SQUAD_TERMINAL_SESSION=" & workstreamName & " AMQ_SQUAD_TERMINAL_TARGET=new-window AMQ_SQUAD_TERMINAL_WINDOW_ID=" & winID & " AMQ_SQUAD_TERMINAL_WINDOW_NAME=" & windowName & " AMQ_SQUAD_TERMINAL_TAB_ID=" & tabID & " AMQ_SQUAD_TERMINAL_SESSION_ID=" & sessID & " /bin/sh -c " & quoted form of agentCommand
 		write text fullCommand
 	end tell
 end tell

@@ -17,6 +17,8 @@ func TestITerm2LaunchArgvShape(t *testing.T) {
 		`tell application "iTerm2"`,
 		`create window with default profile`,
 		`set winID to (id of w as string)`,
+		`set fullCommand to "env AMQ_SQUAD_TERMINAL_BACKEND=iterm2`,
+		` /bin/sh -c " & quoted form of agentCommand`,
 		`AMQ_SQUAD_TERMINAL_BACKEND=iterm2`,
 		`AMQ_SQUAD_TERMINAL_TARGET=new-window`,
 		`AMQ_SQUAD_TERMINAL_WINDOW_ID=`,
@@ -27,6 +29,11 @@ func TestITerm2LaunchArgvShape(t *testing.T) {
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
+	for _, unwanted := range []string{`(export AMQ_SQUAD_TERMINAL_BACKEND`, `; " & agentCommand`} {
+		if strings.Contains(script, unwanted) {
+			t.Fatalf("script contains shell-specific launch fragment %q:\n%s", unwanted, script)
 		}
 	}
 }
