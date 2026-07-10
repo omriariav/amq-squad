@@ -218,6 +218,7 @@ var completionCommonFlags = []string{
 	"--disable-all-hooks",
 	"--disable-plugins",
 	"--dry-run",
+	"--effort",
 	"--evidence",
 	"--external-lead",
 	"--exec",

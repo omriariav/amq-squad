@@ -115,21 +115,45 @@ func runNumberedRunStartWizard(args []string, version string) error {
 		}
 		prefill.Project = cwd
 	}
+	initialContext, err := inspectRunStartWizardProject(prefill.Project)
+	if err != nil {
+		return err
+	}
+	prefill.Project = initialContext.Project
 	if strings.TrimSpace(prefill.Profile) == "" {
 		prefill.Profile = team.DefaultProfile
 	}
-	if strings.TrimSpace(prefill.Session) == "" {
-		prefill.Session = defaultWorkstreamName(prefill.Project)
-	}
 
 	spec, err := runwizard.RunNumbered(runStartWizardInput, runStartWizardOutput, runwizard.NumberedOptions{
-		Defaults: prefill,
+		Defaults:       prefill,
+		InspectProject: inspectRunStartWizardProject,
 		ProfileExists: func(project, profile string) bool {
 			return team.ExistsProfile(strings.TrimSpace(project), strings.TrimSpace(profile))
 		},
 	})
 	if err != nil {
 		return err
+	}
+	preflight := runStartPreflight(runStartPreflightInput{
+		Project:         spec.Project,
+		Profile:         spec.Profile,
+		ProfileExplicit: true,
+		Session:         spec.Session,
+		Roles:           spec.Roles,
+		Binary:          spec.Binary,
+		Visibility:      spec.Visibility,
+		LeadMode:        spec.LeadMode,
+		LeadModeSet:     strings.TrimSpace(spec.LeadMode) != "",
+		Effort:          spec.Effort,
+		EffortSet:       strings.TrimSpace(spec.Effort) != "",
+	})
+	if len(preflight.Issues) > 0 {
+		issue := preflight.Issues[0]
+		fmt.Fprintf(runStartWizardOutput, "\nPreflight blocked [%s]: %s\n", issue.Code, issue.Detail)
+		for _, fix := range issue.SuggestedFixes {
+			fmt.Fprintf(runStartWizardOutput, "  - %s\n", fix)
+		}
+		return preflight.Err()
 	}
 	canonicalArgs := spec.Args()
 	commandArgs := append([]string{"run", "start"}, canonicalArgs...)
@@ -147,6 +171,7 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 	roles := fs.String("roles", "", "")
 	binary := fs.String("binary", "", "")
 	model := fs.String("model", "", "")
+	effort := fs.String("effort", "", "")
 	codexArgs := fs.String("codex-args", "", "")
 	claudeArgs := fs.String("claude-args", "", "")
 	lead := fs.String("lead", "", "")
@@ -172,6 +197,7 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 		Roles:        *roles,
 		Binary:       *binary,
 		Model:        *model,
+		Effort:       *effort,
 		CodexArgs:    *codexArgs,
 		ClaudeArgs:   *claudeArgs,
 		Lead:         *lead,

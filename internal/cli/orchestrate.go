@@ -114,8 +114,9 @@ func runGlobalStart(args []string) error {
 		return err
 	}
 	// Build the agent argv: binary, then model, then the matching per-binary
-	// passthrough (effort etc. rides here, consistent with --codex-args /
-	// --claude-args elsewhere; amq-squad has no first-class --effort flag).
+	// passthrough. Global start remains a single-agent surface, so effort rides
+	// directly in --codex-args / --claude-args; the role-mapped --effort flag is
+	// only meaningful while forming a project roster.
 	agentArgv := []string{*agent}
 	if strings.TrimSpace(*model) != "" {
 		agentArgv = append(agentArgv, "--model", strings.TrimSpace(*model))
@@ -196,6 +197,7 @@ func runRunCmd(args []string, version string) error {
 Usage:
   amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
       [--roles "a,b,c"] [--binary "role=bin,..."] [--model "role=model,..."]
+      [--effort "role=level,..."]
       [--lead-mode builder|planner]
       [--codex-args "..."] [--claude-args "..."]
       [--visibility sibling-tabs|detached|current] [--external-lead]
@@ -214,8 +216,9 @@ registered and wake-live automatically. This wraps the create sequence so the
 Visibility defaults to sibling-tabs: agents open as sibling tmux windows in the
 current visible tmux session (requires a visible tmux pane when --go is used).
 Pass --visibility detached for hidden workers in a separate tmux session. Choose
-binary via --binary, model via --model, and effort via
---codex-args/--claude-args (amq-squad has no first-class --effort flag).
+binary via --binary and model via --model. For a fresh roster, --effort
+normalizes role-specific values into the existing per-member CodexArgs or
+ClaudeArgs fields; it adds no persisted effort field or launch semantics.
 
 Preview by default (prints the plan and runs read-only --dry-run validation, so
 its failures surface honestly); pass --go to create for real.
@@ -268,6 +271,7 @@ func runRunStart(args []string, version string) error {
 	rolesFlag := fs.String("roles", "", "create the roster first: comma-separated role ids")
 	binaryFlag := fs.String("binary", "", "per-role binary assignments, e.g. \"fullstack=codex,qa=codex\"")
 	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5.6-sol,fullstack=sonnet\"")
+	effortFlag := fs.String("effort", "", "per-role effort for a fresh roster, e.g. \"cto=high,qa=medium\" (normalized into native member args)")
 	codexArgsFlag := fs.String("codex-args", "", "extra args for every Codex member (e.g. reasoning effort)")
 	claudeArgsFlag := fs.String("claude-args", "", "extra args for every Claude member")
 	visibilityFlag := fs.String("visibility", visibilitySiblingTabs, "spawn topology: sibling-tabs (visible default), detached (hidden), or current")
@@ -284,42 +288,28 @@ func runRunStart(args []string, version string) error {
 	}
 	project := strings.TrimSpace(*projectFlag)
 	session := strings.TrimSpace(*sessionFlag)
-	if project == "" {
-		return usageErrorf("run start requires --project (-p)")
-	}
-	if session == "" {
-		return usageErrorf("run start requires --session (-s)")
-	}
-	if err := team.ValidateSessionName(session); err != nil {
-		return usageErrorf("invalid --session: %v", err)
-	}
-	if info, err := os.Stat(project); err != nil || !info.IsDir() {
-		return usageErrorf("project directory does not exist: %s", project)
-	}
-	visibility, err := normalizeLaunchVisibility(*visibilityFlag)
-	if err != nil {
-		return usageErrorf("%v", err)
-	}
-	if visibility == visibilityPlan {
-		return usageErrorf("--visibility plan is not valid for run start; it previews by default and creates with --go")
-	}
-	profile, err := resolveProfileFlag(*profileFlag)
-	if err != nil {
+	preflight := runStartPreflight(runStartPreflightInput{
+		Project:         project,
+		Profile:         *profileFlag,
+		ProfileExplicit: flagWasSet(fs, "profile") || flagWasSet(fs, "P"),
+		Session:         session,
+		Roles:           *rolesFlag,
+		Binary:          *binaryFlag,
+		Visibility:      *visibilityFlag,
+		LeadMode:        *leadModeFlag,
+		LeadModeSet:     flagWasSet(fs, "lead-mode"),
+		Effort:          *effortFlag,
+		EffortSet:       flagWasSet(fs, "effort"),
+	})
+	if err := preflight.Err(); err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceCreationCollision("run start", project, profile, session); err != nil {
-		return err
-	}
-	teamPresent := teamExistsForProfile(project, *profileFlag)
+	visibility := preflight.Visibility
+	profile := preflight.Profile
+	teamPresent := preflight.TeamPresent
 	rolesText := strings.TrimSpace(*rolesFlag)
-	freshRoster := rolesText != "" && !teamPresent
-	if err := ensureRunStartExistingProfileMatchesSession(project, *profileFlag, session, *rolesFlag, teamPresent, freshRoster); err != nil {
-		return err
-	}
-	leadMode, err := normalizeLeadMode(*leadModeFlag)
-	if err != nil {
-		return err
-	}
+	freshRoster := preflight.FreshRoster
+	leadMode := preflight.LeadMode
 
 	// Lead resolution: when creating a fresh roster, default the lead to cto.
 	// For an existing team, leave --role unset so `goal start` infers the
@@ -365,6 +355,9 @@ func runRunStart(args []string, version string) error {
 		if strings.TrimSpace(*binaryFlag) != "" {
 			newTeamArgs = append(newTeamArgs, "--binary", *binaryFlag)
 		}
+		if strings.TrimSpace(*effortFlag) != "" {
+			newTeamArgs = append(newTeamArgs, "--effort", *effortFlag)
+		}
 		newTeamArgs = appendPassthroughArgs(newTeamArgs, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
 	}
 	upArgs := []string{session, "--project", project, "--visibility", visibility}
@@ -376,9 +369,6 @@ func runRunStart(args []string, version string) error {
 	}
 	upArgs = appendPassthroughArgs(upArgs, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
 
-	if len(newTeamArgs) == 0 && !teamPresent {
-		return usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", profileOrDefault(*profileFlag), project)
-	}
 	leadModeDisplay := leadMode
 	if !flagWasSet(fs, "lead-mode") && teamPresent {
 		if existing, err := team.ReadProfile(project, *profileFlag); err == nil {
@@ -390,10 +380,6 @@ func runRunStart(args []string, version string) error {
 	// already exist, i.e. this invocation actually creates the roster. When the
 	// profile already exists, --roles is a no-op and we must NOT assume the lead
 	// is cto: goal delivery infers the profile's configured lead instead.
-	if flagWasSet(fs, "lead-mode") && !freshRoster {
-		return usageErrorf("--lead-mode applies only when run start creates a new roster; for an existing profile use `amq-squad team lead set <role> --lead-mode %s` first", leadMode)
-	}
-
 	leadDisplay := explicitLead
 	if explicitLead == "" {
 		if freshRoster {
@@ -842,36 +828,6 @@ func profileOrDefault(profile string) string {
 		return "default"
 	}
 	return profile
-}
-
-func ensureRunStartExistingProfileMatchesSession(project, profile, session, roles string, teamPresent, freshRoster bool) error {
-	if !teamPresent || freshRoster {
-		return nil
-	}
-	profileName := profileOrDefault(profile)
-	t, err := team.ReadProfile(project, profileName)
-	if err != nil {
-		return fmt.Errorf("read team profile %q: %w", profileName, err)
-	}
-	active, skipped := filterMembersBySession(t.Members, session)
-	if len(active) > 0 || len(t.Members) == 0 || len(skipped) == 0 {
-		return nil
-	}
-	pins := pinnedSessionList(skipped)
-	pinned := strings.Join(pins, ", ")
-	if len(pins) == 1 {
-		pinned = pins[0]
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "run start refused: profile %q in %s is pinned to workstream %s, not %q; no team members would run for the requested session.\n", profileName, project, pinned, session)
-	if strings.TrimSpace(roles) != "" {
-		fmt.Fprintf(&b, "--roles %q would be ignored because profile %q already exists; run start uses the existing roster instead of replacing it.\n", roles, profileName)
-	}
-	firstPinned := pins[0]
-	fmt.Fprintf(&b, "Fixes:\n")
-	fmt.Fprintf(&b, "  - run the existing roster on its pinned session: amq-squad run start --project %s%s --session %s\n", shellQuote(project), runStartProfileFixArg(profile), shellQuote(firstPinned))
-	fmt.Fprintf(&b, "  - create a session-pinned roster under a named profile: amq-squad run start --project %s --profile <name> --session %s --roles %s\n", shellQuote(project), shellQuote(session), runStartRolesFixArg(roles))
-	return usageErrorf("%s", strings.TrimRight(b.String(), "\n"))
 }
 
 func pinnedSessionList(members []team.Member) []string {
