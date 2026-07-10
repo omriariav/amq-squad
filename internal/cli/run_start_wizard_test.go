@@ -153,7 +153,7 @@ func TestNumberedWizardRunsCanonicalPreviewWithoutMutation(t *testing.T) {
 	project := t.TempDir()
 	prevInput := runStartWizardInput
 	prevOutput := runStartWizardOutput
-	runStartWizardInput = strings.NewReader(strings.Repeat("\n", 9))
+	runStartWizardInput = strings.NewReader(strings.Repeat("\n", 24))
 	var prompts bytes.Buffer
 	runStartWizardOutput = &prompts
 	t.Cleanup(func() {

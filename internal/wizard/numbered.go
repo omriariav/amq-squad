@@ -7,12 +7,39 @@ import (
 	"strings"
 )
 
-// NumberedOptions supplies the preview-only line UI with defaults and the one
-// filesystem fact it needs. The callback keeps this package independent from
-// the team persistence package.
+// NumberedOptions supplies the preview-only line UI with defaults and an
+// injected project inspector. The callback keeps this package independent from
+// git and team persistence packages.
 type NumberedOptions struct {
-	Defaults      Spec
-	ProfileExists func(project, profile string) bool
+	Defaults       Spec
+	InspectProject func(project string) (ProjectContext, error)
+	ProfileExists  func(project, profile string) bool
+}
+
+type ProjectContext struct {
+	Project              string
+	OriginSlug           string
+	Branch               string
+	SessionSuggestion    string
+	NewProfileSuggestion string
+	Profiles             []ProfileSummary
+	PreferredBinaries    map[string]string
+}
+
+type ProfileSummary struct {
+	Name          string
+	MemberCount   int
+	PinnedSession string
+	Lead          string
+	LeadMode      string
+	Members       []MemberSummary
+}
+
+type MemberSummary struct {
+	Role   string
+	Binary string
+	Model  string
+	Effort string
 }
 
 // RunNumbered collects a project run using plain numbered/text prompts. It is
@@ -33,23 +60,98 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	if s.Project, err = promptText(r, out, "Project directory", s.Project); err != nil {
 		return Spec{}, err
 	}
-	if s.Profile, err = promptText(r, out, "Team profile", defaultString(s.Profile, "default")); err != nil {
+	ctx := ProjectContext{Project: s.Project}
+	if opts.InspectProject != nil {
+		ctx, err = opts.InspectProject(s.Project)
+		if err != nil {
+			return Spec{}, err
+		}
+		if strings.TrimSpace(ctx.Project) != "" {
+			s.Project = ctx.Project
+		}
+	}
+	if ctx.OriginSlug != "" {
+		fmt.Fprintf(out, "Detected git project %s (origin %s)\n", s.Project, ctx.OriginSlug)
+	} else {
+		fmt.Fprintf(out, "Project root: %s\n", s.Project)
+	}
+
+	selectedProfile, existingProfile, err := promptProfile(r, out, s.Profile, ctx)
+	if err != nil {
 		return Spec{}, err
 	}
-	if s.Session, err = promptText(r, out, "Workstream session", s.Session); err != nil {
+	s.Profile = selectedProfile
+	sessionDefault := s.Session
+	if strings.TrimSpace(sessionDefault) == "" && existingProfile != nil {
+		sessionDefault = existingProfile.PinnedSession
+	}
+	if strings.TrimSpace(sessionDefault) == "" {
+		sessionDefault = ctx.SessionSuggestion
+	}
+	if s.Session, err = promptText(r, out, "Workstream session", sessionDefault); err != nil {
 		return Spec{}, err
 	}
 
-	existing := opts.ProfileExists != nil && opts.ProfileExists(s.Project, s.Profile)
+	existing := existingProfile != nil || (opts.ProfileExists != nil && opts.ProfileExists(s.Project, s.Profile))
 	if existing {
-		fmt.Fprintf(out, "Using existing profile %q; roster and lead mode remain unchanged.\n\n", s.Profile)
+		fmt.Fprintf(out, "Using existing profile %q; roster and lead mode remain authoritative.\n", s.Profile)
+		if existingProfile != nil {
+			fmt.Fprintf(out, "Lead: %s (%s)\n", defaultString(existingProfile.Lead, "(not configured)"), defaultString(existingProfile.LeadMode, "builder"))
+			for _, member := range existingProfile.Members {
+				fmt.Fprintf(out, "  - %s: %s, model=%s, effort=%s\n", member.Role, member.Binary, defaultString(member.Model, "automatic"), defaultString(member.Effort, "automatic"))
+			}
+		}
+		fmt.Fprintln(out)
 		s.Roles = ""
 		s.Binary = ""
+		s.Effort = ""
+		s.Lead = ""
 		s.LeadMode = ""
 	} else {
 		if s.Roles, err = promptText(r, out, "Roles (comma-separated)", defaultString(s.Roles, "cto,senior-dev,qa")); err != nil {
 			return Spec{}, err
 		}
+		roles := splitAssignmentsList(s.Roles)
+		binaryPrefill := parseAssignments(s.Binary)
+		modelPrefill := parseAssignments(s.Model)
+		effortPrefill := parseAssignments(s.Effort)
+		binaryValues := make(map[string]string, len(roles))
+		modelValues := make(map[string]string, len(roles))
+		effortValues := make(map[string]string, len(roles))
+		for _, role := range roles {
+			binaryDefault := defaultString(binaryPrefill[role], ctx.PreferredBinaries[role])
+			if binaryDefault != "claude" {
+				binaryDefault = "codex"
+			}
+			binaryValues[role], err = promptChoice(r, out, role+" binary", []choice{
+				{value: "codex", label: "codex"},
+				{value: "claude", label: "claude"},
+			}, binaryDefault)
+			if err != nil {
+				return Spec{}, err
+			}
+			model, promptErr := promptText(r, out, role+" model", defaultString(modelPrefill[role], "automatic"))
+			if promptErr != nil {
+				return Spec{}, promptErr
+			}
+			if model != "" && !strings.EqualFold(model, "automatic") {
+				modelValues[role] = model
+			}
+			effortChoices := []choice{{value: "automatic", label: "automatic: let the binary choose"}, {value: "low", label: "low"}, {value: "medium", label: "medium"}, {value: "high", label: "high"}}
+			if binaryValues[role] == "codex" {
+				effortChoices = append(effortChoices, choice{value: "minimal", label: "minimal"}, choice{value: "xhigh", label: "xhigh"})
+			}
+			effort, promptErr := promptChoice(r, out, role+" effort", effortChoices, defaultString(effortPrefill[role], "automatic"))
+			if promptErr != nil {
+				return Spec{}, promptErr
+			}
+			if effort != effortAutomatic {
+				effortValues[role] = effort
+			}
+		}
+		s.Binary = renderAssignments(roles, binaryValues)
+		s.Model = renderAssignments(roles, modelValues)
+		s.Effort = renderAssignments(roles, effortValues)
 		if s.Lead, err = promptText(r, out, "Lead role", defaultString(s.Lead, "cto")); err != nil {
 			return Spec{}, err
 		}
@@ -78,6 +180,83 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Answers collected. Running the canonical read-only preview next.")
 	return s, nil
+}
+
+const effortAutomatic = "automatic"
+
+func promptProfile(r *bufio.Reader, out io.Writer, current string, ctx ProjectContext) (string, *ProfileSummary, error) {
+	if len(ctx.Profiles) == 0 {
+		profile, err := promptText(r, out, "Team profile", defaultString(current, "default"))
+		return profile, nil, err
+	}
+	byName := make(map[string]*ProfileSummary, len(ctx.Profiles))
+	choices := make([]choice, 0, len(ctx.Profiles)+1)
+	defaultProfile := strings.TrimSpace(current)
+	for i := range ctx.Profiles {
+		profile := &ctx.Profiles[i]
+		byName[profile.Name] = profile
+		pinned := defaultString(profile.PinnedSession, "un-pinned")
+		choices = append(choices, choice{
+			value: profile.Name,
+			label: fmt.Sprintf("%s: %d member(s), session %s", profile.Name, profile.MemberCount, pinned),
+		})
+		if defaultProfile == "" && profile.Name == "default" {
+			defaultProfile = profile.Name
+		}
+	}
+	if defaultProfile == "" || byName[defaultProfile] == nil {
+		defaultProfile = ctx.Profiles[0].Name
+	}
+	choices = append(choices, choice{value: "__create__", label: "create a named profile: define a fresh roster"})
+	selected, err := promptChoice(r, out, "Team profile", choices, defaultProfile)
+	if err != nil {
+		return "", nil, err
+	}
+	if selected != "__create__" {
+		return selected, byName[selected], nil
+	}
+	suggestion := defaultString(ctx.NewProfileSuggestion, "squad-"+defaultString(ctx.SessionSuggestion, "project"))
+	profile, err := promptText(r, out, "New profile name", suggestion)
+	return profile, nil, err
+}
+
+func splitAssignmentsList(raw string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.ToLower(strings.TrimSpace(item))
+		if item != "" && !seen[item] {
+			seen[item] = true
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func parseAssignments(raw string) map[string]string {
+	out := map[string]string{}
+	for _, item := range strings.Split(raw, ",") {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func renderAssignments(order []string, values map[string]string) string {
+	parts := make([]string, 0, len(values))
+	for _, key := range order {
+		if value := strings.TrimSpace(values[key]); value != "" {
+			parts = append(parts, key+"="+value)
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 type choice struct {
