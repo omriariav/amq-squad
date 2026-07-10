@@ -241,25 +241,30 @@ Claude-binary agents launched in tmux also get a best-effort delayed
 `agent resume` replay. Failure to deliver the rename does not block launch.
 Codex agents are unaffected because Codex has no matching slash command.
 
-Model/binary guidance (context-stamped 2026-07-02, current operator setup):
-defaults are not limits; escalate model or effort when output quality misses the
-bar. For shippable work, `intelligence > taste > cost`, with cost only a
-tie-breaker. Bulk/mechanical work defaults to Codex CLI on `gpt-5.5`; UI, copy,
-API, and product design need taste `>= 7`; plan/implementation reviews should
-use `fable-5` or `opus-4.8` with optional `gpt-5.5` as an independent extra
-perspective. Never use Haiku. Configure direct agents with `binary`, `model`,
-Codex effort through `codex_args` (`-c model_reasoning_effort=<level>`), and
-Claude effort/settings through `claude_args` (for example `--effort high`).
+Model/binary guidance (context-stamped 2026-07-10, current operator setup;
+setup-dependent, not universal): defaults are not limits; escalate model or
+effort when output quality misses the bar. For shippable work,
+`intelligence > taste > cost`, with cost only a tie-breaker. Bulk/mechanical
+work defaults to Codex CLI on `gpt-5.6-luna` or `gpt-5.6-terra`; everyday
+balanced implementation defaults to `gpt-5.6-terra`; frontier implementation
+and independent review default to `gpt-5.6-sol`. `gpt-5.5`, `gpt-5.4`, and
+`gpt-5.4-mini` remain valid Codex choices for previous-frontier, strong
+everyday, and small/fast work respectively. UI, copy, API, and product design
+need taste `>= 7`. Never use Haiku. Configure direct agents with `binary`,
+`model`, Codex effort through `codex_args`
+(`-c model_reasoning_effort=<level>`), and Claude effort/settings through
+`claude_args` (for example `--effort high`).
 amq-squad does not maintain an Anthropic whitelist: Claude member `model` is
 passed through to installed `claude --model <model>`, with aliases such as
 `default`, `opus`, `fable`, `sonnet`, `haiku`, and full names such as
 `claude-fable-5` depending on CLI/account support. Mentioning `haiku` here is
 mechanical pass-through support only; the policy remains never choose Haiku for
-amq-squad work. Use a thin Claude wrapper for `gpt-5.5` only when a Claude-only
-workflow/subagent slot forces that shape; a Claude workflow/agent `model:`
-parameter still selects a Claude model only. Prefer an explicit Codex-binary
-member otherwise. Exact override paths include
-`amq-squad team init --model cto=gpt-5.5,fullstack=fable-5`,
+amq-squad work. Use a thin Claude wrapper for Codex models such as
+`gpt-5.6-sol` or `gpt-5.6-terra` only when a Claude-only workflow/subagent slot
+forces that shape; a Claude workflow/agent `model:` parameter still selects a
+Claude model only. Prefer an explicit Codex-binary member otherwise. Exact
+override paths include
+`amq-squad team init --model cto=gpt-5.6-sol,fullstack=fable-5`,
 `amq-squad team member add plan-reviewer --binary claude --model claude-fable-5 --claude-args "--effort high"`,
 `amq-squad up issue-96 --model plan-reviewer=claude-fable-5,implementer=sonnet`,
 and

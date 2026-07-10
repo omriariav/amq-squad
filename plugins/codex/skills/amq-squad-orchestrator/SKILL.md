@@ -329,7 +329,7 @@ This atomically appends a `### YYYY-MM-DD [— title]\nbody` block, creating the
   a one-off; when the role recurs or needs sharp scope, author a real persona
   with the `amq-squad` Role Authoring section and reuse it.
 - **Horsepower: match binary + model + effort to quality needs.** Context
-  stamp: this guidance reflects the current operator setup as of 2026-07-02.
+  stamp: this guidance reflects the current operator setup as of 2026-07-10.
   Availability, aliases, and cost are setup-dependent, not universal prices.
   Defaults are not limits: if the child output is not good enough, escalate the
   model, effort, or reviewer. For shippable work, optimize for
@@ -349,10 +349,15 @@ This atomically appends a `### YYYY-MM-DD [— title]\nbody` block, creating the
 
   | Work type | default in this operator setup | notes |
   | --- | --- | --- |
-  | bulk / mechanical edits | codex · gpt-5.5 | low or medium effort; raise when tests or diff quality show reasoning gaps |
+  | bulk / mechanical edits | codex · gpt-5.6-luna or gpt-5.6-terra | low or medium effort; raise when tests or diff quality show reasoning gaps |
+  | everyday balanced implementation | codex · gpt-5.6-terra | default implementer/reviewer model when frontier depth is not needed |
   | user-facing UI, copy, API, product design | model with taste `>= 7` | do not assign to a purely mechanical worker just because it is cheap |
-  | plan / implementation review | claude · fable-5 or opus-4.8 | optionally add codex · gpt-5.5 as an independent extra perspective |
+  | frontier implementation / independent review | codex · gpt-5.6-sol | new default for hardest implementation and review work |
+  | plan / implementation review | claude · fable-5 or opus-4.8 | optionally add codex · gpt-5.6-sol as an independent extra perspective |
   | hard architecture / debugging / security | strongest available reviewer/implementer | escalate quickly when the first answer is shallow |
+
+  `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini` remain valid Codex choices for
+  previous-frontier, strong everyday, and small/fast work respectively.
 
   Never use Haiku for amq-squad work.
 
@@ -385,12 +390,13 @@ This atomically appends a `### YYYY-MM-DD [— title]\nbody` block, creating the
   amq-squad resume --session <S> --model plan-reviewer=opus,implementer=sonnet --exec
   ```
 
-  Prefer an explicit Codex-binary member when the job needs `gpt-5.5`. The
-  thin Claude wrapper pattern exists only for Claude-only workflow/subagent
-  systems: create a minimal Claude-shaped wrapper whose sole job is to delegate
-  the real task to Codex CLI on `gpt-5.5`, and disclose that indirection in the
-  role/scope. A Claude workflow/agent `model:` parameter selects a Claude model
-  only; it cannot select a Codex model or Codex effort level.
+  Prefer an explicit Codex-binary member when the job needs a Codex model such
+  as `gpt-5.6-sol` or `gpt-5.6-terra`. The thin Claude wrapper pattern exists
+  only for Claude-only workflow/subagent systems: create a minimal
+  Claude-shaped wrapper whose sole job is to delegate the real task to Codex
+  CLI, and disclose that indirection in the role/scope. A Claude workflow/agent
+  `model:` parameter selects a Claude model only; it cannot select a Codex
+  model or Codex effort level.
 
 **2. Get operator approval per spawn (seeded).** For each proposed agent, raise
 a gate on the operator's approval thread and wait for the answer — this reuses

@@ -1317,20 +1317,26 @@ Pass `--model NAME` to set the native `--model` flag on Codex or Claude. `team i
 ### Model, binary, and effort guidance
 
 Context stamp: this guidance reflects the current operator setup as of
-2026-07-02. Availability, aliases, and pricing are deployment-dependent; treat
-cost as a local tie-breaker, not as universal list-price guidance.
+2026-07-10. Availability, aliases, and pricing are setup-dependent, not
+universal; treat cost as a local tie-breaker, not as list-price guidance.
 
 Defaults are not limits. Agents should escalate binary, model, or effort when
 the output does not meet the bar. For shippable work, optimize for
 `intelligence > taste > cost`; cost matters only after the work is good enough.
 
-- Bulk or mechanical work defaults to Codex CLI on `gpt-5.5` in the current
-  operator setup. Use lower effort for truly mechanical edits, but raise effort
-  when the diff or tests show reasoning gaps.
+- Bulk or mechanical work defaults to Codex CLI on `gpt-5.6-luna` or
+  `gpt-5.6-terra` in the current operator setup. Use lower effort for truly
+  mechanical edits, but raise effort when the diff or tests show reasoning
+  gaps.
+- Everyday balanced implementation defaults to Codex CLI on `gpt-5.6-terra`.
+- Frontier implementation and independent review default to Codex CLI on
+  `gpt-5.6-sol`.
+- `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini` remain valid Codex choices for
+  previous-frontier, strong everyday, and small/fast work respectively.
 - User-facing UI, copy, API shape, or product design needs taste `>= 7`; do
   not hand it to a purely mechanical worker just because it is cheaper.
 - Plan and implementation reviews should use `fable-5` or `opus-4.8`, with
-  `gpt-5.5` as an optional independent extra perspective.
+  `gpt-5.6-sol` as an optional independent extra perspective.
 - Never use Haiku for amq-squad work.
 
 Direct amq-squad configuration keeps three decisions separate:
@@ -1380,19 +1386,20 @@ amq-squad resume --session issue-96 --model plan-reviewer=opus,implementer=sonne
 For durable rosters, the same values live in `team.json`: `binary`, `model`,
 per-member `codex_args` / `claude_args`, or team-level `binary_args` for every
 member of one binary. Prefer an explicit Codex-binary member when the job needs
-`gpt-5.5`. A thin Claude wrapper is only a compatibility pattern for
-Claude-only workflow or subagent systems. In those systems, a Claude
-workflow/agent `model:` parameter selects a Claude model only; it does not
-select a Codex model or effort level. Keep the wrapper minimal, have it delegate
-the real task to Codex CLI on `gpt-5.5`, and make that indirection visible in
-the role/scope so reviewers do not mistake it for a native Claude model choice.
+a Codex model such as `gpt-5.6-sol` or `gpt-5.6-terra`. A thin Claude wrapper is
+only a compatibility pattern for Claude-only workflow or subagent systems. In
+those systems, a Claude workflow/agent `model:` parameter selects a Claude model
+only; it does not select a Codex model or effort level. Keep the wrapper
+minimal, have it delegate the real task to Codex CLI, and make that indirection
+visible in the role/scope so reviewers do not mistake it for a native Claude
+model choice.
 
 ```sh
 amq-squad team init --personas cto,fullstack --trust trusted
 amq-squad team init --personas cto,fullstack --trust approve-for-me
-amq-squad team init --personas cto,fullstack --model cto=gpt-5.5,fullstack=fable-5 \
+amq-squad team init --personas cto,fullstack --model cto=gpt-5.6-sol,fullstack=fable-5 \
   --codex-args "-c model_reasoning_effort=medium"
-amq-squad agent up codex --model gpt-5.5 --codex-args "-c model_reasoning_effort=medium"
+amq-squad agent up codex --model gpt-5.6-terra --codex-args "-c model_reasoning_effort=medium"
 ```
 
 amq-squad v2.18.0 requires amq **0.41.0+**. Launches pass `--require-wake` to
