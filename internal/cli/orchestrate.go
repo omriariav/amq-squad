@@ -199,7 +199,11 @@ Usage:
       [--lead-mode builder|planner]
       [--codex-args "..."] [--claude-args "..."]
       [--visibility sibling-tabs|detached|current] [--external-lead]
-      [--goal TEXT] [--seed-from REF] [--go]
+      [--goal TEXT] [--seed-from REF] [--interactive] [--go]
+
+With no flags in an interactive terminal, or with --interactive explicitly,
+run start opens the guided preview wizard. Non-TTY and CI invocations never
+prompt. --interactive and --go are mutually exclusive.
 
 Managed model: amq-squad spawns the whole team (incl. the lead); panes are
 registered and wake-live automatically. This wraps the create sequence so the
@@ -234,6 +238,26 @@ separate orchestrator handle or re-points lead state.
 }
 
 func runRunStart(args []string, version string) error {
+	interactive, interactiveSpecified, args, err := runStartInteractiveTrigger(args)
+	if err != nil {
+		return err
+	}
+	if interactive && runStartHasHelpFlag(args) {
+		return runRunCmd([]string{"--help"}, version)
+	}
+	if interactive && runStartHasGoFlag(args) {
+		return usageErrorf("--interactive cannot be combined with --go; approve launch only at the wizard's final confirmation")
+	}
+	if interactive {
+		if !runStartWizardEligible() {
+			return usageErrorf("run start --interactive requires an interactive terminal and is disabled in CI; use the canonical flag form instead")
+		}
+		return runStartWizardRunner(args, version)
+	}
+	if len(args) == 0 && !interactiveSpecified && runStartWizardEligible() {
+		return runStartWizardRunner(nil, version)
+	}
+
 	fs := flag.NewFlagSet("run start", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project / team-home directory (repo root)")
 	sessionFlag := fs.String("session", "", "workstream session name")

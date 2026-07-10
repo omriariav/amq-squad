@@ -238,6 +238,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"goal":        true,
 		"global":      true,
 		"run":         true,
+		"wizard":      true,
 		"task":        true,
 		"verify":      true,
 		"operator":    true,
