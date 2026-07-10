@@ -365,6 +365,7 @@ func runLeadRegister(args []string) error {
 			Target:     "external",
 		},
 	}
+	rec.Terminal = launch.TerminalInfoFromTmux(rec.Tmux)
 	if preserveExternalGoalBinding(existingRec, existingRecErr, role, env.SessionName) {
 		gb := *existingRec.GoalBinding
 		rec.GoalBinding = &gb
