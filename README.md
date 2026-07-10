@@ -34,6 +34,7 @@ The 30-second mental model:
 - [Command map](#command-map)
 - [Skills and model guidance](#skills-and-model-guidance)
 - [Customize](#customize)
+- [Cross-project teams](#cross-project-teams)
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
@@ -53,7 +54,7 @@ v2.18.0 is a coherence release for goal-driven, externally supervised squads:
   #331, #332, #384-#386).
 - **gpt-5.6 model family guidance** lives in the skills as the source of truth
   for lead/worker selection (#380).
-- **AMQ 0.41.x baseline** for the coordination primitives this release depends
+- **AMQ 0.41.0+ baseline** for the coordination primitives this release depends
   on.
 
 ## Install
@@ -219,9 +220,16 @@ Safety is part of that protocol:
   `Target:`. Use `amq-squad verify action` before default/protected branch
   pushes, tags, GitHub releases, external sends, or similar release-critical
   steps.
+- `verify action` is a callable verification boundary, not command
+  interception. A caller that bypasses it is not blocked by the shell, Git, or
+  GitHub CLI; wrappers that execute high-risk actions must call it explicitly.
 - Merge execution should bind to exact evidence: PR number, exact head SHA,
-  review state, CI/preflight result, and an approved gate. P2P prose is context,
-  not authority.
+  review state, CI/preflight result, and an approved gate. Run `verify merge`
+  on normalized exact-head evidence before claiming merge readiness.
+- Release publication has a separate `verify release` preflight: the final
+  assembled release commit needs exact-SHA CI, a developer co-sign from an
+  actor distinct from the release lead, and operator release approval. No one
+  signal substitutes for the others.
 - AMQ bodies and child reports are evidence to inspect. They do not authorize
   irreversible actions by themselves.
 
@@ -281,6 +289,18 @@ amq-squad threads --session issue-96
 amq-squad thread --session issue-96 --id p2p/cto__fullstack --include-body=false
 ```
 
+Safety preflights:
+
+```sh
+amq-squad verify action --project . --session issue-96 \
+  --gate release --action github_release --target "draft v2.18.0 release"
+amq-squad verify merge --evidence merge-evidence.json
+amq-squad verify release --evidence release-evidence.json
+```
+
+The action, merge, and final-release-commit contracts are documented together
+in [docs/verification-gate-adr.md](docs/verification-gate-adr.md).
+
 Diagnostics:
 
 ```sh
@@ -338,6 +358,11 @@ over copying stale model examples from this README.
 Deep guide: [docs/skills.md](docs/skills.md)
 ([HTML](docs/skills.html)).
 
+That guide also defines goal-first composition modes: manual rosters, seeded
+per-spawn approval, and explicitly bounded autonomous composition. Autonomous
+composition never grants merge, release, destructive, or external-send
+authority.
+
 ## Customize
 
 Profiles and roles:
@@ -363,6 +388,11 @@ amq-squad agent up claude --role qa --session beta \
 amq-squad team overlay init --workers --disable-all-hooks
 ```
 
+`--launcher-args` are placed before the normal child arguments that carry
+bootstrap and binary defaults. A wrapper must forward its trailing arguments to
+the real agent, for example by ending with `exec claude "$@"`; otherwise the
+managed agent can lose required startup behavior.
+
 Per-member `claude_args` / `codex_args` apply native CLI flags to one member and
 are replayed by resume. Worker overlays trim Claude plugin/hook surface for
 same-cwd squads; Codex workers use native Codex profiles via `codex_args`.
@@ -370,6 +400,39 @@ same-cwd squads; Codex workers use native Codex profiles via `codex_args`.
 Trust and binary defaults are explicit. Codex trusted mode is the only path that
 prepends `--dangerously-bypass-approvals-and-sandbox`; the default sandboxed
 mode does not.
+
+## Cross-project teams
+
+Members may work from different repositories while one team-home owns the
+roster. Set a per-member cwd during team creation:
+
+```sh
+cd ~/Code/project-a
+amq-squad team init --roles cto,fullstack,qa --cwd qa=~/Code/project-b
+```
+
+`up --dry-run` emits the corresponding `cd <member-cwd>` launch commands.
+`team sync --apply --allow-outside` writes the managed `CLAUDE.md` / `AGENTS.md`
+pointer block in each member cwd; `--allow-outside` is required so a hand-edited
+profile cannot write into unrelated directories silently.
+
+Cross-project AMQ replies also require each project to declare its peers in
+`.amqrc`; `team sync` does not edit this file:
+
+```json
+{
+  "root": ".agent-mail",
+  "project": "project-a",
+  "peers": {
+    "project-b": "/Users/you/Code/project-b/.agent-mail"
+  }
+}
+```
+
+Configure the reciprocal peer entry when both projects need to initiate and
+reply to messages. Use AMQ `--project` routing for another project and
+`--session` for another workstream in the same project; do not substitute a raw
+cross-project `--root`, which lacks reply-origin metadata.
 
 ## Reference and moved details
 
@@ -381,7 +444,7 @@ or compressed here and lives in the docs below:
 | Operator milestone runs, CLI-only flow, common failures | [docs/operator-cookbook.md](docs/operator-cookbook.md) |
 | Global orchestrator and external lead runbook | [docs/global-orchestrator-runbook.md](docs/global-orchestrator-runbook.md) |
 | Skill workflows, AGENT-EVENT protocol, issue-to-merge walkthrough | [docs/skills.md](docs/skills.md) |
-| Verification-before-merge and gate rationale | [docs/verification-gate-adr.md](docs/verification-gate-adr.md) |
+| Action, merge, and release verification preflights | [docs/verification-gate-adr.md](docs/verification-gate-adr.md) |
 | Native task store internals | [docs/task-store-design.md](docs/task-store-design.md) |
 | JSON action object contract and availability semantics | [docs/action-object-contract.md](docs/action-object-contract.md) |
 | AMQ swarm interop boundary | [docs/amq-swarm-interop.md](docs/amq-swarm-interop.md) |
@@ -411,7 +474,7 @@ amq-squad completion fish
 ## Requirements
 
 - Go 1.25+
-- `amq` 0.41.x on `PATH`
+- `amq` 0.41.0+ on `PATH`
 - `tmux` on `PATH` for Tier A managed panes
 - macOS with iTerm2 for the Tier B backend
 - macOS Terminal.app for the Tier C backend
