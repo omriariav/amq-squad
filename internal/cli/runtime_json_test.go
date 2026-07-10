@@ -41,6 +41,39 @@ func TestTmuxRuntimeFromEmptyInfoIsNil(t *testing.T) {
 	}
 }
 
+func TestTerminalRuntimeMirrorsTmuxIdentity(t *testing.T) {
+	term := terminalRuntimeFromTmuxInfo(&launch.TmuxInfo{
+		Session:    "main",
+		WindowID:   "@1",
+		WindowName: "lead",
+		PaneID:     "%5",
+		Target:     "external",
+	})
+	if term == nil {
+		t.Fatalf("terminal runtime should be present")
+	}
+	if term.Backend != "tmux" || term.Session != "main" || term.WindowID != "@1" || term.WindowName != "lead" || term.PaneID != "%5" || term.Target != "external" {
+		t.Fatalf("terminal runtime = %+v", term)
+	}
+}
+
+func TestSyncTerminalRuntimeFromTmuxUsesSamePaneAlive(t *testing.T) {
+	row := statusRecord{Tmux: &tmuxRuntimeJSON{Session: "main", PaneID: "%5", PaneAlive: true}}
+	syncTerminalRuntimeFromTmux(&row)
+	if row.Terminal == nil {
+		t.Fatalf("terminal should be derived from tmux")
+	}
+	if row.Terminal.Backend != "tmux" || row.Terminal.PaneID != "%5" || !row.Terminal.PaneAlive {
+		t.Fatalf("terminal runtime = %+v", row.Terminal)
+	}
+
+	row.Tmux.PaneAlive = false
+	syncTerminalRuntimeFromTmux(&row)
+	if row.Terminal.PaneAlive {
+		t.Fatalf("terminal pane_alive must follow tmux pane_alive: %+v", row.Terminal)
+	}
+}
+
 func TestMemoizePaneListerCallsUnderlyingOnce(t *testing.T) {
 	calls := 0
 	memo := memoizePaneLister(func() ([]tmuxpane.TmuxPane, error) {

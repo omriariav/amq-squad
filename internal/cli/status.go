@@ -156,6 +156,9 @@ type statusRecord struct {
 	// a computed pane_alive, so clients can target follow-up control. Omitted
 	// when the agent's launch record carried no tmux identity.
 	Tmux *tmuxRuntimeJSON `json:"tmux,omitempty"`
+	// Terminal is the additive backend-neutral runtime identity. For current
+	// tmux launches it mirrors Tmux and carries the same computed pane_alive.
+	Terminal *terminalRuntimeJSON `json:"terminal,omitempty"`
 	// Visibility fields distinguish "agent process is live" from "this member
 	// is the operator-visible project lead". operator_visible is fail-closed:
 	// it is true only when persisted launch-origin evidence proves visibility.
@@ -1214,6 +1217,7 @@ func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLau
 			if panes, perr := statusPaneLister(); perr == nil {
 				if adopted := adoptLivePane(rows[i].Role, rows[i].Handle, rows[i].Binary, rows[i].CWD, workstream, rows[i].Signals.AgentPID, panes, pidTree); adopted != nil {
 					rows[i].Tmux = tmuxRuntimeFromInfo(adopted)
+					rows[i].Terminal = terminalRuntimeFromTmuxInfo(adopted)
 				}
 			}
 		}
@@ -1227,6 +1231,7 @@ func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLau
 			fillPaneAliveFromLiveness(rows[i].Tmux, livePanes, &agentLiveness{Signals: rows[i].Signals})
 			rows[i].AgentPaneID = strings.TrimSpace(rows[i].Tmux.PaneID)
 			rows[i].ManagedTarget = strings.TrimSpace(rows[i].Tmux.Target)
+			syncTerminalRuntimeFromTmux(&rows[i])
 		}
 	}
 	attachStatusActivities(t.Project, profile, workstream, rows, probe.Now())
@@ -1481,6 +1486,7 @@ func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream
 	live := classifyAgentLiveness(rec.AgentDir, root, profile, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe)
 	rec.Tmux = tmuxRuntimeFromInfo(live.Tmux)
 	if live.LaunchFound {
+		rec.Terminal = terminalRuntimeFromInfo(live.LaunchRecord.Terminal)
 		rec.goalBinding = live.LaunchRecord.GoalBinding
 		rec.External = live.LaunchRecord.External
 		rec.WakeAutoDrain = strings.TrimSpace(live.LaunchRecord.WakeInjectCmd) != ""
