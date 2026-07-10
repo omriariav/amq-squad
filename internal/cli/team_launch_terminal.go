@@ -98,20 +98,23 @@ func runTerminalAppLaunchPlan(plan terminalAppLaunchPlan) error {
 }
 
 func terminalAppLaunchArgv(workstream string, pane teamLaunchPane) []string {
+	windowName := nativeTerminalWindowName(workstream, pane.Role)
+	payload := nativeTerminalLaunchPayload(pane.Command, []nativeTerminalEnv{
+		{Key: envTerminalBackend, Value: "terminal_app"},
+		{Key: envTerminalSession, Value: workstream},
+		{Key: envTerminalTarget, Value: "new-window"},
+		{Key: envTerminalWindowID, Value: nativeTerminalWindowIDPlaceholder, Raw: true},
+		{Key: envTerminalWindowName, Value: windowName},
+		{Key: envTerminalTabID, Value: nativeTerminalTabIDPlaceholder, Raw: true},
+		{Key: envTerminalTTY, Value: nativeTerminalTTYPlaceholder, Raw: true},
+	})
 	script := `on run argv
-set workstreamName to item 1 of argv
-set roleName to item 2 of argv
-set agentCommand to item 3 of argv
-set windowName to "amq:" & workstreamName & ":" & roleName
+set windowName to item 1 of argv
+set payloadTemplate to item 2 of argv
 tell application "Terminal"
 	activate
 	set targetTab to do script ""
 	set custom title of targetTab to windowName
-	set targetWindow to front window
-	set winID to ""
-	try
-		set winID to (id of targetWindow as string)
-	end try
 	set tabIndex to ""
 	try
 		set tabIndex to (index of targetTab as string)
@@ -120,10 +123,53 @@ tell application "Terminal"
 	try
 		set ttyName to (tty of targetTab as string)
 	end try
-	set fullCommand to "(export AMQ_SQUAD_TERMINAL_BACKEND=terminal_app AMQ_SQUAD_TERMINAL_SESSION=" & quoted form of workstreamName & " AMQ_SQUAD_TERMINAL_TARGET=new-window AMQ_SQUAD_TERMINAL_WINDOW_ID=" & quoted form of winID & " AMQ_SQUAD_TERMINAL_WINDOW_NAME=" & quoted form of windowName & " AMQ_SQUAD_TERMINAL_TAB_ID=" & quoted form of tabIndex & " AMQ_SQUAD_TERMINAL_TTY=" & quoted form of ttyName & "; " & agentCommand & ")"
+	set targetWindow to missing value
+	if ttyName is not "" then
+		repeat with candidateWindow in windows
+			repeat with candidateTab in tabs of candidateWindow
+				try
+					if (tty of candidateTab as string) is ttyName then
+						set targetWindow to candidateWindow
+						exit repeat
+					end if
+				end try
+			end repeat
+			if targetWindow is not missing value then
+				exit repeat
+			end if
+		end repeat
+	end if
+	if targetWindow is missing value then
+		set targetWindow to front window
+	end if
+	set winID to ""
+	try
+		set winID to (id of targetWindow as string)
+	end try
+	set payload to my replaceText(payloadTemplate, "__AMQ_SQUAD_TERMINAL_WINDOW_ID__", my shellSingleQuote(winID))
+	set payload to my replaceText(payload, "__AMQ_SQUAD_TERMINAL_TAB_ID__", my shellSingleQuote(tabIndex))
+	set payload to my replaceText(payload, "__AMQ_SQUAD_TERMINAL_TTY__", my shellSingleQuote(ttyName))
+	set fullCommand to "/bin/sh -c " & quoted form of payload
 	do script fullCommand in targetTab
 end tell
 return winID
-end run`
-	return []string{"-e", script, workstream, pane.Role, pane.Command}
+end run
+
+on replaceText(sourceText, searchText, replacementText)
+	set oldDelimiters to AppleScript's text item delimiters
+	set AppleScript's text item delimiters to searchText
+	set textItems to text items of sourceText
+	set AppleScript's text item delimiters to replacementText
+	set replacedText to textItems as text
+	set AppleScript's text item delimiters to oldDelimiters
+	return replacedText
+end replaceText
+
+on shellSingleQuote(valueText)
+	set valueText to valueText as string
+	set singleQuote to ASCII character 39
+	set spliceQuote to singleQuote & (ASCII character 92) & singleQuote & singleQuote
+	return singleQuote & my replaceText(valueText, singleQuote, spliceQuote) & singleQuote
+end shellSingleQuote`
+	return []string{"-e", script, windowName, payload}
 }

@@ -170,7 +170,7 @@ func envWithoutAMQIdentity(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, entry := range env {
 		key, _, ok := strings.Cut(entry, "=")
-		if !ok || !remove[key] {
+		if !ok || (!remove[key] && !strings.HasPrefix(key, "AMQ_SQUAD_TERMINAL_")) {
 			out = append(out, entry)
 		}
 	}
