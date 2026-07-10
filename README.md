@@ -100,6 +100,10 @@ The shortest working path for a visible project lead and workers:
 ```sh
 cd ~/Code/my-project
 
+# Guided, read-only preview. In an interactive terminal, zero-argument
+# `amq-squad run start` opens the same wizard.
+amq-squad wizard
+
 # Preview, then create, an orchestrated run. --go is the mutation switch.
 amq-squad run start \
   --project . \
@@ -144,6 +148,13 @@ amq-squad run start \
 `run start` previews by default; `--go` creates. With `--goal`, it waits until
 the lead is live before delivering the goal. If goal delivery fails, it exits
 non-zero and prints an exact retry command.
+
+In an interactive terminal, `amq-squad run start` with no arguments now opens
+the guided preview wizard instead of returning the old missing-flag usage error.
+`amq-squad wizard` and `run start --interactive` are equivalent. The wizard is
+preview-only in the first v2.19.0 slice, is disabled in CI, and never triggers
+when stdin or stderr is not a TTY. Partial flag commands without
+`--interactive` keep the canonical fail-fast parser behavior.
 
 Manual setup still works when the team shape is known:
 
