@@ -28,6 +28,8 @@ const (
 	stageLeadMode
 	stageOperator
 	stageTopology
+	stageLayoutPreset
+	stageLauncherPane
 	stageGoal
 	stageSeed
 	stageConfirm
@@ -297,6 +299,10 @@ func (m BubbleModel) title() string {
 		return "Choose the operator interaction contract"
 	case stageTopology:
 		return "Choose where agents appear"
+	case stageLayoutPreset:
+		return "Choose the deterministic layout preset"
+	case stageLauncherPane:
+		return "Choose what happens to this launcher pane"
 	case stageGoal:
 		return "Optional goal text"
 	case stageSeed:
@@ -328,6 +334,16 @@ func (m BubbleModel) note() string {
 		return "Use automatic to let the selected binary choose."
 	case stageTopology:
 		return "The diagram is the topology that the canonical visibility flag selects."
+	case stageLayoutPreset:
+		return "Preset mappings use exact tmux pane/window IDs; display names are never control targets."
+	case stageLauncherPane:
+		if m.spec.ExternalLead {
+			return "This pane is the external lead and is always kept."
+		}
+		if m.spec.Visibility == "detached" {
+			return "Detached runs keep the launcher as the visible control point."
+		}
+		return "Close is scheduled only after successful spawn, goal delivery, and final output."
 	case stageOperator:
 		if m.existingIndex >= 0 {
 			return "Existing profile contract is authoritative: " + defaultString(m.spec.OperatorMode, "unspecified")
@@ -366,7 +382,11 @@ func (m BubbleModel) summary() string {
 		parts = append(parts, "Effort    "+m.spec.Effort+" (launch only)")
 	}
 	parts = append(parts, "Operator  "+defaultString(m.spec.OperatorMode, "unspecified")+" · "+operatorContractSummary(m.spec.OperatorMode))
-	parts = append(parts, "Topology  "+m.spec.Visibility, "", TopologyPreview(m.spec.Visibility))
+	parts = append(parts, "Topology  "+m.spec.Visibility)
+	if m.spec.LayoutPreset != "" {
+		parts = append(parts, "Layout    "+m.spec.LayoutPreset)
+	}
+	parts = append(parts, "Launcher  "+defaultString(m.spec.LauncherPane, "legacy keep"), "", TopologyPreview(m.spec.Visibility))
 	return strings.Join(parts, "\n")
 }
 
@@ -459,6 +479,13 @@ func (m BubbleModel) choices() []choice {
 		return operatorChoices(m.opts.Capabilities)
 	case stageTopology:
 		return []choice{{value: "sibling-tabs", label: "One window per agent"}, {value: "current", label: "Panes in this window"}, {value: "detached", label: "Detached squad"}}
+	case stageLayoutPreset:
+		return layoutPresetChoices(m.spec.Visibility)
+	case stageLauncherPane:
+		if m.spec.ExternalLead || m.spec.Visibility == "detached" {
+			return []choice{{value: "keep", label: "Keep this pane · required by the selected topology"}}
+		}
+		return []choice{{value: "close-after-start", label: "Close after successful start"}, {value: "keep", label: "Keep this launcher pane"}}
 	case stageConfirm:
 		return []choice{{value: "preview", label: "Run the canonical read-only preview"}}
 	default:
@@ -499,6 +526,10 @@ func (m BubbleModel) defaultCursor() int {
 		}
 	case stageTopology:
 		want = defaultString(m.spec.Visibility, "sibling-tabs")
+	case stageLayoutPreset:
+		want = defaultLayoutPreset(m.spec.LayoutPreset, m.spec.Visibility)
+	case stageLauncherPane:
+		want = defaultLauncherPane(m.spec.LauncherPane, m.spec.Visibility, m.spec.ExternalLead)
 	}
 	for i, item := range choices {
 		if item.value == want {
@@ -656,14 +687,20 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 		m.transition(stageTopology)
 	case stageOperator:
 		if selected == "continue" {
-			m.transition(stageGoal)
+			m.transition(stageLauncherPane)
 		} else {
 			m.spec.OperatorMode = selected
-			m.transition(stageGoal)
+			m.transition(stageLauncherPane)
 		}
 	case stageTopology:
 		m.spec.Visibility = selected
+		m.transition(stageLayoutPreset)
+	case stageLayoutPreset:
+		m.spec.LayoutPreset = selected
 		m.transition(stageOperator)
+	case stageLauncherPane:
+		m.spec.LauncherPane = selected
+		m.transition(stageGoal)
 	case stageConfirm:
 		m.done = true
 		return m, tea.Quit
@@ -727,7 +764,7 @@ func (m BubbleModel) phaseIndex() int {
 		return 0
 	case stageProfile, stageNewProfile, stageSession, stageExistingOverride, stageExistingModel, stageExistingEffort, stageRoles, stageRoleBinary, stageRoleModel, stageRoleEffort, stageLead, stageLeadMode:
 		return 1
-	case stageTopology, stageOperator:
+	case stageTopology, stageLayoutPreset, stageOperator, stageLauncherPane:
 		return 2
 	case stageGoal, stageSeed:
 		return 3
@@ -749,6 +786,40 @@ func operatorContractSummary(mode string) string {
 	default:
 		return "legacy poll-required compatibility"
 	}
+}
+
+func layoutPresetChoices(visibility string) []choice {
+	switch visibility {
+	case "current":
+		return []choice{{value: "lead-left", label: "Lead left · main-vertical, 60% width"}, {value: "lead-top", label: "Lead top · main-horizontal, 60% height"}, {value: "even-grid", label: "Even grid · tiled"}}
+	case "detached":
+		return []choice{{value: "", label: "Detached topology · no visible layout preset"}}
+	default:
+		return []choice{{value: "one-window-per-agent", label: "One window per agent"}}
+	}
+}
+
+func defaultLayoutPreset(current, visibility string) string {
+	if strings.TrimSpace(current) != "" {
+		return current
+	}
+	if visibility == "current" {
+		return "lead-left"
+	}
+	if visibility == "sibling-tabs" {
+		return "one-window-per-agent"
+	}
+	return ""
+}
+
+func defaultLauncherPane(current, visibility string, external bool) string {
+	if external || visibility == "detached" {
+		return "keep"
+	}
+	if strings.TrimSpace(current) != "" {
+		return current
+	}
+	return "close-after-start"
 }
 
 func (m BubbleModel) currentRole() string {

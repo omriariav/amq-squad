@@ -435,6 +435,13 @@ func statusWarnings(projectDir, profile, session string, now time.Time) ([]statu
 		return nil, err
 	}
 	warnings = append(warnings, taskWarnings...)
+	if body, readErr := os.ReadFile(layoutFinalizationWarningPath(projectDir, profile, session)); readErr == nil {
+		detail := strings.TrimSpace(string(body))
+		if detail == "" {
+			detail = "layout finalization reported an unspecified failure"
+		}
+		warnings = append(warnings, statusWarning{Kind: "layout_finalization", Session: session, Detail: detail})
+	}
 	warnings = append(warnings, statusAgedOperatorGateWarnings(projectDir, profile, session, now)...)
 	return warnings, nil
 }

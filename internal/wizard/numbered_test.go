@@ -72,7 +72,9 @@ func TestRunNumberedAcceptsNumberedChoices(t *testing.T) {
 		"",  // lead
 		"2", // planner
 		"3", // current
+		"",  // lead-left layout
 		"",  // lead-pane operator contract
+		"",  // close launcher after start
 		"",  // goal
 		"",  // seed
 	}, "\n") + "\n"
@@ -92,7 +94,7 @@ func TestRunNumberedAcceptsNumberedChoices(t *testing.T) {
 }
 
 func TestRunNumberedExistingProfileKeepsRosterAuthoritative(t *testing.T) {
-	input := strings.Repeat("\n", 6)
+	input := strings.Repeat("\n", 8)
 	got, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
 		Defaults: Spec{
 			Project:    "/repo",
@@ -136,6 +138,8 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 		"",  // pinned session
 		"",  // keep cto profile values
 		"",  // topology
+		"",  // one-window layout
+		"",  // close launcher
 		"",  // goal
 		"",  // seed
 	}, "\n") + "\n"
@@ -212,6 +216,8 @@ func TestRunNumberedExistingProfileCollectsLaunchOnlyOverrides(t *testing.T) {
 		"launch-model", // launch-only model
 		"4",            // high effort
 		"",             // topology
+		"",             // one-window layout
+		"",             // close launcher
 		"",             // goal
 		"",             // seed
 	}, "\n") + "\n"

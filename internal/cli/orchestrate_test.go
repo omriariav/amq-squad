@@ -158,6 +158,38 @@ func TestRunStartRequiresProjectAndSession(t *testing.T) {
 	}
 }
 
+func TestRunStartLayoutPresetRefusesExistingWorkstreamBeforeLaunch(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+		},
+	})
+	backend := useFakeTmuxBackend(t)
+	base := setupFakeAMQSessionRoots(t)
+	if err := os.MkdirAll(filepath.Join(base, "sess"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stubCurrentRunStartPane(t, "%42")
+
+	_, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{
+			"--project", dir,
+			"--session", "sess",
+			"--layout-preset", layoutPresetOneWindowPerAgent,
+			"--go",
+		}, "test")
+	})
+	if err == nil || !strings.Contains(err.Error(), `workstream session "sess" already exists`) {
+		t.Fatalf("layout-preset existing-session error = %v, want collision refusal", err)
+	}
+	if len(backend.launches) != 0 {
+		t.Fatalf("collision refusal must occur before backend launch; got %d launch(es)", len(backend.launches))
+	}
+}
+
 func TestRunStartExternalLeadPreviewExistingProfileIsReadOnlyAndWorkerOnly(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Project:      "",

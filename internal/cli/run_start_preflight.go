@@ -24,6 +24,7 @@ const (
 	runStartPreflightInvalidEffort           = "invalid_effort"
 	runStartPreflightInvalidOperatorMode     = "invalid_operator_mode"
 	runStartPreflightExistingOperatorMode    = "existing_profile_operator_mode"
+	runStartPreflightInvalidLayout           = "invalid_layout"
 )
 
 type runStartPreflightInput struct {
@@ -40,6 +41,12 @@ type runStartPreflightInput struct {
 	EffortSet       bool
 	OperatorMode    string
 	OperatorModeSet bool
+	LayoutPreset    string
+	LayoutPresetSet bool
+	LauncherPane    string
+	LauncherPaneSet bool
+	VisibilitySet   bool
+	ExternalLead    bool
 }
 
 // runStartPreflightIssue is intentionally structured so wizard adapters can
@@ -51,14 +58,16 @@ type runStartPreflightIssue struct {
 }
 
 type runStartPreflightResult struct {
-	Project     string                   `json:"project"`
-	Profile     string                   `json:"profile"`
-	Session     string                   `json:"session"`
-	Visibility  string                   `json:"visibility"`
-	LeadMode    string                   `json:"lead_mode"`
-	TeamPresent bool                     `json:"team_present"`
-	FreshRoster bool                     `json:"fresh_roster"`
-	Issues      []runStartPreflightIssue `json:"issues,omitempty"`
+	Project      string                   `json:"project"`
+	Profile      string                   `json:"profile"`
+	Session      string                   `json:"session"`
+	Visibility   string                   `json:"visibility"`
+	LeadMode     string                   `json:"lead_mode"`
+	LayoutPreset string                   `json:"layout_preset,omitempty"`
+	LauncherPane string                   `json:"launcher_pane,omitempty"`
+	TeamPresent  bool                     `json:"team_present"`
+	FreshRoster  bool                     `json:"fresh_roster"`
+	Issues       []runStartPreflightIssue `json:"issues,omitempty"`
 }
 
 func (r runStartPreflightResult) Err() error {
@@ -98,14 +107,22 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 	if info, err := os.Stat(r.Project); err != nil || !info.IsDir() {
 		return add(runStartPreflightInvalidProject, fmt.Sprintf("project directory does not exist: %s", r.Project), "choose an existing project directory")
 	}
-	visibility, err := normalizeLaunchVisibility(input.Visibility)
+	layout, err := resolveRunStartLayout(runStartLayoutInput{
+		Visibility: input.Visibility, VisibilitySet: input.VisibilitySet,
+		Preset: input.LayoutPreset, PresetSet: input.LayoutPresetSet,
+		LauncherPane: input.LauncherPane, LauncherPaneSet: input.LauncherPaneSet,
+		ExternalLead: input.ExternalLead,
+	})
 	if err != nil {
-		return add(runStartPreflightInvalidVisibility, err.Error(), "choose sibling-tabs, detached, or current")
+		return add(runStartPreflightInvalidLayout, err.Error(), "choose a compatible topology, layout preset, and launcher-pane policy")
 	}
+	visibility := layout.Visibility
 	if visibility == visibilityPlan {
 		return add(runStartPreflightInvalidVisibility, "--visibility plan is not valid for run start; it previews by default and creates with --go", "omit --visibility for sibling-tabs or choose detached/current")
 	}
 	r.Visibility = visibility
+	r.LayoutPreset = layout.Preset
+	r.LauncherPane = layout.LauncherPane
 	profile, err := resolveProfileFlag(input.Profile)
 	if err != nil {
 		return add(runStartPreflightInvalidProfile, err.Error(), "choose default or a valid named profile")
