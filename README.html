@@ -388,29 +388,33 @@ together.</p>
 <p>The shortest working path for a visible project lead and workers:</p>
 <div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Preview, then create, an orchestrated run. --go is the mutation switch.</span></span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="dt">\</span></span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> . <span class="dt">\</span></span>
-<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="dt">\</span></span>
-<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--lead</span> cto <span class="dt">\</span></span>
-<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="dt">\</span></span>
-<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--go</span></span>
-<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="co"># Watch the run.</span></span>
-<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96</span>
-<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--session</span> issue-96</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Guided, read-only preview. In an interactive terminal, zero-argument</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="co"># `amq-squad run start` opens the same wizard.</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> wizard</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Preview, then create, an orchestrated run. --go is the mutation switch.</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="dt">\</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> . <span class="dt">\</span></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="dt">\</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--lead</span> cto <span class="dt">\</span></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="dt">\</span></span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>  <span class="at">--go</span></span>
 <span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a><span class="co"># Queue durable work to a role. Pane nudges are optional; AMQ is authoritative.</span></span>
-<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="dt">\</span></span>
-<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a>  <span class="at">--role</span> qa <span class="dt">\</span></span>
-<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Run smoke tests&quot;</span> <span class="dt">\</span></span>
-<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a>  <span class="at">--body</span> <span class="st">&quot;Validate the current PR and report findings.&quot;</span></span>
-<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a><span class="co"># Stop and resume without losing launch records, briefs, or task state.</span></span>
-<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--session</span> issue-96 <span class="at">--all</span></span>
-<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span></span></code></pre></div>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a><span class="co"># Watch the run.</span></span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96</span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--session</span> issue-96</span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a><span class="co"># Queue durable work to a role. Pane nudges are optional; AMQ is authoritative.</span></span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="dt">\</span></span>
+<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a>  <span class="at">--role</span> qa <span class="dt">\</span></span>
+<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Run smoke tests&quot;</span> <span class="dt">\</span></span>
+<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a>  <span class="at">--body</span> <span class="st">&quot;Validate the current PR and report findings.&quot;</span></span>
+<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-27"><a href="#cb5-27" aria-hidden="true" tabindex="-1"></a><span class="co"># Stop and resume without losing launch records, briefs, or task state.</span></span>
+<span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--session</span> issue-96 <span class="at">--all</span></span>
+<span id="cb5-29"><a href="#cb5-29" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span></span></code></pre></div>
 <p>Use <code>--external-lead</code> when the current pane is already the
 project lead and only the remaining workers should be spawned:</p>
 <div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
@@ -427,6 +431,14 @@ project lead and only the remaining workers should be spawned:</p>
 creates. With <code>--goal</code>, it waits until the lead is live
 before delivering the goal. If goal delivery fails, it exits non-zero
 and prints an exact retry command.</p>
+<p>In an interactive terminal, <code>amq-squad run start</code> with no
+arguments now opens the guided preview wizard instead of returning the
+old missing-flag usage error. <code>amq-squad wizard</code> and
+<code>run start --interactive</code> are equivalent. The wizard is
+preview-only in the first v2.19.0 slice, is disabled in CI, and never
+triggers when stdin or stderr is not a TTY. Partial flag commands
+without <code>--interactive</code> keep the canonical fail-fast parser
+behavior.</p>
 <p>Manual setup still works when the team shape is known:</p>
 <div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--sync</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session issue-96 <span class="at">--seed-from</span> issue:96</span></code></pre></div>
