@@ -356,8 +356,7 @@ func executeStatus(s statusExecution) error {
 		// Attach the stable action commands a client can render/copy per member.
 		for i := range rows {
 			rows[i].Namespace = ns
-			alive := rows[i].Tmux != nil && rows[i].Tmux.PaneAlive
-			rows[i].Actions = disableNamespaceConflictActions(policyAwareMemberActions(t, s.Profile, workstream, rows[i].Role, alive), conflict)
+			rows[i].Actions = disableNamespaceConflictActions(policyAwareMemberActionsForRow(t, s.Profile, workstream, rows[i]), conflict)
 		}
 		ctx := newSessionStatusContext(t, s.Profile, workstream, firstLiveTmuxSession(rows))
 		ctx.Actions = disableNamespaceConflictActions(ctx.Actions, conflict)
@@ -1507,6 +1506,9 @@ func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream
 	if rec.Tmux != nil {
 		rec.AgentPaneID = strings.TrimSpace(rec.Tmux.PaneID)
 		rec.ManagedTarget = strings.TrimSpace(rec.Tmux.Target)
+	}
+	if rec.Terminal != nil && rec.Terminal.Backend != "tmux" {
+		rec.Terminal.PIDAlive = rec.Signals.AgentAlive && rec.Signals.BinaryMatch
 	}
 	return rec
 }

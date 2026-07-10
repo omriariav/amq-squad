@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -360,6 +361,137 @@ func TestResolveControlTargetRefusesForeignProfileRecord(t *testing.T) {
 	panes := []tmuxpane.TmuxPane{{PaneID: "%5", CWD: dir, Command: "codex", Title: "amq:main:cto"}}
 	if paneID, _, ok := resolveControlTarget(mr, workstream, panes); ok || paneID != "" {
 		t.Fatalf("foreign-profile record must not fall back to fuzzy pane resolution, got ok=%v pane=%q", ok, paneID)
+	}
+}
+
+func TestFocusITerm2DoesNotRequireTmuxPaneList(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	seedProfile(t, dir, team.DefaultProfile, team.Team{
+		Project: dir,
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
+	})
+	seedAgentRecord(t, base, "main", "cto", launch.Record{
+		CWD:         dir,
+		Binary:      "codex",
+		Handle:      "cto",
+		Role:        "cto",
+		Session:     "main",
+		TeamProfile: team.DefaultProfile,
+		Terminal: &launch.TerminalInfo{
+			Backend:  "iterm2",
+			Session:  "main",
+			WindowID: "101",
+			Target:   "new-window",
+		},
+	})
+
+	prevLister := statusPaneLister
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		t.Fatal("iTerm2 focus should not list tmux panes")
+		return nil, nil
+	}
+	prevOutput := iterm2OutputCommand
+	called := false
+	iterm2OutputCommand = func(name string, args ...string) (string, error) {
+		called = true
+		if name != "osascript" || len(args) != 3 || args[2] != "101" {
+			t.Fatalf("focus command = %s %v", name, args)
+		}
+		return "OK\n", nil
+	}
+	t.Cleanup(func() {
+		statusPaneLister = prevLister
+		iterm2OutputCommand = prevOutput
+	})
+
+	if err := focusTarget(dir, team.DefaultProfile, "main", true, true, "cto"); err != nil {
+		t.Fatalf("focusTarget iTerm2: %v", err)
+	}
+	if !called {
+		t.Fatal("iTerm2 focus runner was not called")
+	}
+}
+
+func TestITerm2PaneInjectionVerbsReturnUnsupportedReason(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	seedProfile(t, dir, team.DefaultProfile, team.Team{
+		Project: dir,
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
+	})
+	seedAgentRecord(t, base, "main", "cto", launch.Record{
+		CWD:         dir,
+		Binary:      "codex",
+		Handle:      "cto",
+		Role:        "cto",
+		Session:     "main",
+		TeamProfile: team.DefaultProfile,
+		Terminal: &launch.TerminalInfo{
+			Backend:  "iterm2",
+			Session:  "main",
+			WindowID: "101",
+			Target:   "new-window",
+		},
+	})
+
+	prevLister := statusPaneLister
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		t.Fatal("iTerm2 unsupported pane-injection verbs should not list tmux panes")
+		return nil, nil
+	}
+	t.Cleanup(func() { statusPaneLister = prevLister })
+
+	_, _, err := captureOutput(t, func() error {
+		return runSend([]string{"--project", dir, "--session", "main", "--role", "cto", "--body", "hello"})
+	})
+	if err == nil || !strings.Contains(err.Error(), runtimecontrol.ITerm2InjectionDisabledReason) || strings.Contains(err.Error(), "no live tmux pane") {
+		t.Fatalf("iTerm2 send error = %v", err)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--project", dir, "--session", "main", "--role", "cto", "--goal", "ship"})
+	})
+	if err == nil || !strings.Contains(err.Error(), runtimecontrol.ITerm2InjectionDisabledReason) || strings.Contains(err.Error(), "no live tmux pane") {
+		t.Fatalf("iTerm2 goal deliver error = %v", err)
+	}
+}
+
+func TestDispatchWakePaneSkipsITerm2Nudge(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	seedProfile(t, dir, team.DefaultProfile, team.Team{
+		Project: dir,
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
+	})
+	seedAgentRecord(t, base, "main", "cto", launch.Record{
+		CWD:         dir,
+		Binary:      "codex",
+		Handle:      "cto",
+		Role:        "cto",
+		Session:     "main",
+		TeamProfile: team.DefaultProfile,
+		Terminal: &launch.TerminalInfo{
+			Backend:  "iterm2",
+			Session:  "main",
+			WindowID: "101",
+			Target:   "new-window",
+		},
+	})
+
+	prevLister := statusPaneLister
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		t.Fatal("iTerm2 dispatch nudge skip should not list tmux panes")
+		return nil, nil
+	}
+	t.Cleanup(func() { statusPaneLister = prevLister })
+
+	outcome, err := defaultDispatchWakePane(dir, team.DefaultProfile, "main", true, "cto", false)
+	if err != nil {
+		t.Fatalf("dispatch wake pane: %v", err)
+	}
+	if !strings.Contains(outcome.Skipped, runtimecontrol.ITerm2InjectionDisabledReason) || !strings.Contains(outcome.Skipped, "durable AMQ dispatch was queued") {
+		t.Fatalf("dispatch nudge outcome = %+v", outcome)
 	}
 }
 

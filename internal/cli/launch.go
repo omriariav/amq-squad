@@ -30,6 +30,16 @@ const envTmuxTarget = "AMQ_SQUAD_TMUX_TARGET"
 // from TMUX_PANE. Status uses it to detect same-pane lead collapse.
 const envTmuxLauncherPane = "AMQ_SQUAD_TMUX_LAUNCHER_PANE"
 
+const (
+	envTerminalBackend    = "AMQ_SQUAD_TERMINAL_BACKEND"
+	envTerminalSession    = "AMQ_SQUAD_TERMINAL_SESSION"
+	envTerminalWindowID   = "AMQ_SQUAD_TERMINAL_WINDOW_ID"
+	envTerminalWindowName = "AMQ_SQUAD_TERMINAL_WINDOW_NAME"
+	envTerminalTabID      = "AMQ_SQUAD_TERMINAL_TAB_ID"
+	envTerminalSessionID  = "AMQ_SQUAD_TERMINAL_SESSION_ID"
+	envTerminalTarget     = "AMQ_SQUAD_TERMINAL_TARGET"
+)
+
 var launchStdinIsTerminal = stdinIsTerminal
 
 type symphonyInitConfig struct {
@@ -338,6 +348,12 @@ Examples:
 		}
 		rec.Terminal = launch.TerminalInfoFromTmux(rec.Tmux)
 	}
+	if rec.Terminal == nil {
+		rec.Terminal = terminalInfoFromEnv()
+		if rec.Terminal != nil {
+			rec.AdoptionMode = launchAdoptionMode(rec.Terminal.Target, "", "")
+		}
+	}
 	// Keep generated bootstrap out of launch.json so restore stays compact
 	// and does not replay stale startup text.
 	effectiveChildArgs := append([]string(nil), childArgs...)
@@ -491,6 +507,22 @@ Examples:
 	// stale AM_ROOT/AM_ME from the launching shell along to the agent would
 	// re-create the identity-leak asymmetry #46 closed for env resolution.
 	return syscall.Exec(amqBin, append([]string{"amq"}, coopArgs...), envWithoutAMQIdentity(os.Environ()))
+}
+
+func terminalInfoFromEnv() *launch.TerminalInfo {
+	info := &launch.TerminalInfo{
+		Backend:    strings.TrimSpace(os.Getenv(envTerminalBackend)),
+		Session:    strings.TrimSpace(os.Getenv(envTerminalSession)),
+		WindowID:   strings.TrimSpace(os.Getenv(envTerminalWindowID)),
+		WindowName: strings.TrimSpace(os.Getenv(envTerminalWindowName)),
+		TabID:      strings.TrimSpace(os.Getenv(envTerminalTabID)),
+		SessionID:  strings.TrimSpace(os.Getenv(envTerminalSessionID)),
+		Target:     strings.TrimSpace(os.Getenv(envTerminalTarget)),
+	}
+	if info.Backend == "" && info.Session == "" && info.WindowID == "" && info.WindowName == "" && info.TabID == "" && info.SessionID == "" && info.Target == "" {
+		return nil
+	}
+	return info
 }
 
 func validateManagedTmuxLaunch(rec launch.Record) error {

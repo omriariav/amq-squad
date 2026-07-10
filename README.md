@@ -1152,6 +1152,13 @@ when `--json` is not passed. This is the user-facing closure for #222.
 
 ## Runtime control (tmux)
 
+The experimental iTerm2 launch backend is available on macOS with
+`--terminal iterm2 --target new-window`. It records backend-neutral terminal
+identity and supports window focus by recorded iTerm2 window id. Prompt
+injection, capture, busy detection, goal delivery, and pane-nudge dispatch stay
+disabled for iTerm2 until #374 proves safe behavior; durable AMQ dispatch still
+queues normally. Manual smoke steps live in [`docs/iterm2-tier-b-smoke.md`](docs/iterm2-tier-b-smoke.md).
+
 amq-squad owns the tmux execution/control contract for a team so external
 clients (such as amq-noc) can make agents actionable without scraping tmux or
 reconstructing pane layouts themselves.
