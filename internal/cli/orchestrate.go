@@ -116,7 +116,7 @@ func runGlobalStart(args []string) error {
 	// Build the agent argv: binary, then model, then the matching per-binary
 	// passthrough. Global start remains a single-agent surface, so effort rides
 	// directly in --codex-args / --claude-args; the role-mapped --effort flag is
-	// only meaningful while forming a project roster.
+	// only meaningful for a multi-role project run.
 	agentArgv := []string{*agent}
 	if strings.TrimSpace(*model) != "" {
 		agentArgv = append(agentArgv, "--model", strings.TrimSpace(*model))
@@ -216,9 +216,10 @@ registered and wake-live automatically. This wraps the create sequence so the
 Visibility defaults to sibling-tabs: agents open as sibling tmux windows in the
 current visible tmux session (requires a visible tmux pane when --go is used).
 Pass --visibility detached for hidden workers in a separate tmux session. Choose
-binary via --binary and model via --model. For a fresh roster, --effort
-normalizes role-specific values into the existing per-member CodexArgs or
-ClaudeArgs fields; it adds no persisted effort field or launch semantics.
+binary via --binary and model via --model. --effort normalizes role-specific
+values into the existing per-member CodexArgs or ClaudeArgs fields. For an
+existing profile it is launch-only and never rewrites stored member args; it
+adds no persisted effort field or launch semantics.
 
 Preview by default (prints the plan and runs read-only --dry-run validation, so
 its failures surface honestly); pass --go to create for real.
@@ -271,7 +272,7 @@ func runRunStart(args []string, version string) error {
 	rolesFlag := fs.String("roles", "", "create the roster first: comma-separated role ids")
 	binaryFlag := fs.String("binary", "", "per-role binary assignments, e.g. \"fullstack=codex,qa=codex\"")
 	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5.6-sol,fullstack=sonnet\"")
-	effortFlag := fs.String("effort", "", "per-role effort for a fresh roster, e.g. \"cto=high,qa=medium\" (normalized into native member args)")
+	effortFlag := fs.String("effort", "", "per-role effort, e.g. \"cto=high,qa=medium\" (launch-only for existing profiles; normalized into native member args)")
 	codexArgsFlag := fs.String("codex-args", "", "extra args for every Codex member (e.g. reasoning effort)")
 	claudeArgsFlag := fs.String("claude-args", "", "extra args for every Claude member")
 	visibilityFlag := fs.String("visibility", visibilitySiblingTabs, "spawn topology: sibling-tabs (visible default), detached (hidden), or current")
@@ -368,6 +369,9 @@ func runRunStart(args []string, version string) error {
 		upArgs = append(upArgs, "--seed-from", *seedFlag)
 	}
 	upArgs = appendPassthroughArgs(upArgs, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
+	if teamPresent && strings.TrimSpace(*effortFlag) != "" {
+		upArgs = append(upArgs, "--effort", *effortFlag)
+	}
 
 	leadModeDisplay := leadMode
 	if !flagWasSet(fs, "lead-mode") && teamPresent {
@@ -456,6 +460,7 @@ func runRunStart(args []string, version string) error {
 				TeamPresent: teamPresent,
 				Visibility:  visibility,
 				Model:       *modelFlag,
+				Effort:      *effortFlag,
 				CodexArgs:   *codexArgsFlag,
 				ClaudeArgs:  *claudeArgsFlag,
 				Version:     version,
@@ -485,14 +490,14 @@ func runRunStart(args []string, version string) error {
 		} else if len(newTeamArgs) > 0 {
 			quietNotice("profile %q already exists; skipping new team (using existing roster)\n", profileOrDefault(*profileFlag))
 		}
-		if err := validateRunStartExternalLeadWorkerLaunch(project, visibility, session, profile, externalLeadRole, *modelFlag, *codexArgsFlag, *claudeArgsFlag); err != nil {
+		if err := validateRunStartExternalLeadWorkerLaunch(project, visibility, session, profile, externalLeadRole, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag); err != nil {
 			return err
 		}
 		quietNotice("binding current pane as external lead %s...\n", externalLeadRole)
 		if err := runStartRegisterExternalLead(project, profile, session, externalLeadRole); err != nil {
 			return err
 		}
-		opts, err := runStartTeamLaunchOptions(visibility, session, profile, externalSeedContent, false, false, externalLeadRole, true, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
+		opts, err := runStartTeamLaunchOptions(visibility, session, profile, externalSeedContent, false, false, externalLeadRole, true, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag)
 		if err != nil {
 			return err
 		}
@@ -599,6 +604,7 @@ type runStartExternalLeadPreviewOptions struct {
 	TeamPresent bool
 	Visibility  string
 	Model       string
+	Effort      string
 	CodexArgs   string
 	ClaudeArgs  string
 	Version     string
@@ -616,7 +622,7 @@ func runStartExternalLeadPreview(opts runStartExternalLeadPreviewOptions) error 
 		return nil
 	}
 	if opts.TeamPresent {
-		if err := validateRunStartExternalLeadWorkerLaunch(opts.Project, opts.Visibility, opts.Session, opts.Profile, opts.Lead, opts.Model, opts.CodexArgs, opts.ClaudeArgs); err != nil {
+		if err := validateRunStartExternalLeadWorkerLaunch(opts.Project, opts.Visibility, opts.Session, opts.Profile, opts.Lead, opts.Model, opts.Effort, opts.CodexArgs, opts.ClaudeArgs); err != nil {
 			return fmt.Errorf("worker spawn dry-run failed: %w", err)
 		}
 		fmt.Print("\nPreview OK. Re-run with --external-lead --go to bind this pane as lead and spawn remaining workers.\n")
@@ -625,25 +631,30 @@ func runStartExternalLeadPreview(opts runStartExternalLeadPreviewOptions) error 
 	return usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", opts.Profile, opts.Project)
 }
 
-func runStartTeamLaunchOptions(visibility, session, profile, seedContent string, seedForce, dryRun bool, externalLeadRole string, allowLeadOnly bool, modelRaw, codexArgsRaw, claudeArgsRaw string) (teamLaunchOptions, error) {
+func runStartTeamLaunchOptions(visibility, session, profile, seedContent string, seedForce, dryRun bool, externalLeadRole string, allowLeadOnly bool, modelRaw, effortRaw, codexArgsRaw, claudeArgsRaw string) (teamLaunchOptions, error) {
 	modelOverrides, err := parseKV(modelRaw)
 	if err != nil {
 		return teamLaunchOptions{}, fmt.Errorf("parse --model: %w", err)
 	}
 	modelOverrides = lowercaseKeys(modelOverrides)
+	effortOverrides, err := parseEffortOverrides(effortRaw)
+	if err != nil {
+		return teamLaunchOptions{}, err
+	}
 	binaryArgs, err := parseBinaryArgFlags(codexArgsRaw, claudeArgsRaw)
 	if err != nil {
 		return teamLaunchOptions{}, err
 	}
 	opts := teamLaunchOptions{
-		Terminal:       "tmux",
-		Target:         "current-window",
-		Layout:         "vertical",
-		Workstream:     session,
-		Stagger:        750 * time.Millisecond,
-		SquadBin:       teamSquadBin(),
-		BinaryArgs:     binaryArgs,
-		ModelOverrides: modelOverrides,
+		Terminal:        "tmux",
+		Target:          "current-window",
+		Layout:          "vertical",
+		Workstream:      session,
+		Stagger:         750 * time.Millisecond,
+		SquadBin:        teamSquadBin(),
+		BinaryArgs:      binaryArgs,
+		ModelOverrides:  modelOverrides,
+		EffortOverrides: effortOverrides,
 	}
 	if err := applyLaunchVisibility(&opts, visibility, false, false, false, true); err != nil {
 		return teamLaunchOptions{}, err
@@ -794,8 +805,8 @@ func authorizeRunStartExternalLeadAdoption(project, profile, session, lead strin
 	return err
 }
 
-func validateRunStartExternalLeadWorkerLaunch(project, visibility, session, profile, lead, modelRaw, codexArgsRaw, claudeArgsRaw string) error {
-	launchOpts, err := runStartTeamLaunchOptions(visibility, session, profile, "", false, true, lead, true, modelRaw, codexArgsRaw, claudeArgsRaw)
+func validateRunStartExternalLeadWorkerLaunch(project, visibility, session, profile, lead, modelRaw, effortRaw, codexArgsRaw, claudeArgsRaw string) error {
+	launchOpts, err := runStartTeamLaunchOptions(visibility, session, profile, "", false, true, lead, true, modelRaw, effortRaw, codexArgsRaw, claudeArgsRaw)
 	if err != nil {
 		return err
 	}

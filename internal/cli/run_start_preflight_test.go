@@ -31,14 +31,21 @@ func TestRunStartPreflightReturnsStructuredPinnedSessionMismatch(t *testing.T) {
 	}
 }
 
-func TestRunStartPreflightEffortIsFreshRosterOnly(t *testing.T) {
+func TestRunStartPreflightExistingProfileEffortIsLaunchOnlyAndValid(t *testing.T) {
 	dir := t.TempDir()
 	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Project: dir, Members: []team.Member{{Role: "cto", Binary: "codex", Session: "sess"}}}); err != nil {
 		t.Fatal(err)
 	}
 	result := runStartPreflight(runStartPreflightInput{Project: dir, Session: "sess", Visibility: "sibling-tabs", Effort: "cto=high", EffortSet: true})
-	if len(result.Issues) != 1 || result.Issues[0].Code != runStartPreflightExistingProfileEffort {
+	if len(result.Issues) != 0 {
 		t.Fatalf("preflight = %+v", result)
+	}
+	stored, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := memberEffort(stored.Members[0]); got != effortAutomatic {
+		t.Fatalf("preflight mutated stored effort to %q", got)
 	}
 }
 

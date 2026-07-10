@@ -1,0 +1,776 @@
+package wizard
+
+import (
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+type bubbleStage int
+
+const (
+	stageProject bubbleStage = iota
+	stageProfile
+	stageNewProfile
+	stageSession
+	stageExistingOverride
+	stageExistingModel
+	stageExistingEffort
+	stageRoles
+	stageRoleBinary
+	stageRoleModel
+	stageRoleEffort
+	stageLead
+	stageLeadMode
+	stageTopology
+	stageGoal
+	stageSeed
+	stageConfirm
+)
+
+type BubbleResult struct {
+	Spec      Spec
+	Cancelled bool
+}
+
+type bubbleSnapshot struct {
+	spec          Spec
+	ctx           ProjectContext
+	stage         bubbleStage
+	cursor        int
+	existingIndex int
+	roleOrder     []string
+	roleIndex     int
+	inputValue    string
+}
+
+// BubbleModel is the full-screen adapter over the same Spec and project facts
+// used by RunNumbered. It owns navigation only; it cannot preview or launch.
+type BubbleModel struct {
+	opts NumberedOptions
+	spec Spec
+	ctx  ProjectContext
+
+	stage         bubbleStage
+	cursor        int
+	existingIndex int
+	roleOrder     []string
+	roleIndex     int
+	input         textinput.Model
+	history       []bubbleSnapshot
+
+	width     int
+	height    int
+	err       error
+	done      bool
+	cancelled bool
+}
+
+var (
+	wizardAccent = lipgloss.AdaptiveColor{Light: "#416B88", Dark: "#78A9C4"}
+	wizardSignal = lipgloss.AdaptiveColor{Light: "#8A641E", Dark: "#D6A550"}
+	wizardText   = lipgloss.AdaptiveColor{Light: "#20272D", Dark: "#D8DEE4"}
+	wizardMuted  = lipgloss.AdaptiveColor{Light: "#66717A", Dark: "#7D8790"}
+	wizardBorder = lipgloss.AdaptiveColor{Light: "#AAB5BC", Dark: "#4E5A63"}
+
+	styleWizardTitle = lipgloss.NewStyle().Bold(true).Foreground(wizardAccent)
+	styleWizardStep  = lipgloss.NewStyle().Bold(true).Foreground(wizardText)
+	styleWizardMuted = lipgloss.NewStyle().Foreground(wizardMuted)
+	styleWizardPick  = lipgloss.NewStyle().Bold(true).Foreground(wizardSignal)
+	styleWizardPanel = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(wizardBorder).Padding(1, 2)
+)
+
+func NewBubbleModel(opts NumberedOptions) (BubbleModel, error) {
+	s := opts.Defaults
+	ctx := ProjectContext{Project: s.Project}
+	var err error
+	if opts.InspectProject != nil {
+		ctx, err = opts.InspectProject(s.Project)
+		if err != nil {
+			return BubbleModel{}, err
+		}
+		if strings.TrimSpace(ctx.Project) != "" {
+			s.Project = ctx.Project
+		}
+	}
+	input := textinput.New()
+	input.CharLimit = 512
+	input.Width = 64
+	m := BubbleModel{
+		opts:          opts,
+		spec:          s,
+		ctx:           ctx,
+		stage:         stageProject,
+		existingIndex: -1,
+		input:         input,
+		width:         88,
+		height:        28,
+	}
+	m.configureStage()
+	return m, nil
+}
+
+func RunBubbleTea(in io.Reader, out io.Writer, opts NumberedOptions) (BubbleResult, error) {
+	m, err := NewBubbleModel(opts)
+	if err != nil {
+		return BubbleResult{}, err
+	}
+	program := tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(out), tea.WithAltScreen())
+	final, err := program.Run()
+	if err != nil {
+		return BubbleResult{}, err
+	}
+	result, ok := final.(BubbleModel)
+	if !ok {
+		return BubbleResult{}, fmt.Errorf("wizard returned unexpected model %T", final)
+	}
+	return BubbleResult{Spec: result.spec, Cancelled: result.cancelled}, nil
+}
+
+func (m BubbleModel) Init() tea.Cmd {
+	if m.isTextStage() {
+		return textinput.Blink
+	}
+	return nil
+}
+
+func (m BubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		m.input.Width = maxInt(24, minInt(72, msg.Width-12))
+		return m, nil
+	case tea.KeyMsg:
+		key := msg.String()
+		if key == "ctrl+c" {
+			m.cancelled = true
+			return m, tea.Quit
+		}
+		if key == "esc" {
+			return m.back()
+		}
+		if m.isTextStage() {
+			if key == "enter" {
+				return m.commitText()
+			}
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
+		}
+		if key == "q" {
+			m.cancelled = true
+			return m, tea.Quit
+		}
+		choices := m.choices()
+		switch key {
+		case "up", "k":
+			if len(choices) > 0 {
+				m.cursor = (m.cursor - 1 + len(choices)) % len(choices)
+			}
+		case "down", "j", "tab":
+			if len(choices) > 0 {
+				m.cursor = (m.cursor + 1) % len(choices)
+			}
+		case "enter", " ":
+			return m.commitChoice()
+		}
+	}
+	return m, nil
+}
+
+func (m BubbleModel) View() string {
+	if m.cancelled {
+		return "Wizard cancelled. Nothing changed.\n"
+	}
+	if m.done {
+		return "Preview choices collected.\n"
+	}
+	width := maxInt(48, minInt(96, m.width-4))
+	var b strings.Builder
+	b.WriteString(styleWizardTitle.Render("amq-squad · run start control deck"))
+	b.WriteString("\n")
+	b.WriteString(m.renderRail())
+	b.WriteString("\n\n")
+	b.WriteString(styleWizardPanel.Width(width - 6).Render(m.renderPanel()))
+	b.WriteString("\n\n")
+	b.WriteString(styleWizardMuted.Render(m.footer()))
+	if m.err != nil {
+		b.WriteString("\n" + styleWizardPick.Render("Check: "+m.err.Error()))
+	}
+	return b.String()
+}
+
+func (m BubbleModel) renderRail() string {
+	current := m.phaseIndex()
+	labels := []string{"Project", "Team", "Topology", "Goal", "Review"}
+	parts := make([]string, 0, len(labels))
+	for i, label := range labels {
+		marker := "○"
+		style := styleWizardMuted
+		if i < current {
+			marker = "●"
+		}
+		if i == current {
+			marker = "◆"
+			style = styleWizardPick
+		}
+		parts = append(parts, style.Render(fmt.Sprintf("%s %d %s", marker, i+1, label)))
+	}
+	return strings.Join(parts, styleWizardMuted.Render("  ─  "))
+}
+
+func (m BubbleModel) renderPanel() string {
+	var b strings.Builder
+	b.WriteString(styleWizardStep.Render(m.title()))
+	if note := m.note(); note != "" {
+		b.WriteString("\n" + styleWizardMuted.Render(note))
+	}
+	b.WriteString("\n\n")
+	if m.isTextStage() {
+		b.WriteString(m.input.View())
+		return b.String()
+	}
+	if m.stage == stageConfirm {
+		b.WriteString(m.summary())
+		b.WriteString("\n\n")
+	}
+	choices := m.choices()
+	for i, item := range choices {
+		cursor := "  "
+		line := item.label
+		if i == m.cursor {
+			cursor = "› "
+			line = styleWizardPick.Render(line)
+		}
+		b.WriteString(cursor + line + "\n")
+	}
+	if m.stage == stageTopology && len(choices) > 0 {
+		selected := choices[minInt(m.cursor, len(choices)-1)].value
+		b.WriteString("\n" + styleWizardMuted.Render(topologyConsequence(selected)) + "\n\n")
+		b.WriteString(TopologyPreview(selected))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func (m BubbleModel) title() string {
+	switch m.stage {
+	case stageProject:
+		return "Choose the project root"
+	case stageProfile:
+		return "Choose a team profile"
+	case stageNewProfile:
+		return "Name the new profile"
+	case stageSession:
+		return "Choose the workstream session"
+	case stageExistingOverride:
+		return "Launch-time override · " + m.currentMember().Role
+	case stageExistingModel:
+		return "Model override · " + m.currentMember().Role
+	case stageExistingEffort:
+		return "Effort override · " + m.currentMember().Role
+	case stageRoles:
+		return "Choose fresh-roster roles"
+	case stageRoleBinary:
+		return "Binary · " + m.currentRole()
+	case stageRoleModel:
+		return "Model · " + m.currentRole()
+	case stageRoleEffort:
+		return "Effort · " + m.currentRole()
+	case stageLead:
+		return "Choose the visible lead"
+	case stageLeadMode:
+		return "Choose the lead posture"
+	case stageTopology:
+		return "Choose where agents appear"
+	case stageGoal:
+		return "Optional goal text"
+	case stageSeed:
+		return "Optional brief source"
+	case stageConfirm:
+		return "Review the read-only preview"
+	default:
+		return "Run start wizard"
+	}
+}
+
+func (m BubbleModel) note() string {
+	switch m.stage {
+	case stageProject:
+		if m.ctx.OriginSlug != "" {
+			return "Detected origin " + m.ctx.OriginSlug + ". The nearest git root is the default."
+		}
+		return "The nearest git root is the default; no network access is used."
+	case stageExistingOverride:
+		member := m.currentMember()
+		return fmt.Sprintf("Profile values stay untouched: model=%s · effort=%s", defaultString(member.Model, "automatic"), defaultString(member.Effort, "automatic"))
+	case stageExistingModel:
+		return "Enter a model for this launch only, or leave blank to keep the profile value."
+	case stageExistingEffort:
+		return "This replaces only the native effort args in the in-memory launch plan."
+	case stageRoles:
+		return "Comma-separated role ids. Defaults are shown in the field."
+	case stageRoleModel:
+		return "Use automatic to let the selected binary choose."
+	case stageTopology:
+		return "The diagram is the topology that the canonical visibility flag selects."
+	case stageConfirm:
+		return "Enter runs the existing canonical preview. It cannot launch agents."
+	case stageSeed:
+		return "Accepted forms: file:path · issue:393 · gh:owner/repo#393"
+	}
+	return ""
+}
+
+func (m BubbleModel) footer() string {
+	if m.isTextStage() {
+		return "enter continue · esc back · ctrl+c cancel"
+	}
+	return "↑/↓ choose · enter continue · esc back · q cancel"
+}
+
+func (m BubbleModel) summary() string {
+	parts := []string{
+		"Project   " + m.spec.Project,
+		"Profile   " + defaultString(m.spec.Profile, "default"),
+		"Session   " + m.spec.Session,
+	}
+	if m.spec.Roles != "" {
+		parts = append(parts, "Roster    "+m.spec.Roles, "Lead      "+m.spec.Lead+" · "+m.spec.LeadMode)
+	} else {
+		parts = append(parts, "Roster    existing profile (authoritative)")
+	}
+	if m.spec.Model != "" {
+		parts = append(parts, "Models    "+m.spec.Model+" (launch only)")
+	}
+	if m.spec.Effort != "" {
+		parts = append(parts, "Effort    "+m.spec.Effort+" (launch only)")
+	}
+	parts = append(parts, "Topology  "+m.spec.Visibility, "", TopologyPreview(m.spec.Visibility))
+	return strings.Join(parts, "\n")
+}
+
+func (m BubbleModel) isTextStage() bool {
+	switch m.stage {
+	case stageProject, stageNewProfile, stageSession, stageExistingModel, stageRoles, stageRoleModel, stageLead, stageGoal, stageSeed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *BubbleModel) configureStage() {
+	m.err = nil
+	m.cursor = 0
+	m.input.Blur()
+	value := ""
+	placeholder := ""
+	switch m.stage {
+	case stageProject:
+		value = m.spec.Project
+	case stageNewProfile:
+		value = defaultString(m.ctx.NewProfileSuggestion, "squad-"+defaultString(m.ctx.SessionSuggestion, "project"))
+	case stageSession:
+		value = m.spec.Session
+		if value == "" && m.existingIndex >= 0 {
+			value = m.ctx.Profiles[m.existingIndex].PinnedSession
+		}
+		if value == "" {
+			value = m.ctx.SessionSuggestion
+		}
+	case stageExistingModel:
+		placeholder = "leave blank to keep " + defaultString(m.currentMember().Model, "automatic")
+	case stageRoles:
+		value = defaultString(m.spec.Roles, "cto,senior-dev,qa")
+	case stageRoleModel:
+		value = defaultString(parseAssignments(m.spec.Model)[m.currentRole()], "automatic")
+	case stageLead:
+		value = defaultString(m.spec.Lead, defaultLead(m.roleOrder))
+	case stageGoal:
+		value = m.spec.Goal
+		placeholder = "optional"
+	case stageSeed:
+		value = m.spec.SeedFrom
+		placeholder = "optional"
+	}
+	if m.isTextStage() {
+		m.input.SetValue(value)
+		m.input.Placeholder = placeholder
+		m.input.CursorEnd()
+		m.input.Focus()
+	}
+	m.cursor = m.defaultCursor()
+}
+
+func (m BubbleModel) choices() []choice {
+	switch m.stage {
+	case stageProfile:
+		choices := make([]choice, 0, len(m.ctx.Profiles)+2)
+		for _, profile := range m.ctx.Profiles {
+			pinned := defaultString(profile.PinnedSession, "un-pinned")
+			choices = append(choices, choice{value: profile.Name, label: fmt.Sprintf("%s · %d member(s) · session %s", profile.Name, profile.MemberCount, pinned)})
+		}
+		if len(m.ctx.Profiles) == 0 || findProfile(m.ctx.Profiles, "default") < 0 {
+			choices = append(choices, choice{value: "default", label: "default · create a fresh roster"})
+		}
+		choices = append(choices, choice{value: "__create__", label: "create a named profile"})
+		return choices
+	case stageExistingOverride:
+		return []choice{{value: "keep", label: "Keep profile model and effort"}, {value: "override", label: "Override this role for this launch only"}}
+	case stageExistingEffort:
+		return effortChoices(m.currentMember().Binary)
+	case stageRoleBinary:
+		return []choice{{value: "codex", label: "Codex"}, {value: "claude", label: "Claude"}}
+	case stageRoleEffort:
+		return effortChoices(parseAssignments(m.spec.Binary)[m.currentRole()])
+	case stageLeadMode:
+		return []choice{{value: "builder", label: "Builder · lead may implement and delegate"}, {value: "planner", label: "Planner · lead dispatches and reviews; workers mutate"}}
+	case stageTopology:
+		return []choice{{value: "sibling-tabs", label: "One window per agent"}, {value: "current", label: "Panes in this window"}, {value: "detached", label: "Detached squad"}}
+	case stageConfirm:
+		return []choice{{value: "preview", label: "Run the canonical read-only preview"}}
+	default:
+		return nil
+	}
+}
+
+func effortChoices(binary string) []choice {
+	choices := []choice{{value: "automatic", label: "Automatic"}, {value: "low", label: "Low"}, {value: "medium", label: "Medium"}, {value: "high", label: "High"}}
+	if strings.EqualFold(binary, "codex") {
+		choices = append(choices, choice{value: "minimal", label: "Minimal"}, choice{value: "xhigh", label: "Extra high"})
+	}
+	return choices
+}
+
+func (m BubbleModel) defaultCursor() int {
+	choices := m.choices()
+	want := ""
+	switch m.stage {
+	case stageProfile:
+		want = defaultString(m.spec.Profile, "default")
+	case stageExistingEffort:
+		want = defaultString(m.currentMember().Effort, effortAutomatic)
+	case stageRoleBinary:
+		want = parseAssignments(m.spec.Binary)[m.currentRole()]
+		if want == "" {
+			want = m.ctx.PreferredBinaries[m.currentRole()]
+		}
+	case stageRoleEffort:
+		want = defaultString(parseAssignments(m.spec.Effort)[m.currentRole()], effortAutomatic)
+	case stageLeadMode:
+		want = defaultString(m.spec.LeadMode, "builder")
+	case stageTopology:
+		want = defaultString(m.spec.Visibility, "sibling-tabs")
+	}
+	for i, item := range choices {
+		if item.value == want {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
+	value := strings.TrimSpace(m.input.Value())
+	m.pushHistory()
+	switch m.stage {
+	case stageProject:
+		if value == "" {
+			m.err = fmt.Errorf("project cannot be empty")
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		ctx := ProjectContext{Project: value}
+		var err error
+		if m.opts.InspectProject != nil {
+			ctx, err = m.opts.InspectProject(value)
+			if err != nil {
+				m.err = err
+				m.history = m.history[:len(m.history)-1]
+				return m, nil
+			}
+		}
+		m.ctx = ctx
+		m.spec.Project = defaultString(ctx.Project, value)
+		m.transition(stageProfile)
+	case stageNewProfile:
+		if value == "" {
+			m.err = fmt.Errorf("profile cannot be empty")
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		m.spec.Profile = value
+		m.existingIndex = -1
+		m.transition(stageSession)
+	case stageSession:
+		if value == "" {
+			m.err = fmt.Errorf("session cannot be empty")
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		m.spec.Session = value
+		if m.existingIndex >= 0 {
+			m.spec.Roles, m.spec.Binary, m.spec.Model, m.spec.Effort, m.spec.Lead, m.spec.LeadMode = "", "", "", "", "", ""
+			m.roleIndex = 0
+			if len(m.ctx.Profiles[m.existingIndex].Members) == 0 {
+				m.transition(stageTopology)
+			} else {
+				m.transition(stageExistingOverride)
+			}
+		} else {
+			m.transition(stageRoles)
+		}
+	case stageExistingModel:
+		if value != "" {
+			m.spec.Model = setAssignment(m.spec.Model, m.currentMember().Role, value)
+		} else {
+			m.spec.Model = removeAssignment(m.spec.Model, m.currentMember().Role)
+		}
+		m.transition(stageExistingEffort)
+	case stageRoles:
+		m.roleOrder = splitAssignmentsList(value)
+		if len(m.roleOrder) == 0 {
+			m.err = fmt.Errorf("choose at least one role")
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		m.spec.Roles = strings.Join(m.roleOrder, ",")
+		m.spec.Binary = renderAssignments(m.roleOrder, parseAssignments(m.spec.Binary))
+		m.spec.Model = renderAssignments(m.roleOrder, parseAssignments(m.spec.Model))
+		m.spec.Effort = renderAssignments(m.roleOrder, parseAssignments(m.spec.Effort))
+		if !containsString(m.roleOrder, m.spec.Lead) {
+			m.spec.Lead = ""
+		}
+		m.roleIndex = 0
+		m.transition(stageRoleBinary)
+	case stageRoleModel:
+		if value == "" || strings.EqualFold(value, "automatic") {
+			m.spec.Model = removeAssignment(m.spec.Model, m.currentRole())
+		} else {
+			m.spec.Model = setAssignment(m.spec.Model, m.currentRole(), value)
+		}
+		m.transition(stageRoleEffort)
+	case stageLead:
+		if value == "" {
+			m.err = fmt.Errorf("lead cannot be empty")
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		m.spec.Lead = value
+		m.transition(stageLeadMode)
+	case stageGoal:
+		m.spec.Goal = value
+		m.transition(stageSeed)
+	case stageSeed:
+		m.spec.SeedFrom = value
+		m.transition(stageConfirm)
+	}
+	return m, textinput.Blink
+}
+
+func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
+	choices := m.choices()
+	if len(choices) == 0 {
+		return m, nil
+	}
+	selected := choices[minInt(m.cursor, len(choices)-1)].value
+	m.pushHistory()
+	switch m.stage {
+	case stageProfile:
+		if selected == "__create__" {
+			m.transition(stageNewProfile)
+			break
+		}
+		m.spec.Profile = selected
+		m.existingIndex = findProfile(m.ctx.Profiles, selected)
+		m.transition(stageSession)
+	case stageExistingOverride:
+		if selected == "override" {
+			m.transition(stageExistingModel)
+		} else {
+			m.nextExistingMember()
+		}
+	case stageExistingEffort:
+		m.spec.Effort = setAssignment(m.spec.Effort, m.currentMember().Role, selected)
+		m.nextExistingMember()
+	case stageRoleBinary:
+		m.spec.Binary = setAssignment(m.spec.Binary, m.currentRole(), selected)
+		m.transition(stageRoleModel)
+	case stageRoleEffort:
+		if selected == effortAutomatic {
+			m.spec.Effort = removeAssignment(m.spec.Effort, m.currentRole())
+		} else {
+			m.spec.Effort = setAssignment(m.spec.Effort, m.currentRole(), selected)
+		}
+		m.roleIndex++
+		if m.roleIndex < len(m.roleOrder) {
+			m.transition(stageRoleBinary)
+		} else {
+			m.transition(stageLead)
+		}
+	case stageLeadMode:
+		m.spec.LeadMode = selected
+		m.transition(stageTopology)
+	case stageTopology:
+		m.spec.Visibility = selected
+		m.transition(stageGoal)
+	case stageConfirm:
+		m.done = true
+		return m, tea.Quit
+	}
+	return m, textinput.Blink
+}
+
+func (m *BubbleModel) nextExistingMember() {
+	m.roleIndex++
+	if m.roleIndex < len(m.ctx.Profiles[m.existingIndex].Members) {
+		m.transition(stageExistingOverride)
+	} else {
+		m.transition(stageTopology)
+	}
+}
+
+func (m *BubbleModel) transition(stage bubbleStage) {
+	m.stage = stage
+	m.configureStage()
+}
+
+func (m *BubbleModel) pushHistory() {
+	m.history = append(m.history, bubbleSnapshot{
+		spec:          m.spec,
+		ctx:           m.ctx,
+		stage:         m.stage,
+		cursor:        m.cursor,
+		existingIndex: m.existingIndex,
+		roleOrder:     append([]string(nil), m.roleOrder...),
+		roleIndex:     m.roleIndex,
+		inputValue:    m.input.Value(),
+	})
+}
+
+func (m BubbleModel) back() (tea.Model, tea.Cmd) {
+	if len(m.history) == 0 {
+		m.cancelled = true
+		return m, tea.Quit
+	}
+	last := m.history[len(m.history)-1]
+	m.history = m.history[:len(m.history)-1]
+	m.spec = last.spec
+	m.ctx = last.ctx
+	m.stage = last.stage
+	m.cursor = last.cursor
+	m.existingIndex = last.existingIndex
+	m.roleOrder = append([]string(nil), last.roleOrder...)
+	m.roleIndex = last.roleIndex
+	m.configureStage()
+	m.cursor = last.cursor
+	if m.isTextStage() {
+		m.input.SetValue(last.inputValue)
+		m.input.CursorEnd()
+	}
+	return m, textinput.Blink
+}
+
+func (m BubbleModel) phaseIndex() int {
+	switch m.stage {
+	case stageProject:
+		return 0
+	case stageProfile, stageNewProfile, stageSession, stageExistingOverride, stageExistingModel, stageExistingEffort, stageRoles, stageRoleBinary, stageRoleModel, stageRoleEffort, stageLead, stageLeadMode:
+		return 1
+	case stageTopology:
+		return 2
+	case stageGoal, stageSeed:
+		return 3
+	default:
+		return 4
+	}
+}
+
+func (m BubbleModel) currentRole() string {
+	if m.roleIndex < 0 || m.roleIndex >= len(m.roleOrder) {
+		return "role"
+	}
+	return m.roleOrder[m.roleIndex]
+}
+
+func (m BubbleModel) currentMember() MemberSummary {
+	if m.existingIndex < 0 || m.existingIndex >= len(m.ctx.Profiles) {
+		return MemberSummary{Role: "role"}
+	}
+	members := m.ctx.Profiles[m.existingIndex].Members
+	if m.roleIndex < 0 || m.roleIndex >= len(members) {
+		return MemberSummary{Role: "role"}
+	}
+	return members[m.roleIndex]
+}
+
+func findProfile(profiles []ProfileSummary, name string) int {
+	for i := range profiles {
+		if profiles[i].Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func defaultLead(roles []string) string {
+	for _, role := range roles {
+		if role == "cto" {
+			return "cto"
+		}
+	}
+	if len(roles) > 0 {
+		return roles[0]
+	}
+	return "cto"
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func setAssignment(raw, key, value string) string {
+	values := parseAssignments(raw)
+	values[key] = value
+	order := splitAssignmentsList(rawAssignmentKeys(raw) + "," + key)
+	return renderAssignments(order, values)
+}
+
+func removeAssignment(raw, key string) string {
+	values := parseAssignments(raw)
+	delete(values, key)
+	return renderAssignments(splitAssignmentsList(rawAssignmentKeys(raw)), values)
+}
+
+func rawAssignmentKeys(raw string) string {
+	keys := make([]string, 0)
+	for _, item := range strings.Split(raw, ",") {
+		key, _, ok := strings.Cut(item, "=")
+		if ok && strings.TrimSpace(key) != "" {
+			keys = append(keys, strings.TrimSpace(key))
+		}
+	}
+	return strings.Join(keys, ",")
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}

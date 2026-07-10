@@ -104,9 +104,46 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		fmt.Fprintln(out)
 		s.Roles = ""
 		s.Binary = ""
+		s.Model = ""
 		s.Effort = ""
 		s.Lead = ""
 		s.LeadMode = ""
+		if existingProfile != nil {
+			modelOverrides := map[string]string{}
+			effortOverrides := map[string]string{}
+			memberOrder := make([]string, 0, len(existingProfile.Members))
+			for _, member := range existingProfile.Members {
+				memberOrder = append(memberOrder, member.Role)
+				override, choiceErr := promptChoice(r, out, "Override "+member.Role+" at launch", []choice{
+					{value: "keep", label: "keep profile model/effort"},
+					{value: "override", label: "override this role's model/effort for this launch only"},
+				}, "keep")
+				if choiceErr != nil {
+					return Spec{}, choiceErr
+				}
+				if override != "override" {
+					continue
+				}
+				model, promptErr := promptOptionalOverride(r, out, member.Role+" model override", defaultString(member.Model, "automatic"))
+				if promptErr != nil {
+					return Spec{}, promptErr
+				}
+				if model != "" {
+					modelOverrides[member.Role] = model
+				}
+				effortChoices := []choice{{value: "automatic", label: "automatic: ignore stored effort for this launch"}, {value: "low", label: "low"}, {value: "medium", label: "medium"}, {value: "high", label: "high"}}
+				if member.Binary == "codex" {
+					effortChoices = append(effortChoices, choice{value: "minimal", label: "minimal"}, choice{value: "xhigh", label: "xhigh"})
+				}
+				effort, promptErr := promptChoice(r, out, member.Role+" effort override", effortChoices, defaultString(member.Effort, effortAutomatic))
+				if promptErr != nil {
+					return Spec{}, promptErr
+				}
+				effortOverrides[member.Role] = effort
+			}
+			s.Model = renderAssignments(memberOrder, modelOverrides)
+			s.Effort = renderAssignments(memberOrder, effortOverrides)
+		}
 	} else {
 		if s.Roles, err = promptText(r, out, "Roles (comma-separated)", defaultString(s.Roles, "cto,senior-dev,qa")); err != nil {
 			return Spec{}, err
@@ -275,6 +312,15 @@ func promptText(r *bufio.Reader, out io.Writer, label, current string) (string, 
 		return current, nil
 	}
 	return line, nil
+}
+
+func promptOptionalOverride(r *bufio.Reader, out io.Writer, label, current string) (string, error) {
+	fmt.Fprintf(out, "%s [current %s; Enter keeps it]: ", label, current)
+	line, err := r.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", strings.ToLower(label), err)
+	}
+	return strings.TrimSpace(line), nil
 }
 
 func promptChoice(r *bufio.Reader, out io.Writer, label string, choices []choice, current string) (string, error) {
