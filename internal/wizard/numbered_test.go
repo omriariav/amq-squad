@@ -8,7 +8,7 @@ import (
 
 func TestRunNumberedEnterThroughDefaults(t *testing.T) {
 	var out bytes.Buffer
-	got, err := RunNumbered(strings.NewReader(strings.Repeat("\n", 9)), &out, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader(strings.Repeat("\n", 24)), &out, NumberedOptions{
 		Defaults: Spec{
 			Project:    "/repo",
 			Profile:    "default",
@@ -26,6 +26,9 @@ func TestRunNumberedEnterThroughDefaults(t *testing.T) {
 	if got.Visibility != "sibling-tabs" {
 		t.Fatalf("visibility = %q", got.Visibility)
 	}
+	if got.Binary != "cto=codex,senior-dev=codex,qa=codex" || got.Effort != "" {
+		t.Fatalf("default binary/effort normalization = %+v", got)
+	}
 	text := out.String()
 	for _, want := range []string{"Preview only", "Project directory [/repo]", "builder: lead may implement and delegate (default)", "sibling-tabs: one visible tmux window per agent (default)"} {
 		if !strings.Contains(text, want) {
@@ -40,6 +43,15 @@ func TestRunNumberedAcceptsNumberedChoices(t *testing.T) {
 		"",  // profile
 		"",  // session
 		"",  // roles
+		"",  // cto binary
+		"",  // cto model
+		"",  // cto effort
+		"",  // senior-dev binary
+		"",  // senior-dev model
+		"",  // senior-dev effort
+		"",  // qa binary
+		"",  // qa model
+		"",  // qa effort
 		"",  // lead
 		"2", // planner
 		"3", // current
@@ -67,6 +79,7 @@ func TestRunNumberedExistingProfileKeepsRosterAuthoritative(t *testing.T) {
 			Session:    "s",
 			Roles:      "cto,qa",
 			Binary:     "qa=claude",
+			Effort:     "qa=high",
 			LeadMode:   "planner",
 			Visibility: "sibling-tabs",
 		},
@@ -77,18 +90,57 @@ func TestRunNumberedExistingProfileKeepsRosterAuthoritative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Roles != "" || got.Binary != "" || got.LeadMode != "" {
+	if got.Roles != "" || got.Binary != "" || got.Effort != "" || got.LeadMode != "" {
 		t.Fatalf("existing profile mutations not cleared: %+v", got)
 	}
 }
 
 func TestRunNumberedRejectsUnknownChoice(t *testing.T) {
-	input := strings.Join([]string{"", "", "", "", "", "99"}, "\n") + "\n"
+	answers := make([]string, 15)
+	answers[14] = "99"
+	input := strings.Join(answers, "\n") + "\n"
 	_, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
 		ProfileExists: func(string, string) bool { return false },
 	})
 	if err == nil || !strings.Contains(err.Error(), "invalid lead mode choice") {
 		t.Fatalf("expected lead mode choice error, got %v", err)
+	}
+}
+
+func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
+	input := strings.Join([]string{
+		"",  // project
+		"2", // select review profile
+		"",  // pinned session
+		"",  // topology
+		"",  // goal
+		"",  // seed
+	}, "\n") + "\n"
+	var out bytes.Buffer
+	got, err := RunNumbered(strings.NewReader(input), &out, NumberedOptions{
+		Defaults: Spec{Project: "/repo", Visibility: "sibling-tabs"},
+		InspectProject: func(string) (ProjectContext, error) {
+			return ProjectContext{
+				Project:           "/repo",
+				OriginSlug:        "omriariav/amq-squad",
+				SessionSuggestion: "issue-393",
+				Profiles: []ProfileSummary{
+					{Name: "default", MemberCount: 2, PinnedSession: "main-work"},
+					{Name: "review", MemberCount: 3, PinnedSession: "review-work", Lead: "cto", LeadMode: "planner", Members: []MemberSummary{{Role: "cto", Binary: "codex", Effort: "high"}}},
+				},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Profile != "review" || got.Session != "review-work" || got.Roles != "" || got.LeadMode != "" {
+		t.Fatalf("existing profile result = %+v", got)
+	}
+	for _, want := range []string{"origin omriariav/amq-squad", "review: 3 member(s), session review-work", "cto: codex, model=automatic, effort=high"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("output missing %q:\n%s", want, out.String())
+		}
 	}
 }

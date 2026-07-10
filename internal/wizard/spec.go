@@ -14,6 +14,7 @@ type Spec struct {
 	Roles        string
 	Binary       string
 	Model        string
+	Effort       string
 	CodexArgs    string
 	ClaudeArgs   string
 	Lead         string
@@ -39,6 +40,7 @@ func (s Spec) Args() []string {
 	appendValue("--roles", s.Roles)
 	appendValue("--binary", s.Binary)
 	appendValue("--model", s.Model)
+	appendValue("--effort", s.Effort)
 	appendValue("--codex-args", s.CodexArgs)
 	appendValue("--claude-args", s.ClaudeArgs)
 	appendValue("--lead", s.Lead)

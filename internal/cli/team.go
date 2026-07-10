@@ -89,6 +89,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	sessionFlag := fs.String("session", "", "AMQ workstream session name for all members (lowercase a-z, 0-9, -, _)")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
 	modelFlag := fs.String("model", "", "per-persona model overrides, e.g. cto=gpt-5.6-sol,fullstack=sonnet")
+	effortFlag := fs.String("effort", "", "per-persona effort normalized into native member args, e.g. cto=high,qa=medium")
 	trustRaw := fs.String("trust", "", "Codex trust profile for generated commands: approve-for-me (default), sandboxed, or trusted")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
@@ -117,8 +118,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
-  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--effort role=level,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--effort role=level,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE|--no-operator] [--orchestrated [--lead ROLE]] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes the team config under
@@ -254,6 +255,10 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("parse --model: %w", err)
 	}
+	effortOverrides, err := parseEffortOverrides(*effortFlag)
+	if err != nil {
+		return err
+	}
 	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
 	if err != nil {
 		return err
@@ -355,6 +360,9 @@ Examples:
 	if err := validateModelOverrideKeys(modelOverrides, pickedSet); err != nil {
 		return err
 	}
+	if err := validateEffortOverrideKeys(effortOverrides, pickedSet); err != nil {
+		return err
+	}
 
 	members := make([]team.Member, 0, len(picked))
 	seen := make(map[string]bool)
@@ -400,6 +408,11 @@ Examples:
 		}
 		if model, ok := modelOverrides[id]; ok {
 			m.Model = strings.TrimSpace(model)
+		}
+		if effort, ok := effortOverrides[id]; ok {
+			if err := applyMemberEffort(&m, effort); err != nil {
+				return err
+			}
 		}
 		if c, ok := cwdOverrides[id]; ok {
 			abs, err := expandPath(c)
