@@ -56,7 +56,12 @@ These entries come from the current `.amq-squad/team.json` and are authoritative
 {{- if .OperatorGates }}
 Operator gate routing:
 The human/operator is mailbox handle {{.Operator.Handle}}. This participant is not a runnable agent. AMQ 0.38 reserves the conventional `user` handle for this role; custom operator handles follow the same protocol. Use the operator handle only for human-only decisions or manual actions, not ordinary peer coordination. Gates are structural observability and handoff, not an authorization or security boundary.
-Operator delivery: durable AMQ is authoritative; wake_supported={{.OperatorDelivery.WakeSupported}}; poll_required={{.OperatorDelivery.PollRequired}}. If poll_required is true, the operator or parent orchestrator must poll/drain the operator mailbox, gate threads, and status JSON instead of waiting for wake delivery.
+Operator delivery: interaction_mode={{.OperatorDelivery.InteractionMode}}; approval_surface={{.OperatorDelivery.ApprovalSurface}}; durable_amq={{.OperatorDelivery.DurableAMQ}}; wake_supported={{.OperatorDelivery.WakeSupported}}; poll_required={{.OperatorDelivery.PollRequired}}; poll_owner={{.OperatorDelivery.PollOwner}}.
+Contract: {{.OperatorDelivery.Contract}}
+Guidance: {{.OperatorDelivery.Guidance}}
+{{- if eq .OperatorDelivery.InteractionMode "separate_terminal" }}
+Ready answer command: `amq send --root {{shellQuote .Root}} --me {{.Operator.Handle}} --to <agent-handle> --thread gate/<topic> --kind answer --subject "APPROVED: <decision>"`
+{{- end }}
 
 - ask: `amq send --to {{.Operator.Handle}} --thread gate/<topic> --kind question --subject "APPROVAL: <decision>"`
 - done/manual closeout: `amq send --to {{.Operator.Handle}} --thread gate/<topic> --kind decision --subject "DONE: <goal>"`

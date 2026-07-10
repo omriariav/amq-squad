@@ -583,6 +583,71 @@ func TestRunStartGoInsideTmuxDefaultsToSiblingTabsBackend(t *testing.T) {
 	}
 }
 
+func TestRunStartFreshPersistsOperatorMode(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%42")
+	backend := useFakeTmuxBackend(t)
+	dir := t.TempDir()
+	_, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "cto", "--operator-mode", "separate_terminal", "--go"}, "test")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backend.launches) != 1 {
+		t.Fatalf("launches = %d", len(backend.launches))
+	}
+	stored, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Operator == nil || stored.Operator.InteractionMode != team.OperatorInteractionSeparateTerminal {
+		t.Fatalf("stored operator = %+v", stored.Operator)
+	}
+}
+
+func TestRunStartExistingOperatorModeValidationDoesNotMutateOrForward(t *testing.T) {
+	op := team.DefaultOperator()
+	op.InteractionMode = team.OperatorInteractionSeparateTerminal
+	dir := seedTeam(t, team.Team{
+		Operator: &op, Orchestrated: true, Lead: "cto",
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"}},
+	})
+	out, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--operator-mode", "separate_terminal"}, "test")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "--operator-mode") {
+		t.Fatalf("validation-only mode forwarded to up preview:\n%s", out)
+	}
+	stored, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Operator.InteractionMode != team.OperatorInteractionSeparateTerminal {
+		t.Fatalf("stored mode changed: %+v", stored.Operator)
+	}
+	_, _, err = captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--operator-mode", "noc"}, "test")
+	})
+	if err == nil || !strings.Contains(err.Error(), "never rewrites") {
+		t.Fatalf("mismatch error = %v", err)
+	}
+	stored, readErr := team.Read(dir)
+	if readErr != nil || stored.Operator.InteractionMode != team.OperatorInteractionSeparateTerminal {
+		t.Fatalf("mismatch mutated profile: operator=%+v err=%v", stored.Operator, readErr)
+	}
+}
+
+func TestRunStartRejectsUnavailableSelfOperatorMode(t *testing.T) {
+	err := runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto", "--operator-mode", "self_operator"}, "test")
+	if err == nil || !strings.Contains(err.Error(), "#391") {
+		t.Fatalf("self_operator error = %v", err)
+	}
+}
+
 func TestRunStartGoAcceptsGenericLeadRole(t *testing.T) {
 	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
 	t.Setenv("TMUX_PANE", "%42")

@@ -190,6 +190,7 @@ func runStartWizardProfiles(project string) ([]runwizard.ProfileSummary, error) 
 			PinnedSession: runStartPinnedSession(t),
 			Lead:          t.Lead,
 			LeadMode:      team.EffectiveLeadMode(t),
+			OperatorMode:  team.EffectiveOperator(t).InteractionMode,
 		}
 		for _, member := range t.Members {
 			summary.Members = append(summary.Members, runwizard.MemberSummary{

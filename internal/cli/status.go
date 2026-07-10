@@ -723,6 +723,7 @@ func printableHandle(handle string) string {
 
 func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorView {
 	op := team.EffectiveOperator(t)
+	contract := team.OperatorContractForMode(op.InteractionMode)
 	out := statusOperatorView{OperatorView: op}
 	if !op.Enabled {
 		return out
@@ -742,7 +743,7 @@ func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorVie
 	}
 	out.Poll = &statusOperatorPoll{
 		Required:     op.PollRequired,
-		Owner:        "none",
+		Owner:        contract.PollOwner,
 		Unread:       0,
 		OpenGates:    0,
 		OpenBlockers: 0,

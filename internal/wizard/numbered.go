@@ -14,6 +14,7 @@ type NumberedOptions struct {
 	Defaults       Spec
 	InspectProject func(project string) (ProjectContext, error)
 	ProfileExists  func(project, profile string) bool
+	Capabilities   CapabilitySet
 }
 
 type ProjectContext struct {
@@ -32,6 +33,7 @@ type ProfileSummary struct {
 	PinnedSession string
 	Lead          string
 	LeadMode      string
+	OperatorMode  string
 	Members       []MemberSummary
 }
 
@@ -143,6 +145,7 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 			}
 			s.Model = renderAssignments(memberOrder, modelOverrides)
 			s.Effort = renderAssignments(memberOrder, effortOverrides)
+			s.OperatorMode = defaultString(existingProfile.OperatorMode, "unspecified")
 		}
 	} else {
 		if s.Roles, err = promptText(r, out, "Roles (comma-separated)", defaultString(s.Roles, "cto,senior-dev,qa")); err != nil {
@@ -205,6 +208,17 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		{value: "detached", label: "detached: hidden tmux session"},
 		{value: "current", label: "current: split the current tmux window"},
 	}, defaultString(s.Visibility, "sibling-tabs")); err != nil {
+		return Spec{}, err
+	}
+	if existing {
+		fmt.Fprintf(out, "Operator interaction (authoritative): %s\n", defaultString(s.OperatorMode, "unspecified"))
+		for _, item := range operatorChoices(opts.Capabilities) {
+			if item.capability {
+				fmt.Fprintf(out, "  - %s\n", item.label)
+			}
+		}
+		fmt.Fprintln(out)
+	} else if s.OperatorMode, err = promptOperatorChoice(r, out, opts.Capabilities, defaultOperatorMode(s.OperatorMode, s.Visibility)); err != nil {
 		return Spec{}, err
 	}
 	if s.Goal, err = promptText(r, out, "Goal text (optional)", s.Goal); err != nil {
@@ -297,8 +311,15 @@ func renderAssignments(order []string, values map[string]string) string {
 }
 
 type choice struct {
-	value string
-	label string
+	value       string
+	label       string
+	disabled    bool
+	consequence string
+	capability  bool
+}
+
+func promptOperatorChoice(r *bufio.Reader, out io.Writer, caps CapabilitySet, current string) (string, error) {
+	return promptChoice(r, out, "Operator interaction", operatorChoices(caps), current)
 }
 
 func promptText(r *bufio.Reader, out io.Writer, label, current string) (string, error) {
@@ -333,6 +354,9 @@ func promptChoice(r *bufio.Reader, out io.Writer, label string, choices []choice
 			defaultIndex = i
 			marker = " (default)"
 		}
+		if item.disabled {
+			marker += " (disabled)"
+		}
 		fmt.Fprintf(out, "  %d) %s%s\n", i+1, item.label, marker)
 	}
 	fmt.Fprintf(out, "Choose [default %d]: ", defaultIndex+1)
@@ -342,10 +366,16 @@ func promptChoice(r *bufio.Reader, out io.Writer, label string, choices []choice
 	}
 	line = strings.TrimSpace(line)
 	if line == "" {
+		if choices[defaultIndex].disabled {
+			return "", fmt.Errorf("default %s choice is unavailable", strings.ToLower(label))
+		}
 		return choices[defaultIndex].value, nil
 	}
 	for i, item := range choices {
 		if line == fmt.Sprint(i+1) || strings.EqualFold(line, item.value) {
+			if item.disabled {
+				return "", fmt.Errorf("%s choice %q is unavailable", strings.ToLower(label), item.value)
+			}
 			return item.value, nil
 		}
 	}
@@ -357,4 +387,14 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func defaultOperatorMode(current, visibility string) string {
+	if strings.TrimSpace(current) != "" {
+		return current
+	}
+	if visibility == "detached" {
+		return "separate_terminal"
+	}
+	return "lead_pane"
 }

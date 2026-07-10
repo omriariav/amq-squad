@@ -86,43 +86,58 @@ func (m Member) ExtraArgs() []string {
 // OperatorConfig describes the optional human/operator participant for a
 // profile. The operator is a mailbox participant only, never a runnable member.
 type OperatorConfig struct {
-	Enabled       bool   `json:"enabled"`
-	Handle        string `json:"handle,omitempty"`
-	Participant   bool   `json:"participant"`
-	Kind          string `json:"kind,omitempty"`
-	Runnable      bool   `json:"runnable"`
-	Assignable    bool   `json:"assignable"`
-	WakeSupported bool   `json:"wake_supported"`
-	PollRequired  bool   `json:"poll_required"`
+	Enabled         bool   `json:"enabled"`
+	Handle          string `json:"handle,omitempty"`
+	InteractionMode string `json:"interaction_mode,omitempty"`
+	Participant     bool   `json:"participant"`
+	Kind            string `json:"kind,omitempty"`
+	Runnable        bool   `json:"runnable"`
+	Assignable      bool   `json:"assignable"`
+	WakeSupported   bool   `json:"wake_supported"`
+	PollRequired    bool   `json:"poll_required"`
 }
 
 // OperatorView is the JSON/output shape used by callers that need the
 // effective operator contract without interpreting on-disk schema details.
 type OperatorView struct {
-	Enabled       bool   `json:"enabled"`
-	Handle        string `json:"handle,omitempty"`
-	Participant   bool   `json:"participant"`
-	Kind          string `json:"kind,omitempty"`
-	Runnable      bool   `json:"runnable"`
-	Assignable    bool   `json:"assignable"`
-	WakeSupported bool   `json:"wake_supported"`
-	PollRequired  bool   `json:"poll_required"`
+	Enabled         bool   `json:"enabled"`
+	Handle          string `json:"handle,omitempty"`
+	InteractionMode string `json:"interaction_mode"`
+	Participant     bool   `json:"participant"`
+	Kind            string `json:"kind,omitempty"`
+	Runnable        bool   `json:"runnable"`
+	Assignable      bool   `json:"assignable"`
+	WakeSupported   bool   `json:"wake_supported"`
+	PollRequired    bool   `json:"poll_required"`
+}
+
+type OperatorInteractionContract struct {
+	Mode            string
+	ApprovalSurface string
+	Contract        string
+	PollRequired    bool
+	PollOwner       string
 }
 
 const (
-	CompositionSeeded         = "seeded"
-	CompositionAutonomous     = "autonomous"
-	GoalSignificanceTrivial   = "trivial"
-	GoalSignificanceStandard  = "standard"
-	GoalSignificanceRelease   = "release"
-	LeadExecutionSolo         = "solo"
-	LeadExecutionDelegated    = "delegated"
-	LeadExecutionVisibleTeam  = "visible_team"
-	LeadModeBuilder           = "builder"
-	LeadModePlanner           = "planner"
-	IndependentReviewRequired = "required"
-	IndependentReviewWaived   = "waived"
-	IndependentReviewComplete = "complete"
+	OperatorInteractionUnspecified      = "unspecified"
+	OperatorInteractionLeadPane         = "lead_pane"
+	OperatorInteractionSeparateTerminal = "separate_terminal"
+	OperatorInteractionNOC              = "noc"
+	OperatorInteractionSelfOperator     = "self_operator"
+	CompositionSeeded                   = "seeded"
+	CompositionAutonomous               = "autonomous"
+	GoalSignificanceTrivial             = "trivial"
+	GoalSignificanceStandard            = "standard"
+	GoalSignificanceRelease             = "release"
+	LeadExecutionSolo                   = "solo"
+	LeadExecutionDelegated              = "delegated"
+	LeadExecutionVisibleTeam            = "visible_team"
+	LeadModeBuilder                     = "builder"
+	LeadModePlanner                     = "planner"
+	IndependentReviewRequired           = "required"
+	IndependentReviewWaived             = "waived"
+	IndependentReviewComplete           = "complete"
 )
 
 type AutonomousPolicy struct {
@@ -287,7 +302,7 @@ func EffectiveOperator(t Team) OperatorView {
 	}
 	op := *t.Operator
 	if !op.Enabled {
-		return OperatorView{Enabled: false, Runnable: false, Assignable: false, WakeSupported: false}
+		return OperatorView{Enabled: false, InteractionMode: OperatorInteractionUnspecified, Runnable: false, Assignable: false, WakeSupported: false}
 	}
 	return operatorViewFromConfig(op)
 }
@@ -301,15 +316,57 @@ func operatorViewFromConfig(op OperatorConfig) OperatorView {
 	if kind == "" {
 		kind = "operator"
 	}
+	contract := OperatorContractForMode(op.InteractionMode)
 	return OperatorView{
-		Enabled:       true,
-		Handle:        handle,
-		Participant:   true,
-		Kind:          kind,
-		Runnable:      false,
-		Assignable:    false,
-		WakeSupported: false,
-		PollRequired:  true,
+		Enabled:         true,
+		Handle:          handle,
+		InteractionMode: contract.Mode,
+		Participant:     true,
+		Kind:            kind,
+		Runnable:        false,
+		Assignable:      false,
+		WakeSupported:   false,
+		PollRequired:    contract.PollRequired,
+	}
+}
+
+// EffectiveOperatorInteractionMode preserves compatibility for profiles that
+// predate the persisted operator interaction contract.
+func EffectiveOperatorInteractionMode(mode string) string {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		return OperatorInteractionUnspecified
+	}
+	return mode
+}
+
+// OperatorContractForMode is the single semantic mapping consumed by team
+// views, status, bootstrap, and operator-loop reporting.
+func OperatorContractForMode(mode string) OperatorInteractionContract {
+	mode = EffectiveOperatorInteractionMode(mode)
+	switch mode {
+	case OperatorInteractionLeadPane:
+		return OperatorInteractionContract{Mode: mode, ApprovalSurface: "lead pane", Contract: "type in the lead pane; the lead mirrors decisions to gate threads", PollOwner: "none"}
+	case OperatorInteractionSeparateTerminal:
+		return OperatorInteractionContract{Mode: mode, ApprovalSurface: "separate operator terminal", Contract: "poll durable gates and answer them from the operator terminal", PollRequired: true, PollOwner: "operator"}
+	case OperatorInteractionNOC:
+		return OperatorInteractionContract{Mode: mode, ApprovalSurface: "NOC/global board", Contract: "the NOC/global orchestrator polls this run and answers durable gates by explicit namespace", PollRequired: true, PollOwner: "noc"}
+	case OperatorInteractionSelfOperator:
+		return OperatorInteractionContract{Mode: mode, ApprovalSurface: "human operator (self-operator unavailable)", Contract: "forward-known mode only; #391 has not enabled delegated self-approval or changed authorization behavior", PollRequired: true, PollOwner: "operator"}
+	default:
+		return OperatorInteractionContract{Mode: OperatorInteractionUnspecified, ApprovalSurface: "legacy operator mailbox", Contract: "legacy compatibility: operator or parent orchestrator polls durable AMQ gates", PollRequired: true, PollOwner: "operator_or_parent"}
+	}
+}
+
+// ValidateOperatorInteractionMode validates persisted/canonical values. The
+// compatibility-only "unspecified" value is derived from an empty field and
+// is intentionally not accepted as an explicit persisted mode.
+func ValidateOperatorInteractionMode(mode string) error {
+	switch strings.TrimSpace(mode) {
+	case OperatorInteractionLeadPane, OperatorInteractionSeparateTerminal, OperatorInteractionNOC, OperatorInteractionSelfOperator:
+		return nil
+	default:
+		return fmt.Errorf("invalid operator interaction mode %q: use %s, %s, %s, or %s", mode, OperatorInteractionLeadPane, OperatorInteractionSeparateTerminal, OperatorInteractionNOC, OperatorInteractionSelfOperator)
 	}
 }
 
@@ -490,7 +547,8 @@ func normalizeEnabledOperator(op OperatorConfig) OperatorConfig {
 	op.Runnable = false
 	op.Assignable = false
 	op.WakeSupported = false
-	op.PollRequired = true
+	op.InteractionMode = strings.TrimSpace(op.InteractionMode)
+	op.PollRequired = OperatorContractForMode(op.InteractionMode).PollRequired
 	return op
 }
 
@@ -631,8 +689,15 @@ func Validate(t Team) error {
 			if t.Operator.WakeSupported {
 				return fmt.Errorf("operator.wake_supported: non-runnable operator cannot support wake delivery")
 			}
+			if mode := strings.TrimSpace(t.Operator.InteractionMode); mode != "" {
+				if err := ValidateOperatorInteractionMode(mode); err != nil {
+					return fmt.Errorf("operator.interaction_mode: %w", err)
+				}
+			}
 		} else if strings.TrimSpace(t.Operator.Handle) != "" {
 			return fmt.Errorf("operator.handle: set enabled=true before handle")
+		} else if strings.TrimSpace(t.Operator.InteractionMode) != "" {
+			return fmt.Errorf("operator.interaction_mode: set enabled=true before interaction mode")
 		}
 	}
 	for binary, args := range t.BinaryArgs {

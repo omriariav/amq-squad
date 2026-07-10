@@ -1,0 +1,116 @@
+package wizard
+
+import "fmt"
+
+type CapabilityID string
+
+const (
+	CapabilitySelfOperator          CapabilityID = "self_operator"
+	CapabilityOperatorNotifications CapabilityID = "operator_notifications"
+)
+
+type Capability struct {
+	ID        CapabilityID
+	Available bool
+	Issue     int
+	ShipsIn   string
+	Reason    string
+}
+
+type CapabilitySet map[CapabilityID]Capability
+
+type Option struct {
+	ID          string
+	Label       string
+	Consequence string
+	Requires    CapabilityID
+	Blocked     bool
+	BlockReason string
+}
+
+func DefaultCapabilities() CapabilitySet {
+	return CapabilitySet{
+		CapabilitySelfOperator: {
+			ID: CapabilitySelfOperator, Issue: 391, ShipsIn: "v2.19.0",
+			Reason: "delegated self-approval policy is not implemented",
+		},
+		CapabilityOperatorNotifications: {
+			ID: CapabilityOperatorNotifications, Issue: 390, ShipsIn: "v2.19.0",
+			Reason: "attention-only operator notifications are not implemented",
+		},
+	}
+}
+
+func OperatorOptions() []Option {
+	return []Option{
+		{ID: "lead_pane", Label: "Live in the lead pane", Consequence: "Approve by typing in the lead window; the lead mirrors every decision to gate/<topic>."},
+		{ID: "separate_terminal", Label: "Separate operator terminal", Consequence: "Poll durable gates and answer with explicit operator AMQ replies."},
+		{ID: "noc", Label: "NOC/global board", Consequence: "A global operator board polls and answers this run by explicit namespace."},
+		{ID: "self_operator", Label: "Self-operator / delegated approval", Consequence: "The lead may answer only allowlisted gates; human-only exclusions remain blocked.", Requires: CapabilitySelfOperator},
+		{ID: "operator_notifications", Label: "Notification add-on", Consequence: "Gate and staleness changes push attention-only notifications; this never authorizes an action.", Requires: CapabilityOperatorNotifications, Blocked: true, BlockReason: "capability slot only; no canonical notification policy exists"},
+	}
+}
+
+func CapabilityAvailable(caps CapabilitySet, id CapabilityID) bool {
+	if id == "" {
+		return true
+	}
+	capability, ok := caps[id]
+	return ok && capability.Available
+}
+
+func OptionAvailabilityLabel(caps CapabilitySet, option Option) string {
+	if option.Requires == "" || CapabilityAvailable(caps, option.Requires) {
+		return ""
+	}
+	capability := caps[option.Requires]
+	if capability.ShipsIn != "" && capability.Issue > 0 {
+		return fmt.Sprintf("ships in %s: #%d", capability.ShipsIn, capability.Issue)
+	}
+	if capability.Reason != "" {
+		return capability.Reason
+	}
+	return "unavailable"
+}
+
+func CapabilityReleaseLabel(caps CapabilitySet, option Option) string {
+	if option.Requires == "" {
+		return ""
+	}
+	capability := caps[option.Requires]
+	if capability.ShipsIn != "" && capability.Issue > 0 {
+		return fmt.Sprintf("ships in %s: #%d", capability.ShipsIn, capability.Issue)
+	}
+	return ""
+}
+
+func effectiveCapabilities(caps CapabilitySet) CapabilitySet {
+	if caps == nil {
+		return DefaultCapabilities()
+	}
+	return caps
+}
+
+func operatorChoices(caps CapabilitySet) []choice {
+	caps = effectiveCapabilities(caps)
+	options := OperatorOptions()
+	choices := make([]choice, 0, len(options))
+	for _, option := range options {
+		availability := OptionAvailabilityLabel(caps, option)
+		label := option.Label + " · " + option.Consequence
+		release := CapabilityReleaseLabel(caps, option)
+		if release == "" {
+			release = availability
+		}
+		if release != "" {
+			label += " [" + release + "]"
+		}
+		if option.Blocked {
+			label += " [" + option.BlockReason + "]"
+		}
+		choices = append(choices, choice{
+			value: option.ID, label: label, disabled: availability != "" || option.Blocked, consequence: option.Consequence, capability: option.Requires != "",
+		})
+	}
+	return choices
+}
