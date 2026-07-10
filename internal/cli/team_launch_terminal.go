@@ -115,15 +115,6 @@ tell application "Terminal"
 	activate
 	set targetTab to do script ""
 	set custom title of targetTab to windowName
-	try
-		set targetWindow to window of targetTab
-	on error
-		set targetWindow to front window
-	end try
-	set winID to ""
-	try
-		set winID to (id of targetWindow as string)
-	end try
 	set tabIndex to ""
 	try
 		set tabIndex to (index of targetTab as string)
@@ -131,6 +122,29 @@ tell application "Terminal"
 	set ttyName to ""
 	try
 		set ttyName to (tty of targetTab as string)
+	end try
+	set targetWindow to missing value
+	if ttyName is not "" then
+		repeat with candidateWindow in windows
+			repeat with candidateTab in tabs of candidateWindow
+				try
+					if (tty of candidateTab as string) is ttyName then
+						set targetWindow to candidateWindow
+						exit repeat
+					end if
+				end try
+			end repeat
+			if targetWindow is not missing value then
+				exit repeat
+			end if
+		end repeat
+	end if
+	if targetWindow is missing value then
+		set targetWindow to front window
+	end if
+	set winID to ""
+	try
+		set winID to (id of targetWindow as string)
 	end try
 	set payload to my replaceText(payloadTemplate, "__AMQ_SQUAD_TERMINAL_WINDOW_ID__", my shellSingleQuote(winID))
 	set payload to my replaceText(payload, "__AMQ_SQUAD_TERMINAL_TAB_ID__", my shellSingleQuote(tabIndex))

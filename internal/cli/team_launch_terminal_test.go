@@ -17,11 +17,16 @@ func TestTerminalAppLaunchArgvShape(t *testing.T) {
 		`tell application "Terminal"`,
 		`set targetTab to do script ""`,
 		`set custom title of targetTab to windowName`,
-		`set targetWindow to window of targetTab`,
-		`set targetWindow to front window`,
-		`set winID to (id of targetWindow as string)`,
 		`set tabIndex to (index of targetTab as string)`,
 		`set ttyName to (tty of targetTab as string)`,
+		`set targetWindow to missing value`,
+		`repeat with candidateWindow in windows`,
+		`repeat with candidateTab in tabs of candidateWindow`,
+		`if (tty of candidateTab as string) is ttyName then`,
+		`set targetWindow to candidateWindow`,
+		`if targetWindow is missing value then`,
+		`set targetWindow to front window`,
+		`set winID to (id of targetWindow as string)`,
 		`set payloadTemplate to item 2 of argv`,
 		`set payload to my replaceText(payloadTemplate, "__AMQ_SQUAD_TERMINAL_WINDOW_ID__", my shellSingleQuote(winID))`,
 		`set payload to my replaceText(payload, "__AMQ_SQUAD_TERMINAL_TAB_ID__", my shellSingleQuote(tabIndex))`,
@@ -41,6 +46,9 @@ func TestTerminalAppLaunchArgvShape(t *testing.T) {
 		if strings.Contains(script, unwanted) {
 			t.Fatalf("script contains shell-specific launch fragment %q:\n%s", unwanted, script)
 		}
+	}
+	if strings.Contains(script, `window of targetTab`) {
+		t.Fatalf("script must not use unsupported Terminal.app tab->window property:\n%s", script)
 	}
 	payload := argv[3]
 	for _, want := range []string{
