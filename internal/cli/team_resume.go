@@ -769,6 +769,7 @@ func adoptResumeExecLaunchRecords(results []resumeExecLaunchResult) bool {
 			PaneID:     pane.PaneID,
 			Target:     "adopted",
 		}
+		rec.Terminal = launch.TerminalInfoFromTmux(rec.Tmux)
 		if err := launch.Write(r.Check.AgentDir, rec); err == nil {
 			adopted = true
 		}

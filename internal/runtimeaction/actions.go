@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 )
 
 type Action struct {
@@ -66,18 +67,22 @@ func SyncUnavailableReason(a *Action) {
 }
 
 func Member(projectDir, profile, session, role string, paneAlive bool) []Action {
+	return MemberForCapabilities(projectDir, profile, session, role, runtimecontrol.TmuxCapabilities(paneAlive))
+}
+
+func MemberForCapabilities(projectDir, profile, session, role string, caps runtimecontrol.Capabilities) []Action {
 	scope := commandScope(projectDir, profile, session)
 	namespaceID := squadnamespace.ID(profile, session)
 	roleArg := " --role " + ShellQuote(role)
-	deadReason := ""
-	if !paneAlive {
-		deadReason = "agent pane is not live"
-	}
+	focus := caps.State(runtimecontrol.CapabilityFocus)
+	send := caps.State(runtimecontrol.CapabilitySendPrompt)
+	goal := caps.State(runtimecontrol.CapabilityGoalDeliver)
+	dispatch := caps.State(runtimecontrol.CapabilityDispatch)
 	return ApplyCanonical([]Action{
-		{Kind: "focus", Label: "focus pane", Scope: "agent", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: paneAlive, Reason: deadReason, Command: "amq-squad focus" + scope + roleArg},
-		{Kind: "send", Label: "send a prompt", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: paneAlive, Reason: deadReason, Command: "amq-squad send" + scope + roleArg + " --body-file -"},
-		{Kind: "goal_deliver", Label: "deliver native /goal", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: paneAlive, Reason: deadReason, Command: "amq-squad goal deliver" + scope + roleArg + " --goal <goal>"},
-		{Kind: "dispatch", Label: "dispatch task", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: true, Command: "amq-squad dispatch" + scope + roleArg + " --subject <subject> --body-file <file>"},
+		{Kind: "focus", Label: "focus pane", Scope: "agent", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: focus.Available, Reason: focus.Reason, Command: "amq-squad focus" + scope + roleArg},
+		{Kind: "send", Label: "send a prompt", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: send.Available, Reason: send.Reason, Command: "amq-squad send" + scope + roleArg + " --body-file -"},
+		{Kind: "goal_deliver", Label: "deliver native /goal", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: goal.Available, Reason: goal.Reason, Command: "amq-squad goal deliver" + scope + roleArg + " --goal <goal>"},
+		{Kind: "dispatch", Label: "dispatch task", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: dispatch.Available, Reason: dispatch.Reason, Command: "amq-squad dispatch" + scope + roleArg + " --subject <subject> --body-file <file>"},
 		{Kind: "resume", Label: "resume session", Scope: "session", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: true, Command: "amq-squad resume" + scope + " --exec"},
 		{Kind: "status", Label: "show session status", Scope: "session", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: true, Command: "amq-squad status" + scope + " --json"},
 		{Kind: "task_list", Label: "list tasks", Scope: "session", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: true, Command: "amq-squad task list" + scope},

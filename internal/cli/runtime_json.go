@@ -29,6 +29,19 @@ type tmuxRuntimeJSON struct {
 	PaneAlive bool `json:"pane_alive"`
 }
 
+// terminalRuntimeJSON is the additive backend-neutral runtime identity block.
+// For tmux-backed launches it mirrors tmuxRuntimeJSON so consumers can start
+// selecting a controller by backend without losing the legacy tmux contract.
+type terminalRuntimeJSON struct {
+	Backend    string `json:"backend,omitempty"`
+	Session    string `json:"session,omitempty"`
+	WindowID   string `json:"window_id,omitempty"`
+	WindowName string `json:"window_name,omitempty"`
+	PaneID     string `json:"pane_id,omitempty"`
+	Target     string `json:"target,omitempty"`
+	PaneAlive  bool   `json:"pane_alive"`
+}
+
 // tmuxRuntimeFromInfo converts a persisted launch.TmuxInfo into the JSON block,
 // leaving PaneAlive false for the caller to fill from a live-pane set. Returns
 // nil when there is no tmux identity.
@@ -48,6 +61,45 @@ func tmuxRuntimeFromInfo(info *launch.TmuxInfo) *tmuxRuntimeJSON {
 		WindowName: info.WindowName,
 		PaneID:     info.PaneID,
 		Target:     info.Target,
+	}
+}
+
+func terminalRuntimeFromInfo(info *launch.TerminalInfo) *terminalRuntimeJSON {
+	if info == nil {
+		return nil
+	}
+	if info.Backend == "" && info.PaneID == "" && info.WindowID == "" && info.Session == "" && info.WindowName == "" && info.Target == "" {
+		return nil
+	}
+	return &terminalRuntimeJSON{
+		Backend:    info.Backend,
+		Session:    info.Session,
+		WindowID:   info.WindowID,
+		WindowName: info.WindowName,
+		PaneID:     info.PaneID,
+		Target:     info.Target,
+	}
+}
+
+func terminalRuntimeFromTmuxInfo(info *launch.TmuxInfo) *terminalRuntimeJSON {
+	return terminalRuntimeFromInfo(launch.TerminalInfoFromTmux(info))
+}
+
+func syncTerminalRuntimeFromTmux(row *statusRecord) {
+	if row == nil || row.Tmux == nil {
+		return
+	}
+	if row.Terminal == nil {
+		row.Terminal = terminalRuntimeFromTmuxInfo(&launch.TmuxInfo{
+			Session:    row.Tmux.Session,
+			WindowID:   row.Tmux.WindowID,
+			WindowName: row.Tmux.WindowName,
+			PaneID:     row.Tmux.PaneID,
+			Target:     row.Tmux.Target,
+		})
+	}
+	if row.Terminal != nil && row.Terminal.Backend == "tmux" {
+		row.Terminal.PaneAlive = row.Tmux.PaneAlive
 	}
 }
 

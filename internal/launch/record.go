@@ -118,6 +118,11 @@ type Record struct {
 	// tmux metadata could not be resolved). Clients detect runtime-control
 	// availability by the presence of this object, not by Schema.
 	Tmux *TmuxInfo `json:"tmux,omitempty"`
+	// Terminal is the additive backend-neutral runtime identity captured at
+	// launch time. It mirrors Tmux for tmux-backed launches so newer control
+	// planes can select a controller by backend while legacy clients keep using
+	// the stable tmux block.
+	Terminal *TerminalInfo `json:"terminal,omitempty"`
 }
 
 // GoalBinding is launch-time evidence for a visible lead's goal binding.
@@ -143,6 +148,38 @@ type TmuxInfo struct {
 	// environment: "current-window", "new-window", or "new-session". Empty
 	// when not known to the launcher.
 	Target string `json:"target,omitempty"`
+}
+
+// TerminalInfo is the backend-neutral runtime identity for terminal control.
+// For tmux-backed launches it intentionally duplicates the existing tmux ids
+// instead of nesting TmuxInfo, keeping the JSON shape simple for clients that
+// select behavior by backend first.
+type TerminalInfo struct {
+	Backend    string `json:"backend,omitempty"`
+	Session    string `json:"session,omitempty"`
+	WindowID   string `json:"window_id,omitempty"`
+	WindowName string `json:"window_name,omitempty"`
+	PaneID     string `json:"pane_id,omitempty"`
+	Target     string `json:"target,omitempty"`
+}
+
+// TerminalInfoFromTmux maps the legacy tmux identity into the additive generic
+// terminal identity. Empty tmux records carry no useful control target.
+func TerminalInfoFromTmux(info *TmuxInfo) *TerminalInfo {
+	if info == nil {
+		return nil
+	}
+	if info.PaneID == "" && info.WindowID == "" && info.Session == "" && info.WindowName == "" && info.Target == "" {
+		return nil
+	}
+	return &TerminalInfo{
+		Backend:    "tmux",
+		Session:    info.Session,
+		WindowID:   info.WindowID,
+		WindowName: info.WindowName,
+		PaneID:     info.PaneID,
+		Target:     info.Target,
+	}
 }
 
 // Entry is a launch record plus the mailbox directory it was discovered in.

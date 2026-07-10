@@ -575,6 +575,9 @@ func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
 	if !rec.External || rec.Role != goalOrchestratorRole || rec.Handle != "global-orch" || rec.WakePID != 9876 || rec.Tmux == nil || rec.Tmux.PaneID != "%99" {
 		t.Fatalf("orchestrator launch record = %+v", rec)
 	}
+	if rec.Terminal == nil || rec.Terminal.Backend != "tmux" || rec.Terminal.PaneID != "%99" || rec.Terminal.Target != "external" {
+		t.Fatalf("orchestrator launch terminal identity = %+v", rec.Terminal)
+	}
 }
 
 type orchestratorRegStubs struct {
@@ -670,6 +673,9 @@ func TestGoalStartRegisterOrchestratorProducesWakeableIdentity(t *testing.T) {
 	}
 	if !rec.External || rec.Role != goalOrchestratorRole || rec.WakePID != 9876 || rec.Tmux == nil || rec.Tmux.PaneID != "%99" {
 		t.Fatalf("orchestrator launch record = %+v", rec)
+	}
+	if rec.Terminal == nil || rec.Terminal.Backend != "tmux" || rec.Terminal.PaneID != "%99" || rec.Terminal.Target != "external" {
+		t.Fatalf("orchestrator launch terminal identity = %+v", rec.Terminal)
 	}
 	if len(*stubs.wakeOpts) != 1 || (*stubs.wakeOpts)[0].Handle != "global-orch" || !(*stubs.wakeOpts)[0].Require {
 		t.Fatalf("wake opts = %+v", *stubs.wakeOpts)

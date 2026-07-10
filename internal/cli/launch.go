@@ -336,6 +336,7 @@ Examples:
 			PaneID:     id.PaneID,
 			Target:     target,
 		}
+		rec.Terminal = launch.TerminalInfoFromTmux(rec.Tmux)
 	}
 	// Keep generated bootstrap out of launch.json so restore stays compact
 	// and does not replay stale startup text.
