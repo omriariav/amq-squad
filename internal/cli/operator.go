@@ -50,6 +50,8 @@ type operatorWatchExecution struct {
 	Sleep    func(time.Duration) bool
 }
 
+var operatorWatchNotificationPump = deliverOperatorWatchNotifications
+
 type operatorStatusEnvelopeData struct {
 	ProjectDir       string                `json:"project_dir"`
 	BaseRoot         string                `json:"base_root,omitempty"`
@@ -674,12 +676,14 @@ func executeOperatorWatch(w operatorWatchExecution) error {
 				return err
 			}
 		} else if w.Once {
+			operatorWatchNotificationPump(w, data, now)
 			data.Watch = &operatorWatchMeta{Interval: interval.String(), Tick: tick, At: now.UTC()}
 			if writeErr := writeOperatorWatchTick(w.Out, data, w.JSON); writeErr != nil {
 				return writeErr
 			}
 			return nil
 		} else {
+			operatorWatchNotificationPump(w, data, now)
 			data.Watch = &operatorWatchMeta{Interval: interval.String(), Tick: tick, At: now.UTC()}
 			if writeErr := writeOperatorWatchTick(w.Out, data, w.JSON); writeErr != nil {
 				return writeErr
@@ -690,6 +694,18 @@ func executeOperatorWatch(w operatorWatchExecution) error {
 		}
 		tick++
 	}
+}
+
+func deliverOperatorWatchNotifications(w operatorWatchExecution, data operatorStatusEnvelopeData, now time.Time) {
+	t, err := team.ReadProfile(data.ProjectDir, data.Profile)
+	if err != nil {
+		return
+	}
+	policy := team.EffectiveOperatorNotifications(t.Operator)
+	if !policy.Enabled {
+		return
+	}
+	_ = executeNotify(notifyExecution{ProjectDir: data.ProjectDir, Profile: data.Profile, Session: data.Session, BaseRoot: w.BaseRoot, RenotifyAfter: defaultOperatorRenotifyAfter, Deliver: true, Out: io.Discard, Now: func() time.Time { return now }, ResolveBaseRoot: w.ResolveBaseRoot, Probe: w.Probe})
 }
 
 func writeOperatorWatchTick(out io.Writer, data operatorStatusEnvelopeData, jsonOut bool) error {

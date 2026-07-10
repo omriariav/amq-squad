@@ -86,15 +86,100 @@ func (m Member) ExtraArgs() []string {
 // OperatorConfig describes the optional human/operator participant for a
 // profile. The operator is a mailbox participant only, never a runnable member.
 type OperatorConfig struct {
-	Enabled         bool   `json:"enabled"`
-	Handle          string `json:"handle,omitempty"`
-	InteractionMode string `json:"interaction_mode,omitempty"`
-	Participant     bool   `json:"participant"`
-	Kind            string `json:"kind,omitempty"`
-	Runnable        bool   `json:"runnable"`
-	Assignable      bool   `json:"assignable"`
-	WakeSupported   bool   `json:"wake_supported"`
-	PollRequired    bool   `json:"poll_required"`
+	Enabled         bool                        `json:"enabled"`
+	Handle          string                      `json:"handle,omitempty"`
+	InteractionMode string                      `json:"interaction_mode,omitempty"`
+	Participant     bool                        `json:"participant"`
+	Kind            string                      `json:"kind,omitempty"`
+	Runnable        bool                        `json:"runnable"`
+	Assignable      bool                        `json:"assignable"`
+	WakeSupported   bool                        `json:"wake_supported"`
+	PollRequired    bool                        `json:"poll_required"`
+	Notifications   *OperatorNotificationPolicy `json:"notifications,omitempty"`
+}
+
+type OperatorNotificationPolicy struct {
+	Enabled           bool                             `json:"enabled"`
+	DeliverySemantics string                           `json:"delivery_semantics,omitempty"`
+	Events            []string                         `json:"events,omitempty"`
+	Sinks             []OperatorNotificationSinkConfig `json:"sinks,omitempty"`
+}
+
+type OperatorNotificationSinkConfig struct {
+	ID      string   `json:"id"`
+	Type    string   `json:"type"`
+	Argv    []string `json:"argv,omitempty"`
+	Timeout string   `json:"timeout,omitempty"`
+}
+
+func EffectiveOperatorNotifications(op *OperatorConfig) OperatorNotificationPolicy {
+	if op == nil || op.Notifications == nil {
+		return OperatorNotificationPolicy{}
+	}
+	p := *op.Notifications
+	if strings.TrimSpace(p.DeliverySemantics) == "" {
+		p.DeliverySemantics = "attention_only"
+	}
+	if len(p.Events) == 0 {
+		p.Events = []string{"gate", "local_input_blocked"}
+	}
+	if p.Enabled && len(p.Sinks) == 0 {
+		p.Sinks = []OperatorNotificationSinkConfig{{ID: "desktop", Type: "desktop", Timeout: "10s"}}
+	}
+	for i := range p.Sinks {
+		if p.Sinks[i].Timeout == "" {
+			p.Sinks[i].Timeout = "10s"
+		}
+	}
+	return p
+}
+
+func validateOperatorNotifications(op *OperatorConfig) error {
+	if op == nil || op.Notifications == nil {
+		return nil
+	}
+	p := EffectiveOperatorNotifications(op)
+	if p.Enabled && !op.Enabled {
+		return fmt.Errorf("operator.notifications: require operator.enabled=true")
+	}
+	if p.DeliverySemantics != "attention_only" {
+		return fmt.Errorf("operator.notifications.delivery_semantics: must be attention_only")
+	}
+	for _, event := range p.Events {
+		if event != "gate" && event != "local_input_blocked" {
+			return fmt.Errorf("operator.notifications.events: unsupported %q", event)
+		}
+	}
+	seen := map[string]bool{}
+	for i, sink := range p.Sinks {
+		prefix := fmt.Sprintf("operator.notifications.sinks[%d]", i)
+		if strings.TrimSpace(sink.ID) == "" || seen[sink.ID] {
+			return fmt.Errorf("%s.id: must be non-empty and unique", prefix)
+		}
+		seen[sink.ID] = true
+		d, err := time.ParseDuration(sink.Timeout)
+		if err != nil || d < time.Second || d > 60*time.Second {
+			return fmt.Errorf("%s.timeout: must be 1s through 60s", prefix)
+		}
+		switch sink.Type {
+		case "desktop":
+			if len(sink.Argv) > 0 {
+				return fmt.Errorf("%s.argv: desktop sink has no command", prefix)
+			}
+		case "command":
+			if len(sink.Argv) == 0 {
+				return fmt.Errorf("%s.argv: command sink requires argv", prefix)
+			}
+		default:
+			return fmt.Errorf("%s.type: must be desktop or command", prefix)
+		}
+		for j, arg := range sink.Argv {
+			if err := ValidateDisplayValue("arg", arg); err != nil {
+				return fmt.Errorf("%s.argv[%d]: %w", prefix, j, err)
+			}
+		}
+	}
+	return nil
 }
 
 // OperatorView is the JSON/output shape used by callers that need the
@@ -666,6 +751,9 @@ func Validate(t Team) error {
 		return err
 	}
 	operatorHandle := ""
+	if err := validateOperatorNotifications(t.Operator); err != nil {
+		return err
+	}
 	if t.Operator == nil {
 		operatorHandle = DefaultOperatorHandle
 	} else {

@@ -259,6 +259,22 @@ func TestValidateOperatorInteractionModes(t *testing.T) {
 	}
 }
 
+func TestOperatorNotificationPolicyDefaultsAndValidation(t *testing.T) {
+	op := &OperatorConfig{Enabled: true, Notifications: &OperatorNotificationPolicy{Enabled: true}}
+	p := EffectiveOperatorNotifications(op)
+	if len(p.Events) != 2 || len(p.Sinks) != 1 || p.Sinks[0].ID != "desktop" || p.DeliverySemantics != "attention_only" {
+		t.Fatalf("%+v", p)
+	}
+	base := Team{Operator: op, Members: []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}}}
+	if err := Validate(base); err != nil {
+		t.Fatal(err)
+	}
+	op.Notifications.Sinks = []OperatorNotificationSinkConfig{{ID: "x", Type: "command", Argv: []string{"hook"}, Timeout: "10s"}, {ID: "x", Type: "desktop"}}
+	if err := Validate(base); err == nil {
+		t.Fatal("duplicate sink accepted")
+	}
+}
+
 func TestWriteIsAtomic(t *testing.T) {
 	// Write must not leave a .tmp file behind on success.
 	dir := t.TempDir()
