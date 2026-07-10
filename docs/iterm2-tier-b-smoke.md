@@ -27,8 +27,9 @@ desktop with iTerm2 installed.
    - `records[].terminal.backend` is `iterm2`.
    - `records[].terminal.pid_alive` is true for live agent processes.
    - `records[].terminal.tab_id` and `records[].terminal.session_id` are present
-     when iTerm2 exposes those AppleScript ids; an empty value is a recorded
-     iTerm2 metadata gap, not tmux identity.
+     when iTerm2 exposes those AppleScript ids. If iTerm2 returns an empty id,
+     the field is absent because the launch record uses `omitempty`; absence is
+     an iTerm2 metadata gap, not tmux identity.
    - `focus` is available when `window_id` is present and the agent PID/binary
      verifies live. A closed iTerm2 window can still fail at focus time; the
      command should report that the recorded window could not be raised.

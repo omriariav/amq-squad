@@ -116,6 +116,21 @@ func (mr memberRuntime) isITerm2Runtime() bool {
 	return mr.recordedTerminalBackend() == runtimecontrol.BackendITerm2
 }
 
+func (mr memberRuntime) isTerminalAppRuntime() bool {
+	return mr.recordedTerminalBackend() == runtimecontrol.BackendTerminalApp
+}
+
+func (mr memberRuntime) nativePromptInjectionDisabledReason() (string, bool) {
+	switch mr.recordedTerminalBackend() {
+	case runtimecontrol.BackendITerm2:
+		return runtimecontrol.ITerm2InjectionDisabledReason, true
+	case runtimecontrol.BackendTerminalApp:
+		return runtimecontrol.TerminalAppInjectionDisabledReason, true
+	default:
+		return "", false
+	}
+}
+
 // resolveControlTarget picks the tmux pane to act on for a member: the exact
 // recorded pane id when it is still live AND its working directory still
 // matches the member (guarding against pane-id reuse after a tmux server
@@ -381,6 +396,9 @@ func focusTarget(projectDir, profile, session string, explicitSession bool, expl
 			}
 			return nil
 		}
+		if mr.isTerminalAppRuntime() {
+			return fmt.Errorf("%s", runtimecontrol.TerminalAppFocusDisabledReason)
+		}
 		if err := loadPanes(); err != nil {
 			return err
 		}
@@ -468,8 +486,8 @@ Examples:
 	}); err != nil {
 		return err
 	}
-	if mr.isITerm2Runtime() {
-		return fmt.Errorf("%s", runtimecontrol.ITerm2InjectionDisabledReason)
+	if reason, disabled := mr.nativePromptInjectionDisabledReason(); disabled {
+		return fmt.Errorf("%s", reason)
 	}
 	panes, err := statusPaneLister()
 	if err != nil {

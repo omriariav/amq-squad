@@ -78,6 +78,37 @@ func TestDefaultRegistryIncludesITerm2Controller(t *testing.T) {
 	}
 }
 
+func TestTerminalAppControllerCapabilities(t *testing.T) {
+	ctrl := TerminalAppController{}
+	if ctrl.Backend() != BackendTerminalApp {
+		t.Fatalf("backend = %q, want %q", ctrl.Backend(), BackendTerminalApp)
+	}
+
+	caps := ctrl.Capabilities(Identity{Backend: BackendTerminalApp, WindowID: "401", TabID: "1"}, Liveness{AgentAlive: true, BinaryMatch: true})
+	if state := caps.State(CapabilityFocus); state.Available || state.Reason != TerminalAppFocusDisabledReason {
+		t.Fatalf("Terminal.app focus state = %+v", state)
+	}
+	for _, cap := range []Capability{CapabilitySendPrompt, CapabilityGoalDeliver} {
+		state := caps.State(cap)
+		if state.Available || state.Reason != TerminalAppInjectionDisabledReason {
+			t.Fatalf("%s state = %+v", cap, state)
+		}
+	}
+	if !caps.State(CapabilityDispatch).Available {
+		t.Fatalf("Terminal.app dispatch should remain available because durable AMQ dispatch does not require pane injection")
+	}
+}
+
+func TestDefaultRegistryIncludesTerminalAppController(t *testing.T) {
+	ctrl, ok := DefaultRegistry().Lookup(BackendTerminalApp)
+	if !ok {
+		t.Fatalf("default registry missing Terminal.app controller")
+	}
+	if ctrl.Backend() != BackendTerminalApp {
+		t.Fatalf("lookup backend = %q", ctrl.Backend())
+	}
+}
+
 func TestZeroValueRegistryCanRegister(t *testing.T) {
 	var r Registry
 	r.Register(TmuxController{})
