@@ -473,10 +473,6 @@ amq-squad completion fish
 
 ## Requirements
 
-amq-squad v2.18.0 requires AMQ 0.41.0+.
-
-amq-squad v2.18.0 requires amq 0.41.0+ on PATH.
-
 - Go 1.25+
 - `amq` 0.41.0+ on `PATH`
 - `tmux` on `PATH` for Tier A managed panes

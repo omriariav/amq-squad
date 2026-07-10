@@ -11,6 +11,7 @@ import sys
 
 VERSION_RE = re.compile(r"^v?([0-9]+\.[0-9]+\.[0-9]+)$")
 SKILL_MARKER_RE = re.compile(r"Skill version:\s*([0-9]+\.[0-9]+\.[0-9]+)")
+AMQ_MIN_VERSION = "0.41.0"
 
 
 def read(path: str) -> str:
@@ -60,14 +61,16 @@ def main() -> int:
 
     readme = os.path.join(root, "README.md")
     fail_if_missing(readme, f"go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@{tag}", failures)
-    fail_if_missing(readme, f"amq-squad {tag} requires AMQ", failures)
-    fail_if_missing(readme, f"amq-squad {tag} requires amq", failures)
+    fail_if_missing(readme, f"- `amq` {AMQ_MIN_VERSION}+ on `PATH`", failures)
 
     readme_html = os.path.join(root, "README.html")
     if os.path.exists(readme_html):
         fail_if_missing(readme_html, f"github.com/omriariav/amq-squad/v2/cmd/amq-squad@{tag}", failures)
-        fail_if_missing(readme_html, f"amq-squad {tag} requires AMQ", failures)
-        fail_if_missing(readme_html, f"amq-squad {tag} requires amq", failures)
+        fail_if_missing(
+            readme_html,
+            f"<li><code>amq</code> {AMQ_MIN_VERSION}+ on <code>PATH</code></li>",
+            failures,
+        )
 
     if failures:
         for failure in failures:
