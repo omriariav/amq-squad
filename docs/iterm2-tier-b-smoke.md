@@ -5,10 +5,11 @@ CI verifies only the emitted AppleScript argv shape; this flow needs a macOS
 desktop with iTerm2 installed.
 
 The backend asks iTerm2 to type a shell-agnostic launch line into the new
-session: `env AMQ_SQUAD_TERMINAL_* ... /bin/sh -c <agent command>`. This lets
-fish, nushell, and POSIX login shells hand off to `/bin/sh` for the generated
-agent command; the terminal metadata is captured by `amq-squad launch` and then
-stripped before the agent process is exec'd.
+session: `/bin/sh -c <quoted payload>`. The payload exports
+`AMQ_SQUAD_TERMINAL_*` metadata before running the generated agent command. This
+lets fish, nushell, and POSIX login shells hand off to `/bin/sh`; the terminal
+metadata is captured by `amq-squad launch` and then stripped before the agent
+process is exec'd.
 
 1. From a project with a configured team, start a fresh workstream:
 

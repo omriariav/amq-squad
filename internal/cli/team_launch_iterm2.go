@@ -102,11 +102,19 @@ func runITerm2LaunchPlan(plan iterm2LaunchPlan) error {
 }
 
 func iterm2LaunchArgv(workstream string, pane teamLaunchPane) []string {
+	windowName := nativeTerminalWindowName(workstream, pane.Role)
+	payload := nativeTerminalLaunchPayload(pane.Command, []nativeTerminalEnv{
+		{Key: envTerminalBackend, Value: "iterm2"},
+		{Key: envTerminalSession, Value: workstream},
+		{Key: envTerminalTarget, Value: "new-window"},
+		{Key: envTerminalWindowID, Value: nativeTerminalWindowIDPlaceholder, Raw: true},
+		{Key: envTerminalWindowName, Value: windowName},
+		{Key: envTerminalTabID, Value: nativeTerminalTabIDPlaceholder, Raw: true},
+		{Key: envTerminalSessionID, Value: nativeTerminalSessionIDPlaceholder, Raw: true},
+	})
 	script := `on run argv
-set workstreamName to item 1 of argv
-set roleName to item 2 of argv
-set agentCommand to item 3 of argv
-set windowName to "amq:" & workstreamName & ":" & roleName
+set windowName to item 1 of argv
+set payloadTemplate to item 2 of argv
 tell application "iTerm2"
 	activate
 	set w to (create window with default profile)
@@ -122,13 +130,33 @@ tell application "iTerm2"
 	end try
 	tell sess
 		set name to windowName
-		set fullCommand to "env AMQ_SQUAD_TERMINAL_BACKEND=iterm2 AMQ_SQUAD_TERMINAL_SESSION=" & workstreamName & " AMQ_SQUAD_TERMINAL_TARGET=new-window AMQ_SQUAD_TERMINAL_WINDOW_ID=" & winID & " AMQ_SQUAD_TERMINAL_WINDOW_NAME=" & windowName & " AMQ_SQUAD_TERMINAL_TAB_ID=" & tabID & " AMQ_SQUAD_TERMINAL_SESSION_ID=" & sessID & " /bin/sh -c " & quoted form of agentCommand
+		set payload to my replaceText(payloadTemplate, "__AMQ_SQUAD_TERMINAL_WINDOW_ID__", my shellSingleQuote(winID))
+		set payload to my replaceText(payload, "__AMQ_SQUAD_TERMINAL_TAB_ID__", my shellSingleQuote(tabID))
+		set payload to my replaceText(payload, "__AMQ_SQUAD_TERMINAL_SESSION_ID__", my shellSingleQuote(sessID))
+		set fullCommand to "/bin/sh -c " & quoted form of payload
 		write text fullCommand
 	end tell
 end tell
 return winID
-end run`
-	return []string{"-e", script, workstream, pane.Role, pane.Command}
+end run
+
+on replaceText(sourceText, searchText, replacementText)
+	set oldDelimiters to AppleScript's text item delimiters
+	set AppleScript's text item delimiters to searchText
+	set textItems to text items of sourceText
+	set AppleScript's text item delimiters to replacementText
+	set replacedText to textItems as text
+	set AppleScript's text item delimiters to oldDelimiters
+	return replacedText
+end replaceText
+
+on shellSingleQuote(valueText)
+	set valueText to valueText as string
+	set singleQuote to ASCII character 39
+	set spliceQuote to singleQuote & (ASCII character 92) & singleQuote & singleQuote
+	return singleQuote & my replaceText(valueText, singleQuote, spliceQuote) & singleQuote
+end shellSingleQuote`
+	return []string{"-e", script, windowName, payload}
 }
 
 func focusITerm2Window(windowID string) error {
