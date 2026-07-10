@@ -17,6 +17,7 @@ type previewFlags struct {
 	fresh          *bool
 	trustRaw       *string
 	model          *string
+	effort         *string
 	codexArgsRaw   *string
 	claudeArgsRaw  *string
 	forceDuplicate *bool
@@ -33,6 +34,7 @@ func registerPreviewFlags(fs *flag.FlagSet) *previewFlags {
 		fresh:          fs.Bool("fresh", false, "fail if the selected workstream session already exists"),
 		trustRaw:       fs.String("trust", "", "Codex trust profile for this run: approve-for-me (default), sandboxed, or trusted"),
 		model:          fs.String("model", "", "per-persona model overrides for this run, e.g. cto=gpt-5.6-sol,fullstack=sonnet"),
+		effort:         fs.String("effort", "", "per-persona launch-only effort overrides, e.g. cto=high,qa=medium"),
 		codexArgsRaw:   fs.String("codex-args", "", "extra Codex args for this run, e.g. '--enable goals'"),
 		claudeArgsRaw:  fs.String("claude-args", "", "extra Claude args for this run, e.g. '--chrome'"),
 		forceDuplicate: fs.Bool("force-duplicate", false, "include --force-duplicate in emitted launch commands"),
@@ -54,6 +56,10 @@ func (p *previewFlags) toEmitOptions(fs *flag.FlagSet) (emitTeamOptions, error) 
 		return emitTeamOptions{}, fmt.Errorf("parse --model: %w", err)
 	}
 	modelOverrides = lowercaseKeys(modelOverrides)
+	effortOverrides, err := parseEffortOverrides(*p.effort)
+	if err != nil {
+		return emitTeamOptions{}, err
+	}
 	binaryArgs, err := parseBinaryArgFlags(*p.codexArgsRaw, *p.claudeArgsRaw)
 	if err != nil {
 		return emitTeamOptions{}, err
@@ -75,6 +81,7 @@ func (p *previewFlags) toEmitOptions(fs *flag.FlagSet) (emitTeamOptions, error) 
 		RequestedTrust:   trustMode,
 		ExplicitTrust:    flagWasSet(fs, "trust"),
 		ModelOverrides:   modelOverrides,
+		EffortOverrides:  effortOverrides,
 		ForceDuplicate:   *p.forceDuplicate,
 		NoGitignore:      *p.noGitignore,
 		Symphony:         *p.symphony,
@@ -129,6 +136,7 @@ func buildLiveLaunchOptions(fs *flag.FlagSet, pf *previewFlags, lf *liveLaunchFl
 		BinaryArgs:      emit.ExtraBinaryArgs,
 		Trust:           emit.RequestedTrust,
 		ModelOverrides:  emit.ModelOverrides,
+		EffortOverrides: emit.EffortOverrides,
 		ForceDuplicate:  emit.ForceDuplicate,
 		NoGitignore:     emit.NoGitignore,
 		Symphony:        emit.Symphony,

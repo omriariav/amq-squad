@@ -189,3 +189,64 @@ func TestNumberedWizardRunsCanonicalPreviewWithoutMutation(t *testing.T) {
 		t.Fatal("preview-only wizard created a team profile")
 	}
 }
+
+func TestAdaptiveRunStartWizardSelectsUIAndStripsAdapterFlags(t *testing.T) {
+	prevTerm := runStartWizardTerm
+	prevAccessible := runStartWizardAccessible
+	prevNumbered := runStartNumberedAdapter
+	prevBubble := runStartBubbleAdapter
+	t.Cleanup(func() {
+		runStartWizardTerm = prevTerm
+		runStartWizardAccessible = prevAccessible
+		runStartNumberedAdapter = prevNumbered
+		runStartBubbleAdapter = prevBubble
+	})
+
+	var used string
+	var gotArgs []string
+	runStartNumberedAdapter = func(args []string, _ string) error {
+		used, gotArgs = "numbered", append([]string(nil), args...)
+		return nil
+	}
+	runStartBubbleAdapter = func(args []string, _ string) error {
+		used, gotArgs = "tui", append([]string(nil), args...)
+		return nil
+	}
+
+	for _, tc := range []struct {
+		name       string
+		term       string
+		accessible bool
+		args       []string
+		wantUI     string
+	}{
+		{name: "default TUI", term: "xterm-256color", args: []string{"--project", "/repo"}, wantUI: "tui"},
+		{name: "dumb terminal", term: "dumb", args: []string{"--project", "/repo"}, wantUI: "numbered"},
+		{name: "accessibility environment", term: "xterm", accessible: true, args: []string{"--project", "/repo"}, wantUI: "numbered"},
+		{name: "explicit numbered", term: "xterm", args: []string{"--wizard-ui", "numbered", "--project", "/repo"}, wantUI: "numbered"},
+		{name: "numbered alias", term: "xterm", args: []string{"--numbered", "--project", "/repo"}, wantUI: "numbered"},
+		{name: "explicit TUI beats dumb fallback", term: "dumb", accessible: true, args: []string{"--wizard-ui=tui", "--project", "/repo"}, wantUI: "tui"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			used, gotArgs = "", nil
+			runStartWizardTerm = func() string { return tc.term }
+			runStartWizardAccessible = func() bool { return tc.accessible }
+			if err := runAdaptiveRunStartWizard(tc.args, "test"); err != nil {
+				t.Fatal(err)
+			}
+			if used != tc.wantUI {
+				t.Fatalf("adapter = %q, want %q", used, tc.wantUI)
+			}
+			if !reflect.DeepEqual(gotArgs, []string{"--project", "/repo"}) {
+				t.Fatalf("adapter args = %#v", gotArgs)
+			}
+		})
+	}
+}
+
+func TestAdaptiveRunStartWizardRejectsUnknownUI(t *testing.T) {
+	err := runAdaptiveRunStartWizard([]string{"--wizard-ui", "graphical"}, "test")
+	if err == nil || !strings.Contains(err.Error(), "unsupported --wizard-ui") {
+		t.Fatalf("error = %v", err)
+	}
+}

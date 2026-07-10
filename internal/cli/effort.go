@@ -118,3 +118,70 @@ func memberEffort(member team.Member) string {
 	}
 	return effortAutomatic
 }
+
+// applyLaunchEffortOverrides returns an ephemeral roster copy with only the
+// native effort arguments replaced. It never writes the profile and preserves
+// all unrelated per-member args.
+func applyLaunchEffortOverrides(members []team.Member, overrides map[string]string) ([]team.Member, error) {
+	if len(overrides) == 0 {
+		return append([]team.Member(nil), members...), nil
+	}
+	known := make(map[string]bool, len(members))
+	for _, member := range members {
+		known[strings.ToLower(strings.TrimSpace(member.Role))] = true
+	}
+	var unknown []string
+	for role := range overrides {
+		if !known[strings.ToLower(strings.TrimSpace(role))] {
+			unknown = append(unknown, role)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return nil, fmt.Errorf("--effort names role(s) not present in the selected profile: %s", strings.Join(unknown, ", "))
+	}
+	out := append([]team.Member(nil), members...)
+	for i := range out {
+		effort, ok := overrides[strings.ToLower(strings.TrimSpace(out[i].Role))]
+		if !ok {
+			continue
+		}
+		switch normalizedAgentBinary(out[i].Binary) {
+		case "codex":
+			out[i].CodexArgs = stripNativeEffortArgs(out[i].CodexArgs, "codex")
+		case "claude":
+			out[i].ClaudeArgs = stripNativeEffortArgs(out[i].ClaudeArgs, "claude")
+		}
+		if err := applyMemberEffort(&out[i], effort); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func stripNativeEffortArgs(args []string, binary string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if binary == "codex" {
+			if arg == "-c" && i+1 < len(args) && strings.HasPrefix(args[i+1], "model_reasoning_effort=") {
+				i++
+				continue
+			}
+			if strings.HasPrefix(arg, "model_reasoning_effort=") {
+				continue
+			}
+		}
+		if binary == "claude" {
+			if arg == "--effort" && i+1 < len(args) {
+				i++
+				continue
+			}
+			if strings.HasPrefix(arg, "--effort=") {
+				continue
+			}
+		}
+		out = append(out, arg)
+	}
+	return out
+}

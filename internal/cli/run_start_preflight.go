@@ -21,7 +21,6 @@ const (
 	runStartPreflightMissingRoster           = "missing_roster"
 	runStartPreflightInvalidLeadMode         = "invalid_lead_mode"
 	runStartPreflightExistingProfileLeadMode = "existing_profile_lead_mode"
-	runStartPreflightExistingProfileEffort   = "existing_profile_effort"
 	runStartPreflightInvalidEffort           = "invalid_effort"
 )
 
@@ -145,13 +144,20 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 			fmt.Sprintf("run amq-squad team lead set <role> --lead-mode %s before starting", leadMode))
 	}
 	if input.EffortSet {
-		if !r.FreshRoster {
-			return add(runStartPreflightExistingProfileEffort,
-				"--effort applies only when run start creates a fresh roster; existing member CodexArgs/ClaudeArgs remain authoritative",
-				"keep the existing profile effort settings",
-				"create a new named profile to choose different per-role effort")
+		var effortErr error
+		if r.TeamPresent && !r.FreshRoster {
+			efforts, parseErr := parseEffortOverrides(input.Effort)
+			if parseErr != nil {
+				effortErr = parseErr
+			} else if existing, readErr := team.ReadProfile(r.Project, r.Profile); readErr != nil {
+				effortErr = fmt.Errorf("read team profile %q: %w", r.Profile, readErr)
+			} else {
+				_, effortErr = applyLaunchEffortOverrides(existing.Members, efforts)
+			}
+		} else {
+			effortErr = validateRunStartFreshEffort(input.Roles, input.Binary, input.Effort)
 		}
-		if effortErr := validateRunStartFreshEffort(input.Roles, input.Binary, input.Effort); effortErr != nil {
+		if effortErr != nil {
 			return add(runStartPreflightInvalidEffort, effortErr.Error(), "use role=automatic|low|medium|high assignments")
 		}
 	}
