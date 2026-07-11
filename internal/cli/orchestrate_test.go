@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1158,6 +1160,17 @@ func TestAppendPassthroughArgs(t *testing.T) {
 	}
 	if joined := strings.Join(appendPassthroughArgs([]string{"up"}, "", "", ""), " "); joined != "up" {
 		t.Fatalf("empty passthrough should be a no-op, got %q", joined)
+	}
+}
+
+func TestFreshRunStartDoesNotPersistAndForwardPassthroughArgs(t *testing.T) {
+	base := []string{"issue-396", "--project", "/tmp/project"}
+	if got := appendExistingTeamPassthroughArgs(base, false, "cto=opus", "-c model_reasoning_effort=high", "--effort high"); !reflect.DeepEqual(got, base) {
+		t.Fatalf("fresh up args duplicated persisted passthrough: %#v", got)
+	}
+	got := appendExistingTeamPassthroughArgs(base, true, "cto=opus", "-c model_reasoning_effort=high", "--effort high")
+	if !slices.Contains(got, "--claude-args") || !slices.Contains(got, "--codex-args") || !slices.Contains(got, "--model") {
+		t.Fatalf("existing-team overrides missing: %#v", got)
 	}
 }
 

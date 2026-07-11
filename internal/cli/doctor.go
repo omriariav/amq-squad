@@ -13,6 +13,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -595,9 +597,49 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckOrphanPanes(d))
 	checks = append(checks, doctorCheckMarkerIntegrity(d)...)
 	checks = append(checks, doctorCheckPointerSync(d)...)
+	checks = append(checks, doctorCheckBootstrap(d)...)
 	wakeChecks, workstream := doctorCheckWake(d)
 	checks = append(checks, wakeChecks...)
 	return checks, workstream
+}
+
+func doctorCheckBootstrap(d doctorExecution) []doctorCheck {
+	profile := doctorProfile(d)
+	t, err := team.ReadProfile(d.ProjectDir, profile)
+	if err != nil {
+		return []doctorCheck{{Name: "bootstrap", Status: doctorOK, Detail: "team config unavailable; skipped"}}
+	}
+	workstream, err := resolveTeamWorkstreamName(t, d.WorkstreamHint, strings.TrimSpace(d.WorkstreamHint) != "")
+	if err != nil {
+		return []doctorCheck{{Name: "bootstrap", Status: doctorOK, Detail: "workstream unresolved; skipped"}}
+	}
+	now := d.Probe.Now()
+	out := make([]doctorCheck, 0, len(t.Members))
+	for _, m := range orderedTeamMembers(t.Members) {
+		handle := memberHandle(m)
+		env, err := resolveAMQEnvForTeamProfile(m.EffectiveCWD(t.Project), profile, workstream, handle)
+		if err != nil {
+			out = append(out, doctorCheck{Name: "bootstrap/" + m.Role, Status: doctorOK, Detail: "AMQ root unresolved; skipped"})
+			continue
+		}
+		agentDir := filepath.Join(absoluteAMQRoot(m.EffectiveCWD(t.Project), env.Root), "agents", handle)
+		rec, err := launch.Read(agentDir)
+		if err != nil {
+			out = append(out, doctorCheck{Name: "bootstrap/" + m.Role, Status: doctorOK, Detail: "no launch record; skipped"})
+			continue
+		}
+		result := bootstrapack.Evaluate(rec.BootstrapExpectation, bootstrapack.Identity{Handle: rec.Handle, Role: rec.Role, Profile: rec.TeamProfile, Session: rec.Session, Root: rec.Root}, agentDir, now)
+		status := doctorBootstrapStatus(result)
+		out = append(out, doctorCheck{Name: "bootstrap/" + m.Role, Status: status, Detail: result.State + ": " + result.Detail})
+	}
+	return out
+}
+
+func doctorBootstrapStatus(result bootstrapack.Result) doctorStatus {
+	if result.State == "unverified" || result.State == "mismatch" || result.State == "malformed" {
+		return doctorWarn
+	}
+	return doctorOK
 }
 
 func defaultDoctorAMQOps(projectDir string, env amqEnv) ([]byte, error) {

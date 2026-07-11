@@ -354,6 +354,23 @@ func TestEmitTeamCommandAppendsPerMemberArgsAfterTeamArgs(t *testing.T) {
 	}
 }
 
+func TestEmitTeamCommandComposesRecognizedSingletonOnce(t *testing.T) {
+	claude := team.Member{Role: "lead", Binary: "claude", Handle: "lead", ClaudeArgs: []string{"--effort", "max"}}
+	cmd := emitTeamCommand(emitTeamCommandInput{CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p", Member: claude, Workstream: "s", TrustMode: trustModeSandboxed, BinaryArgs: map[string][]string{"claude": {"--effort", "low", "--effort", "high"}}})
+	if strings.Count(cmd, "--effort") != 2 { // once in --claude-args and once after the child -- boundary
+		t.Fatalf("expected one effective effort span in each mirrored argv surface: %s", cmd)
+	}
+	if strings.Contains(cmd, "--effort low") || strings.Contains(cmd, "--effort high") || !strings.Contains(cmd, "--effort max") {
+		t.Fatalf("member precedence not applied: %s", cmd)
+	}
+
+	codex := team.Member{Role: "worker", Binary: "codex", Handle: "worker", CodexArgs: []string{"-c", "model_reasoning_effort=max"}}
+	cmd = emitTeamCommand(emitTeamCommandInput{CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p", Member: codex, Workstream: "s", TrustMode: trustModeSandboxed, BinaryArgs: map[string][]string{"codex": {"-c", "model_reasoning_effort=low", "-c", "model_reasoning_effort=high"}}})
+	if strings.Contains(cmd, "model_reasoning_effort=low") || strings.Contains(cmd, "model_reasoning_effort=high") || strings.Count(cmd, "model_reasoning_effort=max") != 2 {
+		t.Fatalf("codex config precedence not applied: %s", cmd)
+	}
+}
+
 func TestEmitTeamCommandPerMemberArgsOnly(t *testing.T) {
 	// No team-level binary_args: a member's own args still emit.
 	m := team.Member{

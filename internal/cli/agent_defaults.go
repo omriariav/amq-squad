@@ -199,13 +199,11 @@ func launchDefaultChildArgs(binary string, includeBuiltIn bool, modelArgs, extra
 }
 
 func launchDefaultChildArgsWithTrust(binary string, includeBuiltIn bool, modelArgs, extraArgs []string, trustMode string) []string {
-	out := []string{}
+	var builtIn []string
 	if includeBuiltIn {
-		out = append(out, defaultChildArgsForBinaryWithTrust(binary, trustMode)...)
+		builtIn = defaultChildArgsForBinaryWithTrust(binary, trustMode)
 	}
-	out = append(out, modelArgs...)
-	out = append(out, extraArgs...)
-	return out
+	return composeBinaryArgs(binary, builtIn, modelArgs, extraArgs)
 }
 
 // validateTrustCombination rejects user input that contradicts the trust mode.
