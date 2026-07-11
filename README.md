@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.18.0](#whats-new-in-v2180)
+- [What's new in v2.19.0](#whats-new-in-v2190)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,24 +38,26 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.18.0
+## What's new in v2.19.0
 
-v2.18.0 is a coherence release for goal-driven, externally supervised squads:
+v2.19.0 makes squad startup guided, observable, and safer to supervise:
 
-- **Hard authorization boundary** for high-risk lead actions (#349) and a
-  **planner/reviewer-only lead mode** (#350).
-- **Run start UX**: native `run start`, short flags, default visible sibling
-  tabs, and `run start --external-lead` for binding the current pane as the
-  project lead (#340, #345-#348).
-- **External-orchestrator integration**: read-only evidence lane, adopt-evidence
-  workflow, and Symphony lifecycle hooks (#335-#337).
-- **Terminal platform support** with an explicit runtime capability model:
-  tmux Tier A, iTerm2 Tier B, Terminal.app Tier C, and cmux still pending (#330,
-  #331, #332, #384-#386).
-- **gpt-5.6 model family guidance** lives in the skills as the source of truth
-  for lead/worker selection (#380).
-- **AMQ 0.41.0+ baseline** for the coordination primitives this release depends
-  on.
+- **Interactive `run start` wizard** with Bubble Tea and numbered/accessibility
+  adapters, structured preflight, Project and Global/NOC flows, explicit
+  preview-to-live confirmation, and deterministic tmux layouts (#393).
+- **Attention-only operator notifications** with profile-scoped desktop or
+  direct-argv sinks, delivery de-duplication, gate escalation, and wizard/setup
+  configuration that never grants approval (#390).
+- **Bounded self-operator mode** for explicit, exact-session merge approval.
+  Spawn, release, tag, publish, external-send, and destructive actions remain
+  human-only, and the approving lead cannot execute its own merge (#391).
+- **Bootstrap and launch hardening** with identity-bound bootstrap completion
+  attestation and single-pass native Claude/Codex argv composition (#396).
+- **Wake-friendly orchestration waits**: collect briefly for an imminent ACK or
+  report, then park/end the turn for longer work and operator gates (#404).
+- **Deterministic layout finalization hardening** keeps the configured lead in
+  the main tmux pane, verifies exact pane/window identity, and preserves
+  observable warnings without tearing down launched agents (#393).
 
 ## Install
 
@@ -69,7 +71,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.18.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.19.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
@@ -289,8 +291,8 @@ promise.
 | --- | --- | --- | --- | --- | --- | --- |
 | tmux | Tier A | Managed panes in current window, sibling windows, or detached session. | Available only while the recorded pane is live; otherwise reason is `agent pane is not live`. | Available only while the recorded pane is live; otherwise reason is `agent pane is not live`. | Always available because durable AMQ dispatch does not require pane injection. | Full managed stop/resume through launch records and tmux pane identity. |
 | iTerm2 | Tier B | One visible native iTerm2 window per agent. Terminal metadata is captured and then stripped from the agent env. | Available only with a recorded window id and verified agent PID/binary liveness. Missing id reports `iTerm2 window id is unavailable`; dead/mismatched process reports `iTerm2 focus requires verified agent PID liveness`. | Disabled: `iTerm2 prompt/native-goal injection is disabled until #374 proves safe send/capture/busy support`. | Always available because durable AMQ dispatch does not require pane injection. | Agent process stop/resume is managed; native prompt injection is not. |
-| Terminal.app | Tier C | Visible native Terminal.app tabs/windows. Window identity is derived from the launched tab TTY when available. | Disabled: `Terminal.app focus requires stable window/tab addressing; manual focus is required in v2.18.0`. | Disabled: `Terminal.app prompt/native-goal injection is disabled until #375 proves safe Accessibility-based input`. | Always available because durable AMQ dispatch does not require pane injection. | Agent process stop/resume is managed; native focus/input remain manual. |
-| cmux | Pending | Not shipped in v2.18.0. | Pending #330 re-entry bar. | Pending #330 re-entry bar. | Durable AMQ dispatch remains the intended control plane once a backend exists. | Pending #330 re-entry bar. |
+| Terminal.app | Tier C | Visible native Terminal.app tabs/windows. Window identity is derived from the launched tab TTY when available. | Disabled: `Terminal.app focus requires stable window/tab addressing; manual focus is required`. | Disabled: `Terminal.app prompt/native-goal injection is disabled until #375 proves safe Accessibility-based input`. | Always available because durable AMQ dispatch does not require pane injection. | Agent process stop/resume is managed; native focus/input remain manual. |
+| cmux | Pending | No backend is shipped. | Pending #330 re-entry bar. | Pending #330 re-entry bar. | Durable AMQ dispatch remains the intended control plane once a backend exists. | Pending #330 re-entry bar. |
 
 Manual smoke flows live in
 [docs/iterm2-tier-b-smoke.md](docs/iterm2-tier-b-smoke.md) and
@@ -335,7 +337,7 @@ Safety preflights:
 
 ```sh
 amq-squad verify action --project . --session issue-96 \
-  --gate release --action github_release --target "draft v2.18.0 release"
+  --gate release --action github_release --target "draft v2.19.0 release"
 amq-squad verify merge --evidence merge-evidence.json
 amq-squad verify release --evidence release-evidence.json
 ```
@@ -392,10 +394,10 @@ Invoke skills in Claude Code as `/amq-squad:<skill>` and in Codex as
 `$<skill>`.
 
 Model guidance is intentionally skill-owned because it changes faster than the
-binary. For v2.18.0, the guidance points at the gpt-5.6 family for Codex-heavy
-work, uses explicit model/effort overrides per role, and treats cost as a
-tie-breaker after output quality for shippable work. Prefer the skill guidance
-over copying stale model examples from this README.
+binary. For v2.19.0, use the current model family and per-role model/effort
+recommendations in the installed skills; treat cost as a tie-breaker after
+output quality for shippable work. Prefer that guidance over copying model
+examples from this README.
 
 Deep guide: [docs/skills.md](docs/skills.md)
 ([HTML](docs/skills.html)).
