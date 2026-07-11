@@ -17,7 +17,7 @@ func TestOperatorDeliveryModeContracts(t *testing.T) {
 		{name: "lead pane", mode: team.OperatorInteractionLeadPane, surface: "lead pane", owner: "none", contract: "lead mirrors decisions"},
 		{name: "separate terminal", mode: team.OperatorInteractionSeparateTerminal, surface: "separate operator terminal", poll: true, owner: "operator", contract: "operator terminal"},
 		{name: "noc", mode: team.OperatorInteractionNOC, surface: "NOC/global board", poll: true, owner: "noc", contract: "NOC/global orchestrator"},
-		{name: "forward self operator", mode: team.OperatorInteractionSelfOperator, surface: "human operator (self-operator unavailable)", poll: true, owner: "operator", contract: "#391"},
+		{name: "self operator", mode: team.OperatorInteractionSelfOperator, surface: "delegated lead with human override", poll: true, owner: "operator", contract: "exact-session allowlisted gates"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			op := team.DefaultOperator()

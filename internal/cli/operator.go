@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/flock"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -159,6 +161,8 @@ func runOperator(args []string) error {
 		return nil
 	case "answer":
 		return runOperatorAnswer(args[1:])
+	case "self-approve":
+		return runOperatorSelfApprove(args[1:])
 	case "directive":
 		return runOperatorDirective(args[1:])
 	case "poll":
@@ -207,6 +211,10 @@ func runOperatorAnswer(args []string) error {
 	approved := fs.Bool("approved", false, "send APPROVED answer")
 	denied := fs.Bool("denied", false, "send DENIED answer")
 	reasonFlag := fs.String("reason", "", "optional reason to include in the answer body")
+	kindFlag := fs.String("kind", "", "structured gate kind for high-risk authorization")
+	actionFlag := fs.String("action", "", "structured normalized action")
+	targetFlag := fs.String("target", "", "exact case-sensitive target")
+	evidenceFlag := fs.String("evidence", "", "optional strict preflight evidence")
 	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
 	overrideNamespaceReason := fs.String("namespace-reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
@@ -256,6 +264,35 @@ non-runnable operator mailbox.
 	subject := decision + ": " + strings.TrimPrefix(topic, "gate/")
 	body := strings.TrimSpace(*reasonFlag)
 	thread := topic
+	var context map[string]any
+	var onSent func(string) error
+	structured := flagWasSet(fs, "kind") || flagWasSet(fs, "action") || flagWasSet(fs, "target") || flagWasSet(fs, "evidence")
+	if structured {
+		if strings.TrimSpace(*kindFlag) == "" || strings.TrimSpace(*actionFlag) == "" || strings.TrimSpace(*targetFlag) == "" {
+			return usageErrorf("structured operator answer requires --kind, --action, and --target")
+		}
+		question, questionErr := humanApprovalQuestion(projectDir, profile, workstream, topic, *kindFlag, *actionFlag, *targetFlag)
+		if questionErr != nil {
+			return questionErr
+		}
+		approval := operatorauth.ApprovalContext{SchemaVersion: operatorauth.ApprovalSchemaVersion, Source: "human", SelfApproved: false, GateKind: *kindFlag, Action: operatorauth.NormalizeAction(*actionFlag), Target: strings.TrimSpace(*targetFlag), QuestionMessageID: question.ID, AnsweredByRole: "operator", AnsweredByHandle: operatorHandle, VerifiedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+		if strings.TrimSpace(*evidenceFlag) != "" {
+			b, err := os.ReadFile(*evidenceFlag)
+			if err != nil {
+				return err
+			}
+			sum := sha256.Sum256(b)
+			approval.PreflightPath = *evidenceFlag
+			approval.PreflightSHA256 = fmt.Sprintf("sha256:%x", sum)
+			approval.PreflightKind = "provided"
+		}
+		context = map[string]any{"approval": approval}
+		body = strings.TrimSpace(body + fmt.Sprintf("\nGate-Kind: %s\nAction: %s\nTarget: %s", approval.GateKind, approval.Action, approval.Target))
+		onSent = func(answerID string) error {
+			receipt := operatorauth.Receipt{Gate: topic, GateKind: approval.GateKind, Action: approval.Action, Target: approval.Target, Decision: strings.ToLower(decision), ApprovalSource: "human", QuestionMessageID: question.ID, AnswerMessageID: answerID, AnsweredBy: operatorHandle, Preflight: operatorauth.PreflightReceipt{Kind: approval.PreflightKind, SHA256: approval.PreflightSHA256, Path: approval.PreflightPath, OK: approval.PreflightSHA256 != ""}}
+			return writeSelfApprovalReceipt(projectDir, profile, workstream, topic, answerID, receipt)
+		}
+	}
 	return sendOperatorAMQ(operatorSendOptions{
 		Command:  "operator answer",
 		Project:  projectDir,
@@ -267,6 +304,8 @@ non-runnable operator mailbox.
 		Kind:     string(state.KindAnswer),
 		Subject:  subject,
 		Body:     body,
+		Context:  context,
+		OnSent:   onSent,
 		JSON:     *jsonOut,
 		Out:      os.Stdout,
 		FollowUp: "amq-squad operator status --project " + shellQuote(projectDir) + operatorProfileArg(profile) + " --session " + shellQuote(workstream) + " --json",
@@ -358,6 +397,8 @@ type operatorSendOptions struct {
 	JSON     bool
 	Out      io.Writer
 	FollowUp string
+	Context  map[string]any
+	OnSent   func(messageID string) error
 }
 
 func resolveOperatorCommandContext(projectFlag, profileFlag, sessionFlag string, projectSet, sessionSet bool) (string, string, team.Team, string, string, error) {
@@ -404,11 +445,23 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 	}
 	ctx.Me = o.From
 	args := dispatchSendArgs(ctx.Root, o.From, o.To, o.Thread, o.Kind, o.Subject, o.Body, "", "", 0)
+	if len(o.Context) > 0 {
+		contextJSON, marshalErr := json.Marshal(o.Context)
+		if marshalErr != nil {
+			return fmt.Errorf("encode %s context: %w", o.Command, marshalErr)
+		}
+		args = append(args, "--context", string(contextJSON))
+	}
 	raw, err := runAMQCommand(amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
 	if err != nil {
 		return fmt.Errorf("%s send to %s: %w", o.Command, o.To, err)
 	}
 	msgID := parseSentMessageID(string(raw))
+	if o.OnSent != nil {
+		if err := o.OnSent(msgID); err != nil {
+			return fmt.Errorf("%s sent message %s but failed to persist verification receipt: %w", o.Command, msgID, err)
+		}
+	}
 	if o.JSON {
 		return printJSONEnvelope("operator_send", mutationResult{
 			Command:   o.Command,
