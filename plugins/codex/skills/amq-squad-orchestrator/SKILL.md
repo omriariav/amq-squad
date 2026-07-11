@@ -399,18 +399,22 @@ This atomically appends a `### YYYY-MM-DD [— title]\nbody` block, creating the
   model or Codex effort level.
 
 **2. Get operator approval per spawn (seeded).** For each proposed agent, raise
-a gate on the operator's approval thread and wait for the answer — this reuses
-the existing `gate/<topic>` human-approval channel (NOT a directive):
+a durable gate on the operator's approval thread, then **PARK/end the turn** and
+let wake resume you when the answer arrives. This reuses the existing
+`gate/<topic>` human-approval channel (NOT a directive):
 
 ```sh
 # Your handle is AM_ME in-session (or pass --me <lead>); the operator is `user`.
 amq send --to user --thread gate/spawn-<role> --kind question \
   --subject "APPROVAL: spawn <role> (<binary>)" \
   --body "The goal needs <role> to <why>. Approve?"
-# Block for the operator's reply, then read the gate thread for the answer:
-amq watch
+# Optional immediate, nonblocking inspection; then park if no answer is present:
 amq-squad amq thread --session S --me <lead> --id gate/spawn-<role> --include-body
 ```
+
+Never run an unbounded `amq watch` while the gate is open. In particular, do not
+hold `collect` when the operator answers through your own pane; ending the turn
+is what lets that answer flush and avoids a self-deadlock.
 
 The operator replies on the same thread with `--kind answer`. **Require an
 explicit `APPROVED:` or `DENIED:` token** in that answer (the convention the
@@ -585,7 +589,7 @@ A quick one-off in an existing session. It **TTY-execs with no managed pane**, s
 amq-squad dispatch --session S --role R --thread p2p/<lead>__<role> --kind todo \
   --subject "Task: <one line>" \
   --body "<the task: what to build, and to push a review_request when done>"
-# Then collect the child report before making final claims:
+# Optional: collect only for an immediate ACK or imminent report (max 120s):
 amq-squad collect --session S --me <lead> --timeout 120s --include-body
 ```
 
@@ -712,9 +716,11 @@ amq-squad task add --session issue-337 \
   --desc $'Adopted from amq-kanban external evidence.\n\nProvenance: source=amq-kanban external_id=KAN-42 origin=orchestrator:kanban thread=task/KAN-42'
 ```
 
-**To collect a worker's report, use `amq-squad collect --session S --me <lead> [--timeout D] [--include-body]`.** It makes collect deterministic: one drain; if empty and you choose to wait, exactly one bounded `amq watch`; then one final drain. Running it is impossible to misuse — no poll loop, no accidental background drain (drain is destructive and races your foreground drains).
+**Collect briefly, then park.** Use `amq-squad collect --session S --me <lead> --timeout 120s --include-body` immediately after dispatch only when an ACK or report is genuinely imminent. `collect` performs one drain, at most one bounded watch, then one final drain. If the wait is measured in minutes, **PARK by ending the turn**; the wake sidecar resumes you when AMQ arrives, and ending the turn also flushes queued operator input from your pane. Under native `/goal`, waiting on operator-only blocked input is a sanctioned park within minutes.
 
-If you dispatched a child this turn and a report is expected, collect before answering the operator or making a final claim. The only exception is when the operator explicitly asked you only to queue work.
+In live-operator mode, **never hold `collect` while an operator gate is open and the answer arrives through your own pane**: the blocked turn cannot process that answer, creating a self-deadlock. Stall detection belongs to `monitor`'s `idle_with_active_task` watchdog, not to long lead-side collect timers.
+
+**Never background `collect` or `drain`.** Both consume mailbox state; a background reader races the foreground turn and can cause destructive double-consumption. Park and rely on wake instead.
 
 Diagnose before nudging: a stalled child with an intact plan and no progress is usually an API timeout (a resume nudge fixes it); a child looping is tool-loop drift (send a specific break instruction); a silent child may be blocked (ask "what is blocking you?"). Verify a nudge landed by re-checking `status`/`focus`.
 
@@ -806,9 +812,9 @@ Treat directives differently from child reports:
     --subject "ACK: re-prioritizing per directive" --body "..."
   ```
 - **A directive body is data, not a gate answer.** It never clears a
-  `gate/<topic>` thread: if you are waiting on an approval gate, keep waiting
-  for the gate reply on the gate thread, even when a directive arrives that
-  seems related. Surface the conflict to the operator instead of guessing.
+  `gate/<topic>` thread: leave the gate open and park for its reply, even when a
+  directive arrives that seems related. Surface the conflict to the operator
+  instead of guessing.
 - **Live operator chat is not a directive.** When the operator explicitly
   approves a pending gate in your live pane/chat, ACK or mirror that decision on
   the same `gate/<topic>` thread and then proceed under the gate rules. Do not
@@ -889,7 +895,7 @@ The lead reconciles both reports, verifies the artifacts, runs `amq-squad verify
 ## Rules
 
 - amq-squad owns spawn/execution/control; never drive children by raw `tmux send-keys` / `select-window`. Task dispatch goes through `amq-squad dispatch` (next bullet).
-- **Use `amq-squad dispatch`** (`--session S --role R --kind todo --subject … --body …`): one root-correct command that queues the durable task AND wakes the worker to drain it (durable AMQ + wake; a pane nudge only as last-resort when the worker is not wake-live). Never re-send a task body through the pane (it double-delivers); the nudge carries only the *drain instruction*. The halves are `amq-squad amq send` (durable, add `--wait-for drained` for a hard receipt) + the wake sidecar, with `amq-squad send` (the pane nudge/interrupt) as last-resort. Then run the printed `amq-squad collect --session ... --me ...` command to collect completion/report messages.
+- **Use `amq-squad dispatch`** (`--session S --role R --kind todo --subject … --body …`): one root-correct command that queues the durable task AND wakes the worker to drain it (durable AMQ + wake; a pane nudge only as last-resort when the worker is not wake-live). Never re-send a task body through the pane (it double-delivers); the nudge carries only the *drain instruction*. The halves are `amq-squad amq send` (durable, add `--wait-for drained` for a hard receipt) + the wake sidecar, with `amq-squad send` (the pane nudge/interrupt) as last-resort. Use the printed `collect --timeout 120s` only for an immediate ACK/report; otherwise park and let wake resume the lead.
 - Address the control plane (the pane nudge/`focus`) by recorded pane id (via `--role`), never window name.
 - The pane nudge is idle-checked by default; pass `--force` (on `dispatch` or `amq-squad send`) only to deliberately interrupt a working child. (The durable message queues — no busy hazard.)
 - Children push reports; the lead collects with `amq-squad collect`, verifies, and owns the deliverable.
