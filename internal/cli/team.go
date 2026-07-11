@@ -1312,7 +1312,7 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 	// position. They ride the same --claude-args/--codex-args plumbing, so
 	// agent up persists them into the launch record and resume reproduces
 	// them like any other child args.
-	extraDefaultArgs := append(binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs()...)
+	extraDefaultArgs := composeBinaryArgs(m.Binary, binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs())
 	if len(extraDefaultArgs) > 0 {
 		switch normalizedAgentBinary(m.Binary) {
 		case "codex":
@@ -1335,7 +1335,7 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 
 func teamCommandPreview(in emitTeamCommandInput) teamCommandPreviewData {
 	m := in.Member
-	extraDefaultArgs := append(binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs()...)
+	extraDefaultArgs := composeBinaryArgs(m.Binary, binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs())
 	modelArgs := modelArgsForBinary(m.Binary, in.Model)
 	defaultArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, extraDefaultArgs, in.TrustMode)
 	childArgs, preauthorized, added := applyClaudeWorkerPreauth(in.TeamHome, in.Profile, m.Role, m.Binary, in.Workstream, defaultArgs)

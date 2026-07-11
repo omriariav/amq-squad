@@ -101,8 +101,8 @@ func binaryArgsFor(binary string, binaryArgs map[string][]string) []string {
 	if len(binaryArgs) == 0 {
 		return nil
 	}
-	args := binaryArgs[normalizedAgentBinary(binary)]
-	return append([]string(nil), args...)
+	key := normalizedAgentBinary(binary)
+	return composeBinaryArgs(key, binaryArgs[key])
 }
 
 func mergeBinaryArgs(base, extra map[string][]string) map[string][]string {
@@ -115,16 +115,97 @@ func mergeBinaryArgs(base, extra map[string][]string) map[string][]string {
 		if key == "" {
 			continue
 		}
-		out[key] = append(out[key], args...)
+		out[key] = composeBinaryArgs(key, out[key], args)
 	}
 	for k, args := range extra {
 		key := strings.ToLower(strings.TrimSpace(k))
 		if key == "" {
 			continue
 		}
-		out[key] = append(out[key], args...)
+		out[key] = composeBinaryArgs(key, out[key], args)
 	}
 	return out
+}
+
+// composeBinaryArgs combines ordered configuration layers while removing only
+// binary-known singleton options. Unknown and repeatable arguments (including
+// everything after a literal --) remain byte-for-byte ordered. Keeping this
+// parser narrow is intentional: pass-through argv is not a generic flag set.
+func composeBinaryArgs(binary string, layers ...[]string) []string {
+	type span struct {
+		args []string
+		key  string
+	}
+	var spans []span
+	parseOptions := true
+	for _, layer := range layers {
+		for i := 0; i < len(layer); {
+			arg := layer[i]
+			if !parseOptions || arg == "--" {
+				spans = append(spans, span{args: []string{arg}})
+				if arg == "--" {
+					parseOptions = false
+				}
+				i++
+				continue
+			}
+			key, width := binarySingletonSpan(normalizedAgentBinary(binary), layer, i)
+			if width < 1 {
+				width = 1
+			}
+			end := i + width
+			if end > len(layer) {
+				end = len(layer)
+			}
+			spans = append(spans, span{args: append([]string(nil), layer[i:end]...), key: key})
+			i = end
+		}
+	}
+	last := map[string]int{}
+	for i, s := range spans {
+		if s.key != "" {
+			last[s.key] = i
+		}
+	}
+	var out []string
+	for i, s := range spans {
+		if s.key == "" || last[s.key] == i {
+			out = append(out, s.args...)
+		}
+	}
+	return out
+}
+
+func binarySingletonSpan(binary string, args []string, i int) (string, int) {
+	arg := args[i]
+	if binary == "codex" {
+		if (arg == "-c" || arg == "--config") && i+1 < len(args) {
+			if key, _, ok := strings.Cut(args[i+1], "="); ok && strings.TrimSpace(key) != "" {
+				return "codex:config:" + strings.TrimSpace(key), 2
+			}
+		}
+		if strings.HasPrefix(arg, "--config=") {
+			if key, _, ok := strings.Cut(strings.TrimPrefix(arg, "--config="), "="); ok && strings.TrimSpace(key) != "" {
+				return "codex:config:" + strings.TrimSpace(key), 1
+			}
+		}
+		if strings.HasPrefix(arg, "-c=") || (strings.HasPrefix(arg, "-c") && len(arg) > 2) {
+			raw := strings.TrimPrefix(arg, "-c")
+			raw = strings.TrimPrefix(raw, "=")
+			if key, _, ok := strings.Cut(raw, "="); ok && strings.TrimSpace(key) != "" {
+				return "codex:config:" + strings.TrimSpace(key), 1
+			}
+		}
+	}
+	spec, inline, ok := nativeValueSpecForArg(binary, arg)
+	if !ok || !spec.Singleton {
+		return "", 1
+	}
+	width := 1
+	if !inline && i+1 < len(args) && args[i+1] != "--" && !strings.HasPrefix(args[i+1], "-") {
+		width = 2
+	}
+	return binary + ":" + spec.Canonical, width
 }
 
 func joinedAgentArgs(args []string) string {

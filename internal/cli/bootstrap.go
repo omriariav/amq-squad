@@ -11,6 +11,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/role"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
@@ -43,12 +44,13 @@ type bootstrapContext struct {
 	// a non-lead member of an orchestrated team announces readiness to its lead
 	// on startup so the lead can dispatch without guessing the worker's load
 	// state (and without eating busy-guard rejections on a still-loading pane).
-	Orchestrated bool
-	IsLead       bool
-	LeadHandle   string
-	CurrentTeam  []bootstrapTeamMember
-	Workstreams  []bootstrapWorkstream
-	Warnings     []string
+	Orchestrated         bool
+	IsLead               bool
+	LeadHandle           string
+	CurrentTeam          []bootstrapTeamMember
+	Workstreams          []bootstrapWorkstream
+	Warnings             []string
+	BootstrapExpectation *bootstrapack.Expectation
 }
 
 type bootstrapTeamMember struct {
@@ -169,6 +171,63 @@ func promptText(s string) string {
 	return strings.TrimSpace(b.String())
 }
 
+func bootstrapExpectationForLaunch(rec launch.Record, promptAppended, noBootstrap bool, suppressedReason ...string) (bootstrapack.Expectation, error) {
+	required := promptAppended && bootstrapActorCanAttest(rec)
+	expect, err := bootstrapack.NewExpectation(required, rec.StartedAt)
+	if err != nil {
+		return bootstrapack.Expectation{}, err
+	}
+	if required {
+		return expect, nil
+	}
+	switch {
+	case len(suppressedReason) > 0 && strings.TrimSpace(suppressedReason[0]) != "":
+		expect.NotRequiredReason = strings.TrimSpace(suppressedReason[0])
+	case rec.Conversation != "":
+		expect.NotRequiredReason = "true conversation reattach does not require bootstrap acknowledgement"
+	case noBootstrap:
+		expect.NotRequiredReason = "launch explicitly disabled the bootstrap prompt"
+	case !promptAppended:
+		expect.NotRequiredReason = "bootstrap prompt was not appended"
+	default:
+		expect.NotRequiredReason = "bootstrap actor is not a verified configured roster role"
+	}
+	return expect, nil
+}
+
+func bootstrapActorCanAttest(rec launch.Record) bool {
+	if rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) == "" || strings.TrimSpace(rec.Role) == "" || strings.TrimSpace(rec.Handle) == "" {
+		return false
+	}
+	home := strings.TrimSpace(rec.TeamHome)
+	if home == "" {
+		return false
+	}
+	profile := rec.TeamProfile
+	t, err := team.ReadProfile(home, profile)
+	if err != nil {
+		return false
+	}
+	m, ok := operatorRosterMember(t, rec.Role, rec.Handle)
+	if !ok || !sameFilesystemPath(m.EffectiveCWD(t.Project), rec.CWD) {
+		return false
+	}
+	if session := strings.TrimSpace(m.Session); session != "" && session != strings.TrimSpace(rec.Session) {
+		return false
+	}
+	return true
+}
+
+func appendGeneratedBootstrapPrompt(args []string, prompt string) []string {
+	out := append([]string(nil), args...)
+	for _, arg := range out {
+		if arg == "--" {
+			return append(out, prompt)
+		}
+	}
+	return append(out, "--", prompt)
+}
+
 func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrapContext {
 	teamRulesPath := ""
 	if teamHome != "" {
@@ -200,19 +259,20 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		// Brief resolution uses the same rule as the live-launch ensure
 		// step so bootstrap can never name a path that ensure skipped (or
 		// vice versa).
-		BriefPath:        briefPathForProfile(resolveBriefHome(teamHome, rec.CWD), rec.TeamProfile, rec.Session),
-		Operator:         operator,
-		OperatorDelivery: operatorDeliveryForRecord(rec, teamHome),
-		SelfOperator:     selfOperator,
-		OperatorGates:    operatorGates,
-		Execution:        execution,
-		PlannerLead:      isLead && execution != nil && execution.LeadMode == team.LeadModePlanner && !execution.ImplementationAllowed,
-		Orchestrated:     orchestrated,
-		IsLead:           isLead,
-		LeadHandle:       leadHandle,
-		CurrentTeam:      currentTeam,
-		Workstreams:      siblingWorkstreamSummaries(rec.Root, rec.Session),
-		Warnings:         warnings,
+		BriefPath:            briefPathForProfile(resolveBriefHome(teamHome, rec.CWD), rec.TeamProfile, rec.Session),
+		Operator:             operator,
+		OperatorDelivery:     operatorDeliveryForRecord(rec, teamHome),
+		SelfOperator:         selfOperator,
+		OperatorGates:        operatorGates,
+		Execution:            execution,
+		PlannerLead:          isLead && execution != nil && execution.LeadMode == team.LeadModePlanner && !execution.ImplementationAllowed,
+		Orchestrated:         orchestrated,
+		IsLead:               isLead,
+		LeadHandle:           leadHandle,
+		CurrentTeam:          currentTeam,
+		Workstreams:          siblingWorkstreamSummaries(rec.Root, rec.Session),
+		Warnings:             warnings,
+		BootstrapExpectation: rec.BootstrapExpectation,
 	}
 }
 

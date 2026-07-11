@@ -39,7 +39,7 @@ func resolveModelForLaunch(binary, requested string, nativeArgs []string) string
 
 func memberResolvedModel(m team.Member, overrides map[string]string, binaryArgs map[string][]string) string {
 	requested := memberEffectiveModel(m, overrides)
-	nativeArgs := append(binaryArgsFor(m.Binary, binaryArgs), m.ExtraArgs()...)
+	nativeArgs := composeBinaryArgs(m.Binary, binaryArgsFor(m.Binary, binaryArgs), m.ExtraArgs())
 	return resolveModelForLaunch(m.Binary, requested, nativeArgs)
 }
 

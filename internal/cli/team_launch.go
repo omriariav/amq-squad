@@ -583,7 +583,7 @@ func externalLeadRecordForLaunch(m team.Member, cwd, handle, root string, env am
 		},
 	}
 	rec.Terminal = launch.TerminalInfoFromTmux(rec.Tmux)
-	extra := append(binaryArgsFor(m.Binary, binaryArgs), m.ExtraArgs()...)
+	extra := composeBinaryArgs(m.Binary, binaryArgsFor(m.Binary, binaryArgs), m.ExtraArgs())
 	switch normalizedAgentBinary(m.Binary) {
 	case "codex":
 		rec.CodexArgs = extra

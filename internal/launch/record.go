@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 )
 
 const (
@@ -113,6 +115,10 @@ type Record struct {
 	// means the implicit default profile. Captured so status / bootstrap
 	// routing can reuse the same profile without rereading flags.
 	TeamProfile string `json:"team_profile,omitempty"`
+	TeamHome    string `json:"team_home,omitempty"`
+	// BootstrapExpectation is additive launch identity evidence used to judge
+	// whether this exact startup prompt was acknowledged. nil is legacy_unknown.
+	BootstrapExpectation *bootstrapack.Expectation `json:"bootstrap_expectation,omitempty"`
 	// Tmux is the tmux runtime identity captured at launch time when
 	// amq-squad runs inside tmux. nil when launched outside tmux (or when
 	// tmux metadata could not be resolved). Clients detect runtime-control

@@ -9,10 +9,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
+
+func TestDoctorBootstrapGraceIsInfoAndOverdueIsWarn(t *testing.T) {
+	if got := doctorBootstrapStatus(bootstrapack.Result{State: "pending", Required: true}); got != doctorOK {
+		t.Fatalf("pending=%s", got)
+	}
+	for _, state := range []string{"unverified", "mismatch", "malformed"} {
+		if got := doctorBootstrapStatus(bootstrapack.Result{State: state, Required: true}); got != doctorWarn {
+			t.Fatalf("%s=%s", state, got)
+		}
+	}
+	for _, state := range []string{"verified", "not_required", "legacy_unknown"} {
+		if got := doctorBootstrapStatus(bootstrapack.Result{State: state}); got != doctorOK {
+			t.Fatalf("%s=%s", state, got)
+		}
+	}
+}
 
 func newDoctorExec(t *testing.T, dir string) doctorExecution {
 	t.Helper()

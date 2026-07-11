@@ -430,7 +430,9 @@ func runRunStart(args []string, version string) error {
 	if strings.TrimSpace(*seedFlag) != "" {
 		upArgs = append(upArgs, "--seed-from", *seedFlag)
 	}
-	upArgs = appendPassthroughArgs(upArgs, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
+	// A fresh profile already persisted these values through new team above.
+	// Forwarding them to up as a second launch layer duplicated native argv.
+	upArgs = appendExistingTeamPassthroughArgs(upArgs, teamPresent, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
 	if teamPresent && strings.TrimSpace(*effortFlag) != "" {
 		upArgs = append(upArgs, "--effort", *effortFlag)
 	}
@@ -679,6 +681,13 @@ func runRunStart(args []string, version string) error {
 		}
 	}
 	return nil
+}
+
+func appendExistingTeamPassthroughArgs(dst []string, teamPresent bool, model, codexArgs, claudeArgs string) []string {
+	if !teamPresent {
+		return dst
+	}
+	return appendPassthroughArgs(dst, model, codexArgs, claudeArgs)
 }
 
 // runStartPreview runs the read-only dry-run validation and reports honestly.

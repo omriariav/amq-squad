@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -49,6 +50,68 @@ func TestBuildBootstrapPrompt(t *testing.T) {
 	}
 }
 
+func TestBootstrapExpectationLifecycleAndRosterEligibility(t *testing.T) {
+	project := t.TempDir()
+	if err := team.WriteProfile(project, "named", team.Team{Project: project, Members: []team.Member{{Role: "cto", Handle: "lead", Binary: "claude", Session: "s", CWD: project}}}); err != nil {
+		t.Fatal(err)
+	}
+	rec := launch.Record{Role: "cto", Handle: "lead", CWD: project, Root: filepath.Join(t.TempDir(), "custom-root", "named", "s"), Session: "s", TeamHome: project, TeamProfile: "named", StartedAt: time.Now().UTC(), Tmux: &launch.TmuxInfo{PaneID: "%9"}}
+	first, err := bootstrapExpectationForLaunch(rec, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := bootstrapExpectationForLaunch(rec, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Required || !second.Required || first.LaunchID == second.LaunchID {
+		t.Fatalf("fresh/reorient expectations not rotated: %#v %#v", first, second)
+	}
+	rec.Conversation = "saved"
+	reattach, err := bootstrapExpectationForLaunch(rec, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reattach.Required || !strings.Contains(reattach.NotRequiredReason, "conversation reattach") {
+		t.Fatalf("reattach=%#v", reattach)
+	}
+	rec.Conversation = ""
+	noBootstrap, err := bootstrapExpectationForLaunch(rec, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noBootstrap.Required || !strings.Contains(noBootstrap.NotRequiredReason, "disabled") {
+		t.Fatalf("no bootstrap=%#v", noBootstrap)
+	}
+	rec.Role = ""
+	adhoc, err := bootstrapExpectationForLaunch(rec, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adhoc.Required || !strings.Contains(adhoc.NotRequiredReason, "not a verified configured roster") {
+		t.Fatalf("adhoc=%#v", adhoc)
+	}
+}
+
+func TestAppendGeneratedBootstrapPromptTerminatesOptionsOnce(t *testing.T) {
+	prompt := "--flag-like bootstrap text"
+	got := appendGeneratedBootstrapPrompt([]string{"--settings", "settings.json"}, prompt)
+	want := []string{"--settings", "settings.json", "--", prompt}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("got %#v want %#v", got, want)
+	}
+	got = appendGeneratedBootstrapPrompt([]string{"--model", "sonnet", "--"}, prompt)
+	delimiters := 0
+	for _, arg := range got {
+		if arg == "--" {
+			delimiters++
+		}
+	}
+	if delimiters != 1 || got[len(got)-1] != prompt {
+		t.Fatalf("existing delimiter/prompt=%#v", got)
+	}
+}
+
 func TestBootstrapWorkerReadyHandshake(t *testing.T) {
 	// A non-lead member of an orchestrated team is told to announce READY to its
 	// lead on startup.
@@ -61,9 +124,9 @@ func TestBootstrapWorkerReadyHandshake(t *testing.T) {
 	}
 	for _, want := range []string{
 		"worker on a lead-orchestrated squad",
-		"As part of step 11",
+		"As part of step 12",
 		`amq send --to cto --kind status --subject "READY: frontend-dev"`,
-		"Then wait (step 12)",
+		"Then wait (step 13)",
 	} {
 		if !strings.Contains(worker, want) {
 			t.Errorf("worker bootstrap missing %q in:\n%s", want, worker)

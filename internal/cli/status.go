@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/activity"
+	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
@@ -201,7 +202,8 @@ type statusRecord struct {
 	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
 	// Actions are the stable, project-scoped commands a client can render/copy
 	// for this member (focus/send/resume/status). Populated for --json only.
-	Actions []runtimeActionJSON `json:"actions,omitempty"`
+	Actions   []runtimeActionJSON `json:"actions,omitempty"`
+	Bootstrap bootstrapack.Result `json:"bootstrap"`
 }
 
 type statusLocalInput struct {
@@ -352,6 +354,7 @@ func executeStatus(s statusExecution) error {
 
 	rows := buildStatusRows(t, s.Profile, workstream, s.Probe)
 	warnings = append(warnings, statusLocalInputWarnings(t.Project, s.Profile, workstream, rows)...)
+	warnings = append(warnings, statusBootstrapWarnings(workstream, rows)...)
 	if s.JSON {
 		ns := squadnamespace.Resolve(t.Project, s.Profile, workstream)
 		conflict := namespaceConflictForProfileSession(t.Project, s.Profile, workstream)
@@ -424,10 +427,14 @@ func executeStatus(s statusExecution) error {
 		}
 	}
 	fmt.Fprintln(s.Out)
-	w := tabwriter.NewWriter(s.Out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSTATUS\tDETAIL")
+	return writeStatusTable(s.Out, rows, policy)
+}
+
+func writeStatusTable(out io.Writer, rows []statusRecord, policy outputPolicy) error {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSTATUS\tBOOTSTRAP\tDETAIL")
 	for _, r := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), r.Detail)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), r.Bootstrap.State, r.Detail)
 	}
 	return w.Flush()
 }
@@ -1520,12 +1527,16 @@ func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream
 		rec.PreauthorizedActions = live.LaunchRecord.PreauthorizedActions
 		rec.AdoptionMode = strings.TrimSpace(live.LaunchRecord.AdoptionMode)
 		rec.LauncherPaneID = strings.TrimSpace(live.LaunchRecord.LauncherPaneID)
+		rec.Bootstrap = bootstrapack.Evaluate(live.LaunchRecord.BootstrapExpectation, bootstrapack.Identity{Handle: live.LaunchRecord.Handle, Role: live.LaunchRecord.Role, Profile: live.LaunchRecord.TeamProfile, Session: live.LaunchRecord.Session, Root: live.LaunchRecord.Root}, rec.AgentDir, probe.Now())
 		if origin := strings.TrimSpace(live.LaunchRecord.SpawnOrigin); origin != "" {
 			rec.SpawnOrigin = origin
 		}
 		if live.LaunchRecord.SpawnDepth > 0 {
 			rec.SpawnDepth = live.LaunchRecord.SpawnDepth
 		}
+	}
+	if !live.LaunchFound {
+		rec.Bootstrap = bootstrapack.Result{State: "no_record", Detail: "no launch record"}
 	}
 	rec.Signals = live.Signals
 	rec.Status = live.Status
@@ -1539,6 +1550,18 @@ func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream
 		rec.Terminal.PIDAlive = rec.Signals.AgentAlive && rec.Signals.BinaryMatch
 	}
 	return rec
+}
+
+func statusBootstrapWarnings(session string, rows []statusRecord) []statusWarning {
+	var out []statusWarning
+	for _, row := range rows {
+		bad := row.Bootstrap.State == "unverified" || row.Bootstrap.State == "mismatch" || row.Bootstrap.State == "malformed"
+		if !bad || !row.Bootstrap.Required || (row.Status != statusStateLive && row.Status != statusStateWakeLive) {
+			continue
+		}
+		out = append(out, statusWarning{Kind: "bootstrap_unverified", Session: session, Detail: fmt.Sprintf("bootstrap_unverified: %s/%s: %s", row.Role, row.Handle, row.Bootstrap.Detail)})
+	}
+	return out
 }
 
 func statusRecordState(live agentLiveness) string {

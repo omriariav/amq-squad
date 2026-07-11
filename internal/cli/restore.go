@@ -300,6 +300,12 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if rec.Handle != "" {
 		args = append(args, "--me", rec.Handle)
 	}
+	if strings.TrimSpace(rec.TeamHome) != "" {
+		args = append(args, "--team-home", rec.TeamHome)
+	}
+	if profile := strings.TrimSpace(rec.TeamProfile); profile != "" && profile != team.DefaultProfile {
+		args = append(args, "--team-profile", profile)
+	}
 	args = append(args, rec.Binary)
 	argv := restoreArgvFromRecord(rec)
 	if len(argv) > 0 {

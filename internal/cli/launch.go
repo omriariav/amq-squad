@@ -25,6 +25,8 @@ import (
 // unset and record an empty target.
 const envTmuxTarget = "AMQ_SQUAD_TMUX_TARGET"
 
+var launchPlanObserver func(launch.Record, []string)
+
 // envTmuxLauncherPane carries the pane id that initiated a managed tmux launch.
 // The child process runs in the agent pane, so it cannot recover this later
 // from TMUX_PANE. Status uses it to detect same-pane lead collapse.
@@ -325,6 +327,10 @@ Examples:
 		AgentTTY:             currentLaunchTTY(),
 		StartedAt:            time.Now().UTC(),
 		TeamProfile:          teamProfileValue,
+		TeamHome:             strings.TrimSpace(*teamHome),
+	}
+	if rec.TeamHome == "" {
+		rec.TeamHome = rec.CWD
 	}
 
 	// Capture exact tmux identity (session/window/pane ids) when launched
@@ -359,12 +365,34 @@ Examples:
 	// and does not replay stale startup text.
 	effectiveChildArgs := append([]string(nil), childArgs...)
 	bootstrapEligibilityArgs := stripTrailingLauncherPreauthArgs(childArgs, preauthorizedActions)
-	if !*noBootstrap && shouldAppendBootstrapWithDefaults(bootstrapEligibilityArgs, defaultArgs) {
+	bootstrapAppended := !*noBootstrap && shouldAppendBootstrapWithDefaults(bootstrapEligibilityArgs, defaultArgs)
+	bootstrapSuppressedReason := ""
+	if bootstrapAppended {
+		boundary, err := assessNativePromptBoundary(binary, bootstrapEligibilityArgs)
+		if err != nil {
+			return err
+		}
+		if !boundary.Safe {
+			bootstrapAppended = false
+			bootstrapSuppressedReason = boundary.Reason
+		}
+	}
+	expectation, err := bootstrapExpectationForLaunch(rec, bootstrapAppended, *noBootstrap, bootstrapSuppressedReason)
+	if err != nil {
+		return err
+	}
+	rec.BootstrapExpectation = &expectation
+	if bootstrapAppended {
 		prompt, err := buildBootstrapPrompt(bootstrapContextFor(rec, agentDir, *teamHome))
 		if err != nil {
 			return err
 		}
-		effectiveChildArgs = append(effectiveChildArgs, prompt)
+		// Terminate native option parsing so optional/variadic flags can never
+		// consume generated prompt text. The prompt remains the final argv token.
+		effectiveChildArgs = appendGeneratedBootstrapPrompt(effectiveChildArgs, prompt)
+	}
+	if launchPlanObserver != nil {
+		launchPlanObserver(rec, append([]string(nil), effectiveChildArgs...))
 	}
 
 	// Build the coop exec invocation. Done before any disk writes so

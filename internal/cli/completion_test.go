@@ -20,6 +20,20 @@ func TestRunCompletionRejectsMissingShell(t *testing.T) {
 	}
 }
 
+func TestCompletionCoversBootstrapAck(t *testing.T) {
+	for shell, script := range map[string]string{"bash": bashCompletionScript, "zsh": zshCompletionScript, "fish": fishCompletionScript} {
+		for _, want := range []string{"bootstrap", "ack", "--skill-version", "--steps"} {
+			needle := want
+			if shell == "fish" {
+				needle = strings.TrimPrefix(want, "--")
+			}
+			if !strings.Contains(script, needle) {
+				t.Errorf("%s completion missing %q", shell, want)
+			}
+		}
+	}
+}
+
 func TestRunCompletionRejectsExtraArgs(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runCompletion([]string{"bash", "extra"})
@@ -268,6 +282,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"completion":  true,
 		"doctor":      true,
 		"agent":       true,
+		"bootstrap":   true,
 		"version":     true,
 		"help":        true,
 	}
