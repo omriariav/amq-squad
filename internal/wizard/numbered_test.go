@@ -231,6 +231,11 @@ func TestPromptOperatorChoiceCapabilityGating(t *testing.T) {
 	if !CapabilityAvailable(caps, CapabilityOperatorNotifications) {
 		t.Fatal("notification capability unavailable")
 	}
+	for _, option := range OperatorOptions() {
+		if option.ID == "operator_notifications" || option.Blocked && option.Requires == CapabilityOperatorNotifications {
+			t.Fatalf("notification capability remains coupled to blocked operator option: %+v", option)
+		}
+	}
 }
 
 func TestRunNumberedExistingProfileCollectsLaunchOnlyOverrides(t *testing.T) {

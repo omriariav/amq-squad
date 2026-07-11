@@ -3,11 +3,14 @@ package cli
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 func TestTeamInitPersistsDefaultOperatorNotifications(t *testing.T) {
@@ -34,6 +37,34 @@ func TestRunStartExistingNotificationMismatchStructured(t *testing.T) {
 	result := runStartPreflight(runStartPreflightInput{Project: dir, Profile: "default", ProfileExplicit: true, Session: "s", Visibility: "sibling-tabs", OperatorNotifications: true, OperatorNotificationsSet: true})
 	if len(result.Issues) == 0 || result.Issues[0].Code != runStartPreflightExistingOperatorNotifications {
 		t.Fatalf("issues = %+v", result.Issues)
+	}
+}
+
+func TestRunStartWizardPrefillPreservesNotificationRequestSetness(t *testing.T) {
+	spec, err := parseRunStartWizardPrefill([]string{"--project", "/repo", "--operator-notifications"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !spec.OperatorNotifications || !spec.OperatorNotificationsRequested || !spec.OperatorNotificationsSet {
+		t.Fatalf("prefill notification state = %+v", spec)
+	}
+}
+
+func TestFinishWizardRejectsExplicitNotificationMismatchBeforePreview(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Operator: func() *team.OperatorConfig { op := team.DefaultOperator(); return &op }(),
+		Members:  []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
+	})
+	projectCalls, _ := withWizardExecutionSeams(t)
+	err := finishRunStartWizard(runwizard.Spec{
+		Project: dir, Profile: team.DefaultProfile, Session: "s", Visibility: "sibling-tabs",
+		OperatorNotifications: false, OperatorNotificationsRequested: true, OperatorNotificationsSet: true,
+	}, "test", strings.NewReader(""), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "does not match existing profile") {
+		t.Fatalf("mismatch = %v", err)
+	}
+	if len(*projectCalls) != 0 {
+		t.Fatalf("mismatch reached preview/live execution: %+v", *projectCalls)
 	}
 }
 
@@ -77,6 +108,13 @@ func TestOperatorDeliveryShowsAttentionPolicyWithoutSecrets(t *testing.T) {
 	delivery := operatorDeliveryForTeam(team.Team{Operator: &op})
 	if !delivery.NotificationsEnabled || delivery.NotificationSemantics != "attention_only" || len(delivery.NotificationSinkTypes) != 1 || delivery.NotificationSinkTypes[0] != "command" {
 		t.Fatalf("delivery = %+v", delivery)
+	}
+	statusJSON, err := json.Marshal(delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(statusJSON), "secret-wrapper") {
+		t.Fatalf("status delivery leaked command argv: %s", statusJSON)
 	}
 	prompt, err := buildBootstrapPrompt(bootstrapContext{Role: "cto", Handle: "cto", Operator: team.EffectiveOperator(team.Team{Operator: &op}), OperatorDelivery: delivery, OperatorGates: true})
 	if err != nil {

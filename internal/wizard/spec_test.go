@@ -65,6 +65,7 @@ func TestSpecGlobalArgsNeverLeakProjectRunFlags(t *testing.T) {
 		GlobalEffort: "high", GlobalCodexArgs: "--search", GlobalClaudeArgs: "--debug", GlobalWindow: "noc",
 		Project: "/project", Profile: "release", Session: "issue-393", Roles: "cto,qa",
 		Visibility: "current", LayoutPreset: "lead-left", LauncherPane: "close-after-start",
+		OperatorNotifications: true, OperatorNotificationsRequested: true, OperatorNotificationsSet: true,
 	}
 	got := strings.Join(s.GlobalArgs(), " ")
 	for _, want := range []string{"--root /neutral", "--agent codex", "--model gpt", "--codex-args --search -c model_reasoning_effort=high", "--name noc"} {
@@ -72,7 +73,7 @@ func TestSpecGlobalArgsNeverLeakProjectRunFlags(t *testing.T) {
 			t.Fatalf("global argv %q missing %q", got, want)
 		}
 	}
-	for _, forbidden := range []string{"--project", "--profile", "--session", "--roles", "--visibility", "--layout-preset", "--launcher-pane"} {
+	for _, forbidden := range []string{"--project", "--profile", "--session", "--roles", "--visibility", "--layout-preset", "--launcher-pane", "--operator-notifications"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("global argv leaked %q: %s", forbidden, got)
 		}

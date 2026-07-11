@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omriariav/amq-squad/v2/internal/team"
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
@@ -235,6 +236,30 @@ func TestNumberedProjectWizardScriptedYesPreservesReaderAndAddsOnlyGo(t *testing
 		if strings.Contains(stdout, forbidden) {
 			t.Fatalf("prompt %q leaked to stdout:\n%s", forbidden, stdout)
 		}
+	}
+}
+
+func TestNumberedProjectWizardRejectsExplicitNotificationMismatchBeforePreview(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Operator: func() *team.OperatorConfig { op := team.DefaultOperator(); return &op }(),
+		Members:  []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
+	})
+	projectCalls, _ := withWizardExecutionSeams(t)
+	oldInput, oldOutput := runStartWizardInput, runStartWizardOutput
+	t.Cleanup(func() { runStartWizardInput, runStartWizardOutput = oldInput, oldOutput })
+	// Scope; project/profile/session; keep member; topology/layout; launcher; goal/seed.
+	runStartWizardInput = strings.NewReader(strings.Repeat("\n", 10))
+	var prompts strings.Builder
+	runStartWizardOutput = &prompts
+	err := runNumberedRunStartWizard([]string{"--project", dir, "--profile", "default", "--session", "s", "--operator-notifications"}, "test")
+	if err == nil || !strings.Contains(err.Error(), "does not match existing profile") {
+		t.Fatalf("mismatch = %v\nprompts:\n%s", err, prompts.String())
+	}
+	if !strings.Contains(prompts.String(), "Preflight blocked [existing_profile_operator_notifications]") {
+		t.Fatalf("structured mismatch missing:\n%s", prompts.String())
+	}
+	if len(*projectCalls) != 0 {
+		t.Fatalf("mismatch reached preview/live execution: %+v", *projectCalls)
 	}
 }
 

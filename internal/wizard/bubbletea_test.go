@@ -26,13 +26,13 @@ func TestBubbleModelStartsWithProjectDefaultsAndPhaseRail(t *testing.T) {
 	}
 }
 
-func TestBubbleModelExistingProfileOverridesAreLaunchOnly(t *testing.T) {
+func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePreserved(t *testing.T) {
 	profile := ProfileSummary{
 		Name: "review", MemberCount: 1, PinnedSession: "review-work", Lead: "cto", LeadMode: "planner", OperatorMode: "separate_terminal",
 		Members: []MemberSummary{{Role: "cto", Binary: "codex", Model: "stored-model", Effort: "medium"}},
 	}
 	m, err := NewBubbleModel(NumberedOptions{
-		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs"},
+		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs", OperatorNotifications: true, OperatorNotificationsRequested: true, OperatorNotificationsSet: true},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
 		},
@@ -81,6 +81,9 @@ func TestBubbleModelExistingProfileOverridesAreLaunchOnly(t *testing.T) {
 	}
 	if m.spec.OperatorNotifications {
 		t.Fatal("disabled authoritative policy changed to enabled")
+	}
+	if !m.spec.OperatorNotificationsRequested || !m.spec.OperatorNotificationsSet {
+		t.Fatalf("explicit notification request setness was lost: %+v", m.spec)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageLauncherPane {
