@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +20,57 @@ type deliveryFakeSink struct {
 	id    string
 	err   error
 	calls *int
+}
+
+type atomicDeliverySink struct{ calls *int32 }
+
+func (atomicDeliverySink) ID() string { return "desktop" }
+func (s atomicDeliverySink) Deliver(context.Context, attention.Event) error {
+	atomic.AddInt32(s.calls, 1)
+	time.Sleep(20 * time.Millisecond)
+	return nil
+}
+func TestPersistedReservationConcurrentConsumersAndExpiry(t *testing.T) {
+	old := notificationSinkFactory
+	defer func() { notificationSinkFactory = old }()
+	var calls int32
+	notificationSinkFactory = func(team.OperatorNotificationSinkConfig) notifier.Sink { return atomicDeliverySink{&calls} }
+	path := filepath.Join(t.TempDir(), "state.json")
+	item := operatorAttention{EventType: "gate", Key: "default/s\x00gate\x00gate/x", LatestID: "m1", Profile: "default", Session: "s"}
+	p := team.OperatorNotificationPolicy{Sinks: []team.OperatorNotificationSinkConfig{{ID: "desktop", Type: "desktop"}}}
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = deliverNotificationSinksPersisted(context.Background(), "/project", path, []operatorAttention{item}, p, time.Hour, time.Now(), false)
+		}()
+	}
+	wg.Wait()
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("deliveries=%d", calls)
+	}
+	st, err := readNotifyState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := st.Items[item.Key]
+	d := rec.Deliveries["desktop"]
+	d.Fingerprint = ""
+	d.ReservationToken = "dead"
+	d.ReservationExpires = time.Now().Add(-time.Minute)
+	rec.Deliveries["desktop"] = d
+	st.Items[item.Key] = rec
+	if err := writeNotifyState(path, st); err != nil {
+		t.Fatal(err)
+	}
+	_, err = deliverNotificationSinksPersisted(context.Background(), "/project", path, []operatorAttention{item}, p, time.Hour, time.Now(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if atomic.LoadInt32(&calls) != 2 {
+		t.Fatalf("expired reservation not recovered: %d", calls)
+	}
 }
 
 func (s deliveryFakeSink) ID() string                                     { return s.id }
@@ -37,15 +90,15 @@ func TestDeliveryPerSinkRetryIdempotencyAndForce(t *testing.T) {
 	p := team.OperatorNotificationPolicy{Enabled: true, Sinks: []team.OperatorNotificationSinkConfig{{ID: "ok", Type: "desktop"}, {ID: "bad", Type: "desktop"}}}
 	item := operatorAttention{EventType: "gate", Key: "default/s\x00gate\x00gate/x", LatestID: "m1", Profile: "default", Session: "s", Thread: "gate/x", Escalation: "initial"}
 	now := time.Now()
-	res, st := deliverNotificationSinks(context.Background(), []operatorAttention{item}, p, notifyStateFile{Schema: 2, Items: map[string]notifyStateRecord{}}, time.Hour, now, false)
+	res, st := deliverNotificationSinks(context.Background(), "/project", []operatorAttention{item}, p, notifyStateFile{Schema: 2, Items: map[string]notifyStateRecord{}}, time.Hour, now, false)
 	if len(res) != 2 || *calls["ok"] != 1 || *calls["bad"] != 1 {
 		t.Fatal(res, *calls["ok"], *calls["bad"])
 	}
-	res, st = deliverNotificationSinks(context.Background(), []operatorAttention{item}, p, st, time.Hour, now.Add(time.Minute), false)
+	res, st = deliverNotificationSinks(context.Background(), "/project", []operatorAttention{item}, p, st, time.Hour, now.Add(time.Minute), false)
 	if len(res) != 1 || res[0].SinkID != "bad" || *calls["ok"] != 1 || *calls["bad"] != 2 {
 		t.Fatal(res)
 	}
-	res, _ = deliverNotificationSinks(context.Background(), []operatorAttention{item}, p, st, time.Hour, now.Add(2*time.Minute), true)
+	res, _ = deliverNotificationSinks(context.Background(), "/project", []operatorAttention{item}, p, st, time.Hour, now.Add(2*time.Minute), true)
 	if len(res) != 2 || *calls["ok"] != 2 {
 		t.Fatal(res)
 	}

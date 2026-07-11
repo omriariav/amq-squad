@@ -807,7 +807,10 @@ func TestOperatorWatchSuccessfulTickIsSoleNotificationPump(t *testing.T) {
 	old := operatorWatchNotificationPump
 	defer func() { operatorWatchNotificationPump = old }()
 	calls := 0
-	operatorWatchNotificationPump = func(operatorWatchExecution, operatorStatusEnvelopeData, time.Time) { calls++ }
+	operatorWatchNotificationPump = func(operatorWatchExecution, operatorStatusEnvelopeData, time.Time) *operatorNotificationSummary {
+		calls++
+		return nil
+	}
 	err := executeOperatorWatch(operatorWatchExecution{operatorExecution: operatorExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, Owner: "noc", OwnerID: "noc:host:pump", LeaseTTL: 2 * time.Minute, Out: &bytes.Buffer{}, Probe: state.Probe{PIDAlive: func(int) bool { return true }, ProcessMatch: func(int, func(string) bool) bool { return true }, Now: func() time.Time { return notifyNow }}, Now: func() time.Time { return notifyNow }}, Once: true})
 	if err != nil {
 		t.Fatal(err)

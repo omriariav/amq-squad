@@ -18,12 +18,14 @@ type Item struct {
 	Deliveries   map[string]Delivery `json:"deliveries,omitempty"`
 }
 type Delivery struct {
-	Fingerprint    string    `json:"fingerprint,omitempty"`
-	LastNotified   time.Time `json:"last_notified,omitempty"`
-	LastEscalation string    `json:"last_escalation,omitempty"`
-	LastSuccess    time.Time `json:"last_success,omitempty"`
-	LastFailure    time.Time `json:"last_failure,omitempty"`
-	FailureCount   int       `json:"failure_count,omitempty"`
+	Fingerprint        string    `json:"fingerprint,omitempty"`
+	LastNotified       time.Time `json:"last_notified,omitempty"`
+	LastEscalation     string    `json:"last_escalation,omitempty"`
+	LastSuccess        time.Time `json:"last_success,omitempty"`
+	LastFailure        time.Time `json:"last_failure,omitempty"`
+	FailureCount       int       `json:"failure_count,omitempty"`
+	ReservationToken   string    `json:"reservation_token,omitempty"`
+	ReservationExpires time.Time `json:"reservation_expires,omitempty"`
 }
 
 func Select(events []Event, prior State, sink string, renotify time.Duration, now time.Time, force bool) ([]Event, State, int) {

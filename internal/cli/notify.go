@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/attention"
+	"github.com/omriariav/amq-squad/v2/internal/flock"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/notifier"
 	"github.com/omriariav/amq-squad/v2/internal/state"
@@ -221,23 +223,39 @@ func executeNotify(n notifyExecution) error {
 	if statePath == "" {
 		statePath = defaultNotifyStatePath(n.ProjectDir)
 	}
-	prior, err := readNotifyState(statePath)
-	if err != nil {
-		return err
+	var notifications []operatorAttention
+	var suppressed int
+	var next notifyStateFile
+	if n.DryRun {
+		prior, e := readNotifyState(statePath)
+		if e != nil {
+			return e
+		}
+		notifications, suppressed, next = selectNotifications(items, prior, n.RenotifyAfter, now())
+	} else {
+		err = flock.WithLock(statePath+".lock", func() error {
+			prior, e := readNotifyState(statePath)
+			if e != nil {
+				return e
+			}
+			notifications, suppressed, next = selectNotifications(items, prior, n.RenotifyAfter, now())
+			return writeNotifyState(statePath, next)
+		})
+		if err != nil {
+			return err
+		}
 	}
-	notifications, suppressed, next := selectNotifications(items, prior, n.RenotifyAfter, now())
 	var sinkResults []notifier.Result
 	if n.Deliver {
 		policy := team.EffectiveOperatorNotifications(t.Operator)
 		if !policy.Enabled {
 			return usageErrorf("--deliver requires operator.notifications.enabled=true")
 		}
-		sinkResults, next = deliverNotificationSinks(context.Background(), items, policy, next, n.RenotifyAfter, now(), n.ForceResend)
-	}
-	if !n.DryRun {
-		if err := writeNotifyState(statePath, next); err != nil {
+		sinkResults, err = deliverNotificationSinksPersisted(context.Background(), n.ProjectDir, statePath, items, policy, n.RenotifyAfter, now(), n.ForceResend)
+		if err != nil {
 			return err
 		}
+		next, _ = readNotifyState(statePath)
 	}
 	data := notifyEnvelopeData{
 		ProjectDir:    n.ProjectDir,
@@ -255,6 +273,92 @@ func executeNotify(n notifyExecution) error {
 		return writeJSONEnvelope(out, "notify", data)
 	}
 	return renderNotify(out, data)
+}
+
+func deliverNotificationSinksPersisted(ctx context.Context, projectDir, path string, items []operatorAttention, policy team.OperatorNotificationPolicy, renotify time.Duration, now time.Time, force bool) ([]notifier.Result, error) {
+	var results []notifier.Result
+	for _, cfg := range policy.Sinks {
+		for _, item := range items {
+			if item.Cleared {
+				continue
+			}
+			token := ""
+			var event attention.Event
+			reserved := false
+			err := flock.WithLock(path+".lock", func() error {
+				st, e := readNotifyState(path)
+				if e != nil {
+					return e
+				}
+				chosen, next := deliverNotificationSinks(context.Background(), projectDir, []operatorAttention{item}, team.OperatorNotificationPolicy{Sinks: []team.OperatorNotificationSinkConfig{}}, st, renotify, now, force)
+				_ = chosen
+				_ = next
+				rec := st.Items[item.Key]
+				d := rec.Deliveries[cfg.ID]
+				notify := force || !rec.Active || d.Fingerprint != item.LatestID || d.LastNotified.IsZero() || d.ReservationExpires.Before(now)
+				if d.ReservationToken != "" && d.ReservationExpires.After(now) {
+					notify = false
+				}
+				if !notify {
+					return nil
+				}
+				token = randomToken()
+				d.ReservationToken = token
+				d.ReservationExpires = now.Add(30 * time.Second)
+				if rec.Deliveries == nil {
+					rec.Deliveries = map[string]attention.Delivery{}
+				}
+				rec.Deliveries[cfg.ID] = d
+				rec.Active = true
+				rec.Fingerprint = item.LatestID
+				st.Items[item.Key] = rec
+				event = attention.Event{SchemaVersion: 1, EventType: item.EventType, Key: item.Key, Fingerprint: item.LatestID, ProjectDir: projectDir, Profile: item.Profile, Session: item.Session, Thread: item.Thread, Role: item.Role, Subject: item.Subject, Summary: item.Summary, Escalation: item.Escalation, Age: item.Age, InspectCommand: item.Inspect, AttentionOnly: true, ObservedAt: now}
+				reserved = true
+				return writeNotifyState(path, st)
+			})
+			if err != nil {
+				return results, err
+			}
+			if !reserved {
+				continue
+			}
+			deliveryErr := notificationSinkFactory(cfg).Deliver(ctx, event)
+			results = append(results, notifier.Result{SinkID: cfg.ID, Delivered: deliveryErr == nil, Error: errorString(deliveryErr)})
+			_ = flock.WithLock(path+".lock", func() error {
+				st, e := readNotifyState(path)
+				if e != nil {
+					return e
+				}
+				rec := st.Items[item.Key]
+				d := rec.Deliveries[cfg.ID]
+				if d.ReservationToken != token {
+					return nil
+				}
+				d.ReservationToken = ""
+				d.ReservationExpires = time.Time{}
+				if deliveryErr == nil {
+					d.Fingerprint = item.LatestID
+					d.LastNotified = now
+					d.LastSuccess = now
+					d.LastEscalation = item.Escalation
+				} else {
+					d.LastFailure = now
+					d.FailureCount++
+				}
+				rec.Deliveries[cfg.ID] = d
+				st.Items[item.Key] = rec
+				return writeNotifyState(path, st)
+			})
+		}
+	}
+	return results, nil
+}
+func randomToken() string {
+	var b [12]byte
+	if _, e := rand.Read(b[:]); e != nil {
+		return fmt.Sprint(time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%x", b[:])
 }
 
 func collectOperatorAttention(projectDir, profile string, snap state.Snapshot, operatorHandle, onlySession string, now time.Time) []operatorAttention {
@@ -397,13 +501,28 @@ func collectLocalInputAttention(t team.Team, profile, session string, now time.T
 	if strings.TrimSpace(session) == "" {
 		return nil
 	}
-	rows := buildStatusRows(t, profile, session, defaultDuplicateLaunchProbe)
+	type observed struct {
+		blocker tmuxpane.LocalInputBlocker
+		ok      bool
+		err     error
+	}
+	seen := map[string]observed{}
+	detector := func(pane string) (tmuxpane.LocalInputBlocker, bool) {
+		b, ok, err := notifyLocalInputDetector(pane)
+		seen[pane] = observed{b, ok, err}
+		return b, ok && err == nil
+	}
+	rows := buildStatusRowsWithLocalInputDetector(t, profile, session, defaultDuplicateLaunchProbe, detector)
 	var out []operatorAttention
 	for _, row := range rows {
 		if !statusLocalInputCandidate(t, row) {
 			continue
 		}
-		blocker, ok, err := notifyLocalInputDetector(row.Tmux.PaneID)
+		obs, exists := seen[row.Tmux.PaneID]
+		if !exists {
+			continue
+		}
+		blocker, ok, err := obs.blocker, obs.ok, obs.err
 		if err != nil {
 			continue
 		}
@@ -678,9 +797,22 @@ func writeNotifyState(path string, st notifyStateFile) error {
 	if err != nil {
 		return fmt.Errorf("marshal notify state: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
-		return fmt.Errorf("write notify state: %w", err)
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create notify state temp: %w", err)
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("rename notify state: %w", err)
@@ -692,7 +824,7 @@ func notifyKey(profile, session, thread string) string {
 	return attention.GateKey(squadnamespace.NormalizeProfile(profile), session, thread)
 }
 
-func deliverNotificationSinks(ctx context.Context, items []operatorAttention, policy team.OperatorNotificationPolicy, st notifyStateFile, renotify time.Duration, now time.Time, force bool) ([]notifier.Result, notifyStateFile) {
+func deliverNotificationSinks(ctx context.Context, projectDir string, items []operatorAttention, policy team.OperatorNotificationPolicy, st notifyStateFile, renotify time.Duration, now time.Time, force bool) ([]notifier.Result, notifyStateFile) {
 	events := make([]attention.Event, 0, len(items))
 	for _, item := range items {
 		eventType := item.EventType
@@ -703,7 +835,7 @@ func deliverNotificationSinks(ctx context.Context, items []operatorAttention, po
 		if summary == "" {
 			summary = "operator answer required"
 		}
-		events = append(events, attention.Event{SchemaVersion: 1, EventType: eventType, Key: item.Key, Fingerprint: item.LatestID, ProjectDir: "", Profile: item.Profile, Session: item.Session, Thread: item.Thread, Role: item.Role, Subject: item.Subject, Summary: summary, Escalation: item.Escalation, Age: item.Age, InspectCommand: item.Inspect, AttentionOnly: true, ObservedAt: now, Cleared: item.Cleared})
+		events = append(events, attention.Event{SchemaVersion: 1, EventType: eventType, Key: item.Key, Fingerprint: item.LatestID, ProjectDir: projectDir, Profile: item.Profile, Session: item.Session, Thread: item.Thread, Role: item.Role, Subject: item.Subject, Summary: summary, Escalation: item.Escalation, Age: item.Age, InspectCommand: item.Inspect, AttentionOnly: true, ObservedAt: now, Cleared: item.Cleared})
 	}
 	state2 := attention.State{Schema: 2, Items: map[string]attention.Item{}}
 	for key, rec := range st.Items {
