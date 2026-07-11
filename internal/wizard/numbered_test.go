@@ -197,7 +197,7 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 	if got.OperatorMode != "noc" {
 		t.Fatalf("existing operator mode = %q", got.OperatorMode)
 	}
-	for _, want := range []string{"origin omriariav/amq-squad", "review: 3 member(s), session review-work", "cto: codex, model=automatic, effort=high", "Operator interaction (authoritative): noc", "ships in v2.19.0: #391"} {
+	for _, want := range []string{"origin omriariav/amq-squad", "review: 3 member(s), session review-work", "cto: codex, model=automatic, effort=high", "Operator interaction (authoritative): noc · NOC/global orchestrator owns polling. Change it with 'amq-squad team operator set', then relaunch.", "Self-operator / delegated approval", "[locked: the stored profile contract decides]"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}

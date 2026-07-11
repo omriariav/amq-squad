@@ -352,7 +352,8 @@ func (m BubbleModel) note() string {
 		return "Close is scheduled only after successful spawn, goal delivery, and final output."
 	case stageOperator:
 		if m.existingIndex >= 0 {
-			return "Existing profile contract is authoritative: " + defaultString(m.spec.OperatorMode, "unspecified")
+			mode := defaultString(m.spec.OperatorMode, "unspecified")
+			return "Existing profile contract is authoritative: " + mode + " · " + operatorContractSummary(mode) + ". Change it with 'amq-squad team operator set', then relaunch."
 		}
 		return "Unavailable capability rows stay visible so the future contract is explicit."
 	case stageOperatorNotifications:
@@ -490,6 +491,7 @@ func (m BubbleModel) choices() []choice {
 			for _, item := range operatorChoices(m.opts.Capabilities) {
 				if item.capability {
 					item.disabled = true
+					item.label += " [locked: the stored profile contract decides]"
 					choices = append(choices, item)
 				}
 			}

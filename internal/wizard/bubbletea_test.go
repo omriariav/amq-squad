@@ -9,6 +9,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// flattenBubbleView strips the panel border and collapses the word-wrap that
+// lipgloss applies, so tests can assert full phrases regardless of wrap points.
+func flattenBubbleView(view string) string {
+	replaced := strings.NewReplacer("│", " ", "╭", " ", "╮", " ", "╰", " ", "╯", " ", "─", " ").Replace(view)
+	return strings.Join(strings.Fields(replaced), " ")
+}
+
 func TestBubbleModelStartsWithProjectDefaultsAndPhaseRail(t *testing.T) {
 	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{
 		Project: "/repo", Profile: "default", Session: "issue-393", Visibility: "sibling-tabs",
@@ -94,11 +101,14 @@ func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePr
 	if m.stage != stageOperator {
 		t.Fatalf("stage = %v, want operator", m.stage)
 	}
-	operatorView := m.View()
-	for _, want := range []string{"Self-operator / delegated approval", "v2.19.0: #391"} {
+	operatorView := flattenBubbleView(m.View())
+	for _, want := range []string{"Self-operator / delegated approval", "locked: the stored profile contract decides", "Change it with 'amq-squad team operator set'"} {
 		if !strings.Contains(operatorView, want) {
 			t.Fatalf("existing operator view missing %q:\n%s", want, operatorView)
 		}
+	}
+	if strings.Contains(operatorView, "ships in") {
+		t.Fatalf("shipped capability still advertised as future:\n%s", operatorView)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageOperatorNotifications {

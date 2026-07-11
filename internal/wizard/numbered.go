@@ -233,13 +233,14 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		return Spec{}, err
 	}
 	if existing {
-		fmt.Fprintf(out, "Operator interaction (authoritative): %s\n", defaultString(s.OperatorMode, "unspecified"))
+		mode := defaultString(s.OperatorMode, "unspecified")
+		fmt.Fprintf(out, "Operator interaction (authoritative): %s · %s. Change it with 'amq-squad team operator set', then relaunch.\n", mode, operatorContractSummary(mode))
 		if s.OperatorMode == "self_operator" {
 			fmt.Fprintf(out, "Self-operator policy (authoritative): lead=%s session=%s allow=%s revision=%d paused=%t notifications=%t\n", existingProfile.SelfOperatorLead, s.Session, existingProfile.SelfOperatorAllow, existingProfile.SelfOperatorRevision, existingProfile.SelfOperatorPaused, s.OperatorNotifications)
 		}
 		for _, item := range operatorChoices(opts.Capabilities) {
 			if item.capability {
-				fmt.Fprintf(out, "  - %s\n", item.label)
+				fmt.Fprintf(out, "  - %s [locked: the stored profile contract decides]\n", item.label)
 			}
 		}
 		fmt.Fprintln(out)
