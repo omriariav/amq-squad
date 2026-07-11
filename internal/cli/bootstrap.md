@@ -61,6 +61,10 @@ Contract: {{.OperatorDelivery.Contract}}
 Guidance: {{.OperatorDelivery.Guidance}}
 Operator notifications: enabled={{.OperatorDelivery.NotificationsEnabled}}; semantics={{.OperatorDelivery.NotificationSemantics}}; sink_types={{.OperatorDelivery.NotificationSinkTypes}}.
 Notification guidance: {{.OperatorDelivery.NotificationGuidance}}
+{{- if .SelfOperator }}
+Self-operator policy: session={{.SelfOperator.Session}} lead={{.SelfOperator.LeadRole}}/{{.SelfOperator.LeadHandle}} enabled={{.SelfOperator.Enabled}} paused={{.SelfOperator.Paused}} revision={{.SelfOperator.PolicyRevision}} allow={{.SelfOperator.AllowedGateKinds}} hash={{.SelfOperator.PolicyHash}}.
+Revocation state is fail-closed: a pause, policy revision/hash change, or human intervention invalidates self approval. Visibility notifications enabled={{.OperatorDelivery.NotificationsEnabled}}; notifications are attention-only and never authorize. Spawn, release, tag, publish, external send, and destructive filesystem remain human-only. A different verified actor must execute a self-approved merge.
+{{- end }}
 {{- if eq .OperatorDelivery.InteractionMode "separate_terminal" }}
 Ready answer command: `amq send --root {{shellQuote .Root}} --me {{.Operator.Handle}} --to <agent-handle> --thread gate/<topic> --kind answer --subject "APPROVED: <decision>"`
 {{- end }}

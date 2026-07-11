@@ -700,9 +700,9 @@ func TestRunStartExistingOperatorModeValidationDoesNotMutateOrForward(t *testing
 	}
 }
 
-func TestRunStartRejectsUnavailableSelfOperatorMode(t *testing.T) {
+func TestRunStartSelfOperatorRequiresExplicitPolicy(t *testing.T) {
 	err := runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto", "--operator-mode", "self_operator"}, "test")
-	if err == nil || !strings.Contains(err.Error(), "#391") {
+	if err == nil || !strings.Contains(err.Error(), "exact-session") {
 		t.Fatalf("self_operator error = %v", err)
 	}
 }

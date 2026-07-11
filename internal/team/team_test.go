@@ -262,7 +262,7 @@ func TestValidateOperatorInteractionModes(t *testing.T) {
 func TestOperatorNotificationPolicyDefaultsAndValidation(t *testing.T) {
 	op := &OperatorConfig{Enabled: true, Notifications: &OperatorNotificationPolicy{Enabled: true}}
 	p := EffectiveOperatorNotifications(op)
-	if len(p.Events) != 2 || len(p.Sinks) != 1 || p.Sinks[0].ID != "desktop" || p.DeliverySemantics != "attention_only" {
+	if len(p.Events) != 4 || len(p.Sinks) != 1 || p.Sinks[0].ID != "desktop" || p.DeliverySemantics != "attention_only" {
 		t.Fatalf("%+v", p)
 	}
 	base := Team{Operator: op, Members: []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}}}
