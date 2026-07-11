@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// NumberedOptions supplies the preview-only line UI with defaults and an
+// NumberedOptions supplies the answer-collection line UI with defaults and an
 // injected project inspector. The callback keeps this package independent from
 // git and team persistence packages.
 type NumberedOptions struct {
@@ -51,11 +51,14 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	if in == nil || out == nil {
 		return Spec{}, fmt.Errorf("wizard numbered UI requires input and output")
 	}
-	r := bufio.NewReader(in)
+	r, ok := in.(*bufio.Reader)
+	if !ok {
+		r = bufio.NewReader(in)
+	}
 	s := opts.Defaults
 
 	fmt.Fprintln(out, "amq-squad run start wizard")
-	fmt.Fprintln(out, "Preview only: this flow cannot launch agents.")
+	fmt.Fprintln(out, "Answers are previewed first. Launch requires a separate explicit Yes after preview succeeds.")
 	fmt.Fprintln(out)
 
 	var err error
@@ -235,7 +238,7 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	}
 
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Answers collected. Running the canonical read-only preview next.")
+	fmt.Fprintln(out, "Answers collected. Running the canonical preview next; live launch is a separate default-No decision.")
 	return s, nil
 }
 

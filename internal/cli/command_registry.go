@@ -19,7 +19,7 @@ var commandCatalog = []struct {
 	{Name: "goal", Summary: "Draft or apply a preview-first goal setup plan"},
 	{Name: "global", Summary: "Stand up a global/NOC orchestrator (poller) at a neutral root"},
 	{Name: "run", Summary: "Create one orchestrated run in a project (managed spawn)"},
-	{Name: "wizard", Summary: "Guided preview for run start (interactive TTY only)"},
+	{Name: "wizard", Summary: "Guided project/global preview with default-No live confirmation"},
 	{Name: "task", Summary: "Native pull-based task store (add/list/claim/done/fail/block)"},
 	{Name: "verify", Summary: "Deterministic preflight checks (action, merge, release)"},
 	{Name: "operator", Summary: "Show operator inbox and polling-loop status"},

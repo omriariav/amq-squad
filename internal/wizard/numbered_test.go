@@ -34,7 +34,7 @@ func TestRunNumberedEnterThroughDefaults(t *testing.T) {
 		t.Fatalf("visible topology operator default = %q", got.OperatorMode)
 	}
 	text := out.String()
-	for _, want := range []string{"Preview only", "Project directory [/repo]", "builder: lead may implement and delegate (default)", "sibling-tabs: one visible tmux window per agent (default)"} {
+	for _, want := range []string{"Answers are previewed first", "Project directory [/repo]", "builder: lead may implement and delegate (default)", "sibling-tabs: one visible tmux window per agent (default)"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("output missing %q:\n%s", want, text)
 		}
@@ -90,6 +90,32 @@ func TestRunNumberedAcceptsNumberedChoices(t *testing.T) {
 	}
 	if got.OperatorMode != "lead_pane" {
 		t.Fatalf("operator mode = %q", got.OperatorMode)
+	}
+}
+
+func TestRunNumberedReusesCallerReaderAndPreservesFollowingConsent(t *testing.T) {
+	answers := []string{
+		"", "", "", "", // project, profile, session, roles
+		"", "", "", // cto binary/model/effort
+		"", "", "", // senior-dev
+		"", "", "", // qa
+		"", "", "", "", "", "", "", "", // lead through seed
+		"YES",
+	}
+	reader := bufio.NewReader(strings.NewReader(strings.Join(answers, "\n") + "\n"))
+	_, err := RunNumbered(reader, &bytes.Buffer{}, NumberedOptions{
+		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
+		ProfileExists: func(string, string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consent, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(consent) != "YES" {
+		t.Fatalf("following consent = %q", consent)
 	}
 }
 
