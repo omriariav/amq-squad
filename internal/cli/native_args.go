@@ -72,6 +72,12 @@ var codexValueSpecs = []nativeValueSpec{
 func nativeValueSpecForArg(binary, arg string) (nativeValueSpec, bool, bool) {
 	specs := claudeValueSpecs
 	if binary == "codex" {
+		if strings.HasPrefix(arg, "-c=") || (strings.HasPrefix(arg, "-c") && len(arg) > 2) {
+			raw := strings.TrimPrefix(strings.TrimPrefix(arg, "-c"), "=")
+			if strings.Contains(raw, "=") {
+				return codexValueSpecs[0], true, true
+			}
+		}
 		specs = codexValueSpecs
 	}
 	for _, spec := range specs {
