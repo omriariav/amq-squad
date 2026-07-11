@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,7 +44,7 @@ func TestPersistedReservationConcurrentConsumersAndExpiry(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = deliverNotificationSinksPersisted(context.Background(), "/project", path, []operatorAttention{item}, p, time.Hour, time.Now(), false)
+			_, _, _ = deliverNotificationSinksPersisted(context.Background(), "/project", path, []operatorAttention{item}, p, time.Hour, time.Now(), false)
 		}()
 	}
 	wg.Wait()
@@ -64,12 +65,38 @@ func TestPersistedReservationConcurrentConsumersAndExpiry(t *testing.T) {
 	if err := writeNotifyState(path, st); err != nil {
 		t.Fatal(err)
 	}
-	_, err = deliverNotificationSinksPersisted(context.Background(), "/project", path, []operatorAttention{item}, p, time.Hour, time.Now(), false)
+	_, _, err = deliverNotificationSinksPersisted(context.Background(), "/project", path, []operatorAttention{item}, p, time.Hour, time.Now(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if atomic.LoadInt32(&calls) != 2 {
 		t.Fatalf("expired reservation not recovered: %d", calls)
+	}
+}
+func TestExternalDeliveryFiltersSurfaceHonorsEventsAndUsesSinkSummary(t *testing.T) {
+	old := notificationSinkFactory
+	defer func() { notificationSinkFactory = old }()
+	var calls int32
+	notificationSinkFactory = func(team.OperatorNotificationSinkConfig) notifier.Sink { return atomicDeliverySink{&calls} }
+	path := filepath.Join(t.TempDir(), "state.json")
+	gate := operatorAttention{EventType: "gate", Key: "default/s\x00gate\x00gate/x", LatestID: "m1", Profile: "default", Session: "s"}
+	generic := operatorAttention{EventType: "surface", Key: "default/s\x00question/x", LatestID: "q1", Profile: "default", Session: "s"}
+	st := notifyStateFile{Schema: 2, Items: map[string]notifyStateRecord{gate.Key: {LatestID: "m1", LastNotified: time.Now()}}}
+	if err := writeNotifyState(path, st); err != nil {
+		t.Fatal(err)
+	}
+	p := team.OperatorNotificationPolicy{Events: []string{"gate"}, Sinks: []team.OperatorNotificationSinkConfig{{ID: "desktop", Type: "desktop"}}}
+	res, sum, err := deliverNotificationSinksPersisted(context.Background(), "/project", path, []operatorAttention{generic, gate}, p, time.Hour, time.Now(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || sum.Selected != 1 || sum.Delivered != 1 || sum.Failed != 0 || atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("res=%v sum=%+v calls=%d", res, sum, calls)
+	}
+	p.Events = []string{"local_input_blocked"}
+	_, sum, err = deliverNotificationSinksPersisted(context.Background(), "/project", path, []operatorAttention{gate}, p, time.Hour, time.Now(), true)
+	if err != nil || sum.Selected != 0 {
+		t.Fatalf("policy filter sum=%+v err=%v", sum, err)
 	}
 }
 
@@ -132,5 +159,16 @@ func TestNotifySchema1MigrationQualifiesKeyAndSeedsSurfaceOnly(t *testing.T) {
 	}
 	if _, ok := rec.Deliveries["desktop"]; ok {
 		t.Fatal("migration claimed desktop success")
+	}
+}
+func TestNotifyStateRejectsUnknownSchemas(t *testing.T) {
+	for _, schema := range []int{0, 3, 99} {
+		path := filepath.Join(t.TempDir(), fmt.Sprintf("s%d.json", schema))
+		if err := os.WriteFile(path, []byte(fmt.Sprintf(`{"schema":%d,"items":{}}`, schema)), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readNotifyState(path); err == nil || !strings.Contains(err.Error(), "unsupported schema") {
+			t.Fatalf("schema %d err=%v", schema, err)
+		}
 	}
 }

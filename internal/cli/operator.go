@@ -724,15 +724,8 @@ func deliverOperatorWatchNotifications(w operatorWatchExecution, data operatorSt
 	if json.Unmarshal(out.Bytes(), &env) != nil {
 		return &operatorNotificationSummary{Failed: 1}
 	}
-	s := &operatorNotificationSummary{Selected: len(env.Data.Notifications), Suppressed: env.Data.Suppressed}
-	for _, r := range env.Data.SinkResults {
-		if r.Delivered {
-			s.Delivered++
-		} else {
-			s.Failed++
-		}
-	}
-	return s
+	d := env.Data.DeliverySummary
+	return &operatorNotificationSummary{Selected: d.Selected, Delivered: d.Delivered, Failed: d.Failed, Suppressed: d.Suppressed}
 }
 
 func writeOperatorWatchTick(out io.Writer, data operatorStatusEnvelopeData, jsonOut bool) error {

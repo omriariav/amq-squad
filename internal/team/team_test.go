@@ -274,6 +274,14 @@ func TestOperatorNotificationPolicyDefaultsAndValidation(t *testing.T) {
 		t.Fatal("duplicate sink accepted")
 	}
 }
+func TestOperatorNotificationPolicyRejectsUnknownJSONFields(t *testing.T) {
+	for _, raw := range []string{`{"operator":{"enabled":true,"notifications":{"enabled":true,"mystery":1}}}`, `{"operator":{"enabled":true,"notifications":{"enabled":true,"sinks":[{"id":"x","type":"desktop","mystery":1}]}}}`} {
+		var got Team
+		if err := json.Unmarshal([]byte(raw), &got); err == nil {
+			t.Fatalf("accepted %s", raw)
+		}
+	}
+}
 
 func TestWriteIsAtomic(t *testing.T) {
 	// Write must not leave a .tmp file behind on success.

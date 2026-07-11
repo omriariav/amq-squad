@@ -3,6 +3,7 @@
 package team
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -110,6 +111,29 @@ type OperatorNotificationSinkConfig struct {
 	Type    string   `json:"type"`
 	Argv    []string `json:"argv,omitempty"`
 	Timeout string   `json:"timeout,omitempty"`
+}
+
+func (p *OperatorNotificationPolicy) UnmarshalJSON(data []byte) error {
+	type alias OperatorNotificationPolicy
+	var v alias
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&v); err != nil {
+		return fmt.Errorf("operator.notifications: %w", err)
+	}
+	*p = OperatorNotificationPolicy(v)
+	return nil
+}
+func (s *OperatorNotificationSinkConfig) UnmarshalJSON(data []byte) error {
+	type alias OperatorNotificationSinkConfig
+	var v alias
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&v); err != nil {
+		return fmt.Errorf("operator.notifications.sink: %w", err)
+	}
+	*s = OperatorNotificationSinkConfig(v)
+	return nil
 }
 
 func EffectiveOperatorNotifications(op *OperatorConfig) OperatorNotificationPolicy {

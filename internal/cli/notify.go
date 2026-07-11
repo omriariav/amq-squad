@@ -45,17 +45,24 @@ type notifyExecution struct {
 }
 
 type notifyEnvelopeData struct {
-	ProjectDir    string              `json:"project_dir"`
-	BaseRoot      string              `json:"base_root,omitempty"`
-	Profile       string              `json:"profile"`
-	Operator      team.OperatorView   `json:"operator"`
-	RenotifyAfter string              `json:"renotify_after"`
-	Notifications []operatorAttention `json:"notifications"`
-	Suppressed    int                 `json:"suppressed"`
-	StatePath     string              `json:"state_path,omitempty"`
-	OperatorGates bool                `json:"operator_gates"`
-	Message       string              `json:"message,omitempty"`
-	SinkResults   []notifier.Result   `json:"sink_results,omitempty"`
+	ProjectDir      string                `json:"project_dir"`
+	BaseRoot        string                `json:"base_root,omitempty"`
+	Profile         string                `json:"profile"`
+	Operator        team.OperatorView     `json:"operator"`
+	RenotifyAfter   string                `json:"renotify_after"`
+	Notifications   []operatorAttention   `json:"notifications"`
+	Suppressed      int                   `json:"suppressed"`
+	StatePath       string                `json:"state_path,omitempty"`
+	OperatorGates   bool                  `json:"operator_gates"`
+	Message         string                `json:"message,omitempty"`
+	SinkResults     []notifier.Result     `json:"sink_results,omitempty"`
+	DeliverySummary notifyDeliverySummary `json:"delivery_summary"`
+}
+type notifyDeliverySummary struct {
+	Selected   int `json:"selected"`
+	Delivered  int `json:"delivered"`
+	Failed     int `json:"failed"`
+	Suppressed int `json:"suppressed"`
 }
 
 type operatorAttention struct {
@@ -246,28 +253,30 @@ func executeNotify(n notifyExecution) error {
 		}
 	}
 	var sinkResults []notifier.Result
+	var deliverySummary notifyDeliverySummary
 	if n.Deliver {
 		policy := team.EffectiveOperatorNotifications(t.Operator)
 		if !policy.Enabled {
 			return usageErrorf("--deliver requires operator.notifications.enabled=true")
 		}
-		sinkResults, err = deliverNotificationSinksPersisted(context.Background(), n.ProjectDir, statePath, items, policy, n.RenotifyAfter, now(), n.ForceResend)
+		sinkResults, deliverySummary, err = deliverNotificationSinksPersisted(context.Background(), n.ProjectDir, statePath, items, policy, n.RenotifyAfter, now(), n.ForceResend)
 		if err != nil {
 			return err
 		}
 		next, _ = readNotifyState(statePath)
 	}
 	data := notifyEnvelopeData{
-		ProjectDir:    n.ProjectDir,
-		BaseRoot:      snap.BaseRoot,
-		Profile:       profile,
-		Operator:      operator,
-		RenotifyAfter: n.RenotifyAfter.String(),
-		Notifications: notifications,
-		Suppressed:    suppressed,
-		StatePath:     statePath,
-		OperatorGates: true,
-		SinkResults:   sinkResults,
+		ProjectDir:      n.ProjectDir,
+		BaseRoot:        snap.BaseRoot,
+		Profile:         profile,
+		Operator:        operator,
+		RenotifyAfter:   n.RenotifyAfter.String(),
+		Notifications:   notifications,
+		Suppressed:      suppressed,
+		StatePath:       statePath,
+		OperatorGates:   true,
+		SinkResults:     sinkResults,
+		DeliverySummary: deliverySummary,
 	}
 	if n.JSON {
 		return writeJSONEnvelope(out, "notify", data)
@@ -275,11 +284,20 @@ func executeNotify(n notifyExecution) error {
 	return renderNotify(out, data)
 }
 
-func deliverNotificationSinksPersisted(ctx context.Context, projectDir, path string, items []operatorAttention, policy team.OperatorNotificationPolicy, renotify time.Duration, now time.Time, force bool) ([]notifier.Result, error) {
+func deliverNotificationSinksPersisted(ctx context.Context, projectDir, path string, items []operatorAttention, policy team.OperatorNotificationPolicy, renotify time.Duration, now time.Time, force bool) ([]notifier.Result, notifyDeliverySummary, error) {
 	var results []notifier.Result
+	var summary notifyDeliverySummary
+	allowed := map[string]bool{}
+	for _, e := range policy.Events {
+		allowed[e] = true
+	}
+	if len(allowed) == 0 {
+		allowed["gate"] = true
+		allowed["local_input_blocked"] = true
+	}
 	for _, cfg := range policy.Sinks {
 		for _, item := range items {
-			if item.Cleared {
+			if item.Cleared || !allowed[item.EventType] || (item.EventType != "gate" && item.EventType != "local_input_blocked") {
 				continue
 			}
 			token := ""
@@ -320,14 +338,21 @@ func deliverNotificationSinksPersisted(ctx context.Context, projectDir, path str
 				return writeNotifyState(path, st)
 			})
 			if err != nil {
-				return results, err
+				return results, summary, err
 			}
 			if !reserved {
+				summary.Suppressed++
 				continue
 			}
+			summary.Selected++
 			deliveryErr := notificationSinkFactory(cfg).Deliver(ctx, event)
 			results = append(results, notifier.Result{SinkID: cfg.ID, Delivered: deliveryErr == nil, Error: errorString(deliveryErr)})
-			_ = flock.WithLock(path+".lock", func() error {
+			if deliveryErr == nil {
+				summary.Delivered++
+			} else {
+				summary.Failed++
+			}
+			commitErr := flock.WithLock(path+".lock", func() error {
 				st, e := readNotifyState(path)
 				if e != nil {
 					return e
@@ -352,9 +377,12 @@ func deliverNotificationSinksPersisted(ctx context.Context, projectDir, path str
 				st.Items[item.Key] = rec
 				return writeNotifyState(path, st)
 			})
+			if commitErr != nil {
+				return results, summary, commitErr
+			}
 		}
 	}
-	return results, nil
+	return results, summary, nil
 }
 func randomToken() string {
 	var b [12]byte
@@ -389,8 +417,12 @@ func collectOperatorAttention(projectDir, profile string, snap state.Snapshot, o
 				age = 0
 			}
 			from := firstNonOperatorParticipant(th, operatorHandle)
+			eventType := "surface"
+			if strings.HasPrefix(th.ID, "gate/") {
+				eventType = "gate"
+			}
 			item := operatorAttention{
-				EventType:   "gate",
+				EventType:   eventType,
 				Key:         notifyKey(profile, sess.Name, th.ID),
 				Profile:     profile,
 				Session:     sess.Name,
@@ -761,6 +793,9 @@ func readNotifyState(path string) (notifyStateFile, error) {
 	}
 	if err := json.Unmarshal(b, &st); err != nil {
 		return st, fmt.Errorf("parse notify state %s: %w", path, err)
+	}
+	if st.Schema != 1 && st.Schema != 2 {
+		return st, fmt.Errorf("parse notify state %s: unsupported schema %d", path, st.Schema)
 	}
 	if st.Items == nil {
 		st.Items = map[string]notifyStateRecord{}
