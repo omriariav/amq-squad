@@ -325,6 +325,31 @@ func TestBubbleWizardHandsRawTTYToProgramNotAWrapper(t *testing.T) {
 	}
 }
 
+func TestBubbleWizardTypeaheadCannotAnswerLaunchConfirm(t *testing.T) {
+	// The scope prompt's bufio reader can over-read past its own line. Those
+	// typed-ahead bytes never reach the bubble program (which reads the raw
+	// tty directly) and must not leak into "Launch now? [y/N]" as an
+	// accidental yes.
+	projectCalls, _ := withWizardExecutionSeams(t)
+	oldOpen := runStartWizardOpenTTY
+	oldProgram := runStartWizardBubbleProgram
+	t.Cleanup(func() { runStartWizardOpenTTY, runStartWizardBubbleProgram = oldOpen, oldProgram })
+	// "1\n" answers the scope prompt; "y\n" is typeahead the bufio reader
+	// buffers in the same fill and must discard before the confirmation.
+	tty := wizardTestTTY{reader: bytes.NewReader([]byte("1\ny\n")), writes: &bytes.Buffer{}}
+	runStartWizardOpenTTY = func() (io.ReadWriteCloser, error) { return tty, nil }
+	spec := validWizardProjectSpec(t)
+	runStartWizardBubbleProgram = func(in io.Reader, out io.Writer, opts runwizard.NumberedOptions) (runwizard.BubbleResult, error) {
+		return runwizard.BubbleResult{Spec: spec}, nil
+	}
+	if err := runBubbleRunStartWizard([]string{"--project", spec.Project}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*projectCalls) != 1 || hasWizardArg((*projectCalls)[0], "--go") {
+		t.Fatalf("typeahead answered the launch confirmation: calls = %v", *projectCalls)
+	}
+}
+
 func assertOnlyGoDelta(t *testing.T, calls [][]string) {
 	t.Helper()
 	if len(calls) != 2 {
