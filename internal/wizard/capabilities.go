@@ -35,8 +35,7 @@ func DefaultCapabilities() CapabilitySet {
 			Reason: "delegated self-approval policy is not implemented",
 		},
 		CapabilityOperatorNotifications: {
-			ID: CapabilityOperatorNotifications, Issue: 390, ShipsIn: "v2.19.0",
-			Reason: "attention-only operator notifications are not implemented",
+			ID: CapabilityOperatorNotifications, Available: true, Issue: 390, ShipsIn: "v2.19.0",
 		},
 	}
 }
@@ -47,7 +46,6 @@ func OperatorOptions() []Option {
 		{ID: "separate_terminal", Label: "Separate operator terminal", Consequence: "Poll durable gates and answer with explicit operator AMQ replies."},
 		{ID: "noc", Label: "NOC/global board", Consequence: "A global operator board polls and answers this run by explicit namespace."},
 		{ID: "self_operator", Label: "Self-operator / delegated approval", Consequence: "The lead may answer only allowlisted gates; human-only exclusions remain blocked.", Requires: CapabilitySelfOperator},
-		{ID: "operator_notifications", Label: "Notification add-on", Consequence: "Gate and staleness changes push attention-only notifications; this never authorizes an action.", Requires: CapabilityOperatorNotifications, Blocked: true, BlockReason: "capability slot only; no canonical notification policy exists"},
 	}
 }
 

@@ -26,13 +26,13 @@ func TestBubbleModelStartsWithProjectDefaultsAndPhaseRail(t *testing.T) {
 	}
 }
 
-func TestBubbleModelExistingProfileOverridesAreLaunchOnly(t *testing.T) {
+func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePreserved(t *testing.T) {
 	profile := ProfileSummary{
 		Name: "review", MemberCount: 1, PinnedSession: "review-work", Lead: "cto", LeadMode: "planner", OperatorMode: "separate_terminal",
 		Members: []MemberSummary{{Role: "cto", Binary: "codex", Model: "stored-model", Effort: "medium"}},
 	}
 	m, err := NewBubbleModel(NumberedOptions{
-		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs"},
+		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs", OperatorNotifications: true, OperatorNotificationsRequested: true, OperatorNotificationsSet: true},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
 		},
@@ -67,10 +67,23 @@ func TestBubbleModelExistingProfileOverridesAreLaunchOnly(t *testing.T) {
 		t.Fatalf("stage = %v, want operator", m.stage)
 	}
 	operatorView := m.View()
-	for _, want := range []string{"Self-operator / delegated approval", "v2.19.0: #391", "Notification add-on", "v2.19.0: #390"} {
+	for _, want := range []string{"Self-operator / delegated approval", "v2.19.0: #391"} {
 		if !strings.Contains(operatorView, want) {
 			t.Fatalf("existing operator view missing %q:\n%s", want, operatorView)
 		}
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageOperatorNotifications {
+		t.Fatalf("stage = %v, want operator notifications", m.stage)
+	}
+	if !strings.Contains(m.View(), "authoritative policy") {
+		t.Fatalf("notification view should identify authoritative policy:\n%s", m.View())
+	}
+	if m.spec.OperatorNotifications {
+		t.Fatal("disabled authoritative policy changed to enabled")
+	}
+	if !m.spec.OperatorNotificationsRequested || !m.spec.OperatorNotificationsSet {
+		t.Fatalf("explicit notification request setness was lost: %+v", m.spec)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageLauncherPane {
@@ -85,6 +98,42 @@ func TestBubbleModelExistingProfileOverridesAreLaunchOnly(t *testing.T) {
 	}
 	if profile.Members[0].Model != "stored-model" || profile.Members[0].Effort != "medium" {
 		t.Fatalf("source profile mutated: %+v", profile.Members[0])
+	}
+}
+
+func TestBubbleModelHydratesEnabledAuthoritativeNotifications(t *testing.T) {
+	profile := ProfileSummary{
+		Name: "review", PinnedSession: "review-work", OperatorMode: "noc", OperatorNotifications: true,
+	}
+	m, err := NewBubbleModel(NumberedOptions{
+		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs"},
+		InspectProject: func(string) (ProjectContext, error) {
+			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 5 { // project, profile, session, topology, layout
+		m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	}
+	if m.stage != stageOperator || m.spec.OperatorMode != "noc" || !m.spec.OperatorNotifications {
+		t.Fatalf("hydrated operator state = stage %v spec %+v", m.stage, m.spec)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageOperatorNotifications || !m.spec.OperatorNotifications {
+		t.Fatalf("notification stage = %v spec %+v", m.stage, m.spec)
+	}
+	view := m.View()
+	if !strings.Contains(view, "authoritative policy") || !strings.Contains(view, "enabled=true") || strings.Contains(view, "No notifications") {
+		t.Fatalf("authoritative notification view offered mutation:\n%s", view)
+	}
+	if !strings.Contains(m.summary(), "notifications=true") || strings.Count(strings.Join(m.spec.Args(), " "), "--operator-notifications") != 1 {
+		t.Fatalf("notification state not preserved in summary/args: summary=%q args=%q", m.summary(), m.spec.Args())
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageLauncherPane || !m.spec.OperatorNotifications {
+		t.Fatalf("authoritative continue mutated policy: stage=%v spec=%+v", m.stage, m.spec)
 	}
 }
 
@@ -117,7 +166,7 @@ func TestBubbleModelCapabilityRowsAreGatedByInjectedCatalog(t *testing.T) {
 	m.configureStage()
 	m.cursor = 3
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.stage != stageLauncherPane || m.spec.OperatorMode != "self_operator" {
+	if m.stage != stageOperatorNotifications || m.spec.OperatorMode != "self_operator" {
 		t.Fatalf("enabled selection = stage %v mode %q", m.stage, m.spec.OperatorMode)
 	}
 }
@@ -133,8 +182,12 @@ func TestBubbleModelDetachedDefaultsSeparateOperatorTerminal(t *testing.T) {
 		t.Fatalf("detached operator cursor = %d, want separate terminal", m.cursor)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.spec.OperatorMode != "separate_terminal" || m.stage != stageLauncherPane {
+	if m.spec.OperatorMode != "separate_terminal" || m.stage != stageOperatorNotifications {
 		t.Fatalf("detached operator selection = stage %v mode %q", m.stage, m.spec.OperatorMode)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageLauncherPane {
+		t.Fatalf("notification stage = %v, want launcher", m.stage)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageGoal || m.spec.LauncherPane != "keep" {

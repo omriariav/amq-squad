@@ -199,6 +199,7 @@ Usage:
       [--roles "a,b,c"] [--binary "role=bin,..."] [--model "role=model,..."]
       [--effort "role=level,..."]
       [--operator-mode lead_pane|separate_terminal|noc]
+      [--operator-notifications]
       [--lead-mode builder|planner]
       [--codex-args "..."] [--claude-args "..."]
       [--visibility sibling-tabs|detached|current] [--external-lead]
@@ -230,6 +231,9 @@ adds no persisted effort field or launch semantics.
 Operator mode accepts lead_pane, separate_terminal, or noc. The forward-known
 self_operator mode remains unavailable until #391 supplies its authorization
 policy.
+--operator-notifications is an independent fresh-profile add-on. It configures
+attention-only desktop delivery and never changes who may answer or approve a
+gate. Existing profiles remain authoritative and are never rewritten.
 
 Preview by default (prints the plan and runs read-only --dry-run validation, so
 its failures surface honestly); pass --go to create for real.
@@ -284,6 +288,7 @@ func runRunStart(args []string, version string) error {
 	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5.6-sol,fullstack=sonnet\"")
 	effortFlag := fs.String("effort", "", "per-role effort, e.g. \"cto=high,qa=medium\" (launch-only for existing profiles; normalized into native member args)")
 	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, or noc (self_operator is reserved for #391)")
+	operatorNotifications := fs.Bool("operator-notifications", false, "enable attention-only operator notifications for a newly created profile")
 	codexArgsFlag := fs.String("codex-args", "", "extra args for every Codex member (e.g. reasoning effort)")
 	claudeArgsFlag := fs.String("claude-args", "", "extra args for every Claude member")
 	visibilityFlag := fs.String("visibility", visibilitySiblingTabs, "spawn topology: sibling-tabs (visible default), detached (hidden), or current")
@@ -303,25 +308,27 @@ func runRunStart(args []string, version string) error {
 	project := strings.TrimSpace(*projectFlag)
 	session := strings.TrimSpace(*sessionFlag)
 	preflight := runStartPreflight(runStartPreflightInput{
-		Project:         project,
-		Profile:         *profileFlag,
-		ProfileExplicit: flagWasSet(fs, "profile") || flagWasSet(fs, "P"),
-		Session:         session,
-		Roles:           *rolesFlag,
-		Binary:          *binaryFlag,
-		Visibility:      *visibilityFlag,
-		LeadMode:        *leadModeFlag,
-		LeadModeSet:     flagWasSet(fs, "lead-mode"),
-		Effort:          *effortFlag,
-		EffortSet:       flagWasSet(fs, "effort"),
-		OperatorMode:    *operatorModeFlag,
-		OperatorModeSet: flagWasSet(fs, "operator-mode"),
-		LayoutPreset:    *layoutPresetFlag,
-		LayoutPresetSet: flagWasSet(fs, "layout-preset"),
-		LauncherPane:    *launcherPaneFlag,
-		LauncherPaneSet: flagWasSet(fs, "launcher-pane"),
-		VisibilitySet:   flagWasSet(fs, "visibility"),
-		ExternalLead:    *externalLead,
+		Project:                  project,
+		Profile:                  *profileFlag,
+		ProfileExplicit:          flagWasSet(fs, "profile") || flagWasSet(fs, "P"),
+		Session:                  session,
+		Roles:                    *rolesFlag,
+		Binary:                   *binaryFlag,
+		Visibility:               *visibilityFlag,
+		LeadMode:                 *leadModeFlag,
+		LeadModeSet:              flagWasSet(fs, "lead-mode"),
+		Effort:                   *effortFlag,
+		EffortSet:                flagWasSet(fs, "effort"),
+		OperatorMode:             *operatorModeFlag,
+		OperatorModeSet:          flagWasSet(fs, "operator-mode"),
+		OperatorNotifications:    *operatorNotifications,
+		OperatorNotificationsSet: flagWasSet(fs, "operator-notifications"),
+		LayoutPreset:             *layoutPresetFlag,
+		LayoutPresetSet:          flagWasSet(fs, "layout-preset"),
+		LauncherPane:             *launcherPaneFlag,
+		LauncherPaneSet:          flagWasSet(fs, "launcher-pane"),
+		VisibilitySet:            flagWasSet(fs, "visibility"),
+		ExternalLead:             *externalLead,
 	})
 	if err := preflight.Err(); err != nil {
 		return err
@@ -391,6 +398,9 @@ func runRunStart(args []string, version string) error {
 		}
 		if flagWasSet(fs, "operator-mode") {
 			newTeamArgs = append(newTeamArgs, "--operator-mode", strings.TrimSpace(*operatorModeFlag))
+		}
+		if *operatorNotifications {
+			newTeamArgs = append(newTeamArgs, "--operator-notifications")
 		}
 		newTeamArgs = appendPassthroughArgs(newTeamArgs, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
 	}

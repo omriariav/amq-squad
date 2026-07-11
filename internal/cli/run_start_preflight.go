@@ -11,42 +11,45 @@ import (
 )
 
 const (
-	runStartPreflightInvalidProject          = "invalid_project"
-	runStartPreflightInvalidSession          = "invalid_session"
-	runStartPreflightInvalidVisibility       = "invalid_visibility"
-	runStartPreflightInvalidProfile          = "invalid_profile"
-	runStartPreflightNamespaceCollision      = "profile_session_root_collision"
-	runStartPreflightDefaultProfileShadow    = "default_profile_shadowed"
-	runStartPreflightExistingProfileSession  = "existing_profile_session_mismatch"
-	runStartPreflightMissingRoster           = "missing_roster"
-	runStartPreflightInvalidLeadMode         = "invalid_lead_mode"
-	runStartPreflightExistingProfileLeadMode = "existing_profile_lead_mode"
-	runStartPreflightInvalidEffort           = "invalid_effort"
-	runStartPreflightInvalidOperatorMode     = "invalid_operator_mode"
-	runStartPreflightExistingOperatorMode    = "existing_profile_operator_mode"
-	runStartPreflightInvalidLayout           = "invalid_layout"
+	runStartPreflightInvalidProject                = "invalid_project"
+	runStartPreflightInvalidSession                = "invalid_session"
+	runStartPreflightInvalidVisibility             = "invalid_visibility"
+	runStartPreflightInvalidProfile                = "invalid_profile"
+	runStartPreflightNamespaceCollision            = "profile_session_root_collision"
+	runStartPreflightDefaultProfileShadow          = "default_profile_shadowed"
+	runStartPreflightExistingProfileSession        = "existing_profile_session_mismatch"
+	runStartPreflightMissingRoster                 = "missing_roster"
+	runStartPreflightInvalidLeadMode               = "invalid_lead_mode"
+	runStartPreflightExistingProfileLeadMode       = "existing_profile_lead_mode"
+	runStartPreflightInvalidEffort                 = "invalid_effort"
+	runStartPreflightInvalidOperatorMode           = "invalid_operator_mode"
+	runStartPreflightExistingOperatorMode          = "existing_profile_operator_mode"
+	runStartPreflightExistingOperatorNotifications = "existing_profile_operator_notifications"
+	runStartPreflightInvalidLayout                 = "invalid_layout"
 )
 
 type runStartPreflightInput struct {
-	Project         string
-	Profile         string
-	ProfileExplicit bool
-	Session         string
-	Roles           string
-	Binary          string
-	Visibility      string
-	LeadMode        string
-	LeadModeSet     bool
-	Effort          string
-	EffortSet       bool
-	OperatorMode    string
-	OperatorModeSet bool
-	LayoutPreset    string
-	LayoutPresetSet bool
-	LauncherPane    string
-	LauncherPaneSet bool
-	VisibilitySet   bool
-	ExternalLead    bool
+	Project                  string
+	Profile                  string
+	ProfileExplicit          bool
+	Session                  string
+	Roles                    string
+	Binary                   string
+	Visibility               string
+	LeadMode                 string
+	LeadModeSet              bool
+	Effort                   string
+	EffortSet                bool
+	OperatorMode             string
+	OperatorModeSet          bool
+	OperatorNotifications    bool
+	OperatorNotificationsSet bool
+	LayoutPreset             string
+	LayoutPresetSet          bool
+	LauncherPane             string
+	LauncherPaneSet          bool
+	VisibilitySet            bool
+	ExternalLead             bool
 }
 
 // runStartPreflightIssue is intentionally structured so wizard adapters can
@@ -181,6 +184,15 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 					"omit --operator-mode to use the existing profile contract",
 					"create a new named profile with the requested operator mode")
 			}
+		}
+	}
+	if input.OperatorNotificationsSet && r.TeamPresent && !r.FreshRoster {
+		existing, readErr := team.ReadProfile(r.Project, r.Profile)
+		if readErr != nil {
+			return add(runStartPreflightExistingOperatorNotifications, fmt.Sprintf("read team profile %q: %v", r.Profile, readErr))
+		}
+		if input.OperatorNotifications != team.EffectiveOperatorNotifications(existing.Operator).Enabled {
+			return add(runStartPreflightExistingOperatorNotifications, fmt.Sprintf("--operator-notifications does not match existing profile %q notification policy; run start never rewrites it", r.Profile), "omit --operator-notifications to use the authoritative profile policy")
 		}
 	}
 	if input.EffortSet {

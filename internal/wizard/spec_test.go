@@ -8,24 +8,25 @@ import (
 
 func TestSpecArgsStableAndPreviewOnly(t *testing.T) {
 	s := Spec{
-		Project:      "/tmp/my repo",
-		Profile:      "review",
-		Session:      "issue-393",
-		Roles:        "cto,qa",
-		Binary:       "qa=claude",
-		Model:        "cto=gpt-5",
-		Effort:       "cto=high,qa=medium",
-		OperatorMode: "separate_terminal",
-		CodexArgs:    "-c model_reasoning_effort=high",
-		ClaudeArgs:   "--effort high",
-		Lead:         "cto",
-		LeadMode:     "planner",
-		Visibility:   "current",
-		LayoutPreset: "lead-left",
-		LauncherPane: "close-after-start",
-		ExternalLead: true,
-		Goal:         "ship it",
-		SeedFrom:     "issue:393",
+		Project:               "/tmp/my repo",
+		Profile:               "review",
+		Session:               "issue-393",
+		Roles:                 "cto,qa",
+		Binary:                "qa=claude",
+		Model:                 "cto=gpt-5",
+		Effort:                "cto=high,qa=medium",
+		OperatorMode:          "separate_terminal",
+		OperatorNotifications: true,
+		CodexArgs:             "-c model_reasoning_effort=high",
+		ClaudeArgs:            "--effort high",
+		Lead:                  "cto",
+		LeadMode:              "planner",
+		Visibility:            "current",
+		LayoutPreset:          "lead-left",
+		LauncherPane:          "close-after-start",
+		ExternalLead:          true,
+		Goal:                  "ship it",
+		SeedFrom:              "issue:393",
 	}
 	want := []string{
 		"--project", "/tmp/my repo",
@@ -36,6 +37,7 @@ func TestSpecArgsStableAndPreviewOnly(t *testing.T) {
 		"--model", "cto=gpt-5",
 		"--effort", "cto=high,qa=medium",
 		"--operator-mode", "separate_terminal",
+		"--operator-notifications",
 		"--codex-args", "-c model_reasoning_effort=high",
 		"--claude-args", "--effort high",
 		"--lead", "cto",
@@ -63,6 +65,7 @@ func TestSpecGlobalArgsNeverLeakProjectRunFlags(t *testing.T) {
 		GlobalEffort: "high", GlobalCodexArgs: "--search", GlobalClaudeArgs: "--debug", GlobalWindow: "noc",
 		Project: "/project", Profile: "release", Session: "issue-393", Roles: "cto,qa",
 		Visibility: "current", LayoutPreset: "lead-left", LauncherPane: "close-after-start",
+		OperatorNotifications: true, OperatorNotificationsRequested: true, OperatorNotificationsSet: true,
 	}
 	got := strings.Join(s.GlobalArgs(), " ")
 	for _, want := range []string{"--root /neutral", "--agent codex", "--model gpt", "--codex-args --search -c model_reasoning_effort=high", "--name noc"} {
@@ -70,7 +73,7 @@ func TestSpecGlobalArgsNeverLeakProjectRunFlags(t *testing.T) {
 			t.Fatalf("global argv %q missing %q", got, want)
 		}
 	}
-	for _, forbidden := range []string{"--project", "--profile", "--session", "--roles", "--visibility", "--layout-preset", "--launcher-pane"} {
+	for _, forbidden := range []string{"--project", "--profile", "--session", "--roles", "--visibility", "--layout-preset", "--launcher-pane", "--operator-notifications"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("global argv leaked %q: %s", forbidden, got)
 		}

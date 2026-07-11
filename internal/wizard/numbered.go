@@ -28,13 +28,14 @@ type ProjectContext struct {
 }
 
 type ProfileSummary struct {
-	Name          string
-	MemberCount   int
-	PinnedSession string
-	Lead          string
-	LeadMode      string
-	OperatorMode  string
-	Members       []MemberSummary
+	Name                  string
+	MemberCount           int
+	PinnedSession         string
+	Lead                  string
+	LeadMode              string
+	OperatorMode          string
+	OperatorNotifications bool
+	Members               []MemberSummary
 }
 
 type MemberSummary struct {
@@ -149,6 +150,7 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 			s.Model = renderAssignments(memberOrder, modelOverrides)
 			s.Effort = renderAssignments(memberOrder, effortOverrides)
 			s.OperatorMode = defaultString(existingProfile.OperatorMode, "unspecified")
+			s.OperatorNotifications = existingProfile.OperatorNotifications
 		}
 	} else {
 		if s.Roles, err = promptText(r, out, "Roles (comma-separated)", defaultString(s.Roles, "cto,senior-dev,qa")); err != nil {
@@ -226,6 +228,15 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		fmt.Fprintln(out)
 	} else if s.OperatorMode, err = promptOperatorChoice(r, out, opts.Capabilities, defaultOperatorMode(s.OperatorMode, s.Visibility)); err != nil {
 		return Spec{}, err
+	}
+	if existing {
+		fmt.Fprintf(out, "Operator notifications (authoritative): %t\n", s.OperatorNotifications)
+	} else {
+		choice, choiceErr := promptChoice(r, out, "Operator notification add-on", []choice{{value: "no", label: "No notifications"}, {value: "yes", label: "Attention-only desktop notifications"}}, map[bool]string{true: "yes", false: "no"}[s.OperatorNotifications])
+		if choiceErr != nil {
+			return Spec{}, choiceErr
+		}
+		s.OperatorNotifications = choice == "yes"
 	}
 	if s.LauncherPane, err = promptChoice(r, out, "Launcher pane", launcherPaneChoices(s.Visibility, s.ExternalLead), defaultLauncherPane(s.LauncherPane, s.Visibility, s.ExternalLead)); err != nil {
 		return Spec{}, err

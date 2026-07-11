@@ -385,6 +385,12 @@ the amq-squad playbooks themselves.</p>
 skill entries are redirect stubs. The CLI and skills are versioned
 together.</p>
 <h2 id="quickstart">Quickstart</h2>
+<p>Enable the default attention-only desktop notification policy when
+creating a profile with <code>team init --operator-notifications</code>,
+or pass the same flag through <code>run start</code> when it creates a
+new profile. Existing profiles remain authoritative and are never
+rewritten. Notifications run on the scoped <code>operator watch</code>
+host and never approve gates.</p>
 <p>The shortest working path for a visible project lead and workers:</p>
 <div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
