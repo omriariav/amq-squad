@@ -9,6 +9,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// flattenBubbleView strips the panel border and collapses the word-wrap that
+// lipgloss applies, so tests can assert full phrases regardless of wrap points.
+func flattenBubbleView(view string) string {
+	replaced := strings.NewReplacer("│", " ", "╭", " ", "╮", " ", "╰", " ", "╯", " ", "─", " ").Replace(view)
+	return strings.Join(strings.Fields(replaced), " ")
+}
+
 func TestBubbleModelStartsWithProjectDefaultsAndPhaseRail(t *testing.T) {
 	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{
 		Project: "/repo", Profile: "default", Session: "issue-393", Visibility: "sibling-tabs",
@@ -79,6 +86,11 @@ func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePr
 	if m.stage != stageExistingModel {
 		t.Fatalf("stage = %v, want existing model", m.stage)
 	}
+	m.cursor = 3 // custom: type a model name
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageExistingModelCustom {
+		t.Fatalf("stage = %v, want existing model custom", m.stage)
+	}
 	m.input.SetValue("launch-model")
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m.cursor = 3 // high
@@ -94,11 +106,14 @@ func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePr
 	if m.stage != stageOperator {
 		t.Fatalf("stage = %v, want operator", m.stage)
 	}
-	operatorView := m.View()
-	for _, want := range []string{"Self-operator / delegated approval", "v2.19.0: #391"} {
+	operatorView := flattenBubbleView(m.View())
+	for _, want := range []string{"Self-operator / delegated approval", "locked: the stored profile contract decides", "Change it with 'amq-squad team operator set'"} {
 		if !strings.Contains(operatorView, want) {
 			t.Fatalf("existing operator view missing %q:\n%s", want, operatorView)
 		}
+	}
+	if strings.Contains(operatorView, "ships in") {
+		t.Fatalf("shipped capability still advertised as future:\n%s", operatorView)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageOperatorNotifications {
@@ -126,6 +141,42 @@ func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePr
 	}
 	if profile.Members[0].Model != "stored-model" || profile.Members[0].Effort != "medium" {
 		t.Fatalf("source profile mutated: %+v", profile.Members[0])
+	}
+}
+
+func TestBubbleModelRejectsSessionThePinnedProfileCannotRun(t *testing.T) {
+	profile := ProfileSummary{
+		Name: "default", MemberCount: 1, PinnedSession: "issue-136",
+		Members: []MemberSummary{{Role: "cto", Binary: "codex"}},
+	}
+	m, err := NewBubbleModel(NumberedOptions{
+		Defaults: Spec{Project: "/repo", Profile: "default"},
+		InspectProject: func(string) (ProjectContext, error) {
+			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // project
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // profile: default
+	if m.stage != stageSession {
+		t.Fatalf("stage = %v, want session", m.stage)
+	}
+	m.input.SetValue("issue-218")
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageSession || m.err == nil {
+		t.Fatalf("mismatched session advanced: stage=%v err=%v", m.stage, m.err)
+	}
+	for _, want := range []string{"issue-136", "issue-218", "named profile"} {
+		if !strings.Contains(m.err.Error(), want) {
+			t.Fatalf("mismatch guidance missing %q: %v", want, m.err)
+		}
+	}
+	m.input.SetValue("issue-136")
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageExistingOverride || m.spec.Session != "issue-136" {
+		t.Fatalf("pinned session refused: stage=%v session=%q", m.stage, m.spec.Session)
 	}
 }
 
@@ -288,12 +339,52 @@ func TestBubbleModelBlankExistingModelRemovesEarlierLaunchOverride(t *testing.T)
 	}
 	m.ctx.Profiles = []ProfileSummary{{Name: "review", Members: []MemberSummary{{Role: "cto", Binary: "codex"}}}}
 	m.existingIndex = 0
-	m.stage = stageExistingModel
+	m.stage = stageExistingModelCustom
 	m.configureStage()
 	m.input.SetValue("")
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.spec.Model != "" {
 		t.Fatalf("cleared model override = %q", m.spec.Model)
+	}
+}
+
+func TestBubbleModelOffersModelsPerBinaryWithCustomEscape(t *testing.T) {
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Roles: "cto", Binary: "cto=claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.roleOrder = []string{"cto"}
+	m.stage = stageRoleModel
+	m.configureStage()
+	view := flattenBubbleView(m.View())
+	for _, want := range []string{"automatic", "fable", "opus", "sonnet", "haiku", "custom"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("claude model list missing %q:\n%s", want, view)
+		}
+	}
+	m.cursor = 3 // sonnet
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageRoleEffort || m.spec.Model != "cto=sonnet" {
+		t.Fatalf("curated pick = stage %v model %q", m.stage, m.spec.Model)
+	}
+
+	m, err = NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Roles: "cto", Binary: "cto=codex"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.roleOrder = []string{"cto"}
+	m.stage = stageRoleModel
+	m.configureStage()
+	choices := m.choices()
+	m.cursor = len(choices) - 1 // custom
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageRoleModelCustom {
+		t.Fatalf("custom escape = stage %v", m.stage)
+	}
+	m.input.SetValue("gpt-5.7-experimental")
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageRoleEffort || m.spec.Model != "cto=gpt-5.7-experimental" {
+		t.Fatalf("custom model = stage %v model %q", m.stage, m.spec.Model)
 	}
 }
 

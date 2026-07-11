@@ -70,17 +70,6 @@ func OptionAvailabilityLabel(caps CapabilitySet, option Option) string {
 	return "unavailable"
 }
 
-func CapabilityReleaseLabel(caps CapabilitySet, option Option) string {
-	if option.Requires == "" {
-		return ""
-	}
-	capability := caps[option.Requires]
-	if capability.ShipsIn != "" && capability.Issue > 0 {
-		return fmt.Sprintf("ships in %s: #%d", capability.ShipsIn, capability.Issue)
-	}
-	return ""
-}
-
 func effectiveCapabilities(caps CapabilitySet) CapabilitySet {
 	if caps == nil {
 		return DefaultCapabilities()
@@ -95,12 +84,10 @@ func operatorChoices(caps CapabilitySet) []choice {
 	for _, option := range options {
 		availability := OptionAvailabilityLabel(caps, option)
 		label := option.Label + " · " + option.Consequence
-		release := CapabilityReleaseLabel(caps, option)
-		if release == "" {
-			release = availability
-		}
-		if release != "" {
-			label += " [" + release + "]"
+		// The ships-in provenance appears only while the capability is
+		// genuinely unavailable; a shipped feature must not read as future.
+		if availability != "" {
+			label += " [" + availability + "]"
 		}
 		if option.Blocked {
 			label += " [" + option.BlockReason + "]"

@@ -98,8 +98,18 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	if strings.TrimSpace(sessionDefault) == "" {
 		sessionDefault = ctx.SessionSuggestion
 	}
-	if s.Session, err = promptText(r, out, "Workstream session", sessionDefault); err != nil {
-		return Spec{}, err
+	for {
+		if s.Session, err = promptText(r, out, "Workstream session", sessionDefault); err != nil {
+			return Spec{}, err
+		}
+		if existingProfile == nil {
+			break
+		}
+		mismatch := pinnedSessionMismatch(*existingProfile, s.Session)
+		if mismatch == nil {
+			break
+		}
+		fmt.Fprintf(out, "Check: %v\n", mismatch)
 	}
 
 	existing := existingProfile != nil || (opts.ProfileExists != nil && opts.ProfileExists(s.Project, s.Profile))
@@ -134,12 +144,20 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 				if override != "override" {
 					continue
 				}
-				model, promptErr := promptOptionalOverride(r, out, member.Role+" model override", defaultString(member.Model, "automatic"))
+				modelSel, promptErr := promptChoice(r, out, member.Role+" model override", existingOverrideModelChoices(member), modelKeepChoice)
 				if promptErr != nil {
 					return Spec{}, promptErr
 				}
-				if model != "" {
-					modelOverrides[member.Role] = model
+				if modelSel == modelCustomChoice {
+					custom, customErr := promptOptionalOverride(r, out, member.Role+" model override", defaultString(member.Model, "automatic"))
+					if customErr != nil {
+						return Spec{}, customErr
+					}
+					if custom != "" {
+						modelOverrides[member.Role] = custom
+					}
+				} else if modelSel != modelKeepChoice {
+					modelOverrides[member.Role] = modelSel
 				}
 				effortChoices := []choice{{value: "automatic", label: "automatic: ignore stored effort for this launch"}, {value: "low", label: "low"}, {value: "medium", label: "medium"}, {value: "high", label: "high"}}
 				if member.Binary == "codex" {
@@ -179,11 +197,16 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 			if err != nil {
 				return Spec{}, err
 			}
-			model, promptErr := promptText(r, out, role+" model", defaultString(modelPrefill[role], "automatic"))
+			model, promptErr := promptChoice(r, out, role+" model", modelChoices(binaryValues[role]), defaultModelChoice(modelPrefill[role], binaryValues[role]))
 			if promptErr != nil {
 				return Spec{}, promptErr
 			}
-			if model != "" && !strings.EqualFold(model, "automatic") {
+			if model == modelCustomChoice {
+				if model, promptErr = promptText(r, out, role+" model name", defaultString(modelPrefill[role], "automatic")); promptErr != nil {
+					return Spec{}, promptErr
+				}
+			}
+			if model != "" && !strings.EqualFold(model, effortAutomatic) {
 				modelValues[role] = model
 			}
 			effortChoices := []choice{{value: "automatic", label: "automatic: let the binary choose"}, {value: "low", label: "low"}, {value: "medium", label: "medium"}, {value: "high", label: "high"}}
@@ -223,13 +246,14 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		return Spec{}, err
 	}
 	if existing {
-		fmt.Fprintf(out, "Operator interaction (authoritative): %s\n", defaultString(s.OperatorMode, "unspecified"))
+		mode := defaultString(s.OperatorMode, "unspecified")
+		fmt.Fprintf(out, "Operator interaction (authoritative): %s · %s. Change it with 'amq-squad team operator set', then relaunch.\n", mode, operatorContractSummary(mode))
 		if s.OperatorMode == "self_operator" {
 			fmt.Fprintf(out, "Self-operator policy (authoritative): lead=%s session=%s allow=%s revision=%d paused=%t notifications=%t\n", existingProfile.SelfOperatorLead, s.Session, existingProfile.SelfOperatorAllow, existingProfile.SelfOperatorRevision, existingProfile.SelfOperatorPaused, s.OperatorNotifications)
 		}
 		for _, item := range operatorChoices(opts.Capabilities) {
 			if item.capability {
-				fmt.Fprintf(out, "  - %s\n", item.label)
+				fmt.Fprintf(out, "  - %s [locked: the stored profile contract decides]\n", item.label)
 			}
 		}
 		fmt.Fprintln(out)
@@ -272,7 +296,72 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	return s, nil
 }
 
-const effortAutomatic = "automatic"
+const (
+	effortAutomatic   = "automatic"
+	modelCustomChoice = "custom"
+	modelKeepChoice   = "keep"
+)
+
+// modelChoices offers common models per binary. Models pass through to the
+// binary verbatim, so this list is a convenience, never an allowlist; the
+// custom row keeps free-text entry available.
+func modelChoices(binary string) []choice {
+	choices := []choice{{value: effortAutomatic, label: "automatic: let the binary choose"}}
+	if strings.EqualFold(binary, "claude") {
+		choices = append(choices,
+			choice{value: "fable", label: "fable"},
+			choice{value: "opus", label: "opus"},
+			choice{value: "sonnet", label: "sonnet"},
+			choice{value: "haiku", label: "haiku"},
+		)
+	} else {
+		choices = append(choices,
+			choice{value: "gpt-5.6-sol", label: "gpt-5.6-sol"},
+			choice{value: "gpt-5.6-terra", label: "gpt-5.6-terra"},
+		)
+	}
+	return append(choices, choice{value: modelCustomChoice, label: "custom: type a model name"})
+}
+
+// existingOverrideModelChoices frames the same list for a launch-only override:
+// keep replaces automatic because clearing the override falls back to the
+// stored profile value, not to the binary's default.
+func existingOverrideModelChoices(member MemberSummary) []choice {
+	choices := []choice{{value: modelKeepChoice, label: "keep profile model: " + defaultString(member.Model, "automatic")}}
+	for _, item := range modelChoices(member.Binary) {
+		if item.value != effortAutomatic {
+			choices = append(choices, item)
+		}
+	}
+	return choices
+}
+
+func defaultModelChoice(prefill, binary string) string {
+	prefill = strings.TrimSpace(prefill)
+	if prefill == "" {
+		return effortAutomatic
+	}
+	for _, item := range modelChoices(binary) {
+		if strings.EqualFold(item.value, prefill) {
+			return item.value
+		}
+	}
+	return modelCustomChoice
+}
+
+// pinnedSessionMismatch mirrors run start's existing_profile_session_mismatch
+// preflight at answer time: a pinned roster runs only its pinned workstream,
+// so a different session must be rejected before the user invests in the
+// remaining phases. Best-effort — the summary carries one inferred pin, so
+// the canonical preflight stays authoritative.
+func pinnedSessionMismatch(profile ProfileSummary, session string) error {
+	pinned := strings.TrimSpace(profile.PinnedSession)
+	session = strings.TrimSpace(session)
+	if (profile.MemberCount == 0 && len(profile.Members) == 0) || pinned == "" || pinned == session {
+		return nil
+	}
+	return fmt.Errorf("profile %q runs only its pinned workstream %s; use %s, or pick a named profile for %s instead", profile.Name, pinned, pinned, session)
+}
 
 func promptProfile(r *bufio.Reader, out io.Writer, current string, ctx ProjectContext) (string, *ProfileSummary, error) {
 	if len(ctx.Profiles) == 0 {

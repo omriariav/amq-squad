@@ -197,9 +197,101 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 	if got.OperatorMode != "noc" {
 		t.Fatalf("existing operator mode = %q", got.OperatorMode)
 	}
-	for _, want := range []string{"origin omriariav/amq-squad", "review: 3 member(s), session review-work", "cto: codex, model=automatic, effort=high", "Operator interaction (authoritative): noc", "ships in v2.19.0: #391"} {
+	for _, want := range []string{"origin omriariav/amq-squad", "review: 3 member(s), session review-work", "cto: codex, model=automatic, effort=high", "Operator interaction (authoritative): noc · NOC/global orchestrator owns polling. Change it with 'amq-squad team operator set', then relaunch.", "Self-operator / delegated approval", "[locked: the stored profile contract decides]"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestRunNumberedOffersModelListWithCustomEscape(t *testing.T) {
+	input := strings.Join([]string{
+		"",    // project
+		"",    // profile
+		"",    // session
+		"cto", // single role
+		"2",   // claude binary
+		"4",   // sonnet from the claude list (automatic, fable, opus, sonnet, haiku, custom)
+		"",    // effort
+		"",    // lead
+		"",    // lead mode
+		"",    // topology
+		"",    // layout
+		"",    // operator contract
+		"",    // notifications
+		"",    // launcher
+		"",    // goal
+		"",    // seed
+	}, "\n") + "\n"
+	var out bytes.Buffer
+	got, err := RunNumbered(strings.NewReader(input), &out, NumberedOptions{
+		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
+		ProfileExists: func(string, string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Model != "cto=sonnet" {
+		t.Fatalf("curated model pick = %q", got.Model)
+	}
+	for _, want := range []string{"fable", "opus", "sonnet", "haiku", "custom: type a model name"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("model list missing %q:\n%s", want, out.String())
+		}
+	}
+
+	custom := strings.Join([]string{
+		"", "", "", "cto",
+		"",                     // codex binary
+		"4",                    // custom escape (automatic, sol, terra, custom)
+		"gpt-5.7-experimental", // free text
+		// effort, lead, lead mode, topology, layout, operator,
+		// notifications, launcher, goal, seed
+		"", "", "", "", "", "", "", "", "", "",
+	}, "\n") + "\n"
+	got, err = RunNumbered(strings.NewReader(custom), &bytes.Buffer{}, NumberedOptions{
+		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
+		ProfileExists: func(string, string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Model != "cto=gpt-5.7-experimental" {
+		t.Fatalf("custom model = %q", got.Model)
+	}
+}
+
+func TestRunNumberedRepromptsSessionThePinnedProfileCannotRun(t *testing.T) {
+	input := strings.Join([]string{
+		"",          // project
+		"",          // profile: default (existing)
+		"issue-218", // rejected: pinned to issue-136
+		"",          // retry accepts the pinned default
+		"",          // keep cto profile values
+		"",          // topology
+		"",          // one-window layout
+		"",          // close launcher
+		"",          // goal
+		"",          // seed
+	}, "\n") + "\n"
+	var out bytes.Buffer
+	got, err := RunNumbered(strings.NewReader(input), &out, NumberedOptions{
+		Defaults: Spec{Project: "/repo", Visibility: "sibling-tabs"},
+		InspectProject: func(string) (ProjectContext, error) {
+			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{
+				{Name: "default", MemberCount: 1, PinnedSession: "issue-136", Members: []MemberSummary{{Role: "cto", Binary: "codex"}}},
+			}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session != "issue-136" {
+		t.Fatalf("session = %q, want the pinned issue-136", got.Session)
+	}
+	for _, want := range []string{"Check:", "pinned workstream issue-136", "named profile"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("re-prompt output missing %q:\n%s", want, out.String())
 		}
 	}
 }
@@ -244,7 +336,8 @@ func TestRunNumberedExistingProfileCollectsLaunchOnlyOverrides(t *testing.T) {
 		"",             // existing profile
 		"",             // pinned session
 		"2",            // override cto
-		"launch-model", // launch-only model
+		"4",            // model override: custom
+		"launch-model", // custom launch-only model
 		"4",            // high effort
 		"",             // topology
 		"",             // one-window layout
