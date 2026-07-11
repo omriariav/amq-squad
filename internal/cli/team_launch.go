@@ -60,6 +60,19 @@ type teamLaunchOptions struct {
 	// AllowNoMembersAfterExternalLead treats a lead-only run as a successful
 	// bind instead of an error after ExternalLeadRole filters out the lead.
 	AllowNoMembersAfterExternalLead bool
+	// ResultSink is used only by run start layout finalization. Backends that
+	// can return exact runtime IDs call it synchronously before Launch returns.
+	ResultSink func(teamLaunchResult)
+}
+
+type teamLaunchResult struct {
+	Panes []teamLaunchResultPane
+}
+
+type teamLaunchResultPane struct {
+	Role     string
+	PaneID   string
+	WindowID string
 }
 
 type teamLaunchPane struct {
@@ -73,6 +86,10 @@ type teamLaunchBackend interface {
 	Validate(teamLaunchOptions) error
 	DryRun(team.Team, teamLaunchOptions) error
 	Launch(team.Team, teamLaunchOptions) error
+}
+
+type teamLaunchResultBackend interface {
+	LaunchWithResult(team.Team, teamLaunchOptions) (teamLaunchResult, error)
 }
 
 // Terminal support is intentionally backend-based. A new terminal integration
@@ -308,7 +325,20 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if _, _, err := ensureBriefStubForProfile(t.Project, opts.Profile, opts.Workstream); err != nil {
 		return fmt.Errorf("ensure brief: %w", err)
 	}
-	if err := backend.Launch(t, opts); err != nil {
+	if opts.ResultSink != nil {
+		if resultBackend, ok := backend.(teamLaunchResultBackend); ok {
+			result, err := resultBackend.LaunchWithResult(t, opts)
+			if err != nil {
+				return err
+			}
+			opts.ResultSink(result)
+		} else {
+			if err := backend.Launch(t, opts); err != nil {
+				return err
+			}
+			opts.ResultSink(teamLaunchResult{})
+		}
+	} else if err := backend.Launch(t, opts); err != nil {
 		return err
 	}
 	quietNotice("started %s using profile %s in %s\n", opts.Workstream, opts.Profile, t.Project)

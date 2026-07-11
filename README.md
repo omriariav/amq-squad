@@ -149,6 +149,15 @@ amq-squad run start \
 the lead is live before delivering the goal. If goal delivery fails, it exits
 non-zero and prints an exact retry command.
 
+For a deterministic visible arrangement, pass `--layout-preset lead-left`,
+`lead-top`, `even-grid`, or `one-window-per-agent`. Presets close the launcher
+pane after a successful start by default; use `--launcher-pane keep` to retain
+it. External-lead and detached runs always keep the launcher. The final layout
+is applied asynchronously by exact tmux pane/window IDs only after spawn, goal
+delivery, and the final CLI output, so renaming a pane or window is safe. A
+finalization failure never tears down agents and remains visible as a status
+warning.
+
 In an interactive terminal, `amq-squad run start` with no arguments now opens
 the guided preview wizard instead of returning the old missing-flag usage error.
 `amq-squad wizard` and `run start --interactive` are equivalent. The wizard is

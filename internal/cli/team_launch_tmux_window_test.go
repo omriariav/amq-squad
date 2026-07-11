@@ -224,6 +224,52 @@ func TestRunTmuxWindowsPlanAddsWindowsToExistingDetachedSession(t *testing.T) {
 	}
 }
 
+func TestRunTmuxWindowsPlanResultFailureSendsNoAgentCommands(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%1")
+	oldOutput := tmuxOutputCommand
+	oldRun := tmuxRunCommand
+	t.Cleanup(func() {
+		tmuxOutputCommand = oldOutput
+		tmuxRunCommand = oldRun
+	})
+	tmuxOutputCommand = func(name string, args ...string) (string, error) {
+		call := strings.Join(args, " ")
+		switch {
+		case strings.Contains(call, "#{session_name}"):
+			return "operator-session\n", nil
+		case len(args) > 0 && args[0] == "new-window":
+			return "%2\n", nil
+		case strings.Contains(call, "#{window_id}"):
+			return "", fmt.Errorf("window id unavailable")
+		default:
+			return "", fmt.Errorf("unexpected output command: %s %s", name, call)
+		}
+	}
+	var runCalls []string
+	tmuxRunCommand = func(name string, args ...string) error {
+		runCalls = append(runCalls, name+" "+strings.Join(args, " "))
+		return nil
+	}
+
+	_, err := runTmuxWindowsPlanWithResult(tmuxLaunchPlan{
+		Session:    "amq-squad-proj",
+		Workstream: "issue-393",
+		Target:     "new-window",
+		Panes: []teamLaunchPane{
+			{Role: "cto", CWD: "/repo", Command: "agent-command"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "window id unavailable") {
+		t.Fatalf("result collection error = %v, want window id failure", err)
+	}
+	for _, call := range runCalls {
+		if strings.Contains(call, "send-keys") {
+			t.Fatalf("result collection must complete before agent commands; got %q in %v", call, runCalls)
+		}
+	}
+}
+
 func TestTmuxWindowName(t *testing.T) {
 	if got := tmuxWindowName("cto"); got != "cto" {
 		t.Errorf("tmuxWindowName(cto) = %q, want cto", got)

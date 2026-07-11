@@ -232,6 +232,12 @@ func finishRunStartWizard(spec runwizard.Spec, version string) error {
 		EffortSet:       strings.TrimSpace(spec.Effort) != "",
 		OperatorMode:    spec.OperatorMode,
 		OperatorModeSet: strings.TrimSpace(spec.OperatorMode) != "" && strings.TrimSpace(spec.OperatorMode) != team.OperatorInteractionUnspecified,
+		LayoutPreset:    spec.LayoutPreset,
+		LayoutPresetSet: strings.TrimSpace(spec.LayoutPreset) != "",
+		LauncherPane:    spec.LauncherPane,
+		LauncherPaneSet: strings.TrimSpace(spec.LauncherPane) != "",
+		VisibilitySet:   strings.TrimSpace(spec.Visibility) != "",
+		ExternalLead:    spec.ExternalLead,
 	})
 	if len(preflight.Issues) > 0 {
 		issue := preflight.Issues[0]
@@ -264,6 +270,8 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 	lead := fs.String("lead", "", "")
 	leadMode := fs.String("lead-mode", "", "")
 	visibility := fs.String("visibility", visibilitySiblingTabs, "")
+	layoutPreset := fs.String("layout-preset", "", "")
+	launcherPane := fs.String("launcher-pane", "", "")
 	externalLead := fs.Bool("external-lead", false, "")
 	goal := fs.String("goal", "", "")
 	seedFrom := fs.String("seed-from", "", "")
@@ -291,6 +299,8 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 		Lead:         *lead,
 		LeadMode:     *leadMode,
 		Visibility:   *visibility,
+		LayoutPreset: *layoutPreset,
+		LauncherPane: *launcherPane,
 		ExternalLead: *externalLead,
 		Goal:         *goal,
 		SeedFrom:     *seedFrom,

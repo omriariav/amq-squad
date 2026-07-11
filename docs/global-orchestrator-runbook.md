@@ -105,6 +105,36 @@ Requirements:
 Note: this sets the **initial** spawn. Later dynamic spawns by the lead
 (`team member add` → `resume`/`up`) carry their own visibility.
 
+### Deterministic layout presets
+
+`run start` can map a user-facing preset to the spawn topology and final tmux
+layout:
+
+| Preset | Spawn | Final arrangement |
+| --- | --- | --- |
+| `lead-left` | current window, vertical splits | lead in the main left pane at 60% width |
+| `lead-top` | current window, horizontal splits | lead in the main top pane at 60% height |
+| `even-grid` | current window, tiled splits | tiled panes |
+| `one-window-per-agent` | sibling windows | one agent per window, focused on the configured lead |
+
+Example:
+
+```sh
+amq-squad run start -p ~/Code/app -s issue-96 -P release \
+  --layout-preset lead-left --launcher-pane close-after-start --go
+```
+
+A preset defaults to `--launcher-pane close-after-start`. Pass `keep` when the
+launching pane should remain. External-lead and detached runs force `keep` and
+reject an explicit close request before spawning. Without either new flag,
+legacy visibility and launcher behavior are unchanged.
+
+Finalization is scheduled only after the agents start, optional goal delivery
+succeeds, and final output is printed. It waits a bounded time for the parent
+CLI process to exit, then uses the exact pane/window IDs returned synchronously
+by the spawn backend. Missing IDs or tmux failures leave every agent running
+and surface a persistent `layout_finalization` warning in text and JSON status.
+
 ## Wake outside a managed pane
 
 If a lead/orchestrator runs in a plain terminal **outside tmux**, the default

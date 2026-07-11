@@ -431,6 +431,16 @@ project lead and only the remaining workers should be spawned:</p>
 creates. With <code>--goal</code>, it waits until the lead is live
 before delivering the goal. If goal delivery fails, it exits non-zero
 and prints an exact retry command.</p>
+<p>For a deterministic visible arrangement, pass
+<code>--layout-preset lead-left</code>, <code>lead-top</code>,
+<code>even-grid</code>, or <code>one-window-per-agent</code>. Presets
+close the launcher pane after a successful start by default; use
+<code>--launcher-pane keep</code> to retain it. External-lead and
+detached runs always keep the launcher. The final layout is applied
+asynchronously by exact tmux pane/window IDs only after spawn, goal
+delivery, and the final CLI output, so renaming a pane or window is
+safe. A finalization failure never tears down agents and remains visible
+as a status warning.</p>
 <p>In an interactive terminal, <code>amq-squad run start</code> with no
 arguments now opens the guided preview wizard instead of returning the
 old missing-flag usage error. <code>amq-squad wizard</code> and

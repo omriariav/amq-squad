@@ -202,6 +202,8 @@ Usage:
       [--lead-mode builder|planner]
       [--codex-args "..."] [--claude-args "..."]
       [--visibility sibling-tabs|detached|current] [--external-lead]
+      [--layout-preset lead-left|lead-top|even-grid|one-window-per-agent]
+      [--launcher-pane close-after-start|keep]
       [--goal TEXT] [--seed-from REF] [--interactive] [--go]
 
 With no flags in an interactive terminal, or with --interactive explicitly,
@@ -281,6 +283,8 @@ func runRunStart(args []string, version string) error {
 	codexArgsFlag := fs.String("codex-args", "", "extra args for every Codex member (e.g. reasoning effort)")
 	claudeArgsFlag := fs.String("claude-args", "", "extra args for every Claude member")
 	visibilityFlag := fs.String("visibility", visibilitySiblingTabs, "spawn topology: sibling-tabs (visible default), detached (hidden), or current")
+	layoutPresetFlag := fs.String("layout-preset", "", "deterministic layout: lead-left, lead-top, even-grid, or one-window-per-agent")
+	launcherPaneFlag := fs.String("launcher-pane", "", "launcher disposition after successful start: close-after-start or keep")
 	goalFlag := fs.String("goal", "", "after spawn, deliver this goal to the lead")
 	seedFlag := fs.String("seed-from", "", "seed the workstream brief from a reference (e.g. issue:96)")
 	externalLead := fs.Bool("external-lead", false, "bind the current pane as the lead and spawn only remaining workers")
@@ -308,6 +312,12 @@ func runRunStart(args []string, version string) error {
 		EffortSet:       flagWasSet(fs, "effort"),
 		OperatorMode:    *operatorModeFlag,
 		OperatorModeSet: flagWasSet(fs, "operator-mode"),
+		LayoutPreset:    *layoutPresetFlag,
+		LayoutPresetSet: flagWasSet(fs, "layout-preset"),
+		LauncherPane:    *launcherPaneFlag,
+		LauncherPaneSet: flagWasSet(fs, "launcher-pane"),
+		VisibilitySet:   flagWasSet(fs, "visibility"),
+		ExternalLead:    *externalLead,
 	})
 	if err := preflight.Err(); err != nil {
 		return err
@@ -318,6 +328,15 @@ func runRunStart(args []string, version string) error {
 	rolesText := strings.TrimSpace(*rolesFlag)
 	freshRoster := preflight.FreshRoster
 	leadMode := preflight.LeadMode
+	layoutSelection, err := resolveRunStartLayout(runStartLayoutInput{
+		Visibility: preflight.Visibility, VisibilitySet: true,
+		Preset: preflight.LayoutPreset, PresetSet: preflight.LayoutPreset != "",
+		LauncherPane: preflight.LauncherPane, LauncherPaneSet: preflight.LauncherPane != "",
+		ExternalLead: *externalLead,
+	})
+	if err != nil {
+		return err
+	}
 
 	// Lead resolution: when creating a fresh roster, default the lead to cto.
 	// For an existing team, leave --role unset so `goal start` infers the
@@ -371,7 +390,12 @@ func runRunStart(args []string, version string) error {
 		}
 		newTeamArgs = appendPassthroughArgs(newTeamArgs, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
 	}
-	upArgs := []string{session, "--project", project, "--visibility", visibility}
+	upArgs := []string{session, "--project", project}
+	if layoutSelection.Preset != "" {
+		upArgs = append(upArgs, "--terminal", "tmux", "--target", layoutSelection.Target, "--layout", layoutSelection.SpawnLayout)
+	} else {
+		upArgs = append(upArgs, "--visibility", visibility)
+	}
 	if strings.TrimSpace(*profileFlag) != "" {
 		upArgs = append(upArgs, "--profile", *profileFlag)
 	}
@@ -433,6 +457,12 @@ func runRunStart(args []string, version string) error {
 		upStep++
 	}
 	fmt.Printf("  step %d:  amq-squad up %s --visibility %s\n", upStep, session, visibility)
+	if layoutSelection.Preset != "" {
+		fmt.Printf("  layout:  %s -> target=%s layout=%s\n", layoutSelection.Preset, layoutSelection.Target, layoutSelection.SpawnLayout)
+	}
+	if layoutSelection.LauncherPane != "" {
+		fmt.Printf("  launcher-pane: %s\n", layoutSelection.LauncherPane)
+	}
 	if visibility == visibilityDetached {
 		fmt.Printf("  (hidden: agents run in a detached tmux session; attach via the `attach_control` action from `status --json`, or `amq-squad focus`, when you want eyes on them)\n")
 	}
@@ -459,6 +489,7 @@ func runRunStart(args []string, version string) error {
 	}
 
 	if !*goFlag {
+		printLayoutFinalizationDryRun(layoutSelection, os.Getenv("TMUX_PANE"))
 		if *externalLead {
 			return runStartExternalLeadPreview(runStartExternalLeadPreviewOptions{
 				NewTeamArgs: newTeamArgs,
@@ -469,6 +500,7 @@ func runRunStart(args []string, version string) error {
 				FreshRoster: freshRoster,
 				TeamPresent: teamPresent,
 				Visibility:  visibility,
+				Layout:      layoutSelection,
 				Model:       *modelFlag,
 				Effort:      *effortFlag,
 				CodexArgs:   *codexArgsFlag,
@@ -481,6 +513,10 @@ func runRunStart(args []string, version string) error {
 
 	if (visibility == visibilitySiblingTabs || visibility == visibilityCurrent) && !insideTmux() {
 		return usageErrorf("not inside tmux; --visibility %s requires a visible tmux pane. Run inside tmux, or pass --visibility detached to spawn hidden.", visibility)
+	}
+	finalizationContext, err := prepareLayoutFinalization(layoutSelection)
+	if err != nil {
+		return err
 	}
 
 	if *externalLead {
@@ -500,17 +536,19 @@ func runRunStart(args []string, version string) error {
 		} else if len(newTeamArgs) > 0 {
 			quietNotice("profile %q already exists; skipping new team (using existing roster)\n", profileOrDefault(*profileFlag))
 		}
-		if err := validateRunStartExternalLeadWorkerLaunch(project, visibility, session, profile, externalLeadRole, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag); err != nil {
+		if err := validateRunStartExternalLeadWorkerLaunch(project, layoutSelection, session, profile, externalLeadRole, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag); err != nil {
 			return err
 		}
 		quietNotice("binding current pane as external lead %s...\n", externalLeadRole)
 		if err := runStartRegisterExternalLead(project, profile, session, externalLeadRole); err != nil {
 			return err
 		}
-		opts, err := runStartTeamLaunchOptions(visibility, session, profile, externalSeedContent, false, false, externalLeadRole, true, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag)
+		opts, err := runStartTeamLaunchOptions(layoutSelection, session, profile, externalSeedContent, false, false, externalLeadRole, true, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag)
 		if err != nil {
 			return err
 		}
+		var launchResult teamLaunchResult
+		opts.ResultSink = func(result teamLaunchResult) { launchResult = result }
 		quietNotice("spawning remaining workers (--visibility %s)...\n", visibility)
 		if err := runInProject(project, func() error { return executeTeamLaunch(opts, true, false) }); err != nil {
 			return err
@@ -530,6 +568,14 @@ func runRunStart(args []string, version string) error {
 			}
 		}
 		quietNotice("done. Current pane is the lead; drive remaining workers with dispatch/monitor/collect.\n")
+		if layoutSelection.requestedFinalization() {
+			plan, planErr := buildLayoutFinalizationPlan(project, profile, session, externalLeadRole, layoutSelection, finalizationContext, launchResult, true)
+			if planErr != nil {
+				warnLayoutFinalization(project, profile, session, planErr)
+			} else if scheduleErr := scheduleLayoutFinalization(plan); scheduleErr != nil {
+				warnLayoutFinalization(project, profile, session, scheduleErr)
+			}
+		}
 		return nil
 	}
 
@@ -544,7 +590,29 @@ func runRunStart(args []string, version string) error {
 	}
 	// 2) spawn
 	quietNotice("spawning team (--visibility %s)...\n", visibility)
-	if err := runStartUpWithVersion(upArgs, version); err != nil {
+	var launchResult teamLaunchResult
+	if layoutSelection.requestedFinalization() {
+		var seedContent string
+		if strings.TrimSpace(*seedFlag) != "" {
+			body, seedErr := resolveSeed(*seedFlag)
+			if seedErr != nil {
+				return seedErr
+			}
+			seedContent = buildSeedBrief(*seedFlag, body, seedNow())
+		}
+		launchOpts, launchErr := runStartTeamLaunchOptions(layoutSelection, session, profile, seedContent, false, false, "", false, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag)
+		if launchErr != nil {
+			return launchErr
+		}
+		launchOpts.WarnStubBrief = strings.TrimSpace(*seedFlag) == ""
+		// Preserve canonical `up`'s refuse-existing/TOCTOU guard on the direct
+		// result-returning launch path used by layout finalization.
+		launchOpts.Fresh = true
+		launchOpts.ResultSink = func(result teamLaunchResult) { launchResult = result }
+		if launchErr := runInProject(project, func() error { return executeTeamLaunch(launchOpts, true, false) }); launchErr != nil {
+			return launchErr
+		}
+	} else if err := runStartUpWithVersion(upArgs, version); err != nil {
 		return err
 	}
 	// 3) optional goal delivery. Resolve the role before waiting so the
@@ -569,6 +637,19 @@ func runRunStart(args []string, version string) error {
 		}
 	}
 	quietNotice("done. Attach to the lead window and drive with dispatch/monitor/collect.\n")
+	if layoutSelection.requestedFinalization() {
+		leadRole, leadErr := resolveRunStartGoalLead(project, profile, explicitLead, freshRoster, leadForNewTeam)
+		if leadErr != nil {
+			warnLayoutFinalization(project, profile, session, leadErr)
+		} else {
+			plan, planErr := buildLayoutFinalizationPlan(project, profile, session, leadRole, layoutSelection, finalizationContext, launchResult, false)
+			if planErr != nil {
+				warnLayoutFinalization(project, profile, session, planErr)
+			} else if scheduleErr := scheduleLayoutFinalization(plan); scheduleErr != nil {
+				warnLayoutFinalization(project, profile, session, scheduleErr)
+			}
+		}
+	}
 	return nil
 }
 
@@ -613,6 +694,7 @@ type runStartExternalLeadPreviewOptions struct {
 	FreshRoster bool
 	TeamPresent bool
 	Visibility  string
+	Layout      runStartLayoutSelection
 	Model       string
 	Effort      string
 	CodexArgs   string
@@ -632,7 +714,7 @@ func runStartExternalLeadPreview(opts runStartExternalLeadPreviewOptions) error 
 		return nil
 	}
 	if opts.TeamPresent {
-		if err := validateRunStartExternalLeadWorkerLaunch(opts.Project, opts.Visibility, opts.Session, opts.Profile, opts.Lead, opts.Model, opts.Effort, opts.CodexArgs, opts.ClaudeArgs); err != nil {
+		if err := validateRunStartExternalLeadWorkerLaunch(opts.Project, opts.Layout, opts.Session, opts.Profile, opts.Lead, opts.Model, opts.Effort, opts.CodexArgs, opts.ClaudeArgs); err != nil {
 			return fmt.Errorf("worker spawn dry-run failed: %w", err)
 		}
 		fmt.Print("\nPreview OK. Re-run with --external-lead --go to bind this pane as lead and spawn remaining workers.\n")
@@ -641,7 +723,7 @@ func runStartExternalLeadPreview(opts runStartExternalLeadPreviewOptions) error 
 	return usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", opts.Profile, opts.Project)
 }
 
-func runStartTeamLaunchOptions(visibility, session, profile, seedContent string, seedForce, dryRun bool, externalLeadRole string, allowLeadOnly bool, modelRaw, effortRaw, codexArgsRaw, claudeArgsRaw string) (teamLaunchOptions, error) {
+func runStartTeamLaunchOptions(layout runStartLayoutSelection, session, profile, seedContent string, seedForce, dryRun bool, externalLeadRole string, allowLeadOnly bool, modelRaw, effortRaw, codexArgsRaw, claudeArgsRaw string) (teamLaunchOptions, error) {
 	modelOverrides, err := parseKV(modelRaw)
 	if err != nil {
 		return teamLaunchOptions{}, fmt.Errorf("parse --model: %w", err)
@@ -666,8 +748,12 @@ func runStartTeamLaunchOptions(visibility, session, profile, seedContent string,
 		ModelOverrides:  modelOverrides,
 		EffortOverrides: effortOverrides,
 	}
-	if err := applyLaunchVisibility(&opts, visibility, false, false, false, true); err != nil {
+	if err := applyLaunchVisibility(&opts, layout.Visibility, false, false, false, true); err != nil {
 		return teamLaunchOptions{}, err
+	}
+	if layout.Preset != "" {
+		opts.Target = layout.Target
+		opts.Layout = layout.SpawnLayout
 	}
 	opts.DryRun = dryRun
 	opts.Fresh = false
@@ -815,8 +901,8 @@ func authorizeRunStartExternalLeadAdoption(project, profile, session, lead strin
 	return err
 }
 
-func validateRunStartExternalLeadWorkerLaunch(project, visibility, session, profile, lead, modelRaw, effortRaw, codexArgsRaw, claudeArgsRaw string) error {
-	launchOpts, err := runStartTeamLaunchOptions(visibility, session, profile, "", false, true, lead, true, modelRaw, effortRaw, codexArgsRaw, claudeArgsRaw)
+func validateRunStartExternalLeadWorkerLaunch(project string, layout runStartLayoutSelection, session, profile, lead, modelRaw, effortRaw, codexArgsRaw, claudeArgsRaw string) error {
+	launchOpts, err := runStartTeamLaunchOptions(layout, session, profile, "", false, true, lead, true, modelRaw, effortRaw, codexArgsRaw, claudeArgsRaw)
 	if err != nil {
 		return err
 	}

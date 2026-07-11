@@ -210,6 +210,9 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	}, defaultString(s.Visibility, "sibling-tabs")); err != nil {
 		return Spec{}, err
 	}
+	if s.LayoutPreset, err = promptChoice(r, out, "Layout preset", layoutPresetChoices(s.Visibility), defaultLayoutPreset(s.LayoutPreset, s.Visibility)); err != nil {
+		return Spec{}, err
+	}
 	if existing {
 		fmt.Fprintf(out, "Operator interaction (authoritative): %s\n", defaultString(s.OperatorMode, "unspecified"))
 		for _, item := range operatorChoices(opts.Capabilities) {
@@ -219,6 +222,9 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		}
 		fmt.Fprintln(out)
 	} else if s.OperatorMode, err = promptOperatorChoice(r, out, opts.Capabilities, defaultOperatorMode(s.OperatorMode, s.Visibility)); err != nil {
+		return Spec{}, err
+	}
+	if s.LauncherPane, err = promptChoice(r, out, "Launcher pane", launcherPaneChoices(s.Visibility, s.ExternalLead), defaultLauncherPane(s.LauncherPane, s.Visibility, s.ExternalLead)); err != nil {
 		return Spec{}, err
 	}
 	if s.Goal, err = promptText(r, out, "Goal text (optional)", s.Goal); err != nil {
@@ -397,4 +403,11 @@ func defaultOperatorMode(current, visibility string) string {
 		return "separate_terminal"
 	}
 	return "lead_pane"
+}
+
+func launcherPaneChoices(visibility string, external bool) []choice {
+	if external || visibility == "detached" {
+		return []choice{{value: "keep", label: "keep: required because the launcher remains the lead/control point"}}
+	}
+	return []choice{{value: "close-after-start", label: "close-after-start: close only after successful final output"}, {value: "keep", label: "keep: leave this launcher pane open"}}
 }
