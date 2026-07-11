@@ -21,6 +21,8 @@ type Spec struct {
 	Lead         string
 	LeadMode     string
 	Visibility   string
+	LayoutPreset string
+	LauncherPane string
 	ExternalLead bool
 	Goal         string
 	SeedFrom     string
@@ -50,6 +52,8 @@ func (s Spec) Args() []string {
 	appendValue("--lead", s.Lead)
 	appendValue("--lead-mode", s.LeadMode)
 	appendValue("--visibility", s.Visibility)
+	appendValue("--layout-preset", s.LayoutPreset)
+	appendValue("--launcher-pane", s.LauncherPane)
 	if s.ExternalLead {
 		args = append(args, "--external-lead")
 	}

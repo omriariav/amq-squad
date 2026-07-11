@@ -59,6 +59,10 @@ func TestBubbleModelExistingProfileOverridesAreLaunchOnly(t *testing.T) {
 		t.Fatalf("topology stage = %v mode %q", m.stage, m.spec.OperatorMode)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageLayoutPreset {
+		t.Fatalf("stage = %v, want layout", m.stage)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageOperator {
 		t.Fatalf("stage = %v, want operator", m.stage)
 	}
@@ -67,6 +71,10 @@ func TestBubbleModelExistingProfileOverridesAreLaunchOnly(t *testing.T) {
 		if !strings.Contains(operatorView, want) {
 			t.Fatalf("existing operator view missing %q:\n%s", want, operatorView)
 		}
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageLauncherPane {
+		t.Fatalf("stage = %v, want launcher", m.stage)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageGoal {
@@ -109,7 +117,7 @@ func TestBubbleModelCapabilityRowsAreGatedByInjectedCatalog(t *testing.T) {
 	m.configureStage()
 	m.cursor = 3
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.stage != stageGoal || m.spec.OperatorMode != "self_operator" {
+	if m.stage != stageLauncherPane || m.spec.OperatorMode != "self_operator" {
 		t.Fatalf("enabled selection = stage %v mode %q", m.stage, m.spec.OperatorMode)
 	}
 }
@@ -125,8 +133,12 @@ func TestBubbleModelDetachedDefaultsSeparateOperatorTerminal(t *testing.T) {
 		t.Fatalf("detached operator cursor = %d, want separate terminal", m.cursor)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.spec.OperatorMode != "separate_terminal" || m.stage != stageGoal {
+	if m.spec.OperatorMode != "separate_terminal" || m.stage != stageLauncherPane {
 		t.Fatalf("detached operator selection = stage %v mode %q", m.stage, m.spec.OperatorMode)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageGoal || m.spec.LauncherPane != "keep" {
+		t.Fatalf("detached launcher = stage %v policy %q", m.stage, m.spec.LauncherPane)
 	}
 }
 
@@ -139,8 +151,8 @@ func TestBubbleModelBackRestoresChoiceCursor(t *testing.T) {
 	m.configureStage()
 	m.cursor = 2
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.stage != stageOperator {
-		t.Fatalf("stage = %v, want operator", m.stage)
+	if m.stage != stageLayoutPreset {
+		t.Fatalf("stage = %v, want layout", m.stage)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.stage != stageTopology || m.cursor != 2 || m.spec.Visibility != "sibling-tabs" {
