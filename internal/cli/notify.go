@@ -290,12 +290,15 @@ func deliverNotificationSinksPersisted(ctx context.Context, projectDir, path str
 				if e != nil {
 					return e
 				}
-				chosen, next := deliverNotificationSinks(context.Background(), projectDir, []operatorAttention{item}, team.OperatorNotificationPolicy{Sinks: []team.OperatorNotificationSinkConfig{}}, st, renotify, now, force)
-				_ = chosen
-				_ = next
 				rec := st.Items[item.Key]
 				d := rec.Deliveries[cfg.ID]
-				notify := force || !rec.Active || d.Fingerprint != item.LatestID || d.LastNotified.IsZero() || d.ReservationExpires.Before(now)
+				notify := force || !rec.Active || d.Fingerprint != item.LatestID || d.LastNotified.IsZero()
+				if !notify && operatorAttentionEscalated(item, notifyStateRecord{LastEscalation: d.LastEscalation}) {
+					notify = true
+				}
+				if !notify && renotify > 0 && now.Sub(d.LastNotified) >= renotify {
+					notify = true
+				}
 				if d.ReservationToken != "" && d.ReservationExpires.After(now) {
 					notify = false
 				}
