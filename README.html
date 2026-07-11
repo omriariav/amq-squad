@@ -272,8 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-v2180" id="toc-whats-new-in-v2180">What's new
-in v2.18.0</a></li>
+<li><a href="#whats-new-in-v2190" id="toc-whats-new-in-v2190">What's new
+in v2.19.0</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#quickstart" id="toc-quickstart">Quickstart</a></li>
 <li><a href="#execution-modes" id="toc-execution-modes">Execution
@@ -324,7 +324,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2180">What's new in v2.18.0</a></li>
+<li><a href="#whats-new-in-v2190">What's new in v2.19.0</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -342,27 +342,32 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
-<h2 id="whats-new-in-v2180">What's new in v2.18.0</h2>
-<p>v2.18.0 is a coherence release for goal-driven, externally supervised
-squads:</p>
+<h2 id="whats-new-in-v2190">What's new in v2.19.0</h2>
+<p>v2.19.0 makes squad startup guided, observable, and safer to
+supervise:</p>
 <ul>
-<li><strong>Hard authorization boundary</strong> for high-risk lead
-actions (#349) and a <strong>planner/reviewer-only lead mode</strong>
-(#350).</li>
-<li><strong>Run start UX</strong>: native <code>run start</code>, short
-flags, default visible sibling tabs, and
-<code>run start --external-lead</code> for binding the current pane as
-the project lead (#340, #345-#348).</li>
-<li><strong>External-orchestrator integration</strong>: read-only
-evidence lane, adopt-evidence workflow, and Symphony lifecycle hooks
-(#335-#337).</li>
-<li><strong>Terminal platform support</strong> with an explicit runtime
-capability model: tmux Tier A, iTerm2 Tier B, Terminal.app Tier C, and
-cmux still pending (#330, #331, #332, #384-#386).</li>
-<li><strong>gpt-5.6 model family guidance</strong> lives in the skills
-as the source of truth for lead/worker selection (#380).</li>
-<li><strong>AMQ 0.41.0+ baseline</strong> for the coordination
-primitives this release depends on.</li>
+<li><strong>Interactive <code>run start</code> wizard</strong> with
+Bubble Tea and numbered/accessibility adapters, structured preflight,
+Project and Global/NOC flows, explicit preview-to-live confirmation, and
+deterministic tmux layouts (#393).</li>
+<li><strong>Attention-only operator notifications</strong> with
+profile-scoped desktop or direct-argv sinks, delivery de-duplication,
+gate escalation, and wizard/setup configuration that never grants
+approval (#390).</li>
+<li><strong>Bounded self-operator mode</strong> for explicit,
+exact-session merge approval. Spawn, release, tag, publish,
+external-send, and destructive actions remain human-only, and the
+approving lead cannot execute its own merge (#391).</li>
+<li><strong>Bootstrap and launch hardening</strong> with identity-bound
+bootstrap completion attestation and single-pass native Claude/Codex
+argv composition (#396).</li>
+<li><strong>Wake-friendly orchestration waits</strong>: collect briefly
+for an imminent ACK or report, then park/end the turn for longer work
+and operator gates (#404).</li>
+<li><strong>Deterministic layout finalization hardening</strong> keeps
+the configured lead in the main tmux pane, verifies exact pane/window
+identity, and preserves observable warnings without tearing down
+launched agents (#393).</li>
 </ul>
 <h2 id="install">Install</h2>
 <p>Install the v2 module path:</p>
@@ -370,7 +375,7 @@ primitives this release depends on.</li>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.18.0</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.19.0</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
@@ -701,7 +706,7 @@ not.</td>
 <td>Visible native Terminal.app tabs/windows. Window identity is derived
 from the launched tab TTY when available.</td>
 <td>Disabled:
-<code>Terminal.app focus requires stable window/tab addressing; manual focus is required in v2.18.0</code>.</td>
+<code>Terminal.app focus requires stable window/tab addressing; manual focus is required</code>.</td>
 <td>Disabled:
 <code>Terminal.app prompt/native-goal injection is disabled until #375 proves safe Accessibility-based input</code>.</td>
 <td>Always available because durable AMQ dispatch does not require pane
@@ -712,7 +717,7 @@ manual.</td>
 <tr>
 <td>cmux</td>
 <td>Pending</td>
-<td>Not shipped in v2.18.0.</td>
+<td>No backend is shipped.</td>
 <td>Pending #330 re-entry bar.</td>
 <td>Pending #330 re-entry bar.</td>
 <td>Durable AMQ dispatch remains the intended control plane once a
@@ -753,7 +758,7 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#
 <p>Safety preflights:</p>
 <div class="sourceCode" id="cb12"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify action <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--gate</span> release <span class="at">--action</span> github_release <span class="at">--target</span> <span class="st">&quot;draft v2.18.0 release&quot;</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--gate</span> release <span class="at">--action</span> github_release <span class="at">--target</span> <span class="st">&quot;draft v2.19.0 release&quot;</span></span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify merge <span class="at">--evidence</span> merge-evidence.json</span>
 <span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify release <span class="at">--evidence</span> release-evidence.json</span></code></pre></div>
 <p>The action, merge, and final-release-commit contracts are documented
@@ -844,11 +849,10 @@ coordinate reviews, recover, and produce final evidence.</td>
 <p>Invoke skills in Claude Code as <code>/amq-squad:&lt;skill&gt;</code>
 and in Codex as <code>$&lt;skill&gt;</code>.</p>
 <p>Model guidance is intentionally skill-owned because it changes faster
-than the binary. For v2.18.0, the guidance points at the gpt-5.6 family
-for Codex-heavy work, uses explicit model/effort overrides per role, and
-treats cost as a tie-breaker after output quality for shippable work.
-Prefer the skill guidance over copying stale model examples from this
-README.</p>
+than the binary. For v2.19.0, use the current model family and per-role
+model/effort recommendations in the installed skills; treat cost as a
+tie-breaker after output quality for shippable work. Prefer that
+guidance over copying model examples from this README.</p>
 <p>Deep guide: <a href="docs/skills.md">docs/skills.md</a> (<a
 href="docs/skills.html">HTML</a>).</p>
 <p>That guide also defines goal-first composition modes: manual rosters,
