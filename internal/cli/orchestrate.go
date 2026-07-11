@@ -204,11 +204,15 @@ Usage:
       [--visibility sibling-tabs|detached|current] [--external-lead]
       [--layout-preset lead-left|lead-top|even-grid|one-window-per-agent]
       [--launcher-pane close-after-start|keep]
-      [--goal TEXT] [--seed-from REF] [--interactive] [--go]
+      [--goal TEXT] [--seed-from REF] [--interactive]
+      [--wizard-ui auto|tui|numbered] [--numbered|--accessible] [--go]
 
 With no flags in an interactive terminal, or with --interactive explicitly,
 run start opens the guided preview wizard. Non-TTY and CI invocations never
-prompt. --interactive and --go are mutually exclusive.
+prompt. The wizard previews first and launches only after an explicit yes at
+"Launch now? [y/N]"; the live call adds only --go and rechecks current state.
+Its first choice can instead delegate to canonical global start for a
+Global/NOC poller. --interactive and --go are mutually exclusive.
 
 Managed model: amq-squad spawns the whole team (incl. the lead); panes are
 registered and wake-live automatically. This wraps the create sequence so the

@@ -100,8 +100,9 @@ The shortest working path for a visible project lead and workers:
 ```sh
 cd ~/Code/my-project
 
-# Guided, read-only preview. In an interactive terminal, zero-argument
-# `amq-squad run start` opens the same wizard.
+# Guided preview with an explicit, default-No live confirmation. In an
+# interactive terminal, zero-argument `amq-squad run start` opens the same
+# wizard.
 amq-squad wizard
 
 # Preview, then create, an orchestrated run. --go is the mutation switch.
@@ -159,11 +160,22 @@ finalization failure never tears down agents and remains visible as a status
 warning.
 
 In an interactive terminal, `amq-squad run start` with no arguments now opens
-the guided preview wizard instead of returning the old missing-flag usage error.
-`amq-squad wizard` and `run start --interactive` are equivalent. The wizard is
-preview-only in the first v2.19.0 slice, is disabled in CI, and never triggers
-when stdin or stderr is not a TTY. Partial flag commands without
-`--interactive` keep the canonical fail-fast parser behavior.
+the guided wizard instead of returning the old missing-flag usage error.
+`amq-squad wizard` and `run start --interactive` are equivalent. The wizard
+first runs the exact canonical preview, then asks `Launch now? [y/N]`; only an
+explicit `y`/`yes` reruns the identical argv with `--go` added. The second call
+rechecks current state, so a collision introduced after preview is still
+refused. The wizard also offers a Global/NOC branch backed by canonical
+`amq-squad global start`. It is disabled in CI and never triggers when stdin or
+stderr is not a TTY; non-TTY zero-argument calls retain the usage error. Partial
+flag commands without `--interactive` keep fail-fast parser behavior.
+
+Copy/paste equivalents remain canonical:
+
+```sh
+amq-squad run start --project . --profile default --session issue-96
+amq-squad global start --root ~/Code --agent claude --name global-orch
+```
 
 Manual setup still works when the team shape is known:
 

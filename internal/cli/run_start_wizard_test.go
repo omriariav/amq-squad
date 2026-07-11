@@ -182,7 +182,7 @@ func TestNumberedWizardRunsCanonicalPreviewWithoutMutation(t *testing.T) {
 			t.Fatalf("preview output missing %q:\n%s", want, stdout)
 		}
 	}
-	if !strings.Contains(prompts.String(), "Preview only: this flow cannot launch agents") {
+	if !strings.Contains(prompts.String(), "Answers are previewed first") {
 		t.Fatalf("prompt output missing preview-only banner:\n%s", prompts.String())
 	}
 	if team.ExistsProfile(project, "review") {

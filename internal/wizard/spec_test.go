@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -53,6 +54,36 @@ func TestSpecArgsStableAndPreviewOnly(t *testing.T) {
 		if arg == "--go" || arg == "--interactive" {
 			t.Fatalf("preview-only spec emitted forbidden flag %q", arg)
 		}
+	}
+}
+
+func TestSpecGlobalArgsNeverLeakProjectRunFlags(t *testing.T) {
+	s := Spec{
+		Scope: "global", GlobalRoot: "/neutral", GlobalAgent: "codex", GlobalModel: "gpt",
+		GlobalEffort: "high", GlobalCodexArgs: "--search", GlobalClaudeArgs: "--debug", GlobalWindow: "noc",
+		Project: "/project", Profile: "release", Session: "issue-393", Roles: "cto,qa",
+		Visibility: "current", LayoutPreset: "lead-left", LauncherPane: "close-after-start",
+	}
+	got := strings.Join(s.GlobalArgs(), " ")
+	for _, want := range []string{"--root /neutral", "--agent codex", "--model gpt", "--codex-args --search -c model_reasoning_effort=high", "--name noc"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("global argv %q missing %q", got, want)
+		}
+	}
+	for _, forbidden := range []string{"--project", "--profile", "--session", "--roles", "--visibility", "--layout-preset", "--launcher-pane"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("global argv leaked %q: %s", forbidden, got)
+		}
+	}
+	if strings.Contains(got, "--claude-args") {
+		t.Fatalf("inactive native args leaked: %s", got)
+	}
+}
+
+func TestSpecGlobalClaudeEffortUsesOnlyClaudeNativeArgs(t *testing.T) {
+	got := strings.Join((Spec{GlobalRoot: "/n", GlobalAgent: "claude", GlobalEffort: "medium", GlobalCodexArgs: "--search", GlobalClaudeArgs: "--chrome"}).GlobalArgs(), " ")
+	if !strings.Contains(got, "--claude-args --chrome --effort medium") || strings.Contains(got, "--codex-args") {
+		t.Fatalf("Claude global args = %s", got)
 	}
 }
 

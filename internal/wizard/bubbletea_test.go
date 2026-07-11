@@ -237,8 +237,8 @@ func TestBubbleModelConfirmationShowsCanonicalReadOnlyBoundary(t *testing.T) {
 	m.configureStage()
 	view := m.View()
 	for _, want := range []string{
-		"Review the read-only preview", "existing profile (authoritative)", "cto=high (launch only)",
-		"detached squad", "Operator", "noc · NOC/global orchestrator owns polling", "Run the canonical read-only preview",
+		"Review answers before canonical preview", "existing profile (authoritative)", "cto=high (launch only)",
+		"detached squad", "Operator", "noc · NOC/global orchestrator owns polling", "Run canonical preview, then decide launch separately",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("confirmation missing %q:\n%s", want, view)
