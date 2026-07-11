@@ -67,10 +67,17 @@ func TestBubbleModelExistingProfileOverridesAreLaunchOnly(t *testing.T) {
 		t.Fatalf("stage = %v, want operator", m.stage)
 	}
 	operatorView := m.View()
-	for _, want := range []string{"Self-operator / delegated approval", "v2.19.0: #391", "Notification add-on", "v2.19.0: #390"} {
+	for _, want := range []string{"Self-operator / delegated approval", "v2.19.0: #391"} {
 		if !strings.Contains(operatorView, want) {
 			t.Fatalf("existing operator view missing %q:\n%s", want, operatorView)
 		}
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageOperatorNotifications {
+		t.Fatalf("stage = %v, want operator notifications", m.stage)
+	}
+	if !strings.Contains(m.View(), "authoritative policy") {
+		t.Fatalf("notification view should identify authoritative policy:\n%s", m.View())
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageLauncherPane {
@@ -117,7 +124,7 @@ func TestBubbleModelCapabilityRowsAreGatedByInjectedCatalog(t *testing.T) {
 	m.configureStage()
 	m.cursor = 3
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.stage != stageLauncherPane || m.spec.OperatorMode != "self_operator" {
+	if m.stage != stageOperatorNotifications || m.spec.OperatorMode != "self_operator" {
 		t.Fatalf("enabled selection = stage %v mode %q", m.stage, m.spec.OperatorMode)
 	}
 }
@@ -133,8 +140,12 @@ func TestBubbleModelDetachedDefaultsSeparateOperatorTerminal(t *testing.T) {
 		t.Fatalf("detached operator cursor = %d, want separate terminal", m.cursor)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.spec.OperatorMode != "separate_terminal" || m.stage != stageLauncherPane {
+	if m.spec.OperatorMode != "separate_terminal" || m.stage != stageOperatorNotifications {
 		t.Fatalf("detached operator selection = stage %v mode %q", m.stage, m.spec.OperatorMode)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageLauncherPane {
+		t.Fatalf("notification stage = %v, want launcher", m.stage)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageGoal || m.spec.LauncherPane != "keep" {

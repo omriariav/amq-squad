@@ -8,17 +8,21 @@ import (
 )
 
 type operatorDeliveryData struct {
-	Enabled         bool   `json:"enabled"`
-	Handle          string `json:"handle,omitempty"`
-	InteractionMode string `json:"interaction_mode"`
-	ApprovalSurface string `json:"approval_surface,omitempty"`
-	Contract        string `json:"contract,omitempty"`
-	DurableAMQ      bool   `json:"durable_amq"`
-	WakeSupported   bool   `json:"wake_supported"`
-	PollRequired    bool   `json:"poll_required"`
-	PollOwner       string `json:"poll_owner,omitempty"`
-	Reason          string `json:"reason,omitempty"`
-	Guidance        string `json:"guidance,omitempty"`
+	Enabled               bool     `json:"enabled"`
+	Handle                string   `json:"handle,omitempty"`
+	InteractionMode       string   `json:"interaction_mode"`
+	ApprovalSurface       string   `json:"approval_surface,omitempty"`
+	Contract              string   `json:"contract,omitempty"`
+	DurableAMQ            bool     `json:"durable_amq"`
+	WakeSupported         bool     `json:"wake_supported"`
+	PollRequired          bool     `json:"poll_required"`
+	PollOwner             string   `json:"poll_owner,omitempty"`
+	Reason                string   `json:"reason,omitempty"`
+	Guidance              string   `json:"guidance,omitempty"`
+	NotificationsEnabled  bool     `json:"notifications_enabled"`
+	NotificationSemantics string   `json:"notification_semantics,omitempty"`
+	NotificationSinkTypes []string `json:"notification_sink_types,omitempty"`
+	NotificationGuidance  string   `json:"notification_guidance,omitempty"`
 }
 
 func operatorDeliveryForTeam(t team.Team) operatorDeliveryData {
@@ -40,6 +44,19 @@ func operatorDeliveryForTeam(t team.Team) operatorDeliveryData {
 		InteractionMode: op.InteractionMode,
 		DurableAMQ:      true,
 		WakeSupported:   false,
+	}
+	policy := team.EffectiveOperatorNotifications(t.Operator)
+	data.NotificationsEnabled = policy.Enabled
+	if policy.Enabled {
+		data.NotificationSemantics = policy.DeliverySemantics
+		seen := map[string]bool{}
+		for _, sink := range policy.Sinks {
+			if !seen[sink.Type] {
+				data.NotificationSinkTypes = append(data.NotificationSinkTypes, sink.Type)
+				seen[sink.Type] = true
+			}
+		}
+		data.NotificationGuidance = "attention-only sinks run on the operator-watch host; start the scoped `amq-squad operator watch` loop; delivery never approves or answers"
 	}
 	contract := team.OperatorContractForMode(op.InteractionMode)
 	data.InteractionMode = contract.Mode
@@ -71,14 +88,15 @@ func operatorDeliverySummary(d operatorDeliveryData) string {
 	if !d.Enabled {
 		return "disabled"
 	}
+	notifications := fmt.Sprintf(", notifications=%t", d.NotificationsEnabled)
 	if d.InteractionMode != "" && d.InteractionMode != team.OperatorInteractionUnspecified {
-		return fmt.Sprintf("%s (approval_surface=%s, durable_amq=true, wake_supported=%t, poll_required=%t, poll_owner=%s)", d.InteractionMode, d.ApprovalSurface, d.WakeSupported, d.PollRequired, d.PollOwner)
+		return fmt.Sprintf("%s (approval_surface=%s, durable_amq=true, wake_supported=%t, poll_required=%t, poll_owner=%s%s)", d.InteractionMode, d.ApprovalSurface, d.WakeSupported, d.PollRequired, d.PollOwner, notifications)
 	}
 	if d.PollRequired {
-		return "poll_required (durable_amq=true, wake_supported=false)"
+		return "poll_required (durable_amq=true, wake_supported=false" + notifications + ")"
 	}
 	if d.WakeSupported {
-		return "wake_supported (durable_amq=true)"
+		return "wake_supported (durable_amq=true" + notifications + ")"
 	}
-	return "durable_amq=true"
+	return "durable_amq=true" + notifications
 }

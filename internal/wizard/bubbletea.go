@@ -27,6 +27,7 @@ const (
 	stageLead
 	stageLeadMode
 	stageOperator
+	stageOperatorNotifications
 	stageTopology
 	stageLayoutPreset
 	stageLauncherPane
@@ -297,6 +298,8 @@ func (m BubbleModel) title() string {
 		return "Choose the lead posture"
 	case stageOperator:
 		return "Choose the operator interaction contract"
+	case stageOperatorNotifications:
+		return "Choose the independent notification add-on"
 	case stageTopology:
 		return "Choose where agents appear"
 	case stageLayoutPreset:
@@ -349,6 +352,11 @@ func (m BubbleModel) note() string {
 			return "Existing profile contract is authoritative: " + defaultString(m.spec.OperatorMode, "unspecified")
 		}
 		return "Unavailable capability rows stay visible so the future contract is explicit."
+	case stageOperatorNotifications:
+		if m.existingIndex >= 0 {
+			return fmt.Sprintf("Existing profile notification policy is authoritative: %t", m.spec.OperatorNotifications)
+		}
+		return "Attention-only notifications never approve gates or send pane input."
 	case stageConfirm:
 		return "Enter collects these answers and runs preview. Live launch is a later default-No prompt."
 	case stageSeed:
@@ -382,6 +390,7 @@ func (m BubbleModel) summary() string {
 		parts = append(parts, "Effort    "+m.spec.Effort+" (launch only)")
 	}
 	parts = append(parts, "Operator  "+defaultString(m.spec.OperatorMode, "unspecified")+" · "+operatorContractSummary(m.spec.OperatorMode))
+	parts = append(parts, fmt.Sprintf("Alerts    attention-only notifications=%t", m.spec.OperatorNotifications))
 	parts = append(parts, "Topology  "+m.spec.Visibility)
 	if m.spec.LayoutPreset != "" {
 		parts = append(parts, "Layout    "+m.spec.LayoutPreset)
@@ -477,6 +486,11 @@ func (m BubbleModel) choices() []choice {
 			return choices
 		}
 		return operatorChoices(m.opts.Capabilities)
+	case stageOperatorNotifications:
+		if m.existingIndex >= 0 {
+			return []choice{{value: "continue", label: fmt.Sprintf("Continue with authoritative policy · enabled=%t", m.spec.OperatorNotifications)}}
+		}
+		return []choice{{value: "no", label: "No notifications"}, {value: "yes", label: "Attention-only desktop notifications"}}
 	case stageTopology:
 		return []choice{{value: "sibling-tabs", label: "One window per agent"}, {value: "current", label: "Panes in this window"}, {value: "detached", label: "Detached squad"}}
 	case stageLayoutPreset:
@@ -523,6 +537,11 @@ func (m BubbleModel) defaultCursor() int {
 			want = "continue"
 		} else {
 			want = defaultOperatorMode(m.spec.OperatorMode, m.spec.Visibility)
+		}
+	case stageOperatorNotifications:
+		want = map[bool]string{true: "yes", false: "no"}[m.spec.OperatorNotifications]
+		if m.existingIndex >= 0 {
+			want = "continue"
 		}
 	case stageTopology:
 		want = defaultString(m.spec.Visibility, "sibling-tabs")
@@ -687,11 +706,16 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 		m.transition(stageTopology)
 	case stageOperator:
 		if selected == "continue" {
-			m.transition(stageLauncherPane)
+			m.transition(stageOperatorNotifications)
 		} else {
 			m.spec.OperatorMode = selected
-			m.transition(stageLauncherPane)
+			m.transition(stageOperatorNotifications)
 		}
+	case stageOperatorNotifications:
+		if selected != "continue" {
+			m.spec.OperatorNotifications = selected == "yes"
+		}
+		m.transition(stageLauncherPane)
 	case stageTopology:
 		m.spec.Visibility = selected
 		m.transition(stageLayoutPreset)
@@ -764,7 +788,7 @@ func (m BubbleModel) phaseIndex() int {
 		return 0
 	case stageProfile, stageNewProfile, stageSession, stageExistingOverride, stageExistingModel, stageExistingEffort, stageRoles, stageRoleBinary, stageRoleModel, stageRoleEffort, stageLead, stageLeadMode:
 		return 1
-	case stageTopology, stageLayoutPreset, stageOperator, stageLauncherPane:
+	case stageTopology, stageLayoutPreset, stageOperator, stageOperatorNotifications, stageLauncherPane:
 		return 2
 	case stageGoal, stageSeed:
 		return 3

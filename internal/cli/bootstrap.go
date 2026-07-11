@@ -106,6 +106,11 @@ func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
 	ctx.OperatorDelivery.PollOwner = promptText(ctx.OperatorDelivery.PollOwner)
 	ctx.OperatorDelivery.Reason = promptText(ctx.OperatorDelivery.Reason)
 	ctx.OperatorDelivery.Guidance = promptText(ctx.OperatorDelivery.Guidance)
+	ctx.OperatorDelivery.NotificationSemantics = promptText(ctx.OperatorDelivery.NotificationSemantics)
+	ctx.OperatorDelivery.NotificationGuidance = promptText(ctx.OperatorDelivery.NotificationGuidance)
+	for i := range ctx.OperatorDelivery.NotificationSinkTypes {
+		ctx.OperatorDelivery.NotificationSinkTypes[i] = promptText(ctx.OperatorDelivery.NotificationSinkTypes[i])
+	}
 	if ctx.Execution != nil {
 		ctx.Execution.Mode = promptText(ctx.Execution.Mode)
 		ctx.Execution.ControlRoot = promptText(ctx.Execution.ControlRoot)

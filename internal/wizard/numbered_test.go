@@ -74,6 +74,7 @@ func TestRunNumberedAcceptsNumberedChoices(t *testing.T) {
 		"3", // current
 		"",  // lead-left layout
 		"",  // lead-pane operator contract
+		"2", // attention-only notifications
 		"",  // close launcher after start
 		"",  // goal
 		"",  // seed
@@ -91,6 +92,9 @@ func TestRunNumberedAcceptsNumberedChoices(t *testing.T) {
 	if got.OperatorMode != "lead_pane" {
 		t.Fatalf("operator mode = %q", got.OperatorMode)
 	}
+	if !got.OperatorNotifications {
+		t.Fatal("notification add-on was not selected")
+	}
 }
 
 func TestRunNumberedReusesCallerReaderAndPreservesFollowingConsent(t *testing.T) {
@@ -99,7 +103,7 @@ func TestRunNumberedReusesCallerReaderAndPreservesFollowingConsent(t *testing.T)
 		"", "", "", // cto binary/model/effort
 		"", "", "", // senior-dev
 		"", "", "", // qa
-		"", "", "", "", "", "", "", "", // lead through seed
+		"", "", "", "", "", "", "", "", "", // lead through seed
 		"YES",
 	}
 	reader := bufio.NewReader(strings.NewReader(strings.Join(answers, "\n") + "\n"))
@@ -206,7 +210,7 @@ func TestPromptOperatorChoiceCapabilityGating(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "self_operator") {
 		t.Fatalf("disabled choice error = %v", err)
 	}
-	for _, want := range []string{"Self-operator / delegated approval", "ships in v2.19.0: #391", "Notification add-on", "ships in v2.19.0: #390"} {
+	for _, want := range []string{"Self-operator / delegated approval", "ships in v2.19.0: #391"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("capability rows missing %q:\n%s", want, out.String())
 		}
@@ -224,12 +228,8 @@ func TestPromptOperatorChoiceCapabilityGating(t *testing.T) {
 		t.Fatalf("enabled capability result = mode %q", mode)
 	}
 
-	notifyCap := caps[CapabilityOperatorNotifications]
-	notifyCap.Available = true
-	caps[CapabilityOperatorNotifications] = notifyCap
-	_, err = promptOperatorChoice(bufio.NewReader(strings.NewReader("5\n")), &bytes.Buffer{}, caps, "lead_pane")
-	if err == nil || !strings.Contains(err.Error(), "operator_notifications") {
-		t.Fatalf("notification slot must remain blocked without canonical serialization: %v", err)
+	if !CapabilityAvailable(caps, CapabilityOperatorNotifications) {
+		t.Fatal("notification capability unavailable")
 	}
 }
 

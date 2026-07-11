@@ -211,7 +211,7 @@ func TestNumberedProjectWizardScriptedYesPreservesReaderAndAddsOnlyGo(t *testing
 		"", "", "", // cto binary/model/effort
 		"", "", "", // senior-dev binary/model/effort
 		"", "", "", // qa binary/model/effort
-		"", "", "", "", "", "", "", "", // lead through seed
+		"", "", "", "", "", "", "", "", "", // lead through seed
 		"YES", // post-preview live confirmation
 	}
 	runStartWizardInput = strings.NewReader(strings.Join(answers, "\n") + "\n")

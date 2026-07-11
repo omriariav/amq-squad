@@ -185,12 +185,13 @@ func runStartWizardProfiles(project string) ([]runwizard.ProfileSummary, error) 
 			return nil, fmt.Errorf("read team profile %q: %w", name, err)
 		}
 		summary := runwizard.ProfileSummary{
-			Name:          name,
-			MemberCount:   len(t.Members),
-			PinnedSession: runStartPinnedSession(t),
-			Lead:          t.Lead,
-			LeadMode:      team.EffectiveLeadMode(t),
-			OperatorMode:  team.EffectiveOperator(t).InteractionMode,
+			Name:                  name,
+			MemberCount:           len(t.Members),
+			PinnedSession:         runStartPinnedSession(t),
+			Lead:                  t.Lead,
+			LeadMode:              team.EffectiveLeadMode(t),
+			OperatorMode:          team.EffectiveOperator(t).InteractionMode,
+			OperatorNotifications: team.EffectiveOperatorNotifications(t.Operator).Enabled,
 		}
 		for _, member := range t.Members {
 			summary.Members = append(summary.Members, runwizard.MemberSummary{

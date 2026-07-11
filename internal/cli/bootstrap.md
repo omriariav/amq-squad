@@ -59,6 +59,8 @@ The human/operator is mailbox handle {{.Operator.Handle}}. This participant is n
 Operator delivery: interaction_mode={{.OperatorDelivery.InteractionMode}}; approval_surface={{.OperatorDelivery.ApprovalSurface}}; durable_amq={{.OperatorDelivery.DurableAMQ}}; wake_supported={{.OperatorDelivery.WakeSupported}}; poll_required={{.OperatorDelivery.PollRequired}}; poll_owner={{.OperatorDelivery.PollOwner}}.
 Contract: {{.OperatorDelivery.Contract}}
 Guidance: {{.OperatorDelivery.Guidance}}
+Operator notifications: enabled={{.OperatorDelivery.NotificationsEnabled}}; semantics={{.OperatorDelivery.NotificationSemantics}}; sink_types={{.OperatorDelivery.NotificationSinkTypes}}.
+Notification guidance: {{.OperatorDelivery.NotificationGuidance}}
 {{- if eq .OperatorDelivery.InteractionMode "separate_terminal" }}
 Ready answer command: `amq send --root {{shellQuote .Root}} --me {{.Operator.Handle}} --to <agent-handle> --thread gate/<topic> --kind answer --subject "APPROVED: <decision>"`
 {{- end }}

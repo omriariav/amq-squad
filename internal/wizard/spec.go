@@ -8,32 +8,33 @@ import "strings"
 // adapters may add richer choices, but execution must always flow through Args
 // and the existing run start parser.
 type Spec struct {
-	Scope            string
-	Project          string
-	Profile          string
-	Session          string
-	Roles            string
-	Binary           string
-	Model            string
-	Effort           string
-	OperatorMode     string
-	CodexArgs        string
-	ClaudeArgs       string
-	Lead             string
-	LeadMode         string
-	Visibility       string
-	LayoutPreset     string
-	LauncherPane     string
-	ExternalLead     bool
-	Goal             string
-	SeedFrom         string
-	GlobalRoot       string
-	GlobalAgent      string
-	GlobalModel      string
-	GlobalEffort     string
-	GlobalCodexArgs  string
-	GlobalClaudeArgs string
-	GlobalWindow     string
+	Scope                 string
+	Project               string
+	Profile               string
+	Session               string
+	Roles                 string
+	Binary                string
+	Model                 string
+	Effort                string
+	OperatorMode          string
+	OperatorNotifications bool
+	CodexArgs             string
+	ClaudeArgs            string
+	Lead                  string
+	LeadMode              string
+	Visibility            string
+	LayoutPreset          string
+	LauncherPane          string
+	ExternalLead          bool
+	Goal                  string
+	SeedFrom              string
+	GlobalRoot            string
+	GlobalAgent           string
+	GlobalModel           string
+	GlobalEffort          string
+	GlobalCodexArgs       string
+	GlobalClaudeArgs      string
+	GlobalWindow          string
 }
 
 // GlobalArgs renders only global-start flags. Project roster and topology
@@ -87,6 +88,9 @@ func (s Spec) Args() []string {
 	appendValue("--effort", s.Effort)
 	if strings.TrimSpace(s.OperatorMode) != "unspecified" {
 		appendValue("--operator-mode", s.OperatorMode)
+	}
+	if s.OperatorNotifications {
+		args = append(args, "--operator-notifications")
 	}
 	appendValue("--codex-args", s.CodexArgs)
 	appendValue("--claude-args", s.ClaudeArgs)
