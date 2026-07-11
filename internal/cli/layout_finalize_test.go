@@ -87,8 +87,10 @@ func TestLayoutFinalizationScriptExactIDsBoundedAndRenameAgnostic(t *testing.T) 
 	}
 	script := layoutFinalizationScript(plan)
 	for _, want := range []string{
-		"kill -0 4242", "-ge 200", "tmux kill-pane -t '%1'", "tmux list-panes -t '@7'", "tmux swap-pane -s '%3'",
+		"kill -0 4242", "-ge 200", "tmux kill-pane -t '%1'", "tmux list-panes -t '@7'", "tmux swap-pane -d -s '%3'",
 		"tmux set-option -w -t '@7' main-pane-width", "total*60/100", "tmux select-layout -t '@7' main-vertical", "tmux select-pane -t '%3'",
+		"lead_pane_probe=$(tmux display-message -p -t '%3' '##{pane_id}'", "[ \"$lead_pane_probe\" = '%3' ] || fail 'layout finalization skipped: lead pane is missing'",
+		"lead_window_probe=$(tmux display-message -p -t '@7' '##{window_id}'", "[ \"$lead_window_probe\" = '@7' ] || fail 'layout finalization skipped: lead window is missing'",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
@@ -96,6 +98,23 @@ func TestLayoutFinalizationScriptExactIDsBoundedAndRenameAgnostic(t *testing.T) 
 	}
 	if strings.Index(script, "timed out waiting") > strings.Index(script, "tmux kill-pane") {
 		t.Fatalf("timeout guard must precede launcher close:\n%s", script)
+	}
+	setOption := strings.Index(script, "tmux set-option")
+	selectLayout := strings.Index(script, "tmux select-layout")
+	resolveMain := strings.Index(script, "main=$(tmux list-panes")
+	swapLead := strings.Index(script, "tmux swap-pane")
+	verifyLead := strings.Index(script, "actual=$(tmux display-message")
+	if setOption < 0 || selectLayout < setOption || resolveMain < selectLayout || swapLead < resolveMain || verifyLead < swapLead {
+		t.Fatalf("finalizer must size and apply the layout before moving and verifying the exact lead pane:\n%s", script)
+	}
+	if !strings.Contains(script, "'##{pane_width}'") || !strings.Contains(script, "lead pane dimension mismatch: expected $main_size, got $actual") {
+		t.Fatalf("finalizer must verify the lead received the requested main width:\n%s", script)
+	}
+	if !strings.Contains(script, "'##{pane_id} ##{pane_left} ##{pane_width}'") || !strings.Contains(script, "awk -v size=\"$main_size\" '$2 == 0 && $3 == size") || strings.Contains(script, "head -n 1") {
+		t.Fatalf("finalizer must resolve the post-layout main pane by geometry, not enumeration order:\n%s", script)
+	}
+	if strings.Contains(script, "'##{pane_id}' >/dev/null") || strings.Contains(script, "'##{window_id}' >/dev/null") {
+		t.Fatalf("liveness probes must reject empty or wrong successful output, not trust tmux exit status:\n%s", script)
 	}
 	if strings.LastIndex(script, "rm -f") < strings.LastIndex(script, "select-pane") {
 		t.Fatalf("successful helper must clear its warning only after layout and focus:\n%s", script)
@@ -107,11 +126,32 @@ func TestLayoutFinalizationScriptExactIDsBoundedAndRenameAgnostic(t *testing.T) 
 	}
 }
 
+func TestLayoutFinalizationScriptVerifiesLeadTopGeometryAfterReflow(t *testing.T) {
+	selection := runStartLayoutSelection{
+		Preset: layoutPresetLeadTop, LauncherPane: launcherPaneCloseAfterStart,
+		FinalLayout: "main-horizontal", MainPaneOption: "main-pane-height", MainPaneValue: "60%", LeadMain: true,
+	}
+	plan := layoutFinalizationPlan{
+		Selection: selection, ParentPID: 4242, LauncherPaneID: "%1", LeadPaneID: "%3", LeadWindowID: "@7",
+		WarningPath: "/tmp/amq-layout/default/issue-393.warning",
+	}
+	script := layoutFinalizationScript(plan)
+	selectLayout := strings.Index(script, "tmux select-layout -t '@7' main-horizontal")
+	swapLead := strings.Index(script, "tmux swap-pane -d -s '%3'")
+	verifyLead := strings.Index(script, "'##{pane_height}'")
+	if selectLayout < 0 || swapLead < selectLayout || verifyLead < swapLead {
+		t.Fatalf("lead-top finalizer must reflow before moving and verifying the lead:\n%s", script)
+	}
+	if !strings.Contains(script, "'##{pane_id} ##{pane_top} ##{pane_height}'") {
+		t.Fatalf("lead-top finalizer must resolve the main pane by top/height geometry:\n%s", script)
+	}
+}
+
 func TestLayoutFinalizationLauncherSafetyAndWindowPreset(t *testing.T) {
 	selection := runStartLayoutSelection{Preset: layoutPresetOneWindowPerAgent, LauncherPane: launcherPaneCloseAfterStart}
 	base := layoutFinalizationPlan{Selection: selection, ParentPID: 1, LauncherPaneID: "%1", LeadPaneID: "%2", LeadWindowID: "@2", WarningPath: "/tmp/w.warning"}
 	script := layoutFinalizationScript(base)
-	if !strings.Contains(script, "if tmux display-message") || !strings.Contains(script, "tmux kill-pane -t '%1'") {
+	if !strings.Contains(script, "launcher_probe=$(tmux display-message") || !strings.Contains(script, "[ \"$launcher_probe\" = '%1' ]") || !strings.Contains(script, "tmux kill-pane -t '%1'") {
 		t.Fatalf("missing idempotent launcher close:\n%s", script)
 	}
 	if strings.Contains(script, "select-layout") || !strings.Contains(script, "select-window -t '@2'") {
@@ -192,7 +232,10 @@ func TestScheduleLayoutFinalizationUsesBackgroundRunShell(t *testing.T) {
 		return layoutFinalizationRunCommand("tmux", "run-shell", "-b", script)
 	}
 	plan := layoutFinalizationPlan{
-		Selection: runStartLayoutSelection{Preset: layoutPresetEvenGrid, LauncherPane: launcherPaneKeep, FinalLayout: "tiled"},
+		Selection: runStartLayoutSelection{
+			Preset: layoutPresetLeadLeft, LauncherPane: launcherPaneCloseAfterStart,
+			FinalLayout: "main-vertical", MainPaneOption: "main-pane-width", MainPaneValue: "60%", LeadMain: true,
+		},
 		ParentPID: 1, LauncherPaneID: "%1", LeadPaneID: "%2", LeadWindowID: "@1",
 		WarningPath: layoutFinalizationWarningPath(t.TempDir(), team.DefaultProfile, "issue-393"),
 	}
@@ -204,6 +247,17 @@ func TestScheduleLayoutFinalizationUsesBackgroundRunShell(t *testing.T) {
 	}
 	if !strings.Contains(gotArgs[2], "while kill -0 1") || !strings.Contains(gotArgs[2], "-ge 200") {
 		t.Fatalf("scheduled helper lacks bounded parent wait: %q", gotArgs[2])
+	}
+	for _, escaped := range []string{
+		"'##{pane_id}'", "'##{window_id}'", "'##{window_width}'",
+		"'##{pane_id} ##{pane_left} ##{pane_width}'", "'##{pane_width}'",
+	} {
+		if !strings.Contains(gotArgs[2], escaped) {
+			t.Fatalf("scheduled run-shell helper lacks escaped nested format %q: %q", escaped, gotArgs[2])
+		}
+	}
+	if strings.Contains(strings.ReplaceAll(gotArgs[2], "##{", ""), "#{") {
+		t.Fatalf("scheduled run-shell helper contains an unescaped nested tmux format: %q", gotArgs[2])
 	}
 }
 
