@@ -177,10 +177,10 @@ func TestNotifyProfileScopesOperatorAttentionAndStateKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := st.Items["release/s\x00gate/release"]; !ok {
+	if _, ok := st.Items["release/s\x00gate\x00gate/release"]; !ok {
 		t.Fatalf("notify state missing release namespace key: %#v", st.Items)
 	}
-	if _, ok := st.Items["default/s\x00gate/default"]; !ok {
+	if _, ok := st.Items["default/s\x00gate\x00gate/default"]; !ok {
 		t.Fatalf("notify state missing default namespace key: %#v", st.Items)
 	}
 }

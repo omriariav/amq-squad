@@ -1203,6 +1203,9 @@ func nativeGoalMissingBinding(binding goalBindingData, row statusRecord) goalBin
 }
 
 func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLaunchProbe) []statusRecord {
+	return buildStatusRowsWithLocalInputDetector(t, profile, workstream, probe, statusLocalInputDetector)
+}
+func buildStatusRowsWithLocalInputDetector(t team.Team, profile, workstream string, probe duplicateLaunchProbe, detector func(string) (tmuxpane.LocalInputBlocker, bool)) []statusRecord {
 	// Share one tmux pane snapshot across this whole command: live-replacement
 	// detection inside classifyMemberStatus and pane_alive resolution below
 	// both read statusPaneLister, so memoize it for the command's duration.
@@ -1242,7 +1245,7 @@ func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLau
 		}
 	}
 	attachStatusActivities(t.Project, profile, workstream, rows, probe.Now())
-	attachStatusLocalInputs(t, rows)
+	attachStatusLocalInputsWithDetector(t, rows, detector)
 	return rows
 }
 
@@ -1346,11 +1349,14 @@ func taskStoreActivity(t taskstore.Task, now time.Time) *activity.Snapshot {
 }
 
 func attachStatusLocalInputs(t team.Team, rows []statusRecord) {
+	attachStatusLocalInputsWithDetector(t, rows, statusLocalInputDetector)
+}
+func attachStatusLocalInputsWithDetector(t team.Team, rows []statusRecord, detector func(string) (tmuxpane.LocalInputBlocker, bool)) {
 	for i := range rows {
 		if !statusLocalInputCandidate(t, rows[i]) {
 			continue
 		}
-		blocker, ok := statusLocalInputDetector(rows[i].Tmux.PaneID)
+		blocker, ok := detector(rows[i].Tmux.PaneID)
 		if !ok {
 			continue
 		}

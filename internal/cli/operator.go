@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -50,23 +51,32 @@ type operatorWatchExecution struct {
 	Sleep    func(time.Duration) bool
 }
 
+var operatorWatchNotificationPump = deliverOperatorWatchNotifications
+
 type operatorStatusEnvelopeData struct {
-	ProjectDir       string                `json:"project_dir"`
-	BaseRoot         string                `json:"base_root,omitempty"`
-	Profile          string                `json:"profile"`
-	Session          string                `json:"session"`
-	Namespace        squadnamespace.Ref    `json:"namespace"`
-	ReadOnly         bool                  `json:"readonly"`
-	Operator         statusOperatorView    `json:"operator"`
-	OperatorDelivery operatorDeliveryData  `json:"operator_delivery"`
-	OperatorLoop     operatorLoopStatus    `json:"operator_loop"`
-	Attention        []operatorAttention   `json:"attention,omitempty"`
-	OperatorGates    bool                  `json:"operator_gates"`
-	Claimed          *bool                 `json:"claimed,omitempty"`
-	Conflict         *operatorPollConflict `json:"conflict,omitempty"`
-	Watch            *operatorWatchMeta    `json:"watch,omitempty"`
-	Message          string                `json:"message,omitempty"`
+	ProjectDir       string                       `json:"project_dir"`
+	BaseRoot         string                       `json:"base_root,omitempty"`
+	Profile          string                       `json:"profile"`
+	Session          string                       `json:"session"`
+	Namespace        squadnamespace.Ref           `json:"namespace"`
+	ReadOnly         bool                         `json:"readonly"`
+	Operator         statusOperatorView           `json:"operator"`
+	OperatorDelivery operatorDeliveryData         `json:"operator_delivery"`
+	OperatorLoop     operatorLoopStatus           `json:"operator_loop"`
+	Attention        []operatorAttention          `json:"attention,omitempty"`
+	OperatorGates    bool                         `json:"operator_gates"`
+	Claimed          *bool                        `json:"claimed,omitempty"`
+	Conflict         *operatorPollConflict        `json:"conflict,omitempty"`
+	Watch            *operatorWatchMeta           `json:"watch,omitempty"`
+	Message          string                       `json:"message,omitempty"`
+	Notifications    *operatorNotificationSummary `json:"notifications,omitempty"`
 	operatorCursor   string
+}
+type operatorNotificationSummary struct {
+	Selected   int `json:"selected"`
+	Delivered  int `json:"delivered"`
+	Failed     int `json:"failed"`
+	Suppressed int `json:"suppressed"`
 }
 
 type operatorWatchMeta struct {
@@ -674,12 +684,14 @@ func executeOperatorWatch(w operatorWatchExecution) error {
 				return err
 			}
 		} else if w.Once {
+			data.Notifications = operatorWatchNotificationPump(w, data, now)
 			data.Watch = &operatorWatchMeta{Interval: interval.String(), Tick: tick, At: now.UTC()}
 			if writeErr := writeOperatorWatchTick(w.Out, data, w.JSON); writeErr != nil {
 				return writeErr
 			}
 			return nil
 		} else {
+			data.Notifications = operatorWatchNotificationPump(w, data, now)
 			data.Watch = &operatorWatchMeta{Interval: interval.String(), Tick: tick, At: now.UTC()}
 			if writeErr := writeOperatorWatchTick(w.Out, data, w.JSON); writeErr != nil {
 				return writeErr
@@ -690,6 +702,30 @@ func executeOperatorWatch(w operatorWatchExecution) error {
 		}
 		tick++
 	}
+}
+
+func deliverOperatorWatchNotifications(w operatorWatchExecution, data operatorStatusEnvelopeData, now time.Time) *operatorNotificationSummary {
+	t, err := team.ReadProfile(data.ProjectDir, data.Profile)
+	if err != nil {
+		return nil
+	}
+	policy := team.EffectiveOperatorNotifications(t.Operator)
+	if !policy.Enabled {
+		return nil
+	}
+	var out bytes.Buffer
+	err = executeNotify(notifyExecution{ProjectDir: data.ProjectDir, Profile: data.Profile, Session: data.Session, BaseRoot: w.BaseRoot, RenotifyAfter: defaultOperatorRenotifyAfter, Deliver: true, JSON: true, Out: &out, Now: func() time.Time { return now }, ResolveBaseRoot: w.ResolveBaseRoot, Probe: w.Probe})
+	if err != nil {
+		return &operatorNotificationSummary{Failed: 1}
+	}
+	var env struct {
+		Data notifyEnvelopeData `json:"data"`
+	}
+	if json.Unmarshal(out.Bytes(), &env) != nil {
+		return &operatorNotificationSummary{Failed: 1}
+	}
+	d := env.Data.DeliverySummary
+	return &operatorNotificationSummary{Selected: d.Selected, Delivered: d.Delivered, Failed: d.Failed, Suppressed: d.Suppressed}
 }
 
 func writeOperatorWatchTick(out io.Writer, data operatorStatusEnvelopeData, jsonOut bool) error {

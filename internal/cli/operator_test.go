@@ -801,6 +801,25 @@ func TestOperatorWatchOnceClaimsLeaseCompactJSON(t *testing.T) {
 	}
 }
 
+func TestOperatorWatchSuccessfulTickIsSoleNotificationPump(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	old := operatorWatchNotificationPump
+	defer func() { operatorWatchNotificationPump = old }()
+	calls := 0
+	operatorWatchNotificationPump = func(operatorWatchExecution, operatorStatusEnvelopeData, time.Time) *operatorNotificationSummary {
+		calls++
+		return nil
+	}
+	err := executeOperatorWatch(operatorWatchExecution{operatorExecution: operatorExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, Owner: "noc", OwnerID: "noc:host:pump", LeaseTTL: 2 * time.Minute, Out: &bytes.Buffer{}, Probe: state.Probe{PIDAlive: func(int) bool { return true }, ProcessMatch: func(int, func(string) bool) bool { return true }, Now: func() time.Time { return notifyNow }}, Now: func() time.Time { return notifyNow }}, Once: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("pump calls=%d", calls)
+	}
+}
+
 func TestOperatorWatchOnceConflictReturnsTypedError(t *testing.T) {
 	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
 	seedNotifyLaunch(t, project, base, "s", "cto")
