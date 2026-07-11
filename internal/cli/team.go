@@ -40,6 +40,8 @@ func runTeam(args []string) error {
 		return runTeamMember(args[1:])
 	case "autonomous":
 		return runTeamAutonomous(args[1:])
+	case "operator":
+		return runTeamOperator(args[1:])
 	case "sync":
 		return runTeamSync(args[1:])
 	case "profiles":

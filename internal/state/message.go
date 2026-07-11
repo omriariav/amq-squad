@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 )
 
 // MessageSchema is the on-disk schema version this parser understands. Every
@@ -95,6 +97,11 @@ type Message struct {
 	ReplyProject      string
 	OrchestratorEvent string
 	ExternalTaskID    string
+	Context           map[string]any
+	Approval          *operatorauth.ApprovalContext
+	ApprovalPresent   bool
+	ApprovalValid     bool
+	ApprovalError     string
 	Body              string
 
 	// Owner is the handle whose inbox this copy was found in.
@@ -201,6 +208,7 @@ func parseMessageFile(path, owner string, state MailboxState, now func() time.Ti
 		ReplyProject:      strings.TrimSpace(h.ReplyProject),
 		OrchestratorEvent: orchestratorEventFromContext(h.Context),
 		ExternalTaskID:    externalTaskIDFromContext(h.Context),
+		Context:           h.Context,
 		Body:              body,
 		Owner:             owner,
 		State:             state,
@@ -208,6 +216,18 @@ func parseMessageFile(path, owner string, state MailboxState, now func() time.Ti
 		SchemaOK:          h.Schema == MessageSchema,
 	}
 	m.Created = parseCreated(h.Created, path, now)
+	if rawApproval, present := h.Context["approval"]; present {
+		m.ApprovalPresent = true
+		approval, approvalErr := operatorauth.DecodeApproval(rawApproval)
+		if approvalErr != nil {
+			m.ApprovalError = approvalErr.Error()
+		} else if approvalErr = operatorauth.ValidateApproval(approval); approvalErr != nil {
+			m.ApprovalError = approvalErr.Error()
+		} else {
+			m.Approval = &approval
+			m.ApprovalValid = true
+		}
+	}
 
 	// A message with neither an id nor a sender is structurally useless; treat
 	// it as torn so it is skipped-with-warning rather than polluting threads.

@@ -4,6 +4,7 @@ package team
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 )
 
 func sortStrings(s []string) { sort.Strings(s) }
@@ -97,6 +100,109 @@ type OperatorConfig struct {
 	WakeSupported   bool                        `json:"wake_supported"`
 	PollRequired    bool                        `json:"poll_required"`
 	Notifications   *OperatorNotificationPolicy `json:"notifications,omitempty"`
+	SelfOperator    *SelfOperatorPolicy         `json:"self_operator,omitempty"`
+}
+
+type SelfOperatorPolicy struct {
+	LeadRole       string                               `json:"lead_role"`
+	PolicyRevision int64                                `json:"policy_revision"`
+	Sessions       map[string]SelfOperatorSessionPolicy `json:"sessions"`
+}
+
+type SelfOperatorSessionPolicy struct {
+	Enabled          bool     `json:"enabled"`
+	Paused           bool     `json:"paused"`
+	AllowedGateKinds []string `json:"allowed_gate_kinds"`
+}
+
+type EffectiveSelfOperatorView struct {
+	Enabled          bool     `json:"enabled"`
+	Paused           bool     `json:"paused"`
+	LeadRole         string   `json:"lead_role,omitempty"`
+	LeadHandle       string   `json:"lead_handle,omitempty"`
+	Session          string   `json:"session"`
+	AllowedGateKinds []string `json:"allowed_gate_kinds,omitempty"`
+	PolicyRevision   int64    `json:"policy_revision,omitempty"`
+	PolicyHash       string   `json:"policy_hash,omitempty"`
+}
+
+func (p *SelfOperatorPolicy) UnmarshalJSON(data []byte) error {
+	type alias SelfOperatorPolicy
+	var value alias
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&value); err != nil {
+		return fmt.Errorf("operator.self_operator: %w", err)
+	}
+	*p = SelfOperatorPolicy(value)
+	return nil
+}
+
+func (p *SelfOperatorSessionPolicy) UnmarshalJSON(data []byte) error {
+	type alias SelfOperatorSessionPolicy
+	var value alias
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&value); err != nil {
+		return fmt.Errorf("operator.self_operator.session: %w", err)
+	}
+	*p = SelfOperatorSessionPolicy(value)
+	return nil
+}
+
+func EffectiveSelfOperator(t Team, session string) EffectiveSelfOperatorView {
+	view := EffectiveSelfOperatorView{Session: strings.TrimSpace(session)}
+	if t.Operator == nil || !t.Operator.Enabled || t.Operator.InteractionMode != OperatorInteractionSelfOperator || t.Operator.SelfOperator == nil {
+		return view
+	}
+	policy := t.Operator.SelfOperator
+	entry, ok := policy.Sessions[view.Session]
+	if !ok {
+		return view
+	}
+	view.LeadRole = policy.LeadRole
+	for _, member := range t.Members {
+		if member.Role == policy.LeadRole {
+			view.LeadHandle = member.Handle
+			if view.LeadHandle == "" {
+				view.LeadHandle = member.Role
+			}
+		}
+	}
+	view.Enabled = entry.Enabled && !entry.Paused
+	view.Paused = entry.Paused
+	view.AllowedGateKinds = append([]string(nil), entry.AllowedGateKinds...)
+	view.PolicyRevision = policy.PolicyRevision
+	view.PolicyHash = SelfOperatorPolicyHash(t, view.Session)
+	return view
+}
+
+func SelfOperatorPolicyHash(t Team, session string) string {
+	if t.Operator == nil || t.Operator.SelfOperator == nil {
+		return ""
+	}
+	policy := t.Operator.SelfOperator
+	entry := policy.Sessions[strings.TrimSpace(session)]
+	allowed := append([]string(nil), entry.AllowedGateKinds...)
+	sort.Strings(allowed)
+	leadHandle := ""
+	for _, member := range t.Members {
+		if member.Role == policy.LeadRole {
+			leadHandle = member.Handle
+			if leadHandle == "" {
+				leadHandle = member.Role
+			}
+		}
+	}
+	projection := struct {
+		Mode, OperatorHandle, LeadRole, LeadHandle, Session string
+		Revision                                            int64
+		Enabled, Paused                                     bool
+		Allowed                                             []string
+	}{t.Operator.InteractionMode, strings.TrimSpace(t.Operator.Handle), policy.LeadRole, leadHandle, strings.TrimSpace(session), policy.PolicyRevision, entry.Enabled, entry.Paused, allowed}
+	b, _ := json.Marshal(projection)
+	sum := sha256.Sum256(b)
+	return fmt.Sprintf("sha256:%x", sum)
 }
 
 type OperatorNotificationPolicy struct {
@@ -461,7 +567,7 @@ func OperatorContractForMode(mode string) OperatorInteractionContract {
 	case OperatorInteractionNOC:
 		return OperatorInteractionContract{Mode: mode, ApprovalSurface: "NOC/global board", Contract: "the NOC/global orchestrator polls this run and answers durable gates by explicit namespace", PollRequired: true, PollOwner: "noc"}
 	case OperatorInteractionSelfOperator:
-		return OperatorInteractionContract{Mode: mode, ApprovalSurface: "human operator (self-operator unavailable)", Contract: "forward-known mode only; #391 has not enabled delegated self-approval or changed authorization behavior", PollRequired: true, PollOwner: "operator"}
+		return OperatorInteractionContract{Mode: mode, ApprovalSurface: "delegated lead with human override", Contract: "the configured lead may answer only exact-session allowlisted gates; human intervention and revocation always win", PollRequired: true, PollOwner: "operator"}
 	default:
 		return OperatorInteractionContract{Mode: OperatorInteractionUnspecified, ApprovalSurface: "legacy operator mailbox", Contract: "legacy compatibility: operator or parent orchestrator polls durable AMQ gates", PollRequired: true, PollOwner: "operator_or_parent"}
 	}
@@ -849,6 +955,64 @@ func Validate(t Team) error {
 				return fmt.Errorf("%s: duplicate handle %q", prefix, handle)
 			}
 			seenHandles[handle] = true
+		}
+	}
+	if err := validateSelfOperator(t); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateSelfOperator(t Team) error {
+	if t.Operator == nil || t.Operator.SelfOperator == nil {
+		if t.Operator != nil && t.Operator.InteractionMode == OperatorInteractionSelfOperator {
+			return fmt.Errorf("operator.self_operator: exact-session policy is required for self_operator mode")
+		}
+		return nil
+	}
+	policy := t.Operator.SelfOperator
+	if policy.PolicyRevision < 0 {
+		return fmt.Errorf("operator.self_operator.policy_revision: cannot be negative")
+	}
+	if strings.TrimSpace(policy.LeadRole) == "" {
+		return fmt.Errorf("operator.self_operator.lead_role: cannot be empty")
+	}
+	if len(policy.Sessions) == 0 {
+		return fmt.Errorf("operator.self_operator.sessions: at least one exact session policy is required")
+	}
+	for session, entry := range policy.Sessions {
+		if err := ValidateSessionName(session); err != nil {
+			return fmt.Errorf("operator.self_operator.sessions[%q]: %w", session, err)
+		}
+		if entry.Enabled && len(entry.AllowedGateKinds) == 0 {
+			return fmt.Errorf("operator.self_operator.sessions[%q].allowed_gate_kinds: enabled session requires a non-empty allowlist", session)
+		}
+		validated, err := operatorauth.ValidateAllowlist(entry.AllowedGateKinds)
+		if err != nil {
+			return fmt.Errorf("operator.self_operator.sessions[%q].allowed_gate_kinds: %w", session, err)
+		}
+		if len(validated) != len(entry.AllowedGateKinds) {
+			return fmt.Errorf("operator.self_operator.sessions[%q].allowed_gate_kinds: duplicates are not allowed", session)
+		}
+	}
+	if t.Operator.InteractionMode == OperatorInteractionSelfOperator {
+		if !t.Operator.Enabled {
+			return fmt.Errorf("operator.self_operator: require operator.enabled=true")
+		}
+		if !t.Orchestrated {
+			return fmt.Errorf("operator.self_operator: require orchestrated=true")
+		}
+		if policy.LeadRole != t.Lead {
+			return fmt.Errorf("operator.self_operator.lead_role: %q must equal configured lead %q", policy.LeadRole, t.Lead)
+		}
+		matches := 0
+		for _, member := range t.Members {
+			if member.Role == policy.LeadRole && strings.TrimSpace(member.Binary) != "" {
+				matches++
+			}
+		}
+		if matches != 1 {
+			return fmt.Errorf("operator.self_operator.lead_role: must resolve to exactly one runnable member")
 		}
 	}
 	return nil

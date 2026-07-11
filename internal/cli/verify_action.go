@@ -1,15 +1,19 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -55,13 +59,16 @@ type verifyActionExecution struct {
 }
 
 type verifyActionResult struct {
-	Action     string               `json:"action"`
-	Target     string               `json:"target"`
-	Gate       string               `json:"gate"`
-	Decision   string               `json:"decision"`
-	AnsweredBy string               `json:"answered_by,omitempty"`
-	MessageID  string               `json:"message_id,omitempty"`
-	Failures   []verifyMergeFailure `json:"failures,omitempty"`
+	Action         string               `json:"action"`
+	Target         string               `json:"target"`
+	Gate           string               `json:"gate"`
+	Decision       string               `json:"decision"`
+	AnsweredBy     string               `json:"answered_by,omitempty"`
+	MessageID      string               `json:"message_id,omitempty"`
+	GateKind       string               `json:"gate_kind,omitempty"`
+	ApprovalSource string               `json:"approval_source,omitempty"`
+	SelfApproved   bool                 `json:"self_approved"`
+	Failures       []verifyMergeFailure `json:"failures,omitempty"`
 }
 
 func runVerifyAction(args []string) error {
@@ -172,15 +179,16 @@ func executeVerifyAction(x verifyActionExecution) error {
 	if !ok {
 		return fmt.Errorf("session %q for profile %q not found under %s", session, profile, baseRoot)
 	}
-	operatorHandle, err := verifyActionOperatorHandle(x.ProjectDir, profile)
+	cfg, err := team.ReadProfile(x.ProjectDir, profile)
 	if err != nil {
-		return err
+		return fmt.Errorf("read team profile: %w", err)
 	}
+	operatorHandle := team.EffectiveOperator(cfg).Handle
 	msgs, warnings := state.ScanSessionMessages(sess.Root, now)
 	if len(warnings) > 0 {
-		sort.SliceStable(warnings, func(i, j int) bool { return warnings[i].Path < warnings[j].Path })
+		return usageErrorf("verify action message scan degraded; refusing authorization")
 	}
-	result := decideVerifyAction(msgs, gate, action, target, operatorHandle)
+	result := decideVerifyActionWithPolicy(msgs, gate, action, target, operatorHandle, cfg, session, x.ProjectDir, profile)
 	if x.JSON {
 		if err := writeJSONEnvelope(out, "verify_action", result); err != nil {
 			return err
@@ -300,6 +308,241 @@ func decideVerifyAction(msgs []state.Message, gate, action, target, operatorHand
 		result.Failures = append(result.Failures, verifyMergeFailure{Code: "answer_not_decision", Detail: "bound operator answer is neither APPROVED nor DENIED"})
 	}
 	return result
+}
+
+func decideVerifyActionWithPolicy(msgs []state.Message, gate, action, target, humanHandle string, cfg team.Team, session, projectDir, profile string) verifyActionResult {
+	var duplicateConflict bool
+	msgs, duplicateConflict = dedupeSecurityMessages(msgs)
+	if duplicateConflict {
+		return verifyActionResult{Action: action, Target: target, Gate: gate, Decision: actionDecisionPending, Failures: []verifyMergeFailure{{Code: "duplicate_message_conflict", Detail: "conflicting copies share a message id"}}}
+	}
+	legacy := decideVerifyAction(msgs, gate, action, target, humanHandle)
+	view := team.EffectiveSelfOperator(cfg, session)
+	if !view.Enabled {
+		return legacy
+	}
+	// Self mode applies full-scan human precedence. Human profiles outside self
+	// mode returned above retain the pre-#391 latest-answer behavior unchanged.
+	var question *state.Message
+	for i := range msgs {
+		msg := msgs[i]
+		if msg.Thread == gate && msg.Kind == state.KindQuestion && (question == nil || messageAfter(msg, *question)) {
+			copy := msg
+			question = &copy
+		}
+	}
+	if question != nil {
+		if !strictBindingMatches(question.Subject+"\n"+question.Body, action, target) {
+			return verifyActionResult{Action: action, Target: target, Gate: gate, Decision: actionDecisionNoGate, MessageID: question.ID, Failures: []verifyMergeFailure{{Code: "latest_gate_binding_mismatch", Detail: "latest gate question does not bind the requested action and target"}}}
+		}
+		strictHumanBinding, _ := operatorauth.ParseStrictBinding(question.Subject + "\n" + question.Body)
+		facts := make([]operatorauth.MessageFact, 0)
+		for i := range msgs {
+			msg := msgs[i]
+			if msg.Thread != gate || msg.From != humanHandle || !messageAfter(msg, *question) {
+				continue
+			}
+			decision, bound := actionDecisionPending, false
+			text := msg.Subject + "\n" + msg.Body
+			if msg.Kind == state.KindAnswer && strictBindingMatches(text, action, target) {
+				decision = classifyDecision(text)
+				bound = decision == actionDecisionApproved || decision == actionDecisionDenied
+			}
+			if msg.ApprovalPresent {
+				bound = bound && validTypedHumanApproval(msg, humanHandle, question.ID, strictHumanBinding, action, target)
+			}
+			facts = append(facts, operatorauth.MessageFact{ID: msg.ID, From: msg.From, Kind: string(msg.Kind), Decision: decision, Bound: bound, After: true, Order: int64(i + 1)})
+		}
+		precedence := operatorauth.ResolvePrecedence(facts, humanHandle, "")
+		switch precedence.Decision {
+		case actionDecisionDenied:
+			return verifyActionResult{Action: action, Target: target, Gate: gate, Decision: actionDecisionDenied, AnsweredBy: humanHandle, MessageID: precedence.MessageID, ApprovalSource: "human", Failures: []verifyMergeFailure{{Code: "gate_denied", Detail: "human operator denied the bound gate"}}}
+		case actionDecisionApproved:
+			return verifyActionResult{Action: action, Target: target, Gate: gate, Decision: actionDecisionApproved, AnsweredBy: humanHandle, MessageID: precedence.MessageID, ApprovalSource: "human"}
+		case actionDecisionPending:
+			if precedence.Barrier {
+				return verifyActionResult{Action: action, Target: target, Gate: gate, Decision: actionDecisionPending, AnsweredBy: humanHandle, MessageID: precedence.MessageID, ApprovalSource: "human", Failures: []verifyMergeFailure{{Code: "human_intervention_pending", Detail: "human-authored gate message requires a bound human decision"}}}
+			}
+		}
+	}
+	var strictQuestion *state.Message
+	var binding operatorauth.Binding
+	for i := range msgs {
+		msg := msgs[i]
+		if msg.Thread != gate || msg.Kind != state.KindQuestion || (strictQuestion != nil && !messageAfter(msg, *strictQuestion)) {
+			continue
+		}
+		parsed, err := operatorauth.ParseStrictBinding(msg.Subject + "\n" + msg.Body)
+		if err != nil {
+			strictQuestion = &msg
+			binding = operatorauth.Binding{}
+			continue
+		}
+		copy := msg
+		strictQuestion = &copy
+		binding = parsed
+	}
+	if strictQuestion == nil || !binding.Matches(binding.GateKind, action, target) {
+		return legacy
+	}
+	if err := operatorauth.Evaluate(binding.GateKind, action, view.AllowedGateKinds); err != nil {
+		legacy.Failures = append(legacy.Failures, verifyMergeFailure{Code: "self_kind_not_allowed", Detail: err.Error()})
+		return legacy
+	}
+	var selfAnswer *state.Message
+	for i := range msgs {
+		msg := msgs[i]
+		if msg.Thread == gate && msg.Kind == state.KindAnswer && msg.From == view.LeadHandle && messageAfter(msg, *strictQuestion) && (selfAnswer == nil || messageAfter(msg, *selfAnswer)) {
+			copy := msg
+			selfAnswer = &copy
+		}
+	}
+	if selfAnswer == nil {
+		return legacy
+	}
+	if !selfAnswer.ApprovalPresent || !selfAnswer.ApprovalValid || selfAnswer.Approval == nil {
+		legacy.Failures = append(legacy.Failures, verifyMergeFailure{Code: "self_approval_context_invalid", Detail: "self answer has missing or malformed typed approval context"})
+		return legacy
+	}
+	a := *selfAnswer.Approval
+	if a.Source != "self_operator" || !a.SelfApproved || a.AnsweredByHandle != view.LeadHandle || a.AnsweredByRole != view.LeadRole || a.QuestionMessageID != strictQuestion.ID || a.GateKind != binding.GateKind || operatorauth.NormalizeAction(a.Action) != action || a.Target != target {
+		legacy.Failures = append(legacy.Failures, verifyMergeFailure{Code: "self_approval_forged", Detail: "typed self approval does not match actor/question/action/target"})
+		return legacy
+	}
+	if a.PolicyRevision != view.PolicyRevision || a.PolicyHash != view.PolicyHash {
+		legacy.Failures = append(legacy.Failures, verifyMergeFailure{Code: "self_policy_revoked", Detail: "current self policy revision/hash differs from the answer"})
+		return legacy
+	}
+	if err := validateSelfApprovalReceipt(projectDir, profile, session, gate, selfAnswer.ID, a); err != nil {
+		legacy.Failures = append(legacy.Failures, verifyMergeFailure{Code: "self_receipt_invalid", Detail: err.Error()})
+		return legacy
+	}
+	if err := revalidateSelfApprovalEvidence(projectDir, a, target); err != nil {
+		legacy.Failures = append(legacy.Failures, verifyMergeFailure{Code: "self_preflight_stale", Detail: err.Error()})
+		return legacy
+	}
+	if binding.GateKind == operatorauth.GateMerge {
+		actor, err := verifiedCurrentRosterActor(projectDir, profile, session, cfg)
+		if err != nil {
+			legacy.Failures = append(legacy.Failures, verifyMergeFailure{Code: "executor_identity_unverified", Detail: err.Error()})
+			return legacy
+		}
+		if actor.Handle == view.LeadHandle {
+			legacy.Failures = append(legacy.Failures, verifyMergeFailure{Code: "self_merge_actor_conflict", Detail: "self-approving lead cannot execute the merge"})
+			return legacy
+		}
+	}
+	return verifyActionResult{Action: action, Target: target, Gate: gate, GateKind: binding.GateKind, Decision: actionDecisionApproved, AnsweredBy: view.LeadHandle, MessageID: selfAnswer.ID, ApprovalSource: "self_operator", SelfApproved: true}
+}
+
+func revalidateSelfApprovalEvidence(projectDir string, approval operatorauth.ApprovalContext, target string) error {
+	path := strings.TrimSpace(approval.PreflightPath)
+	if path == "" {
+		return fmt.Errorf("approval omitted preflight path")
+	}
+	rel, err := filepath.Rel(projectDir, path)
+	evidencePrefix := filepath.Join(team.DirName, "evidence") + string(os.PathSeparator)
+	if err != nil || !strings.HasPrefix(rel, evidencePrefix) {
+		return fmt.Errorf("preflight path is outside project evidence namespace")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(b)
+	if fmt.Sprintf("sha256:%x", sum) != approval.PreflightSHA256 {
+		return fmt.Errorf("preflight digest changed")
+	}
+	var evidence verifyMergeEvidence
+	dec := json.NewDecoder(strings.NewReader(string(b)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&evidence); err != nil {
+		return err
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return fmt.Errorf("preflight evidence contains trailing JSON values")
+	}
+	if result := validateVerifyMergeEvidence(evidence); !result.OK || evidence.Base == "" {
+		return fmt.Errorf("verify merge evidence is no longer valid")
+	}
+	parsed, parseErr := operatorauth.ParseMergeTarget(target)
+	if parseErr != nil || parsed.Subject != evidence.Subject || parsed.Head != evidence.HeadSHA || parsed.Base != evidence.Base {
+		return fmt.Errorf("preflight no longer binds exact PR/head/base")
+	}
+	return nil
+}
+
+func validateSelfApprovalReceipt(projectDir, profile, session, gate, answerID string, approval operatorauth.ApprovalContext) error {
+	path := filepath.Join(selfApprovalStoreDir(projectDir, profile, session), safeGateFile(gate)+"-"+safeGateFile(answerID)+".receipt.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var receipt operatorauth.Receipt
+	dec := json.NewDecoder(strings.NewReader(string(b)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&receipt); err != nil {
+		return err
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return fmt.Errorf("receipt contains trailing JSON values")
+	}
+	if receipt.Gate != gate || receipt.Decision != "approved" || receipt.AnswerMessageID != answerID || receipt.QuestionMessageID != approval.QuestionMessageID || receipt.AnsweredBy != approval.AnsweredByHandle || receipt.ApprovalSource != "self_operator" || !receipt.SelfApproved || receipt.GateKind != approval.GateKind || receipt.Action != approval.Action || receipt.Target != approval.Target || receipt.PolicyRevision != approval.PolicyRevision || receipt.PolicyHash != approval.PolicyHash || receipt.Preflight.Kind != approval.PreflightKind || receipt.Preflight.Path != approval.PreflightPath || receipt.Preflight.SHA256 != approval.PreflightSHA256 || !receipt.Preflight.OK {
+		return fmt.Errorf("receipt does not match typed self approval")
+	}
+	return nil
+}
+
+func validTypedHumanApproval(msg state.Message, humanHandle, questionID string, binding operatorauth.Binding, action, target string) bool {
+	if !msg.ApprovalPresent || !msg.ApprovalValid || msg.Approval == nil {
+		return false
+	}
+	a := msg.Approval
+	return a.Source == "human" && !a.SelfApproved && a.QuestionMessageID == questionID && a.AnsweredByHandle == humanHandle && a.AnsweredByRole == "operator" && a.GateKind == binding.GateKind && operatorauth.NormalizeAction(a.Action) == action && a.Target == target
+}
+
+func dedupeSecurityMessages(msgs []state.Message) ([]state.Message, bool) {
+	byID := map[string]state.Message{}
+	conflict := false
+	for _, msg := range msgs {
+		if msg.ID == "" {
+			continue
+		}
+		if existing, ok := byID[msg.ID]; ok {
+			if existing.From != msg.From || existing.Thread != msg.Thread || existing.Kind != msg.Kind || existing.Subject != msg.Subject || existing.Body != msg.Body || !securityContextEqual(existing, msg) {
+				conflict = true
+			}
+			if msg.Path < existing.Path {
+				byID[msg.ID] = msg
+			}
+			continue
+		}
+		byID[msg.ID] = msg
+	}
+	out := make([]state.Message, 0, len(byID))
+	for _, msg := range byID {
+		out = append(out, msg)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Created.Equal(out[j].Created) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Created.Before(out[j].Created)
+	})
+	return out, conflict
+}
+
+func securityContextEqual(a, b state.Message) bool {
+	aContext, aErr := json.Marshal(a.Context)
+	bContext, bErr := json.Marshal(b.Context)
+	if aErr != nil || bErr != nil || string(aContext) != string(bContext) {
+		return false
+	}
+	aApproval, aErr := json.Marshal(a.Approval)
+	bApproval, bErr := json.Marshal(b.Approval)
+	return aErr == nil && bErr == nil && string(aApproval) == string(bApproval) && a.ApprovalPresent == b.ApprovalPresent && a.ApprovalValid == b.ApprovalValid && a.ApprovalError == b.ApprovalError
 }
 
 func strictBindingMatches(text, action, target string) bool {

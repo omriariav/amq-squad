@@ -75,8 +75,8 @@ func operatorDeliveryForTeam(t team.Team) operatorDeliveryData {
 		data.Reason = "operator delivery is owned by the NOC/global orchestrator"
 		data.Guidance = "poll and answer using the explicit project/profile/session namespace; durable AMQ remains authoritative"
 	case team.OperatorInteractionSelfOperator:
-		data.Reason = "self_operator is persisted for forward compatibility but has no backing authorization behavior"
-		data.Guidance = "continue routing human-only decisions to the operator; the lead cannot approve its own gates"
+		data.Reason = "self_operator delegates only exact-session allowlisted gates to the configured lead under durable policy and audit checks"
+		data.Guidance = "route human-only and out-of-policy decisions to the operator; use a distinct strongly verified actor to execute self-approved merges"
 	default:
 		data.Reason = fmt.Sprintf("operator handle %q is virtual/non-runnable; durable AMQ messages have no wakeable agent recipient", handle)
 		data.Guidance = "operator or parent orchestrator must poll/drain the operator mailbox, gate threads, and status JSON; durable AMQ remains the source of truth"

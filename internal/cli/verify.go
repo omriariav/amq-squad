@@ -17,6 +17,7 @@ const (
 type verifyMergeEvidence struct {
 	Subject    string                 `json:"subject"`
 	HeadSHA    string                 `json:"head_sha"`
+	Base       string                 `json:"base,omitempty"`
 	CI         verifyMergeCheck       `json:"ci"`
 	Review     verifyMergeCheck       `json:"review"`
 	Exceptions []verifyMergeException `json:"exceptions"`
