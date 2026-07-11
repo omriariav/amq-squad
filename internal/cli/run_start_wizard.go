@@ -222,7 +222,9 @@ func runBubbleRunStartWizard(args []string, version string) error {
 	}
 	prefill.Scope = "project"
 	opts.Defaults = prefill
-	result, err := runStartWizardBubbleProgram(reader, tty, opts)
+	// Bubble Tea enables raw mode only when its input is the tty file itself;
+	// a wrapping reader leaves the terminal cooked and every key is swallowed.
+	result, err := runStartWizardBubbleProgram(tty, tty, opts)
 	if err != nil {
 		return err
 	}

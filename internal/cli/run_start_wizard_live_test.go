@@ -297,6 +297,34 @@ func TestBubbleWizardReturnsFromProgramThenConfirmsOnSameTTY(t *testing.T) {
 	}
 }
 
+func TestBubbleWizardHandsRawTTYToProgramNotAWrapper(t *testing.T) {
+	// Bubble Tea enables raw mode only when its input asserts to term.File
+	// (the tty *os.File itself). Passing any wrapping reader leaves the
+	// terminal cooked: keys are line-buffered and enter arrives as ctrl+j,
+	// freezing the wizard on its first phase (#421).
+	withWizardExecutionSeams(t)
+	oldOpen := runStartWizardOpenTTY
+	oldProgram := runStartWizardBubbleProgram
+	t.Cleanup(func() { runStartWizardOpenTTY, runStartWizardBubbleProgram = oldOpen, oldProgram })
+	tty := wizardTestTTY{reader: bytes.NewReader([]byte("\n")), writes: &bytes.Buffer{}}
+	runStartWizardOpenTTY = func() (io.ReadWriteCloser, error) { return tty, nil }
+	var gotIn io.Reader
+	var gotOut io.Writer
+	runStartWizardBubbleProgram = func(in io.Reader, out io.Writer, opts runwizard.NumberedOptions) (runwizard.BubbleResult, error) {
+		gotIn, gotOut = in, out
+		return runwizard.BubbleResult{Cancelled: true}, nil
+	}
+	if err := runBubbleRunStartWizard([]string{"--scope", "project", "--project", t.TempDir()}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if in, ok := gotIn.(wizardTestTTY); !ok || in != tty {
+		t.Fatalf("bubble program input = %T, want the exact tty from runStartWizardOpenTTY", gotIn)
+	}
+	if out, ok := gotOut.(wizardTestTTY); !ok || out != tty {
+		t.Fatalf("bubble program output = %T, want the exact tty from runStartWizardOpenTTY", gotOut)
+	}
+}
+
 func assertOnlyGoDelta(t *testing.T, calls [][]string) {
 	t.Helper()
 	if len(calls) != 2 {
