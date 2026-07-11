@@ -206,11 +206,11 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 
 func TestPromptOperatorChoiceCapabilityGating(t *testing.T) {
 	var out bytes.Buffer
-	_, err := promptOperatorChoice(bufio.NewReader(strings.NewReader("4\n")), &out, nil, "lead_pane")
-	if err == nil || !strings.Contains(err.Error(), "self_operator") {
-		t.Fatalf("disabled choice error = %v", err)
+	mode, err := promptOperatorChoice(bufio.NewReader(strings.NewReader("4\n")), &out, nil, "lead_pane")
+	if err != nil || mode != "self_operator" {
+		t.Fatalf("default capability = %q, %v", mode, err)
 	}
-	for _, want := range []string{"Self-operator / delegated approval", "ships in v2.19.0: #391"} {
+	for _, want := range []string{"Self-operator / delegated approval"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("capability rows missing %q:\n%s", want, out.String())
 		}
@@ -220,7 +220,7 @@ func TestPromptOperatorChoiceCapabilityGating(t *testing.T) {
 	self := caps[CapabilitySelfOperator]
 	self.Available = true
 	caps[CapabilitySelfOperator] = self
-	mode, err := promptOperatorChoice(bufio.NewReader(strings.NewReader("4\n")), &bytes.Buffer{}, caps, "lead_pane")
+	mode, err = promptOperatorChoice(bufio.NewReader(strings.NewReader("4\n")), &bytes.Buffer{}, caps, "lead_pane")
 	if err != nil {
 		t.Fatal(err)
 	}

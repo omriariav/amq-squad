@@ -117,8 +117,10 @@ type statusWarning struct {
 
 type statusOperatorView struct {
 	team.OperatorView
-	CanonicalInbox *statusOperatorInbox `json:"canonical_inbox,omitempty"`
-	Poll           *statusOperatorPoll  `json:"poll,omitempty"`
+	SelfOperator            *team.EffectiveSelfOperatorView `json:"self_operator,omitempty"`
+	VisibilityNotifications bool                            `json:"visibility_notifications"`
+	CanonicalInbox          *statusOperatorInbox            `json:"canonical_inbox,omitempty"`
+	Poll                    *statusOperatorPoll             `json:"poll,omitempty"`
 }
 
 type statusOperatorInbox struct {
@@ -413,6 +415,13 @@ func executeStatus(s statusExecution) error {
 	delivery := operatorDeliveryForTeam(t)
 	if delivery.Enabled {
 		fmt.Fprintf(s.Out, "# operator_delivery: %s\n", operatorDeliverySummary(delivery))
+	}
+	if delivery.InteractionMode == team.OperatorInteractionSelfOperator {
+		v := team.EffectiveSelfOperator(t, workstream)
+		fmt.Fprintf(s.Out, "# self_operator: lead=%s/%s allow=%s revision=%d enabled=%t paused=%t hash=%s visibility_notifications=%t human_only=spawn,release,tag,publish,external_send,destructive_filesystem\n", v.LeadRole, v.LeadHandle, strings.Join(v.AllowedGateKinds, ","), v.PolicyRevision, v.Enabled, v.Paused, v.PolicyHash, delivery.NotificationsEnabled)
+		if !delivery.NotificationsEnabled {
+			fmt.Fprintln(s.Out, "# self_operator_visibility: notifications disabled; inspect durable gate threads manually")
+		}
 	}
 	fmt.Fprintln(s.Out)
 	w := tabwriter.NewWriter(s.Out, 0, 0, 2, ' ', 0)
@@ -732,6 +741,11 @@ func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorVie
 	op := team.EffectiveOperator(t)
 	contract := team.OperatorContractForMode(op.InteractionMode)
 	out := statusOperatorView{OperatorView: op}
+	if op.InteractionMode == team.OperatorInteractionSelfOperator {
+		view := team.EffectiveSelfOperator(t, ns.Session)
+		out.SelfOperator = &view
+		out.VisibilityNotifications = team.EffectiveOperatorNotifications(t.Operator).Enabled
+	}
 	if !op.Enabled {
 		return out
 	}

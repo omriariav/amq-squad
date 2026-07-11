@@ -1046,7 +1046,7 @@ func TestRunTeamInitRejectsOperatorConflicts(t *testing.T) {
 		t.Fatalf("runTeamInit conflicting mode error = %v", err)
 	}
 	err = runTeamInit([]string{"--roles", "cto", "--operator-mode", "self_operator"})
-	if err == nil || !strings.Contains(err.Error(), "#391") {
+	if err == nil || !strings.Contains(err.Error(), "explicit --self-operator-allow merge") {
 		t.Fatalf("runTeamInit self_operator error = %v", err)
 	}
 }

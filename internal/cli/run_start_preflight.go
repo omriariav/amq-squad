@@ -37,11 +37,15 @@ type runStartPreflightInput struct {
 	Binary                   string
 	Visibility               string
 	LeadMode                 string
+	Lead                     string
 	LeadModeSet              bool
 	Effort                   string
 	EffortSet                bool
 	OperatorMode             string
 	OperatorModeSet          bool
+	SelfOperatorLead         string
+	SelfOperatorAllow        string
+	SelfOperatorPolicySet    bool
 	OperatorNotifications    bool
 	OperatorNotificationsSet bool
 	LayoutPreset             string
@@ -170,7 +174,34 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 	if input.OperatorModeSet {
 		mode, modeErr := validateCanonicalOperatorMode(input.OperatorMode)
 		if modeErr != nil {
-			return add(runStartPreflightInvalidOperatorMode, "invalid --operator-mode: "+modeErr.Error(), "choose lead_pane, separate_terminal, or noc")
+			return add(runStartPreflightInvalidOperatorMode, "invalid --operator-mode: "+modeErr.Error(), "choose lead_pane, separate_terminal, noc, or self_operator")
+		}
+		if mode == team.OperatorInteractionSelfOperator {
+			if r.TeamPresent && !r.FreshRoster {
+				if input.SelfOperatorPolicySet {
+					return add(runStartPreflightExistingOperatorMode, "run start never rewrites an existing self-operator policy", "omit self-operator policy flags and use the authoritative profile", "use amq-squad team operator set to change policy")
+				}
+				existing, readErr := team.ReadProfile(r.Project, r.Profile)
+				if readErr != nil {
+					return add(runStartPreflightExistingOperatorMode, readErr.Error())
+				}
+				view := team.EffectiveSelfOperator(existing, r.Session)
+				if view.LeadRole == "" || len(view.AllowedGateKinds) == 0 {
+					return add(runStartPreflightExistingOperatorMode, "existing self_operator profile has no exact-session policy; run start fails closed", "use amq-squad team operator set for this exact session")
+				}
+			} else {
+				allow := splitCSV(input.SelfOperatorAllow)
+				if strings.TrimSpace(input.SelfOperatorLead) == "" || len(allow) != 1 || allow[0] != "merge" {
+					return add(runStartPreflightInvalidOperatorMode, "self_operator requires an exact-session lead and explicit merge-only allowlist; spawn remains human-only", "pass --self-operator-lead <lead> --self-operator-allow merge")
+				}
+				wantLead := strings.TrimSpace(input.Lead)
+				if wantLead == "" {
+					wantLead = "cto"
+				}
+				if strings.TrimSpace(input.SelfOperatorLead) != wantLead {
+					return add(runStartPreflightInvalidOperatorMode, "self-operator lead must equal the configured fresh-roster lead")
+				}
+			}
 		}
 		if r.TeamPresent && !r.FreshRoster {
 			existing, readErr := team.ReadProfile(r.Project, r.Profile)
@@ -183,6 +214,24 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 					fmt.Sprintf("--operator-mode %s does not match existing profile %q interaction mode %s; run start never rewrites an existing operator contract", mode, r.Profile, persisted),
 					"omit --operator-mode to use the existing profile contract",
 					"create a new named profile with the requested operator mode")
+			}
+		}
+	}
+	if input.SelfOperatorPolicySet && !input.OperatorModeSet {
+		return add(runStartPreflightInvalidOperatorMode, "self-operator policy flags require --operator-mode self_operator")
+	}
+	if input.SelfOperatorPolicySet && input.OperatorModeSet && strings.TrimSpace(input.OperatorMode) != team.OperatorInteractionSelfOperator {
+		return add(runStartPreflightInvalidOperatorMode, "self-operator policy flags require --operator-mode self_operator")
+	}
+	if r.TeamPresent && !r.FreshRoster {
+		existing, readErr := team.ReadProfile(r.Project, r.Profile)
+		if readErr != nil {
+			return add(runStartPreflightExistingOperatorMode, readErr.Error())
+		}
+		if team.EffectiveOperator(existing).InteractionMode == team.OperatorInteractionSelfOperator {
+			view := team.EffectiveSelfOperator(existing, r.Session)
+			if view.LeadRole == "" || len(view.AllowedGateKinds) == 0 {
+				return add(runStartPreflightExistingOperatorMode, "existing self_operator profile has no exact-session policy; run start fails closed", "use amq-squad team operator set for this exact session")
 			}
 		}
 	}

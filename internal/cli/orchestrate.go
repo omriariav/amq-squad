@@ -198,7 +198,8 @@ Usage:
   amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
       [--roles "a,b,c"] [--binary "role=bin,..."] [--model "role=model,..."]
       [--effort "role=level,..."]
-      [--operator-mode lead_pane|separate_terminal|noc]
+      [--operator-mode lead_pane|separate_terminal|noc|self_operator]
+      [--self-operator-lead ROLE --self-operator-allow merge]
       [--operator-notifications]
       [--lead-mode builder|planner]
       [--codex-args "..."] [--claude-args "..."]
@@ -228,9 +229,10 @@ binary via --binary and model via --model. --effort normalizes role-specific
 values into the existing per-member CodexArgs or ClaudeArgs fields. For an
 existing profile it is launch-only and never rewrites stored member args; it
 adds no persisted effort field or launch semantics.
-Operator mode accepts lead_pane, separate_terminal, or noc. The forward-known
-self_operator mode remains unavailable until #391 supplies its authorization
-policy.
+Operator mode accepts lead_pane, separate_terminal, noc, or self_operator.
+Fresh self_operator profiles require --self-operator-lead and the explicit
+merge-only --self-operator-allow; no default is inferred and spawn remains
+human-only.
 --operator-notifications is an independent fresh-profile add-on. It configures
 attention-only desktop delivery and never changes who may answer or approve a
 gate. Existing profiles remain authoritative and are never rewritten.
@@ -287,7 +289,9 @@ func runRunStart(args []string, version string) error {
 	binaryFlag := fs.String("binary", "", "per-role binary assignments, e.g. \"fullstack=codex,qa=codex\"")
 	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5.6-sol,fullstack=sonnet\"")
 	effortFlag := fs.String("effort", "", "per-role effort, e.g. \"cto=high,qa=medium\" (launch-only for existing profiles; normalized into native member args)")
-	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, or noc (self_operator is reserved for #391)")
+	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, noc, or self_operator")
+	selfOperatorLeadFlag := fs.String("self-operator-lead", "", "lead role delegated for exact-session self-operator policy")
+	selfOperatorAllowFlag := fs.String("self-operator-allow", "", "explicit self-operator allowlist (v2.19: merge only)")
 	operatorNotifications := fs.Bool("operator-notifications", false, "enable attention-only operator notifications for a newly created profile")
 	codexArgsFlag := fs.String("codex-args", "", "extra args for every Codex member (e.g. reasoning effort)")
 	claudeArgsFlag := fs.String("claude-args", "", "extra args for every Claude member")
@@ -316,11 +320,15 @@ func runRunStart(args []string, version string) error {
 		Binary:                   *binaryFlag,
 		Visibility:               *visibilityFlag,
 		LeadMode:                 *leadModeFlag,
+		Lead:                     *leadFlag,
 		LeadModeSet:              flagWasSet(fs, "lead-mode"),
 		Effort:                   *effortFlag,
 		EffortSet:                flagWasSet(fs, "effort"),
 		OperatorMode:             *operatorModeFlag,
 		OperatorModeSet:          flagWasSet(fs, "operator-mode"),
+		SelfOperatorLead:         *selfOperatorLeadFlag,
+		SelfOperatorAllow:        *selfOperatorAllowFlag,
+		SelfOperatorPolicySet:    flagWasSet(fs, "self-operator-lead") || flagWasSet(fs, "self-operator-allow"),
 		OperatorNotifications:    *operatorNotifications,
 		OperatorNotificationsSet: flagWasSet(fs, "operator-notifications"),
 		LayoutPreset:             *layoutPresetFlag,
@@ -398,6 +406,12 @@ func runRunStart(args []string, version string) error {
 		}
 		if flagWasSet(fs, "operator-mode") {
 			newTeamArgs = append(newTeamArgs, "--operator-mode", strings.TrimSpace(*operatorModeFlag))
+		}
+		if flagWasSet(fs, "self-operator-lead") {
+			newTeamArgs = append(newTeamArgs, "--self-operator-lead", strings.TrimSpace(*selfOperatorLeadFlag))
+		}
+		if flagWasSet(fs, "self-operator-allow") {
+			newTeamArgs = append(newTeamArgs, "--self-operator-allow", strings.TrimSpace(*selfOperatorAllowFlag))
 		}
 		if *operatorNotifications {
 			newTeamArgs = append(newTeamArgs, "--operator-notifications")

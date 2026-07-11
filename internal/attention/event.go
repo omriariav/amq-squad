@@ -17,6 +17,9 @@ type Event struct {
 	Session        string    `json:"session"`
 	Thread         string    `json:"thread,omitempty"`
 	Role           string    `json:"role,omitempty"`
+	GateKind       string    `json:"gate_kind,omitempty"`
+	Actor          string    `json:"actor,omitempty"`
+	PolicyRevision int64     `json:"policy_revision,omitempty"`
 	Subject        string    `json:"subject,omitempty"`
 	Summary        string    `json:"summary"`
 	Escalation     string    `json:"escalation,omitempty"`
@@ -25,6 +28,13 @@ type Event struct {
 	AttentionOnly  bool      `json:"attention_only"`
 	ObservedAt     time.Time `json:"observed_at"`
 	Cleared        bool      `json:"-"`
+}
+
+func SelfApprovedKey(profile, session, thread string) string {
+	return profile + "/" + session + "\x00self_approved\x00" + thread
+}
+func HumanOnlyGateKey(profile, session, thread string) string {
+	return profile + "/" + session + "\x00human_only_gate\x00" + thread
 }
 
 func GateKey(profile, session, thread string) string {

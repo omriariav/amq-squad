@@ -516,6 +516,17 @@ handle as the project lead.</p>
 href="docs/global-orchestrator-runbook.md">docs/global-orchestrator-runbook.md</a>
 and <a
 href="docs/operator-cookbook.md">docs/operator-cookbook.md</a>.</p>
+<h3 id="bounded-self-operator-mode">Bounded self-operator mode</h3>
+<p><code>self_operator</code> is an explicit, exact-session policy for
+delegated merge-gate approval. New profiles require
+<code>--operator-mode self_operator --self-operator-lead &lt;lead&gt; --self-operator-allow merge</code>;
+there is no default allowlist. Spawn remains human-only until strict
+spawn evidence exists, as do release, tag, publish, external-send, and
+destructive-filesystem gates. The approving lead cannot execute the
+merge; a different strongly verified roster actor must run the final
+verifier. Human denial/intervention and policy pause or revision revoke
+self approval. Notifications are attention-only and never authorize an
+action.</p>
 <h2 id="core-concepts">Core concepts</h2>
 <table>
 <thead>

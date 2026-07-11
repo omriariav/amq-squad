@@ -35,6 +35,7 @@ type bootstrapContext struct {
 	BriefPath        string
 	Operator         team.OperatorView
 	OperatorDelivery operatorDeliveryData
+	SelfOperator     *team.EffectiveSelfOperatorView
 	OperatorGates    bool
 	Execution        *executionModeData
 	PlannerLead      bool
@@ -176,6 +177,11 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		teamRulesPath = rules.Path(rec.CWD)
 	}
 	operator, operatorGates := bootstrapOperator(rec, teamHome)
+	var selfOperator *team.EffectiveSelfOperatorView
+	if t, err := team.ReadProfile(teamHome, rec.TeamProfile); err == nil && t.Operator != nil && t.Operator.InteractionMode == team.OperatorInteractionSelfOperator {
+		view := team.EffectiveSelfOperator(t, rec.Session)
+		selfOperator = &view
+	}
 	orchestrated, isLead, leadHandle := bootstrapOrchestration(rec, teamHome)
 	currentTeam, warnings := bootstrapCurrentTeam(rec, teamHome)
 	execution := bootstrapExecution(rec, teamHome)
@@ -197,6 +203,7 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		BriefPath:        briefPathForProfile(resolveBriefHome(teamHome, rec.CWD), rec.TeamProfile, rec.Session),
 		Operator:         operator,
 		OperatorDelivery: operatorDeliveryForRecord(rec, teamHome),
+		SelfOperator:     selfOperator,
 		OperatorGates:    operatorGates,
 		Execution:        execution,
 		PlannerLead:      isLead && execution != nil && execution.LeadMode == team.LeadModePlanner && !execution.ImplementationAllowed,

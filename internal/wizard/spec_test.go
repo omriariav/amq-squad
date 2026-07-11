@@ -6,6 +6,16 @@ import (
 	"testing"
 )
 
+func TestSpecSerializesExplicitSelfOperatorPolicy(t *testing.T) {
+	args := Spec{OperatorMode: "self_operator", SelfOperatorLead: "cto", SelfOperatorAllow: "merge"}.Args()
+	got := strings.Join(args, " ")
+	for _, want := range []string{"--operator-mode self_operator", "--self-operator-lead cto", "--self-operator-allow merge"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("args %q missing %q", got, want)
+		}
+	}
+}
+
 func TestSpecArgsStableAndPreviewOnly(t *testing.T) {
 	s := Spec{
 		Project:               "/tmp/my repo",

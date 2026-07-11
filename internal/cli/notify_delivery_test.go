@@ -23,6 +23,28 @@ type deliveryFakeSink struct {
 	calls *int
 }
 
+func TestSelfOperatorEventDeliveryFilterAndRetry(t *testing.T) {
+	old := notificationSinkFactory
+	defer func() { notificationSinkFactory = old }()
+	calls := 0
+	notificationSinkFactory = func(c team.OperatorNotificationSinkConfig) notifier.Sink { return deliveryFakeSink{c.ID, nil, &calls} }
+	p := team.OperatorNotificationPolicy{Enabled: true, Events: []string{"self_approved"}, Sinks: []team.OperatorNotificationSinkConfig{{ID: "desktop", Type: "desktop"}}}
+	item := operatorAttention{EventType: "self_approved", Key: attention.SelfApprovedKey("default", "s", "gate/x"), LatestID: "a1", Profile: "default", Session: "s"}
+	res, st := deliverNotificationSinks(context.Background(), "/project", []operatorAttention{item}, p, notifyStateFile{Schema: 2, Items: map[string]notifyStateRecord{}}, time.Hour, time.Now(), false)
+	if len(res) != 1 || calls != 1 {
+		t.Fatalf("new event not delivered: %v calls=%d", res, calls)
+	}
+	res, _ = deliverNotificationSinks(context.Background(), "/project", []operatorAttention{item}, p, st, time.Hour, time.Now().Add(time.Minute), false)
+	if len(res) != 0 || calls != 1 {
+		t.Fatal("new event dedup failed")
+	}
+	p.Events = []string{"gate"}
+	res, _ = deliverNotificationSinks(context.Background(), "/project", []operatorAttention{item}, p, notifyStateFile{Schema: 2, Items: map[string]notifyStateRecord{}}, time.Hour, time.Now(), false)
+	if len(res) != 0 {
+		t.Fatal("event filter ignored")
+	}
+}
+
 type atomicDeliverySink struct{ calls *int32 }
 
 func (atomicDeliverySink) ID() string { return "desktop" }

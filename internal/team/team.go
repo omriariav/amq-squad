@@ -251,7 +251,7 @@ func EffectiveOperatorNotifications(op *OperatorConfig) OperatorNotificationPoli
 		p.DeliverySemantics = "attention_only"
 	}
 	if len(p.Events) == 0 {
-		p.Events = []string{"gate", "local_input_blocked"}
+		p.Events = []string{"gate", "local_input_blocked", "self_approved", "human_only_gate"}
 	}
 	if p.Enabled && len(p.Sinks) == 0 {
 		p.Sinks = []OperatorNotificationSinkConfig{{ID: "desktop", Type: "desktop", Timeout: "10s"}}
@@ -276,7 +276,7 @@ func validateOperatorNotifications(op *OperatorConfig) error {
 		return fmt.Errorf("operator.notifications.delivery_semantics: must be attention_only")
 	}
 	for _, event := range p.Events {
-		if event != "gate" && event != "local_input_blocked" {
+		if event != "gate" && event != "local_input_blocked" && event != "self_approved" && event != "human_only_gate" {
 			return fmt.Errorf("operator.notifications.events: unsupported %q", event)
 		}
 	}

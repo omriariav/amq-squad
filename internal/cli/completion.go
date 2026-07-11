@@ -309,6 +309,8 @@ var completionCommonFlags = []string{
 	"--run-action",
 	"--seed-from",
 	"--self",
+	"--self-operator-allow",
+	"--self-operator-lead",
 	"--session",
 	"--set",
 	"--scope",

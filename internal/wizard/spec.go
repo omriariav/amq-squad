@@ -17,6 +17,8 @@ type Spec struct {
 	Model                          string
 	Effort                         string
 	OperatorMode                   string
+	SelfOperatorLead               string
+	SelfOperatorAllow              string
 	OperatorNotifications          bool
 	OperatorNotificationsRequested bool
 	OperatorNotificationsSet       bool
@@ -91,6 +93,8 @@ func (s Spec) Args() []string {
 	if strings.TrimSpace(s.OperatorMode) != "unspecified" {
 		appendValue("--operator-mode", s.OperatorMode)
 	}
+	appendValue("--self-operator-lead", s.SelfOperatorLead)
+	appendValue("--self-operator-allow", s.SelfOperatorAllow)
 	if s.OperatorNotifications {
 		args = append(args, "--operator-notifications")
 	}

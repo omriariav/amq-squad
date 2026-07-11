@@ -269,6 +269,21 @@ every lifecycle, status, operator, goal, and repair command.
 evidence only; it does not authorize `goal apply`, merge, release, teardown, or
 external side effects.
 
+**Bounded self-operator setup:** For a fresh exact session, use
+`amq-squad run start --operator-mode self_operator --self-operator-lead cto --self-operator-allow merge ...`.
+No allowlist is inferred. Existing profiles are authoritative; change them only
+with `amq-squad team operator set`. Spawn, releases, tags, publishing, external
+sends, and destructive filesystem actions remain human-only. A self-approved
+merge must be executed by a different verified actor. `self_approved` and
+`human_only_gate` notifications are attention-only and never satisfy
+`verify action`.
+
+`team operator set` fails closed when invoked from any tmux pane if the target
+project has no resolvable AMQ root. This is correct but can be rough during
+first-time setup: initialize the project namespace first, then run the policy
+command from a manual/non-agent control plane (outside the squad's agent
+panes).
+
 **When to use `goal apply`:** Use it only after the matching gate has a real
 operator `APPROVED:` answer and the visible lead has a native goal binding.
 `goal apply` verifies both before delivering.

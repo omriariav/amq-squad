@@ -35,6 +35,10 @@ type ProfileSummary struct {
 	LeadMode              string
 	OperatorMode          string
 	OperatorNotifications bool
+	SelfOperatorLead      string
+	SelfOperatorAllow     string
+	SelfOperatorRevision  int64
+	SelfOperatorPaused    bool
 	Members               []MemberSummary
 }
 
@@ -220,6 +224,9 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	}
 	if existing {
 		fmt.Fprintf(out, "Operator interaction (authoritative): %s\n", defaultString(s.OperatorMode, "unspecified"))
+		if s.OperatorMode == "self_operator" {
+			fmt.Fprintf(out, "Self-operator policy (authoritative): lead=%s session=%s allow=%s revision=%d paused=%t notifications=%t\n", existingProfile.SelfOperatorLead, s.Session, existingProfile.SelfOperatorAllow, existingProfile.SelfOperatorRevision, existingProfile.SelfOperatorPaused, s.OperatorNotifications)
+		}
 		for _, item := range operatorChoices(opts.Capabilities) {
 			if item.capability {
 				fmt.Fprintf(out, "  - %s\n", item.label)
@@ -228,6 +235,18 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		fmt.Fprintln(out)
 	} else if s.OperatorMode, err = promptOperatorChoice(r, out, opts.Capabilities, defaultOperatorMode(s.OperatorMode, s.Visibility)); err != nil {
 		return Spec{}, err
+	}
+	if !existing && s.OperatorMode == "self_operator" {
+		fmt.Fprintln(out, "Self-operator exclusions: spawn, release, tag, publish, external send, and destructive filesystem remain human-only. A different verified actor must execute an approved merge.")
+		if s.SelfOperatorLead, err = promptText(r, out, "Self-operator lead", defaultString(s.SelfOperatorLead, s.Lead)); err != nil {
+			return Spec{}, err
+		}
+		if s.SelfOperatorAllow, err = promptText(r, out, "Self-operator allowlist (explicitly type merge; no default)", ""); err != nil {
+			return Spec{}, err
+		}
+		if strings.TrimSpace(s.SelfOperatorAllow) != "merge" {
+			return Spec{}, fmt.Errorf("self-operator allowlist must explicitly be merge; spawn and immutable exclusions remain human-only")
+		}
 	}
 	if existing {
 		fmt.Fprintf(out, "Operator notifications (authoritative): %t\n", s.OperatorNotifications)

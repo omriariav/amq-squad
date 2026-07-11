@@ -11,6 +11,7 @@ import (
 )
 
 func TestTeamOperatorResumeRejectsDisabledUnpausedSession(t *testing.T) {
+	t.Setenv("TMUX_PANE", "")
 	dir := seedTeam(t, team.Team{Orchestrated: true, Lead: "cto", Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}}})
 	cfg, err := team.Read(dir)
 	if err != nil {
@@ -34,6 +35,7 @@ func TestTeamOperatorResumeRejectsDisabledUnpausedSession(t *testing.T) {
 }
 
 func TestTeamOperatorSetPauseResumeRevisionAndModeHistory(t *testing.T) {
+	t.Setenv("TMUX_PANE", "")
 	dir := seedTeam(t, team.Team{Orchestrated: true, Lead: "cto", Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}, {Role: "qa", Handle: "qa", Binary: "codex", Session: "s"}}})
 	if err := runTeamOperator([]string{"set", "--project", dir, "--mode", "self_operator", "--self", "cto", "--session", "s", "--allow", "merge"}); err != nil {
 		t.Fatal(err)

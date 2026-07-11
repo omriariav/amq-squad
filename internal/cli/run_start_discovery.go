@@ -193,6 +193,12 @@ func runStartWizardProfiles(project string) ([]runwizard.ProfileSummary, error) 
 			OperatorMode:          team.EffectiveOperator(t).InteractionMode,
 			OperatorNotifications: team.EffectiveOperatorNotifications(t.Operator).Enabled,
 		}
+		if view := team.EffectiveSelfOperator(t, runStartPinnedSession(t)); t.Operator != nil && t.Operator.InteractionMode == team.OperatorInteractionSelfOperator {
+			summary.SelfOperatorLead = view.LeadRole
+			summary.SelfOperatorAllow = strings.Join(view.AllowedGateKinds, ",")
+			summary.SelfOperatorRevision = view.PolicyRevision
+			summary.SelfOperatorPaused = view.Paused
+		}
 		for _, member := range t.Members {
 			summary.Members = append(summary.Members, runwizard.MemberSummary{
 				Role:   member.Role,

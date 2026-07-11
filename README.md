@@ -211,6 +211,10 @@ Operational recipes live in
 [docs/global-orchestrator-runbook.md](docs/global-orchestrator-runbook.md) and
 [docs/operator-cookbook.md](docs/operator-cookbook.md).
 
+### Bounded self-operator mode
+
+`self_operator` is an explicit, exact-session policy for delegated merge-gate approval. New profiles require `--operator-mode self_operator --self-operator-lead <lead> --self-operator-allow merge`; there is no default allowlist. Spawn remains human-only until strict spawn evidence exists, as do release, tag, publish, external-send, and destructive-filesystem gates. The approving lead cannot execute the merge; a different strongly verified roster actor must run the final verifier. Human denial/intervention and policy pause or revision revoke self approval. Notifications are attention-only and never authorize an action.
+
 ## Core concepts
 
 | Concept | Meaning |

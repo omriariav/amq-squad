@@ -286,11 +286,15 @@ func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out
 		Binary:                   spec.Binary,
 		Visibility:               spec.Visibility,
 		LeadMode:                 spec.LeadMode,
+		Lead:                     spec.Lead,
 		LeadModeSet:              strings.TrimSpace(spec.LeadMode) != "",
 		Effort:                   spec.Effort,
 		EffortSet:                strings.TrimSpace(spec.Effort) != "",
 		OperatorMode:             spec.OperatorMode,
 		OperatorModeSet:          strings.TrimSpace(spec.OperatorMode) != "" && strings.TrimSpace(spec.OperatorMode) != team.OperatorInteractionUnspecified,
+		SelfOperatorLead:         spec.SelfOperatorLead,
+		SelfOperatorAllow:        spec.SelfOperatorAllow,
+		SelfOperatorPolicySet:    strings.TrimSpace(spec.SelfOperatorLead) != "" || strings.TrimSpace(spec.SelfOperatorAllow) != "",
 		OperatorNotifications:    spec.OperatorNotificationsRequested,
 		OperatorNotificationsSet: spec.OperatorNotificationsSet,
 		LayoutPreset:             spec.LayoutPreset,
@@ -467,6 +471,8 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 	model := fs.String("model", "", "")
 	effort := fs.String("effort", "", "")
 	operatorMode := fs.String("operator-mode", "", "")
+	selfOperatorLead := fs.String("self-operator-lead", "", "")
+	selfOperatorAllow := fs.String("self-operator-allow", "", "")
 	operatorNotifications := fs.Bool("operator-notifications", false, "")
 	codexArgs := fs.String("codex-args", "", "")
 	claudeArgs := fs.String("claude-args", "", "")
@@ -501,6 +507,8 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 		Model:                          *model,
 		Effort:                         *effort,
 		OperatorMode:                   *operatorMode,
+		SelfOperatorLead:               *selfOperatorLead,
+		SelfOperatorAllow:              *selfOperatorAllow,
 		OperatorNotifications:          *operatorNotifications,
 		OperatorNotificationsRequested: *operatorNotifications,
 		OperatorNotificationsSet:       flagWasSet(fs, "operator-notifications"),
