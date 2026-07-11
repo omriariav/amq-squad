@@ -19,10 +19,12 @@ const (
 	stageSession
 	stageExistingOverride
 	stageExistingModel
+	stageExistingModelCustom
 	stageExistingEffort
 	stageRoles
 	stageRoleBinary
 	stageRoleModel
+	stageRoleModelCustom
 	stageRoleEffort
 	stageLead
 	stageLeadMode
@@ -283,6 +285,8 @@ func (m BubbleModel) title() string {
 		return "Launch-time override · " + m.currentMember().Role
 	case stageExistingModel:
 		return "Model override · " + m.currentMember().Role
+	case stageExistingModelCustom:
+		return "Custom model override · " + m.currentMember().Role
 	case stageExistingEffort:
 		return "Effort override · " + m.currentMember().Role
 	case stageRoles:
@@ -291,6 +295,8 @@ func (m BubbleModel) title() string {
 		return "Binary · " + m.currentRole()
 	case stageRoleModel:
 		return "Model · " + m.currentRole()
+	case stageRoleModelCustom:
+		return "Custom model · " + m.currentRole()
 	case stageRoleEffort:
 		return "Effort · " + m.currentRole()
 	case stageLead:
@@ -331,13 +337,17 @@ func (m BubbleModel) note() string {
 		member := m.currentMember()
 		return fmt.Sprintf("Profile values stay untouched: model=%s · effort=%s", defaultString(member.Model, "automatic"), defaultString(member.Effort, "automatic"))
 	case stageExistingModel:
+		return "Keep uses the stored profile value; a pick applies to this launch only."
+	case stageExistingModelCustom:
 		return "Enter a model for this launch only, or leave blank to keep the profile value."
 	case stageExistingEffort:
 		return "This replaces only the native effort args in the in-memory launch plan."
 	case stageRoles:
 		return "Comma-separated role ids. Defaults are shown in the field."
 	case stageRoleModel:
-		return "Use automatic to let the selected binary choose."
+		return "Models pass through to the selected binary verbatim; custom accepts any name."
+	case stageRoleModelCustom:
+		return "Enter any model name, or leave blank for automatic."
 	case stageTopology:
 		return "The diagram is the topology that the canonical visibility flag selects."
 	case stageLayoutPreset:
@@ -352,7 +362,8 @@ func (m BubbleModel) note() string {
 		return "Close is scheduled only after successful spawn, goal delivery, and final output."
 	case stageOperator:
 		if m.existingIndex >= 0 {
-			return "Existing profile contract is authoritative: " + defaultString(m.spec.OperatorMode, "unspecified")
+			mode := defaultString(m.spec.OperatorMode, "unspecified")
+			return "Existing profile contract is authoritative: " + mode + " · " + operatorContractSummary(mode) + ". Change it with 'amq-squad team operator set', then relaunch."
 		}
 		return "Unavailable capability rows stay visible so the future contract is explicit."
 	case stageOperatorNotifications:
@@ -406,7 +417,7 @@ func (m BubbleModel) summary() string {
 
 func (m BubbleModel) isTextStage() bool {
 	switch m.stage {
-	case stageProject, stageNewProfile, stageSession, stageExistingModel, stageRoles, stageRoleModel, stageLead, stageGoal, stageSeed:
+	case stageProject, stageNewProfile, stageSession, stageExistingModelCustom, stageRoles, stageRoleModelCustom, stageLead, stageGoal, stageSeed:
 		return true
 	default:
 		return false
@@ -432,12 +443,14 @@ func (m *BubbleModel) configureStage() {
 		if value == "" {
 			value = m.ctx.SessionSuggestion
 		}
-	case stageExistingModel:
+	case stageExistingModelCustom:
+		value = parseAssignments(m.spec.Model)[m.currentMember().Role]
 		placeholder = "leave blank to keep " + defaultString(m.currentMember().Model, "automatic")
 	case stageRoles:
 		value = defaultString(m.spec.Roles, "cto,senior-dev,qa")
-	case stageRoleModel:
-		value = defaultString(parseAssignments(m.spec.Model)[m.currentRole()], "automatic")
+	case stageRoleModelCustom:
+		value = parseAssignments(m.spec.Model)[m.currentRole()]
+		placeholder = "leave blank for automatic"
 	case stageLead:
 		value = defaultString(m.spec.Lead, defaultLead(m.roleOrder))
 	case stageGoal:
@@ -471,10 +484,14 @@ func (m BubbleModel) choices() []choice {
 		return choices
 	case stageExistingOverride:
 		return []choice{{value: "keep", label: "Keep profile model and effort"}, {value: "override", label: "Override this role for this launch only"}}
+	case stageExistingModel:
+		return existingOverrideModelChoices(m.currentMember())
 	case stageExistingEffort:
 		return effortChoices(m.currentMember().Binary)
 	case stageRoleBinary:
 		return []choice{{value: "codex", label: "Codex"}, {value: "claude", label: "Claude"}}
+	case stageRoleModel:
+		return modelChoices(parseAssignments(m.spec.Binary)[m.currentRole()])
 	case stageRoleEffort:
 		return effortChoices(parseAssignments(m.spec.Binary)[m.currentRole()])
 	case stageLeadMode:
@@ -490,6 +507,7 @@ func (m BubbleModel) choices() []choice {
 			for _, item := range operatorChoices(m.opts.Capabilities) {
 				if item.capability {
 					item.disabled = true
+					item.label += " [locked: the stored profile contract decides]"
 					choices = append(choices, item)
 				}
 			}
@@ -536,8 +554,14 @@ func (m BubbleModel) defaultCursor() int {
 	switch m.stage {
 	case stageProfile:
 		want = defaultString(m.spec.Profile, "default")
+	case stageExistingModel:
+		// An empty override maps to automatic, which this list omits; the
+		// find-loop then falls through to keep at index zero.
+		want = defaultModelChoice(parseAssignments(m.spec.Model)[m.currentMember().Role], m.currentMember().Binary)
 	case stageExistingEffort:
 		want = defaultString(m.currentMember().Effort, effortAutomatic)
+	case stageRoleModel:
+		want = defaultModelChoice(parseAssignments(m.spec.Model)[m.currentRole()], parseAssignments(m.spec.Binary)[m.currentRole()])
 	case stageRoleBinary:
 		want = parseAssignments(m.spec.Binary)[m.currentRole()]
 		if want == "" {
@@ -611,6 +635,13 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 			m.history = m.history[:len(m.history)-1]
 			return m, nil
 		}
+		if m.existingIndex >= 0 {
+			if mismatch := pinnedSessionMismatch(m.ctx.Profiles[m.existingIndex], value); mismatch != nil {
+				m.err = mismatch
+				m.history = m.history[:len(m.history)-1]
+				return m, nil
+			}
+		}
 		m.spec.Session = value
 		if m.existingIndex >= 0 {
 			m.spec.Roles, m.spec.Binary, m.spec.Model, m.spec.Effort, m.spec.Lead, m.spec.LeadMode = "", "", "", "", "", ""
@@ -626,7 +657,7 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 		} else {
 			m.transition(stageRoles)
 		}
-	case stageExistingModel:
+	case stageExistingModelCustom:
 		if value != "" {
 			m.spec.Model = setAssignment(m.spec.Model, m.currentMember().Role, value)
 		} else {
@@ -649,8 +680,8 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 		}
 		m.roleIndex = 0
 		m.transition(stageRoleBinary)
-	case stageRoleModel:
-		if value == "" || strings.EqualFold(value, "automatic") {
+	case stageRoleModelCustom:
+		if value == "" || strings.EqualFold(value, effortAutomatic) {
 			m.spec.Model = removeAssignment(m.spec.Model, m.currentRole())
 		} else {
 			m.spec.Model = setAssignment(m.spec.Model, m.currentRole(), value)
@@ -700,12 +731,34 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 		} else {
 			m.nextExistingMember()
 		}
+	case stageExistingModel:
+		switch selected {
+		case modelCustomChoice:
+			m.transition(stageExistingModelCustom)
+		case modelKeepChoice:
+			m.spec.Model = removeAssignment(m.spec.Model, m.currentMember().Role)
+			m.transition(stageExistingEffort)
+		default:
+			m.spec.Model = setAssignment(m.spec.Model, m.currentMember().Role, selected)
+			m.transition(stageExistingEffort)
+		}
 	case stageExistingEffort:
 		m.spec.Effort = setAssignment(m.spec.Effort, m.currentMember().Role, selected)
 		m.nextExistingMember()
 	case stageRoleBinary:
 		m.spec.Binary = setAssignment(m.spec.Binary, m.currentRole(), selected)
 		m.transition(stageRoleModel)
+	case stageRoleModel:
+		switch selected {
+		case modelCustomChoice:
+			m.transition(stageRoleModelCustom)
+		case effortAutomatic:
+			m.spec.Model = removeAssignment(m.spec.Model, m.currentRole())
+			m.transition(stageRoleEffort)
+		default:
+			m.spec.Model = setAssignment(m.spec.Model, m.currentRole(), selected)
+			m.transition(stageRoleEffort)
+		}
 	case stageRoleEffort:
 		if selected == effortAutomatic {
 			m.spec.Effort = removeAssignment(m.spec.Effort, m.currentRole())
@@ -818,7 +871,7 @@ func (m BubbleModel) phaseIndex() int {
 	switch m.stage {
 	case stageProject:
 		return 0
-	case stageProfile, stageNewProfile, stageSession, stageExistingOverride, stageExistingModel, stageExistingEffort, stageRoles, stageRoleBinary, stageRoleModel, stageRoleEffort, stageLead, stageLeadMode:
+	case stageProfile, stageNewProfile, stageSession, stageExistingOverride, stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageRoles, stageRoleBinary, stageRoleModel, stageRoleModelCustom, stageRoleEffort, stageLead, stageLeadMode:
 		return 1
 	case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane:
 		return 2
