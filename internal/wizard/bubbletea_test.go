@@ -357,12 +357,12 @@ func TestBubbleModelOffersModelsPerBinaryWithCustomEscape(t *testing.T) {
 	m.stage = stageRoleModel
 	m.configureStage()
 	view := flattenBubbleView(m.View())
-	for _, want := range []string{"automatic", "opus", "sonnet", "haiku", "custom"} {
+	for _, want := range []string{"automatic", "fable", "opus", "sonnet", "haiku", "custom"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("claude model list missing %q:\n%s", want, view)
 		}
 	}
-	m.cursor = 2 // sonnet
+	m.cursor = 3 // sonnet
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageRoleEffort || m.spec.Model != "cto=sonnet" {
 		t.Fatalf("curated pick = stage %v model %q", m.stage, m.spec.Model)

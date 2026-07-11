@@ -309,6 +309,7 @@ func modelChoices(binary string) []choice {
 	choices := []choice{{value: effortAutomatic, label: "automatic: let the binary choose"}}
 	if strings.EqualFold(binary, "claude") {
 		choices = append(choices,
+			choice{value: "fable", label: "fable"},
 			choice{value: "opus", label: "opus"},
 			choice{value: "sonnet", label: "sonnet"},
 			choice{value: "haiku", label: "haiku"},

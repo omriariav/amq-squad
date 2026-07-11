@@ -211,7 +211,7 @@ func TestRunNumberedOffersModelListWithCustomEscape(t *testing.T) {
 		"",    // session
 		"cto", // single role
 		"2",   // claude binary
-		"3",   // sonnet from the claude list
+		"4",   // sonnet from the claude list (automatic, fable, opus, sonnet, haiku, custom)
 		"",    // effort
 		"",    // lead
 		"",    // lead mode
@@ -234,7 +234,7 @@ func TestRunNumberedOffersModelListWithCustomEscape(t *testing.T) {
 	if got.Model != "cto=sonnet" {
 		t.Fatalf("curated model pick = %q", got.Model)
 	}
-	for _, want := range []string{"opus", "sonnet", "haiku", "custom: type a model name"} {
+	for _, want := range []string{"fable", "opus", "sonnet", "haiku", "custom: type a model name"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("model list missing %q:\n%s", want, out.String())
 		}
