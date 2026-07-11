@@ -96,7 +96,9 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
 	operatorFlag := fs.String("operator", team.DefaultOperatorHandle, "virtual operator mailbox handle for human gates (default: user)")
-	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, or noc (self_operator is reserved for #391)")
+	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, noc, or self_operator")
+	selfOperatorLeadFlag := fs.String("self-operator-lead", "", "lead role delegated for exact-session self-operator policy")
+	selfOperatorAllowFlag := fs.String("self-operator-allow", "", "explicit self-operator gate allowlist (v2.19: merge only)")
 	operatorNotifications := fs.Bool("operator-notifications", false, "enable attention-only operator notifications with the default desktop sink")
 	noOperator := fs.Bool("no-operator", false, "disable the virtual operator participant for this profile")
 	orchestratedFlag := fs.Bool("orchestrated", false, "wire the squad for lead-agent orchestration: inject the reporting norm into team-rules.md and mark the lead role")
@@ -122,8 +124,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--binary persona=cli,...] [--session workstream] [--model role=model,...] [--effort role=level,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE] [--operator-mode lead_pane|separate_terminal|noc] [--operator-notifications] [--no-operator] [--orchestrated [--lead ROLE]] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
-  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--binary role=cli,...] [--session workstream] [--model role=model,...] [--effort role=level,...] [--trust sandboxed|approve-for-me|trusted] [--operator HANDLE] [--operator-mode lead_pane|separate_terminal|noc] [--operator-notifications] [--no-operator] [--orchestrated [--lead ROLE]] [--lead-mode builder|planner] [--mode project_lead|project_team|direct_lead_session|global_orchestrator] [--composition seeded|autonomous] [--max-agents N --max-total-spawns N --allowed-roles role,... --budget-turns N] [--codex-args args] [--claude-args args] [--dry-run [--json]] [--force]
+  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--session workstream] [--operator-mode lead_pane|separate_terminal|noc|self_operator] [--self-operator-lead ROLE --self-operator-allow merge] [other flags]
+  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--session workstream] [--operator-mode lead_pane|separate_terminal|noc|self_operator] [--self-operator-lead ROLE --self-operator-allow merge] [other flags]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes the team config under
@@ -151,8 +153,9 @@ The authored document is staged under .amq-squad/roles/<id>.md and seeds that
 agent's role.md at launch.
 
 Operator interaction: --operator-mode accepts lead_pane, separate_terminal,
-or noc. The forward-known self_operator schema value is reserved and cannot be
-selected until #391 supplies its authorization policy.
+noc, or self_operator. Fresh self_operator profiles require an exact
+--self-operator-lead and explicit --self-operator-allow merge. Spawn remains
+human-only and merges require a different verified execution actor.
 --operator-notifications independently enables attention-only delivery through
 the default desktop sink. It never changes the interaction mode or approves a
 gate; run the scoped operator watcher on the host that should show alerts.
@@ -482,6 +485,16 @@ Examples:
 	// default.
 	if executionMode == executionModeGlobalOrchestrator && !flagWasSet(fs, "target-project-root") {
 		return usageErrorf("global_orchestrator requires an explicit --target-project-root: the control root is not the project tree, and amq-squad will not silently use the current directory. Pass the confirmed local checkout path.")
+	}
+	if operator.InteractionMode == team.OperatorInteractionSelfOperator {
+		selfLead := strings.TrimSpace(*selfOperatorLeadFlag)
+		allow := splitCSV(*selfOperatorAllowFlag)
+		if selfLead == "" || selfLead != leadRole || len(allow) != 1 || allow[0] != "merge" {
+			return usageErrorf("self_operator requires --self-operator-lead equal to the configured lead and explicit --self-operator-allow merge; spawn remains human-only")
+		}
+		operator.SelfOperator = &team.SelfOperatorPolicy{LeadRole: selfLead, PolicyRevision: 1, Sessions: map[string]team.SelfOperatorSessionPolicy{workstream: {Enabled: true, AllowedGateKinds: []string{"merge"}}}}
+	} else if flagWasSet(fs, "self-operator-lead") || flagWasSet(fs, "self-operator-allow") {
+		return usageErrorf("--self-operator-lead/--self-operator-allow require --operator-mode self_operator")
 	}
 
 	t := team.Team{

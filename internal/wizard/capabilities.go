@@ -31,8 +31,7 @@ type Option struct {
 func DefaultCapabilities() CapabilitySet {
 	return CapabilitySet{
 		CapabilitySelfOperator: {
-			ID: CapabilitySelfOperator, Issue: 391, ShipsIn: "v2.19.0",
-			Reason: "delegated self-approval policy is not implemented",
+			ID: CapabilitySelfOperator, Available: true, Issue: 391, ShipsIn: "v2.19.0",
 		},
 		CapabilityOperatorNotifications: {
 			ID: CapabilityOperatorNotifications, Available: true, Issue: 390, ShipsIn: "v2.19.0",
@@ -45,7 +44,7 @@ func OperatorOptions() []Option {
 		{ID: "lead_pane", Label: "Live in the lead pane", Consequence: "Approve by typing in the lead window; the lead mirrors every decision to gate/<topic>."},
 		{ID: "separate_terminal", Label: "Separate operator terminal", Consequence: "Poll durable gates and answer with explicit operator AMQ replies."},
 		{ID: "noc", Label: "NOC/global board", Consequence: "A global operator board polls and answers this run by explicit namespace."},
-		{ID: "self_operator", Label: "Self-operator / delegated approval", Consequence: "The lead may answer only allowlisted gates; human-only exclusions remain blocked.", Requires: CapabilitySelfOperator},
+		{ID: "self_operator", Label: "Self-operator / delegated approval", Consequence: "The lead may approve only explicitly allowlisted merge gates; spawn, release, tag, publish, external, and destructive gates remain human-only; merges require a second actor.", Requires: CapabilitySelfOperator},
 	}
 }
 

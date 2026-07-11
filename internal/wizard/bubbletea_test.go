@@ -26,6 +26,34 @@ func TestBubbleModelStartsWithProjectDefaultsAndPhaseRail(t *testing.T) {
 	}
 }
 
+func TestBubbleSelfOperatorAllowBackDeselectReselect(t *testing.T) {
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Lead: "cto"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.stage = stageOperator
+	m.configureStage()
+	m.cursor = 3
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageSelfOperatorAllow || m.spec.SelfOperatorAllow != "" {
+		t.Fatal("allowlist was preselected")
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.spec.SelfOperatorAllow != "merge" || m.stage != stageSelfOperatorAllow {
+		t.Fatal("merge not selected")
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.spec.SelfOperatorAllow != "" {
+		t.Fatal("back did not restore zero selection")
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageOperatorNotifications || m.spec.SelfOperatorAllow != "merge" {
+		t.Fatal("reselect/continue failed")
+	}
+}
+
 func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePreserved(t *testing.T) {
 	profile := ProfileSummary{
 		Name: "review", MemberCount: 1, PinnedSession: "review-work", Lead: "cto", LeadMode: "planner", OperatorMode: "separate_terminal",
@@ -146,12 +174,12 @@ func TestBubbleModelCapabilityRowsAreGatedByInjectedCatalog(t *testing.T) {
 	m.configureStage()
 	m.cursor = 3
 	view := m.View()
-	if !strings.Contains(view, "Self-operator / delegated approval") || !strings.Contains(view, "v2.19.0: #391") {
-		t.Fatalf("disabled capability missing from view:\n%s", view)
+	if !strings.Contains(view, "Self-operator / delegated approval") {
+		t.Fatalf("capability missing from view:\n%s", view)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.stage != stageOperator || m.err == nil || m.spec.OperatorMode != "" {
-		t.Fatalf("disabled selection changed state: stage=%v err=%v spec=%+v", m.stage, m.err, m.spec)
+	if m.stage != stageSelfOperatorAllow || m.spec.OperatorMode != "self_operator" {
+		t.Fatalf("default capability selection failed: stage=%v err=%v spec=%+v", m.stage, m.err, m.spec)
 	}
 
 	caps := DefaultCapabilities()
@@ -166,8 +194,27 @@ func TestBubbleModelCapabilityRowsAreGatedByInjectedCatalog(t *testing.T) {
 	m.configureStage()
 	m.cursor = 3
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.stage != stageOperatorNotifications || m.spec.OperatorMode != "self_operator" {
+	if m.stage != stageSelfOperatorAllow || m.spec.OperatorMode != "self_operator" {
 		t.Fatalf("enabled selection = stage %v mode %q", m.stage, m.spec.OperatorMode)
+	}
+}
+
+func TestBubbleExistingSelfOperatorShowsAuthoritativePolicy(t *testing.T) {
+	p := ProfileSummary{Name: "default", OperatorMode: "self_operator", OperatorNotifications: true, SelfOperatorLead: "cto", SelfOperatorAllow: "merge", SelfOperatorRevision: 7, SelfOperatorPaused: true}
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", OperatorMode: "self_operator", OperatorNotifications: true}, InspectProject: func(string) (ProjectContext, error) {
+		return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{p}}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.existingIndex = 0
+	m.stage = stageOperator
+	m.configureStage()
+	view := m.View()
+	for _, want := range []string{"lead=cto", "allow=merge", "revision=7", "paused=true", "notifications=true"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q: %s", want, view)
+		}
 	}
 }
 

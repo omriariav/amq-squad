@@ -27,6 +27,7 @@ const (
 	stageLead
 	stageLeadMode
 	stageOperator
+	stageSelfOperatorAllow
 	stageOperatorNotifications
 	stageTopology
 	stageLayoutPreset
@@ -300,6 +301,8 @@ func (m BubbleModel) title() string {
 		return "Choose the operator interaction contract"
 	case stageOperatorNotifications:
 		return "Choose the independent notification add-on"
+	case stageSelfOperatorAllow:
+		return "Explicit self-operator allowlist"
 	case stageTopology:
 		return "Choose where agents appear"
 	case stageLayoutPreset:
@@ -357,6 +360,8 @@ func (m BubbleModel) note() string {
 			return fmt.Sprintf("Existing profile notification policy is authoritative: %t", m.spec.OperatorNotifications)
 		}
 		return "Attention-only notifications never approve gates or send pane input."
+	case stageSelfOperatorAllow:
+		return "No gate is preselected. Selecting merge opts in explicitly; spawn, release, tag, publish, external send, and destructive filesystem remain human-only. A second verified actor must execute the merge."
 	case stageConfirm:
 		return "Enter collects these answers and runs preview. Live launch is a later default-No prompt."
 	case stageSeed:
@@ -476,7 +481,12 @@ func (m BubbleModel) choices() []choice {
 		return []choice{{value: "builder", label: "Builder · lead may implement and delegate"}, {value: "planner", label: "Planner · lead dispatches and reviews; workers mutate"}}
 	case stageOperator:
 		if m.existingIndex >= 0 {
-			choices := []choice{{value: "continue", label: "Continue with authoritative profile contract · " + defaultString(m.spec.OperatorMode, "unspecified")}}
+			p := m.ctx.Profiles[m.existingIndex]
+			label := "Continue with authoritative profile contract · " + defaultString(m.spec.OperatorMode, "unspecified")
+			if m.spec.OperatorMode == "self_operator" {
+				label += fmt.Sprintf(" · lead=%s allow=%s revision=%d paused=%t notifications=%t", p.SelfOperatorLead, p.SelfOperatorAllow, p.SelfOperatorRevision, p.SelfOperatorPaused, p.OperatorNotifications)
+			}
+			choices := []choice{{value: "continue", label: label}}
 			for _, item := range operatorChoices(m.opts.Capabilities) {
 				if item.capability {
 					item.disabled = true
@@ -491,6 +501,11 @@ func (m BubbleModel) choices() []choice {
 			return []choice{{value: "continue", label: fmt.Sprintf("Continue with authoritative policy · enabled=%t", m.spec.OperatorNotifications)}}
 		}
 		return []choice{{value: "no", label: "No notifications"}, {value: "yes", label: "Attention-only desktop notifications"}}
+	case stageSelfOperatorAllow:
+		if m.spec.SelfOperatorAllow == "merge" {
+			return []choice{{value: "remove", label: "☑ merge · selected explicitly"}, {value: "continue", label: "Continue with explicit merge allowlist"}}
+		}
+		return []choice{{value: "merge", label: "☐ merge · select explicitly (second actor executes)"}}
 	case stageTopology:
 		return []choice{{value: "sibling-tabs", label: "One window per agent"}, {value: "current", label: "Panes in this window"}, {value: "detached", label: "Detached squad"}}
 	case stageLayoutPreset:
@@ -711,6 +726,21 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 			m.transition(stageOperatorNotifications)
 		} else {
 			m.spec.OperatorMode = selected
+			if selected == "self_operator" {
+				m.spec.SelfOperatorLead = m.spec.Lead
+				m.transition(stageSelfOperatorAllow)
+			} else {
+				m.transition(stageOperatorNotifications)
+			}
+		}
+	case stageSelfOperatorAllow:
+		if selected == "merge" {
+			m.spec.SelfOperatorAllow = "merge"
+			m.transition(stageSelfOperatorAllow)
+		} else if selected == "remove" {
+			m.spec.SelfOperatorAllow = ""
+			m.transition(stageSelfOperatorAllow)
+		} else {
 			m.transition(stageOperatorNotifications)
 		}
 	case stageOperatorNotifications:
@@ -790,7 +820,7 @@ func (m BubbleModel) phaseIndex() int {
 		return 0
 	case stageProfile, stageNewProfile, stageSession, stageExistingOverride, stageExistingModel, stageExistingEffort, stageRoles, stageRoleBinary, stageRoleModel, stageRoleEffort, stageLead, stageLeadMode:
 		return 1
-	case stageTopology, stageLayoutPreset, stageOperator, stageOperatorNotifications, stageLauncherPane:
+	case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane:
 		return 2
 	case stageGoal, stageSeed:
 		return 3
@@ -808,7 +838,7 @@ func operatorContractSummary(mode string) string {
 	case "noc":
 		return "NOC/global orchestrator owns polling"
 	case "self_operator":
-		return "forward-known only; #391 authorization unavailable"
+		return "exact-session merge-only delegation; human exclusions and second actor remain"
 	default:
 		return "legacy poll-required compatibility"
 	}
