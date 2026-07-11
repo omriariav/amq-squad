@@ -129,6 +129,42 @@ func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePr
 	}
 }
 
+func TestBubbleModelRejectsSessionThePinnedProfileCannotRun(t *testing.T) {
+	profile := ProfileSummary{
+		Name: "default", MemberCount: 1, PinnedSession: "issue-136",
+		Members: []MemberSummary{{Role: "cto", Binary: "codex"}},
+	}
+	m, err := NewBubbleModel(NumberedOptions{
+		Defaults: Spec{Project: "/repo", Profile: "default"},
+		InspectProject: func(string) (ProjectContext, error) {
+			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // project
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // profile: default
+	if m.stage != stageSession {
+		t.Fatalf("stage = %v, want session", m.stage)
+	}
+	m.input.SetValue("issue-218")
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageSession || m.err == nil {
+		t.Fatalf("mismatched session advanced: stage=%v err=%v", m.stage, m.err)
+	}
+	for _, want := range []string{"issue-136", "issue-218", "named profile"} {
+		if !strings.Contains(m.err.Error(), want) {
+			t.Fatalf("mismatch guidance missing %q: %v", want, m.err)
+		}
+	}
+	m.input.SetValue("issue-136")
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageExistingOverride || m.spec.Session != "issue-136" {
+		t.Fatalf("pinned session refused: stage=%v session=%q", m.stage, m.spec.Session)
+	}
+}
+
 func TestBubbleModelHydratesEnabledAuthoritativeNotifications(t *testing.T) {
 	profile := ProfileSummary{
 		Name: "review", PinnedSession: "review-work", OperatorMode: "noc", OperatorNotifications: true,

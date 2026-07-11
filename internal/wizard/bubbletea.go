@@ -611,6 +611,13 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 			m.history = m.history[:len(m.history)-1]
 			return m, nil
 		}
+		if m.existingIndex >= 0 {
+			if mismatch := pinnedSessionMismatch(m.ctx.Profiles[m.existingIndex], value); mismatch != nil {
+				m.err = mismatch
+				m.history = m.history[:len(m.history)-1]
+				return m, nil
+			}
+		}
 		m.spec.Session = value
 		if m.existingIndex >= 0 {
 			m.spec.Roles, m.spec.Binary, m.spec.Model, m.spec.Effort, m.spec.Lead, m.spec.LeadMode = "", "", "", "", "", ""

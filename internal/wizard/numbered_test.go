@@ -204,6 +204,41 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 	}
 }
 
+func TestRunNumberedRepromptsSessionThePinnedProfileCannotRun(t *testing.T) {
+	input := strings.Join([]string{
+		"",          // project
+		"",          // profile: default (existing)
+		"issue-218", // rejected: pinned to issue-136
+		"",          // retry accepts the pinned default
+		"",          // keep cto profile values
+		"",          // topology
+		"",          // one-window layout
+		"",          // close launcher
+		"",          // goal
+		"",          // seed
+	}, "\n") + "\n"
+	var out bytes.Buffer
+	got, err := RunNumbered(strings.NewReader(input), &out, NumberedOptions{
+		Defaults: Spec{Project: "/repo", Visibility: "sibling-tabs"},
+		InspectProject: func(string) (ProjectContext, error) {
+			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{
+				{Name: "default", MemberCount: 1, PinnedSession: "issue-136", Members: []MemberSummary{{Role: "cto", Binary: "codex"}}},
+			}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session != "issue-136" {
+		t.Fatalf("session = %q, want the pinned issue-136", got.Session)
+	}
+	for _, want := range []string{"Check:", "pinned workstream issue-136", "named profile"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("re-prompt output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
 func TestPromptOperatorChoiceCapabilityGating(t *testing.T) {
 	var out bytes.Buffer
 	mode, err := promptOperatorChoice(bufio.NewReader(strings.NewReader("4\n")), &out, nil, "lead_pane")

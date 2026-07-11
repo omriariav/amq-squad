@@ -98,8 +98,18 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	if strings.TrimSpace(sessionDefault) == "" {
 		sessionDefault = ctx.SessionSuggestion
 	}
-	if s.Session, err = promptText(r, out, "Workstream session", sessionDefault); err != nil {
-		return Spec{}, err
+	for {
+		if s.Session, err = promptText(r, out, "Workstream session", sessionDefault); err != nil {
+			return Spec{}, err
+		}
+		if existingProfile == nil {
+			break
+		}
+		mismatch := pinnedSessionMismatch(*existingProfile, s.Session)
+		if mismatch == nil {
+			break
+		}
+		fmt.Fprintf(out, "Check: %v\n", mismatch)
 	}
 
 	existing := existingProfile != nil || (opts.ProfileExists != nil && opts.ProfileExists(s.Project, s.Profile))
@@ -273,6 +283,20 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 }
 
 const effortAutomatic = "automatic"
+
+// pinnedSessionMismatch mirrors run start's existing_profile_session_mismatch
+// preflight at answer time: a pinned roster runs only its pinned workstream,
+// so a different session must be rejected before the user invests in the
+// remaining phases. Best-effort — the summary carries one inferred pin, so
+// the canonical preflight stays authoritative.
+func pinnedSessionMismatch(profile ProfileSummary, session string) error {
+	pinned := strings.TrimSpace(profile.PinnedSession)
+	session = strings.TrimSpace(session)
+	if (profile.MemberCount == 0 && len(profile.Members) == 0) || pinned == "" || pinned == session {
+		return nil
+	}
+	return fmt.Errorf("profile %q runs only its pinned workstream %s; use %s, or pick a named profile for %s instead", profile.Name, pinned, pinned, session)
+}
 
 func promptProfile(r *bufio.Reader, out io.Writer, current string, ctx ProjectContext) (string, *ProfileSummary, error) {
 	if len(ctx.Profiles) == 0 {
