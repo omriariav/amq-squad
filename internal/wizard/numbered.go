@@ -144,12 +144,20 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 				if override != "override" {
 					continue
 				}
-				model, promptErr := promptOptionalOverride(r, out, member.Role+" model override", defaultString(member.Model, "automatic"))
+				modelSel, promptErr := promptChoice(r, out, member.Role+" model override", existingOverrideModelChoices(member), modelKeepChoice)
 				if promptErr != nil {
 					return Spec{}, promptErr
 				}
-				if model != "" {
-					modelOverrides[member.Role] = model
+				if modelSel == modelCustomChoice {
+					custom, customErr := promptOptionalOverride(r, out, member.Role+" model override", defaultString(member.Model, "automatic"))
+					if customErr != nil {
+						return Spec{}, customErr
+					}
+					if custom != "" {
+						modelOverrides[member.Role] = custom
+					}
+				} else if modelSel != modelKeepChoice {
+					modelOverrides[member.Role] = modelSel
 				}
 				effortChoices := []choice{{value: "automatic", label: "automatic: ignore stored effort for this launch"}, {value: "low", label: "low"}, {value: "medium", label: "medium"}, {value: "high", label: "high"}}
 				if member.Binary == "codex" {
@@ -189,11 +197,16 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 			if err != nil {
 				return Spec{}, err
 			}
-			model, promptErr := promptText(r, out, role+" model", defaultString(modelPrefill[role], "automatic"))
+			model, promptErr := promptChoice(r, out, role+" model", modelChoices(binaryValues[role]), defaultModelChoice(modelPrefill[role], binaryValues[role]))
 			if promptErr != nil {
 				return Spec{}, promptErr
 			}
-			if model != "" && !strings.EqualFold(model, "automatic") {
+			if model == modelCustomChoice {
+				if model, promptErr = promptText(r, out, role+" model name", defaultString(modelPrefill[role], "automatic")); promptErr != nil {
+					return Spec{}, promptErr
+				}
+			}
+			if model != "" && !strings.EqualFold(model, effortAutomatic) {
 				modelValues[role] = model
 			}
 			effortChoices := []choice{{value: "automatic", label: "automatic: let the binary choose"}, {value: "low", label: "low"}, {value: "medium", label: "medium"}, {value: "high", label: "high"}}
@@ -283,7 +296,57 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	return s, nil
 }
 
-const effortAutomatic = "automatic"
+const (
+	effortAutomatic   = "automatic"
+	modelCustomChoice = "custom"
+	modelKeepChoice   = "keep"
+)
+
+// modelChoices offers common models per binary. Models pass through to the
+// binary verbatim, so this list is a convenience, never an allowlist; the
+// custom row keeps free-text entry available.
+func modelChoices(binary string) []choice {
+	choices := []choice{{value: effortAutomatic, label: "automatic: let the binary choose"}}
+	if strings.EqualFold(binary, "claude") {
+		choices = append(choices,
+			choice{value: "opus", label: "opus"},
+			choice{value: "sonnet", label: "sonnet"},
+			choice{value: "haiku", label: "haiku"},
+		)
+	} else {
+		choices = append(choices,
+			choice{value: "gpt-5.6-sol", label: "gpt-5.6-sol"},
+			choice{value: "gpt-5.6-terra", label: "gpt-5.6-terra"},
+		)
+	}
+	return append(choices, choice{value: modelCustomChoice, label: "custom: type a model name"})
+}
+
+// existingOverrideModelChoices frames the same list for a launch-only override:
+// keep replaces automatic because clearing the override falls back to the
+// stored profile value, not to the binary's default.
+func existingOverrideModelChoices(member MemberSummary) []choice {
+	choices := []choice{{value: modelKeepChoice, label: "keep profile model: " + defaultString(member.Model, "automatic")}}
+	for _, item := range modelChoices(member.Binary) {
+		if item.value != effortAutomatic {
+			choices = append(choices, item)
+		}
+	}
+	return choices
+}
+
+func defaultModelChoice(prefill, binary string) string {
+	prefill = strings.TrimSpace(prefill)
+	if prefill == "" {
+		return effortAutomatic
+	}
+	for _, item := range modelChoices(binary) {
+		if strings.EqualFold(item.value, prefill) {
+			return item.value
+		}
+	}
+	return modelCustomChoice
+}
 
 // pinnedSessionMismatch mirrors run start's existing_profile_session_mismatch
 // preflight at answer time: a pinned roster runs only its pinned workstream,

@@ -86,6 +86,11 @@ func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePr
 	if m.stage != stageExistingModel {
 		t.Fatalf("stage = %v, want existing model", m.stage)
 	}
+	m.cursor = 3 // custom: type a model name
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageExistingModelCustom {
+		t.Fatalf("stage = %v, want existing model custom", m.stage)
+	}
 	m.input.SetValue("launch-model")
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m.cursor = 3 // high
@@ -334,12 +339,52 @@ func TestBubbleModelBlankExistingModelRemovesEarlierLaunchOverride(t *testing.T)
 	}
 	m.ctx.Profiles = []ProfileSummary{{Name: "review", Members: []MemberSummary{{Role: "cto", Binary: "codex"}}}}
 	m.existingIndex = 0
-	m.stage = stageExistingModel
+	m.stage = stageExistingModelCustom
 	m.configureStage()
 	m.input.SetValue("")
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.spec.Model != "" {
 		t.Fatalf("cleared model override = %q", m.spec.Model)
+	}
+}
+
+func TestBubbleModelOffersModelsPerBinaryWithCustomEscape(t *testing.T) {
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Roles: "cto", Binary: "cto=claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.roleOrder = []string{"cto"}
+	m.stage = stageRoleModel
+	m.configureStage()
+	view := flattenBubbleView(m.View())
+	for _, want := range []string{"automatic", "opus", "sonnet", "haiku", "custom"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("claude model list missing %q:\n%s", want, view)
+		}
+	}
+	m.cursor = 2 // sonnet
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageRoleEffort || m.spec.Model != "cto=sonnet" {
+		t.Fatalf("curated pick = stage %v model %q", m.stage, m.spec.Model)
+	}
+
+	m, err = NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Roles: "cto", Binary: "cto=codex"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.roleOrder = []string{"cto"}
+	m.stage = stageRoleModel
+	m.configureStage()
+	choices := m.choices()
+	m.cursor = len(choices) - 1 // custom
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageRoleModelCustom {
+		t.Fatalf("custom escape = stage %v", m.stage)
+	}
+	m.input.SetValue("gpt-5.7-experimental")
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageRoleEffort || m.spec.Model != "cto=gpt-5.7-experimental" {
+		t.Fatalf("custom model = stage %v model %q", m.stage, m.spec.Model)
 	}
 }
 
