@@ -42,6 +42,61 @@ func TestRunLaunchDryRunSandboxedCodexOmitsBypassDefault(t *testing.T) {
 	}
 }
 
+func TestRunLaunchBootstrapBoundaryIntegrated(t *testing.T) {
+	for _, tc := range []struct{ name, raw, reason string }{
+		{"delimiter-tail", "--profile p -- existing-prompt", "after --"},
+		{"bare-positional", "--profile p existing-prompt", "positional token"},
+		{"unknown-ambiguous", "--mystery value", "ambiguous"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupFakeAMQ(t)
+			var observed launch.Record
+			var argv []string
+			old := launchPlanObserver
+			t.Cleanup(func() { launchPlanObserver = old })
+			launchPlanObserver = func(rec launch.Record, args []string) { observed = rec; argv = args }
+			stdout, _, err := captureOutput(t, func() error {
+				return runLaunch([]string{"--dry-run", "--trust", "sandboxed", "--codex-args=" + tc.raw, "codex"})
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(stdout, "You are a fresh amq-squad agent.") {
+				t.Fatalf("unsafe argv received generated bootstrap:\n%s", stdout)
+			}
+			if observed.BootstrapExpectation == nil || observed.BootstrapExpectation.Required || !strings.Contains(observed.BootstrapExpectation.NotRequiredReason, tc.reason) {
+				t.Fatalf("expectation=%#v argv=%#v", observed.BootstrapExpectation, argv)
+			}
+		})
+	}
+
+	t.Run("terminal-delimiter", func(t *testing.T) {
+		setupFakeAMQ(t)
+		var argv []string
+		old := launchPlanObserver
+		t.Cleanup(func() { launchPlanObserver = old })
+		launchPlanObserver = func(_ launch.Record, args []string) { argv = args }
+		stdout, _, err := captureOutput(t, func() error {
+			return runLaunch([]string{"--dry-run", "--trust", "sandboxed", "--codex-args=--profile p --", "codex"})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(stdout, "You are a fresh amq-squad agent.") || len(argv) == 0 || argv[len(argv)-1] == "--" || !strings.Contains(argv[len(argv)-1], "You are a fresh amq-squad agent.") {
+			t.Fatalf("bootstrap not final positional: stdout=%s argv=%#v", stdout, argv)
+		}
+		delimiters := 0
+		for _, arg := range argv {
+			if arg == "--" {
+				delimiters++
+			}
+		}
+		if delimiters != 1 {
+			t.Fatalf("expected one end-of-options delimiter: %#v", argv)
+		}
+	})
+}
+
 func TestRunLaunchDryRunApproveForMeCodexPreset(t *testing.T) {
 	setupFakeAMQ(t)
 
