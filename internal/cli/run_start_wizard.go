@@ -222,7 +222,17 @@ func runBubbleRunStartWizard(args []string, version string) error {
 	}
 	prefill.Scope = "project"
 	opts.Defaults = prefill
-	result, err := runStartWizardBubbleProgram(reader, tty, opts)
+	// Bubble Tea enables raw mode only when its input is the tty file itself;
+	// a wrapping reader leaves the terminal cooked and every key is swallowed.
+	// The scope prompt's reader may have over-read past its line; drop that
+	// typeahead so it cannot resurface at the launch confirmation and answer
+	// it on the user's behalf.
+	if buffered := reader.Buffered(); buffered > 0 {
+		if _, err := reader.Discard(buffered); err != nil {
+			return err
+		}
+	}
+	result, err := runStartWizardBubbleProgram(tty, tty, opts)
 	if err != nil {
 		return err
 	}
