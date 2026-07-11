@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/role"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 // orchestrateTmuxRun executes a tmux command. It is a package var so tests can
@@ -1040,6 +1042,19 @@ func deliverRunStartGoalWhenReady(opts runStartGoalDeliveryOptions) error {
 		"--yes",
 	}
 	if err := runStartGoalWithVersion(args, opts.Version); err != nil {
+		// An unconfirmed pane submit is ambiguous, not a failure (see
+		// classifyNudgeResult): the goal text is pasted in the lead's input,
+		// and a busy agent queues typed input until it goes idle. Aborting
+		// here would also skip layout finalization and the launcher-pane
+		// policy, punishing a likely success. Warn and continue; hard
+		// delivery errors still abort.
+		var unconfirmed *tmuxpane.SubmitUnconfirmedError
+		if errors.As(err, &unconfirmed) {
+			fmt.Fprintf(os.Stderr, "warning: goal submission was not confirmed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "warning: the goal text is staged in the lead's input; a busy agent queues it and submits when idle (or after one manual Enter). Continuing the launch — layout finalization and the launcher-pane policy still run.\n")
+			fmt.Fprintf(os.Stderr, "If the goal never appears, re-deliver with:\n  %s\n", retryCmd)
+			return nil
+		}
 		printRunStartGoalRetry(retryCmd)
 		return fmt.Errorf("goal delivery failed after lead became ready: %w", err)
 	}

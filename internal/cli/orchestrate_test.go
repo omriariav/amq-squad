@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1037,6 +1038,46 @@ func TestRunStartGoGoalDeliveryFailureAfterReadyPrintsRetryCommand(t *testing.T)
 		" --profile default --session sess --role cto --goal 'ship it' --yes"
 	if !strings.Contains(stderr, wantCmd) {
 		t.Fatalf("stderr missing retry command\nwant: %s\nstderr:\n%s", wantCmd, stderr)
+	}
+}
+
+func TestRunStartGoUnconfirmedGoalSubmitWarnsAndContinues(t *testing.T) {
+	// A SubmitUnconfirmedError is ambiguous, not a failure: the goal text is
+	// staged in the lead's input and a busy agent queues it (#427). The launch
+	// must warn and continue so layout finalization and the launcher-pane
+	// policy still run; only hard delivery errors abort.
+	dir := t.TempDir()
+	if _, _, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--project", dir, "--session", "sess", "--roles", "cto", "--orchestrated", "--lead", "cto"})
+	}); err != nil {
+		t.Fatalf("setup new team: %v", err)
+	}
+
+	unconfirmed := fmt.Errorf("goal start: %w", &tmuxpane.SubmitUnconfirmedError{PaneID: "%26", Attempts: 3})
+	stubRunStartGoalDelivery(t,
+		func(args []string, version string) error { return nil },
+		func(args []string, version string) error { return unconfirmed },
+		func(project, profile, session, role string) (runStartLeadReadiness, error) {
+			return runStartLeadReadiness{Ready: true, Detail: "live"}, nil
+		},
+		func(time.Duration) {},
+		time.Now,
+	)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("unconfirmed submit must not abort the launch, got %v", err)
+	}
+	for _, want := range []string{
+		"warning: goal submission was not confirmed",
+		"Continuing the launch",
+		"amq-squad goal start --project " + shellQuote(dir) + " --profile default --session sess --role cto --goal 'ship it' --yes",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr)
+		}
 	}
 }
 
