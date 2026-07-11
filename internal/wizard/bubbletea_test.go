@@ -79,6 +79,9 @@ func TestBubbleModelExistingProfileOverridesAreLaunchOnly(t *testing.T) {
 	if !strings.Contains(m.View(), "authoritative policy") {
 		t.Fatalf("notification view should identify authoritative policy:\n%s", m.View())
 	}
+	if m.spec.OperatorNotifications {
+		t.Fatal("disabled authoritative policy changed to enabled")
+	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageLauncherPane {
 		t.Fatalf("stage = %v, want launcher", m.stage)
@@ -92,6 +95,42 @@ func TestBubbleModelExistingProfileOverridesAreLaunchOnly(t *testing.T) {
 	}
 	if profile.Members[0].Model != "stored-model" || profile.Members[0].Effort != "medium" {
 		t.Fatalf("source profile mutated: %+v", profile.Members[0])
+	}
+}
+
+func TestBubbleModelHydratesEnabledAuthoritativeNotifications(t *testing.T) {
+	profile := ProfileSummary{
+		Name: "review", PinnedSession: "review-work", OperatorMode: "noc", OperatorNotifications: true,
+	}
+	m, err := NewBubbleModel(NumberedOptions{
+		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs"},
+		InspectProject: func(string) (ProjectContext, error) {
+			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 5 { // project, profile, session, topology, layout
+		m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	}
+	if m.stage != stageOperator || m.spec.OperatorMode != "noc" || !m.spec.OperatorNotifications {
+		t.Fatalf("hydrated operator state = stage %v spec %+v", m.stage, m.spec)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageOperatorNotifications || !m.spec.OperatorNotifications {
+		t.Fatalf("notification stage = %v spec %+v", m.stage, m.spec)
+	}
+	view := m.View()
+	if !strings.Contains(view, "authoritative policy") || !strings.Contains(view, "enabled=true") || strings.Contains(view, "No notifications") {
+		t.Fatalf("authoritative notification view offered mutation:\n%s", view)
+	}
+	if !strings.Contains(m.summary(), "notifications=true") || strings.Count(strings.Join(m.spec.Args(), " "), "--operator-notifications") != 1 {
+		t.Fatalf("notification state not preserved in summary/args: summary=%q args=%q", m.summary(), m.spec.Args())
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageLauncherPane || !m.spec.OperatorNotifications {
+		t.Fatalf("authoritative continue mutated policy: stage=%v spec=%+v", m.stage, m.spec)
 	}
 }
 

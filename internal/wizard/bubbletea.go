@@ -599,7 +599,9 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 		m.spec.Session = value
 		if m.existingIndex >= 0 {
 			m.spec.Roles, m.spec.Binary, m.spec.Model, m.spec.Effort, m.spec.Lead, m.spec.LeadMode = "", "", "", "", "", ""
-			m.spec.OperatorMode = defaultString(m.ctx.Profiles[m.existingIndex].OperatorMode, "unspecified")
+			profile := m.ctx.Profiles[m.existingIndex]
+			m.spec.OperatorMode = defaultString(profile.OperatorMode, "unspecified")
+			m.spec.OperatorNotifications = profile.OperatorNotifications
 			m.roleIndex = 0
 			if len(m.ctx.Profiles[m.existingIndex].Members) == 0 {
 				m.transition(stageTopology)
