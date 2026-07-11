@@ -132,6 +132,7 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 	b.WriteString("- Merge authority default: the visible lead owns the merge and lifecycle-action path after exact-head review, `amq-squad verify merge`, normalized evidence, and operator approval are aligned.\n")
 	b.WriteString("- Workers do not merge, push, tag, release, close issues, or perform other irreversible lifecycle actions by default. If a worker is ever asked to do one, require a verifiable authorization artifact that binds the operator/lead approval to the same subject, PR/head SHA, and gate/evidence thread; otherwise escalate back to the lead.\n")
 	b.WriteString("- The acting orchestrator must not self-merge, even when running with trusted local permissions. That separation-of-duties rule does not make a worker merge-capable by default; the visible lead coordinates a different authorized actor after review evidence, preflight, and operator approval are all aligned.\n\n")
+	b.WriteString("- A lead hand-editing its own `operator.self_operator` policy outside canonical `amq-squad team operator set` or `team operator self pause|resume` is a policy violation on par with self-merging. Self-approved merges must be executed by a different strongly verified roster actor; there is no `allow_self_merge` waiver.\n\n")
 
 	b.WriteString("## Conflict Protocol\n\n")
 	b.WriteString("- Surface disagreement on the relevant AMQ thread with the concrete risk, evidence, and proposed decision owner.\n")
