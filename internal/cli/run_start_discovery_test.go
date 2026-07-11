@@ -47,11 +47,14 @@ func TestSuggestRunStartSessionPriority(t *testing.T) {
 
 func TestRunStartWizardProfilesExposePinnedRosterFacts(t *testing.T) {
 	dir := t.TempDir()
+	op := team.DefaultOperator()
+	op.Notifications = &team.OperatorNotificationPolicy{Enabled: true, DeliverySemantics: "attention_only"}
 	if err := team.WriteProfile(dir, "review", team.Team{
 		Project:      dir,
 		Orchestrated: true,
 		Lead:         "cto",
 		LeadMode:     team.LeadModePlanner,
+		Operator:     &op,
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Session: "issue-393", CodexArgs: []string{"-c", "model_reasoning_effort=high"}},
 			{Role: "qa", Binary: "claude", Session: "issue-393", ClaudeArgs: []string{"--effort", "medium"}},
@@ -63,7 +66,7 @@ func TestRunStartWizardProfilesExposePinnedRosterFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(profiles) != 1 || profiles[0].Name != "review" || profiles[0].PinnedSession != "issue-393" || profiles[0].LeadMode != "planner" {
+	if len(profiles) != 1 || profiles[0].Name != "review" || profiles[0].PinnedSession != "issue-393" || profiles[0].LeadMode != "planner" || !profiles[0].OperatorNotifications {
 		t.Fatalf("profiles = %+v", profiles)
 	}
 	if profiles[0].Members[0].Effort != "high" || profiles[0].Members[1].Effort != "medium" {

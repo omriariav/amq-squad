@@ -95,6 +95,12 @@ The CLI and skills are versioned together.
 
 ## Quickstart
 
+Enable the default attention-only desktop notification policy when creating a
+profile with `team init --operator-notifications`, or pass the same flag through
+`run start` when it creates a new profile. Existing profiles remain
+authoritative and are never rewritten. Notifications run on the scoped
+`operator watch` host and never approve gates.
+
 The shortest working path for a visible project lead and workers:
 
 ```sh

@@ -4,6 +4,15 @@ This cookbook is the root operator workflow for v2.12.0. It covers the public
 CLI paths an operator uses to start, monitor, steer, approve, and close an
 orchestrated run.
 
+## Attention-only notifications
+
+Create a profile with `--operator-notifications` to enable the default desktop
+sink, then keep the scoped `amq-squad operator watch` loop running on the host
+that should display notifications. This add-on is independent of
+`--operator-mode`; it never answers a gate, clicks approval, or sends pane input.
+Status and bootstrap expose effective semantics and sink types, never command
+arguments, credentials, or other secrets.
+
 ## Prerequisites
 
 Confirm the installed binary and local health before starting a run:

@@ -638,6 +638,33 @@ func TestRunStartFreshPersistsOperatorMode(t *testing.T) {
 	}
 }
 
+func TestRunStartFreshPersistsNotificationsWithoutChangingOperatorMode(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%42")
+	backend := useFakeTmuxBackend(t)
+	dir := t.TempDir()
+	_, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "cto", "--operator-mode", "separate_terminal", "--operator-notifications", "--go"}, "test")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backend.launches) != 1 {
+		t.Fatalf("launches = %d", len(backend.launches))
+	}
+	stored, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := team.EffectiveOperatorNotifications(stored.Operator)
+	if !policy.Enabled || policy.DeliverySemantics != "attention_only" || len(policy.Sinks) != 1 || policy.Sinks[0].Type != "desktop" {
+		t.Fatalf("stored notification policy = %+v", policy)
+	}
+	if stored.Operator.InteractionMode != team.OperatorInteractionSeparateTerminal {
+		t.Fatalf("notification add-on changed interaction mode: %+v", stored.Operator)
+	}
+}
+
 func TestRunStartExistingOperatorModeValidationDoesNotMutateOrForward(t *testing.T) {
 	op := team.DefaultOperator()
 	op.InteractionMode = team.OperatorInteractionSeparateTerminal
