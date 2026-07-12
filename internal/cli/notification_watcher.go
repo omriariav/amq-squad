@@ -439,10 +439,16 @@ func stopNotificationWatcherGeneration(projectDir, profile, session, expectedTok
 			if err != nil {
 				return err
 			}
-			if current.OwnerToken != "" {
+			if strings.TrimSpace(current.OwnerToken) != "" {
 				return fmt.Errorf("notification watcher ownership appeared while stopping; retry lifecycle reconciliation")
 			}
-			return writeNotificationWatcherRecord(path, inactive)
+			if current.SchemaVersion == 0 {
+				return writeNotificationWatcherRecord(path, inactive)
+			}
+			if notificationWatcherInactiveTombstoneForScope(current, projectDir, profile, session, now) {
+				return nil
+			}
+			return fmt.Errorf("notification watcher stop observed invalid blank-owner runtime record for %s/%s; ownership preserved", squadnamespace.NormalizeProfile(profile), session)
 		})
 	}
 	host, _ := os.Hostname()
@@ -455,24 +461,7 @@ func stopNotificationWatcherGeneration(projectDir, profile, session, expectedTok
 	}
 	if local && notificationWatcherProcessMatches(rec) {
 		if signalErr := notificationWatcherSignal(rec.PID, syscall.SIGTERM); signalErr != nil {
-			now := notificationWatcherNow().UTC()
-			err := flock.WithLock(notificationWatcherLockPath(projectDir, profile, session), func() error {
-				current, err := readNotificationWatcherRecord(path)
-				if err != nil {
-					return err
-				}
-				if notificationWatcherInactiveTombstoneForScope(current, projectDir, profile, session, now) {
-					return nil
-				}
-				if current.OwnerToken != rec.OwnerToken {
-					return fmt.Errorf("notification watcher ownership changed from %q to %q after signal failed; retry lifecycle reconciliation", rec.OwnerToken, current.OwnerToken)
-				}
-				return fmt.Errorf("stop notification watcher pid %d: %w", rec.PID, signalErr)
-			})
-			if err != nil {
-				return err
-			}
-			return nil
+			return finalizeNotificationWatcherStop(projectDir, profile, session, path, rec, signalErr)
 		}
 		deadline := notificationWatcherNow().Add(2 * time.Second)
 		for notificationWatcherPIDAlive(rec.PID) && notificationWatcherNow().Before(deadline) {
@@ -482,38 +471,58 @@ func stopNotificationWatcherGeneration(projectDir, profile, session, expectedTok
 			return fmt.Errorf("notification watcher pid %d did not exit after SIGTERM; ownership preserved", rec.PID)
 		}
 	}
+	return finalizeNotificationWatcherStop(projectDir, profile, session, path, rec, nil)
+}
+
+func finalizeNotificationWatcherStop(projectDir, profile, session, path string, observed notificationWatcherRecord, signalErr error) error {
 	return flock.WithLock(notificationWatcherLockPath(projectDir, profile, session), func() error {
 		current, err := readNotificationWatcherRecord(path)
 		if err != nil {
 			return err
 		}
-		if current.OwnerToken == rec.OwnerToken {
-			now := notificationWatcherNow().UTC()
-			current.PID = 0
-			current.OwnerToken = ""
-			current.Expected = false
-			current.Health = "inactive"
-			current.LastError = ""
-			current.HeartbeatAt = now
-			current.LeaseExpiresAt = now
-			current.UpdatedAt = now
-			return writeNotificationWatcherRecord(path, current)
+		now := notificationWatcherNow().UTC()
+		if notificationWatcherInactiveTombstoneForScope(current, projectDir, profile, session, now) {
+			return nil
 		}
-		return nil
+		if current.OwnerToken != observed.OwnerToken {
+			if strings.TrimSpace(current.OwnerToken) == "" {
+				return fmt.Errorf("notification watcher stop observed invalid inactive tombstone for %s/%s; ownership preserved", squadnamespace.NormalizeProfile(profile), session)
+			}
+			return fmt.Errorf("notification watcher ownership changed from %q to %q while stopping; retry lifecycle reconciliation", observed.OwnerToken, current.OwnerToken)
+		}
+		if !notificationWatcherRecordForScope(current, projectDir, profile, session) {
+			return fmt.Errorf("notification watcher observed generation changed project/profile/session scope while stopping; ownership preserved")
+		}
+		if signalErr != nil {
+			return fmt.Errorf("stop notification watcher pid %d: %w", observed.PID, signalErr)
+		}
+		current.PID = 0
+		current.OwnerToken = ""
+		current.Expected = false
+		current.Health = "inactive"
+		current.LastError = ""
+		current.HeartbeatAt = now
+		current.LeaseExpiresAt = now
+		current.UpdatedAt = now
+		return writeNotificationWatcherRecord(path, current)
 	})
 }
 
 func notificationWatcherInactiveTombstoneForScope(rec notificationWatcherRecord, projectDir, profile, session string, now time.Time) bool {
-	return rec.SchemaVersion == notificationWatcherSchema &&
-		filepath.Clean(rec.ProjectDir) == filepath.Clean(projectDir) &&
-		rec.Profile == squadnamespace.NormalizeProfile(profile) &&
-		rec.Session == session &&
-		rec.NamespaceID == squadnamespace.ID(profile, session) &&
+	return notificationWatcherRecordForScope(rec, projectDir, profile, session) &&
 		rec.PID == 0 &&
 		strings.TrimSpace(rec.OwnerToken) == "" &&
 		!rec.Expected &&
 		rec.Health == "inactive" &&
 		!rec.LeaseExpiresAt.After(now)
+}
+
+func notificationWatcherRecordForScope(rec notificationWatcherRecord, projectDir, profile, session string) bool {
+	return rec.SchemaVersion == notificationWatcherSchema &&
+		filepath.Clean(rec.ProjectDir) == filepath.Clean(projectDir) &&
+		rec.Profile == squadnamespace.NormalizeProfile(profile) &&
+		rec.Session == session &&
+		rec.NamespaceID == squadnamespace.ID(profile, session)
 }
 
 func notificationWatcherGeneration(t team.Team, profile, session string) string {

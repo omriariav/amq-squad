@@ -254,6 +254,7 @@ func TestStopNotificationWatcherToleratesChildSelfReleaseAndESRCH(t *testing.T) 
 	alive := true
 	notificationWatcherPIDAlive = func(pid int) bool { return alive && pid == 44 }
 	notificationWatcherProcessMatch = func(pid int, _ func(string) bool) bool { return alive && pid == 44 }
+	var published notificationWatcherRecord
 	notificationWatcherSignal = func(pid int, _ os.Signal) error {
 		if pid != 44 {
 			return fmt.Errorf("unexpected pid %d", pid)
@@ -262,13 +263,150 @@ func TestStopNotificationWatcherToleratesChildSelfReleaseAndESRCH(t *testing.T) 
 		if err := releaseNotificationWatcherLease(path, &childRecord, "self-release", time.Now()); err != nil {
 			return err
 		}
+		var err error
+		published, err = readNotificationWatcherRecord(path)
+		if err != nil {
+			return err
+		}
 		alive = false
 		return syscall.ESRCH
 	}
 	if err := stopNotificationWatcher(project, team.DefaultProfile, "s"); err != nil {
 		t.Fatal(err)
 	}
-	assertInactiveWatcherTombstone(t, path)
+	current := assertInactiveWatcherTombstone(t, path)
+	if current != published {
+		t.Fatalf("self-released tombstone was rewritten:\n got: %+v\nwant: %+v", current, published)
+	}
+}
+
+func TestStopNotificationWatcherSuccessfulSignalAcceptsChildTombstone(t *testing.T) {
+	project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	host, _ := os.Hostname()
+	now := time.Now().UTC()
+	rec := notificationWatcherRecord{
+		SchemaVersion: notificationWatcherSchema, ProjectDir: project, Profile: team.DefaultProfile,
+		Session: "s", NamespaceID: "default/s", PID: 44, Host: host, OwnerToken: "self-release",
+		LeaseTTL: "1m", LeaseExpiresAt: now.Add(time.Minute), Expected: true, Health: "healthy",
+	}
+	if err := writeNotificationWatcherRecord(path, rec); err != nil {
+		t.Fatal(err)
+	}
+	oldAlive, oldMatch, oldSignal := notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal
+	t.Cleanup(func() {
+		notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal = oldAlive, oldMatch, oldSignal
+	})
+	alive := true
+	notificationWatcherPIDAlive = func(pid int) bool { return alive && pid == 44 }
+	notificationWatcherProcessMatch = func(pid int, _ func(string) bool) bool { return alive && pid == 44 }
+	var published notificationWatcherRecord
+	notificationWatcherSignal = func(pid int, _ os.Signal) error {
+		if pid != 44 {
+			return fmt.Errorf("unexpected pid %d", pid)
+		}
+		childRecord := rec
+		if err := releaseNotificationWatcherLease(path, &childRecord, "self-release", time.Now()); err != nil {
+			return err
+		}
+		var err error
+		published, err = readNotificationWatcherRecord(path)
+		if err != nil {
+			return err
+		}
+		alive = false
+		return nil
+	}
+	if err := stopNotificationWatcher(project, team.DefaultProfile, "s"); err != nil {
+		t.Fatal(err)
+	}
+	current := assertInactiveWatcherTombstone(t, path)
+	if current != published {
+		t.Fatalf("self-released tombstone was rewritten:\n got: %+v\nwant: %+v", current, published)
+	}
+}
+
+func TestStopNotificationWatcherSuccessfulSignalClearsObservedGeneration(t *testing.T) {
+	project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	host, _ := os.Hostname()
+	now := time.Now().UTC()
+	rec := notificationWatcherRecord{
+		SchemaVersion: notificationWatcherSchema, ProjectDir: project, Profile: team.DefaultProfile,
+		Session: "s", NamespaceID: "default/s", PID: 44, Host: host, OwnerToken: "observed-owner",
+		LeaseTTL: "1m", LeaseExpiresAt: now.Add(time.Minute), Expected: true, Health: "healthy",
+	}
+	if err := writeNotificationWatcherRecord(path, rec); err != nil {
+		t.Fatal(err)
+	}
+	oldAlive, oldMatch, oldSignal := notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal
+	t.Cleanup(func() {
+		notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal = oldAlive, oldMatch, oldSignal
+	})
+	alive := true
+	notificationWatcherPIDAlive = func(pid int) bool { return alive && pid == 44 }
+	notificationWatcherProcessMatch = func(pid int, _ func(string) bool) bool { return alive && pid == 44 }
+	notificationWatcherSignal = func(pid int, _ os.Signal) error {
+		if pid != 44 {
+			return fmt.Errorf("unexpected pid %d", pid)
+		}
+		alive = false
+		return nil
+	}
+	if err := stopNotificationWatcher(project, team.DefaultProfile, "s"); err != nil {
+		t.Fatal(err)
+	}
+	tombstone := assertInactiveWatcherTombstone(t, path)
+	if tombstone.ProjectDir != project || tombstone.NamespaceID != "default/s" {
+		t.Fatalf("stop changed watcher scope: %+v", tombstone)
+	}
+}
+
+func TestStopNotificationWatcherSuccessfulSignalPreservesSameTokenCrossScopeRecord(t *testing.T) {
+	project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	host, _ := os.Hostname()
+	now := time.Now().UTC()
+	rec := notificationWatcherRecord{
+		SchemaVersion: notificationWatcherSchema, ProjectDir: project, Profile: team.DefaultProfile,
+		Session: "s", NamespaceID: "default/s", PID: 44, Host: host, OwnerToken: "observed-owner",
+		LeaseTTL: "1m", LeaseExpiresAt: now.Add(time.Minute), Expected: true, Health: "healthy",
+	}
+	if err := writeNotificationWatcherRecord(path, rec); err != nil {
+		t.Fatal(err)
+	}
+	oldAlive, oldMatch, oldSignal := notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal
+	t.Cleanup(func() {
+		notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal = oldAlive, oldMatch, oldSignal
+	})
+	alive := true
+	notificationWatcherPIDAlive = func(pid int) bool { return alive && pid == 44 }
+	notificationWatcherProcessMatch = func(pid int, _ func(string) bool) bool { return alive && pid == 44 }
+	var published notificationWatcherRecord
+	notificationWatcherSignal = func(pid int, _ os.Signal) error {
+		if pid != 44 {
+			return fmt.Errorf("unexpected pid %d", pid)
+		}
+		crossScope := rec
+		crossScope.ProjectDir = filepath.Join(project, "other")
+		published = crossScope
+		if err := writeNotificationWatcherRecord(path, crossScope); err != nil {
+			return err
+		}
+		alive = false
+		return nil
+	}
+	err := stopNotificationWatcher(project, team.DefaultProfile, "s")
+	if err == nil || !strings.Contains(err.Error(), "scope") {
+		t.Fatalf("same-token cross-scope record err=%v", err)
+	}
+	current, readErr := readNotificationWatcherRecord(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if current != published {
+		t.Fatalf("same-token cross-scope record was altered: %+v", current)
+	}
 }
 
 func TestStopNotificationWatcherSignalErrorPreservesReplacementOwner(t *testing.T) {
@@ -291,6 +429,7 @@ func TestStopNotificationWatcherSignalErrorPreservesReplacementOwner(t *testing.
 	alive := true
 	notificationWatcherPIDAlive = func(pid int) bool { return alive && pid == 44 }
 	notificationWatcherProcessMatch = func(pid int, _ func(string) bool) bool { return alive && pid == 44 }
+	var published notificationWatcherRecord
 	notificationWatcherSignal = func(pid int, _ os.Signal) error {
 		if pid != 44 {
 			return fmt.Errorf("unexpected pid %d", pid)
@@ -301,6 +440,7 @@ func TestStopNotificationWatcherSignalErrorPreservesReplacementOwner(t *testing.
 		replacement.HeartbeatAt = time.Now().UTC()
 		replacement.LeaseExpiresAt = time.Now().Add(time.Minute).UTC()
 		replacement.UpdatedAt = time.Now().UTC()
+		published = replacement
 		if err := writeNotificationWatcherRecord(path, replacement); err != nil {
 			return err
 		}
@@ -315,8 +455,140 @@ func TestStopNotificationWatcherSignalErrorPreservesReplacementOwner(t *testing.
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	if current.OwnerToken != "replacement-owner" || current.PID != 55 || !current.Expected || current.Health != "healthy" {
+	if current != published {
 		t.Fatalf("replacement owner was altered: %+v", current)
+	}
+}
+
+func TestStopNotificationWatcherSuccessfulSignalPreservesReplacementOwner(t *testing.T) {
+	project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	host, _ := os.Hostname()
+	now := time.Now().UTC()
+	rec := notificationWatcherRecord{
+		SchemaVersion: notificationWatcherSchema, ProjectDir: project, Profile: team.DefaultProfile,
+		Session: "s", NamespaceID: "default/s", PID: 44, Host: host, OwnerToken: "old-owner",
+		LeaseTTL: "1m", LeaseExpiresAt: now.Add(time.Minute), Expected: true, Health: "healthy",
+	}
+	if err := writeNotificationWatcherRecord(path, rec); err != nil {
+		t.Fatal(err)
+	}
+	oldAlive, oldMatch, oldSignal := notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal
+	t.Cleanup(func() {
+		notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal = oldAlive, oldMatch, oldSignal
+	})
+	alive := true
+	notificationWatcherPIDAlive = func(pid int) bool { return alive && pid == 44 }
+	notificationWatcherProcessMatch = func(pid int, _ func(string) bool) bool { return alive && pid == 44 }
+	var published notificationWatcherRecord
+	notificationWatcherSignal = func(pid int, _ os.Signal) error {
+		if pid != 44 {
+			return fmt.Errorf("unexpected pid %d", pid)
+		}
+		replacement := rec
+		replacement.PID = 55
+		replacement.OwnerToken = "replacement-owner"
+		replacement.HeartbeatAt = time.Now().UTC()
+		replacement.LeaseExpiresAt = time.Now().Add(time.Minute).UTC()
+		replacement.UpdatedAt = time.Now().UTC()
+		published = replacement
+		if err := writeNotificationWatcherRecord(path, replacement); err != nil {
+			return err
+		}
+		alive = false
+		return nil
+	}
+	err := stopNotificationWatcher(project, team.DefaultProfile, "s")
+	if err == nil || !strings.Contains(err.Error(), "ownership changed") {
+		t.Fatalf("replacement owner successful signal race err=%v", err)
+	}
+	current, readErr := readNotificationWatcherRecord(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if current != published {
+		t.Fatalf("replacement owner was altered: %+v", current)
+	}
+}
+
+func TestStopNotificationWatcherRejectsInvalidTombstoneAfterSignal(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*notificationWatcherRecord)
+	}{
+		{
+			name: "cross-scope",
+			mutate: func(rec *notificationWatcherRecord) {
+				rec.ProjectDir = filepath.Join(rec.ProjectDir, "other")
+			},
+		},
+		{
+			name: "malformed-future-lease",
+			mutate: func(rec *notificationWatcherRecord) {
+				rec.LeaseExpiresAt = time.Now().Add(time.Minute).UTC()
+			},
+		},
+	}
+	signalResults := []struct {
+		name string
+		err  error
+	}{{name: "success"}, {name: "esrch", err: syscall.ESRCH}}
+	for _, tt := range tests {
+		for _, signalResult := range signalResults {
+			t.Run(tt.name+"/"+signalResult.name, func(t *testing.T) {
+				project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
+				path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+				host, _ := os.Hostname()
+				now := time.Now().UTC()
+				rec := notificationWatcherRecord{
+					SchemaVersion: notificationWatcherSchema, ProjectDir: project, Profile: team.DefaultProfile,
+					Session: "s", NamespaceID: "default/s", PID: 44, Host: host, OwnerToken: "old-owner",
+					LeaseTTL: "1m", LeaseExpiresAt: now.Add(time.Minute), Expected: true, Health: "healthy",
+				}
+				if err := writeNotificationWatcherRecord(path, rec); err != nil {
+					t.Fatal(err)
+				}
+				oldAlive, oldMatch, oldSignal := notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal
+				t.Cleanup(func() {
+					notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal = oldAlive, oldMatch, oldSignal
+				})
+				alive := true
+				notificationWatcherPIDAlive = func(pid int) bool { return alive && pid == 44 }
+				notificationWatcherProcessMatch = func(pid int, _ func(string) bool) bool { return alive && pid == 44 }
+				var published notificationWatcherRecord
+				notificationWatcherSignal = func(pid int, _ os.Signal) error {
+					if pid != 44 {
+						return fmt.Errorf("unexpected pid %d", pid)
+					}
+					tombstone := rec
+					tombstone.PID = 0
+					tombstone.OwnerToken = ""
+					tombstone.Expected = false
+					tombstone.Health = "inactive"
+					tombstone.HeartbeatAt = time.Now().UTC()
+					tombstone.LeaseExpiresAt = time.Now().UTC()
+					tombstone.UpdatedAt = time.Now().UTC()
+					tt.mutate(&tombstone)
+					published = tombstone
+					if err := writeNotificationWatcherRecord(path, tombstone); err != nil {
+						return err
+					}
+					alive = false
+					return signalResult.err
+				}
+				err := stopNotificationWatcher(project, team.DefaultProfile, "s")
+				if err == nil || !strings.Contains(err.Error(), "invalid inactive tombstone") {
+					t.Fatalf("invalid tombstone err=%v", err)
+				}
+				current, readErr := readNotificationWatcherRecord(path)
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				if current != published {
+					t.Fatalf("invalid tombstone was altered: %+v", current)
+				}
+			})
+		}
 	}
 }
 
@@ -348,7 +620,7 @@ func TestStopNotificationWatcherSignalErrorPreservesObservedOwner(t *testing.T) 
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	if current.OwnerToken != "observed-owner" || current.PID != 44 || !current.Expected {
+	if current != rec {
 		t.Fatalf("observed owner was altered after signal error: %+v", current)
 	}
 }
@@ -906,6 +1178,89 @@ func TestStopNotificationWatcherWithoutRuntimeWritesInactiveTombstone(t *testing
 	status := inspectNotificationWatcher(tm, team.DefaultProfile, "s", time.Now())
 	if status.Health != "inactive" || status.record.Expected {
 		t.Fatalf("stop tombstone=%+v", status)
+	}
+}
+
+func TestStopNotificationWatcherPreservesPreexistingInactiveTombstone(t *testing.T) {
+	project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	now := time.Now().UTC()
+	seeded := notificationWatcherRecord{
+		SchemaVersion: notificationWatcherSchema, ProjectDir: project, Profile: team.DefaultProfile,
+		Session: "s", NamespaceID: "default/s", Owner: "prior-owner", StatePath: defaultNotifyStatePath(project),
+		Expected: false, Health: "inactive", HeartbeatAt: now.Add(-time.Second), LastScanAt: now.Add(-time.Minute),
+		LeaseExpiresAt: now.Add(-time.Second), UpdatedAt: now.Add(-time.Second),
+	}
+	if err := writeNotificationWatcherRecord(path, seeded); err != nil {
+		t.Fatal(err)
+	}
+	if err := stopNotificationWatcher(project, team.DefaultProfile, "s"); err != nil {
+		t.Fatal(err)
+	}
+	current, err := readNotificationWatcherRecord(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current != seeded {
+		t.Fatalf("preexisting inactive tombstone was altered:\n got: %+v\nwant: %+v", current, seeded)
+	}
+}
+
+func TestStopNotificationWatcherPreservesInvalidPreexistingBlankOwnerRecord(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*notificationWatcherRecord, time.Time)
+	}{
+		{
+			name: "cross-scope-tombstone",
+			mutate: func(rec *notificationWatcherRecord, _ time.Time) {
+				rec.ProjectDir = filepath.Join(rec.ProjectDir, "other")
+			},
+		},
+		{
+			name: "malformed-tombstone",
+			mutate: func(rec *notificationWatcherRecord, now time.Time) {
+				rec.LeaseExpiresAt = now.Add(time.Minute)
+			},
+		},
+		{
+			name: "active-looking",
+			mutate: func(rec *notificationWatcherRecord, now time.Time) {
+				rec.PID = 44
+				rec.Host = "local-host"
+				rec.Expected = true
+				rec.Health = "healthy"
+				rec.LeaseTTL = "1m"
+				rec.LeaseExpiresAt = now.Add(time.Minute)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
+			path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+			now := time.Now().UTC()
+			seeded := notificationWatcherRecord{
+				SchemaVersion: notificationWatcherSchema, ProjectDir: project, Profile: team.DefaultProfile,
+				Session: "s", NamespaceID: "default/s", StatePath: defaultNotifyStatePath(project),
+				Expected: false, Health: "inactive", HeartbeatAt: now, LeaseExpiresAt: now, UpdatedAt: now,
+			}
+			tt.mutate(&seeded, now)
+			if err := writeNotificationWatcherRecord(path, seeded); err != nil {
+				t.Fatal(err)
+			}
+			err := stopNotificationWatcher(project, team.DefaultProfile, "s")
+			if err == nil || !strings.Contains(err.Error(), "invalid blank-owner runtime record") {
+				t.Fatalf("invalid blank-owner record err=%v", err)
+			}
+			current, readErr := readNotificationWatcherRecord(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if current != seeded {
+				t.Fatalf("invalid blank-owner record was altered:\n got: %+v\nwant: %+v", current, seeded)
+			}
+		})
 	}
 }
 
