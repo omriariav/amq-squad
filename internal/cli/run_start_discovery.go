@@ -2,13 +2,19 @@ package cli
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v2/internal/catalog"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
@@ -178,6 +184,10 @@ func runStartWizardProfiles(project string) ([]runwizard.ProfileSummary, error) 
 		return nil, fmt.Errorf("list team profiles: %w", err)
 	}
 	names = append(names, named...)
+	history, err := launch.ScanEntries(project)
+	if err != nil {
+		return nil, fmt.Errorf("scan launch history: %w", err)
+	}
 	profiles := make([]runwizard.ProfileSummary, 0, len(names))
 	for _, name := range names {
 		t, err := team.ReadProfile(project, name)
@@ -207,9 +217,148 @@ func runStartWizardProfiles(project string) ([]runwizard.ProfileSummary, error) 
 				Effort: memberEffort(member),
 			})
 		}
+		summary.Sessions = runStartWizardProfileSessions(project, name, t, history)
 		profiles = append(profiles, summary)
 	}
 	return profiles, nil
+}
+
+func runStartWizardProfileSessions(project, profile string, t team.Team, history []launch.Entry) []runwizard.SessionSummary {
+	pinned := runStartPinnedSession(t)
+	sources := map[string]runwizard.SessionSource{}
+	if pinned != "" {
+		source := runwizard.SessionSourceProfile
+		if inferredSharedMemberSession(t) != "" {
+			source = runwizard.SessionSourceMemberPin
+		}
+		sources[pinned] = source
+	}
+	for _, entry := range history {
+		rec := entry.Record
+		if !squadnamespace.ProfilesEqual(profile, rec.TeamProfile) || strings.TrimSpace(rec.Session) == "" {
+			continue
+		}
+		if home := strings.TrimSpace(rec.TeamHome); home != "" && filepath.Clean(home) != filepath.Clean(project) {
+			continue
+		}
+		if _, exists := sources[rec.Session]; !exists {
+			sources[rec.Session] = runwizard.SessionSourceLaunchHistory
+		}
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(sources))
+	for name := range sources {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if names[i] == pinned {
+			return true
+		}
+		if names[j] == pinned {
+			return false
+		}
+		return names[i] < names[j]
+	})
+	out := make([]runwizard.SessionSummary, 0, len(names))
+	for _, session := range names {
+		out = append(out, discoverRunStartWizardSession(t, profile, session, sources[session], names, history))
+	}
+	return out
+}
+
+func discoverRunStartWizardSession(t team.Team, profile, session string, source runwizard.SessionSource, knownSessions []string, history []launch.Entry) runwizard.SessionSummary {
+	active, _ := filterMembersBySession(t.Members, session)
+	if len(active) == 0 && len(t.Members) > 0 {
+		return runwizard.SessionSummary{Name: session, Source: source, Classification: runwizard.RunClassification{State: runwizard.RunStateBlocked, Detail: "no current profile members belong to this session"}, Blocked: len(t.Members)}
+	}
+	planningTeam := t
+	planningTeam.Members = active
+	plans := make([]resumePlan, 0, len(active))
+	recordCount := 0
+	for _, member := range orderedTeamMembers(active) {
+		plan, err := planMemberResume(memberPlanInput{
+			Member: member, Team: planningTeam, Workstream: session, Mode: resumeModeDefault,
+			SquadBin: teamSquadBin(), BinaryArgs: t.BinaryArgs, Trust: string(trustModeSandboxed), Profile: profile, Probe: defaultDuplicateLaunchProbe,
+		})
+		if err != nil {
+			return runwizard.SessionSummary{Name: session, Source: source, Classification: runwizard.RunClassification{State: runwizard.RunStateBlocked, Detail: err.Error()}, Blocked: len(active)}
+		}
+		if plan.HasRestoreRecord {
+			recordCount++
+		}
+		plans = append(plans, plan)
+	}
+	conflict := namespaceConflictForProfileSession(t.Project, profile, session)
+	if conflict != nil {
+		plans = blockResumePlansForNamespaceConflict(plans, conflict)
+	}
+	classification := classifyRunStartWizardExistingProfile(len(active), recordCount, plans, conflict != nil)
+	summary := runwizard.SessionSummary{Name: session, Source: source, Classification: classification}
+	fingerprint := runwizard.DiscoveryFingerprintInput{Profile: profile, Lead: t.Lead, LeadMode: team.EffectiveLeadMode(t), Session: session, SessionSource: string(source), MatchingHistorySessions: append([]string(nil), knownSessions...), RecordCount: recordCount}
+	operator := team.EffectiveOperator(t)
+	self := team.EffectiveSelfOperator(t, session)
+	notifications := team.EffectiveOperatorNotifications(t.Operator)
+	fingerprint.Operator = runwizard.DiscoveryOperator{Enabled: operator.Enabled, InteractionMode: operator.InteractionMode, Handle: operator.Handle, SelfLead: self.LeadRole, SelfAllow: append([]string(nil), self.AllowedGateKinds...), SelfRevision: self.PolicyRevision, SelfPaused: self.Paused, Notifications: runwizard.DiscoveryNotificationPolicy{Enabled: notifications.Enabled, DeliverySemantics: notifications.DeliverySemantics, Events: append([]string(nil), notifications.Events...)}}
+	for _, sink := range notifications.Sinks {
+		fingerprint.Operator.Notifications.Sinks = append(fingerprint.Operator.Notifications.Sinks, runwizard.DiscoveryNotificationSink{ID: sink.ID, Type: sink.Type, Argv: append([]string(nil), sink.Argv...), Timeout: sink.Timeout})
+	}
+	briefPath := briefPathForProfile(t.Project, profile, session)
+	fingerprint.Brief.Path = briefPath
+	if body, err := os.ReadFile(briefPath); err == nil {
+		digest := sha256.Sum256(body)
+		fingerprint.Brief.ContentDigest = hex.EncodeToString(digest[:])
+	}
+	ns := squadnamespace.Resolve(t.Project, profile, session)
+	_, stateErr := os.Stat(ns.AMQRoot)
+	fingerprint.NamespaceFacts = append(fingerprint.NamespaceFacts, runwizard.DiscoveryNamespaceFact{Profile: profile, Session: session, AMQRoot: ns.AMQRoot, DurableState: stateErr == nil, ProfilePinsSession: runStartPinnedSession(t) == session})
+	if conflict != nil {
+		if payload, err := json.Marshal(conflict); err == nil {
+			fingerprint.NamespaceConflicts = append(fingerprint.NamespaceConflicts, string(payload))
+		}
+		for _, candidate := range conflict.Conflicts {
+			fingerprint.NamespaceFacts = append(fingerprint.NamespaceFacts, runwizard.DiscoveryNamespaceFact{Profile: candidate.Profile, Session: session, AMQRoot: candidate.AMQRoot, DurableState: true})
+		}
+	}
+	savedByRole := map[string]string{}
+	for _, entry := range history {
+		rec := entry.Record
+		if !squadnamespace.ProfilesEqual(profile, rec.TeamProfile) || rec.Session != session {
+			continue
+		}
+		identity := entry.AgentDir + "|" + rec.Role + "|" + rec.Handle + "|" + rec.StartedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
+		fingerprint.RecordIDs = append(fingerprint.RecordIDs, identity)
+		savedByRole[rec.Role] = identity
+	}
+	for _, member := range active {
+		native := composeBinaryArgs(member.Binary, binaryArgsFor(member.Binary, t.BinaryArgs), member.ExtraArgs())
+		fingerprint.Roster = append(fingerprint.Roster, runwizard.DiscoveryMember{Role: member.Role, Handle: member.Handle, Binary: member.Binary, CWD: member.EffectiveCWD(t.Project), Session: member.Session, NativeArgs: native, Model: member.Model, Effort: memberEffort(member)})
+	}
+	for _, plan := range plans {
+		action := runwizard.MemberActionBlocked
+		switch plan.Action {
+		case resumeLive:
+			action, summary.Live = runwizard.MemberActionLive, summary.Live+1
+		case resumeRestore:
+			action, summary.Restore = runwizard.MemberActionRestore, summary.Restore+1
+		case resumeFresh:
+			action, summary.Fresh = runwizard.MemberActionFresh, summary.Fresh+1
+		default:
+			summary.Blocked++
+		}
+		liveness := ""
+		var livenessSignals []string
+		if plan.Liveness != nil {
+			liveness = string(plan.Liveness.Status)
+			if payload, err := json.Marshal(plan.Liveness); err == nil {
+				livenessSignals = []string{string(payload)}
+			}
+		}
+		fingerprint.MemberPlans = append(fingerprint.MemberPlans, runwizard.DiscoveryMemberPlan{Role: plan.Role, Action: action, LivenessStatus: liveness, LivenessSignals: livenessSignals, SavedLaunchIdentity: savedByRole[plan.Role], Blocker: plan.Note})
+	}
+	summary.Fingerprint = runwizard.DiscoveryFingerprint(fingerprint)
+	return summary
 }
 
 func runStartPinnedSession(t team.Team) string {

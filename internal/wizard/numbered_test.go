@@ -24,6 +24,9 @@ func TestRunNumberedEnterThroughDefaults(t *testing.T) {
 	if got.Roles != "cto,senior-dev,qa" || got.Lead != "cto" || got.LeadMode != "builder" {
 		t.Fatalf("default roster = %+v", got)
 	}
+	if got.ProfileBranch != ProfileBranchNew || got.Profile != "default" || got.Session != "issue-393" || got.Backend != BackendRunStart {
+		t.Fatalf("new-profile derivation = %+v", got)
+	}
 	if got.Visibility != "sibling-tabs" {
 		t.Fatalf("visibility = %q", got.Visibility)
 	}
@@ -197,7 +200,7 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 	if got.OperatorMode != "noc" {
 		t.Fatalf("existing operator mode = %q", got.OperatorMode)
 	}
-	for _, want := range []string{"origin omriariav/amq-squad", "review: 3 member(s), session review-work", "cto: codex, model=automatic, effort=high", "Operator interaction (authoritative): noc · NOC/global orchestrator owns polling. Change it with 'amq-squad team operator set', then relaunch.", "Self-operator / delegated approval", "[locked: the stored profile contract decides]"} {
+	for _, want := range []string{"origin omriariav/amq-squad", "review · 3 members · review-work/not started · roster and contract stay authoritative", "Derived session \"review-work\" from member_pin", "cto: codex, model=automatic, effort=high", "Operator interaction (authoritative): noc · NOC/global orchestrator owns polling. Change it with 'amq-squad team operator set', then relaunch.", "Self-operator / delegated approval", "[locked: the stored profile contract decides]"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}
@@ -261,18 +264,16 @@ func TestRunNumberedOffersModelListWithCustomEscape(t *testing.T) {
 	}
 }
 
-func TestRunNumberedRepromptsSessionThePinnedProfileCannotRun(t *testing.T) {
+func TestRunNumberedDerivesPinnedSessionWithoutPrompt(t *testing.T) {
 	input := strings.Join([]string{
-		"",          // project
-		"",          // profile: default (existing)
-		"issue-218", // rejected: pinned to issue-136
-		"",          // retry accepts the pinned default
-		"",          // keep cto profile values
-		"",          // topology
-		"",          // one-window layout
-		"",          // close launcher
-		"",          // goal
-		"",          // seed
+		"", // project
+		"", // profile: default (existing)
+		"", // keep cto profile values
+		"", // topology
+		"", // one-window layout
+		"", // close launcher
+		"", // goal
+		"", // seed
 	}, "\n") + "\n"
 	var out bytes.Buffer
 	got, err := RunNumbered(strings.NewReader(input), &out, NumberedOptions{
@@ -289,9 +290,56 @@ func TestRunNumberedRepromptsSessionThePinnedProfileCannotRun(t *testing.T) {
 	if got.Session != "issue-136" {
 		t.Fatalf("session = %q, want the pinned issue-136", got.Session)
 	}
-	for _, want := range []string{"Check:", "pinned workstream issue-136", "named profile"} {
+	for _, want := range []string{"Known run: issue-136", "Derived session \"issue-136\" from member_pin", "never accept an arbitrary session name"} {
 		if !strings.Contains(out.String(), want) {
-			t.Fatalf("re-prompt output missing %q:\n%s", want, out.String())
+			t.Fatalf("derived-session output missing %q:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "Workstream session [") {
+		t.Fatalf("pinned profile exposed free-text session input:\n%s", out.String())
+	}
+}
+
+func TestRunNumberedNoSessionProfileUsesSuggestedFirstRun(t *testing.T) {
+	var out bytes.Buffer
+	got, err := RunNumbered(strings.NewReader(strings.Repeat("\n", 10)), &out, NumberedOptions{
+		Defaults: Spec{Project: "/repo", Profile: "unused", Visibility: "sibling-tabs"},
+		InspectProject: func(string) (ProjectContext, error) {
+			return ProjectContext{Project: "/repo", SessionSuggestion: "issue-431", Profiles: []ProfileSummary{{Name: "unused", MemberCount: 1, Members: []MemberSummary{{Role: "cto", Binary: "codex"}}}}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session != "issue-431" || got.SessionSource != SessionSourceSuggestedFirst || got.Backend != BackendRunStart {
+		t.Fatalf("unused authoritative profile = %+v", got)
+	}
+	if strings.Contains(out.String(), "Name the new session [") {
+		t.Fatalf("unused existing profile entered generic session input:\n%s", out.String())
+	}
+}
+
+func TestRunNumberedMultipleSessionsUseKnownRunListAndDeferResume(t *testing.T) {
+	profile := ProfileSummary{Name: "release", MemberCount: 2, Sessions: []SessionSummary{
+		{Name: "run-a", Source: SessionSourceLaunchHistory, Classification: RunClassification{State: RunStateNotStarted, Backend: BackendRunStart, Executable: true}, Fresh: 2},
+		{Name: "run-b", Source: SessionSourceLaunchHistory, Fingerprint: "run-b-fp", Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Restore: 2},
+	}}
+	var out bytes.Buffer
+	got, err := RunNumbered(strings.NewReader("\n\n2\n"), &out, NumberedOptions{
+		Defaults: Spec{Project: "/repo", Profile: "release"},
+		InspectProject: func(string) (ProjectContext, error) {
+			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session != "run-b" || got.Backend != BackendResume || got.RunState != RunStateStopped || got.DiscoveryFingerprint != "run-b-fp" {
+		t.Fatalf("known-session selection = %+v", got)
+	}
+	for _, want := range []string{"Which existing run do you want?", "run-a · launch_history · not started", "run-b · launch_history · stopped", "nothing will be previewed or launched"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}
 	}
 }
@@ -334,7 +382,6 @@ func TestRunNumberedExistingProfileCollectsLaunchOnlyOverrides(t *testing.T) {
 	input := strings.Join([]string{
 		"",             // project
 		"",             // existing profile
-		"",             // pinned session
 		"2",            // override cto
 		"4",            // model override: custom
 		"launch-model", // custom launch-only model

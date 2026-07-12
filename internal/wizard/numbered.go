@@ -40,6 +40,7 @@ type ProfileSummary struct {
 	SelfOperatorRevision  int64
 	SelfOperatorPaused    bool
 	Members               []MemberSummary
+	Sessions              []SessionSummary
 }
 
 type MemberSummary struct {
@@ -70,7 +71,7 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	if s.Project, err = promptText(r, out, "Project directory", s.Project); err != nil {
 		return Spec{}, err
 	}
-	ctx := ProjectContext{Project: s.Project}
+	ctx := ProjectContext{Project: s.Project, SessionSuggestion: s.Session}
 	if opts.InspectProject != nil {
 		ctx, err = opts.InspectProject(s.Project)
 		if err != nil {
@@ -78,6 +79,9 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		}
 		if strings.TrimSpace(ctx.Project) != "" {
 			s.Project = ctx.Project
+		}
+		if strings.TrimSpace(ctx.SessionSuggestion) == "" {
+			ctx.SessionSuggestion = s.Session
 		}
 	}
 	if ctx.OriginSlug != "" {
@@ -90,26 +94,29 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	if err != nil {
 		return Spec{}, err
 	}
-	s.Profile = selectedProfile
-	sessionDefault := s.Session
-	if strings.TrimSpace(sessionDefault) == "" && existingProfile != nil {
-		sessionDefault = existingProfile.PinnedSession
-	}
-	if strings.TrimSpace(sessionDefault) == "" {
-		sessionDefault = ctx.SessionSuggestion
-	}
-	for {
-		if s.Session, err = promptText(r, out, "Workstream session", sessionDefault); err != nil {
-			return Spec{}, err
+	if existingProfile != nil {
+		s.SelectExistingProfile(selectedProfile)
+		session, selectErr := promptExistingSession(r, out, *existingProfile, ctx.SessionSuggestion)
+		if selectErr != nil {
+			return Spec{}, selectErr
 		}
-		if existingProfile == nil {
-			break
+		s.SelectExistingSession(session)
+		fmt.Fprintf(out, "Derived session %q from %s; existing profiles never accept an arbitrary session name.\n", s.Session, s.SessionSource)
+		if s.Backend != BackendRunStart || !s.RunExecutable {
+			fmt.Fprintf(out, "Selected run state: %s. Backend: %s. Execution controls for this state arrive in the resume slice; nothing will be previewed or launched.\n", s.RunState, defaultString(string(s.Backend), "none"))
+			return s, nil
 		}
-		mismatch := pinnedSessionMismatch(*existingProfile, s.Session)
-		if mismatch == nil {
-			break
+	} else {
+		freshSessionDefault := defaultString(s.Session, ctx.SessionSuggestion)
+		s.SelectNewProfile(selectedProfile)
+		newSession, promptErr := promptText(r, out, "Name the new session", freshSessionDefault)
+		if promptErr != nil {
+			return Spec{}, promptErr
 		}
-		fmt.Fprintf(out, "Check: %v\n", mismatch)
+		if strings.TrimSpace(newSession) == "" {
+			return Spec{}, fmt.Errorf("session cannot be empty")
+		}
+		s.SelectNewSession(newSession)
 	}
 
 	existing := existingProfile != nil || (opts.ProfileExists != nil && opts.ProfileExists(s.Project, s.Profile))
@@ -349,23 +356,9 @@ func defaultModelChoice(prefill, binary string) string {
 	return modelCustomChoice
 }
 
-// pinnedSessionMismatch mirrors run start's existing_profile_session_mismatch
-// preflight at answer time: a pinned roster runs only its pinned workstream,
-// so a different session must be rejected before the user invests in the
-// remaining phases. Best-effort — the summary carries one inferred pin, so
-// the canonical preflight stays authoritative.
-func pinnedSessionMismatch(profile ProfileSummary, session string) error {
-	pinned := strings.TrimSpace(profile.PinnedSession)
-	session = strings.TrimSpace(session)
-	if (profile.MemberCount == 0 && len(profile.Members) == 0) || pinned == "" || pinned == session {
-		return nil
-	}
-	return fmt.Errorf("profile %q runs only its pinned workstream %s; use %s, or pick a named profile for %s instead", profile.Name, pinned, pinned, session)
-}
-
 func promptProfile(r *bufio.Reader, out io.Writer, current string, ctx ProjectContext) (string, *ProfileSummary, error) {
 	if len(ctx.Profiles) == 0 {
-		profile, err := promptText(r, out, "Team profile", defaultString(current, "default"))
+		profile, err := promptText(r, out, "Name the new profile", defaultString(current, defaultString(ctx.NewProfileSuggestion, "default")))
 		return profile, nil, err
 	}
 	byName := make(map[string]*ProfileSummary, len(ctx.Profiles))
@@ -374,10 +367,9 @@ func promptProfile(r *bufio.Reader, out io.Writer, current string, ctx ProjectCo
 	for i := range ctx.Profiles {
 		profile := &ctx.Profiles[i]
 		byName[profile.Name] = profile
-		pinned := defaultString(profile.PinnedSession, "un-pinned")
 		choices = append(choices, choice{
 			value: profile.Name,
-			label: fmt.Sprintf("%s: %d member(s), session %s", profile.Name, profile.MemberCount, pinned),
+			label: fmt.Sprintf("%s · %d members · %s · roster and contract stay authoritative", profile.Name, profile.MemberCount, profileRunSummary(*profile, ctx.SessionSuggestion)),
 		})
 		if defaultProfile == "" && profile.Name == "default" {
 			defaultProfile = profile.Name
@@ -386,17 +378,39 @@ func promptProfile(r *bufio.Reader, out io.Writer, current string, ctx ProjectCo
 	if defaultProfile == "" || byName[defaultProfile] == nil {
 		defaultProfile = ctx.Profiles[0].Name
 	}
-	choices = append(choices, choice{value: "__create__", label: "create a named profile: define a fresh roster"})
-	selected, err := promptChoice(r, out, "Team profile", choices, defaultProfile)
+	choices = append(choices, choice{value: "__create__", label: "Create a new profile · choose a fresh roster and contract"})
+	selected, err := promptChoice(r, out, "Use an existing team setup or create a new one?", choices, defaultProfile)
 	if err != nil {
 		return "", nil, err
 	}
 	if selected != "__create__" {
 		return selected, byName[selected], nil
 	}
-	suggestion := defaultString(ctx.NewProfileSuggestion, "squad-"+defaultString(ctx.SessionSuggestion, "project"))
-	profile, err := promptText(r, out, "New profile name", suggestion)
+	suggestion := defaultString(current, defaultString(ctx.NewProfileSuggestion, "squad-"+defaultString(ctx.SessionSuggestion, "project")))
+	profile, err := promptText(r, out, "Name the new profile", suggestion)
 	return profile, nil, err
+}
+
+func promptExistingSession(r *bufio.Reader, out io.Writer, profile ProfileSummary, suggestion string) (SessionSummary, error) {
+	sessions := profileSessions(profile, suggestion)
+	if len(sessions) == 0 {
+		return SessionSummary{}, fmt.Errorf("profile %q has no derivable session", profile.Name)
+	}
+	if len(sessions) == 1 {
+		fmt.Fprintf(out, "Known run: %s\n", sessions[0].Label())
+		return sessions[0], nil
+	}
+	choices := make([]choice, 0, len(sessions))
+	byName := make(map[string]SessionSummary, len(sessions))
+	for _, session := range sessions {
+		choices = append(choices, choice{value: session.Name, label: session.Label()})
+		byName[session.Name] = session
+	}
+	selected, err := promptChoice(r, out, "Which existing run do you want?", choices, sessions[0].Name)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	return byName[selected], nil
 }
 
 func splitAssignmentsList(raw string) []string {
