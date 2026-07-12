@@ -745,17 +745,19 @@ type leadWakeHelperHarness struct {
 }
 
 type leadWakeHelperEvent struct {
-	Time       string `json:"time"`
-	PID        int    `json:"pid"`
-	PPID       int    `json:"ppid"`
-	PGID       int    `json:"pgid"`
-	TargetPID  int    `json:"target_pid,omitempty"`
-	TargetPGID int    `json:"target_pgid,omitempty"`
-	Mode       string `json:"mode"`
-	Phase      string `json:"phase"`
-	ReadyPath  string `json:"ready_path,omitempty"`
-	MarkerPath string `json:"marker_path"`
-	Error      string `json:"error,omitempty"`
+	Time          string `json:"time"`
+	PID           int    `json:"pid"`
+	PPID          int    `json:"ppid"`
+	PGID          int    `json:"pgid"`
+	TargetPID     int    `json:"target_pid,omitempty"`
+	TargetPGID    int    `json:"target_pgid,omitempty"`
+	Mode          string `json:"mode"`
+	Phase         string `json:"phase"`
+	ReadyPath     string `json:"ready_path,omitempty"`
+	MarkerPath    string `json:"marker_path"`
+	ProbeKillZero string `json:"probe_kill_zero,omitempty"`
+	ProbeGetPGID  string `json:"probe_getpgid,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 func installLeadWakeHelper(t *testing.T, mode string) *leadWakeHelperHarness {
@@ -803,6 +805,16 @@ func installLeadWakeHelper(t *testing.T, mode string) *leadWakeHelperHarness {
 			}
 		}
 		_ = appendLeadWakeHelperEvent(harness.eventsPath, mode, phase, "", harness.markerPath, targetPID, eventErr)
+		if phase == "kill_result" {
+			childPID, err := readLeadWakeHelperStartedPID(harness.startedPath)
+			if err != nil {
+				_ = appendLeadWakeHelperEvent(harness.eventsPath, mode, "post_kill_probe_unavailable", "", harness.markerPath, 0, err)
+				return
+			}
+			_ = appendLeadWakeHelperProbeEvent(harness.eventsPath, mode, "post_kill_probe_immediate", harness.markerPath, childPID)
+			time.Sleep(2 * time.Millisecond)
+			_ = appendLeadWakeHelperProbeEvent(harness.eventsPath, mode, "post_kill_probe_2ms", harness.markerPath, childPID)
+		}
 	}
 	externalLeadWakeReadyTimeout = 20 * time.Millisecond
 	externalLeadWakePollInterval = 2 * time.Millisecond
@@ -813,7 +825,7 @@ func installLeadWakeHelper(t *testing.T, mode string) *leadWakeHelperHarness {
 		externalLeadWakePollInterval = prevPoll
 		externalLeadWakeStopTimeout = prevStopTimeout
 		externalLeadWakeProcessEvent = prevProcessEvent
-		if t.Failed() {
+		if t.Failed() || testing.Verbose() {
 			if events, err := os.ReadFile(harness.eventsPath); err == nil {
 				t.Logf("lead wake helper events:\n%s", events)
 			} else {
@@ -828,21 +840,10 @@ func waitForLeadWakeHelperStarted(path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for {
-		data, err := os.ReadFile(path)
-		if err == nil {
-			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
-			if parseErr == nil && pid > 0 {
-				return nil
-			}
-			if parseErr != nil {
-				lastErr = fmt.Errorf("parse started PID: %w", parseErr)
-			} else {
-				lastErr = fmt.Errorf("started PID must be positive, got %d", pid)
-			}
-		} else if errors.Is(err, os.ErrNotExist) {
-			lastErr = err
+		if _, err := readLeadWakeHelperStartedPID(path); err == nil {
+			return nil
 		} else {
-			return fmt.Errorf("read started file: %w", err)
+			lastErr = err
 		}
 		if !time.Now().Before(deadline) {
 			return fmt.Errorf("grandchild did not reach trigger wait phase within %s: %w", timeout, lastErr)
@@ -851,10 +852,99 @@ func waitForLeadWakeHelperStarted(path string, timeout time.Duration) error {
 	}
 }
 
+func readLeadWakeHelperStartedPID(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, fmt.Errorf("parse started PID: %w", err)
+	}
+	if pid <= 0 {
+		return 0, fmt.Errorf("started PID must be positive, got %d", pid)
+	}
+	return pid, nil
+}
+
 func TestWaitForLeadWakeHelperStartedFailsClosed(t *testing.T) {
 	err := waitForLeadWakeHelperStarted(filepath.Join(t.TempDir(), "missing"), 5*time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "did not reach trigger wait phase") {
 		t.Fatalf("missing started file err = %v, want bounded fail-closed error", err)
+	}
+}
+
+func TestWaitExternalLeadWakeProcessGroupGoneResignalsUntilESRCH(t *testing.T) {
+	prevSignal := externalLeadWakeProcessGroupSignal
+	prevPoll := externalLeadWakePollInterval
+	prevTimeout := externalLeadWakeStopTimeout
+	t.Cleanup(func() {
+		externalLeadWakeProcessGroupSignal = prevSignal
+		externalLeadWakePollInterval = prevPoll
+		externalLeadWakeStopTimeout = prevTimeout
+	})
+	probes := 0
+	kills := 0
+	externalLeadWakeProcessGroupSignal = func(pgid int, signal syscall.Signal) error {
+		if pgid != 4242 {
+			t.Fatalf("pgid = %d, want 4242", pgid)
+		}
+		if signal == 0 {
+			probes++
+			if probes == 1 {
+				return nil
+			}
+			return syscall.ESRCH
+		}
+		if signal != syscall.SIGKILL {
+			t.Fatalf("signal = %v, want SIGKILL", signal)
+		}
+		kills++
+		return nil
+	}
+	externalLeadWakePollInterval = time.Millisecond
+	externalLeadWakeStopTimeout = 50 * time.Millisecond
+
+	cmd := &exec.Cmd{Process: &os.Process{Pid: 4242}}
+	if err := waitExternalLeadWakeProcessGroupGone(cmd, true); err != nil {
+		t.Fatalf("wait for process group: %v", err)
+	}
+	if probes != 2 || kills != 1 {
+		t.Fatalf("probes/kills = %d/%d, want 2/1", probes, kills)
+	}
+}
+
+func TestWaitExternalLeadWakeProcessGroupGoneTimesOutWhileLive(t *testing.T) {
+	prevSignal := externalLeadWakeProcessGroupSignal
+	prevPoll := externalLeadWakePollInterval
+	prevTimeout := externalLeadWakeStopTimeout
+	t.Cleanup(func() {
+		externalLeadWakeProcessGroupSignal = prevSignal
+		externalLeadWakePollInterval = prevPoll
+		externalLeadWakeStopTimeout = prevTimeout
+	})
+	externalLeadWakeProcessGroupSignal = func(_ int, _ syscall.Signal) error { return nil }
+	externalLeadWakePollInterval = time.Millisecond
+	externalLeadWakeStopTimeout = 5 * time.Millisecond
+
+	cmd := &exec.Cmd{Process: &os.Process{Pid: 4242}}
+	err := waitExternalLeadWakeProcessGroupGone(cmd, true)
+	if err == nil || !strings.Contains(err.Error(), "timed out waiting for spawned wake process group") {
+		t.Fatalf("live group err = %v, want bounded timeout", err)
+	}
+}
+
+func TestWaitExternalLeadWakeProcessGroupGoneScopesDarwinEPERMAfterSuccess(t *testing.T) {
+	prevSignal := externalLeadWakeProcessGroupSignal
+	t.Cleanup(func() { externalLeadWakeProcessGroupSignal = prevSignal })
+	externalLeadWakeProcessGroupSignal = func(_ int, _ syscall.Signal) error { return syscall.EPERM }
+	cmd := &exec.Cmd{Process: &os.Process{Pid: 4242}}
+
+	if err := waitExternalLeadWakeProcessGroupGone(cmd, true); err != nil {
+		t.Fatalf("post-success EPERM = %v, want accepted quiescence", err)
+	}
+	if err := waitExternalLeadWakeProcessGroupGone(cmd, false); !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("pre-success EPERM = %v, want EPERM failure", err)
 	}
 }
 
@@ -905,6 +995,44 @@ func appendLeadWakeHelperEvent(path, mode, phase, readyPath, markerPath string, 
 	if eventErr != nil {
 		event.Error = eventErr.Error()
 	}
+	return writeLeadWakeHelperEvent(path, event)
+}
+
+func appendLeadWakeHelperProbeEvent(path, mode, phase, markerPath string, targetPID int) error {
+	pgid, _ := syscall.Getpgid(0)
+	targetPGID, getPGIDErr := syscall.Getpgid(targetPID)
+	killZeroErr := syscall.Kill(targetPID, 0)
+	event := leadWakeHelperEvent{
+		Time:          time.Now().UTC().Format(time.RFC3339Nano),
+		PID:           os.Getpid(),
+		PPID:          os.Getppid(),
+		PGID:          pgid,
+		TargetPID:     targetPID,
+		TargetPGID:    targetPGID,
+		Mode:          mode,
+		Phase:         phase,
+		MarkerPath:    markerPath,
+		ProbeKillZero: probeResult(killZeroErr),
+		ProbeGetPGID:  probePGIDResult(targetPGID, getPGIDErr),
+	}
+	return writeLeadWakeHelperEvent(path, event)
+}
+
+func probeResult(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	return err.Error()
+}
+
+func probePGIDResult(pgid int, err error) string {
+	if err == nil {
+		return strconv.Itoa(pgid)
+	}
+	return err.Error()
+}
+
+func writeLeadWakeHelperEvent(path string, event leadWakeHelperEvent) error {
 	line, err := json.Marshal(event)
 	if err != nil {
 		return err
