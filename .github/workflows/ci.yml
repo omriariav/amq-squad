@@ -31,16 +31,16 @@ jobs:
       - name: Run shuffled internal/cli evidence suite
         shell: bash
         run: |
-          mkdir -p .ci-artifacts
+          mkdir -p ci-artifacts
           set +e
-          go test -json -shuffle=on -timeout=15m ./internal/cli > .ci-artifacts/internal-cli.json
+          go test -json -shuffle=on -timeout=15m ./internal/cli > ci-artifacts/internal-cli.json
           status=$?
           set -e
-          seed="$(sed -nE 's/.*-test\.shuffle ([0-9]+).*/\1/p' .ci-artifacts/internal-cli.json | head -n 1)"
+          seed="$(sed -nE 's/.*-test\.shuffle ([0-9]+).*/\1/p' ci-artifacts/internal-cli.json | head -n 1)"
           if [[ -z "$seed" ]]; then
             seed=unknown
           fi
-          printf 'shuffle_seed=%s\nexit_code=%s\n' "$seed" "$status" | tee .ci-artifacts/internal-cli-metadata.txt
+          printf 'shuffle_seed=%s\nexit_code=%s\n' "$seed" "$status" | tee ci-artifacts/internal-cli-metadata.txt
           exit "$status"
 
       - name: Upload shuffled internal/cli evidence
@@ -48,7 +48,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: internal-cli-go-test-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .ci-artifacts/
+          path: ci-artifacts/
           if-no-files-found: error
           retention-days: 14
 
