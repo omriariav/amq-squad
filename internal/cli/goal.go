@@ -426,7 +426,7 @@ confirm-gated and requires --yes in this first implementation slice.
 		return err
 	}
 	if flagWasSet(fs, "register-orchestrator") {
-		if err := registerGoalOrchestrator(opts, *registerOrchestrator, wakeInjectModeValue); err != nil {
+		if err := registerGoalOrchestrator(opts, *registerOrchestrator, wakeInjectModeValue, flagWasSet(fs, "wake-inject-mode")); err != nil {
 			return err
 		}
 	}
@@ -503,7 +503,7 @@ runtime accepts goal control messages safely.
 		return err
 	}
 	if flagWasSet(fs, "register-orchestrator") {
-		if err := registerGoalOrchestrator(opts, *registerOrchestrator, wakeInjectModeValue); err != nil {
+		if err := registerGoalOrchestrator(opts, *registerOrchestrator, wakeInjectModeValue, flagWasSet(fs, "wake-inject-mode")); err != nil {
 			return err
 		}
 	}
@@ -723,7 +723,7 @@ func normalizeGoalOrchestratorWakeInjectMode(fs *flag.FlagSet, raw string) (stri
 	return mode, nil
 }
 
-func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode string) error {
+func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode string, wakeInjectModeExplicit bool) error {
 	handle = strings.TrimSpace(handle)
 	if handle == "" {
 		handle = defaultGoalOrchestratorHandle
@@ -757,11 +757,17 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	if env.Me != "" {
 		handle = env.Me
 	}
+	root := absoluteAMQRoot(cwd, env.Root)
+	agentDir := filepath.Join(root, "agents", handle)
+	existingRec, existingRecErr := launch.Read(agentDir)
+	wakeConfig, err := resolveExternalWakeInjectConfig(wakeInjectConfig{Mode: wakeInjectMode}, wakeInjectModeExplicit, false, false, existingRec, existingRecErr, goalOrchestratorRole, handle, opts.Profile, env.SessionName, root, id.PaneID)
+	if err != nil {
+		return err
+	}
+	wakeInjectMode = wakeConfig.Mode
 	if wakeInjectMode != "" && !amqSupportsWakeInjectMode(env.AMQVersion) {
 		return fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
 	}
-	root := absoluteAMQRoot(cwd, env.Root)
-	agentDir := filepath.Join(root, "agents", handle)
 	wakeInjectCmdValue := wakeDrainInject()
 	if wakeInjectMode == "none" {
 		wakeInjectCmdValue = ""
@@ -771,6 +777,8 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		Root:           root,
 		Handle:         handle,
 		Require:        true,
+		WakeInjectVia:  wakeConfig.Via,
+		WakeInjectArgs: wakeConfig.Args,
 		WakeInjectMode: wakeInjectMode,
 		WakeInjectCmd:  wakeInjectCmdValue,
 	})
@@ -795,6 +803,8 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		Model:            strings.TrimSpace(member.Model),
 		Trust:            strings.TrimSpace(t.Trust),
 		External:         true,
+		WakeInjectVia:    wakeConfig.Via,
+		WakeInjectArgs:   wakeConfig.Args,
 		WakeInjectMode:   wakeInjectMode,
 		WakeInjectCmd:    wakeInjectCmdValue,
 		WakePID:          wakePID,

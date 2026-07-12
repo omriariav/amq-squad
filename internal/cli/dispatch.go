@@ -129,8 +129,9 @@ By default the nudge is skipped when the agent looks busy (a prompt pushed over
 a working agent is lost); the task stays queued and the agent drains it on its
 next turn. Pass --force to nudge anyway, or --no-wake to queue without nudging.
 When the recipient launch record uses --wake-inject-mode none, dispatch never
-injects pane input. --force cannot override that zero-input contract: the task
-remains queued durably and dispatch reports the refused pane nudge.
+injects pane input. --force cannot override that zero-input contract and is
+rejected before anything is queued; re-run without --force for durable-only
+delivery.
 
 After dispatch, the lead should collect the child's completion/report message
 with the printed root-correct 'amq-squad collect --session ... --me ...'
@@ -221,6 +222,10 @@ Examples:
 		return fmt.Errorf("resolve amq root for dispatch: %w", err)
 	}
 	ctx.Me = from
+	recipientWakeInjectMode := dispatchRecipientWakeInjectMode(ctx.Root, member.Handle)
+	if *forceFlag && recipientWakeInjectMode == "none" {
+		return usageErrorf("refusing --force pane nudge for zero-input worker %s: wake-inject-mode none is active; re-run without --force to queue the task durably", member.Handle)
+	}
 
 	taskID := strings.TrimSpace(*taskIDFlag)
 	if *createTaskFlag {
@@ -348,12 +353,60 @@ Examples:
 		return nil
 	}
 
+	wakeLive := dispatchRecipientWakeLive(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag)
+	// A recipient launched with wake-inject-mode=none has an explicit zero-input
+	// contract. Honor it before wake-first: a live none-mode sidecar emits an
+	// attention notice but cannot inject a drain command, so it must not be
+	// reported as queued_wake_delivered.
+	if recipientWakeInjectMode == "none" {
+		receipt.TaskID = taskID
+		receipt.Status = "queued_zero_input"
+		stage := "wake_skipped_zero_input"
+		detail := "recipient launch record requires wake-inject-mode none; durable task queued with zero pane input"
+		if wakeLive {
+			receipt.Method = "durable_amq+wake_notice"
+			stage = "wake_notice_zero_input"
+			detail = "recipient wake sidecar is live in none mode; durable task queued and wake notice emitted, but no drain input was injected"
+		} else {
+			receipt.Method = "durable_amq_only"
+		}
+		receipt.addStage(stage, detail)
+		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+			return err
+		}
+		if *jsonOut {
+			return printJSONEnvelope("dispatch", mutationResult{
+				Command:         "dispatch",
+				Status:          "queued_zero_input",
+				Project:         projectDir,
+				Session:         workstream,
+				Profile:         profile,
+				Namespace:       ns,
+				ID:              taskID,
+				TaskID:          taskID,
+				Role:            member.Role,
+				Assignee:        member.Handle,
+				Handle:          member.Handle,
+				MessageID:       msgID,
+				Root:            ctx.Root,
+				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				DeliveryReceipt: &receipt,
+			})
+		}
+		if wakeLive {
+			quietNotice("Queued for zero-input worker %s; wake emitted a notice but did not inject a drain command.\n", member.Handle)
+		} else {
+			quietNotice("Skipped pane nudge for zero-input worker %s; the task is queued durably.\n", member.Handle)
+		}
+		return nil
+	}
+
 	// Wake-first (#289): if the recipient has a positively-live wake sidecar, the
 	// durable AMQ message wakes and drains it (reinforced by the #283/#288
 	// drain-on-arrival injection). Normal worker direction must NOT inject pane
 	// keystrokes; raw send-keys is last-resort recovery only. --force bypasses
 	// this to force an explicit, clearly-marked pane override.
-	if !*forceFlag && dispatchRecipientWakeLive(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag) {
+	if !*forceFlag && wakeLive {
 		receipt.TaskID = taskID
 		receipt.Method = "durable_amq+wake"
 		receipt.Status = "queued_wake_delivered"
@@ -381,49 +434,6 @@ Examples:
 			})
 		}
 		quietNotice("Dispatched to %s via durable AMQ + wake (recipient wake-live; no pane injection).\n", *roleFlag)
-		return nil
-	}
-
-	// A recipient launched with wake-inject-mode=none has an explicit zero-input
-	// contract. Honor it across dispatch's last-resort pane fallback too: the
-	// durable AMQ message is already queued, but no synthetic terminal input may
-	// be sent. --force deliberately cannot override this boundary because the
-	// foreground pane may be sitting on a permission prompt.
-	if dispatchRecipientWakeInjectMode(ctx.Root, member.Handle) == "none" {
-		receipt.TaskID = taskID
-		receipt.Method = "durable_amq_only"
-		receipt.Status = "queued_zero_input"
-		detail := "recipient launch record requires wake-inject-mode none; durable task queued with zero pane input"
-		if *forceFlag {
-			detail += "; --force pane nudge refused"
-		}
-		receipt.addStage("wake_skipped_zero_input", detail)
-		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
-			return err
-		}
-		if *forceFlag {
-			return usageErrorf("refusing --force pane nudge for zero-input worker %s: wake-inject-mode none is active; task %s is queued durably", member.Handle, zeroInputDispatchTaskLabel(taskID, msgID))
-		}
-		if *jsonOut {
-			return printJSONEnvelope("dispatch", mutationResult{
-				Command:         "dispatch",
-				Status:          "queued_zero_input",
-				Project:         projectDir,
-				Session:         workstream,
-				Profile:         profile,
-				Namespace:       ns,
-				ID:              taskID,
-				TaskID:          taskID,
-				Role:            member.Role,
-				Assignee:        member.Handle,
-				Handle:          member.Handle,
-				MessageID:       msgID,
-				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
-				DeliveryReceipt: &receipt,
-			})
-		}
-		quietNotice("Skipped pane nudge for zero-input worker %s; the task is queued durably.\n", member.Handle)
 		return nil
 	}
 
@@ -544,16 +554,6 @@ func dispatchRecipientWakeInjectMode(root, handle string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(rec.WakeInjectMode))
-}
-
-func zeroInputDispatchTaskLabel(taskID, messageID string) string {
-	if taskID = strings.TrimSpace(taskID); taskID != "" {
-		return taskID
-	}
-	if messageID = strings.TrimSpace(messageID); messageID != "" {
-		return "message " + messageID
-	}
-	return "message"
 }
 
 func validateDispatchTask(t taskstore.Task, assignee, projectDir, profile, session string) error {

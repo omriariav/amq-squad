@@ -299,7 +299,12 @@ flags. The zero-input contract also suppresses dispatch's last-resort pane
 nudge (even with `--force`) and the delayed Claude `/rename` command. Records
 written with mode `none` must not be resumed by an amq-squad binary older than
 v2.20.0; run `amq-squad doctor` and resolve any binary/plugin/skill version skew
-before `resume --exec` or `agent resume`.
+before `resume --exec` or `agent resume`. Mode `none` governs automatic
+injection paths: the wake sidecar, dispatch's pane nudge, and delayed Claude
+`/rename`. It does not disable deliberate operator control actions such as
+`amq-squad send` or native `/goal` pane delivery. Layout startup send-keys that
+launch the process before the agent becomes active are outside this runtime
+injection contract.
 Use `--no-gitignore` on `agent up`, `up`, or `up --dry-run` when AMQ coop
 auto-init should leave `.gitignore` unchanged; the opt-out is persisted in the
 launch record and replayed by `agent resume`.

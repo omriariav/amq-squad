@@ -627,10 +627,10 @@ func TestLeadRegisterWakeInjectModeNoneIsZeroInput(t *testing.T) {
 	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
 		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "lead", PaneID: "%5"}, nil
 	}
-	var got leadWakeOptions
+	var got []leadWakeOptions
 	prevWake := leadWakeStarter
 	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
-		got = opts
+		got = append(got, opts)
 		return leadWakeResult{PID: 1234, Started: true}, nil
 	}
 	t.Cleanup(func() { currentPaneIdentity = prevPane; leadWakeStarter = prevWake })
@@ -639,7 +639,7 @@ func TestLeadRegisterWakeInjectModeNoneIsZeroInput(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("lead register none: %v", err)
 	}
-	if got.WakeInjectMode != "none" || got.WakeInjectCmd != "" || got.WakeInjectVia != "" || len(got.WakeInjectArgs) != 0 {
+	if len(got) != 1 || got[0].WakeInjectMode != "none" || got[0].WakeInjectCmd != "" || got[0].WakeInjectVia != "" || len(got[0].WakeInjectArgs) != 0 {
 		t.Fatalf("zero-input wake options = %+v", got)
 	}
 	rec, err := launch.Read(filepath.Join(base, "agents", "cto"))
@@ -647,9 +647,54 @@ func TestLeadRegisterWakeInjectModeNoneIsZeroInput(t *testing.T) {
 		t.Fatalf("zero-input wake record = %+v, %v", rec, err)
 	}
 	if _, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
+	}); err != nil {
+		t.Fatalf("lead repair without mode: %v", err)
+	}
+	if len(got) != 2 || got[1].WakeInjectMode != "none" || got[1].WakeInjectCmd != "" {
+		t.Fatalf("repair must inherit none mode: %+v", got)
+	}
+	rec, err = launch.Read(filepath.Join(base, "agents", "cto"))
+	if err != nil || rec.WakeInjectMode != "none" || rec.WakeInjectCmd != "" {
+		t.Fatalf("repair reset zero-input record = %+v, %v", rec, err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead", "--wake-inject-mode", "raw"})
+	}); err != nil {
+		t.Fatalf("lead repair explicit raw: %v", err)
+	}
+	if len(got) != 3 || got[2].WakeInjectMode != "raw" || got[2].WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("explicit raw must override inherited none: %+v", got)
+	}
+	rec, err = launch.Read(filepath.Join(base, "agents", "cto"))
+	if err != nil || rec.WakeInjectMode != "raw" || rec.WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("explicit raw record = %+v, %v", rec, err)
+	}
+	if _, _, err := captureOutput(t, func() error {
 		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead", "--wake-inject-mode", "none", "--wake-inject-via", "/opt/inject"})
 	}); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
 		t.Fatalf("none + injector must fail closed, got %v", err)
+	}
+}
+
+func TestResolveExternalWakeInjectConfigInheritsAssociatedInjector(t *testing.T) {
+	rec := launch.Record{
+		External:       true,
+		Role:           "cto",
+		Handle:         "cto",
+		Session:        "issue-96",
+		Root:           "/repo/.agent-mail/issue-96",
+		WakeInjectMode: "paste",
+		WakeInjectVia:  "/opt/inject",
+		WakeInjectArgs: []string{"--pane", "%5"},
+		Tmux:           &launch.TmuxInfo{PaneID: "%5"},
+	}
+	got, err := resolveExternalWakeInjectConfig(wakeInjectConfig{}, false, false, false, rec, nil, "cto", "cto", "default", "issue-96", rec.Root, "%5")
+	if err != nil {
+		t.Fatalf("inherit external wake config: %v", err)
+	}
+	if got.Mode != "paste" || got.Via != "/opt/inject" || strings.Join(got.Args, ",") != "--pane,%5" {
+		t.Fatalf("inherited config = %+v", got)
 	}
 }
 

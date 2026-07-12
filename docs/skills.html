@@ -652,7 +652,13 @@ mode <code>none</code> must not be resumed by an amq-squad binary older
 than v2.20.0, because older replay code does not understand that safety
 contract. Run <code>amq-squad doctor</code> and resolve any
 binary/plugin/skill version skew before <code>resume --exec</code> or
-<code>agent resume</code>. Use <code>--no-gitignore</code> on
+<code>agent resume</code>. Mode <code>none</code> governs automatic
+injection paths: the wake sidecar, dispatch's pane nudge, and delayed
+Claude <code>/rename</code>. It does not disable deliberate operator
+control actions such as <code>amq-squad send</code> or native
+<code>/goal</code> pane delivery. Layout startup send-keys that launch
+the process before the agent becomes active are outside this runtime
+injection contract. Use <code>--no-gitignore</code> on
 <code>agent up</code>, <code>up</code>, or <code>up --dry-run</code>
 when AMQ coop auto-init should leave <code>.gitignore</code> unchanged;
 the opt-out is persisted in the launch record and replayed by

@@ -29,6 +29,12 @@ type leadWakeOptions struct {
 	WakeInjectCmd  string
 }
 
+type wakeInjectConfig struct {
+	Mode string
+	Via  string
+	Args []string
+}
+
 // wakeDrainInject is the standard instruction amq-squad asks the wake sidecar to
 // inject on each durable-message arrival (amq wake --inject-cmd). It re-engages a
 // lead or orchestrator even after its native /goal reaches a terminal "achieved"
@@ -247,12 +253,6 @@ func runLeadRegister(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateWakeInjectConfig(wakeInjectModeValue, wakeInjectViaValue, wakeInjectArgValues, ""); err != nil {
-		return err
-	}
-	if wakeInjectViaValue != "" && !filepath.IsAbs(wakeInjectViaValue) {
-		return usageErrorf("--wake-inject-via must be an absolute path")
-	}
 	projectDir, profile, err := resolveExistingTeamProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
@@ -292,15 +292,26 @@ func runLeadRegister(args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve amq env: %w", err)
 	}
-	if wakeInjectModeValue != "" && !amqSupportsWakeInjectMode(env.AMQVersion) {
-		return fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
-	}
 	if env.Me != "" {
 		handle = env.Me
 	}
 	root := absoluteAMQRoot(cwd, env.Root)
 	agentDir := filepath.Join(root, "agents", handle)
 	existingRec, existingRecErr := launch.Read(agentDir)
+	wakeConfig, err := resolveExternalWakeInjectConfig(wakeInjectConfig{
+		Mode: wakeInjectModeValue,
+		Via:  wakeInjectViaValue,
+		Args: wakeInjectArgValues,
+	}, flagWasSet(fs, "wake-inject-mode"), flagWasSet(fs, "wake-inject-via"), flagWasSet(fs, "wake-inject-arg"), existingRec, existingRecErr, role, handle, profile, env.SessionName, root, id.PaneID)
+	if err != nil {
+		return err
+	}
+	wakeInjectModeValue = wakeConfig.Mode
+	wakeInjectViaValue = wakeConfig.Via
+	wakeInjectArgValues = wakeConfig.Args
+	if wakeInjectModeValue != "" && !amqSupportsWakeInjectMode(env.AMQVersion) {
+		return fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
+	}
 	targetMode := leadRegisterTargetMode(t, role)
 	auth, err := authorizeLeadRegister(leadRegisterAuthInput{
 		Team:               t,
@@ -398,6 +409,33 @@ func runLeadRegister(args []string) error {
 		fmt.Printf("wake: %s\n", wakeResult.Detail)
 	}
 	return nil
+}
+
+func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, viaExplicit, argsExplicit bool, existing launch.Record, existingErr error, role, handle, profile, session, root, paneID string) (wakeInjectConfig, error) {
+	resolved := wakeInjectConfig{
+		Mode: strings.TrimSpace(requested.Mode),
+		Via:  strings.TrimSpace(requested.Via),
+		Args: append([]string(nil), requested.Args...),
+	}
+	if !modeExplicit && existingErr == nil && existing.External && launchRecordMatchesSamePaneIdentity(existing, role, handle, profile, session, root, paneID) {
+		resolved.Mode = strings.TrimSpace(existing.WakeInjectMode)
+		if !viaExplicit && !argsExplicit {
+			resolved.Via = strings.TrimSpace(existing.WakeInjectVia)
+			resolved.Args = append([]string(nil), existing.WakeInjectArgs...)
+		}
+	}
+	mode, err := normalizeWakeInjectMode(resolved.Mode)
+	if err != nil {
+		return wakeInjectConfig{}, fmt.Errorf("stored external wake config: %w", err)
+	}
+	resolved.Mode = mode
+	if err := validateWakeInjectConfig(resolved.Mode, resolved.Via, resolved.Args, ""); err != nil {
+		return wakeInjectConfig{}, err
+	}
+	if resolved.Via != "" && !filepath.IsAbs(resolved.Via) {
+		return wakeInjectConfig{}, usageErrorf("--wake-inject-via must be an absolute path")
+	}
+	return resolved, nil
 }
 
 func preserveExternalGoalBinding(rec launch.Record, err error, role, session string) bool {

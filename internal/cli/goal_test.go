@@ -707,6 +707,26 @@ func TestGoalStartRegisterOrchestratorNoneModeIsZeroInput(t *testing.T) {
 	if rec.WakeInjectMode != "none" || rec.WakeInjectCmd != "" {
 		t.Fatalf("none-mode launch record = %+v", rec)
 	}
+	if _, stderr, err = captureOutput(t, func() error {
+		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--yes", "--json"})
+	}); err != nil {
+		t.Fatalf("goal repair without mode: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(*stubs.wakeOpts) != 2 || (*stubs.wakeOpts)[1].WakeInjectMode != "none" || (*stubs.wakeOpts)[1].WakeInjectCmd != "" {
+		t.Fatalf("goal repair must inherit none: %+v", *stubs.wakeOpts)
+	}
+	if _, stderr, err = captureOutput(t, func() error {
+		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--wake-inject-mode", "raw", "--yes", "--json"})
+	}); err != nil {
+		t.Fatalf("goal repair explicit raw: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(*stubs.wakeOpts) != 3 || (*stubs.wakeOpts)[2].WakeInjectMode != "raw" || (*stubs.wakeOpts)[2].WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("goal explicit raw must override inherited none: %+v", *stubs.wakeOpts)
+	}
+	rec, err = launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
+	if err != nil || rec.WakeInjectMode != "raw" || rec.WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("goal explicit raw record = %+v, %v", rec, err)
+	}
 }
 
 // TestGoalStartRegisterOrchestratorIdempotentOnRerun proves #287 idempotency:

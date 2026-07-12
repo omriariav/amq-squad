@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -551,6 +552,38 @@ func TestRunDispatchNoneModeSkipsLastResortPane(t *testing.T) {
 	}
 }
 
+func TestRunDispatchWakeLiveNoneModeReportsNoticeNotDrain(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	if err := launch.Write(filepath.Join(dir, ".agent-mail", "issue-96", "agents", "qa"), launch.Record{
+		Handle: "qa", Session: "issue-96", WakeInjectMode: "none",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-zero-live to qa\n")
+	withDispatchWakeLiveSeam(t, true)
+	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch live none mode: %v", err)
+	}
+	if len(*nudges) != 0 {
+		t.Fatalf("wake-live none recipient must not receive pane input, got %v", *nudges)
+	}
+	env := decodeJSONEnvelope[mutationResult](t, stdout)
+	r := env.Data.DeliveryReceipt
+	if env.Data.Status != "queued_zero_input" || r == nil || r.Method != "durable_amq+wake_notice" || !receiptHasStage(r, "wake_notice_zero_input") {
+		t.Fatalf("wake-live none outcome = status %q receipt %+v", env.Data.Status, r)
+	}
+	if receiptHasStage(r, "wake_delivered") || strings.Contains(r.Detail, "drain") {
+		t.Fatalf("wake-live none outcome must not claim auto-drain: %+v", r)
+	}
+}
+
 func TestRunDispatchForceCannotOverrideNoneMode(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -560,18 +593,30 @@ func TestRunDispatchForceCannotOverrideNoneMode(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-zero-force to qa\n")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-zero-force to qa\n")
 	withDispatchWakeLiveSeam(t, true)
 	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
 
-	_, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y", "--force", "--json"})
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y", "--create-task", "--force", "--json"})
 	})
-	if err == nil || !strings.Contains(err.Error(), "refusing --force") || !strings.Contains(err.Error(), "queued durably") {
+	if err == nil || !strings.Contains(err.Error(), "refusing --force") || !strings.Contains(err.Error(), "re-run without --force") {
 		t.Fatalf("force none-mode error = %v", err)
+	}
+	if stdout != "" {
+		t.Fatalf("force refusal must not emit a JSON success envelope: %q", stdout)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("force refusal must not send AMQ, got calls %+v", *calls)
 	}
 	if len(*nudges) != 0 {
 		t.Fatalf("--force must not override none mode, got nudges %v", *nudges)
+	}
+	if _, statErr := os.Stat(deliveryReceiptDir(dir, team.DefaultProfile, "issue-96")); !os.IsNotExist(statErr) {
+		t.Fatalf("force refusal wrote a receipt directory: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, team.DirName, "tasks", "issue-96")); !os.IsNotExist(statErr) {
+		t.Fatalf("force refusal created a native task: %v", statErr)
 	}
 }
 
