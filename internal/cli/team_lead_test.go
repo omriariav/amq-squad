@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -737,11 +738,13 @@ func TestLeadRegisterWakeFailureRequiredErrorsBeforeTeamMutation(t *testing.T) {
 }
 
 type leadWakeHelperHarness struct {
-	mode        string
-	markerPath  string
-	startedPath string
-	triggerPath string
-	eventsPath  string
+	mode           string
+	markerPath     string
+	startedPath    string
+	triggerPath    string
+	eventsPath     string
+	deferredMu     sync.Mutex
+	deferredEvents []leadWakeHelperEvent
 }
 
 type leadWakeHelperEvent struct {
@@ -811,9 +814,7 @@ func installLeadWakeHelper(t *testing.T, mode string) *leadWakeHelperHarness {
 				_ = appendLeadWakeHelperEvent(harness.eventsPath, mode, "post_kill_probe_unavailable", "", harness.markerPath, 0, err)
 				return
 			}
-			_ = appendLeadWakeHelperProbeEvent(harness.eventsPath, mode, "post_kill_probe_immediate", harness.markerPath, childPID)
-			time.Sleep(2 * time.Millisecond)
-			_ = appendLeadWakeHelperProbeEvent(harness.eventsPath, mode, "post_kill_probe_2ms", harness.markerPath, childPID)
+			harness.recordImmediateProbe(mode, "post_kill_probe_immediate", childPID)
 		}
 	}
 	externalLeadWakeReadyTimeout = 20 * time.Millisecond
@@ -825,6 +826,9 @@ func installLeadWakeHelper(t *testing.T, mode string) *leadWakeHelperHarness {
 		externalLeadWakePollInterval = prevPoll
 		externalLeadWakeStopTimeout = prevStopTimeout
 		externalLeadWakeProcessEvent = prevProcessEvent
+		if err := harness.flushDeferredEvents(); err != nil {
+			t.Logf("flush deferred lead wake helper events: %v", err)
+		}
 		if t.Failed() || testing.Verbose() {
 			if events, err := os.ReadFile(harness.eventsPath); err == nil {
 				t.Logf("lead wake helper events:\n%s", events)
@@ -950,9 +954,16 @@ func TestWaitExternalLeadWakeProcessGroupGoneScopesDarwinEPERMAfterSuccess(t *te
 
 func (h *leadWakeHelperHarness) assertStoppedAfterCleanup(t *testing.T) {
 	t.Helper()
-	if err := appendLeadWakeHelperEvent(h.eventsPath, h.mode, "cleanup_returned", "", h.markerPath, 0, nil); err != nil {
-		t.Fatalf("record cleanup return: %v", err)
-	}
+	pgid, _ := syscall.Getpgid(0)
+	h.recordDeferredEvent(leadWakeHelperEvent{
+		Time:       time.Now().UTC().Format(time.RFC3339Nano),
+		PID:        os.Getpid(),
+		PPID:       os.Getppid(),
+		PGID:       pgid,
+		Mode:       h.mode,
+		Phase:      "cleanup_returned",
+		MarkerPath: h.markerPath,
+	})
 	if err := os.WriteFile(h.triggerPath, []byte("cleanup returned\n"), 0o644); err != nil {
 		t.Fatalf("write cleanup trigger: %v", err)
 	}
@@ -998,7 +1009,7 @@ func appendLeadWakeHelperEvent(path, mode, phase, readyPath, markerPath string, 
 	return writeLeadWakeHelperEvent(path, event)
 }
 
-func appendLeadWakeHelperProbeEvent(path, mode, phase, markerPath string, targetPID int) error {
+func (h *leadWakeHelperHarness) recordImmediateProbe(mode, phase string, targetPID int) {
 	pgid, _ := syscall.Getpgid(0)
 	targetPGID, getPGIDErr := syscall.Getpgid(targetPID)
 	killZeroErr := syscall.Kill(targetPID, 0)
@@ -1011,11 +1022,32 @@ func appendLeadWakeHelperProbeEvent(path, mode, phase, markerPath string, target
 		TargetPGID:    targetPGID,
 		Mode:          mode,
 		Phase:         phase,
-		MarkerPath:    markerPath,
+		MarkerPath:    h.markerPath,
 		ProbeKillZero: probeResult(killZeroErr),
 		ProbeGetPGID:  probePGIDResult(targetPGID, getPGIDErr),
 	}
-	return writeLeadWakeHelperEvent(path, event)
+	h.deferredMu.Lock()
+	h.deferredEvents = append(h.deferredEvents, event)
+	h.deferredMu.Unlock()
+}
+
+func (h *leadWakeHelperHarness) recordDeferredEvent(event leadWakeHelperEvent) {
+	h.deferredMu.Lock()
+	h.deferredEvents = append(h.deferredEvents, event)
+	h.deferredMu.Unlock()
+}
+
+func (h *leadWakeHelperHarness) flushDeferredEvents() error {
+	h.deferredMu.Lock()
+	events := append([]leadWakeHelperEvent(nil), h.deferredEvents...)
+	h.deferredEvents = nil
+	h.deferredMu.Unlock()
+	for _, event := range events {
+		if err := writeLeadWakeHelperEvent(h.eventsPath, event); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func probeResult(err error) string {
