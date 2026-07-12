@@ -14,6 +14,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/omriariav/amq-squad/v2/internal/attention"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/notifier"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -328,6 +329,40 @@ type watcherTestProcess struct{ pid int }
 func (p watcherTestProcess) PID() int             { return p.pid }
 func (watcherTestProcess) Signal(os.Signal) error { return nil }
 func (watcherTestProcess) Release() error         { return nil }
+
+func stubHealthyNotificationWatcherSpawn(t *testing.T) {
+	t.Helper()
+	oldSpawn, oldAlive, oldMatch, oldSignal := notificationWatcherSpawn, notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal
+	t.Cleanup(func() {
+		notificationWatcherSpawn, notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal = oldSpawn, oldAlive, oldMatch, oldSignal
+	})
+	const pid = 4242
+	alive := true
+	notificationWatcherPIDAlive = func(got int) bool { return alive && got == pid }
+	notificationWatcherProcessMatch = func(got int, _ func(string) bool) bool { return alive && got == pid }
+	notificationWatcherSignal = func(got int, _ os.Signal) error {
+		if got == pid {
+			alive = false
+		}
+		return nil
+	}
+	notificationWatcherSpawn = func(projectDir, profile, session, baseRoot, token string) (notificationWatcherProcess, error) {
+		host, _ := os.Hostname()
+		now := time.Now().UTC()
+		rec := notificationWatcherRecord{
+			SchemaVersion: notificationWatcherSchema, ProjectDir: projectDir,
+			Profile: squadnamespace.NormalizeProfile(profile), Session: session,
+			NamespaceID: squadnamespace.ID(profile, session), PID: pid, Host: host,
+			Owner: "supervised-test", OwnerToken: token, LeaseTTL: defaultNotificationWatcherTTL.String(),
+			LeaseExpiresAt: now.Add(defaultNotificationWatcherTTL), HeartbeatAt: now, LastScanAt: now,
+			StatePath: defaultNotifyStatePath(projectDir), Expected: true, Health: "healthy", UpdatedAt: now,
+		}
+		if err := writeNotificationWatcherRecord(notificationWatcherRuntimePath(projectDir, profile, session), rec); err != nil {
+			return nil, err
+		}
+		return watcherTestProcess{pid: pid}, nil
+	}
+}
 
 func TestLeadPaneNotificationsStartDespitePollNotRequired(t *testing.T) {
 	project, tm, base := notificationWatcherTeam(t, team.DefaultProfile, "s")
