@@ -25,7 +25,14 @@ type leadWakeOptions struct {
 	Require        bool
 	WakeInjectVia  string
 	WakeInjectArgs []string
+	WakeInjectMode string
 	WakeInjectCmd  string
+}
+
+type wakeInjectConfig struct {
+	Mode string
+	Via  string
+	Args []string
 }
 
 // wakeDrainInject is the standard instruction amq-squad asks the wake sidecar to
@@ -49,6 +56,10 @@ var externalLeadWakeCommand = exec.Command
 var externalLeadWakeReadyTimeout = 5 * time.Second
 var externalLeadWakePollInterval = 50 * time.Millisecond
 var externalLeadWakeStopTimeout = 2 * time.Second
+var externalLeadWakeProcessEvent = func(_ string, _ *exec.Cmd, _ error) {}
+var externalLeadWakeProcessGroupSignal = func(pgid int, signal syscall.Signal) error {
+	return syscall.Kill(-pgid, signal)
+}
 
 type teamLeadData struct {
 	Profile      string `json:"profile"`
@@ -182,6 +193,7 @@ Usage:
   amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
                           [--wake|--no-wake] [--require-wake|--no-require-wake]
                           [--adopt-project-lead] [--compat-no-wake --reason TEXT]
+                          [--wake-inject-mode auto|raw|paste|none]
                           [--wake-inject-via PATH] [--wake-inject-arg ARG]
 
 register adopts the current tmux pane as the external lead for an existing team
@@ -218,6 +230,7 @@ func runLeadRegister(args []string) error {
 	requireWake := fs.Bool("require-wake", false, "fail if the external lead wake sidecar cannot become ready (default)")
 	noRequireWake := fs.Bool("no-require-wake", false, "warn instead of failing if the external lead wake sidecar cannot become ready")
 	wakeInjectVia := fs.String("wake-inject-via", "", "absolute executable passed to amq wake --inject-via for external lead notifications")
+	wakeInjectMode := fs.String("wake-inject-mode", "", "wake injection mode: auto, raw, paste, or none (none guarantees zero terminal input)")
 	var wakeInjectArgs stringListFlag
 	fs.Var(&wakeInjectArgs, "wake-inject-arg", "argument passed to amq wake --inject-arg (repeatable; requires --wake-inject-via)")
 	if err := parseFlags(fs, args); err != nil {
@@ -240,11 +253,9 @@ func runLeadRegister(args []string) error {
 	}
 	wakeInjectViaValue := strings.TrimSpace(*wakeInjectVia)
 	wakeInjectArgValues := append([]string(nil), wakeInjectArgs...)
-	if len(wakeInjectArgValues) > 0 && wakeInjectViaValue == "" {
-		return usageErrorf("--wake-inject-arg requires --wake-inject-via")
-	}
-	if wakeInjectViaValue != "" && !filepath.IsAbs(wakeInjectViaValue) {
-		return usageErrorf("--wake-inject-via must be an absolute path")
+	wakeInjectModeValue, err := normalizeWakeInjectMode(*wakeInjectMode)
+	if err != nil {
+		return err
 	}
 	projectDir, profile, err := resolveExistingTeamProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {
@@ -291,6 +302,20 @@ func runLeadRegister(args []string) error {
 	root := absoluteAMQRoot(cwd, env.Root)
 	agentDir := filepath.Join(root, "agents", handle)
 	existingRec, existingRecErr := launch.Read(agentDir)
+	wakeConfig, err := resolveExternalWakeInjectConfig(wakeInjectConfig{
+		Mode: wakeInjectModeValue,
+		Via:  wakeInjectViaValue,
+		Args: wakeInjectArgValues,
+	}, flagWasSet(fs, "wake-inject-mode"), flagWasSet(fs, "wake-inject-via"), flagWasSet(fs, "wake-inject-arg"), existingRec, existingRecErr, role, handle, profile, env.SessionName, root, id.PaneID)
+	if err != nil {
+		return err
+	}
+	wakeInjectModeValue = wakeConfig.Mode
+	wakeInjectViaValue = wakeConfig.Via
+	wakeInjectArgValues = wakeConfig.Args
+	if wakeInjectModeValue != "" && !amqSupportsWakeInjectMode(env.AMQVersion) {
+		return fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
+	}
 	targetMode := leadRegisterTargetMode(t, role)
 	auth, err := authorizeLeadRegister(leadRegisterAuthInput{
 		Team:               t,
@@ -314,6 +339,9 @@ func runLeadRegister(args []string) error {
 		return err
 	}
 	wakeInjectCmdValue := wakeDrainInject()
+	if wakeInjectModeValue == "none" {
+		wakeInjectCmdValue = ""
+	}
 	var wakeResult leadWakeResult
 	if !*noWake {
 		wakeResult, err = leadWakeStarter(leadWakeOptions{
@@ -323,6 +351,7 @@ func runLeadRegister(args []string) error {
 			Require:        !*noRequireWake,
 			WakeInjectVia:  wakeInjectViaValue,
 			WakeInjectArgs: wakeInjectArgValues,
+			WakeInjectMode: wakeInjectModeValue,
 			WakeInjectCmd:  wakeInjectCmdValue,
 		})
 		if err != nil {
@@ -352,6 +381,7 @@ func runLeadRegister(args []string) error {
 		NoWakeReason:     auth.NoWakeReason,
 		WakeInjectVia:    wakeInjectViaValue,
 		WakeInjectArgs:   wakeInjectArgValues,
+		WakeInjectMode:   wakeInjectModeValue,
 		WakeInjectCmd:    wakeInjectCmdValue,
 		WakePID:          wakePID,
 		AgentTTY:         currentLaunchTTY(),
@@ -383,6 +413,33 @@ func runLeadRegister(args []string) error {
 		fmt.Printf("wake: %s\n", wakeResult.Detail)
 	}
 	return nil
+}
+
+func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, viaExplicit, argsExplicit bool, existing launch.Record, existingErr error, role, handle, profile, session, root, paneID string) (wakeInjectConfig, error) {
+	resolved := wakeInjectConfig{
+		Mode: strings.TrimSpace(requested.Mode),
+		Via:  strings.TrimSpace(requested.Via),
+		Args: append([]string(nil), requested.Args...),
+	}
+	if !modeExplicit && existingErr == nil && existing.External && launchRecordMatchesSamePaneIdentity(existing, role, handle, profile, session, root, paneID) {
+		resolved.Mode = strings.TrimSpace(existing.WakeInjectMode)
+		if !viaExplicit && !argsExplicit {
+			resolved.Via = strings.TrimSpace(existing.WakeInjectVia)
+			resolved.Args = append([]string(nil), existing.WakeInjectArgs...)
+		}
+	}
+	mode, err := normalizeWakeInjectMode(resolved.Mode)
+	if err != nil {
+		return wakeInjectConfig{}, fmt.Errorf("stored external wake config: %w", err)
+	}
+	resolved.Mode = mode
+	if err := validateWakeInjectConfig(resolved.Mode, resolved.Via, resolved.Args, ""); err != nil {
+		return wakeInjectConfig{}, err
+	}
+	if resolved.Via != "" && !filepath.IsAbs(resolved.Via) {
+		return wakeInjectConfig{}, usageErrorf("--wake-inject-via must be an absolute path")
+	}
+	return resolved, nil
 }
 
 func preserveExternalGoalBinding(rec launch.Record, err error, role, session string) bool {
@@ -507,6 +564,9 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 			args = append(args, "--inject-arg", arg)
 		}
 	}
+	if mode := strings.TrimSpace(opts.WakeInjectMode); mode != "" {
+		args = append(args, "--inject-mode", mode)
+	}
 	if cmd := strings.TrimSpace(opts.WakeInjectCmd); cmd != "" {
 		args = append(args, "--inject-cmd", cmd)
 	}
@@ -520,8 +580,13 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 	if err := cmd.Start(); err != nil {
 		return leadWakeResult{}, err
 	}
+	externalLeadWakeProcessEvent("process_started", cmd, nil)
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		externalLeadWakeProcessEvent("process_wait_done", cmd, err)
+		done <- err
+	}()
 
 	deadline := time.Now().Add(externalLeadWakeReadyTimeout)
 	for {
@@ -530,11 +595,12 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 		}
 		select {
 		case err := <-done:
+			externalLeadWakeProcessEvent("done_observed", cmd, err)
 			if err == nil {
 				return leadWakeResult{Started: false, Detail: fmt.Sprintf("existing wake accepted for %s at %s", opts.Handle, opts.Root)}, nil
 			}
 			cleanupDetail := ""
-			if stopErr := stopExternalLeadWakeProcessGroup(cmd); stopErr != nil {
+			if stopErr := stopExternalLeadWakeProcessGroupAndWait(cmd); stopErr != nil {
 				cleanupDetail = fmt.Sprintf("failed to stop spawned wake process group %d: %v", cmd.Process.Pid, stopErr)
 			} else {
 				cleanupDetail = fmt.Sprintf("stopped spawned wake process group %d", cmd.Process.Pid)
@@ -577,14 +643,67 @@ func stopExternalLeadWakeProcess(cmd *exec.Cmd, done <-chan error) error {
 	}
 	killErr := stopExternalLeadWakeProcessGroup(cmd)
 	select {
-	case <-done:
+	case err := <-done:
+		externalLeadWakeProcessEvent("done_observed", cmd, err)
 	case <-time.After(externalLeadWakeStopTimeout):
 		return fmt.Errorf("timed out waiting for process exit")
 	}
+	// The helper can fork after the first group signal is delivered but before
+	// its leader is reaped. Once Wait completes the leader can no longer add a
+	// descendant, so sweep the process group again to catch that race.
+	finalKillErr := stopExternalLeadWakeProcessGroup(cmd)
+	priorKillSucceeded := killErr == nil || errors.Is(killErr, os.ErrProcessDone)
+	finalKillSucceeded := finalKillErr == nil || errors.Is(finalKillErr, os.ErrProcessDone)
+	if !priorKillSucceeded && !finalKillSucceeded {
+		return killErr
+	}
+	if !finalKillSucceeded && !(priorKillSucceeded && errors.Is(finalKillErr, syscall.EPERM)) {
+		return finalKillErr
+	}
+	return waitExternalLeadWakeProcessGroupGone(cmd, priorKillSucceeded || finalKillSucceeded)
+}
+
+func stopExternalLeadWakeProcessGroupAndWait(cmd *exec.Cmd) error {
+	killErr := stopExternalLeadWakeProcessGroup(cmd)
 	if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
 		return killErr
 	}
-	return nil
+	return waitExternalLeadWakeProcessGroupGone(cmd, true)
+}
+
+func waitExternalLeadWakeProcessGroupGone(cmd *exec.Cmd, priorKillSucceeded bool) error {
+	if cmd == nil || cmd.Process == nil || cmd.Process.Pid <= 0 {
+		return nil
+	}
+	pgid := cmd.Process.Pid
+	deadline := time.Now().Add(externalLeadWakeStopTimeout)
+	for {
+		probeErr := externalLeadWakeProcessGroupSignal(pgid, 0)
+		externalLeadWakeProcessEvent("quiescence_probe", cmd, probeErr)
+		if errors.Is(probeErr, syscall.ESRCH) {
+			return nil
+		}
+		// After a successful SIGKILL, Darwin can report EPERM while only
+		// already-killed, unsignalable group members remain.
+		if priorKillSucceeded && errors.Is(probeErr, syscall.EPERM) {
+			return nil
+		}
+		if probeErr != nil {
+			return fmt.Errorf("probe spawned wake process group %d: %w", pgid, probeErr)
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("timed out waiting for spawned wake process group %d to terminate", pgid)
+		}
+		resignalErr := stopExternalLeadWakeProcessGroup(cmd)
+		if resignalErr == nil || errors.Is(resignalErr, os.ErrProcessDone) {
+			priorKillSucceeded = true
+		} else if priorKillSucceeded && errors.Is(resignalErr, syscall.EPERM) {
+			return nil
+		} else if !errors.Is(resignalErr, syscall.ESRCH) {
+			return resignalErr
+		}
+		time.Sleep(externalLeadWakePollInterval)
+	}
 }
 
 func stopExternalLeadWakeProcessGroup(cmd *exec.Cmd) error {
@@ -595,16 +714,20 @@ func stopExternalLeadWakeProcessGroup(cmd *exec.Cmd) error {
 	if pid <= 0 {
 		return nil
 	}
-	err := syscall.Kill(-pid, syscall.SIGKILL)
+	externalLeadWakeProcessEvent("kill_attempt", cmd, nil)
+	err := externalLeadWakeProcessGroupSignal(pid, syscall.SIGKILL)
 	if err == nil {
+		externalLeadWakeProcessEvent("kill_result", cmd, nil)
 		return nil
 	}
 	if errors.Is(err, syscall.ESRCH) {
 		err = cmd.Process.Kill()
 		if errors.Is(err, os.ErrProcessDone) {
+			externalLeadWakeProcessEvent("kill_result", cmd, nil)
 			return nil
 		}
 	}
+	externalLeadWakeProcessEvent("kill_result", cmd, err)
 	return err
 }
 

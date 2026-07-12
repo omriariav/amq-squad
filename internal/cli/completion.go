@@ -368,6 +368,7 @@ var completionCommonFlags = []string{
 	"--wait-timeout",
 	"--wake",
 	"--wake-inject-arg",
+	"--wake-inject-mode",
 	"--wake-inject-via",
 	"--yes",
 }

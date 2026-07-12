@@ -596,14 +596,15 @@ type teamInitDryRun struct {
 }
 
 type teamProfilePlanMember struct {
-	Role       string   `json:"role"`
-	Handle     string   `json:"handle"`
-	Binary     string   `json:"binary"`
-	Model      string   `json:"model,omitempty"`
-	CWD        string   `json:"cwd"`
-	Session    string   `json:"session"`
-	ClaudeArgs []string `json:"claude_args,omitempty"`
-	CodexArgs  []string `json:"codex_args,omitempty"`
+	Role                string   `json:"role"`
+	Handle              string   `json:"handle"`
+	Binary              string   `json:"binary"`
+	Model               string   `json:"model,omitempty"`
+	CWD                 string   `json:"cwd"`
+	Session             string   `json:"session"`
+	ClaudeArgs          []string `json:"claude_args,omitempty"`
+	CodexArgs           []string `json:"codex_args,omitempty"`
+	PermissionAllowlist []string `json:"permission_allowlist,omitempty"`
 }
 
 type teamProfilePlan struct {
@@ -699,14 +700,15 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 	rows := make([]teamProfilePlanMember, 0, len(p.Team.Members))
 	for _, m := range orderedTeamMembers(p.Team.Members) {
 		rows = append(rows, teamProfilePlanMember{
-			Role:       m.Role,
-			Handle:     m.Handle,
-			Binary:     m.Binary,
-			Model:      m.Model,
-			CWD:        m.EffectiveCWD(p.Team.Project),
-			Session:    m.Session,
-			ClaudeArgs: m.ClaudeArgs,
-			CodexArgs:  m.CodexArgs,
+			Role:                m.Role,
+			Handle:              m.Handle,
+			Binary:              m.Binary,
+			Model:               m.Model,
+			CWD:                 m.EffectiveCWD(p.Team.Project),
+			Session:             m.Session,
+			ClaudeArgs:          m.ClaudeArgs,
+			CodexArgs:           m.CodexArgs,
+			PermissionAllowlist: m.PermissionAllowlist,
 		})
 	}
 	return teamProfilePlan{
@@ -786,6 +788,7 @@ type emitTeamOptions struct {
 	Symphony         bool
 	WakeInjectVia    string
 	WakeInjectArgs   []string
+	WakeInjectMode   string
 	Profile          string
 	// JSON requests a structured "team_plan" envelope on stdout instead of
 	// the human launch-command preview. Diagnostics still go to stderr.
@@ -801,6 +804,7 @@ type teamPlanMember struct {
 	CWD                  string   `json:"cwd"`
 	ClaudeArgs           []string `json:"claude_args,omitempty"`
 	CodexArgs            []string `json:"codex_args,omitempty"`
+	PermissionAllowlist  []string `json:"permission_allowlist,omitempty"`
 	ChildArgs            []string `json:"child_args,omitempty"`
 	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
 	Bootstrap            string   `json:"bootstrap"`
@@ -957,6 +961,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 				Profile:        opts.Profile,
 				WakeInjectVia:  opts.WakeInjectVia,
 				WakeInjectArgs: opts.WakeInjectArgs,
+				WakeInjectMode: opts.WakeInjectMode,
 			}
 			preview := teamCommandPreview(input)
 			plan.Plan = append(plan.Plan, teamPlanMember{
@@ -967,6 +972,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 				CWD:                  cwd,
 				ClaudeArgs:           m.ClaudeArgs,
 				CodexArgs:            m.CodexArgs,
+				PermissionAllowlist:  m.PermissionAllowlist,
 				ChildArgs:            preview.ChildArgs,
 				PreauthorizedActions: preview.PreauthorizedActions,
 				Bootstrap:            preview.Bootstrap,
@@ -1032,6 +1038,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			Symphony:       opts.Symphony,
 			WakeInjectVia:  opts.WakeInjectVia,
 			WakeInjectArgs: opts.WakeInjectArgs,
+			WakeInjectMode: opts.WakeInjectMode,
 		}
 		preview := teamCommandPreview(input)
 		fmt.Printf("#    bootstrap: %s\n", preview.Bootstrap)
@@ -1214,6 +1221,7 @@ type emitTeamCommandInput struct {
 	Symphony       bool
 	WakeInjectVia  string
 	WakeInjectArgs []string
+	WakeInjectMode string
 	Profile        string
 }
 
@@ -1293,6 +1301,10 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 			b.WriteString(shellQuote(arg))
 		}
 	}
+	if mode := strings.TrimSpace(in.WakeInjectMode); mode != "" {
+		b.WriteString(" --wake-inject-mode ")
+		b.WriteString(shellQuote(mode))
+	}
 	if m.Handle != "" {
 		// Always explicit: a role-named handle avoids collisions when the
 		// same binary (e.g. codex) hosts multiple roles in one project.
@@ -1338,21 +1350,22 @@ func teamCommandPreview(in emitTeamCommandInput) teamCommandPreviewData {
 	extraDefaultArgs := composeBinaryArgs(m.Binary, binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs())
 	modelArgs := modelArgsForBinary(m.Binary, in.Model)
 	defaultArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, extraDefaultArgs, in.TrustMode)
-	childArgs, preauthorized, added := applyClaudeWorkerPreauth(in.TeamHome, in.Profile, m.Role, m.Binary, in.Workstream, defaultArgs)
-	bootstrapArgs := stripTrailingLauncherPreauthArgs(childArgs, preauthorized)
+	// Launcher policy is display/audit metadata only at preview time. It must
+	// never ride inside the executable child argv: runLaunch recomputes it from
+	// the current member policy, making every allowed-tools value already in
+	// ChildArgs explicit by construction.
+	launcherActions := claudeLauncherPreauthActions(in.TeamHome, in.Profile, m.Role, m.Binary, in.Workstream, true)
+	explicitActions := childArgsAllowedTools(defaultArgs)
+	preauthorized := appendUniquePermissionPatterns(explicitActions, launcherActions...)
 	bootstrap := "suppressed"
 	if in.NoBootstrap {
 		bootstrap = "disabled"
-	} else if shouldAppendBootstrapWithDefaults(bootstrapArgs, defaultArgs) {
+	} else if shouldAppendBootstrapWithDefaults(defaultArgs, defaultArgs) {
 		bootstrap = "appended"
 	}
-	var launcherAdded []string
-	if added {
-		launcherAdded = claudePreauthChildArgs(preauthorized)
-	}
 	return teamCommandPreviewData{
-		ChildArgs:            childArgs,
-		LauncherAddedArgs:    launcherAdded,
+		ChildArgs:            defaultArgs,
+		LauncherAddedArgs:    claudePreauthChildArgs(launcherActions),
 		PreauthorizedActions: preauthorized,
 		Bootstrap:            bootstrap,
 	}

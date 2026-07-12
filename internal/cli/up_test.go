@@ -170,16 +170,59 @@ func TestUpDryRunJSONIncludesClaudeWorkerPreauthAndBootstrapStatus(t *testing.T)
 		t.Fatalf("worker bootstrap = %q, want appended", worker.Bootstrap)
 	}
 	joinedArgs := strings.Join(worker.ChildArgs, " ")
-	for _, want := range []string{"--permission-mode auto", "--allowedTools", "Bash(gh pr create:*)"} {
-		if !strings.Contains(joinedArgs, want) {
-			t.Fatalf("worker child_args missing %q: %v", want, worker.ChildArgs)
-		}
-		if !strings.Contains(worker.Command, want) {
-			t.Fatalf("worker command missing %q: %s", want, worker.Command)
+	if !strings.Contains(joinedArgs, "--permission-mode auto") || !strings.Contains(worker.Command, "--permission-mode auto") {
+		t.Fatalf("worker executable defaults missing from plan: %+v", *worker)
+	}
+	for _, forbidden := range []string{"--allowedTools", "Bash(gh pr create:*)"} {
+		if strings.Contains(joinedArgs, forbidden) || strings.Contains(worker.Command, forbidden) {
+			t.Fatalf("launcher policy %q leaked into executable preview argv: %+v", forbidden, *worker)
 		}
 	}
 	if len(worker.PreauthorizedActions) != 1 || !strings.Contains(worker.PreauthorizedActions[0], "gh pr create") {
 		t.Fatalf("worker preauthorized_actions = %v, want gh pr create", worker.PreauthorizedActions)
+	}
+}
+
+func TestUpDryRunPermissionAllowlistIsPerMemberAndAuditable(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-401"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-401", PermissionAllowlist: []string{"Bash(rm -rf /tmp/qa-review/*:*)"}},
+			{Role: "reviewer", Binary: "claude", Handle: "reviewer", Session: "issue-401", PermissionAllowlist: []string{"Read(/tmp/reviewer-work/**)"}},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runUp([]string{"issue-401", "--dry-run", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --json: %v", err)
+	}
+	env := decodeJSONEnvelope[teamPlan](t, stdout)
+	for _, row := range env.Data.Plan {
+		var own, forbidden string
+		switch row.Role {
+		case "qa":
+			own, forbidden = "Bash(rm -rf /tmp/qa-review/*:*)", "reviewer-work"
+		case "reviewer":
+			own, forbidden = "Read(/tmp/reviewer-work/**)", "qa-review"
+		default:
+			continue
+		}
+		if len(row.PermissionAllowlist) != 1 || row.PermissionAllowlist[0] != own {
+			t.Fatalf("%s permission_allowlist = %v, want %q", row.Role, row.PermissionAllowlist, own)
+		}
+		if !containsString(row.PreauthorizedActions, own) {
+			t.Fatalf("%s effective grant missing from plan/audit: %+v", row.Role, row)
+		}
+		if strings.Contains(row.Command, own) {
+			t.Fatalf("%s launcher policy leaked into executable command: %+v", row.Role, row)
+		}
+		if strings.Contains(strings.Join(row.PreauthorizedActions, " "), forbidden) || strings.Contains(row.Command, forbidden) {
+			t.Fatalf("%s received another role's allowlist: %+v", row.Role, row)
+		}
 	}
 }
 
@@ -219,7 +262,7 @@ func TestUpDryRunCrossCWDClaudeWorkerPreauthMatchesLiveLaunch(t *testing.T) {
 		t.Fatalf("worker cwd = %q, want %q", worker.CWD, workerDir)
 	}
 	planTeamHome := env.Data.TeamHome
-	if worker.Bootstrap != "appended" || !strings.Contains(worker.Command, "--allowedTools") || !strings.Contains(worker.Command, "--team-home "+planTeamHome) {
+	if worker.Bootstrap != "appended" || strings.Contains(worker.Command, "--allowedTools") || !strings.Contains(worker.Command, "--team-home "+planTeamHome) {
 		t.Fatalf("preview did not show cross-cwd preauth+bootstrap correctly: %+v", *worker)
 	}
 
@@ -229,7 +272,7 @@ func TestUpDryRunCrossCWDClaudeWorkerPreauthMatchesLiveLaunch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("up --dry-run text: %v", err)
 	}
-	for _, want := range []string{"#    bootstrap: appended", "#    launcher-added args: --allowedTools 'Bash(gh pr create:*)'"} {
+	for _, want := range []string{"#    bootstrap: appended", "#    launcher-added args: '--allowedTools=Bash(gh pr create:*)'"} {
 		if !strings.Contains(textOut, want) {
 			t.Fatalf("text dry-run missing %q in:\n%s", want, textOut)
 		}
@@ -246,7 +289,6 @@ func TestUpDryRunCrossCWDClaudeWorkerPreauthMatchesLiveLaunch(t *testing.T) {
 			"claude",
 			"--",
 			"--permission-mode", "auto",
-			"--allowedTools", "Bash(gh pr create:*)",
 		})
 	})
 	if err != nil {
@@ -372,6 +414,25 @@ func TestUpDryRunMatchesTeamShowWithFlags(t *testing.T) {
 	}
 	if !strings.Contains(upOut, "--wake-inject-via /opt/amq-inject") || !strings.Contains(upOut, "--wake-inject-arg=--pane") {
 		t.Errorf("wake injector flags not applied: %s", upOut)
+	}
+}
+
+func TestUpDryRunWakeInjectModeNonePropagates(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{Members: []team.Member{{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-401"}}})
+	out, _, err := captureOutput(t, func() error {
+		return runUp([]string{"--dry-run", "--session", "issue-401", "--wake-inject-mode", "none"})
+	})
+	if err != nil {
+		t.Fatalf("up zero-input wake: %v", err)
+	}
+	if !strings.Contains(out, "--wake-inject-mode none") {
+		t.Fatalf("up preview omitted zero-input wake mode:\n%s", out)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runUp([]string{"--dry-run", "--session", "issue-401", "--wake-inject-mode", "none", "--wake-inject-via", "/opt/inject"})
+	}); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("up must reject none + injector flags, got %v", err)
 	}
 }
 

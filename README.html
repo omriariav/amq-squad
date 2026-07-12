@@ -886,6 +886,32 @@ required startup behavior.</p>
 native CLI flags to one member and are replayed by resume. Worker
 overlays trim Claude plugin/hook surface for same-cwd squads; Codex
 workers use native Codex profiles via <code>codex_args</code>.</p>
+<p>Claude members may also carry an explicit, role-scoped
+<code>permission_allowlist</code>, for example
+<code>"permission_allowlist": ["Bash(rm -rf /tmp/qa-review/*:*)"]</code>.
+amq-squad merges those patterns into one effective
+<code>--allowedTools</code> grant for that member only, records the
+result in launch history, and shows both the configured and effective
+lists in <code>up --dry-run --json</code>. Values beginning with
+<code>-</code> are rejected and generated grants use the single-token
+<code>--allowedTools=&lt;grant&gt;</code> form. Resume removes the prior
+launcher-owned grant before rebuilding from current policy, so narrowing
+or removing the field revokes old access; the
+<code>--no-preauthorize-inscope</code> choice also survives replay.
+Preview commands never embed launcher-owned policy in executable child
+argv: <code>agent up</code> recomputes it from current profile state,
+and launch history records launcher-owned and explicit-native provenance
+separately even when their values are identical. Keep each pattern as
+narrow as the member's own scratch or review workspace; the field is
+rejected on non-Claude members and is intentionally not a team-wide
+trust switch.</p>
+<p>Profiles using <code>permission_allowlist</code> are written as team
+schema 4; profiles without it remain schema 3. v2.20+ readers accept
+both and reject future schemas. Pre-v2.20 binaries do not understand
+this field: they can silently ignore it and lossily rewrite a schema-4
+profile. Upgrade every amq-squad binary that may read or write the
+profile before configuring an allowlist, and use
+<code>amq-squad doctor</code> to detect version skew.</p>
 <p>Trust and binary defaults are explicit. Codex trusted mode is the
 only path that prepends
 <code>--dangerously-bypass-approvals-and-sandbox</code>; the default
@@ -999,7 +1025,7 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#
 <h2 id="requirements">Requirements</h2>
 <ul>
 <li>Go 1.25+</li>
-<li><code>amq</code> 0.41.0+ on <code>PATH</code></li>
+<li><code>amq</code> 0.42.0+ on <code>PATH</code></li>
 <li><code>tmux</code> on <code>PATH</code> for Tier A managed panes</li>
 <li>macOS with iTerm2 for the Tier B backend</li>
 <li>macOS Terminal.app for the Tier C backend</li>

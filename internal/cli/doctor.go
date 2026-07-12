@@ -24,7 +24,7 @@ import (
 // expects to interoperate with. Bumped manually when amq-squad starts to
 // depend on newer AMQ behavior; the doctor check compares the running amq
 // binary's reported version against this floor.
-const doctorMinAMQVersion = "0.41.0"
+const doctorMinAMQVersion = "0.42.0"
 
 type doctorStatus string
 
@@ -690,7 +690,7 @@ func doctorCheckAMQVersion(d doctorExecution) doctorCheck {
 		}
 	}
 	min, _ := parseSemverParts(doctorMinAMQVersion)
-	if compareSemverParts(parsed, min) < 0 {
+	if compareSemverParts(parsed, min) < 0 || (compareSemverParts(parsed, min) == 0 && semverHasPrerelease(got)) {
 		return doctorCheck{
 			Name:   "amq version",
 			Status: doctorFail,
@@ -1225,4 +1225,35 @@ func parseSemverParts(s string) ([3]int, bool) {
 		out[i] = n
 	}
 	return out, true
+}
+
+// semverMeetsStableFloor compares a possibly-prerelease version against a
+// stable minimum. A prerelease with the same core is older than the stable
+// release (0.42.0-rc1 < 0.42.0), while a prerelease with a higher core remains
+// newer (0.42.1-rc1 > 0.42.0).
+func semverMeetsStableFloor(version, minimum string) bool {
+	got, ok := parseSemverParts(strings.TrimSpace(version))
+	if !ok {
+		return false
+	}
+	min, ok := parseSemverParts(strings.TrimSpace(minimum))
+	if !ok {
+		return false
+	}
+	switch compareSemverParts(got, min) {
+	case -1:
+		return false
+	case 1:
+		return true
+	default:
+		return !semverHasPrerelease(version)
+	}
+}
+
+func semverHasPrerelease(version string) bool {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if build := strings.IndexByte(version, '+'); build >= 0 {
+		version = version[:build]
+	}
+	return strings.Contains(version, "-")
 }

@@ -62,6 +62,32 @@ func TestMaybeScheduleClaudeSessionRenameStartsDetachedHelper(t *testing.T) {
 	}
 }
 
+func TestMaybeScheduleClaudeSessionRenameSkipsNoneMode(t *testing.T) {
+	oldExecutable := claudeRenameHelperExecutable
+	oldStart := claudeRenameHelperStart
+	started := false
+	claudeRenameHelperExecutable = func() (string, error) { return "/tmp/amq-squad", nil }
+	claudeRenameHelperStart = func(string, []string) error {
+		started = true
+		return nil
+	}
+	t.Cleanup(func() {
+		claudeRenameHelperExecutable = oldExecutable
+		claudeRenameHelperStart = oldStart
+	})
+
+	err := maybeScheduleClaudeSessionRename(launch.Record{
+		Binary: "claude", Role: "qa", Session: "issue-96",
+		WakeInjectMode: "none", Tmux: &launch.TmuxInfo{PaneID: "%7"},
+	})
+	if err != nil {
+		t.Fatalf("none-mode rename scheduling: %v", err)
+	}
+	if started {
+		t.Fatal("none mode must suppress delayed Claude /rename injection")
+	}
+}
+
 func TestMaybeScheduleClaudeSessionRenameSkipsCodexAndMissingPane(t *testing.T) {
 	oldStart := claudeRenameHelperStart
 	t.Cleanup(func() { claudeRenameHelperStart = oldStart })

@@ -24,6 +24,7 @@ type previewFlags struct {
 	noGitignore    *bool
 	symphony       *bool
 	wakeInjectVia  *string
+	wakeInjectMode *string
 	wakeInjectArgs stringListFlag
 }
 
@@ -41,6 +42,7 @@ func registerPreviewFlags(fs *flag.FlagSet) *previewFlags {
 		noGitignore:    fs.Bool("no-gitignore", false, "forward --no-gitignore to every amq coop exec launch"),
 		symphony:       fs.Bool("symphony", false, "Codex only: emit launch commands that patch the existing WORKFLOW.md with AMQ Symphony lifecycle hooks"),
 		wakeInjectVia:  fs.String("wake-inject-via", "", "absolute executable forwarded to every agent launch as amq coop exec --wake-inject-via"),
+		wakeInjectMode: fs.String("wake-inject-mode", "", "wake injection mode forwarded to every agent launch: auto, raw, paste, or none"),
 	}
 	fs.Var(&p.wakeInjectArgs, "wake-inject-arg", "argument forwarded to every agent launch as amq coop exec --wake-inject-arg (repeatable; requires --wake-inject-via)")
 	return p
@@ -66,8 +68,12 @@ func (p *previewFlags) toEmitOptions(fs *flag.FlagSet) (emitTeamOptions, error) 
 	}
 	wakeInjectVia := strings.TrimSpace(*p.wakeInjectVia)
 	wakeInjectArgs := append([]string(nil), p.wakeInjectArgs...)
-	if len(wakeInjectArgs) > 0 && wakeInjectVia == "" {
-		return emitTeamOptions{}, usageErrorf("--wake-inject-arg requires --wake-inject-via")
+	wakeInjectMode, err := normalizeWakeInjectMode(*p.wakeInjectMode)
+	if err != nil {
+		return emitTeamOptions{}, err
+	}
+	if err := validateWakeInjectConfig(wakeInjectMode, wakeInjectVia, wakeInjectArgs, ""); err != nil {
+		return emitTeamOptions{}, err
 	}
 	if wakeInjectVia != "" && !filepath.IsAbs(wakeInjectVia) {
 		return emitTeamOptions{}, usageErrorf("--wake-inject-via must be an absolute path")
@@ -87,6 +93,7 @@ func (p *previewFlags) toEmitOptions(fs *flag.FlagSet) (emitTeamOptions, error) 
 		Symphony:         *p.symphony,
 		WakeInjectVia:    wakeInjectVia,
 		WakeInjectArgs:   wakeInjectArgs,
+		WakeInjectMode:   wakeInjectMode,
 	}, nil
 }
 
@@ -142,5 +149,6 @@ func buildLiveLaunchOptions(fs *flag.FlagSet, pf *previewFlags, lf *liveLaunchFl
 		Symphony:        emit.Symphony,
 		WakeInjectVia:   emit.WakeInjectVia,
 		WakeInjectArgs:  emit.WakeInjectArgs,
+		WakeInjectMode:  emit.WakeInjectMode,
 	}, nil
 }

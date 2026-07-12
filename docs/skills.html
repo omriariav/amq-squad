@@ -633,27 +633,62 @@ drain your inbox.</li>
 </tr>
 </tbody>
 </table>
+<p>For a narrow Claude-only permission exception, configure a member's
+<code>permission_allowlist</code> in <code>team.json</code>, for example
+<code>["Bash(rm -rf /tmp/qa-review/*:*)"]</code>. The grant is scoped to
+that exact role, merged with any explicit native
+<code>--allowedTools</code>, visible in dry-run JSON and launch history,
+and rebuilt from current policy on resume so removed/narrowed grants are
+revoked. Validation rejects other binaries and values beginning with
+<code>-</code>; generated grants use one
+<code>--allowedTools=&lt;grant&gt;</code> token. The
+<code>--no-preauthorize-inscope</code> bit also round-trips. Preview
+commands keep launcher policy out of executable child argv;
+<code>agent up</code> recomputes it and the launch record stores
+launcher-owned versus explicit provenance separately, including
+equal-valued grants. Prefer scratch/worktree- specific patterns over
+broad command grants. Such profiles write schema 4; profiles without the
+field stay schema 3. Upgrade all readers/writers to v2.20+ before
+configuring it: pre-v2.20 binaries can silently ignore the field and
+lossily rewrite the profile. Use <code>amq-squad doctor</code> to detect
+version skew.</p>
 <p>Per-member <code>claude_args</code> / <code>codex_args</code> in
 <code>team.json</code> (v1.8.0+) carry native CLI args for one member
 only — the overlay verb above generates the flagship case (a
 <code>--settings</code> overlay that trims a worker's plugins/hooks) and
 wires it for you. Plan emission fails fast when a referenced
-<code>--settings</code> file is missing. AMQ floor (v2.18.0+): amq-squad
-requires amq 0.41.0+. Launches pass <code>--require-wake</code> so a
+<code>--settings</code> file is missing. AMQ floor (v2.20.0+): amq-squad
+requires amq 0.42.0+. Launches pass <code>--require-wake</code> so a
 launch fails immediately when the wake sidecar cannot acquire its lock
 (<code>--no-require-wake</code> opts out and persists into resume). Use
-<code>--no-gitignore</code> on <code>agent up</code>, <code>up</code>,
-or <code>up --dry-run</code> when AMQ coop auto-init should leave
-<code>.gitignore</code> unchanged; the opt-out is persisted in the
-launch record and replayed by <code>agent resume</code>. Namespace
-safety (v2.16.0+): mutating commands with <code>--session</code> fail
-closed when an unprofiled default-profile write would collide with a
-named profile that already owns that session. Rerun with
-<code>--profile &lt;name&gt;</code> to target the named namespace, or
-<code>--profile default</code> to intentionally write the legacy default
-root. Operator-gate escalation (v2.16.0+): unanswered
-<code>gate/&lt;topic&gt;</code> asks addressed to the configured
-operator handle escalate from <code>initial</code> to
+<code>--wake-inject-mode none</code> for permission-prompt workflows
+that require AMQ wake notices with zero synthetic terminal input; normal
+notices go to wake stderr and urgent notices add one bell. It cannot be
+combined with injector flags. The zero-input contract also suppresses
+dispatch's last-resort pane nudge (even with <code>--force</code>) and
+the delayed Claude <code>/rename</code> command. Records written with
+mode <code>none</code> must not be resumed by an amq-squad binary older
+than v2.20.0, because older replay code does not understand that safety
+contract. Run <code>amq-squad doctor</code> and resolve any
+binary/plugin/skill version skew before <code>resume --exec</code> or
+<code>agent resume</code>. Mode <code>none</code> governs automatic
+injection paths: the wake sidecar, dispatch's pane nudge, and delayed
+Claude <code>/rename</code>. It does not disable deliberate operator
+control actions such as <code>amq-squad send</code> or native
+<code>/goal</code> pane delivery. Layout startup send-keys that launch
+the process before the agent becomes active are outside this runtime
+injection contract. Use <code>--no-gitignore</code> on
+<code>agent up</code>, <code>up</code>, or <code>up --dry-run</code>
+when AMQ coop auto-init should leave <code>.gitignore</code> unchanged;
+the opt-out is persisted in the launch record and replayed by
+<code>agent resume</code>. Namespace safety (v2.16.0+): mutating
+commands with <code>--session</code> fail closed when an unprofiled
+default-profile write would collide with a named profile that already
+owns that session. Rerun with <code>--profile &lt;name&gt;</code> to
+target the named namespace, or <code>--profile default</code> to
+intentionally write the legacy default root. Operator-gate escalation
+(v2.16.0+): unanswered <code>gate/&lt;topic&gt;</code> asks addressed to
+the configured operator handle escalate from <code>initial</code> to
 <code>reminder</code> after 30m and <code>strong-warning</code> after
 2h. <code>amq-squad notify</code> bypasses its normal throttle when the
 escalation band advances, while <code>status --json</code> warnings and
@@ -718,9 +753,10 @@ or raw
 when direct mailbox plumbing is intentional.</p>
 <p>Claude-binary agents launched in tmux also get a best-effort delayed
 <code>/rename &lt;role&gt;-&lt;session&gt;</code> injection, including
-managed <code>resume --exec</code> / <code>agent resume</code> replay.
-Failure to deliver the rename does not block launch. Codex agents are
-unaffected because Codex has no matching slash command.</p>
+managed <code>resume --exec</code> / <code>agent resume</code> replay,
+except when wake injection mode is <code>none</code>. Failure to deliver
+the rename does not block launch. Codex agents are unaffected because
+Codex has no matching slash command.</p>
 <p>Model/binary guidance (context-stamped 2026-07-10, current operator
 setup; setup-dependent, not universal): defaults are not limits;
 escalate model or effort when output quality misses the bar. For

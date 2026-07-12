@@ -116,6 +116,7 @@ func runLaunch(args []string) error {
 	noGitignore := fs.Bool("no-gitignore", false, "pass --no-gitignore to amq coop exec (leave .gitignore unchanged during AMQ auto-init)")
 	symphony := fs.Bool("symphony", false, "Codex only: patch the existing WORKFLOW.md with AMQ Symphony lifecycle hooks for this resolved root and handle")
 	wakeInjectVia := fs.String("wake-inject-via", "", "absolute executable passed to amq coop exec --wake-inject-via")
+	wakeInjectMode := fs.String("wake-inject-mode", "", "wake injection mode forwarded to amq coop exec: auto, raw, paste, or none")
 	var wakeInjectArgs stringListFlag
 	fs.Var(&wakeInjectArgs, "wake-inject-arg", "argument passed to amq coop exec --wake-inject-arg (repeatable; requires --wake-inject-via)")
 	dryRun := fs.Bool("dry-run", false, "print the coop exec command without executing")
@@ -162,6 +163,8 @@ Side effects before exec:
      out for environments where wake cannot run but the agent should.
      --wake-inject-via and repeatable --wake-inject-arg are forwarded to
      amq coop exec so AMQ can save a repairable external wake target.
+     --wake-inject-mode none keeps wake notices on stderr and guarantees zero
+     synthetic terminal input; it cannot be combined with injector flags.
 
 With --dry-run, the resolved coop exec command is printed and amq-squad exits.
 Disk state is untouched and no exec occurs.
@@ -210,8 +213,12 @@ Examples:
 	}
 	wakeInjectViaValue := strings.TrimSpace(*wakeInjectVia)
 	wakeInjectArgValues := append([]string(nil), wakeInjectArgs...)
-	if len(wakeInjectArgValues) > 0 && wakeInjectViaValue == "" {
-		return usageErrorf("--wake-inject-arg requires --wake-inject-via")
+	wakeInjectModeValue, err := normalizeWakeInjectMode(*wakeInjectMode)
+	if err != nil {
+		return err
+	}
+	if err := validateWakeInjectConfig(wakeInjectModeValue, wakeInjectViaValue, wakeInjectArgValues, ""); err != nil {
+		return err
 	}
 	if wakeInjectViaValue != "" && !filepath.IsAbs(wakeInjectViaValue) {
 		return usageErrorf("--wake-inject-via must be an absolute path")
@@ -289,45 +296,49 @@ Examples:
 	// slice (no safe pattern form; see claudeInScopePreauthAllowlist); main push,
 	// tags, and releases always stay gated.
 	var preauthorizedActions []string
-	if !*noPreauthInScope {
-		childArgs, preauthorizedActions, _ = applyClaudeWorkerPreauth(launchPreauthProjectDir(cwd, *teamHome), teamProfileValue, *roleFlag, binary, env.SessionName, childArgs)
-	}
+	explicitAllowedTools := childArgsAllowedTools(childArgs)
+	launcherPreauthorizedActions := claudeLauncherPreauthActions(launchPreauthProjectDir(cwd, *teamHome), teamProfileValue, *roleFlag, binary, env.SessionName, !*noPreauthInScope)
+	childArgs, preauthorizedActions, _ = applyClaudeWorkerPreauthActions(childArgs, launcherPreauthorizedActions)
 
 	agentDir := filepath.Join(root, "agents", handle)
 	rec := launch.Record{
-		CWD:                  cwd,
-		Binary:               binary,
-		Argv:                 childArgs,
-		Session:              env.SessionName,
-		SharedWorkstream:     *sharedWorkstream,
-		Conversation:         conversationRef,
-		Handle:               handle,
-		Role:                 *roleFlag,
-		Root:                 root,
-		BaseRoot:             env.BaseRoot,
-		RootSource:           env.RootSource,
-		AMQVersion:           env.AMQVersion,
-		CodexArgs:            binaryArgs["codex"],
-		ClaudeArgs:           binaryArgs["claude"],
-		Launcher:             launcher,
-		LauncherArgs:         launcherArgs,
-		Model:                resolvedModel,
-		Trust:                trustMode,
-		NoDefaultArgs:        *noDefaultArgs,
-		SpawnOrigin:          strings.TrimSpace(*spawnOrigin),
-		SpawnDepth:           *spawnDepth,
-		NoRequireWake:        *noRequireWake,
-		NoGitignore:          *noGitignore,
-		Symphony:             *symphony,
-		GoalBinding:          nativeGoalBindingFromArgs(childArgs),
-		PreauthorizedActions: preauthorizedActions,
-		WakeInjectVia:        wakeInjectViaValue,
-		WakeInjectArgs:       wakeInjectArgValues,
-		AgentPID:             os.Getpid(),
-		AgentTTY:             currentLaunchTTY(),
-		StartedAt:            time.Now().UTC(),
-		TeamProfile:          teamProfileValue,
-		TeamHome:             strings.TrimSpace(*teamHome),
+		CWD:                          cwd,
+		Binary:                       binary,
+		Argv:                         childArgs,
+		Session:                      env.SessionName,
+		SharedWorkstream:             *sharedWorkstream,
+		Conversation:                 conversationRef,
+		Handle:                       handle,
+		Role:                         *roleFlag,
+		Root:                         root,
+		BaseRoot:                     env.BaseRoot,
+		RootSource:                   env.RootSource,
+		AMQVersion:                   env.AMQVersion,
+		CodexArgs:                    binaryArgs["codex"],
+		ClaudeArgs:                   binaryArgs["claude"],
+		Launcher:                     launcher,
+		LauncherArgs:                 launcherArgs,
+		Model:                        resolvedModel,
+		Trust:                        trustMode,
+		NoDefaultArgs:                *noDefaultArgs,
+		NoPreauthorizeInScope:        *noPreauthInScope,
+		SpawnOrigin:                  strings.TrimSpace(*spawnOrigin),
+		SpawnDepth:                   *spawnDepth,
+		NoRequireWake:                *noRequireWake,
+		NoGitignore:                  *noGitignore,
+		Symphony:                     *symphony,
+		GoalBinding:                  nativeGoalBindingFromArgs(childArgs),
+		PreauthorizedActions:         preauthorizedActions,
+		LauncherPreauthorizedActions: launcherPreauthorizedActions,
+		ExplicitAllowedTools:         explicitAllowedTools,
+		WakeInjectVia:                wakeInjectViaValue,
+		WakeInjectArgs:               wakeInjectArgValues,
+		WakeInjectMode:               wakeInjectModeValue,
+		AgentPID:                     os.Getpid(),
+		AgentTTY:                     currentLaunchTTY(),
+		StartedAt:                    time.Now().UTC(),
+		TeamProfile:                  teamProfileValue,
+		TeamHome:                     strings.TrimSpace(*teamHome),
 	}
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD
@@ -364,7 +375,14 @@ Examples:
 	// Keep generated bootstrap out of launch.json so restore stays compact
 	// and does not replay stale startup text.
 	effectiveChildArgs := append([]string(nil), childArgs...)
-	bootstrapEligibilityArgs := stripTrailingLauncherPreauthArgs(childArgs, preauthorizedActions)
+	bootstrapEligibilityArgs := childArgs
+	if len(launcherPreauthorizedActions) > 0 {
+		if len(explicitAllowedTools) > 0 {
+			bootstrapEligibilityArgs = replaceClaudeAllowedTools(childArgs, explicitAllowedTools)
+		} else {
+			bootstrapEligibilityArgs = stripRecordedLauncherPreauth(childArgs, preauthorizedActions)
+		}
+	}
 	bootstrapAppended := !*noBootstrap && shouldAppendBootstrapWithDefaults(bootstrapEligibilityArgs, defaultArgs)
 	bootstrapSuppressedReason := ""
 	if bootstrapAppended {
@@ -437,6 +455,12 @@ Examples:
 		for _, arg := range wakeInjectArgValues {
 			coopArgs = append(coopArgs, "--wake-inject-arg="+arg)
 		}
+	}
+	if wakeInjectModeValue != "" {
+		if !amqSupportsWakeInjectMode(env.AMQVersion) {
+			return fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
+		}
+		coopArgs = append(coopArgs, "--wake-inject-mode", wakeInjectModeValue)
 	}
 	// A custom launcher is exec'd in place of the binary. Launcher args precede
 	// the agent's normal child args; the launcher is expected to forward the
