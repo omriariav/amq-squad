@@ -67,10 +67,24 @@ func TestExistingSessionChangeClearsDownstreamAndDerivesBackend(t *testing.T) {
 	}
 }
 
-func TestNoSessionProfileDerivesSuggestedFirstRun(t *testing.T) {
-	profile := ProfileSummary{Name: "unused", MemberCount: 2}
+func TestNoSessionProfileConsumesCLIDiscoveredSuggestedFirstRun(t *testing.T) {
+	profile := ProfileSummary{Name: "unused", MemberCount: 2, Sessions: []SessionSummary{discoveredFreshSession("issue-431", SessionSourceSuggestedFirst, 2)}}
 	sessions := profileSessions(profile, "issue-431")
 	if len(sessions) != 1 || sessions[0].Name != "issue-431" || sessions[0].Source != SessionSourceSuggestedFirst || sessions[0].Classification.Backend != BackendRunStart || !sessions[0].Classification.Executable {
 		t.Fatalf("suggested first run = %+v", sessions)
+	}
+}
+
+func TestProfileSessionsNeverSynthesizesExecutableDiscovery(t *testing.T) {
+	if sessions := profileSessions(ProfileSummary{Name: "unused", MemberCount: 2}, "issue-431"); len(sessions) != 0 {
+		t.Fatalf("wizard synthesized discovery: %+v", sessions)
+	}
+}
+
+func discoveredFreshSession(name string, source SessionSource, count int) SessionSummary {
+	return SessionSummary{
+		Name: name, Source: source, Fingerprint: "fingerprint-" + name,
+		Classification: RunClassification{State: RunStateNotStarted, Backend: BackendRunStart, Executable: true},
+		Fresh:          count,
 	}
 }

@@ -185,8 +185,8 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 				OriginSlug:        "omriariav/amq-squad",
 				SessionSuggestion: "issue-393",
 				Profiles: []ProfileSummary{
-					{Name: "default", MemberCount: 2, PinnedSession: "main-work"},
-					{Name: "review", MemberCount: 3, PinnedSession: "review-work", Lead: "cto", LeadMode: "planner", OperatorMode: "noc", Members: []MemberSummary{{Role: "cto", Binary: "codex", Effort: "high"}}},
+					{Name: "default", MemberCount: 2, PinnedSession: "main-work", Sessions: []SessionSummary{discoveredFreshSession("main-work", SessionSourceMemberPin, 2)}},
+					{Name: "review", MemberCount: 3, PinnedSession: "review-work", Lead: "cto", LeadMode: "planner", OperatorMode: "noc", Members: []MemberSummary{{Role: "cto", Binary: "codex", Effort: "high"}}, Sessions: []SessionSummary{discoveredFreshSession("review-work", SessionSourceMemberPin, 3)}},
 				},
 			}, nil
 		},
@@ -280,7 +280,7 @@ func TestRunNumberedDerivesPinnedSessionWithoutPrompt(t *testing.T) {
 		Defaults: Spec{Project: "/repo", Visibility: "sibling-tabs"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{
-				{Name: "default", MemberCount: 1, PinnedSession: "issue-136", Members: []MemberSummary{{Role: "cto", Binary: "codex"}}},
+				{Name: "default", MemberCount: 1, PinnedSession: "issue-136", Members: []MemberSummary{{Role: "cto", Binary: "codex"}}, Sessions: []SessionSummary{discoveredFreshSession("issue-136", SessionSourceMemberPin, 1)}},
 			}}, nil
 		},
 	})
@@ -305,7 +305,7 @@ func TestRunNumberedNoSessionProfileUsesSuggestedFirstRun(t *testing.T) {
 	got, err := RunNumbered(strings.NewReader(strings.Repeat("\n", 10)), &out, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "unused", Visibility: "sibling-tabs"},
 		InspectProject: func(string) (ProjectContext, error) {
-			return ProjectContext{Project: "/repo", SessionSuggestion: "issue-431", Profiles: []ProfileSummary{{Name: "unused", MemberCount: 1, Members: []MemberSummary{{Role: "cto", Binary: "codex"}}}}}, nil
+			return ProjectContext{Project: "/repo", SessionSuggestion: "issue-431", Profiles: []ProfileSummary{{Name: "unused", MemberCount: 1, Members: []MemberSummary{{Role: "cto", Binary: "codex"}}, Sessions: []SessionSummary{discoveredFreshSession("issue-431", SessionSourceSuggestedFirst, 1)}}}}, nil
 		},
 	})
 	if err != nil {
@@ -316,6 +316,18 @@ func TestRunNumberedNoSessionProfileUsesSuggestedFirstRun(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "Name the new session [") {
 		t.Fatalf("unused existing profile entered generic session input:\n%s", out.String())
+	}
+}
+
+func TestRunNumberedExistingProfileWithoutCLIDiscoveryFailsClosed(t *testing.T) {
+	_, err := RunNumbered(strings.NewReader("\n\n"), &bytes.Buffer{}, NumberedOptions{
+		Defaults: Spec{Project: "/repo", Profile: "review"},
+		InspectProject: func(string) (ProjectContext, error) {
+			return ProjectContext{Project: "/repo", SessionSuggestion: "issue-444", Profiles: []ProfileSummary{{Name: "review", MemberCount: 1}}}, nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "no derivable session") {
+		t.Fatalf("empty CLI discovery error=%v", err)
 	}
 }
 
@@ -410,7 +422,7 @@ func TestRunNumberedExistingProfileCollectsLaunchOnlyOverrides(t *testing.T) {
 	}, "\n") + "\n"
 	profile := ProfileSummary{
 		Name: "review", MemberCount: 1, PinnedSession: "review-work",
-		Members: []MemberSummary{{Role: "cto", Binary: "codex", Model: "stored-model", Effort: "low"}},
+		Members: []MemberSummary{{Role: "cto", Binary: "codex", Model: "stored-model", Effort: "low"}}, Sessions: []SessionSummary{discoveredFreshSession("review-work", SessionSourceMemberPin, 1)},
 	}
 	got, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs"},

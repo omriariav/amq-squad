@@ -44,39 +44,8 @@ func (s SessionSummary) Label() string {
 	return fmt.Sprintf("%s · %s · %s · %s", s.Name, s.Source, state, counts)
 }
 
-func profileSessions(profile ProfileSummary, suggestion string) []SessionSummary {
-	if len(profile.Sessions) > 0 {
-		return append([]SessionSummary(nil), profile.Sessions...)
-	}
-	if pinned := strings.TrimSpace(profile.PinnedSession); pinned != "" {
-		return []SessionSummary{{
-			Name:           pinned,
-			Source:         SessionSourceMemberPin,
-			Classification: ClassifyExistingRun(profile.MemberCount, 0, freshActions(profile.MemberCount), false),
-			Fresh:          profile.MemberCount,
-		}}
-	}
-	if strings.TrimSpace(suggestion) == "" {
-		return []SessionSummary{{
-			Source:         SessionSourceSuggestedFirst,
-			Classification: blockedClassification("the project did not produce a valid first-session suggestion"),
-			Blocked:        profile.MemberCount,
-		}}
-	}
-	return []SessionSummary{{
-		Name:           strings.TrimSpace(suggestion),
-		Source:         SessionSourceSuggestedFirst,
-		Classification: ClassifyExistingRun(profile.MemberCount, 0, freshActions(profile.MemberCount), false),
-		Fresh:          profile.MemberCount,
-	}}
-}
-
-func freshActions(count int) []MemberAction {
-	actions := make([]MemberAction, count)
-	for i := range actions {
-		actions[i] = MemberActionFresh
-	}
-	return actions
+func profileSessions(profile ProfileSummary, _ string) []SessionSummary {
+	return append([]SessionSummary(nil), profile.Sessions...)
 }
 
 func profileRunSummary(profile ProfileSummary, suggestion string) string {

@@ -20,8 +20,9 @@ import (
 )
 
 var (
-	versionBranchPattern = regexp.MustCompile(`(?i)(?:^|[/_-])v([0-9]+)[._-]([0-9]+)[._-]([0-9]+)(?:$|[/_-])`)
-	issueBranchPattern   = regexp.MustCompile(`(?i)^(?:feat|fix|chore|docs|refactor|test)/([0-9]+)(?:[-_/].*)?$`)
+	versionBranchPattern           = regexp.MustCompile(`(?i)(?:^|[/_-])v([0-9]+)[._-]([0-9]+)[._-]([0-9]+)(?:$|[/_-])`)
+	issueBranchPattern             = regexp.MustCompile(`(?i)^(?:feat|fix|chore|docs|refactor|test)/([0-9]+)(?:[-_/].*)?$`)
+	runStartWizardPlanMemberResume = planMemberResume
 )
 
 func inspectRunStartWizardProject(project string) (runwizard.ProjectContext, error) {
@@ -41,7 +42,7 @@ func inspectRunStartWizardProject(project string) (runwizard.ProjectContext, err
 	ctx.Branch = readGitBranch(gitDir)
 	ctx.SessionSuggestion = suggestRunStartSession(ctx.Branch, root)
 	ctx.NewProfileSuggestion = suggestedWizardProfile(ctx.SessionSuggestion)
-	ctx.Profiles, err = runStartWizardProfiles(root)
+	ctx.Profiles, err = runStartWizardProfiles(root, ctx.SessionSuggestion)
 	if err != nil {
 		return runwizard.ProjectContext{}, err
 	}
@@ -174,7 +175,7 @@ func suggestedWizardProfile(session string) string {
 	return suggestion
 }
 
-func runStartWizardProfiles(project string) ([]runwizard.ProfileSummary, error) {
+func runStartWizardProfiles(project, sessionSuggestion string) ([]runwizard.ProfileSummary, error) {
 	var names []string
 	if team.Exists(project) {
 		names = append(names, team.DefaultProfile)
@@ -217,15 +218,16 @@ func runStartWizardProfiles(project string) ([]runwizard.ProfileSummary, error) 
 				Effort: memberEffort(member),
 			})
 		}
-		summary.Sessions = runStartWizardProfileSessions(project, name, t, history)
+		summary.Sessions = runStartWizardProfileSessions(project, name, t, history, sessionSuggestion)
 		profiles = append(profiles, summary)
 	}
 	return profiles, nil
 }
 
-func runStartWizardProfileSessions(project, profile string, t team.Team, history []launch.Entry) []runwizard.SessionSummary {
+func runStartWizardProfileSessions(project, profile string, t team.Team, history []launch.Entry, sessionSuggestion string) []runwizard.SessionSummary {
 	pinned := runStartPinnedSession(t)
 	sources := map[string]runwizard.SessionSource{}
+	historySessions := map[string]struct{}{}
 	if pinned != "" {
 		source := runwizard.SessionSourceProfile
 		if inferredSharedMemberSession(t) != "" {
@@ -244,9 +246,14 @@ func runStartWizardProfileSessions(project, profile string, t team.Team, history
 		if _, exists := sources[rec.Session]; !exists {
 			sources[rec.Session] = runwizard.SessionSourceLaunchHistory
 		}
+		historySessions[rec.Session] = struct{}{}
 	}
 	if len(sources) == 0 {
-		return nil
+		if suggested := strings.TrimSpace(sessionSuggestion); suggested != "" {
+			sources[suggested] = runwizard.SessionSourceSuggestedFirst
+		} else {
+			return nil
+		}
 	}
 	names := make([]string, 0, len(sources))
 	for name := range sources {
@@ -261,40 +268,53 @@ func runStartWizardProfileSessions(project, profile string, t team.Team, history
 		}
 		return names[i] < names[j]
 	})
+	knownHistory := make([]string, 0, len(historySessions))
+	for name := range historySessions {
+		knownHistory = append(knownHistory, name)
+	}
+	sort.Strings(knownHistory)
 	out := make([]runwizard.SessionSummary, 0, len(names))
 	for _, session := range names {
-		out = append(out, discoverRunStartWizardSession(t, profile, session, sources[session], names, history))
+		out = append(out, discoverRunStartWizardSession(t, profile, session, sources[session], knownHistory, history))
 	}
 	return out
 }
 
 func discoverRunStartWizardSession(t team.Team, profile, session string, source runwizard.SessionSource, knownSessions []string, history []launch.Entry) runwizard.SessionSummary {
-	active, _ := filterMembersBySession(t.Members, session)
-	if len(active) == 0 && len(t.Members) > 0 {
-		return runwizard.SessionSummary{Name: session, Source: source, Classification: runwizard.RunClassification{State: runwizard.RunStateBlocked, Detail: "no current profile members belong to this session"}, Blocked: len(t.Members)}
-	}
+	active, skipped := filterMembersBySession(t.Members, session)
 	planningTeam := t
 	planningTeam.Members = active
 	plans := make([]resumePlan, 0, len(active))
 	recordCount := 0
 	for _, member := range orderedTeamMembers(active) {
-		plan, err := planMemberResume(memberPlanInput{
+		plan, err := runStartWizardPlanMemberResume(memberPlanInput{
 			Member: member, Team: planningTeam, Workstream: session, Mode: resumeModeDefault,
 			SquadBin: teamSquadBin(), BinaryArgs: t.BinaryArgs, Trust: string(trustModeSandboxed), Profile: profile, Probe: defaultDuplicateLaunchProbe,
 		})
 		if err != nil {
-			return runwizard.SessionSummary{Name: session, Source: source, Classification: runwizard.RunClassification{State: runwizard.RunStateBlocked, Detail: err.Error()}, Blocked: len(active)}
+			plans = append(plans, resumePlan{Role: member.Role, Action: resumeBlocked, Note: err.Error()})
+			continue
 		}
 		if plan.HasRestoreRecord {
 			recordCount++
 		}
 		plans = append(plans, plan)
 	}
+	classificationMemberCount := len(active)
+	if source == runwizard.SessionSourceSuggestedFirst {
+		for _, member := range orderedTeamMembers(skipped) {
+			plans = append(plans, resumePlan{Role: member.Role, Action: resumeBlocked, Note: fmt.Sprintf("member is pinned to session %q and cannot join suggested first session %q", member.Session, session)})
+		}
+		classificationMemberCount += len(skipped)
+	}
 	conflict := namespaceConflictForProfileSession(t.Project, profile, session)
 	if conflict != nil {
 		plans = blockResumePlansForNamespaceConflict(plans, conflict)
 	}
-	classification := classifyRunStartWizardExistingProfile(len(active), recordCount, plans, conflict != nil)
+	classification := classifyRunStartWizardExistingProfile(classificationMemberCount, recordCount, plans, conflict != nil)
+	if len(active) == 0 && len(t.Members) > 0 {
+		classification = runwizard.RunClassification{State: runwizard.RunStateBlocked, Detail: "no current profile members belong to this session"}
+	}
 	summary := runwizard.SessionSummary{Name: session, Source: source, Classification: classification}
 	fingerprint := runwizard.DiscoveryFingerprintInput{Profile: profile, Lead: t.Lead, LeadMode: team.EffectiveLeadMode(t), Session: session, SessionSource: string(source), MatchingHistorySessions: append([]string(nil), knownSessions...), RecordCount: recordCount}
 	operator := team.EffectiveOperator(t)
@@ -325,7 +345,7 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 		identity := entry.AgentDir + "|" + rec.Role + "|" + rec.Handle + "|" + rec.StartedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
 		fingerprint.RecordIDs = append(fingerprint.RecordIDs, identity)
 	}
-	for _, member := range active {
+	for _, member := range t.Members {
 		native := composeBinaryArgs(member.Binary, binaryArgsFor(member.Binary, t.BinaryArgs), member.ExtraArgs())
 		fingerprint.Roster = append(fingerprint.Roster, runwizard.DiscoveryMember{Role: member.Role, Handle: member.Handle, Binary: member.Binary, CWD: member.EffectiveCWD(t.Project), Session: member.Session, NativeArgs: native, Model: member.Model, Effort: memberEffort(member)})
 	}
@@ -342,6 +362,9 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 			summary.Blocked++
 		}
 		fingerprint.MemberPlans = append(fingerprint.MemberPlans, runStartWizardDiscoveryMemberPlan(plan, action))
+	}
+	if len(active) == 0 {
+		summary.Blocked = len(t.Members)
 	}
 	summary.Fingerprint = runwizard.DiscoveryFingerprint(fingerprint)
 	return summary

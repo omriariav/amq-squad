@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 func TestInspectRunStartWizardProjectFindsGitRootOriginAndBranchSession(t *testing.T) {
@@ -62,7 +64,7 @@ func TestRunStartWizardProfilesExposePinnedRosterFacts(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	profiles, err := runStartWizardProfiles(dir)
+	profiles, err := runStartWizardProfiles(dir, "issue-393")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +73,107 @@ func TestRunStartWizardProfilesExposePinnedRosterFacts(t *testing.T) {
 	}
 	if profiles[0].Members[0].Effort != "high" || profiles[0].Members[1].Effort != "medium" {
 		t.Fatalf("member efforts = %+v", profiles[0].Members)
+	}
+}
+
+func TestRunStartWizardProfilesDiscoversSuggestedFirstWithPlannerFingerprint(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	if err := team.WriteProfile(dir, "review", team.Team{
+		Project: dir, Orchestrated: true, Lead: "cto", LeadMode: team.LeadModePlanner,
+		Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := runStartWizardProfiles(dir, "issue-444")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 1 || len(profiles[0].Sessions) != 1 {
+		t.Fatalf("suggested-first discovery = %+v", profiles)
+	}
+	summary := profiles[0].Sessions[0]
+	if summary.Name != "issue-444" || summary.Source != runwizard.SessionSourceSuggestedFirst || summary.Fingerprint == "" {
+		t.Fatalf("suggested-first identity = %+v", summary)
+	}
+	if summary.Classification.State != runwizard.RunStateNotStarted || summary.Classification.Backend != runwizard.BackendRunStart || !summary.Classification.Executable || summary.Fresh != 1 {
+		t.Fatalf("suggested-first planner classification = %+v", summary)
+	}
+	tm, err := team.ReadProfile(dir, "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := discoverRunStartWizardSession(tm, "review", "issue-444", runwizard.SessionSourceSuggestedFirst, nil, nil)
+	wrongHistorySet := discoverRunStartWizardSession(tm, "review", "issue-444", runwizard.SessionSourceSuggestedFirst, []string{"issue-444"}, nil)
+	if summary.Fingerprint != expected.Fingerprint || summary.Fingerprint == wrongHistorySet.Fingerprint {
+		t.Fatalf("suggested-first fingerprint did not preserve empty actual-history set: summary=%s expected=%s wrong=%s", summary.Fingerprint, expected.Fingerprint, wrongHistorySet.Fingerprint)
+	}
+}
+
+func TestRunStartWizardSuggestedFirstBlocksPlannerAndNamespaceFailures(t *testing.T) {
+	t.Run("planner blocked", func(t *testing.T) {
+		dir := t.TempDir()
+		setupFakeAMQSessionRoots(t)
+		oldPlan := runStartWizardPlanMemberResume
+		t.Cleanup(func() { runStartWizardPlanMemberResume = oldPlan })
+		runStartWizardPlanMemberResume = func(in memberPlanInput) (resumePlan, error) {
+			return resumePlan{}, fmt.Errorf("planner inspection failed for %s", in.Member.Role)
+		}
+		if err := team.WriteProfile(dir, "review", team.Team{
+			Project: dir, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		profiles, err := runStartWizardProfiles(dir, "issue-444")
+		if err != nil {
+			t.Fatal(err)
+		}
+		summary := profiles[0].Sessions[0]
+		if summary.Source != runwizard.SessionSourceSuggestedFirst || summary.Fingerprint == "" || summary.Classification.State != runwizard.RunStateBlocked || summary.Classification.Executable || summary.Classification.Backend == runwizard.BackendRunStart || summary.Blocked == 0 {
+			t.Fatalf("planner-blocked suggested-first = %+v", summary)
+		}
+	})
+
+	t.Run("namespace blocked", func(t *testing.T) {
+		dir := t.TempDir()
+		setupFakeAMQSessionRoots(t)
+		if err := team.WriteProfile(dir, "review", team.Team{Project: dir, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex"}}}); err != nil {
+			t.Fatal(err)
+		}
+		legacy := filepath.Join(dir, ".agent-mail", "issue-444", "agents", "legacy")
+		if err := os.MkdirAll(legacy, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(legacy, "inbox"), []byte("durable\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		profiles, err := runStartWizardProfiles(dir, "issue-444")
+		if err != nil {
+			t.Fatal(err)
+		}
+		summary := profiles[0].Sessions[0]
+		if summary.Fingerprint == "" || summary.Classification.State != runwizard.RunStateBlocked || summary.Classification.Executable || summary.Classification.Backend == runwizard.BackendRunStart || summary.Blocked == 0 {
+			t.Fatalf("namespace-blocked suggested-first = %+v", summary)
+		}
+	})
+}
+
+func TestRunStartWizardSuggestedFirstBlocksMixedPinnedSubset(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	if err := team.WriteProfile(dir, "review", team.Team{Project: dir, Members: []team.Member{
+		{Role: "cto", Handle: "cto", Binary: "codex", Session: "other"},
+		{Role: "qa", Handle: "qa", Binary: "codex"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := runStartWizardProfiles(dir, "issue-444")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := profiles[0].Sessions[0]
+	if summary.Classification.State != runwizard.RunStateBlocked || summary.Classification.Executable || summary.Blocked == 0 || summary.Fingerprint == "" {
+		t.Fatalf("mixed-pin suggested-first executed subset: %+v", summary)
 	}
 }
 

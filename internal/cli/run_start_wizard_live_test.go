@@ -116,6 +116,24 @@ func TestFinishWizardDeferredExistingRunNeverPreviewsOrConfirms(t *testing.T) {
 	}
 }
 
+func TestFinishWizardBlockedSuggestedFirstNeverReachesExplicitYes(t *testing.T) {
+	projectCalls, _ := withWizardExecutionSeams(t)
+	confirmed := false
+	runStartWizardConfirm = func(io.Reader, io.Writer) (bool, error) { confirmed = true; return true, nil }
+	var out strings.Builder
+	err := finishRunStartWizard(runwizard.Spec{
+		Scope: "project", Project: "/repo", Profile: "review", ProfileBranch: runwizard.ProfileBranchExisting,
+		Session: "issue-444", SessionSource: runwizard.SessionSourceSuggestedFirst, DiscoveryFingerprint: "full-fingerprint",
+		Backend: runwizard.BackendRunStart, RunState: runwizard.RunStateBlocked, RunExecutable: false,
+	}, "test", strings.NewReader("y\n"), &out)
+	if err != nil || confirmed || len(*projectCalls) != 0 {
+		t.Fatalf("blocked suggested-first crossed explicit-Yes boundary: err=%v confirmed=%t calls=%v", err, confirmed, *projectCalls)
+	}
+	if !strings.Contains(out.String(), "nothing was previewed or launched") {
+		t.Fatalf("missing blocked deferral: %q", out.String())
+	}
+}
+
 func TestFinishWizardLiveRechecksAndSurfacesNewCollision(t *testing.T) {
 	projectCalls, _ := withWizardExecutionSeams(t)
 	runStartWizardConfirm = func(io.Reader, io.Writer) (bool, error) { return true, nil }

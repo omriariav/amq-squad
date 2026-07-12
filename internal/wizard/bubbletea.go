@@ -742,6 +742,13 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 		m.spec.SelectExistingProfile(selected)
 		m.existingIndex = findProfile(m.ctx.Profiles, selected)
 		sessions := profileSessions(m.ctx.Profiles[m.existingIndex], m.ctx.SessionSuggestion)
+		if len(sessions) == 0 {
+			m.spec.clearSelectedRun()
+			m.spec.RunState = RunStateBlocked
+			m.err = fmt.Errorf("profile %q has no CLI-discovered session summary", selected)
+			m.done = true
+			return m, tea.Quit
+		}
 		if len(sessions) == 1 {
 			m.selectExistingSession(sessions[0])
 			if m.done {
@@ -908,22 +915,45 @@ func (m BubbleModel) back() (tea.Model, tea.Cmd) {
 	}
 	last := m.history[len(m.history)-1]
 	m.history = m.history[:len(m.history)-1]
+	refreshedExisting := false
+	if last.spec.ProfileBranch == ProfileBranchExisting && strings.TrimSpace(last.spec.Session) != "" && m.opts.InspectProject != nil {
+		project := defaultString(m.ctx.Project, last.spec.Project)
+		refreshed, refreshErr := m.opts.InspectProject(project)
+		if refreshErr == nil || projectContextHasFacts(refreshed) {
+			if strings.TrimSpace(refreshed.Project) == "" {
+				refreshed.Project = project
+			}
+			if strings.TrimSpace(refreshed.SessionSuggestion) == "" {
+				refreshed.SessionSuggestion = m.ctx.SessionSuggestion
+			}
+			m.ctx = refreshed
+			refreshedExisting = true
+		}
+		if refreshErr != nil {
+			m.rejectExistingSnapshot(last, stageProject, fmt.Errorf("refresh project discovery before Back: %w", refreshErr))
+			return m, textinput.Blink
+		}
+		for i := range m.history {
+			if strings.TrimSpace(m.history[i].spec.Project) == strings.TrimSpace(last.spec.Project) {
+				m.history[i].ctx = m.ctx
+			}
+		}
+	}
 	if !snapshotCompatible(last, m.ctx) {
-		m.spec = last.spec
-		m.spec.clearSelectedRun()
-		m.stage = stageProfile
-		m.existingIndex = -1
-		m.roleOrder = nil
-		m.roleIndex = 0
-		m.configureStage()
-		m.err = fmt.Errorf("the selected profile or run changed while the wizard was open; review the refreshed facts before continuing")
+		m.rejectExistingSnapshot(last, stageProfile, fmt.Errorf("the selected profile or run changed while the wizard was open; review the refreshed facts before continuing"))
 		return m, textinput.Blink
 	}
 	m.spec = last.spec
-	m.ctx = last.ctx
+	if !refreshedExisting {
+		m.ctx = last.ctx
+	}
 	m.stage = last.stage
 	m.cursor = last.cursor
-	m.existingIndex = last.existingIndex
+	if refreshedExisting && m.spec.ProfileBranch == ProfileBranchExisting {
+		m.existingIndex = findProfile(m.ctx.Profiles, m.spec.Profile)
+	} else {
+		m.existingIndex = last.existingIndex
+	}
 	m.roleOrder = append([]string(nil), last.roleOrder...)
 	m.roleIndex = last.roleIndex
 	m.newProfilePrefill = last.newProfilePrefill
@@ -937,9 +967,30 @@ func (m BubbleModel) back() (tea.Model, tea.Cmd) {
 	return m, textinput.Blink
 }
 
+func (m *BubbleModel) rejectExistingSnapshot(last bubbleSnapshot, stage bubbleStage, err error) {
+	m.spec = last.spec
+	m.spec.clearSelectedRun()
+	m.spec.clearFreshProfileAnswers()
+	m.stage = stage
+	m.existingIndex = findProfile(m.ctx.Profiles, m.spec.Profile)
+	m.roleOrder = nil
+	m.roleIndex = 0
+	m.history = nil
+	m.configureStage()
+	m.err = err
+}
+
+func projectContextHasFacts(ctx ProjectContext) bool {
+	return strings.TrimSpace(ctx.Project) != "" || strings.TrimSpace(ctx.OriginSlug) != "" || strings.TrimSpace(ctx.Branch) != "" ||
+		strings.TrimSpace(ctx.SessionSuggestion) != "" || strings.TrimSpace(ctx.NewProfileSuggestion) != "" || len(ctx.Profiles) > 0 || len(ctx.PreferredBinaries) > 0
+}
+
 func snapshotCompatible(snapshot bubbleSnapshot, current ProjectContext) bool {
-	if snapshot.spec.ProfileBranch != ProfileBranchExisting || snapshot.spec.DiscoveryFingerprint == "" || snapshot.spec.Session == "" {
+	if snapshot.spec.ProfileBranch != ProfileBranchExisting || snapshot.spec.Session == "" {
 		return true
+	}
+	if snapshot.spec.DiscoveryFingerprint == "" {
+		return false
 	}
 	index := findProfile(current.Profiles, snapshot.spec.Profile)
 	if index < 0 {
@@ -947,7 +998,7 @@ func snapshotCompatible(snapshot bubbleSnapshot, current ProjectContext) bool {
 	}
 	for _, session := range profileSessions(current.Profiles[index], current.SessionSuggestion) {
 		if session.Name == snapshot.spec.Session {
-			return session.Fingerprint == snapshot.spec.DiscoveryFingerprint
+			return session.Fingerprint != "" && session.Fingerprint == snapshot.spec.DiscoveryFingerprint
 		}
 	}
 	return false

@@ -1,6 +1,9 @@
 package wizard
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,7 +67,7 @@ func TestBubbleSelfOperatorAllowBackDeselectReselect(t *testing.T) {
 func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePreserved(t *testing.T) {
 	profile := ProfileSummary{
 		Name: "review", MemberCount: 1, PinnedSession: "review-work", Lead: "cto", LeadMode: "planner", OperatorMode: "separate_terminal",
-		Members: []MemberSummary{{Role: "cto", Binary: "codex", Model: "stored-model", Effort: "medium"}},
+		Members: []MemberSummary{{Role: "cto", Binary: "codex", Model: "stored-model", Effort: "medium"}}, Sessions: []SessionSummary{discoveredFreshSession("review-work", SessionSourceMemberPin, 1)},
 	}
 	m, err := NewBubbleModel(NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs", OperatorNotifications: true, OperatorNotificationsRequested: true, OperatorNotificationsSet: true},
@@ -146,7 +149,7 @@ func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePr
 func TestBubbleModelPinnedSessionIsDerivedWithoutFreeText(t *testing.T) {
 	profile := ProfileSummary{
 		Name: "default", MemberCount: 1, PinnedSession: "issue-136",
-		Members: []MemberSummary{{Role: "cto", Binary: "codex"}},
+		Members: []MemberSummary{{Role: "cto", Binary: "codex"}}, Sessions: []SessionSummary{discoveredFreshSession("issue-136", SessionSourceMemberPin, 1)},
 	}
 	m, err := NewBubbleModel(NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "default"},
@@ -164,6 +167,44 @@ func TestBubbleModelPinnedSessionIsDerivedWithoutFreeText(t *testing.T) {
 	}
 	if m.isTextStage() {
 		t.Fatal("pinned existing profile reached a text-input stage")
+	}
+}
+
+func TestWizardAdaptersConsumeSameSuggestedFirstSummary(t *testing.T) {
+	summary := discoveredFreshSession("issue-444", SessionSourceSuggestedFirst, 1)
+	profile := ProfileSummary{Name: "review", MemberCount: 1, Members: []MemberSummary{{Role: "cto", Binary: "codex"}}, Sessions: []SessionSummary{summary}}
+	ctx := ProjectContext{Project: "/repo", SessionSuggestion: "issue-444", Profiles: []ProfileSummary{profile}}
+	inspect := func(string) (ProjectContext, error) { return ctx, nil }
+
+	numbered, err := RunNumbered(strings.NewReader(strings.Repeat("\n", 12)), &bytes.Buffer{}, NumberedOptions{
+		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs"}, InspectProject: inspect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bubble, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "review"}, InspectProject: inspect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bubble = updateBubble(t, bubble, tea.KeyMsg{Type: tea.KeyEnter})
+	bubble = updateBubble(t, bubble, tea.KeyMsg{Type: tea.KeyEnter})
+	for name, got := range map[string]Spec{"numbered": numbered, "bubble": bubble.spec} {
+		if got.Session != summary.Name || got.SessionSource != summary.Source || got.DiscoveryFingerprint != summary.Fingerprint || got.RunState != summary.Classification.State || got.Backend != summary.Classification.Backend || got.RunExecutable != summary.Classification.Executable {
+			t.Fatalf("%s adapter did not consume exact summary: %+v want=%+v", name, got, summary)
+		}
+	}
+}
+
+func TestBubbleExistingProfileWithoutCLIDiscoveryFailsClosed(t *testing.T) {
+	ctx := ProjectContext{Project: "/repo", SessionSuggestion: "issue-444", Profiles: []ProfileSummary{{Name: "review", MemberCount: 1}}}
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "review"}, InspectProject: func(string) (ProjectContext, error) { return ctx, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.done || m.err == nil || m.spec.RunState != RunStateBlocked || m.spec.RunExecutable || m.spec.Backend != "" || m.spec.DiscoveryFingerprint != "" {
+		t.Fatalf("empty discovery did not fail closed: done=%t err=%v spec=%+v", m.done, m.err, m.spec)
 	}
 }
 
@@ -199,31 +240,113 @@ func TestBubbleMultipleKnownSessionsUseListAndBackDropsStaleRun(t *testing.T) {
 	}
 }
 
-func TestBubbleBackRejectsChangedDiscoverySnapshot(t *testing.T) {
-	profile := ProfileSummary{Name: "release", MemberCount: 1, Members: []MemberSummary{{Role: "cto", Binary: "codex"}}, Sessions: []SessionSummary{{
-		Name: "s", Source: SessionSourceMemberPin, Fingerprint: "reviewed", Classification: RunClassification{State: RunStateNotStarted, Backend: BackendRunStart, Executable: true}, Fresh: 1,
+func TestBubbleBackRefreshRejectsChangedDiscoveryAndRetainsB(t *testing.T) {
+	calls := 0
+	ctxA := bubbleBackContext("reviewed-a", "context-a")
+	ctxB := bubbleBackContext("reviewed-b", "context-b")
+	m := bubbleAtExistingModel(t, func(string) (ProjectContext, error) {
+		calls++
+		if calls < 3 {
+			return ctxA, nil
+		}
+		return ctxB, nil
+	})
+	m.spec.Goal, m.spec.Visibility, m.spec.Model = "stale goal", "current", "cto=stale"
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if calls != 3 || m.stage != stageProfile || m.ctx.OriginSlug != "context-b" || m.spec.Session != "" || m.spec.Backend != "" || m.spec.RunExecutable || m.spec.Goal != "" || m.spec.Visibility != "" || m.spec.Model != "" || m.spec.OperatorMode != "" || m.err == nil || len(m.history) != 0 || m.existingIndex != 0 {
+		t.Fatalf("changed refresh was not rejected safely: calls=%d stage=%v ctx=%+v spec=%+v err=%v history=%d index=%d", calls, m.stage, m.ctx, m.spec, m.err, len(m.history), m.existingIndex)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.ctx.OriginSlug != "context-b" {
+		t.Fatalf("subsequent Back resurrected context A: %+v", m.ctx)
+	}
+}
+
+func TestBubbleBackRefreshRestoresCompatibleSnapshotAndRetainsFreshA(t *testing.T) {
+	calls := 0
+	m := bubbleAtExistingModel(t, func(string) (ProjectContext, error) {
+		calls++
+		return bubbleBackContext("reviewed-a", fmt.Sprintf("context-a-%d", calls)), nil
+	})
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if calls != 3 || m.stage != stageExistingOverride || m.spec.Session != "s" || m.spec.DiscoveryFingerprint != "reviewed-a" || m.ctx.OriginSlug != "context-a-3" || m.existingIndex != 0 || m.err != nil {
+		t.Fatalf("compatible refresh did not restore snapshot: calls=%d stage=%v ctx=%+v spec=%+v err=%v", calls, m.stage, m.ctx, m.spec, m.err)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.ctx.OriginSlug != "context-a-3" {
+		t.Fatalf("subsequent Back resurrected pre-refresh context: %+v", m.ctx)
+	}
+}
+
+func TestBubbleBackRefreshErrorRejectsAndRetainsLastKnownContext(t *testing.T) {
+	calls := 0
+	m := bubbleAtExistingModel(t, func(string) (ProjectContext, error) {
+		calls++
+		if calls == 3 {
+			return ProjectContext{}, errors.New("discovery unavailable")
+		}
+		return bubbleBackContext("reviewed-a", fmt.Sprintf("context-a-%d", calls)), nil
+	})
+	m.spec.Goal, m.spec.OperatorMode = "stale goal", "lead_pane"
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if calls != 3 || m.stage != stageProject || m.ctx.OriginSlug != "context-a-2" || m.spec.Session != "" || m.spec.Goal != "" || m.spec.OperatorMode != "" || m.err == nil || !strings.Contains(m.err.Error(), "discovery unavailable") || len(m.history) != 0 || m.input.Value() != "/repo" {
+		t.Fatalf("refresh error did not fail closed: calls=%d stage=%v ctx=%+v spec=%+v err=%v history=%d input=%q", calls, m.stage, m.ctx, m.spec, m.err, len(m.history), m.input.Value())
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.ctx.OriginSlug != "context-a-2" {
+		t.Fatalf("subsequent Back changed last-known context: %+v", m.ctx)
+	}
+}
+
+func TestSnapshotCompatibleFailsClosedOnMissingFingerprints(t *testing.T) {
+	current := bubbleBackContext("current", "context")
+	base := bubbleSnapshot{spec: Spec{Project: "/repo", Profile: "release", ProfileBranch: ProfileBranchExisting, Session: "s", DiscoveryFingerprint: "current"}}
+	tests := []struct {
+		name     string
+		snapshot bubbleSnapshot
+		current  ProjectContext
+		want     bool
+	}{
+		{name: "same fingerprint", snapshot: base, current: current, want: true},
+		{name: "saved fingerprint empty", snapshot: bubbleSnapshot{spec: Spec{Profile: "release", ProfileBranch: ProfileBranchExisting, Session: "s"}}, current: current},
+		{name: "current fingerprint empty", snapshot: base, current: bubbleBackContext("", "context")},
+		{name: "changed fingerprint", snapshot: base, current: bubbleBackContext("changed", "context")},
+		{name: "missing profile", snapshot: base, current: ProjectContext{Project: "/repo"}},
+		{name: "missing session", snapshot: base, current: ProjectContext{Project: "/repo", Profiles: []ProfileSummary{{Name: "release"}}}},
+		{name: "preselection", snapshot: bubbleSnapshot{spec: Spec{Profile: "release", ProfileBranch: ProfileBranchExisting}}, current: current, want: true},
+		{name: "new profile", snapshot: bubbleSnapshot{spec: Spec{ProfileBranch: ProfileBranchNew}}, current: current, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := snapshotCompatible(tt.snapshot, tt.current); got != tt.want {
+				t.Fatalf("snapshotCompatible=%t want=%t", got, tt.want)
+			}
+		})
+	}
+}
+
+func bubbleBackContext(fingerprint, origin string) ProjectContext {
+	return ProjectContext{Project: "/repo", OriginSlug: origin, Profiles: []ProfileSummary{{
+		Name: "release", MemberCount: 1, OperatorMode: "lead_pane", Members: []MemberSummary{{Role: "cto", Binary: "codex"}}, Sessions: []SessionSummary{{
+			Name: "s", Source: SessionSourceMemberPin, Fingerprint: fingerprint, Classification: RunClassification{State: RunStateNotStarted, Backend: BackendRunStart, Executable: true}, Fresh: 1,
+		}},
 	}}}
-	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
-		return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
-	}})
+}
+
+func bubbleAtExistingModel(t *testing.T, inspect func(string) (ProjectContext, error)) BubbleModel {
+	t.Helper()
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: inspect})
 	if err != nil {
 		t.Fatal(err)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.stage != stageExistingOverride || m.spec.DiscoveryFingerprint != "reviewed" {
-		t.Fatalf("reviewed state = stage %v spec %+v", m.stage, m.spec)
-	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageExistingModel {
-		t.Fatalf("expected downstream stage, got %v", m.stage)
+		t.Fatalf("fixture stage=%v spec=%+v", m.stage, m.spec)
 	}
-	m.ctx.Profiles[0].Sessions[0].Fingerprint = "changed"
-	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.stage != stageProfile || m.spec.Session != "" || m.spec.Backend != "" || m.err == nil {
-		t.Fatalf("changed snapshot restored: stage=%v spec=%+v err=%v", m.stage, m.spec, m.err)
-	}
+	return m
 }
 
 func TestBubbleNewProfileUsesProfileAndSessionSuggestions(t *testing.T) {
@@ -283,7 +406,7 @@ func TestBubbleFreshAndNamedOnlyProjectsUseSingleNewProfilePath(t *testing.T) {
 func TestBubbleModelHydratesEnabledAuthoritativeNotifications(t *testing.T) {
 	profile := ProfileSummary{
 		Name: "review", MemberCount: 1, PinnedSession: "review-work", OperatorMode: "noc", OperatorNotifications: true,
-		Members: []MemberSummary{{Role: "cto", Binary: "codex"}},
+		Members: []MemberSummary{{Role: "cto", Binary: "codex"}}, Sessions: []SessionSummary{discoveredFreshSession("review-work", SessionSourceMemberPin, 1)},
 	}
 	m, err := NewBubbleModel(NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs"},
