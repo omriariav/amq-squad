@@ -68,12 +68,7 @@ func amqSupportsWakeInject(version string) bool {
 }
 
 func amqSupportsWakeInjectMode(version string) bool {
-	got, ok := parseSemverParts(strings.TrimSpace(version))
-	if !ok {
-		return false
-	}
-	min, _ := parseSemverParts(minWakeInjectModeAMQVersion)
-	return compareSemverParts(got, min) >= 0
+	return semverMeetsStableFloor(version, minWakeInjectModeAMQVersion)
 }
 
 func amqSupportsNoGitignore(version string) bool {

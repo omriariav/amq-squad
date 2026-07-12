@@ -266,7 +266,8 @@ func TestAMQSupportsWakeInject(t *testing.T) {
 func TestAMQSupportsWakeInjectMode(t *testing.T) {
 	for version, want := range map[string]bool{
 		"": false, "garbage": false, "0.41.9": false,
-		"0.42.0": true, "v0.42.0": true, "1.0.0": true,
+		"0.42.0-rc1": false, "0.42.0": true, "v0.42.0": true,
+		"0.42.1-rc1": true, "1.0.0": true,
 	} {
 		if got := amqSupportsWakeInjectMode(version); got != want {
 			t.Errorf("amqSupportsWakeInjectMode(%q) = %v, want %v", version, got, want)

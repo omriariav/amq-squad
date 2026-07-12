@@ -682,6 +682,33 @@ func TestGoalStartRegisterOrchestratorProducesWakeableIdentity(t *testing.T) {
 	}
 }
 
+func TestGoalStartRegisterOrchestratorNoneModeIsZeroInput(t *testing.T) {
+	base, dir := seedCtoLeadTeamForOrchestrator(t)
+	t.Setenv("AMQ_FAKE_VERSION", "0.42.0")
+	stubs := setupOrchestratorRegStubs(t, dir)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--wake-inject-mode", "none", "--yes", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("goal start none mode: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(*stubs.wakeOpts) != 1 {
+		t.Fatalf("wake opts = %+v", *stubs.wakeOpts)
+	}
+	wake := (*stubs.wakeOpts)[0]
+	if wake.WakeInjectMode != "none" || wake.WakeInjectCmd != "" {
+		t.Fatalf("none-mode wake opts = %+v", wake)
+	}
+	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
+	if err != nil {
+		t.Fatalf("read orchestrator launch record: %v", err)
+	}
+	if rec.WakeInjectMode != "none" || rec.WakeInjectCmd != "" {
+		t.Fatalf("none-mode launch record = %+v", rec)
+	}
+}
+
 // TestGoalStartRegisterOrchestratorIdempotentOnRerun proves #287 idempotency:
 // re-running the same gated command does not error and does not duplicate the
 // orchestrator member or launch record.

@@ -645,7 +645,14 @@ launch fails immediately when the wake sidecar cannot acquire its lock
 <code>--wake-inject-mode none</code> for permission-prompt workflows
 that require AMQ wake notices with zero synthetic terminal input; normal
 notices go to wake stderr and urgent notices add one bell. It cannot be
-combined with injector flags. Use <code>--no-gitignore</code> on
+combined with injector flags. The zero-input contract also suppresses
+dispatch's last-resort pane nudge (even with <code>--force</code>) and
+the delayed Claude <code>/rename</code> command. Records written with
+mode <code>none</code> must not be resumed by an amq-squad binary older
+than v2.20.0, because older replay code does not understand that safety
+contract. Run <code>amq-squad doctor</code> and resolve any
+binary/plugin/skill version skew before <code>resume --exec</code> or
+<code>agent resume</code>. Use <code>--no-gitignore</code> on
 <code>agent up</code>, <code>up</code>, or <code>up --dry-run</code>
 when AMQ coop auto-init should leave <code>.gitignore</code> unchanged;
 the opt-out is persisted in the launch record and replayed by
@@ -721,9 +728,10 @@ or raw
 when direct mailbox plumbing is intentional.</p>
 <p>Claude-binary agents launched in tmux also get a best-effort delayed
 <code>/rename &lt;role&gt;-&lt;session&gt;</code> injection, including
-managed <code>resume --exec</code> / <code>agent resume</code> replay.
-Failure to deliver the rename does not block launch. Codex agents are
-unaffected because Codex has no matching slash command.</p>
+managed <code>resume --exec</code> / <code>agent resume</code> replay,
+except when wake injection mode is <code>none</code>. Failure to deliver
+the rename does not block launch. Codex agents are unaffected because
+Codex has no matching slash command.</p>
 <p>Model/binary guidance (context-stamped 2026-07-10, current operator
 setup; setup-dependent, not universal): defaults are not limits;
 escalate model or effort when output quality misses the bar. For

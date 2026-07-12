@@ -729,7 +729,11 @@ if [ "$root_arg" != "" ]; then
 elif [ "$session" != "" ]; then
   root="$root/$session"
 fi
-printf '{"root":"%s"}\n' "$root"
+if [ "$AMQ_FAKE_VERSION" != "" ]; then
+  printf '{"root":"%s","amq_version":"%s"}\n' "$root" "$AMQ_FAKE_VERSION"
+else
+  printf '{"root":"%s"}\n' "$root"
+fi
 `
 	if err := os.WriteFile(filepath.Join(binDir, "amq"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
