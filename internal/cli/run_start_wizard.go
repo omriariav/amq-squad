@@ -263,6 +263,9 @@ func prepareRunStartWizard(args []string) (runwizard.Spec, runwizard.NumberedOpt
 	if strings.TrimSpace(prefill.Profile) == "" {
 		prefill.Profile = team.DefaultProfile
 	}
+	if prefill.Backend == "" {
+		prefill.Backend = runwizard.BackendRunStart
+	}
 	opts := runwizard.NumberedOptions{
 		InspectProject: inspectRunStartWizardProject,
 		ProfileExists: func(project, profile string) bool {
@@ -378,6 +381,7 @@ func collectGlobalWizard(in io.Reader, out io.Writer, spec runwizard.Spec) (runw
 		in = bufio.NewReader(in)
 	}
 	spec.Scope = "global"
+	spec.Backend = runwizard.BackendGlobalStart
 	if strings.TrimSpace(spec.GlobalRoot) == "" {
 		if home, homeErr := os.UserHomeDir(); homeErr == nil {
 			spec.GlobalRoot = filepath.Join(home, "Code")

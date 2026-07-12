@@ -503,7 +503,8 @@ Core invariants:
   verbatim.
 - Every screen has consequence copy understandable without source knowledge.
 - Discovery, navigation, and preview remain non-mutating; only explicit Yes
-  after an unchanged second fingerprint check invokes `--go` or `--exec`.
+  invokes `--go` or `--exec`. For existing-profile branches, that Yes follows
+  an unchanged second fingerprint check.
 - Catalog-backed model/effort choices are injected so #432 can change their
   source without restructuring the decision tree.
 
