@@ -66,6 +66,22 @@ milestone or issue-delivery runs where the source repo, milestone, session, and
 profile are known. For unusual work with special constraints, hand-write the
 long-form `/goal` prompt and still follow the seeded flow below.
 
+When an injected `/goal` includes `--attempt-id ID`, it is one route to a
+claim-once durable goal attempt. Before creating or replacing a runtime goal,
+run `amq-squad goal claim --profile <profile> --session <session> --attempt-id
+ID --route native --json` from the target project. Continue only when its status
+is `claimed`. If the status is `already_claimed`, another route (normally the
+AMQ fallback) won the same attempt: treat this prompt as a successful no-op and
+do not create, restart, or duplicate the goal. Never reset a claim to replay an
+attempt. An actionable AMQ goal-attempt message carries the equivalent command
+with `--route amq`; the atomic claim is the shared runtime dedupe boundary.
+The contract is explicitly **at-most-once**, not exactly-once: if the winning
+claimant crashes after publishing its claim but before activating the goal, the
+activation may be lost. Never let the second route activate that consumed
+attempt. Instead, inspect the `claim_path`, route, and `claimed_at` returned by
+`goal claim`; if no goal activated, use its `recovery_command` to deliver a new
+attempt. Do not reset, delete, or reuse the old claim as crash recovery.
+
 ### Operator-facing Step 1 / Step 2 / Step 3
 
 For `/goal` runs, keep the operator interface simple and lead-centered:

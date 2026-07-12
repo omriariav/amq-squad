@@ -42,6 +42,7 @@ type dispatchOutcome struct {
 const (
 	dispatchSubmitConfirmed   = "submit_confirmed"
 	dispatchSubmitUnconfirmed = "submit_unconfirmed"
+	dispatchSubmitQueued      = "submit_queued"
 )
 
 const (
@@ -493,6 +494,10 @@ Examples:
 		}
 		receipt.addStage("submit_attempted", "attempted to submit the staged drain-only prompt")
 		switch outcome.SubmitState {
+		case dispatchSubmitQueued:
+			receipt.Status = dispatchSubmitQueued
+			receipt.Detail = outcome.Detail
+			receipt.addStage(dispatchSubmitQueued, outcome.Detail)
 		case dispatchSubmitUnconfirmed:
 			receipt.Status = dispatchSubmitUnconfirmed
 			receipt.Detail = outcome.Detail
@@ -514,7 +519,10 @@ Examples:
 		status := "queued"
 		if outcome.PaneID != "" {
 			status = "queued_and_nudged"
-			if outcome.SubmitState == dispatchSubmitUnconfirmed {
+			switch outcome.SubmitState {
+			case dispatchSubmitQueued:
+				status = "queued_nudge_submit_queued"
+			case dispatchSubmitUnconfirmed:
 				status = "queued_nudge_submit_unconfirmed"
 			}
 		}
@@ -537,9 +545,12 @@ Examples:
 		})
 	}
 	if outcome.PaneID != "" {
-		if outcome.SubmitState == dispatchSubmitUnconfirmed {
+		switch outcome.SubmitState {
+		case dispatchSubmitQueued:
+			quietNotice("Nudged %s pane %s to drain; the prompt is queued in the pane input and will submit when the agent goes idle.\n", *roleFlag, outcome.PaneID)
+		case dispatchSubmitUnconfirmed:
 			quietNotice("Nudged %s pane %s to drain, but submit was unconfirmed; durable task remains queued.\n", *roleFlag, outcome.PaneID)
-		} else {
+		default:
 			quietNotice("Nudged %s pane %s to drain.\n", *roleFlag, outcome.PaneID)
 		}
 	} else {
@@ -793,6 +804,14 @@ func defaultDispatchWakePane(projectDir, profile, session string, explicitSessio
 func classifyNudgeResult(paneID string, sendErr error, paneBusy func(string) (bool, error)) (dispatchOutcome, error) {
 	if sendErr == nil {
 		return dispatchOutcome{PaneID: paneID, SubmitState: dispatchSubmitConfirmed}, nil
+	}
+	var queued *tmuxpane.QueuedInputError
+	if errors.As(sendErr, &queued) {
+		return dispatchOutcome{
+			PaneID:      paneID,
+			SubmitState: dispatchSubmitQueued,
+			Detail:      fmt.Sprintf("pane %s has the prompt queued in its input; it will submit when the agent goes idle", paneID),
+		}, nil
 	}
 	var unconfirmed *tmuxpane.SubmitUnconfirmedError
 	if errors.As(sendErr, &unconfirmed) {

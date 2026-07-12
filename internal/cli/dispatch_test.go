@@ -312,6 +312,34 @@ func TestRunDispatchJSONEnvelopeReportsSubmitUnconfirmed(t *testing.T) {
 	}
 }
 
+func TestRunDispatchJSONEnvelopeReportsSubmitQueued(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"},
+		"Sent msg-queued to qa (session: , root: /x/.agent-mail/issue-96)\n")
+	_ = withDispatchWakeSeam(t, dispatchOutcome{
+		PaneID:      "%7",
+		SubmitState: dispatchSubmitQueued,
+		Detail:      "pane %7 has the prompt queued in its input; it will submit when the agent goes idle",
+	}, nil)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch --json: %v", err)
+	}
+	env := decodeJSONEnvelope[mutationResult](t, stdout)
+	if env.Data.Status != "queued_nudge_submit_queued" {
+		t.Fatalf("dispatch status = %q, want queued_nudge_submit_queued", env.Data.Status)
+	}
+	r := env.Data.DeliveryReceipt
+	if r == nil || r.Status != dispatchSubmitQueued || !r.Fallback || !strings.Contains(r.Detail, "will submit when the agent goes idle") || !receiptHasStage(r, dispatchSubmitQueued) {
+		t.Fatalf("dispatch receipt = %+v, want explicit submit_queued pane attempt", r)
+	}
+}
+
 func withDispatchAMQCommandErrorSeam(t *testing.T, env amqEnv, output string, sendErr error) *[]amqCommandRequest {
 	t.Helper()
 	var calls []amqCommandRequest
@@ -366,6 +394,7 @@ func TestClassifyNudgeResult(t *testing.T) {
 	busy := func(string) (bool, error) { return true, nil }
 	idle := func(string) (bool, error) { return false, nil }
 	unconfirmed := &tmuxpane.SubmitUnconfirmedError{PaneID: "%7", Attempts: 3}
+	queued := &tmuxpane.QueuedInputError{PaneID: "%7"}
 
 	// Clean send -> nudged.
 	if o, err := classifyNudgeResult("%7", nil, idle); err != nil || o.PaneID != "%7" || o.SubmitState != dispatchSubmitConfirmed {
@@ -383,6 +412,11 @@ func TestClassifyNudgeResult(t *testing.T) {
 	}
 	if o.PaneID != "%7" || o.SubmitState != dispatchSubmitUnconfirmed || !strings.Contains(o.Detail, "manual Enter") {
 		t.Fatalf("unconfirmed+idle should be an explicit unconfirmed attempt, got %+v", o)
+	}
+	// Codex's explicit queued-input footer is stronger evidence than an
+	// unchanged input region and should never be described as a dropped Enter.
+	if o, err := classifyNudgeResult("%7", queued, idle); err != nil || o.SubmitState != dispatchSubmitQueued || !strings.Contains(o.Detail, "will submit when the agent goes idle") {
+		t.Fatalf("queued input should be a soft queued outcome: got %+v, %v", o, err)
 	}
 	// A real failure (dead pane) propagates as an error.
 	dead := &tmuxpane.DeadPaneError{PaneID: "%7"}
