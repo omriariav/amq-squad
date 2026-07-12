@@ -19,6 +19,7 @@ amq-squad-rc-*
 # amq-squad local runtime/session state. Commit durable project files explicitly.
 .amq-squad/briefs/
 .amq-squad/evidence/
+.amq-squad/goal-attempts/
 .amq-squad/notify-state.json
 .amq-squad/receipts/
 .amq-squad/reviews/

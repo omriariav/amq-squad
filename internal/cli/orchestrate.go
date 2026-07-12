@@ -1042,6 +1042,19 @@ func deliverRunStartGoalWhenReady(opts runStartGoalDeliveryOptions) error {
 		"--yes",
 	}
 	if err := runStartGoalWithVersion(args, opts.Version); err != nil {
+		var sentReceiptErr *goalFallbackSentReceiptError
+		if errors.As(err, &sentReceiptErr) {
+			fmt.Fprintf(os.Stderr, "warning: claim-once goal fallback %s was sent on %s, but local receipt persistence failed: %v\n", sentReceiptErr.MessageID, sentReceiptErr.Thread, sentReceiptErr.ReceiptErr)
+			fmt.Fprintf(os.Stderr, "warning: do not blindly retry this goal attempt; inspect root %s and attempt/message evidence first. Continuing the launch — layout finalization and the launcher-pane policy still run.\n", sentReceiptErr.Root)
+			return nil
+		}
+		var queued *tmuxpane.QueuedInputError
+		if errors.As(err, &queued) {
+			fmt.Fprintf(os.Stderr, "warning: goal queued in the lead's input; it will submit when the agent goes idle: %v\n", err)
+			fmt.Fprintf(os.Stderr, "warning: continuing the launch — layout finalization and the launcher-pane policy still run.\n")
+			fmt.Fprintf(os.Stderr, "If the goal never appears, re-deliver with:\n  %s\n", retryCmd)
+			return nil
+		}
 		// An unconfirmed pane submit is ambiguous, not a failure (see
 		// classifyNudgeResult): the goal text is pasted in the lead's input,
 		// and a busy agent queues typed input until it goes idle. Aborting

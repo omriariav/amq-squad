@@ -105,6 +105,7 @@ var completionLeadSubcommands = []string{
 // completionGoalSubcommands lists the top-level `amq-squad goal` subcommands.
 var completionGoalSubcommands = []string{
 	"apply",
+	"claim",
 	"deliver",
 	"draft",
 	"start",
@@ -184,6 +185,7 @@ var completionCommonFlags = []string{
 	// Subcommand flags, sorted alphabetically.
 	"--action",
 	"--action-id",
+	"--attempt-id",
 	"--actions",
 	"--agent",
 	"--all",
@@ -308,6 +310,7 @@ var completionCommonFlags = []string{
 	"--role-file",
 	"--roles",
 	"--root",
+	"--route",
 	"--run-action",
 	"--seed-from",
 	"--skill-version",
