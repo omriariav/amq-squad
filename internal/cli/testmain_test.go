@@ -145,6 +145,10 @@ if [ "$1" = "ops" ]; then
   printf '{}\n'
   exit 0
 fi
+if [ "$1" = "version" ]; then
+  printf '0.38.0\n'
+  exit 0
+fi
 echo "fake amq: unsupported command: $*" >&2
 exit 2
 `
