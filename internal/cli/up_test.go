@@ -183,6 +183,46 @@ func TestUpDryRunJSONIncludesClaudeWorkerPreauthAndBootstrapStatus(t *testing.T)
 	}
 }
 
+func TestUpDryRunPermissionAllowlistIsPerMemberAndAuditable(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-401"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-401", PermissionAllowlist: []string{"Bash(rm -rf /tmp/qa-review/*:*)"}},
+			{Role: "reviewer", Binary: "claude", Handle: "reviewer", Session: "issue-401", PermissionAllowlist: []string{"Read(/tmp/reviewer-work/**)"}},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runUp([]string{"issue-401", "--dry-run", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --json: %v", err)
+	}
+	env := decodeJSONEnvelope[teamPlan](t, stdout)
+	for _, row := range env.Data.Plan {
+		var own, forbidden string
+		switch row.Role {
+		case "qa":
+			own, forbidden = "Bash(rm -rf /tmp/qa-review/*:*)", "reviewer-work"
+		case "reviewer":
+			own, forbidden = "Read(/tmp/reviewer-work/**)", "qa-review"
+		default:
+			continue
+		}
+		if len(row.PermissionAllowlist) != 1 || row.PermissionAllowlist[0] != own {
+			t.Fatalf("%s permission_allowlist = %v, want %q", row.Role, row.PermissionAllowlist, own)
+		}
+		if !containsString(row.PreauthorizedActions, own) || !strings.Contains(row.Command, own) {
+			t.Fatalf("%s effective grant missing from plan/audit: %+v", row.Role, row)
+		}
+		if strings.Contains(strings.Join(row.PreauthorizedActions, " "), forbidden) || strings.Contains(row.Command, forbidden) {
+			t.Fatalf("%s received another role's allowlist: %+v", row.Role, row)
+		}
+	}
+}
+
 func TestUpDryRunCrossCWDClaudeWorkerPreauthMatchesLiveLaunch(t *testing.T) {
 	teamHome := t.TempDir()
 	workerDir := t.TempDir()

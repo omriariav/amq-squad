@@ -20,7 +20,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		Lead:         "cpo",
 		Members: []Member{
 			{Role: "cpo", Binary: "codex", Handle: "cpo", Session: "stream1"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "stream2"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "stream2", PermissionAllowlist: []string{"Bash(rm -rf /tmp/fullstack-review/*:*)"}},
 		},
 	}
 	if err := Write(dir, in); err != nil {
@@ -513,6 +513,34 @@ func TestValidateMemberPerMemberArgs(t *testing.T) {
 	blank.ClaudeArgs = []string{"  "}
 	if err := Validate(Team{Members: []Member{blank}}); err == nil || !strings.Contains(err.Error(), "claude_args[0]") {
 		t.Errorf("blank claude_args entry: want display-value error, got %v", err)
+	}
+}
+
+func TestValidateMemberPermissionAllowlist(t *testing.T) {
+	claude := Member{Role: "qa", Binary: "claude", Handle: "qa", Session: "s"}
+	claude.PermissionAllowlist = []string{"Bash(rm -rf /tmp/qa-review/*:*)", "Read(/tmp/qa-review/**)"}
+	if err := Validate(Team{Members: []Member{claude}}); err != nil {
+		t.Fatalf("scoped Claude permission_allowlist should validate: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		member Member
+		want   string
+	}{
+		{"non-Claude", Member{Role: "qa", Binary: "codex", PermissionAllowlist: []string{"Bash(make test:*)"}}, "only to claude"},
+		{"blank", Member{Role: "qa", Binary: "claude", PermissionAllowlist: []string{"  "}}, "cannot be empty"},
+		{"surrounding whitespace", Member{Role: "qa", Binary: "claude", PermissionAllowlist: []string{" Bash(make test:*)"}}, "surrounding whitespace"},
+		{"comma", Member{Role: "qa", Binary: "claude", PermissionAllowlist: []string{"Read(/a),Read(/b)"}}, "commas are not allowed"},
+		{"duplicate", Member{Role: "qa", Binary: "claude", PermissionAllowlist: []string{"Bash(make test:*)", "Bash(make test:*)"}}, "duplicate permission"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Validate(Team{Members: []Member{tc.member}})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

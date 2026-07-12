@@ -474,6 +474,15 @@ You can also preview a candidate from a deterministic source with
   cutting its per-prompt context cost. Do not hand-edit this: step 5 generates
   and wires it with `amq-squad team overlay init` (v1.9.0+). Plan emission
   validates that every referenced `--settings` file exists.
+- **Per-member permission allowlist**: a Claude member may carry
+  `permission_allowlist`, for example
+  `"permission_allowlist": ["Bash(rm -rf /tmp/qa-review/*:*)"]`. amq-squad
+  merges it with explicit native `--allowedTools`, applies it only to that
+  exact role, shows configured/effective grants in `up --dry-run --json`, and
+  persists the effective list in launch history for resume/audit. Validation
+  rejects this field on non-Claude members. Keep patterns scoped to the
+  member's own scratch or review workspace; this is not a team-wide trust
+  switch and the setup wizard does not author it.
 - **Model/binary/effort choice** (context stamp: 2026-07-10, current operator
   setup; setup-dependent, not universal): defaults are not limits; escalate
   when output quality misses the bar. For shippable work use

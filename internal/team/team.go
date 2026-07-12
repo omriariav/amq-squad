@@ -67,6 +67,12 @@ type Member struct {
 	// never silently apply stale flags.
 	ClaudeArgs []string `json:"claude_args,omitempty"`
 	CodexArgs  []string `json:"codex_args,omitempty"`
+	// PermissionAllowlist is the member-scoped native permission grant applied
+	// at launch. The current implementation translates these patterns to
+	// Claude's --allowedTools and therefore accepts the field only on Claude
+	// members. Keeping it separate from claude_args makes the security-sensitive
+	// grant visible, auditable, and impossible to inherit from another role.
+	PermissionAllowlist []string `json:"permission_allowlist,omitempty"`
 }
 
 // ExtraArgs returns the per-member native CLI args that match the member's
@@ -1274,6 +1280,22 @@ func validateMember(prefix string, m Member) error {
 			return fmt.Errorf("%s.codex_args[%d]: %w", prefix, i, err)
 		}
 	}
+	seenPermissions := map[string]bool{}
+	for i, permission := range m.PermissionAllowlist {
+		if err := ValidateDisplayValue("permission_allowlist", permission); err != nil {
+			return fmt.Errorf("%s.permission_allowlist[%d]: %w", prefix, i, err)
+		}
+		if permission != strings.TrimSpace(permission) {
+			return fmt.Errorf("%s.permission_allowlist[%d]: surrounding whitespace is not allowed", prefix, i)
+		}
+		if strings.Contains(permission, ",") {
+			return fmt.Errorf("%s.permission_allowlist[%d]: commas are not allowed (Claude uses comma as the --allowedTools separator)", prefix, i)
+		}
+		if seenPermissions[permission] {
+			return fmt.Errorf("%s.permission_allowlist[%d]: duplicate permission %q", prefix, i, permission)
+		}
+		seenPermissions[permission] = true
+	}
 	// Binary-match contract: per-member args are bound to the binary they
 	// configure. Rejecting the mismatch (instead of silently ignoring it)
 	// means a member whose binary flips later can never carry stale flags.
@@ -1283,6 +1305,9 @@ func validateMember(prefix string, m Member) error {
 	}
 	if len(m.CodexArgs) > 0 && bin != "codex" {
 		return fmt.Errorf("%s.codex_args: member binary is %q; codex_args applies only to codex members", prefix, m.Binary)
+	}
+	if len(m.PermissionAllowlist) > 0 && bin != "claude" {
+		return fmt.Errorf("%s.permission_allowlist: member binary is %q; permission_allowlist currently applies only to claude members", prefix, m.Binary)
 	}
 	return nil
 }

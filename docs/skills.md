@@ -197,6 +197,13 @@ This is the everyday skill. The lifecycle is one small state machine:
 | Trim worker context (overlays) | `amq-squad team overlay init --workers [--disable-plugins ids] [--disable-all-hooks]` |
 | Tear down (destructive / recoverable) | `amq-squad rm <s>` / `amq-squad archive <s>` |
 
+For a narrow Claude-only permission exception, configure a member's
+`permission_allowlist` in `team.json`, for example
+`["Bash(rm -rf /tmp/qa-review/*:*)"]`. The grant is scoped to that exact role,
+merged with any explicit native `--allowedTools`, visible in dry-run JSON and
+launch history, and replayed by resume. Validation rejects the field for other
+binaries; prefer scratch/worktree-specific patterns over broad command grants.
+
 Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
 CLI args for one member only — the overlay verb above generates the flagship
 case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it

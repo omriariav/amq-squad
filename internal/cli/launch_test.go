@@ -213,6 +213,28 @@ func TestRunLaunchPreauthOptOutAndScope(t *testing.T) {
 	})
 }
 
+func TestRunLaunchBuiltInPreauthOptOutPreservesMemberPermissionAllowlist(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "v2-14-0"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "v2-14-0", PermissionAllowlist: []string{"Bash(rm -rf /tmp/fullstack-review/*:*)"}},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--no-preauthorize-inscope", "--role", "fullstack", "--session", "v2-14-0", "claude", "p"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "fullstack-review") || strings.Contains(stdout, "gh pr create") {
+		t.Fatalf("explicit allowlist should survive built-in opt-out without PR grant:\n%s", stdout)
+	}
+}
+
 func TestValidateManagedTmuxLaunchRejectsNonTTY(t *testing.T) {
 	t.Setenv(envTmuxTarget, "current-window")
 	t.Setenv("TMUX", "/tmp/tmux-1/default,1,0")

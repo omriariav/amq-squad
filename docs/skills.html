@@ -633,6 +633,13 @@ drain your inbox.</li>
 </tr>
 </tbody>
 </table>
+<p>For a narrow Claude-only permission exception, configure a member's
+<code>permission_allowlist</code> in <code>team.json</code>, for example
+<code>["Bash(rm -rf /tmp/qa-review/*:*)"]</code>. The grant is scoped to
+that exact role, merged with any explicit native
+<code>--allowedTools</code>, visible in dry-run JSON and launch history,
+and replayed by resume. Validation rejects the field for other binaries;
+prefer scratch/worktree-specific patterns over broad command grants.</p>
 <p>Per-member <code>claude_args</code> / <code>codex_args</code> in
 <code>team.json</code> (v1.8.0+) carry native CLI args for one member
 only — the overlay verb above generates the flagship case (a

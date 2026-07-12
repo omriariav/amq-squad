@@ -441,6 +441,15 @@ Per-member `claude_args` / `codex_args` apply native CLI flags to one member and
 are replayed by resume. Worker overlays trim Claude plugin/hook surface for
 same-cwd squads; Codex workers use native Codex profiles via `codex_args`.
 
+Claude members may also carry an explicit, role-scoped
+`permission_allowlist`, for example
+`"permission_allowlist": ["Bash(rm -rf /tmp/qa-review/*:*)"]`. amq-squad
+merges those patterns into one effective `--allowedTools` grant for that member
+only, records the result in launch history, and shows both the configured and
+effective lists in `up --dry-run --json`. Keep each pattern as narrow as the
+member's own scratch or review workspace; the field is rejected on non-Claude
+members and is intentionally not a team-wide trust switch.
+
 Trust and binary defaults are explicit. Codex trusted mode is the only path that
 prepends `--dangerously-bypass-approvals-and-sandbox`; the default sandboxed
 mode does not.

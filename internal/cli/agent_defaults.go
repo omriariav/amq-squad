@@ -52,14 +52,15 @@ func claudePreauthChildArgs(allow []string) []string {
 	return []string{"--allowedTools", strings.Join(allow, ",")}
 }
 
-func applyClaudeWorkerPreauth(projectDir, profile, role, binary, session string, childArgs []string) ([]string, []string, bool) {
+func applyClaudeWorkerPreauth(projectDir, profile, role, binary, session string, childArgs []string, includeBuiltIn bool) ([]string, []string, bool) {
 	out := append([]string(nil), childArgs...)
-	if !claudeWorkerPreauthEligible(projectDir, profile, role, binary) {
-		return out, nil, false
+	configured := configuredClaudePermissionAllowlist(projectDir, profile, role, binary)
+	var actions []string
+	if includeBuiltIn && claudeWorkerPreauthEligible(projectDir, profile, role, binary) {
+		actions = appendUniquePermissionPatterns(actions, claudeInScopePreauthAllowlist(session)...)
 	}
-	actions := claudeInScopePreauthAllowlist(session)
-	preauthArgs := claudePreauthChildArgs(actions)
-	if len(preauthArgs) == 0 {
+	actions = appendUniquePermissionPatterns(actions, configured...)
+	if len(actions) == 0 {
 		return out, nil, false
 	}
 	if childArgsHasAllowedTools(out) {
@@ -69,9 +70,121 @@ func applyClaudeWorkerPreauth(projectDir, profile, role, binary, session string,
 			// and launch-record audit fields stay aligned with live launch.
 			return out, actions, false
 		}
-		return out, nil, false
+		// Preserve the old conservative behavior for the built-in PR-create
+		// grant: an unrelated explicit --allowedTools remains authoritative. A
+		// member-scoped permission_allowlist is itself explicit configuration,
+		// so merge it with the existing value rather than silently dropping it.
+		if len(configured) == 0 {
+			return out, nil, false
+		}
+		actions = appendUniquePermissionPatterns(childArgsAllowedTools(out), actions...)
 	}
-	return append(out, preauthArgs...), actions, true
+	return replaceClaudeAllowedTools(out, actions), actions, true
+}
+
+func configuredClaudePermissionAllowlist(projectDir, profile, role, binary string) []string {
+	if normalizedAgentBinary(binary) != "claude" || strings.TrimSpace(role) == "" || !team.ExistsProfile(projectDir, profile) {
+		return nil
+	}
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return nil
+	}
+	m, ok := teamMemberByRole(t, role)
+	if !ok || normalizedAgentBinary(m.Binary) != "claude" {
+		return nil
+	}
+	return appendUniquePermissionPatterns(nil, m.PermissionAllowlist...)
+}
+
+func appendUniquePermissionPatterns(dst []string, patterns ...string) []string {
+	seen := make(map[string]bool, len(dst)+len(patterns))
+	for _, pattern := range dst {
+		seen[pattern] = true
+	}
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" || seen[pattern] {
+			continue
+		}
+		seen[pattern] = true
+		dst = append(dst, pattern)
+	}
+	return dst
+}
+
+func childArgsAllowedTools(args []string) []string {
+	values, _ := collectClaudeAllowedTools(args)
+	return values
+}
+
+// collectClaudeAllowedTools reads every native allowed-tools spelling before
+// the literal -- prompt boundary. Claude treats this option as variadic, while
+// amq-squad emits a single comma-joined value so the effective launch grant is
+// unambiguous and auditable.
+func collectClaudeAllowedTools(args []string) ([]string, bool) {
+	var values []string
+	found := false
+	for i := 0; i < len(args); {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		spec, inline, ok := nativeValueSpecForArg("claude", arg)
+		if !ok || spec.Canonical != "--allowed-tools" {
+			i++
+			continue
+		}
+		found = true
+		if inline {
+			if _, raw, ok := strings.Cut(arg, "="); ok {
+				values = appendUniquePermissionPatterns(values, strings.Split(raw, ",")...)
+			}
+			i++
+			continue
+		}
+		i++
+		for i < len(args) && args[i] != "--" && !strings.HasPrefix(args[i], "-") {
+			values = appendUniquePermissionPatterns(values, strings.Split(args[i], ",")...)
+			i++
+		}
+	}
+	return values, found
+}
+
+func replaceClaudeAllowedTools(args, actions []string) []string {
+	clean := make([]string, 0, len(args)+2)
+	boundary := -1
+	for i := 0; i < len(args); {
+		arg := args[i]
+		if arg == "--" {
+			boundary = len(clean)
+			clean = append(clean, args[i:]...)
+			break
+		}
+		spec, inline, ok := nativeValueSpecForArg("claude", arg)
+		if !ok || spec.Canonical != "--allowed-tools" {
+			clean = append(clean, arg)
+			i++
+			continue
+		}
+		i++
+		if inline {
+			continue
+		}
+		for i < len(args) && args[i] != "--" && !strings.HasPrefix(args[i], "-") {
+			i++
+		}
+	}
+	grant := claudePreauthChildArgs(actions)
+	if boundary < 0 {
+		return append(clean, grant...)
+	}
+	out := make([]string, 0, len(clean)+len(grant))
+	out = append(out, clean[:boundary]...)
+	out = append(out, grant...)
+	out = append(out, clean[boundary:]...)
+	return out
 }
 
 func stripTrailingLauncherPreauthArgs(childArgs, preauthorizedActions []string) []string {
@@ -83,24 +196,13 @@ func stripTrailingLauncherPreauthArgs(childArgs, preauthorizedActions []string) 
 }
 
 func childArgsHasAllowedTools(args []string) bool {
-	for _, arg := range args {
-		if arg == "--allowedTools" || strings.HasPrefix(arg, "--allowedTools=") {
-			return true
-		}
-	}
-	return false
+	_, found := collectClaudeAllowedTools(args)
+	return found
 }
 
 func childArgsAllowedToolsEquals(args []string, want string) bool {
-	for i, arg := range args {
-		if arg == "--allowedTools" && i+1 < len(args) && args[i+1] == want {
-			return true
-		}
-		if strings.TrimPrefix(arg, "--allowedTools=") != arg && strings.TrimPrefix(arg, "--allowedTools=") == want {
-			return true
-		}
-	}
-	return false
+	values, found := collectClaudeAllowedTools(args)
+	return found && strings.Join(values, ",") == want
 }
 
 func hasTrailingArgs(args, suffix []string) bool {

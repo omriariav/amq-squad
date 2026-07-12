@@ -289,9 +289,7 @@ Examples:
 	// slice (no safe pattern form; see claudeInScopePreauthAllowlist); main push,
 	// tags, and releases always stay gated.
 	var preauthorizedActions []string
-	if !*noPreauthInScope {
-		childArgs, preauthorizedActions, _ = applyClaudeWorkerPreauth(launchPreauthProjectDir(cwd, *teamHome), teamProfileValue, *roleFlag, binary, env.SessionName, childArgs)
-	}
+	childArgs, preauthorizedActions, _ = applyClaudeWorkerPreauth(launchPreauthProjectDir(cwd, *teamHome), teamProfileValue, *roleFlag, binary, env.SessionName, childArgs, !*noPreauthInScope)
 
 	agentDir := filepath.Join(root, "agents", handle)
 	rec := launch.Record{
