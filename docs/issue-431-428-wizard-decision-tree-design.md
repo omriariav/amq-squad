@@ -3,6 +3,11 @@
 Status: design for operator review. No implementation is included in this
 change.
 
+Revision 2 resolves the exact-head QA findings from PR #434 at `df47588`:
+state precedence and restore guards are explicit, resume overrides are scoped to
+actions the backend can honor, existing-profile freshness uses a full discovery
+fingerprint at both mutation boundaries, and acceptance is table-driven.
+
 ## Goal
 
 Make the wizard read like the decisions an operator is making, while keeping
@@ -131,23 +136,65 @@ known sessions. Each session summary contains:
 - brief path plus goal excerpt and seed source when readable;
 - per-member resume action from the shared planner: `live`, `restore`,
   `launch fresh`, or `blocked`;
-- rollup counts for live, restorable/fresh, and blocked members;
+- matching launch-record count plus rollup counts for live, restore, launch-fresh,
+  and blocked members;
 - a session state derived from those actions.
 
-The rollup states are display vocabulary only:
+The rollup states are mutually exclusive and exhaustive. Classification uses
+this precedence; the first matching row wins:
 
-| State | Shared-planner facts | Wizard consequence |
-| --- | --- | --- |
-| Not started | No live members and no launch records for the selected session. | Existing authoritative profile can start its known/pinned run. |
-| Running | Every member action is `live`. | No launch action is offered; go back or create a new profile. |
-| Stopped, resumable | No member is live, at least one is `restore` or `launch fresh`, and none is blocked. | Offer Resume. |
-| Partly running, resumable | At least one member is live, at least one is `restore` or `launch fresh`, and none is blocked. | Offer Restore missing members; live members are skipped by resume. |
-| Blocked | Any member action is `blocked`, or namespace/profile resolution is ambiguous. | Show the blocker and its read-only diagnostic command; do not offer execution. |
+| Precedence | State | Shared-planner and record facts | Wizard consequence |
+| --- | --- | --- | --- |
+| 1 | Blocked | The profile has no members; any member action is `blocked`; or profile/session/namespace resolution is ambiguous. | Show the blocker and its read-only diagnostic command; do not offer execution. |
+| 2 | Running | Every configured member action is `live`. | No launch action is offered; go back or create a new profile. |
+| 3 | Not started | No member is live, the matching launch-record count is zero, and every member action is `launch fresh`. | Existing authoritative profile can start its known/pinned run with `run start`. This wins over the planner's superficial all-`launch fresh` resemblance to resume. |
+| 4 | Partly running, resumable | At least one member is `live`, at least one other member is `restore` or `launch fresh`, and none is blocked. | Offer Restore missing members; live members are skipped. This includes live-plus-fresh with zero matching launch records. |
+| 5 | Stopped, resumable | No member is live, the matching launch-record count is greater than zero, at least one member is `restore` or `launch fresh`, and none is blocked. | Offer Resume. A stopped state therefore always has durable history to restore or reconcile. |
+
+Any fact combination not covered by rows 1-5 is an internal discovery
+inconsistency and is rendered as Blocked with diagnostic detail. The wizard
+never guesses a sixth executable state.
+
+The resume command includes `--restore-existing` if and only if the selected
+session has at least one matching launch record. An all-fresh/no-record session
+uses `run start`, not resume. A live-plus-fresh/no-record repair is Partly
+running and uses `resume` **without** `--restore-existing`; live members are
+skipped and missing members launch fresh. This makes the guard truthful instead
+of emitting a command that must fail at `recordCount == 0`.
 
 The wizard must call the shared planner once per selected session and retain the
-result used for review. It must refresh that plan immediately before the
-canonical preview so a squad that changed while the operator was answering
-cannot be launched from a stale liveness snapshot.
+result used for review.
+
+### Discovery fingerprint and freshness gate
+
+Every existing-profile discovery result carries a deterministic fingerprint of
+the full decision input, not only the rolled-up state or member action labels.
+The fingerprint covers:
+
+- roster identity and order: role, handle, binary, cwd, member session, native
+  args, stored model, and stored effort;
+- configured lead, effective lead mode, operator contract, self-operator
+  policy, and notification policy;
+- selected session name and source (member pin, profile workstream, or matching
+  history set);
+- brief identity: resolved path, provenance/source metadata, and content digest
+  of the full brief (not the truncated Review excerpt);
+- namespace-conflict result and every fact used to produce it;
+- matching launch-record identities/count and the complete per-member plan,
+  including action, liveness verdict/signals, saved-launch identity, and
+  blockers.
+
+The wizard refreshes and compares this fingerprint twice for **every**
+existing-profile branch: immediately before canonical preview and again
+immediately before execution after the operator answers Yes. Any delta, even
+when the rollup label remains the same, invalidates all downstream answers and
+returns to Profile & run with:
+
+`The selected profile or run changed while the wizard was open. Review the refreshed facts before continuing.`
+
+The second refresh is required because profile policy, brief content, or launch
+state can change after preview but before execution. A changed fingerprint is
+never reduced to a warning and never auto-accepted.
 
 ## Full decision tree
 
@@ -161,18 +208,23 @@ Scope
 │        │     └─ Shared liveness plan
 │        │        ├─ stopped or partly running
 │        │        │  ├─ Resume existing squad
-│        │        │  │  └─ launch-only team overrides
-│        │        │  │     └─ resume placement/layout
-│        │        │  │        └─ authoritative contract summary
-│        │        │  │           └─ preserved brief
-│        │        │  │              └─ review -> resume preview -> default-No exec
+│        │        │  │  └─ member action summary
+│        │        │  │     ├─ live: keep running, no override
+│        │        │  │     ├─ restore: replay saved args, no override
+│        │        │  │     └─ launch fresh: optional model override only
+│        │        │  │        └─ resume placement/layout
+│        │        │  │           └─ authoritative contract summary
+│        │        │  │              └─ preserved brief
+│        │        │  │                 └─ review -> fingerprint check -> resume preview
+│        │        │  │                    └─ default-No exec -> fingerprint check -> execute
 │        │        │  └─ Back and create a new profile
 │        │        ├─ not started
 │        │        │  ├─ Start the profile's known session
 │        │        │  │  └─ launch-only team overrides
 │        │        │  │     └─ run controls
 │        │        │  │        └─ goal + seed
-│        │        │  │           └─ review -> run-start preview -> default-No launch
+│        │        │  │           └─ review -> fingerprint check -> run-start preview
+│        │        │  │              └─ default-No launch -> fingerprint check -> execute
 │        │        │  └─ Back and create a new profile
 │        │        ├─ running
 │        │        │  ├─ Back to profile list
@@ -245,19 +297,23 @@ separate generic session picker.
 | **How much effort should <role> use?** | Merged catalog values / `Automatic` / `Custom` when #432 lands. | Stored effort for a new profile. | `The catalog catches likely typos but does not decide what the underlying binary accepts.` |
 | **Which role leads the team?** | Role list, `cto` preferred when present. | Lead role. | `The lead is the visible owner of dispatch, review, and operator handoff.` |
 | **How should the lead work?** | `Builder` / `Planner`. | Lead mode. | `Builder may implement and delegate. Planner dispatches mutations to workers and reviews the result.` |
-| **Change <role> for this launch?** (existing profile) | `Keep profile model and effort` / `Override for this launch only`. | Whether role override screens are entered. | `The stored profile is unchanged: model=<value>, effort=<value>.` |
-| **Model override for <role>** | `Keep stored value` / merged catalog values / `Custom`. | Per-role launch-only model assignment. | `This applies only to the command previewed by this wizard.` |
-| **Effort override for <role>** | `Keep stored value` / merged catalog values / `Custom` when #432 lands. | Per-role launch-only effort assignment. | `This applies only to the command previewed by this wizard.` |
+| **Change <role> for this launch?** (`run start`) | `Keep profile model and effort` / `Override for this launch only`. | Whether existing-profile start override screens are entered. | `The stored profile is unchanged: model=<value>, effort=<value>.` |
+| **Model override for <role>** (`run start`) | `Keep stored value` / merged catalog values / `Custom`. | Per-role launch-only model assignment. | `This applies only to the run-start command previewed by this wizard.` |
+| **Effort override for <role>** (`run start`) | `Keep stored value` / merged catalog values / `Custom` when #432 lands. | Per-role launch-only effort assignment. | `This applies only to the run-start command previewed by this wizard.` |
+| **Saved launch for <role> will be restored** (`resume`, action=`restore`) | `Continue` only; show saved binary/model/effort/native args. | No override. | `Restored members replay their saved launch arguments. This wizard does not rewrite them.` |
+| **<role> is already live** (`resume`, action=`live`) | `Continue` only; show current stored/runtime facts. | No override and no relaunch. | `Resume keeps this member running and does not change its launch arguments.` |
+| **Model for fresh <role>** (`resume`, action=`launch fresh`) | `Keep profile model` / merged catalog values / `Custom`. | Per-role model assignment passed through resume's fresh-member `--model` support. | `This member has no restorable launch. The model choice applies only to its fresh launch.` |
+| **Effort for fresh <role>** (`resume`, action=`launch fresh`) | No screen in v1. | Stored profile effort remains authoritative. | `Resume has no per-role effort override contract yet; the wizard will not offer a control it cannot apply.` |
 
-The same existing-profile override screens are used for `run start` and
-`resume`. The answer model remains `role=value` assignments. `run start`
-already accepts both `--model` and `--effort` assignments. `resume` accepts
-per-role `--model` today but has no equivalent per-role `--effort` flag. The
-implementation must add resume command parity or omit the effort override with
-an explicit explanation; it must not flatten multiple role values into one
-binary-wide native argument. The recommended implementation is resume
-`--effort role=value,...` parity so one UI contract composes honestly to both
-backends.
+The v1 resume contract is deliberately action-scoped. A `restore` action replays
+its saved record unchanged, so the wizard shows saved model/effort/native args
+read-only. A `live` action is also read-only. Only `launch fresh` may expose a
+model override, because current resume `--model role=value` applies only to fresh
+members. Resume exposes no effort override screen: current native-arg flags are
+not a truthful per-role replacement. `run start` keeps its existing per-role
+model and effort controls. Rewriting saved launch records for restored members
+and adding per-role effort parity are explicit follow-up choices, not hidden v1
+behavior.
 
 ### Run controls screens
 
@@ -303,30 +359,43 @@ tree.
 2. The wizard derives the session from the profile's pin/known-session list. A
    unique pinned session is shown as selected context, not as a text input.
 3. The shared resume planner returns member actions and liveness. The wizard
-   displays the exact counts and offers Resume only when no member is blocked.
-4. The operator optionally applies per-role model and effort overrides using
-   the same screens as an existing-profile start. Stored profile values remain
-   unchanged.
+   applies the precedence table, displays exact record/action counts, and offers
+   Resume only when no member is blocked. No-record/all-fresh selects Not
+   started and `run start`, not resume.
+4. The wizard renders controls by member action. `live` is kept unchanged;
+   `restore` shows saved launch arguments read-only; `launch fresh` may offer a
+   model override. Resume never offers an effort override in v1. Stored profile
+   values and saved launch records remain unchanged.
 5. The operator chooses placement/layout for missing members. Live members are
    explicitly listed as `keep live` and are not relaunched.
 6. The wizard displays the stored operator/notification contract as
    authoritative and the existing brief as preserved.
-7. Review shows project, profile, session, liveness snapshot, every per-member
-   action, overrides, placement/layout, stored contract, brief path, goal
-   excerpt, seed source, selected backend `resume`, and both command forms.
-8. Enter runs a fresh read-only resume plan. If the refreshed actions differ,
-   the wizard returns to the action screen with `The squad changed while the
-   wizard was open; review the new plan.`
-9. The canonical preview is plan-only, for example:
+7. Review shows project, profile, session, matching record count, the full
+   per-member plan, action-scoped controls or read-only saved args,
+   placement/layout, stored contract, brief path, goal excerpt, seed source,
+   selected backend `resume`, and both command forms.
+8. Enter refreshes and compares the complete discovery fingerprint. Any delta
+   returns to Profile & run and clears downstream answers, even if member action
+   labels did not change.
+9. The canonical preview is plan-only. When matching records exist, it includes
+   the fail-closed restore guard:
 
    ```sh
    amq-squad resume --project /repo --profile release --session issue-431 --restore-existing --target new-window
    ```
 
-   Optional model/effort arguments are included only when selected. The exact
-   final syntax depends on the effort-parity decision above.
-10. Only after preview succeeds does the separate prompt appear:
-    `Resume now? [y/N]`. An explicit Yes executes the same canonical arguments
+   A live-plus-fresh/no-record repair omits `--restore-existing`:
+
+   ```sh
+   amq-squad resume --project /repo --profile release --session issue-431 --target new-window
+   ```
+
+   Optional `--model role=value` assignments include only `launch fresh`
+   members. No resume effort assignment is emitted in v1.
+10. After preview succeeds, the separate prompt appears: `Resume now? [y/N]`.
+11. On explicit Yes, the wizard refreshes and compares the complete discovery
+    fingerprint a second time. Any delta returns to Profile & run without
+    executing. An unchanged fingerprint executes the same canonical arguments
     plus `--exec`. No or EOF exits without mutation.
 
 The wording is **Resume now?**, not **Launch now?**, because the final prompt
@@ -345,8 +414,10 @@ Every project review shows:
 - backend: `run start` or `resume`;
 - roster and lead facts, labeled `stored/authoritative`, `new`, or
   `launch-only override`;
-- model and effort values for every role, including explicit Keep decisions;
-- liveness and per-member actions for resume;
+- model and effort values for every role, labeled as stored, saved/restored,
+  live/unchanged, or fresh-launch override; controls omitted by contract display
+  `not offered`, never an empty value;
+- matching launch-record count, liveness, and per-member actions for resume;
 - placement, layout, operator contract, notifications, and launcher behavior
   when applicable;
 - goal and seed source;
@@ -369,13 +440,17 @@ window name, backend, and exact preview/live command forms.
 | --- | --- | --- |
 | New profile, new session | `amq-squad run start <canonical args>` | Same args plus `--go`. |
 | Existing profile, known session not started | `amq-squad run start <canonical args>` | Same args plus `--go`. |
-| Existing profile, stopped/partly running | `amq-squad resume <canonical args>` (plan-only; JSON may be used internally for the refreshed plan) | Same args plus `--exec`. |
+| Existing profile, stopped/partly running with matching records | `amq-squad resume <canonical args> --restore-existing` (plan-only; JSON may be used internally for the refreshed plan) | Same args plus `--exec`, after the second fingerprint check. |
+| Existing profile, live-plus-fresh with zero matching records | `amq-squad resume <canonical args>` without `--restore-existing`; only fresh-member model overrides may be present. | Same args plus `--exec`, after the second fingerprint check. |
 | Existing profile already running/blocked | No executable command. | No confirmation prompt. |
 | Global/NOC | `amq-squad global start <canonical args>` | Same args plus `--go`. |
 
 The answer model therefore needs an explicit backend/action field rather than
 inferring behavior late from whether a profile happens to exist. The UI package
-still returns answers only; command execution remains in the CLI layer.
+still returns answers only; command execution remains in the CLI layer. Every
+row backed by an existing profile is guarded by the full fingerprint comparison
+before preview and again before execution; the new-profile and global branches
+have no pre-existing discovery snapshot to compare.
 
 ## Back navigation and stale answers
 
@@ -392,9 +467,11 @@ Changing an upstream fork clears answers that no longer apply:
 - changing session refreshes liveness and clears the selected backend;
 - changing placement resets incompatible layout and launcher values.
 
-Back navigation restores a snapshot only while its discovery generation still
-matches. A refresh that changes profile/session facts invalidates the old
-snapshot and explains why the operator is returned to Profile & run.
+Back navigation restores a snapshot only while its full discovery fingerprint
+still matches. Both mandatory freshness checks use the same invalidation path.
+A delta in roster, policy, brief identity, namespace conflicts, records,
+liveness, or member plan clears downstream answers and explains why the
+operator is returned to Profile & run.
 
 ## Accessible numbered adapter
 
@@ -408,23 +485,54 @@ full-screen renderer.
 
 ## Acceptance criteria for implementation
 
+Core invariants:
+
 - Scope is a first-class wizard state for project and global flows; there is no
   pre-TUI scope prompt.
 - Existing-vs-new profile is the first project decision after root discovery.
 - A pinned existing profile never enters a free-text session screen.
+- The precedence table classifies every valid discovered session into exactly
+  one state; invalid or ambiguous discovery is Blocked.
 - Resume is reachable only through an existing profile/session and uses shared
-  status/resume liveness facts.
+  status/resume liveness facts plus matching-record counts.
+- Every decision-tree leaf ends in exactly one of: Review, an explicit Back
+  choice, or Blocked. There is no dead-end or implicit execution leaf.
 - Running and blocked sessions cannot reach an executable final confirmation.
 - The final preview and confirmation name the selected backend action.
 - Review contains goal and seed source, with goal truncation and seed preserved
   verbatim.
 - Every screen has consequence copy understandable without source knowledge.
-- Bubble Tea and numbered adapters produce equivalent answers for the same
-  path.
 - Discovery, navigation, and preview remain non-mutating; only explicit Yes
-  invokes `--go` or `--exec`.
+  after an unchanged second fingerprint check invokes `--go` or `--exec`.
 - Catalog-backed model/effort choices are injected so #432 can change their
   source without restructuring the decision tree.
+
+Required table-driven cases:
+
+| Case | Input facts / action | Expected state and leaf | Assertions shared by Bubble Tea and numbered adapters |
+| --- | --- | --- | --- |
+| All fresh, no records | Zero live, zero matching records, every member `launch fresh`. | Not started -> start known session -> Review. | Backend is `run start`; no resume screen and no `--restore-existing`. |
+| All restore | Zero live, one or more matching records, every member `restore`. | Stopped -> Resume -> Review. | `--restore-existing` present; saved model/effort/native args shown read-only; no override controls. |
+| Stopped restore plus fresh | Zero live, matching records > 0, actions include `restore` and `launch fresh`. | Stopped -> Resume -> Review. | `--restore-existing` present; restore rows read-only; model override offered only on fresh rows; no resume effort override. |
+| Live plus fresh, no records | One or more `live`, one or more `launch fresh`, zero matching records. | Partly running -> Restore missing members -> Review. | Resume command omits `--restore-existing`; live rows unchanged; model override only on fresh rows. |
+| Live plus restore | One or more `live`, one or more `restore`, matching records > 0. | Partly running -> Restore missing members -> Review. | `--restore-existing` present; live and restore rows have no override controls. |
+| All live | Every member `live`. | Running -> Back/Create new profile. | No Review or execution confirmation is reachable. |
+| Any blocked | At least one member `blocked`, regardless of other actions or record count. | Blocked. | No executable command; blocker and diagnostic command shown. |
+| Ambiguous namespace | Namespace/profile resolution reports a collision or ambiguous owner. | Blocked. | No member rollup can override the block; exact scoped diagnostic shown. |
+| Empty profile | Existing profile has zero members. | Blocked. | Plain-language invalid-profile note; Back is available. |
+| No-session profile | Existing authoritative profile has no pin and no matching history. | Recommended unused-profile first-session branch -> Review, subject to operator question 1. | Suggested session is derived once; no generic existing-session free-text loop; backend `run start`. |
+| Multiple history sessions | Profile has two or more matching historical sessions. | Session list -> selected session's unique state leaf. | Each row shows source/state; changing selection clears action, overrides, and preserved brief facts. |
+| Restore override attempt | Member action is `restore`. | Read-only saved-launch screen. | Model/effort controls are absent and Review cannot contain an override assignment for the member. |
+| Fresh model override | Member action is `launch fresh` on resume. | Model override screen -> Review. | Exact role appears in resume `--model`; no restore/live role appears in the assignment. |
+| Resume effort attempt | Any resume member action. | No effort override screen. | Review says stored/saved effort and `not offered`; no `--effort` or role-flattened native-arg workaround is emitted. |
+| Upstream scope change | Project answers exist, then scope changes to Global/NOC (and reverse). | New scope's first applicable screen. | All abandoned-branch project/global answers are cleared. |
+| Upstream project/profile/session change | Downstream action, override, run-control, and brief answers exist, then an upstream value changes. | Refreshed Profile & run path. | Every dependent answer listed in Back navigation and stale answers is cleared. |
+| Fingerprint delta before preview | Any roster, lead/mode, operator/notification, stored model/effort, session source, brief identity, namespace conflict, record, liveness, or member-plan fact changes. | Return to Profile & run. | Preview is not called; downstream answers clear even if the rollup label is unchanged. |
+| Fingerprint delta after Yes | Preview passed, then any fingerprint component changes before execution. | Return to Profile & run. | `--go`/`--exec` is not called; the prior Yes is discarded. |
+| Fingerprint unchanged twice | Existing-profile branch reaches Review and both refreshes equal the reviewed fingerprint. | Preview, default-No confirmation, then execution only on Yes. | Preview and live argv differ only by `--go` or `--exec`; second check precedes mutation. |
+| Review completeness | Goal/seed supplied or preserved; mixed member actions. | Review. | Scope, branch, session source, matching record count, every member action/value source, goal excerpt, full seed, backend, and both commands appear. |
+| Leaf audit | Walk every option from every decision node. | Review, Back, or Blocked only. | No missing transition, implicit mutation, or unreachable recovery choice. |
+| Adapter parity | Replay every case above through Bubble Tea and numbered adapters. | Same semantic leaf and answer model. | Canonical argv, cleared fields, notes, fingerprint behavior, and Review values match; renderer-only formatting may differ. |
 
 ## Open questions for operator review
 
@@ -439,9 +547,11 @@ full-screen renderer.
 3. **Partly running squad.** Recommendation: label the action `Restore missing
    members`, use the ordinary resume planner, and skip live members. Should the
    wizard require an extra warning when the lead is one of the live members?
-4. **Per-role effort on resume.** Recommendation: add `resume --effort
-   role=value,...` parity so the shared override screens are truthful. Is that
-   command-surface addition accepted as part of #428 implementation?
+4. **Per-role effort for launch-fresh resume members.** The v1 contract omits
+   this control because resume has no truthful per-role effort flag.
+   Recommendation: add `resume --effort role=value,...` later for
+   `launch fresh` actions only. Is that command-surface addition desired in
+   #428 implementation or a follow-up?
 5. **Resume placement default.** Recommendation: default to the saved launch
    target when all restorable records agree, otherwise `One window per agent`.
    Should the default always remain the current `resume --exec` target instead?
@@ -451,6 +561,12 @@ full-screen renderer.
    non-supervisory and offer only Back/Create new profile. Should it also expose
    a copyable `amq-squad focus` action, even though focus is outside the three
    wizard backend commands?
+8. **Overrides for restored members.** The v1 contract shows saved launch args
+   read-only and offers controls only for `launch fresh` members. Should a future
+   resume explicitly rewrite saved launch arguments for both model and effort
+   before restoring, or should override controls remain limited to fresh
+   members? Recommendation: keep restored records immutable in #428 and design
+   rewrite parity as a separate, auditable feature.
 
 ## Issue references
 
