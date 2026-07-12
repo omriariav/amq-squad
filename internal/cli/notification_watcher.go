@@ -300,7 +300,7 @@ func reconcileNotificationWatcherStarted(t team.Team, profile, session, baseRoot
 		return nil
 	}
 	now := notificationWatcherNow()
-	if status := inspectNotificationWatcher(t, profile, session, now); status.Health == "healthy" || status.Health == "degraded" || status.Health == "external-active" {
+	if status := inspectNotificationWatcher(t, profile, session, now); notificationWatcherReady(status) {
 		return nil
 	}
 	if strings.TrimSpace(baseRoot) == "" {
@@ -341,7 +341,7 @@ func reconcileNotificationWatcherStarted(t team.Team, profile, session, baseRoot
 	deadline := notificationWatcherNow().Add(defaultNotificationWatcherStartup)
 	for {
 		status := inspectNotificationWatcher(t, profile, session, notificationWatcherNow())
-		if status.Health == "healthy" || (status.Health == "degraded" && !status.LastScanAt.IsZero()) || status.Health == "external-active" {
+		if notificationWatcherReady(status) {
 			return nil
 		}
 		if !notificationWatcherNow().Before(deadline) {
@@ -351,6 +351,17 @@ func reconcileNotificationWatcherStarted(t team.Team, profile, session, baseRoot
 			return fmt.Errorf("notification watcher required but healthy lease was not established within %s: %s", defaultNotificationWatcherStartup, status.Reason)
 		}
 		notificationWatcherSleep(25 * time.Millisecond)
+	}
+}
+
+func notificationWatcherReady(status notificationWatcherStatus) bool {
+	switch status.Health {
+	case "healthy", "external-active":
+		return true
+	case "degraded":
+		return !status.LastScanAt.IsZero()
+	default:
+		return false
 	}
 }
 
@@ -679,8 +690,7 @@ func executeNotificationWatcher(w notificationWatcherExecution) error {
 					return fmt.Errorf("notification watcher delivery did not stop after cancellation")
 				}
 			}
-			rec.Expected, rec.Health, rec.LastError = false, "inactive", ""
-			if err := refreshNotificationWatcherLease(path, &rec, w.Token, nowFn()); err != nil {
+			if err := releaseNotificationWatcherLease(path, &rec, w.Token, nowFn()); err != nil {
 				return err
 			}
 			return nil
@@ -739,8 +749,7 @@ func executeNotificationWatcher(w notificationWatcherExecution) error {
 			}
 			currentTeam, teamErr := team.ReadProfile(w.ProjectDir, profile)
 			if teamErr == nil && !team.EffectiveOperatorNotifications(currentTeam.Operator).Enabled {
-				rec.Expected, rec.Health, rec.LastError = false, "inactive", ""
-				if err := refreshNotificationWatcherLease(path, &rec, w.Token, nowFn()); err != nil {
+				if err := releaseNotificationWatcherLease(path, &rec, w.Token, nowFn()); err != nil {
 					return err
 				}
 				return nil
@@ -835,5 +844,31 @@ func refreshNotificationWatcherLease(path string, rec *notificationWatcherRecord
 		rec.LeaseExpiresAt = now.Add(ttl).UTC()
 		rec.UpdatedAt = now.UTC()
 		return writeNotificationWatcherRecord(path, *rec)
+	})
+}
+
+// releaseNotificationWatcherLease publishes an immediately reclaimable
+// inactive tombstone for an owned clean exit. Unlike a heartbeat refresh, it
+// never extends the lease and never leaves process identity behind.
+func releaseNotificationWatcherLease(path string, rec *notificationWatcherRecord, token string, now time.Time) error {
+	return flock.WithLock(path+".lock", func() error {
+		current, err := readNotificationWatcherRecord(path)
+		if err != nil {
+			return err
+		}
+		if current.OwnerToken != token {
+			return fmt.Errorf("notification watcher lease lost to %s", current.OwnerToken)
+		}
+		now = now.UTC()
+		current.PID = 0
+		current.OwnerToken = ""
+		current.Expected = false
+		current.Health = "inactive"
+		current.LastError = ""
+		current.HeartbeatAt = now
+		current.LeaseExpiresAt = now
+		current.UpdatedAt = now
+		*rec = current
+		return writeNotificationWatcherRecord(path, current)
 	})
 }

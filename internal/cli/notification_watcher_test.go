@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -99,6 +100,18 @@ func stopTestNotificationWatcher(t *testing.T, stop chan os.Signal, done <-chan 
 	}
 }
 
+func assertInactiveWatcherTombstone(t *testing.T, path string) notificationWatcherRecord {
+	t.Helper()
+	rec, err := readNotificationWatcherRecord(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.PID != 0 || rec.OwnerToken != "" || rec.Expected || rec.Health != "inactive" || rec.LeaseExpiresAt.After(time.Now()) {
+		t.Fatalf("watcher did not publish an immediately reclaimable inactive tombstone: %+v", rec)
+	}
+	return rec
+}
+
 func TestNotificationWatcherInitialScanFSNotifyAndPeriodicRescan(t *testing.T) {
 	project, tm, base := notificationWatcherTeam(t, team.DefaultProfile, "s")
 	var scans atomic.Int32
@@ -120,6 +133,141 @@ func TestNotificationWatcherInitialScanFSNotifyAndPeriodicRescan(t *testing.T) {
 	if got := inspectNotificationWatcher(tm, team.DefaultProfile, "s", time.Now()).Health; got != "inactive" {
 		t.Fatalf("health after clean stop=%s", got)
 	}
+}
+
+func TestNotificationWatcherSignalReleaseAllowsImmediateRestart(t *testing.T) {
+	project, tm, base := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	deliver := func(context.Context, time.Time) (notifyDeliverySummary, error) { return notifyDeliverySummary{}, nil }
+
+	stop, done := startTestNotificationWatcher(t, tm, team.DefaultProfile, "s", base, "signal-old", deliver)
+	waitWatcherRecord(t, path, time.Second, func(r notificationWatcherRecord) bool {
+		return r.OwnerToken == "signal-old" && r.Health == "healthy"
+	})
+	stopTestNotificationWatcher(t, stop, done)
+	assertInactiveWatcherTombstone(t, path)
+
+	stop, done = startTestNotificationWatcher(t, tm, team.DefaultProfile, "s", base, "signal-new", deliver)
+	waitWatcherRecord(t, path, time.Second, func(r notificationWatcherRecord) bool {
+		return r.OwnerToken == "signal-new" && r.Health == "healthy"
+	})
+	stopTestNotificationWatcher(t, stop, done)
+}
+
+func TestNotificationWatcherPolicyDisableReleaseAllowsImmediateReenable(t *testing.T) {
+	project, tm, base := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	deliver := func(context.Context, time.Time) (notifyDeliverySummary, error) { return notifyDeliverySummary{}, nil }
+
+	_, done := startTestNotificationWatcher(t, tm, team.DefaultProfile, "s", base, "policy-old", deliver)
+	waitWatcherRecord(t, path, time.Second, func(r notificationWatcherRecord) bool {
+		return r.OwnerToken == "policy-old" && r.Health == "healthy"
+	})
+	disabled := tm
+	op := *tm.Operator
+	notifications := *op.Notifications
+	notifications.Enabled = false
+	op.Notifications = &notifications
+	disabled.Operator = &op
+	if err := team.WriteProfile(project, team.DefaultProfile, disabled); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("watcher did not exit after notification policy was disabled")
+	}
+	assertInactiveWatcherTombstone(t, path)
+
+	if err := team.WriteProfile(project, team.DefaultProfile, tm); err != nil {
+		t.Fatal(err)
+	}
+	stop, restarted := startTestNotificationWatcher(t, tm, team.DefaultProfile, "s", base, "policy-new", deliver)
+	waitWatcherRecord(t, path, time.Second, func(r notificationWatcherRecord) bool {
+		return r.OwnerToken == "policy-new" && r.Health == "healthy"
+	})
+	stopTestNotificationWatcher(t, stop, restarted)
+}
+
+func TestNotificationWatcherReleasedGenerationCannotClearOrResurrectLease(t *testing.T) {
+	project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	now := time.Now().UTC()
+	old := notificationWatcherRecord{
+		SchemaVersion: notificationWatcherSchema, ProjectDir: project, Profile: team.DefaultProfile,
+		Session: "s", NamespaceID: "default/s", PID: 11, OwnerToken: "old", LeaseTTL: "1m",
+		LeaseExpiresAt: now.Add(time.Minute), Expected: true, Health: "healthy",
+	}
+	if err := writeNotificationWatcherRecord(path, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := releaseNotificationWatcherLease(path, &old, "old", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := refreshNotificationWatcherLease(path, &old, "old", now.Add(time.Second)); err == nil || !strings.Contains(err.Error(), "lease lost") {
+		t.Fatalf("released generation refreshed tombstone: %v", err)
+	}
+	assertInactiveWatcherTombstone(t, path)
+
+	newOwner := old
+	newOwner.PID = 22
+	newOwner.OwnerToken = "new"
+	newOwner.Expected = true
+	newOwner.Health = "healthy"
+	newOwner.LeaseExpiresAt = now.Add(time.Minute)
+	if err := writeNotificationWatcherRecord(path, newOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := releaseNotificationWatcherLease(path, &old, "old", now.Add(2*time.Second)); err == nil || !strings.Contains(err.Error(), "lease lost") {
+		t.Fatalf("old generation release against replacement err=%v", err)
+	}
+	current, err := readNotificationWatcherRecord(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.OwnerToken != "new" || current.PID != 22 || !current.Expected {
+		t.Fatalf("old generation altered replacement: %+v", current)
+	}
+}
+
+func TestStopNotificationWatcherToleratesChildSelfReleaseRace(t *testing.T) {
+	project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	host, _ := os.Hostname()
+	now := time.Now().UTC()
+	rec := notificationWatcherRecord{
+		SchemaVersion: notificationWatcherSchema, ProjectDir: project, Profile: team.DefaultProfile,
+		Session: "s", NamespaceID: "default/s", PID: 44, Host: host, OwnerToken: "self-release",
+		LeaseTTL: "1m", LeaseExpiresAt: now.Add(time.Minute), Expected: true, Health: "healthy",
+	}
+	if err := writeNotificationWatcherRecord(path, rec); err != nil {
+		t.Fatal(err)
+	}
+	oldAlive, oldMatch, oldSignal := notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal
+	t.Cleanup(func() {
+		notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal = oldAlive, oldMatch, oldSignal
+	})
+	alive := true
+	notificationWatcherPIDAlive = func(pid int) bool { return alive && pid == 44 }
+	notificationWatcherProcessMatch = func(pid int, _ func(string) bool) bool { return alive && pid == 44 }
+	notificationWatcherSignal = func(pid int, _ os.Signal) error {
+		if pid != 44 {
+			return fmt.Errorf("unexpected pid %d", pid)
+		}
+		childRecord := rec
+		if err := releaseNotificationWatcherLease(path, &childRecord, "self-release", time.Now()); err != nil {
+			return err
+		}
+		alive = false
+		return nil
+	}
+	if err := stopNotificationWatcher(project, team.DefaultProfile, "s"); err != nil {
+		t.Fatal(err)
+	}
+	assertInactiveWatcherTombstone(t, path)
 }
 
 func TestNotificationWatcherStartsBeforeSessionWithoutCreatingIt(t *testing.T) {
@@ -184,12 +332,80 @@ func TestNotificationWatcherFreshRemoteLeaseFencesAndStopRefuses(t *testing.T) {
 	}
 }
 
+func TestNotificationWatcherReadinessRequiresScanForDegradedOnly(t *testing.T) {
+	scanned := time.Now().UTC()
+	tests := []struct {
+		name   string
+		health string
+		scan   time.Time
+		ready  bool
+	}{
+		{name: "healthy before scan", health: "healthy", ready: true},
+		{name: "external active before scan", health: "external-active", ready: true},
+		{name: "degraded before fallback scan", health: "degraded", ready: false},
+		{name: "degraded after fallback scan", health: "degraded", scan: scanned, ready: true},
+		{name: "starting", health: "starting", ready: false},
+		{name: "unhealthy", health: "unhealthy", scan: scanned, ready: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := notificationWatcherReady(notificationWatcherStatus{Health: tt.health, LastScanAt: tt.scan})
+			if got != tt.ready {
+				t.Fatalf("ready=%t want=%t", got, tt.ready)
+			}
+		})
+	}
+}
+
+func TestNotificationWatcherStartupPollingWaitsForDegradedFallbackScan(t *testing.T) {
+	project, tm, base := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	oldSpawn, oldSleep := notificationWatcherSpawn, notificationWatcherSleep
+	t.Cleanup(func() {
+		notificationWatcherSpawn, notificationWatcherSleep = oldSpawn, oldSleep
+	})
+	spawned := false
+	var sleeps atomic.Int32
+	notificationWatcherSpawn = func(projectDir, profile, session, _ string, token string) (notificationWatcherProcess, error) {
+		spawned = true
+		now := time.Now().UTC()
+		return nil, writeNotificationWatcherRecord(path, notificationWatcherRecord{
+			SchemaVersion: notificationWatcherSchema, ProjectDir: projectDir, Profile: profile,
+			Session: session, NamespaceID: squadnamespace.ID(profile, session), PID: 7, Host: "remote-host",
+			OwnerToken: token, LeaseTTL: "1m", LeaseExpiresAt: now.Add(time.Minute), HeartbeatAt: now,
+			Expected: true, Health: "degraded", LastError: "periodic fallback initial scan pending",
+		})
+	}
+	notificationWatcherSleep = func(time.Duration) {
+		if sleeps.Add(1) != 1 {
+			return
+		}
+		rec, err := readNotificationWatcherRecord(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec.LastScanAt = time.Now().UTC()
+		if err := writeNotificationWatcherRecord(path, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := reconcileNotificationWatcherStarted(tm, team.DefaultProfile, "s", base); err != nil {
+		t.Fatal(err)
+	}
+	if !spawned || sleeps.Load() == 0 {
+		t.Fatalf("startup accepted degraded watcher before fallback scan: spawned=%t sleeps=%d", spawned, sleeps.Load())
+	}
+}
+
 func TestNotificationWatcherRemoteHealthIsNotMaskedAndNeverSpawnsRival(t *testing.T) {
 	project, tm, base := notificationWatcherTeam(t, team.DefaultProfile, "s")
 	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
-	writeRemote := func(health, detail string) {
+	writeRemote := func(health, detail string, scanned bool) {
 		t.Helper()
 		rec := notificationWatcherRecord{SchemaVersion: 1, ProjectDir: project, Profile: team.DefaultProfile, Session: "s", NamespaceID: "default/s", PID: 7, Host: "remote-host", OwnerToken: "remote-health", LeaseTTL: "1m", LeaseExpiresAt: time.Now().Add(time.Minute), Expected: true, Health: health, LastError: detail}
+		if scanned {
+			rec.LastScanAt = time.Now().Add(-time.Second).UTC()
+		}
 		if err := writeNotificationWatcherRecord(path, rec); err != nil {
 			t.Fatal(err)
 		}
@@ -202,8 +418,51 @@ func TestNotificationWatcherRemoteHealthIsNotMaskedAndNeverSpawnsRival(t *testin
 		return nil, nil
 	}
 
-	writeRemote("degraded", "fsnotify unavailable")
+	writeRemote("degraded", "initial fallback scan pending", false)
 	status := inspectNotificationWatcher(tm, team.DefaultProfile, "s", time.Now())
+	if status.Health != "degraded" || !status.LastScanAt.IsZero() {
+		t.Fatalf("remote initial degraded status=%+v", status)
+	}
+	if err := reconcileNotificationWatcherStarted(tm, team.DefaultProfile, "s", base); err == nil || !strings.Contains(err.Error(), "active but unhealthy") {
+		t.Fatalf("remote initial degraded reconcile=%v", err)
+	}
+	if spawned {
+		t.Fatal("remote initial degraded lease spawned a rival")
+	}
+	current, err := readNotificationWatcherRecord(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.OwnerToken != "remote-health" || !current.Expected {
+		t.Fatalf("remote initial degraded lease was not preserved: %+v", current)
+	}
+
+	writeRemote("starting", "initial scan pending", false)
+	status = inspectNotificationWatcher(tm, team.DefaultProfile, "s", time.Now())
+	if status.Health != "unhealthy" || !strings.Contains(status.Reason, "remote-host") || !strings.Contains(status.Reason, "initial scan pending") {
+		t.Fatalf("remote unhealthy status=%+v", status)
+	}
+	if err := reconcileNotificationWatcherStarted(tm, team.DefaultProfile, "s", base); err == nil || !strings.Contains(err.Error(), "active but unhealthy") {
+		t.Fatalf("remote unhealthy reconcile=%v", err)
+	}
+	if spawned {
+		t.Fatal("remote unhealthy lease spawned a rival")
+	}
+
+	writeRemote("healthy", "", false)
+	status = inspectNotificationWatcher(tm, team.DefaultProfile, "s", time.Now())
+	if status.Health != "external-active" || !status.LastScanAt.IsZero() {
+		t.Fatalf("remote initial external-active status=%+v", status)
+	}
+	if err := reconcileNotificationWatcherStarted(tm, team.DefaultProfile, "s", base); err != nil {
+		t.Fatalf("remote initial external-active reconcile=%v", err)
+	}
+	if spawned {
+		t.Fatal("remote initial external-active lease spawned a rival")
+	}
+
+	writeRemote("degraded", "fsnotify unavailable", true)
+	status = inspectNotificationWatcher(tm, team.DefaultProfile, "s", time.Now())
 	if status.Health != "degraded" || !strings.Contains(status.Reason, "remote-host") || !strings.Contains(status.Reason, "fsnotify unavailable") {
 		t.Fatalf("remote degraded status=%+v", status)
 	}
@@ -227,17 +486,6 @@ func TestNotificationWatcherRemoteHealthIsNotMaskedAndNeverSpawnsRival(t *testin
 		t.Fatalf("remote degraded board=%+v state=%s", row.NotificationWatcher, row.State)
 	}
 
-	writeRemote("starting", "initial scan pending")
-	status = inspectNotificationWatcher(tm, team.DefaultProfile, "s", time.Now())
-	if status.Health != "unhealthy" || !strings.Contains(status.Reason, "remote-host") || !strings.Contains(status.Reason, "initial scan pending") {
-		t.Fatalf("remote unhealthy status=%+v", status)
-	}
-	if err := reconcileNotificationWatcherStarted(tm, team.DefaultProfile, "s", base); err == nil || !strings.Contains(err.Error(), "active but unhealthy") {
-		t.Fatalf("remote unhealthy reconcile=%v", err)
-	}
-	if spawned {
-		t.Fatal("remote unhealthy lease spawned a rival")
-	}
 }
 
 func TestNotificationWatcherNamespaceIsolation(t *testing.T) {
@@ -407,7 +655,7 @@ func (s watcherCountingSink) Deliver(context.Context, attention.Event) error {
 	return nil
 }
 
-func TestLeadPaneDirectGateDeliversExactlyOnceWithoutOperatorCommand(t *testing.T) {
+func TestLeadPaneDirectGateDeliversOnceBeforeRenotify(t *testing.T) {
 	project, tm, base := notificationWatcherTeam(t, team.DefaultProfile, "s")
 	seedNotifyLaunch(t, project, base, "s", "cto")
 	oldFactory := notificationSinkFactory

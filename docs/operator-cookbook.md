@@ -15,6 +15,18 @@ inactive state. `status` and `doctor` expose watcher health without exposing
 command arguments, credentials, or other secrets. This add-on never answers a
 gate, clicks approval, or sends pane input.
 
+Delivery is **at least once**, not exactly once. The supervised watcher, a
+manual `operator watch`, and `notify --deliver` all coordinate through the same
+per-event/per-sink reservation and success-commit state in
+`.amq-squad/notify-state.json`. Each reservation lasts for the configured sink
+timeout plus a 5-second commit margin (15 seconds by default, up to 65 seconds
+at the supported maximum timeout). A sink side effect can succeed and the
+process can die before its success commit; the other drivers suppress that
+event until reservation expiry, then retry it. The bounded window limits
+concurrent replay and retry delay, not total duplicates: repeated ambiguous
+crashes can replay repeatedly, committed errors retry, and renotify or
+`--force-resend` intentionally repeats delivery. Use idempotent command sinks.
+
 ## Prerequisites
 
 Confirm the installed binary and local health before starting a run:
