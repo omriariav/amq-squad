@@ -15,25 +15,26 @@ import (
 func TestWriteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	in := Record{
-		CWD:                   "/some/project",
-		Binary:                "claude",
-		Argv:                  []string{"--flag", "value"},
-		Session:               "stream1",
-		SharedWorkstream:      true,
-		Conversation:          "drive-fix",
-		Handle:                "cpo",
-		Role:                  "cpo",
-		Root:                  dir,
-		BaseRoot:              filepath.Dir(dir),
-		RootSource:            "project_amqrc",
-		AMQVersion:            "0.34.0",
-		NoGitignore:           true,
-		NoPreauthorizeInScope: true,
-		ExplicitAllowedTools:  []string{"Read(/tmp/review/**)"},
-		WakeInjectVia:         "/opt/amq-inject",
-		WakeInjectArgs:        []string{"--pane", "%42"},
-		WakePID:               1234,
-		StartedAt:             time.Now().UTC().Truncate(time.Second),
+		CWD:                          "/some/project",
+		Binary:                       "claude",
+		Argv:                         []string{"--flag", "value"},
+		Session:                      "stream1",
+		SharedWorkstream:             true,
+		Conversation:                 "drive-fix",
+		Handle:                       "cpo",
+		Role:                         "cpo",
+		Root:                         dir,
+		BaseRoot:                     filepath.Dir(dir),
+		RootSource:                   "project_amqrc",
+		AMQVersion:                   "0.34.0",
+		NoGitignore:                  true,
+		NoPreauthorizeInScope:        true,
+		LauncherPreauthorizedActions: []string{"Bash(gh pr create:*)"},
+		ExplicitAllowedTools:         []string{"Read(/tmp/review/**)"},
+		WakeInjectVia:                "/opt/amq-inject",
+		WakeInjectArgs:               []string{"--pane", "%42"},
+		WakePID:                      1234,
+		StartedAt:                    time.Now().UTC().Truncate(time.Second),
 	}
 	if err := Write(dir, in); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -69,6 +70,9 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(out.ExplicitAllowedTools, in.ExplicitAllowedTools) {
 		t.Errorf("ExplicitAllowedTools = %v, want %v", out.ExplicitAllowedTools, in.ExplicitAllowedTools)
+	}
+	if !reflect.DeepEqual(out.LauncherPreauthorizedActions, in.LauncherPreauthorizedActions) {
+		t.Errorf("LauncherPreauthorizedActions = %v, want %v", out.LauncherPreauthorizedActions, in.LauncherPreauthorizedActions)
 	}
 	if len(out.Argv) != len(in.Argv) {
 		t.Fatalf("Argv len mismatch: %v vs %v", out.Argv, in.Argv)

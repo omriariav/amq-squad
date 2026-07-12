@@ -1342,21 +1342,22 @@ func teamCommandPreview(in emitTeamCommandInput) teamCommandPreviewData {
 	extraDefaultArgs := composeBinaryArgs(m.Binary, binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs())
 	modelArgs := modelArgsForBinary(m.Binary, in.Model)
 	defaultArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, extraDefaultArgs, in.TrustMode)
-	childArgs, preauthorized, added := applyClaudeWorkerPreauth(in.TeamHome, in.Profile, m.Role, m.Binary, in.Workstream, defaultArgs, true)
-	bootstrapArgs := stripTrailingLauncherPreauthArgs(childArgs, preauthorized)
+	// Launcher policy is display/audit metadata only at preview time. It must
+	// never ride inside the executable child argv: runLaunch recomputes it from
+	// the current member policy, making every allowed-tools value already in
+	// ChildArgs explicit by construction.
+	launcherActions := claudeLauncherPreauthActions(in.TeamHome, in.Profile, m.Role, m.Binary, in.Workstream, true)
+	explicitActions := childArgsAllowedTools(defaultArgs)
+	preauthorized := appendUniquePermissionPatterns(explicitActions, launcherActions...)
 	bootstrap := "suppressed"
 	if in.NoBootstrap {
 		bootstrap = "disabled"
-	} else if shouldAppendBootstrapWithDefaults(bootstrapArgs, defaultArgs) {
+	} else if shouldAppendBootstrapWithDefaults(defaultArgs, defaultArgs) {
 		bootstrap = "appended"
 	}
-	var launcherAdded []string
-	if added {
-		launcherAdded = claudePreauthChildArgs(preauthorized)
-	}
 	return teamCommandPreviewData{
-		ChildArgs:            childArgs,
-		LauncherAddedArgs:    launcherAdded,
+		ChildArgs:            defaultArgs,
+		LauncherAddedArgs:    claudePreauthChildArgs(launcherActions),
 		PreauthorizedActions: preauthorized,
 		Bootstrap:            bootstrap,
 	}

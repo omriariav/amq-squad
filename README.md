@@ -450,7 +450,11 @@ effective lists in `up --dry-run --json`. Values beginning with `-` are rejected
 and generated grants use the single-token `--allowedTools=<grant>` form. Resume
 removes the prior launcher-owned grant before rebuilding from current policy,
 so narrowing or removing the field revokes old access; the
-`--no-preauthorize-inscope` choice also survives replay. Keep each pattern as
+`--no-preauthorize-inscope` choice also survives replay. Preview commands never
+embed launcher-owned policy in executable child argv: `agent up` recomputes it
+from current profile state, and launch history records launcher-owned and
+explicit-native provenance separately even when their values are identical.
+Keep each pattern as
 narrow as the member's own scratch or review workspace; the field is rejected
 on non-Claude members and is intentionally not a team-wide trust switch.
 

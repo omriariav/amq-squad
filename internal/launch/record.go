@@ -93,6 +93,10 @@ type Record struct {
 	// audit evidence of exactly what was granted to this role; additive and
 	// omitted for legacy records and launches where no pre-authorization applied.
 	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
+	// LauncherPreauthorizedActions records only the built-in and current member
+	// policy contribution. Keeping it separate from ExplicitAllowedTools makes
+	// equal-valued grants retain their source provenance across replay.
+	LauncherPreauthorizedActions []string `json:"launcher_preauthorized_actions,omitempty"`
 	// ExplicitAllowedTools preserves native allowed-tools values that existed
 	// before launcher policy was composed. Replay removes the old merged grant,
 	// then restores these explicit values before applying current policy.

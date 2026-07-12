@@ -484,7 +484,10 @@ You can also preview a candidate from a deterministic source with
   narrowing revokes old access; `--no-preauthorize-inscope` also round-trips.
   Validation rejects this field on non-Claude members and rejects patterns
   beginning with `-`; emission uses one injection-safe
-  `--allowedTools=<grant>` token. Keep patterns scoped to the member's own
+  `--allowedTools=<grant>` token. Preview commands never embed launcher policy
+  in executable child argv: `agent up` recomputes current policy, and launch
+  history stores launcher-owned and explicit-native provenance separately even
+  when the values are identical. Keep patterns scoped to the member's own
   scratch or review workspace; this is not a team-wide trust switch and the
   setup wizard does not author it. Profiles using the field write team schema
   4; other profiles remain schema 3. Upgrade every reader/writer to v2.20+

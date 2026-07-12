@@ -204,7 +204,10 @@ merged with any explicit native `--allowedTools`, visible in dry-run JSON and
 launch history, and rebuilt from current policy on resume so removed/narrowed
 grants are revoked. Validation rejects other binaries and values beginning with
 `-`; generated grants use one `--allowedTools=<grant>` token. The
-`--no-preauthorize-inscope` bit also round-trips. Prefer scratch/worktree-
+`--no-preauthorize-inscope` bit also round-trips. Preview commands keep
+launcher policy out of executable child argv; `agent up` recomputes it and the
+launch record stores launcher-owned versus explicit provenance separately,
+including equal-valued grants. Prefer scratch/worktree-
 specific patterns over broad command grants. Such profiles write schema 4;
 profiles without the field stay schema 3. Upgrade all readers/writers to v2.20+
 before configuring it: pre-v2.20 binaries can silently ignore the field and

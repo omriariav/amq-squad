@@ -170,12 +170,12 @@ func TestUpDryRunJSONIncludesClaudeWorkerPreauthAndBootstrapStatus(t *testing.T)
 		t.Fatalf("worker bootstrap = %q, want appended", worker.Bootstrap)
 	}
 	joinedArgs := strings.Join(worker.ChildArgs, " ")
-	for _, want := range []string{"--permission-mode auto", "--allowedTools", "Bash(gh pr create:*)"} {
-		if !strings.Contains(joinedArgs, want) {
-			t.Fatalf("worker child_args missing %q: %v", want, worker.ChildArgs)
-		}
-		if !strings.Contains(worker.Command, want) {
-			t.Fatalf("worker command missing %q: %s", want, worker.Command)
+	if !strings.Contains(joinedArgs, "--permission-mode auto") || !strings.Contains(worker.Command, "--permission-mode auto") {
+		t.Fatalf("worker executable defaults missing from plan: %+v", *worker)
+	}
+	for _, forbidden := range []string{"--allowedTools", "Bash(gh pr create:*)"} {
+		if strings.Contains(joinedArgs, forbidden) || strings.Contains(worker.Command, forbidden) {
+			t.Fatalf("launcher policy %q leaked into executable preview argv: %+v", forbidden, *worker)
 		}
 	}
 	if len(worker.PreauthorizedActions) != 1 || !strings.Contains(worker.PreauthorizedActions[0], "gh pr create") {
@@ -214,8 +214,11 @@ func TestUpDryRunPermissionAllowlistIsPerMemberAndAuditable(t *testing.T) {
 		if len(row.PermissionAllowlist) != 1 || row.PermissionAllowlist[0] != own {
 			t.Fatalf("%s permission_allowlist = %v, want %q", row.Role, row.PermissionAllowlist, own)
 		}
-		if !containsString(row.PreauthorizedActions, own) || !strings.Contains(row.Command, own) {
+		if !containsString(row.PreauthorizedActions, own) {
 			t.Fatalf("%s effective grant missing from plan/audit: %+v", row.Role, row)
+		}
+		if strings.Contains(row.Command, own) {
+			t.Fatalf("%s launcher policy leaked into executable command: %+v", row.Role, row)
 		}
 		if strings.Contains(strings.Join(row.PreauthorizedActions, " "), forbidden) || strings.Contains(row.Command, forbidden) {
 			t.Fatalf("%s received another role's allowlist: %+v", row.Role, row)
@@ -259,7 +262,7 @@ func TestUpDryRunCrossCWDClaudeWorkerPreauthMatchesLiveLaunch(t *testing.T) {
 		t.Fatalf("worker cwd = %q, want %q", worker.CWD, workerDir)
 	}
 	planTeamHome := env.Data.TeamHome
-	if worker.Bootstrap != "appended" || !strings.Contains(worker.Command, "--allowedTools") || !strings.Contains(worker.Command, "--team-home "+planTeamHome) {
+	if worker.Bootstrap != "appended" || strings.Contains(worker.Command, "--allowedTools") || !strings.Contains(worker.Command, "--team-home "+planTeamHome) {
 		t.Fatalf("preview did not show cross-cwd preauth+bootstrap correctly: %+v", *worker)
 	}
 
@@ -286,7 +289,6 @@ func TestUpDryRunCrossCWDClaudeWorkerPreauthMatchesLiveLaunch(t *testing.T) {
 			"claude",
 			"--",
 			"--permission-mode", "auto",
-			"--allowedTools", "Bash(gh pr create:*)",
 		})
 	})
 	if err != nil {

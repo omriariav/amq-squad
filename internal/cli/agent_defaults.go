@@ -56,34 +56,33 @@ func claudePreauthChildArgs(allow []string) []string {
 }
 
 func applyClaudeWorkerPreauth(projectDir, profile, role, binary, session string, childArgs []string, includeBuiltIn bool) ([]string, []string, bool) {
+	launcherActions := claudeLauncherPreauthActions(projectDir, profile, role, binary, session, includeBuiltIn)
+	return applyClaudeWorkerPreauthActions(childArgs, launcherActions)
+}
+
+func applyClaudeWorkerPreauthActions(childArgs, launcherActions []string) ([]string, []string, bool) {
 	out := append([]string(nil), childArgs...)
-	configured := configuredClaudePermissionAllowlist(projectDir, profile, role, binary)
+	explicit, found := collectClaudeAllowedTools(out)
+	if len(launcherActions) == 0 {
+		if found {
+			// Even without launcher-owned policy, canonicalize explicit native
+			// grants into the safe equals form and collapse duplicate aliases.
+			return replaceClaudeAllowedTools(out, explicit), explicit, false
+		}
+		return out, nil, false
+	}
+	// Every allowed-tools value already present in child argv is explicit by
+	// construction. Team preview never embeds launcher policy in that argv.
+	effective := appendUniquePermissionPatterns(explicit, launcherActions...)
+	return replaceClaudeAllowedTools(out, effective), effective, true
+}
+
+func claudeLauncherPreauthActions(projectDir, profile, role, binary, session string, includeBuiltIn bool) []string {
 	var actions []string
 	if includeBuiltIn && claudeWorkerPreauthEligible(projectDir, profile, role, binary) {
 		actions = appendUniquePermissionPatterns(actions, claudeInScopePreauthAllowlist(session)...)
 	}
-	actions = appendUniquePermissionPatterns(actions, configured...)
-	if len(actions) == 0 {
-		if explicit, found := collectClaudeAllowedTools(out); found {
-			// Even without launcher-owned policy, canonicalize explicit native
-			// grants into the safe equals form and collapse duplicate aliases.
-			return replaceClaudeAllowedTools(out, explicit), nil, false
-		}
-		return out, nil, false
-	}
-	if childArgsHasAllowedTools(out) {
-		if childArgsAllowedToolsEquals(out, strings.Join(actions, ",")) {
-			// Team launch previews emit launcher-owned preauth into the copied
-			// command. Treat the exact allowlist as ours so bootstrap eligibility
-			// and launch-record audit fields stay aligned with live launch.
-			return out, actions, false
-		}
-		// Recomposition always preserves genuinely explicit native grants while
-		// rebuilding launcher-owned grants from current policy. This is what lets
-		// profile removal/narrowing revoke the old launcher-owned value on replay.
-		actions = appendUniquePermissionPatterns(childArgsAllowedTools(out), actions...)
-	}
-	return replaceClaudeAllowedTools(out, actions), actions, true
+	return appendUniquePermissionPatterns(actions, configuredClaudePermissionAllowlist(projectDir, profile, role, binary)...)
 }
 
 func configuredClaudePermissionAllowlist(projectDir, profile, role, binary string) []string {
@@ -191,10 +190,6 @@ func replaceClaudeAllowedTools(args, actions []string) []string {
 	return out
 }
 
-func stripTrailingLauncherPreauthArgs(childArgs, preauthorizedActions []string) []string {
-	return stripRecordedLauncherPreauth(childArgs, preauthorizedActions)
-}
-
 // stripRecordedLauncherPreauth removes only the exact launcher-owned grant
 // identified by launch.Record.PreauthorizedActions. It recognizes both the
 // historical two-token spelling and the injection-safe equals spelling. Any
@@ -237,16 +232,6 @@ func stripRecordedLauncherPreauth(args, preauthorizedActions []string) []string 
 		i++
 	}
 	return out
-}
-
-func childArgsHasAllowedTools(args []string) bool {
-	_, found := collectClaudeAllowedTools(args)
-	return found
-}
-
-func childArgsAllowedToolsEquals(args []string, want string) bool {
-	values, found := collectClaudeAllowedTools(args)
-	return found && strings.Join(values, ",") == want
 }
 
 // claudeWorkerPreauthEligible reports whether an `agent up` launch is an

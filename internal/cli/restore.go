@@ -320,7 +320,13 @@ func launchArgsFromRecord(rec launch.Record) []string {
 
 func restoreArgvFromRecord(rec launch.Record) []string {
 	argv := append([]string(nil), rec.Argv...)
-	argv = stripRecordedLauncherPreauth(argv, rec.PreauthorizedActions)
+	// New records carry structural provenance. Strip the final merged grant only
+	// when launcher policy contributed, then restore the explicit source below.
+	// Legacy records lack both provenance fields, so retain the historical exact
+	// PreauthorizedActions stripping behavior for backward compatibility.
+	if len(rec.LauncherPreauthorizedActions) > 0 || len(rec.ExplicitAllowedTools) == 0 {
+		argv = stripRecordedLauncherPreauth(argv, rec.PreauthorizedActions)
+	}
 	if normalizedAgentBinary(rec.Binary) == "claude" && len(rec.ExplicitAllowedTools) > 0 {
 		argv = replaceClaudeAllowedTools(argv, rec.ExplicitAllowedTools)
 	}
