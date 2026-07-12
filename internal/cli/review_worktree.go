@@ -38,6 +38,11 @@ type reviewWorktree struct {
 
 var reviewWorktreeNow = time.Now
 
+var reviewWorktreeAdd = func(repository, path, commit string) error {
+	_, err := gitOutput(repository, "worktree", "add", "--detach", path, commit)
+	return err
+}
+
 func runReviewWorktree(args []string, version string) error {
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
 		printReviewWorktreeUsage()
@@ -70,12 +75,18 @@ The helper resolves REF once to an exact commit, creates a detached worktree
 under the system temporary directory, verifies its commit, tree, and clean
 state, then writes .amq-squad-review.json inside it. The manifest records the
 commit, tree, UTC creation time, Go version, amq-squad version, and AMQ version.
+If AMQ is absent or its version command fails, creation continues and records
+an explicit "unavailable: <reason>" value; Go and amq-squad versions remain
+required.
 
-exec and shell clear all AM_*, AMQ_SQUAD_*, and TMUX* variables before starting
-the reviewer process, including AM_ROOT, AM_BASE_ROOT, AM_ME, AM_SESSION,
-AM_WAKE_FD, TMUX, and TMUX_PANE. The worktree is deliberately kept after the
-process exits so its manifest and evidence remain inspectable. Use the printed
-remove command when review is complete; cleanup is performed only by
+exec and shell clear all AM_*, AMQ_SQUAD_*, TMUX*, and GIT_* variables before
+starting the reviewer process. This includes agent identity, tmux identity, and
+Git repository/index/object/namespace/replace-ref overrides. GOCACHE, TMPDIR,
+PATH, HOME, and other ordinary process settings are retained. Helper-owned Git
+commands use the same sanitized environment, so --repo wins over ambient Git
+overrides. The worktree is deliberately kept after the process exits so its
+manifest and evidence remain inspectable. Use the printed remove command when
+review is complete; registered-worktree cleanup is performed only by
 git worktree remove --force, never rm -rf.
 
 Options:
@@ -154,17 +165,9 @@ func runReviewWorktreeRemove(args []string) error {
 	if fs.NArg() != 1 {
 		return usageErrorf("review-worktree remove requires exactly one PATH")
 	}
-	path, err := validateReviewWorktreeForRemoval(fs.Arg(0))
+	path, manifest, err := validateReviewWorktreeForRemoval(fs.Arg(0))
 	if err != nil {
 		return err
-	}
-	data, err := os.ReadFile(filepath.Join(path, reviewWorktreeManifestName))
-	if err != nil {
-		return fmt.Errorf("read review manifest: %w", err)
-	}
-	var manifest reviewWorktreeManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return fmt.Errorf("parse review manifest: %w", err)
 	}
 	if _, err := gitOutput(manifest.Repository, "worktree", "remove", "--force", path); err != nil {
 		return fmt.Errorf("remove review worktree: %w", err)
@@ -174,6 +177,10 @@ func runReviewWorktreeRemove(args []string) error {
 }
 
 func createReviewWorktree(repo, ref, version string) (result reviewWorktree, err error) {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return result, fmt.Errorf("running amq-squad version is required for the review manifest")
+	}
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return result, usageErrorf("review-worktree REF must not be empty")
@@ -204,10 +211,31 @@ func createReviewWorktree(repo, ref, version string) (result reviewWorktree, err
 	if err != nil {
 		return result, fmt.Errorf("allocate review worktree path: %w", err)
 	}
-	// Git accepts the existing empty mktemp directory. Once registered, every
-	// cleanup path below goes exclusively through `git worktree remove --force`.
-	if _, err := gitOutput(repository, "worktree", "add", "--detach", tempPath, commit); err != nil {
-		return result, fmt.Errorf("create detached review worktree: %w", err)
+	resolvedTempPath, resolveErr := filepath.EvalSymlinks(tempPath)
+	if resolveErr != nil {
+		if cleanupErr := os.Remove(tempPath); cleanupErr != nil {
+			return result, errors.Join(fmt.Errorf("resolve review worktree path: %w", resolveErr), fmt.Errorf("remove empty unresolved review directory: %w", cleanupErr))
+		}
+		return result, fmt.Errorf("resolve review worktree path: %w", resolveErr)
+	}
+	tempPath = resolvedTempPath
+	// Git accepts the existing empty mktemp directory. If add fails before it
+	// registers or populates the worktree, remove that still-empty placeholder
+	// with os.Remove (never recursively). Once registered, every cleanup path
+	// below goes exclusively through `git worktree remove --force`.
+	if addErr := reviewWorktreeAdd(repository, tempPath, commit); addErr != nil {
+		registered, probeErr := gitWorktreeRegistered(repository, tempPath)
+		if probeErr != nil {
+			return result, errors.Join(fmt.Errorf("create detached review worktree: %w", addErr), fmt.Errorf("determine whether failed worktree add registered: %w", probeErr))
+		}
+		if registered {
+			if _, cleanupErr := gitOutput(repository, "worktree", "remove", "--force", tempPath); cleanupErr != nil {
+				return result, errors.Join(fmt.Errorf("create detached review worktree: %w", addErr), fmt.Errorf("cleanup registered failed worktree: %w", cleanupErr))
+			}
+		} else if cleanupErr := os.Remove(tempPath); cleanupErr != nil {
+			return result, errors.Join(fmt.Errorf("create detached review worktree: %w", addErr), fmt.Errorf("remove empty unregistered review directory: %w", cleanupErr))
+		}
+		return result, fmt.Errorf("create detached review worktree: %w", addErr)
 	}
 	added := true
 	defer func() {
@@ -247,17 +275,14 @@ func createReviewWorktree(repo, ref, version string) (result reviewWorktree, err
 	if err != nil {
 		return result, err
 	}
-	amqVersion, err := toolVersion(worktree, "amq", "version")
-	if err != nil {
-		return result, err
-	}
+	amqVersion := optionalToolVersion(worktree, "amq", "version")
 	manifest := reviewWorktreeManifest{
 		SchemaVersion:   1,
 		Commit:          commit,
 		Tree:            tree,
 		CreatedAt:       reviewWorktreeNow().UTC().Format(time.RFC3339Nano),
 		GoVersion:       goVersion,
-		AMQSquadVersion: versionOrUnknown(version),
+		AMQSquadVersion: version,
 		AMQVersion:      amqVersion,
 		Repository:      repository,
 		Worktree:        worktree,
@@ -295,6 +320,19 @@ func toolVersion(dir, name string, args ...string) (string, error) {
 	return version, nil
 }
 
+func optionalToolVersion(dir, name string, args ...string) string {
+	version, err := toolVersion(dir, name, args...)
+	if err == nil {
+		return version
+	}
+	reason := strings.Join(strings.Fields(err.Error()), " ")
+	const maxReasonBytes = 200
+	if len(reason) > maxReasonBytes {
+		reason = reason[:maxReasonBytes] + "..."
+	}
+	return "unavailable: " + reason
+}
+
 func runSanitizedReviewProcess(dir, name string, args []string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
@@ -312,7 +350,7 @@ func sanitizedReviewEnv(env []string) []string {
 		if !ok {
 			continue
 		}
-		if key == "PWD" || strings.HasPrefix(key, "AM_") || strings.HasPrefix(key, "AMQ_SQUAD_") || strings.HasPrefix(key, "TMUX") {
+		if key == "PWD" || strings.HasPrefix(key, "AM_") || strings.HasPrefix(key, "AMQ_SQUAD_") || strings.HasPrefix(key, "TMUX") || strings.HasPrefix(key, "GIT_") {
 			continue
 		}
 		out = append(out, entry)
@@ -348,54 +386,117 @@ func gitOutput(repo string, args ...string) (string, error) {
 	return string(out), err
 }
 
-func validateReviewWorktreeForRemoval(rawPath string) (string, error) {
+func validateReviewWorktreeForRemoval(rawPath string) (string, reviewWorktreeManifest, error) {
 	path, err := filepath.Abs(rawPath)
 	if err != nil {
-		return "", usageErrorf("invalid review worktree path %q: %v", rawPath, err)
+		return "", reviewWorktreeManifest{}, usageErrorf("invalid review worktree path %q: %v", rawPath, err)
 	}
 	path, err = filepath.EvalSymlinks(path)
 	if err != nil {
-		return "", usageErrorf("review worktree path %q is not accessible: %v", rawPath, err)
+		return "", reviewWorktreeManifest{}, usageErrorf("review worktree path %q is not accessible: %v", rawPath, err)
 	}
 	tempRoot, err := filepath.EvalSymlinks(os.TempDir())
 	if err != nil {
-		return "", fmt.Errorf("resolve system temporary directory: %w", err)
+		return "", reviewWorktreeManifest{}, fmt.Errorf("resolve system temporary directory: %w", err)
 	}
 	if filepath.Dir(path) != tempRoot || !strings.HasPrefix(filepath.Base(path), reviewWorktreeTempPrefix) {
-		return "", usageErrorf("refusing to remove %q: not an amq-squad mktemp review-worktree path", path)
+		return "", reviewWorktreeManifest{}, usageErrorf("refusing to remove %q: not an amq-squad mktemp review-worktree path", path)
 	}
 	manifestPath := filepath.Join(path, reviewWorktreeManifestName)
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
-		return "", usageErrorf("refusing to remove %q: valid %s is required: %v", path, reviewWorktreeManifestName, err)
+		return "", reviewWorktreeManifest{}, usageErrorf("refusing to remove %q: valid %s is required: %v", path, reviewWorktreeManifestName, err)
 	}
 	var manifest reviewWorktreeManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return "", usageErrorf("refusing to remove %q: invalid review manifest: %v", path, err)
+		return "", reviewWorktreeManifest{}, usageErrorf("refusing to remove %q: invalid review manifest: %v", path, err)
 	}
 	if manifest.SchemaVersion != 1 || manifest.Worktree != path || strings.TrimSpace(manifest.Repository) == "" || strings.TrimSpace(manifest.Commit) == "" || strings.TrimSpace(manifest.Tree) == "" {
-		return "", usageErrorf("refusing to remove %q: review manifest identity does not match", path)
+		return "", reviewWorktreeManifest{}, usageErrorf("refusing to remove %q: review manifest identity does not match", path)
 	}
 	repository, err := gitOutput(manifest.Repository, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return "", fmt.Errorf("verify manifest repository: %w", err)
+		return "", reviewWorktreeManifest{}, fmt.Errorf("verify manifest repository: %w", err)
 	}
 	if strings.TrimSpace(repository) != manifest.Repository {
-		return "", usageErrorf("refusing to remove %q: manifest repository identity does not match", path)
+		return "", reviewWorktreeManifest{}, usageErrorf("refusing to remove %q: manifest repository identity does not match", path)
 	}
-	listed, err := gitOutput(manifest.Repository, "worktree", "list", "--porcelain")
+	targetRoot, err := gitOutput(path, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return "", fmt.Errorf("list repository worktrees: %w", err)
+		return "", reviewWorktreeManifest{}, usageErrorf("refusing to remove %q: target is not a readable Git worktree: %v", path, err)
 	}
-	registered := false
-	for _, line := range strings.Split(listed, "\n") {
-		if strings.TrimPrefix(line, "worktree ") == path && strings.HasPrefix(line, "worktree ") {
-			registered = true
-			break
-		}
+	if strings.TrimSpace(targetRoot) != path {
+		return "", reviewWorktreeManifest{}, usageErrorf("refusing to remove %q: target Git worktree root resolves to %q", path, strings.TrimSpace(targetRoot))
+	}
+	headKind, err := gitOutput(path, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", reviewWorktreeManifest{}, fmt.Errorf("verify review worktree HEAD identity: %w", err)
+	}
+	if strings.TrimSpace(headKind) != "HEAD" {
+		return "", reviewWorktreeManifest{}, usageErrorf("refusing to remove %q: review worktree HEAD is attached to %q; expected detached HEAD", path, strings.TrimSpace(headKind))
+	}
+	actualCommit, err := gitOutput(path, "rev-parse", "HEAD")
+	if err != nil {
+		return "", reviewWorktreeManifest{}, fmt.Errorf("verify review worktree commit: %w", err)
+	}
+	actualCommit = strings.TrimSpace(actualCommit)
+	if actualCommit != manifest.Commit {
+		return "", reviewWorktreeManifest{}, usageErrorf("refusing to remove %q: actual HEAD commit %s does not match manifest commit %s", path, actualCommit, manifest.Commit)
+	}
+	actualTree, err := gitOutput(path, "show", "-s", "--format=%T", "HEAD")
+	if err != nil {
+		return "", reviewWorktreeManifest{}, fmt.Errorf("verify review worktree tree: %w", err)
+	}
+	actualTree = strings.TrimSpace(actualTree)
+	if actualTree != manifest.Tree {
+		return "", reviewWorktreeManifest{}, usageErrorf("refusing to remove %q: actual HEAD tree %s does not match manifest tree %s", path, actualTree, manifest.Tree)
+	}
+	manifestCommon, err := canonicalGitCommonDir(manifest.Repository)
+	if err != nil {
+		return "", reviewWorktreeManifest{}, fmt.Errorf("resolve manifest common Git directory: %w", err)
+	}
+	targetCommon, err := canonicalGitCommonDir(path)
+	if err != nil {
+		return "", reviewWorktreeManifest{}, fmt.Errorf("resolve target common Git directory: %w", err)
+	}
+	if targetCommon != manifestCommon {
+		return "", reviewWorktreeManifest{}, usageErrorf("refusing to remove %q: target common Git directory %q does not match manifest repository %q", path, targetCommon, manifestCommon)
+	}
+	registered, err := gitWorktreeRegistered(manifest.Repository, path)
+	if err != nil {
+		return "", reviewWorktreeManifest{}, fmt.Errorf("list repository worktrees: %w", err)
 	}
 	if !registered {
-		return "", usageErrorf("refusing to remove %q: path is not a registered worktree of %s", path, manifest.Repository)
+		return "", reviewWorktreeManifest{}, usageErrorf("refusing to remove %q: path is not a registered worktree of %s", path, manifest.Repository)
 	}
-	return path, nil
+	return path, manifest, nil
+}
+
+func gitWorktreeRegistered(repository, path string) (bool, error) {
+	listed, err := gitOutput(repository, "worktree", "list", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(listed, "\n") {
+		if strings.HasPrefix(line, "worktree ") && strings.TrimPrefix(line, "worktree ") == path {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func canonicalGitCommonDir(worktree string) (string, error) {
+	raw, err := gitOutput(worktree, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	path := strings.TrimSpace(raw)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(worktree, path)
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(path)
 }

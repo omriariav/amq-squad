@@ -23,6 +23,11 @@ Every review worktree contains `.amq-squad-review.json` with:
 - Go, `amq-squad`, and AMQ versions; and
 - source repository, source ref, and worktree identity.
 
+Go and the running `amq-squad` version are required. If AMQ is absent or
+`amq version` fails, creation still succeeds and `amq_version` records an
+explicit `unavailable: <short reason>` value instead of losing the review
+worktree.
+
 Keep generated evidence inside this worktree until it has been inspected or
 copied to its durable destination. The manifest then travels alongside the
 evidence and proves which tree produced it.
@@ -41,10 +46,15 @@ Or open the user's preferred shell in the isolated checkout:
 amq-squad review-worktree shell --repo ~/Code/app <ref>
 ```
 
-Both modes remove ambient `AM_*`, `AMQ_SQUAD_*`, and `TMUX*` variables before
-starting the process. This includes `AM_ROOT`, `AM_BASE_ROOT`, `AM_ME`,
-`AM_SESSION`, `AM_WAKE_FD`, `TMUX`, and `TMUX_PANE`. Normal process settings
-such as `PATH`, `HOME`, and `SHELL` remain available.
+Both modes remove every ambient variable whose name starts with `AM_*`,
+`AMQ_SQUAD_*`, `TMUX`, or `GIT_` before starting the process. This includes
+agent and terminal identity plus Git repository, worktree, index, object,
+alternate-object, namespace, and replace-ref controls such as `GIT_DIR`,
+`GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_NAMESPACE`, and
+`GIT_NO_REPLACE_OBJECTS`. Helper-owned Git commands use the same sanitization,
+so an ambient Git override cannot defeat `--repo`. Normal process settings
+such as `PATH`, `HOME`, `SHELL`, `GOCACHE`, and `TMPDIR` remain available.
 
 The worktree is intentionally retained after the command or shell exits so
 the evidence and manifest do not disappear. Its location and paired cleanup
@@ -57,11 +67,16 @@ amq-squad review-worktree remove /tmp/amq-squad-review-123456
 ```
 
 Removal is fail-closed: the path must be under the system temporary directory,
-have the helper's generated name and matching manifest, and still be registered
-to the recorded repository. Cleanup uses only:
+have the helper's generated name and matching manifest, remain a detached
+worktree at the manifest's exact commit and tree, share the recorded
+repository's canonical common Git directory, and still be registered there.
+Registered-worktree cleanup uses only:
 
 ```sh
 git worktree remove --force <path>
 ```
 
-The helper never runs `rm -rf` for worktree cleanup.
+The helper never runs `rm` or `rm -rf` for worktree cleanup. If Git rejects
+`worktree add` before registering or populating the freshly allocated empty
+directory, the helper removes only that empty directory with non-recursive
+`os.Remove`.
