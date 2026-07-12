@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -201,6 +202,16 @@ type goalDeliveryOptions struct {
 	Namespace squadnamespace.Ref
 	Mode      string
 }
+
+type goalFallbackDelivery struct {
+	MessageID string
+	Root      string
+	Thread    string
+}
+
+// goalFallbackAMQSend is the durable half of ambiguous native goal delivery.
+// Tests replace it without needing a real AMQ binary or mailbox tree.
+var goalFallbackAMQSend = sendDurableGoalFallback
 
 const (
 	goalOrchestratorRole          = "orchestrator"
@@ -445,7 +456,11 @@ confirm-gated and requires --yes in this first implementation slice.
 			DeliveryReceipt: result.DeliveryReceipt,
 		})
 	}
-	fmt.Printf("Started goal on %s for session %s.\n", result.Role, result.Session)
+	if result.Status == "durable_goal_fallback" {
+		fmt.Printf("Queued durable goal fallback for %s on session %s.\n", result.Role, result.Session)
+	} else {
+		fmt.Printf("Started goal on %s for session %s.\n", result.Role, result.Session)
+	}
 	return nil
 }
 
@@ -504,7 +519,11 @@ runtime accepts goal control messages safely.
 	if *jsonOut {
 		return printJSONEnvelope("goal_deliver", result)
 	}
-	fmt.Printf("Delivered native /goal to %s pane %s (attempt %s).\n", result.Role, result.DeliveryReceipt.PaneID, result.DeliveryReceipt.AttemptID)
+	if result.Status == "durable_goal_fallback" {
+		fmt.Printf("Queued durable goal fallback for %s (message %s).\n", result.Role, result.MessageID)
+	} else {
+		fmt.Printf("Delivered native /goal to %s pane %s (attempt %s).\n", result.Role, result.DeliveryReceipt.PaneID, result.DeliveryReceipt.AttemptID)
+	}
 	return nil
 }
 
@@ -871,6 +890,41 @@ func writeGoalStartPlan(out *os.File, data goalStartData) {
 	fmt.Fprintf(out, "Run: %s\n", data.DeliverCmd)
 }
 
+func sendDurableGoalFallback(opts goalDeliveryOptions) (goalFallbackDelivery, error) {
+	target := memberHandle(opts.Member)
+	if target == "" {
+		return goalFallbackDelivery{}, fmt.Errorf("goal fallback target role %q has no handle", opts.Role)
+	}
+	sender, err := resolveDispatchSender(opts.Team, "")
+	if err != nil {
+		// A flat/non-orchestrated team can still use goal deliver with an explicit
+		// role. A self-addressed durable message is preferable to losing the goal
+		// when no separate dispatcher identity exists.
+		sender = target
+	}
+	cwd := opts.Member.EffectiveCWD(opts.Project)
+	ctx, err := resolveAMQContextForNamespace(cwd, opts.Profile, opts.Session, sender)
+	if err != nil {
+		return goalFallbackDelivery{}, fmt.Errorf("resolve amq root for goal fallback: %w", err)
+	}
+	ctx.Me = sender
+	thread := "goal/" + opts.Session
+	subject := "Launch goal fallback: " + opts.Session
+	body := "Launch goal for session " + opts.Session + ":\n\n" + opts.Goal +
+		"\n\nThis durable AMQ message is the fallback for native /goal delivery. " +
+		"The same goal may already be queued in the lead pane; if it is active, treat this message as confirmation rather than a second goal."
+	args := dispatchSendArgs(ctx.Root, sender, target, thread, "todo", subject, body, "", "", 0)
+	out, err := runAMQCommand(amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: args})
+	if err != nil {
+		return goalFallbackDelivery{}, fmt.Errorf("send durable goal fallback to %s: %w", target, err)
+	}
+	return goalFallbackDelivery{
+		MessageID: parseSentMessageID(string(out)),
+		Root:      ctx.Root,
+		Thread:    thread,
+	}, nil
+}
+
 func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
 	prompt := nativeGoalControlPrompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role)
 	receipt := newDeliveryReceipt(opts.Project, opts.Profile, opts.Session, opts.Role, opts.Member.Handle, opts.Mode, "native_goal")
@@ -898,6 +952,57 @@ func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
 	receipt.PaneID = paneID
 	receipt.addStage("control_delivery_started", "resolved exact target pane for native /goal control")
 	if err := sendPromptToPane(paneID, prompt); err != nil {
+		var queued *tmuxpane.QueuedInputError
+		var unconfirmed *tmuxpane.SubmitUnconfirmedError
+		if errors.As(err, &queued) || errors.As(err, &unconfirmed) {
+			fallback, fallbackErr := goalFallbackAMQSend(opts)
+			if fallbackErr != nil {
+				receipt.Status = "failed"
+				receipt.Detail = fmt.Sprintf("native goal submission was ambiguous and durable AMQ fallback failed: %v", fallbackErr)
+				receipt.addStage("failed", receipt.Detail)
+				_ = writeDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &receipt)
+				return mutationResult{}, fmt.Errorf("%s", receipt.Detail)
+			}
+			receipt.MessageID = fallback.MessageID
+			receipt.Root = fallback.Root
+			receipt.Thread = fallback.Thread
+			receipt.Fallback = true
+			receipt.Method = "durable_amq_goal_fallback"
+			receipt.Status = "durable_goal_fallback"
+			receipt.Detail = err.Error()
+			if queued != nil {
+				receipt.addStage("native_goal_queued", "queued in the lead's input; it will submit when the agent goes idle")
+			} else {
+				receipt.addStage("native_goal_unconfirmed", err.Error())
+			}
+			receipt.addStage("written_to_amq", "durable goal fallback written to the lead inbox")
+			if err := writeDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &receipt); err != nil {
+				return mutationResult{}, err
+			}
+			messageID := strings.TrimSpace(fallback.MessageID)
+			if messageID == "" {
+				messageID = "(message id unavailable)"
+			}
+			if queued != nil {
+				fmt.Fprintf(os.Stderr, "warning: goal queued in the lead's input; it will submit when the agent goes idle. Durable AMQ fallback %s is queued; continuing.\n", messageID)
+			} else {
+				fmt.Fprintf(os.Stderr, "warning: native goal submission was not confirmed. Durable AMQ fallback %s is queued; continuing.\n", messageID)
+			}
+			return mutationResult{
+				Command:         "goal deliver",
+				Status:          receipt.Status,
+				Project:         opts.Project,
+				Session:         opts.Session,
+				Profile:         opts.Profile,
+				Namespace:       opts.Namespace,
+				Role:            opts.Role,
+				Handle:          opts.Member.Handle,
+				MessageID:       fallback.MessageID,
+				Thread:          fallback.Thread,
+				Root:            fallback.Root,
+				DeliveryReceipt: &receipt,
+			}, nil
+		}
 		receipt.Status = "failed"
 		receipt.Detail = err.Error()
 		receipt.addStage("failed", err.Error())

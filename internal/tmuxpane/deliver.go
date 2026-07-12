@@ -237,11 +237,17 @@ func submitStagedPrompt(paneID string) error {
 	for attempt := 0; attempt < submitAttempts; attempt++ {
 		time.Sleep(submitSettleDelay)
 		before, beforeOK := captureInputRegion(paneID)
+		if beforeOK && queuedInputVisible(before) {
+			return &QueuedInputError{PaneID: paneID}
+		}
 		if err := SendKeysToPane(paneID, "Enter"); err != nil {
 			return err
 		}
 		time.Sleep(submitVerifyDelay)
 		after, afterOK := captureInputRegion(paneID)
+		if afterOK && queuedInputVisible(after) {
+			return &QueuedInputError{PaneID: paneID}
+		}
 		// Submitted when the input region changed; fail open when either snapshot
 		// is unavailable (don't block or retry on a capture we can't trust).
 		if !beforeOK || !afterOK || after != before {
@@ -250,6 +256,22 @@ func submitStagedPrompt(paneID string) error {
 		// Unchanged: the Enter was dropped — retry.
 	}
 	return &SubmitUnconfirmedError{PaneID: paneID, Attempts: submitAttempts}
+}
+
+// QueuedInputError reports the explicit Codex busy-input state. When Codex is
+// mid-turn it keeps newly pasted text in the input area and renders the
+// "tab to queue message" footer. Repeated Enter attempts cannot prove a submit
+// in that state, but the staged text is not lost: Codex will process it when the
+// current turn goes idle. Callers with a durable fallback should report this as
+// queued rather than collapsing it into an ambiguous SubmitUnconfirmedError.
+type QueuedInputError struct{ PaneID string }
+
+func (e *QueuedInputError) Error() string {
+	return fmt.Sprintf("delivered the prompt to pane %s; queued in the pane input and it will submit when the agent goes idle", e.PaneID)
+}
+
+func queuedInputVisible(region string) bool {
+	return strings.Contains(strings.ToLower(region), "tab to queue message")
 }
 
 // SubmitUnconfirmedError reports that the prompt was pasted and Enter pressed,

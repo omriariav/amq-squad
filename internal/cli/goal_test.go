@@ -498,6 +498,97 @@ func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
 	}
 }
 
+func TestGoalDeliveryAmbiguousSubmitQueuesDurableAMQFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		sendErr    error
+		wantNotice string
+		wantStage  string
+	}{
+		{
+			name:       "codex queued input",
+			sendErr:    &tmuxpane.QueuedInputError{PaneID: "%7"},
+			wantNotice: "queued in the lead's input; it will submit when the agent goes idle",
+			wantStage:  "native_goal_queued",
+		},
+		{
+			name:       "submit unconfirmed",
+			sendErr:    &tmuxpane.SubmitUnconfirmedError{PaneID: "%7", Attempts: 3},
+			wantNotice: "native goal submission was not confirmed",
+			wantStage:  "native_goal_unconfirmed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := setupFakeAMQSessionRoots(t)
+			dir := seedTeam(t, team.Team{
+				Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+				Orchestrated:  true,
+				Lead:          "cto",
+				ExecutionMode: executionModeProjectLead,
+			})
+			seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+				CWD:      dir,
+				Binary:   "codex",
+				Handle:   "cto",
+				Role:     "cto",
+				Session:  "issue-96",
+				AgentPID: 4242,
+				Tmux:     &launch.TmuxInfo{PaneID: "%7"},
+			})
+			calls := withAMQCommandSeams(t, amqEnv{
+				Root:     filepath.Join(base, "{session}"),
+				BaseRoot: base,
+			}, "Sent goal-msg-427 to cto\n")
+			oldLister := statusPaneLister
+			statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+				return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: "codex", Title: "amq:issue-96:cto"}}, nil
+			}
+			oldSend := sendPromptToPane
+			sendPromptToPane = func(string, string) error { return tc.sendErr }
+			t.Cleanup(func() {
+				statusPaneLister = oldLister
+				sendPromptToPane = oldSend
+			})
+
+			stdout, stderr, err := captureOutput(t, func() error {
+				return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--json"})
+			})
+			if err != nil {
+				t.Fatalf("ambiguous goal submit must use durable fallback: %v\nstderr:\n%s", err, stderr)
+			}
+			env := decodeJSONEnvelope[mutationResult](t, stdout)
+			if env.Kind != "goal_deliver" || env.Data.Status != "durable_goal_fallback" || env.Data.MessageID != "goal-msg-427" {
+				t.Fatalf("goal fallback envelope = %+v", env)
+			}
+			receipt := env.Data.DeliveryReceipt
+			if receipt == nil || !receipt.Fallback || receipt.Method != "durable_amq_goal_fallback" || receipt.MessageID != "goal-msg-427" || !receiptHasStage(receipt, tc.wantStage) || !receiptHasStage(receipt, "written_to_amq") {
+				t.Fatalf("goal fallback receipt = %+v", receipt)
+			}
+			if !strings.Contains(stderr, tc.wantNotice) || !strings.Contains(stderr, "Durable AMQ fallback goal-msg-427 is queued; continuing") {
+				t.Fatalf("goal fallback warning missing detail:\n%s", stderr)
+			}
+			if len(*calls) != 1 {
+				t.Fatalf("AMQ sends = %d, want 1", len(*calls))
+			}
+			args := (*calls)[0].Arg
+			joined := strings.Join(args, " ")
+			for _, want := range []string{
+				"send --root " + filepath.Join(base, "issue-96"),
+				"--me cto --to cto",
+				"--thread goal/issue-96",
+				"--kind todo",
+				"--subject Launch goal fallback: issue-96",
+				"ship safely",
+				"same goal may already be queued",
+			} {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("durable goal send args missing %q:\n%q", want, args)
+				}
+			}
+		})
+	}
+}
+
 func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{

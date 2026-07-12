@@ -1081,6 +1081,42 @@ func TestRunStartGoUnconfirmedGoalSubmitWarnsAndContinues(t *testing.T) {
 	}
 }
 
+func TestRunStartGoQueuedGoalSubmitReportsQueueAndContinues(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--project", dir, "--session", "sess", "--roles", "cto", "--orchestrated", "--lead", "cto"})
+	}); err != nil {
+		t.Fatalf("setup new team: %v", err)
+	}
+
+	queued := fmt.Errorf("goal start: %w", &tmuxpane.QueuedInputError{PaneID: "%26"})
+	stubRunStartGoalDelivery(t,
+		func(args []string, version string) error { return nil },
+		func(args []string, version string) error { return queued },
+		func(project, profile, session, role string) (runStartLeadReadiness, error) {
+			return runStartLeadReadiness{Ready: true, Detail: "live"}, nil
+		},
+		func(time.Duration) {},
+		time.Now,
+	)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("queued submit must not abort the launch, got %v", err)
+	}
+	for _, want := range []string{
+		"goal queued in the lead's input; it will submit when the agent goes idle",
+		"continuing the launch",
+		"amq-squad goal start --project " + shellQuote(dir) + " --profile default --session sess --role cto --goal 'ship it' --yes",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
 func TestRunStartLeadReadinessTransientErrorKeepsPolling(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Unix(100, 0)

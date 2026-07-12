@@ -587,13 +587,16 @@ func parseTmuxClients(out string) []tmuxClient {
 }
 
 func warnTmuxControlModeClients(clients []tmuxClient) {
-	fmt.Fprintf(os.Stderr, "warning: detected %d tmux control-mode client(s). iTerm2 tmux -CC can pause when several agent TUIs start at once.\n", len(clients))
-	for _, c := range clients {
-		fmt.Fprintf(os.Stderr, "warning: control client %s flags: %s\n", c.TTY, c.Flags)
+	fmt.Fprintf(os.Stderr, "warning: detected %d tmux control-mode client(s); iTerm2 tmux -CC launches use stagger and retry safeguards (use --verbose for client flags and recovery guidance).\n", len(clients))
+	if !outputPolicyCurrent().Verbose {
+		return
 	}
-	fmt.Fprintln(os.Stderr, "warning: starting panes with a stagger to reduce the initial output burst.")
-	fmt.Fprintln(os.Stderr, "warning: amq-squad retries its tmux control queries through these pauses, so send/focus/status ride through a stutter.")
-	fmt.Fprintln(os.Stderr, "warning: if the iTerm2 view itself stalls, recover from a non-tmux shell with: tmux detach-client -t <tty>, then reattach.")
+	for _, c := range clients {
+		fmt.Fprintf(os.Stderr, "verbose: control client %s flags: %s\n", c.TTY, c.Flags)
+	}
+	fmt.Fprintln(os.Stderr, "verbose: starting panes with a stagger to reduce the initial output burst.")
+	fmt.Fprintln(os.Stderr, "verbose: amq-squad retries tmux control queries through pauses, so send/focus/status ride through a stutter.")
+	fmt.Fprintln(os.Stderr, "verbose: if the iTerm2 view stalls, recover from a non-tmux shell with: tmux detach-client -t <tty>, then reattach.")
 }
 
 func tmuxEnsureSessionAbsent(session string) error {
