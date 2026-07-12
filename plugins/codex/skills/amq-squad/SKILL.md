@@ -183,7 +183,7 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
      ```
    - Decisions: `--thread decision/<topic> --kind decision`.
    - Valid `--kind` values (enforced by `amq`): `brainstorm, review_request, review_response, question, answer, decision, status, todo`. **There is no `handoff` kind** — send a role-to-role handoff as `--kind review_request` (work to take over) or `--kind todo` (a queued task). An unknown kind (e.g. `--kind handoff`) is **rejected** with a validation error (`--kind must be one of: ...`) and the message is **not sent** — always pass a valid kind.
-   - **Surfacing to the human:** use the operator handle declared in the current team rules/profile. Default schema-3 teams use non-runnable handle `user`; custom `--operator HANDLE` teams use that handle; `--no-operator` teams route human-facing asks through the lead/CTO rule instead. Human gates use stable `gate/<topic>` threads, for example `amq send --to <operator> --thread gate/<topic> --subject "APPROVAL: ..." --kind question`.
+   - **Surfacing to the human:** use the operator handle declared in the current team rules/profile. Default schema-3+ teams use non-runnable handle `user`; custom `--operator HANDLE` teams use that handle; `--no-operator` teams route human-facing asks through the lead/CTO rule instead. Human gates use stable `gate/<topic>` threads, for example `amq send --to <operator> --thread gate/<topic> --subject "APPROVAL: ..." --kind question`.
    - Synchronous wait: append `--wait-for drained --wait-timeout 60s`.
    - Cross-session sends need explicit `--session` and `--thread`; avoid them in normal flow.
 
@@ -485,6 +485,26 @@ You can also preview a candidate from a deterministic source with
   cutting its per-prompt context cost. Do not hand-edit this: step 5 generates
   and wires it with `amq-squad team overlay init` (v1.9.0+). Plan emission
   validates that every referenced `--settings` file exists.
+- **Per-member permission allowlist**: a Claude member may carry
+  `permission_allowlist`, for example
+  `"permission_allowlist": ["Bash(rm -rf /tmp/qa-review/*:*)"]`. amq-squad
+  merges it with explicit native `--allowedTools`, applies it only to that
+  exact role, shows configured/effective grants in `up --dry-run --json`, and
+  persists the effective list in launch history for resume/audit. Resume strips
+  the prior launcher-owned grant and rebuilds from current policy, so removal or
+  narrowing revokes old access; `--no-preauthorize-inscope` also round-trips.
+  Validation rejects this field on non-Claude members and rejects patterns
+  beginning with `-`; emission uses one injection-safe
+  `--allowedTools=<grant>` token. Preview commands never embed launcher policy
+  in executable child argv: `agent up` recomputes current policy, and launch
+  history stores launcher-owned and explicit-native provenance separately even
+  when the values are identical. Keep patterns scoped to the member's own
+  scratch or review workspace; this is not a team-wide trust switch and the
+  setup wizard does not author it. Profiles using the field write team schema
+  4; other profiles remain schema 3. Upgrade every reader/writer to v2.20+
+  before configuration: pre-v2.20 binaries can silently ignore the field and
+  lossily rewrite a schema-4 profile. Use `amq-squad doctor` to detect version
+  skew; v2.20+ readers accept schemas 3/4 and reject future schemas.
 - **Model/binary/effort choice** (context stamp: 2026-07-10, current operator
   setup; setup-dependent, not universal): defaults are not limits; escalate
   when output quality misses the bar. For shippable work use

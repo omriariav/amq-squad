@@ -49,71 +49,189 @@ func claudePreauthChildArgs(allow []string) []string {
 	if len(allow) == 0 {
 		return nil
 	}
-	return []string{"--allowedTools", strings.Join(allow, ",")}
+	// native_args.go recognizes the equals-joined alias. Keeping the validated
+	// value in the same argv token prevents it from ever being reinterpreted as
+	// another native option if a malformed profile bypasses validation.
+	return []string{"--allowedTools=" + strings.Join(allow, ",")}
 }
 
-func applyClaudeWorkerPreauth(projectDir, profile, role, binary, session string, childArgs []string) ([]string, []string, bool) {
+func applyClaudeWorkerPreauth(projectDir, profile, role, binary, session string, childArgs []string, includeBuiltIn bool) ([]string, []string, bool) {
+	launcherActions := claudeLauncherPreauthActions(projectDir, profile, role, binary, session, includeBuiltIn)
+	return applyClaudeWorkerPreauthActions(childArgs, launcherActions)
+}
+
+func applyClaudeWorkerPreauthActions(childArgs, launcherActions []string) ([]string, []string, bool) {
 	out := append([]string(nil), childArgs...)
-	if !claudeWorkerPreauthEligible(projectDir, profile, role, binary) {
-		return out, nil, false
-	}
-	actions := claudeInScopePreauthAllowlist(session)
-	preauthArgs := claudePreauthChildArgs(actions)
-	if len(preauthArgs) == 0 {
-		return out, nil, false
-	}
-	if childArgsHasAllowedTools(out) {
-		if childArgsAllowedToolsEquals(out, strings.Join(actions, ",")) {
-			// Team launch previews emit launcher-owned preauth into the copied
-			// command. Treat the exact allowlist as ours so bootstrap eligibility
-			// and launch-record audit fields stay aligned with live launch.
-			return out, actions, false
+	explicit, found := collectClaudeAllowedTools(out)
+	if len(launcherActions) == 0 {
+		if found {
+			// Even without launcher-owned policy, canonicalize explicit native
+			// grants into the safe equals form and collapse duplicate aliases.
+			return replaceClaudeAllowedTools(out, explicit), explicit, false
 		}
 		return out, nil, false
 	}
-	return append(out, preauthArgs...), actions, true
+	// Every allowed-tools value already present in child argv is explicit by
+	// construction. Team preview never embeds launcher policy in that argv.
+	effective := appendUniquePermissionPatterns(explicit, launcherActions...)
+	return replaceClaudeAllowedTools(out, effective), effective, true
 }
 
-func stripTrailingLauncherPreauthArgs(childArgs, preauthorizedActions []string) []string {
-	preauthArgs := claudePreauthChildArgs(preauthorizedActions)
-	if len(preauthArgs) == 0 || !hasTrailingArgs(childArgs, preauthArgs) {
-		return childArgs
+func claudeLauncherPreauthActions(projectDir, profile, role, binary, session string, includeBuiltIn bool) []string {
+	var actions []string
+	if includeBuiltIn && claudeWorkerPreauthEligible(projectDir, profile, role, binary) {
+		actions = appendUniquePermissionPatterns(actions, claudeInScopePreauthAllowlist(session)...)
 	}
-	return append([]string(nil), childArgs[:len(childArgs)-len(preauthArgs)]...)
+	return appendUniquePermissionPatterns(actions, configuredClaudePermissionAllowlist(projectDir, profile, role, binary)...)
 }
 
-func childArgsHasAllowedTools(args []string) bool {
-	for _, arg := range args {
-		if arg == "--allowedTools" || strings.HasPrefix(arg, "--allowedTools=") {
-			return true
-		}
+func configuredClaudePermissionAllowlist(projectDir, profile, role, binary string) []string {
+	if normalizedAgentBinary(binary) != "claude" || strings.TrimSpace(role) == "" || !team.ExistsProfile(projectDir, profile) {
+		return nil
 	}
-	return false
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return nil
+	}
+	m, ok := teamMemberByRole(t, role)
+	if !ok || normalizedAgentBinary(m.Binary) != "claude" {
+		return nil
+	}
+	return appendUniquePermissionPatterns(nil, m.PermissionAllowlist...)
 }
 
-func childArgsAllowedToolsEquals(args []string, want string) bool {
-	for i, arg := range args {
-		if arg == "--allowedTools" && i+1 < len(args) && args[i+1] == want {
-			return true
-		}
-		if strings.TrimPrefix(arg, "--allowedTools=") != arg && strings.TrimPrefix(arg, "--allowedTools=") == want {
-			return true
-		}
+func appendUniquePermissionPatterns(dst []string, patterns ...string) []string {
+	seen := make(map[string]bool, len(dst)+len(patterns))
+	for _, pattern := range dst {
+		seen[pattern] = true
 	}
-	return false
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" || seen[pattern] {
+			continue
+		}
+		seen[pattern] = true
+		dst = append(dst, pattern)
+	}
+	return dst
 }
 
-func hasTrailingArgs(args, suffix []string) bool {
-	if len(suffix) == 0 || len(args) < len(suffix) {
-		return false
-	}
-	offset := len(args) - len(suffix)
-	for i := range suffix {
-		if args[offset+i] != suffix[i] {
-			return false
+func childArgsAllowedTools(args []string) []string {
+	values, _ := collectClaudeAllowedTools(args)
+	return values
+}
+
+// collectClaudeAllowedTools reads every native allowed-tools spelling before
+// the literal -- prompt boundary. Claude treats this option as variadic, while
+// amq-squad emits a single comma-joined value so the effective launch grant is
+// unambiguous and auditable.
+func collectClaudeAllowedTools(args []string) ([]string, bool) {
+	var values []string
+	found := false
+	for i := 0; i < len(args); {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		spec, inline, ok := nativeValueSpecForArg("claude", arg)
+		if !ok || spec.Canonical != "--allowed-tools" {
+			i++
+			continue
+		}
+		found = true
+		if inline {
+			if _, raw, ok := strings.Cut(arg, "="); ok {
+				values = appendUniquePermissionPatterns(values, strings.Split(raw, ",")...)
+			}
+			i++
+			continue
+		}
+		i++
+		for i < len(args) && args[i] != "--" && !strings.HasPrefix(args[i], "-") {
+			values = appendUniquePermissionPatterns(values, strings.Split(args[i], ",")...)
+			i++
 		}
 	}
-	return true
+	return values, found
+}
+
+func replaceClaudeAllowedTools(args, actions []string) []string {
+	clean := make([]string, 0, len(args)+2)
+	boundary := -1
+	for i := 0; i < len(args); {
+		arg := args[i]
+		if arg == "--" {
+			boundary = len(clean)
+			clean = append(clean, args[i:]...)
+			break
+		}
+		spec, inline, ok := nativeValueSpecForArg("claude", arg)
+		if !ok || spec.Canonical != "--allowed-tools" {
+			clean = append(clean, arg)
+			i++
+			continue
+		}
+		i++
+		if inline {
+			continue
+		}
+		for i < len(args) && args[i] != "--" && !strings.HasPrefix(args[i], "-") {
+			i++
+		}
+	}
+	grant := claudePreauthChildArgs(actions)
+	if boundary < 0 {
+		return append(clean, grant...)
+	}
+	out := make([]string, 0, len(clean)+len(grant))
+	out = append(out, clean[:boundary]...)
+	out = append(out, grant...)
+	out = append(out, clean[boundary:]...)
+	return out
+}
+
+// stripRecordedLauncherPreauth removes only the exact launcher-owned grant
+// identified by launch.Record.PreauthorizedActions. It recognizes both the
+// historical two-token spelling and the injection-safe equals spelling. Any
+// independently configured native allowed-tools value remains available via
+// the record's ClaudeArgs/ExplicitAllowedTools and is recomposed with current
+// member policy.
+func stripRecordedLauncherPreauth(args, preauthorizedActions []string) []string {
+	if len(preauthorizedActions) == 0 {
+		return append([]string(nil), args...)
+	}
+	want := strings.Join(preauthorizedActions, ",")
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); {
+		arg := args[i]
+		if arg == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+		spec, inline, ok := nativeValueSpecForArg("claude", arg)
+		if !ok || spec.Canonical != "--allowed-tools" {
+			out = append(out, arg)
+			i++
+			continue
+		}
+		if inline {
+			_, value, _ := strings.Cut(arg, "=")
+			if value == want {
+				i++
+				continue
+			}
+			out = append(out, arg)
+			i++
+			continue
+		}
+		if i+1 < len(args) && args[i+1] == want {
+			i += 2
+			continue
+		}
+		out = append(out, arg)
+		i++
+	}
+	return out
 }
 
 // claudeWorkerPreauthEligible reports whether an `agent up` launch is an

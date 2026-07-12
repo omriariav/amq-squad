@@ -98,9 +98,9 @@ func TestReadProfileRoundTrip(t *testing.T) {
 	}
 }
 
-// Schema 1 files must still load. Writes always re-emit schema 2 so a
-// future Read sees the upgraded value.
-func TestReadProfileAcceptsSchema1ThenWriteEmitsSchema2(t *testing.T) {
+// Schema 1 files must still load. A write without security-sensitive
+// permission allowlists upgrades only to the compatibility schema 3.
+func TestReadProfileAcceptsSchema1ThenWriteEmitsBaseSchema(t *testing.T) {
 	dir := t.TempDir()
 	teamsDir := filepath.Join(dir, DirName)
 	if err := os.MkdirAll(teamsDir, 0o755); err != nil {
@@ -135,8 +135,8 @@ func TestReadProfileAcceptsSchema1ThenWriteEmitsSchema2(t *testing.T) {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Schema != SchemaVersion {
-		t.Errorf("on-disk schema after Write = %d, want %d", decoded.Schema, SchemaVersion)
+	if decoded.Schema != BaseSchemaVersion {
+		t.Errorf("on-disk schema after Write = %d, want %d", decoded.Schema, BaseSchemaVersion)
 	}
 }
 

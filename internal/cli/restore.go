@@ -256,6 +256,9 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if rec.NoDefaultArgs {
 		args = append(args, "--no-default-args")
 	}
+	if rec.NoPreauthorizeInScope {
+		args = append(args, "--no-preauthorize-inscope")
+	}
 	if origin := strings.TrimSpace(rec.SpawnOrigin); origin != "" {
 		args = append(args, "--spawn-origin", origin)
 	}
@@ -320,6 +323,16 @@ func launchArgsFromRecord(rec launch.Record) []string {
 
 func restoreArgvFromRecord(rec launch.Record) []string {
 	argv := append([]string(nil), rec.Argv...)
+	// New records carry structural provenance. Strip the final merged grant only
+	// when launcher policy contributed, then restore the explicit source below.
+	// Legacy records lack both provenance fields, so retain the historical exact
+	// PreauthorizedActions stripping behavior for backward compatibility.
+	if len(rec.LauncherPreauthorizedActions) > 0 || len(rec.ExplicitAllowedTools) == 0 {
+		argv = stripRecordedLauncherPreauth(argv, rec.PreauthorizedActions)
+	}
+	if normalizedAgentBinary(rec.Binary) == "claude" && len(rec.ExplicitAllowedTools) > 0 {
+		argv = replaceClaudeAllowedTools(argv, rec.ExplicitAllowedTools)
+	}
 	if rec.Conversation != "" {
 		argv = stripConversationRestoreArgs(rec.Binary, argv, rec.Conversation)
 	}
@@ -482,6 +495,9 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	}
 	if rec.NoDefaultArgs {
 		b.WriteString(" --no-default-args")
+	}
+	if rec.NoPreauthorizeInScope {
+		b.WriteString(" --no-preauthorize-inscope")
 	}
 	if origin := strings.TrimSpace(rec.SpawnOrigin); origin != "" {
 		b.WriteString(" --spawn-origin ")

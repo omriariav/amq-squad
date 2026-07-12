@@ -633,6 +633,25 @@ drain your inbox.</li>
 </tr>
 </tbody>
 </table>
+<p>For a narrow Claude-only permission exception, configure a member's
+<code>permission_allowlist</code> in <code>team.json</code>, for example
+<code>["Bash(rm -rf /tmp/qa-review/*:*)"]</code>. The grant is scoped to
+that exact role, merged with any explicit native
+<code>--allowedTools</code>, visible in dry-run JSON and launch history,
+and rebuilt from current policy on resume so removed/narrowed grants are
+revoked. Validation rejects other binaries and values beginning with
+<code>-</code>; generated grants use one
+<code>--allowedTools=&lt;grant&gt;</code> token. The
+<code>--no-preauthorize-inscope</code> bit also round-trips. Preview
+commands keep launcher policy out of executable child argv;
+<code>agent up</code> recomputes it and the launch record stores
+launcher-owned versus explicit provenance separately, including
+equal-valued grants. Prefer scratch/worktree- specific patterns over
+broad command grants. Such profiles write schema 4; profiles without the
+field stay schema 3. Upgrade all readers/writers to v2.20+ before
+configuring it: pre-v2.20 binaries can silently ignore the field and
+lossily rewrite the profile. Use <code>amq-squad doctor</code> to detect
+version skew.</p>
 <p>Per-member <code>claude_args</code> / <code>codex_args</code> in
 <code>team.json</code> (v1.8.0+) carry native CLI args for one member
 only — the overlay verb above generates the flagship case (a
