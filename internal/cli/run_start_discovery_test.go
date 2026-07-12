@@ -73,3 +73,14 @@ func TestRunStartWizardProfilesExposePinnedRosterFacts(t *testing.T) {
 		t.Fatalf("member efforts = %+v", profiles[0].Members)
 	}
 }
+
+func TestClassifyRunStartWizardExistingProfileUsesSharedPlannerActions(t *testing.T) {
+	got := classifyRunStartWizardExistingProfile(2, 0, []resumePlan{{Action: resumeLive}, {Action: resumeFresh}}, false)
+	if got.State != "partly_running" || got.Backend != "resume" || !got.Executable || got.RestoreExisting {
+		t.Fatalf("live+fresh/no-record classification = %+v", got)
+	}
+	blocked := classifyRunStartWizardExistingProfile(1, 1, []resumePlan{{Action: resumeBlocked}}, false)
+	if blocked.State != "blocked" || blocked.Executable {
+		t.Fatalf("blocked planner action = %+v", blocked)
+	}
+}
