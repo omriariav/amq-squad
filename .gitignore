@@ -13,6 +13,7 @@ coverage.txt
 
 # Local scratch / RC build artifacts (never commit)
 amq-squad-rc-*
+/ci-artifacts/
 .pm-os/
 .claude/worktrees/
 

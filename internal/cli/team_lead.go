@@ -56,6 +56,10 @@ var externalLeadWakeCommand = exec.Command
 var externalLeadWakeReadyTimeout = 5 * time.Second
 var externalLeadWakePollInterval = 50 * time.Millisecond
 var externalLeadWakeStopTimeout = 2 * time.Second
+var externalLeadWakeProcessEvent = func(_ string, _ *exec.Cmd, _ error) {}
+var externalLeadWakeProcessGroupSignal = func(pgid int, signal syscall.Signal) error {
+	return syscall.Kill(-pgid, signal)
+}
 
 type teamLeadData struct {
 	Profile      string `json:"profile"`
@@ -576,8 +580,13 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 	if err := cmd.Start(); err != nil {
 		return leadWakeResult{}, err
 	}
+	externalLeadWakeProcessEvent("process_started", cmd, nil)
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		externalLeadWakeProcessEvent("process_wait_done", cmd, err)
+		done <- err
+	}()
 
 	deadline := time.Now().Add(externalLeadWakeReadyTimeout)
 	for {
@@ -586,11 +595,12 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 		}
 		select {
 		case err := <-done:
+			externalLeadWakeProcessEvent("done_observed", cmd, err)
 			if err == nil {
 				return leadWakeResult{Started: false, Detail: fmt.Sprintf("existing wake accepted for %s at %s", opts.Handle, opts.Root)}, nil
 			}
 			cleanupDetail := ""
-			if stopErr := stopExternalLeadWakeProcessGroup(cmd); stopErr != nil {
+			if stopErr := stopExternalLeadWakeProcessGroupAndWait(cmd); stopErr != nil {
 				cleanupDetail = fmt.Sprintf("failed to stop spawned wake process group %d: %v", cmd.Process.Pid, stopErr)
 			} else {
 				cleanupDetail = fmt.Sprintf("stopped spawned wake process group %d", cmd.Process.Pid)
@@ -633,14 +643,67 @@ func stopExternalLeadWakeProcess(cmd *exec.Cmd, done <-chan error) error {
 	}
 	killErr := stopExternalLeadWakeProcessGroup(cmd)
 	select {
-	case <-done:
+	case err := <-done:
+		externalLeadWakeProcessEvent("done_observed", cmd, err)
 	case <-time.After(externalLeadWakeStopTimeout):
 		return fmt.Errorf("timed out waiting for process exit")
 	}
+	// The helper can fork after the first group signal is delivered but before
+	// its leader is reaped. Once Wait completes the leader can no longer add a
+	// descendant, so sweep the process group again to catch that race.
+	finalKillErr := stopExternalLeadWakeProcessGroup(cmd)
+	priorKillSucceeded := killErr == nil || errors.Is(killErr, os.ErrProcessDone)
+	finalKillSucceeded := finalKillErr == nil || errors.Is(finalKillErr, os.ErrProcessDone)
+	if !priorKillSucceeded && !finalKillSucceeded {
+		return killErr
+	}
+	if !finalKillSucceeded && !(priorKillSucceeded && errors.Is(finalKillErr, syscall.EPERM)) {
+		return finalKillErr
+	}
+	return waitExternalLeadWakeProcessGroupGone(cmd, priorKillSucceeded || finalKillSucceeded)
+}
+
+func stopExternalLeadWakeProcessGroupAndWait(cmd *exec.Cmd) error {
+	killErr := stopExternalLeadWakeProcessGroup(cmd)
 	if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
 		return killErr
 	}
-	return nil
+	return waitExternalLeadWakeProcessGroupGone(cmd, true)
+}
+
+func waitExternalLeadWakeProcessGroupGone(cmd *exec.Cmd, priorKillSucceeded bool) error {
+	if cmd == nil || cmd.Process == nil || cmd.Process.Pid <= 0 {
+		return nil
+	}
+	pgid := cmd.Process.Pid
+	deadline := time.Now().Add(externalLeadWakeStopTimeout)
+	for {
+		probeErr := externalLeadWakeProcessGroupSignal(pgid, 0)
+		externalLeadWakeProcessEvent("quiescence_probe", cmd, probeErr)
+		if errors.Is(probeErr, syscall.ESRCH) {
+			return nil
+		}
+		// After a successful SIGKILL, Darwin can report EPERM while only
+		// already-killed, unsignalable group members remain.
+		if priorKillSucceeded && errors.Is(probeErr, syscall.EPERM) {
+			return nil
+		}
+		if probeErr != nil {
+			return fmt.Errorf("probe spawned wake process group %d: %w", pgid, probeErr)
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("timed out waiting for spawned wake process group %d to terminate", pgid)
+		}
+		resignalErr := stopExternalLeadWakeProcessGroup(cmd)
+		if resignalErr == nil || errors.Is(resignalErr, os.ErrProcessDone) {
+			priorKillSucceeded = true
+		} else if priorKillSucceeded && errors.Is(resignalErr, syscall.EPERM) {
+			return nil
+		} else if !errors.Is(resignalErr, syscall.ESRCH) {
+			return resignalErr
+		}
+		time.Sleep(externalLeadWakePollInterval)
+	}
 }
 
 func stopExternalLeadWakeProcessGroup(cmd *exec.Cmd) error {
@@ -651,16 +714,20 @@ func stopExternalLeadWakeProcessGroup(cmd *exec.Cmd) error {
 	if pid <= 0 {
 		return nil
 	}
-	err := syscall.Kill(-pid, syscall.SIGKILL)
+	externalLeadWakeProcessEvent("kill_attempt", cmd, nil)
+	err := externalLeadWakeProcessGroupSignal(pid, syscall.SIGKILL)
 	if err == nil {
+		externalLeadWakeProcessEvent("kill_result", cmd, nil)
 		return nil
 	}
 	if errors.Is(err, syscall.ESRCH) {
 		err = cmd.Process.Kill()
 		if errors.Is(err, os.ErrProcessDone) {
+			externalLeadWakeProcessEvent("kill_result", cmd, nil)
 			return nil
 		}
 	}
+	externalLeadWakeProcessEvent("kill_result", cmd, err)
 	return err
 }
 
