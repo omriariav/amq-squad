@@ -71,11 +71,13 @@ func TestLaunchArgsFromRecordReplaysWakeInject(t *testing.T) {
 		Session:        "issue-96",
 		WakeInjectVia:  "/opt/amq-inject",
 		WakeInjectArgs: []string{"--pane", "%42"},
+		WakeInjectMode: "raw",
 	}
 	want := []string{
 		"--role", "cto", "--session", "issue-96",
 		"--wake-inject-via", "/opt/amq-inject",
 		"--wake-inject-arg=--pane", "--wake-inject-arg=%42",
+		"--wake-inject-mode", "raw",
 		"--trust", "sandboxed", "--me", "cto", "codex",
 	}
 	if got := launchArgsFromRecord(rec); !reflect.DeepEqual(got, want) {
@@ -86,6 +88,7 @@ func TestLaunchArgsFromRecordReplaysWakeInject(t *testing.T) {
 		"--wake-inject-via /opt/amq-inject",
 		"--wake-inject-arg=--pane",
 		"--wake-inject-arg='%42'",
+		"--wake-inject-mode raw",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("emit command missing %q in: %s", want, cmd)
