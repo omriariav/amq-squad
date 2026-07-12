@@ -49,6 +49,7 @@ var externalLeadWakeCommand = exec.Command
 var externalLeadWakeReadyTimeout = 5 * time.Second
 var externalLeadWakePollInterval = 50 * time.Millisecond
 var externalLeadWakeStopTimeout = 2 * time.Second
+var externalLeadWakeProcessEvent = func(_ string, _ *exec.Cmd, _ error) {}
 
 type teamLeadData struct {
 	Profile      string `json:"profile"`
@@ -520,8 +521,13 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 	if err := cmd.Start(); err != nil {
 		return leadWakeResult{}, err
 	}
+	externalLeadWakeProcessEvent("process_started", cmd, nil)
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		externalLeadWakeProcessEvent("process_wait_done", cmd, err)
+		done <- err
+	}()
 
 	deadline := time.Now().Add(externalLeadWakeReadyTimeout)
 	for {
@@ -530,6 +536,7 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 		}
 		select {
 		case err := <-done:
+			externalLeadWakeProcessEvent("done_observed", cmd, err)
 			if err == nil {
 				return leadWakeResult{Started: false, Detail: fmt.Sprintf("existing wake accepted for %s at %s", opts.Handle, opts.Root)}, nil
 			}
@@ -577,12 +584,27 @@ func stopExternalLeadWakeProcess(cmd *exec.Cmd, done <-chan error) error {
 	}
 	killErr := stopExternalLeadWakeProcessGroup(cmd)
 	select {
-	case <-done:
+	case err := <-done:
+		externalLeadWakeProcessEvent("done_observed", cmd, err)
 	case <-time.After(externalLeadWakeStopTimeout):
 		return fmt.Errorf("timed out waiting for process exit")
 	}
+	// The helper can fork after the first group signal is delivered but before
+	// its leader is reaped. Once Wait completes the leader can no longer add a
+	// descendant, so sweep the process group again to catch that race.
+	finalKillErr := stopExternalLeadWakeProcessGroup(cmd)
 	if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
 		return killErr
+	}
+	if finalKillErr != nil && !errors.Is(finalKillErr, os.ErrProcessDone) {
+		// On Darwin a process group containing only already-killed, unreaped
+		// members can return EPERM after the leader's Wait completes. The first
+		// kill succeeded, so do not turn that best-effort final sweep into a
+		// false cleanup failure. A live same-user descendant accepts SIGKILL.
+		if killErr == nil && errors.Is(finalKillErr, syscall.EPERM) {
+			return nil
+		}
+		return finalKillErr
 	}
 	return nil
 }
@@ -595,16 +617,20 @@ func stopExternalLeadWakeProcessGroup(cmd *exec.Cmd) error {
 	if pid <= 0 {
 		return nil
 	}
+	externalLeadWakeProcessEvent("kill_attempt", cmd, nil)
 	err := syscall.Kill(-pid, syscall.SIGKILL)
 	if err == nil {
+		externalLeadWakeProcessEvent("kill_result", cmd, nil)
 		return nil
 	}
 	if errors.Is(err, syscall.ESRCH) {
 		err = cmd.Process.Kill()
 		if errors.Is(err, os.ErrProcessDone) {
+			externalLeadWakeProcessEvent("kill_result", cmd, nil)
 			return nil
 		}
 	}
+	externalLeadWakeProcessEvent("kill_result", cmd, err)
 	return err
 }
 
