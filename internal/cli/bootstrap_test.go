@@ -125,7 +125,7 @@ func TestBootstrapWorkerReadyHandshake(t *testing.T) {
 	for _, want := range []string{
 		"worker on a lead-orchestrated squad",
 		"As part of step 12",
-		`amq send --to cto --kind status --subject "READY: frontend-dev"`,
+		`printf '%s\n' 'loaded and idle; ready for dispatch' | amq send --to cto --kind status --subject "READY: frontend-dev" --body -`,
 		"Then wait (step 13)",
 	} {
 		if !strings.Contains(worker, want) {

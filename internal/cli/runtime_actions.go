@@ -437,9 +437,12 @@ Usage:
                  (--body TEXT | --body-file FILE | --body-file -) [--force]
                  [--override-namespace-conflict --reason WHY]
 
-Stages the prompt in a tmux paste buffer (via stdin, never a shell string) and
-pastes it into the agent's exact pane, then submits a single Enter. Multi-line
-prompts and text with quotes or shell metacharacters are delivered verbatim.
+Stages the resolved prompt in a tmux paste buffer (via stdin, never a shell
+string) and pastes it into the agent's exact pane, then submits a single Enter.
+Use --body-file FILE or --body-file - (stdin) for bodies containing code,
+commands, backticks, or $() syntax. Inline --body is suitable only for short
+plain prose: the caller's shell expands inline text before amq-squad receives
+argv, so no literal flag can recover text the shell already substituted.
 Errors clearly if the target pane is gone.
 
 By default it REFUSES to deliver into a pane whose agent looks busy (mid-turn),
@@ -447,9 +450,9 @@ since a prompt pushed over a working agent lands in a tool-result buffer and is
 lost; pass --force to deliver anyway.
 
 Examples:
-  amq-squad send --session issue-96 --role cto --body "please review PR #64"
   amq-squad send --session issue-96 --role qa --body-file ./prompt.md
   cat prompt.md | amq-squad send --session issue-96 --role cto --body-file -
+  amq-squad send --session issue-96 --role cto --body "please review PR #64"
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -462,6 +465,7 @@ Examples:
 	if err != nil {
 		return err
 	}
+	warnSuspiciousInlineBody("send", prompt, flagWasSet(fs, "body"), os.Stderr)
 	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
