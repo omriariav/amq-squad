@@ -110,6 +110,46 @@ func TestRunStartWizardProfilesDiscoversSuggestedFirstWithPlannerFingerprint(t *
 	}
 }
 
+func TestDiscoverWizardSessionCarriesRecordCountAndStructuredMemberEvidence(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	oldPlan := runStartWizardPlanMemberResume
+	t.Cleanup(func() { runStartWizardPlanMemberResume = oldPlan })
+	runStartWizardPlanMemberResume = func(in memberPlanInput) (resumePlan, error) {
+		plan := resumePlan{Role: in.Member.Role}
+		switch in.Member.Role {
+		case "cto":
+			plan.Action, plan.HasRestoreRecord, plan.SavedLaunchIdentity = resumeLive, true, "live-record"
+			plan.Saved = &resumeSavedLaunchSummary{Binary: "codex", Model: "saved-live", Effort: "high", NativeArgs: []string{"codex", "--saved-live"}}
+		case "qa":
+			plan.Action, plan.HasRestoreRecord, plan.SavedLaunchIdentity = resumeRestore, true, "restore-record"
+			plan.Saved = &resumeSavedLaunchSummary{Binary: "claude", Model: "saved-restore", Effort: "medium", NativeArgs: []string{"claude", "--saved-restore"}}
+		default:
+			plan.Action = resumeFresh
+		}
+		return plan, nil
+	}
+	tm := team.Team{Project: dir, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}, {Role: "qa", Handle: "qa", Binary: "claude", Session: "s"}, {Role: "dev", Handle: "dev", Binary: "codex", Session: "s", Model: "stored-fresh"}}}
+	summary := discoverRunStartWizardSession(tm, team.DefaultProfile, "s", runwizard.SessionSourceMemberPin, []string{"s"}, nil)
+	if summary.RecordCount != 2 || !summary.Classification.RestoreExisting || summary.Classification.Backend != runwizard.BackendResume || len(summary.Members) != 3 {
+		t.Fatalf("summary=%+v", summary)
+	}
+	if summary.Members[0].Action != runwizard.MemberActionLive || summary.Members[0].SavedLaunchIdentity != "live-record" || summary.Members[0].SavedModel != "saved-live" || summary.Members[0].SavedEffort != "high" || len(summary.Members[0].SavedNativeArgs) != 2 {
+		t.Fatalf("live structured evidence=%+v", summary.Members[0])
+	}
+	if summary.Members[1].Action != runwizard.MemberActionRestore || summary.Members[1].SavedLaunchIdentity != "restore-record" || summary.Members[1].SavedBinary != "claude" {
+		t.Fatalf("restore structured evidence=%+v", summary.Members[1])
+	}
+	if summary.Members[2].Action != runwizard.MemberActionFresh || summary.Members[2].Model != "stored-fresh" || summary.Members[2].SavedLaunchIdentity != "" {
+		t.Fatalf("fresh structured evidence=%+v", summary.Members[2])
+	}
+	summary.Members[0].SavedNativeArgs[0] = "mutated"
+	again := discoverRunStartWizardSession(tm, team.DefaultProfile, "s", runwizard.SessionSourceMemberPin, []string{"s"}, nil)
+	if again.Members[0].SavedNativeArgs[0] != "codex" {
+		t.Fatalf("saved argv was not deep-copied: %+v", again.Members[0])
+	}
+}
+
 func TestRunStartWizardSuggestedFirstBlocksPlannerAndNamespaceFailures(t *testing.T) {
 	t.Run("planner blocked", func(t *testing.T) {
 		dir := t.TempDir()

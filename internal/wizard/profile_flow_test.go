@@ -1,6 +1,10 @@
 package wizard
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestProfileFlowClearsIncompatibleAnswers(t *testing.T) {
 	tests := []struct {
@@ -57,6 +61,7 @@ func TestExistingSessionChangeClearsDownstreamAndDerivesBackend(t *testing.T) {
 	s := Spec{ProfileBranch: ProfileBranchExisting, Profile: "release", Session: "old", Model: "qa=x", Visibility: "current", Goal: "stale"}
 	s.SelectExistingSession(SessionSummary{
 		Name: "history-b", Source: SessionSourceLaunchHistory, Fingerprint: "fp-b",
+		RecordCount: 1, Members: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore}},
 		Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true},
 	})
 	if s.Session != "history-b" || s.SessionSource != SessionSourceLaunchHistory || s.Backend != BackendResume || !s.RestoreExisting || !s.RunExecutable {
@@ -64,6 +69,55 @@ func TestExistingSessionChangeClearsDownstreamAndDerivesBackend(t *testing.T) {
 	}
 	if s.Model != "" || s.Visibility != "" || s.Goal != "" {
 		t.Fatalf("session-dependent answers survived: %+v", s)
+	}
+}
+
+func TestSelectedSessionAndSpecCloneDeepCopyResumeMembers(t *testing.T) {
+	summary := SessionSummary{Name: "s", Fingerprint: "fp", RecordCount: 1, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Members: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore, SavedNativeArgs: []string{"saved"}}}}
+	s := Spec{ProfileBranch: ProfileBranchExisting, Profile: "release"}
+	s.SelectExistingSession(summary)
+	summary.Members[0].SavedNativeArgs[0] = "mutated-source"
+	if s.ResumeMembers[0].SavedNativeArgs[0] != "saved" {
+		t.Fatalf("selection aliased discovery members: %+v", s.ResumeMembers)
+	}
+	clone := s.Clone()
+	clone.ResumeMembers[0].SavedNativeArgs[0] = "mutated-clone"
+	if s.ResumeMembers[0].SavedNativeArgs[0] != "saved" {
+		t.Fatalf("Spec.Clone aliased resume members: %+v", s.ResumeMembers)
+	}
+}
+
+func TestInvalidateExistingRunClearsPolicyAndAllDownstreamState(t *testing.T) {
+	s := Spec{Scope: "project", Project: "/repo", Profile: "release", ProfileBranch: ProfileBranchExisting, Session: "s", SessionSource: SessionSourceMemberPin, Backend: BackendResume, RunState: RunStateStopped, RunExecutable: true, RestoreExisting: true, RecordCount: 1, DiscoveryFingerprint: "fp", ResumeMembers: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore}}, Model: "cto=x", Effort: "cto=high", OperatorMode: "lead_pane", SelfOperatorLead: "cto", SelfOperatorAllow: "merge", OperatorNotifications: true, OperatorNotificationsRequested: true, OperatorNotificationsSet: true, Visibility: "current", LayoutPreset: "lead-left", LauncherPane: "keep", Goal: "g", SeedFrom: "issue:1"}
+	s.InvalidateExistingRun()
+	if s.Scope != "project" || s.Project != "/repo" || s.Profile != "release" || s.ProfileBranch != ProfileBranchExisting {
+		t.Fatalf("invalidation lost upstream selection: %+v", s)
+	}
+	if s.Session != "" || s.Backend != "" || s.RunExecutable || s.RecordCount != 0 || len(s.ResumeMembers) != 0 || s.Model != "" || s.Effort != "" || s.OperatorMode != "" || s.OperatorNotifications || !s.OperatorNotificationsRequested || !s.OperatorNotificationsSet || s.Visibility != "" || s.LayoutPreset != "" || s.LauncherPane != "" || s.Goal != "" || s.SeedFrom != "" {
+		t.Fatalf("invalidation retained stale state: %+v", s)
+	}
+	s.SelectExistingSession(SessionSummary{Name: "fresh", Fingerprint: "new", Members: []SessionMemberSummary{{Role: "cto", Action: MemberActionFresh}}, Classification: RunClassification{State: RunStateNotStarted, Backend: BackendRunStart, Executable: true}})
+	if !s.OperatorNotificationsRequested || !s.OperatorNotificationsSet {
+		t.Fatalf("explicit notification intent was lost across refreshed reselection: %+v", s)
+	}
+}
+
+func TestFormatSavedNativeArgsIsBoundedAndTerminalSafe(t *testing.T) {
+	args := []string{"line1\nline2", "\x1b]52;c;clipboard\x07", strings.Repeat("x", 1000)}
+	for i := 0; i < 20; i++ {
+		args = append(args, fmt.Sprintf("arg-%02d", i))
+	}
+	got := FormatSavedNativeArgs(args)
+	if len(got) > maxSavedNativeArgsDisplay {
+		t.Fatalf("formatted args length=%d: %q", len(got), got)
+	}
+	if strings.ContainsAny(got, "\n\r\x1b\x07") {
+		t.Fatalf("formatted args contain raw terminal controls: %q", got)
+	}
+	for _, want := range []string{`\n`, `\x1b`, `\a`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("formatted args %q missing escaped %q", got, want)
+		}
 	}
 }
 

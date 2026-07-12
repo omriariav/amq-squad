@@ -2,14 +2,17 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
@@ -27,7 +30,10 @@ var (
 	runStartBubbleAdapter          func([]string, string) error
 	runStartWizardProjectExecute   = runRunStart
 	runStartWizardGlobalExecute    = runGlobalStart
+	runStartWizardResumeExecute    = runResume
+	runStartWizardInspectProject   = inspectRunStartWizardProject
 	runStartWizardConfirm          = promptRunStartWizardLaunch
+	runStartWizardResumeConfirm    = promptRunStartWizardResume
 	runStartWizardOpenTTY          = func() (io.ReadWriteCloser, error) { return os.OpenFile("/dev/tty", os.O_RDWR, 0) }
 	runStartWizardBubbleProgram    = runwizard.RunBubbleTea
 )
@@ -185,11 +191,21 @@ func runNumberedRunStartWizard(args []string, version string) error {
 	}
 	prefill.Scope = "project"
 	opts.Defaults = prefill
-	spec, err := runwizard.RunNumbered(reader, runStartWizardOutput, opts)
-	if err != nil {
-		return err
+	for {
+		spec, runErr := runwizard.RunNumbered(reader, runStartWizardOutput, opts)
+		if runErr != nil {
+			return runErr
+		}
+		finishErr := finishRunStartWizard(spec, version, reader, runStartWizardOutput)
+		var restart *wizardRestartError
+		if !errors.As(finishErr, &restart) {
+			return finishErr
+		}
+		discardWizardBufferedInput(reader)
+		opts.Defaults = restart.Defaults
+		opts.StartAtProfile = true
+		opts.RestartMessage = restart.Message
 	}
-	return finishRunStartWizard(spec, version, reader, runStartWizardOutput)
 }
 
 func runBubbleRunStartWizard(args []string, version string) error {
@@ -232,15 +248,32 @@ func runBubbleRunStartWizard(args []string, version string) error {
 			return err
 		}
 	}
-	result, err := runStartWizardBubbleProgram(tty, tty, opts)
-	if err != nil {
-		return err
+	for {
+		result, runErr := runStartWizardBubbleProgram(tty, tty, opts)
+		if runErr != nil {
+			return runErr
+		}
+		if result.Cancelled {
+			fmt.Fprintln(runStartWizardOutput, "Wizard cancelled. Nothing changed.")
+			return nil
+		}
+		finishErr := finishRunStartWizard(result.Spec, version, reader, tty)
+		var restart *wizardRestartError
+		if !errors.As(finishErr, &restart) {
+			return finishErr
+		}
+		discardWizardBufferedInput(reader)
+		opts.Defaults = restart.Defaults
+		opts.StartAtProfile = true
+		opts.RestartMessage = restart.Message
 	}
-	if result.Cancelled {
-		fmt.Fprintln(runStartWizardOutput, "Wizard cancelled. Nothing changed.")
-		return nil
+}
+
+func discardWizardBufferedInput(reader *bufio.Reader) {
+	if reader == nil || reader.Buffered() == 0 {
+		return
 	}
-	return finishRunStartWizard(result.Spec, version, reader, tty)
+	_, _ = reader.Discard(reader.Buffered())
 }
 
 func prepareRunStartWizard(args []string) (runwizard.Spec, runwizard.NumberedOptions, error) {
@@ -255,7 +288,7 @@ func prepareRunStartWizard(args []string) (runwizard.Spec, runwizard.NumberedOpt
 		}
 		prefill.Project = cwd
 	}
-	initialContext, err := inspectRunStartWizardProject(prefill.Project)
+	initialContext, err := runStartWizardInspectProject(prefill.Project)
 	if err != nil {
 		return runwizard.Spec{}, runwizard.NumberedOptions{}, err
 	}
@@ -267,12 +300,69 @@ func prepareRunStartWizard(args []string) (runwizard.Spec, runwizard.NumberedOpt
 		prefill.Backend = runwizard.BackendRunStart
 	}
 	opts := runwizard.NumberedOptions{
-		InspectProject: inspectRunStartWizardProject,
+		InspectProject: runStartWizardInspectProject,
 		ProfileExists: func(project, profile string) bool {
 			return team.ExistsProfile(strings.TrimSpace(project), strings.TrimSpace(profile))
 		},
 	}
 	return prefill, opts, nil
+}
+
+const wizardDiscoveryChangedMessage = "The selected profile or run changed while the wizard was open. Review the refreshed facts before continuing."
+
+type wizardRestartError struct {
+	Defaults runwizard.Spec
+	Message  string
+	Cause    error
+}
+
+func (e *wizardRestartError) Error() string {
+	if e.Cause != nil {
+		return e.Message + " (" + e.Cause.Error() + ")"
+	}
+	return e.Message
+}
+
+func (e *wizardRestartError) Unwrap() error { return e.Cause }
+
+func refreshWizardExistingSelection(spec runwizard.Spec) error {
+	if spec.ProfileBranch != runwizard.ProfileBranchExisting {
+		return nil
+	}
+	stale := func(cause error) error {
+		defaults := spec.Clone()
+		defaults.InvalidateExistingRun()
+		return &wizardRestartError{Defaults: defaults, Message: wizardDiscoveryChangedMessage, Cause: cause}
+	}
+	if strings.TrimSpace(spec.DiscoveryFingerprint) == "" {
+		return stale(fmt.Errorf("reviewed discovery fingerprint is empty"))
+	}
+	ctx, err := runStartWizardInspectProject(spec.Project)
+	if err != nil {
+		return stale(fmt.Errorf("refresh project discovery: %w", err))
+	}
+	for _, profile := range ctx.Profiles {
+		if !squadnamespace.ProfilesEqual(profile.Name, spec.Profile) {
+			continue
+		}
+		for _, session := range profile.Sessions {
+			if session.Name != spec.Session {
+				continue
+			}
+			if strings.TrimSpace(session.Fingerprint) == "" {
+				return stale(fmt.Errorf("refreshed discovery fingerprint is empty"))
+			}
+			if session.Fingerprint != spec.DiscoveryFingerprint {
+				return stale(fmt.Errorf("discovery fingerprint changed"))
+			}
+			if session.Classification.Backend != spec.Backend || session.Classification.State != spec.RunState || session.Classification.Executable != spec.RunExecutable || session.RecordCount != spec.RecordCount || (session.RecordCount > 0) != spec.RestoreExisting || !reflect.DeepEqual(session.Members, spec.ResumeMembers) {
+				return stale(fmt.Errorf("refreshed run contract changed without a fingerprint change"))
+			}
+			return nil
+		}
+		return stale(fmt.Errorf("selected session %q is missing", spec.Session))
+	}
+	return stale(fmt.Errorf("selected profile %q is missing", spec.Profile))
 }
 
 func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out io.Writer) error {
@@ -290,9 +380,32 @@ func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out
 		}
 		return runStartWizardGlobalExecute(liveArgs)
 	}
-	if spec.Backend == runwizard.BackendResume || spec.RunState == runwizard.RunStateRunning || spec.RunState == runwizard.RunStateBlocked || !spec.RunExecutable && spec.ProfileBranch == runwizard.ProfileBranchExisting {
-		fmt.Fprintf(out, "Selected existing run %s/%s is %s (backend=%s). Resume execution and action-scoped controls are deferred to the next wizard slice; nothing was previewed or launched.\n", spec.Profile, spec.Session, spec.RunState, spec.Backend)
+	if spec.ProfileBranch == runwizard.ProfileBranchExisting && !spec.RunExecutable {
+		fmt.Fprintf(out, "Selected existing run %s/%s is %s (backend=%s). This state is read-only; nothing was previewed or launched.\n", spec.Profile, spec.Session, spec.RunState, spec.Backend)
 		return nil
+	}
+	if err := refreshWizardExistingSelection(spec); err != nil {
+		return err
+	}
+	if spec.Backend == runwizard.BackendResume {
+		canonicalArgs, err := spec.ResumeArgs()
+		if err != nil {
+			return err
+		}
+		liveArgs := append(append([]string{}, canonicalArgs...), "--exec")
+		fmt.Printf("\nEquivalent flag command (preview only):\n  %s\n\n", shellCommand("amq-squad", append([]string{"resume"}, canonicalArgs...)...))
+		fmt.Printf("Equivalent flag command (live, only after explicit Yes):\n  %s\n\n", shellCommand("amq-squad", append([]string{"resume"}, liveArgs...)...))
+		if err := runStartWizardResumeExecute(canonicalArgs); err != nil {
+			return err
+		}
+		resume, err := runStartWizardResumeConfirm(in, out)
+		if err != nil || !resume {
+			return err
+		}
+		if err := refreshWizardExistingSelection(spec); err != nil {
+			return err
+		}
+		return runStartWizardResumeExecute(liveArgs)
 	}
 	preflight := runStartPreflight(runStartPreflightInput{
 		Project:                  spec.Project,
@@ -341,11 +454,27 @@ func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out
 	if err != nil || !launch {
 		return err
 	}
+	if err := refreshWizardExistingSelection(spec); err != nil {
+		return err
+	}
 	return runStartWizardProjectExecute(liveArgs, version)
 }
 
 func promptRunStartWizardLaunch(in io.Reader, out io.Writer) (bool, error) {
 	fmt.Fprint(out, "Launch now? [y/N] ")
+	line, err := readWizardLine(in)
+	if err == io.EOF {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	line = strings.ToLower(strings.TrimSpace(line))
+	return line == "y" || line == "yes", nil
+}
+
+func promptRunStartWizardResume(in io.Reader, out io.Writer) (bool, error) {
+	fmt.Fprint(out, "Resume now? [y/N] ")
 	line, err := readWizardLine(in)
 	if err == io.EOF {
 		return false, nil

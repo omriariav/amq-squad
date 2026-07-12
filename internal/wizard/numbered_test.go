@@ -331,13 +331,13 @@ func TestRunNumberedExistingProfileWithoutCLIDiscoveryFailsClosed(t *testing.T) 
 	}
 }
 
-func TestRunNumberedMultipleSessionsUseKnownRunListAndDeferResume(t *testing.T) {
-	profile := ProfileSummary{Name: "release", MemberCount: 2, Sessions: []SessionSummary{
+func TestRunNumberedMultipleSessionsUseKnownRunListAndComposeResume(t *testing.T) {
+	profile := ProfileSummary{Name: "release", MemberCount: 2, Members: []MemberSummary{{Role: "cto", Binary: "codex"}, {Role: "qa", Binary: "codex"}}, Sessions: []SessionSummary{
 		{Name: "run-a", Source: SessionSourceLaunchHistory, Classification: RunClassification{State: RunStateNotStarted, Backend: BackendRunStart, Executable: true}, Fresh: 2},
-		{Name: "run-b", Source: SessionSourceLaunchHistory, Fingerprint: "run-b-fp", Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Restore: 2},
+		{Name: "run-b", Source: SessionSourceLaunchHistory, Fingerprint: "run-b-fp", RecordCount: 2, Members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Restore: 2},
 	}}
 	var out bytes.Buffer
-	got, err := RunNumbered(strings.NewReader("\n\n2\n"), &out, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n\n2\n\n\n"), &out, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "release"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
@@ -349,10 +349,71 @@ func TestRunNumberedMultipleSessionsUseKnownRunListAndDeferResume(t *testing.T) 
 	if got.Session != "run-b" || got.Backend != BackendResume || got.RunState != RunStateStopped || got.DiscoveryFingerprint != "run-b-fp" {
 		t.Fatalf("known-session selection = %+v", got)
 	}
-	for _, want := range []string{"Which existing run do you want?", "run-a · launch_history · not started", "run-b · launch_history · stopped", "nothing will be previewed or launched"} {
+	for _, want := range []string{"Which existing run do you want?", "run-a · launch_history · not started", "run-b · launch_history · stopped", "restores saved launch", "existing brief is preserved"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestRunNumberedResumeActionScopedControls(t *testing.T) {
+	tests := []struct {
+		name    string
+		records int
+		state   RunState
+		members []SessionMemberSummary
+		input   string
+		model   string
+	}{
+		{name: "all restore", records: 2, state: RunStateStopped, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore, SavedBinary: "codex", SavedModel: "saved", SavedEffort: "high", SavedNativeArgs: []string{"--saved"}}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, input: "\n\n\n\n"},
+		{name: "restore fresh", records: 1, state: RunStateStopped, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Model: "stored", Action: MemberActionFresh}}, input: "\n\n2\n\n\n", model: "qa=gpt-5.6-sol"},
+		{name: "live fresh no records", state: RunStatePartly, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionLive}, {Role: "qa", Binary: "codex", Action: MemberActionFresh}}, input: "\n\n2\n\n\n", model: "qa=gpt-5.6-sol"},
+		{name: "live restore", records: 1, state: RunStatePartly, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionLive}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, input: "\n\n\n\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			summary := SessionSummary{Name: "s", Source: SessionSourceMemberPin, Fingerprint: "fp", RecordCount: tt.records, Members: tt.members, Classification: RunClassification{State: tt.state, Backend: BackendResume, Executable: true, RestoreExisting: tt.records > 0}}
+			profileMembers := make([]MemberSummary, 0, len(tt.members))
+			for _, member := range tt.members {
+				profileMembers = append(profileMembers, MemberSummary{Role: member.Role, Binary: member.Binary, Model: member.Model, Effort: member.Effort})
+			}
+			profile := ProfileSummary{Name: "release", MemberCount: len(tt.members), Members: profileMembers, Sessions: []SessionSummary{summary}}
+			var out bytes.Buffer
+			got, err := RunNumbered(strings.NewReader(tt.input), &out, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+				return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Model != tt.model || got.Effort != "" || got.Backend != BackendResume || got.RecordCount != tt.records {
+				t.Fatalf("resume answers=%+v", got)
+			}
+			if strings.Contains(out.String(), "effort override") || strings.Contains(out.String(), "Override cto at launch") {
+				t.Fatalf("resume exposed run-start controls:\n%s", out.String())
+			}
+			if _, err := got.ResumeArgs(); err != nil {
+				t.Fatalf("composed resume args: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunNumberedRunningAndBlockedExistingRunsRemainNonExecutable(t *testing.T) {
+	for _, state := range []RunState{RunStateRunning, RunStateBlocked} {
+		t.Run(string(state), func(t *testing.T) {
+			summary := SessionSummary{Name: "s", Source: SessionSourceMemberPin, Fingerprint: "fp", Classification: RunClassification{State: state}}
+			profile := ProfileSummary{Name: "release", MemberCount: 1, Members: []MemberSummary{{Role: "cto", Binary: "codex"}}, Sessions: []SessionSummary{summary}}
+			var out bytes.Buffer
+			got, err := RunNumbered(strings.NewReader("\n\n"), &out, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+				return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.RunExecutable || got.RunState != state || strings.Contains(out.String(), "Topology") || !strings.Contains(out.String(), "read-only") {
+				t.Fatalf("state=%s got=%+v output=%s", state, got, out.String())
+			}
+		})
 	}
 }
 

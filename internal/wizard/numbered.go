@@ -15,6 +15,8 @@ type NumberedOptions struct {
 	InspectProject func(project string) (ProjectContext, error)
 	ProfileExists  func(project, profile string) bool
 	Capabilities   CapabilitySet
+	StartAtProfile bool
+	RestartMessage string
 }
 
 type ProjectContext struct {
@@ -61,15 +63,19 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	if !ok {
 		r = bufio.NewReader(in)
 	}
-	s := opts.Defaults
+	s := opts.Defaults.Clone()
 
 	fmt.Fprintln(out, "amq-squad run start wizard")
 	fmt.Fprintln(out, "Answers are previewed first. Launch requires a separate explicit Yes after preview succeeds.")
 	fmt.Fprintln(out)
 
 	var err error
-	if s.Project, err = promptText(r, out, "Project directory", s.Project); err != nil {
-		return Spec{}, err
+	if opts.StartAtProfile {
+		fmt.Fprintln(out, defaultString(opts.RestartMessage, "The selected profile or run changed while the wizard was open. Review the refreshed facts before continuing."))
+	} else {
+		if s.Project, err = promptText(r, out, "Project directory", s.Project); err != nil {
+			return Spec{}, err
+		}
 	}
 	ctx := ProjectContext{Project: s.Project, SessionSuggestion: s.Session}
 	if opts.InspectProject != nil {
@@ -102,8 +108,8 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		}
 		s.SelectExistingSession(session)
 		fmt.Fprintf(out, "Derived session %q from %s; existing profiles never accept an arbitrary session name.\n", s.Session, s.SessionSource)
-		if s.Backend != BackendRunStart || !s.RunExecutable {
-			fmt.Fprintf(out, "Selected run state: %s. Backend: %s. Execution controls for this state arrive in the resume slice; nothing will be previewed or launched.\n", s.RunState, defaultString(string(s.Backend), "none"))
+		if !s.RunExecutable {
+			fmt.Fprintf(out, "Selected run state: %s. Backend: %s. This run is read-only in the wizard; nothing will be previewed or launched.\n", s.RunState, defaultString(string(s.Backend), "none"))
 			return s, nil
 		}
 	} else {
@@ -122,20 +128,52 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	existing := existingProfile != nil || (opts.ProfileExists != nil && opts.ProfileExists(s.Project, s.Profile))
 	if existing {
 		fmt.Fprintf(out, "Using existing profile %q; roster and lead mode remain authoritative.\n", s.Profile)
-		if existingProfile != nil {
-			fmt.Fprintf(out, "Lead: %s (%s)\n", defaultString(existingProfile.Lead, "(not configured)"), defaultString(existingProfile.LeadMode, "builder"))
-			for _, member := range existingProfile.Members {
-				fmt.Fprintf(out, "  - %s: %s, model=%s, effort=%s\n", member.Role, member.Binary, defaultString(member.Model, "automatic"), defaultString(member.Effort, "automatic"))
-			}
-		}
-		fmt.Fprintln(out)
 		s.Roles = ""
 		s.Binary = ""
 		s.Model = ""
 		s.Effort = ""
 		s.Lead = ""
 		s.LeadMode = ""
-		if existingProfile != nil {
+		if existingProfile != nil && s.Backend == BackendResume {
+			modelOverrides := map[string]string{}
+			memberOrder := make([]string, 0, len(s.ResumeMembers))
+			for _, member := range s.ResumeMembers {
+				memberOrder = append(memberOrder, member.Role)
+				switch member.Action {
+				case MemberActionLive:
+					fmt.Fprintf(out, "%s is already live; resume keeps its model=%s effort=%s unchanged.\n", member.Role, defaultString(member.Model, "automatic"), defaultString(member.Effort, "automatic"))
+				case MemberActionRestore:
+					fmt.Fprintf(out, "%s restores saved launch %s read-only (binary=%s model=%s effort=%s saved extra args=%s).\n", member.Role, defaultString(member.SavedLaunchIdentity, "recorded"), defaultString(member.SavedBinary, member.Binary), defaultString(member.SavedModel, "automatic"), defaultString(member.SavedEffort, "automatic"), FormatSavedNativeArgs(member.SavedNativeArgs))
+				case MemberActionFresh:
+					modelSel, promptErr := promptChoice(r, out, member.Role+" fresh-launch model", existingOverrideModelChoices(MemberSummary{Role: member.Role, Binary: member.Binary, Model: member.Model, Effort: member.Effort}), modelKeepChoice)
+					if promptErr != nil {
+						return Spec{}, promptErr
+					}
+					if modelSel == modelCustomChoice {
+						custom, customErr := promptOptionalOverride(r, out, member.Role+" fresh-launch model", defaultString(member.Model, "automatic"))
+						if customErr != nil {
+							return Spec{}, customErr
+						}
+						if custom != "" {
+							modelOverrides[member.Role] = custom
+						}
+					} else if modelSel != modelKeepChoice {
+						modelOverrides[member.Role] = modelSel
+					}
+				}
+			}
+			s.Model = renderAssignments(memberOrder, modelOverrides)
+			s.Effort = ""
+			s.OperatorMode = defaultString(existingProfile.OperatorMode, "unspecified")
+			s.OperatorNotifications = existingProfile.OperatorNotifications
+		} else if existingProfile != nil {
+			fmt.Fprintf(out, "Lead: %s (%s)\n", defaultString(existingProfile.Lead, "(not configured)"), defaultString(existingProfile.LeadMode, "builder"))
+			for _, member := range existingProfile.Members {
+				fmt.Fprintf(out, "  - %s: %s, model=%s, effort=%s\n", member.Role, member.Binary, defaultString(member.Model, "automatic"), defaultString(member.Effort, "automatic"))
+			}
+		}
+		fmt.Fprintln(out)
+		if existingProfile != nil && s.Backend != BackendResume {
 			modelOverrides := map[string]string{}
 			effortOverrides := map[string]string{}
 			memberOrder := make([]string, 0, len(existingProfile.Members))
@@ -288,14 +326,21 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		}
 		s.OperatorNotifications = choice == "yes"
 	}
-	if s.LauncherPane, err = promptChoice(r, out, "Launcher pane", launcherPaneChoices(s.Visibility, s.ExternalLead), defaultLauncherPane(s.LauncherPane, s.Visibility, s.ExternalLead)); err != nil {
-		return Spec{}, err
-	}
-	if s.Goal, err = promptText(r, out, "Goal text (optional)", s.Goal); err != nil {
-		return Spec{}, err
-	}
-	if s.SeedFrom, err = promptText(r, out, "Seed brief from file:/issue:/gh: reference (optional)", s.SeedFrom); err != nil {
-		return Spec{}, err
+	if s.Backend == BackendResume {
+		s.LauncherPane = ""
+		s.Goal = ""
+		s.SeedFrom = ""
+		fmt.Fprintln(out, "This wizard pane stays open; resume only opens missing agent panes. The existing brief is preserved.")
+	} else {
+		if s.LauncherPane, err = promptChoice(r, out, "Launcher pane", launcherPaneChoices(s.Visibility, s.ExternalLead), defaultLauncherPane(s.LauncherPane, s.Visibility, s.ExternalLead)); err != nil {
+			return Spec{}, err
+		}
+		if s.Goal, err = promptText(r, out, "Goal text (optional)", s.Goal); err != nil {
+			return Spec{}, err
+		}
+		if s.SeedFrom, err = promptText(r, out, "Seed brief from file:/issue:/gh: reference (optional)", s.SeedFrom); err != nil {
+			return Spec{}, err
+		}
 	}
 
 	fmt.Fprintln(out)

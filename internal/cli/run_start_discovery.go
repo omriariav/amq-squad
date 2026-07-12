@@ -315,7 +315,7 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 	if len(active) == 0 && len(t.Members) > 0 {
 		classification = runwizard.RunClassification{State: runwizard.RunStateBlocked, Detail: "no current profile members belong to this session"}
 	}
-	summary := runwizard.SessionSummary{Name: session, Source: source, Classification: classification}
+	summary := runwizard.SessionSummary{Name: session, Source: source, Classification: classification, RecordCount: recordCount}
 	fingerprint := runwizard.DiscoveryFingerprintInput{Profile: profile, Lead: t.Lead, LeadMode: team.EffectiveLeadMode(t), Session: session, SessionSource: string(source), MatchingHistorySessions: append([]string(nil), knownSessions...), RecordCount: recordCount}
 	operator := team.EffectiveOperator(t)
 	self := team.EffectiveSelfOperator(t, session)
@@ -349,6 +349,10 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 		native := composeBinaryArgs(member.Binary, binaryArgsFor(member.Binary, t.BinaryArgs), member.ExtraArgs())
 		fingerprint.Roster = append(fingerprint.Roster, runwizard.DiscoveryMember{Role: member.Role, Handle: member.Handle, Binary: member.Binary, CWD: member.EffectiveCWD(t.Project), Session: member.Session, NativeArgs: native, Model: member.Model, Effort: memberEffort(member)})
 	}
+	membersByRole := make(map[string]team.Member, len(t.Members))
+	for _, member := range t.Members {
+		membersByRole[member.Role] = member
+	}
 	for _, plan := range plans {
 		action := runwizard.MemberActionBlocked
 		switch plan.Action {
@@ -361,6 +365,18 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 		default:
 			summary.Blocked++
 		}
+		member := membersByRole[plan.Role]
+		row := runwizard.SessionMemberSummary{
+			Role: plan.Role, Binary: member.Binary, Model: member.Model, Effort: memberEffort(member), Action: action,
+			SavedLaunchIdentity: plan.SavedLaunchIdentity,
+		}
+		if plan.Saved != nil {
+			row.SavedBinary = plan.Saved.Binary
+			row.SavedModel = plan.Saved.Model
+			row.SavedEffort = plan.Saved.Effort
+			row.SavedNativeArgs = append([]string(nil), plan.Saved.NativeArgs...)
+		}
+		summary.Members = append(summary.Members, row)
 		fingerprint.MemberPlans = append(fingerprint.MemberPlans, runStartWizardDiscoveryMemberPlan(plan, action))
 	}
 	if len(active) == 0 {

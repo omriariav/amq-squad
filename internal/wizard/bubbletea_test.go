@@ -240,6 +240,96 @@ func TestBubbleMultipleKnownSessionsUseListAndBackDropsStaleRun(t *testing.T) {
 	}
 }
 
+func TestBubbleResumeActionScopedControls(t *testing.T) {
+	tests := []struct {
+		name    string
+		records int
+		state   RunState
+		members []SessionMemberSummary
+		model   string
+	}{
+		{name: "all restore", records: 2, state: RunStateStopped, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore, SavedModel: "saved", SavedEffort: "high", SavedNativeArgs: []string{"--saved"}}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}},
+		{name: "restore fresh", records: 1, state: RunStateStopped, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Action: MemberActionFresh}}, model: "qa=gpt-5.6-sol"},
+		{name: "live fresh", state: RunStatePartly, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionLive}, {Role: "qa", Binary: "codex", Action: MemberActionFresh}}, model: "qa=gpt-5.6-sol"},
+		{name: "live restore", records: 1, state: RunStatePartly, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionLive}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			summary := SessionSummary{Name: "s", Source: SessionSourceMemberPin, Fingerprint: "fp", RecordCount: tt.records, Members: tt.members, Classification: RunClassification{State: tt.state, Backend: BackendResume, Executable: true, RestoreExisting: tt.records > 0}}
+			profile := ProfileSummary{Name: "release", MemberCount: len(tt.members), OperatorMode: "lead_pane", Sessions: []SessionSummary{summary}}
+			for _, member := range tt.members {
+				profile.Members = append(profile.Members, MemberSummary{Role: member.Role, Binary: member.Binary, Model: member.Model, Effort: member.Effort})
+			}
+			m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+				return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			for _, member := range tt.members {
+				if m.stage != stageResumeMember || m.currentResumeMember().Role != member.Role {
+					t.Fatalf("member stage=%v member=%+v", m.stage, m.currentResumeMember())
+				}
+				if member.Action == MemberActionFresh {
+					m.cursor = 1
+				}
+				m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			}
+			if m.stage != stageTopology || m.spec.Model != tt.model || m.spec.Effort != "" {
+				t.Fatalf("post-member state stage=%v spec=%+v", m.stage, m.spec)
+			}
+			for _, wantStage := range []bubbleStage{stageLayoutPreset, stageOperator, stageOperatorNotifications, stageConfirm} {
+				m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+				if m.stage != wantStage {
+					t.Fatalf("stage=%v want=%v", m.stage, wantStage)
+				}
+			}
+			if _, err := m.spec.ResumeArgs(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestBubbleRunningAndBlockedExistingRunsRemainNonExecutable(t *testing.T) {
+	for _, state := range []RunState{RunStateRunning, RunStateBlocked} {
+		t.Run(string(state), func(t *testing.T) {
+			summary := SessionSummary{Name: "s", Source: SessionSourceMemberPin, Fingerprint: "fp", Classification: RunClassification{State: state}}
+			profile := ProfileSummary{Name: "release", MemberCount: 1, Members: []MemberSummary{{Role: "cto", Binary: "codex"}}, Sessions: []SessionSummary{summary}}
+			m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+				return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			if !m.done || m.spec.RunExecutable || m.stage == stageConfirm {
+				t.Fatalf("nonexec state reached execution: state=%s model=%+v", state, m)
+			}
+		})
+	}
+}
+
+func TestNewBubbleModelRestartStartsAtProfileWithFreshContext(t *testing.T) {
+	stale := Spec{Scope: "project", Project: "/repo", Profile: "release", ProfileBranch: ProfileBranchExisting, Session: "old", Backend: BackendResume, RunExecutable: true, DiscoveryFingerprint: "old", Model: "qa=old", Visibility: "current"}
+	stale.InvalidateExistingRun()
+	freshSummary := SessionSummary{Name: "new", Fingerprint: "fresh", Classification: RunClassification{State: RunStateRunning}}
+	fresh := ProjectContext{Project: "/repo", OriginSlug: "fresh/context", Profiles: []ProfileSummary{{Name: "release", MemberCount: 1, Sessions: []SessionSummary{freshSummary}}}}
+	m, err := NewBubbleModel(NumberedOptions{Defaults: stale, StartAtProfile: true, RestartMessage: "refresh required", InspectProject: func(string) (ProjectContext, error) { return fresh, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.stage != stageProfile || m.spec.Profile != "release" || m.spec.ProfileBranch != ProfileBranchExisting || m.spec.Session != "" || m.spec.Backend != "" || m.ctx.OriginSlug != "fresh/context" || len(m.history) != 0 || m.err == nil || !strings.Contains(m.err.Error(), "refresh required") {
+		t.Fatalf("restart model=%+v", m)
+	}
+	if m.defaultCursor() != 0 || len(m.choices()) != 2 || !strings.Contains(m.choices()[0].label, "new/running") {
+		t.Fatalf("restart choices=%+v cursor=%d", m.choices(), m.defaultCursor())
+	}
+}
+
 func TestBubbleBackRefreshRejectsChangedDiscoveryAndRetainsB(t *testing.T) {
 	calls := 0
 	ctxA := bubbleBackContext("reviewed-a", "context-a")

@@ -2,8 +2,11 @@ package wizard
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
+
+const maxSavedNativeArgsDisplay = 240
 
 type ProfileBranch string
 
@@ -29,10 +32,28 @@ type SessionSummary struct {
 	Source         SessionSource
 	Classification RunClassification
 	Fingerprint    string
+	RecordCount    int
+	Members        []SessionMemberSummary
 	Live           int
 	Restore        int
 	Fresh          int
 	Blocked        int
+}
+
+// SessionMemberSummary is the action-scoped member plan retained by the
+// answer model. Resume controls are derived from Action: live and restore are
+// read-only, while launch-fresh may carry a model-only override.
+type SessionMemberSummary struct {
+	Role                string
+	Binary              string
+	Model               string
+	Effort              string
+	Action              MemberAction
+	SavedLaunchIdentity string
+	SavedBinary         string
+	SavedModel          string
+	SavedEffort         string
+	SavedNativeArgs     []string
 }
 
 func (s SessionSummary) Label() string {
@@ -106,8 +127,10 @@ func (s *Spec) SelectExistingSession(session SessionSummary) {
 	s.RunState = session.Classification.State
 	s.Backend = session.Classification.Backend
 	s.RunExecutable = session.Classification.Executable
-	s.RestoreExisting = session.Classification.RestoreExisting
+	s.RecordCount = session.RecordCount
+	s.RestoreExisting = session.RecordCount > 0
 	s.DiscoveryFingerprint = session.Fingerprint
+	s.ResumeMembers = cloneSessionMembers(session.Members)
 	if changed {
 		s.clearDownstreamRunAnswers()
 		// restore the just-selected authoritative facts cleared above
@@ -116,8 +139,10 @@ func (s *Spec) SelectExistingSession(session SessionSummary) {
 		s.RunState = session.Classification.State
 		s.Backend = session.Classification.Backend
 		s.RunExecutable = session.Classification.Executable
-		s.RestoreExisting = session.Classification.RestoreExisting
+		s.RecordCount = session.RecordCount
+		s.RestoreExisting = session.RecordCount > 0
 		s.DiscoveryFingerprint = session.Fingerprint
+		s.ResumeMembers = cloneSessionMembers(session.Members)
 	}
 }
 
@@ -132,7 +157,9 @@ func (s *Spec) SelectNewSession(session string) {
 	s.Backend = BackendRunStart
 	s.RunExecutable = true
 	s.RestoreExisting = false
+	s.RecordCount = 0
 	s.DiscoveryFingerprint = ""
+	s.ResumeMembers = nil
 }
 
 func (s *Spec) clearProfileAndRun() {
@@ -155,7 +182,9 @@ func (s *Spec) clearAuthoritativeRunAnswers() {
 	s.Backend = ""
 	s.RunExecutable = false
 	s.RestoreExisting = false
+	s.RecordCount = 0
 	s.DiscoveryFingerprint = ""
+	s.ResumeMembers = nil
 }
 
 func (s *Spec) clearFreshProfileAnswers() {
@@ -180,4 +209,81 @@ func (s *Spec) clearDownstreamRunAnswers() {
 	s.ExternalLead = false
 	s.Goal = ""
 	s.SeedFrom = ""
+}
+
+// InvalidateExistingRun returns the answer model to Profile & run after an
+// authoritative fingerprint delta. Project/profile selection remains the
+// default; the reviewed run, action controls, and every downstream answer are
+// discarded so a prior Yes cannot be replayed.
+func (s *Spec) InvalidateExistingRun() {
+	s.clearSelectedRun()
+	s.OperatorMode = ""
+	s.SelfOperatorLead = ""
+	s.SelfOperatorAllow = ""
+	s.OperatorNotifications = false
+}
+
+func (s Spec) Clone() Spec {
+	s.ResumeMembers = cloneSessionMembers(s.ResumeMembers)
+	return s
+}
+
+func cloneSessionMembers(members []SessionMemberSummary) []SessionMemberSummary {
+	out := append([]SessionMemberSummary(nil), members...)
+	for i := range out {
+		out[i].SavedNativeArgs = append([]string(nil), members[i].SavedNativeArgs...)
+	}
+	return out
+}
+
+// FormatSavedNativeArgs renders only the structured extra-option subset kept
+// by discovery. It is deliberately bounded and quoted so terminal controls,
+// newlines, and oversized values cannot become wizard UI content.
+func FormatSavedNativeArgs(args []string) string {
+	if len(args) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, minInt(len(args), 8))
+	used := 0
+	for i, arg := range args {
+		if i == 8 {
+			break
+		}
+		runes := []rune(arg)
+		truncated := len(runes) > 32
+		if truncated {
+			runes = runes[:32]
+		}
+		available := maxSavedNativeArgsDisplay - used
+		if len(parts) > 0 {
+			available--
+		}
+		for {
+			value := string(runes)
+			if truncated {
+				value += "…"
+			}
+			quoted := strconv.QuoteToASCII(value)
+			if len(quoted) <= available {
+				parts = append(parts, quoted)
+				used += len(quoted)
+				if len(parts) > 1 {
+					used++
+				}
+				break
+			}
+			if len(runes) == 0 {
+				return strings.Join(append(parts, "…"), " ")
+			}
+			runes = runes[:len(runes)-1]
+			truncated = true
+		}
+	}
+	if len(args) > len(parts) {
+		candidate := strings.Join(append(append([]string(nil), parts...), "…"), " ")
+		if len(candidate) <= maxSavedNativeArgsDisplay {
+			return candidate
+		}
+	}
+	return strings.Join(parts, " ")
 }

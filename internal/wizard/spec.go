@@ -2,7 +2,10 @@
 // It deliberately returns canonical flag arguments and never launches agents.
 package wizard
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Backend is the canonical command family selected by the answer model. The
 // UI records it explicitly so execution never infers resume-vs-start from a
@@ -29,7 +32,9 @@ type Spec struct {
 	RunState                       RunState
 	RunExecutable                  bool
 	RestoreExisting                bool
+	RecordCount                    int
 	DiscoveryFingerprint           string
+	ResumeMembers                  []SessionMemberSummary
 	Roles                          string
 	Binary                         string
 	Model                          string
@@ -57,6 +62,134 @@ type Spec struct {
 	GlobalCodexArgs                string
 	GlobalClaudeArgs               string
 	GlobalWindow                   string
+}
+
+// ResumeArgs renders the canonical plan-only resume argv. The restore guard is
+// a direct statement about matching history, and model overrides are validated
+// and restricted to launch-fresh members because live and restore actions are
+// immutable.
+func (s Spec) ResumeArgs() ([]string, error) {
+	if s.Backend != BackendResume || !s.RunExecutable || s.ProfileBranch != ProfileBranchExisting {
+		return nil, fmt.Errorf("resume arguments require an executable existing-profile resume selection")
+	}
+	if strings.TrimSpace(s.DiscoveryFingerprint) == "" {
+		return nil, fmt.Errorf("resume arguments require a non-empty discovery fingerprint")
+	}
+	if strings.TrimSpace(s.Project) == "" || strings.TrimSpace(s.Profile) == "" || strings.TrimSpace(s.Session) == "" || len(s.ResumeMembers) == 0 {
+		return nil, fmt.Errorf("resume arguments require project, profile, session, and a non-empty member plan")
+	}
+	if s.RecordCount < 0 || s.RestoreExisting != (s.RecordCount > 0) {
+		return nil, fmt.Errorf("resume restore guard is inconsistent with matching record count %d", s.RecordCount)
+	}
+	if strings.TrimSpace(s.Effort) != "" || strings.TrimSpace(s.CodexArgs) != "" || strings.TrimSpace(s.ClaudeArgs) != "" || strings.TrimSpace(s.LauncherPane) != "" || strings.TrimSpace(s.Goal) != "" || strings.TrimSpace(s.SeedFrom) != "" {
+		return nil, fmt.Errorf("resume answer model contains unsupported effort, native-arg, launcher, goal, or seed controls")
+	}
+	args := make([]string, 0, 16)
+	appendValue := func(name, value string) {
+		if value = strings.TrimSpace(value); value != "" {
+			args = append(args, name, value)
+		}
+	}
+	appendValue("--project", s.Project)
+	appendValue("--profile", s.Profile)
+	appendValue("--session", s.Session)
+	if s.RecordCount > 0 {
+		args = append(args, "--restore-existing")
+	}
+	models, err := parseResumeModelAssignments(s.Model)
+	if err != nil {
+		return nil, err
+	}
+	roles := make([]string, 0, len(s.ResumeMembers))
+	allowed := make(map[string]string)
+	actions := make(map[string]MemberAction, len(s.ResumeMembers))
+	runnable := 0
+	for _, member := range s.ResumeMembers {
+		if _, exists := actions[member.Role]; exists || strings.TrimSpace(member.Role) == "" {
+			return nil, fmt.Errorf("resume member plan contains an empty or duplicate role %q", member.Role)
+		}
+		actions[member.Role] = member.Action
+		switch member.Action {
+		case MemberActionLive, MemberActionRestore, MemberActionFresh:
+			if member.Action != MemberActionLive {
+				runnable++
+			}
+		default:
+			return nil, fmt.Errorf("resume member %q has non-executable action %q", member.Role, member.Action)
+		}
+		if member.Action != MemberActionFresh {
+			continue
+		}
+		if value := strings.TrimSpace(models[member.Role]); value != "" {
+			roles = append(roles, member.Role)
+			allowed[member.Role] = value
+		}
+	}
+	if runnable == 0 {
+		return nil, fmt.Errorf("resume member plan has no restore or launch-fresh action")
+	}
+	for role := range models {
+		action, exists := actions[role]
+		if !exists || action != MemberActionFresh {
+			return nil, fmt.Errorf("resume model override for %q is not allowed for action %q", role, action)
+		}
+	}
+	appendValue("--model", renderAssignments(roles, allowed))
+	target, layout, err := resumePlacement(s.Visibility, s.LayoutPreset)
+	if err != nil {
+		return nil, err
+	}
+	appendValue("--target", target)
+	appendValue("--layout", layout)
+	return args, nil
+}
+
+func resumePlacement(visibility, layout string) (string, string, error) {
+	switch strings.TrimSpace(visibility) {
+	case "current":
+		switch strings.TrimSpace(layout) {
+		case "lead-left", "vertical", "":
+			return "current-window", "vertical", nil
+		case "lead-top", "horizontal":
+			return "current-window", "horizontal", nil
+		case "even-grid", "tiled":
+			return "current-window", "tiled", nil
+		default:
+			return "", "", fmt.Errorf("unsupported current-window resume layout %q", layout)
+		}
+	case "detached":
+		if layout = strings.TrimSpace(layout); layout != "" && layout != "tiled" {
+			return "", "", fmt.Errorf("detached resume placement does not accept layout preset %q", layout)
+		}
+		return "new-session", "tiled", nil
+	case "sibling-tabs", "":
+		if layout = strings.TrimSpace(layout); layout != "" && layout != "one-window-per-agent" {
+			return "", "", fmt.Errorf("sibling-tabs resume placement requires one-window-per-agent layout, got %q", layout)
+		}
+		return "new-window", "tiled", nil
+	default:
+		return "", "", fmt.Errorf("unsupported resume placement %q", visibility)
+	}
+}
+
+func parseResumeModelAssignments(raw string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		role, value, ok := strings.Cut(item, "=")
+		role, value = strings.ToLower(strings.TrimSpace(role)), strings.TrimSpace(value)
+		if !ok || role == "" || value == "" {
+			return nil, fmt.Errorf("invalid resume model assignment %q", item)
+		}
+		if _, exists := out[role]; exists {
+			return nil, fmt.Errorf("duplicate resume model assignment for %q", role)
+		}
+		out[role] = value
+	}
+	return out, nil
 }
 
 // GlobalArgs renders only global-start flags. Project roster and topology
