@@ -49,8 +49,12 @@ type Record struct {
 	Model            string   `json:"model,omitempty"`
 	Trust            string   `json:"trust,omitempty"`
 	NoDefaultArgs    bool     `json:"no_default_args,omitempty"`
-	SpawnOrigin      string   `json:"spawn_origin,omitempty"`
-	SpawnDepth       int      `json:"spawn_depth,omitempty"`
+	// NoPreauthorizeInScope records the --no-preauthorize-inscope choice so a
+	// replay never silently restores the built-in worker grant. Older records
+	// omit the field and retain the historical include-built-in behavior.
+	NoPreauthorizeInScope bool   `json:"no_preauthorize_inscope,omitempty"`
+	SpawnOrigin           string `json:"spawn_origin,omitempty"`
+	SpawnDepth            int    `json:"spawn_depth,omitempty"`
 	// AdoptionMode records how this agent became part of the visible runtime:
 	// managed_window, managed_current_window, managed_session, bare_agent_up,
 	// external, unmanaged. Status treats missing/unknown values fail-closed for
@@ -83,14 +87,20 @@ type Record struct {
 	// and NOC/status surfaces must fall back to AMQ task + brief binding unless
 	// a visible lead record carries native evidence.
 	GoalBinding *GoalBinding `json:"goal_binding,omitempty"`
-	// PreauthorizedActions records the in-scope worker actions amq-squad
-	// pre-authorized at launch (#296) — the Claude --allowedTools patterns that
-	// let an orchestrated worker create its PR without a permission prompt. It is
-	// audit evidence of exactly what was granted; feature-branch push (future
-	// work), main-branch push, tags, releases, and destructive git are never in
-	// this list. Additive and omitted for legacy records and launches where no
-	// pre-authorization applied.
+	// PreauthorizedActions records the effective Claude --allowedTools patterns
+	// amq-squad granted at launch: explicit native values plus the narrow
+	// built-in worker action and current per-member permission_allowlist. It is
+	// audit evidence of exactly what was granted to this role; additive and
+	// omitted for legacy records and launches where no pre-authorization applied.
 	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
+	// LauncherPreauthorizedActions records only the built-in and current member
+	// policy contribution. Keeping it separate from ExplicitAllowedTools makes
+	// equal-valued grants retain their source provenance across replay.
+	LauncherPreauthorizedActions []string `json:"launcher_preauthorized_actions,omitempty"`
+	// ExplicitAllowedTools preserves native allowed-tools values that existed
+	// before launcher policy was composed. Replay removes the old merged grant,
+	// then restores these explicit values before applying current policy.
+	ExplicitAllowedTools []string `json:"explicit_allowed_tools,omitempty"`
 	// WakeInjectVia and WakeInjectArgs record AMQ 0.37.0 external wake
 	// injector settings so resume/replay can repair and restart the same
 	// digest-bound wake target later.

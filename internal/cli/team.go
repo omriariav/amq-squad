@@ -596,14 +596,15 @@ type teamInitDryRun struct {
 }
 
 type teamProfilePlanMember struct {
-	Role       string   `json:"role"`
-	Handle     string   `json:"handle"`
-	Binary     string   `json:"binary"`
-	Model      string   `json:"model,omitempty"`
-	CWD        string   `json:"cwd"`
-	Session    string   `json:"session"`
-	ClaudeArgs []string `json:"claude_args,omitempty"`
-	CodexArgs  []string `json:"codex_args,omitempty"`
+	Role                string   `json:"role"`
+	Handle              string   `json:"handle"`
+	Binary              string   `json:"binary"`
+	Model               string   `json:"model,omitempty"`
+	CWD                 string   `json:"cwd"`
+	Session             string   `json:"session"`
+	ClaudeArgs          []string `json:"claude_args,omitempty"`
+	CodexArgs           []string `json:"codex_args,omitempty"`
+	PermissionAllowlist []string `json:"permission_allowlist,omitempty"`
 }
 
 type teamProfilePlan struct {
@@ -699,14 +700,15 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 	rows := make([]teamProfilePlanMember, 0, len(p.Team.Members))
 	for _, m := range orderedTeamMembers(p.Team.Members) {
 		rows = append(rows, teamProfilePlanMember{
-			Role:       m.Role,
-			Handle:     m.Handle,
-			Binary:     m.Binary,
-			Model:      m.Model,
-			CWD:        m.EffectiveCWD(p.Team.Project),
-			Session:    m.Session,
-			ClaudeArgs: m.ClaudeArgs,
-			CodexArgs:  m.CodexArgs,
+			Role:                m.Role,
+			Handle:              m.Handle,
+			Binary:              m.Binary,
+			Model:               m.Model,
+			CWD:                 m.EffectiveCWD(p.Team.Project),
+			Session:             m.Session,
+			ClaudeArgs:          m.ClaudeArgs,
+			CodexArgs:           m.CodexArgs,
+			PermissionAllowlist: m.PermissionAllowlist,
 		})
 	}
 	return teamProfilePlan{
@@ -802,6 +804,7 @@ type teamPlanMember struct {
 	CWD                  string   `json:"cwd"`
 	ClaudeArgs           []string `json:"claude_args,omitempty"`
 	CodexArgs            []string `json:"codex_args,omitempty"`
+	PermissionAllowlist  []string `json:"permission_allowlist,omitempty"`
 	ChildArgs            []string `json:"child_args,omitempty"`
 	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
 	Bootstrap            string   `json:"bootstrap"`
@@ -969,6 +972,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 				CWD:                  cwd,
 				ClaudeArgs:           m.ClaudeArgs,
 				CodexArgs:            m.CodexArgs,
+				PermissionAllowlist:  m.PermissionAllowlist,
 				ChildArgs:            preview.ChildArgs,
 				PreauthorizedActions: preview.PreauthorizedActions,
 				Bootstrap:            preview.Bootstrap,
@@ -1346,21 +1350,22 @@ func teamCommandPreview(in emitTeamCommandInput) teamCommandPreviewData {
 	extraDefaultArgs := composeBinaryArgs(m.Binary, binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs())
 	modelArgs := modelArgsForBinary(m.Binary, in.Model)
 	defaultArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, extraDefaultArgs, in.TrustMode)
-	childArgs, preauthorized, added := applyClaudeWorkerPreauth(in.TeamHome, in.Profile, m.Role, m.Binary, in.Workstream, defaultArgs)
-	bootstrapArgs := stripTrailingLauncherPreauthArgs(childArgs, preauthorized)
+	// Launcher policy is display/audit metadata only at preview time. It must
+	// never ride inside the executable child argv: runLaunch recomputes it from
+	// the current member policy, making every allowed-tools value already in
+	// ChildArgs explicit by construction.
+	launcherActions := claudeLauncherPreauthActions(in.TeamHome, in.Profile, m.Role, m.Binary, in.Workstream, true)
+	explicitActions := childArgsAllowedTools(defaultArgs)
+	preauthorized := appendUniquePermissionPatterns(explicitActions, launcherActions...)
 	bootstrap := "suppressed"
 	if in.NoBootstrap {
 		bootstrap = "disabled"
-	} else if shouldAppendBootstrapWithDefaults(bootstrapArgs, defaultArgs) {
+	} else if shouldAppendBootstrapWithDefaults(defaultArgs, defaultArgs) {
 		bootstrap = "appended"
 	}
-	var launcherAdded []string
-	if added {
-		launcherAdded = claudePreauthChildArgs(preauthorized)
-	}
 	return teamCommandPreviewData{
-		ChildArgs:            childArgs,
-		LauncherAddedArgs:    launcherAdded,
+		ChildArgs:            defaultArgs,
+		LauncherAddedArgs:    claudePreauthChildArgs(launcherActions),
 		PreauthorizedActions: preauthorized,
 		Bootstrap:            bootstrap,
 	}

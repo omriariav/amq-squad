@@ -296,46 +296,49 @@ Examples:
 	// slice (no safe pattern form; see claudeInScopePreauthAllowlist); main push,
 	// tags, and releases always stay gated.
 	var preauthorizedActions []string
-	if !*noPreauthInScope {
-		childArgs, preauthorizedActions, _ = applyClaudeWorkerPreauth(launchPreauthProjectDir(cwd, *teamHome), teamProfileValue, *roleFlag, binary, env.SessionName, childArgs)
-	}
+	explicitAllowedTools := childArgsAllowedTools(childArgs)
+	launcherPreauthorizedActions := claudeLauncherPreauthActions(launchPreauthProjectDir(cwd, *teamHome), teamProfileValue, *roleFlag, binary, env.SessionName, !*noPreauthInScope)
+	childArgs, preauthorizedActions, _ = applyClaudeWorkerPreauthActions(childArgs, launcherPreauthorizedActions)
 
 	agentDir := filepath.Join(root, "agents", handle)
 	rec := launch.Record{
-		CWD:                  cwd,
-		Binary:               binary,
-		Argv:                 childArgs,
-		Session:              env.SessionName,
-		SharedWorkstream:     *sharedWorkstream,
-		Conversation:         conversationRef,
-		Handle:               handle,
-		Role:                 *roleFlag,
-		Root:                 root,
-		BaseRoot:             env.BaseRoot,
-		RootSource:           env.RootSource,
-		AMQVersion:           env.AMQVersion,
-		CodexArgs:            binaryArgs["codex"],
-		ClaudeArgs:           binaryArgs["claude"],
-		Launcher:             launcher,
-		LauncherArgs:         launcherArgs,
-		Model:                resolvedModel,
-		Trust:                trustMode,
-		NoDefaultArgs:        *noDefaultArgs,
-		SpawnOrigin:          strings.TrimSpace(*spawnOrigin),
-		SpawnDepth:           *spawnDepth,
-		NoRequireWake:        *noRequireWake,
-		NoGitignore:          *noGitignore,
-		Symphony:             *symphony,
-		GoalBinding:          nativeGoalBindingFromArgs(childArgs),
-		PreauthorizedActions: preauthorizedActions,
-		WakeInjectVia:        wakeInjectViaValue,
-		WakeInjectArgs:       wakeInjectArgValues,
-		WakeInjectMode:       wakeInjectModeValue,
-		AgentPID:             os.Getpid(),
-		AgentTTY:             currentLaunchTTY(),
-		StartedAt:            time.Now().UTC(),
-		TeamProfile:          teamProfileValue,
-		TeamHome:             strings.TrimSpace(*teamHome),
+		CWD:                          cwd,
+		Binary:                       binary,
+		Argv:                         childArgs,
+		Session:                      env.SessionName,
+		SharedWorkstream:             *sharedWorkstream,
+		Conversation:                 conversationRef,
+		Handle:                       handle,
+		Role:                         *roleFlag,
+		Root:                         root,
+		BaseRoot:                     env.BaseRoot,
+		RootSource:                   env.RootSource,
+		AMQVersion:                   env.AMQVersion,
+		CodexArgs:                    binaryArgs["codex"],
+		ClaudeArgs:                   binaryArgs["claude"],
+		Launcher:                     launcher,
+		LauncherArgs:                 launcherArgs,
+		Model:                        resolvedModel,
+		Trust:                        trustMode,
+		NoDefaultArgs:                *noDefaultArgs,
+		NoPreauthorizeInScope:        *noPreauthInScope,
+		SpawnOrigin:                  strings.TrimSpace(*spawnOrigin),
+		SpawnDepth:                   *spawnDepth,
+		NoRequireWake:                *noRequireWake,
+		NoGitignore:                  *noGitignore,
+		Symphony:                     *symphony,
+		GoalBinding:                  nativeGoalBindingFromArgs(childArgs),
+		PreauthorizedActions:         preauthorizedActions,
+		LauncherPreauthorizedActions: launcherPreauthorizedActions,
+		ExplicitAllowedTools:         explicitAllowedTools,
+		WakeInjectVia:                wakeInjectViaValue,
+		WakeInjectArgs:               wakeInjectArgValues,
+		WakeInjectMode:               wakeInjectModeValue,
+		AgentPID:                     os.Getpid(),
+		AgentTTY:                     currentLaunchTTY(),
+		StartedAt:                    time.Now().UTC(),
+		TeamProfile:                  teamProfileValue,
+		TeamHome:                     strings.TrimSpace(*teamHome),
 	}
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD
@@ -372,7 +375,14 @@ Examples:
 	// Keep generated bootstrap out of launch.json so restore stays compact
 	// and does not replay stale startup text.
 	effectiveChildArgs := append([]string(nil), childArgs...)
-	bootstrapEligibilityArgs := stripTrailingLauncherPreauthArgs(childArgs, preauthorizedActions)
+	bootstrapEligibilityArgs := childArgs
+	if len(launcherPreauthorizedActions) > 0 {
+		if len(explicitAllowedTools) > 0 {
+			bootstrapEligibilityArgs = replaceClaudeAllowedTools(childArgs, explicitAllowedTools)
+		} else {
+			bootstrapEligibilityArgs = stripRecordedLauncherPreauth(childArgs, preauthorizedActions)
+		}
+	}
 	bootstrapAppended := !*noBootstrap && shouldAppendBootstrapWithDefaults(bootstrapEligibilityArgs, defaultArgs)
 	bootstrapSuppressedReason := ""
 	if bootstrapAppended {
