@@ -237,11 +237,17 @@ func submitStagedPrompt(paneID string) error {
 	for attempt := 0; attempt < submitAttempts; attempt++ {
 		time.Sleep(submitSettleDelay)
 		before, beforeOK := captureInputRegion(paneID)
+		if beforeOK && queuedInputVisible(before) {
+			return &QueuedInputError{PaneID: paneID}
+		}
 		if err := SendKeysToPane(paneID, "Enter"); err != nil {
 			return err
 		}
 		time.Sleep(submitVerifyDelay)
 		after, afterOK := captureInputRegion(paneID)
+		if afterOK && queuedInputVisible(after) {
+			return &QueuedInputError{PaneID: paneID}
+		}
 		// Submitted when the input region changed; fail open when either snapshot
 		// is unavailable (don't block or retry on a capture we can't trust).
 		if !beforeOK || !afterOK || after != before {
@@ -250,6 +256,36 @@ func submitStagedPrompt(paneID string) error {
 		// Unchanged: the Enter was dropped — retry.
 	}
 	return &SubmitUnconfirmedError{PaneID: paneID, Attempts: submitAttempts}
+}
+
+// QueuedInputError reports the explicit Codex busy-input state. When Codex is
+// mid-turn it keeps newly pasted text in the input area and renders the
+// "tab to queue message" footer. Repeated Enter attempts cannot prove a submit
+// in that state, but the staged text is not lost: Codex will process it when the
+// current turn goes idle. Callers with a durable fallback should report this as
+// queued rather than collapsing it into an ambiguous SubmitUnconfirmedError.
+type QueuedInputError struct{ PaneID string }
+
+func (e *QueuedInputError) Error() string {
+	return fmt.Sprintf("delivered the prompt to pane %s; queued in the pane input and it will submit when the agent goes idle", e.PaneID)
+}
+
+func queuedInputVisible(region string) bool {
+	// Codex renders the queue hint as footer chrome on the final non-blank line
+	// of the input box. Do not search the whole captured region: the staged
+	// prompt itself is user-controlled and may legitimately contain these words.
+	// Matching the complete footer line also makes an unknown/new footer degrade
+	// to the conservative SubmitUnconfirmedError path instead of guessing that a
+	// queued state is present.
+	lines := strings.Split(strings.ReplaceAll(region, "\r\n", "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		footer := strings.TrimSpace(lines[i])
+		if footer == "" {
+			continue
+		}
+		return strings.EqualFold(footer, "tab to queue message")
+	}
+	return false
 }
 
 // SubmitUnconfirmedError reports that the prompt was pasted and Enter pressed,

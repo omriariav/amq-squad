@@ -468,6 +468,59 @@ func TestParseTmuxClientsReturnsControlModeClients(t *testing.T) {
 	}
 }
 
+func TestWarnTmuxControlModeClientsIsOneLineByDefault(t *testing.T) {
+	prev := currentOutputPolicy
+	currentOutputPolicy = outputPolicy{}
+	t.Cleanup(func() { currentOutputPolicy = prev })
+
+	_, stderr, err := captureOutput(t, func() error {
+		warnTmuxControlModeClients([]tmuxClient{{TTY: "/dev/ttys001", ControlMode: true, Flags: "attached,control-mode,pause-after=120"}})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Split(strings.TrimSpace(stderr), "\n"); len(lines) != 1 {
+		t.Fatalf("default control-mode warning should be one line, got %d:\n%s", len(lines), stderr)
+	}
+	for _, want := range []string{"1 tmux control-mode client", "iTerm2 tmux -CC", "use --verbose"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("concise warning missing %q:\n%s", want, stderr)
+		}
+	}
+	for _, forbidden := range []string{"/dev/ttys001", "pause-after=120", "detach-client"} {
+		if strings.Contains(stderr, forbidden) {
+			t.Fatalf("default warning should hide verbose detail %q:\n%s", forbidden, stderr)
+		}
+	}
+}
+
+func TestWarnTmuxControlModeClientsVerboseExpandsDetails(t *testing.T) {
+	prev := currentOutputPolicy
+	currentOutputPolicy = outputPolicy{Verbose: true}
+	t.Cleanup(func() { currentOutputPolicy = prev })
+
+	_, stderr, err := captureOutput(t, func() error {
+		warnTmuxControlModeClients([]tmuxClient{{TTY: "/dev/ttys001", ControlMode: true, Flags: "attached,control-mode,pause-after=120"}})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"warning: detected 1 tmux control-mode client",
+		"verbose: control client /dev/ttys001 flags: attached,control-mode,pause-after=120",
+		"verbose: starting panes with a stagger",
+		"verbose: amq-squad retries tmux control queries",
+		"verbose: if the iTerm2 view stalls",
+		"tmux detach-client -t <tty>",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("verbose warning missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
 // filterMembersBySession tests
 
 func TestFilterMembersBySessionReturnsAllWhenUnpinned(t *testing.T) {

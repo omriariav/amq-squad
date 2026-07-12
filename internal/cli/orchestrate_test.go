@@ -1081,6 +1081,76 @@ func TestRunStartGoUnconfirmedGoalSubmitWarnsAndContinues(t *testing.T) {
 	}
 }
 
+func TestRunStartProductionGoalFallbackFailurePreservesSoftFinalization(t *testing.T) {
+	// Exercise the real runGoalWithVersion -> executeGoalDelivery path. The
+	// earlier regression test injected a typed error above executeGoalDelivery,
+	// so it could not catch that fallback composition erased the type.
+	dir, _, _, _ := setupGoalDeliveryFailureTest(t, &tmuxpane.SubmitUnconfirmedError{PaneID: "%7", Attempts: 3})
+	prevRunGoal := runStartGoalWithVersion
+	runStartGoalWithVersion = runGoalWithVersion
+	prevReady := runStartLeadReadyCheck
+	runStartLeadReadyCheck = func(project, profile, session, role string) (runStartLeadReadiness, error) {
+		return runStartLeadReadiness{Ready: true, Detail: "live"}, nil
+	}
+	prevRunAMQ := runAMQCommand
+	runAMQCommand = func(amqCommandRequest) ([]byte, error) { return nil, errors.New("mailbox unavailable") }
+	t.Cleanup(func() {
+		runStartGoalWithVersion = prevRunGoal
+		runStartLeadReadyCheck = prevReady
+		runAMQCommand = prevRunAMQ
+	})
+
+	_, stderr, err := captureOutput(t, func() error {
+		return deliverRunStartGoalWhenReady(runStartGoalDeliveryOptions{
+			Project: dir, Profile: team.DefaultProfile, Session: "issue-96", Role: "cto", Goal: "ship safely", Version: "test",
+		})
+	})
+	if err != nil {
+		t.Fatalf("fallback durability failure after an unconfirmed submit must not abort launch finalization: %v", err)
+	}
+	for _, want := range []string{"goal submission was not confirmed", "durable goal fallback failed", "mailbox unavailable", "Continuing the launch"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("production-path warning missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
+func TestRunStartGoQueuedGoalSubmitReportsQueueAndContinues(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := captureOutput(t, func() error {
+		return runNew([]string{"team", "--project", dir, "--session", "sess", "--roles", "cto", "--orchestrated", "--lead", "cto"})
+	}); err != nil {
+		t.Fatalf("setup new team: %v", err)
+	}
+
+	queued := fmt.Errorf("goal start: %w", &tmuxpane.QueuedInputError{PaneID: "%26"})
+	stubRunStartGoalDelivery(t,
+		func(args []string, version string) error { return nil },
+		func(args []string, version string) error { return queued },
+		func(project, profile, session, role string) (runStartLeadReadiness, error) {
+			return runStartLeadReadiness{Ready: true, Detail: "live"}, nil
+		},
+		func(time.Duration) {},
+		time.Now,
+	)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("queued submit must not abort the launch, got %v", err)
+	}
+	for _, want := range []string{
+		"goal queued in the lead's input; it will submit when the agent goes idle",
+		"continuing the launch",
+		"amq-squad goal start --project " + shellQuote(dir) + " --profile default --session sess --role cto --goal 'ship it' --yes",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
 func TestRunStartLeadReadinessTransientErrorKeepsPolling(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Unix(100, 0)
