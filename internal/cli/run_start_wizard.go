@@ -290,6 +290,10 @@ func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out
 		}
 		return runStartWizardGlobalExecute(liveArgs)
 	}
+	if spec.Backend == runwizard.BackendResume || spec.RunState == runwizard.RunStateRunning || spec.RunState == runwizard.RunStateBlocked || !spec.RunExecutable && spec.ProfileBranch == runwizard.ProfileBranchExisting {
+		fmt.Fprintf(out, "Selected existing run %s/%s is %s (backend=%s). Resume execution and action-scoped controls are deferred to the next wizard slice; nothing was previewed or launched.\n", spec.Profile, spec.Session, spec.RunState, spec.Backend)
+		return nil
+	}
 	preflight := runStartPreflight(runStartPreflightInput{
 		Project:                  spec.Project,
 		Profile:                  spec.Profile,

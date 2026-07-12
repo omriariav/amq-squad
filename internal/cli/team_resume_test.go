@@ -10,6 +10,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 // writeMemberLaunchRecord drops a v0.6 launch.json under the fake AMQ base
@@ -167,6 +168,49 @@ func TestPlanMemberResumeIsolatesForeignProfileLaunchRecord(t *testing.T) {
 	}
 	if plan.Action != resumeFresh || !strings.Contains(plan.Command, ".agent-mail/release/main") {
 		t.Fatalf("foreign-profile launch should be isolated and plan fresh in release namespace, got %+v", plan)
+	}
+}
+
+func TestPlanMemberResumeFingerprintsExactNewestMatchingRecord(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	older := launch.Record{CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", Session: "s", StartedAt: time.Now().Add(-time.Hour), Conversation: "older"}
+	writeMemberLaunchRecord(t, base, "s", "cto", older)
+	newer := older
+	newer.StartedAt = time.Now()
+	newer.Conversation = "newer"
+	newerDir := filepath.Join(base, "s", "agents", "cto-newer")
+	if err := launch.Write(newerDir, newer); err != nil {
+		t.Fatal(err)
+	}
+	member := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}
+	plan, err := planMemberResume(memberPlanInput{
+		Member: member, Team: team.Team{Project: dir, Members: []team.Member{member}}, Workstream: "s",
+		Profile: team.DefaultProfile, SquadBin: "amq-squad", Probe: duplicateLaunchProbe{PIDAlive: func(int) bool { return false }, ProcessMatch: func(int, func(string) bool) bool { return false }, Now: time.Now},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newerStored, err := launch.Read(newerDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	olderStored, err := launch.Read(filepath.Join(base, "s", "agents", "cto"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, olderID := resumeSavedLaunchIdentity(newerStored), resumeSavedLaunchIdentity(olderStored)
+	if plan.Action != resumeRestore || plan.SavedLaunchIdentity != want || plan.SavedLaunchIdentity == olderID {
+		t.Fatalf("planner record evidence = action %s identity %q; want newest %q, not older %q", plan.Action, plan.SavedLaunchIdentity, want, olderID)
+	}
+	evidence := runStartWizardDiscoveryMemberPlan(plan, runwizard.MemberActionRestore)
+	if evidence.SavedLaunchIdentity != want {
+		t.Fatalf("wizard fingerprint evidence = %+v, want selected identity %q", evidence, want)
+	}
+	selected := runwizard.DiscoveryFingerprint(runwizard.DiscoveryFingerprintInput{MemberPlans: []runwizard.DiscoveryMemberPlan{evidence}})
+	evidence.SavedLaunchIdentity = olderID
+	if got := runwizard.DiscoveryFingerprint(runwizard.DiscoveryFingerprintInput{MemberPlans: []runwizard.DiscoveryMemberPlan{evidence}}); got == selected {
+		t.Fatal("changing the planner-selected record identity did not change the wizard fingerprint")
 	}
 }
 

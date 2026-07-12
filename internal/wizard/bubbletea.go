@@ -16,6 +16,7 @@ const (
 	stageProject bubbleStage = iota
 	stageProfile
 	stageNewProfile
+	stageExistingSession
 	stageSession
 	stageExistingOverride
 	stageExistingModel
@@ -45,14 +46,16 @@ type BubbleResult struct {
 }
 
 type bubbleSnapshot struct {
-	spec          Spec
-	ctx           ProjectContext
-	stage         bubbleStage
-	cursor        int
-	existingIndex int
-	roleOrder     []string
-	roleIndex     int
-	inputValue    string
+	spec              Spec
+	ctx               ProjectContext
+	stage             bubbleStage
+	cursor            int
+	existingIndex     int
+	roleOrder         []string
+	roleIndex         int
+	inputValue        string
+	newProfilePrefill string
+	newSessionPrefill string
 }
 
 // BubbleModel is the full-screen adapter over the same Spec and project facts
@@ -62,13 +65,15 @@ type BubbleModel struct {
 	spec Spec
 	ctx  ProjectContext
 
-	stage         bubbleStage
-	cursor        int
-	existingIndex int
-	roleOrder     []string
-	roleIndex     int
-	input         textinput.Model
-	history       []bubbleSnapshot
+	stage             bubbleStage
+	cursor            int
+	existingIndex     int
+	roleOrder         []string
+	roleIndex         int
+	input             textinput.Model
+	history           []bubbleSnapshot
+	newProfilePrefill string
+	newSessionPrefill string
 
 	width     int
 	height    int
@@ -93,7 +98,7 @@ var (
 
 func NewBubbleModel(opts NumberedOptions) (BubbleModel, error) {
 	s := opts.Defaults
-	ctx := ProjectContext{Project: s.Project}
+	ctx := ProjectContext{Project: s.Project, SessionSuggestion: s.Session}
 	var err error
 	if opts.InspectProject != nil {
 		ctx, err = opts.InspectProject(s.Project)
@@ -103,19 +108,26 @@ func NewBubbleModel(opts NumberedOptions) (BubbleModel, error) {
 		if strings.TrimSpace(ctx.Project) != "" {
 			s.Project = ctx.Project
 		}
+		if strings.TrimSpace(ctx.SessionSuggestion) == "" {
+			ctx.SessionSuggestion = s.Session
+		}
 	}
 	input := textinput.New()
 	input.CharLimit = 512
 	input.Width = 64
 	m := BubbleModel{
-		opts:          opts,
-		spec:          s,
-		ctx:           ctx,
-		stage:         stageProject,
-		existingIndex: -1,
-		input:         input,
-		width:         88,
-		height:        28,
+		opts:              opts,
+		spec:              s,
+		ctx:               ctx,
+		stage:             stageProject,
+		existingIndex:     -1,
+		input:             input,
+		width:             88,
+		height:            28,
+		newSessionPrefill: s.Session,
+	}
+	if strings.TrimSpace(s.Profile) != "" && findProfile(ctx.Profiles, s.Profile) < 0 {
+		m.newProfilePrefill = s.Profile
 	}
 	m.configureStage()
 	return m, nil
@@ -276,11 +288,13 @@ func (m BubbleModel) title() string {
 	case stageProject:
 		return "Choose the project root"
 	case stageProfile:
-		return "Choose a team profile"
+		return "Use an existing team setup or create a new one?"
 	case stageNewProfile:
 		return "Name the new profile"
+	case stageExistingSession:
+		return "Which existing run do you want?"
 	case stageSession:
-		return "Choose the workstream session"
+		return "Name the new session"
 	case stageExistingOverride:
 		return "Launch-time override · " + m.currentMember().Role
 	case stageExistingModel:
@@ -333,6 +347,14 @@ func (m BubbleModel) note() string {
 			return "Detected origin " + m.ctx.OriginSlug + ". The nearest git root is the default."
 		}
 		return "The nearest git root is the default; no network access is used."
+	case stageProfile:
+		return "An existing profile keeps its roster, lead, and operator contract. A new profile lets you choose them."
+	case stageExistingSession:
+		return "These sessions belong to the selected profile. To type a new session name, go back and create a new profile."
+	case stageNewProfile:
+		return "This name identifies a reusable team setup. Nothing is written until the final command is approved."
+	case stageSession:
+		return "This is the new run's mailbox, brief, task, and launch-history namespace."
 	case stageExistingOverride:
 		member := m.currentMember()
 		return fmt.Sprintf("Profile values stay untouched: model=%s · effort=%s", defaultString(member.Model, "automatic"), defaultString(member.Effort, "automatic"))
@@ -434,15 +456,9 @@ func (m *BubbleModel) configureStage() {
 	case stageProject:
 		value = m.spec.Project
 	case stageNewProfile:
-		value = defaultString(m.ctx.NewProfileSuggestion, "squad-"+defaultString(m.ctx.SessionSuggestion, "project"))
+		value = defaultString(m.newProfilePrefill, defaultString(m.ctx.NewProfileSuggestion, "squad-"+defaultString(m.ctx.SessionSuggestion, "project")))
 	case stageSession:
-		value = m.spec.Session
-		if value == "" && m.existingIndex >= 0 {
-			value = m.ctx.Profiles[m.existingIndex].PinnedSession
-		}
-		if value == "" {
-			value = m.ctx.SessionSuggestion
-		}
+		value = defaultString(m.newSessionPrefill, m.ctx.SessionSuggestion)
 	case stageExistingModelCustom:
 		value = parseAssignments(m.spec.Model)[m.currentMember().Role]
 		placeholder = "leave blank to keep " + defaultString(m.currentMember().Model, "automatic")
@@ -472,15 +488,21 @@ func (m *BubbleModel) configureStage() {
 func (m BubbleModel) choices() []choice {
 	switch m.stage {
 	case stageProfile:
-		choices := make([]choice, 0, len(m.ctx.Profiles)+2)
+		choices := make([]choice, 0, len(m.ctx.Profiles)+1)
 		for _, profile := range m.ctx.Profiles {
-			pinned := defaultString(profile.PinnedSession, "un-pinned")
-			choices = append(choices, choice{value: profile.Name, label: fmt.Sprintf("%s · %d member(s) · session %s", profile.Name, profile.MemberCount, pinned)})
+			choices = append(choices, choice{value: profile.Name, label: fmt.Sprintf("%s · %d members · %s · roster and contract stay authoritative", profile.Name, profile.MemberCount, profileRunSummary(profile, m.ctx.SessionSuggestion))})
 		}
-		if len(m.ctx.Profiles) == 0 || findProfile(m.ctx.Profiles, "default") < 0 {
-			choices = append(choices, choice{value: "default", label: "default · create a fresh roster"})
+		choices = append(choices, choice{value: "__create__", label: "Create a new profile · choose a fresh roster and contract"})
+		return choices
+	case stageExistingSession:
+		if m.existingIndex < 0 || m.existingIndex >= len(m.ctx.Profiles) {
+			return nil
 		}
-		choices = append(choices, choice{value: "__create__", label: "create a named profile"})
+		sessions := profileSessions(m.ctx.Profiles[m.existingIndex], m.ctx.SessionSuggestion)
+		choices := make([]choice, 0, len(sessions))
+		for _, session := range sessions {
+			choices = append(choices, choice{value: session.Name, label: session.Label()})
+		}
 		return choices
 	case stageExistingOverride:
 		return []choice{{value: "keep", label: "Keep profile model and effort"}, {value: "override", label: "Override this role for this launch only"}}
@@ -553,7 +575,12 @@ func (m BubbleModel) defaultCursor() int {
 	want := ""
 	switch m.stage {
 	case stageProfile:
-		want = defaultString(m.spec.Profile, "default")
+		want = m.spec.Profile
+		if findProfile(m.ctx.Profiles, want) < 0 {
+			want = "__create__"
+		}
+	case stageExistingSession:
+		want = m.spec.Session
 	case stageExistingModel:
 		// An empty override maps to automatic, which this list omits; the
 		// find-loop then falls through to keep at index zero.
@@ -617,8 +644,11 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+		if strings.TrimSpace(ctx.SessionSuggestion) == "" {
+			ctx.SessionSuggestion = m.ctx.SessionSuggestion
+		}
 		m.ctx = ctx
-		m.spec.Project = defaultString(ctx.Project, value)
+		m.spec.SelectProject(defaultString(ctx.Project, value))
 		m.transition(stageProfile)
 	case stageNewProfile:
 		if value == "" {
@@ -626,7 +656,8 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 			m.history = m.history[:len(m.history)-1]
 			return m, nil
 		}
-		m.spec.Profile = value
+		m.spec.SelectNewProfile(value)
+		m.newProfilePrefill = value
 		m.existingIndex = -1
 		m.transition(stageSession)
 	case stageSession:
@@ -635,28 +666,9 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 			m.history = m.history[:len(m.history)-1]
 			return m, nil
 		}
-		if m.existingIndex >= 0 {
-			if mismatch := pinnedSessionMismatch(m.ctx.Profiles[m.existingIndex], value); mismatch != nil {
-				m.err = mismatch
-				m.history = m.history[:len(m.history)-1]
-				return m, nil
-			}
-		}
-		m.spec.Session = value
-		if m.existingIndex >= 0 {
-			m.spec.Roles, m.spec.Binary, m.spec.Model, m.spec.Effort, m.spec.Lead, m.spec.LeadMode = "", "", "", "", "", ""
-			profile := m.ctx.Profiles[m.existingIndex]
-			m.spec.OperatorMode = defaultString(profile.OperatorMode, "unspecified")
-			m.spec.OperatorNotifications = profile.OperatorNotifications
-			m.roleIndex = 0
-			if len(m.ctx.Profiles[m.existingIndex].Members) == 0 {
-				m.transition(stageTopology)
-			} else {
-				m.transition(stageExistingOverride)
-			}
-		} else {
-			m.transition(stageRoles)
-		}
+		m.spec.SelectNewSession(value)
+		m.newSessionPrefill = value
+		m.transition(stageRoles)
 	case stageExistingModelCustom:
 		if value != "" {
 			m.spec.Model = setAssignment(m.spec.Model, m.currentMember().Role, value)
@@ -719,12 +731,43 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 	switch m.stage {
 	case stageProfile:
 		if selected == "__create__" {
+			if strings.TrimSpace(m.spec.Profile) != "" && findProfile(m.ctx.Profiles, m.spec.Profile) < 0 {
+				m.newProfilePrefill = m.spec.Profile
+			}
+			m.spec.SelectNewProfile("")
+			m.existingIndex = -1
 			m.transition(stageNewProfile)
 			break
 		}
-		m.spec.Profile = selected
+		m.spec.SelectExistingProfile(selected)
 		m.existingIndex = findProfile(m.ctx.Profiles, selected)
-		m.transition(stageSession)
+		sessions := profileSessions(m.ctx.Profiles[m.existingIndex], m.ctx.SessionSuggestion)
+		if len(sessions) == 0 {
+			m.spec.clearSelectedRun()
+			m.spec.RunState = RunStateBlocked
+			m.err = fmt.Errorf("profile %q has no CLI-discovered session summary", selected)
+			m.done = true
+			return m, tea.Quit
+		}
+		if len(sessions) == 1 {
+			m.selectExistingSession(sessions[0])
+			if m.done {
+				return m, tea.Quit
+			}
+		} else {
+			m.transition(stageExistingSession)
+		}
+	case stageExistingSession:
+		sessions := profileSessions(m.ctx.Profiles[m.existingIndex], m.ctx.SessionSuggestion)
+		for _, session := range sessions {
+			if session.Name == selected {
+				m.selectExistingSession(session)
+				if m.done {
+					return m, tea.Quit
+				}
+				break
+			}
+		}
 	case stageExistingOverride:
 		if selected == "override" {
 			m.transition(stageExistingModel)
@@ -826,6 +869,25 @@ func (m *BubbleModel) nextExistingMember() {
 	}
 }
 
+func (m *BubbleModel) selectExistingSession(session SessionSummary) {
+	m.spec.SelectExistingSession(session)
+	profile := m.ctx.Profiles[m.existingIndex]
+	m.spec.OperatorMode = defaultString(profile.OperatorMode, "unspecified")
+	m.spec.OperatorNotifications = profile.OperatorNotifications
+	m.roleIndex = 0
+	if m.spec.Backend != BackendRunStart || !m.spec.RunExecutable {
+		// Slice 3 owns resume composition and action-scoped controls. Returning a
+		// non-run-start Spec is safe because the CLI refuses to preview it.
+		m.done = true
+		return
+	}
+	if len(profile.Members) == 0 {
+		m.done = true
+		return
+	}
+	m.transition(stageExistingOverride)
+}
+
 func (m *BubbleModel) transition(stage bubbleStage) {
 	m.stage = stage
 	m.configureStage()
@@ -833,14 +895,16 @@ func (m *BubbleModel) transition(stage bubbleStage) {
 
 func (m *BubbleModel) pushHistory() {
 	m.history = append(m.history, bubbleSnapshot{
-		spec:          m.spec,
-		ctx:           m.ctx,
-		stage:         m.stage,
-		cursor:        m.cursor,
-		existingIndex: m.existingIndex,
-		roleOrder:     append([]string(nil), m.roleOrder...),
-		roleIndex:     m.roleIndex,
-		inputValue:    m.input.Value(),
+		spec:              m.spec,
+		ctx:               m.ctx,
+		stage:             m.stage,
+		cursor:            m.cursor,
+		existingIndex:     m.existingIndex,
+		roleOrder:         append([]string(nil), m.roleOrder...),
+		roleIndex:         m.roleIndex,
+		inputValue:        m.input.Value(),
+		newProfilePrefill: m.newProfilePrefill,
+		newSessionPrefill: m.newSessionPrefill,
 	})
 }
 
@@ -851,13 +915,49 @@ func (m BubbleModel) back() (tea.Model, tea.Cmd) {
 	}
 	last := m.history[len(m.history)-1]
 	m.history = m.history[:len(m.history)-1]
+	refreshedExisting := false
+	if last.spec.ProfileBranch == ProfileBranchExisting && strings.TrimSpace(last.spec.Session) != "" && m.opts.InspectProject != nil {
+		project := defaultString(m.ctx.Project, last.spec.Project)
+		refreshed, refreshErr := m.opts.InspectProject(project)
+		if refreshErr == nil || projectContextHasFacts(refreshed) {
+			if strings.TrimSpace(refreshed.Project) == "" {
+				refreshed.Project = project
+			}
+			if strings.TrimSpace(refreshed.SessionSuggestion) == "" {
+				refreshed.SessionSuggestion = m.ctx.SessionSuggestion
+			}
+			m.ctx = refreshed
+			refreshedExisting = true
+		}
+		if refreshErr != nil {
+			m.rejectExistingSnapshot(last, stageProject, fmt.Errorf("refresh project discovery before Back: %w", refreshErr))
+			return m, textinput.Blink
+		}
+		for i := range m.history {
+			if strings.TrimSpace(m.history[i].spec.Project) == strings.TrimSpace(last.spec.Project) {
+				m.history[i].ctx = m.ctx
+			}
+		}
+	}
+	if !snapshotCompatible(last, m.ctx) {
+		m.rejectExistingSnapshot(last, stageProfile, fmt.Errorf("the selected profile or run changed while the wizard was open; review the refreshed facts before continuing"))
+		return m, textinput.Blink
+	}
 	m.spec = last.spec
-	m.ctx = last.ctx
+	if !refreshedExisting {
+		m.ctx = last.ctx
+	}
 	m.stage = last.stage
 	m.cursor = last.cursor
-	m.existingIndex = last.existingIndex
+	if refreshedExisting && m.spec.ProfileBranch == ProfileBranchExisting {
+		m.existingIndex = findProfile(m.ctx.Profiles, m.spec.Profile)
+	} else {
+		m.existingIndex = last.existingIndex
+	}
 	m.roleOrder = append([]string(nil), last.roleOrder...)
 	m.roleIndex = last.roleIndex
+	m.newProfilePrefill = last.newProfilePrefill
+	m.newSessionPrefill = last.newSessionPrefill
 	m.configureStage()
 	m.cursor = last.cursor
 	if m.isTextStage() {
@@ -867,11 +967,48 @@ func (m BubbleModel) back() (tea.Model, tea.Cmd) {
 	return m, textinput.Blink
 }
 
+func (m *BubbleModel) rejectExistingSnapshot(last bubbleSnapshot, stage bubbleStage, err error) {
+	m.spec = last.spec
+	m.spec.clearSelectedRun()
+	m.spec.clearFreshProfileAnswers()
+	m.stage = stage
+	m.existingIndex = findProfile(m.ctx.Profiles, m.spec.Profile)
+	m.roleOrder = nil
+	m.roleIndex = 0
+	m.history = nil
+	m.configureStage()
+	m.err = err
+}
+
+func projectContextHasFacts(ctx ProjectContext) bool {
+	return strings.TrimSpace(ctx.Project) != "" || strings.TrimSpace(ctx.OriginSlug) != "" || strings.TrimSpace(ctx.Branch) != "" ||
+		strings.TrimSpace(ctx.SessionSuggestion) != "" || strings.TrimSpace(ctx.NewProfileSuggestion) != "" || len(ctx.Profiles) > 0 || len(ctx.PreferredBinaries) > 0
+}
+
+func snapshotCompatible(snapshot bubbleSnapshot, current ProjectContext) bool {
+	if snapshot.spec.ProfileBranch != ProfileBranchExisting || snapshot.spec.Session == "" {
+		return true
+	}
+	if snapshot.spec.DiscoveryFingerprint == "" {
+		return false
+	}
+	index := findProfile(current.Profiles, snapshot.spec.Profile)
+	if index < 0 {
+		return false
+	}
+	for _, session := range profileSessions(current.Profiles[index], current.SessionSuggestion) {
+		if session.Name == snapshot.spec.Session {
+			return session.Fingerprint != "" && session.Fingerprint == snapshot.spec.DiscoveryFingerprint
+		}
+	}
+	return false
+}
+
 func (m BubbleModel) phaseIndex() int {
 	switch m.stage {
 	case stageProject:
 		return 0
-	case stageProfile, stageNewProfile, stageSession, stageExistingOverride, stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageRoles, stageRoleBinary, stageRoleModel, stageRoleModelCustom, stageRoleEffort, stageLead, stageLeadMode:
+	case stageProfile, stageNewProfile, stageExistingSession, stageSession, stageExistingOverride, stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageRoles, stageRoleBinary, stageRoleModel, stageRoleModelCustom, stageRoleEffort, stageLead, stageLeadMode:
 		return 1
 	case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane:
 		return 2

@@ -23,7 +23,13 @@ type Spec struct {
 	Backend                        Backend
 	Project                        string
 	Profile                        string
+	ProfileBranch                  ProfileBranch
 	Session                        string
+	SessionSource                  SessionSource
+	RunState                       RunState
+	RunExecutable                  bool
+	RestoreExisting                bool
+	DiscoveryFingerprint           string
 	Roles                          string
 	Binary                         string
 	Model                          string
