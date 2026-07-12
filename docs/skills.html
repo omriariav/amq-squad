@@ -715,14 +715,14 @@ follows the #322 collect-vs-drain contract.</td>
 </tr>
 <tr>
 <td>Tell a live visible lead something now</td>
-<td><code>amq-squad send --session S --role lead --body "..."</code></td>
+<td><code>amq-squad send --session S --role lead --body-file ./prompt.md</code></td>
 <td>Tmux pane delivery to the recorded pane. It is <strong>not</strong>
 a durable AMQ protocol message: no <code>--kind</code>, no
 <code>--thread</code>, no mailbox receipt.</td>
 </tr>
 <tr>
 <td>Assign durable work and wake the recipient</td>
-<td><code>amq-squad dispatch --session S --role worker --kind todo --subject "..." --body "..."</code></td>
+<td><code>amq-squad dispatch --session S --role worker --kind todo --subject "..." --body-file ./task.md</code></td>
 <td>Queues durable AMQ in the resolved workstream root and wakes or
 nudges the agent to drain it. This is the usual lead-to-worker
 path.</td>
@@ -795,8 +795,15 @@ and
 <p>amq-squad owns the tmux control contract — drive agents by stable
 command, never raw <code>tmux send-keys</code>. Control targets the
 recorded <strong>pane id</strong>, never window names.</p>
+<p>Use <code>--body-file FILE</code> or <code>--body-file -</code>
+(stdin) for wrapper bodies containing code, commands, backticks, or
+<code>$()</code> syntax. Inline <code>--body</code> is only for short
+plain prose because the caller shell expands it before execution. Bare
+<code>amq send</code> instead uses <code>--body -</code> or
+<code>--body @file</code>; raw AMQ does not accept
+<code>--body-file</code>.</p>
 <div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> cto                       <span class="co"># bring a pane into view</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send  <span class="at">--session</span> issue-96 <span class="at">--role</span> cto <span class="at">--body</span> <span class="st">&quot;review PR #69&quot;</span> <span class="co"># deliver a prompt + submit</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send  <span class="at">--session</span> issue-96 <span class="at">--role</span> cto <span class="at">--body-file</span> ./prompt.md <span class="co"># deliver a prompt + submit</span></span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> prompt.md <span class="kw">|</span> <span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--body-file</span> <span class="at">-</span></span></code></pre></div>
 <p><code>send</code> stages text in a tmux paste buffer (multi-line and
 shell metacharacters arrive verbatim) and has a <strong>built-in
@@ -810,7 +817,7 @@ post an inter-agent message, use
 </blockquote>
 <h3 id="routing-messages-over-amq">Routing messages over AMQ</h3>
 <div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> review_request <span class="dt">\</span></span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Review: rate limiter&quot;</span> <span class="at">--body</span> <span class="st">&quot;Please review the diff on branch X.&quot;</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Review: rate limiter&quot;</span> <span class="at">--body</span> @review.md</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span>            <span class="co"># read your inbox</span></span></code></pre></div>
 <p>Valid kinds (enforced):
 <code>brainstorm, review_request, review_response, question, answer, decision, status, todo</code>.
@@ -1132,10 +1139,10 @@ loads <code>/amq-squad:amq-squad-orchestrator</code>) dispatches to
 <code>fullstack</code>, monitors, and drains pushed reports:</p>
 <div class="sourceCode" id="cb15"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: #96&quot;</span> <span class="at">--body</span> <span class="st">&quot;Implement #96 per the brief; push a review_request when ready.&quot;</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: #96&quot;</span> <span class="at">--body</span> @task.md</span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> collect <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="at">--timeout</span> 120s <span class="at">--include-body</span></span>
 <span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--to</span> qa <span class="at">--thread</span> p2p/cto__qa <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
-<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: review #96&quot;</span> <span class="at">--body</span> <span class="st">&quot;Review fullstack&#39;s diff on branch X; push review_response.&quot;</span></span></code></pre></div></li>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: review #96&quot;</span> <span class="at">--body</span> @review-task.md</span></code></pre></div></li>
 <li><p><strong>Converge and tear down</strong> — the lead verifies the
 artifacts, owns the merge and lifecycle-action path after the readiness
 gates align, reports up to the human, then:</p>

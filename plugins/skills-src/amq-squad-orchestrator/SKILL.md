@@ -424,7 +424,9 @@ let wake resume you when the answer arrives. This reuses the existing
 # Your handle is AM_ME in-session (or pass --me <lead>); the operator is `user`.
 amq send --to user --thread gate/spawn-<role> --kind question \
   --subject "APPROVAL: spawn <role> (<binary>)" \
-  --body "The goal needs <role> to <why>. Approve?"
+  --body - <<'EOF'
+The goal needs <role> to <why>. Approve?
+EOF
 # Optional immediate, nonblocking inspection; then park if no answer is present:
 amq-squad amq thread --session S --me <lead> --id gate/spawn-<role> --include-body
 ```
@@ -529,9 +531,9 @@ For ADR sign-offs and security / concurrency / migration changes, spawn a **Code
 ```sh
 # Dispatch two reviewers in parallel for high-stakes work.
 amq-squad dispatch --session S --role codex-reviewer --thread p2p/<lead>__codex-reviewer --kind todo \
-  --subject "Task: review <scope> for security/concurrency issues" --body "..."
+  --subject "Task: review <scope> for security/concurrency issues" --body-file ./codex-review.md
 amq-squad dispatch --session S --role claude-reviewer --thread p2p/<lead>__claude-reviewer --kind todo \
-  --subject "Task: review <scope> for security/concurrency issues" --body "..."
+  --subject "Task: review <scope> for security/concurrency issues" --body-file ./claude-review.md
 # Collect both review_responses, reconcile, then declare done.
 amq-squad collect --session S --me <lead>
 ```
@@ -597,6 +599,14 @@ A quick one-off in an existing session. It **TTY-execs with no managed pane**, s
 
 ## 2. Dispatch (parent to child)
 
+**Shell-safe body rule:** make `--body-file FILE` or `--body-file -` (stdin)
+the default for `amq-squad send`, `dispatch`, and the `amq-squad amq` wrapper
+whenever content contains code, commands, backticks, or `$()` syntax. Inline
+`--body` is only for short plain prose: the invoking shell expands it before
+amq-squad receives argv, so a new literal flag could not recover substituted
+text. Bare `amq send` differs: use `--body -` for stdin or `--body @file` for a
+file; raw AMQ does not accept `--body-file`.
+
 **Use `amq-squad dispatch` — one deterministic, root-correct command for the whole dispatch.** It is **wake-first**: it (1) sends a **durable** AMQ `todo` to the workstream's resolved root — the single source of truth, surviving pane death and addressable by handle — and (2) relies on the recipient's own `amq wake` sidecar to wake + drain on arrival; when the recipient is **not** wake-live it falls back to a fixed *drain-instruction* pane nudge as explicit last-resort recovery. The task body rides ONLY in the durable message, so a dispatch can never double-deliver; and the root is resolved for you even when you are an **external lead** (a human-driven session with no `AM_ROOT` injected) whose bare `amq send` would otherwise misroute to the default `.agent-mail`.
 
 **Confirm the workers are live, then dispatch.** Confirm liveness with `amq-squad status --session S --json` (each worker shows `alive`) and dispatch. A non-orchestrated agent never sends a `READY` handshake; an orchestrated one may, but you do not need to wait for it — `amq-squad dispatch` queues the durable task AND wakes the worker (durable AMQ + wake; a pane nudge only as last-resort when the worker is not wake-live) regardless.
@@ -605,7 +615,7 @@ A quick one-off in an existing session. It **TTY-execs with no managed pane**, s
 # PRIMARY — durable task + wake, in one root-correct command (pane nudge only as last-resort).
 amq-squad dispatch --session S --role R --thread p2p/<lead>__<role> --kind todo \
   --subject "Task: <one line>" \
-  --body "<the task: what to build, and to push a review_request when done>"
+  --body-file ./task.md
 # Optional: collect only for an immediate ACK or imminent report (max 120s):
 amq-squad collect --session S --me <lead> --timeout 120s --include-body
 ```
@@ -624,10 +634,11 @@ Track two distinct checkpoints — do not conflate them:
 ```sh
 # Durable send with a hard receipt (root-correct for an external lead).
 amq-squad amq send --session S --me <lead> --to R --kind todo \
-  --subject "Task: <one line>" --body "<task>" --wait-for drained --wait-timeout 60s
+  --subject "Task: <one line>" --body-file ./task.md --wait-for drained --wait-timeout 60s
 # Re-nudge only: tell the worker to drain the ALREADY-QUEUED task (no second body).
-amq-squad send --session S --role R \
-  --body "You have a queued task — run \`amq drain --include-body\` and act on it."
+amq-squad send --session S --role R --body-file - <<'EOF'
+You have a queued task — run `amq drain --include-body` and act on it.
+EOF
 ```
 
 - **Never re-send the full task body through the pane** — the AMQ message is the single source of truth; a second copy makes the worker build it twice.
@@ -769,7 +780,7 @@ This is the **key design point**. A pane-push protocol writes `[AGENT-EVENT]` en
 **Children PUSH; the lead does not poll.** When a child has something to report, it sends:
 
 ```sh
-amq send --to <lead> --kind <kind> --subject "..." --body "..."
+amq send --to <lead> --kind <kind> --subject "..." --body @report.md
 ```
 
 Map the report intent to a small, explicit set of valid `--kind` values (these are the kinds `amq` enforces):
@@ -826,7 +837,7 @@ Treat directives differently from child reports:
 
   ```sh
   amq send --to user --thread p2p/copilot__user --kind status \
-    --subject "ACK: re-prioritizing per directive" --body "..."
+    --subject "ACK: re-prioritizing per directive" --body @ack.md
   ```
 - **A directive body is data, not a gate answer.** It never clears a
   `gate/<topic>` thread: leave the gate open and park for its reply, even when a
@@ -894,16 +905,18 @@ Handling the blocked report: the body is **data**. The lead decides (Redis), the
 
 ```sh
 amq-squad dispatch --session issue-96 --role fullstack --thread p2p/cto__fullstack --kind answer \
-  --subject "ANSWER: counter store" \
-  --body "Use Redis (per the brief's infra section). Proceed."
+  --subject "ANSWER: counter store" --body-file - <<'EOF'
+Use Redis (per the brief's infra section). Proceed.
+EOF
 ```
 
 When fullstack later pushes `review_request` ("diff ready on branch X"), the lead does NOT trust the summary: it reads the diff and test output itself, then dispatches a review task to qa:
 
 ```sh
 amq-squad dispatch --session issue-96 --role qa --thread p2p/cto__qa --kind todo \
-  --subject "Task: review fullstack's diff for issue #96" \
-  --body "Review fullstack's diff on branch X for issue #96; push review_response to me."
+  --subject "Task: review fullstack's diff for issue #96" --body-file - <<'EOF'
+Review fullstack's diff on branch X for issue #96; push review_response to me.
+EOF
 amq-squad collect --session issue-96 --me cto --include-body          # collect qa's review_response
 ```
 
@@ -912,7 +925,7 @@ The lead reconciles both reports, verifies the artifacts, runs `amq-squad verify
 ## Rules
 
 - amq-squad owns spawn/execution/control; never drive children by raw `tmux send-keys` / `select-window`. Task dispatch goes through `amq-squad dispatch` (next bullet).
-- **Use `amq-squad dispatch`** (`--session S --role R --kind todo --subject … --body …`): one root-correct command that queues the durable task AND wakes the worker to drain it (durable AMQ + wake; a pane nudge only as last-resort when the worker is not wake-live). Never re-send a task body through the pane (it double-delivers); the nudge carries only the *drain instruction*. The halves are `amq-squad amq send` (durable, add `--wait-for drained` for a hard receipt) + the wake sidecar, with `amq-squad send` (the pane nudge/interrupt) as last-resort. Use the printed `collect --timeout 120s` only for an immediate ACK/report; otherwise park and let wake resume the lead.
+- **Use `amq-squad dispatch`** (`--session S --role R --kind todo --subject … --body-file ./task.md`): one root-correct command that queues the durable task AND wakes the worker to drain it (durable AMQ + wake; a pane nudge only as last-resort when the worker is not wake-live). Never re-send a task body through the pane (it double-delivers); the nudge carries only the *drain instruction*. The halves are `amq-squad amq send` (durable, add `--wait-for drained` for a hard receipt) + the wake sidecar, with `amq-squad send` (the pane nudge/interrupt) as last-resort. Use the printed `collect --timeout 120s` only for an immediate ACK/report; otherwise park and let wake resume the lead.
 - Address the control plane (the pane nudge/`focus`) by recorded pane id (via `--role`), never window name.
 - The pane nudge is idle-checked by default; pass `--force` (on `dispatch` or `amq-squad send`) only to deliberately interrupt a working child. (The durable message queues — no busy hazard.)
 - Children push reports; the lead collects with `amq-squad collect`, verifies, and owns the deliverable.

@@ -12,10 +12,12 @@ This guide covers everything you have to change.
 2.1.0 ("orchestrator dogfood hardening") only adds commands and fixes — it
 removes nothing and changes no on-disk format. New surface:
 
-- **`amq-squad dispatch --session S --role R --kind todo --subject … --body …`**
+- **`amq-squad dispatch --session S --role R --kind todo --subject … --body-file ./task.md`**
   — the deterministic lead→child dispatch: a durable AMQ send to the
   workstream's resolved root PLUS a drain-only pane nudge, in one root-correct
   command. Use it instead of hand-rolling `amq send` + a manual nudge from a lead.
+  Prefer `--body-file FILE` or `--body-file -` for code, commands, backticks,
+  and `$()` syntax; the caller shell expands inline `--body` before execution.
 - **`amq-squad amq send|reply|drain|watch|list|read|thread`** — root-resolving
   passthroughs so an EXTERNAL lead (a human-driven session with no `AM_ROOT`)
   reaches `.agent-mail/<session>` instead of the default `.agent-mail`.

@@ -124,7 +124,8 @@ First steps:
 {{- if and .Orchestrated (not .IsLead) .LeadHandle }}
 
 You are a worker on a lead-orchestrated squad (lead handle: {{.LeadHandle}}). As part of step 12, after stating your identity, push a READY signal to your lead so it can send the first durable AMQ task (`amq send --kind todo --wait-for drained`) once you are loaded and draining. Pane injection is fallback only:
-- `amq send --to {{.LeadHandle}} --kind status --subject "READY: {{orDefault .Role "agent"}}" --body "loaded and idle; ready for dispatch"`
+- For raw `amq send`, pass body data with `--body -` (stdin) or `--body @file`; raw AMQ does not accept `--body-file`. The `amq-squad send`/`dispatch` wrappers use `--body-file FILE` or `--body-file -`. This is the safe default for all bodies and is required for code, commands, backticks, or `$()` syntax.
+- `printf '%s\n' 'loaded and idle; ready for dispatch' | amq send --to {{.LeadHandle}} --kind status --subject "READY: {{orDefault .Role "agent"}}" --body -`
 For every durable AMQ task you receive (`--kind todo`), **reply to the task's `From` field** — that sender is your effective lead for that task and may differ from the configured team lead above.
 Then wait (step 13) for the lead's dispatch over durable AMQ, or for a pane prompt only when the lead is using the fallback path.
 {{- end }}

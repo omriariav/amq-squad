@@ -139,11 +139,15 @@ with the printed root-correct 'amq-squad collect --session ... --me ...'
 command. Drain receipts only prove the child saw the task; they do not prove the
 task is complete.
 
+Use --body-file FILE or --body-file - (stdin) for task bodies containing code,
+commands, backticks, or $() syntax. Inline --body is suitable only for short
+plain prose: the caller's shell expands inline text before amq-squad receives
+argv, so no literal flag can recover text the shell already substituted.
+
 Examples:
-  amq-squad dispatch --session issue-96 --role qa --subject "Validate PR #64" --body "Run the suite and report risk."
   amq-squad dispatch --session issue-96 --role fullstack --thread p2p/cto__fullstack --subject "Build X" --body-file ./task.md
-  amq-squad dispatch --session issue-96 --role cto --kind question --subject "Approve merge?" --body-file ./ask.md
-  amq-squad dispatch --session issue-96 --role fullstack --from cto --subject "Build X" --body "..." --force
+  cat task.md | amq-squad dispatch --session issue-96 --role qa --subject "Validate PR #64" --body-file -
+  amq-squad dispatch --session issue-96 --role cto --kind question --subject "Approve merge?" --body "Plain-prose question."
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -162,6 +166,7 @@ Examples:
 	if err != nil {
 		return err
 	}
+	warnSuspiciousInlineBody("dispatch", taskBody, flagWasSet(fs, "body"), os.Stderr)
 
 	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {
