@@ -28,5 +28,29 @@ jobs:
           curl -L https://github.com/jgm/pandoc/releases/download/3.8.3/pandoc-3.8.3-1-amd64.deb -o /tmp/pandoc.deb
           sudo dpkg -i /tmp/pandoc.deb
 
+      - name: Run shuffled internal/cli evidence suite
+        shell: bash
+        run: |
+          mkdir -p ci-artifacts
+          set +e
+          go test -json -shuffle=on -timeout=15m ./internal/cli > ci-artifacts/internal-cli.json
+          status=$?
+          set -e
+          seed="$(sed -nE 's/.*-test\.shuffle ([0-9]+).*/\1/p' ci-artifacts/internal-cli.json | head -n 1)"
+          if [[ -z "$seed" ]]; then
+            seed=unknown
+          fi
+          printf 'shuffle_seed=%s\nexit_code=%s\n' "$seed" "$status" | tee ci-artifacts/internal-cli-metadata.txt
+          exit "$status"
+
+      - name: Upload shuffled internal/cli evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: internal-cli-go-test-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Run make ci
         run: make ci

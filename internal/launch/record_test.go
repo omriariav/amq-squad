@@ -33,6 +33,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		ExplicitAllowedTools:         []string{"Read(/tmp/review/**)"},
 		WakeInjectVia:                "/opt/amq-inject",
 		WakeInjectArgs:               []string{"--pane", "%42"},
+		WakeInjectMode:               "raw",
 		WakePID:                      1234,
 		StartedAt:                    time.Now().UTC().Truncate(time.Second),
 	}
@@ -61,7 +62,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		out.Conversation != in.Conversation ||
 		out.Handle != in.Handle || out.Role != in.Role || out.Root != in.Root ||
 		out.BaseRoot != in.BaseRoot || out.RootSource != in.RootSource ||
-		out.AMQVersion != in.AMQVersion || out.WakeInjectVia != in.WakeInjectVia ||
+		out.AMQVersion != in.AMQVersion || out.WakeInjectVia != in.WakeInjectVia || out.WakeInjectMode != in.WakeInjectMode ||
 		out.NoGitignore != in.NoGitignore || out.NoPreauthorizeInScope != in.NoPreauthorizeInScope || out.WakePID != in.WakePID {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", out, in)
 	}

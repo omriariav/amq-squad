@@ -417,6 +417,25 @@ func TestUpDryRunMatchesTeamShowWithFlags(t *testing.T) {
 	}
 }
 
+func TestUpDryRunWakeInjectModeNonePropagates(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{Members: []team.Member{{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-401"}}})
+	out, _, err := captureOutput(t, func() error {
+		return runUp([]string{"--dry-run", "--session", "issue-401", "--wake-inject-mode", "none"})
+	})
+	if err != nil {
+		t.Fatalf("up zero-input wake: %v", err)
+	}
+	if !strings.Contains(out, "--wake-inject-mode none") {
+		t.Fatalf("up preview omitted zero-input wake mode:\n%s", out)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runUp([]string{"--dry-run", "--session", "issue-401", "--wake-inject-mode", "none", "--wake-inject-via", "/opt/inject"})
+	}); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("up must reject none + injector flags, got %v", err)
+	}
+}
+
 func TestUpDryRunVisibilityChangesPreviewTopology(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	seedTeam(t, team.Team{

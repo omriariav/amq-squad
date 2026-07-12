@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -619,10 +623,87 @@ func TestLeadRegisterWakeFailureCanBeNonRequired(t *testing.T) {
 	}
 }
 
+func TestLeadRegisterWakeInjectModeNoneIsZeroInput(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.42.0")
+	base := os.Getenv("AMQ_FAKE_ROOT")
+	seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
+	prevPane := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "lead", PaneID: "%5"}, nil
+	}
+	var got []leadWakeOptions
+	prevWake := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		got = append(got, opts)
+		return leadWakeResult{PID: 1234, Started: true}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prevPane; leadWakeStarter = prevWake })
+	if _, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead", "--wake-inject-mode", "none"})
+	}); err != nil {
+		t.Fatalf("lead register none: %v", err)
+	}
+	if len(got) != 1 || got[0].WakeInjectMode != "none" || got[0].WakeInjectCmd != "" || got[0].WakeInjectVia != "" || len(got[0].WakeInjectArgs) != 0 {
+		t.Fatalf("zero-input wake options = %+v", got)
+	}
+	rec, err := launch.Read(filepath.Join(base, "agents", "cto"))
+	if err != nil || rec.WakeInjectMode != "none" || rec.WakeInjectCmd != "" {
+		t.Fatalf("zero-input wake record = %+v, %v", rec, err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
+	}); err != nil {
+		t.Fatalf("lead repair without mode: %v", err)
+	}
+	if len(got) != 2 || got[1].WakeInjectMode != "none" || got[1].WakeInjectCmd != "" {
+		t.Fatalf("repair must inherit none mode: %+v", got)
+	}
+	rec, err = launch.Read(filepath.Join(base, "agents", "cto"))
+	if err != nil || rec.WakeInjectMode != "none" || rec.WakeInjectCmd != "" {
+		t.Fatalf("repair reset zero-input record = %+v, %v", rec, err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead", "--wake-inject-mode", "raw"})
+	}); err != nil {
+		t.Fatalf("lead repair explicit raw: %v", err)
+	}
+	if len(got) != 3 || got[2].WakeInjectMode != "raw" || got[2].WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("explicit raw must override inherited none: %+v", got)
+	}
+	rec, err = launch.Read(filepath.Join(base, "agents", "cto"))
+	if err != nil || rec.WakeInjectMode != "raw" || rec.WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("explicit raw record = %+v, %v", rec, err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead", "--wake-inject-mode", "none", "--wake-inject-via", "/opt/inject"})
+	}); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("none + injector must fail closed, got %v", err)
+	}
+}
+
+func TestResolveExternalWakeInjectConfigInheritsAssociatedInjector(t *testing.T) {
+	rec := launch.Record{
+		External:       true,
+		Role:           "cto",
+		Handle:         "cto",
+		Session:        "issue-96",
+		Root:           "/repo/.agent-mail/issue-96",
+		WakeInjectMode: "paste",
+		WakeInjectVia:  "/opt/inject",
+		WakeInjectArgs: []string{"--pane", "%5"},
+		Tmux:           &launch.TmuxInfo{PaneID: "%5"},
+	}
+	got, err := resolveExternalWakeInjectConfig(wakeInjectConfig{}, false, false, false, rec, nil, "cto", "cto", "default", "issue-96", rec.Root, "%5")
+	if err != nil {
+		t.Fatalf("inherit external wake config: %v", err)
+	}
+	if got.Mode != "paste" || got.Via != "/opt/inject" || strings.Join(got.Args, ",") != "--pane,%5" {
+		t.Fatalf("inherited config = %+v", got)
+	}
+}
+
 func TestStartExternalLeadWakeRequiredTimeoutStopsSpawnedProcess(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "late-ready")
-	restore := installLeadWakeHelper(t, "spawn-child-late-ready", marker)
-	defer restore()
+	harness := installLeadWakeHelper(t, "spawn-child-late-ready")
 
 	_, err := startExternalLeadWake(leadWakeOptions{
 		ProjectDir: t.TempDir(),
@@ -636,13 +717,11 @@ func TestStartExternalLeadWakeRequiredTimeoutStopsSpawnedProcess(t *testing.T) {
 	if !strings.Contains(err.Error(), "did not become ready") || !strings.Contains(err.Error(), "stopped spawned wake process") {
 		t.Fatalf("timeout error = %v, want stopped-process detail", err)
 	}
-	assertLateReadyMarkerAbsent(t, marker)
+	harness.assertStoppedAfterCleanup(t)
 }
 
 func TestStartExternalLeadWakeNonRequiredTimeoutStopsSpawnedProcessAndReportsNoPID(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "late-ready")
-	restore := installLeadWakeHelper(t, "spawn-child-late-ready", marker)
-	defer restore()
+	harness := installLeadWakeHelper(t, "spawn-child-late-ready")
 
 	result, err := startExternalLeadWake(leadWakeOptions{
 		ProjectDir: t.TempDir(),
@@ -659,13 +738,11 @@ func TestStartExternalLeadWakeNonRequiredTimeoutStopsSpawnedProcessAndReportsNoP
 	if !strings.Contains(result.Detail, "did not become ready") || !strings.Contains(result.Detail, "stopped spawned wake process") {
 		t.Fatalf("timeout detail = %q, want stopped-process detail", result.Detail)
 	}
-	assertLateReadyMarkerAbsent(t, marker)
+	harness.assertStoppedAfterCleanup(t)
 }
 
 func TestStartExternalLeadWakeRequiredFailureStopsSpawnedProcess(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "late-ready")
-	restore := installLeadWakeHelper(t, "spawn-child-fail", marker)
-	defer restore()
+	harness := installLeadWakeHelper(t, "spawn-child-fail")
 
 	_, err := startExternalLeadWake(leadWakeOptions{
 		ProjectDir: t.TempDir(),
@@ -679,13 +756,11 @@ func TestStartExternalLeadWakeRequiredFailureStopsSpawnedProcess(t *testing.T) {
 	if !strings.Contains(err.Error(), "stopped spawned wake process") {
 		t.Fatalf("failure error = %v, want stopped-process detail", err)
 	}
-	assertLateReadyMarkerAbsent(t, marker)
+	harness.assertStoppedAfterCleanup(t)
 }
 
 func TestStartExternalLeadWakeNonRequiredFailureStopsSpawnedProcessAndReportsNoPID(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "late-ready")
-	restore := installLeadWakeHelper(t, "spawn-child-fail", marker)
-	defer restore()
+	harness := installLeadWakeHelper(t, "spawn-child-fail")
 
 	result, err := startExternalLeadWake(leadWakeOptions{
 		ProjectDir: t.TempDir(),
@@ -703,7 +778,7 @@ func TestStartExternalLeadWakeNonRequiredFailureStopsSpawnedProcessAndReportsNoP
 	if !hasFailureReason || !strings.Contains(result.Detail, "stopped spawned wake process") {
 		t.Fatalf("failure detail = %q, want stopped-process detail", result.Detail)
 	}
-	assertLateReadyMarkerAbsent(t, marker)
+	harness.assertStoppedAfterCleanup(t)
 }
 
 func TestLeadRegisterWakeFailureRequiredErrorsBeforeTeamMutation(t *testing.T) {
@@ -741,40 +816,349 @@ func TestLeadRegisterWakeFailureRequiredErrorsBeforeTeamMutation(t *testing.T) {
 	}
 }
 
-func installLeadWakeHelper(t *testing.T, mode, marker string) func() {
+type leadWakeHelperHarness struct {
+	mode           string
+	markerPath     string
+	startedPath    string
+	triggerPath    string
+	eventsPath     string
+	deferredMu     sync.Mutex
+	deferredEvents []leadWakeHelperEvent
+}
+
+type leadWakeHelperEvent struct {
+	Time          string `json:"time"`
+	PID           int    `json:"pid"`
+	PPID          int    `json:"ppid"`
+	PGID          int    `json:"pgid"`
+	TargetPID     int    `json:"target_pid,omitempty"`
+	TargetPGID    int    `json:"target_pgid,omitempty"`
+	Mode          string `json:"mode"`
+	Phase         string `json:"phase"`
+	ReadyPath     string `json:"ready_path,omitempty"`
+	MarkerPath    string `json:"marker_path"`
+	ProbeKillZero string `json:"probe_kill_zero,omitempty"`
+	ProbeGetPGID  string `json:"probe_getpgid,omitempty"`
+	Error         string `json:"error,omitempty"`
+}
+
+func installLeadWakeHelper(t *testing.T, mode string) *leadWakeHelperHarness {
 	t.Helper()
+	dir := t.TempDir()
+	harness := &leadWakeHelperHarness{
+		mode:        mode,
+		markerPath:  filepath.Join(dir, "survived-after-cleanup"),
+		startedPath: filepath.Join(dir, "grandchild-started"),
+		triggerPath: filepath.Join(dir, "cleanup-returned"),
+		eventsPath:  filepath.Join(dir, "helper-events.jsonl"),
+	}
 	prevCommand := externalLeadWakeCommand
 	prevTimeout := externalLeadWakeReadyTimeout
 	prevPoll := externalLeadWakePollInterval
 	prevStopTimeout := externalLeadWakeStopTimeout
+	prevProcessEvent := externalLeadWakeProcessEvent
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatalf("test executable: %v", err)
 	}
 	externalLeadWakeCommand = func(_ string, args ...string) *exec.Cmd {
-		helperArgs := []string{"-test.run=TestLeadWakeHelperProcess", "--", "lead-wake-helper", mode, marker}
+		helperArgs := []string{
+			"-test.run=TestLeadWakeHelperProcess", "--", "lead-wake-helper", mode,
+			harness.markerPath, harness.startedPath, harness.triggerPath, harness.eventsPath,
+		}
 		helperArgs = append(helperArgs, args...)
 		return exec.Command(exe, helperArgs...)
+	}
+	firstKillAttempt := true
+	externalLeadWakeProcessEvent = func(phase string, cmd *exec.Cmd, eventErr error) {
+		targetPID := 0
+		if cmd != nil && cmd.Process != nil {
+			targetPID = cmd.Process.Pid
+		}
+		if phase == "kill_attempt" && firstKillAttempt {
+			firstKillAttempt = false
+			_ = appendLeadWakeHelperEvent(harness.eventsPath, mode, "waiting_for_started", "", harness.markerPath, targetPID, nil)
+			if err := waitForLeadWakeHelperStarted(harness.startedPath, 2*time.Second); err != nil {
+				// Mark the test failed before allowing cleanup to signal the group,
+				// but keep running so the failed precondition cannot leak helpers.
+				t.Errorf("wake-helper canary precondition: %v", err)
+			} else {
+				_ = appendLeadWakeHelperEvent(harness.eventsPath, mode, "started_observed", "", harness.markerPath, targetPID, nil)
+			}
+		}
+		_ = appendLeadWakeHelperEvent(harness.eventsPath, mode, phase, "", harness.markerPath, targetPID, eventErr)
+		if phase == "kill_result" {
+			childPID, err := readLeadWakeHelperStartedPID(harness.startedPath)
+			if err != nil {
+				_ = appendLeadWakeHelperEvent(harness.eventsPath, mode, "post_kill_probe_unavailable", "", harness.markerPath, 0, err)
+				return
+			}
+			harness.recordImmediateProbe(mode, "post_kill_probe_immediate", childPID)
+		}
 	}
 	externalLeadWakeReadyTimeout = 20 * time.Millisecond
 	externalLeadWakePollInterval = 2 * time.Millisecond
 	externalLeadWakeStopTimeout = time.Second
-	return func() {
+	t.Cleanup(func() {
 		externalLeadWakeCommand = prevCommand
 		externalLeadWakeReadyTimeout = prevTimeout
 		externalLeadWakePollInterval = prevPoll
 		externalLeadWakeStopTimeout = prevStopTimeout
+		externalLeadWakeProcessEvent = prevProcessEvent
+		if err := harness.flushDeferredEvents(); err != nil {
+			t.Logf("flush deferred lead wake helper events: %v", err)
+		}
+		if t.Failed() || testing.Verbose() {
+			if events, err := os.ReadFile(harness.eventsPath); err == nil {
+				t.Logf("lead wake helper events:\n%s", events)
+			} else {
+				t.Logf("read lead wake helper events: %v", err)
+			}
+		}
+	})
+	return harness
+}
+
+func waitForLeadWakeHelperStarted(path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		if _, err := readLeadWakeHelperStartedPID(path); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("grandchild did not reach trigger wait phase within %s: %w", timeout, lastErr)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
-func assertLateReadyMarkerAbsent(t *testing.T, marker string) {
-	t.Helper()
-	time.Sleep(250 * time.Millisecond)
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatalf("late-ready helper marker exists at %s; spawned wake process was not stopped", marker)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("stat late-ready helper marker: %v", err)
+func readLeadWakeHelperStartedPID(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
 	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, fmt.Errorf("parse started PID: %w", err)
+	}
+	if pid <= 0 {
+		return 0, fmt.Errorf("started PID must be positive, got %d", pid)
+	}
+	return pid, nil
+}
+
+func TestWaitForLeadWakeHelperStartedFailsClosed(t *testing.T) {
+	err := waitForLeadWakeHelperStarted(filepath.Join(t.TempDir(), "missing"), 5*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "did not reach trigger wait phase") {
+		t.Fatalf("missing started file err = %v, want bounded fail-closed error", err)
+	}
+}
+
+func TestWaitExternalLeadWakeProcessGroupGoneResignalsUntilESRCH(t *testing.T) {
+	prevSignal := externalLeadWakeProcessGroupSignal
+	prevPoll := externalLeadWakePollInterval
+	prevTimeout := externalLeadWakeStopTimeout
+	t.Cleanup(func() {
+		externalLeadWakeProcessGroupSignal = prevSignal
+		externalLeadWakePollInterval = prevPoll
+		externalLeadWakeStopTimeout = prevTimeout
+	})
+	probes := 0
+	kills := 0
+	externalLeadWakeProcessGroupSignal = func(pgid int, signal syscall.Signal) error {
+		if pgid != 4242 {
+			t.Fatalf("pgid = %d, want 4242", pgid)
+		}
+		if signal == 0 {
+			probes++
+			if probes == 1 {
+				return nil
+			}
+			return syscall.ESRCH
+		}
+		if signal != syscall.SIGKILL {
+			t.Fatalf("signal = %v, want SIGKILL", signal)
+		}
+		kills++
+		return nil
+	}
+	externalLeadWakePollInterval = time.Millisecond
+	externalLeadWakeStopTimeout = 50 * time.Millisecond
+
+	cmd := &exec.Cmd{Process: &os.Process{Pid: 4242}}
+	if err := waitExternalLeadWakeProcessGroupGone(cmd, true); err != nil {
+		t.Fatalf("wait for process group: %v", err)
+	}
+	if probes != 2 || kills != 1 {
+		t.Fatalf("probes/kills = %d/%d, want 2/1", probes, kills)
+	}
+}
+
+func TestWaitExternalLeadWakeProcessGroupGoneTimesOutWhileLive(t *testing.T) {
+	prevSignal := externalLeadWakeProcessGroupSignal
+	prevPoll := externalLeadWakePollInterval
+	prevTimeout := externalLeadWakeStopTimeout
+	t.Cleanup(func() {
+		externalLeadWakeProcessGroupSignal = prevSignal
+		externalLeadWakePollInterval = prevPoll
+		externalLeadWakeStopTimeout = prevTimeout
+	})
+	externalLeadWakeProcessGroupSignal = func(_ int, _ syscall.Signal) error { return nil }
+	externalLeadWakePollInterval = time.Millisecond
+	externalLeadWakeStopTimeout = 5 * time.Millisecond
+
+	cmd := &exec.Cmd{Process: &os.Process{Pid: 4242}}
+	err := waitExternalLeadWakeProcessGroupGone(cmd, true)
+	if err == nil || !strings.Contains(err.Error(), "timed out waiting for spawned wake process group") {
+		t.Fatalf("live group err = %v, want bounded timeout", err)
+	}
+}
+
+func TestWaitExternalLeadWakeProcessGroupGoneScopesDarwinEPERMAfterSuccess(t *testing.T) {
+	prevSignal := externalLeadWakeProcessGroupSignal
+	t.Cleanup(func() { externalLeadWakeProcessGroupSignal = prevSignal })
+	externalLeadWakeProcessGroupSignal = func(_ int, _ syscall.Signal) error { return syscall.EPERM }
+	cmd := &exec.Cmd{Process: &os.Process{Pid: 4242}}
+
+	if err := waitExternalLeadWakeProcessGroupGone(cmd, true); err != nil {
+		t.Fatalf("post-success EPERM = %v, want accepted quiescence", err)
+	}
+	if err := waitExternalLeadWakeProcessGroupGone(cmd, false); !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("pre-success EPERM = %v, want EPERM failure", err)
+	}
+}
+
+func (h *leadWakeHelperHarness) assertStoppedAfterCleanup(t *testing.T) {
+	t.Helper()
+	pgid, _ := syscall.Getpgid(0)
+	h.recordDeferredEvent(leadWakeHelperEvent{
+		Time:       time.Now().UTC().Format(time.RFC3339Nano),
+		PID:        os.Getpid(),
+		PPID:       os.Getppid(),
+		PGID:       pgid,
+		Mode:       h.mode,
+		Phase:      "cleanup_returned",
+		MarkerPath: h.markerPath,
+	})
+	if err := os.WriteFile(h.triggerPath, []byte("cleanup returned\n"), 0o644); err != nil {
+		t.Fatalf("write cleanup trigger: %v", err)
+	}
+	if err := appendLeadWakeHelperEvent(h.eventsPath, h.mode, "trigger_written", "", h.markerPath, 0, nil); err != nil {
+		t.Fatalf("record cleanup trigger: %v", err)
+	}
+
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(h.markerPath); err == nil {
+			t.Fatalf("post-cleanup survival marker exists at %s; spawned wake process survived cleanup", h.markerPath)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("stat post-cleanup survival marker: %v", err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if err := appendLeadWakeHelperEvent(h.eventsPath, h.mode, "marker_absent", "", h.markerPath, 0, nil); err != nil {
+		t.Fatalf("record marker absence: %v", err)
+	}
+}
+
+func appendLeadWakeHelperEvent(path, mode, phase, readyPath, markerPath string, targetPID int, eventErr error) error {
+	pgid, _ := syscall.Getpgid(0)
+	targetPGID := 0
+	if targetPID > 0 {
+		targetPGID, _ = syscall.Getpgid(targetPID)
+	}
+	event := leadWakeHelperEvent{
+		Time:       time.Now().UTC().Format(time.RFC3339Nano),
+		PID:        os.Getpid(),
+		PPID:       os.Getppid(),
+		PGID:       pgid,
+		TargetPID:  targetPID,
+		TargetPGID: targetPGID,
+		Mode:       mode,
+		Phase:      phase,
+		ReadyPath:  readyPath,
+		MarkerPath: markerPath,
+	}
+	if eventErr != nil {
+		event.Error = eventErr.Error()
+	}
+	return writeLeadWakeHelperEvent(path, event)
+}
+
+func (h *leadWakeHelperHarness) recordImmediateProbe(mode, phase string, targetPID int) {
+	pgid, _ := syscall.Getpgid(0)
+	targetPGID, getPGIDErr := syscall.Getpgid(targetPID)
+	killZeroErr := syscall.Kill(targetPID, 0)
+	event := leadWakeHelperEvent{
+		Time:          time.Now().UTC().Format(time.RFC3339Nano),
+		PID:           os.Getpid(),
+		PPID:          os.Getppid(),
+		PGID:          pgid,
+		TargetPID:     targetPID,
+		TargetPGID:    targetPGID,
+		Mode:          mode,
+		Phase:         phase,
+		MarkerPath:    h.markerPath,
+		ProbeKillZero: probeResult(killZeroErr),
+		ProbeGetPGID:  probePGIDResult(targetPGID, getPGIDErr),
+	}
+	h.deferredMu.Lock()
+	h.deferredEvents = append(h.deferredEvents, event)
+	h.deferredMu.Unlock()
+}
+
+func (h *leadWakeHelperHarness) recordDeferredEvent(event leadWakeHelperEvent) {
+	h.deferredMu.Lock()
+	h.deferredEvents = append(h.deferredEvents, event)
+	h.deferredMu.Unlock()
+}
+
+func (h *leadWakeHelperHarness) flushDeferredEvents() error {
+	h.deferredMu.Lock()
+	events := append([]leadWakeHelperEvent(nil), h.deferredEvents...)
+	h.deferredEvents = nil
+	h.deferredMu.Unlock()
+	for _, event := range events {
+		if err := writeLeadWakeHelperEvent(h.eventsPath, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func probeResult(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	return err.Error()
+}
+
+func probePGIDResult(pgid int, err error) string {
+	if err == nil {
+		return strconv.Itoa(pgid)
+	}
+	return err.Error()
+}
+
+func writeLeadWakeHelperEvent(path string, event leadWakeHelperEvent) error {
+	line, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	line = append(line, '\n')
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.Write(line)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
 }
 
 func TestLeadWakeHelperProcess(t *testing.T) {
@@ -788,19 +1172,26 @@ func TestLeadWakeHelperProcess(t *testing.T) {
 	if idx == -1 {
 		return
 	}
-	if len(os.Args) <= idx+3 {
+	if len(os.Args) <= idx+6 {
 		fmt.Fprintln(os.Stderr, "lead wake helper missing args")
 		os.Exit(2)
 	}
 	mode := os.Args[idx+1]
 	marker := os.Args[idx+2]
-	wakeArgs := os.Args[idx+3:]
+	startedPath := os.Args[idx+3]
+	triggerPath := os.Args[idx+4]
+	eventsPath := os.Args[idx+5]
+	wakeArgs := os.Args[idx+6:]
 	readyPath := ""
 	for i := 0; i < len(wakeArgs)-1; i++ {
 		if wakeArgs[i] == "--ready-file" {
 			readyPath = wakeArgs[i+1]
 			break
 		}
+	}
+	if err := appendLeadWakeHelperEvent(eventsPath, mode, "helper_start", readyPath, marker, 0, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "record helper start: %v\n", err)
+		os.Exit(2)
 	}
 	switch mode {
 	case "spawn-child-late-ready", "spawn-child-fail":
@@ -809,27 +1200,52 @@ func TestLeadWakeHelperProcess(t *testing.T) {
 			fmt.Fprintf(os.Stderr, "test executable: %v\n", err)
 			os.Exit(2)
 		}
-		childArgs := []string{"-test.run=TestLeadWakeHelperProcess", "--", "lead-wake-helper", "late-ready", marker}
+		childArgs := []string{
+			"-test.run=TestLeadWakeHelperProcess", "--", "lead-wake-helper", "late-ready",
+			marker, startedPath, triggerPath, eventsPath,
+		}
 		childArgs = append(childArgs, wakeArgs...)
 		child := exec.Command(exe, childArgs...)
 		child.Stdout = os.Stderr
 		child.Stderr = os.Stderr
 		if err := child.Start(); err != nil {
+			_ = appendLeadWakeHelperEvent(eventsPath, mode, "child_start_failed", readyPath, marker, 0, err)
 			fmt.Fprintf(os.Stderr, "start child: %v\n", err)
 			os.Exit(2)
 		}
+		_ = appendLeadWakeHelperEvent(eventsPath, mode, "child_started", readyPath, marker, child.Process.Pid, nil)
 		if mode == "spawn-child-fail" {
+			_ = appendLeadWakeHelperEvent(eventsPath, mode, "parent_exit", readyPath, marker, child.Process.Pid, errors.New("exit status 42"))
 			os.Exit(42)
 		}
+		_ = appendLeadWakeHelperEvent(eventsPath, mode, "parent_wait", readyPath, marker, child.Process.Pid, nil)
 		for {
 			time.Sleep(time.Hour)
 		}
 	case "late-ready":
-		time.Sleep(200 * time.Millisecond)
+		if err := os.WriteFile(startedPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o644); err != nil {
+			_ = appendLeadWakeHelperEvent(eventsPath, mode, "started_write_failed", readyPath, marker, 0, err)
+			fmt.Fprintf(os.Stderr, "write started: %v\n", err)
+			os.Exit(2)
+		}
+		_ = appendLeadWakeHelperEvent(eventsPath, mode, "started_written", readyPath, marker, 0, nil)
+		for {
+			if _, err := os.Stat(triggerPath); err == nil {
+				break
+			} else if !errors.Is(err, os.ErrNotExist) {
+				_ = appendLeadWakeHelperEvent(eventsPath, mode, "trigger_stat_failed", readyPath, marker, 0, err)
+				fmt.Fprintf(os.Stderr, "stat trigger: %v\n", err)
+				os.Exit(2)
+			}
+			time.Sleep(time.Millisecond)
+		}
+		_ = appendLeadWakeHelperEvent(eventsPath, mode, "trigger_observed", readyPath, marker, 0, nil)
 		if err := os.WriteFile(marker, []byte("late-ready"), 0o644); err != nil {
+			_ = appendLeadWakeHelperEvent(eventsPath, mode, "marker_write_failed", readyPath, marker, 0, err)
 			fmt.Fprintf(os.Stderr, "write marker: %v\n", err)
 			os.Exit(2)
 		}
+		_ = appendLeadWakeHelperEvent(eventsPath, mode, "marker_written", readyPath, marker, 0, nil)
 		if readyPath != "" {
 			if err := os.WriteFile(readyPath, []byte("ready"), 0o644); err != nil {
 				fmt.Fprintf(os.Stderr, "write ready: %v\n", err)

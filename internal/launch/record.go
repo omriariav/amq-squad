@@ -106,6 +106,7 @@ type Record struct {
 	// digest-bound wake target later.
 	WakeInjectVia  string   `json:"wake_inject_via,omitempty"`
 	WakeInjectArgs []string `json:"wake_inject_args,omitempty"`
+	WakeInjectMode string   `json:"wake_inject_mode,omitempty"`
 	// WakeInjectCmd records the literal instruction the wake sidecar injects on
 	// each durable-message arrival (amq wake --inject-cmd). amq-squad sets it to
 	// the standard drain instruction so an inbound directive re-engages a lead

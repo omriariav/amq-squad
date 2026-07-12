@@ -542,7 +542,7 @@ amq-squad completion fish
 ## Requirements
 
 - Go 1.25+
-- `amq` 0.41.0+ on `PATH`
+- `amq` 0.42.0+ on `PATH`
 - `tmux` on `PATH` for Tier A managed panes
 - macOS with iTerm2 for the Tier B backend
 - macOS Terminal.app for the Tier C backend
