@@ -37,7 +37,7 @@ func newDoctorExec(t *testing.T, dir string) doctorExecution {
 		ProjectDir: dir,
 		Out:        &bytes.Buffer{},
 		ResolveAMQEnv: func(string) (amqEnv, error) {
-			return amqEnv{AMQVersion: "0.41.0", Root: filepath.Join(dir, ".agent-mail")}, nil
+			return amqEnv{AMQVersion: "0.42.0", Root: filepath.Join(dir, ".agent-mail")}, nil
 		},
 		RunAMQOps: func(string, amqEnv) ([]byte, error) {
 			return []byte(`{"status":"ok"}`), nil
@@ -193,7 +193,7 @@ func TestExecuteDoctorAMQVersionTooOld(t *testing.T) {
 	if got == nil || got.Status != doctorFail {
 		t.Fatalf("amq version check = %+v, want fail", got)
 	}
-	if !strings.Contains(got.Detail, "0.38.0") || !strings.Contains(got.Detail, "0.41.0") {
+	if !strings.Contains(got.Detail, "0.38.0") || !strings.Contains(got.Detail, "0.42.0") {
 		t.Errorf("detail should name the bad version: %q", got.Detail)
 	}
 	if !strings.Contains(got.Detail, "amq upgrade") {
@@ -250,9 +250,9 @@ func TestExecuteDoctorAMQEnvCommandFails(t *testing.T) {
 	}
 }
 
-func TestExecuteDoctorAMQVersionAccepts041x(t *testing.T) {
+func TestExecuteDoctorAMQVersionAccepts042x(t *testing.T) {
 	dir := t.TempDir()
-	for _, v := range []string{"0.41.0", "v0.41.1-rc1", "1.0.0+build42"} {
+	for _, v := range []string{"0.42.0", "v0.42.1-rc1", "1.0.0+build42"} {
 		d := newDoctorExec(t, dir)
 		d.ResolveAMQEnv = func(string) (amqEnv, error) {
 			return amqEnv{AMQVersion: v, Root: dir}, nil
@@ -270,23 +270,27 @@ func TestExecuteDoctorAMQVersionAccepts041x(t *testing.T) {
 	}
 }
 
-func TestExecuteDoctorAMQVersionRejectsOlderThan041(t *testing.T) {
-	dir := t.TempDir()
-	d := newDoctorExec(t, dir)
-	d.ResolveAMQEnv = func(string) (amqEnv, error) {
-		return amqEnv{AMQVersion: "0.40.9", Root: dir}, nil
-	}
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err == nil {
-		t.Fatal("doctor should fail when amq is below the 0.41.0 floor")
-	}
-	amqLine := firstLineWith(buf.String(), "amq version")
-	if !strings.Contains(amqLine, "fail") || !strings.Contains(amqLine, "older than required 0.41.0") {
-		t.Fatalf("unexpected amq version line: %q\n%s", amqLine, buf.String())
-	}
-	if !strings.Contains(amqLine, "amq upgrade") {
-		t.Fatalf("amq version line should point at amq upgrade: %q", amqLine)
+func TestExecuteDoctorAMQVersionRejectsOlderThan042(t *testing.T) {
+	for _, version := range []string{"0.41.9", "0.42.0-rc1"} {
+		t.Run(version, func(t *testing.T) {
+			dir := t.TempDir()
+			d := newDoctorExec(t, dir)
+			d.ResolveAMQEnv = func(string) (amqEnv, error) {
+				return amqEnv{AMQVersion: version, Root: dir}, nil
+			}
+			var buf bytes.Buffer
+			d.Out = &buf
+			if err := executeDoctor(d); err == nil {
+				t.Fatalf("doctor should fail when amq %s is below the 0.42.0 floor", version)
+			}
+			amqLine := firstLineWith(buf.String(), "amq version")
+			if !strings.Contains(amqLine, "fail") || !strings.Contains(amqLine, "older than required 0.42.0") {
+				t.Fatalf("unexpected amq version line: %q\n%s", amqLine, buf.String())
+			}
+			if !strings.Contains(amqLine, "amq upgrade") {
+				t.Fatalf("amq version line should point at amq upgrade: %q", amqLine)
+			}
+		})
 	}
 }
 
@@ -755,7 +759,7 @@ func TestExecuteDoctorWakeReuseClassifyMemberStatus(t *testing.T) {
 		ProjectDir: dir,
 		Out:        &bytes.Buffer{},
 		ResolveAMQEnv: func(string) (amqEnv, error) {
-			return amqEnv{AMQVersion: "0.41.0", Root: filepath.Join(base, "issue-96")}, nil
+			return amqEnv{AMQVersion: "0.42.0", Root: filepath.Join(base, "issue-96")}, nil
 		},
 		LookPath: func(string) (string, error) { return "/usr/bin/tmux", nil },
 		Probe: duplicateLaunchProbe{
@@ -798,7 +802,7 @@ func TestExecuteDoctorWakeHandlesAMQEnvErrorPerMember(t *testing.T) {
 	d := doctorExecution{
 		ProjectDir:    dir,
 		Out:           &bytes.Buffer{},
-		ResolveAMQEnv: func(string) (amqEnv, error) { return amqEnv{AMQVersion: "0.41.0"}, nil },
+		ResolveAMQEnv: func(string) (amqEnv, error) { return amqEnv{AMQVersion: "0.42.0"}, nil },
 		LookPath:      func(string) (string, error) { return "/usr/bin/tmux", nil },
 		Probe:         defaultDuplicateLaunchProbe,
 	}

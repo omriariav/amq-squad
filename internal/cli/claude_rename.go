@@ -26,6 +26,9 @@ func maybeScheduleClaudeSessionRename(rec launch.Record) error {
 	if normalizedAgentBinary(rec.Binary) != "claude" {
 		return nil
 	}
+	if strings.EqualFold(strings.TrimSpace(rec.WakeInjectMode), "none") {
+		return nil
+	}
 	if rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) == "" {
 		return nil
 	}

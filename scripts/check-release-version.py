@@ -11,7 +11,7 @@ import sys
 
 VERSION_RE = re.compile(r"^v?([0-9]+\.[0-9]+\.[0-9]+)$")
 SKILL_MARKER_RE = re.compile(r"Skill version:\s*([0-9]+\.[0-9]+\.[0-9]+)")
-AMQ_MIN_VERSION = "0.41.0"
+AMQ_MIN_VERSION = "0.42.0"
 
 
 def read(path: str) -> str:

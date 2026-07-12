@@ -113,7 +113,7 @@ amq-squad owns the tmux execution/control contract, so drive agents by stable co
 - **`amq-squad focus --session S [--role R]`** — bring an agent's pane into view (with `--role`), or the session's first live pane (no role). `open` is the session alias.
 - **`amq-squad send --session S --role R --body "..."`** (or `--body-file F`, or `--body-file -` for stdin) — deliver a prompt into an agent's exact pane and submit it with one Enter. Text is staged in a tmux paste buffer (not a shell string), so **multi-line prompts and text with quotes or shell metacharacters arrive verbatim**. It errors clearly if the pane is gone. **Built-in busy-guard:** `send` REFUSES to deliver into a busy / mid-turn pane by default (a push into a working agent can land in a tool-result buffer and be missed); pass `--force` to override and deliberately interrupt.
   - This is **pane delivery, not an AMQ message**: `amq-squad send` takes `--body`/`--body-file` and has **no `--kind`/`--thread`**. To post an inter-agent AMQ message, use `amq send ... --kind <valid kind>` (see *Route messages*) — never put a `--kind` on `amq-squad send`.
-- **`amq-squad dispatch --session S --role R --kind todo --subject "..." --body "..."`** — the deterministic way to hand an agent a task: it sends a **durable** AMQ message to the workstream's resolved root (root-correct even for an external lead whose bare `amq send` would misroute to the default `.agent-mail`) AND nudges the agent's pane with a fixed *drain instruction* so an idle worker wakes and runs `amq drain`. The task body rides only in the durable message (no double-delivery). The nudge is best-effort: a gone/busy pane leaves the task queued (drained on the worker's next turn); `--force` nudges a busy pane, `--no-wake` queues without nudging, `--thread`/`--from` set the AMQ thread/sender. Use the printed root-correct `collect --timeout 120s` only for an immediate ACK or imminent report; otherwise park/end the turn and let wake resume you. A drain receipt proves only that the child saw the task, not completion. For the full lead-to-child pattern, use the `amq-squad-orchestrator` skill.
+- **`amq-squad dispatch --session S --role R --kind todo --subject "..." --body "..."`** — the deterministic way to hand an agent a task: it sends a **durable** AMQ message to the workstream's resolved root (root-correct even for an external lead whose bare `amq send` would misroute to the default `.agent-mail`) AND nudges the agent's pane with a fixed *drain instruction* so an idle worker wakes and runs `amq drain`. The task body rides only in the durable message (no double-delivery). The nudge is best-effort: a gone/busy pane leaves the task queued (drained on the worker's next turn); `--force` nudges a busy pane, `--no-wake` queues without nudging, `--thread`/`--from` set the AMQ thread/sender. A recipient launch record with `wake_inject_mode=none` disables the pane nudge even under `--force`; the task remains queued durably with zero synthetic input. Use the printed root-correct `collect --timeout 120s` only for an immediate ACK or imminent report; otherwise park/end the turn and let wake resume you. A drain receipt proves only that the child saw the task, not completion. For the full lead-to-child pattern, use the `amq-squad-orchestrator` skill.
 - Each agent launched in tmux persists its exact tmux identity in its launch record; `status --session <name> --json`, `history --json`, and `resume --json` expose it plus `pane_alive`, and the single-session `status --json` `actions[]` give the exact focus/send/resume commands. Prefer those over hand-built tmux.
 
 **Launch topology** — `amq-squad up --target ...`:
@@ -162,7 +162,7 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
    - Preview-only: `amq-squad up --dry-run` prints one launch command per member; share or paste into separate panes.
    - Restart someone: `amq-squad agent resume <role>` (delegates to the saved launch record). Use `agent up <binary> [flags]` for ad-hoc single-agent launches.
    - Stop: use the exact scoped command from `status --json` when possible, e.g. `amq-squad stop --project <repo> --profile <profile> --session <session> --all --close-panes` for managed worker teardown. `--force` escalates to SIGKILL. State is preserved, so the session stays resumable. (The `down` alias was removed in 2.0.)
-   - Re-orient: `amq-squad resume` reattaches a saved conversation if present, else re-runs bootstrap so the agent re-reads its brief + AMQ history (no replay of prior reasoning). Plan-only; `--exec` opens the commands.
+   - Re-orient: `amq-squad resume` reattaches a saved conversation if present, else re-runs bootstrap so the agent re-reads its brief + AMQ history (no replay of prior reasoning). Plan-only; `--exec` opens the commands. A launch record written with `wake_inject_mode=none` must not be resumed by a pre-v2.20.0 binary; run `amq-squad doctor` first and resolve reported binary/plugin/skill skew.
    - Tear down for good: `amq-squad rm <session>` (destructive, confirm-gated) or `amq-squad archive <session>` (recoverable). Both refuse a live session unless `--force` — stop first.
    - External/adopted lead panes are operator-owned. Do not kill them with raw tmux or treat `stop` output as permission to close them; report that they remain open and whether one is the current pane.
 
@@ -288,12 +288,25 @@ Plan emission fails fast when a referenced `--settings` file is missing;
 `up --dry-run` shows the args on each member's command. Codex members use a `$CODEX_HOME/<name>.config.toml` profile wired
 via `codex_args: ["--profile", "<name>"]` instead.
 
-AMQ floor (v2.18.0+): amq-squad requires amq 0.41.0+. The launch wake
+AMQ floor (v2.20.0+): amq-squad requires amq 0.42.0+. The launch wake
 gate introduced in v2.5.0 passes `--require-wake` to `amq coop exec`, so a
 launch fails at the door when the AMQ wake sidecar cannot start and acquire its
 lock (instead of surfacing later as a stale wake). `--no-require-wake` opts out
 for wake-hostile environments and persists into the launch record, so `agent
 resume` reproduces it.
+Use `--wake-inject-mode none` for permission-prompt workflows that require AMQ
+wake notices with zero synthetic terminal input; normal notices go to wake
+stderr and urgent notices add one bell. It cannot be combined with injector
+flags. The zero-input contract also suppresses dispatch's last-resort pane
+nudge (even with `--force`) and the delayed Claude `/rename` command. Records
+written with mode `none` must not be resumed by an amq-squad binary older than
+v2.20.0; run `amq-squad doctor` and resolve any binary/plugin/skill version skew
+before `resume --exec` or `agent resume`. Mode `none` governs automatic
+injection paths: the wake sidecar, dispatch's pane nudge, and delayed Claude
+`/rename`. It does not disable deliberate operator control actions such as
+`amq-squad send` or native `/goal` pane delivery. Layout startup send-keys that
+launch the process before the agent becomes active are outside this runtime
+injection contract.
 Use `--no-gitignore` on `agent up`, `up`, or `up --dry-run` when AMQ coop
 auto-init should leave `.gitignore` unchanged; the opt-out is persisted in the
 launch record and replayed by `agent resume`.

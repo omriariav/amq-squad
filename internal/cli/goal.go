@@ -417,6 +417,7 @@ func runGoalStart(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	registerOrchestrator := fs.String("register-orchestrator", "", "before delivery, register the current pane as external orchestrator handle (default: orchestrator)")
+	wakeInjectMode := fs.String("wake-inject-mode", "", "wake injection mode for --register-orchestrator: auto, raw, paste, or none")
 	dryRun := fs.Bool("dry-run", false, "preview the inferred start plan without delivering")
 	yes := fs.Bool("yes", false, "confirm delivery without an interactive prompt")
 	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
@@ -426,7 +427,7 @@ func runGoalStart(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad goal start - preview or deliver a goal to the visible lead
 
 Usage:
-  amq-squad goal start [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE]] [--dry-run] [--yes] [--override-namespace-conflict --reason WHY] [--json]
+  amq-squad goal start [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE] [--wake-inject-mode auto|raw|paste|none]] [--dry-run] [--yes] [--override-namespace-conflict --reason WHY] [--json]
 
 Infers the current team profile, session, execution mode, and visible lead target
 from the project. Use --dry-run to inspect the plan. Non-dry-run delivery is
@@ -442,6 +443,10 @@ confirm-gated and requires --yes in this first implementation slice.
 	goal := strings.TrimSpace(*goalFlag)
 	if goal == "" {
 		return usageErrorf("goal start requires --goal TEXT")
+	}
+	wakeInjectModeValue, err := normalizeGoalOrchestratorWakeInjectMode(fs, *wakeInjectMode)
+	if err != nil {
+		return err
 	}
 	// Dry-run previews the plan without any mutation. --register-orchestrator is
 	// intentionally not applied here; the preview resolves against the configured
@@ -476,7 +481,7 @@ confirm-gated and requires --yes in this first implementation slice.
 		return err
 	}
 	if flagWasSet(fs, "register-orchestrator") {
-		if err := registerGoalOrchestrator(opts, *registerOrchestrator); err != nil {
+		if err := registerGoalOrchestrator(opts, *registerOrchestrator, wakeInjectModeValue, flagWasSet(fs, "wake-inject-mode")); err != nil {
 			return err
 		}
 	}
@@ -519,6 +524,7 @@ func runGoalDeliver(args []string) error {
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	registerOrchestrator := fs.String("register-orchestrator", "", "before delivery, register the current pane as external orchestrator handle (default: orchestrator)")
+	wakeInjectMode := fs.String("wake-inject-mode", "", "wake injection mode for --register-orchestrator: auto, raw, paste, or none")
 	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
 	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
@@ -526,7 +532,7 @@ func runGoalDeliver(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad goal deliver - deliver native /goal as a control action
 
 Usage:
-  amq-squad goal deliver [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE]] [--override-namespace-conflict --reason WHY] [--json]
+  amq-squad goal deliver [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE] [--wake-inject-mode auto|raw|paste|none]] [--override-namespace-conflict --reason WHY] [--json]
 
 Delivers a native Codex /goal command to the visible lead as a first-class
 control action. This is not an ordinary prompt send: it preserves the busy guard
@@ -541,6 +547,10 @@ runtime accepts goal control messages safely.
 	if goal == "" {
 		return usageErrorf("goal deliver requires --goal TEXT")
 	}
+	wakeInjectModeValue, err := normalizeGoalOrchestratorWakeInjectMode(fs, *wakeInjectMode)
+	if err != nil {
+		return err
+	}
 	override := namespaceConflictOverrideOptions{Allowed: *overrideNamespaceConflict, Reason: *overrideNamespaceReason}
 	if flagWasSet(fs, "register-orchestrator") {
 		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver", override)
@@ -554,7 +564,7 @@ runtime accepts goal control messages safely.
 		return err
 	}
 	if flagWasSet(fs, "register-orchestrator") {
-		if err := registerGoalOrchestrator(opts, *registerOrchestrator); err != nil {
+		if err := registerGoalOrchestrator(opts, *registerOrchestrator, wakeInjectModeValue, flagWasSet(fs, "wake-inject-mode")); err != nil {
 			return err
 		}
 	}
@@ -766,7 +776,21 @@ func goalDeliverCommand(opts goalDeliveryOptions, jsonOut bool) string {
 	return strings.Join(parts, " ")
 }
 
-func registerGoalOrchestrator(opts goalDeliveryOptions, handle string) error {
+func normalizeGoalOrchestratorWakeInjectMode(fs *flag.FlagSet, raw string) (string, error) {
+	mode, err := normalizeWakeInjectMode(raw)
+	if err != nil {
+		return "", err
+	}
+	if flagWasSet(fs, "wake-inject-mode") && !flagWasSet(fs, "register-orchestrator") {
+		return "", usageErrorf("--wake-inject-mode requires --register-orchestrator")
+	}
+	if err := validateWakeInjectConfig(mode, "", nil, ""); err != nil {
+		return "", err
+	}
+	return mode, nil
+}
+
+func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode string, wakeInjectModeExplicit bool) error {
 	handle = strings.TrimSpace(handle)
 	if handle == "" {
 		handle = defaultGoalOrchestratorHandle
@@ -802,13 +826,28 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle string) error {
 	}
 	root := absoluteAMQRoot(cwd, env.Root)
 	agentDir := filepath.Join(root, "agents", handle)
+	existingRec, existingRecErr := launch.Read(agentDir)
+	wakeConfig, err := resolveExternalWakeInjectConfig(wakeInjectConfig{Mode: wakeInjectMode}, wakeInjectModeExplicit, false, false, existingRec, existingRecErr, goalOrchestratorRole, handle, opts.Profile, env.SessionName, root, id.PaneID)
+	if err != nil {
+		return err
+	}
+	wakeInjectMode = wakeConfig.Mode
+	if wakeInjectMode != "" && !amqSupportsWakeInjectMode(env.AMQVersion) {
+		return fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
+	}
 	wakeInjectCmdValue := wakeDrainInject()
+	if wakeInjectMode == "none" {
+		wakeInjectCmdValue = ""
+	}
 	wakeResult, err := leadWakeStarter(leadWakeOptions{
-		ProjectDir:    cwd,
-		Root:          root,
-		Handle:        handle,
-		Require:       true,
-		WakeInjectCmd: wakeInjectCmdValue,
+		ProjectDir:     cwd,
+		Root:           root,
+		Handle:         handle,
+		Require:        true,
+		WakeInjectVia:  wakeConfig.Via,
+		WakeInjectArgs: wakeConfig.Args,
+		WakeInjectMode: wakeInjectMode,
+		WakeInjectCmd:  wakeInjectCmdValue,
 	})
 	if err != nil {
 		return fmt.Errorf("start external orchestrator wake: %w", err)
@@ -831,6 +870,9 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle string) error {
 		Model:            strings.TrimSpace(member.Model),
 		Trust:            strings.TrimSpace(t.Trust),
 		External:         true,
+		WakeInjectVia:    wakeConfig.Via,
+		WakeInjectArgs:   wakeConfig.Args,
+		WakeInjectMode:   wakeInjectMode,
 		WakeInjectCmd:    wakeInjectCmdValue,
 		WakePID:          wakePID,
 		AgentTTY:         currentLaunchTTY(),

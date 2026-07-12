@@ -25,7 +25,14 @@ type leadWakeOptions struct {
 	Require        bool
 	WakeInjectVia  string
 	WakeInjectArgs []string
+	WakeInjectMode string
 	WakeInjectCmd  string
+}
+
+type wakeInjectConfig struct {
+	Mode string
+	Via  string
+	Args []string
 }
 
 // wakeDrainInject is the standard instruction amq-squad asks the wake sidecar to
@@ -182,6 +189,7 @@ Usage:
   amq-squad lead register [--role ROLE] [--session S] [--project DIR] [--profile NAME]
                           [--wake|--no-wake] [--require-wake|--no-require-wake]
                           [--adopt-project-lead] [--compat-no-wake --reason TEXT]
+                          [--wake-inject-mode auto|raw|paste|none]
                           [--wake-inject-via PATH] [--wake-inject-arg ARG]
 
 register adopts the current tmux pane as the external lead for an existing team
@@ -218,6 +226,7 @@ func runLeadRegister(args []string) error {
 	requireWake := fs.Bool("require-wake", false, "fail if the external lead wake sidecar cannot become ready (default)")
 	noRequireWake := fs.Bool("no-require-wake", false, "warn instead of failing if the external lead wake sidecar cannot become ready")
 	wakeInjectVia := fs.String("wake-inject-via", "", "absolute executable passed to amq wake --inject-via for external lead notifications")
+	wakeInjectMode := fs.String("wake-inject-mode", "", "wake injection mode: auto, raw, paste, or none (none guarantees zero terminal input)")
 	var wakeInjectArgs stringListFlag
 	fs.Var(&wakeInjectArgs, "wake-inject-arg", "argument passed to amq wake --inject-arg (repeatable; requires --wake-inject-via)")
 	if err := parseFlags(fs, args); err != nil {
@@ -240,11 +249,9 @@ func runLeadRegister(args []string) error {
 	}
 	wakeInjectViaValue := strings.TrimSpace(*wakeInjectVia)
 	wakeInjectArgValues := append([]string(nil), wakeInjectArgs...)
-	if len(wakeInjectArgValues) > 0 && wakeInjectViaValue == "" {
-		return usageErrorf("--wake-inject-arg requires --wake-inject-via")
-	}
-	if wakeInjectViaValue != "" && !filepath.IsAbs(wakeInjectViaValue) {
-		return usageErrorf("--wake-inject-via must be an absolute path")
+	wakeInjectModeValue, err := normalizeWakeInjectMode(*wakeInjectMode)
+	if err != nil {
+		return err
 	}
 	projectDir, profile, err := resolveExistingTeamProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {
@@ -291,6 +298,20 @@ func runLeadRegister(args []string) error {
 	root := absoluteAMQRoot(cwd, env.Root)
 	agentDir := filepath.Join(root, "agents", handle)
 	existingRec, existingRecErr := launch.Read(agentDir)
+	wakeConfig, err := resolveExternalWakeInjectConfig(wakeInjectConfig{
+		Mode: wakeInjectModeValue,
+		Via:  wakeInjectViaValue,
+		Args: wakeInjectArgValues,
+	}, flagWasSet(fs, "wake-inject-mode"), flagWasSet(fs, "wake-inject-via"), flagWasSet(fs, "wake-inject-arg"), existingRec, existingRecErr, role, handle, profile, env.SessionName, root, id.PaneID)
+	if err != nil {
+		return err
+	}
+	wakeInjectModeValue = wakeConfig.Mode
+	wakeInjectViaValue = wakeConfig.Via
+	wakeInjectArgValues = wakeConfig.Args
+	if wakeInjectModeValue != "" && !amqSupportsWakeInjectMode(env.AMQVersion) {
+		return fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
+	}
 	targetMode := leadRegisterTargetMode(t, role)
 	auth, err := authorizeLeadRegister(leadRegisterAuthInput{
 		Team:               t,
@@ -314,6 +335,9 @@ func runLeadRegister(args []string) error {
 		return err
 	}
 	wakeInjectCmdValue := wakeDrainInject()
+	if wakeInjectModeValue == "none" {
+		wakeInjectCmdValue = ""
+	}
 	var wakeResult leadWakeResult
 	if !*noWake {
 		wakeResult, err = leadWakeStarter(leadWakeOptions{
@@ -323,6 +347,7 @@ func runLeadRegister(args []string) error {
 			Require:        !*noRequireWake,
 			WakeInjectVia:  wakeInjectViaValue,
 			WakeInjectArgs: wakeInjectArgValues,
+			WakeInjectMode: wakeInjectModeValue,
 			WakeInjectCmd:  wakeInjectCmdValue,
 		})
 		if err != nil {
@@ -352,6 +377,7 @@ func runLeadRegister(args []string) error {
 		NoWakeReason:     auth.NoWakeReason,
 		WakeInjectVia:    wakeInjectViaValue,
 		WakeInjectArgs:   wakeInjectArgValues,
+		WakeInjectMode:   wakeInjectModeValue,
 		WakeInjectCmd:    wakeInjectCmdValue,
 		WakePID:          wakePID,
 		AgentTTY:         currentLaunchTTY(),
@@ -383,6 +409,33 @@ func runLeadRegister(args []string) error {
 		fmt.Printf("wake: %s\n", wakeResult.Detail)
 	}
 	return nil
+}
+
+func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, viaExplicit, argsExplicit bool, existing launch.Record, existingErr error, role, handle, profile, session, root, paneID string) (wakeInjectConfig, error) {
+	resolved := wakeInjectConfig{
+		Mode: strings.TrimSpace(requested.Mode),
+		Via:  strings.TrimSpace(requested.Via),
+		Args: append([]string(nil), requested.Args...),
+	}
+	if !modeExplicit && existingErr == nil && existing.External && launchRecordMatchesSamePaneIdentity(existing, role, handle, profile, session, root, paneID) {
+		resolved.Mode = strings.TrimSpace(existing.WakeInjectMode)
+		if !viaExplicit && !argsExplicit {
+			resolved.Via = strings.TrimSpace(existing.WakeInjectVia)
+			resolved.Args = append([]string(nil), existing.WakeInjectArgs...)
+		}
+	}
+	mode, err := normalizeWakeInjectMode(resolved.Mode)
+	if err != nil {
+		return wakeInjectConfig{}, fmt.Errorf("stored external wake config: %w", err)
+	}
+	resolved.Mode = mode
+	if err := validateWakeInjectConfig(resolved.Mode, resolved.Via, resolved.Args, ""); err != nil {
+		return wakeInjectConfig{}, err
+	}
+	if resolved.Via != "" && !filepath.IsAbs(resolved.Via) {
+		return wakeInjectConfig{}, usageErrorf("--wake-inject-via must be an absolute path")
+	}
+	return resolved, nil
 }
 
 func preserveExternalGoalBinding(rec launch.Record, err error, role, session string) bool {
@@ -506,6 +559,9 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 		for _, arg := range opts.WakeInjectArgs {
 			args = append(args, "--inject-arg", arg)
 		}
+	}
+	if mode := strings.TrimSpace(opts.WakeInjectMode); mode != "" {
+		args = append(args, "--inject-mode", mode)
 	}
 	if cmd := strings.TrimSpace(opts.WakeInjectCmd); cmd != "" {
 		args = append(args, "--inject-cmd", cmd)

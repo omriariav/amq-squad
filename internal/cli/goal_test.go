@@ -1088,6 +1088,53 @@ func TestGoalStartRegisterOrchestratorProducesWakeableIdentity(t *testing.T) {
 	}
 }
 
+func TestGoalStartRegisterOrchestratorNoneModeIsZeroInput(t *testing.T) {
+	base, dir := seedCtoLeadTeamForOrchestrator(t)
+	t.Setenv("AMQ_FAKE_VERSION", "0.42.0")
+	stubs := setupOrchestratorRegStubs(t, dir)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--wake-inject-mode", "none", "--yes", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("goal start none mode: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(*stubs.wakeOpts) != 1 {
+		t.Fatalf("wake opts = %+v", *stubs.wakeOpts)
+	}
+	wake := (*stubs.wakeOpts)[0]
+	if wake.WakeInjectMode != "none" || wake.WakeInjectCmd != "" {
+		t.Fatalf("none-mode wake opts = %+v", wake)
+	}
+	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
+	if err != nil {
+		t.Fatalf("read orchestrator launch record: %v", err)
+	}
+	if rec.WakeInjectMode != "none" || rec.WakeInjectCmd != "" {
+		t.Fatalf("none-mode launch record = %+v", rec)
+	}
+	if _, stderr, err = captureOutput(t, func() error {
+		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--yes", "--json"})
+	}); err != nil {
+		t.Fatalf("goal repair without mode: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(*stubs.wakeOpts) != 2 || (*stubs.wakeOpts)[1].WakeInjectMode != "none" || (*stubs.wakeOpts)[1].WakeInjectCmd != "" {
+		t.Fatalf("goal repair must inherit none: %+v", *stubs.wakeOpts)
+	}
+	if _, stderr, err = captureOutput(t, func() error {
+		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--wake-inject-mode", "raw", "--yes", "--json"})
+	}); err != nil {
+		t.Fatalf("goal repair explicit raw: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(*stubs.wakeOpts) != 3 || (*stubs.wakeOpts)[2].WakeInjectMode != "raw" || (*stubs.wakeOpts)[2].WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("goal explicit raw must override inherited none: %+v", *stubs.wakeOpts)
+	}
+	rec, err = launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
+	if err != nil || rec.WakeInjectMode != "raw" || rec.WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("goal explicit raw record = %+v, %v", rec, err)
+	}
+}
+
 // TestGoalStartRegisterOrchestratorIdempotentOnRerun proves #287 idempotency:
 // re-running the same gated command does not error and does not duplicate the
 // orchestrator member or launch record.
