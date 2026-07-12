@@ -252,8 +252,8 @@ when the escalation band advances, while `status --json` warnings and
 | Intent | Use | Why |
 | --- | --- | --- |
 | Supervise a squad | `amq-squad status`, `console`, `task`, `collect` | Resolves the project/profile/session and shows the squad model. Use `collect` for lead-side reports when raw AMQ would say `refusing collect` of a `lead-owned mailbox`; it follows the #322 collect-vs-drain contract. |
-| Tell a live visible lead something now | `amq-squad send --session S --role lead --body "..."` | Tmux pane delivery to the recorded pane. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
-| Assign durable work and wake the recipient | `amq-squad dispatch --session S --role worker --kind todo --subject "..." --body "..."` | Queues durable AMQ in the resolved workstream root and wakes or nudges the agent to drain it. This is the usual lead-to-worker path. |
+| Tell a live visible lead something now | `amq-squad send --session S --role lead --body-file ./prompt.md` | Tmux pane delivery to the recorded pane. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
+| Assign durable work and wake the recipient | `amq-squad dispatch --session S --role worker --kind todo --subject "..." --body-file ./task.md` | Queues durable AMQ in the resolved workstream root and wakes or nudges the agent to drain it. This is the usual lead-to-worker path. |
 | Read or write AMQ mailboxes directly | Raw `amq send/read/drain/thread` only inside the correct coop/session shell, or with explicit `--root`; otherwise prefer `amq-squad amq ...`. | Raw AMQ is mailbox plumbing. From an external pane, the wrong root can trigger the same class of namespace problem as #328: `implicit default-profile mutation`, `legacy/default session root`, or `refusing before write`. |
 
 For orchestrated squads, the operator normally talks to the visible lead with
@@ -306,9 +306,15 @@ amq-squad owns the tmux control contract — drive agents by stable command, nev
 raw `tmux send-keys`. Control targets the recorded **pane id**, never window
 names.
 
+Use `--body-file FILE` or `--body-file -` (stdin) for wrapper bodies containing
+code, commands, backticks, or `$()` syntax. Inline `--body` is only for short
+plain prose because the caller shell expands it before execution. Bare
+`amq send` instead uses `--body -` or `--body @file`; raw AMQ does not accept
+`--body-file`.
+
 ```sh
 amq-squad focus --session issue-96 --role cto                       # bring a pane into view
-amq-squad send  --session issue-96 --role cto --body "review PR #69" # deliver a prompt + submit
+amq-squad send  --session issue-96 --role cto --body-file ./prompt.md # deliver a prompt + submit
 cat prompt.md | amq-squad send --session issue-96 --role qa --body-file -
 ```
 
@@ -324,7 +330,7 @@ mid-turn pane unless you pass `--force`.
 
 ```sh
 amq send --to fullstack --thread p2p/cto__fullstack --kind review_request \
-  --subject "Review: rate limiter" --body "Please review the diff on branch X."
+  --subject "Review: rate limiter" --body @review.md
 amq drain --include-body            # read your inbox
 ```
 
@@ -614,10 +620,10 @@ cd ~/Code/my-project
 
    ```sh
    amq send --to fullstack --thread p2p/cto__fullstack --kind todo --wait-for drained \
-     --subject "Task: #96" --body "Implement #96 per the brief; push a review_request when ready."
+     --subject "Task: #96" --body @task.md
    amq-squad collect --session issue-96 --me cto --timeout 120s --include-body
    amq send --to qa --thread p2p/cto__qa --kind todo --wait-for drained \
-     --subject "Task: review #96" --body "Review fullstack's diff on branch X; push review_response."
+     --subject "Task: review #96" --body @review-task.md
    ```
 
 4. **Converge and tear down** — the lead verifies the artifacts, owns the merge

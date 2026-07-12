@@ -159,8 +159,8 @@ When steering a live squad, choose the command family by intent:
 | Intent | Use | Why |
 | --- | --- | --- |
 | Supervise a run | `amq-squad status`, `operator status`, `operator watch`, `next`, `task`, `collect` | These commands resolve the project/profile/session and show the squad model. Use `collect` for lead-side reports when raw AMQ would say `refusing collect` of a `lead-owned mailbox`; it follows the #322 collect-vs-drain contract. |
-| Tell the visible lead something now | `amq-squad send --project <project> --profile <profile> --session <session> --role <lead-role> --body "..."` | This is live tmux pane delivery to the recorded agent pane. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
-| Assign durable work and wake a recipient | `amq-squad dispatch --project <project> --profile <profile> --session <session> --role <role> --kind todo --subject "..." --body "..."` | Dispatch sends a durable AMQ task to the resolved workstream root and wakes or nudges the agent to drain it. This is the usual lead-to-worker path. |
+| Tell the visible lead something now | `amq-squad send --project <project> --profile <profile> --session <session> --role <lead-role> --body-file ./prompt.md` | This is live tmux pane delivery to the recorded agent pane. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
+| Assign durable work and wake a recipient | `amq-squad dispatch --project <project> --profile <profile> --session <session> --role <role> --kind todo --subject "..." --body-file ./task.md` | Dispatch sends a durable AMQ task to the resolved workstream root and wakes or nudges the agent to drain it. This is the usual lead-to-worker path. |
 | Read or write AMQ mailboxes directly | Raw `amq send/read/drain/thread` only from the correct coop/session shell, or with an explicit `--root`. From an external pane, prefer `amq-squad amq ...`. | Raw AMQ is mailbox plumbing, not squad routing. If the profile/session root is wrong, you can reproduce #328-style namespace mistakes: `implicit default-profile mutation`, `legacy/default session root`, or `refusing before write`. |
 
 Typical orchestrated flow: the operator uses `amq-squad send` or
@@ -168,11 +168,17 @@ Typical orchestrated flow: the operator uses `amq-squad send` or
 `dispatch`, and `collect` to coordinate workers. Do not use raw AMQ from an
 external operator pane unless the mailbox root is explicit.
 
+For wrapper `send`/`dispatch` bodies containing code, commands, backticks, or
+`$()` syntax, use `--body-file FILE` or `--body-file -` (stdin). Inline
+`--body` is only for short plain prose because the caller shell expands it
+before execution. Bare `amq send` instead uses `--body -` or `--body @file`;
+raw AMQ does not accept `--body-file`.
+
 Ambiguous from an external pane:
 
 ```sh
 amq send --session <session> --to <worker-handle> --thread p2p/<lead>__<worker> \
-  --kind todo --subject "Task" --body "..."
+  --kind todo --subject "Task" --body @task.md
 ```
 
 Root-resolving alternatives:
@@ -180,11 +186,11 @@ Root-resolving alternatives:
 ```sh
 amq-squad amq send --project <project> --profile <profile> --session <session> \
   --to <worker-handle> --thread p2p/<lead>__<worker> \
-  --kind todo --subject "Task" --body "..."
+  --kind todo --subject "Task" --body-file ./task.md
 
 amq send --root <project>/.agent-mail/<profile>/<session> \
   --to <worker-handle> --thread p2p/<lead>__<worker> \
-  --kind todo --subject "Task" --body "..."
+  --kind todo --subject "Task" --body @task.md
 ```
 
 ## Issue Or Dogfood Run

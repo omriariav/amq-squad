@@ -145,7 +145,7 @@ amq-squad dispatch \
   --session issue-96 \
   --role qa \
   --subject "Run smoke tests" \
-  --body "Validate the current PR and report findings."
+  --body-file ./qa-task.md
 
 # Stop and resume without losing launch records, briefs, or task state.
 amq-squad stop --session issue-96 --all
@@ -339,9 +339,15 @@ amq-squad rm issue-96
 
 Coordination:
 
+Use `--body-file FILE` or `--body-file -` (stdin) for `amq-squad send` and
+`dispatch` bodies containing code, commands, backticks, or `$()` syntax.
+Inline `--body` is only for short plain prose because the caller shell expands
+it before amq-squad receives argv. For bare `amq send`, use `--body -` or
+`--body @file` instead; raw AMQ does not accept `--body-file`.
+
 ```sh
 amq-squad task add --session issue-96 --title "Implement fix" --assign fullstack
-amq-squad dispatch --session issue-96 --role fullstack --task t1 --subject "Implement fix" --body "..."
+amq-squad dispatch --session issue-96 --role fullstack --task t1 --subject "Implement fix" --body-file ./task.md
 amq-squad activity set --session issue-96 --me fullstack --task t1 --phase testing
 amq-squad threads --session issue-96
 amq-squad thread --session issue-96 --id p2p/cto__fullstack --include-body=false
@@ -373,7 +379,7 @@ Runtime control:
 
 ```sh
 amq-squad focus --session issue-96 --role cto
-amq-squad send --session issue-96 --role qa --body "run the smoke suite"
+amq-squad send --session issue-96 --role qa --body-file ./prompt.md
 ```
 
 `focus` and `send` are runtime capabilities. They may be unavailable on native
