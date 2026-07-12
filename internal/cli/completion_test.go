@@ -34,6 +34,16 @@ func TestCompletionCoversBootstrapAck(t *testing.T) {
 	}
 }
 
+func TestCompletionCoversReviewWorktreeModes(t *testing.T) {
+	for shell, script := range map[string]string{"bash": bashCompletionScript, "zsh": zshCompletionScript, "fish": fishCompletionScript} {
+		for _, want := range []string{"review-worktree", "create", "exec", "shell", "remove"} {
+			if !strings.Contains(script, want) {
+				t.Errorf("%s completion missing review-worktree token %q", shell, want)
+			}
+		}
+	}
+}
+
 func TestRunCompletionRejectsExtraArgs(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runCompletion([]string{"bash", "extra"})
@@ -245,46 +255,47 @@ func TestCompletionRootFlagsOfferedAsFirstToken(t *testing.T) {
 // no longer exists).
 func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 	expected := map[string]bool{
-		"new":         true,
-		"roles":       true,
-		"team":        true,
-		"lead":        true,
-		"goal":        true,
-		"global":      true,
-		"run":         true,
-		"wizard":      true,
-		"task":        true,
-		"verify":      true,
-		"operator":    true,
-		"activity":    true,
-		"up":          true,
-		"stop":        true,
-		"brief":       true,
-		"threads":     true,
-		"thread":      true,
-		"status":      true,
-		"focus":       true,
-		"open":        true,
-		"send":        true,
-		"dispatch":    true,
-		"collect":     true,
-		"prune-panes": true,
-		"console":     true,
-		"monitor":     true,
-		"notify":      true,
-		"amq":         true,
-		"history":     true,
-		"resume":      true,
-		"fork":        true,
-		"rm":          true,
-		"archive":     true,
-		"next":        true,
-		"completion":  true,
-		"doctor":      true,
-		"agent":       true,
-		"bootstrap":   true,
-		"version":     true,
-		"help":        true,
+		"new":             true,
+		"roles":           true,
+		"team":            true,
+		"lead":            true,
+		"goal":            true,
+		"global":          true,
+		"run":             true,
+		"wizard":          true,
+		"task":            true,
+		"verify":          true,
+		"operator":        true,
+		"activity":        true,
+		"up":              true,
+		"stop":            true,
+		"brief":           true,
+		"threads":         true,
+		"thread":          true,
+		"status":          true,
+		"focus":           true,
+		"open":            true,
+		"send":            true,
+		"dispatch":        true,
+		"collect":         true,
+		"prune-panes":     true,
+		"console":         true,
+		"monitor":         true,
+		"notify":          true,
+		"amq":             true,
+		"history":         true,
+		"resume":          true,
+		"fork":            true,
+		"review-worktree": true,
+		"rm":              true,
+		"archive":         true,
+		"next":            true,
+		"completion":      true,
+		"doctor":          true,
+		"agent":           true,
+		"bootstrap":       true,
+		"version":         true,
+		"help":            true,
 	}
 	for _, c := range completionTopCommands {
 		if !expected[c] {
