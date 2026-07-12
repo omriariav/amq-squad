@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -233,7 +234,7 @@ func TestNotificationWatcherReleasedGenerationCannotClearOrResurrectLease(t *tes
 	}
 }
 
-func TestStopNotificationWatcherToleratesChildSelfReleaseRace(t *testing.T) {
+func TestStopNotificationWatcherToleratesChildSelfReleaseAndESRCH(t *testing.T) {
 	project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
 	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
 	host, _ := os.Hostname()
@@ -262,12 +263,94 @@ func TestStopNotificationWatcherToleratesChildSelfReleaseRace(t *testing.T) {
 			return err
 		}
 		alive = false
-		return nil
+		return syscall.ESRCH
 	}
 	if err := stopNotificationWatcher(project, team.DefaultProfile, "s"); err != nil {
 		t.Fatal(err)
 	}
 	assertInactiveWatcherTombstone(t, path)
+}
+
+func TestStopNotificationWatcherSignalErrorPreservesReplacementOwner(t *testing.T) {
+	project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	host, _ := os.Hostname()
+	now := time.Now().UTC()
+	rec := notificationWatcherRecord{
+		SchemaVersion: notificationWatcherSchema, ProjectDir: project, Profile: team.DefaultProfile,
+		Session: "s", NamespaceID: "default/s", PID: 44, Host: host, OwnerToken: "old-owner",
+		LeaseTTL: "1m", LeaseExpiresAt: now.Add(time.Minute), Expected: true, Health: "healthy",
+	}
+	if err := writeNotificationWatcherRecord(path, rec); err != nil {
+		t.Fatal(err)
+	}
+	oldAlive, oldMatch, oldSignal := notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal
+	t.Cleanup(func() {
+		notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal = oldAlive, oldMatch, oldSignal
+	})
+	alive := true
+	notificationWatcherPIDAlive = func(pid int) bool { return alive && pid == 44 }
+	notificationWatcherProcessMatch = func(pid int, _ func(string) bool) bool { return alive && pid == 44 }
+	notificationWatcherSignal = func(pid int, _ os.Signal) error {
+		if pid != 44 {
+			return fmt.Errorf("unexpected pid %d", pid)
+		}
+		replacement := rec
+		replacement.PID = 55
+		replacement.OwnerToken = "replacement-owner"
+		replacement.HeartbeatAt = time.Now().UTC()
+		replacement.LeaseExpiresAt = time.Now().Add(time.Minute).UTC()
+		replacement.UpdatedAt = time.Now().UTC()
+		if err := writeNotificationWatcherRecord(path, replacement); err != nil {
+			return err
+		}
+		alive = false
+		return syscall.ESRCH
+	}
+	err := stopNotificationWatcher(project, team.DefaultProfile, "s")
+	if err == nil || !strings.Contains(err.Error(), "ownership changed") {
+		t.Fatalf("replacement owner signal race err=%v", err)
+	}
+	current, readErr := readNotificationWatcherRecord(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if current.OwnerToken != "replacement-owner" || current.PID != 55 || !current.Expected || current.Health != "healthy" {
+		t.Fatalf("replacement owner was altered: %+v", current)
+	}
+}
+
+func TestStopNotificationWatcherSignalErrorPreservesObservedOwner(t *testing.T) {
+	project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	host, _ := os.Hostname()
+	now := time.Now().UTC()
+	rec := notificationWatcherRecord{
+		SchemaVersion: notificationWatcherSchema, ProjectDir: project, Profile: team.DefaultProfile,
+		Session: "s", NamespaceID: "default/s", PID: 44, Host: host, OwnerToken: "observed-owner",
+		LeaseTTL: "1m", LeaseExpiresAt: now.Add(time.Minute), Expected: true, Health: "healthy",
+	}
+	if err := writeNotificationWatcherRecord(path, rec); err != nil {
+		t.Fatal(err)
+	}
+	oldAlive, oldMatch, oldSignal := notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal
+	t.Cleanup(func() {
+		notificationWatcherPIDAlive, notificationWatcherProcessMatch, notificationWatcherSignal = oldAlive, oldMatch, oldSignal
+	})
+	notificationWatcherPIDAlive = func(pid int) bool { return pid == 44 }
+	notificationWatcherProcessMatch = func(pid int, _ func(string) bool) bool { return pid == 44 }
+	notificationWatcherSignal = func(int, os.Signal) error { return syscall.EPERM }
+	err := stopNotificationWatcher(project, team.DefaultProfile, "s")
+	if !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("signal error=%v, want wrapped EPERM", err)
+	}
+	current, readErr := readNotificationWatcherRecord(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if current.OwnerToken != "observed-owner" || current.PID != 44 || !current.Expected {
+		t.Fatalf("observed owner was altered after signal error: %+v", current)
+	}
 }
 
 func TestNotificationWatcherStartsBeforeSessionWithoutCreatingIt(t *testing.T) {

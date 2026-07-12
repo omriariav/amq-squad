@@ -454,8 +454,25 @@ func stopNotificationWatcherGeneration(projectDir, profile, session, expectedTok
 		return fmt.Errorf("notification watcher pid %d is alive but exact project/profile/session/token identity is unverified; ownership preserved", rec.PID)
 	}
 	if local && notificationWatcherProcessMatches(rec) {
-		if err := notificationWatcherSignal(rec.PID, syscall.SIGTERM); err != nil {
-			return fmt.Errorf("stop notification watcher pid %d: %w", rec.PID, err)
+		if signalErr := notificationWatcherSignal(rec.PID, syscall.SIGTERM); signalErr != nil {
+			now := notificationWatcherNow().UTC()
+			err := flock.WithLock(notificationWatcherLockPath(projectDir, profile, session), func() error {
+				current, err := readNotificationWatcherRecord(path)
+				if err != nil {
+					return err
+				}
+				if notificationWatcherInactiveTombstoneForScope(current, projectDir, profile, session, now) {
+					return nil
+				}
+				if current.OwnerToken != rec.OwnerToken {
+					return fmt.Errorf("notification watcher ownership changed from %q to %q after signal failed; retry lifecycle reconciliation", rec.OwnerToken, current.OwnerToken)
+				}
+				return fmt.Errorf("stop notification watcher pid %d: %w", rec.PID, signalErr)
+			})
+			if err != nil {
+				return err
+			}
+			return nil
 		}
 		deadline := notificationWatcherNow().Add(2 * time.Second)
 		for notificationWatcherPIDAlive(rec.PID) && notificationWatcherNow().Before(deadline) {
@@ -484,6 +501,19 @@ func stopNotificationWatcherGeneration(projectDir, profile, session, expectedTok
 		}
 		return nil
 	})
+}
+
+func notificationWatcherInactiveTombstoneForScope(rec notificationWatcherRecord, projectDir, profile, session string, now time.Time) bool {
+	return rec.SchemaVersion == notificationWatcherSchema &&
+		filepath.Clean(rec.ProjectDir) == filepath.Clean(projectDir) &&
+		rec.Profile == squadnamespace.NormalizeProfile(profile) &&
+		rec.Session == session &&
+		rec.NamespaceID == squadnamespace.ID(profile, session) &&
+		rec.PID == 0 &&
+		strings.TrimSpace(rec.OwnerToken) == "" &&
+		!rec.Expected &&
+		rec.Health == "inactive" &&
+		!rec.LeaseExpiresAt.After(now)
 }
 
 func notificationWatcherGeneration(t team.Team, profile, session string) string {
