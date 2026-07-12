@@ -46,14 +46,16 @@ type BubbleResult struct {
 }
 
 type bubbleSnapshot struct {
-	spec          Spec
-	ctx           ProjectContext
-	stage         bubbleStage
-	cursor        int
-	existingIndex int
-	roleOrder     []string
-	roleIndex     int
-	inputValue    string
+	spec              Spec
+	ctx               ProjectContext
+	stage             bubbleStage
+	cursor            int
+	existingIndex     int
+	roleOrder         []string
+	roleIndex         int
+	inputValue        string
+	newProfilePrefill string
+	newSessionPrefill string
 }
 
 // BubbleModel is the full-screen adapter over the same Spec and project facts
@@ -63,13 +65,15 @@ type BubbleModel struct {
 	spec Spec
 	ctx  ProjectContext
 
-	stage         bubbleStage
-	cursor        int
-	existingIndex int
-	roleOrder     []string
-	roleIndex     int
-	input         textinput.Model
-	history       []bubbleSnapshot
+	stage             bubbleStage
+	cursor            int
+	existingIndex     int
+	roleOrder         []string
+	roleIndex         int
+	input             textinput.Model
+	history           []bubbleSnapshot
+	newProfilePrefill string
+	newSessionPrefill string
 
 	width     int
 	height    int
@@ -112,14 +116,18 @@ func NewBubbleModel(opts NumberedOptions) (BubbleModel, error) {
 	input.CharLimit = 512
 	input.Width = 64
 	m := BubbleModel{
-		opts:          opts,
-		spec:          s,
-		ctx:           ctx,
-		stage:         stageProject,
-		existingIndex: -1,
-		input:         input,
-		width:         88,
-		height:        28,
+		opts:              opts,
+		spec:              s,
+		ctx:               ctx,
+		stage:             stageProject,
+		existingIndex:     -1,
+		input:             input,
+		width:             88,
+		height:            28,
+		newSessionPrefill: s.Session,
+	}
+	if strings.TrimSpace(s.Profile) != "" && findProfile(ctx.Profiles, s.Profile) < 0 {
+		m.newProfilePrefill = s.Profile
 	}
 	m.configureStage()
 	return m, nil
@@ -448,15 +456,9 @@ func (m *BubbleModel) configureStage() {
 	case stageProject:
 		value = m.spec.Project
 	case stageNewProfile:
-		value = defaultString(m.ctx.NewProfileSuggestion, "squad-"+defaultString(m.ctx.SessionSuggestion, "project"))
+		value = defaultString(m.newProfilePrefill, defaultString(m.ctx.NewProfileSuggestion, "squad-"+defaultString(m.ctx.SessionSuggestion, "project")))
 	case stageSession:
-		value = m.spec.Session
-		if value == "" && m.existingIndex >= 0 {
-			value = m.ctx.Profiles[m.existingIndex].PinnedSession
-		}
-		if value == "" {
-			value = m.ctx.SessionSuggestion
-		}
+		value = defaultString(m.newSessionPrefill, m.ctx.SessionSuggestion)
 	case stageExistingModelCustom:
 		value = parseAssignments(m.spec.Model)[m.currentMember().Role]
 		placeholder = "leave blank to keep " + defaultString(m.currentMember().Model, "automatic")
@@ -486,12 +488,9 @@ func (m *BubbleModel) configureStage() {
 func (m BubbleModel) choices() []choice {
 	switch m.stage {
 	case stageProfile:
-		choices := make([]choice, 0, len(m.ctx.Profiles)+2)
+		choices := make([]choice, 0, len(m.ctx.Profiles)+1)
 		for _, profile := range m.ctx.Profiles {
 			choices = append(choices, choice{value: profile.Name, label: fmt.Sprintf("%s · %d members · %s · roster and contract stay authoritative", profile.Name, profile.MemberCount, profileRunSummary(profile, m.ctx.SessionSuggestion))})
-		}
-		if len(m.ctx.Profiles) == 0 || findProfile(m.ctx.Profiles, "default") < 0 {
-			choices = append(choices, choice{value: "default", label: "default · create a fresh roster"})
 		}
 		choices = append(choices, choice{value: "__create__", label: "Create a new profile · choose a fresh roster and contract"})
 		return choices
@@ -576,7 +575,10 @@ func (m BubbleModel) defaultCursor() int {
 	want := ""
 	switch m.stage {
 	case stageProfile:
-		want = defaultString(m.spec.Profile, "default")
+		want = m.spec.Profile
+		if findProfile(m.ctx.Profiles, want) < 0 {
+			want = "__create__"
+		}
 	case stageExistingSession:
 		want = m.spec.Session
 	case stageExistingModel:
@@ -655,6 +657,7 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.spec.SelectNewProfile(value)
+		m.newProfilePrefill = value
 		m.existingIndex = -1
 		m.transition(stageSession)
 	case stageSession:
@@ -664,6 +667,7 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.spec.SelectNewSession(value)
+		m.newSessionPrefill = value
 		m.transition(stageRoles)
 	case stageExistingModelCustom:
 		if value != "" {
@@ -727,6 +731,9 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 	switch m.stage {
 	case stageProfile:
 		if selected == "__create__" {
+			if strings.TrimSpace(m.spec.Profile) != "" && findProfile(m.ctx.Profiles, m.spec.Profile) < 0 {
+				m.newProfilePrefill = m.spec.Profile
+			}
 			m.spec.SelectNewProfile("")
 			m.existingIndex = -1
 			m.transition(stageNewProfile)
@@ -881,14 +888,16 @@ func (m *BubbleModel) transition(stage bubbleStage) {
 
 func (m *BubbleModel) pushHistory() {
 	m.history = append(m.history, bubbleSnapshot{
-		spec:          m.spec,
-		ctx:           m.ctx,
-		stage:         m.stage,
-		cursor:        m.cursor,
-		existingIndex: m.existingIndex,
-		roleOrder:     append([]string(nil), m.roleOrder...),
-		roleIndex:     m.roleIndex,
-		inputValue:    m.input.Value(),
+		spec:              m.spec,
+		ctx:               m.ctx,
+		stage:             m.stage,
+		cursor:            m.cursor,
+		existingIndex:     m.existingIndex,
+		roleOrder:         append([]string(nil), m.roleOrder...),
+		roleIndex:         m.roleIndex,
+		inputValue:        m.input.Value(),
+		newProfilePrefill: m.newProfilePrefill,
+		newSessionPrefill: m.newSessionPrefill,
 	})
 }
 
@@ -917,6 +926,8 @@ func (m BubbleModel) back() (tea.Model, tea.Cmd) {
 	m.existingIndex = last.existingIndex
 	m.roleOrder = append([]string(nil), last.roleOrder...)
 	m.roleIndex = last.roleIndex
+	m.newProfilePrefill = last.newProfilePrefill
+	m.newSessionPrefill = last.newSessionPrefill
 	m.configureStage()
 	m.cursor = last.cursor
 	if m.isTextStage() {

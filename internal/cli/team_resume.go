@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -57,6 +58,10 @@ type resumePlan struct {
 	// to `status --json` instead of inferring from the planning `Action`. nil on
 	// the early blocked paths (amq env / preflight error) where no verdict ran.
 	Liveness *agentLiveness
+	// SavedLaunchIdentity fingerprints the exact record selected by
+	// findMemberRestoreRecord. It is read-only discovery evidence; consumers
+	// must not reconstruct it from an arbitrary scan order.
+	SavedLaunchIdentity string
 }
 
 func runTeamResume(args []string) error {
@@ -982,6 +987,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	plan.Handle = handle
 	if recFound {
 		plan.Tmux = rec.Tmux
+		plan.SavedLaunchIdentity = resumeSavedLaunchIdentity(rec)
 	}
 	if recFound && projectLeadExternalRecordBoundaryViolation(in.Team, m, rec, in.Profile, env.SessionName, root, handle) {
 		plan.Action = resumeBlocked
@@ -1114,6 +1120,12 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	plan.Action = resumeFresh
 	plan.Command = freshLaunchCommand(in)
 	return plan, nil
+}
+
+func resumeSavedLaunchIdentity(rec launch.Record) string {
+	payload, _ := json.Marshal(rec)
+	sum := sha256.Sum256(payload)
+	return fmt.Sprintf("sha256:%x", sum)
 }
 
 func projectLeadExternalRecordBoundaryViolation(t team.Team, m team.Member, rec launch.Record, profile, session, root, handle string) bool {

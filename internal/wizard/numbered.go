@@ -375,8 +375,10 @@ func promptProfile(r *bufio.Reader, out io.Writer, current string, ctx ProjectCo
 			defaultProfile = profile.Name
 		}
 	}
-	if defaultProfile == "" || byName[defaultProfile] == nil {
+	if defaultProfile == "" {
 		defaultProfile = ctx.Profiles[0].Name
+	} else if byName[defaultProfile] == nil {
+		defaultProfile = "__create__"
 	}
 	choices = append(choices, choice{value: "__create__", label: "Create a new profile · choose a fresh roster and contract"})
 	selected, err := promptChoice(r, out, "Use an existing team setup or create a new one?", choices, defaultProfile)

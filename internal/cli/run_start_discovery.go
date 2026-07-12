@@ -305,11 +305,7 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 		fingerprint.Operator.Notifications.Sinks = append(fingerprint.Operator.Notifications.Sinks, runwizard.DiscoveryNotificationSink{ID: sink.ID, Type: sink.Type, Argv: append([]string(nil), sink.Argv...), Timeout: sink.Timeout})
 	}
 	briefPath := briefPathForProfile(t.Project, profile, session)
-	fingerprint.Brief.Path = briefPath
-	if body, err := os.ReadFile(briefPath); err == nil {
-		digest := sha256.Sum256(body)
-		fingerprint.Brief.ContentDigest = hex.EncodeToString(digest[:])
-	}
+	fingerprint.Brief = runStartWizardBriefDiscovery(briefPath)
 	ns := squadnamespace.Resolve(t.Project, profile, session)
 	_, stateErr := os.Stat(ns.AMQRoot)
 	fingerprint.NamespaceFacts = append(fingerprint.NamespaceFacts, runwizard.DiscoveryNamespaceFact{Profile: profile, Session: session, AMQRoot: ns.AMQRoot, DurableState: stateErr == nil, ProfilePinsSession: runStartPinnedSession(t) == session})
@@ -321,7 +317,6 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 			fingerprint.NamespaceFacts = append(fingerprint.NamespaceFacts, runwizard.DiscoveryNamespaceFact{Profile: candidate.Profile, Session: session, AMQRoot: candidate.AMQRoot, DurableState: true})
 		}
 	}
-	savedByRole := map[string]string{}
 	for _, entry := range history {
 		rec := entry.Record
 		if !squadnamespace.ProfilesEqual(profile, rec.TeamProfile) || rec.Session != session {
@@ -329,7 +324,6 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 		}
 		identity := entry.AgentDir + "|" + rec.Role + "|" + rec.Handle + "|" + rec.StartedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
 		fingerprint.RecordIDs = append(fingerprint.RecordIDs, identity)
-		savedByRole[rec.Role] = identity
 	}
 	for _, member := range active {
 		native := composeBinaryArgs(member.Binary, binaryArgsFor(member.Binary, t.BinaryArgs), member.ExtraArgs())
@@ -347,18 +341,54 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 		default:
 			summary.Blocked++
 		}
-		liveness := ""
-		var livenessSignals []string
-		if plan.Liveness != nil {
-			liveness = string(plan.Liveness.Status)
-			if payload, err := json.Marshal(plan.Liveness); err == nil {
-				livenessSignals = []string{string(payload)}
-			}
-		}
-		fingerprint.MemberPlans = append(fingerprint.MemberPlans, runwizard.DiscoveryMemberPlan{Role: plan.Role, Action: action, LivenessStatus: liveness, LivenessSignals: livenessSignals, SavedLaunchIdentity: savedByRole[plan.Role], Blocker: plan.Note})
+		fingerprint.MemberPlans = append(fingerprint.MemberPlans, runStartWizardDiscoveryMemberPlan(plan, action))
 	}
 	summary.Fingerprint = runwizard.DiscoveryFingerprint(fingerprint)
 	return summary
+}
+
+func runStartWizardDiscoveryMemberPlan(plan resumePlan, action runwizard.MemberAction) runwizard.DiscoveryMemberPlan {
+	evidence := runwizard.DiscoveryMemberPlan{Role: plan.Role, Action: action, SavedLaunchIdentity: plan.SavedLaunchIdentity, Blocker: plan.Note}
+	if plan.Liveness != nil {
+		evidence.LivenessStatus = string(plan.Liveness.Status)
+		if payload, err := json.Marshal(plan.Liveness); err == nil {
+			evidence.LivenessSignals = []string{string(payload)}
+		}
+	}
+	return evidence
+}
+
+func runStartWizardBriefDiscovery(path string) runwizard.DiscoveryBrief {
+	brief := runwizard.DiscoveryBrief{Path: path}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return brief
+	}
+	digest := sha256.Sum256(body)
+	brief.ContentDigest = hex.EncodeToString(digest[:])
+	lines := strings.Split(string(body), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return brief
+	}
+	var provenance []string
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "---" {
+			break
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if key == "source" {
+			brief.Source = value
+		}
+		if key == "source" || key == "generated_at" || key == "generator" {
+			provenance = append(provenance, key+":"+value)
+		}
+	}
+	brief.Provenance = strings.Join(provenance, "|")
+	return brief
 }
 
 func runStartPinnedSession(t team.Team) string {

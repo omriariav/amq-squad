@@ -245,6 +245,41 @@ func TestBubbleNewProfileUsesProfileAndSessionSuggestions(t *testing.T) {
 	}
 }
 
+func TestBubbleFreshAndNamedOnlyProjectsUseSingleNewProfilePath(t *testing.T) {
+	tests := []struct {
+		name     string
+		profiles []ProfileSummary
+	}{
+		{name: "zero profiles"},
+		{name: "named only", profiles: []ProfileSummary{{Name: "release", MemberCount: 1, PinnedSession: "main"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "brand-new", Session: "explicit-session"}, InspectProject: func(string) (ProjectContext, error) {
+				return ProjectContext{Project: "/repo", SessionSuggestion: "suggested-session", NewProfileSuggestion: "squad-suggested-session", Profiles: tc.profiles}, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			if len(m.choices()) != len(tc.profiles)+1 || m.choices()[len(m.choices())-1].value != "__create__" {
+				t.Fatalf("profile choices include a synthetic fresh row: %+v", m.choices())
+			}
+			if m.cursor != len(m.choices())-1 {
+				t.Fatalf("unknown prefill cursor=%d choices=%+v", m.cursor, m.choices())
+			}
+			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			if m.stage != stageNewProfile || m.input.Value() != "brand-new" || m.spec.ProfileBranch != ProfileBranchNew {
+				t.Fatalf("new profile path = stage %v input %q spec %+v", m.stage, m.input.Value(), m.spec)
+			}
+			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			if m.stage != stageSession || m.input.Value() != "explicit-session" {
+				t.Fatalf("new session path = stage %v input %q", m.stage, m.input.Value())
+			}
+		})
+	}
+}
+
 func TestBubbleModelHydratesEnabledAuthoritativeNotifications(t *testing.T) {
 	profile := ProfileSummary{
 		Name: "review", MemberCount: 1, PinnedSession: "review-work", OperatorMode: "noc", OperatorNotifications: true,

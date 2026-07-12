@@ -84,3 +84,15 @@ func TestClassifyRunStartWizardExistingProfileUsesSharedPlannerActions(t *testin
 		t.Fatalf("blocked planner action = %+v", blocked)
 	}
 }
+
+func TestRunStartWizardBriefDiscoveryCarriesSeedProvenanceAndDigest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "brief.md")
+	body := "---\nsource: issue:431\ngenerated_at: 2026-07-12T10:00:00Z\ngenerator: deterministic\n---\n\n# Goal\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := runStartWizardBriefDiscovery(path)
+	if got.Path != path || got.Source != "issue:431" || got.Provenance != "source:issue:431|generated_at:2026-07-12T10:00:00Z|generator:deterministic" || got.ContentDigest == "" {
+		t.Fatalf("brief discovery = %+v", got)
+	}
+}

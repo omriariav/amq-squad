@@ -344,6 +344,22 @@ func TestRunNumberedMultipleSessionsUseKnownRunListAndDeferResume(t *testing.T) 
 	}
 }
 
+func TestRunNumberedUnknownProfilePrefillDefaultsToCreate(t *testing.T) {
+	input := strings.Repeat("\n", 30)
+	got, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
+		Defaults: Spec{Project: "/repo", Profile: "brand-new", Session: "explicit-session"},
+		InspectProject: func(string) (ProjectContext, error) {
+			return ProjectContext{Project: "/repo", SessionSuggestion: "suggested-session", NewProfileSuggestion: "squad-suggested-session", Profiles: []ProfileSummary{{Name: "release", MemberCount: 1, PinnedSession: "main"}}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProfileBranch != ProfileBranchNew || got.Profile != "brand-new" || got.Session != "explicit-session" {
+		t.Fatalf("unknown prefill was not preserved as new: %+v", got)
+	}
+}
+
 func TestPromptOperatorChoiceCapabilityGating(t *testing.T) {
 	var out bytes.Buffer
 	mode, err := promptOperatorChoice(bufio.NewReader(strings.NewReader("4\n")), &out, nil, "lead_pane")
