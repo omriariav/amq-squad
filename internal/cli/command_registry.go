@@ -108,6 +108,11 @@ func lookupCommand(name, version string) (commandMeta, bool) {
 	if name == claudeRenameHelperCommand {
 		return commandMeta{Name: name, Run: runClaudeSessionRename}, true
 	}
+	// Supervised lifecycle child. Deliberately omitted from public command
+	// listings: operators manage it through up/resume/stop, status and doctor.
+	if name == "_notification-watch" {
+		return commandMeta{Name: name, Run: runNotificationWatcher}, true
+	}
 	for _, cmd := range commandRegistry(version) {
 		if cmd.Name == name {
 			return cmd, true

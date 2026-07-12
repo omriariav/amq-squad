@@ -100,8 +100,10 @@ The CLI and skills are versioned together.
 Enable the default attention-only desktop notification policy when creating a
 profile with `team init --operator-notifications`, or pass the same flag through
 `run start` when it creates a new profile. Existing profiles remain
-authoritative and are never rewritten. Notifications run on the scoped
-`operator watch` host and never approve gates.
+authoritative and are never rewritten. Live start/up/resume supervises one
+profile/session notification watcher on the launch host, independently of the
+operator polling contract. `status` and `doctor` fail visibly when enabled
+delivery has no healthy watcher. Notifications never approve gates.
 
 The shortest working path for a visible project lead and workers:
 

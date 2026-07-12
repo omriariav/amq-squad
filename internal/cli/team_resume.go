@@ -578,6 +578,9 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 		// Nothing to do is success: all members are live or there is no
 		// recoverable plan. Tell the operator explicitly rather than
 		// silently opening an empty tmux window.
+		if err := reconcileNotificationWatcherStarted(t, profile, workstream, ""); err != nil {
+			return err
+		}
 		fmt.Printf("# amq-squad resume --exec\n# workstream: %s\n# nothing to launch (%d live, %d blocked)\n", workstream, len(skipped), len(blocked))
 		return nil
 	}
@@ -621,16 +624,35 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 	if err := preflightTeam(resumeExecLaunchPreflights(checks), defaultDuplicateLaunchProbe); err != nil {
 		return err
 	}
+	watcherBefore := notificationWatcherGeneration(t, profile, workstream)
+	watcherBaseRoot := ""
+	if len(checks) > 0 && strings.TrimSpace(checks[0].Root) != "" {
+		watcherBaseRoot = filepath.Dir(checks[0].Root)
+	}
+	if err := reconcileNotificationWatcherStarted(t, profile, workstream, watcherBaseRoot); err != nil {
+		return err
+	}
+	watcherAfter := notificationWatcherGeneration(t, profile, workstream)
+	createdWatcherToken := ""
+	if watcherAfter != "" && watcherAfter != watcherBefore {
+		createdWatcherToken = watcherAfter
+	}
 
 	for _, p := range skipped {
 		fmt.Fprintf(os.Stderr, "skipping %s: %s\n", p.Role, p.Note)
 	}
 	snapshots := snapshotResumeExecLaunchRecords(checks)
 	if err := runTmuxLaunchPlanForResume(plan); err != nil {
+		if cleanupErr := cleanupCreatedNotificationWatcherAfterLaunchFailure(t, profile, workstream, createdWatcherToken, defaultDuplicateLaunchProbe); cleanupErr != nil {
+			return fmt.Errorf("%w; notification watcher cleanup after clean resume failure: %v", err, cleanupErr)
+		}
 		return err
 	}
 	results := verifyResumeExecLaunchRecordsNow(checks, snapshots)
 	if err := resumeExecLaunchError(results); err != nil {
+		if cleanupErr := cleanupCreatedNotificationWatcherAfterLaunchFailure(t, profile, workstream, createdWatcherToken, defaultDuplicateLaunchProbe); cleanupErr != nil {
+			return fmt.Errorf("%w; notification watcher cleanup after clean resume verification failure: %v", err, cleanupErr)
+		}
 		return err
 	}
 	return nil

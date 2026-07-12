@@ -7,11 +7,13 @@ orchestrated run.
 ## Attention-only notifications
 
 Create a profile with `--operator-notifications` to enable the default desktop
-sink, then keep the scoped `amq-squad operator watch` loop running on the host
-that should display notifications. This add-on is independent of
-`--operator-mode`; it never answers a gate, clicks approval, or sends pane input.
-Status and bootstrap expose effective semantics and sink types, never command
-arguments, credentials, or other secrets.
+sink. Live `run start`/`up`/`resume --exec` supervises one scoped notification
+watcher on that launch host; its lease and heartbeat are independent from the
+operator poll lease, so lead-pane mode remains notification-capable even when
+`poll_required=false`. `stop --all`, `rm`, and `archive` reconcile it to an
+inactive state. `status` and `doctor` expose watcher health without exposing
+command arguments, credentials, or other secrets. This add-on never answers a
+gate, clicks approval, or sends pane input.
 
 ## Prerequisites
 

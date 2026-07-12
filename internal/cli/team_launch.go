@@ -263,6 +263,12 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 				if _, _, err := ensureBriefStubForProfile(t.Project, opts.Profile, opts.Workstream); err != nil {
 					return fmt.Errorf("ensure brief: %w", err)
 				}
+				// An external lead can be the only live member. Notifications are
+				// still operational infrastructure and must not depend on spawning a
+				// worker pane (or on operator poll_required).
+				if err := reconcileNotificationWatcherStarted(t, opts.Profile, opts.Workstream, ""); err != nil {
+					return err
+				}
 			}
 			quietNotice("lead bound; no remaining workers to spawn for session %s.\n", opts.Workstream)
 			return nil
@@ -326,21 +332,40 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if _, _, err := ensureBriefStubForProfile(t.Project, opts.Profile, opts.Workstream); err != nil {
 		return fmt.Errorf("ensure brief: %w", err)
 	}
+	watcherBefore := notificationWatcherGeneration(t, opts.Profile, opts.Workstream)
+	watcherBaseRoot := ""
+	if len(preflights) > 0 && strings.TrimSpace(preflights[0].Root) != "" {
+		watcherBaseRoot = filepath.Dir(preflights[0].Root)
+	}
+	if err := reconcileNotificationWatcherStarted(t, opts.Profile, opts.Workstream, watcherBaseRoot); err != nil {
+		return err
+	}
+	watcherAfter := notificationWatcherGeneration(t, opts.Profile, opts.Workstream)
+	createdWatcherToken := ""
+	if watcherAfter != "" && watcherAfter != watcherBefore {
+		createdWatcherToken = watcherAfter
+	}
+	launchFailure := func(err error) error {
+		if cleanupErr := cleanupCreatedNotificationWatcherAfterLaunchFailure(t, opts.Profile, opts.Workstream, createdWatcherToken, defaultDuplicateLaunchProbe); cleanupErr != nil {
+			return fmt.Errorf("%w; notification watcher cleanup after clean launch failure: %v", err, cleanupErr)
+		}
+		return err
+	}
 	if opts.ResultSink != nil {
 		if resultBackend, ok := backend.(teamLaunchResultBackend); ok {
 			result, err := resultBackend.LaunchWithResult(t, opts)
 			if err != nil {
-				return err
+				return launchFailure(err)
 			}
 			opts.ResultSink(result)
 		} else {
 			if err := backend.Launch(t, opts); err != nil {
-				return err
+				return launchFailure(err)
 			}
 			opts.ResultSink(teamLaunchResult{})
 		}
 	} else if err := backend.Launch(t, opts); err != nil {
-		return err
+		return launchFailure(err)
 	}
 	quietNotice("started %s using profile %s in %s\n", opts.Workstream, opts.Profile, t.Project)
 	if len(preflights) > 0 && preflights[0].Root != "" {
