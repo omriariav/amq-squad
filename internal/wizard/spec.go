@@ -4,11 +4,23 @@ package wizard
 
 import "strings"
 
+// Backend is the canonical command family selected by the answer model. The
+// UI records it explicitly so execution never infers resume-vs-start from a
+// profile merely existing at some later point in time.
+type Backend string
+
+const (
+	BackendRunStart    Backend = "run_start"
+	BackendResume      Backend = "resume"
+	BackendGlobalStart Backend = "global_start"
+)
+
 // Spec is the headless, serializable answer model for a project run. Later UI
 // adapters may add richer choices, but execution must always flow through Args
 // and the existing run start parser.
 type Spec struct {
 	Scope                          string
+	Backend                        Backend
 	Project                        string
 	Profile                        string
 	Session                        string

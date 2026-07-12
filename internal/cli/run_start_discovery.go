@@ -218,3 +218,23 @@ func runStartPinnedSession(t team.Team) string {
 	}
 	return strings.TrimSpace(t.Workstream)
 }
+
+// classifyRunStartWizardExistingProfile adapts the shared resume planner's
+// internal action vocabulary to the UI package's backend-neutral discovery
+// contract. The wizard never reimplements liveness or restore selection.
+func classifyRunStartWizardExistingProfile(memberCount, recordCount int, plans []resumePlan, namespaceAmbiguous bool) runwizard.RunClassification {
+	actions := make([]runwizard.MemberAction, 0, len(plans))
+	for _, plan := range plans {
+		switch plan.Action {
+		case resumeLive:
+			actions = append(actions, runwizard.MemberActionLive)
+		case resumeRestore:
+			actions = append(actions, runwizard.MemberActionRestore)
+		case resumeFresh:
+			actions = append(actions, runwizard.MemberActionFresh)
+		default:
+			actions = append(actions, runwizard.MemberActionBlocked)
+		}
+	}
+	return runwizard.ClassifyExistingRun(memberCount, recordCount, actions, namespaceAmbiguous)
+}
