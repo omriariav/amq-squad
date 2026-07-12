@@ -115,3 +115,14 @@ func TestSpecArgsOmitsLegacyUnspecifiedOperatorMode(t *testing.T) {
 		t.Fatalf("Args() = %#v, want %#v", got, want)
 	}
 }
+
+func TestSpecCarriesExplicitBackendWithoutAffectingLegacyRunStartArgs(t *testing.T) {
+	s := Spec{Backend: BackendResume, Project: "/repo", Profile: "release", Session: "s"}
+	if s.Backend != BackendResume {
+		t.Fatalf("backend = %q", s.Backend)
+	}
+	want := []string{"--project", "/repo", "--profile", "release", "--session", "s"}
+	if got := s.Args(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy run-start args changed while adding explicit backend: %#v", got)
+	}
+}
