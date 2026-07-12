@@ -892,10 +892,22 @@ workers use native Codex profiles via <code>codex_args</code>.</p>
 amq-squad merges those patterns into one effective
 <code>--allowedTools</code> grant for that member only, records the
 result in launch history, and shows both the configured and effective
-lists in <code>up --dry-run --json</code>. Keep each pattern as narrow
-as the member's own scratch or review workspace; the field is rejected
-on non-Claude members and is intentionally not a team-wide trust
-switch.</p>
+lists in <code>up --dry-run --json</code>. Values beginning with
+<code>-</code> are rejected and generated grants use the single-token
+<code>--allowedTools=&lt;grant&gt;</code> form. Resume removes the prior
+launcher-owned grant before rebuilding from current policy, so narrowing
+or removing the field revokes old access; the
+<code>--no-preauthorize-inscope</code> choice also survives replay. Keep
+each pattern as narrow as the member's own scratch or review workspace;
+the field is rejected on non-Claude members and is intentionally not a
+team-wide trust switch.</p>
+<p>Profiles using <code>permission_allowlist</code> are written as team
+schema 4; profiles without it remain schema 3. v2.20+ readers accept
+both and reject future schemas. Pre-v2.20 binaries do not understand
+this field: they can silently ignore it and lossily rewrite a schema-4
+profile. Upgrade every amq-squad binary that may read or write the
+profile before configuring an allowlist, and use
+<code>amq-squad doctor</code> to detect version skew.</p>
 <p>Trust and binary defaults are explicit. Codex trusted mode is the
 only path that prepends
 <code>--dangerously-bypass-approvals-and-sandbox</code>; the default

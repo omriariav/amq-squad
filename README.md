@@ -446,9 +446,20 @@ Claude members may also carry an explicit, role-scoped
 `"permission_allowlist": ["Bash(rm -rf /tmp/qa-review/*:*)"]`. amq-squad
 merges those patterns into one effective `--allowedTools` grant for that member
 only, records the result in launch history, and shows both the configured and
-effective lists in `up --dry-run --json`. Keep each pattern as narrow as the
-member's own scratch or review workspace; the field is rejected on non-Claude
-members and is intentionally not a team-wide trust switch.
+effective lists in `up --dry-run --json`. Values beginning with `-` are rejected
+and generated grants use the single-token `--allowedTools=<grant>` form. Resume
+removes the prior launcher-owned grant before rebuilding from current policy,
+so narrowing or removing the field revokes old access; the
+`--no-preauthorize-inscope` choice also survives replay. Keep each pattern as
+narrow as the member's own scratch or review workspace; the field is rejected
+on non-Claude members and is intentionally not a team-wide trust switch.
+
+Profiles using `permission_allowlist` are written as team schema 4; profiles
+without it remain schema 3. v2.20+ readers accept both and reject future
+schemas. Pre-v2.20 binaries do not understand this field: they can silently
+ignore it and lossily rewrite a schema-4 profile. Upgrade every amq-squad binary
+that may read or write the profile before configuring an allowlist, and use
+`amq-squad doctor` to detect version skew.
 
 Trust and binary defaults are explicit. Codex trusted mode is the only path that
 prepends `--dangerously-bypass-approvals-and-sandbox`; the default sandboxed

@@ -289,43 +289,52 @@ Examples:
 	// slice (no safe pattern form; see claudeInScopePreauthAllowlist); main push,
 	// tags, and releases always stay gated.
 	var preauthorizedActions []string
+	explicitAllowedTools := childArgsAllowedTools(childArgs)
+	preauthInputArgs := append([]string(nil), childArgs...)
 	childArgs, preauthorizedActions, _ = applyClaudeWorkerPreauth(launchPreauthProjectDir(cwd, *teamHome), teamProfileValue, *roleFlag, binary, env.SessionName, childArgs, !*noPreauthInScope)
+	if len(preauthorizedActions) > 0 && childArgsAllowedToolsEquals(preauthInputArgs, strings.Join(preauthorizedActions, ",")) {
+		// A generated team command already carries the exact launcher grant in
+		// its preview argv. It is not an independently explicit native grant.
+		explicitAllowedTools = nil
+	}
 
 	agentDir := filepath.Join(root, "agents", handle)
 	rec := launch.Record{
-		CWD:                  cwd,
-		Binary:               binary,
-		Argv:                 childArgs,
-		Session:              env.SessionName,
-		SharedWorkstream:     *sharedWorkstream,
-		Conversation:         conversationRef,
-		Handle:               handle,
-		Role:                 *roleFlag,
-		Root:                 root,
-		BaseRoot:             env.BaseRoot,
-		RootSource:           env.RootSource,
-		AMQVersion:           env.AMQVersion,
-		CodexArgs:            binaryArgs["codex"],
-		ClaudeArgs:           binaryArgs["claude"],
-		Launcher:             launcher,
-		LauncherArgs:         launcherArgs,
-		Model:                resolvedModel,
-		Trust:                trustMode,
-		NoDefaultArgs:        *noDefaultArgs,
-		SpawnOrigin:          strings.TrimSpace(*spawnOrigin),
-		SpawnDepth:           *spawnDepth,
-		NoRequireWake:        *noRequireWake,
-		NoGitignore:          *noGitignore,
-		Symphony:             *symphony,
-		GoalBinding:          nativeGoalBindingFromArgs(childArgs),
-		PreauthorizedActions: preauthorizedActions,
-		WakeInjectVia:        wakeInjectViaValue,
-		WakeInjectArgs:       wakeInjectArgValues,
-		AgentPID:             os.Getpid(),
-		AgentTTY:             currentLaunchTTY(),
-		StartedAt:            time.Now().UTC(),
-		TeamProfile:          teamProfileValue,
-		TeamHome:             strings.TrimSpace(*teamHome),
+		CWD:                   cwd,
+		Binary:                binary,
+		Argv:                  childArgs,
+		Session:               env.SessionName,
+		SharedWorkstream:      *sharedWorkstream,
+		Conversation:          conversationRef,
+		Handle:                handle,
+		Role:                  *roleFlag,
+		Root:                  root,
+		BaseRoot:              env.BaseRoot,
+		RootSource:            env.RootSource,
+		AMQVersion:            env.AMQVersion,
+		CodexArgs:             binaryArgs["codex"],
+		ClaudeArgs:            binaryArgs["claude"],
+		Launcher:              launcher,
+		LauncherArgs:          launcherArgs,
+		Model:                 resolvedModel,
+		Trust:                 trustMode,
+		NoDefaultArgs:         *noDefaultArgs,
+		NoPreauthorizeInScope: *noPreauthInScope,
+		SpawnOrigin:           strings.TrimSpace(*spawnOrigin),
+		SpawnDepth:            *spawnDepth,
+		NoRequireWake:         *noRequireWake,
+		NoGitignore:           *noGitignore,
+		Symphony:              *symphony,
+		GoalBinding:           nativeGoalBindingFromArgs(childArgs),
+		PreauthorizedActions:  preauthorizedActions,
+		ExplicitAllowedTools:  explicitAllowedTools,
+		WakeInjectVia:         wakeInjectViaValue,
+		WakeInjectArgs:        wakeInjectArgValues,
+		AgentPID:              os.Getpid(),
+		AgentTTY:              currentLaunchTTY(),
+		StartedAt:             time.Now().UTC(),
+		TeamProfile:           teamProfileValue,
+		TeamHome:              strings.TrimSpace(*teamHome),
 	}
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD

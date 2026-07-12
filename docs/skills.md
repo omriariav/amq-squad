@@ -201,8 +201,14 @@ For a narrow Claude-only permission exception, configure a member's
 `permission_allowlist` in `team.json`, for example
 `["Bash(rm -rf /tmp/qa-review/*:*)"]`. The grant is scoped to that exact role,
 merged with any explicit native `--allowedTools`, visible in dry-run JSON and
-launch history, and replayed by resume. Validation rejects the field for other
-binaries; prefer scratch/worktree-specific patterns over broad command grants.
+launch history, and rebuilt from current policy on resume so removed/narrowed
+grants are revoked. Validation rejects other binaries and values beginning with
+`-`; generated grants use one `--allowedTools=<grant>` token. The
+`--no-preauthorize-inscope` bit also round-trips. Prefer scratch/worktree-
+specific patterns over broad command grants. Such profiles write schema 4;
+profiles without the field stay schema 3. Upgrade all readers/writers to v2.20+
+before configuring it: pre-v2.20 binaries can silently ignore the field and
+lossily rewrite the profile. Use `amq-squad doctor` to detect version skew.
 
 Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
 CLI args for one member only — the overlay verb above generates the flagship

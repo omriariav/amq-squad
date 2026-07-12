@@ -19,7 +19,11 @@ import (
 func sortStrings(s []string) { sort.Strings(s) }
 
 const (
-	SchemaVersion         = 3
+	// SchemaVersion is the newest team profile schema this binary understands.
+	// Schema 4 is written only when permission_allowlist is present; profiles
+	// that do not use the security-sensitive feature remain schema 3.
+	SchemaVersion         = 4
+	BaseSchemaVersion     = 3
 	DirName               = ".amq-squad"
 	FileName              = "team.json"
 	TeamsDirName          = "teams"
@@ -740,7 +744,7 @@ func NormalizeForWrite(projectDir, profile string, t Team) (Team, error) {
 			return Team{}, err
 		}
 	}
-	t.Schema = SchemaVersion
+	t.Schema = schemaVersionForWrite(t)
 	t.Project = projectDir
 	if t.Operator == nil {
 		op := DefaultOperator()
@@ -755,6 +759,15 @@ func NormalizeForWrite(projectDir, profile string, t Team) (Team, error) {
 		return Team{}, fmt.Errorf("validate team: %w", err)
 	}
 	return t, nil
+}
+
+func schemaVersionForWrite(t Team) int {
+	for _, member := range t.Members {
+		if len(member.PermissionAllowlist) > 0 {
+			return SchemaVersion
+		}
+	}
+	return BaseSchemaVersion
 }
 
 func normalizeEnabledOperator(op OperatorConfig) OperatorConfig {
@@ -774,8 +787,8 @@ func normalizeEnabledOperator(op OperatorConfig) OperatorConfig {
 }
 
 // WriteProfile atomically persists a named profile under projectDir. The
-// schema field is unconditionally set to the current SchemaVersion so
-// reading a schema 1 file and writing it back upgrades the on-disk shape.
+// schema field is set to 4 only when permission_allowlist is used; otherwise
+// writes stay on schema 3 for compatibility.
 func WriteProfile(projectDir, profile string, t Team) error {
 	path := ProfilePath(projectDir, profile)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -866,6 +879,9 @@ func ListProfiles(projectDir string) ([]string, error) {
 }
 
 func Validate(t Team) error {
+	if t.Schema > SchemaVersion {
+		return fmt.Errorf("unsupported team schema %d: this binary supports through schema %d; upgrade amq-squad before reading or rewriting this profile", t.Schema, SchemaVersion)
+	}
 	if t.Workstream != "" {
 		if err := ValidateSessionName(t.Workstream); err != nil {
 			return fmt.Errorf("workstream: %w", err)
@@ -1287,6 +1303,9 @@ func validateMember(prefix string, m Member) error {
 		}
 		if permission != strings.TrimSpace(permission) {
 			return fmt.Errorf("%s.permission_allowlist[%d]: surrounding whitespace is not allowed", prefix, i)
+		}
+		if strings.HasPrefix(permission, "-") {
+			return fmt.Errorf("%s.permission_allowlist[%d]: values beginning with '-' are not allowed because they can be reinterpreted as native Claude options", prefix, i)
 		}
 		if strings.Contains(permission, ",") {
 			return fmt.Errorf("%s.permission_allowlist[%d]: commas are not allowed (Claude uses comma as the --allowedTools separator)", prefix, i)

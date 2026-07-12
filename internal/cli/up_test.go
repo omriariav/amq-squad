@@ -269,7 +269,7 @@ func TestUpDryRunCrossCWDClaudeWorkerPreauthMatchesLiveLaunch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("up --dry-run text: %v", err)
 	}
-	for _, want := range []string{"#    bootstrap: appended", "#    launcher-added args: --allowedTools 'Bash(gh pr create:*)'"} {
+	for _, want := range []string{"#    bootstrap: appended", "#    launcher-added args: '--allowedTools=Bash(gh pr create:*)'"} {
 		if !strings.Contains(textOut, want) {
 			t.Fatalf("text dry-run missing %q in:\n%s", want, textOut)
 		}

@@ -49,8 +49,12 @@ type Record struct {
 	Model            string   `json:"model,omitempty"`
 	Trust            string   `json:"trust,omitempty"`
 	NoDefaultArgs    bool     `json:"no_default_args,omitempty"`
-	SpawnOrigin      string   `json:"spawn_origin,omitempty"`
-	SpawnDepth       int      `json:"spawn_depth,omitempty"`
+	// NoPreauthorizeInScope records the --no-preauthorize-inscope choice so a
+	// replay never silently restores the built-in worker grant. Older records
+	// omit the field and retain the historical include-built-in behavior.
+	NoPreauthorizeInScope bool   `json:"no_preauthorize_inscope,omitempty"`
+	SpawnOrigin           string `json:"spawn_origin,omitempty"`
+	SpawnDepth            int    `json:"spawn_depth,omitempty"`
 	// AdoptionMode records how this agent became part of the visible runtime:
 	// managed_window, managed_current_window, managed_session, bare_agent_up,
 	// external, unmanaged. Status treats missing/unknown values fail-closed for
@@ -84,11 +88,15 @@ type Record struct {
 	// a visible lead record carries native evidence.
 	GoalBinding *GoalBinding `json:"goal_binding,omitempty"`
 	// PreauthorizedActions records the effective Claude --allowedTools patterns
-	// amq-squad granted at launch: the narrow built-in worker action plus any
-	// explicit per-member permission_allowlist. It is audit evidence of exactly
-	// what was granted to this role; additive and omitted for legacy records and
-	// launches where no pre-authorization applied.
+	// amq-squad granted at launch: explicit native values plus the narrow
+	// built-in worker action and current per-member permission_allowlist. It is
+	// audit evidence of exactly what was granted to this role; additive and
+	// omitted for legacy records and launches where no pre-authorization applied.
 	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
+	// ExplicitAllowedTools preserves native allowed-tools values that existed
+	// before launcher policy was composed. Replay removes the old merged grant,
+	// then restores these explicit values before applying current policy.
+	ExplicitAllowedTools []string `json:"explicit_allowed_tools,omitempty"`
 	// WakeInjectVia and WakeInjectArgs record AMQ 0.37.0 external wake
 	// injector settings so resume/replay can repair and restart the same
 	// digest-bound wake target later.

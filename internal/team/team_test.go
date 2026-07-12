@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -67,6 +68,67 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 	if out.CreatedAt.IsZero() {
 		t.Error("CreatedAt not set by Write")
+	}
+}
+
+func TestPermissionAllowlistConditionalSchemaWriteAndRead(t *testing.T) {
+	base := Team{Members: []Member{{Role: "qa", Binary: "claude", Handle: "qa", Session: "s"}}}
+	plainDir := t.TempDir()
+	if err := Write(plainDir, base); err != nil {
+		t.Fatal(err)
+	}
+	plain, err := Read(plainDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Schema != BaseSchemaVersion {
+		t.Fatalf("profile without permission_allowlist schema = %d, want %d", plain.Schema, BaseSchemaVersion)
+	}
+
+	allowDir := t.TempDir()
+	base.Members[0].PermissionAllowlist = []string{"Read(/tmp/qa-review/**)"}
+	if err := Write(allowDir, base); err != nil {
+		t.Fatal(err)
+	}
+	withAllow, err := Read(allowDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withAllow.Schema != SchemaVersion {
+		t.Fatalf("profile with permission_allowlist schema = %d, want %d", withAllow.Schema, SchemaVersion)
+	}
+	if !reflect.DeepEqual(withAllow.Members[0].PermissionAllowlist, base.Members[0].PermissionAllowlist) {
+		t.Fatalf("schema 4 permission_allowlist = %v, want %v", withAllow.Members[0].PermissionAllowlist, base.Members[0].PermissionAllowlist)
+	}
+}
+
+func TestReadAcceptsSchemasThreeAndFourRejectsFuture(t *testing.T) {
+	for _, schema := range []int{BaseSchemaVersion, SchemaVersion} {
+		t.Run(fmt.Sprintf("schema-%d", schema), func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			body := fmt.Sprintf(`{"schema":%d,"members":[{"role":"qa","binary":"claude","handle":"qa","session":"s"}]}`, schema)
+			if err := os.WriteFile(Path(dir), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Read(dir); err != nil {
+				t.Fatalf("Read schema %d: %v", schema, err)
+			}
+		})
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"schema":%d,"members":[]}`, SchemaVersion+1)
+	if err := os.WriteFile(Path(dir), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(dir); err == nil || !strings.Contains(err.Error(), "unsupported team schema") {
+		t.Fatalf("future schema read error = %v, want fail-closed unsupported schema", err)
 	}
 }
 
@@ -531,6 +593,10 @@ func TestValidateMemberPermissionAllowlist(t *testing.T) {
 		{"non-Claude", Member{Role: "qa", Binary: "codex", PermissionAllowlist: []string{"Bash(make test:*)"}}, "only to claude"},
 		{"blank", Member{Role: "qa", Binary: "claude", PermissionAllowlist: []string{"  "}}, "cannot be empty"},
 		{"surrounding whitespace", Member{Role: "qa", Binary: "claude", PermissionAllowlist: []string{" Bash(make test:*)"}}, "surrounding whitespace"},
+		{"dash", Member{Role: "qa", Binary: "claude", PermissionAllowlist: []string{"-"}}, "beginning with '-'"},
+		{"dash dash", Member{Role: "qa", Binary: "claude", PermissionAllowlist: []string{"--"}}, "beginning with '-'"},
+		{"dangerous option", Member{Role: "qa", Binary: "claude", PermissionAllowlist: []string{"--dangerously-skip-permissions"}}, "beginning with '-'"},
+		{"known value option", Member{Role: "qa", Binary: "claude", PermissionAllowlist: []string{"--model"}}, "beginning with '-'"},
 		{"comma", Member{Role: "qa", Binary: "claude", PermissionAllowlist: []string{"Read(/a),Read(/b)"}}, "commas are not allowed"},
 		{"duplicate", Member{Role: "qa", Binary: "claude", PermissionAllowlist: []string{"Bash(make test:*)", "Bash(make test:*)"}}, "duplicate permission"},
 	}

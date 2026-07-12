@@ -35,11 +35,14 @@ func TestClaudePreauthChildArgs(t *testing.T) {
 		t.Fatal("empty allowlist must yield no child args (back-compat)")
 	}
 	args := claudePreauthChildArgs([]string{"Bash(gh pr create:*)", "Bash(git push origin codex/s-:*)"})
-	if len(args) != 2 || args[0] != "--allowedTools" {
-		t.Fatalf("child args = %v, want --allowedTools + comma-joined value", args)
+	if len(args) != 1 || !strings.HasPrefix(args[0], "--allowedTools=") {
+		t.Fatalf("child args = %v, want one equals-joined --allowedTools token", args)
 	}
-	if !strings.Contains(args[1], "gh pr create") || !strings.Contains(args[1], "git push origin codex/s-") {
-		t.Fatalf("allowedTools value missing patterns: %q", args[1])
+	if !strings.Contains(args[0], "gh pr create") || !strings.Contains(args[0], "git push origin codex/s-") {
+		t.Fatalf("allowedTools value missing patterns: %q", args[0])
+	}
+	if spec, inline, ok := nativeValueSpecForArg("claude", args[0]); !ok || !inline || spec.Canonical != "--allowed-tools" {
+		t.Fatalf("native parser does not recognize safe equals form: spec=%+v inline=%v ok=%v", spec, inline, ok)
 	}
 }
 
@@ -145,10 +148,38 @@ func TestConfiguredClaudePermissionAllowlistMergesExplicitAllowedTools(t *testin
 			break
 		}
 	}
-	if !added || boundary < 2 || args[boundary-2] != "--allowedTools" || strings.Count(strings.Join(args[:boundary], " "), "--allowedTools") != 1 || strings.Contains(strings.Join(args[:boundary], " "), "--allowed-tools") {
+	if !added || boundary != 1 || !strings.HasPrefix(args[0], "--allowedTools=") || strings.Count(strings.Join(args[:boundary], " "), "--allowedTools") != 1 || strings.Contains(strings.Join(args[:boundary], " "), "--allowed-tools") {
 		t.Fatalf("merged args = %v, added=%v", args, added)
 	}
 	if got := args[boundary:]; !reflect.DeepEqual(got, []string{"--", "--allowedTools", "prompt text"}) {
 		t.Fatalf("literal prompt boundary changed: %v", got)
+	}
+}
+
+func TestStripRecordedLauncherPreauthRecognizesHistoricalAndSafeForms(t *testing.T) {
+	actions := []string{"Read(/tmp/qa/**)", "Bash(gh pr create:*)"}
+	joined := strings.Join(actions, ",")
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "historical camel", args: []string{"--chrome", "--allowedTools", joined}},
+		{name: "historical kebab", args: []string{"--chrome", "--allowed-tools", joined}},
+		{name: "safe camel", args: []string{"--chrome", "--allowedTools=" + joined}},
+		{name: "safe kebab", args: []string{"--chrome", "--allowed-tools=" + joined}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := stripRecordedLauncherPreauth(tc.args, actions)
+			if !reflect.DeepEqual(got, []string{"--chrome"}) {
+				t.Fatalf("stripRecordedLauncherPreauth(%v) = %v", tc.args, got)
+			}
+		})
+	}
+
+	other := "Read(/tmp/other/**)"
+	args := []string{"--allowedTools=" + other, "--", "--allowedTools=" + joined}
+	if got := stripRecordedLauncherPreauth(args, actions); !reflect.DeepEqual(got, args) {
+		t.Fatalf("different/boundary grants changed: got %v want %v", got, args)
 	}
 }

@@ -49,7 +49,10 @@ func claudePreauthChildArgs(allow []string) []string {
 	if len(allow) == 0 {
 		return nil
 	}
-	return []string{"--allowedTools", strings.Join(allow, ",")}
+	// native_args.go recognizes the equals-joined alias. Keeping the validated
+	// value in the same argv token prevents it from ever being reinterpreted as
+	// another native option if a malformed profile bypasses validation.
+	return []string{"--allowedTools=" + strings.Join(allow, ",")}
 }
 
 func applyClaudeWorkerPreauth(projectDir, profile, role, binary, session string, childArgs []string, includeBuiltIn bool) ([]string, []string, bool) {
@@ -61,6 +64,11 @@ func applyClaudeWorkerPreauth(projectDir, profile, role, binary, session string,
 	}
 	actions = appendUniquePermissionPatterns(actions, configured...)
 	if len(actions) == 0 {
+		if explicit, found := collectClaudeAllowedTools(out); found {
+			// Even without launcher-owned policy, canonicalize explicit native
+			// grants into the safe equals form and collapse duplicate aliases.
+			return replaceClaudeAllowedTools(out, explicit), nil, false
+		}
 		return out, nil, false
 	}
 	if childArgsHasAllowedTools(out) {
@@ -70,13 +78,9 @@ func applyClaudeWorkerPreauth(projectDir, profile, role, binary, session string,
 			// and launch-record audit fields stay aligned with live launch.
 			return out, actions, false
 		}
-		// Preserve the old conservative behavior for the built-in PR-create
-		// grant: an unrelated explicit --allowedTools remains authoritative. A
-		// member-scoped permission_allowlist is itself explicit configuration,
-		// so merge it with the existing value rather than silently dropping it.
-		if len(configured) == 0 {
-			return out, nil, false
-		}
+		// Recomposition always preserves genuinely explicit native grants while
+		// rebuilding launcher-owned grants from current policy. This is what lets
+		// profile removal/narrowing revoke the old launcher-owned value on replay.
 		actions = appendUniquePermissionPatterns(childArgsAllowedTools(out), actions...)
 	}
 	return replaceClaudeAllowedTools(out, actions), actions, true
@@ -188,11 +192,51 @@ func replaceClaudeAllowedTools(args, actions []string) []string {
 }
 
 func stripTrailingLauncherPreauthArgs(childArgs, preauthorizedActions []string) []string {
-	preauthArgs := claudePreauthChildArgs(preauthorizedActions)
-	if len(preauthArgs) == 0 || !hasTrailingArgs(childArgs, preauthArgs) {
-		return childArgs
+	return stripRecordedLauncherPreauth(childArgs, preauthorizedActions)
+}
+
+// stripRecordedLauncherPreauth removes only the exact launcher-owned grant
+// identified by launch.Record.PreauthorizedActions. It recognizes both the
+// historical two-token spelling and the injection-safe equals spelling. Any
+// independently configured native allowed-tools value remains available via
+// the record's ClaudeArgs/ExplicitAllowedTools and is recomposed with current
+// member policy.
+func stripRecordedLauncherPreauth(args, preauthorizedActions []string) []string {
+	if len(preauthorizedActions) == 0 {
+		return append([]string(nil), args...)
 	}
-	return append([]string(nil), childArgs[:len(childArgs)-len(preauthArgs)]...)
+	want := strings.Join(preauthorizedActions, ",")
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); {
+		arg := args[i]
+		if arg == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+		spec, inline, ok := nativeValueSpecForArg("claude", arg)
+		if !ok || spec.Canonical != "--allowed-tools" {
+			out = append(out, arg)
+			i++
+			continue
+		}
+		if inline {
+			_, value, _ := strings.Cut(arg, "=")
+			if value == want {
+				i++
+				continue
+			}
+			out = append(out, arg)
+			i++
+			continue
+		}
+		if i+1 < len(args) && args[i+1] == want {
+			i += 2
+			continue
+		}
+		out = append(out, arg)
+		i++
+	}
+	return out
 }
 
 func childArgsHasAllowedTools(args []string) bool {
@@ -203,19 +247,6 @@ func childArgsHasAllowedTools(args []string) bool {
 func childArgsAllowedToolsEquals(args []string, want string) bool {
 	values, found := collectClaudeAllowedTools(args)
 	return found && strings.Join(values, ",") == want
-}
-
-func hasTrailingArgs(args, suffix []string) bool {
-	if len(suffix) == 0 || len(args) < len(suffix) {
-		return false
-	}
-	offset := len(args) - len(suffix)
-	for i := range suffix {
-		if args[offset+i] != suffix[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // claudeWorkerPreauthEligible reports whether an `agent up` launch is an
