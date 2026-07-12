@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -784,10 +785,22 @@ func installLeadWakeHelper(t *testing.T, mode string) *leadWakeHelperHarness {
 		helperArgs = append(helperArgs, args...)
 		return exec.Command(exe, helperArgs...)
 	}
+	firstKillAttempt := true
 	externalLeadWakeProcessEvent = func(phase string, cmd *exec.Cmd, eventErr error) {
 		targetPID := 0
 		if cmd != nil && cmd.Process != nil {
 			targetPID = cmd.Process.Pid
+		}
+		if phase == "kill_attempt" && firstKillAttempt {
+			firstKillAttempt = false
+			_ = appendLeadWakeHelperEvent(harness.eventsPath, mode, "waiting_for_started", "", harness.markerPath, targetPID, nil)
+			if err := waitForLeadWakeHelperStarted(harness.startedPath, 2*time.Second); err != nil {
+				// Mark the test failed before allowing cleanup to signal the group,
+				// but keep running so the failed precondition cannot leak helpers.
+				t.Errorf("wake-helper canary precondition: %v", err)
+			} else {
+				_ = appendLeadWakeHelperEvent(harness.eventsPath, mode, "started_observed", "", harness.markerPath, targetPID, nil)
+			}
 		}
 		_ = appendLeadWakeHelperEvent(harness.eventsPath, mode, phase, "", harness.markerPath, targetPID, eventErr)
 	}
@@ -809,6 +822,40 @@ func installLeadWakeHelper(t *testing.T, mode string) *leadWakeHelperHarness {
 		}
 	})
 	return harness
+}
+
+func waitForLeadWakeHelperStarted(path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
+			if parseErr == nil && pid > 0 {
+				return nil
+			}
+			if parseErr != nil {
+				lastErr = fmt.Errorf("parse started PID: %w", parseErr)
+			} else {
+				lastErr = fmt.Errorf("started PID must be positive, got %d", pid)
+			}
+		} else if errors.Is(err, os.ErrNotExist) {
+			lastErr = err
+		} else {
+			return fmt.Errorf("read started file: %w", err)
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("grandchild did not reach trigger wait phase within %s: %w", timeout, lastErr)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestWaitForLeadWakeHelperStartedFailsClosed(t *testing.T) {
+	err := waitForLeadWakeHelperStarted(filepath.Join(t.TempDir(), "missing"), 5*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "did not reach trigger wait phase") {
+		t.Fatalf("missing started file err = %v, want bounded fail-closed error", err)
+	}
 }
 
 func (h *leadWakeHelperHarness) assertStoppedAfterCleanup(t *testing.T) {
