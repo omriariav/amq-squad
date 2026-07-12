@@ -422,12 +422,6 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 	if target.RootExists && len(liveSet) > 0 {
 		liveAgents = liveSessionAgents(target.Root, liveSet)
 	}
-	// --stop-agents: full teardown of a live squad. Gracefully stop the live
-	// agents now (SIGTERM); their panes are closed below with the non-live ones.
-	if e.StopAgents && len(liveAgents) > 0 {
-		stopLiveSessionAgents(out, liveAgents, e.Terminator)
-	}
-
 	// Collect the panes to close BEFORE the root is moved/removed (the launch
 	// records live under it). Live agents are excluded by default so rm --force
 	// never kills a still-running agent's pane; --stop-agents closes their
@@ -442,12 +436,45 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 		panesToClose = collectSessionPaneIDs(target.Root, exclude)
 	}
 
+	var watcherTeam team.Team
+	watcherTeam, watcherTeamErr := team.ReadProfile(e.ProjectDir, profile)
+	watcherStatus := notificationWatcherStatus{Health: "disabled"}
+	watcherWasActive := false
+	watcherManaged := watcherTeamErr == nil && team.EffectiveOperatorNotifications(watcherTeam.Operator).Enabled
+	if watcherTeamErr == nil {
+		watcherStatus = inspectNotificationWatcher(watcherTeam, profile, session, notificationWatcherNow())
+		watcherWasActive = watcherStatus.record.Expected && watcherStatus.record.OwnerToken != "" && notificationWatcherNow().Before(watcherStatus.record.LeaseExpiresAt)
+	}
+	if watcherManaged || watcherWasActive {
+		if err := stopNotificationWatcher(e.ProjectDir, profile, session); err != nil {
+			return false, fmt.Errorf("refusing to %s before notification watcher is stopped: %w", verb, err)
+		}
+	}
+	// Only after watcher fencing succeeds may --stop-agents signal members. A
+	// remote or ambiguous watcher therefore refuses the whole destructive
+	// lifecycle before either agent or namespace mutation.
+	if e.StopAgents && len(liveAgents) > 0 {
+		stopLiveSessionAgents(out, liveAgents, e.Terminator)
+	}
+	restartWatcherAfterFailure := func(mutationErr error) error {
+		if !watcherWasActive || watcherTeamErr != nil {
+			return mutationErr
+		}
+		if info, statErr := os.Stat(target.Root); statErr != nil || !info.IsDir() {
+			return fmt.Errorf("%w; notification watcher was stopped and namespace is no longer restartable", mutationErr)
+		}
+		if restartErr := reconcileNotificationWatcherStarted(watcherTeam, profile, session, baseRoot); restartErr != nil {
+			return fmt.Errorf("%w; notification watcher rollback failed: %v", mutationErr, restartErr)
+		}
+		return mutationErr
+	}
+
 	if e.Mode == rmModeArchive {
 		if err := archiveSession(out, target); err != nil {
-			return false, err
+			return false, restartWatcherAfterFailure(err)
 		}
 	} else if err := deleteSession(out, target); err != nil {
-		return false, err
+		return false, restartWatcherAfterFailure(err)
 	}
 	closeSessionPanes(out, session, panesToClose)
 

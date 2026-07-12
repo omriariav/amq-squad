@@ -29,6 +29,7 @@ var notificationSinkFactory = notificationSink
 const defaultOperatorRenotifyAfter = 30 * time.Minute
 
 type notifyExecution struct {
+	Context         context.Context
 	ProjectDir      string
 	Profile         string
 	Session         string
@@ -266,7 +267,11 @@ func executeNotify(n notifyExecution) error {
 		if !policy.Enabled {
 			return usageErrorf("--deliver requires operator.notifications.enabled=true")
 		}
-		sinkResults, deliverySummary, err = deliverNotificationSinksPersisted(context.Background(), n.ProjectDir, statePath, items, policy, n.RenotifyAfter, now(), n.ForceResend)
+		ctx := n.Context
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		sinkResults, deliverySummary, err = deliverNotificationSinksPersisted(ctx, n.ProjectDir, statePath, items, policy, n.RenotifyAfter, now(), n.ForceResend)
 		if err != nil {
 			return err
 		}
@@ -334,7 +339,11 @@ func deliverNotificationSinksPersisted(ctx context.Context, projectDir, path str
 				}
 				token = randomToken()
 				d.ReservationToken = token
-				d.ReservationExpires = now.Add(30 * time.Second)
+				// Keep the claim alive for the entire configured sink deadline plus
+				// a small commit margin. A fixed 30s reservation allowed a second
+				// watcher/manual notify process to retry a valid 60s command sink
+				// while the first delivery was still running.
+				d.ReservationExpires = now.Add(notificationReservationTTL(cfg))
 				if rec.Deliveries == nil {
 					rec.Deliveries = map[string]attention.Delivery{}
 				}
@@ -392,6 +401,14 @@ func deliverNotificationSinksPersisted(ctx context.Context, projectDir, path str
 		}
 	}
 	return results, summary, nil
+}
+
+func notificationReservationTTL(cfg team.OperatorNotificationSinkConfig) time.Duration {
+	timeout, err := time.ParseDuration(strings.TrimSpace(cfg.Timeout))
+	if err != nil || timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	return timeout + 5*time.Second
 }
 func randomToken() string {
 	var b [12]byte
@@ -1076,10 +1093,10 @@ func deliverNotificationSinks(ctx context.Context, projectDir string, items []op
 	return results, st
 }
 func notificationSink(cfg team.OperatorNotificationSinkConfig) notifier.Sink {
-	if cfg.Type == "desktop" {
-		return notifier.DesktopSink{SinkID: cfg.ID}
-	}
 	d, _ := time.ParseDuration(cfg.Timeout)
+	if cfg.Type == "desktop" {
+		return notifier.DesktopSink{SinkID: cfg.ID, Timeout: d}
+	}
 	return notifier.CommandSink{SinkID: cfg.ID, Argv: append([]string(nil), cfg.Argv...), Timeout: d}
 }
 func errorString(err error) string {
