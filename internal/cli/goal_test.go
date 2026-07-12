@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -498,94 +500,196 @@ func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
 	}
 }
 
-func TestGoalDeliveryAmbiguousSubmitQueuesDurableAMQFallback(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		sendErr    error
-		wantNotice string
-		wantStage  string
-	}{
-		{
-			name:       "codex queued input",
-			sendErr:    &tmuxpane.QueuedInputError{PaneID: "%7"},
-			wantNotice: "queued in the lead's input; it will submit when the agent goes idle",
-			wantStage:  "native_goal_queued",
-		},
-		{
-			name:       "submit unconfirmed",
-			sendErr:    &tmuxpane.SubmitUnconfirmedError{PaneID: "%7", Attempts: 3},
-			wantNotice: "native goal submission was not confirmed",
-			wantStage:  "native_goal_unconfirmed",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			base := setupFakeAMQSessionRoots(t)
-			dir := seedTeam(t, team.Team{
-				Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-				Orchestrated:  true,
-				Lead:          "cto",
-				ExecutionMode: executionModeProjectLead,
-			})
-			seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-				CWD:      dir,
-				Binary:   "codex",
-				Handle:   "cto",
-				Role:     "cto",
-				Session:  "issue-96",
-				AgentPID: 4242,
-				Tmux:     &launch.TmuxInfo{PaneID: "%7"},
-			})
-			calls := withAMQCommandSeams(t, amqEnv{
-				Root:     filepath.Join(base, "{session}"),
-				BaseRoot: base,
-			}, "Sent goal-msg-427 to cto\n")
-			oldLister := statusPaneLister
-			statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
-				return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: "codex", Title: "amq:issue-96:cto"}}, nil
-			}
-			oldSend := sendPromptToPane
-			sendPromptToPane = func(string, string) error { return tc.sendErr }
-			t.Cleanup(func() {
-				statusPaneLister = oldLister
-				sendPromptToPane = oldSend
-			})
+func setupGoalDeliveryFailureTest(t *testing.T, sendErr error) (string, string, *[]amqCommandRequest, *[]string) {
+	t.Helper()
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96",
+		AgentPID: 4242, Tmux: &launch.TmuxInfo{PaneID: "%7"},
+	})
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "Sent goal-msg-427 to cto\n")
+	oldLister := statusPaneLister
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: "codex", Title: "amq:issue-96:cto"}}, nil
+	}
+	oldSend := sendPromptToPane
+	var prompts []string
+	sendPromptToPane = func(_ string, prompt string) error {
+		prompts = append(prompts, prompt)
+		return sendErr
+	}
+	t.Cleanup(func() {
+		statusPaneLister = oldLister
+		sendPromptToPane = oldSend
+	})
+	return dir, base, calls, &prompts
+}
 
-			stdout, stderr, err := captureOutput(t, func() error {
-				return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--json"})
-			})
-			if err != nil {
-				t.Fatalf("ambiguous goal submit must use durable fallback: %v\nstderr:\n%s", err, stderr)
-			}
-			env := decodeJSONEnvelope[mutationResult](t, stdout)
-			if env.Kind != "goal_deliver" || env.Data.Status != "durable_goal_fallback" || env.Data.MessageID != "goal-msg-427" {
-				t.Fatalf("goal fallback envelope = %+v", env)
-			}
-			receipt := env.Data.DeliveryReceipt
-			if receipt == nil || !receipt.Fallback || receipt.Method != "durable_amq_goal_fallback" || receipt.MessageID != "goal-msg-427" || !receiptHasStage(receipt, tc.wantStage) || !receiptHasStage(receipt, "written_to_amq") {
-				t.Fatalf("goal fallback receipt = %+v", receipt)
-			}
-			if !strings.Contains(stderr, tc.wantNotice) || !strings.Contains(stderr, "Durable AMQ fallback goal-msg-427 is queued; continuing") {
-				t.Fatalf("goal fallback warning missing detail:\n%s", stderr)
-			}
-			if len(*calls) != 1 {
-				t.Fatalf("AMQ sends = %d, want 1", len(*calls))
-			}
-			args := (*calls)[0].Arg
-			joined := strings.Join(args, " ")
-			for _, want := range []string{
-				"send --root " + filepath.Join(base, "issue-96"),
-				"--me cto --to cto",
-				"--thread goal/issue-96",
-				"--kind todo",
-				"--subject Launch goal fallback: issue-96",
-				"ship safely",
-				"same goal may already be queued",
-			} {
-				if !strings.Contains(joined, want) {
-					t.Fatalf("durable goal send args missing %q:\n%q", want, args)
-				}
-			}
-		})
+func TestGoalDeliveryQueuedInputRecordsPendingWithoutActionableAMQ(t *testing.T) {
+	dir, _, calls, prompts := setupGoalDeliveryFailureTest(t, &tmuxpane.QueuedInputError{PaneID: "%7"})
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("known queued goal must remain a soft outcome: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[mutationResult](t, stdout)
+	receipt := env.Data.DeliveryReceipt
+	if env.Data.Status != "native_goal_queued" || receipt == nil || receipt.Fallback || receipt.MessageID != "" || !receiptHasStage(receipt, "native_goal_queued") || !receiptHasStage(receipt, "pending_without_amq_action") {
+		t.Fatalf("queued native goal receipt = %+v", receipt)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("known queued input must not emit a second actionable AMQ todo; sends=%d", len(*calls))
+	}
+	if len(*prompts) != 1 || !strings.Contains((*prompts)[0], "--attempt-id "+receipt.AttemptID) {
+		t.Fatalf("native prompt does not carry shared attempt id %q: %q", receipt.AttemptID, *prompts)
+	}
+	if !strings.Contains(stderr, "without a second actionable AMQ goal") {
+		t.Fatalf("queued warning missing idempotency contract:\n%s", stderr)
+	}
+}
+
+func TestGoalDeliveryUnconfirmedQueuesClaimOnceAMQFallback(t *testing.T) {
+	dir, base, calls, prompts := setupGoalDeliveryFailureTest(t, &tmuxpane.SubmitUnconfirmedError{PaneID: "%7", Attempts: 3})
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("unconfirmed goal submit must use claim-once fallback: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[mutationResult](t, stdout)
+	receipt := env.Data.DeliveryReceipt
+	if env.Data.Status != "durable_goal_fallback" || env.Data.MessageID != "goal-msg-427" || receipt == nil || !receipt.Fallback || receipt.Method != "durable_amq_goal_fallback" || !receiptHasStage(receipt, "native_goal_unconfirmed") || !receiptHasStage(receipt, "claim_once_contract") || !receiptHasStage(receipt, "written_to_amq") {
+		t.Fatalf("claim-once fallback receipt = %+v", receipt)
+	}
+	if len(*prompts) != 1 || !strings.Contains((*prompts)[0], "--attempt-id "+receipt.AttemptID) {
+		t.Fatalf("native prompt does not carry attempt id %q: %q", receipt.AttemptID, *prompts)
+	}
+	if !strings.Contains(stderr, "Claim-once durable AMQ fallback goal-msg-427 shares attempt "+receipt.AttemptID) {
+		t.Fatalf("claim-once warning missing detail:\n%s", stderr)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("AMQ sends = %d, want exactly 1", len(*calls))
+	}
+	joined := strings.Join((*calls)[0].Arg, " ")
+	for _, want := range []string{
+		"send --root " + filepath.Join(base, "issue-96"),
+		"--me cto --to cto", "--thread goal/issue-96", "--kind todo",
+		"--subject Claim-once launch goal: issue-96", "Goal attempt ID: " + receipt.AttemptID,
+		"goal claim --project " + dir, "--attempt-id " + receipt.AttemptID, "--route amq --json",
+		"Proceed only when status is claimed", "already_claimed", "ship safely",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("durable goal send args missing %q:\n%q", want, (*calls)[0].Arg)
+		}
+	}
+}
+
+func TestGoalClaimIsAtomicAndSecondRouteIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	opts := goalDeliveryOptions{
+		Project: dir, Profile: "release", Session: "issue-96", Role: "cto", Goal: "ship safely",
+		Member:    team.Member{Role: "cto", Handle: "cto"},
+		Namespace: squadnamespace.Resolve(dir, "release", "issue-96"),
+	}
+	const attemptID = "20260712T120000.000000000Z-native_goal-cto-cto"
+	if _, err := createGoalAttempt(opts, attemptID, time.Unix(100, 0).UTC()); err != nil {
+		t.Fatalf("create goal attempt: %v", err)
+	}
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoal([]string{"claim", "--project", dir, "--profile", "release", "--session", "issue-96", "--attempt-id", attemptID, "--route", "native", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("native claim: %v\nstderr:\n%s", err, stderr)
+	}
+	first := decodeJSONEnvelope[goalAttemptClaimData](t, stdout)
+	if first.Data.Status != "claimed" || first.Data.Route != "native" || first.Data.AttemptID != attemptID || first.Data.Namespace.ID != "release/issue-96" {
+		t.Fatalf("first claim = %+v", first.Data)
+	}
+	stdout, stderr, err = captureOutput(t, func() error {
+		return runGoal([]string{"claim", "--project", dir, "--profile", "release", "--session", "issue-96", "--attempt-id", attemptID, "--route", "amq", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("second claim should be a successful no-op: %v\nstderr:\n%s", err, stderr)
+	}
+	second := decodeJSONEnvelope[goalAttemptClaimData](t, stdout)
+	if second.Data.Status != "already_claimed" || second.Data.ExistingRoute != "native" || second.Data.Route != "amq" {
+		t.Fatalf("second claim = %+v", second.Data)
+	}
+}
+
+func TestGoalDeliveryFallbackSendFailurePreservesTypedSoftError(t *testing.T) {
+	dir, _, _, _ := setupGoalDeliveryFailureTest(t, &tmuxpane.SubmitUnconfirmedError{PaneID: "%7", Attempts: 3})
+	prevRun := runAMQCommand
+	runAMQCommand = func(amqCommandRequest) ([]byte, error) { return nil, errors.New("mailbox unavailable") }
+	t.Cleanup(func() { runAMQCommand = prevRun })
+	_, _, err := captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--json"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "durable goal fallback failed") || !strings.Contains(err.Error(), "mailbox unavailable") {
+		t.Fatalf("fallback send error = %v", err)
+	}
+	var unconfirmed *tmuxpane.SubmitUnconfirmedError
+	if !errors.As(err, &unconfirmed) {
+		t.Fatalf("fallback failure lost original *SubmitUnconfirmedError: %T %v", err, err)
+	}
+}
+
+func TestGoalDeliveryReceiptFailureAfterSendIsTypedUnsafeToRetry(t *testing.T) {
+	dir, _, _, _ := setupGoalDeliveryFailureTest(t, &tmuxpane.SubmitUnconfirmedError{PaneID: "%7", Attempts: 3})
+	prevWrite := goalDeliveryReceiptWrite
+	goalDeliveryReceiptWrite = func(string, string, string, *deliveryReceiptData) error {
+		return errors.New("receipt disk full")
+	}
+	t.Cleanup(func() { goalDeliveryReceiptWrite = prevWrite })
+	_, _, err := captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--json"})
+	})
+	var sent *goalFallbackSentReceiptError
+	if !errors.As(err, &sent) {
+		t.Fatalf("want *goalFallbackSentReceiptError, got %T: %v", err, err)
+	}
+	if sent.MessageID != "goal-msg-427" || sent.Thread != "goal/issue-96" || sent.Root == "" || sent.RetrySafe() || !strings.Contains(err.Error(), "unsafe to blindly retry") {
+		t.Fatalf("sent-but-receipt-failed outcome = %+v: %v", sent, err)
+	}
+	var unconfirmed *tmuxpane.SubmitUnconfirmedError
+	if !errors.As(err, &unconfirmed) {
+		t.Fatalf("sent-but-receipt failure lost original soft error: %T %v", err, err)
+	}
+}
+
+func TestGoalFallbackNamedProfileUsesNamespacedAMQRoot(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	profile := "release"
+	tm := team.Team{
+		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96", CWD: dir}},
+	}
+	if err := team.WriteProfile(dir, profile, tm); err != nil {
+		t.Fatal(err)
+	}
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "Sent named-msg to cto\n")
+	opts := goalDeliveryOptions{
+		Project: dir, Profile: profile, Session: "issue-96", Role: "cto", Goal: "ship safely",
+		AttemptID: "attempt-named", Team: tm, Member: tm.Members[0], Namespace: squadnamespace.Resolve(dir, profile, "issue-96"), Mode: executionModeProjectLead,
+	}
+	got, err := sendDurableGoalFallback(opts)
+	if err != nil {
+		t.Fatalf("named-profile fallback: %v", err)
+	}
+	wantRoot := filepath.Join(dir, ".agent-mail", profile, "issue-96")
+	if got.Root != wantRoot {
+		t.Fatalf("fallback root = %q, want named-profile root %q", got.Root, wantRoot)
+	}
+	if len(*calls) != 1 || !strings.Contains(strings.Join((*calls)[0].Arg, " "), "--root "+wantRoot) {
+		t.Fatalf("named-profile AMQ send args = %+v", *calls)
 	}
 }
 

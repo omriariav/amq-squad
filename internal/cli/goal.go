@@ -197,6 +197,7 @@ type goalDeliveryOptions struct {
 	Session   string
 	Role      string
 	Goal      string
+	AttemptID string
 	Team      team.Team
 	Member    team.Member
 	Namespace squadnamespace.Ref
@@ -209,9 +210,49 @@ type goalFallbackDelivery struct {
 	Thread    string
 }
 
+// goalFallbackDurabilityError preserves the original typed pane-delivery
+// outcome when the AMQ fallback itself fails. errors.As must still reach the
+// QueuedInputError/SubmitUnconfirmedError so run-start treats this as a soft
+// launch-finalization outcome while reporting that durable recovery failed.
+type goalFallbackDurabilityError struct {
+	DeliveryErr error
+	FallbackErr error
+}
+
+func (e *goalFallbackDurabilityError) Error() string {
+	return fmt.Sprintf("%v; durable goal fallback failed: %v", e.DeliveryErr, e.FallbackErr)
+}
+
+func (e *goalFallbackDurabilityError) Unwrap() []error {
+	return []error{e.DeliveryErr, e.FallbackErr}
+}
+
+// goalFallbackSentReceiptError means AMQ accepted the actionable fallback but
+// local receipt persistence failed. Retrying blindly can enqueue the same goal
+// again, so callers receive the original delivery error plus the exact durable
+// message coordinates and an explicit non-retryable signal.
+type goalFallbackSentReceiptError struct {
+	MessageID   string
+	Root        string
+	Thread      string
+	DeliveryErr error
+	ReceiptErr  error
+}
+
+func (e *goalFallbackSentReceiptError) Error() string {
+	return fmt.Sprintf("durable goal fallback %s was sent to %s on %s, but its delivery receipt failed: %v; unsafe to blindly retry", strings.TrimSpace(e.MessageID), e.Thread, e.Root, e.ReceiptErr)
+}
+
+func (e *goalFallbackSentReceiptError) Unwrap() []error {
+	return []error{e.DeliveryErr, e.ReceiptErr}
+}
+
+func (e *goalFallbackSentReceiptError) RetrySafe() bool { return false }
+
 // goalFallbackAMQSend is the durable half of ambiguous native goal delivery.
 // Tests replace it without needing a real AMQ binary or mailbox tree.
 var goalFallbackAMQSend = sendDurableGoalFallback
+var goalDeliveryReceiptWrite = writeDeliveryReceipt
 
 const (
 	goalOrchestratorRole          = "orchestrator"
@@ -235,6 +276,8 @@ func runGoalWithVersion(args []string, version string) error {
 		return runGoalDraftWithVersion(args[1:], version)
 	case "deliver":
 		return runGoalDeliver(args[1:])
+	case "claim":
+		return runGoalClaim(args[1:])
 	case "start":
 		return runGoalStart(args[1:])
 	case "apply":
@@ -270,6 +313,7 @@ Usage:
 
 Subcommands:
   apply     apply an operator-approved visible lead goal
+  claim     atomically claim one native/AMQ goal delivery attempt
   deliver   deliver a native /goal to the resolved visible lead
   draft     produce a preview-only goal setup plan from a goal description
   start     preview or deliver a goal to the current visible lead
@@ -458,6 +502,8 @@ confirm-gated and requires --yes in this first implementation slice.
 	}
 	if result.Status == "durable_goal_fallback" {
 		fmt.Printf("Queued durable goal fallback for %s on session %s.\n", result.Role, result.Session)
+	} else if result.Status == "native_goal_queued" {
+		fmt.Printf("Queued native goal attempt %s for %s on session %s; no actionable AMQ duplicate was sent.\n", result.DeliveryReceipt.AttemptID, result.Role, result.Session)
 	} else {
 		fmt.Printf("Started goal on %s for session %s.\n", result.Role, result.Session)
 	}
@@ -521,6 +567,8 @@ runtime accepts goal control messages safely.
 	}
 	if result.Status == "durable_goal_fallback" {
 		fmt.Printf("Queued durable goal fallback for %s (message %s).\n", result.Role, result.MessageID)
+	} else if result.Status == "native_goal_queued" {
+		fmt.Printf("Queued native /goal attempt %s for %s; no actionable AMQ duplicate was sent.\n", result.DeliveryReceipt.AttemptID, result.Role)
 	} else {
 		fmt.Printf("Delivered native /goal to %s pane %s (attempt %s).\n", result.Role, result.DeliveryReceipt.PaneID, result.DeliveryReceipt.AttemptID)
 	}
@@ -908,11 +956,23 @@ func sendDurableGoalFallback(opts goalDeliveryOptions) (goalFallbackDelivery, er
 		return goalFallbackDelivery{}, fmt.Errorf("resolve amq root for goal fallback: %w", err)
 	}
 	ctx.Me = sender
+	attemptID := strings.TrimSpace(opts.AttemptID)
+	if attemptID == "" {
+		return goalFallbackDelivery{}, fmt.Errorf("goal fallback requires a shared attempt id")
+	}
 	thread := "goal/" + opts.Session
-	subject := "Launch goal fallback: " + opts.Session
+	subject := "Claim-once launch goal: " + opts.Session + " (" + attemptID + ")"
+	claimCommand := "amq-squad goal claim --project " + shellQuote(opts.Project) +
+		" --profile " + shellQuote(opts.Profile) +
+		" --session " + shellQuote(opts.Session) +
+		" --attempt-id " + shellQuote(attemptID) +
+		" --route amq --json"
 	body := "Launch goal for session " + opts.Session + ":\n\n" + opts.Goal +
-		"\n\nThis durable AMQ message is the fallback for native /goal delivery. " +
-		"The same goal may already be queued in the lead pane; if it is active, treat this message as confirmation rather than a second goal."
+		"\n\nGoal attempt ID: " + attemptID +
+		"\n\nThis is the single actionable AMQ path for an unconfirmed native submission. " +
+		"Before activating the goal, run:\n\n" + claimCommand +
+		"\n\nProceed only when status is claimed. If status is already_claimed, the native path won and this message is a no-op. " +
+		"Never reset or retry this attempt to activate it twice."
 	args := dispatchSendArgs(ctx.Root, sender, target, thread, "todo", subject, body, "", "", 0)
 	out, err := runAMQCommand(amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: args})
 	if err != nil {
@@ -926,8 +986,9 @@ func sendDurableGoalFallback(opts goalDeliveryOptions) (goalFallbackDelivery, er
 }
 
 func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
-	prompt := nativeGoalControlPrompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role)
 	receipt := newDeliveryReceipt(opts.Project, opts.Profile, opts.Session, opts.Role, opts.Member.Handle, opts.Mode, "native_goal")
+	opts.AttemptID = receipt.AttemptID
+	prompt := nativeGoalControlPrompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
 	receipt.Method = "native_goal_control"
 	receipt.addStage("queued", "native /goal control delivery accepted by amq-squad")
 
@@ -951,17 +1012,43 @@ func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
 	}
 	receipt.PaneID = paneID
 	receipt.addStage("control_delivery_started", "resolved exact target pane for native /goal control")
+	attemptPath, err := goalAttemptCreate(opts, receipt.AttemptID, receipt.CreatedAt)
+	if err != nil {
+		return mutationResult{}, fmt.Errorf("create claim-once goal attempt: %w", err)
+	}
+	receipt.addStage("attempt_recorded", "claim-once goal attempt recorded at "+attemptPath+"; native and AMQ paths share attempt_id="+receipt.AttemptID)
 	if err := sendPromptToPane(paneID, prompt); err != nil {
 		var queued *tmuxpane.QueuedInputError
 		var unconfirmed *tmuxpane.SubmitUnconfirmedError
-		if errors.As(err, &queued) || errors.As(err, &unconfirmed) {
+		if errors.As(err, &queued) {
+			receipt.Status = "native_goal_queued"
+			receipt.Detail = err.Error()
+			receipt.addStage("native_goal_queued", "native goal text is known present in the lead input and will submit when the agent goes idle")
+			receipt.addStage("pending_without_amq_action", "durable pending evidence recorded; no actionable AMQ fallback emitted because the native text is known present")
+			if writeErr := goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt); writeErr != nil {
+				return mutationResult{}, &goalFallbackDurabilityError{DeliveryErr: err, FallbackErr: fmt.Errorf("write queued native-goal receipt: %w", writeErr)}
+			}
+			fmt.Fprintf(os.Stderr, "warning: goal queued in the lead's input; it will submit when the agent goes idle. Pending attempt %s was recorded without a second actionable AMQ goal; continuing.\n", receipt.AttemptID)
+			return mutationResult{
+				Command:         "goal deliver",
+				Status:          receipt.Status,
+				Project:         opts.Project,
+				Session:         opts.Session,
+				Profile:         opts.Profile,
+				Namespace:       opts.Namespace,
+				Role:            opts.Role,
+				Handle:          opts.Member.Handle,
+				DeliveryReceipt: &receipt,
+			}, nil
+		}
+		if errors.As(err, &unconfirmed) {
 			fallback, fallbackErr := goalFallbackAMQSend(opts)
 			if fallbackErr != nil {
 				receipt.Status = "failed"
-				receipt.Detail = fmt.Sprintf("native goal submission was ambiguous and durable AMQ fallback failed: %v", fallbackErr)
+				receipt.Detail = fmt.Sprintf("native goal submission was unconfirmed and claim-once AMQ fallback failed: %v", fallbackErr)
 				receipt.addStage("failed", receipt.Detail)
-				_ = writeDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &receipt)
-				return mutationResult{}, fmt.Errorf("%s", receipt.Detail)
+				_ = goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt)
+				return mutationResult{}, &goalFallbackDurabilityError{DeliveryErr: err, FallbackErr: fallbackErr}
 			}
 			receipt.MessageID = fallback.MessageID
 			receipt.Root = fallback.Root
@@ -970,24 +1057,23 @@ func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
 			receipt.Method = "durable_amq_goal_fallback"
 			receipt.Status = "durable_goal_fallback"
 			receipt.Detail = err.Error()
-			if queued != nil {
-				receipt.addStage("native_goal_queued", "queued in the lead's input; it will submit when the agent goes idle")
-			} else {
-				receipt.addStage("native_goal_unconfirmed", err.Error())
-			}
-			receipt.addStage("written_to_amq", "durable goal fallback written to the lead inbox")
-			if err := writeDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &receipt); err != nil {
-				return mutationResult{}, err
+			receipt.addStage("native_goal_unconfirmed", err.Error())
+			receipt.addStage("claim_once_contract", "native prompt and AMQ todo share attempt_id="+receipt.AttemptID+"; exactly one route may atomically claim it")
+			receipt.addStage("written_to_amq", "single actionable claim-once goal fallback written to the lead inbox")
+			if writeErr := goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt); writeErr != nil {
+				return mutationResult{}, &goalFallbackSentReceiptError{
+					MessageID:   fallback.MessageID,
+					Root:        fallback.Root,
+					Thread:      fallback.Thread,
+					DeliveryErr: err,
+					ReceiptErr:  writeErr,
+				}
 			}
 			messageID := strings.TrimSpace(fallback.MessageID)
 			if messageID == "" {
 				messageID = "(message id unavailable)"
 			}
-			if queued != nil {
-				fmt.Fprintf(os.Stderr, "warning: goal queued in the lead's input; it will submit when the agent goes idle. Durable AMQ fallback %s is queued; continuing.\n", messageID)
-			} else {
-				fmt.Fprintf(os.Stderr, "warning: native goal submission was not confirmed. Durable AMQ fallback %s is queued; continuing.\n", messageID)
-			}
+			fmt.Fprintf(os.Stderr, "warning: native goal submission was not confirmed. Claim-once durable AMQ fallback %s shares attempt %s; continuing.\n", messageID, receipt.AttemptID)
 			return mutationResult{
 				Command:         "goal deliver",
 				Status:          receipt.Status,
@@ -1006,7 +1092,7 @@ func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
 		receipt.Status = "failed"
 		receipt.Detail = err.Error()
 		receipt.addStage("failed", err.Error())
-		_ = writeDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &receipt)
+		_ = goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt)
 		return mutationResult{}, err
 	}
 	receipt.addStage("pane_settled", "SendPromptToPane waited for target pane output to settle before native /goal control delivery")
@@ -1026,7 +1112,7 @@ func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
 		}
 		receipt.addStage("launch_record_updated", "launch record goal_binding updated from native /goal control delivery")
 	}
-	if err := writeDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &receipt); err != nil {
+	if err := goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt); err != nil {
 		return mutationResult{}, err
 	}
 	return mutationResult{
@@ -1042,7 +1128,7 @@ func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
 	}, nil
 }
 
-func nativeGoalControlPrompt(goal string, t team.Team, profile, session, role string) string {
+func nativeGoalControlPrompt(goal string, t team.Team, profile, session, role string, attemptIDs ...string) string {
 	args := []string{"/goal", "--goal", strconv.Quote(goal), "--session", session, "--profile", profile, "--mode", effectiveTeamExecutionMode(t)}
 	if role != "" && role != "cto" {
 		args = append(args, "--lead", role)
@@ -1052,6 +1138,9 @@ func nativeGoalControlPrompt(goal string, t team.Team, profile, session, role st
 	}
 	if target := strings.TrimSpace(t.TargetContract); target != "" {
 		args = append(args, "--target-contract", target)
+	}
+	if len(attemptIDs) > 0 && strings.TrimSpace(attemptIDs[0]) != "" {
+		args = append(args, "--attempt-id", strings.TrimSpace(attemptIDs[0]))
 	}
 	return strings.Join(args, " ")
 }

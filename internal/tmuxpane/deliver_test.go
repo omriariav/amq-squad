@@ -369,12 +369,34 @@ func TestSendPromptReportsCodexQueuedInputWithoutRetryingEnter(t *testing.T) {
 	}
 }
 
-func TestQueuedInputVisibleIsCaseInsensitive(t *testing.T) {
-	if !queuedInputVisible("TAB TO QUEUE MESSAGE") {
+func TestQueuedInputVisibleIsAnchoredToCaseInsensitiveFooter(t *testing.T) {
+	if !queuedInputVisible("│ staged prompt │\n  TAB TO QUEUE MESSAGE\n") {
 		t.Fatal("queued footer should be detected case-insensitively")
 	}
 	if queuedInputVisible("? for shortcuts") {
 		t.Fatal("ordinary idle footer must not be classified as queued")
+	}
+	if queuedInputVisible("│ please explain the phrase tab to queue message │\n  ? for shortcuts") {
+		t.Fatal("prompt text containing the queue phrase must not be classified as queued")
+	}
+}
+
+func TestChangedQueuedFooterDegradesToSubmitUnconfirmed(t *testing.T) {
+	calls := swapDeliver(t, nil)
+	paneCapturer = func(string) (string, error) {
+		return "│ review the change │\n  tab to queue messages", nil
+	}
+	err := SendPromptToPane("%5", "review the change")
+	var queued *QueuedInputError
+	if errors.As(err, &queued) {
+		t.Fatalf("changed footer must not be guessed as queued: %v", err)
+	}
+	var unconfirmed *SubmitUnconfirmedError
+	if !errors.As(err, &unconfirmed) {
+		t.Fatalf("changed footer must degrade to *SubmitUnconfirmedError, got %T: %v", err, err)
+	}
+	if got := enterCount(*calls); got != submitAttempts {
+		t.Fatalf("changed footer should take the ordinary confirmation path (%d Enters), got %d", submitAttempts, got)
 	}
 }
 

@@ -271,7 +271,21 @@ func (e *QueuedInputError) Error() string {
 }
 
 func queuedInputVisible(region string) bool {
-	return strings.Contains(strings.ToLower(region), "tab to queue message")
+	// Codex renders the queue hint as footer chrome on the final non-blank line
+	// of the input box. Do not search the whole captured region: the staged
+	// prompt itself is user-controlled and may legitimately contain these words.
+	// Matching the complete footer line also makes an unknown/new footer degrade
+	// to the conservative SubmitUnconfirmedError path instead of guessing that a
+	// queued state is present.
+	lines := strings.Split(strings.ReplaceAll(region, "\r\n", "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		footer := strings.TrimSpace(lines[i])
+		if footer == "" {
+			continue
+		}
+		return strings.EqualFold(footer, "tab to queue message")
+	}
+	return false
 }
 
 // SubmitUnconfirmedError reports that the prompt was pasted and Enter pressed,
