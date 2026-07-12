@@ -15,24 +15,27 @@ import (
 func TestWriteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	in := Record{
-		CWD:              "/some/project",
-		Binary:           "claude",
-		Argv:             []string{"--flag", "value"},
-		Session:          "stream1",
-		SharedWorkstream: true,
-		Conversation:     "drive-fix",
-		Handle:           "cpo",
-		Role:             "cpo",
-		Root:             dir,
-		BaseRoot:         filepath.Dir(dir),
-		RootSource:       "project_amqrc",
-		AMQVersion:       "0.34.0",
-		NoGitignore:      true,
-		WakeInjectVia:    "/opt/amq-inject",
-		WakeInjectArgs:   []string{"--pane", "%42"},
-		WakeInjectMode:   "raw",
-		WakePID:          1234,
-		StartedAt:        time.Now().UTC().Truncate(time.Second),
+		CWD:                          "/some/project",
+		Binary:                       "claude",
+		Argv:                         []string{"--flag", "value"},
+		Session:                      "stream1",
+		SharedWorkstream:             true,
+		Conversation:                 "drive-fix",
+		Handle:                       "cpo",
+		Role:                         "cpo",
+		Root:                         dir,
+		BaseRoot:                     filepath.Dir(dir),
+		RootSource:                   "project_amqrc",
+		AMQVersion:                   "0.34.0",
+		NoGitignore:                  true,
+		NoPreauthorizeInScope:        true,
+		LauncherPreauthorizedActions: []string{"Bash(gh pr create:*)"},
+		ExplicitAllowedTools:         []string{"Read(/tmp/review/**)"},
+		WakeInjectVia:                "/opt/amq-inject",
+		WakeInjectArgs:               []string{"--pane", "%42"},
+		WakeInjectMode:               "raw",
+		WakePID:                      1234,
+		StartedAt:                    time.Now().UTC().Truncate(time.Second),
 	}
 	if err := Write(dir, in); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -60,11 +63,17 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		out.Handle != in.Handle || out.Role != in.Role || out.Root != in.Root ||
 		out.BaseRoot != in.BaseRoot || out.RootSource != in.RootSource ||
 		out.AMQVersion != in.AMQVersion || out.WakeInjectVia != in.WakeInjectVia || out.WakeInjectMode != in.WakeInjectMode ||
-		out.NoGitignore != in.NoGitignore || out.WakePID != in.WakePID {
+		out.NoGitignore != in.NoGitignore || out.NoPreauthorizeInScope != in.NoPreauthorizeInScope || out.WakePID != in.WakePID {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", out, in)
 	}
 	if !reflect.DeepEqual(out.WakeInjectArgs, in.WakeInjectArgs) {
 		t.Errorf("WakeInjectArgs = %v, want %v", out.WakeInjectArgs, in.WakeInjectArgs)
+	}
+	if !reflect.DeepEqual(out.ExplicitAllowedTools, in.ExplicitAllowedTools) {
+		t.Errorf("ExplicitAllowedTools = %v, want %v", out.ExplicitAllowedTools, in.ExplicitAllowedTools)
+	}
+	if !reflect.DeepEqual(out.LauncherPreauthorizedActions, in.LauncherPreauthorizedActions) {
+		t.Errorf("LauncherPreauthorizedActions = %v, want %v", out.LauncherPreauthorizedActions, in.LauncherPreauthorizedActions)
 	}
 	if len(out.Argv) != len(in.Argv) {
 		t.Fatalf("Argv len mismatch: %v vs %v", out.Argv, in.Argv)

@@ -131,7 +131,7 @@ amq-squad dispatch \
   --session issue-96 \
   --role qa \
   --subject "Run smoke tests" \
-  --body "Validate the current PR and report findings."
+  --body-file ./qa-task.md
 
 # Stop and resume without losing launch records, briefs, or task state.
 amq-squad stop --session issue-96 --all
@@ -325,9 +325,15 @@ amq-squad rm issue-96
 
 Coordination:
 
+Use `--body-file FILE` or `--body-file -` (stdin) for `amq-squad send` and
+`dispatch` bodies containing code, commands, backticks, or `$()` syntax.
+Inline `--body` is only for short plain prose because the caller shell expands
+it before amq-squad receives argv. For bare `amq send`, use `--body -` or
+`--body @file` instead; raw AMQ does not accept `--body-file`.
+
 ```sh
 amq-squad task add --session issue-96 --title "Implement fix" --assign fullstack
-amq-squad dispatch --session issue-96 --role fullstack --task t1 --subject "Implement fix" --body "..."
+amq-squad dispatch --session issue-96 --role fullstack --task t1 --subject "Implement fix" --body-file ./task.md
 amq-squad activity set --session issue-96 --me fullstack --task t1 --phase testing
 amq-squad threads --session issue-96
 amq-squad thread --session issue-96 --id p2p/cto__fullstack --include-body=false
@@ -359,7 +365,7 @@ Runtime control:
 
 ```sh
 amq-squad focus --session issue-96 --role cto
-amq-squad send --session issue-96 --role qa --body "run the smoke suite"
+amq-squad send --session issue-96 --role qa --body-file ./prompt.md
 ```
 
 `focus` and `send` are runtime capabilities. They may be unavailable on native
@@ -440,6 +446,30 @@ managed agent can lose required startup behavior.
 Per-member `claude_args` / `codex_args` apply native CLI flags to one member and
 are replayed by resume. Worker overlays trim Claude plugin/hook surface for
 same-cwd squads; Codex workers use native Codex profiles via `codex_args`.
+
+Claude members may also carry an explicit, role-scoped
+`permission_allowlist`, for example
+`"permission_allowlist": ["Bash(rm -rf /tmp/qa-review/*:*)"]`. amq-squad
+merges those patterns into one effective `--allowedTools` grant for that member
+only, records the result in launch history, and shows both the configured and
+effective lists in `up --dry-run --json`. Values beginning with `-` are rejected
+and generated grants use the single-token `--allowedTools=<grant>` form. Resume
+removes the prior launcher-owned grant before rebuilding from current policy,
+so narrowing or removing the field revokes old access; the
+`--no-preauthorize-inscope` choice also survives replay. Preview commands never
+embed launcher-owned policy in executable child argv: `agent up` recomputes it
+from current profile state, and launch history records launcher-owned and
+explicit-native provenance separately even when their values are identical.
+Keep each pattern as
+narrow as the member's own scratch or review workspace; the field is rejected
+on non-Claude members and is intentionally not a team-wide trust switch.
+
+Profiles using `permission_allowlist` are written as team schema 4; profiles
+without it remain schema 3. v2.20+ readers accept both and reject future
+schemas. Pre-v2.20 binaries do not understand this field: they can silently
+ignore it and lossily rewrite a schema-4 profile. Upgrade every amq-squad binary
+that may read or write the profile before configuring an allowlist, and use
+`amq-squad doctor` to detect version skew.
 
 Trust and binary defaults are explicit. Codex trusted mode is the only path that
 prepends `--dangerously-bypass-approvals-and-sandbox`; the default sandboxed

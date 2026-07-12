@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -211,6 +212,288 @@ func TestRunLaunchPreauthOptOutAndScope(t *testing.T) {
 			t.Fatalf("codex worker is out of scope and must be unchanged:\n%s", out)
 		}
 	})
+}
+
+func TestRunLaunchBuiltInPreauthOptOutPreservesMemberPermissionAllowlist(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "v2-14-0"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "v2-14-0", PermissionAllowlist: []string{"Bash(rm -rf /tmp/fullstack-review/*:*)"}},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	setupFakeAMQ(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--no-preauthorize-inscope", "--role", "fullstack", "--session", "v2-14-0", "claude", "p"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "fullstack-review") || strings.Contains(stdout, "gh pr create") {
+		t.Fatalf("explicit allowlist should survive built-in opt-out without PR grant:\n%s", stdout)
+	}
+}
+
+func TestConfiguredAllowlistOptOutFullRecordReplay(t *testing.T) {
+	teamHome := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-401"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-401", PermissionAllowlist: []string{"Read(/tmp/qa-review/**)"}},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	setupFakeAMQ(t)
+
+	recordDir := t.TempDir()
+	initial := launch.Record{
+		Binary:                "claude",
+		Argv:                  []string{"--allowedTools=Read(/tmp/qa-review/**)"},
+		Session:               "issue-401",
+		Handle:                "qa",
+		Role:                  "qa",
+		Root:                  filepath.Join(teamHome, ".agent-mail", "issue-401"),
+		TeamHome:              teamHome,
+		NoPreauthorizeInScope: true,
+		PreauthorizedActions:  []string{"Read(/tmp/qa-review/**)"},
+	}
+	if err := launch.Write(recordDir, initial); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := launch.Read(recordDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var replayed launch.Record
+	oldObserver := launchPlanObserver
+	t.Cleanup(func() { launchPlanObserver = oldObserver })
+	launchPlanObserver = func(rec launch.Record, _ []string) { replayed = rec }
+	args := append([]string{"--dry-run", "--no-bootstrap"}, launchArgsFromRecord(stored)...)
+	_, _, err = captureOutput(t, func() error { return runLaunch(args) })
+	if err != nil {
+		t.Fatalf("replay runLaunch: %v", err)
+	}
+	if !replayed.NoPreauthorizeInScope {
+		t.Fatal("replayed launch record lost no-preauthorize-inscope")
+	}
+	if !reflect.DeepEqual(replayed.PreauthorizedActions, []string{"Read(/tmp/qa-review/**)"}) {
+		t.Fatalf("replayed current grant = %v", replayed.PreauthorizedActions)
+	}
+	if strings.Contains(strings.Join(replayed.Argv, " "), "gh pr create") {
+		t.Fatalf("replayed opt-out restored built-in grant: %v", replayed.Argv)
+	}
+}
+
+func TestRunLaunchRecordsExplicitAllowedToolsSeparatelyFromMergedGrant(t *testing.T) {
+	teamHome := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-401"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-401", PermissionAllowlist: []string{"Read(/tmp/policy/**)"}},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	setupFakeAMQ(t)
+	var observed launch.Record
+	oldObserver := launchPlanObserver
+	t.Cleanup(func() { launchPlanObserver = oldObserver })
+	launchPlanObserver = func(rec launch.Record, _ []string) { observed = rec }
+	_, _, err := captureOutput(t, func() error {
+		return runLaunch([]string{
+			"--dry-run", "--no-bootstrap", "--team-home", teamHome,
+			"--role", "qa", "--session", "issue-401", "claude", "--",
+			"--allowedTools=Edit(/tmp/explicit/**)",
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(observed.ExplicitAllowedTools, []string{"Edit(/tmp/explicit/**)"}) {
+		t.Fatalf("explicit_allowed_tools = %v", observed.ExplicitAllowedTools)
+	}
+	for _, want := range []string{"Edit(/tmp/explicit/**)", "Read(/tmp/policy/**)", "Bash(gh pr create:*)"} {
+		if !containsString(observed.PreauthorizedActions, want) {
+			t.Fatalf("effective record audit missing %q: %v", want, observed.PreauthorizedActions)
+		}
+	}
+	if containsString(observed.LauncherPreauthorizedActions, "Edit(/tmp/explicit/**)") ||
+		!containsString(observed.LauncherPreauthorizedActions, "Read(/tmp/policy/**)") ||
+		!containsString(observed.LauncherPreauthorizedActions, "Bash(gh pr create:*)") {
+		t.Fatalf("launcher provenance = %v", observed.LauncherPreauthorizedActions)
+	}
+}
+
+func TestExplicitGrantEqualToLauncherPolicySurvivesPolicyRemoval(t *testing.T) {
+	const configured = "Read(/tmp/equal-policy/**)"
+	for _, optOut := range []bool{false, true} {
+		name := "with built-in"
+		if optOut {
+			name = "with built-in opt-out"
+		}
+		t.Run(name, func(t *testing.T) {
+			teamHome := t.TempDir()
+			writeReplayAllowlistTeam(t, teamHome, []string{configured}, true)
+			setupFakeAMQ(t)
+
+			launcherPolicy := []string{configured}
+			if !optOut {
+				launcherPolicy = []string{"Bash(gh pr create:*)", configured}
+			}
+			initialArgs := []string{
+				"--dry-run", "--no-bootstrap", "--team-home", teamHome,
+				"--role", "qa", "--session", "issue-401",
+			}
+			if optOut {
+				initialArgs = append(initialArgs, "--no-preauthorize-inscope")
+			}
+			initialArgs = append(initialArgs, "claude", "--", claudePreauthChildArgs(launcherPolicy)[0])
+
+			var initial launch.Record
+			oldObserver := launchPlanObserver
+			t.Cleanup(func() { launchPlanObserver = oldObserver })
+			launchPlanObserver = func(rec launch.Record, _ []string) { initial = rec }
+			if _, _, err := captureOutput(t, func() error { return runLaunch(initialArgs) }); err != nil {
+				t.Fatalf("initial launch: %v", err)
+			}
+			if !reflect.DeepEqual(initial.ExplicitAllowedTools, launcherPolicy) ||
+				!reflect.DeepEqual(initial.LauncherPreauthorizedActions, launcherPolicy) {
+				t.Fatalf("equal-valued provenance collapsed: explicit=%v launcher=%v want=%v", initial.ExplicitAllowedTools, initial.LauncherPreauthorizedActions, launcherPolicy)
+			}
+
+			// Remove the configured member policy, then replay the exact record.
+			writeReplayAllowlistTeam(t, teamHome, nil, true)
+			var replayed launch.Record
+			launchPlanObserver = func(rec launch.Record, _ []string) { replayed = rec }
+			replayArgs := append([]string{"--dry-run", "--no-bootstrap"}, launchArgsFromRecord(initial)...)
+			if _, _, err := captureOutput(t, func() error { return runLaunch(replayArgs) }); err != nil {
+				t.Fatalf("replay after policy removal: %v", err)
+			}
+			if !reflect.DeepEqual(replayed.ExplicitAllowedTools, launcherPolicy) {
+				t.Fatalf("equal-valued explicit grant was lost: got %v want %v", replayed.ExplicitAllowedTools, launcherPolicy)
+			}
+			wantLauncher := []string(nil)
+			if !optOut {
+				wantLauncher = []string{"Bash(gh pr create:*)"}
+			}
+			if !reflect.DeepEqual(replayed.LauncherPreauthorizedActions, wantLauncher) {
+				t.Fatalf("launcher policy was not revoked structurally: got %v want %v", replayed.LauncherPreauthorizedActions, wantLauncher)
+			}
+			if !containsString(replayed.PreauthorizedActions, configured) {
+				t.Fatalf("surviving explicit value absent from effective audit: %v", replayed.PreauthorizedActions)
+			}
+			if strings.Count(strings.Join(replayed.Argv, " "), "--allowedTools") != 1 {
+				t.Fatalf("replay emitted duplicate allowed-tools flags: %v", replayed.Argv)
+			}
+		})
+	}
+}
+
+func TestReplayRecomposesLauncherGrantFromCurrentPolicy(t *testing.T) {
+	const (
+		oldGrant = "Read(/tmp/old-policy/**)"
+		newGrant = "Read(/tmp/new-policy/**)"
+		explicit = "Edit(/tmp/explicit/**)"
+	)
+	tests := []struct {
+		name        string
+		configure   func(t *testing.T, dir string)
+		want        []string
+		wantBuiltin bool
+	}{
+		{
+			name: "A to B",
+			configure: func(t *testing.T, dir string) {
+				writeReplayAllowlistTeam(t, dir, []string{newGrant}, true)
+			},
+			want: []string{explicit, newGrant}, wantBuiltin: true,
+		},
+		{
+			name: "A to empty",
+			configure: func(t *testing.T, dir string) {
+				writeReplayAllowlistTeam(t, dir, nil, true)
+			},
+			want: []string{explicit}, wantBuiltin: true,
+		},
+		{
+			name: "role removed",
+			configure: func(t *testing.T, dir string) {
+				writeReplayAllowlistTeam(t, dir, nil, false)
+			},
+			want: []string{explicit},
+		},
+		{
+			name: "profile removed",
+			configure: func(t *testing.T, dir string) {
+				if err := os.MkdirAll(filepath.Join(dir, team.DirName), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: []string{explicit},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			teamHome := t.TempDir()
+			tc.configure(t, teamHome)
+			setupFakeAMQ(t)
+			prior := []string{explicit, "Bash(gh pr create:*)", oldGrant}
+			rec := launch.Record{
+				Binary:                       "claude",
+				Argv:                         claudePreauthChildArgs(prior),
+				Session:                      "issue-401",
+				Handle:                       "qa",
+				Role:                         "qa",
+				Root:                         filepath.Join(teamHome, ".agent-mail", "issue-401"),
+				TeamHome:                     teamHome,
+				PreauthorizedActions:         prior,
+				LauncherPreauthorizedActions: []string{"Bash(gh pr create:*)", oldGrant},
+				ExplicitAllowedTools:         []string{explicit},
+			}
+
+			var replayed launch.Record
+			oldObserver := launchPlanObserver
+			t.Cleanup(func() { launchPlanObserver = oldObserver })
+			launchPlanObserver = func(got launch.Record, _ []string) { replayed = got }
+			args := append([]string{"--dry-run", "--no-bootstrap"}, launchArgsFromRecord(rec)...)
+			_, _, err := captureOutput(t, func() error { return runLaunch(args) })
+			if err != nil {
+				t.Fatalf("replay runLaunch: %v", err)
+			}
+			joined := strings.Join(replayed.Argv, " ")
+			if strings.Contains(joined, oldGrant) {
+				t.Fatalf("revoked grant survived replay: argv=%v audit=%v", replayed.Argv, replayed.PreauthorizedActions)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("current/explicit grant %q missing: argv=%v audit=%v", want, replayed.Argv, replayed.PreauthorizedActions)
+				}
+			}
+			hasBuiltin := strings.Contains(joined, "Bash(gh pr create:*)")
+			if hasBuiltin != tc.wantBuiltin {
+				t.Fatalf("built-in presence = %v, want %v: argv=%v", hasBuiltin, tc.wantBuiltin, replayed.Argv)
+			}
+			if strings.Count(joined, "--allowedTools") != 1 {
+				t.Fatalf("replay emitted duplicate allowed-tools flags: %v", replayed.Argv)
+			}
+			if tc.wantBuiltin && !reflect.DeepEqual(childArgsAllowedTools(replayed.Argv), replayed.PreauthorizedActions) {
+				t.Fatalf("new record audit is not the current effective grant: argv=%v audit=%v", childArgsAllowedTools(replayed.Argv), replayed.PreauthorizedActions)
+			}
+		})
+	}
+}
+
+func writeReplayAllowlistTeam(t *testing.T, dir string, allow []string, includeQA bool) {
+	t.Helper()
+	members := []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-401"}}
+	if includeQA {
+		members = append(members, team.Member{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-401", PermissionAllowlist: allow})
+	}
+	if err := team.Write(dir, team.Team{Members: members, Orchestrated: true, Lead: "cto"}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestValidateManagedTmuxLaunchRejectsNonTTY(t *testing.T) {
@@ -468,6 +751,28 @@ func TestLaunchArgsFromRecordReplaysNoRequireWake(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("replay args missing --no-require-wake: %v", args)
+	}
+}
+
+func TestLaunchArgsFromRecordReplaysNoPreauthorizeInScope(t *testing.T) {
+	rec := launch.Record{
+		Binary:                "claude",
+		Handle:                "qa",
+		Role:                  "qa",
+		Session:               "issue-401",
+		NoPreauthorizeInScope: true,
+		PreauthorizedActions:  []string{"Read(/tmp/qa-review/**)"},
+		Argv:                  []string{"--allowedTools=Read(/tmp/qa-review/**)"},
+	}
+	args := launchArgsFromRecord(rec)
+	if !containsArg(args, "--no-preauthorize-inscope") {
+		t.Fatalf("replay args missing --no-preauthorize-inscope: %v", args)
+	}
+	if strings.Contains(strings.Join(args, " "), "qa-review") {
+		t.Fatalf("replay args retained launcher-owned grant instead of recomposing current policy: %v", args)
+	}
+	if cmd := emitCommand(rec); !strings.Contains(cmd, "--no-preauthorize-inscope") {
+		t.Fatalf("replay command missing opt-out: %s", cmd)
 	}
 }
 

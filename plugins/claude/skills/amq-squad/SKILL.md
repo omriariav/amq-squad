@@ -45,8 +45,8 @@ The lifecycle is one small state machine: `(none) --up--> running --stop--> stop
 | Multi-session board (also the bare command) | `amq-squad status` / `amq-squad` |
 | Single-session detail | `amq-squad status --session <name>` |
 | Focus an agent's pane (or the session) | `amq-squad focus --session <name> [--role R]` (`open` = session alias) |
-| Deliver a prompt to an agent's pane + submit | `amq-squad send --session <name> --role R --body "..."` |
-| Dispatch a durable task to an agent and wake it | `amq-squad dispatch --session <name> --role R --kind todo --subject "..." --body "..."` |
+| Deliver a prompt to an agent's pane + submit | `amq-squad send --session <name> --role R --body-file ./prompt.md` |
+| Dispatch a durable task to an agent and wake it | `amq-squad dispatch --session <name> --role R --kind todo --subject "..." --body-file ./task.md` |
 | Live read-only Mission Control TUI | `amq-squad console` (`--once` for CI) |
 | Inspect restorable launch records (project history) | `amq-squad history` |
 | Launch a single agent (modern verb) | `amq-squad agent up <binary>` |
@@ -79,8 +79,8 @@ When an operator sees both `amq-squad ...` and raw `amq ...`, choose by intent:
 | Intent | Use | Why |
 | --- | --- | --- |
 | Supervise a squad | `amq-squad status`, `amq-squad console`, `amq-squad task`, `amq-squad collect` | These commands resolve the project/profile/session and expose the squad model. `collect` is the lead-safe report collector; use it when raw AMQ would say `refusing collect` of a `lead-owned mailbox` unless an audited override is supplied. |
-| Give a live agent an instruction now | `amq-squad send --session S --role R --body "..."` | This is tmux pane delivery to the recorded live pane, best for operator-to-visible-lead prompts. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
-| Assign durable work and wake the recipient | `amq-squad dispatch --session S --role R --kind todo --subject "..." --body "..."` | Dispatch queues a durable AMQ task in the resolved workstream root and wakes or nudges the agent to drain it, especially lead-to-worker. |
+| Give a live agent an instruction now | `amq-squad send --session S --role R --body-file ./prompt.md` | This is tmux pane delivery to the recorded live pane, best for operator-to-visible-lead prompts. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
+| Assign durable work and wake the recipient | `amq-squad dispatch --session S --role R --kind todo --subject "..." --body-file ./task.md` | Dispatch queues a durable AMQ task in the resolved workstream root and wakes or nudges the agent to drain it, especially lead-to-worker. |
 | Inspect or write mailbox messages directly | Raw `amq send/read/drain/thread` only inside the correct coop/session shell, or with an explicit root/session contract. Prefer `amq-squad amq ...` when operating from an external pane. | Raw AMQ is mailbox plumbing. Outside the right `amq coop exec` context it can target the wrong `.agent-mail` tree. This is the same namespace rule as #328 errors such as `implicit default-profile mutation`, `legacy/default session root`, and `refusing before write`. |
 
 For orchestrated squads, the operator normally talks to the visible lead with
@@ -89,23 +89,31 @@ For orchestrated squads, the operator normally talks to the visible lead with
 an external operator pane with raw AMQ unless the root/profile/session contract
 is explicit.
 
+**Shell-safe body rule:** use wrapper `--body-file FILE` or `--body-file -`
+(stdin) whenever a body contains code, commands, backticks, or `$()` syntax.
+Inline `--body` is only for short plain prose: the invoking shell expands it
+before amq-squad receives argv, and no later flag could recover substituted
+text. Raw `amq send` has a different interface: use
+`--body -` for stdin or `--body @file` for a file; never pass raw AMQ
+`--body-file`.
+
 Failing example from an external pane:
 
 ```sh
 # Ambiguous/wrong for a named-profile squad: may use the external pane's cwd or
 # default .agent-mail/issue-96 while the worker drains .agent-mail/release/issue-96.
 amq send --session issue-96 --to developer --thread p2p/cto__developer \
-  --kind todo --subject "Task" --body "..."
+  --kind todo --subject "Task" --body @task.md
 
 # Root-resolving squad wrapper:
 amq-squad amq send --project /path/to/repo --profile release --session issue-96 \
   --to developer --thread p2p/cto__developer --kind todo \
-  --subject "Task" --body "..."
+  --subject "Task" --body-file ./task.md
 
 # Raw AMQ is acceptable only when the mailbox root contract is explicit:
 amq send --root /path/to/repo/.agent-mail/release/issue-96 \
   --to developer --thread p2p/cto__developer --kind todo \
-  --subject "Task" --body "..."
+  --subject "Task" --body @task.md
 ```
 
 ## Runtime control (tmux)
@@ -113,9 +121,9 @@ amq send --root /path/to/repo/.agent-mail/release/issue-96 \
 amq-squad owns the tmux execution/control contract, so drive agents by stable command — never raw `tmux send-keys`/`select-window`. Control targets the exact recorded **pane id**, never window names.
 
 - **`amq-squad focus --session S [--role R]`** — bring an agent's pane into view (with `--role`), or the session's first live pane (no role). `open` is the session alias.
-- **`amq-squad send --session S --role R --body "..."`** (or `--body-file F`, or `--body-file -` for stdin) — deliver a prompt into an agent's exact pane and submit it with one Enter. Text is staged in a tmux paste buffer (not a shell string), so **multi-line prompts and text with quotes or shell metacharacters arrive verbatim**. It errors clearly if the pane is gone. **Built-in busy-guard:** `send` REFUSES to deliver into a busy / mid-turn pane by default (a push into a working agent can land in a tool-result buffer and be missed); pass `--force` to override and deliberately interrupt.
+- **`amq-squad send --session S --role R --body-file F`** (or `--body-file -` for stdin; inline `--body` only for short plain prose) — deliver a prompt into an agent's exact pane and submit it with one Enter. After the body is safely resolved, text is staged in a tmux paste buffer (not a shell string), so multi-line prompts and shell metacharacters from a file/stdin arrive verbatim. The caller shell still expands inline `--body` before execution. It errors clearly if the pane is gone. **Built-in busy-guard:** `send` REFUSES to deliver into a busy / mid-turn pane by default (a push into a working agent can land in a tool-result buffer and be missed); pass `--force` to override and deliberately interrupt.
   - This is **pane delivery, not an AMQ message**: `amq-squad send` takes `--body`/`--body-file` and has **no `--kind`/`--thread`**. To post an inter-agent AMQ message, use `amq send ... --kind <valid kind>` (see *Route messages*) — never put a `--kind` on `amq-squad send`.
-- **`amq-squad dispatch --session S --role R --kind todo --subject "..." --body "..."`** — the deterministic way to hand an agent a task: it sends a **durable** AMQ message to the workstream's resolved root (root-correct even for an external lead whose bare `amq send` would misroute to the default `.agent-mail`) AND nudges the agent's pane with a fixed *drain instruction* so an idle worker wakes and runs `amq drain`. The task body rides only in the durable message (no double-delivery). The nudge is best-effort: a gone/busy pane leaves the task queued (drained on the worker's next turn); `--force` nudges a busy pane, `--no-wake` queues without nudging, `--thread`/`--from` set the AMQ thread/sender. A recipient launch record with `wake_inject_mode=none` disables the pane nudge even under `--force`; the task remains queued durably with zero synthetic input. Use the printed root-correct `collect --timeout 120s` only for an immediate ACK or imminent report; otherwise park/end the turn and let wake resume you. A drain receipt proves only that the child saw the task, not completion. For the full lead-to-child pattern, use the `amq-squad-orchestrator` skill.
+- **`amq-squad dispatch --session S --role R --kind todo --subject "..." --body-file ./task.md`** — the deterministic way to hand an agent a task: it sends a **durable** AMQ message to the workstream's resolved root (root-correct even for an external lead whose bare `amq send` would misroute to the default `.agent-mail`) AND nudges the agent's pane with a fixed *drain instruction* so an idle worker wakes and runs `amq drain`. The task body rides only in the durable message (no double-delivery). The nudge is best-effort: a gone/busy pane leaves the task queued (drained on the worker's next turn); `--force` nudges a busy pane, `--no-wake` queues without nudging, `--thread`/`--from` set the AMQ thread/sender. A recipient launch record with `wake_inject_mode=none` disables the pane nudge even under `--force`; the task remains queued durably with zero synthetic input. Use the printed root-correct `collect --timeout 120s` only for an immediate ACK or imminent report; otherwise park/end the turn and let wake resume you. A drain receipt proves only that the child saw the task, not completion. For the full lead-to-child pattern, use the `amq-squad-orchestrator` skill.
 - Each agent launched in tmux persists its exact tmux identity in its launch record; `status --session <name> --json`, `history --json`, and `resume --json` expose it plus `pane_alive`, and the single-session `status --json` `actions[]` give the exact focus/send/resume commands. Prefer those over hand-built tmux.
 
 **Launch topology** — `amq-squad up --target ...`:
@@ -183,11 +191,11 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
    - Same-project role handoffs use the shared workstream and a canonical p2p thread:
      ```sh
      amq send --to fullstack --thread p2p/cto__fullstack --kind review_request \
-       --subject "Review: X" --body "Please review."
+       --subject "Review: X" --body @review.md
      ```
    - Decisions: `--thread decision/<topic> --kind decision`.
    - Valid `--kind` values (enforced by `amq`): `brainstorm, review_request, review_response, question, answer, decision, status, todo`. **There is no `handoff` kind** — send a role-to-role handoff as `--kind review_request` (work to take over) or `--kind todo` (a queued task). An unknown kind (e.g. `--kind handoff`) is **rejected** with a validation error (`--kind must be one of: ...`) and the message is **not sent** — always pass a valid kind.
-   - **Surfacing to the human:** use the operator handle declared in the current team rules/profile. Default schema-3 teams use non-runnable handle `user`; custom `--operator HANDLE` teams use that handle; `--no-operator` teams route human-facing asks through the lead/CTO rule instead. Human gates use stable `gate/<topic>` threads, for example `amq send --to <operator> --thread gate/<topic> --subject "APPROVAL: ..." --kind question`.
+   - **Surfacing to the human:** use the operator handle declared in the current team rules/profile. Default schema-3+ teams use non-runnable handle `user`; custom `--operator HANDLE` teams use that handle; `--no-operator` teams route human-facing asks through the lead/CTO rule instead. Human gates use stable `gate/<topic>` threads, for example `amq send --to <operator> --thread gate/<topic> --subject "APPROVAL: ..." --kind question`.
    - Synchronous wait: append `--wait-for drained --wait-timeout 60s`.
    - Cross-session sends need explicit `--session` and `--thread`; avoid them in normal flow.
 
@@ -238,7 +246,7 @@ amq-squad up --dry-run
 
 # Runtime control: focus a pane, deliver a prompt, read the action contract
 amq-squad focus --session issue-96 --role cto
-amq-squad send  --session issue-96 --role cto --body "please review PR #69"
+amq-squad send  --session issue-96 --role cto --body-file ./prompt.md
 cat prompt.md | amq-squad send --session issue-96 --role qa --body-file -
 amq-squad dispatch --session issue-96 --role qa --from cto --subject "Validate" --body-file ./task.md
 amq-squad collect --session issue-96 --me cto --timeout 120s --include-body
@@ -489,6 +497,26 @@ You can also preview a candidate from a deterministic source with
   cutting its per-prompt context cost. Do not hand-edit this: step 5 generates
   and wires it with `amq-squad team overlay init` (v1.9.0+). Plan emission
   validates that every referenced `--settings` file exists.
+- **Per-member permission allowlist**: a Claude member may carry
+  `permission_allowlist`, for example
+  `"permission_allowlist": ["Bash(rm -rf /tmp/qa-review/*:*)"]`. amq-squad
+  merges it with explicit native `--allowedTools`, applies it only to that
+  exact role, shows configured/effective grants in `up --dry-run --json`, and
+  persists the effective list in launch history for resume/audit. Resume strips
+  the prior launcher-owned grant and rebuilds from current policy, so removal or
+  narrowing revokes old access; `--no-preauthorize-inscope` also round-trips.
+  Validation rejects this field on non-Claude members and rejects patterns
+  beginning with `-`; emission uses one injection-safe
+  `--allowedTools=<grant>` token. Preview commands never embed launcher policy
+  in executable child argv: `agent up` recomputes current policy, and launch
+  history stores launcher-owned and explicit-native provenance separately even
+  when the values are identical. Keep patterns scoped to the member's own
+  scratch or review workspace; this is not a team-wide trust switch and the
+  setup wizard does not author it. Profiles using the field write team schema
+  4; other profiles remain schema 3. Upgrade every reader/writer to v2.20+
+  before configuration: pre-v2.20 binaries can silently ignore the field and
+  lossily rewrite a schema-4 profile. Use `amq-squad doctor` to detect version
+  skew; v2.20+ readers accept schemas 3/4 and reject future schemas.
 - **Model/binary/effort choice** (context stamp: 2026-07-10, current operator
   setup; setup-dependent, not universal): defaults are not limits; escalate
   when output quality misses the bar. For shippable work use

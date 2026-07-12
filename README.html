@@ -422,7 +422,7 @@ host and never approve gates.</p>
 <span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
 <span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a>  <span class="at">--role</span> qa <span class="dt">\</span></span>
 <span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Run smoke tests&quot;</span> <span class="dt">\</span></span>
-<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a>  <span class="at">--body</span> <span class="st">&quot;Validate the current PR and report findings.&quot;</span></span>
+<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a>  <span class="at">--body-file</span> ./qa-task.md</span>
 <span id="cb5-27"><a href="#cb5-27" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a><span class="co"># Stop and resume without losing launch records, briefs, or task state.</span></span>
 <span id="cb5-29"><a href="#cb5-29" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--session</span> issue-96 <span class="at">--all</span></span>
@@ -749,9 +749,17 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#
 <span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> archive issue-96</span>
 <span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> rm issue-96</span></code></pre></div>
 <p>Coordination:</p>
+<p>Use <code>--body-file FILE</code> or <code>--body-file -</code>
+(stdin) for <code>amq-squad send</code> and <code>dispatch</code> bodies
+containing code, commands, backticks, or <code>$()</code> syntax. Inline
+<code>--body</code> is only for short plain prose because the caller
+shell expands it before amq-squad receives argv. For bare
+<code>amq send</code>, use <code>--body -</code> or
+<code>--body @file</code> instead; raw AMQ does not accept
+<code>--body-file</code>.</p>
 <div class="sourceCode" id="cb11"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--session</span> issue-96 <span class="at">--title</span> <span class="st">&quot;Implement fix&quot;</span> <span class="at">--assign</span> fullstack</span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack <span class="at">--task</span> t1 <span class="at">--subject</span> <span class="st">&quot;Implement fix&quot;</span> <span class="at">--body</span> <span class="st">&quot;...&quot;</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack <span class="at">--task</span> t1 <span class="at">--subject</span> <span class="st">&quot;Implement fix&quot;</span> <span class="at">--body-file</span> ./task.md</span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> activity set <span class="at">--session</span> issue-96 <span class="at">--me</span> fullstack <span class="at">--task</span> t1 <span class="at">--phase</span> testing</span>
 <span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> threads <span class="at">--session</span> issue-96</span>
 <span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> thread <span class="at">--session</span> issue-96 <span class="at">--id</span> p2p/cto__fullstack <span class="at">--include-body</span><span class="op">=</span>false</span></code></pre></div>
@@ -774,7 +782,7 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#
 <p>Runtime control:</p>
 <div class="sourceCode" id="cb14"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> cto</span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--body</span> <span class="st">&quot;run the smoke suite&quot;</span></span></code></pre></div>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--body-file</span> ./prompt.md</span></code></pre></div>
 <p><code>focus</code> and <code>send</code> are runtime capabilities.
 They may be unavailable on native terminal tiers even while durable AMQ
 <code>dispatch</code> remains available.</p>
@@ -886,6 +894,32 @@ required startup behavior.</p>
 native CLI flags to one member and are replayed by resume. Worker
 overlays trim Claude plugin/hook surface for same-cwd squads; Codex
 workers use native Codex profiles via <code>codex_args</code>.</p>
+<p>Claude members may also carry an explicit, role-scoped
+<code>permission_allowlist</code>, for example
+<code>"permission_allowlist": ["Bash(rm -rf /tmp/qa-review/*:*)"]</code>.
+amq-squad merges those patterns into one effective
+<code>--allowedTools</code> grant for that member only, records the
+result in launch history, and shows both the configured and effective
+lists in <code>up --dry-run --json</code>. Values beginning with
+<code>-</code> are rejected and generated grants use the single-token
+<code>--allowedTools=&lt;grant&gt;</code> form. Resume removes the prior
+launcher-owned grant before rebuilding from current policy, so narrowing
+or removing the field revokes old access; the
+<code>--no-preauthorize-inscope</code> choice also survives replay.
+Preview commands never embed launcher-owned policy in executable child
+argv: <code>agent up</code> recomputes it from current profile state,
+and launch history records launcher-owned and explicit-native provenance
+separately even when their values are identical. Keep each pattern as
+narrow as the member's own scratch or review workspace; the field is
+rejected on non-Claude members and is intentionally not a team-wide
+trust switch.</p>
+<p>Profiles using <code>permission_allowlist</code> are written as team
+schema 4; profiles without it remain schema 3. v2.20+ readers accept
+both and reject future schemas. Pre-v2.20 binaries do not understand
+this field: they can silently ignore it and lossily rewrite a schema-4
+profile. Upgrade every amq-squad binary that may read or write the
+profile before configuring an allowlist, and use
+<code>amq-squad doctor</code> to detect version skew.</p>
 <p>Trust and binary defaults are explicit. Codex trusted mode is the
 only path that prepends
 <code>--dangerously-bypass-approvals-and-sandbox</code>; the default
