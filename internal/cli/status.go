@@ -82,25 +82,26 @@ type statusSignals struct {
 // statusEnvelopeData is the kind="status" payload: resolved team-home,
 // workstream, profile, and the per-member records.
 type statusEnvelopeData struct {
-	TeamHome          string                      `json:"team_home"`
-	Workstream        string                      `json:"workstream"`
-	Profile           string                      `json:"profile,omitempty"`
-	Namespace         squadnamespace.Ref          `json:"namespace"`
-	Operator          statusOperatorView          `json:"operator"`
-	OperatorDelivery  operatorDeliveryData        `json:"operator_delivery"`
-	Capabilities      team.Capabilities           `json:"capabilities"`
-	Orchestrated      bool                        `json:"orchestrated,omitempty"`
-	Lead              string                      `json:"lead,omitempty"`
-	LeadHandle        string                      `json:"lead_handle,omitempty"`
-	GoalBinding       goalBindingData             `json:"goal_binding"`
-	Autonomous        team.AutonomousStatus       `json:"autonomous"`
-	Execution         executionModeData           `json:"execution"`
-	Versions          versionAlignmentData        `json:"versions"`
-	NamespaceConflict *namespaceConflictData      `json:"namespace_conflict,omitempty"`
-	Warnings          []statusWarning             `json:"warnings,omitempty"`
-	Topology          *statusTopology             `json:"topology,omitempty"`
-	ExternalEvidence  []state.ExternalEvidenceRow `json:"external_evidence,omitempty"`
-	Records           []statusRecord              `json:"records"`
+	TeamHome            string                      `json:"team_home"`
+	Workstream          string                      `json:"workstream"`
+	Profile             string                      `json:"profile,omitempty"`
+	Namespace           squadnamespace.Ref          `json:"namespace"`
+	Operator            statusOperatorView          `json:"operator"`
+	OperatorDelivery    operatorDeliveryData        `json:"operator_delivery"`
+	NotificationWatcher notificationWatcherStatus   `json:"notification_watcher"`
+	Capabilities        team.Capabilities           `json:"capabilities"`
+	Orchestrated        bool                        `json:"orchestrated,omitempty"`
+	Lead                string                      `json:"lead,omitempty"`
+	LeadHandle          string                      `json:"lead_handle,omitempty"`
+	GoalBinding         goalBindingData             `json:"goal_binding"`
+	Autonomous          team.AutonomousStatus       `json:"autonomous"`
+	Execution           executionModeData           `json:"execution"`
+	Versions            versionAlignmentData        `json:"versions"`
+	NamespaceConflict   *namespaceConflictData      `json:"namespace_conflict,omitempty"`
+	Warnings            []statusWarning             `json:"warnings,omitempty"`
+	Topology            *statusTopology             `json:"topology,omitempty"`
+	ExternalEvidence    []state.ExternalEvidenceRow `json:"external_evidence,omitempty"`
+	Records             []statusRecord              `json:"records"`
 	// Actions are the SESSION-scope operator actions (status / resume preview /
 	// resume in current window / resume in new tmux session / stop), the catalog
 	// counterpart to each record's agent-scope actions. A client renders these
@@ -385,26 +386,27 @@ func executeStatus(s statusExecution) error {
 		execution.InvariantErrors = invariantErrors
 		applyLeadExecutionContract(&execution, t.LeadExecution)
 		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
-			TeamHome:          t.Project,
-			Workstream:        workstream,
-			Profile:           s.Profile,
-			Namespace:         ns,
-			Operator:          operatorView,
-			OperatorDelivery:  operatorDeliveryForTeam(t),
-			Capabilities:      team.EffectiveCapabilities(t),
-			Orchestrated:      ctx.Orchestrated,
-			Lead:              ctx.Lead,
-			LeadHandle:        ctx.LeadHandle,
-			GoalBinding:       binding,
-			Autonomous:        team.EffectiveAutonomousStatus(t),
-			Execution:         execution,
-			Versions:          buildVersionAlignment(versionSources),
-			NamespaceConflict: conflict,
-			Warnings:          warnings,
-			Topology:          topology,
-			ExternalEvidence:  externalEvidence,
-			Records:           rows,
-			Actions:           ctx.Actions,
+			TeamHome:            t.Project,
+			Workstream:          workstream,
+			Profile:             s.Profile,
+			Namespace:           ns,
+			Operator:            operatorView,
+			OperatorDelivery:    operatorDeliveryForTeam(t),
+			NotificationWatcher: inspectNotificationWatcher(t, s.Profile, workstream, now),
+			Capabilities:        team.EffectiveCapabilities(t),
+			Orchestrated:        ctx.Orchestrated,
+			Lead:                ctx.Lead,
+			LeadHandle:          ctx.LeadHandle,
+			GoalBinding:         binding,
+			Autonomous:          team.EffectiveAutonomousStatus(t),
+			Execution:           execution,
+			Versions:            buildVersionAlignment(versionSources),
+			NamespaceConflict:   conflict,
+			Warnings:            warnings,
+			Topology:            topology,
+			ExternalEvidence:    externalEvidence,
+			Records:             rows,
+			Actions:             ctx.Actions,
 		})
 	}
 	policy := outputPolicyCurrent()
@@ -418,6 +420,10 @@ func executeStatus(s statusExecution) error {
 	delivery := operatorDeliveryForTeam(t)
 	if delivery.Enabled {
 		fmt.Fprintf(s.Out, "# operator_delivery: %s\n", operatorDeliverySummary(delivery))
+	}
+	if delivery.NotificationsEnabled {
+		watcher := inspectNotificationWatcher(t, s.Profile, workstream, now)
+		fmt.Fprintf(s.Out, "# notification_watcher: %s (pid=%d host=%s heartbeat=%s state=%s)\n", watcher.Health, watcher.PID, watcher.Host, watcher.HeartbeatAt.UTC().Format(time.RFC3339), watcher.RuntimePath)
 	}
 	if delivery.InteractionMode == team.OperatorInteractionSelfOperator {
 		v := team.EffectiveSelfOperator(t, workstream)
@@ -459,7 +465,24 @@ func statusWarnings(projectDir, profile, session string, now time.Time) ([]statu
 		warnings = append(warnings, statusWarning{Kind: "layout_finalization", Session: session, Detail: detail})
 	}
 	warnings = append(warnings, statusAgedOperatorGateWarnings(projectDir, profile, session, now)...)
+	warnings = append(warnings, statusNotificationWatcherWarnings(projectDir, profile, session, now)...)
 	return warnings, nil
+}
+
+func statusNotificationWatcherWarnings(projectDir, profile, session string, now time.Time) []statusWarning {
+	t, err := team.ReadProfile(projectDir, profile)
+	if err != nil || !team.EffectiveOperatorNotifications(t.Operator).Enabled {
+		return nil
+	}
+	watcher := inspectNotificationWatcher(t, profile, session, now)
+	if watcher.Health == "healthy" || watcher.Health == "inactive" || watcher.Health == "external-active" {
+		return nil
+	}
+	return []statusWarning{{
+		Kind: "notification_watcher_unhealthy", Session: session,
+		Detail:           fmt.Sprintf("UNHEALTHY: notifications_enabled=true but the supervised notification watcher is %s: %s (runtime %s)", watcher.Health, watcher.Reason, watcher.RuntimePath),
+		SuggestedCommand: "amq-squad resume --project " + shellQuote(projectDir) + commandProfileArg(profile) + " --session " + shellQuote(session) + " --exec",
+	}}
 }
 
 func statusAgedOperatorGateWarnings(projectDir, profile, session string, now time.Time) []statusWarning {

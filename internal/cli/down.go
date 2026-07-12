@@ -248,6 +248,14 @@ func executeDown(d downExecution) error {
 	if err != nil {
 		return err
 	}
+	finalStop := d.All || noOperationalUntargetedMembers(t, d.Profile, workstream, targets, d.Probe)
+	watcherStopped := false
+	if finalStop && team.EffectiveOperatorNotifications(t.Operator).Enabled {
+		if err := stopNotificationWatcher(t.Project, d.Profile, workstream); err != nil {
+			return fmt.Errorf("stop notification watcher before final agent teardown: %w", err)
+		}
+		watcherStopped = true
+	}
 
 	reports := make([]downReport, 0, len(targets))
 	for _, m := range targets {
@@ -256,7 +264,51 @@ func executeDown(d downExecution) error {
 	if d.ClosePanes {
 		closeDownedPanes(reports, workstream)
 	}
-	return renderDownReports(d.Out, verb, workstream, reports)
+	renderErr := renderDownReports(d.Out, verb, workstream, reports)
+	if watcherStopped && !downReportsConfirmed(reports) {
+		restartErr := reconcileNotificationWatcherStarted(t, d.Profile, workstream, "")
+		if restartErr != nil {
+			if renderErr != nil {
+				return fmt.Errorf("%v; final stop was incomplete and notification watcher restart failed: %w", renderErr, restartErr)
+			}
+			return fmt.Errorf("final stop was incomplete and notification watcher restart failed: %w", restartErr)
+		}
+	}
+	return renderErr
+}
+
+func downReportsConfirmed(reports []downReport) bool {
+	for _, report := range reports {
+		switch report.Status {
+		case downStatusStopped, downStatusCleaned, downStatusNotLive:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func noOperationalUntargetedMembers(t team.Team, profile, workstream string, targeted []team.Member, probe duplicateLaunchProbe) bool {
+	return shouldStopNotificationWatcherAfterDown(false, targeted, buildStatusRows(t, profile, workstream, probe))
+}
+
+func shouldStopNotificationWatcherAfterDown(all bool, targeted []team.Member, rows []statusRecord) bool {
+	if all {
+		return true
+	}
+	targetedRoles := make(map[string]bool, len(targeted))
+	for _, m := range targeted {
+		targetedRoles[strings.ToLower(strings.TrimSpace(m.Role))] = true
+	}
+	for _, row := range rows {
+		if targetedRoles[strings.ToLower(strings.TrimSpace(row.Role))] {
+			continue
+		}
+		if row.Status == statusStateLive || row.Status == statusStateWakeLive {
+			return false
+		}
+	}
+	return true
 }
 
 // closeDownedPanes closes the recorded tmux pane of every member that is

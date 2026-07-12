@@ -8,15 +8,23 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/attention"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type DesktopSink struct {
-	SinkID string
-	Run    func(context.Context, string, ...string) error
+	SinkID  string
+	Timeout time.Duration
+	Run     func(context.Context, string, ...string) error
 }
 
 func (s DesktopSink) ID() string { return s.SinkID }
 func (s DesktopSink) Deliver(ctx context.Context, e attention.Event) error {
+	timeout := s.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	p, err := exec.LookPath("osascript")
 	if err != nil {
 		return fmt.Errorf("desktop degraded: osascript unavailable: %w", err)

@@ -6,9 +6,13 @@ import (
 	"context"
 	"fmt"
 	"github.com/omriariav/amq-squad/v2/internal/attention"
+	"time"
 )
 
-type DesktopSink struct{ SinkID string }
+type DesktopSink struct {
+	SinkID  string
+	Timeout time.Duration
+}
 
 func (s DesktopSink) ID() string { return s.SinkID }
 func (s DesktopSink) Deliver(context.Context, attention.Event) error {

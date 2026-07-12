@@ -120,7 +120,7 @@ func TestOperatorDeliveryShowsAttentionPolicyWithoutSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"enabled=true; semantics=attention_only; sink_types=[command]", "attention-only sinks run on the operator-watch host"} {
+	for _, want := range []string{"enabled=true; semantics=attention_only; sink_types=[command]", "attention-only sinks run through the supervised scoped notification watcher"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("bootstrap missing %q:\n%s", want, prompt)
 		}

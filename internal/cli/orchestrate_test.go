@@ -644,6 +644,7 @@ func TestRunStartFreshPersistsOperatorMode(t *testing.T) {
 func TestRunStartFreshPersistsNotificationsWithoutChangingOperatorMode(t *testing.T) {
 	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
 	t.Setenv("TMUX_PANE", "%42")
+	stubHealthyNotificationWatcherSpawn(t)
 	backend := useFakeTmuxBackend(t)
 	dir := t.TempDir()
 	_, _, err := captureOutput(t, func() error {

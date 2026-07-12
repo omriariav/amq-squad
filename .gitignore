@@ -22,6 +22,8 @@ amq-squad-rc-*
 .amq-squad/evidence/
 .amq-squad/goal-attempts/
 .amq-squad/notify-state.json
+.amq-squad/notify-state.json.lock
+.amq-squad/notification-watchers/
 .amq-squad/receipts/
 .amq-squad/reviews/
 .amq-squad/roles/

@@ -100,8 +100,22 @@ The CLI and skills are versioned together.
 Enable the default attention-only desktop notification policy when creating a
 profile with `team init --operator-notifications`, or pass the same flag through
 `run start` when it creates a new profile. Existing profiles remain
-authoritative and are never rewritten. Notifications run on the scoped
-`operator watch` host and never approve gates.
+authoritative and are never rewritten. Live start/up/resume supervises one
+profile/session notification watcher on the launch host, independently of the
+operator polling contract. `status` and `doctor` fail visibly when enabled
+delivery has no healthy watcher. Notifications never approve gates.
+
+Notification delivery is honestly **at least once**, not exactly once. The
+supervised watcher, manual `operator watch`, and `notify --deliver` share the
+same per-event/per-sink reservation and success-commit state in
+`.amq-squad/notify-state.json`. A reservation lasts for the configured sink
+timeout plus a 5-second commit margin (15 seconds by default, up to 65 seconds
+for the supported maximum timeout). If a sink side effect succeeds but the
+process dies before committing success, other drivers suppress that event only
+until the reservation expires and then retry it. This bounds concurrent replay
+and retry delay, not the total duplicate count: repeated ambiguous crashes,
+committed delivery errors, renotify, and `--force-resend` can all cause further
+attempts. Command sinks should therefore be idempotent.
 
 The shortest working path for a visible project lead and workers:
 

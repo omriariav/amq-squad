@@ -56,7 +56,7 @@ func operatorDeliveryForTeam(t team.Team) operatorDeliveryData {
 				seen[sink.Type] = true
 			}
 		}
-		data.NotificationGuidance = "attention-only sinks run on the operator-watch host; start the scoped `amq-squad operator watch` loop; delivery never approves or answers"
+		data.NotificationGuidance = "attention-only sinks run through the supervised scoped notification watcher on the launch host; status/doctor report its independent health; delivery never approves or answers"
 	}
 	contract := team.OperatorContractForMode(op.InteractionMode)
 	data.InteractionMode = contract.Mode
