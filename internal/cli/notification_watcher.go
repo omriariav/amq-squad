@@ -248,8 +248,27 @@ func inspectNotificationWatcher(t team.Team, profile, session string, now time.T
 	}
 	host, _ := os.Hostname()
 	if strings.TrimSpace(rec.Host) != "" && strings.TrimSpace(rec.Host) != strings.TrimSpace(host) {
-		result.Health = "external-active"
-		result.Reason = fmt.Sprintf("notification watcher lease is active on host %s", rec.Host)
+		switch rec.Health {
+		case "healthy":
+			result.Health = "external-active"
+			result.Reason = fmt.Sprintf("notification watcher lease is active on host %s", rec.Host)
+		case "degraded":
+			result.Health = "degraded"
+			result.Reason = fmt.Sprintf("notification watcher on host %s is degraded", rec.Host)
+			if detail := strings.TrimSpace(rec.LastError); detail != "" {
+				result.Reason += ": " + detail
+			}
+		default:
+			result.Health = "unhealthy"
+			state := strings.TrimSpace(rec.Health)
+			if state == "" {
+				state = "unknown"
+			}
+			result.Reason = fmt.Sprintf("notification watcher on host %s reported %s", rec.Host, state)
+			if detail := strings.TrimSpace(rec.LastError); detail != "" {
+				result.Reason += ": " + detail
+			}
+		}
 		return result
 	}
 	if !notificationWatcherProcessMatches(rec) {

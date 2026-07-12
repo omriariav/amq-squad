@@ -183,6 +183,62 @@ func TestNotificationWatcherFreshRemoteLeaseFencesAndStopRefuses(t *testing.T) {
 	}
 }
 
+func TestNotificationWatcherRemoteHealthIsNotMaskedAndNeverSpawnsRival(t *testing.T) {
+	project, tm, base := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
+	writeRemote := func(health, detail string) {
+		t.Helper()
+		rec := notificationWatcherRecord{SchemaVersion: 1, ProjectDir: project, Profile: team.DefaultProfile, Session: "s", NamespaceID: "default/s", PID: 7, Host: "remote-host", OwnerToken: "remote-health", LeaseTTL: "1m", LeaseExpiresAt: time.Now().Add(time.Minute), Expected: true, Health: health, LastError: detail}
+		if err := writeNotificationWatcherRecord(path, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldSpawn := notificationWatcherSpawn
+	t.Cleanup(func() { notificationWatcherSpawn = oldSpawn })
+	spawned := false
+	notificationWatcherSpawn = func(string, string, string, string, string) (notificationWatcherProcess, error) {
+		spawned = true
+		return nil, nil
+	}
+
+	writeRemote("degraded", "fsnotify unavailable")
+	status := inspectNotificationWatcher(tm, team.DefaultProfile, "s", time.Now())
+	if status.Health != "degraded" || !strings.Contains(status.Reason, "remote-host") || !strings.Contains(status.Reason, "fsnotify unavailable") {
+		t.Fatalf("remote degraded status=%+v", status)
+	}
+	if err := reconcileNotificationWatcherStarted(tm, team.DefaultProfile, "s", base); err != nil {
+		t.Fatalf("remote degraded reconcile=%v", err)
+	}
+	if spawned {
+		t.Fatal("remote degraded lease spawned a rival")
+	}
+	warnings := statusNotificationWatcherWarnings(project, team.DefaultProfile, "s", time.Now())
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Detail, "remote-host") {
+		t.Fatalf("remote degraded status warnings=%+v", warnings)
+	}
+	doctor := doctorCheckNotificationWatcher(doctorExecution{ProjectDir: project, Profile: team.DefaultProfile, Probe: duplicateLaunchProbe{Now: time.Now}}, "s")
+	if doctor.Status != doctorWarn || !strings.Contains(doctor.Detail, "remote-host") {
+		t.Fatalf("remote degraded doctor=%+v", doctor)
+	}
+	row := sessionBoardRow{State: boardStateRunning}
+	enrichBoardNotificationWatcher([]boardProfile{{Name: team.DefaultProfile, Team: tm}}, state.Session{Name: "s", TeamProfile: team.DefaultProfile}, time.Now(), &row)
+	if row.State != boardStateDegraded || row.NotificationWatcher == nil || row.NotificationWatcher.Health != "degraded" {
+		t.Fatalf("remote degraded board=%+v state=%s", row.NotificationWatcher, row.State)
+	}
+
+	writeRemote("starting", "initial scan pending")
+	status = inspectNotificationWatcher(tm, team.DefaultProfile, "s", time.Now())
+	if status.Health != "unhealthy" || !strings.Contains(status.Reason, "remote-host") || !strings.Contains(status.Reason, "initial scan pending") {
+		t.Fatalf("remote unhealthy status=%+v", status)
+	}
+	if err := reconcileNotificationWatcherStarted(tm, team.DefaultProfile, "s", base); err == nil || !strings.Contains(err.Error(), "active but unhealthy") {
+		t.Fatalf("remote unhealthy reconcile=%v", err)
+	}
+	if spawned {
+		t.Fatal("remote unhealthy lease spawned a rival")
+	}
+}
+
 func TestNotificationWatcherNamespaceIsolation(t *testing.T) {
 	project, tm, base := notificationWatcherTeam(t, "release", "one")
 	tm.Members[0].Session = "two"
