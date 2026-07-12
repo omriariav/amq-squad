@@ -42,6 +42,7 @@ func resolveAMQEnvForTeamProfile(cwd, profile, session, handle string) (amqEnv, 
 // --require-wake (refuse to launch unless the wake sidecar acquires its lock).
 const minRequireWakeAMQVersion = "0.34.1"
 const minWakeInjectAMQVersion = "0.37.0"
+const minWakeInjectModeAMQVersion = "0.42.0"
 const minNoGitignoreAMQVersion = "0.40.0"
 
 // amqSupportsRequireWake reports whether the amq version string from `amq env`
@@ -63,6 +64,15 @@ func amqSupportsWakeInject(version string) bool {
 		return false
 	}
 	min, _ := parseSemverParts(minWakeInjectAMQVersion)
+	return compareSemverParts(got, min) >= 0
+}
+
+func amqSupportsWakeInjectMode(version string) bool {
+	got, ok := parseSemverParts(strings.TrimSpace(version))
+	if !ok {
+		return false
+	}
+	min, _ := parseSemverParts(minWakeInjectModeAMQVersion)
 	return compareSemverParts(got, min) >= 0
 }
 

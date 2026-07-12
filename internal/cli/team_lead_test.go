@@ -619,6 +619,40 @@ func TestLeadRegisterWakeFailureCanBeNonRequired(t *testing.T) {
 	}
 }
 
+func TestLeadRegisterWakeInjectModeNoneIsZeroInput(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.42.0")
+	base := os.Getenv("AMQ_FAKE_ROOT")
+	seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
+	prevPane := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "lead", PaneID: "%5"}, nil
+	}
+	var got leadWakeOptions
+	prevWake := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		got = opts
+		return leadWakeResult{PID: 1234, Started: true}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prevPane; leadWakeStarter = prevWake })
+	if _, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead", "--wake-inject-mode", "none"})
+	}); err != nil {
+		t.Fatalf("lead register none: %v", err)
+	}
+	if got.WakeInjectMode != "none" || got.WakeInjectCmd != "" || got.WakeInjectVia != "" || len(got.WakeInjectArgs) != 0 {
+		t.Fatalf("zero-input wake options = %+v", got)
+	}
+	rec, err := launch.Read(filepath.Join(base, "agents", "cto"))
+	if err != nil || rec.WakeInjectMode != "none" || rec.WakeInjectCmd != "" {
+		t.Fatalf("zero-input wake record = %+v, %v", rec, err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead", "--wake-inject-mode", "none", "--wake-inject-via", "/opt/inject"})
+	}); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("none + injector must fail closed, got %v", err)
+	}
+}
+
 func TestStartExternalLeadWakeRequiredTimeoutStopsSpawnedProcess(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "late-ready")
 	restore := installLeadWakeHelper(t, "spawn-child-late-ready", marker)

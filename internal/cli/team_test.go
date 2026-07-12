@@ -404,6 +404,17 @@ func TestEmitTeamCommandAddsWakeInject(t *testing.T) {
 	}
 }
 
+func TestEmitTeamCommandAddsZeroInputWakeMode(t *testing.T) {
+	m := team.Member{Role: "qa", Binary: "codex", Handle: "qa", Session: "qa"}
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: "/p", SquadBin: "amq-squad", TeamHome: "/p", Member: m,
+		Workstream: "p", TrustMode: trustModeSandboxed, WakeInjectMode: "none",
+	})
+	if !strings.Contains(cmd, "--wake-inject-mode none") || strings.Contains(cmd, "--wake-inject-via") {
+		t.Fatalf("zero-input wake mode command = %s", cmd)
+	}
+}
+
 func TestEmitTeamCommandAddsNoGitignore(t *testing.T) {
 	m := team.Member{Role: "cto", Binary: "codex", Handle: "cto", Session: "cto"}
 	cmd := emitTeamCommand(emitTeamCommandInput{

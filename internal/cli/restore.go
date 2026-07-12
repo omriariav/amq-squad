@@ -277,6 +277,9 @@ func launchArgsFromRecord(rec launch.Record) []string {
 			args = append(args, "--wake-inject-arg="+arg)
 		}
 	}
+	if mode := strings.TrimSpace(rec.WakeInjectMode); mode != "" {
+		args = append(args, "--wake-inject-mode", mode)
+	}
 	if trust := trustModeFromRecord(rec); trust != "" {
 		args = append(args, "--trust", trust)
 	}
@@ -504,6 +507,10 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 			b.WriteString(" --wake-inject-arg=")
 			b.WriteString(shellQuote(arg))
 		}
+	}
+	if mode := strings.TrimSpace(rec.WakeInjectMode); mode != "" {
+		b.WriteString(" --wake-inject-mode ")
+		b.WriteString(shellQuote(mode))
 	}
 	if trust := trustModeFromRecord(rec); trust != "" {
 		b.WriteString(" --trust ")

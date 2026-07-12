@@ -34,6 +34,7 @@ type teamLaunchOptions struct {
 	Symphony        bool
 	WakeInjectVia   string
 	WakeInjectArgs  []string
+	WakeInjectMode  string
 	// SeedBriefContent, when non-empty, is the rendered active brief that
 	// the live launch path should write to .amq-squad/briefs/<workstream>.md
 	// AFTER all team-launch validations and preflight pass. Empty means no
@@ -464,6 +465,7 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 				Profile:        opts.Profile,
 				WakeInjectVia:  opts.WakeInjectVia,
 				WakeInjectArgs: opts.WakeInjectArgs,
+				WakeInjectMode: opts.WakeInjectMode,
 			}),
 		})
 	}
