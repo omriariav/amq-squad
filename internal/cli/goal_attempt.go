@@ -45,11 +45,25 @@ type goalAttemptClaimData struct {
 	Route         string             `json:"route"`
 	Status        string             `json:"status"`
 	ExistingRoute string             `json:"existing_route,omitempty"`
+	ClaimedAt     time.Time          `json:"claimed_at,omitempty"`
+	ClaimPath     string             `json:"claim_path,omitempty"`
+	RecoveryCmd   string             `json:"recovery_command,omitempty"`
+}
+
+type invalidExistingGoalClaimError struct {
+	Status string
+	Path   string
+	Detail string
+}
+
+func (e *invalidExistingGoalClaimError) Error() string {
+	return fmt.Sprintf("goal claim status %s: canonical claim %s is invalid (%s); activation refused", e.Status, e.Path, e.Detail)
 }
 
 var (
 	goalAttemptNow    = func() time.Time { return time.Now().UTC() }
 	goalAttemptCreate = createGoalAttempt
+	goalAttemptLink   = os.Link
 )
 
 func goalAttemptDir(projectDir, profile, session string) string {
@@ -66,6 +80,10 @@ func goalAttemptPath(projectDir, profile, session, attemptID string) (string, er
 		return "", fmt.Errorf("invalid goal attempt id %q", attemptID)
 	}
 	return filepath.Join(goalAttemptDir(projectDir, profile, session), attemptID+".json"), nil
+}
+
+func goalAttemptClaimPath(attemptPath string) string {
+	return strings.TrimSuffix(attemptPath, ".json") + ".claim.json"
 }
 
 func createGoalAttempt(opts goalDeliveryOptions, attemptID string, now time.Time) (string, error) {
@@ -92,31 +110,83 @@ func createGoalAttempt(opts goalDeliveryOptions, attemptID string, now time.Time
 	if err != nil {
 		return "", fmt.Errorf("marshal goal attempt: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	published, err := publishGoalJSON(path, append(b, '\n'))
 	if err != nil {
-		return "", fmt.Errorf("create goal attempt: %w", err)
+		return "", fmt.Errorf("publish goal attempt: %w", err)
 	}
-	if _, err := f.Write(append(b, '\n')); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return "", fmt.Errorf("write goal attempt: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("close goal attempt: %w", err)
+	if !published {
+		return "", fmt.Errorf("publish goal attempt: canonical record already exists at %s", path)
 	}
 	return path, nil
 }
 
-// claimGoalAttempt uses O_EXCL as the cross-process compare-and-swap. A second
-// native/AMQ activation sees the existing claim and must become a no-op.
+// publishGoalJSON writes and fsyncs a same-directory candidate before linking
+// it into the canonical path. link(2) is the atomic no-replace publication:
+// losers see ErrExist but can never observe an empty/partial canonical file.
+func publishGoalJSON(path string, payload []byte) (published bool, err error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, fmt.Errorf("ensure publish dir: %w", err)
+	}
+	candidate, err := os.CreateTemp(dir, "."+filepath.Base(path)+".candidate-*")
+	if err != nil {
+		return false, fmt.Errorf("create publish candidate: %w", err)
+	}
+	candidatePath := candidate.Name()
+	defer func() { _ = os.Remove(candidatePath) }()
+	if err := candidate.Chmod(0o644); err != nil {
+		_ = candidate.Close()
+		return false, fmt.Errorf("chmod publish candidate: %w", err)
+	}
+	if _, err := candidate.Write(payload); err != nil {
+		_ = candidate.Close()
+		return false, fmt.Errorf("write publish candidate: %w", err)
+	}
+	if err := candidate.Sync(); err != nil {
+		_ = candidate.Close()
+		return false, fmt.Errorf("fsync publish candidate: %w", err)
+	}
+	if err := candidate.Close(); err != nil {
+		return false, fmt.Errorf("close publish candidate: %w", err)
+	}
+	if err := goalAttemptLink(candidatePath, path); errors.Is(err, os.ErrExist) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("link publish candidate: %w", err)
+	}
+	if dirHandle, openErr := os.Open(dir); openErr == nil {
+		_ = dirHandle.Sync()
+		_ = dirHandle.Close()
+	}
+	return true, nil
+}
+
+func readGoalAttempt(path, attemptID string) (goalAttemptRecord, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return goalAttemptRecord{}, fmt.Errorf("read goal attempt %q: %w", attemptID, err)
+	}
+	var record goalAttemptRecord
+	if err := json.Unmarshal(b, &record); err != nil {
+		return goalAttemptRecord{}, fmt.Errorf("goal attempt %q is invalid: %w", attemptID, err)
+	}
+	if record.AttemptID != attemptID {
+		return goalAttemptRecord{}, fmt.Errorf("goal attempt id mismatch: record=%q requested=%q", record.AttemptID, attemptID)
+	}
+	return record, nil
+}
+
+// claimGoalAttempt uses atomic no-replace publication as the cross-process
+// compare-and-swap. This is deliberately at-most-once: a winner that crashes
+// after publishing but before activation can lose that activation, but a
+// second route can never activate the same attempt again.
 func claimGoalAttempt(projectDir, profile, session, attemptID, route string, now time.Time) (bool, goalAttemptClaim, error) {
 	path, err := goalAttemptPath(projectDir, profile, session, attemptID)
 	if err != nil {
 		return false, goalAttemptClaim{}, err
 	}
-	if _, err := os.Stat(path); err != nil {
-		return false, goalAttemptClaim{}, fmt.Errorf("read goal attempt %q: %w", attemptID, err)
+	if _, err := readGoalAttempt(path, attemptID); err != nil {
+		return false, goalAttemptClaim{}, err
 	}
 	route = strings.ToLower(strings.TrimSpace(route))
 	if route != "native" && route != "amq" {
@@ -127,30 +197,27 @@ func claimGoalAttempt(projectDir, profile, session, attemptID, route string, now
 	if err != nil {
 		return false, goalAttemptClaim{}, fmt.Errorf("marshal goal attempt claim: %w", err)
 	}
-	claimPath := strings.TrimSuffix(path, ".json") + ".claim.json"
-	f, err := os.OpenFile(claimPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if errors.Is(err, os.ErrExist) {
+	claimPath := goalAttemptClaimPath(path)
+	published, err := publishGoalJSON(claimPath, append(b, '\n'))
+	if err != nil {
+		return false, goalAttemptClaim{}, fmt.Errorf("publish goal attempt claim: %w", err)
+	}
+	if !published {
 		existingBytes, readErr := os.ReadFile(claimPath)
 		if readErr != nil {
-			return false, goalAttemptClaim{}, fmt.Errorf("read existing goal attempt claim: %w", readErr)
+			return false, goalAttemptClaim{}, &invalidExistingGoalClaimError{Status: "invalid_existing_claim", Path: claimPath, Detail: readErr.Error()}
 		}
 		var existing goalAttemptClaim
 		if err := json.Unmarshal(existingBytes, &existing); err != nil {
-			return false, goalAttemptClaim{}, fmt.Errorf("parse existing goal attempt claim: %w", err)
+			return false, goalAttemptClaim{}, &invalidExistingGoalClaimError{Status: "invalid_existing_claim", Path: claimPath, Detail: "malformed JSON: " + err.Error()}
+		}
+		if existing.AttemptID != attemptID {
+			return false, goalAttemptClaim{}, &invalidExistingGoalClaimError{Status: "invalid_existing_claim", Path: claimPath, Detail: fmt.Sprintf("attempt_id mismatch: got %q want %q", existing.AttemptID, attemptID)}
+		}
+		if existing.Route != "native" && existing.Route != "amq" {
+			return false, goalAttemptClaim{}, &invalidExistingGoalClaimError{Status: "invalid_existing_claim", Path: claimPath, Detail: fmt.Sprintf("invalid route %q", existing.Route)}
 		}
 		return false, existing, nil
-	}
-	if err != nil {
-		return false, goalAttemptClaim{}, fmt.Errorf("claim goal attempt: %w", err)
-	}
-	if _, err := f.Write(append(b, '\n')); err != nil {
-		_ = f.Close()
-		_ = os.Remove(claimPath)
-		return false, goalAttemptClaim{}, fmt.Errorf("write goal attempt claim: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(claimPath)
-		return false, goalAttemptClaim{}, fmt.Errorf("close goal attempt claim: %w", err)
 	}
 	return true, claim, nil
 }
@@ -170,8 +237,11 @@ func runGoalClaim(args []string) error {
 Usage:
   amq-squad goal claim --attempt-id ID --route native|amq --session S [--profile P] [--project DIR] [--json]
 
-Exactly one route can claim an attempt. A second claim exits successfully with
-status already_claimed and MUST be treated as a no-op by the goal runtime.
+Exactly one route can claim an attempt. This is an at-most-once contract: a
+claimant crash before activation may lose the activation, but a second route
+can never activate the same attempt. A second claim exits successfully with
+status already_claimed, prints the canonical claim evidence and a new-attempt
+re-delivery command, and MUST be treated as a no-op by the goal runtime.
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -194,7 +264,16 @@ status already_claimed and MUST be treated as a no-op by the goal runtime.
 	if err != nil {
 		return err
 	}
-	claimed, existing, err := claimGoalAttempt(projectDir, profile, session, *attemptFlag, *routeFlag, goalAttemptNow())
+	attemptID := strings.TrimSpace(*attemptFlag)
+	attemptPath, err := goalAttemptPath(projectDir, profile, session, attemptID)
+	if err != nil {
+		return err
+	}
+	record, err := readGoalAttempt(attemptPath, attemptID)
+	if err != nil {
+		return err
+	}
+	claimed, existing, err := claimGoalAttempt(projectDir, profile, session, attemptID, *routeFlag, goalAttemptNow())
 	if err != nil {
 		return err
 	}
@@ -207,20 +286,41 @@ status already_claimed and MUST be treated as a no-op by the goal runtime.
 		Profile:   profile,
 		Session:   session,
 		Namespace: squadnamespace.Resolve(projectDir, profile, session),
-		AttemptID: strings.TrimSpace(*attemptFlag),
+		AttemptID: attemptID,
 		Route:     strings.ToLower(strings.TrimSpace(*routeFlag)),
 		Status:    status,
+		ClaimedAt: existing.ClaimedAt,
+		ClaimPath: goalAttemptClaimPath(attemptPath),
 	}
 	if !claimed {
 		data.ExistingRoute = existing.Route
+		data.RecoveryCmd = goalAttemptRecoveryCommand(record)
 	}
 	if *jsonOut {
 		return printJSONEnvelope("goal_claim", data)
 	}
 	if claimed {
-		fmt.Printf("claimed goal attempt %s via %s\n", data.AttemptID, data.Route)
+		fmt.Printf("claimed goal attempt %s via %s (at-most-once evidence: %s)\n", data.AttemptID, data.Route, data.ClaimPath)
 	} else {
-		fmt.Printf("goal attempt %s already claimed via %s; no-op\n", data.AttemptID, data.ExistingRoute)
+		fmt.Printf("goal attempt %s already claimed via %s at %s; no-op\n", data.AttemptID, data.ExistingRoute, data.ClaimedAt.Format(time.RFC3339Nano))
+		fmt.Printf("claim evidence: %s\n", data.ClaimPath)
+		fmt.Printf("If the claim exists but no goal activated, inspect the evidence and re-deliver as a new attempt:\n  %s\n", data.RecoveryCmd)
 	}
 	return nil
+}
+
+func goalAttemptRecoveryCommand(record goalAttemptRecord) string {
+	args := []string{
+		"amq-squad", "goal", "deliver",
+		"--project", record.Project,
+		"--profile", record.Profile,
+		"--session", record.Session,
+		"--role", record.Role,
+		"--goal", record.Goal,
+	}
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
 }

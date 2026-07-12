@@ -1058,7 +1058,7 @@ func executeGoalDelivery(opts goalDeliveryOptions) (mutationResult, error) {
 			receipt.Status = "durable_goal_fallback"
 			receipt.Detail = err.Error()
 			receipt.addStage("native_goal_unconfirmed", err.Error())
-			receipt.addStage("claim_once_contract", "native prompt and AMQ todo share attempt_id="+receipt.AttemptID+"; exactly one route may atomically claim it")
+			receipt.addStage("claim_once_contract", "native prompt and AMQ todo share attempt_id="+receipt.AttemptID+" under an at-most-once contract: exactly one route may atomically claim it; a claimant crash before activation is observable but never replayed")
 			receipt.addStage("written_to_amq", "single actionable claim-once goal fallback written to the lead inbox")
 			if writeErr := goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt); writeErr != nil {
 				return mutationResult{}, &goalFallbackSentReceiptError{

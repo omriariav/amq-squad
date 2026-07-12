@@ -609,7 +609,7 @@ func TestGoalClaimIsAtomicAndSecondRouteIsNoOp(t *testing.T) {
 		t.Fatalf("native claim: %v\nstderr:\n%s", err, stderr)
 	}
 	first := decodeJSONEnvelope[goalAttemptClaimData](t, stdout)
-	if first.Data.Status != "claimed" || first.Data.Route != "native" || first.Data.AttemptID != attemptID || first.Data.Namespace.ID != "release/issue-96" {
+	if first.Data.Status != "claimed" || first.Data.Route != "native" || first.Data.AttemptID != attemptID || first.Data.Namespace.ID != "release/issue-96" || first.Data.ClaimPath == "" || first.Data.ClaimedAt.IsZero() {
 		t.Fatalf("first claim = %+v", first.Data)
 	}
 	stdout, stderr, err = captureOutput(t, func() error {
@@ -619,8 +619,219 @@ func TestGoalClaimIsAtomicAndSecondRouteIsNoOp(t *testing.T) {
 		t.Fatalf("second claim should be a successful no-op: %v\nstderr:\n%s", err, stderr)
 	}
 	second := decodeJSONEnvelope[goalAttemptClaimData](t, stdout)
-	if second.Data.Status != "already_claimed" || second.Data.ExistingRoute != "native" || second.Data.Route != "amq" {
+	if second.Data.Status != "already_claimed" || second.Data.ExistingRoute != "native" || second.Data.Route != "amq" || second.Data.ClaimPath == "" || second.Data.RecoveryCmd == "" || second.Data.ClaimedAt.IsZero() {
 		t.Fatalf("second claim = %+v", second.Data)
+	}
+}
+
+func TestGoalClaimConcurrentPublishHasOneWinnerAndValidLoser(t *testing.T) {
+	dir := t.TempDir()
+	opts := goalDeliveryOptions{
+		Project: dir, Profile: "release", Session: "issue-96", Role: "cto", Goal: "ship safely",
+		Member: team.Member{Role: "cto", Handle: "cto"}, Namespace: squadnamespace.Resolve(dir, "release", "issue-96"),
+	}
+	const attemptID = "race-attempt"
+	if _, err := createGoalAttempt(opts, attemptID, time.Unix(100, 0).UTC()); err != nil {
+		t.Fatal(err)
+	}
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	prevLink := goalAttemptLink
+	goalAttemptLink = func(candidate, canonical string) error {
+		arrived <- struct{}{}
+		<-release
+		return os.Link(candidate, canonical)
+	}
+	t.Cleanup(func() { goalAttemptLink = prevLink })
+	type result struct {
+		claimed  bool
+		existing goalAttemptClaim
+		err      error
+	}
+	results := make(chan result, 2)
+	for _, route := range []string{"native", "amq"} {
+		go func(route string) {
+			claimed, existing, err := claimGoalAttempt(dir, "release", "issue-96", attemptID, route, time.Now().UTC())
+			results <- result{claimed: claimed, existing: existing, err: err}
+		}(route)
+	}
+	<-arrived
+	<-arrived
+	close(release)
+	winners := 0
+	losers := 0
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("concurrent claim failed: %v", got.err)
+		}
+		if got.claimed {
+			winners++
+		} else {
+			losers++
+			if got.existing.AttemptID != attemptID || (got.existing.Route != "native" && got.existing.Route != "amq") || got.existing.ClaimedAt.IsZero() {
+				t.Fatalf("loser observed invalid canonical claim: %+v", got.existing)
+			}
+		}
+	}
+	if winners != 1 || losers != 1 {
+		t.Fatalf("race results winners=%d losers=%d", winners, losers)
+	}
+	assertNoGoalPublishCandidates(t, goalAttemptDir(dir, "release", "issue-96"))
+}
+
+func TestGoalAttemptConcurrentPublishCanonicalIsComplete(t *testing.T) {
+	dir := t.TempDir()
+	opts := goalDeliveryOptions{Project: dir, Profile: "release", Session: "issue-96", Role: "cto", Goal: "ship safely", Member: team.Member{Role: "cto", Handle: "cto"}, Namespace: squadnamespace.Resolve(dir, "release", "issue-96")}
+	const attemptID = "attempt-record-race"
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	prevLink := goalAttemptLink
+	goalAttemptLink = func(candidate, canonical string) error {
+		arrived <- struct{}{}
+		<-release
+		return os.Link(candidate, canonical)
+	}
+	t.Cleanup(func() { goalAttemptLink = prevLink })
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := createGoalAttempt(opts, attemptID, time.Unix(100, 0).UTC())
+			results <- err
+		}()
+	}
+	<-arrived
+	<-arrived
+	close(release)
+	successes := 0
+	failures := 0
+	for range 2 {
+		if err := <-results; err == nil {
+			successes++
+		} else if strings.Contains(err.Error(), "canonical record already exists") {
+			failures++
+		} else {
+			t.Fatalf("unexpected concurrent attempt error: %v", err)
+		}
+	}
+	if successes != 1 || failures != 1 {
+		t.Fatalf("attempt race successes=%d expected-existing=%d", successes, failures)
+	}
+	path, _ := goalAttemptPath(dir, "release", "issue-96", attemptID)
+	record, err := readGoalAttempt(path, attemptID)
+	if err != nil || record.Goal != "ship safely" || record.Role != "cto" {
+		t.Fatalf("canonical attempt is not complete: %+v, %v", record, err)
+	}
+	assertNoGoalPublishCandidates(t, filepath.Dir(path))
+}
+
+func TestGoalClaimMalformedCanonicalFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "truncated", body: "{\n"},
+		{name: "mismatched attempt", body: `{"attempt_id":"other","route":"native","claimed_at":"2026-07-12T08:00:00Z"}`},
+		{name: "invalid route", body: `{"attempt_id":"bad-claim","route":"unknown","claimed_at":"2026-07-12T08:00:00Z"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			opts := goalDeliveryOptions{Project: dir, Profile: "release", Session: "issue-96", Role: "cto", Goal: "ship safely", Member: team.Member{Role: "cto", Handle: "cto"}, Namespace: squadnamespace.Resolve(dir, "release", "issue-96")}
+			attemptID := "bad-claim"
+			attemptPath, err := createGoalAttempt(opts, attemptID, time.Now().UTC())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(goalAttemptClaimPath(attemptPath), []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = claimGoalAttempt(dir, "release", "issue-96", attemptID, "amq", time.Now().UTC())
+			var invalid *invalidExistingGoalClaimError
+			if !errors.As(err, &invalid) || invalid.Status != "invalid_existing_claim" || !strings.Contains(err.Error(), "activation refused") {
+				t.Fatalf("want explicit fail-closed claim status, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+func TestGoalPublishCandidateCleanupOnFailure(t *testing.T) {
+	t.Run("attempt", func(t *testing.T) {
+		dir := t.TempDir()
+		opts := goalDeliveryOptions{Project: dir, Profile: "release", Session: "issue-96", Role: "cto", Goal: "ship safely", Member: team.Member{Role: "cto", Handle: "cto"}, Namespace: squadnamespace.Resolve(dir, "release", "issue-96")}
+		prevLink := goalAttemptLink
+		goalAttemptLink = func(string, string) error { return errors.New("link denied") }
+		t.Cleanup(func() { goalAttemptLink = prevLink })
+		if _, err := createGoalAttempt(opts, "orphan-test", time.Now().UTC()); err == nil || !strings.Contains(err.Error(), "link denied") {
+			t.Fatalf("publish error = %v", err)
+		}
+		attemptDir := goalAttemptDir(dir, "release", "issue-96")
+		assertNoGoalPublishCandidates(t, attemptDir)
+		if _, err := os.Stat(filepath.Join(attemptDir, "orphan-test.json")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed publish left canonical attempt: %v", err)
+		}
+	})
+	t.Run("claim", func(t *testing.T) {
+		dir := t.TempDir()
+		opts := goalDeliveryOptions{Project: dir, Profile: "release", Session: "issue-96", Role: "cto", Goal: "ship safely", Member: team.Member{Role: "cto", Handle: "cto"}, Namespace: squadnamespace.Resolve(dir, "release", "issue-96")}
+		attemptPath, err := createGoalAttempt(opts, "orphan-claim", time.Now().UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		prevLink := goalAttemptLink
+		goalAttemptLink = func(string, string) error { return errors.New("link denied") }
+		t.Cleanup(func() { goalAttemptLink = prevLink })
+		if _, _, err := claimGoalAttempt(dir, "release", "issue-96", "orphan-claim", "native", time.Now().UTC()); err == nil || !strings.Contains(err.Error(), "link denied") {
+			t.Fatalf("claim publish error = %v", err)
+		}
+		assertNoGoalPublishCandidates(t, filepath.Dir(attemptPath))
+		if _, err := os.Stat(goalAttemptClaimPath(attemptPath)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed publish left canonical claim: %v", err)
+		}
+	})
+}
+
+func TestGoalClaimCrashWindowIsObservableAtMostOnce(t *testing.T) {
+	dir := t.TempDir()
+	opts := goalDeliveryOptions{Project: dir, Profile: "release", Session: "issue-96", Role: "cto", Goal: "ship safely", Member: team.Member{Role: "cto", Handle: "cto"}, Namespace: squadnamespace.Resolve(dir, "release", "issue-96")}
+	const attemptID = "crash-window"
+	attemptPath, err := createGoalAttempt(opts, attemptID, time.Unix(100, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, _, err := claimGoalAttempt(dir, "release", "issue-96", attemptID, "native", time.Unix(101, 0).UTC())
+	if err != nil || !claimed {
+		t.Fatalf("first claim = %t, %v", claimed, err)
+	}
+	// Simulate a claimant crash: no activation marker/action follows the claim.
+	stdout, _, err := captureOutput(t, func() error {
+		return runGoal([]string{"claim", "--project", dir, "--profile", "release", "--session", "issue-96", "--attempt-id", attemptID, "--route", "amq"})
+	})
+	if err != nil {
+		t.Fatalf("second route must no-op after consumed crash window: %v", err)
+	}
+	for _, want := range []string{"already claimed via native", "no-op", goalAttemptClaimPath(attemptPath), "re-deliver as a new attempt", "amq-squad goal deliver", "--goal 'ship safely'"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("crash-window output missing %q:\n%s", want, stdout)
+		}
+	}
+	b, err := os.ReadFile(goalAttemptClaimPath(attemptPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence goalAttemptClaim
+	if err := json.Unmarshal(b, &evidence); err != nil || evidence.Route != "native" {
+		t.Fatalf("second route changed winner evidence: %+v, %v", evidence, err)
+	}
+}
+
+func assertNoGoalPublishCandidates(t *testing.T, dir string) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, ".*.candidate-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("publish candidate orphan(s): %v", matches)
 	}
 }
 

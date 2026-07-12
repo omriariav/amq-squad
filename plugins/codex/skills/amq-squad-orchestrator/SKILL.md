@@ -75,6 +75,12 @@ AMQ fallback) won the same attempt: treat this prompt as a successful no-op and
 do not create, restart, or duplicate the goal. Never reset a claim to replay an
 attempt. An actionable AMQ goal-attempt message carries the equivalent command
 with `--route amq`; the atomic claim is the shared runtime dedupe boundary.
+The contract is explicitly **at-most-once**, not exactly-once: if the winning
+claimant crashes after publishing its claim but before activating the goal, the
+activation may be lost. Never let the second route activate that consumed
+attempt. Instead, inspect the `claim_path`, route, and `claimed_at` returned by
+`goal claim`; if no goal activated, use its `recovery_command` to deliver a new
+attempt. Do not reset, delete, or reuse the old claim as crash recovery.
 
 ### Operator-facing Step 1 / Step 2 / Step 3
 
