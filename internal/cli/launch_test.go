@@ -263,6 +263,18 @@ func TestAMQSupportsWakeInject(t *testing.T) {
 	}
 }
 
+func TestAMQSupportsWakeInjectMode(t *testing.T) {
+	for version, want := range map[string]bool{
+		"": false, "garbage": false, "0.41.9": false,
+		"0.42.0-rc1": false, "0.42.0": true, "v0.42.0": true,
+		"0.42.1-rc1": true, "1.0.0": true,
+	} {
+		if got := amqSupportsWakeInjectMode(version); got != want {
+			t.Errorf("amqSupportsWakeInjectMode(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
 func TestAMQSupportsNoGitignore(t *testing.T) {
 	for version, want := range map[string]bool{
 		"":         false,
@@ -394,6 +406,36 @@ func TestRunLaunchWakeInjectValidatesShape(t *testing.T) {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-via", "relative-inject", "codex"})
 	}); err == nil || !strings.Contains(err.Error(), "must be an absolute path") {
 		t.Fatalf("relative via error = %v", err)
+	}
+}
+
+func TestRunLaunchDryRunWakeInjectModeNone(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.42.0")
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-mode", "none", "codex"})
+	})
+	if err != nil {
+		t.Fatalf("wake inject none: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "--wake-inject-mode none") {
+		t.Fatalf("zero-input wake mode not forwarded:\n%s", stdout)
+	}
+	for _, args := range [][]string{
+		{"--dry-run", "--no-bootstrap", "--wake-inject-mode", "none", "--wake-inject-via", "/opt/inject", "codex"},
+		{"--dry-run", "--no-bootstrap", "--wake-inject-mode", "bogus", "codex"},
+	} {
+		if _, _, err := captureOutput(t, func() error { return runLaunch(args) }); err == nil {
+			t.Fatalf("invalid wake inject combination accepted: %v", args)
+		}
+	}
+}
+
+func TestRunLaunchWakeInjectModeRequiresAMQ042(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.41.9")
+	if _, _, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-mode", "none", "codex"})
+	}); err == nil || !strings.Contains(err.Error(), "requires amq 0.42.0 or newer") {
+		t.Fatalf("wake inject mode floor error = %v", err)
 	}
 }
 

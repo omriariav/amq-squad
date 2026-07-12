@@ -786,6 +786,7 @@ type emitTeamOptions struct {
 	Symphony         bool
 	WakeInjectVia    string
 	WakeInjectArgs   []string
+	WakeInjectMode   string
 	Profile          string
 	// JSON requests a structured "team_plan" envelope on stdout instead of
 	// the human launch-command preview. Diagnostics still go to stderr.
@@ -957,6 +958,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 				Profile:        opts.Profile,
 				WakeInjectVia:  opts.WakeInjectVia,
 				WakeInjectArgs: opts.WakeInjectArgs,
+				WakeInjectMode: opts.WakeInjectMode,
 			}
 			preview := teamCommandPreview(input)
 			plan.Plan = append(plan.Plan, teamPlanMember{
@@ -1032,6 +1034,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			Symphony:       opts.Symphony,
 			WakeInjectVia:  opts.WakeInjectVia,
 			WakeInjectArgs: opts.WakeInjectArgs,
+			WakeInjectMode: opts.WakeInjectMode,
 		}
 		preview := teamCommandPreview(input)
 		fmt.Printf("#    bootstrap: %s\n", preview.Bootstrap)
@@ -1214,6 +1217,7 @@ type emitTeamCommandInput struct {
 	Symphony       bool
 	WakeInjectVia  string
 	WakeInjectArgs []string
+	WakeInjectMode string
 	Profile        string
 }
 
@@ -1292,6 +1296,10 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 			b.WriteString(" --wake-inject-arg=")
 			b.WriteString(shellQuote(arg))
 		}
+	}
+	if mode := strings.TrimSpace(in.WakeInjectMode); mode != "" {
+		b.WriteString(" --wake-inject-mode ")
+		b.WriteString(shellQuote(mode))
 	}
 	if m.Handle != "" {
 		// Always explicit: a role-named handle avoids collisions when the
