@@ -104,7 +104,7 @@ Startup warnings:
 First steps:
 1. Read the startup files that exist.
 2. Use the current team routing above for live messages and handoffs.
-3. Run `amq drain --include-body` before acting on inbox state. Use bare `amq` commands in this shell; amq-squad already injected AM_ROOT, AM_BASE_ROOT, and AM_ME.
+3. Run `amq drain --include-body` before acting on inbox state. Use bare `amq` commands in this shell; amq-squad injected a complete AMQ identity tuple (sessionful default roots include AM_SESSION, exact named roots omit it).
 4. Inspect prior AMQ history in this workstream relevant to your role using `amq-squad status`, `amq-squad history`, `amq list`, `amq read`, and `amq thread --include-body` as needed.
 5. If routing is ambiguous, use `amq route explain` or the printed `amq-squad amq route --to <handle>` diagnostics before sending.
 6. For important review requests or queued handoffs, send with `--wait-for drained --wait-timeout 60s` and keep the message id.
