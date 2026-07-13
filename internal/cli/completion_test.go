@@ -96,6 +96,7 @@ func TestRunCompletionBashContainsRepresentativeTokens(t *testing.T) {
 		// goal/operator subcommands
 		"goal_subcommands", "apply", "claim", "deliver", "draft", "start",
 		"operator_subcommands", "answer", "directive", "poll", "watch",
+		"notifications_subcommands", "notifications", "events", "probe",
 		// high-traffic flags
 		"--profile", "--json", "--actions", "--action", "--action-id", "--target-id", "--scope", "--run-action", "--set", "--commands", "--mutating", "--dry-run", "--force", "--force-duplicate", "--session",
 		"--approved", "--denied", "--gate", "--goal-id", "--attempt-id", "--route",
@@ -128,6 +129,7 @@ func TestRunCompletionZshContainsRepresentativeTokens(t *testing.T) {
 		"'profile'", "'session'",
 		"goal_subcommands", "'apply'", "'claim'", "'deliver'", "'draft'", "'start'",
 		"operator_subcommands", "'answer'", "'directive'", "'poll'", "'watch'",
+		"notifications_subcommands", "'notifications'", "'events'", "'probe'",
 		"'init'", "'profiles'", "'delete'", "'show'",
 		"'--profile'", "'--json'", "'--actions'", "'--action'", "'--action-id'", "'--target-id'", "'--scope'", "'--run-action'", "'--set'", "'--commands'", "'--mutating'", "'--dry-run'", "'--force-duplicate'", "'--approved'", "'--denied'", "'--gate'", "'--goal-id'", "'--attempt-id'", "'--route'",
 		"'--fresh'", "'--exec'", "'--handle'", "'--root'", "'--conversation-id'",
@@ -161,6 +163,8 @@ func TestRunCompletionFishContainsRepresentativeTokens(t *testing.T) {
 		"-a 'apply'", "-a 'claim'", "-a 'deliver'", "-a 'draft'", "-a 'start'",
 		"__fish_seen_subcommand_from operator",
 		"-a 'answer'", "-a 'directive'", "-a 'poll'", "-a 'watch'",
+		"__fish_seen_subcommand_from notifications",
+		"-a 'events'", "-a 'probe'",
 		"__fish_seen_subcommand_from rules",
 		"-a 'show'",
 		"-l 'profile'", "-l 'json'", "-l 'actions'", "-l 'action'", "-l 'action-id'", "-l 'target-id'", "-l 'scope'", "-l 'run-action'", "-l 'set'", "-l 'commands'", "-l 'mutating'", "-l 'dry-run'", "-l 'force-duplicate'", "-l 'approved'", "-l 'denied'", "-l 'gate'", "-l 'goal-id'", "-l 'attempt-id'", "-l 'route'",
@@ -282,6 +286,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"console":         true,
 		"monitor":         true,
 		"notify":          true,
+		"notifications":   true,
 		"amq":             true,
 		"history":         true,
 		"resume":          true,
