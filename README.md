@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.19.0](#whats-new-in-v2190)
+- [What's new in v2.20.0](#whats-new-in-v2200)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,26 +38,22 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.19.0
+## What's new in v2.20.0
 
-v2.19.0 makes squad startup guided, observable, and safer to supervise:
+v2.20.0 makes long-running squad recovery and AMQ compatibility safer to ship:
 
-- **Interactive `run start` wizard** with Bubble Tea and numbered/accessibility
-  adapters, structured preflight, Project and Global/NOC flows, explicit
-  preview-to-live confirmation, and deterministic tmux layouts (#393).
-- **Attention-only operator notifications** with profile-scoped desktop or
-  direct-argv sinks, delivery de-duplication, gate escalation, and wizard/setup
-  configuration that never grants approval (#390).
-- **Bounded self-operator mode** for explicit, exact-session merge approval.
-  Spawn, release, tag, publish, external-send, and destructive actions remain
-  human-only, and the approving lead cannot execute its own merge (#391).
-- **Bootstrap and launch hardening** with identity-bound bootstrap completion
-  attestation and single-pass native Claude/Codex argv composition (#396).
-- **Wake-friendly orchestration waits**: collect briefly for an imminent ACK or
-  report, then park/end the turn for longer work and operator gates (#404).
-- **Deterministic layout finalization hardening** keeps the configured lead in
-  the main tmux pane, verifies exact pane/window identity, and preserves
-  observable warnings without tearing down launched agents (#393).
+- **Durable resume-goal recovery.** Recovery preserves the exact target and
+  delivery evidence across interrupted launches, so an operator can resume a
+  staged goal without silently retargeting or losing the durable handoff (#447,
+  PR #466).
+- **Hermetic AMQ compatibility checks.** Ordinary CLI tests install a
+  package-owned fake AMQ and prove that a poison host binary is never selected;
+  CI also exercises the supported AMQ floor and current AMQ with real
+  sessionful and exact-root tuples (#449, PR #468).
+- **Fail-closed inherited AMQ identities.** Default and named sessions keep
+  their lexical namespace identity through resolution. Nested profile or session
+  symlink rewrites are rejected before AMQ resolver I/O, while a deliberate
+  top-level `.agent-mail` container symlink remains supported.
 
 ## Install
 
@@ -71,7 +67,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.19.1
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.20.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
@@ -361,7 +357,7 @@ Safety preflights:
 
 ```sh
 amq-squad verify action --project . --session issue-96 \
-  --gate release --action github_release --target "draft v2.19.0 release"
+  --gate release --action github_release --target "publish v2.20.0 GitHub release"
 amq-squad verify merge --evidence merge-evidence.json
 amq-squad verify release --evidence release-evidence.json
 ```
@@ -418,7 +414,7 @@ Invoke skills in Claude Code as `/amq-squad:<skill>` and in Codex as
 `$<skill>`.
 
 Model guidance is intentionally skill-owned because it changes faster than the
-binary. For v2.19.0, use the current model family and per-role model/effort
+binary. For v2.20.0, use the current model family and per-role model/effort
 recommendations in the installed skills; treat cost as a tie-breaker after
 output quality for shippable work. Prefer that guidance over copying model
 examples from this README.
@@ -600,8 +596,8 @@ amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or other goal
 sources happens in the skills or operator tooling; the core binary owns team,
 runtime, and coordination state.
 
-AMQ 0.42.1 is the first supported release for the complete injected identity
-contract. After upgrading from an older AMQ, stop and resume/relaunch agents so
+v2.20.0 requires AMQ 0.42.1+, the first supported release for the complete
+injected identity contract. After upgrading from an older AMQ, stop and resume/relaunch agents so
 their shells receive a coherent pin; a child command cannot repair stale parent
 environment variables. Default-profile sessions use `AM_ROOT`, `AM_BASE_ROOT`,
 non-empty `AM_SESSION`, and `AM_ME`. Named profiles use their exact root with

@@ -272,8 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-v2190" id="toc-whats-new-in-v2190">What's new
-in v2.19.0</a></li>
+<li><a href="#whats-new-in-v2200" id="toc-whats-new-in-v2200">What's new
+in v2.20.0</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#quickstart" id="toc-quickstart">Quickstart</a></li>
 <li><a href="#execution-modes" id="toc-execution-modes">Execution
@@ -324,7 +324,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2190">What's new in v2.19.0</a></li>
+<li><a href="#whats-new-in-v2200">What's new in v2.20.0</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -342,32 +342,24 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
-<h2 id="whats-new-in-v2190">What's new in v2.19.0</h2>
-<p>v2.19.0 makes squad startup guided, observable, and safer to
-supervise:</p>
+<h2 id="whats-new-in-v2200">What's new in v2.20.0</h2>
+<p>v2.20.0 makes long-running squad recovery and AMQ compatibility safer
+to ship:</p>
 <ul>
-<li><strong>Interactive <code>run start</code> wizard</strong> with
-Bubble Tea and numbered/accessibility adapters, structured preflight,
-Project and Global/NOC flows, explicit preview-to-live confirmation, and
-deterministic tmux layouts (#393).</li>
-<li><strong>Attention-only operator notifications</strong> with
-profile-scoped desktop or direct-argv sinks, delivery de-duplication,
-gate escalation, and wizard/setup configuration that never grants
-approval (#390).</li>
-<li><strong>Bounded self-operator mode</strong> for explicit,
-exact-session merge approval. Spawn, release, tag, publish,
-external-send, and destructive actions remain human-only, and the
-approving lead cannot execute its own merge (#391).</li>
-<li><strong>Bootstrap and launch hardening</strong> with identity-bound
-bootstrap completion attestation and single-pass native Claude/Codex
-argv composition (#396).</li>
-<li><strong>Wake-friendly orchestration waits</strong>: collect briefly
-for an imminent ACK or report, then park/end the turn for longer work
-and operator gates (#404).</li>
-<li><strong>Deterministic layout finalization hardening</strong> keeps
-the configured lead in the main tmux pane, verifies exact pane/window
-identity, and preserves observable warnings without tearing down
-launched agents (#393).</li>
+<li><strong>Durable resume-goal recovery.</strong> Recovery preserves
+the exact target and delivery evidence across interrupted launches, so
+an operator can resume a staged goal without silently retargeting or
+losing the durable handoff (#447, PR #466).</li>
+<li><strong>Hermetic AMQ compatibility checks.</strong> Ordinary CLI
+tests install a package-owned fake AMQ and prove that a poison host
+binary is never selected; CI also exercises the supported AMQ floor and
+current AMQ with real sessionful and exact-root tuples (#449, PR
+#468).</li>
+<li><strong>Fail-closed inherited AMQ identities.</strong> Default and
+named sessions keep their lexical namespace identity through resolution.
+Nested profile or session symlink rewrites are rejected before AMQ
+resolver I/O, while a deliberate top-level <code>.agent-mail</code>
+container symlink remains supported.</li>
 </ul>
 <h2 id="install">Install</h2>
 <p>Install the v2 module path:</p>
@@ -375,7 +367,7 @@ launched agents (#393).</li>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.19.1</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.20.0</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
@@ -786,7 +778,7 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#
 <p>Safety preflights:</p>
 <div class="sourceCode" id="cb12"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify action <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--gate</span> release <span class="at">--action</span> github_release <span class="at">--target</span> <span class="st">&quot;draft v2.19.0 release&quot;</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--gate</span> release <span class="at">--action</span> github_release <span class="at">--target</span> <span class="st">&quot;publish v2.20.0 GitHub release&quot;</span></span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify merge <span class="at">--evidence</span> merge-evidence.json</span>
 <span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify release <span class="at">--evidence</span> release-evidence.json</span></code></pre></div>
 <p>The action, merge, and final-release-commit contracts are documented
@@ -877,7 +869,7 @@ coordinate reviews, recover, and produce final evidence.</td>
 <p>Invoke skills in Claude Code as <code>/amq-squad:&lt;skill&gt;</code>
 and in Codex as <code>$&lt;skill&gt;</code>.</p>
 <p>Model guidance is intentionally skill-owned because it changes faster
-than the binary. For v2.19.0, use the current model family and per-role
+than the binary. For v2.20.0, use the current model family and per-role
 model/effort recommendations in the installed skills; treat cost as a
 tie-breaker after output quality for shippable work. Prefer that
 guidance over copying model examples from this README.</p>
@@ -1085,10 +1077,10 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#
 <p>amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or
 other goal sources happens in the skills or operator tooling; the core
 binary owns team, runtime, and coordination state.</p>
-<p>AMQ 0.42.1 is the first supported release for the complete injected
-identity contract. After upgrading from an older AMQ, stop and
-resume/relaunch agents so their shells receive a coherent pin; a child
-command cannot repair stale parent environment variables.
+<p>v2.20.0 requires AMQ 0.42.1+, the first supported release for the
+complete injected identity contract. After upgrading from an older AMQ,
+stop and resume/relaunch agents so their shells receive a coherent pin;
+a child command cannot repair stale parent environment variables.
 Default-profile sessions use <code>AM_ROOT</code>,
 <code>AM_BASE_ROOT</code>, non-empty <code>AM_SESSION</code>, and
 <code>AM_ME</code>. Named profiles use their exact root with

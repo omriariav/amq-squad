@@ -97,7 +97,7 @@ Options:
 Examples:
   amq-squad review-worktree HEAD
   amq-squad review-worktree exec --repo ~/Code/app abc123 -- go test ./...
-  amq-squad review-worktree shell v2.19.1
+  amq-squad review-worktree shell v2.20.0
   amq-squad review-worktree remove /tmp/amq-squad-review-123456
 `)
 }
