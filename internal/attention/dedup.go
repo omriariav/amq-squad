@@ -21,9 +21,11 @@ type Delivery struct {
 	Fingerprint        string    `json:"fingerprint,omitempty"`
 	LastNotified       time.Time `json:"last_notified,omitempty"`
 	LastEscalation     string    `json:"last_escalation,omitempty"`
+	LastAttempt        time.Time `json:"last_attempt,omitempty"`
 	LastSuccess        time.Time `json:"last_success,omitempty"`
 	LastFailure        time.Time `json:"last_failure,omitempty"`
 	FailureCount       int       `json:"failure_count,omitempty"`
+	LastError          string    `json:"last_error,omitempty"`
 	ReservationToken   string    `json:"reservation_token,omitempty"`
 	ReservationExpires time.Time `json:"reservation_expires,omitempty"`
 }
@@ -81,18 +83,34 @@ func Commit(st State, key, sink string, e Event, now time.Time, err error) State
 		item.Deliveries = map[string]Delivery{}
 	}
 	d := item.Deliveries[sink]
+	d.LastAttempt = now
 	if err == nil {
 		d.Fingerprint = e.Fingerprint
 		d.LastNotified = now
 		d.LastSuccess = now
 		d.LastEscalation = e.Escalation
+		d.LastError = ""
 	} else {
 		d.LastFailure = now
 		d.FailureCount++
+		d.LastError = NormalizeDeliveryError(err.Error())
 	}
 	item.Deliveries[sink] = d
 	st.Items[key] = item
 	return st
+}
+
+const maxDeliveryErrorRunes = 512
+
+// NormalizeDeliveryError makes untrusted sink errors safe for one-line human
+// diagnostics and bounds their durable footprint.
+func NormalizeDeliveryError(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) <= maxDeliveryErrorRunes {
+		return text
+	}
+	return string(runes[:maxDeliveryErrorRunes])
 }
 func escalated(cur, prev string) bool {
 	c := state.OperatorGateEscalation(cur)
