@@ -217,11 +217,13 @@ func namedProfileFromInheritedAMQRoot(projectDir, session string) (string, bool,
 	if strings.TrimSpace(session) == "" {
 		return "", false, nil
 	}
-	root = absoluteAMQRoot(projectDir, root)
-	base := filepath.Join(filepath.Clean(projectDir), ".agent-mail")
+	base, root, err := canonicalInheritedAMQInferencePaths(projectDir, root)
+	if err != nil {
+		return "", false, err
+	}
 	rel, err := filepath.Rel(base, root)
 	if err != nil || rel == "." || rel == "" || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", false, usageErrorf("inherited AM_ROOT %q is outside the selected project .agent-mail root; pass an explicit --profile/--project or relaunch the agent shell", root)
+		return "", false, usageErrorf("inherited AM_ROOT %q resolves outside selected .agent-mail base %q; pass an explicit --profile/--project or relaunch the agent shell", root, base)
 	}
 	parts := strings.Split(filepath.Clean(rel), string(os.PathSeparator))
 	if len(parts) == 1 {
@@ -244,6 +246,27 @@ func namedProfileFromInheritedAMQRoot(projectDir, session string) (string, bool,
 		return "", false, usageErrorf("inherited AM_ROOT session %q does not match requested --session %q; relaunch the agent shell or pass the exact namespace", parts[1], session)
 	}
 	return profile, true, nil
+}
+
+// canonicalInheritedAMQInferencePaths resolves the only two filesystem paths
+// that implicit named-profile inference trusts. The selected .agent-mail
+// container may itself be a deliberate symlink (for example, to a managed
+// mailbox volume), so containment is against that resolved container. A
+// symlink below the container must still resolve beneath it; otherwise a
+// lexical .agent-mail/<profile>/<session> path could escape the selected
+// project namespace.
+func canonicalInheritedAMQInferencePaths(projectDir, inheritedRoot string) (string, string, error) {
+	lexicalBase := absoluteAMQRoot("", filepath.Join(filepath.Clean(projectDir), ".agent-mail"))
+	lexicalRoot := absoluteAMQRoot(projectDir, inheritedRoot)
+	base, err := filepath.EvalSymlinks(lexicalBase)
+	if err != nil {
+		return "", "", usageErrorf("cannot resolve selected .agent-mail base %q while validating inherited AM_ROOT %q: %v", lexicalBase, lexicalRoot, err)
+	}
+	root, err := filepath.EvalSymlinks(lexicalRoot)
+	if err != nil {
+		return "", "", usageErrorf("cannot resolve inherited AM_ROOT %q while validating selected .agent-mail base %q: %v", lexicalRoot, base, err)
+	}
+	return filepath.Clean(base), filepath.Clean(root), nil
 }
 
 func inferAMQContextProfileFromRoot(ctx amqContext, profileExplicit bool) amqContext {
