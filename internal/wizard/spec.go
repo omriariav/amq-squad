@@ -218,6 +218,9 @@ func (s Spec) ResumeArgs() ([]string, error) {
 			if reason == "" {
 				reason = "eligibility evidence is missing"
 			}
+			if recovery := strings.TrimSpace(s.ResumeGoalPlan.RecoveryCommand); recovery != "" {
+				return nil, fmt.Errorf("resume goal redelivery is unavailable: %s; recover exact attempt %s manually: %s", reason, s.ResumeGoalPlan.RecoveryAttemptID, recovery)
+			}
 			return nil, fmt.Errorf("resume goal redelivery is unavailable: %s", reason)
 		}
 		args = append(args, "--redeliver-goal")

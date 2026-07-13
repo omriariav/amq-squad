@@ -567,6 +567,9 @@ func executeResume(r resumeExecution) error {
 		goalPlan = buildResumeGoalPlan(t, r.Profile, workstream, plans, r.Force, r.NoBootstrap)
 	}
 	if r.GoalRedelivery && r.Exec.RedeliveryExplicit && r.Exec.RedeliverGoal && !goalPlan.Eligible {
+		if goalPlan.RecoveryCommand != "" {
+			return usageErrorf("--redeliver-goal is unavailable: %s\nRecover the exact attempt %s manually (the command revalidates identity before mutation):\n  %s", goalPlan.Reason, goalPlan.RecoveryAttemptID, goalPlan.RecoveryCommand)
+		}
 		return usageErrorf("--redeliver-goal is unavailable: %s", goalPlan.Reason)
 	}
 	goalPlan.Selected = r.Exec.RedeliverGoal
@@ -595,7 +598,13 @@ func executeResume(r resumeExecution) error {
 			return namespaceConflictError("resume --exec", namespaceConflict)
 		}
 		r.Exec.GoalPlan = goalPlan
-		return execResumePlan(t, r.Profile, workstream, plans, r.Exec, r.Force)
+		// Emit recovery guidance before any launch side effect so --exec retains
+		// the visibility contract even when preflight or backend launch fails.
+		writeResumeNativeGoalBlockedRecoveries(os.Stderr, resumeNativeGoalBlockedRecoveries(plans))
+		if err := execResumePlan(t, r.Profile, workstream, plans, r.Exec, r.Force); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	style := r.Style
@@ -608,6 +617,7 @@ func executeResume(r resumeExecution) error {
 	if r.GoalRedelivery {
 		writeResumeGoalPlan(out, goalPlan)
 	}
+	writeResumeNativeGoalBlockedRecoveries(out, resumeNativeGoalBlockedRecoveries(plans))
 	return nil
 }
 

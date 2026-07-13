@@ -44,7 +44,7 @@ func seededResumeGoalPlan(t *testing.T, conversation string, writeClaim bool) (t
 	}
 	rec := launch.Record{
 		CWD: project, Binary: "codex", Session: session, SharedWorkstream: true, Conversation: conversation,
-		Handle: "cto", Role: "cto", Root: ns.AMQRoot, TeamProfile: team.DefaultProfile,
+		Handle: "cto", Role: "cto", Root: ns.AMQRoot, TeamHome: project, TeamProfile: team.DefaultProfile,
 		BootstrapExpectation: &bootstrapack.Expectation{Required: true},
 		GoalBinding:          &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: command, Detail: "delivered"},
 	}
@@ -116,8 +116,38 @@ func TestResumeGoalTransitionNoReplaceAndPlannerFingerprint(t *testing.T) {
 		t.Fatalf("duplicate transition accepted: %v", err)
 	}
 	blocked := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
-	if blocked.Eligible || blocked.Action != "blocked" || blocked.TransitionID != plan.TransitionID || blocked.TransitionState != "reserved" || blocked.TransitionDigest == "" || blocked.EvidenceDigest == plan.EvidenceDigest {
+	if blocked.Eligible || blocked.Action != "continue" || blocked.TransitionID != plan.TransitionID || blocked.TransitionState != "reserved" || blocked.TransitionDigest == "" || blocked.RecoveryAttemptID == "" || !strings.Contains(blocked.RecoveryCommand, "--resume-transition "+plan.TransitionID) || blocked.EvidenceDigest == plan.EvidenceDigest {
 		t.Fatalf("transition not included in read-only plan/fingerprint: %+v", blocked)
+	}
+}
+
+func TestResumeGoalPlanRejectsSavedTeamHomeAndAdoptedTarget(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		mutate func(*launch.Record, string)
+		want   string
+	}{
+		{
+			name:   "team home mismatch",
+			mutate: func(rec *launch.Record, project string) { rec.TeamHome = filepath.Join(project, "other-team") },
+			want:   "team home",
+		},
+		{
+			name:   "adopted pane",
+			mutate: func(rec *launch.Record, _ string) { rec.Tmux = &launch.TmuxInfo{PaneID: "%old", Target: "adopted"} },
+			want:   "adopted",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tm, session, plans := seededResumeGoalPlan(t, "", true)
+			rec := *plans[0].RestoreRecord
+			tt.mutate(&rec, tm.Project)
+			plans[0].RestoreRecord = &rec
+			plan := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
+			if plan.Eligible || !strings.Contains(plan.Reason, tt.want) {
+				t.Fatalf("plan accepted invalid saved identity: %+v", plan)
+			}
+		})
 	}
 }
 
@@ -329,6 +359,154 @@ func TestResumeGoalTransitionCreatesExactlyOnePreallocatedAttempt(t *testing.T) 
 	}
 	if attempts != 2 {
 		t.Fatalf("attempts=%d want original+one redelivery; entries=%v", attempts, entries)
+	}
+}
+
+func TestResumeGoalTransitionContinuationReusesReservedAttemptAfterCrash(t *testing.T) {
+	tm, session, plans, plan, verified := freshResumeTransitionFixture(t)
+	if err := reserveResumeGoalTransition(tm, team.DefaultProfile, session, verified, plan); err != nil {
+		t.Fatal(err)
+	}
+	transitionPath, err := resumeGoalTransitionPath(tm.Project, team.DefaultProfile, session, plan.TransitionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tr resumeGoalTransitionRecord
+	transitionBytes, err := os.ReadFile(transitionPath)
+	if err != nil || json.Unmarshal(transitionBytes, &tr) != nil {
+		t.Fatalf("read transition: %v", err)
+	}
+	opts := goalDeliveryOptions{Project: tm.Project, Profile: team.DefaultProfile, Session: session, Role: "cto", Goal: plan.Goal, Team: tm, Member: tm.Members[0], Namespace: squadnamespace.Resolve(tm.Project, team.DefaultProfile, session), Mode: executionModeProjectLead, ResumeTransitionID: plan.TransitionID}
+	if _, err := createGoalAttempt(opts, tr.NewAttemptID, time.Unix(501, 0).UTC()); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a process crash after it has reserved the new binding but before
+	// the durable transition completion marker. The recovery must neither reject
+	// that legitimate generation nor manufacture a third attempt.
+	rec, err := launch.Read(verified.Check.AgentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.GoalBinding = &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: nativeGoalControlPrompt(plan.Goal, tm, team.DefaultProfile, session, "cto", tr.NewAttemptID), Detail: "reserved"}
+	if err := launch.Write(verified.Check.AgentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	blocked := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
+	if blocked.Eligible || blocked.Action != "continue" || blocked.RecoveryAttemptID != tr.NewAttemptID || !strings.Contains(blocked.RecoveryCommand, "--resume-transition "+plan.TransitionID) {
+		t.Fatalf("reserved crash recovery plan = %+v", blocked)
+	}
+	oldLister, oldSend := statusPaneLister, sendPromptToPane
+	var prompts []string
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		return []tmuxpane.TmuxPane{{PaneID: "%447", CWD: tm.Project, Command: "codex"}}, nil
+	}
+	sendPromptToPane = func(_ string, prompt string) error { prompts = append(prompts, prompt); return nil }
+	t.Cleanup(func() { statusPaneLister, sendPromptToPane = oldLister, oldSend })
+	if _, err := executeGoalDelivery(opts); err != nil {
+		t.Fatalf("continue reserved transition: %v", err)
+	}
+	if len(prompts) != 1 || !strings.Contains(prompts[0], "--attempt-id "+tr.NewAttemptID) {
+		t.Fatalf("continuation prompt = %v", prompts)
+	}
+	if _, err := os.Stat(resumeGoalTransitionConsumedPath(transitionPath)); err != nil {
+		t.Fatalf("continuation did not mark transition consumed: %v", err)
+	}
+	entries, err := os.ReadDir(goalAttemptDir(tm.Project, team.DefaultProfile, session))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".") && strings.HasSuffix(entry.Name(), ".json") && !strings.HasSuffix(entry.Name(), ".claim.json") {
+			attempts++
+		}
+	}
+	if attempts != 2 {
+		t.Fatalf("continuation created a third attempt: %v", entries)
+	}
+}
+
+func TestResumeGoalTransitionConsumedRecoveryPlanUsesExactRetry(t *testing.T) {
+	tm, session, plans, plan, verified := freshResumeTransitionFixture(t)
+	if err := reserveResumeGoalTransition(tm, team.DefaultProfile, session, verified, plan); err != nil {
+		t.Fatal(err)
+	}
+	transitionPath, err := resumeGoalTransitionPath(tm.Project, team.DefaultProfile, session, plan.TransitionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tr resumeGoalTransitionRecord
+	transitionBytes, err := os.ReadFile(transitionPath)
+	if err != nil || json.Unmarshal(transitionBytes, &tr) != nil {
+		t.Fatalf("read transition: %v", err)
+	}
+	writeTestJSON(t, resumeGoalTransitionConsumedPath(transitionPath), resumeGoalTransitionConsumed{SchemaVersion: resumeGoalTransitionSchemaVersion, TransitionID: tr.TransitionID, NewAttemptID: tr.NewAttemptID, ConsumedAt: time.Unix(502, 0).UTC()})
+	blocked := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
+	if blocked.Eligible || blocked.Action != "retry" || blocked.TransitionState != "consumed" || blocked.RecoveryAttemptID != tr.NewAttemptID || !strings.Contains(blocked.RecoveryCommand, "retry-attempt") || !strings.Contains(blocked.RecoveryCommand, "--attempt-id "+tr.NewAttemptID) {
+		t.Fatalf("consumed crash recovery plan = %+v", blocked)
+	}
+}
+
+func TestResumeGoalTransitionMismatchedRecoveryFailsClosed(t *testing.T) {
+	tm, session, plans, plan, verified := freshResumeTransitionFixture(t)
+	if err := reserveResumeGoalTransition(tm, team.DefaultProfile, session, verified, plan); err != nil {
+		t.Fatal(err)
+	}
+	transitionPath, err := resumeGoalTransitionPath(tm.Project, team.DefaultProfile, session, plan.TransitionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tr resumeGoalTransitionRecord
+	transitionBytes, err := os.ReadFile(transitionPath)
+	if err != nil || json.Unmarshal(transitionBytes, &tr) != nil {
+		t.Fatalf("read transition: %v", err)
+	}
+	tr.NewAttemptID = tr.OriginalAttemptID
+	writeTestJSON(t, transitionPath, tr)
+	blocked := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
+	if blocked.Eligible || blocked.TransitionState != "mismatched" || blocked.RecoveryCommand != "" {
+		t.Fatalf("mismatched transition exposed recovery: %+v", blocked)
+	}
+}
+
+func TestResumeGoalTransitionReservedBindingGenerationChangeFailsClosed(t *testing.T) {
+	tm, session, _, plan, verified := freshResumeTransitionFixture(t)
+	if err := reserveResumeGoalTransition(tm, team.DefaultProfile, session, verified, plan); err != nil {
+		t.Fatal(err)
+	}
+	transitionPath, err := resumeGoalTransitionPath(tm.Project, team.DefaultProfile, session, plan.TransitionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tr resumeGoalTransitionRecord
+	transitionBytes, err := os.ReadFile(transitionPath)
+	if err != nil || json.Unmarshal(transitionBytes, &tr) != nil {
+		t.Fatalf("read transition: %v", err)
+	}
+	opts := goalDeliveryOptions{Project: tm.Project, Profile: team.DefaultProfile, Session: session, Role: "cto", Goal: plan.Goal, Team: tm, Member: tm.Members[0], Namespace: squadnamespace.Resolve(tm.Project, team.DefaultProfile, session), Mode: executionModeProjectLead, ResumeTransitionID: plan.TransitionID}
+	if _, err := createGoalAttempt(opts, tr.NewAttemptID, time.Unix(503, 0).UTC()); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := launch.Read(verified.Check.AgentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.GoalBinding = &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: nativeGoalControlPrompt(plan.Goal, tm, team.DefaultProfile, session, "cto", tr.NewAttemptID), Detail: "reserved"}
+	if err := launch.Write(verified.Check.AgentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureResumeGoalTransitionBinding(opts, &tr, verified.Check.AgentDir); err != nil {
+		t.Fatal(err)
+	}
+	rec.Model = "mutated-after-bound-marker"
+	if err := launch.Write(verified.Check.AgentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	oldSend := sendPromptToPane
+	sendPromptToPane = func(string, string) error { t.Fatal("generation mismatch reached pane send"); return nil }
+	t.Cleanup(func() { sendPromptToPane = oldSend })
+	if _, err := executeGoalDelivery(opts); err == nil || !strings.Contains(err.Error(), "reserved launch binding generation changed") {
+		t.Fatalf("reserved generation mutation was accepted: %v", err)
 	}
 }
 
@@ -562,6 +740,68 @@ func TestResumeGoalPlanReattachSkipsButFingerprintsBinding(t *testing.T) {
 	}
 }
 
+func TestResumeSurfacesNativeGoalBlockedRecoveryWithoutReactivation(t *testing.T) {
+	tm, session, plans := seededResumeGoalPlan(t, "", true)
+	rec := *plans[0].RestoreRecord
+	binding := *rec.GoalBinding
+	binding.Mode = "native_goal_blocked"
+	binding.Detail = "Goal blocked (/goal resume)\n\x1b[31munsafe control text"
+	rec.GoalBinding = &binding
+	plans[0].RestoreRecord = &rec
+
+	recoveries := resumeNativeGoalBlockedRecoveries(plans)
+	if len(recoveries) != 1 || recoveries[0].Role != "cto" || recoveries[0].Action != string(resumeRestore) {
+		t.Fatalf("recoveries = %+v", recoveries)
+	}
+	if !strings.Contains(recoveries[0].Guidance, "/goal resume") || strings.Contains(recoveries[0].Guidance, "automatically redeliver") && !strings.Contains(recoveries[0].Guidance, "Do not automatically") {
+		t.Fatalf("unsafe recovery guidance: %q", recoveries[0].Guidance)
+	}
+
+	var plain strings.Builder
+	writeResumeNativeGoalBlockedRecoveries(&plain, recoveries)
+	if !strings.Contains(plain.String(), "Native goal recovery required") || !strings.Contains(plain.String(), "/goal resume") || strings.ContainsRune(plain.String(), '\x1b') {
+		t.Fatalf("plain recovery output is not safe/explicit: %q", plain.String())
+	}
+	if strings.Contains(plain.String(), rec.GoalBinding.Command) {
+		t.Fatalf("plain recovery output leaked saved goal command: %q", plain.String())
+	}
+
+	var jsonOut strings.Builder
+	if err := writeResumeJSONWithGoal(&jsonOut, tm, session, resumeModeDefault, team.DefaultProfile, nil, plans, runwizard.ResumeGoalPlan{}); err != nil {
+		t.Fatal(err)
+	}
+	env := decodeJSONEnvelope[resumeEnvelopeData](t, jsonOut.String())
+	if len(env.Data.NativeGoalBlockedRecovery) != 1 || env.Data.NativeGoalBlockedRecovery[0].Guidance != nativeGoalBlockedResumeGuidance {
+		t.Fatalf("native blocked recovery JSON = %s", jsonOut.String())
+	}
+}
+
+func TestResumeNativeGoalBlockedRecoveryCoversMixedRosterWithoutFalsePositives(t *testing.T) {
+	blockedLead := launch.Record{GoalBinding: &launch.GoalBinding{Mode: "native_goal_blocked", NativeGoal: true, Detail: "lead blocked"}}
+	blockedWorker := launch.Record{GoalBinding: &launch.GoalBinding{Mode: "native_goal_blocked", NativeGoal: true, Detail: "worker blocked"}}
+	nativeDelivered := launch.Record{GoalBinding: &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Detail: "delivered"}}
+	plans := []resumePlan{
+		{Role: "cto", Handle: "cto", Action: resumeRestore, RestoreRecord: &blockedLead},
+		{Role: "fullstack", Handle: "fullstack", Action: resumeRestore, RestoreRecord: &nativeDelivered},
+		{Role: "qa", Handle: "qa", Action: resumeFresh},
+		{Role: "analyst", Handle: "analyst", Action: resumeRestore, RestoreRecord: &blockedWorker},
+	}
+	recoveries := resumeNativeGoalBlockedRecoveries(plans)
+	if len(recoveries) != 2 || recoveries[0].Role != "cto" || recoveries[1].Role != "analyst" {
+		t.Fatalf("mixed roster recoveries = %+v", recoveries)
+	}
+	for _, recovery := range recoveries {
+		if recovery.Action != string(resumeRestore) || recovery.Guidance != nativeGoalBlockedResumeGuidance || strings.Contains(strings.ToLower(recovery.Detail), "delivered") {
+			t.Fatalf("invalid recovery = %+v", recovery)
+		}
+	}
+	var out strings.Builder
+	writeResumeNativeGoalBlockedRecoveries(&out, recoveries)
+	if strings.Count(out.String(), "# Recovery:") != 2 || !strings.Contains(out.String(), "cto") || !strings.Contains(out.String(), "analyst") || strings.Contains(out.String(), "fullstack") {
+		t.Fatalf("mixed roster output = %q", out.String())
+	}
+}
+
 func TestResumeGoalPlanUnclaimedBlocksWithoutCreatingAttempt(t *testing.T) {
 	tm, session, plans := seededResumeGoalPlan(t, "", false)
 	dir := goalAttemptDir(tm.Project, team.DefaultProfile, session)
@@ -741,9 +981,9 @@ func TestGoalRetryAttemptRequiresYesAndNeverCreatesAnotherAttempt(t *testing.T) 
 
 func TestGoalBindingReservationFailureReportsExactUnsentAttempt(t *testing.T) {
 	dir, _, _, prompts := setupGoalDeliveryFailureTest(t, nil)
-	oldWrite := goalLaunchWrite
-	goalLaunchWrite = func(string, launch.Record) error { return errors.New("injected binding write failure") }
-	t.Cleanup(func() { goalLaunchWrite = oldWrite })
+	oldWrite := goalLaunchWriteUnderRecordLock
+	goalLaunchWriteUnderRecordLock = func(string, launch.Record) error { return errors.New("injected binding write failure") }
+	t.Cleanup(func() { goalLaunchWriteUnderRecordLock = oldWrite })
 	_, _, err := captureOutput(t, func() error {
 		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "durable ordering"})
 	})
@@ -923,6 +1163,7 @@ func TestQueuedRedeliveryReservesSecondAttemptAndBlocksThird(t *testing.T) {
 		t.Fatalf("reserved binding did not advance attempt: %q %v", secondID, err)
 	}
 	rec.Root = ns.AMQRoot
+	rec.TeamHome = dir
 	rec.TeamProfile = team.DefaultProfile
 	rec.BootstrapExpectation = &bootstrapack.Expectation{Required: true}
 	plan := buildResumeGoalPlan(tm, team.DefaultProfile, "issue-96", []resumePlan{{Role: "cto", Handle: "cto", Action: resumeRestore, RestoreRecord: &rec}}, false, false)

@@ -591,6 +591,120 @@ func TestGoalDeliveryUnconfirmedQueuesClaimOnceAMQFallback(t *testing.T) {
 	}
 }
 
+func TestGoalDeliverySerializesOrdinaryLaunchBindingWithConcurrentWriter(t *testing.T) {
+	dir, base, _, prompts := setupGoalDeliveryFailureTest(t, nil)
+	agentDir := filepath.Join(base, "issue-96", "agents", "cto")
+	oldHook, oldSend := goalBeforeOrdinaryBindingCAS, sendPromptToPane
+	writerDone := make(chan error, 1)
+	goalBeforeOrdinaryBindingCAS = func() {
+		started := make(chan struct{})
+		go func() {
+			close(started)
+			writerDone <- launch.WithRecordLock(agentDir, func() error {
+				rec, err := launch.Read(agentDir)
+				if err != nil {
+					return err
+				}
+				rec.Model = "concurrent-resume-update"
+				return launch.WriteUnderRecordLock(agentDir, rec)
+			})
+		}()
+		<-started
+		select {
+		case err := <-writerDone:
+			t.Fatalf("concurrent writer completed inside ordinary delivery writer lock: %v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	sendPromptToPane = func(paneID, prompt string) error {
+		select {
+		case err := <-writerDone:
+			t.Fatalf("concurrent writer interleaved before ordinary delivery send: %v", err)
+		default:
+		}
+		return oldSend(paneID, prompt)
+	}
+	t.Cleanup(func() {
+		goalBeforeOrdinaryBindingCAS = oldHook
+		sendPromptToPane = oldSend
+	})
+
+	if _, _, err := captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely"})
+	}); err != nil {
+		t.Fatalf("ordinary goal delivery: %v", err)
+	}
+	select {
+	case err := <-writerDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("concurrent launch writer did not resume after ordinary delivery")
+	}
+	if len(*prompts) != 1 {
+		t.Fatalf("ordinary delivery prompts=%v", *prompts)
+	}
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Model != "concurrent-resume-update" || rec.GoalBinding == nil || !rec.GoalBinding.NativeGoal {
+		t.Fatalf("ordinary delivery lost concurrent launch update: model=%q binding=%+v", rec.Model, rec.GoalBinding)
+	}
+}
+
+func TestGoalDeliverySerializesOrdinaryPostSendBindingWithConcurrentWriter(t *testing.T) {
+	dir, base, _, prompts := setupGoalDeliveryFailureTest(t, nil)
+	agentDir := filepath.Join(base, "issue-96", "agents", "cto")
+	oldHook := goalBeforePostDeliveryBindingCAS
+	writerDone := make(chan error, 1)
+	goalBeforePostDeliveryBindingCAS = func() {
+		started := make(chan struct{})
+		go func() {
+			close(started)
+			writerDone <- launch.WithRecordLock(agentDir, func() error {
+				rec, err := launch.Read(agentDir)
+				if err != nil {
+					return err
+				}
+				rec.Model = "concurrent-post-send-update"
+				return launch.WriteUnderRecordLock(agentDir, rec)
+			})
+		}()
+		<-started
+		select {
+		case err := <-writerDone:
+			t.Fatalf("concurrent writer completed inside post-send binding RMW: %v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	t.Cleanup(func() { goalBeforePostDeliveryBindingCAS = oldHook })
+	if _, _, err := captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely"})
+	}); err != nil {
+		t.Fatalf("ordinary goal delivery: %v", err)
+	}
+	select {
+	case err := <-writerDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("concurrent launch writer did not resume after post-send binding update")
+	}
+	if len(*prompts) != 1 {
+		t.Fatalf("ordinary delivery prompts=%v", *prompts)
+	}
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Model != "concurrent-post-send-update" || rec.GoalBinding == nil || rec.GoalBinding.Detail != "native /goal delivered as a first-class claim-once control action" {
+		t.Fatalf("ordinary post-send RMW lost state: model=%q binding=%+v", rec.Model, rec.GoalBinding)
+	}
+}
+
 func TestGoalClaimIsAtomicAndSecondRouteIsNoOp(t *testing.T) {
 	dir := t.TempDir()
 	opts := goalDeliveryOptions{

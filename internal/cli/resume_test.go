@@ -426,6 +426,91 @@ func TestRunResumeReorientsSeatWithoutConversation(t *testing.T) {
 	})
 }
 
+func TestRunResumeSurfacesNativeGoalBlockedRecovery(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream:    "issue-447",
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-447"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeMemberLaunchRecord(t, base, "issue-447", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", StartedAt: time.Now(),
+		GoalBinding: &launch.GoalBinding{
+			Mode:       "native_goal_blocked",
+			NativeGoal: true,
+			Source:     "goal-runtime",
+			Command:    `/goal --goal "ship"`,
+			Detail:     "Goal blocked (/goal resume)",
+		},
+	})
+
+	plain, _, err := captureOutput(t, func() error { return runResume(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plain, "Native goal recovery required") || !strings.Contains(plain, "then enter /goal resume manually") || !strings.Contains(plain, "Do not automatically redeliver") {
+		t.Fatalf("resume plan did not surface safe blocked-goal recovery:\n%s", plain)
+	}
+
+	jsonOut, _, err := captureOutput(t, func() error { return runResume([]string{"--json"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := decodeJSONEnvelope[resumeEnvelopeData](t, jsonOut)
+	if len(env.Data.NativeGoalBlockedRecovery) != 1 || env.Data.NativeGoalBlockedRecovery[0].Role != "cto" || !strings.Contains(env.Data.NativeGoalBlockedRecovery[0].Guidance, "/goal resume") {
+		t.Fatalf("resume JSON did not surface blocked-goal recovery:\n%s", jsonOut)
+	}
+}
+
+func TestRunResumeExecSurfacesBlockedGoalRecoveryForMixedRoster(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-447", Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-447"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-447"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "issue-447"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		role    string
+		binding *launch.GoalBinding
+	}{
+		{role: "cto", binding: &launch.GoalBinding{Mode: "native_goal_blocked", NativeGoal: true, Detail: "lead blocked"}},
+		{role: "qa", binding: &launch.GoalBinding{Mode: "native_goal_blocked", NativeGoal: true, Detail: "worker blocked"}},
+		{role: "fullstack", binding: &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Detail: "delivered"}},
+	} {
+		writeMemberLaunchRecord(t, base, "issue-447", row.role, launch.Record{CWD: dir, Binary: "codex", Role: row.role, Handle: row.role, Session: "issue-447", StartedAt: time.Now(), GoalBinding: row.binding})
+	}
+	oldRun, oldVerify := runTmuxLaunchPlanForResume, verifyResumeExecLaunchRecordsNow
+	runTmuxLaunchPlanForResume = func(tmuxLaunchPlan) error { return nil }
+	verifyResumeExecLaunchRecordsNow = func(checks []resumeExecLaunchCheck, _ map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {
+		out := make([]resumeExecLaunchResult, 0, len(checks))
+		for _, check := range checks {
+			out = append(out, resumeExecLaunchResult{Check: check, State: resumeExecLaunchStateLaunched})
+		}
+		return out
+	}
+	t.Cleanup(func() { runTmuxLaunchPlanForResume, verifyResumeExecLaunchRecordsNow = oldRun, oldVerify })
+	_, stderr, err := captureOutput(t, func() error { return runResume([]string{"--exec", "--stagger", "0"}) })
+	if err != nil {
+		t.Fatalf("resume --exec: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Count(stderr, "# Recovery:") != 2 || !strings.Contains(stderr, "cto") || !strings.Contains(stderr, "qa") || strings.Contains(stderr, "fullstack") || !strings.Contains(stderr, "then enter /goal resume manually") {
+		t.Fatalf("mixed exec recovery output = %q", stderr)
+	}
+}
+
 func TestRunResumeRejectsFreshFlag(t *testing.T) {
 	dir := t.TempDir()
 	resumeChdir(t, dir)

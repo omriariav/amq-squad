@@ -156,6 +156,8 @@ type ResumeGoalPlan struct {
 	TransitionID         string `json:"transition_id"`
 	TransitionState      string `json:"transition_state"`
 	TransitionDigest     string `json:"transition_digest"`
+	RecoveryAttemptID    string `json:"recovery_attempt_id,omitempty"`
+	RecoveryCommand      string `json:"recovery_command,omitempty"`
 	EvidenceDigest       string `json:"evidence_digest"`
 }
 
