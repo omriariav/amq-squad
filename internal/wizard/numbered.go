@@ -2,10 +2,15 @@ package wizard
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 )
+
+// ErrCancelled reports an explicit q/quit/cancel answer from the numbered
+// adapter without turning cancellation into a usage failure.
+var ErrCancelled = errors.New("wizard cancelled")
 
 // NumberedOptions supplies the answer-collection line UI with defaults and an
 // injected project inspector. The callback keeps this package independent from
@@ -15,6 +20,8 @@ type NumberedOptions struct {
 	InspectProject func(project string) (ProjectContext, error)
 	ProfileExists  func(project, profile string) bool
 	Capabilities   CapabilitySet
+	StartAtProfile bool
+	RestartMessage string
 }
 
 type ProjectContext struct {
@@ -61,15 +68,32 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	if !ok {
 		r = bufio.NewReader(in)
 	}
-	s := opts.Defaults
+	s := opts.Defaults.Clone()
 
 	fmt.Fprintln(out, "amq-squad run start wizard")
 	fmt.Fprintln(out, "Answers are previewed first. Launch requires a separate explicit Yes after preview succeeds.")
 	fmt.Fprintln(out)
 
 	var err error
-	if s.Project, err = promptText(r, out, "Project directory", s.Project); err != nil {
-		return Spec{}, err
+	if opts.StartAtProfile {
+		fmt.Fprintln(out, defaultString(opts.RestartMessage, "The selected profile or run changed while the wizard was open. Review the refreshed facts before continuing."))
+	} else {
+		fmt.Fprintln(out, "Project runs use one repository's profiles and sessions. Global/NOC starts one coordinator and does not own project wake mailboxes.")
+		s.Scope, err = promptChoice(r, out, "What do you want to run?", []choice{
+			{value: "project", label: "Project squad"},
+			{value: "global", label: "Global / NOC orchestrator"},
+		}, defaultString(strings.ToLower(strings.TrimSpace(s.Scope)), "project"))
+		if err != nil {
+			return Spec{}, err
+		}
+		if s.Scope == "global" {
+			s.Backend = BackendGlobalStart
+			return runNumberedGlobal(r, out, s)
+		}
+		s.Backend = BackendRunStart
+		if s.Project, err = promptText(r, out, "Project directory", s.Project); err != nil {
+			return Spec{}, err
+		}
 	}
 	ctx := ProjectContext{Project: s.Project, SessionSuggestion: s.Session}
 	if opts.InspectProject != nil {
@@ -102,8 +126,8 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		}
 		s.SelectExistingSession(session)
 		fmt.Fprintf(out, "Derived session %q from %s; existing profiles never accept an arbitrary session name.\n", s.Session, s.SessionSource)
-		if s.Backend != BackendRunStart || !s.RunExecutable {
-			fmt.Fprintf(out, "Selected run state: %s. Backend: %s. Execution controls for this state arrive in the resume slice; nothing will be previewed or launched.\n", s.RunState, defaultString(string(s.Backend), "none"))
+		if !s.RunExecutable {
+			fmt.Fprintf(out, "Selected run state: %s. Backend: %s. This run is read-only in the wizard; nothing will be previewed or launched.\n", s.RunState, defaultString(string(s.Backend), "none"))
 			return s, nil
 		}
 	} else {
@@ -122,20 +146,52 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	existing := existingProfile != nil || (opts.ProfileExists != nil && opts.ProfileExists(s.Project, s.Profile))
 	if existing {
 		fmt.Fprintf(out, "Using existing profile %q; roster and lead mode remain authoritative.\n", s.Profile)
-		if existingProfile != nil {
-			fmt.Fprintf(out, "Lead: %s (%s)\n", defaultString(existingProfile.Lead, "(not configured)"), defaultString(existingProfile.LeadMode, "builder"))
-			for _, member := range existingProfile.Members {
-				fmt.Fprintf(out, "  - %s: %s, model=%s, effort=%s\n", member.Role, member.Binary, defaultString(member.Model, "automatic"), defaultString(member.Effort, "automatic"))
-			}
-		}
-		fmt.Fprintln(out)
 		s.Roles = ""
 		s.Binary = ""
 		s.Model = ""
 		s.Effort = ""
 		s.Lead = ""
 		s.LeadMode = ""
-		if existingProfile != nil {
+		if existingProfile != nil && s.Backend == BackendResume {
+			modelOverrides := map[string]string{}
+			memberOrder := make([]string, 0, len(s.ResumeMembers))
+			for _, member := range s.ResumeMembers {
+				memberOrder = append(memberOrder, member.Role)
+				switch member.Action {
+				case MemberActionLive:
+					fmt.Fprintf(out, "%s is already live; resume keeps its model=%s effort=%s unchanged.\n", member.Role, defaultString(member.Model, "automatic"), defaultString(member.Effort, "automatic"))
+				case MemberActionRestore:
+					fmt.Fprintf(out, "%s restores saved launch %s read-only (binary=%s model=%s effort=%s saved extra args=%s).\n", member.Role, defaultString(member.SavedLaunchIdentity, "recorded"), defaultString(member.SavedBinary, member.Binary), defaultString(member.SavedModel, "automatic"), defaultString(member.SavedEffort, "automatic"), FormatSavedNativeArgs(member.SavedNativeArgs))
+				case MemberActionFresh:
+					modelSel, promptErr := promptChoice(r, out, member.Role+" fresh-launch model", existingOverrideModelChoices(MemberSummary{Role: member.Role, Binary: member.Binary, Model: member.Model, Effort: member.Effort}), modelKeepChoice)
+					if promptErr != nil {
+						return Spec{}, promptErr
+					}
+					if modelSel == modelCustomChoice {
+						custom, customErr := promptOptionalOverride(r, out, member.Role+" fresh-launch model", defaultString(member.Model, "automatic"))
+						if customErr != nil {
+							return Spec{}, customErr
+						}
+						if custom != "" {
+							modelOverrides[member.Role] = custom
+						}
+					} else if modelSel != modelKeepChoice {
+						modelOverrides[member.Role] = modelSel
+					}
+				}
+			}
+			s.Model = renderAssignments(memberOrder, modelOverrides)
+			s.Effort = ""
+			s.OperatorMode = defaultString(existingProfile.OperatorMode, "unspecified")
+			s.OperatorNotifications = existingProfile.OperatorNotifications
+		} else if existingProfile != nil {
+			fmt.Fprintf(out, "Lead: %s (%s)\n", defaultString(existingProfile.Lead, "(not configured)"), defaultString(existingProfile.LeadMode, "builder"))
+			for _, member := range existingProfile.Members {
+				fmt.Fprintf(out, "  - %s: %s, model=%s, effort=%s\n", member.Role, member.Binary, defaultString(member.Model, "automatic"), defaultString(member.Effort, "automatic"))
+			}
+		}
+		fmt.Fprintln(out)
+		if existingProfile != nil && s.Backend != BackendResume {
 			modelOverrides := map[string]string{}
 			effortOverrides := map[string]string{}
 			memberOrder := make([]string, 0, len(existingProfile.Members))
@@ -288,19 +344,97 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		}
 		s.OperatorNotifications = choice == "yes"
 	}
-	if s.LauncherPane, err = promptChoice(r, out, "Launcher pane", launcherPaneChoices(s.Visibility, s.ExternalLead), defaultLauncherPane(s.LauncherPane, s.Visibility, s.ExternalLead)); err != nil {
-		return Spec{}, err
-	}
-	if s.Goal, err = promptText(r, out, "Goal text (optional)", s.Goal); err != nil {
-		return Spec{}, err
-	}
-	if s.SeedFrom, err = promptText(r, out, "Seed brief from file:/issue:/gh: reference (optional)", s.SeedFrom); err != nil {
-		return Spec{}, err
+	if s.Backend == BackendResume {
+		s.LauncherPane = ""
+		s.Goal = ""
+		s.SeedFrom = ""
+		fmt.Fprintln(out, "This wizard pane stays open; resume only opens missing agent panes.")
+		fmt.Fprintf(out, "Brief preserved for resume: path=%s\ngoal excerpt:\n%s\nseed source=%s\n", displayValue(s.BriefPath), GoalExcerpt(s.BriefGoal), displayValue(s.BriefSeed))
+	} else {
+		if s.LauncherPane, err = promptChoice(r, out, "Launcher pane", launcherPaneChoices(s.Visibility, s.ExternalLead), defaultLauncherPane(s.LauncherPane, s.Visibility, s.ExternalLead)); err != nil {
+			return Spec{}, err
+		}
+		if s.Goal, err = promptText(r, out, "Goal text (optional)", s.Goal); err != nil {
+			return Spec{}, err
+		}
+		if s.SeedFrom, err = promptText(r, out, "Seed brief from file:/issue:/gh: reference (optional)", s.SeedFrom); err != nil {
+			return Spec{}, err
+		}
 	}
 
+	previewCommand, liveCommand, commandErr := s.CommandForms()
+	if commandErr != nil {
+		return Spec{}, commandErr
+	}
+	goal, seed := s.Goal, s.SeedFrom
+	if s.Backend == BackendResume {
+		goal, seed = s.BriefGoal, s.BriefSeed
+	}
 	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Review")
+	fmt.Fprintf(out, "Goal excerpt:\n%s\nSeed source: %s\nPreview command: %s\nLive command: %s\n", GoalExcerpt(goal), displayValue(seed), previewCommand, liveCommand)
 	fmt.Fprintln(out, "Answers collected. Running the canonical preview next; live launch is a separate default-No decision.")
 	return s, nil
+}
+
+func runNumberedGlobal(r *bufio.Reader, out io.Writer, s Spec) (Spec, error) {
+	var err error
+	fmt.Fprintln(out, "This is a neutral control root, not a project profile or session.")
+	if s.GlobalRoot, err = promptText(r, out, "Where should the global orchestrator run?", s.GlobalRoot); err != nil {
+		return Spec{}, err
+	}
+	if strings.TrimSpace(s.GlobalRoot) == "" {
+		return Spec{}, fmt.Errorf("global root cannot be empty")
+	}
+	if s.GlobalAgent, err = promptChoice(r, out, "Which agent should run the global orchestrator?", []choice{
+		{value: "claude", label: "Claude"},
+		{value: "codex", label: "Codex"},
+	}, defaultString(strings.ToLower(strings.TrimSpace(s.GlobalAgent)), "claude")); err != nil {
+		return Spec{}, err
+	}
+	if s.GlobalModel, err = promptText(r, out, "Model (optional)", s.GlobalModel); err != nil {
+		return Spec{}, err
+	}
+	if s.GlobalEffort, err = promptChoice(r, out, "Effort", effortChoices(s.GlobalAgent), defaultString(strings.ToLower(strings.TrimSpace(s.GlobalEffort)), effortAutomatic)); err != nil {
+		return Spec{}, err
+	}
+	if s.GlobalEffort == effortAutomatic {
+		s.GlobalEffort = ""
+	}
+	if s.GlobalAgent == "codex" {
+		if s.GlobalCodexArgs, err = promptText(r, out, "Codex extra native args (excluding effort)", s.GlobalCodexArgs); err != nil {
+			return Spec{}, err
+		}
+		s.GlobalClaudeArgs = ""
+	} else {
+		if s.GlobalClaudeArgs, err = promptText(r, out, "Claude extra native args (excluding effort)", s.GlobalClaudeArgs); err != nil {
+			return Spec{}, err
+		}
+		s.GlobalCodexArgs = ""
+	}
+	if s.GlobalWindow, err = promptText(r, out, "Window name", defaultString(s.GlobalWindow, "global-orch")); err != nil {
+		return Spec{}, err
+	}
+	if strings.TrimSpace(s.GlobalWindow) == "" {
+		return Spec{}, fmt.Errorf("window name cannot be empty")
+	}
+
+	previewCommand, liveCommand, commandErr := s.CommandForms()
+	if commandErr != nil {
+		return Spec{}, commandErr
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Review")
+	fmt.Fprintf(out, "Scope: Global / NOC orchestrator\nNeutral root: %s\nAgent: %s\nModel: %s\nEffort: %s\nWindow: %s\nNOC contract: poll explicit project/profile/session namespaces; this global orchestrator owns no wake mailbox.\nPreview command: %s\nLive command: %s\n", s.GlobalRoot, s.GlobalAgent, displayValue(s.GlobalModel), defaultString(s.GlobalEffort, effortAutomatic), s.GlobalWindow, previewCommand, liveCommand)
+	fmt.Fprintln(out, "Answers collected. Running the canonical preview next; live launch is a separate default-No decision.")
+	return s, nil
+}
+
+func displayValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "not provided"
+	}
+	return value
 }
 
 const (
@@ -509,6 +643,9 @@ func promptChoice(r *bufio.Reader, out io.Writer, label string, choices []choice
 		return "", fmt.Errorf("read %s: %w", strings.ToLower(label), err)
 	}
 	line = strings.TrimSpace(line)
+	if strings.EqualFold(line, "q") || strings.EqualFold(line, "quit") || strings.EqualFold(line, "cancel") {
+		return "", ErrCancelled
+	}
 	if line == "" {
 		if choices[defaultIndex].disabled {
 			return "", fmt.Errorf("default %s choice is unavailable", strings.ToLower(label))

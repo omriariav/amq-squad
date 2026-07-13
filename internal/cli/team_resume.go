@@ -62,6 +62,14 @@ type resumePlan struct {
 	// findMemberRestoreRecord. It is read-only discovery evidence; consumers
 	// must not reconstruct it from an arbitrary scan order.
 	SavedLaunchIdentity string
+	Saved               *resumeSavedLaunchSummary
+}
+
+type resumeSavedLaunchSummary struct {
+	Binary     string
+	Model      string
+	Effort     string
+	NativeArgs []string
 }
 
 func runTeamResume(args []string) error {
@@ -1010,6 +1018,23 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	if recFound {
 		plan.Tmux = rec.Tmux
 		plan.SavedLaunchIdentity = resumeSavedLaunchIdentity(rec)
+		savedMember := team.Member{Binary: rec.Binary}
+		if strings.EqualFold(rec.Binary, "claude") {
+			savedMember.ClaudeArgs = append([]string(nil), rec.Argv...)
+		} else {
+			savedMember.CodexArgs = append([]string(nil), rec.Argv...)
+		}
+		savedEffort := memberEffort(savedMember)
+		if savedEffort == effortAutomatic {
+			savedMember.CodexArgs = append([]string(nil), rec.CodexArgs...)
+			savedMember.ClaudeArgs = append([]string(nil), rec.ClaudeArgs...)
+			savedEffort = memberEffort(savedMember)
+		}
+		extraArgs := rec.CodexArgs
+		if strings.EqualFold(rec.Binary, "claude") {
+			extraArgs = rec.ClaudeArgs
+		}
+		plan.Saved = &resumeSavedLaunchSummary{Binary: rec.Binary, Model: rec.Model, Effort: savedEffort, NativeArgs: wizardSavedExtraArgs(rec.Binary, extraArgs)}
 	}
 	if recFound && projectLeadExternalRecordBoundaryViolation(in.Team, m, rec, in.Profile, env.SessionName, root, handle) {
 		plan.Action = resumeBlocked
@@ -1142,6 +1167,89 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	plan.Action = resumeFresh
 	plan.Command = freshLaunchCommand(in)
 	return plan, nil
+}
+
+func wizardSavedExtraArgs(binary string, args []string) []string {
+	binary = normalizedAgentBinary(binary)
+	booleans := claudeBooleanArgs
+	if binary == "codex" {
+		booleans = codexBooleanArgs
+	}
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" || !strings.HasPrefix(arg, "-") {
+			return out
+		}
+		spec, inline, known := nativeValueSpecForArg(binary, arg)
+		if known {
+			if inline {
+				if !wizardSeparatelyRenderedNativeValue(binary, spec, compactNativeValue(arg)) {
+					out = append(out, arg)
+				}
+				continue
+			}
+			values := make([]string, 0, 2)
+			switch spec.Cardinality {
+			case nativeRequired:
+				if i+1 < len(args) && args[i+1] != "--" && !strings.HasPrefix(args[i+1], "-") {
+					i++
+					values = append(values, args[i])
+				}
+			case nativeOptional:
+				if i+1 < len(args) && args[i+1] != "--" && !strings.HasPrefix(args[i+1], "-") {
+					i++
+					values = append(values, args[i])
+				}
+			case nativeVariadic:
+				for i+1 < len(args) && args[i+1] != "--" && !strings.HasPrefix(args[i+1], "-") {
+					i++
+					values = append(values, args[i])
+				}
+			}
+			value := ""
+			if len(values) > 0 {
+				value = values[0]
+			}
+			if !wizardSeparatelyRenderedNativeValue(binary, spec, value) {
+				out = append(out, arg)
+				out = append(out, values...)
+			}
+			continue
+		}
+		if booleans[arg] {
+			out = append(out, arg)
+			continue
+		}
+		name, _, _ := strings.Cut(arg, "=")
+		out = append(out, name)
+		return out
+	}
+	return out
+}
+
+func compactNativeValue(arg string) string {
+	if strings.HasPrefix(arg, "-c=") {
+		return strings.TrimPrefix(arg, "-c=")
+	}
+	if strings.HasPrefix(arg, "-c") && len(arg) > 2 {
+		return strings.TrimPrefix(arg, "-c")
+	}
+	if _, value, ok := strings.Cut(arg, "="); ok {
+		return value
+	}
+	return ""
+}
+
+func wizardSeparatelyRenderedNativeValue(binary string, spec nativeValueSpec, value string) bool {
+	if spec.Canonical == "--model" || binary == "claude" && spec.Canonical == "--effort" {
+		return true
+	}
+	if binary != "codex" || spec.Canonical != "--config" {
+		return false
+	}
+	key, _, ok := strings.Cut(strings.TrimSpace(value), "=")
+	return ok && (key == "model" || key == "model_reasoning_effort")
 }
 
 func resumeSavedLaunchIdentity(rec launch.Record) string {

@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -179,6 +181,10 @@ func TestPlanMemberResumeFingerprintsExactNewestMatchingRecord(t *testing.T) {
 	newer := older
 	newer.StartedAt = time.Now()
 	newer.Conversation = "newer"
+	newer.Model = "saved-model"
+	secretPrompt := "TOP-SECRET-PROMPT\n\x1b]52;c;clipboard\x07" + strings.Repeat("x", 2000)
+	newer.Argv = []string{"codex", "-c", "model_reasoning_effort=xhigh", secretPrompt}
+	newer.CodexArgs = []string{"-c", "model_reasoning_effort=xhigh", "-m", "saved-model", "--search"}
 	newerDir := filepath.Join(base, "s", "agents", "cto-newer")
 	if err := launch.Write(newerDir, newer); err != nil {
 		t.Fatal(err)
@@ -203,6 +209,17 @@ func TestPlanMemberResumeFingerprintsExactNewestMatchingRecord(t *testing.T) {
 	if plan.Action != resumeRestore || plan.SavedLaunchIdentity != want || plan.SavedLaunchIdentity == olderID {
 		t.Fatalf("planner record evidence = action %s identity %q; want newest %q, not older %q", plan.Action, plan.SavedLaunchIdentity, want, olderID)
 	}
+	if plan.Saved == nil || plan.Saved.Binary != "codex" || plan.Saved.Model != "saved-model" || plan.Saved.Effort != "xhigh" || !reflect.DeepEqual(plan.Saved.NativeArgs, []string{"--search"}) {
+		t.Fatalf("planner structured saved evidence = %+v, record=%+v", plan.Saved, newerStored)
+	}
+	summary := discoverRunStartWizardSession(team.Team{Project: dir, Members: []team.Member{member}}, team.DefaultProfile, "s", runwizard.SessionSourceMemberPin, []string{"s"}, nil)
+	if len(summary.Members) != 1 || !reflect.DeepEqual(summary.Members[0].SavedNativeArgs, []string{"--search"}) {
+		t.Fatalf("wizard saved args = %+v", summary.Members)
+	}
+	renderedSummary := fmt.Sprintf("%+v %s", summary, runwizard.FormatSavedNativeArgs(summary.Members[0].SavedNativeArgs))
+	if strings.Contains(renderedSummary, "TOP-SECRET-PROMPT") || strings.ContainsAny(renderedSummary, "\n\x1b\x07") || len(renderedSummary) > 2000 {
+		t.Fatalf("saved prompt/control leaked into wizard summary: %q", renderedSummary)
+	}
 	evidence := runStartWizardDiscoveryMemberPlan(plan, runwizard.MemberActionRestore)
 	if evidence.SavedLaunchIdentity != want {
 		t.Fatalf("wizard fingerprint evidence = %+v, want selected identity %q", evidence, want)
@@ -211,6 +228,17 @@ func TestPlanMemberResumeFingerprintsExactNewestMatchingRecord(t *testing.T) {
 	evidence.SavedLaunchIdentity = olderID
 	if got := runwizard.DiscoveryFingerprint(runwizard.DiscoveryFingerprintInput{MemberPlans: []runwizard.DiscoveryMemberPlan{evidence}}); got == selected {
 		t.Fatal("changing the planner-selected record identity did not change the wizard fingerprint")
+	}
+}
+
+func TestWizardSavedExtraArgsStripsSeparatelyRenderedModelAndEffort(t *testing.T) {
+	codex := []string{"-m", "one", "-m=two", "--model", "three", "--model=four", "-c", "model=x", "--config=model=y", "-cmodel=z", "-c=model_reasoning_effort=high", "--config=model_reasoning_effort=low", "-cmodel_reasoning_effort=max", "--search", "secret positional prompt"}
+	if got, want := wizardSavedExtraArgs("codex", codex), []string{"--search"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("codex saved extras=%#v want=%#v", got, want)
+	}
+	claude := []string{"--model", "opus", "--model=sonnet", "--effort", "high", "--effort=medium", "--chrome", "--", "prompt"}
+	if got, want := wizardSavedExtraArgs("claude", claude), []string{"--chrome"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("claude saved extras=%#v want=%#v", got, want)
 	}
 }
 
