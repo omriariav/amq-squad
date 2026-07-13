@@ -368,11 +368,11 @@ func TestBubblePhaseRailsAreScopeSpecific(t *testing.T) {
 		{name: "project existing", stages: []struct {
 			stage bubbleStage
 			want  int
-		}{{stageProject, 0}, {stageProfile, 1}, {stageResumeMember, 3}, {stageTopology, 3}, {stageResumeBrief, 4}, {stageConfirm, 5}}},
+		}{{stageProject, 0}, {stageProfile, 1}, {stageResumeMember, 2}, {stageTopology, 3}, {stageResumeBrief, 4}, {stageConfirm, 5}}},
 		{name: "project new", stages: []struct {
 			stage bubbleStage
 			want  int
-		}{{stageProject, 0}, {stageNewProfile, 1}, {stageRoleBinary, 2}, {stageRoleModel, 3}, {stageOperator, 3}, {stageGoal, 4}, {stageConfirm, 5}}},
+		}{{stageProject, 0}, {stageNewProfile, 1}, {stageRoleBinary, 2}, {stageRoleModel, 2}, {stageOperator, 3}, {stageGoal, 4}, {stageConfirm, 5}}},
 	} {
 		t.Run(branch.name, func(t *testing.T) {
 			for _, item := range branch.stages {
@@ -395,12 +395,94 @@ func TestBubblePhaseRailsAreScopeSpecific(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, stage := range tc.stages {
 				project.stage = stage
-				if got := project.phaseIndex(); got != 3 {
-					t.Fatalf("stage=%v index=%d want Run controls index 3", stage, got)
+				if got := project.phaseIndex(); got != 2 {
+					t.Fatalf("stage=%v index=%d want Team index 2", stage, got)
 				}
 			}
 		})
 	}
+}
+
+func TestBubbleProjectPhaseRailNeverRegressesAcrossMultiMemberFlows(t *testing.T) {
+	walk := func(t *testing.T, m BubbleModel, next func(BubbleModel) tea.KeyMsg) []bubbleStage {
+		t.Helper()
+		stages := []bubbleStage{m.stage}
+		previous := m.phaseIndex()
+		for step := 0; step < 64 && m.stage != stageConfirm; step++ {
+			m = updateBubble(t, m, next(m))
+			current := m.phaseIndex()
+			stages = append(stages, m.stage)
+			if current < previous {
+				t.Fatalf("phase rail regressed at step %d: stage %v index %d -> stage %v index %d; walk=%v", step, stages[len(stages)-2], previous, m.stage, current, stages)
+			}
+			previous = current
+		}
+		if m.stage != stageConfirm {
+			t.Fatalf("flow did not reach review; final stage=%v walk=%v", m.stage, stages)
+		}
+		return stages
+	}
+	countStage := func(stages []bubbleStage, want bubbleStage) int {
+		count := 0
+		for _, stage := range stages {
+			if stage == want {
+				count++
+			}
+		}
+		return count
+	}
+
+	t.Run("fresh multi-role roster", func(t *testing.T) {
+		m, err := NewBubbleModel(NumberedOptions{
+			Defaults: Spec{
+				Scope: "project", Project: "/repo", Profile: "new", Session: "s",
+				Roles: "cto,qa", Binary: "cto=codex,qa=claude", Lead: "cto",
+			},
+			InspectProject: func(string) (ProjectContext, error) {
+				return ProjectContext{Project: "/repo"}, nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stages := walk(t, m, func(BubbleModel) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyEnter} })
+		for _, stage := range []bubbleStage{stageRoleBinary, stageRoleModel, stageRoleEffort} {
+			if got := countStage(stages, stage); got != 2 {
+				t.Fatalf("stage %v visits=%d want=2; walk=%v", stage, got, stages)
+			}
+		}
+	})
+
+	t.Run("existing multi-member launch overrides", func(t *testing.T) {
+		profile := ProfileSummary{
+			Name: "release", MemberCount: 2, OperatorMode: "lead_pane",
+			Members: []MemberSummary{
+				{Role: "cto", Binary: "codex", Model: "gpt-5.6-sol", Effort: "high"},
+				{Role: "qa", Binary: "claude", Model: "sonnet", Effort: "medium"},
+			},
+			Sessions: []SessionSummary{discoveredFreshSession("s", SessionSourceMemberPin, 2)},
+		}
+		m, err := NewBubbleModel(NumberedOptions{
+			Defaults: Spec{Scope: "project", Project: "/repo", Profile: "release"},
+			InspectProject: func(string) (ProjectContext, error) {
+				return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stages := walk(t, m, func(current BubbleModel) tea.KeyMsg {
+			if current.stage == stageExistingOverride && current.cursor == 0 {
+				return tea.KeyMsg{Type: tea.KeyDown}
+			}
+			return tea.KeyMsg{Type: tea.KeyEnter}
+		})
+		for _, stage := range []bubbleStage{stageExistingOverride, stageExistingModel, stageExistingEffort} {
+			if got := countStage(stages, stage); got < 2 {
+				t.Fatalf("stage %v visits=%d want at least 2; walk=%v", stage, got, stages)
+			}
+		}
+	})
 }
 
 func TestGlobalBranchRunsThroughBothRealAdaptersToIdenticalReview(t *testing.T) {

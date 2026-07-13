@@ -1412,12 +1412,12 @@ func (m BubbleModel) phaseIndex() int {
 		return 0
 	case stageProfile, stageNewProfile, stageExistingSession, stageSession:
 		return 1
-	case stageExistingOverride, stageRoles, stageRoleBinary, stageLead, stageLeadMode:
-		return 2
-	case stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageExistingEffortCustom,
+	case stageExistingOverride, stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageExistingEffortCustom,
 		stageResumeMember, stageResumeModelCustom, stageResumeEffort, stageResumeEffortCustom,
 		stageRoleModel, stageRoleModelCustom, stageRoleEffort, stageRoleEffortCustom,
-		stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane:
+		stageRoles, stageRoleBinary, stageLead, stageLeadMode:
+		return 2
+	case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane:
 		return 3
 	case stageGoal, stageSeed, stageResumeBrief:
 		return 4
