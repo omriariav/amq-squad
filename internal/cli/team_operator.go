@@ -179,7 +179,7 @@ func mutateOperatorProfile(projectDir, profile string, mutate func(*team.Team) e
 		if err := mutate(&cfg); err != nil {
 			return err
 		}
-		if err := team.WriteProfile(projectDir, profile, cfg); err != nil {
+		if err := team.WriteProfileUnderLock(projectDir, profile, cfg); err != nil {
 			return err
 		}
 		view := cfg.Operator.SelfOperator

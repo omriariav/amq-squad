@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -1800,6 +1801,59 @@ func TestRunTeamAutonomousPauseAndDisable(t *testing.T) {
 	tm, _ = team.Read(dir)
 	if tm.Autonomous == nil || !tm.Autonomous.Disabled {
 		t.Fatalf("disable did not persist: %+v", tm.Autonomous)
+	}
+}
+
+func TestRunTeamAutonomousSerializesProfileReadModifyWrite(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := runTeamInit([]string{
+		"--roles", "cto,fullstack", "--orchestrated", "--lead", "cto",
+		"--composition", "autonomous", "--max-agents", "4", "--max-total-spawns", "3",
+		"--allowed-roles", "fullstack", "--budget-turns", "20",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldHook := teamAutonomousAfterRead
+	writerDone := make(chan error, 1)
+	teamAutonomousAfterRead = func() {
+		started := make(chan struct{})
+		go func() {
+			close(started)
+			writerDone <- team.WithProfileLock(dir, team.DefaultProfile, func() error {
+				current, err := team.ReadProfile(dir, team.DefaultProfile)
+				if err != nil {
+					return err
+				}
+				current.Members[0].Model = "concurrent-profile-update"
+				return team.WriteProfileUnderLock(dir, team.DefaultProfile, current)
+			})
+		}()
+		<-started
+		select {
+		case err := <-writerDone:
+			t.Fatalf("profile writer interleaved with autonomous RMW: %v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	t.Cleanup(func() { teamAutonomousAfterRead = oldHook })
+	if err := runTeamAutonomous([]string{"pause"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-writerDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("concurrent profile writer did not resume")
+	}
+	current, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Autonomous == nil || !current.Autonomous.Paused || current.Members[0].Model != "concurrent-profile-update" {
+		t.Fatalf("lost concurrent or autonomous update: %+v", current)
 	}
 }
 

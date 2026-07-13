@@ -591,6 +591,75 @@ func TestGoalDeliveryUnconfirmedQueuesClaimOnceAMQFallback(t *testing.T) {
 	}
 }
 
+func TestGoalDeliveryReleasesIdentityLocksBeforeBlockedSend(t *testing.T) {
+	for _, kind := range []string{"launch", "team"} {
+		t.Run(kind, func(t *testing.T) {
+			dir, base, _, prompts := setupGoalDeliveryFailureTest(t, nil)
+			agentDir := filepath.Join(base, "issue-96", "agents", "cto")
+			oldSend := sendPromptToPane
+			writerDone := make(chan error, 1)
+			sendPromptToPane = func(paneID, prompt string) error {
+				go func() {
+					switch kind {
+					case "launch":
+						writerDone <- launch.WithRecordLock(agentDir, func() error {
+							rec, err := launch.Read(agentDir)
+							if err != nil {
+								return err
+							}
+							rec.Model = "concurrent-send-launch-update"
+							return launch.WriteUnderRecordLock(agentDir, rec)
+						})
+					case "team":
+						writerDone <- team.WithProfileLock(dir, team.DefaultProfile, func() error {
+							current, err := team.ReadProfile(dir, team.DefaultProfile)
+							if err != nil {
+								return err
+							}
+							current.Members[0].Model = "concurrent-send-team-update"
+							return team.WriteProfileUnderLock(dir, team.DefaultProfile, current)
+						})
+					}
+				}()
+				select {
+				case err := <-writerDone:
+					if err != nil {
+						t.Fatalf("%s writer while send blocked: %v", kind, err)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatalf("%s writer was blocked by external send", kind)
+				}
+				return oldSend(paneID, prompt)
+			}
+			t.Cleanup(func() { sendPromptToPane = oldSend })
+
+			_, _, err := captureOutput(t, func() error {
+				return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely"})
+			})
+			if len(*prompts) != 1 {
+				t.Fatalf("ordinary delivery prompts=%v", *prompts)
+			}
+			if kind == "team" {
+				if err == nil || !strings.Contains(err.Error(), "team generation changed after pane delivery") {
+					t.Fatalf("team update must cause explicit stale-generation refusal, got %v", err)
+				}
+				current, readErr := team.ReadProfile(dir, team.DefaultProfile)
+				if readErr != nil || current.Members[0].Model != "concurrent-send-team-update" {
+					t.Fatalf("team writer did not survive blocked send: model=%q err=%v", current.Members[0].Model, readErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("launch update should merge after blocked send: %v", err)
+			}
+			rec, readErr := launch.Read(agentDir)
+			if readErr != nil || rec.Model != "concurrent-send-launch-update" || rec.GoalBinding == nil || rec.GoalBinding.Detail != "native /goal delivered as a first-class claim-once control action" {
+				t.Fatalf("post-send merge lost independent launch update: model=%q binding=%+v err=%v", rec.Model, rec.GoalBinding, readErr)
+			}
+		})
+	}
+}
+
 func TestGoalClaimIsAtomicAndSecondRouteIsNoOp(t *testing.T) {
 	dir := t.TempDir()
 	opts := goalDeliveryOptions{

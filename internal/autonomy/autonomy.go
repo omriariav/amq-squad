@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/flock"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -89,8 +88,7 @@ func authorize(projectDir, profile, session string, req Request) (Outcome, error
 	}
 
 	var out Outcome
-	lockPath := team.ProfilePath(projectDir, profile) + ".lock"
-	err := flock.WithLock(lockPath, func() error {
+	err := team.WithProfileLock(projectDir, profile, func() error {
 		t, err := team.ReadProfile(projectDir, profile)
 		if err != nil {
 			return fmt.Errorf("read team profile: %w", err)
@@ -98,7 +96,7 @@ func authorize(projectDir, profile, session string, req Request) (Outcome, error
 		d := evaluateDecision(t, req)
 		if d.Allowed {
 			applyAllowedCounters(&t, req.Action)
-			if err := team.WriteProfile(projectDir, profile, t); err != nil {
+			if err := team.WriteProfileUnderLock(projectDir, profile, t); err != nil {
 				return fmt.Errorf("write autonomous counters: %w", err)
 			}
 		}

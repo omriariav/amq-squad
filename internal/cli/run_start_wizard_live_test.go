@@ -347,6 +347,30 @@ func TestFinishWizardResumeFingerprintDeltaAfterYesRestartsWithoutExec(t *testin
 	assertWizardRestartCleared(t, restart.Defaults, spec)
 }
 
+func TestRefreshWizardExistingSelectionInvalidatesOnGoalEvidenceOnly(t *testing.T) {
+	withWizardExecutionSeams(t)
+	spec, current := resumeWizardFixture("placeholder")
+	currentPlan := runwizard.ResumeGoalPlan{SchemaVersion: 1, Action: "redeliver", Eligible: true, BindingDigest: "sha256:binding", AttemptDigest: "sha256:attempt", ClaimDigest: "sha256:claim-a", TransitionState: "absent"}
+	currentFP := runwizard.DiscoveryFingerprint(runwizard.DiscoveryFingerprintInput{Profile: "release", Session: "s", GoalPlan: currentPlan})
+	current.Profiles[0].Sessions[0].GoalPlan = currentPlan
+	current.Profiles[0].Sessions[0].Fingerprint = currentFP
+	spec.SelectExistingSession(current.Profiles[0].Sessions[0])
+	spec.RedeliverGoal = true
+	changed := current
+	changed.Profiles = append([]runwizard.ProfileSummary(nil), current.Profiles...)
+	changed.Profiles[0].Sessions = append([]runwizard.SessionSummary(nil), current.Profiles[0].Sessions...)
+	changedPlan := currentPlan
+	changedPlan.ClaimDigest = "sha256:claim-b"
+	changed.Profiles[0].Sessions[0].GoalPlan = changedPlan
+	changed.Profiles[0].Sessions[0].Fingerprint = runwizard.DiscoveryFingerprint(runwizard.DiscoveryFingerprintInput{Profile: "release", Session: "s", GoalPlan: changedPlan})
+	runStartWizardInspectProject = func(string) (runwizard.ProjectContext, error) { return changed, nil }
+	err := refreshWizardExistingSelection(spec)
+	var restart *wizardRestartError
+	if !errors.As(err, &restart) || restart.Defaults.RedeliverGoal || restart.Defaults.ResumeGoalPlan != (runwizard.ResumeGoalPlan{}) {
+		t.Fatalf("goal-only evidence delta did not clear stale choice: err=%v defaults=%+v", err, restart)
+	}
+}
+
 func TestRefreshWizardExistingSelectionFailsClosed(t *testing.T) {
 	tests := map[string]func(runwizard.ProjectContext) (runwizard.ProjectContext, error){
 		"inspector error": func(runwizard.ProjectContext) (runwizard.ProjectContext, error) {

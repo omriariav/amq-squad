@@ -10,6 +10,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 // swapStatusPaneLister installs a fake pane lister for the duration of a test.
@@ -288,6 +289,29 @@ func TestWriteResumeJSONShapeAndPaneAlive(t *testing.T) {
 	}
 	if qa.LaunchState != "will-launch" || qa.RecordState != "missing" {
 		t.Errorf("qa state wrong: launch=%q record=%q", qa.LaunchState, qa.RecordState)
+	}
+}
+
+func TestWriteResumeJSONGoalPlanIsAdditiveAndPreservesSelection(t *testing.T) {
+	base := team.Team{Project: "/r"}
+	plans := []resumePlan{{Role: "cto", Handle: "cto", Action: resumeRestore}}
+	var legacy bytes.Buffer
+	if err := writeResumeJSON(&legacy, base, "s", resumeModeDefault, team.DefaultProfile, nil, plans); err != nil {
+		t.Fatal(err)
+	}
+	if env := decodeJSONEnvelope[resumeEnvelopeData](t, legacy.String()); env.Data.GoalPlan != nil || strings.Contains(legacy.String(), "goal_plan") {
+		t.Fatalf("legacy resume JSON changed: %s", legacy.String())
+	}
+	for _, selected := range []bool{false, true} {
+		var buf bytes.Buffer
+		plan := runwizard.ResumeGoalPlan{SchemaVersion: 1, Action: "redeliver", Eligible: true, Selected: selected, BindingDigest: "sha256:binding", EvidenceDigest: "sha256:evidence"}
+		if err := writeResumeJSONWithGoal(&buf, base, "s", resumeModeDefault, team.DefaultProfile, nil, plans, plan); err != nil {
+			t.Fatal(err)
+		}
+		env := decodeJSONEnvelope[resumeEnvelopeData](t, buf.String())
+		if env.SchemaVersion != 1 || env.Data.GoalPlan == nil || env.Data.GoalPlan.Selected != selected || env.Data.GoalPlan.BindingDigest != plan.BindingDigest {
+			t.Fatalf("selected=%t JSON=%s", selected, buf.String())
+		}
 	}
 }
 

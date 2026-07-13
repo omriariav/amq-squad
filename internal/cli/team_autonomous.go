@@ -9,6 +9,11 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
+// teamAutonomousAfterRead is a deterministic test seam. It runs while the
+// profile writer lock is held, after the command has loaded the only snapshot
+// it may mutate.
+var teamAutonomousAfterRead = func() {}
+
 func runTeamAutonomous(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(os.Stderr, `amq-squad team autonomous - inspect or control opt-in Autonomous mode
@@ -85,26 +90,32 @@ func runTeamAutonomousMutation(args []string, action string) error {
 	if fs.NArg() != 0 {
 		return usageErrorf("team autonomous %s takes no positional arguments", action)
 	}
-	t, profile, err := readAutonomousTeam(*projectFlag, *profileFlag, fs)
+	projectDir, profile, err := resolveAutonomousProjectProfile(*projectFlag, *profileFlag, fs)
 	if err != nil {
 		return err
 	}
-	if team.EffectiveComposition(t) != team.CompositionAutonomous || t.Autonomous == nil {
-		return usageErrorf("team autonomous %s requires a profile with composition=autonomous", action)
-	}
-	switch action {
-	case "pause":
-		t.Autonomous.Paused = true
-	case "resume":
-		t.Autonomous.Paused = false
-		if t.Autonomous.Disabled {
-			return usageErrorf("team autonomous resume cannot resume a disabled policy; reconfigure the profile explicitly")
+	if err := team.WithProfileLock(projectDir, profile, func() error {
+		t, err := team.ReadProfile(projectDir, profile)
+		if err != nil {
+			return fmt.Errorf("read team: %w", err)
 		}
-	case "disable":
-		t.Autonomous.Disabled = true
-	}
-	projectDir := t.Project
-	if err := team.WriteProfile(projectDir, profile, t); err != nil {
+		if team.EffectiveComposition(t) != team.CompositionAutonomous || t.Autonomous == nil {
+			return usageErrorf("team autonomous %s requires a profile with composition=autonomous", action)
+		}
+		teamAutonomousAfterRead()
+		switch action {
+		case "pause":
+			t.Autonomous.Paused = true
+		case "resume":
+			t.Autonomous.Paused = false
+			if t.Autonomous.Disabled {
+				return usageErrorf("team autonomous resume cannot resume a disabled policy; reconfigure the profile explicitly")
+			}
+		case "disable":
+			t.Autonomous.Disabled = true
+		}
+		return team.WriteProfileUnderLock(projectDir, profile, t)
+	}); err != nil {
 		return err
 	}
 	fmt.Printf("autonomous %s for profile %s\n", action, profile)
@@ -112,15 +123,7 @@ func runTeamAutonomousMutation(args []string, action string) error {
 }
 
 func readAutonomousTeam(projectFlag, profileFlag string, fs *flag.FlagSet) (team.Team, string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return team.Team{}, "", fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, projectFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return team.Team{}, "", err
-	}
-	profile, err := resolveProfileFlag(profileFlag)
+	projectDir, profile, err := resolveAutonomousProjectProfile(projectFlag, profileFlag, fs)
 	if err != nil {
 		return team.Team{}, "", err
 	}
@@ -129,4 +132,20 @@ func readAutonomousTeam(projectFlag, profileFlag string, fs *flag.FlagSet) (team
 		return team.Team{}, "", fmt.Errorf("read team: %w", err)
 	}
 	return t, profile, nil
+}
+
+func resolveAutonomousProjectProfile(projectFlag, profileFlag string, fs *flag.FlagSet) (string, string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", "", fmt.Errorf("getwd: %w", err)
+	}
+	projectDir, err := resolveProjectDirFlag(cwd, projectFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return "", "", err
+	}
+	profile, err := resolveProfileFlag(profileFlag)
+	if err != nil {
+		return "", "", err
+	}
+	return projectDir, profile, nil
 }

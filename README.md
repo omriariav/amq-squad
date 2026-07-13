@@ -150,6 +150,10 @@ amq-squad dispatch \
 # Stop and resume without losing launch records, briefs, or task state.
 amq-squad stop --session issue-96 --all
 amq-squad resume --session issue-96 --exec
+
+# For a freshly re-oriented lead, explicitly create one new claim-once goal
+# attempt after the launch and original goal evidence are revalidated.
+amq-squad resume --session issue-96 --exec --redeliver-goal
 ```
 
 Use `--external-lead` when the current pane is already the project lead and only

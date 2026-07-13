@@ -356,10 +356,10 @@ func TestRunNumberedExistingProfileWithoutCLIDiscoveryFailsClosed(t *testing.T) 
 func TestRunNumberedMultipleSessionsUseKnownRunListAndComposeResume(t *testing.T) {
 	profile := ProfileSummary{Name: "release", MemberCount: 2, Members: []MemberSummary{{Role: "cto", Binary: "codex"}, {Role: "qa", Binary: "codex"}}, Sessions: []SessionSummary{
 		{Name: "run-a", Source: SessionSourceLaunchHistory, Classification: RunClassification{State: RunStateNotStarted, Backend: BackendRunStart, Executable: true}, Fresh: 2},
-		{Name: "run-b", Source: SessionSourceLaunchHistory, Fingerprint: "run-b-fp", RecordCount: 2, BriefPath: "/repo/.amq-squad/briefs/release/run-b.md", BriefGoal: "First goal line\nSecond goal line", BriefSeed: "gh:owner/repo#431", Members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Restore: 2},
+		{Name: "run-b", Source: SessionSourceLaunchHistory, Fingerprint: "run-b-fp", RecordCount: 2, BriefPath: "/repo/.amq-squad/briefs/release/run-b.md", BriefGoal: "First goal line\nSecond goal line", BriefSeed: "gh:owner/repo#431", GoalPlan: ResumeGoalPlan{Eligible: true, Action: "redeliver", Goal: "recorded\x1b[31m goal\x1b[0m\x00"}, Members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Restore: 2},
 	}}
 	var out bytes.Buffer
-	got, err := RunNumbered(strings.NewReader("\n\n\n2\n\n\n"), &out, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n\n\n2\n\n\n\n"), &out, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "release"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
@@ -371,10 +371,34 @@ func TestRunNumberedMultipleSessionsUseKnownRunListAndComposeResume(t *testing.T
 	if got.Session != "run-b" || got.Backend != BackendResume || got.RunState != RunStateStopped || got.DiscoveryFingerprint != "run-b-fp" {
 		t.Fatalf("known-session selection = %+v", got)
 	}
-	for _, want := range []string{"Which existing run do you want?", "run-a · launch_history · not started", "run-b · launch_history · stopped", "restores saved launch", "Brief preserved for resume", "/repo/.amq-squad/briefs/release/run-b.md", "First goal line\nSecond goal line", "gh:owner/repo#431", "Preview command:", "Live command:", "--exec"} {
+	for _, want := range []string{"Which existing run do you want?", "run-a · launch_history · not started", "run-b · launch_history · stopped", "restores saved launch", "Brief preserved for resume", "/repo/.amq-squad/briefs/release/run-b.md", "First goal line\nSecond goal line", "gh:owner/repo#431", "Recorded goal evidence", "recorded goal", "--no-redeliver-goal-prompt", "Preview command:", "Live command:", "--exec"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}
+	}
+	if got.RedeliverGoal || strings.ContainsRune(out.String(), '\x1b') || strings.ContainsRune(out.String(), '\x00') || strings.Contains(out.String(), "[31m") {
+		t.Fatalf("numbered default No/control safety failed: spec=%+v output=%q", got, out.String())
+	}
+	var yesOut bytes.Buffer
+	yes, err := RunNumbered(strings.NewReader("\n\n\n2\n\n\n2\n"), &yesOut, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+		return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+	}})
+	if err != nil || !yes.RedeliverGoal {
+		t.Fatalf("numbered explicit Yes: spec=%+v err=%v output=%q", yes, err, yesOut.String())
+	}
+	args, err := yes.ResumeArgs()
+	if err != nil || strings.Count(strings.Join(args, " "), "--redeliver-goal") != 1 {
+		t.Fatalf("numbered Yes canonical args=%v err=%v", args, err)
+	}
+	blockedProfile := profile
+	blockedProfile.Sessions = append([]SessionSummary(nil), profile.Sessions...)
+	blockedProfile.Sessions[1].GoalPlan = ResumeGoalPlan{Eligible: false, Action: "blocked", Reason: "claim missing"}
+	var blockedOut bytes.Buffer
+	blocked, err := RunNumbered(strings.NewReader("\n\n\n2\n\n\n"), &blockedOut, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+		return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{blockedProfile}}, nil
+	}})
+	if err != nil || blocked.RedeliverGoal || strings.Contains(blockedOut.String(), "Re-deliver the recorded") || !strings.Contains(blockedOut.String(), "claim missing") {
+		t.Fatalf("numbered unavailable path: spec=%+v err=%v output=%q", blocked, err, blockedOut.String())
 	}
 }
 

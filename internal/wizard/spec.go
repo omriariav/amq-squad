@@ -84,6 +84,8 @@ type Spec struct {
 	RecordCount                    int
 	DiscoveryFingerprint           string
 	ResumeMembers                  []SessionMemberSummary
+	ResumeGoalPlan                 ResumeGoalPlan
+	RedeliverGoal                  bool
 	BriefPath                      string
 	BriefGoal                      string
 	BriefSeed                      string
@@ -210,6 +212,24 @@ func (s Spec) ResumeArgs() ([]string, error) {
 	}
 	appendValue("--target", target)
 	appendValue("--layout", layout)
+	if s.RedeliverGoal {
+		if !s.ResumeGoalPlan.Eligible {
+			reason := strings.TrimSpace(s.ResumeGoalPlan.Reason)
+			if reason == "" {
+				reason = "eligibility evidence is missing"
+			}
+			if recovery := strings.TrimSpace(s.ResumeGoalPlan.RecoveryCommand); recovery != "" {
+				return nil, fmt.Errorf("resume goal redelivery is unavailable: %s; recover exact attempt %s manually: %s", reason, s.ResumeGoalPlan.RecoveryAttemptID, recovery)
+			}
+			return nil, fmt.Errorf("resume goal redelivery is unavailable: %s", reason)
+		}
+		args = append(args, "--redeliver-goal")
+	} else if s.ResumeGoalPlan.Eligible {
+		// Preserve the wizard's explicit default-No choice when the same args are
+		// later executed in a TTY; direct resume without this internal flag keeps
+		// its normal default-No prompt.
+		args = append(args, "--no-redeliver-goal-prompt")
+	}
 	return args, nil
 }
 

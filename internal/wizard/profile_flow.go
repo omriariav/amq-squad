@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const maxSavedNativeArgsDisplay = 240
@@ -43,6 +45,7 @@ type SessionSummary struct {
 	Restore        int
 	Fresh          int
 	Blocked        int
+	GoalPlan       ResumeGoalPlan
 }
 
 // SessionMemberSummary is the action-scoped member plan retained by the
@@ -138,6 +141,8 @@ func (s *Spec) SelectExistingSession(session SessionSummary) {
 	s.RestoreExisting = session.RecordCount > 0
 	s.DiscoveryFingerprint = session.Fingerprint
 	s.ResumeMembers = cloneSessionMembers(session.Members)
+	s.ResumeGoalPlan = session.GoalPlan
+	s.ResumeGoalPlan.Selected = false
 	s.BriefPath = session.BriefPath
 	s.BriefGoal = session.BriefGoal
 	s.BriefSeed = session.BriefSeed
@@ -153,6 +158,8 @@ func (s *Spec) SelectExistingSession(session SessionSummary) {
 		s.RestoreExisting = session.RecordCount > 0
 		s.DiscoveryFingerprint = session.Fingerprint
 		s.ResumeMembers = cloneSessionMembers(session.Members)
+		s.ResumeGoalPlan = session.GoalPlan
+		s.ResumeGoalPlan.Selected = false
 		s.BriefPath = session.BriefPath
 		s.BriefGoal = session.BriefGoal
 		s.BriefSeed = session.BriefSeed
@@ -189,6 +196,7 @@ func (s *Spec) SelectNewSession(session string) {
 	s.RecordCount = 0
 	s.DiscoveryFingerprint = ""
 	s.ResumeMembers = nil
+	s.ResumeGoalPlan = ResumeGoalPlan{}
 	s.BriefPath = ""
 	s.BriefGoal = ""
 	s.BriefSeed = ""
@@ -240,6 +248,7 @@ func ResumeDefaultVisibility(members []SessionMemberSummary) string {
 
 // GoalExcerpt returns at most two lines and 160 runes including the ellipsis.
 func GoalExcerpt(goal string) string {
+	goal = stripGoalTerminalControls(goal)
 	goal = strings.ReplaceAll(goal, "\r\n", "\n")
 	goal = strings.ReplaceAll(goal, "\r", "\n")
 	lines := strings.Split(goal, "\n")
@@ -265,6 +274,48 @@ func GoalExcerpt(goal string) string {
 	return value
 }
 
+func stripGoalTerminalControls(value string) string {
+	var b strings.Builder
+	for i := 0; i < len(value); {
+		if value[i] == 0x1b {
+			i++
+			if i < len(value) && value[i] == '[' { // CSI
+				i++
+				for i < len(value) {
+					c := value[i]
+					i++
+					if c >= 0x40 && c <= 0x7e {
+						break
+					}
+				}
+			} else if i < len(value) && value[i] == ']' { // OSC
+				i++
+				for i < len(value) {
+					if value[i] == 0x07 {
+						i++
+						break
+					}
+					if value[i] == 0x1b && i+1 < len(value) && value[i+1] == '\\' {
+						i += 2
+						break
+					}
+					i++
+				}
+			}
+			continue
+		}
+		r, size := rune(value[i]), 1
+		if value[i] >= utf8.RuneSelf {
+			r, size = utf8.DecodeRuneInString(value[i:])
+		}
+		i += size
+		if r == '\n' || r == '\r' || r == '\t' || !unicode.IsControl(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 func (s *Spec) clearSelectedRun() {
 	s.clearAuthoritativeRunAnswers()
 	s.clearDownstreamRunAnswers()
@@ -280,6 +331,7 @@ func (s *Spec) clearAuthoritativeRunAnswers() {
 	s.RecordCount = 0
 	s.DiscoveryFingerprint = ""
 	s.ResumeMembers = nil
+	s.ResumeGoalPlan = ResumeGoalPlan{}
 	s.BriefPath = ""
 	s.BriefGoal = ""
 	s.BriefSeed = ""
@@ -311,6 +363,7 @@ func (s *Spec) clearDownstreamRunAnswers() {
 	s.ExternalLead = false
 	s.Goal = ""
 	s.SeedFrom = ""
+	s.RedeliverGoal = false
 }
 
 // InvalidateExistingRun returns the answer model to Profile & run after an

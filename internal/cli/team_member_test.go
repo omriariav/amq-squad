@@ -3,9 +3,38 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
+
+func TestWithProfileLockUnderLockWriteDoesNotSelfDeadlock(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-447"}},
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- withProfileLock(dir, team.DefaultProfile, func() error {
+			cfg, err := team.ReadProfile(dir, team.DefaultProfile)
+			if err != nil {
+				return err
+			}
+			cfg.Members = append(cfg.Members, team.Member{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-447"})
+			return team.WriteProfileUnderLock(dir, team.DefaultProfile, cfg)
+		})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CLI profile mutation self-deadlocked by reacquiring the shared team lock")
+	}
+	if got := teamMembers(t, dir); len(got) != 2 || got[1].Role != "qa" {
+		t.Fatalf("serialized profile mutation was not persisted: %+v", got)
+	}
+}
 
 func teamMembers(t *testing.T, dir string) []team.Member {
 	t.Helper()

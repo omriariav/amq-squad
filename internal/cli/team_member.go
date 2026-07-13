@@ -7,7 +7,6 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/omriariav/amq-squad/v2/internal/flock"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -292,10 +291,10 @@ func runTeamMemberAdd(args []string) error {
 			return err
 		}
 		t.Members = append(t.Members, added)
-		// WriteProfile re-validates the whole team (orchestration, per-member
+		// WriteProfileUnderLock re-validates the whole team (orchestration, per-member
 		// binary-match, duplicate handles) before the atomic rename, so an
 		// invalid add never persists.
-		if err := team.WriteProfile(projectDir, profile, t); err != nil {
+		if err := team.WriteProfileUnderLock(projectDir, profile, t); err != nil {
 			return err
 		}
 		return nil
@@ -446,7 +445,7 @@ func runTeamMemberRemove(args []string) error {
 			return fmt.Errorf("role %q is not a team member", role)
 		}
 		t.Members = kept
-		if err := team.WriteProfile(projectDir, profile, t); err != nil {
+		if err := team.WriteProfileUnderLock(projectDir, profile, t); err != nil {
 			return err
 		}
 		return nil
@@ -530,7 +529,7 @@ func resolveExistingTeamProfile(projectFlag, profileFlag string, projectSet bool
 // concurrent amq-squad processes via an exclusive lock on a sidecar file, so
 // a lead and a worker mutating the roster at once cannot lose an update.
 func withProfileLock(projectDir, profile string, fn func() error) error {
-	return flock.WithLock(team.ProfilePath(projectDir, profile)+".lock", fn)
+	return team.WithProfileLock(projectDir, profile, fn)
 }
 
 // inheritedSession returns the workstream a new member should join: the

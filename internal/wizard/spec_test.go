@@ -187,3 +187,76 @@ func TestResumeArgsRejectsSemanticLeakage(t *testing.T) {
 		})
 	}
 }
+
+func TestResumeArgsEmitsOnlyRedeliverGoalIntent(t *testing.T) {
+	s := Spec{
+		Backend: BackendResume, Project: "/repo", Profile: "release", ProfileBranch: ProfileBranchExisting,
+		Session: "s", RunExecutable: true, RunState: RunStateStopped, RecordCount: 1, RestoreExisting: true,
+		DiscoveryFingerprint: "fp", ResumeMembers: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore}},
+		Visibility: "sibling-tabs", LayoutPreset: "one-window-per-agent",
+		ResumeGoalPlan: ResumeGoalPlan{SchemaVersion: 1, Eligible: true, Goal: "secret goal text"}, RedeliverGoal: true,
+	}
+	args, err := s.ResumeArgs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(args, " "); !strings.Contains(got, "--redeliver-goal") || strings.Contains(got, s.ResumeGoalPlan.Goal) {
+		t.Fatalf("resume args leaked or omitted goal intent: %q", got)
+	}
+	s.ResumeGoalPlan.Eligible = false
+	s.ResumeGoalPlan.Reason = "claim missing"
+	if _, err := s.ResumeArgs(); err == nil || !strings.Contains(err.Error(), "claim missing") {
+		t.Fatalf("ineligible selected redelivery accepted: %v", err)
+	}
+}
+
+func TestResumeArgsPreservesEligibleNoWithoutGoalText(t *testing.T) {
+	s := Spec{Backend: BackendResume, Project: "/repo", Profile: "default", ProfileBranch: ProfileBranchExisting, Session: "s", RunExecutable: true, RunState: RunStateStopped, RecordCount: 1, RestoreExisting: true, DiscoveryFingerprint: "fp", ResumeMembers: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore}}, Visibility: "sibling-tabs", LayoutPreset: "one-window-per-agent", ResumeGoalPlan: ResumeGoalPlan{SchemaVersion: 1, Eligible: true, Goal: "secret\n\x1b[31mgoal"}}
+	args, err := s.ResumeArgs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--no-redeliver-goal-prompt") || strings.Contains(joined, "secret") || strings.Contains(joined, "--redeliver-goal") {
+		t.Fatalf("eligible No args=%#v", args)
+	}
+	preview, live, err := s.CommandForms()
+	if err != nil || strings.Count(preview, "--no-redeliver-goal-prompt") != 1 || strings.Count(live, "--no-redeliver-goal-prompt") != 1 || strings.Count(live, "--exec") != 1 {
+		t.Fatalf("forms preview=%q live=%q err=%v", preview, live, err)
+	}
+}
+
+func TestDiscoveryFingerprintIgnoresGoalSelectionButTracksEvidence(t *testing.T) {
+	base := DiscoveryFingerprintInput{Profile: "default", Session: "s", GoalPlan: ResumeGoalPlan{SchemaVersion: 1, Action: "redeliver", Eligible: true, BindingDigest: "sha256:a", AttemptDigest: "sha256:b", ClaimDigest: "sha256:c", TransitionState: "absent"}}
+	want := DiscoveryFingerprint(base)
+	selected := base
+	selected.GoalPlan.Selected = true
+	if got := DiscoveryFingerprint(selected); got != want {
+		t.Fatalf("downstream Selected changed discovery fingerprint: %s != %s", got, want)
+	}
+	mutated := base
+	mutated.GoalPlan.ClaimDigest = "sha256:changed"
+	if got := DiscoveryFingerprint(mutated); got == want {
+		t.Fatal("raw goal evidence mutation did not invalidate fingerprint")
+	}
+}
+
+func TestGoalExcerptStripsTerminalControlsAndBounds(t *testing.T) {
+	got := GoalExcerpt("safe\x1b[31mRED\x1b[0m\x00\nsecond\nthird" + strings.Repeat("x", 300))
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\x00') || strings.Contains(got, "[31m") || len([]rune(got)) > maxGoalExcerptRunes || strings.Count(got, "\n") > 1 {
+		t.Fatalf("unsafe/unbounded excerpt: %q", got)
+	}
+}
+
+func TestResumeGoalChoiceIsDownstreamAndClearedOnInvalidation(t *testing.T) {
+	s := Spec{RedeliverGoal: true}
+	s.SelectExistingSession(SessionSummary{Name: "s", Fingerprint: "fp", Classification: RunClassification{Backend: BackendResume, Executable: true}, GoalPlan: ResumeGoalPlan{Eligible: true, Selected: true, BindingDigest: "sha256:evidence"}})
+	if s.ResumeGoalPlan.Selected || s.RedeliverGoal {
+		t.Fatalf("authoritative session imported downstream intent: %+v", s)
+	}
+	s.RedeliverGoal = true
+	s.InvalidateExistingRun()
+	if s.RedeliverGoal || s.ResumeGoalPlan != (ResumeGoalPlan{}) {
+		t.Fatalf("stale goal choice survived invalidation: %+v", s)
+	}
+}

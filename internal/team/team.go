@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/flock"
 	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 )
 
@@ -790,6 +791,29 @@ func normalizeEnabledOperator(op OperatorConfig) OperatorConfig {
 // schema field is set to 4 only when permission_allowlist is used; otherwise
 // writes stay on schema 3 for compatibility.
 func WriteProfile(projectDir, profile string, t Team) error {
+	return WithProfileLock(projectDir, profile, func() error {
+		return WriteProfileUnderLock(projectDir, profile, t)
+	})
+}
+
+// ProfileLockPath is the shared writer lock for one team profile.
+func ProfileLockPath(projectDir, profile string) string {
+	return ProfilePath(projectDir, profile) + ".lock"
+}
+
+// WithProfileLock serializes team profile writers and narrow conditional
+// read/write control-plane operations.
+func WithProfileLock(projectDir, profile string, fn func() error) error {
+	path := ProfilePath(projectDir, profile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("ensure %s: %w", filepath.Dir(path), err)
+	}
+	return flock.WithLock(ProfileLockPath(projectDir, profile), fn)
+}
+
+// WriteProfileUnderLock writes a profile while the caller holds
+// WithProfileLock. It is exported only for compound compare-and-write sections.
+func WriteProfileUnderLock(projectDir, profile string, t Team) error {
 	path := ProfilePath(projectDir, profile)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("ensure %s: %w", filepath.Dir(path), err)
@@ -833,6 +857,15 @@ func DeleteProfile(projectDir, profile string) error {
 			return err
 		}
 	}
+	return WithProfileLock(projectDir, profile, func() error {
+		return DeleteProfileUnderLock(projectDir, profile)
+	})
+}
+
+// DeleteProfileUnderLock removes a profile while the caller holds
+// WithProfileLock. The adjacent lock file intentionally remains as durable
+// serialization state for later recreation of the same named profile.
+func DeleteProfileUnderLock(projectDir, profile string) error {
 	path := ProfilePath(projectDir, profile)
 	if err := os.Remove(path); err != nil {
 		return err
