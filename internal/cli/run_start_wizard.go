@@ -268,6 +268,7 @@ func prepareRunStartWizard(args []string) (runwizard.Spec, runwizard.NumberedOpt
 	}
 	opts := runwizard.NumberedOptions{
 		InspectProject: runStartWizardInspectProject,
+		LoadCatalog:    loadAgentCatalogAndWarn,
 		ProfileExists: func(project, profile string) bool {
 			return team.ExistsProfile(strings.TrimSpace(project), strings.TrimSpace(profile))
 		},

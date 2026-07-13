@@ -278,6 +278,35 @@ func TestRunNewProfileDelegatesToNamedTeamInit(t *testing.T) {
 	}
 }
 
+func TestRunNewProfileForwardsEffortOverride(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runNew([]string{
+			"profile", "review",
+			"--roles", "qa",
+			"--binary", "qa=claude",
+			"--effort", "qa=max",
+			"--session", "review-main",
+		})
+	})
+	if err != nil {
+		t.Fatalf("new profile review --effort: %v\nstderr:\n%s", err, stderr)
+	}
+
+	cfg, err := team.ReadProfile(dir, "review")
+	if err != nil {
+		t.Fatalf("read named team config: %v", err)
+	}
+	if len(cfg.Members) != 1 {
+		t.Fatalf("members = %d, want 1", len(cfg.Members))
+	}
+	if got := strings.Join(cfg.Members[0].ClaudeArgs, " "); got != "--effort max" {
+		t.Fatalf("qa claude_args = %q, want %q", got, "--effort max")
+	}
+}
+
 func TestRunNewTeamRejectsProfileSessionCollisionBeforeWrite(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)

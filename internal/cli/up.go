@@ -48,6 +48,7 @@ Usage:
     [--layout vertical|horizontal|tiled]
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
     [--trust sandboxed|approve-for-me|trusted] [--model role=model,...]
+    [--effort role=level,...]
     [--codex-args args] [--claude-args args]
     [--force-duplicate] [--no-gitignore] [--symphony]
     [--seed-from REF [--force]] [--dry-run]
