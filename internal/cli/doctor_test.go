@@ -201,6 +201,26 @@ func TestExecuteDoctorAMQVersionTooOld(t *testing.T) {
 	}
 }
 
+func TestDoctorAMQVersionResolutionDisablesChildUpdateCheck(t *testing.T) {
+	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
+	setupFakeAMQScript(t, `#!/bin/sh
+if [ "$AMQ_NO_UPDATE_CHECK" != "1" ]; then
+  echo "update available" >&2
+  exit 91
+fi
+printf '%s\n' '{"root":"/mail","base_root":"/mail","amq_version":"0.42.0"}'
+`)
+
+	d := defaultDoctorExecution(t.TempDir())
+	check := doctorCheckAMQVersion(d)
+	if check.Status != doctorOK || !strings.Contains(check.Detail, "amq 0.42.0") {
+		t.Fatalf("doctor amq version check = %+v, want ok 0.42.0", check)
+	}
+	if got := os.Getenv("AMQ_NO_UPDATE_CHECK"); got != "0" {
+		t.Fatalf("parent AMQ_NO_UPDATE_CHECK = %q, want unchanged 0", got)
+	}
+}
+
 func TestExecuteDoctorAMQVersionMissing(t *testing.T) {
 	dir := t.TempDir()
 	d := newDoctorExec(t, dir)

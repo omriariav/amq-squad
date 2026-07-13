@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/amqexec"
 	"github.com/omriariav/amq-squad/v2/internal/catalog"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
@@ -26,6 +27,7 @@ import (
 const envTmuxTarget = "AMQ_SQUAD_TMUX_TARGET"
 
 var launchPlanObserver func(launch.Record, []string)
+var amqSyscallExec = syscall.Exec
 
 // envTmuxLauncherPane carries the pane id that initiated a managed tmux launch.
 // The child process runs in the agent pane, so it cannot recover this later
@@ -59,6 +61,7 @@ func defaultRunSymphonyInit(cfg symphonyInitConfig) error {
 		"--root", cfg.Root,
 		"--me", cfg.Me,
 	)
+	cmd.Env = amqexec.NoUpdateCheckEnv(nil)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return nil
@@ -559,7 +562,12 @@ Examples:
 	// resolved the right --root/--session/--me on the command line; passing a
 	// stale AM_ROOT/AM_ME from the launching shell along to the agent would
 	// re-create the identity-leak asymmetry #46 closed for env resolution.
-	return syscall.Exec(amqBin, append([]string{"amq"}, coopArgs...), envWithoutAMQIdentity(os.Environ()))
+	return execAMQCoop(amqBin, coopArgs)
+}
+
+func execAMQCoop(amqBin string, coopArgs []string) error {
+	env := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
+	return amqSyscallExec(amqBin, append([]string{"amq"}, coopArgs...), env)
 }
 
 func terminalInfoFromEnv() *launch.TerminalInfo {

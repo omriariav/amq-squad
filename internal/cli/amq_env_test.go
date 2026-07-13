@@ -74,6 +74,28 @@ func TestResolveAMQEnvInDirClearsInheritedAMQIdentity(t *testing.T) {
 	}
 }
 
+func TestResolveAMQEnvInDirDisablesChildUpdateCheck(t *testing.T) {
+	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
+	setupFakeAMQScript(t, `#!/bin/sh
+if [ "$AMQ_NO_UPDATE_CHECK" != "1" ]; then
+  echo "update check was not disabled" >&2
+  exit 91
+fi
+printf '%s\n' '{"root":"/target/session","base_root":"/target","amq_version":"0.42.0"}'
+`)
+
+	got, err := resolveAMQEnvInDir(t.TempDir(), "", "", "amq-squad")
+	if err != nil {
+		t.Fatalf("resolveAMQEnvInDir: %v", err)
+	}
+	if got.Root != "/target/session" {
+		t.Fatalf("Root = %q, want /target/session", got.Root)
+	}
+	if got := os.Getenv("AMQ_NO_UPDATE_CHECK"); got != "0" {
+		t.Fatalf("parent AMQ_NO_UPDATE_CHECK = %q, want unchanged 0", got)
+	}
+}
+
 // TestResolveAMQEnvDropsRootWhenSessionProvided covers the boundary fix
 // for the mutual-exclusion bug: amq treats --session NAME as shorthand
 // for --root .agent-mail/<name> and rejects the call when both are set.

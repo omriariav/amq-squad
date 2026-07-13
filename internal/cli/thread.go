@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v2/internal/amqexec"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 )
@@ -208,7 +209,7 @@ func runAMQThreadDefault(req threadAMQRequest) ([]byte, error) {
 		args = append(args, "--json")
 	}
 	cmd := exec.Command("amq", args...)
-	cmd.Env = envWithoutAMQIdentity(os.Environ())
+	cmd.Env = amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		detail := strings.TrimSpace(string(out))

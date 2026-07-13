@@ -205,12 +205,21 @@ func TestSendViaFakeSeamExactArgvAndCleanEnv(t *testing.T) {
 	if !reflect.DeepEqual(rec.args, m.argv()) {
 		t.Fatalf("seam argv mismatch\n got: %#v\nwant: %#v", rec.args, m.argv())
 	}
+	updateCheckCount := 0
 	for _, e := range rec.env {
 		key, _, _ := strings.Cut(e, "=")
 		switch key {
 		case "AM_ROOT", "AM_BASE_ROOT", "AM_ME":
 			t.Fatalf("child env still carries stale AMQ identity %q", e)
+		case "AMQ_NO_UPDATE_CHECK":
+			updateCheckCount++
+			if e != "AMQ_NO_UPDATE_CHECK=1" {
+				t.Fatalf("child env carries wrong update policy %q", e)
+			}
 		}
+	}
+	if updateCheckCount != 1 {
+		t.Fatalf("child env has %d AMQ_NO_UPDATE_CHECK entries, want exactly one: %#v", updateCheckCount, rec.env)
 	}
 }
 
