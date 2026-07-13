@@ -112,6 +112,7 @@ type DiscoveryNotificationSink struct {
 type DiscoveryBrief struct {
 	Path          string `json:"path"`
 	Source        string `json:"source"`
+	Goal          string `json:"goal"`
 	Provenance    string `json:"provenance"`
 	ContentDigest string `json:"content_digest"`
 }
@@ -122,6 +123,7 @@ type DiscoveryMemberPlan struct {
 	LivenessStatus      string       `json:"liveness_status"`
 	LivenessSignals     []string     `json:"liveness_signals"`
 	SavedLaunchIdentity string       `json:"saved_launch_identity"`
+	SavedTarget         string       `json:"saved_target"`
 	Blocker             string       `json:"blocker"`
 }
 

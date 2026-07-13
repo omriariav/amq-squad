@@ -330,7 +330,8 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		s.LauncherPane = ""
 		s.Goal = ""
 		s.SeedFrom = ""
-		fmt.Fprintln(out, "This wizard pane stays open; resume only opens missing agent panes. The existing brief is preserved.")
+		fmt.Fprintln(out, "This wizard pane stays open; resume only opens missing agent panes.")
+		fmt.Fprintf(out, "Brief preserved for resume: path=%s\ngoal excerpt:\n%s\nseed source=%s\n", displayValue(s.BriefPath), GoalExcerpt(s.BriefGoal), displayValue(s.BriefSeed))
 	} else {
 		if s.LauncherPane, err = promptChoice(r, out, "Launcher pane", launcherPaneChoices(s.Visibility, s.ExternalLead), defaultLauncherPane(s.LauncherPane, s.Visibility, s.ExternalLead)); err != nil {
 			return Spec{}, err
@@ -343,9 +344,26 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		}
 	}
 
+	previewCommand, liveCommand, commandErr := s.CommandForms()
+	if commandErr != nil {
+		return Spec{}, commandErr
+	}
+	goal, seed := s.Goal, s.SeedFrom
+	if s.Backend == BackendResume {
+		goal, seed = s.BriefGoal, s.BriefSeed
+	}
 	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Review")
+	fmt.Fprintf(out, "Goal excerpt:\n%s\nSeed source: %s\nPreview command: %s\nLive command: %s\n", GoalExcerpt(goal), displayValue(seed), previewCommand, liveCommand)
 	fmt.Fprintln(out, "Answers collected. Running the canonical preview next; live launch is a separate default-No decision.")
 	return s, nil
+}
+
+func displayValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "not provided"
+	}
+	return value
 }
 
 const (

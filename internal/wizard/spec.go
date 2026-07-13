@@ -7,6 +7,55 @@ import (
 	"strings"
 )
 
+// CommandForms returns the exact preview and live command pair represented by
+// the answer model. The live form differs only by the backend's explicit
+// mutation flag.
+func (s Spec) CommandForms() (string, string, error) {
+	var prefix, previewArgs, liveArgs []string
+	switch s.Backend {
+	case BackendResume:
+		args, err := s.ResumeArgs()
+		if err != nil {
+			return "", "", err
+		}
+		prefix = []string{"resume"}
+		previewArgs = args
+		liveArgs = append(append([]string(nil), args...), "--exec")
+	case BackendGlobalStart:
+		prefix = []string{"global", "start"}
+		previewArgs = s.GlobalArgs()
+		liveArgs = append(append([]string(nil), previewArgs...), "--go")
+	case BackendRunStart, "":
+		prefix = []string{"run", "start"}
+		previewArgs = s.Args()
+		liveArgs = append(append([]string(nil), previewArgs...), "--go")
+	default:
+		return "", "", fmt.Errorf("unsupported wizard backend %q", s.Backend)
+	}
+	return renderShellCommand(append(prefix, previewArgs...)...), renderShellCommand(append(prefix, liveArgs...)...), nil
+}
+
+func renderShellCommand(args ...string) string {
+	parts := []string{"amq-squad"}
+	for _, arg := range args {
+		parts = append(parts, shellQuoteReview(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuoteReview(value string) string {
+	if value == "" {
+		return "''"
+	}
+	for _, r := range value {
+		if !(r == '/' || r == '.' || r == '-' || r == '_' || r == '=' ||
+			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+		}
+	}
+	return value
+}
+
 // Backend is the canonical command family selected by the answer model. The
 // UI records it explicitly so execution never infers resume-vs-start from a
 // profile merely existing at some later point in time.
@@ -35,6 +84,9 @@ type Spec struct {
 	RecordCount                    int
 	DiscoveryFingerprint           string
 	ResumeMembers                  []SessionMemberSummary
+	BriefPath                      string
+	BriefGoal                      string
+	BriefSeed                      string
 	Roles                          string
 	Binary                         string
 	Model                          string

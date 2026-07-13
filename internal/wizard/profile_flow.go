@@ -8,6 +8,8 @@ import (
 
 const maxSavedNativeArgsDisplay = 240
 
+const maxGoalExcerptRunes = 160
+
 type ProfileBranch string
 
 const (
@@ -33,6 +35,9 @@ type SessionSummary struct {
 	Classification RunClassification
 	Fingerprint    string
 	RecordCount    int
+	BriefPath      string
+	BriefGoal      string
+	BriefSeed      string
 	Members        []SessionMemberSummary
 	Live           int
 	Restore        int
@@ -54,6 +59,7 @@ type SessionMemberSummary struct {
 	SavedModel          string
 	SavedEffort         string
 	SavedNativeArgs     []string
+	SavedTarget         string
 }
 
 func (s SessionSummary) Label() string {
@@ -131,6 +137,9 @@ func (s *Spec) SelectExistingSession(session SessionSummary) {
 	s.RestoreExisting = session.RecordCount > 0
 	s.DiscoveryFingerprint = session.Fingerprint
 	s.ResumeMembers = cloneSessionMembers(session.Members)
+	s.BriefPath = session.BriefPath
+	s.BriefGoal = session.BriefGoal
+	s.BriefSeed = session.BriefSeed
 	if changed {
 		s.clearDownstreamRunAnswers()
 		// restore the just-selected authoritative facts cleared above
@@ -143,6 +152,17 @@ func (s *Spec) SelectExistingSession(session SessionSummary) {
 		s.RestoreExisting = session.RecordCount > 0
 		s.DiscoveryFingerprint = session.Fingerprint
 		s.ResumeMembers = cloneSessionMembers(session.Members)
+		s.BriefPath = session.BriefPath
+		s.BriefGoal = session.BriefGoal
+		s.BriefSeed = session.BriefSeed
+		if s.Backend == BackendResume {
+			s.Visibility = ResumeDefaultVisibility(session.Members)
+			s.LayoutPreset = defaultLayoutPreset("", s.Visibility)
+		}
+	}
+	if s.Backend == BackendResume && strings.TrimSpace(s.Visibility) == "" {
+		s.Visibility = ResumeDefaultVisibility(session.Members)
+		s.LayoutPreset = defaultLayoutPreset("", s.Visibility)
 	}
 }
 
@@ -160,6 +180,9 @@ func (s *Spec) SelectNewSession(session string) {
 	s.RecordCount = 0
 	s.DiscoveryFingerprint = ""
 	s.ResumeMembers = nil
+	s.BriefPath = ""
+	s.BriefGoal = ""
+	s.BriefSeed = ""
 }
 
 func (s *Spec) clearProfileAndRun() {
@@ -168,6 +191,66 @@ func (s *Spec) clearProfileAndRun() {
 	s.clearFreshProfileAnswers()
 	s.clearAuthoritativeRunAnswers()
 	s.clearDownstreamRunAnswers()
+}
+
+// ResumeDefaultVisibility uses the persisted target only when every matching
+// launch record carries the same supported target. Zero records, missing
+// targets, mixed targets, and unknown targets fall back to one window per
+// agent.
+func ResumeDefaultVisibility(members []SessionMemberSummary) string {
+	target := ""
+	records := 0
+	for _, member := range members {
+		if strings.TrimSpace(member.SavedLaunchIdentity) == "" {
+			continue
+		}
+		records++
+		current := strings.TrimSpace(member.SavedTarget)
+		if current == "" || target != "" && current != target {
+			return "sibling-tabs"
+		}
+		target = current
+	}
+	if records == 0 {
+		return "sibling-tabs"
+	}
+	switch target {
+	case "current-window":
+		return "current"
+	case "new-session":
+		return "detached"
+	case "new-window":
+		return "sibling-tabs"
+	default:
+		return "sibling-tabs"
+	}
+}
+
+// GoalExcerpt returns at most two lines and 160 runes including the ellipsis.
+func GoalExcerpt(goal string) string {
+	goal = strings.ReplaceAll(goal, "\r\n", "\n")
+	goal = strings.ReplaceAll(goal, "\r", "\n")
+	lines := strings.Split(goal, "\n")
+	truncated := len(lines) > 2
+	if len(lines) > 2 {
+		lines = lines[:2]
+	}
+	value := strings.TrimSpace(strings.Join(lines, "\n"))
+	if value == "" {
+		return "not provided"
+	}
+	runes := []rune(value)
+	if len(runes) > maxGoalExcerptRunes {
+		truncated = true
+	}
+	if truncated {
+		limit := maxGoalExcerptRunes - len([]rune("..."))
+		if len(runes) > limit {
+			runes = runes[:limit]
+		}
+		return strings.TrimSpace(string(runes)) + "..."
+	}
+	return value
 }
 
 func (s *Spec) clearSelectedRun() {
@@ -185,6 +268,9 @@ func (s *Spec) clearAuthoritativeRunAnswers() {
 	s.RecordCount = 0
 	s.DiscoveryFingerprint = ""
 	s.ResumeMembers = nil
+	s.BriefPath = ""
+	s.BriefGoal = ""
+	s.BriefSeed = ""
 }
 
 func (s *Spec) clearFreshProfileAnswers() {

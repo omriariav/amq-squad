@@ -67,8 +67,48 @@ func TestExistingSessionChangeClearsDownstreamAndDerivesBackend(t *testing.T) {
 	if s.Session != "history-b" || s.SessionSource != SessionSourceLaunchHistory || s.Backend != BackendResume || !s.RestoreExisting || !s.RunExecutable {
 		t.Fatalf("authoritative session not selected: %+v", s)
 	}
-	if s.Model != "" || s.Visibility != "" || s.Goal != "" {
+	if s.Model != "" || s.Visibility != "sibling-tabs" || s.LayoutPreset != "one-window-per-agent" || s.Goal != "" {
 		t.Fatalf("session-dependent answers survived: %+v", s)
+	}
+}
+
+func TestResumePlacementDefaultsUseOnlyUnanimousSavedTargets(t *testing.T) {
+	record := func(target string) SessionMemberSummary {
+		return SessionMemberSummary{Role: target, Action: MemberActionRestore, SavedLaunchIdentity: "record-" + target, SavedTarget: target}
+	}
+	tests := []struct {
+		name    string
+		members []SessionMemberSummary
+		want    string
+	}{
+		{name: "agreed current", members: []SessionMemberSummary{record("current-window"), record("current-window")}, want: "current"},
+		{name: "agreed detached", members: []SessionMemberSummary{record("new-session")}, want: "detached"},
+		{name: "mixed", members: []SessionMemberSummary{record("current-window"), record("new-window")}, want: "sibling-tabs"},
+		{name: "absent", members: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore, SavedLaunchIdentity: "record"}}, want: "sibling-tabs"},
+		{name: "zero", members: []SessionMemberSummary{{Role: "cto", Action: MemberActionFresh}}, want: "sibling-tabs"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ResumeDefaultVisibility(tt.members); got != tt.want {
+				t.Fatalf("visibility=%q want=%q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGoalExcerptAndCommandFormsPreserveReviewEvidence(t *testing.T) {
+	goal := strings.Repeat("a", 170) + "\nsecond\nthird"
+	excerpt := GoalExcerpt(goal)
+	if len([]rune(excerpt)) > maxGoalExcerptRunes || !strings.HasSuffix(excerpt, "...") || strings.Count(excerpt, "\n") > 1 {
+		t.Fatalf("excerpt=%q runes=%d", excerpt, len([]rune(excerpt)))
+	}
+	s := Spec{Backend: BackendResume, Project: "/repo", Profile: "release", ProfileBranch: ProfileBranchExisting, Session: "s", RunExecutable: true, RecordCount: 1, RestoreExisting: true, DiscoveryFingerprint: "fp", ResumeMembers: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore}}, Visibility: "current", LayoutPreset: "lead-top"}
+	preview, live, err := s.CommandForms()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(preview, "resume --project /repo") || strings.Contains(preview, "--exec") || live != preview+" --exec" {
+		t.Fatalf("preview=%q live=%q", preview, live)
 	}
 }
 
@@ -88,12 +128,12 @@ func TestSelectedSessionAndSpecCloneDeepCopyResumeMembers(t *testing.T) {
 }
 
 func TestInvalidateExistingRunClearsPolicyAndAllDownstreamState(t *testing.T) {
-	s := Spec{Scope: "project", Project: "/repo", Profile: "release", ProfileBranch: ProfileBranchExisting, Session: "s", SessionSource: SessionSourceMemberPin, Backend: BackendResume, RunState: RunStateStopped, RunExecutable: true, RestoreExisting: true, RecordCount: 1, DiscoveryFingerprint: "fp", ResumeMembers: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore}}, Model: "cto=x", Effort: "cto=high", OperatorMode: "lead_pane", SelfOperatorLead: "cto", SelfOperatorAllow: "merge", OperatorNotifications: true, OperatorNotificationsRequested: true, OperatorNotificationsSet: true, Visibility: "current", LayoutPreset: "lead-left", LauncherPane: "keep", Goal: "g", SeedFrom: "issue:1"}
+	s := Spec{Scope: "project", Project: "/repo", Profile: "release", ProfileBranch: ProfileBranchExisting, Session: "s", SessionSource: SessionSourceMemberPin, Backend: BackendResume, RunState: RunStateStopped, RunExecutable: true, RestoreExisting: true, RecordCount: 1, DiscoveryFingerprint: "fp", ResumeMembers: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore}}, BriefPath: "/repo/brief.md", BriefGoal: "goal", BriefSeed: "issue:1", Model: "cto=x", Effort: "cto=high", OperatorMode: "lead_pane", SelfOperatorLead: "cto", SelfOperatorAllow: "merge", OperatorNotifications: true, OperatorNotificationsRequested: true, OperatorNotificationsSet: true, Visibility: "current", LayoutPreset: "lead-left", LauncherPane: "keep", Goal: "g", SeedFrom: "issue:1"}
 	s.InvalidateExistingRun()
 	if s.Scope != "project" || s.Project != "/repo" || s.Profile != "release" || s.ProfileBranch != ProfileBranchExisting {
 		t.Fatalf("invalidation lost upstream selection: %+v", s)
 	}
-	if s.Session != "" || s.Backend != "" || s.RunExecutable || s.RecordCount != 0 || len(s.ResumeMembers) != 0 || s.Model != "" || s.Effort != "" || s.OperatorMode != "" || s.OperatorNotifications || !s.OperatorNotificationsRequested || !s.OperatorNotificationsSet || s.Visibility != "" || s.LayoutPreset != "" || s.LauncherPane != "" || s.Goal != "" || s.SeedFrom != "" {
+	if s.Session != "" || s.Backend != "" || s.RunExecutable || s.RecordCount != 0 || len(s.ResumeMembers) != 0 || s.BriefPath != "" || s.BriefGoal != "" || s.BriefSeed != "" || s.Model != "" || s.Effort != "" || s.OperatorMode != "" || s.OperatorNotifications || !s.OperatorNotificationsRequested || !s.OperatorNotificationsSet || s.Visibility != "" || s.LayoutPreset != "" || s.LauncherPane != "" || s.Goal != "" || s.SeedFrom != "" {
 		t.Fatalf("invalidation retained stale state: %+v", s)
 	}
 	s.SelectExistingSession(SessionSummary{Name: "fresh", Fingerprint: "new", Members: []SessionMemberSummary{{Role: "cto", Action: MemberActionFresh}}, Classification: RunClassification{State: RunStateNotStarted, Backend: BackendRunStart, Executable: true}})

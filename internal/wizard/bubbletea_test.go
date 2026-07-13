@@ -28,7 +28,7 @@ func TestBubbleModelStartsWithProjectDefaultsAndPhaseRail(t *testing.T) {
 	}
 	view := m.View()
 	for _, want := range []string{
-		"run start control deck", "◆ 1 Project", "○ 2 Team", "Choose the project root", "/repo",
+		"run start control deck", "◆ 1 Scope", "○ 2 Profile & run", "○ 3 Team", "○ 4 Run controls", "○ 5 Brief", "○ 6 Review", "Choose the project root", "/repo",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("initial view missing %q:\n%s", want, view)
@@ -280,7 +280,7 @@ func TestBubbleResumeActionScopedControls(t *testing.T) {
 			if m.stage != stageTopology || m.spec.Model != tt.model || m.spec.Effort != "" {
 				t.Fatalf("post-member state stage=%v spec=%+v", m.stage, m.spec)
 			}
-			for _, wantStage := range []bubbleStage{stageLayoutPreset, stageOperator, stageOperatorNotifications, stageConfirm} {
+			for _, wantStage := range []bubbleStage{stageLayoutPreset, stageOperator, stageOperatorNotifications, stageResumeBrief, stageConfirm} {
 				m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 				if m.stage != wantStage {
 					t.Fatalf("stage=%v want=%v", m.stage, wantStage)
@@ -290,6 +290,72 @@ func TestBubbleResumeActionScopedControls(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestBubbleResumeUsesAgreedSavedPlacementAndShowsPreservedReviewEvidence(t *testing.T) {
+	members := []SessionMemberSummary{
+		{Role: "cto", Binary: "codex", Action: MemberActionRestore, SavedLaunchIdentity: "a", SavedTarget: "current-window"},
+		{Role: "qa", Binary: "codex", Action: MemberActionRestore, SavedLaunchIdentity: "b", SavedTarget: "current-window"},
+	}
+	summary := SessionSummary{Name: "s", Source: SessionSourceLaunchHistory, Fingerprint: "fp", RecordCount: 2, BriefPath: "/repo/brief.md", BriefGoal: "line one\nline two", BriefSeed: "issue:431", Members: members, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}}
+	profile := ProfileSummary{Name: "release", MemberCount: 2, OperatorMode: "lead_pane", Members: []MemberSummary{{Role: "cto", Binary: "codex"}, {Role: "qa", Binary: "codex"}}, Sessions: []SessionSummary{summary}}
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+		return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	for range members {
+		m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	}
+	if m.stage != stageTopology || m.spec.Visibility != "current" || m.cursor != 1 {
+		t.Fatalf("saved placement stage=%v visibility=%q cursor=%d", m.stage, m.spec.Visibility, m.cursor)
+	}
+	for _, want := range []string{"/repo/brief.md", "line one\nline two", "issue:431", "amq-squad resume", "--target current-window", "--exec"} {
+		if !strings.Contains(m.summary(), want) {
+			t.Fatalf("summary missing %q:\n%s", want, m.summary())
+		}
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.spec.Visibility != "sibling-tabs" {
+		t.Fatalf("explicit placement override=%q", m.spec.Visibility)
+	}
+}
+
+func TestBubblePhaseRailsAreScopeSpecific(t *testing.T) {
+	project := BubbleModel{spec: Spec{Scope: "project"}}
+	if got, want := strings.Join(project.phaseLabels(), "|"), "Scope|Profile & run|Team|Run controls|Brief|Review"; got != want {
+		t.Fatalf("project rail=%q", got)
+	}
+	for _, branch := range []struct {
+		name   string
+		stages []bubbleStage
+	}{
+		{name: "project existing", stages: []bubbleStage{stageProject, stageProfile, stageResumeMember, stageTopology, stageResumeBrief, stageConfirm}},
+		{name: "project new", stages: []bubbleStage{stageProject, stageNewProfile, stageRoleBinary, stageOperator, stageGoal, stageConfirm}},
+	} {
+		t.Run(branch.name, func(t *testing.T) {
+			for want, stage := range branch.stages {
+				project.stage = stage
+				if got := project.phaseIndex(); got != want {
+					t.Fatalf("stage=%v index=%d want=%d", stage, got, want)
+				}
+			}
+		})
+	}
+	global := BubbleModel{spec: Spec{Scope: "global"}}
+	if got, want := strings.Join(global.phaseLabels(), "|"), "Scope|Agent|Run controls|Review"; got != want {
+		t.Fatalf("global rail=%q", got)
+	}
+	for want, stage := range []bubbleStage{stageProject, stageRoleBinary, stageTopology, stageConfirm} {
+		global.stage = stage
+		if got := global.phaseIndex(); got != want {
+			t.Fatalf("global stage=%v index=%d want=%d", stage, got, want)
+		}
 	}
 }
 

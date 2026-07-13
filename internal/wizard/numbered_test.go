@@ -334,7 +334,7 @@ func TestRunNumberedExistingProfileWithoutCLIDiscoveryFailsClosed(t *testing.T) 
 func TestRunNumberedMultipleSessionsUseKnownRunListAndComposeResume(t *testing.T) {
 	profile := ProfileSummary{Name: "release", MemberCount: 2, Members: []MemberSummary{{Role: "cto", Binary: "codex"}, {Role: "qa", Binary: "codex"}}, Sessions: []SessionSummary{
 		{Name: "run-a", Source: SessionSourceLaunchHistory, Classification: RunClassification{State: RunStateNotStarted, Backend: BackendRunStart, Executable: true}, Fresh: 2},
-		{Name: "run-b", Source: SessionSourceLaunchHistory, Fingerprint: "run-b-fp", RecordCount: 2, Members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Restore: 2},
+		{Name: "run-b", Source: SessionSourceLaunchHistory, Fingerprint: "run-b-fp", RecordCount: 2, BriefPath: "/repo/.amq-squad/briefs/release/run-b.md", BriefGoal: "First goal line\nSecond goal line", BriefSeed: "gh:owner/repo#431", Members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Restore: 2},
 	}}
 	var out bytes.Buffer
 	got, err := RunNumbered(strings.NewReader("\n\n2\n\n\n"), &out, NumberedOptions{
@@ -349,10 +349,36 @@ func TestRunNumberedMultipleSessionsUseKnownRunListAndComposeResume(t *testing.T
 	if got.Session != "run-b" || got.Backend != BackendResume || got.RunState != RunStateStopped || got.DiscoveryFingerprint != "run-b-fp" {
 		t.Fatalf("known-session selection = %+v", got)
 	}
-	for _, want := range []string{"Which existing run do you want?", "run-a · launch_history · not started", "run-b · launch_history · stopped", "restores saved launch", "existing brief is preserved"} {
+	for _, want := range []string{"Which existing run do you want?", "run-a · launch_history · not started", "run-b · launch_history · stopped", "restores saved launch", "Brief preserved for resume", "/repo/.amq-squad/briefs/release/run-b.md", "First goal line\nSecond goal line", "gh:owner/repo#431", "Preview command:", "Live command:", "--exec"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestRunNumberedResumePlacementDefaultsAndExplicitOverride(t *testing.T) {
+	members := []SessionMemberSummary{
+		{Role: "cto", Binary: "codex", Action: MemberActionRestore, SavedLaunchIdentity: "a", SavedTarget: "current-window"},
+		{Role: "qa", Binary: "codex", Action: MemberActionRestore, SavedLaunchIdentity: "b", SavedTarget: "current-window"},
+	}
+	summary := SessionSummary{Name: "s", Source: SessionSourceLaunchHistory, Fingerprint: "fp", RecordCount: 2, Members: members, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}}
+	profile := ProfileSummary{Name: "release", MemberCount: 2, Members: []MemberSummary{{Role: "cto", Binary: "codex"}, {Role: "qa", Binary: "codex"}}, Sessions: []SessionSummary{summary}}
+	for _, tt := range []struct{ name, input, visibility, target string }{
+		{name: "agreed saved target", input: "\n\n\n\n", visibility: "current", target: "--target current-window"},
+		{name: "explicit override", input: "\n\n1\n\n", visibility: "sibling-tabs", target: "--target new-window"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			got, err := RunNumbered(strings.NewReader(tt.input), &out, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+				return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Visibility != tt.visibility || !strings.Contains(out.String(), tt.target) {
+				t.Fatalf("visibility=%q output=%s", got.Visibility, out.String())
+			}
+		})
 	}
 }
 

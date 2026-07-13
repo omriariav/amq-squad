@@ -326,6 +326,9 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 	}
 	briefPath := briefPathForProfile(t.Project, profile, session)
 	fingerprint.Brief = runStartWizardBriefDiscovery(briefPath)
+	summary.BriefPath = fingerprint.Brief.Path
+	summary.BriefGoal = fingerprint.Brief.Goal
+	summary.BriefSeed = fingerprint.Brief.Source
 	ns := squadnamespace.Resolve(t.Project, profile, session)
 	_, stateErr := os.Stat(ns.AMQRoot)
 	fingerprint.NamespaceFacts = append(fingerprint.NamespaceFacts, runwizard.DiscoveryNamespaceFact{Profile: profile, Session: session, AMQRoot: ns.AMQRoot, DurableState: stateErr == nil, ProfilePinsSession: runStartPinnedSession(t) == session})
@@ -376,6 +379,9 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 			row.SavedEffort = plan.Saved.Effort
 			row.SavedNativeArgs = append([]string(nil), plan.Saved.NativeArgs...)
 		}
+		if plan.Tmux != nil {
+			row.SavedTarget = plan.Tmux.Target
+		}
 		summary.Members = append(summary.Members, row)
 		fingerprint.MemberPlans = append(fingerprint.MemberPlans, runStartWizardDiscoveryMemberPlan(plan, action))
 	}
@@ -388,6 +394,9 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 
 func runStartWizardDiscoveryMemberPlan(plan resumePlan, action runwizard.MemberAction) runwizard.DiscoveryMemberPlan {
 	evidence := runwizard.DiscoveryMemberPlan{Role: plan.Role, Action: action, SavedLaunchIdentity: plan.SavedLaunchIdentity, Blocker: plan.Note}
+	if plan.Tmux != nil {
+		evidence.SavedTarget = plan.Tmux.Target
+	}
 	if plan.Liveness != nil {
 		evidence.LivenessStatus = string(plan.Liveness.Status)
 		if payload, err := json.Marshal(plan.Liveness); err == nil {
@@ -405,6 +414,7 @@ func runStartWizardBriefDiscovery(path string) runwizard.DiscoveryBrief {
 	}
 	digest := sha256.Sum256(body)
 	brief.ContentDigest = hex.EncodeToString(digest[:])
+	brief.Goal = runStartWizardBriefGoal(string(body))
 	lines := strings.Split(string(body), "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
 		return brief
@@ -428,6 +438,29 @@ func runStartWizardBriefDiscovery(path string) runwizard.DiscoveryBrief {
 	}
 	brief.Provenance = strings.Join(provenance, "|")
 	return brief
+}
+
+func runStartWizardBriefGoal(body string) string {
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	inGoal := false
+	var goal []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+			if inGoal {
+				break
+			}
+			if strings.EqualFold(heading, "goal") {
+				inGoal = true
+			}
+			continue
+		}
+		if inGoal {
+			goal = append(goal, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(goal, "\n"))
 }
 
 func runStartPinnedSession(t team.Team) string {

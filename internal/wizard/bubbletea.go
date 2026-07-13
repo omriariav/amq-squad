@@ -39,6 +39,7 @@ const (
 	stageLauncherPane
 	stageGoal
 	stageSeed
+	stageResumeBrief
 	stageConfirm
 )
 
@@ -234,7 +235,7 @@ func (m BubbleModel) View() string {
 
 func (m BubbleModel) renderRail() string {
 	current := m.phaseIndex()
-	labels := []string{"Project", "Team", "Topology", "Goal", "Review"}
+	labels := m.phaseLabels()
 	parts := make([]string, 0, len(labels))
 	for i, label := range labels {
 		marker := "○"
@@ -350,6 +351,8 @@ func (m BubbleModel) title() string {
 		return "Optional goal text"
 	case stageSeed:
 		return "Optional brief source"
+	case stageResumeBrief:
+		return "Brief preserved for resume"
 	case stageConfirm:
 		return "Review answers before canonical preview"
 	default:
@@ -431,6 +434,8 @@ func (m BubbleModel) note() string {
 		return "Enter collects these answers and runs preview. Live launch is a later default-No prompt."
 	case stageSeed:
 		return "Accepted forms: file:path · issue:393 · gh:owner/repo#393"
+	case stageResumeBrief:
+		return fmt.Sprintf("Resume keeps the existing brief unchanged. Path=%s · goal excerpt=%s · seed=%s", displayValue(m.spec.BriefPath), GoalExcerpt(m.spec.BriefGoal), displayValue(m.spec.BriefSeed))
 	}
 	return ""
 }
@@ -480,6 +485,17 @@ func (m BubbleModel) summary() string {
 		parts = append(parts, "Launcher  kept · resume opens only missing members")
 	} else {
 		parts = append(parts, "Launcher  "+defaultString(m.spec.LauncherPane, "legacy keep"))
+	}
+	goal, seed := m.spec.Goal, m.spec.SeedFrom
+	if m.spec.Backend == BackendResume {
+		goal, seed = m.spec.BriefGoal, m.spec.BriefSeed
+		parts = append(parts, "Brief     "+displayValue(m.spec.BriefPath)+" (preserved)")
+	}
+	parts = append(parts, "Goal      "+GoalExcerpt(goal), "Seed      "+displayValue(seed))
+	if previewCommand, liveCommand, err := m.spec.CommandForms(); err == nil {
+		parts = append(parts, "Preview   "+previewCommand, "Live      "+liveCommand)
+	} else {
+		parts = append(parts, "Commands  unavailable: "+err.Error())
 	}
 	parts = append(parts, "", TopologyPreview(m.spec.Visibility))
 	return strings.Join(parts, "\n")
@@ -614,6 +630,8 @@ func (m BubbleModel) choices() []choice {
 		return []choice{{value: "close-after-start", label: "Close after successful start"}, {value: "keep", label: "Keep this launcher pane"}}
 	case stageConfirm:
 		return []choice{{value: "preview", label: "Run canonical preview, then decide launch separately"}}
+	case stageResumeBrief:
+		return []choice{{value: "continue", label: "Continue with the preserved brief"}}
 	default:
 		return nil
 	}
@@ -933,7 +951,7 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 			m.spec.LauncherPane = ""
 			m.spec.Goal = ""
 			m.spec.SeedFrom = ""
-			m.transition(stageConfirm)
+			m.transition(stageResumeBrief)
 		} else {
 			m.transition(stageLauncherPane)
 		}
@@ -946,6 +964,8 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 	case stageLauncherPane:
 		m.spec.LauncherPane = selected
 		m.transition(stageGoal)
+	case stageResumeBrief:
+		m.transition(stageConfirm)
 	case stageConfirm:
 		m.done = true
 		return m, tea.Quit
@@ -1114,18 +1134,39 @@ func snapshotCompatible(snapshot bubbleSnapshot, current ProjectContext) bool {
 }
 
 func (m BubbleModel) phaseIndex() int {
+	if strings.EqualFold(m.spec.Scope, "global") {
+		switch m.stage {
+		case stageProject:
+			return 0
+		case stageRoles, stageRoleBinary, stageRoleModel, stageRoleModelCustom, stageRoleEffort:
+			return 1
+		case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane, stageGoal, stageSeed:
+			return 2
+		default:
+			return 3
+		}
+	}
 	switch m.stage {
 	case stageProject:
 		return 0
-	case stageProfile, stageNewProfile, stageExistingSession, stageSession, stageExistingOverride, stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageResumeMember, stageResumeModelCustom, stageRoles, stageRoleBinary, stageRoleModel, stageRoleModelCustom, stageRoleEffort, stageLead, stageLeadMode:
+	case stageProfile, stageNewProfile, stageExistingSession, stageSession:
 		return 1
-	case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane:
+	case stageExistingOverride, stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageResumeMember, stageResumeModelCustom, stageRoles, stageRoleBinary, stageRoleModel, stageRoleModelCustom, stageRoleEffort, stageLead, stageLeadMode:
 		return 2
-	case stageGoal, stageSeed:
+	case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane:
 		return 3
-	default:
+	case stageGoal, stageSeed, stageResumeBrief:
 		return 4
+	default:
+		return 5
 	}
+}
+
+func (m BubbleModel) phaseLabels() []string {
+	if strings.EqualFold(m.spec.Scope, "global") {
+		return []string{"Scope", "Agent", "Run controls", "Review"}
+	}
+	return []string{"Scope", "Profile & run", "Team", "Run controls", "Brief", "Review"}
 }
 
 func operatorContractSummary(mode string) string {
