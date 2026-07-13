@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -28,11 +29,15 @@ func TestBubbleModelStartsWithProjectDefaultsAndPhaseRail(t *testing.T) {
 	}
 	view := m.View()
 	for _, want := range []string{
-		"run start control deck", "◆ 1 Scope", "○ 2 Profile & run", "○ 3 Team", "○ 4 Run controls", "○ 5 Brief", "○ 6 Review", "Choose the project root", "/repo",
+		"run start control deck", "◆ 1 Scope", "○ 2 Profile & run", "○ 3 Team", "○ 4 Run controls", "○ 5 Brief", "○ 6 Review", "What do you want to run?", "Project squad", "Global / NOC orchestrator",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("initial view missing %q:\n%s", want, view)
 		}
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageProject || m.input.Value() != "/repo" || !strings.Contains(m.View(), "Which project owns this squad?") {
+		t.Fatalf("project scope did not enter the project screen: stage=%v input=%q\n%s", m.stage, m.input.Value(), m.View())
 	}
 }
 
@@ -78,6 +83,7 @@ func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePr
 	if err != nil {
 		t.Fatal(err)
 	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // scope
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // project
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // profile
 	if m.stage != stageExistingOverride {
@@ -160,6 +166,7 @@ func TestBubbleModelPinnedSessionIsDerivedWithoutFreeText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // scope
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // project
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // profile: default
 	if m.stage != stageExistingOverride || m.spec.Session != "issue-136" {
@@ -188,6 +195,7 @@ func TestWizardAdaptersConsumeSameSuggestedFirstSummary(t *testing.T) {
 	}
 	bubble = updateBubble(t, bubble, tea.KeyMsg{Type: tea.KeyEnter})
 	bubble = updateBubble(t, bubble, tea.KeyMsg{Type: tea.KeyEnter})
+	bubble = updateBubble(t, bubble, tea.KeyMsg{Type: tea.KeyEnter})
 	for name, got := range map[string]Spec{"numbered": numbered, "bubble": bubble.spec} {
 		if got.Session != summary.Name || got.SessionSource != summary.Source || got.DiscoveryFingerprint != summary.Fingerprint || got.RunState != summary.Classification.State || got.Backend != summary.Classification.Backend || got.RunExecutable != summary.Classification.Executable {
 			t.Fatalf("%s adapter did not consume exact summary: %+v want=%+v", name, got, summary)
@@ -201,6 +209,7 @@ func TestBubbleExistingProfileWithoutCLIDiscoveryFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if !m.done || m.err == nil || m.spec.RunState != RunStateBlocked || m.spec.RunExecutable || m.spec.Backend != "" || m.spec.DiscoveryFingerprint != "" {
@@ -219,6 +228,7 @@ func TestBubbleMultipleKnownSessionsUseListAndBackDropsStaleRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // scope
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // project
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // profile
 	if m.stage != stageExistingSession || m.isTextStage() {
@@ -268,6 +278,7 @@ func TestBubbleResumeActionScopedControls(t *testing.T) {
 			}
 			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			for _, member := range tt.members {
 				if m.stage != stageResumeMember || m.currentResumeMember().Role != member.Role {
 					t.Fatalf("member stage=%v member=%+v", m.stage, m.currentResumeMember())
@@ -306,6 +317,7 @@ func TestBubbleResumeUsesAgreedSavedPlacementAndShowsPreservedReviewEvidence(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	for range members {
@@ -347,15 +359,67 @@ func TestBubblePhaseRailsAreScopeSpecific(t *testing.T) {
 			}
 		})
 	}
-	global := BubbleModel{spec: Spec{Scope: "global"}}
-	if got, want := strings.Join(global.phaseLabels(), "|"), "Scope|Agent|Run controls|Review"; got != want {
-		t.Fatalf("global rail=%q", got)
+}
+
+func TestGlobalBranchRunsThroughBothRealAdaptersToIdenticalReview(t *testing.T) {
+	defaults := Spec{Scope: "global", GlobalRoot: "/neutral", GlobalAgent: "claude", GlobalWindow: "global-orch"}
+	initial, err := NewBubbleModel(NumberedOptions{Defaults: defaults})
+	if err != nil {
+		t.Fatal(err)
 	}
-	for want, stage := range []bubbleStage{stageProject, stageRoleBinary, stageTopology, stageConfirm} {
-		global.stage = stage
-		if got := global.phaseIndex(); got != want {
-			t.Fatalf("global stage=%v index=%d want=%d", stage, got, want)
+	program := tea.NewProgram(initial, tea.WithInput(nil), tea.WithOutput(&bytes.Buffer{}), tea.WithoutRenderer())
+	type programResult struct {
+		model tea.Model
+		err   error
+	}
+	done := make(chan programResult, 1)
+	go func() {
+		model, runErr := program.Run()
+		done <- programResult{model: model, err: runErr}
+	}()
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyEnter},
+		{Type: tea.KeyEnter}, {Type: tea.KeyEnter}, {Type: tea.KeyEnter}, {Type: tea.KeyEnter},
+		{Type: tea.KeyEnter}, {Type: tea.KeyEnter}, {Type: tea.KeyEnter},
+	} {
+		program.Send(key)
+	}
+	completed := <-done
+	if completed.err != nil {
+		t.Fatal(completed.err)
+	}
+	bubbleModel, ok := completed.model.(BubbleModel)
+	if !ok {
+		t.Fatalf("bubble adapter returned %T", completed.model)
+	}
+	bubble := BubbleResult{Spec: bubbleModel.spec, Cancelled: bubbleModel.cancelled}
+
+	var numberedOut bytes.Buffer
+	numbered, err := RunNumbered(strings.NewReader("2\n\n\n\n\n\n\n"), &numberedOut, NumberedOptions{Defaults: defaults})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(bubble.Spec, numbered) {
+		t.Fatalf("adapter specs differ:\nbubble=%+v\nnumbered=%+v", bubble.Spec, numbered)
+	}
+	bubblePreview, bubbleLive, err := bubble.Spec.CommandForms()
+	if err != nil {
+		t.Fatal(err)
+	}
+	numberedPreview, numberedLive, err := numbered.CommandForms()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bubblePreview != numberedPreview || bubbleLive != numberedLive {
+		t.Fatalf("command forms differ: bubble=(%q, %q) numbered=(%q, %q)", bubblePreview, bubbleLive, numberedPreview, numberedLive)
+	}
+	for _, want := range []string{"Review", bubblePreview, bubbleLive, "owns no wake mailbox"} {
+		if !strings.Contains(numberedOut.String(), want) {
+			t.Fatalf("numbered global review missing %q:\n%s", want, numberedOut.String())
 		}
+	}
+	if !strings.Contains(bubble.Spec.Scope, "global") || bubble.Spec.Backend != BackendGlobalStart {
+		t.Fatalf("bubble did not complete the global backend: %+v", bubble.Spec)
 	}
 }
 
@@ -370,6 +434,7 @@ func TestBubbleRunningAndBlockedExistingRunsRemainNonExecutable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			if !m.done || m.spec.RunExecutable || m.stage == stageConfirm {
@@ -402,14 +467,14 @@ func TestBubbleBackRefreshRejectsChangedDiscoveryAndRetainsB(t *testing.T) {
 	ctxB := bubbleBackContext("reviewed-b", "context-b")
 	m := bubbleAtExistingModel(t, func(string) (ProjectContext, error) {
 		calls++
-		if calls < 3 {
+		if calls < 2 {
 			return ctxA, nil
 		}
 		return ctxB, nil
 	})
 	m.spec.Goal, m.spec.Visibility, m.spec.Model = "stale goal", "current", "cto=stale"
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if calls != 3 || m.stage != stageProfile || m.ctx.OriginSlug != "context-b" || m.spec.Session != "" || m.spec.Backend != "" || m.spec.RunExecutable || m.spec.Goal != "" || m.spec.Visibility != "" || m.spec.Model != "" || m.spec.OperatorMode != "" || m.err == nil || len(m.history) != 0 || m.existingIndex != 0 {
+	if calls != 2 || m.stage != stageProfile || m.ctx.OriginSlug != "context-b" || m.spec.Session != "" || m.spec.Backend != "" || m.spec.RunExecutable || m.spec.Goal != "" || m.spec.Visibility != "" || m.spec.Model != "" || m.spec.OperatorMode != "" || m.err == nil || len(m.history) != 0 || m.existingIndex != 0 {
 		t.Fatalf("changed refresh was not rejected safely: calls=%d stage=%v ctx=%+v spec=%+v err=%v history=%d index=%d", calls, m.stage, m.ctx, m.spec, m.err, len(m.history), m.existingIndex)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
@@ -425,11 +490,11 @@ func TestBubbleBackRefreshRestoresCompatibleSnapshotAndRetainsFreshA(t *testing.
 		return bubbleBackContext("reviewed-a", fmt.Sprintf("context-a-%d", calls)), nil
 	})
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if calls != 3 || m.stage != stageExistingOverride || m.spec.Session != "s" || m.spec.DiscoveryFingerprint != "reviewed-a" || m.ctx.OriginSlug != "context-a-3" || m.existingIndex != 0 || m.err != nil {
+	if calls != 2 || m.stage != stageExistingOverride || m.spec.Session != "s" || m.spec.DiscoveryFingerprint != "reviewed-a" || m.ctx.OriginSlug != "context-a-2" || m.existingIndex != 0 || m.err != nil {
 		t.Fatalf("compatible refresh did not restore snapshot: calls=%d stage=%v ctx=%+v spec=%+v err=%v", calls, m.stage, m.ctx, m.spec, m.err)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.ctx.OriginSlug != "context-a-3" {
+	if m.ctx.OriginSlug != "context-a-2" {
 		t.Fatalf("subsequent Back resurrected pre-refresh context: %+v", m.ctx)
 	}
 }
@@ -438,18 +503,18 @@ func TestBubbleBackRefreshErrorRejectsAndRetainsLastKnownContext(t *testing.T) {
 	calls := 0
 	m := bubbleAtExistingModel(t, func(string) (ProjectContext, error) {
 		calls++
-		if calls == 3 {
+		if calls == 2 {
 			return ProjectContext{}, errors.New("discovery unavailable")
 		}
 		return bubbleBackContext("reviewed-a", fmt.Sprintf("context-a-%d", calls)), nil
 	})
 	m.spec.Goal, m.spec.OperatorMode = "stale goal", "lead_pane"
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if calls != 3 || m.stage != stageProject || m.ctx.OriginSlug != "context-a-2" || m.spec.Session != "" || m.spec.Goal != "" || m.spec.OperatorMode != "" || m.err == nil || !strings.Contains(m.err.Error(), "discovery unavailable") || len(m.history) != 0 || m.input.Value() != "/repo" {
+	if calls != 2 || m.stage != stageProject || m.ctx.OriginSlug != "context-a-1" || m.spec.Session != "" || m.spec.Goal != "" || m.spec.OperatorMode != "" || m.err == nil || !strings.Contains(m.err.Error(), "discovery unavailable") || len(m.history) != 0 || m.input.Value() != "/repo" {
 		t.Fatalf("refresh error did not fail closed: calls=%d stage=%v ctx=%+v spec=%+v err=%v history=%d input=%q", calls, m.stage, m.ctx, m.spec, m.err, len(m.history), m.input.Value())
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.ctx.OriginSlug != "context-a-2" {
+	if m.ctx.OriginSlug != "context-a-1" {
 		t.Fatalf("subsequent Back changed last-known context: %+v", m.ctx)
 	}
 }
@@ -497,6 +562,7 @@ func bubbleAtExistingModel(t *testing.T, inspect func(string) (ProjectContext, e
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageExistingModel {
@@ -512,6 +578,7 @@ func TestBubbleNewProfileUsesProfileAndSessionSuggestions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m.cursor = len(m.choices()) - 1
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -540,6 +607,7 @@ func TestBubbleFreshAndNamedOnlyProjectsUseSingleNewProfilePath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			if len(m.choices()) != len(tc.profiles)+1 || m.choices()[len(m.choices())-1].value != "__create__" {
 				t.Fatalf("profile choices include a synthetic fresh row: %+v", m.choices())
@@ -573,7 +641,7 @@ func TestBubbleModelHydratesEnabledAuthoritativeNotifications(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range 5 { // project, profile, session, topology, layout
+	for range 6 { // scope, project, profile, session, topology, layout
 		m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	}
 	if m.stage != stageOperator || m.spec.OperatorMode != "noc" || !m.spec.OperatorNotifications {
@@ -638,6 +706,8 @@ func TestBubbleExistingSelfOperatorShowsAuthoritativePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m.existingIndex = 0
 	m.stage = stageOperator
 	m.configureStage()
@@ -701,13 +771,14 @@ func TestBubbleModelBackRestoresProjectContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m.input.SetValue("/two")
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.ctx.OriginSlug != "two" {
 		t.Fatalf("new context = %+v", m.ctx)
 	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.stage != stageProject || m.spec.Project != "/one" || m.ctx.OriginSlug != "one" || m.input.Value() != "/two" {
+	if m.stage != stageProject || m.spec.Project != "/one" || m.ctx.OriginSlug != "" || m.input.Value() != "/two" {
 		t.Fatalf("restored project state = stage %v spec %+v ctx %+v input %q", m.stage, m.spec, m.ctx, m.input.Value())
 	}
 }

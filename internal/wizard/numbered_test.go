@@ -82,7 +82,7 @@ func TestRunNumberedAcceptsNumberedChoices(t *testing.T) {
 		"",  // goal
 		"",  // seed
 	}, "\n") + "\n"
-	got, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &bytes.Buffer{}, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
 		ProfileExists: func(string, string) bool { return false },
 	})
@@ -109,7 +109,7 @@ func TestRunNumberedReusesCallerReaderAndPreservesFollowingConsent(t *testing.T)
 		"", "", "", "", "", "", "", "", "", // lead through seed
 		"YES",
 	}
-	reader := bufio.NewReader(strings.NewReader(strings.Join(answers, "\n") + "\n"))
+	reader := bufio.NewReader(strings.NewReader("\n" + strings.Join(answers, "\n") + "\n"))
 	_, err := RunNumbered(reader, &bytes.Buffer{}, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
 		ProfileExists: func(string, string) bool { return false },
@@ -128,7 +128,7 @@ func TestRunNumberedReusesCallerReaderAndPreservesFollowingConsent(t *testing.T)
 
 func TestRunNumberedExistingProfileKeepsRosterAuthoritative(t *testing.T) {
 	input := strings.Repeat("\n", 8)
-	got, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &bytes.Buffer{}, NumberedOptions{
 		Defaults: Spec{
 			Project:    "/repo",
 			Profile:    "review",
@@ -155,7 +155,7 @@ func TestRunNumberedRejectsUnknownChoice(t *testing.T) {
 	answers := make([]string, 15)
 	answers[14] = "99"
 	input := strings.Join(answers, "\n") + "\n"
-	_, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
+	_, err := RunNumbered(strings.NewReader("\n"+input), &bytes.Buffer{}, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
 		ProfileExists: func(string, string) bool { return false },
 	})
@@ -177,7 +177,7 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 		"",  // seed
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := RunNumbered(strings.NewReader(input), &out, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &out, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Visibility: "sibling-tabs"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{
@@ -227,7 +227,7 @@ func TestRunNumberedOffersModelListWithCustomEscape(t *testing.T) {
 		"",    // seed
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := RunNumbered(strings.NewReader(input), &out, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &out, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
 		ProfileExists: func(string, string) bool { return false },
 	})
@@ -252,7 +252,7 @@ func TestRunNumberedOffersModelListWithCustomEscape(t *testing.T) {
 		// notifications, launcher, goal, seed
 		"", "", "", "", "", "", "", "", "", "",
 	}, "\n") + "\n"
-	got, err = RunNumbered(strings.NewReader(custom), &bytes.Buffer{}, NumberedOptions{
+	got, err = RunNumbered(strings.NewReader("\n"+custom), &bytes.Buffer{}, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
 		ProfileExists: func(string, string) bool { return false },
 	})
@@ -276,7 +276,7 @@ func TestRunNumberedDerivesPinnedSessionWithoutPrompt(t *testing.T) {
 		"", // seed
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := RunNumbered(strings.NewReader(input), &out, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &out, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Visibility: "sibling-tabs"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{
@@ -320,7 +320,7 @@ func TestRunNumberedNoSessionProfileUsesSuggestedFirstRun(t *testing.T) {
 }
 
 func TestRunNumberedExistingProfileWithoutCLIDiscoveryFailsClosed(t *testing.T) {
-	_, err := RunNumbered(strings.NewReader("\n\n"), &bytes.Buffer{}, NumberedOptions{
+	_, err := RunNumbered(strings.NewReader("\n\n\n"), &bytes.Buffer{}, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "review"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", SessionSuggestion: "issue-444", Profiles: []ProfileSummary{{Name: "review", MemberCount: 1}}}, nil
@@ -337,7 +337,7 @@ func TestRunNumberedMultipleSessionsUseKnownRunListAndComposeResume(t *testing.T
 		{Name: "run-b", Source: SessionSourceLaunchHistory, Fingerprint: "run-b-fp", RecordCount: 2, BriefPath: "/repo/.amq-squad/briefs/release/run-b.md", BriefGoal: "First goal line\nSecond goal line", BriefSeed: "gh:owner/repo#431", Members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Restore: 2},
 	}}
 	var out bytes.Buffer
-	got, err := RunNumbered(strings.NewReader("\n\n2\n\n\n"), &out, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n\n\n2\n\n\n"), &out, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "release"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
@@ -369,7 +369,7 @@ func TestRunNumberedResumePlacementDefaultsAndExplicitOverride(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
-			got, err := RunNumbered(strings.NewReader(tt.input), &out, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+			got, err := RunNumbered(strings.NewReader("\n"+tt.input), &out, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
 				return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
 			}})
 			if err != nil {
@@ -405,7 +405,7 @@ func TestRunNumberedResumeActionScopedControls(t *testing.T) {
 			}
 			profile := ProfileSummary{Name: "release", MemberCount: len(tt.members), Members: profileMembers, Sessions: []SessionSummary{summary}}
 			var out bytes.Buffer
-			got, err := RunNumbered(strings.NewReader(tt.input), &out, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+			got, err := RunNumbered(strings.NewReader("\n"+tt.input), &out, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
 				return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
 			}})
 			if err != nil {
@@ -430,7 +430,7 @@ func TestRunNumberedRunningAndBlockedExistingRunsRemainNonExecutable(t *testing.
 			summary := SessionSummary{Name: "s", Source: SessionSourceMemberPin, Fingerprint: "fp", Classification: RunClassification{State: state}}
 			profile := ProfileSummary{Name: "release", MemberCount: 1, Members: []MemberSummary{{Role: "cto", Binary: "codex"}}, Sessions: []SessionSummary{summary}}
 			var out bytes.Buffer
-			got, err := RunNumbered(strings.NewReader("\n\n"), &out, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+			got, err := RunNumbered(strings.NewReader("\n\n\n"), &out, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
 				return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
 			}})
 			if err != nil {
@@ -445,7 +445,7 @@ func TestRunNumberedRunningAndBlockedExistingRunsRemainNonExecutable(t *testing.
 
 func TestRunNumberedUnknownProfilePrefillDefaultsToCreate(t *testing.T) {
 	input := strings.Repeat("\n", 30)
-	got, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &bytes.Buffer{}, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "brand-new", Session: "explicit-session"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", SessionSuggestion: "suggested-session", NewProfileSuggestion: "squad-suggested-session", Profiles: []ProfileSummary{{Name: "release", MemberCount: 1, PinnedSession: "main"}}}, nil
@@ -511,7 +511,7 @@ func TestRunNumberedExistingProfileCollectsLaunchOnlyOverrides(t *testing.T) {
 		Name: "review", MemberCount: 1, PinnedSession: "review-work",
 		Members: []MemberSummary{{Role: "cto", Binary: "codex", Model: "stored-model", Effort: "low"}}, Sessions: []SessionSummary{discoveredFreshSession("review-work", SessionSourceMemberPin, 1)},
 	}
-	got, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &bytes.Buffer{}, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil

@@ -102,7 +102,9 @@ type Spec struct {
 	Lead                           string
 	LeadMode                       string
 	Visibility                     string
+	VisibilityExplicit             bool
 	LayoutPreset                   string
+	LayoutExplicit                 bool
 	LauncherPane                   string
 	ExternalLead                   bool
 	Goal                           string

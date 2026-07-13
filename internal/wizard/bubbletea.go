@@ -13,7 +13,14 @@ import (
 type bubbleStage int
 
 const (
-	stageProject bubbleStage = iota
+	stageScope bubbleStage = iota
+	stageProject
+	stageGlobalRoot
+	stageGlobalAgent
+	stageGlobalModel
+	stageGlobalEffort
+	stageGlobalNativeArgs
+	stageGlobalWindow
 	stageProfile
 	stageNewProfile
 	stageExistingSession
@@ -103,7 +110,7 @@ func NewBubbleModel(opts NumberedOptions) (BubbleModel, error) {
 	s := opts.Defaults.Clone()
 	ctx := ProjectContext{Project: s.Project, SessionSuggestion: s.Session}
 	var err error
-	if opts.InspectProject != nil {
+	if opts.StartAtProfile && opts.InspectProject != nil {
 		ctx, err = opts.InspectProject(s.Project)
 		if err != nil {
 			return BubbleModel{}, err
@@ -118,7 +125,7 @@ func NewBubbleModel(opts NumberedOptions) (BubbleModel, error) {
 	input := textinput.New()
 	input.CharLimit = 512
 	input.Width = 64
-	startStage := stageProject
+	startStage := stageScope
 	if opts.StartAtProfile {
 		startStage = stageProfile
 	}
@@ -295,8 +302,22 @@ func (m BubbleModel) renderPanel() string {
 
 func (m BubbleModel) title() string {
 	switch m.stage {
+	case stageScope:
+		return "What do you want to run?"
 	case stageProject:
-		return "Choose the project root"
+		return "Which project owns this squad?"
+	case stageGlobalRoot:
+		return "Where should the global orchestrator run?"
+	case stageGlobalAgent:
+		return "Which agent should run the global orchestrator?"
+	case stageGlobalModel:
+		return "Model for the global orchestrator"
+	case stageGlobalEffort:
+		return "Effort for the global orchestrator"
+	case stageGlobalNativeArgs:
+		return "Extra native arguments"
+	case stageGlobalWindow:
+		return "Window name"
 	case stageProfile:
 		return "Use an existing team setup or create a new one?"
 	case stageNewProfile:
@@ -362,11 +383,25 @@ func (m BubbleModel) title() string {
 
 func (m BubbleModel) note() string {
 	switch m.stage {
+	case stageScope:
+		return "Project runs use one repository's profiles and sessions. Global/NOC starts one coordinator and does not own project wake mailboxes."
 	case stageProject:
 		if m.ctx.OriginSlug != "" {
 			return "Detected origin " + m.ctx.OriginSlug + ". The nearest git root is the default."
 		}
-		return "The nearest git root is the default; no network access is used."
+		return "Choose the repository root that owns .amq-squad. The nearest git root is suggested; no network access is used."
+	case stageGlobalRoot:
+		return "This is a neutral control root, not a project profile or session."
+	case stageGlobalAgent:
+		return "The global orchestrator coordinates project namespaces but owns no project wake mailbox."
+	case stageGlobalModel:
+		return "Leave blank to let the selected agent choose its default model."
+	case stageGlobalEffort:
+		return "Automatic lets the selected agent choose its default reasoning effort."
+	case stageGlobalNativeArgs:
+		return "These arguments pass to the selected agent; effort is controlled separately."
+	case stageGlobalWindow:
+		return "This names the tmux window used by the global orchestrator."
 	case stageProfile:
 		return "An existing profile keeps its roster, lead, and operator contract. A new profile lets you choose them."
 	case stageExistingSession:
@@ -448,6 +483,31 @@ func (m BubbleModel) footer() string {
 }
 
 func (m BubbleModel) summary() string {
+	if strings.EqualFold(m.spec.Scope, "global") {
+		parts := []string{
+			"Scope     global / NOC orchestrator",
+			"Root      " + m.spec.GlobalRoot,
+			"Agent     " + defaultString(m.spec.GlobalAgent, "claude"),
+			"Model     " + defaultString(m.spec.GlobalModel, "automatic"),
+			"Effort    " + defaultString(m.spec.GlobalEffort, "automatic"),
+		}
+		if strings.EqualFold(m.spec.GlobalAgent, "codex") {
+			parts = append(parts, "Native    "+displayValue(m.spec.GlobalCodexArgs))
+		} else {
+			parts = append(parts, "Native    "+displayValue(m.spec.GlobalClaudeArgs))
+		}
+		parts = append(parts,
+			"Window    "+defaultString(m.spec.GlobalWindow, "global-orch"),
+			"Backend   "+string(BackendGlobalStart),
+			"NOC       polls explicit project/profile/session namespaces; owns no wake mailbox",
+		)
+		if previewCommand, liveCommand, err := m.spec.CommandForms(); err == nil {
+			parts = append(parts, "Preview   "+previewCommand, "Live      "+liveCommand)
+		} else {
+			parts = append(parts, "Commands  unavailable: "+err.Error())
+		}
+		return strings.Join(parts, "\n")
+	}
 	parts := []string{
 		"Project   " + m.spec.Project,
 		"Profile   " + defaultString(m.spec.Profile, "default"),
@@ -503,7 +563,7 @@ func (m BubbleModel) summary() string {
 
 func (m BubbleModel) isTextStage() bool {
 	switch m.stage {
-	case stageProject, stageNewProfile, stageSession, stageExistingModelCustom, stageResumeModelCustom, stageRoles, stageRoleModelCustom, stageLead, stageGoal, stageSeed:
+	case stageProject, stageGlobalRoot, stageGlobalModel, stageGlobalNativeArgs, stageGlobalWindow, stageNewProfile, stageSession, stageExistingModelCustom, stageResumeModelCustom, stageRoles, stageRoleModelCustom, stageLead, stageGoal, stageSeed:
 		return true
 	default:
 		return false
@@ -519,6 +579,20 @@ func (m *BubbleModel) configureStage() {
 	switch m.stage {
 	case stageProject:
 		value = m.spec.Project
+	case stageGlobalRoot:
+		value = m.spec.GlobalRoot
+	case stageGlobalModel:
+		value = m.spec.GlobalModel
+		placeholder = "optional"
+	case stageGlobalNativeArgs:
+		if strings.EqualFold(m.spec.GlobalAgent, "codex") {
+			value = m.spec.GlobalCodexArgs
+		} else {
+			value = m.spec.GlobalClaudeArgs
+		}
+		placeholder = "optional"
+	case stageGlobalWindow:
+		value = defaultString(m.spec.GlobalWindow, "global-orch")
 	case stageNewProfile:
 		value = defaultString(m.newProfilePrefill, defaultString(m.ctx.NewProfileSuggestion, "squad-"+defaultString(m.ctx.SessionSuggestion, "project")))
 	case stageSession:
@@ -554,6 +628,12 @@ func (m *BubbleModel) configureStage() {
 
 func (m BubbleModel) choices() []choice {
 	switch m.stage {
+	case stageScope:
+		return []choice{{value: "project", label: "Project squad"}, {value: "global", label: "Global / NOC orchestrator"}}
+	case stageGlobalAgent:
+		return []choice{{value: "claude", label: "Claude"}, {value: "codex", label: "Codex"}}
+	case stageGlobalEffort:
+		return effortChoices(m.spec.GlobalAgent)
 	case stageProfile:
 		choices := make([]choice, 0, len(m.ctx.Profiles)+1)
 		for _, profile := range m.ctx.Profiles {
@@ -649,6 +729,12 @@ func (m BubbleModel) defaultCursor() int {
 	choices := m.choices()
 	want := ""
 	switch m.stage {
+	case stageScope:
+		want = defaultString(strings.ToLower(strings.TrimSpace(m.spec.Scope)), "project")
+	case stageGlobalAgent:
+		want = defaultString(strings.ToLower(strings.TrimSpace(m.spec.GlobalAgent)), "claude")
+	case stageGlobalEffort:
+		want = defaultString(strings.ToLower(strings.TrimSpace(m.spec.GlobalEffort)), effortAutomatic)
 	case stageProfile:
 		want = m.spec.Profile
 		if findProfile(m.ctx.Profiles, want) < 0 {
@@ -731,6 +817,34 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 		m.ctx = ctx
 		m.spec.SelectProject(defaultString(ctx.Project, value))
 		m.transition(stageProfile)
+	case stageGlobalRoot:
+		if value == "" {
+			m.err = fmt.Errorf("global root cannot be empty")
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		m.spec.GlobalRoot = value
+		m.transition(stageGlobalAgent)
+	case stageGlobalModel:
+		m.spec.GlobalModel = value
+		m.transition(stageGlobalEffort)
+	case stageGlobalNativeArgs:
+		if strings.EqualFold(m.spec.GlobalAgent, "codex") {
+			m.spec.GlobalCodexArgs = value
+			m.spec.GlobalClaudeArgs = ""
+		} else {
+			m.spec.GlobalClaudeArgs = value
+			m.spec.GlobalCodexArgs = ""
+		}
+		m.transition(stageGlobalWindow)
+	case stageGlobalWindow:
+		if value == "" {
+			m.err = fmt.Errorf("window name cannot be empty")
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		m.spec.GlobalWindow = value
+		m.transition(stageConfirm)
 	case stageNewProfile:
 		if value == "" {
 			m.err = fmt.Errorf("profile cannot be empty")
@@ -817,6 +931,25 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 	}
 	m.pushHistory()
 	switch m.stage {
+	case stageScope:
+		m.spec.Scope = selected
+		if selected == "global" {
+			m.spec.Backend = BackendGlobalStart
+			m.transition(stageGlobalRoot)
+		} else {
+			m.spec.Backend = BackendRunStart
+			m.transition(stageProject)
+		}
+	case stageGlobalAgent:
+		m.spec.GlobalAgent = selected
+		m.transition(stageGlobalModel)
+	case stageGlobalEffort:
+		if selected == effortAutomatic {
+			m.spec.GlobalEffort = ""
+		} else {
+			m.spec.GlobalEffort = selected
+		}
+		m.transition(stageGlobalNativeArgs)
 	case stageProfile:
 		if selected == "__create__" {
 			if strings.TrimSpace(m.spec.Profile) != "" && findProfile(m.ctx.Profiles, m.spec.Profile) < 0 {
@@ -1136,18 +1269,18 @@ func snapshotCompatible(snapshot bubbleSnapshot, current ProjectContext) bool {
 func (m BubbleModel) phaseIndex() int {
 	if strings.EqualFold(m.spec.Scope, "global") {
 		switch m.stage {
-		case stageProject:
+		case stageScope, stageGlobalRoot:
 			return 0
-		case stageRoles, stageRoleBinary, stageRoleModel, stageRoleModelCustom, stageRoleEffort:
+		case stageGlobalAgent, stageGlobalModel:
 			return 1
-		case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane, stageGoal, stageSeed:
+		case stageGlobalEffort, stageGlobalNativeArgs, stageGlobalWindow:
 			return 2
 		default:
 			return 3
 		}
 	}
 	switch m.stage {
-	case stageProject:
+	case stageScope, stageProject:
 		return 0
 	case stageProfile, stageNewProfile, stageExistingSession, stageSession:
 		return 1

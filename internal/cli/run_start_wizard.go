@@ -168,32 +168,19 @@ func stripWizardUIArgs(args []string) ([]string, string, error) {
 }
 
 func runNumberedRunStartWizard(args []string, version string) error {
-	prefill, err := parseRunStartWizardPrefill(args)
-	if err != nil {
-		return err
-	}
 	reader := bufio.NewReader(runStartWizardInput)
-	scope, cancelled, err := promptRunStartWizardScope(reader, runStartWizardOutput, prefill.Scope)
-	if err != nil || cancelled {
-		return err
-	}
-	prefill.Scope = scope
-	if scope == "global" {
-		spec, collectErr := collectGlobalWizard(reader, runStartWizardOutput, prefill)
-		if collectErr != nil {
-			return collectErr
-		}
-		return finishRunStartWizard(spec, version, reader, runStartWizardOutput)
-	}
 	prefill, opts, err := prepareRunStartWizard(args)
 	if err != nil {
 		return err
 	}
-	prefill.Scope = "project"
 	opts.Defaults = prefill
 	for {
 		spec, runErr := runwizard.RunNumbered(reader, runStartWizardOutput, opts)
 		if runErr != nil {
+			if errors.Is(runErr, runwizard.ErrCancelled) {
+				fmt.Fprintln(runStartWizardOutput, "Wizard cancelled. Nothing changed.")
+				return nil
+			}
 			return runErr
 		}
 		finishErr := finishRunStartWizard(spec, version, reader, runStartWizardOutput)
@@ -209,10 +196,6 @@ func runNumberedRunStartWizard(args []string, version string) error {
 }
 
 func runBubbleRunStartWizard(args []string, version string) error {
-	prefill, err := parseRunStartWizardPrefill(args)
-	if err != nil {
-		return err
-	}
 	tty, err := runStartWizardOpenTTY()
 	if err != nil {
 		fmt.Fprintf(runStartWizardOutput, "Full-screen wizard unavailable (%v); using the numbered adapter.\n", err)
@@ -220,34 +203,13 @@ func runBubbleRunStartWizard(args []string, version string) error {
 	}
 	defer tty.Close()
 	reader := bufio.NewReader(tty)
-	scope, cancelled, err := promptRunStartWizardScope(reader, tty, prefill.Scope)
-	if err != nil || cancelled {
-		return err
-	}
-	prefill.Scope = scope
-	if scope == "global" {
-		spec, collectErr := collectGlobalWizard(reader, tty, prefill)
-		if collectErr != nil {
-			return collectErr
-		}
-		return finishRunStartWizard(spec, version, reader, tty)
-	}
 	prefill, opts, err := prepareRunStartWizard(args)
 	if err != nil {
 		return err
 	}
-	prefill.Scope = "project"
 	opts.Defaults = prefill
 	// Bubble Tea enables raw mode only when its input is the tty file itself;
 	// a wrapping reader leaves the terminal cooked and every key is swallowed.
-	// The scope prompt's reader may have over-read past its line; drop that
-	// typeahead so it cannot resurface at the launch confirmation and answer
-	// it on the user's behalf.
-	if buffered := reader.Buffered(); buffered > 0 {
-		if _, err := reader.Discard(buffered); err != nil {
-			return err
-		}
-	}
 	for {
 		result, runErr := runStartWizardBubbleProgram(tty, tty, opts)
 		if runErr != nil {
@@ -288,13 +250,30 @@ func prepareRunStartWizard(args []string) (runwizard.Spec, runwizard.NumberedOpt
 		}
 		prefill.Project = cwd
 	}
-	initialContext, err := runStartWizardInspectProject(prefill.Project)
-	if err != nil {
-		return runwizard.Spec{}, runwizard.NumberedOptions{}, err
+	// Preserve the established initial read-only refresh for project-prefilled
+	// flows. The adapters still own the scope screen; an explicit global prefill
+	// avoids project discovery entirely.
+	if !strings.EqualFold(strings.TrimSpace(prefill.Scope), "global") {
+		initialContext, inspectErr := runStartWizardInspectProject(prefill.Project)
+		if inspectErr != nil {
+			return runwizard.Spec{}, runwizard.NumberedOptions{}, inspectErr
+		}
+		if strings.TrimSpace(initialContext.Project) != "" {
+			prefill.Project = initialContext.Project
+		}
 	}
-	prefill.Project = initialContext.Project
 	if strings.TrimSpace(prefill.Profile) == "" {
 		prefill.Profile = team.DefaultProfile
+	}
+	if strings.TrimSpace(prefill.GlobalRoot) == "" {
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return runwizard.Spec{}, runwizard.NumberedOptions{}, fmt.Errorf("resolve default global root: %w", homeErr)
+		}
+		prefill.GlobalRoot = filepath.Join(home, "Code")
+	}
+	if strings.TrimSpace(prefill.GlobalWindow) == "" {
+		prefill.GlobalWindow = "global-orch"
 	}
 	if prefill.Backend == "" {
 		prefill.Backend = runwizard.BackendRunStart
@@ -379,6 +358,31 @@ func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out
 			return err
 		}
 		return runStartWizardGlobalExecute(liveArgs)
+	}
+	if spec.ProfileBranch == runwizard.ProfileBranchExisting && spec.OperatorNotificationsSet {
+		visibility := spec.Visibility
+		if strings.TrimSpace(visibility) == "" {
+			visibility = visibilitySiblingTabs
+		}
+		prefillCheck := runStartPreflight(runStartPreflightInput{
+			Project:                  spec.Project,
+			Profile:                  spec.Profile,
+			ProfileExplicit:          true,
+			Session:                  spec.Session,
+			Visibility:               visibility,
+			OperatorNotifications:    spec.OperatorNotificationsRequested,
+			OperatorNotificationsSet: true,
+		})
+		for _, issue := range prefillCheck.Issues {
+			if issue.Code != runStartPreflightExistingOperatorNotifications {
+				continue
+			}
+			fmt.Fprintf(runStartWizardOutput, "\nPreflight blocked [%s]: %s\n", issue.Code, issue.Detail)
+			for _, fix := range issue.SuggestedFixes {
+				fmt.Fprintf(runStartWizardOutput, "  - %s\n", fix)
+			}
+			return fmt.Errorf("%s", issue.Detail)
+		}
 	}
 	if spec.ProfileBranch == runwizard.ProfileBranchExisting && !spec.RunExecutable {
 		fmt.Fprintf(out, "Selected existing run %s/%s is %s (backend=%s). This state is read-only; nothing was previewed or launched.\n", spec.Profile, spec.Session, spec.RunState, spec.Backend)
@@ -486,109 +490,6 @@ func promptRunStartWizardResume(in io.Reader, out io.Writer) (bool, error) {
 	return line == "y" || line == "yes", nil
 }
 
-func promptRunStartWizardScope(in io.Reader, out io.Writer, current string) (scope string, cancelled bool, err error) {
-	current = strings.ToLower(strings.TrimSpace(current))
-	if current == "project" || current == "global" {
-		return current, false, nil
-	}
-	fmt.Fprint(out, "Scope\n  1) Project run\n  2) Global / NOC orchestrator\nChoose [1]: ")
-	line, err := readWizardLine(in)
-	if err != nil {
-		return "", false, err
-	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "", "1", "project":
-		return "project", false, nil
-	case "2", "global", "noc":
-		return "global", false, nil
-	case "q", "quit", "cancel":
-		fmt.Fprintln(out, "Wizard cancelled. Nothing changed.")
-		return "", true, nil
-	default:
-		return "", false, usageErrorf("invalid wizard scope %q", strings.TrimSpace(line))
-	}
-}
-
-func collectGlobalWizard(in io.Reader, out io.Writer, spec runwizard.Spec) (runwizard.Spec, error) {
-	if _, ok := in.(*bufio.Reader); !ok {
-		in = bufio.NewReader(in)
-	}
-	spec.Scope = "global"
-	spec.Backend = runwizard.BackendGlobalStart
-	if strings.TrimSpace(spec.GlobalRoot) == "" {
-		if home, homeErr := os.UserHomeDir(); homeErr == nil {
-			spec.GlobalRoot = filepath.Join(home, "Code")
-		} else {
-			return spec, fmt.Errorf("resolve default global root: %w", homeErr)
-		}
-	}
-	var err error
-	if spec.GlobalRoot, err = promptWizardText(in, out, "Neutral root", spec.GlobalRoot); err != nil {
-		return spec, err
-	}
-	if spec.GlobalAgent, err = promptWizardChoice(in, out, "Agent", spec.GlobalAgent, []string{"claude", "codex"}); err != nil {
-		return spec, err
-	}
-	if spec.GlobalModel, err = promptWizardText(in, out, "Model (optional)", spec.GlobalModel); err != nil {
-		return spec, err
-	}
-	efforts := []string{"automatic", "low", "medium", "high"}
-	if spec.GlobalAgent == "codex" {
-		efforts = append(efforts, "minimal", "xhigh")
-	}
-	if spec.GlobalEffort, err = promptWizardChoice(in, out, "Effort", spec.GlobalEffort, efforts); err != nil {
-		return spec, err
-	}
-	if spec.GlobalAgent == "codex" {
-		if spec.GlobalCodexArgs, err = promptWizardText(in, out, "Codex extra native args (excluding effort)", spec.GlobalCodexArgs); err != nil {
-			return spec, err
-		}
-	} else if spec.GlobalClaudeArgs, err = promptWizardText(in, out, "Claude extra native args (excluding effort)", spec.GlobalClaudeArgs); err != nil {
-		return spec, err
-	}
-	if strings.TrimSpace(spec.GlobalWindow) == "" {
-		spec.GlobalWindow = "global-orch"
-	}
-	if spec.GlobalWindow, err = promptWizardText(in, out, "Window name", spec.GlobalWindow); err != nil {
-		return spec, err
-	}
-	fmt.Fprintln(out, "NOC contract: poll explicit project/profile/session namespaces; this global orchestrator owns no wake mailbox.")
-	return spec, nil
-}
-
-func promptWizardText(in io.Reader, out io.Writer, label, current string) (string, error) {
-	fmt.Fprintf(out, "%s [%s]: ", label, current)
-	line, err := readWizardLine(in)
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(line) == "" {
-		return current, nil
-	}
-	return strings.TrimSpace(line), nil
-}
-
-func promptWizardChoice(in io.Reader, out io.Writer, label, current string, values []string) (string, error) {
-	if strings.TrimSpace(current) == "" {
-		current = values[0]
-	}
-	fmt.Fprintf(out, "%s (%s) [%s]: ", label, strings.Join(values, "/"), current)
-	line, err := readWizardLine(in)
-	if err != nil {
-		return "", err
-	}
-	line = strings.ToLower(strings.TrimSpace(line))
-	if line == "" {
-		line = strings.ToLower(strings.TrimSpace(current))
-	}
-	for _, value := range values {
-		if line == value {
-			return line, nil
-		}
-	}
-	return "", usageErrorf("invalid %s %q", strings.ToLower(label), line)
-}
-
 func readWizardLine(in io.Reader) (string, error) {
 	if reader, ok := in.(*bufio.Reader); ok {
 		line, err := reader.ReadString('\n')
@@ -664,7 +565,9 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 		Lead:                           *lead,
 		LeadMode:                       *leadMode,
 		Visibility:                     *visibility,
+		VisibilityExplicit:             flagWasSet(fs, "visibility"),
 		LayoutPreset:                   *layoutPreset,
+		LayoutExplicit:                 flagWasSet(fs, "layout-preset"),
 		LauncherPane:                   *launcherPane,
 		ExternalLead:                   *externalLead,
 		Goal:                           *goal,

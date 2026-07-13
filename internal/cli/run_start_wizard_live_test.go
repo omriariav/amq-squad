@@ -483,12 +483,8 @@ func TestFinishWizardGlobalNoAndYesDelegateExactCanonicalArgs(t *testing.T) {
 	}
 }
 
-func TestPromptWizardScopeAndConfirmationDefaults(t *testing.T) {
+func TestWizardConfirmationDefaults(t *testing.T) {
 	var out strings.Builder
-	scope, cancelled, err := promptRunStartWizardScope(strings.NewReader("\n"), &out, "")
-	if err != nil || cancelled || scope != "project" {
-		t.Fatalf("scope=%q cancelled=%t err=%v", scope, cancelled, err)
-	}
 	yes, err := promptRunStartWizardLaunch(strings.NewReader("\n"), &out)
 	if err != nil || yes {
 		t.Fatalf("default confirmation yes=%t err=%v", yes, err)
@@ -508,24 +504,11 @@ func TestWizardCustomFlagsRemainInCompletionCatalog(t *testing.T) {
 	}
 }
 
-func TestCollectGlobalWizardDefaultsToExistingGlobalNeutralRoot(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	input := strings.NewReader("\n\n\n\n\n\n")
-	spec, err := collectGlobalWizard(input, io.Discard, runwizard.Spec{Scope: "global"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec.GlobalRoot != home+"/Code" || spec.GlobalAgent != "claude" || spec.GlobalWindow != "global-orch" {
-		t.Fatalf("global defaults = %+v", spec)
-	}
-}
-
 func TestNumberedGlobalWizardDelegatesPreviewThenDefaultNo(t *testing.T) {
 	_, globalCalls := withWizardExecutionSeams(t)
 	oldInput, oldOutput := runStartWizardInput, runStartWizardOutput
 	t.Cleanup(func() { runStartWizardInput, runStartWizardOutput = oldInput, oldOutput })
-	// root, agent, model, effort, Claude args, window, then default-No confirmation.
+	// Scope, root, agent, model, effort, Claude args, and window. EOF is default-No confirmation.
 	runStartWizardInput = strings.NewReader(strings.Repeat("\n", 7))
 	var prompts strings.Builder
 	runStartWizardOutput = &prompts
@@ -535,7 +518,7 @@ func TestNumberedGlobalWizardDelegatesPreviewThenDefaultNo(t *testing.T) {
 	if len(*globalCalls) != 1 || hasWizardArg((*globalCalls)[0], "--go") {
 		t.Fatalf("global calls = %v", *globalCalls)
 	}
-	for _, want := range []string{"NOC contract", "Launch now? [y/N]"} {
+	for _, want := range []string{"What do you want to run?", "Review", "Preview command:", "Live command:", "NOC contract", "Launch now? [y/N]"} {
 		if !strings.Contains(prompts.String(), want) {
 			t.Fatalf("prompts missing %q: %s", want, prompts.String())
 		}
@@ -567,7 +550,7 @@ func TestNumberedProjectWizardScriptedYesPreservesReaderAndAddsOnlyGo(t *testing
 	}
 	assertOnlyGoDelta(t, *projectCalls)
 	assertPrintedCanonicalPair(t, stdout, "run", "start", (*projectCalls)[0], (*projectCalls)[1])
-	for _, want := range []string{"Scope", "Answers are previewed first", "Launch now? [y/N]"} {
+	for _, want := range []string{"What do you want to run?", "Answers are previewed first", "Launch now? [y/N]"} {
 		if !strings.Contains(prompts.String(), want) {
 			t.Fatalf("prompt channel missing %q:\n%s", want, prompts.String())
 		}
@@ -634,6 +617,31 @@ func TestBubbleWizardReturnsFromProgramThenConfirmsOnSameTTY(t *testing.T) {
 	assertOnlyGoDelta(t, *projectCalls)
 	if !strings.Contains(tty.writes.String(), "Launch now? [y/N]") {
 		t.Fatalf("confirmation not written to same tty: %q", tty.writes.String())
+	}
+}
+
+func TestBubbleGlobalWizardStaysInProgramThroughReview(t *testing.T) {
+	_, globalCalls := withWizardExecutionSeams(t)
+	oldOpen, oldProgram := runStartWizardOpenTTY, runStartWizardBubbleProgram
+	t.Cleanup(func() { runStartWizardOpenTTY, runStartWizardBubbleProgram = oldOpen, oldProgram })
+	tty := wizardTestTTY{reader: bytes.NewReader([]byte("\n")), writes: &bytes.Buffer{}}
+	runStartWizardOpenTTY = func() (io.ReadWriteCloser, error) { return tty, nil }
+	programs := 0
+	runStartWizardBubbleProgram = func(_ io.Reader, _ io.Writer, opts runwizard.NumberedOptions) (runwizard.BubbleResult, error) {
+		programs++
+		if opts.Defaults.Scope != "global" || opts.Defaults.GlobalRoot == "" || opts.Defaults.GlobalWindow != "global-orch" {
+			t.Fatalf("global prefills did not reach Bubble: %+v", opts.Defaults)
+		}
+		return runwizard.BubbleResult{Spec: runwizard.Spec{
+			Scope: "global", Backend: runwizard.BackendGlobalStart, GlobalRoot: opts.Defaults.GlobalRoot,
+			GlobalAgent: "claude", GlobalWindow: opts.Defaults.GlobalWindow,
+		}}, nil
+	}
+	if err := runBubbleRunStartWizard([]string{"--scope", "global", "--root", t.TempDir()}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if programs != 1 || len(*globalCalls) != 1 || hasWizardArg((*globalCalls)[0], "--go") {
+		t.Fatalf("global Bubble routing programs=%d calls=%v", programs, *globalCalls)
 	}
 }
 
@@ -725,7 +733,7 @@ func TestNumberedWizardPostYesDeltaDiscardsYesAndRestartsAtProfile(t *testing.T)
 	// The first confirmation chunk intentionally contains a second affirmative
 	// line. The post-Yes drift restart must discard that buffered consent; the
 	// retry reaches a real prompt and consumes the later explicit No.
-	runStartWizardInput = &wizardLineReader{lines: []string{"\n", "\n", "\n", "\n", "yes\nYES\n", "\n", "\n", "\n", "n\n"}}
+	runStartWizardInput = &wizardLineReader{lines: []string{"\n", "\n", "\n", "\n", "\n", "yes\nYES\n", "\n", "\n", "\n", "n\n"}}
 	runStartWizardOutput = io.Discard
 	inspections, previews, confirms := 0, 0, 0
 	runStartWizardInspectProject = func(string) (runwizard.ProjectContext, error) {
@@ -797,29 +805,25 @@ func TestBubbleWizardHandsRawTTYToProgramNotAWrapper(t *testing.T) {
 	}
 }
 
-func TestBubbleWizardTypeaheadCannotAnswerLaunchConfirm(t *testing.T) {
-	// The scope prompt's bufio reader can over-read past its own line. Those
-	// typed-ahead bytes never reach the bubble program (which reads the raw
-	// tty directly) and must not leak into "Launch now? [y/N]" as an
-	// accidental yes.
+func TestBubbleWizardProgramOwnsScopeInputBeforeLaunchConfirmation(t *testing.T) {
 	projectCalls, _ := withWizardExecutionSeams(t)
 	oldOpen := runStartWizardOpenTTY
 	oldProgram := runStartWizardBubbleProgram
 	t.Cleanup(func() { runStartWizardOpenTTY, runStartWizardBubbleProgram = oldOpen, oldProgram })
-	// "1\n" answers the scope prompt; "y\n" is typeahead the bufio reader
-	// buffers in the same fill and must discard before the confirmation.
-	tty := wizardTestTTY{reader: bytes.NewReader([]byte("1\ny\n")), writes: &bytes.Buffer{}}
+	tty := wizardTestTTY{reader: &wizardLineReader{lines: []string{"1\n", "yes\n"}}, writes: &bytes.Buffer{}}
 	runStartWizardOpenTTY = func() (io.ReadWriteCloser, error) { return tty, nil }
 	spec := validWizardProjectSpec(t)
 	runStartWizardBubbleProgram = func(in io.Reader, out io.Writer, opts runwizard.NumberedOptions) (runwizard.BubbleResult, error) {
+		line, err := readWizardLine(in)
+		if err != nil || strings.TrimSpace(line) != "1" {
+			t.Fatalf("scope input did not reach Bubble first: line=%q err=%v", line, err)
+		}
 		return runwizard.BubbleResult{Spec: spec}, nil
 	}
 	if err := runBubbleRunStartWizard([]string{"--project", spec.Project}, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if len(*projectCalls) != 1 || hasWizardArg((*projectCalls)[0], "--go") {
-		t.Fatalf("typeahead answered the launch confirmation: calls = %v", *projectCalls)
-	}
+	assertOnlyGoDelta(t, *projectCalls)
 }
 
 func assertOnlyGoDelta(t *testing.T, calls [][]string) {

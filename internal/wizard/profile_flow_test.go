@@ -84,6 +84,8 @@ func TestResumePlacementDefaultsUseOnlyUnanimousSavedTargets(t *testing.T) {
 		{name: "agreed current", members: []SessionMemberSummary{record("current-window"), record("current-window")}, want: "current"},
 		{name: "agreed detached", members: []SessionMemberSummary{record("new-session")}, want: "detached"},
 		{name: "mixed", members: []SessionMemberSummary{record("current-window"), record("new-window")}, want: "sibling-tabs"},
+		{name: "live divergent ignored", members: []SessionMemberSummary{{Role: "lead", Action: MemberActionLive, SavedLaunchIdentity: "live", SavedTarget: "new-session"}, record("current-window")}, want: "current"},
+		{name: "all live has no placed records", members: []SessionMemberSummary{{Role: "lead", Action: MemberActionLive, SavedLaunchIdentity: "live", SavedTarget: "new-session"}}, want: "sibling-tabs"},
 		{name: "absent", members: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore, SavedLaunchIdentity: "record"}}, want: "sibling-tabs"},
 		{name: "zero", members: []SessionMemberSummary{{Role: "cto", Action: MemberActionFresh}}, want: "sibling-tabs"},
 	}
@@ -93,6 +95,21 @@ func TestResumePlacementDefaultsUseOnlyUnanimousSavedTargets(t *testing.T) {
 				t.Fatalf("visibility=%q want=%q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSelectExistingSessionExplicitPlacementPrefillWinsDerivedDefault(t *testing.T) {
+	summary := SessionSummary{Name: "s", Fingerprint: "fp", RecordCount: 1, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Members: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore, SavedLaunchIdentity: "record", SavedTarget: "current-window"}}}
+	s := Spec{Profile: "other", Visibility: "detached", VisibilityExplicit: true, LayoutPreset: "tiled", LayoutExplicit: true}
+	s.SelectExistingProfile("release")
+	s.SelectExistingSession(summary)
+	if s.Visibility != "detached" || s.LayoutPreset != "tiled" {
+		t.Fatalf("explicit placement overwritten: %+v", s)
+	}
+	derived := Spec{ProfileBranch: ProfileBranchExisting, Profile: "release"}
+	derived.SelectExistingSession(summary)
+	if derived.Visibility != "current" || derived.LayoutPreset != "lead-left" {
+		t.Fatalf("derived placement=%q/%q", derived.Visibility, derived.LayoutPreset)
 	}
 }
 

@@ -128,6 +128,7 @@ func (s *Spec) SelectNewProfile(profile string) {
 // from the chosen profile's read-only session set.
 func (s *Spec) SelectExistingSession(session SessionSummary) {
 	changed := s.Session != session.Name || s.SessionSource != session.Source || s.DiscoveryFingerprint != session.Fingerprint
+	explicitVisibility, explicitLayout := s.Visibility, s.LayoutPreset
 	s.Session = session.Name
 	s.SessionSource = session.Source
 	s.RunState = session.Classification.State
@@ -156,8 +157,16 @@ func (s *Spec) SelectExistingSession(session SessionSummary) {
 		s.BriefGoal = session.BriefGoal
 		s.BriefSeed = session.BriefSeed
 		if s.Backend == BackendResume {
-			s.Visibility = ResumeDefaultVisibility(session.Members)
-			s.LayoutPreset = defaultLayoutPreset("", s.Visibility)
+			if s.VisibilityExplicit {
+				s.Visibility = explicitVisibility
+			} else {
+				s.Visibility = ResumeDefaultVisibility(session.Members)
+			}
+			if s.LayoutExplicit {
+				s.LayoutPreset = explicitLayout
+			} else {
+				s.LayoutPreset = defaultLayoutPreset("", s.Visibility)
+			}
 		}
 	}
 	if s.Backend == BackendResume && strings.TrimSpace(s.Visibility) == "" {
@@ -201,6 +210,9 @@ func ResumeDefaultVisibility(members []SessionMemberSummary) string {
 	target := ""
 	records := 0
 	for _, member := range members {
+		if member.Action != MemberActionRestore && member.Action != MemberActionFresh {
+			continue
+		}
 		if strings.TrimSpace(member.SavedLaunchIdentity) == "" {
 			continue
 		}
@@ -289,8 +301,12 @@ func (s *Spec) clearDownstreamRunAnswers() {
 	s.Effort = ""
 	s.CodexArgs = ""
 	s.ClaudeArgs = ""
-	s.Visibility = ""
-	s.LayoutPreset = ""
+	if !s.VisibilityExplicit {
+		s.Visibility = ""
+	}
+	if !s.LayoutExplicit {
+		s.LayoutPreset = ""
+	}
 	s.LauncherPane = ""
 	s.ExternalLead = false
 	s.Goal = ""

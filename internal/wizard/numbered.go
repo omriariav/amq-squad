@@ -2,10 +2,15 @@ package wizard
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 )
+
+// ErrCancelled reports an explicit q/quit/cancel answer from the numbered
+// adapter without turning cancellation into a usage failure.
+var ErrCancelled = errors.New("wizard cancelled")
 
 // NumberedOptions supplies the answer-collection line UI with defaults and an
 // injected project inspector. The callback keeps this package independent from
@@ -73,6 +78,19 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	if opts.StartAtProfile {
 		fmt.Fprintln(out, defaultString(opts.RestartMessage, "The selected profile or run changed while the wizard was open. Review the refreshed facts before continuing."))
 	} else {
+		fmt.Fprintln(out, "Project runs use one repository's profiles and sessions. Global/NOC starts one coordinator and does not own project wake mailboxes.")
+		s.Scope, err = promptChoice(r, out, "What do you want to run?", []choice{
+			{value: "project", label: "Project squad"},
+			{value: "global", label: "Global / NOC orchestrator"},
+		}, defaultString(strings.ToLower(strings.TrimSpace(s.Scope)), "project"))
+		if err != nil {
+			return Spec{}, err
+		}
+		if s.Scope == "global" {
+			s.Backend = BackendGlobalStart
+			return runNumberedGlobal(r, out, s)
+		}
+		s.Backend = BackendRunStart
 		if s.Project, err = promptText(r, out, "Project directory", s.Project); err != nil {
 			return Spec{}, err
 		}
@@ -359,6 +377,59 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	return s, nil
 }
 
+func runNumberedGlobal(r *bufio.Reader, out io.Writer, s Spec) (Spec, error) {
+	var err error
+	fmt.Fprintln(out, "This is a neutral control root, not a project profile or session.")
+	if s.GlobalRoot, err = promptText(r, out, "Where should the global orchestrator run?", s.GlobalRoot); err != nil {
+		return Spec{}, err
+	}
+	if strings.TrimSpace(s.GlobalRoot) == "" {
+		return Spec{}, fmt.Errorf("global root cannot be empty")
+	}
+	if s.GlobalAgent, err = promptChoice(r, out, "Which agent should run the global orchestrator?", []choice{
+		{value: "claude", label: "Claude"},
+		{value: "codex", label: "Codex"},
+	}, defaultString(strings.ToLower(strings.TrimSpace(s.GlobalAgent)), "claude")); err != nil {
+		return Spec{}, err
+	}
+	if s.GlobalModel, err = promptText(r, out, "Model (optional)", s.GlobalModel); err != nil {
+		return Spec{}, err
+	}
+	if s.GlobalEffort, err = promptChoice(r, out, "Effort", effortChoices(s.GlobalAgent), defaultString(strings.ToLower(strings.TrimSpace(s.GlobalEffort)), effortAutomatic)); err != nil {
+		return Spec{}, err
+	}
+	if s.GlobalEffort == effortAutomatic {
+		s.GlobalEffort = ""
+	}
+	if s.GlobalAgent == "codex" {
+		if s.GlobalCodexArgs, err = promptText(r, out, "Codex extra native args (excluding effort)", s.GlobalCodexArgs); err != nil {
+			return Spec{}, err
+		}
+		s.GlobalClaudeArgs = ""
+	} else {
+		if s.GlobalClaudeArgs, err = promptText(r, out, "Claude extra native args (excluding effort)", s.GlobalClaudeArgs); err != nil {
+			return Spec{}, err
+		}
+		s.GlobalCodexArgs = ""
+	}
+	if s.GlobalWindow, err = promptText(r, out, "Window name", defaultString(s.GlobalWindow, "global-orch")); err != nil {
+		return Spec{}, err
+	}
+	if strings.TrimSpace(s.GlobalWindow) == "" {
+		return Spec{}, fmt.Errorf("window name cannot be empty")
+	}
+
+	previewCommand, liveCommand, commandErr := s.CommandForms()
+	if commandErr != nil {
+		return Spec{}, commandErr
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Review")
+	fmt.Fprintf(out, "Scope: Global / NOC orchestrator\nNeutral root: %s\nAgent: %s\nModel: %s\nEffort: %s\nWindow: %s\nNOC contract: poll explicit project/profile/session namespaces; this global orchestrator owns no wake mailbox.\nPreview command: %s\nLive command: %s\n", s.GlobalRoot, s.GlobalAgent, displayValue(s.GlobalModel), defaultString(s.GlobalEffort, effortAutomatic), s.GlobalWindow, previewCommand, liveCommand)
+	fmt.Fprintln(out, "Answers collected. Running the canonical preview next; live launch is a separate default-No decision.")
+	return s, nil
+}
+
 func displayValue(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return "not provided"
@@ -572,6 +643,9 @@ func promptChoice(r *bufio.Reader, out io.Writer, label string, choices []choice
 		return "", fmt.Errorf("read %s: %w", strings.ToLower(label), err)
 	}
 	line = strings.TrimSpace(line)
+	if strings.EqualFold(line, "q") || strings.EqualFold(line, "quit") || strings.EqualFold(line, "cancel") {
+		return "", ErrCancelled
+	}
 	if line == "" {
 		if choices[defaultIndex].disabled {
 			return "", fmt.Errorf("default %s choice is unavailable", strings.ToLower(label))
