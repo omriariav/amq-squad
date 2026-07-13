@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -312,6 +313,10 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if profile := strings.TrimSpace(rec.TeamProfile); profile != "" && profile != team.DefaultProfile {
 		args = append(args, "--team-profile", profile)
 	}
+	if rec.GoalBinding != nil {
+		payload, _ := json.Marshal(rec.GoalBinding) // launch.GoalBinding contains only strings/bools.
+		args = append(args, "--restore-goal-binding", string(payload))
+	}
 	args = append(args, rec.Binary)
 	argv := restoreArgvFromRecord(rec)
 	if len(argv) > 0 {
@@ -323,6 +328,18 @@ func launchArgsFromRecord(rec launch.Record) []string {
 
 func restoreArgvFromRecord(rec launch.Record) []string {
 	argv := append([]string(nil), rec.Argv...)
+	// A saved goal binding is restore metadata, never child input. In
+	// particular, a fresh re-orient must not silently replay the old /goal;
+	// resume owns the explicit claim-once redelivery decision after launch.
+	if rec.GoalBinding != nil && rec.GoalBinding.NativeGoal && rec.GoalBinding.Command != "" {
+		out := argv[:0]
+		for _, arg := range argv {
+			if arg != rec.GoalBinding.Command {
+				out = append(out, arg)
+			}
+		}
+		argv = out
+	}
 	// New records carry structural provenance. Strip the final merged grant only
 	// when launcher policy contributed, then restore the explicit source below.
 	// Legacy records lack both provenance fields, so retain the historical exact
@@ -559,6 +576,11 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	if profile := strings.TrimSpace(rec.TeamProfile); profile != "" && profile != team.DefaultProfile {
 		b.WriteString(" --team-profile ")
 		b.WriteString(shellQuote(profile))
+	}
+	if rec.GoalBinding != nil {
+		payload, _ := json.Marshal(rec.GoalBinding) // launch.GoalBinding contains only strings/bools.
+		b.WriteString(" --restore-goal-binding ")
+		b.WriteString(shellQuote(string(payload)))
 	}
 	argv := restoreArgvFromRecord(rec)
 	if len(argv) > 0 {

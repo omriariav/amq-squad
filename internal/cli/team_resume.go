@@ -17,6 +17,7 @@ import (
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 // resumeAction labels what `team resume` would do for one member.
@@ -64,6 +65,10 @@ type resumePlan struct {
 	// must not reconstruct it from an arbitrary scan order.
 	SavedLaunchIdentity string
 	Saved               *resumeSavedLaunchSummary
+	// RestoreRecord is the exact record chosen by findMemberRestoreRecord.
+	// Session-level goal planning must derive from this record, never from a
+	// second scan whose ordering could select different evidence.
+	RestoreRecord *launch.Record
 }
 
 type resumeSavedLaunchSummary struct {
@@ -209,6 +214,9 @@ type resumeExecution struct {
 	// JSON emits a schema-versioned resume_plan envelope instead of the human
 	// plan. It is a read-only preview, so it is mutually exclusive with Exec.
 	JSON bool
+	// GoalRedelivery enables the top-level resume-only goal plan contract.
+	// team resume and fork share this planner but retain their existing shape.
+	GoalRedelivery bool
 	// Probe abstracts liveness/process inspection for the per-member live-signal
 	// classification (mirrors how statusExecution takes a probe). Defaults to
 	// defaultDuplicateLaunchProbe when unset; tests inject a deterministic probe.
@@ -234,12 +242,18 @@ type resumeExecution struct {
 // needs, which keeps the resume entry point free of preview-flag plumbing
 // that does not apply (no --fresh, no --json envelope).
 type resumeExecOptions struct {
-	Enabled         bool
-	Terminal        string
-	Target          string
-	Layout          string
-	TerminalSession string
-	Stagger         time.Duration
+	Enabled            bool
+	Terminal           string
+	Target             string
+	Layout             string
+	TerminalSession    string
+	Stagger            time.Duration
+	RedeliverGoal      bool
+	RedeliveryExplicit bool
+	PromptGoal         bool
+	PromptIn           io.Reader
+	PromptOut          io.Writer
+	GoalPlan           runwizard.ResumeGoalPlan
 }
 
 type resumeExecLaunchCheck struct {
@@ -261,9 +275,11 @@ type resumeExecLaunchSnapshot struct {
 }
 
 type resumeExecLaunchResult struct {
-	Check  resumeExecLaunchCheck
-	State  string
-	Detail string
+	Check         resumeExecLaunchCheck
+	State         string
+	Detail        string
+	RecordModTime time.Time
+	RecordStarted time.Time
 }
 
 const (
@@ -546,11 +562,30 @@ func executeResume(r resumeExecution) error {
 			return fmt.Errorf("--fresh --session %q: workstream root %s already exists; rerun with --force-duplicate to reuse", workstream, root)
 		}
 	}
+	goalPlan := runwizard.ResumeGoalPlan{}
+	if r.GoalRedelivery {
+		goalPlan = buildResumeGoalPlan(t, r.Profile, workstream, plans, r.Force, r.NoBootstrap)
+	}
+	if r.GoalRedelivery && r.Exec.RedeliveryExplicit && r.Exec.RedeliverGoal && !goalPlan.Eligible {
+		return usageErrorf("--redeliver-goal is unavailable: %s", goalPlan.Reason)
+	}
+	goalPlan.Selected = r.Exec.RedeliverGoal
+	if r.GoalRedelivery && r.Exec.Enabled && !r.Exec.RedeliveryExplicit && r.Exec.PromptGoal && goalPlan.Eligible {
+		approved, err := promptResumeGoalRedelivery(r.Exec.PromptIn, r.Exec.PromptOut, goalPlan)
+		if err != nil {
+			return err
+		}
+		r.Exec.RedeliverGoal = approved
+		goalPlan.Selected = approved
+	}
 
 	if r.JSON {
 		out := r.Out
 		if out == nil {
 			out = os.Stdout
+		}
+		if r.GoalRedelivery {
+			return writeResumeJSONWithGoal(out, t, workstream, r.Mode, r.Profile, namespaceConflict, plans, goalPlan)
 		}
 		return writeResumeJSON(out, t, workstream, r.Mode, r.Profile, namespaceConflict, plans)
 	}
@@ -559,6 +594,7 @@ func executeResume(r resumeExecution) error {
 		if namespaceConflict != nil {
 			return namespaceConflictError("resume --exec", namespaceConflict)
 		}
+		r.Exec.GoalPlan = goalPlan
 		return execResumePlan(t, r.Profile, workstream, plans, r.Exec, r.Force)
 	}
 
@@ -569,6 +605,9 @@ func executeResume(r resumeExecution) error {
 		out = os.Stdout
 	}
 	writeResumePlan(out, t, workstream, r.Mode, plans, r.DryRun, r.Force, style)
+	if r.GoalRedelivery {
+		writeResumeGoalPlan(out, goalPlan)
+	}
 	return nil
 }
 
@@ -719,6 +758,11 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 		}
 		return err
 	}
+	if exec.RedeliverGoal {
+		if err := deliverResumeGoalAfterLaunch(t, profile, workstream, results, exec.GoalPlan); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -836,17 +880,26 @@ func adoptResumeExecLaunchRecords(results []resumeExecLaunchResult) bool {
 		if !ok {
 			continue
 		}
-		rec, err := launch.Read(r.Check.AgentDir)
-		if err != nil {
-			continue
+		if err := adoptResumeExecLaunchRecord(r.Check, pane); err == nil {
+			adopted = true
 		}
-		rec.Role = r.Check.Role
-		rec.Handle = r.Check.Handle
-		rec.Session = r.Check.Workstream
-		rec.Root = r.Check.Root
-		rec.CWD = r.Check.CWD
-		rec.Binary = r.Check.Binary
-		rec.TeamProfile = r.Check.Profile
+	}
+	return adopted
+}
+
+func adoptResumeExecLaunchRecord(check resumeExecLaunchCheck, pane tmuxpane.TmuxPane) error {
+	return launch.WithRecordLock(check.AgentDir, func() error {
+		rec, err := launch.Read(check.AgentDir)
+		if err != nil {
+			return err
+		}
+		rec.Role = check.Role
+		rec.Handle = check.Handle
+		rec.Session = check.Workstream
+		rec.Root = check.Root
+		rec.CWD = check.CWD
+		rec.Binary = check.Binary
+		rec.TeamProfile = check.Profile
 		rec.StartedAt = time.Now().UTC()
 		rec.Tmux = &launch.TmuxInfo{
 			Session:    pane.Session,
@@ -856,11 +909,8 @@ func adoptResumeExecLaunchRecords(results []resumeExecLaunchResult) bool {
 			Target:     "adopted",
 		}
 		rec.Terminal = launch.TerminalInfoFromTmux(rec.Tmux)
-		if err := launch.Write(r.Check.AgentDir, rec); err == nil {
-			adopted = true
-		}
-	}
-	return adopted
+		return launch.WriteUnderRecordLock(check.AgentDir, rec)
+	})
 }
 
 func resumeExecAdoptionPane(c resumeExecLaunchCheck, panes []tmuxpane.TmuxPane) (tmuxpane.TmuxPane, bool) {
@@ -946,6 +996,10 @@ func inspectResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots ma
 			results = append(results, res)
 			continue
 		}
+		if info, statErr := os.Stat(launch.ExistingPath(c.AgentDir)); statErr == nil {
+			res.RecordModTime = info.ModTime()
+		}
+		res.RecordStarted = rec.StartedAt
 		results = append(results, res)
 	}
 	return results
@@ -1067,6 +1121,8 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	plan.HasRestoreRecord = recFound
 	plan.Handle = handle
 	if recFound {
+		restored := rec
+		plan.RestoreRecord = &restored
 		plan.Tmux = rec.Tmux
 		plan.SavedLaunchIdentity = resumeSavedLaunchIdentity(rec)
 		savedMember := team.Member{Binary: rec.Binary}

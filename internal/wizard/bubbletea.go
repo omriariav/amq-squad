@@ -53,6 +53,7 @@ const (
 	stageGoal
 	stageSeed
 	stageResumeBrief
+	stageResumeGoal
 	stageConfirm
 )
 
@@ -392,6 +393,8 @@ func (m BubbleModel) title() string {
 		return "Optional brief source"
 	case stageResumeBrief:
 		return "Brief preserved for resume"
+	case stageResumeGoal:
+		return "Recorded lead goal"
 	case stageConfirm:
 		return "Review answers before canonical preview"
 	default:
@@ -503,6 +506,11 @@ func (m BubbleModel) note() string {
 		return "Accepted forms: file:path · issue:393 · gh:owner/repo#393"
 	case stageResumeBrief:
 		return fmt.Sprintf("Resume keeps the existing brief unchanged. Path=%s · goal excerpt=%s · seed=%s", displayValue(m.spec.BriefPath), GoalExcerpt(m.spec.BriefGoal), displayValue(m.spec.BriefSeed))
+	case stageResumeGoal:
+		if m.spec.ResumeGoalPlan.Eligible {
+			return "Default is No. Yes creates one new claim-once attempt only after the restored lead and original binding/claim evidence are revalidated. Goal: " + GoalExcerpt(m.spec.ResumeGoalPlan.Goal)
+		}
+		return fmt.Sprintf("Redelivery is %s: %s", defaultString(m.spec.ResumeGoalPlan.Action, "unavailable"), m.spec.ResumeGoalPlan.Reason)
 	}
 	return ""
 }
@@ -560,6 +568,7 @@ func (m BubbleModel) summary() string {
 	}
 	if m.spec.Backend == BackendResume {
 		parts = append(parts, fmt.Sprintf("Records   %d · restore-existing=%t", m.spec.RecordCount, m.spec.RecordCount > 0))
+		parts = append(parts, fmt.Sprintf("Goal plan %s · eligible=%t · selected=%t", defaultString(m.spec.ResumeGoalPlan.Action, "unavailable"), m.spec.ResumeGoalPlan.Eligible, m.spec.RedeliverGoal))
 		for _, member := range m.spec.ResumeMembers {
 			value := fmt.Sprintf("  %-10s %s · model=%s · effort=%s", member.Role, member.Action, defaultString(member.Model, "automatic"), defaultString(member.Effort, "automatic"))
 			if member.Action == MemberActionRestore {
@@ -763,6 +772,11 @@ func (m BubbleModel) choices() []choice {
 		return []choice{{value: "preview", label: "Run canonical preview, then decide launch separately"}}
 	case stageResumeBrief:
 		return []choice{{value: "continue", label: "Continue with the preserved brief"}}
+	case stageResumeGoal:
+		if m.spec.ResumeGoalPlan.Eligible {
+			return []choice{{value: "no", label: "No · preserve binding only"}, {value: "yes", label: "Yes · redeliver as one new claim-once attempt"}}
+		}
+		return []choice{{value: "continue", label: fmt.Sprintf("Continue · %s", defaultString(m.spec.ResumeGoalPlan.Action, "unavailable"))}}
 	default:
 		return nil
 	}
@@ -839,6 +853,14 @@ func (m BubbleModel) defaultCursor() int {
 		want = defaultLayoutPreset(m.spec.LayoutPreset, m.spec.Visibility)
 	case stageLauncherPane:
 		want = defaultLauncherPane(m.spec.LauncherPane, m.spec.Visibility, m.spec.ExternalLead)
+	case stageResumeGoal:
+		if m.spec.RedeliverGoal {
+			want = "yes"
+		} else if m.spec.ResumeGoalPlan.Eligible {
+			want = "no"
+		} else {
+			want = "continue"
+		}
 	}
 	for i, item := range choices {
 		if item.value == want {
@@ -1226,6 +1248,14 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 		m.spec.LauncherPane = selected
 		m.transition(stageGoal)
 	case stageResumeBrief:
+		if m.spec.ResumeGoalPlan.Eligible {
+			m.transition(stageResumeGoal)
+		} else {
+			m.spec.RedeliverGoal = false
+			m.transition(stageConfirm)
+		}
+	case stageResumeGoal:
+		m.spec.RedeliverGoal = m.spec.ResumeGoalPlan.Eligible && selected == "yes"
 		m.transition(stageConfirm)
 	case stageConfirm:
 		m.done = true
@@ -1419,7 +1449,7 @@ func (m BubbleModel) phaseIndex() int {
 		return 2
 	case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane:
 		return 3
-	case stageGoal, stageSeed, stageResumeBrief:
+	case stageGoal, stageSeed, stageResumeBrief, stageResumeGoal:
 		return 4
 	default:
 		return 5

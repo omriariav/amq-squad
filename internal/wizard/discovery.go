@@ -127,6 +127,38 @@ type DiscoveryMemberPlan struct {
 	Blocker             string       `json:"blocker"`
 }
 
+// ResumeGoalPlan is the read-only, session-level evidence used to decide
+// whether a freshly re-oriented lead may receive a new claim-once goal
+// attempt. Every field is scalar and byte-stable so CLI, JSON, and both
+// wizard adapters share the same facts without reconstructing the binding.
+type ResumeGoalPlan struct {
+	SchemaVersion        int    `json:"schema_version"`
+	Action               string `json:"action"`
+	Eligible             bool   `json:"eligible"`
+	Selected             bool   `json:"selected"`
+	Reason               string `json:"reason"`
+	LeadRole             string `json:"lead_role"`
+	LeadHandle           string `json:"lead_handle"`
+	LeadResumeAction     string `json:"lead_resume_action"`
+	SavedConversation    bool   `json:"saved_conversation"`
+	Goal                 string `json:"goal"`
+	BindingMode          string `json:"binding_mode"`
+	BindingNative        bool   `json:"binding_native"`
+	BindingSource        string `json:"binding_source"`
+	BindingDigest        string `json:"binding_digest"`
+	BindingCommandDigest string `json:"binding_command_digest"`
+	OriginalAttemptID    string `json:"original_attempt_id"`
+	AttemptState         string `json:"attempt_state"`
+	AttemptDigest        string `json:"attempt_digest"`
+	ClaimState           string `json:"claim_state"`
+	ClaimRoute           string `json:"claim_route"`
+	ClaimDigest          string `json:"claim_digest"`
+	TransitionID         string `json:"transition_id"`
+	TransitionState      string `json:"transition_state"`
+	TransitionDigest     string `json:"transition_digest"`
+	EvidenceDigest       string `json:"evidence_digest"`
+}
+
 // DiscoveryNamespaceFact is one independently mutable input to namespace
 // conflict detection. Result strings alone are insufficient: adding durable
 // state or changing a profile pin must invalidate a reviewed fingerprint even
@@ -157,10 +189,13 @@ type DiscoveryFingerprintInput struct {
 	RecordIDs               []string                 `json:"record_ids"`
 	RecordCount             int                      `json:"record_count"`
 	MemberPlans             []DiscoveryMemberPlan    `json:"member_plans"`
+	GoalPlan                ResumeGoalPlan           `json:"goal_plan"`
 }
 
 func DiscoveryFingerprint(input DiscoveryFingerprintInput) string {
 	canonical := input
+	// Selected is downstream operator intent, never authoritative discovery.
+	canonical.GoalPlan.Selected = false
 	canonical.NamespaceConflicts = sortedCopy(input.NamespaceConflicts)
 	canonical.NamespaceFacts = canonicalNamespaceFacts(input.NamespaceFacts)
 	canonical.RecordIDs = sortedCopy(input.RecordIDs)

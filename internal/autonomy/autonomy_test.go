@@ -144,6 +144,30 @@ func TestAuthorizeSpawnPersistsCountersAndAuditBeforeAllowedReturn(t *testing.T)
 	}
 }
 
+func TestAuthorizeSpawnProfileLockDoesNotSelfDeadlock(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.WriteProfile(dir, team.DefaultProfile, autonomousTeam()); err != nil {
+		t.Fatalf("write team: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := AuthorizeSpawn(dir, team.DefaultProfile, "s1", Request{
+			Role:            "worker",
+			RequestedByRole: "cto",
+			Reason:          "profile lock regression",
+		})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("autonomy authorization self-deadlocked by reacquiring the shared team lock")
+	}
+}
+
 func TestAuthorizePrunePersistsBudgetCounterIdleEvidenceAndAudit(t *testing.T) {
 	dir := t.TempDir()
 	if err := team.WriteProfile(dir, team.DefaultProfile, autonomousTeam()); err != nil {

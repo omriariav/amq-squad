@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -125,6 +126,7 @@ func runLaunch(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "print the coop exec command without executing")
 	launcherRaw := fs.String("launcher", "", "custom launcher to exec instead of <binary> (still receives AMQ env/identity, bootstrap, and a launch record)")
 	launcherArgsRaw := fs.String("launcher-args", "", "args passed to --launcher before the agent's child args; the launcher must forward trailing args to <binary>")
+	restoreGoalBindingRaw := fs.String("restore-goal-binding", "", "internal restore-only goal binding metadata")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad agent up - launch an agent with role metadata
@@ -237,6 +239,14 @@ Examples:
 	if launcher == "" && len(launcherArgs) > 0 {
 		return usageErrorf("--launcher-args requires --launcher")
 	}
+	var restoredGoalBinding *launch.GoalBinding
+	if strings.TrimSpace(*restoreGoalBindingRaw) != "" {
+		var binding launch.GoalBinding
+		if err := json.Unmarshal([]byte(*restoreGoalBindingRaw), &binding); err != nil {
+			return usageErrorf("--restore-goal-binding contains invalid JSON: %v", err)
+		}
+		restoredGoalBinding = &binding
+	}
 	remaining := fs.Args()
 	if len(remaining) == 0 {
 		return usageErrorf("agent up requires a binary (e.g. 'amq-squad agent up codex --role cpo')")
@@ -260,6 +270,9 @@ Examples:
 		if err != nil {
 			return err
 		}
+	}
+	if restoredGoalBinding != nil && nativeGoalBindingFromArgs(childArgs) != nil {
+		return usageErrorf("--restore-goal-binding cannot be combined with a native /goal child argument")
 	}
 
 	handle := *me
@@ -330,7 +343,7 @@ Examples:
 		NoRequireWake:                *noRequireWake,
 		NoGitignore:                  *noGitignore,
 		Symphony:                     *symphony,
-		GoalBinding:                  nativeGoalBindingFromArgs(childArgs),
+		GoalBinding:                  restoredGoalBinding,
 		PreauthorizedActions:         preauthorizedActions,
 		LauncherPreauthorizedActions: launcherPreauthorizedActions,
 		ExplicitAllowedTools:         explicitAllowedTools,
@@ -342,6 +355,9 @@ Examples:
 		StartedAt:                    time.Now().UTC(),
 		TeamProfile:                  teamProfileValue,
 		TeamHome:                     strings.TrimSpace(*teamHome),
+	}
+	if rec.GoalBinding == nil {
+		rec.GoalBinding = nativeGoalBindingFromArgs(childArgs)
 	}
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD

@@ -10,6 +10,11 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
+var (
+	resumeStdinIsTerminal  = stdinIsTerminal
+	resumeStderrIsTerminal = stderrIsTerminal
+)
+
 func runResume(args []string) error {
 	fs := flag.NewFlagSet("resume", flag.ContinueOnError)
 	sessionFlag := fs.String("session", "", "AMQ workstream session name to resume into (default: team workstream)")
@@ -27,6 +32,8 @@ func runResume(args []string) error {
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	roleFlag := fs.String("role", "", "comma-separated subset of roles to resume (default: all members)")
 	execMode := fs.Bool("exec", false, "open the planned launch commands in the terminal backend (tmux) instead of printing them")
+	redeliverGoal := fs.Bool("redeliver-goal", false, "after a verified fresh lead re-orient, deliver the saved goal as a new claim-once attempt")
+	suppressGoalPrompt := fs.Bool("no-redeliver-goal-prompt", false, "preserve an upstream wizard No without prompting again")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (liveness + tmux metadata) instead of the human plan")
 	terminal := fs.String("terminal", "tmux", "terminal backend to use with --exec")
 	target := fs.String("target", "current-window", "terminal target with --exec (tmux: current-window, new-window, or new-session)")
@@ -43,7 +50,7 @@ Usage:
                    [--model role=model,...]
                    [--effort role=level,...]
                    [--codex-args args] [--claude-args args]
-                   [--exec [--terminal tmux] [--target current-window|new-window|new-session]
+                   [--exec [--redeliver-goal] [--terminal tmux] [--target current-window|new-window|new-session]
                            [--layout vertical|horizontal|tiled]
                            [--terminal-session name] [--stagger 750ms]]
 
@@ -130,15 +137,23 @@ Examples:
 	if *restoreExisting {
 		mode = resumeModeRestoreExisting
 	}
-	exec := resumeExecOptions{}
+	exec := resumeExecOptions{
+		RedeliverGoal:      *redeliverGoal,
+		RedeliveryExplicit: flagWasSet(fs, "redeliver-goal"),
+	}
 	if *execMode {
 		exec = resumeExecOptions{
-			Enabled:         true,
-			Terminal:        *terminal,
-			Target:          *target,
-			Layout:          *layout,
-			TerminalSession: *terminalSession,
-			Stagger:         *stagger,
+			Enabled:            true,
+			Terminal:           *terminal,
+			Target:             *target,
+			Layout:             *layout,
+			TerminalSession:    *terminalSession,
+			Stagger:            *stagger,
+			RedeliverGoal:      *redeliverGoal,
+			RedeliveryExplicit: flagWasSet(fs, "redeliver-goal"),
+			PromptGoal:         !flagWasSet(fs, "redeliver-goal") && !*suppressGoalPrompt && resumeStdinIsTerminal() && resumeStderrIsTerminal(),
+			PromptIn:           os.Stdin,
+			PromptOut:          os.Stderr,
 		}
 	}
 	return executeResume(resumeExecution{
@@ -159,6 +174,7 @@ Examples:
 		DryRun:           *dryRun,
 		Profile:          profile,
 		JSON:             *jsonOut,
+		GoalRedelivery:   true,
 		Style:            resumePrinterStyle{Label: "resume", FooterVerb: "up"},
 		Exec:             exec,
 	})
