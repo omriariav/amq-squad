@@ -95,6 +95,39 @@ func TestPersistedReservationConcurrentConsumersAndExpiry(t *testing.T) {
 		t.Fatalf("expired reservation not recovered: %d", calls)
 	}
 }
+
+func TestAmbiguousSideEffectReservationSuppressesThenRetriesAfterExpiry(t *testing.T) {
+	old := notificationSinkFactory
+	defer func() { notificationSinkFactory = old }()
+	var calls int32
+	notificationSinkFactory = func(team.OperatorNotificationSinkConfig) notifier.Sink { return atomicDeliverySink{&calls} }
+	path := filepath.Join(t.TempDir(), "state.json")
+	now := time.Now().UTC()
+	item := operatorAttention{EventType: "gate", Key: "default/s\x00gate\x00gate/ambiguous", LatestID: "m1", Profile: "default", Session: "s"}
+	policy := team.OperatorNotificationPolicy{Sinks: []team.OperatorNotificationSinkConfig{{ID: "desktop", Type: "desktop", Timeout: "10s"}}}
+	state := notifyStateFile{Schema: 2, Items: map[string]notifyStateRecord{
+		item.Key: {
+			Active: true, LatestID: item.LatestID,
+			Deliveries: map[string]attention.Delivery{"desktop": {
+				ReservationToken:   "side-effect-before-commit",
+				ReservationExpires: now.Add(notificationReservationTTL(policy.Sinks[0])),
+			}},
+		},
+	}}
+	if err := writeNotifyState(path, state); err != nil {
+		t.Fatal(err)
+	}
+
+	_, summary, err := deliverNotificationSinksPersisted(context.Background(), "/project", path, []operatorAttention{item}, policy, time.Hour, now.Add(time.Second), false)
+	if err != nil || summary.Selected != 0 || summary.Suppressed != 1 || atomic.LoadInt32(&calls) != 0 {
+		t.Fatalf("live ambiguous reservation not suppressed: summary=%+v calls=%d err=%v", summary, calls, err)
+	}
+	_, summary, err = deliverNotificationSinksPersisted(context.Background(), "/project", path, []operatorAttention{item}, policy, time.Hour, now.Add(16*time.Second), false)
+	if err != nil || summary.Delivered != 1 || atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("expired ambiguous reservation not retried: summary=%+v calls=%d err=%v", summary, calls, err)
+	}
+}
+
 func TestExternalDeliveryFiltersSurfaceHonorsEventsAndUsesSinkSummary(t *testing.T) {
 	old := notificationSinkFactory
 	defer func() { notificationSinkFactory = old }()
