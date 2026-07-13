@@ -2,6 +2,8 @@ package cli
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -199,4 +201,123 @@ func TestTeamMemberAddEffortDryRunJSONAndLiveParity(t *testing.T) {
 	if len(after.Members) != 2 || !reflect.DeepEqual(after.Members[1].ClaudeArgs, []string{"--effort", "FutureTier"}) {
 		t.Fatalf("live member = %+v", after.Members)
 	}
+}
+
+func TestTeamShowEffortUsesProjectCatalogWithoutPersisting(t *testing.T) {
+	dir := t.TempDir()
+	resumeChdir(t, dir)
+	home := t.TempDir()
+	oldHome := agentCatalogUserHomeDir
+	agentCatalogUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { agentCatalogUserHomeDir = oldHome })
+	if err := team.Write(dir, team.Team{
+		Workstream: "sess",
+		Members: []team.Member{{
+			Role: "qa", Binary: "claude", Handle: "qa", Session: "sess",
+			ClaudeArgs: []string{"--chrome", "--effort", "low"},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeCatalogFixture(t, filepath.Join(dir, ".amq-squad", "catalog.json"), `{
+  "schema_version": 1,
+  "binaries": {"claude": {"efforts": [{"value":"ProjectTier","label":"Project tier"}]}}
+}`)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamShow([]string{"--json", "--no-bootstrap", "--effort", "qa=projecttier"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid([]byte(stdout)) || !strings.Contains(stdout, "--effort ProjectTier") {
+		t.Fatalf("team show JSON did not use the project catalog's canonical effort:\n%s", stdout)
+	}
+	if strings.Contains(stderr, "not in the merged catalog") {
+		t.Fatalf("known project effort warned as custom: %q", stderr)
+	}
+	stored, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stored.Members[0].ClaudeArgs, []string{"--chrome", "--effort", "low"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("team show mutated stored args: got %#v want %#v", got, want)
+	}
+}
+
+func TestTeamMemberAddEffortKnownAutomaticAndAtomicFailure(t *testing.T) {
+	t.Run("known project tier is canonicalized", func(t *testing.T) {
+		dir := t.TempDir()
+		home := t.TempDir()
+		oldHome := agentCatalogUserHomeDir
+		agentCatalogUserHomeDir = func() (string, error) { return home, nil }
+		t.Cleanup(func() { agentCatalogUserHomeDir = oldHome })
+		if err := team.Write(dir, team.Team{Workstream: "sess", Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"}}}); err != nil {
+			t.Fatal(err)
+		}
+		writeCatalogFixture(t, filepath.Join(dir, ".amq-squad", "catalog.json"), `{
+  "schema_version": 1,
+  "binaries": {"claude": {"efforts": [{"value":"ProjectTier"}]}}
+}`)
+		_, stderr, err := captureOutput(t, func() error {
+			return runTeamMember([]string{"add", "qa", "--project", dir, "--binary", "claude", "--effort", "projecttier"})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(stderr, "not in the merged catalog") {
+			t.Fatalf("known effort warning = %q", stderr)
+		}
+		cfg, err := team.Read(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := cfg.Members[1].ClaudeArgs, []string{"--effort", "ProjectTier"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("known effort args = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("automatic strips supplied native effort", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := team.Write(dir, team.Team{Workstream: "sess", Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"}}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := captureOutput(t, func() error {
+			return runTeamMember([]string{"add", "qa", "--project", dir, "--binary", "claude", "--claude-args", "--chrome --effort low", "--effort", "automatic"})
+		}); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := team.Read(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := cfg.Members[1].ClaudeArgs, []string{"--chrome"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("automatic args = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("structural failure leaves profile byte exact", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := team.Write(dir, team.Team{Workstream: "sess", Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"}}}); err != nil {
+			t.Fatal(err)
+		}
+		path := team.ProfilePath(dir, team.DefaultProfile)
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = captureOutput(t, func() error {
+			return runTeamMember([]string{"add", "qa", "--project", dir, "--binary", "claude", "--handle", "cto", "--effort", "FutureTier"})
+		})
+		if err == nil || !strings.Contains(err.Error(), "handle") {
+			t.Fatalf("structural failure = %v", err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(after, before) {
+			t.Fatal("failed member add changed the profile")
+		}
+	})
 }

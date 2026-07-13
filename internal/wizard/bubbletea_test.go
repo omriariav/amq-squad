@@ -360,16 +360,43 @@ func TestBubblePhaseRailsAreScopeSpecific(t *testing.T) {
 	}
 	for _, branch := range []struct {
 		name   string
-		stages []bubbleStage
+		stages []struct {
+			stage bubbleStage
+			want  int
+		}
 	}{
-		{name: "project existing", stages: []bubbleStage{stageProject, stageProfile, stageResumeMember, stageTopology, stageResumeBrief, stageConfirm}},
-		{name: "project new", stages: []bubbleStage{stageProject, stageNewProfile, stageRoleBinary, stageOperator, stageGoal, stageConfirm}},
+		{name: "project existing", stages: []struct {
+			stage bubbleStage
+			want  int
+		}{{stageProject, 0}, {stageProfile, 1}, {stageResumeMember, 3}, {stageTopology, 3}, {stageResumeBrief, 4}, {stageConfirm, 5}}},
+		{name: "project new", stages: []struct {
+			stage bubbleStage
+			want  int
+		}{{stageProject, 0}, {stageNewProfile, 1}, {stageRoleBinary, 2}, {stageRoleModel, 3}, {stageOperator, 3}, {stageGoal, 4}, {stageConfirm, 5}}},
 	} {
 		t.Run(branch.name, func(t *testing.T) {
-			for want, stage := range branch.stages {
+			for _, item := range branch.stages {
+				project.stage = item.stage
+				if got := project.phaseIndex(); got != item.want {
+					t.Fatalf("stage=%v index=%d want=%d", item.stage, got, item.want)
+				}
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name   string
+		stages []bubbleStage
+	}{
+		{name: "existing start catalog controls", stages: []bubbleStage{stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageExistingEffortCustom}},
+		{name: "resume catalog controls", stages: []bubbleStage{stageResumeMember, stageResumeModelCustom, stageResumeEffort, stageResumeEffortCustom}},
+		{name: "fresh roster catalog controls", stages: []bubbleStage{stageRoleModel, stageRoleModelCustom, stageRoleEffort, stageRoleEffortCustom}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, stage := range tc.stages {
 				project.stage = stage
-				if got := project.phaseIndex(); got != want {
-					t.Fatalf("stage=%v index=%d want=%d", stage, got, want)
+				if got := project.phaseIndex(); got != 3 {
+					t.Fatalf("stage=%v index=%d want Run controls index 3", stage, got)
 				}
 			}
 		})
@@ -497,6 +524,138 @@ func TestGlobalCatalogChoicesMatchAcrossAdapters(t *testing.T) {
 		if !strings.Contains(numberedOut.String(), want) {
 			t.Fatalf("numbered output missing %q:\n%s", want, numberedOut.String())
 		}
+	}
+}
+
+func TestProjectCatalogChoicesMatchAcrossAdapters(t *testing.T) {
+	catalog := agentcatalog.Merge(agentcatalog.Builtins(), agentcatalog.Catalog{Binaries: map[string]agentcatalog.Binary{
+		"claude": {Efforts: []agentcatalog.Entry{
+			{Value: "medium", Label: "medium", Enabled: false},
+			{Value: "UltraTier", Label: "Ultra tier", Enabled: true},
+		}},
+	}})
+	existing := ProfileSummary{
+		Name: "release", MemberCount: 1, OperatorMode: "lead_pane",
+		Members:  []MemberSummary{{Role: "qa", Binary: "claude", Effort: "low"}},
+		Sessions: []SessionSummary{discoveredFreshSession("s", SessionSourceMemberPin, 1)},
+	}
+	resumeMembers := []SessionMemberSummary{{Role: "qa", Binary: "claude", Effort: "low", Action: MemberActionFresh}}
+	resume := ProfileSummary{
+		Name: "release", MemberCount: 1, OperatorMode: "lead_pane",
+		Members: []MemberSummary{{Role: "qa", Binary: "claude", Effort: "low"}},
+		Sessions: []SessionSummary{{
+			Name: "s", Source: SessionSourceMemberPin, Fingerprint: "fp", Fresh: 1,
+			Members:        resumeMembers,
+			Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true},
+		}},
+	}
+
+	choiceLabels := func(items []choice) []string {
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			out = append(out, item.label)
+		}
+		return out
+	}
+	numberedPromptLabels := func(t *testing.T, output, prompt string) []string {
+		t.Helper()
+		startToken := "\n" + prompt + ":\n"
+		start := strings.Index(output, startToken)
+		if start < 0 {
+			t.Fatalf("numbered output missing %q prompt:\n%s", prompt, output)
+		}
+		block := output[start+len(startToken):]
+		end := strings.Index(block, "Choose [")
+		if end < 0 {
+			t.Fatalf("numbered output missing chooser after %q:\n%s", prompt, output)
+		}
+		var labels []string
+		for _, line := range strings.Split(block[:end], "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			_, label, ok := strings.Cut(line, ") ")
+			if !ok {
+				t.Fatalf("unexpected numbered choice line %q", line)
+			}
+			labels = append(labels, strings.TrimSuffix(label, " (default)"))
+		}
+		return labels
+	}
+
+	for _, tc := range []struct {
+		name       string
+		defaults   Spec
+		ctx        ProjectContext
+		input      string
+		prompt     string
+		bubble     BubbleModel
+		wantValues []string
+	}{
+		{
+			name:     "fresh roster",
+			defaults: Spec{Scope: "project", Project: "/repo", Profile: "new", Session: "s", Roles: "qa", Binary: "qa=claude", Lead: "qa"},
+			ctx:      ProjectContext{Project: "/repo", Catalog: catalog},
+			input:    strings.Repeat("\n", 24),
+			prompt:   "qa effort",
+			bubble: BubbleModel{
+				spec: Spec{Binary: "qa=claude"}, ctx: ProjectContext{Catalog: catalog},
+				stage: stageRoleEffort, roleOrder: []string{"qa"}, roleIndex: 0,
+			},
+			wantValues: []string{"automatic", "low", "high", "xhigh", "max", "UltraTier", "custom"},
+		},
+		{
+			name:     "existing start",
+			defaults: Spec{Scope: "project", Project: "/repo", Profile: "release"},
+			ctx:      ProjectContext{Project: "/repo", Catalog: catalog, Profiles: []ProfileSummary{existing}},
+			input:    strings.Join([]string{"", "", "", "2"}, "\n") + "\n" + strings.Repeat("\n", 20),
+			prompt:   "qa effort override",
+			bubble: BubbleModel{
+				ctx:   ProjectContext{Catalog: catalog, Profiles: []ProfileSummary{existing}},
+				stage: stageExistingEffort, existingIndex: 0, roleIndex: 0,
+			},
+			wantValues: []string{"keep", "low", "high", "xhigh", "max", "UltraTier", "custom"},
+		},
+		{
+			name:     "resume fresh member",
+			defaults: Spec{Scope: "project", Project: "/repo", Profile: "release"},
+			ctx:      ProjectContext{Project: "/repo", Catalog: catalog, Profiles: []ProfileSummary{resume}},
+			input:    strings.Repeat("\n", 20),
+			prompt:   "qa fresh-launch effort",
+			bubble: BubbleModel{
+				spec: Spec{ResumeMembers: resumeMembers}, ctx: ProjectContext{Catalog: catalog},
+				stage: stageResumeEffort, roleIndex: 0,
+			},
+			wantValues: []string{"keep", "low", "high", "xhigh", "max", "UltraTier", "custom"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := make([]string, 0, len(tc.bubble.choices()))
+			for _, item := range tc.bubble.choices() {
+				values = append(values, item.value)
+			}
+			if !reflect.DeepEqual(values, tc.wantValues) {
+				t.Fatalf("bubble values = %v, want %v", values, tc.wantValues)
+			}
+
+			var out bytes.Buffer
+			_, err := RunNumbered(strings.NewReader(tc.input), &out, NumberedOptions{
+				Defaults: tc.defaults,
+				InspectProject: func(string) (ProjectContext, error) {
+					return tc.ctx, nil
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := numberedPromptLabels(t, out.String(), tc.prompt), choiceLabels(tc.bubble.choices()); !reflect.DeepEqual(got, want) {
+				t.Fatalf("adapter labels differ:\nnumbered=%v\nbubble=%v", got, want)
+			}
+			if strings.Contains(strings.Join(choiceLabels(tc.bubble.choices()), "\n"), "medium") {
+				t.Fatal("disabled project catalog entry leaked into a wizard adapter")
+			}
+		})
 	}
 }
 
