@@ -525,6 +525,57 @@ func TestNumberedGlobalWizardDelegatesPreviewThenDefaultNo(t *testing.T) {
 	}
 }
 
+func TestNumberedGlobalWizardWithoutScopeNeverDiscoversProject(t *testing.T) {
+	_, globalCalls := withWizardExecutionSeams(t)
+	oldInput, oldOutput := runStartWizardInput, runStartWizardOutput
+	t.Cleanup(func() { runStartWizardInput, runStartWizardOutput = oldInput, oldOutput })
+	inspections := 0
+	runStartWizardInspectProject = func(string) (runwizard.ProjectContext, error) {
+		inspections++
+		return runwizard.ProjectContext{}, errors.New("project discovery must stay behind Project scope")
+	}
+	// Global scope; root, agent, model, effort, native args, window; default-No confirmation.
+	runStartWizardInput = strings.NewReader("2\n\n\n\n\n\n\n\n")
+	var prompts strings.Builder
+	runStartWizardOutput = &prompts
+	if err := runNumberedRunStartWizard([]string{"--root", t.TempDir()}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if inspections != 0 || len(*globalCalls) != 1 || hasWizardArg((*globalCalls)[0], "--go") {
+		t.Fatalf("inspections=%d global calls=%v", inspections, *globalCalls)
+	}
+	for _, want := range []string{"What do you want to run?", "Review", "Preview command:", "Live command:", "owns no wake mailbox"} {
+		if !strings.Contains(prompts.String(), want) {
+			t.Fatalf("global Review missing %q:\n%s", want, prompts.String())
+		}
+	}
+}
+
+func TestNumberedGlobalWizardOverridesProjectPrefillWithoutDiscovery(t *testing.T) {
+	_, globalCalls := withWizardExecutionSeams(t)
+	oldInput, oldOutput := runStartWizardInput, runStartWizardOutput
+	t.Cleanup(func() { runStartWizardInput, runStartWizardOutput = oldInput, oldOutput })
+	inspections := 0
+	runStartWizardInspectProject = func(string) (runwizard.ProjectContext, error) {
+		inspections++
+		return runwizard.ProjectContext{}, errors.New("project-prefilled scope must remain only a default row")
+	}
+	runStartWizardInput = strings.NewReader("2\n\n\n\n\n\n\n\n")
+	var prompts strings.Builder
+	runStartWizardOutput = &prompts
+	if err := runNumberedRunStartWizard([]string{"--scope", "project", "--project", "/must-not-inspect", "--root", t.TempDir()}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if inspections != 0 || len(*globalCalls) != 1 || hasWizardArg((*globalCalls)[0], "--go") {
+		t.Fatalf("inspections=%d global calls=%v", inspections, *globalCalls)
+	}
+	for _, want := range []string{"What do you want to run?", "Review", "Preview command:", "Live command:"} {
+		if !strings.Contains(prompts.String(), want) {
+			t.Fatalf("project-prefilled global Review missing %q:\n%s", want, prompts.String())
+		}
+	}
+}
+
 func TestNumberedProjectWizardScriptedYesPreservesReaderAndAddsOnlyGo(t *testing.T) {
 	projectCalls, _ := withWizardExecutionSeams(t)
 	oldInput, oldOutput := runStartWizardInput, runStartWizardOutput
@@ -645,20 +696,75 @@ func TestBubbleGlobalWizardStaysInProgramThroughReview(t *testing.T) {
 	}
 }
 
+func TestBubbleGlobalWizardWithoutScopeStartsBeforeProjectDiscovery(t *testing.T) {
+	_, globalCalls := withWizardExecutionSeams(t)
+	oldOpen, oldProgram := runStartWizardOpenTTY, runStartWizardBubbleProgram
+	t.Cleanup(func() { runStartWizardOpenTTY, runStartWizardBubbleProgram = oldOpen, oldProgram })
+	tty := wizardTestTTY{reader: bytes.NewReader([]byte("\n")), writes: &bytes.Buffer{}}
+	runStartWizardOpenTTY = func() (io.ReadWriteCloser, error) { return tty, nil }
+	inspections, programs := 0, 0
+	runStartWizardInspectProject = func(string) (runwizard.ProjectContext, error) {
+		inspections++
+		return runwizard.ProjectContext{}, errors.New("project discovery must stay behind Project scope")
+	}
+	runStartWizardBubbleProgram = func(_ io.Reader, _ io.Writer, opts runwizard.NumberedOptions) (runwizard.BubbleResult, error) {
+		programs++
+		if inspections != 0 || opts.Defaults.Scope != "" {
+			t.Fatalf("Bubble started after premature discovery: inspections=%d defaults=%+v", inspections, opts.Defaults)
+		}
+		return runwizard.BubbleResult{Spec: runwizard.Spec{
+			Scope: "global", Backend: runwizard.BackendGlobalStart, GlobalRoot: opts.Defaults.GlobalRoot,
+			GlobalAgent: "claude", GlobalWindow: opts.Defaults.GlobalWindow,
+		}}, nil
+	}
+	if err := runBubbleRunStartWizard([]string{"--root", t.TempDir()}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if inspections != 0 || programs != 1 || len(*globalCalls) != 1 || hasWizardArg((*globalCalls)[0], "--go") {
+		t.Fatalf("inspections=%d programs=%d global calls=%v", inspections, programs, *globalCalls)
+	}
+}
+
+func TestBubbleGlobalWizardOverridesProjectPrefillWithoutDiscovery(t *testing.T) {
+	_, globalCalls := withWizardExecutionSeams(t)
+	oldOpen, oldProgram := runStartWizardOpenTTY, runStartWizardBubbleProgram
+	t.Cleanup(func() { runStartWizardOpenTTY, runStartWizardBubbleProgram = oldOpen, oldProgram })
+	tty := wizardTestTTY{reader: bytes.NewReader([]byte("\n")), writes: &bytes.Buffer{}}
+	runStartWizardOpenTTY = func() (io.ReadWriteCloser, error) { return tty, nil }
+	inspections, programs := 0, 0
+	runStartWizardInspectProject = func(string) (runwizard.ProjectContext, error) {
+		inspections++
+		return runwizard.ProjectContext{}, errors.New("project-prefilled scope must remain only a default row")
+	}
+	runStartWizardBubbleProgram = func(_ io.Reader, _ io.Writer, opts runwizard.NumberedOptions) (runwizard.BubbleResult, error) {
+		programs++
+		if inspections != 0 || opts.Defaults.Scope != "project" || opts.Defaults.Project != "/must-not-inspect" {
+			t.Fatalf("project prefill was inspected or lost before Bubble: inspections=%d defaults=%+v", inspections, opts.Defaults)
+		}
+		return runwizard.BubbleResult{Spec: runwizard.Spec{
+			Scope: "global", Backend: runwizard.BackendGlobalStart, GlobalRoot: opts.Defaults.GlobalRoot,
+			GlobalAgent: "claude", GlobalWindow: opts.Defaults.GlobalWindow,
+		}}, nil
+	}
+	if err := runBubbleRunStartWizard([]string{"--scope", "project", "--project", "/must-not-inspect", "--root", t.TempDir()}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if inspections != 0 || programs != 1 || len(*globalCalls) != 1 || hasWizardArg((*globalCalls)[0], "--go") {
+		t.Fatalf("inspections=%d programs=%d global calls=%v", inspections, programs, *globalCalls)
+	}
+}
+
 func TestBubbleWizardFingerprintDeltaBeforePreviewRestartsAtProfile(t *testing.T) {
 	withWizardExecutionSeams(t)
 	oldOpen, oldProgram := runStartWizardOpenTTY, runStartWizardBubbleProgram
 	t.Cleanup(func() { runStartWizardOpenTTY, runStartWizardBubbleProgram = oldOpen, oldProgram })
-	spec, current := resumeWizardFixture("A")
+	spec, _ := resumeWizardFixture("A")
 	_, changed := resumeWizardFixture("B")
 	tty := wizardTestTTY{reader: bytes.NewReader([]byte("\n")), writes: &bytes.Buffer{}}
 	runStartWizardOpenTTY = func() (io.ReadWriteCloser, error) { return tty, nil }
 	inspections, programs, confirms, previews := 0, 0, 0, 0
 	runStartWizardInspectProject = func(string) (runwizard.ProjectContext, error) {
 		inspections++
-		if inspections == 1 {
-			return current, nil
-		}
 		return changed, nil
 	}
 	runStartWizardBubbleProgram = func(_ io.Reader, _ io.Writer, opts runwizard.NumberedOptions) (runwizard.BubbleResult, error) {
@@ -676,7 +782,7 @@ func TestBubbleWizardFingerprintDeltaBeforePreviewRestartsAtProfile(t *testing.T
 	if err := runBubbleRunStartWizard([]string{"--scope", "project", "--project", "/repo"}, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if inspections != 2 || programs != 2 || confirms != 0 || previews != 0 {
+	if inspections != 1 || programs != 2 || confirms != 0 || previews != 0 {
 		t.Fatalf("inspections=%d programs=%d confirms=%d previews=%d", inspections, programs, confirms, previews)
 	}
 }
@@ -692,7 +798,7 @@ func TestBubbleWizardFingerprintDeltaAfterYesRestartsAtProfile(t *testing.T) {
 	inspections, programs := 0, 0
 	runStartWizardInspectProject = func(string) (runwizard.ProjectContext, error) {
 		inspections++
-		if inspections <= 2 {
+		if inspections <= 1 {
 			return current, nil
 		}
 		return changed, nil
@@ -719,7 +825,7 @@ func TestBubbleWizardFingerprintDeltaAfterYesRestartsAtProfile(t *testing.T) {
 	if err := runBubbleRunStartWizard([]string{"--scope", "project", "--project", "/repo"}, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if inspections != 4 || programs != 2 || len(calls) != 2 {
+	if inspections != 3 || programs != 2 || len(calls) != 2 {
 		t.Fatalf("inspections=%d programs=%d calls=%v", inspections, programs, calls)
 	}
 }
@@ -738,7 +844,7 @@ func TestNumberedWizardPostYesDeltaDiscardsYesAndRestartsAtProfile(t *testing.T)
 	inspections, previews, confirms := 0, 0, 0
 	runStartWizardInspectProject = func(string) (runwizard.ProjectContext, error) {
 		inspections++
-		if inspections <= 3 {
+		if inspections <= 2 {
 			return current, nil
 		}
 		return changed, nil
@@ -759,7 +865,7 @@ func TestNumberedWizardPostYesDeltaDiscardsYesAndRestartsAtProfile(t *testing.T)
 	if err := runNumberedRunStartWizard([]string{"--scope", "project", "--project", spec.Project, "--profile", spec.Profile}, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if inspections != 6 || previews != 2 || confirms != 2 || len(calls) != 2 {
+	if inspections != 5 || previews != 2 || confirms != 2 || len(calls) != 2 {
 		t.Fatalf("inspections=%d previews=%d confirms=%d calls=%v", inspections, previews, confirms, calls)
 	}
 }

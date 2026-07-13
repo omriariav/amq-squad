@@ -362,7 +362,7 @@ func TestBubblePhaseRailsAreScopeSpecific(t *testing.T) {
 }
 
 func TestGlobalBranchRunsThroughBothRealAdaptersToIdenticalReview(t *testing.T) {
-	defaults := Spec{Scope: "global", GlobalRoot: "/neutral", GlobalAgent: "claude", GlobalWindow: "global-orch"}
+	defaults := Spec{Scope: "project", GlobalRoot: "/neutral", GlobalAgent: "claude", GlobalWindow: "global-orch"}
 	initial, err := NewBubbleModel(NumberedOptions{Defaults: defaults})
 	if err != nil {
 		t.Fatal(err)
@@ -378,6 +378,7 @@ func TestGlobalBranchRunsThroughBothRealAdaptersToIdenticalReview(t *testing.T) 
 		done <- programResult{model: model, err: runErr}
 	}()
 	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyDown},
 		{Type: tea.KeyEnter},
 		{Type: tea.KeyEnter}, {Type: tea.KeyEnter}, {Type: tea.KeyEnter}, {Type: tea.KeyEnter},
 		{Type: tea.KeyEnter}, {Type: tea.KeyEnter}, {Type: tea.KeyEnter},

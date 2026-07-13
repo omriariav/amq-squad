@@ -250,18 +250,6 @@ func prepareRunStartWizard(args []string) (runwizard.Spec, runwizard.NumberedOpt
 		}
 		prefill.Project = cwd
 	}
-	// Preserve the established initial read-only refresh for project-prefilled
-	// flows. The adapters still own the scope screen; an explicit global prefill
-	// avoids project discovery entirely.
-	if !strings.EqualFold(strings.TrimSpace(prefill.Scope), "global") {
-		initialContext, inspectErr := runStartWizardInspectProject(prefill.Project)
-		if inspectErr != nil {
-			return runwizard.Spec{}, runwizard.NumberedOptions{}, inspectErr
-		}
-		if strings.TrimSpace(initialContext.Project) != "" {
-			prefill.Project = initialContext.Project
-		}
-	}
 	if strings.TrimSpace(prefill.Profile) == "" {
 		prefill.Profile = team.DefaultProfile
 	}
