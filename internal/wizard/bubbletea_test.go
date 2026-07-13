@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/omriariav/amq-squad/v2/internal/agentcatalog"
 )
 
 // flattenBubbleView strips the panel border and collapses the word-wrap that
@@ -101,7 +102,7 @@ func TestBubbleModelExistingProfileOverridesAndExplicitNotificationMismatchArePr
 	}
 	m.input.SetValue("launch-model")
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	m.cursor = 3 // high
+	m.cursor = 4 // high
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageTopology || m.spec.OperatorMode != "separate_terminal" {
 		t.Fatalf("topology stage = %v mode %q", m.stage, m.spec.OperatorMode)
@@ -257,9 +258,10 @@ func TestBubbleResumeActionScopedControls(t *testing.T) {
 		state   RunState
 		members []SessionMemberSummary
 		model   string
+		effort  string
 	}{
 		{name: "all restore", records: 2, state: RunStateStopped, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore, SavedModel: "saved", SavedEffort: "high", SavedNativeArgs: []string{"--saved"}}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}},
-		{name: "restore fresh", records: 1, state: RunStateStopped, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Action: MemberActionFresh}}, model: "qa=gpt-5.6-sol"},
+		{name: "restore fresh", records: 1, state: RunStateStopped, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Action: MemberActionFresh}}, model: "qa=gpt-5.6-sol", effort: "qa=xhigh"},
 		{name: "live fresh", state: RunStatePartly, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionLive}, {Role: "qa", Binary: "codex", Action: MemberActionFresh}}, model: "qa=gpt-5.6-sol"},
 		{name: "live restore", records: 1, state: RunStatePartly, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionLive}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}},
 	}
@@ -287,8 +289,21 @@ func TestBubbleResumeActionScopedControls(t *testing.T) {
 					m.cursor = 1
 				}
 				m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+				if member.Action == MemberActionFresh {
+					if m.stage != stageResumeEffort {
+						t.Fatalf("fresh member effort stage=%v", m.stage)
+					}
+					if tt.effort != "" {
+						for i, item := range m.choices() {
+							if item.value == "xhigh" {
+								m.cursor = i
+							}
+						}
+					}
+					m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+				}
 			}
-			if m.stage != stageTopology || m.spec.Model != tt.model || m.spec.Effort != "" {
+			if m.stage != stageTopology || m.spec.Model != tt.model || m.spec.Effort != tt.effort {
 				t.Fatalf("post-member state stage=%v spec=%+v", m.stage, m.spec)
 			}
 			for _, wantStage := range []bubbleStage{stageLayoutPreset, stageOperator, stageOperatorNotifications, stageResumeBrief, stageConfirm} {
@@ -421,6 +436,143 @@ func TestGlobalBranchRunsThroughBothRealAdaptersToIdenticalReview(t *testing.T) 
 	}
 	if !strings.Contains(bubble.Spec.Scope, "global") || bubble.Spec.Backend != BackendGlobalStart {
 		t.Fatalf("bubble did not complete the global backend: %+v", bubble.Spec)
+	}
+}
+
+func TestGlobalCatalogChoicesMatchAcrossAdapters(t *testing.T) {
+	catalog := agentcatalog.Merge(agentcatalog.Builtins(), agentcatalog.Catalog{Binaries: map[string]agentcatalog.Binary{
+		"claude": {
+			Models:  []agentcatalog.Entry{{Value: "NeoModel", Label: "Neo model", Enabled: true}},
+			Efforts: []agentcatalog.Entry{{Value: "UltraTier", Label: "Ultra tier", Enabled: true}},
+		},
+	}})
+	loaded := []string{}
+	load := func(root string) agentcatalog.Catalog {
+		loaded = append(loaded, root)
+		return catalog
+	}
+	defaults := Spec{Scope: "project", GlobalRoot: "/neutral", GlobalAgent: "claude", GlobalWindow: "global-orch"}
+	m, err := NewBubbleModel(NumberedOptions{Defaults: defaults, LoadCatalog: load})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // global scope
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // root + catalog load
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // claude
+	if m.stage != stageGlobalModel {
+		t.Fatalf("global model stage = %v", m.stage)
+	}
+	for i, item := range m.choices() {
+		if item.value == "NeoModel" {
+			m.cursor = i
+		}
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i, item := range m.choices() {
+		if item.value == "UltraTier" {
+			m.cursor = i
+		}
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // native args
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // window
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // review
+
+	var numberedOut bytes.Buffer
+	numbered, err := RunNumbered(strings.NewReader("2\n\n\n6\n7\n\n\n"), &numberedOut, NumberedOptions{Defaults: defaults, LoadCatalog: load})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(m.spec, numbered) {
+		t.Fatalf("catalog adapter specs differ:\nbubble=%+v\nnumbered=%+v", m.spec, numbered)
+	}
+	if m.spec.GlobalModel != "NeoModel" || m.spec.GlobalEffort != "UltraTier" {
+		t.Fatalf("catalog selections = %+v", m.spec)
+	}
+	if got, want := loaded, []string{"/neutral", "/neutral"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("catalog roots = %v, want %v", got, want)
+	}
+	for _, want := range []string{"Neo model", "Ultra tier", "NeoModel", "UltraTier"} {
+		if !strings.Contains(numberedOut.String(), want) {
+			t.Fatalf("numbered output missing %q:\n%s", want, numberedOut.String())
+		}
+	}
+}
+
+func TestGlobalCustomEffortIsPreservedAndWarnedInBothReviews(t *testing.T) {
+	defaults := Spec{Scope: "project", GlobalRoot: "/neutral", GlobalAgent: "claude", GlobalEffort: "FutureTier", GlobalWindow: "global-orch"}
+	m, err := NewBubbleModel(NumberedOptions{Defaults: defaults})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyDown}, {Type: tea.KeyEnter}, // global
+		{Type: tea.KeyEnter}, // root
+		{Type: tea.KeyEnter}, // agent
+		{Type: tea.KeyEnter}, // automatic model
+		{Type: tea.KeyEnter}, // custom effort row
+		{Type: tea.KeyEnter}, // exact custom effort text
+		{Type: tea.KeyEnter}, // native args
+		{Type: tea.KeyEnter}, // window
+	} {
+		m = updateBubble(t, m, key)
+	}
+	if m.stage != stageConfirm || m.spec.GlobalEffort != "FutureTier" {
+		t.Fatalf("bubble custom global state = stage %v spec %+v", m.stage, m.spec)
+	}
+	if review := m.summary(); !strings.Contains(review, "Warning: effort global=FutureTier") || !strings.Contains(review, "passed through exactly") {
+		t.Fatalf("bubble review missing custom warning:\n%s", review)
+	}
+
+	var out bytes.Buffer
+	numbered, err := RunNumbered(strings.NewReader("2\n\n\n\n\n\n\n\n"), &out, NumberedOptions{Defaults: defaults})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if numbered.GlobalEffort != "FutureTier" || !strings.Contains(out.String(), "Warning: effort global=FutureTier") {
+		t.Fatalf("numbered custom result=%+v output:\n%s", numbered, out.String())
+	}
+}
+
+func TestBubbleResumeUsesInjectedCatalogAndPrefillsStoredCustomValues(t *testing.T) {
+	catalog := agentcatalog.Merge(agentcatalog.Builtins(), agentcatalog.Catalog{Binaries: map[string]agentcatalog.Binary{
+		"claude": {
+			Models:  []agentcatalog.Entry{{Value: "NeoModel", Enabled: true}},
+			Efforts: []agentcatalog.Entry{{Value: "UltraTier", Enabled: true}},
+		},
+	}})
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.ctx.Catalog = catalog
+	m.spec.ResumeMembers = []SessionMemberSummary{{Role: "qa", Binary: "claude", Action: MemberActionFresh, Model: "StoredModel", Effort: "StoredTier"}}
+	m.spec.Model = "qa=NeoModel"
+	m.spec.Effort = "qa=UltraTier"
+	m.roleIndex = 0
+	m.stage = stageResumeMember
+	m.configureStage()
+	if got := m.choices()[m.cursor].value; got != "NeoModel" {
+		t.Fatalf("resume model default = %q, want injected catalog value", got)
+	}
+	m.stage = stageResumeEffort
+	m.configureStage()
+	if got := m.choices()[m.cursor].value; got != "UltraTier" {
+		t.Fatalf("resume effort default = %q, want injected catalog value", got)
+	}
+
+	m.spec.Model = ""
+	m.stage = stageResumeModelCustom
+	m.configureStage()
+	if got := m.input.Value(); got != "StoredModel" {
+		t.Fatalf("custom model prefill = %q, want stored value", got)
+	}
+	m.spec.Effort = ""
+	m.stage = stageResumeEffortCustom
+	m.configureStage()
+	if got := m.input.Value(); got != "StoredTier" {
+		t.Fatalf("custom effort prefill = %q, want stored value", got)
 	}
 }
 
@@ -766,7 +918,10 @@ func TestBubbleModelBackRestoresProjectContext(t *testing.T) {
 	m, err := NewBubbleModel(NumberedOptions{
 		Defaults: Spec{Project: "/one"},
 		InspectProject: func(project string) (ProjectContext, error) {
-			return ProjectContext{Project: project, OriginSlug: strings.TrimPrefix(project, "/")}, nil
+			value := strings.TrimPrefix(project, "/")
+			return ProjectContext{Project: project, OriginSlug: value, Catalog: agentcatalog.Catalog{Binaries: map[string]agentcatalog.Binary{
+				"claude": {Efforts: []agentcatalog.Entry{{Value: value, Enabled: true}}},
+			}}}, nil
 		},
 	})
 	if err != nil {
@@ -778,9 +933,17 @@ func TestBubbleModelBackRestoresProjectContext(t *testing.T) {
 	if m.ctx.OriginSlug != "two" {
 		t.Fatalf("new context = %+v", m.ctx)
 	}
+	if _, ok := m.ctx.Catalog.Resolve("claude", agentcatalog.Efforts, "two"); !ok {
+		t.Fatalf("project catalog was not injected: %+v", m.ctx.Catalog)
+	}
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.stage != stageProject || m.spec.Project != "/one" || m.ctx.OriginSlug != "" || m.input.Value() != "/two" {
 		t.Fatalf("restored project state = stage %v spec %+v ctx %+v input %q", m.stage, m.spec, m.ctx, m.input.Value())
+	}
+	m.input.SetValue("/three")
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if _, ok := m.ctx.Catalog.Resolve("claude", agentcatalog.Efforts, "three"); !ok {
+		t.Fatalf("changed project did not refresh catalog: %+v", m.ctx.Catalog)
 	}
 }
 
@@ -837,6 +1000,35 @@ func TestBubbleModelOffersModelsPerBinaryWithCustomEscape(t *testing.T) {
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.stage != stageRoleEffort || m.spec.Model != "cto=gpt-5.7-experimental" {
 		t.Fatalf("custom model = stage %v model %q", m.stage, m.spec.Model)
+	}
+}
+
+func TestBubbleModelOffersCurrentClaudeEffortsWithCustomEscape(t *testing.T) {
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Roles: "qa", Binary: "qa=claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.roleOrder = []string{"qa"}
+	m.stage = stageRoleEffort
+	m.configureStage()
+	view := flattenBubbleView(m.View())
+	for _, want := range []string{"automatic", "low", "medium", "high", "xhigh", "max", "custom"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("claude effort list missing %q:\n%s", want, view)
+		}
+	}
+	m.cursor = len(m.choices()) - 1
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageRoleEffortCustom {
+		t.Fatalf("custom effort stage = %v", m.stage)
+	}
+	m.input.SetValue("FutureTier")
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.spec.Effort != "qa=FutureTier" {
+		t.Fatalf("custom effort = %q", m.spec.Effort)
+	}
+	if review := m.summary(); !strings.Contains(review, "Warning: effort qa=FutureTier") {
+		t.Fatalf("custom effort warning missing from summary:\n%s", review)
 	}
 }
 

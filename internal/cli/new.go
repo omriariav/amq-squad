@@ -212,8 +212,8 @@ Usage:
   amq-squad new profile NAME [--project DIR] [--sync] [--dry-run [--json]] [team init options]
 
 This delegates to 'amq-squad team init --profile NAME'. It is the named-profile
-counterpart to 'amq-squad new team', so it inherits role selection, --binary
-overrides, --dry-run, --json, --project, and --sync.
+counterpart to 'amq-squad new team', so it inherits role selection, --binary,
+--model, --effort, --dry-run, --json, --project, and --sync.
 
 Examples:
   amq-squad roles
@@ -239,6 +239,7 @@ func newProfileTeamArgs(args []string) ([]string, error) {
 		"--claude-args": true,
 		"--codex-args":  true,
 		"--cwd":         true,
+		"--effort":      true,
 		"--lead":        true,
 		"--model":       true,
 		"--operator":    true,

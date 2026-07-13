@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,54 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
+
+func TestRunResumeEffortIsFreshOnlyAndJSONSafe(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{{
+			Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96",
+			ClaudeArgs: []string{"--chrome", "--effort", "low"},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runResume([]string{"--json", "--effort", "qa=FutureTier"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid([]byte(stdout)) {
+		t.Fatalf("resume JSON is polluted:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "FutureTier") || strings.Contains(stdout, "--effort low") {
+		t.Fatalf("fresh command did not replace stored effort exactly:\n%s", stdout)
+	}
+	if strings.Count(stderr, "not in the merged catalog") != 1 {
+		t.Fatalf("warning count/stderr = %q", stderr)
+	}
+	stored, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(stored.Members[0].ClaudeArgs, " "); got != "--chrome --effort low" {
+		t.Fatalf("resume preview mutated profile args: %q", got)
+	}
+
+	writeMemberLaunchRecord(t, base, "issue-96", "qa", launch.Record{
+		CWD: dir, Binary: "claude", Role: "qa", StartedAt: time.Now(),
+	})
+	_, _, err = captureOutput(t, func() error {
+		return runResume([]string{"--effort", "qa=max"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "qa (restore)") || !strings.Contains(err.Error(), "only to launch-fresh") {
+		t.Fatalf("restore-target effort error = %v", err)
+	}
+}
 
 func TestRunResumeRequiresTeam(t *testing.T) {
 	dir := t.TempDir()

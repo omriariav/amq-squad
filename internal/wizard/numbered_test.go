@@ -100,6 +100,28 @@ func TestRunNumberedAcceptsNumberedChoices(t *testing.T) {
 	}
 }
 
+func TestRunNumberedClaudeEffortCustomEscapePreservesSpelling(t *testing.T) {
+	answers := []string{
+		"", "", "", "", // project, profile, session, roles
+		"2", "", "7", "FutureTier", // claude, automatic model, custom effort + exact tier
+		"", "", "", "", "", "", "", "", "", // lead through seed
+	}
+	var out bytes.Buffer
+	got, err := RunNumbered(strings.NewReader("\n"+strings.Join(answers, "\n")+"\n"), &out, NumberedOptions{
+		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s", Roles: "qa"},
+		ProfileExists: func(string, string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Binary != "qa=claude" || got.Effort != "qa=FutureTier" {
+		t.Fatalf("custom effort answers = %+v", got)
+	}
+	if !strings.Contains(out.String(), "Warning: effort qa=FutureTier") {
+		t.Fatalf("custom effort warning missing from review:\n%s", out.String())
+	}
+}
+
 func TestRunNumberedReusesCallerReaderAndPreservesFollowingConsent(t *testing.T) {
 	answers := []string{
 		"", "", "", "", // project, profile, session, roles
@@ -390,10 +412,11 @@ func TestRunNumberedResumeActionScopedControls(t *testing.T) {
 		members []SessionMemberSummary
 		input   string
 		model   string
+		effort  string
 	}{
 		{name: "all restore", records: 2, state: RunStateStopped, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore, SavedBinary: "codex", SavedModel: "saved", SavedEffort: "high", SavedNativeArgs: []string{"--saved"}}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, input: "\n\n\n\n"},
-		{name: "restore fresh", records: 1, state: RunStateStopped, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Model: "stored", Action: MemberActionFresh}}, input: "\n\n2\n\n\n", model: "qa=gpt-5.6-sol"},
-		{name: "live fresh no records", state: RunStatePartly, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionLive}, {Role: "qa", Binary: "codex", Action: MemberActionFresh}}, input: "\n\n2\n\n\n", model: "qa=gpt-5.6-sol"},
+		{name: "restore fresh", records: 1, state: RunStateStopped, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Model: "stored", Action: MemberActionFresh}}, input: "\n\n2\n6\n\n\n", model: "qa=gpt-5.6-sol", effort: "qa=xhigh"},
+		{name: "live fresh no records", state: RunStatePartly, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionLive}, {Role: "qa", Binary: "codex", Action: MemberActionFresh}}, input: "\n\n2\n\n\n\n", model: "qa=gpt-5.6-sol"},
 		{name: "live restore", records: 1, state: RunStatePartly, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionLive}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, input: "\n\n\n\n"},
 	}
 	for _, tt := range tests {
@@ -411,7 +434,7 @@ func TestRunNumberedResumeActionScopedControls(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Model != tt.model || got.Effort != "" || got.Backend != BackendResume || got.RecordCount != tt.records {
+			if got.Model != tt.model || got.Effort != tt.effort || got.Backend != BackendResume || got.RecordCount != tt.records {
 				t.Fatalf("resume answers=%+v", got)
 			}
 			if strings.Contains(out.String(), "effort override") || strings.Contains(out.String(), "Override cto at launch") {
@@ -500,7 +523,7 @@ func TestRunNumberedExistingProfileCollectsLaunchOnlyOverrides(t *testing.T) {
 		"2",            // override cto
 		"4",            // model override: custom
 		"launch-model", // custom launch-only model
-		"4",            // high effort
+		"5",            // high effort
 		"",             // topology
 		"",             // one-window layout
 		"",             // close launcher

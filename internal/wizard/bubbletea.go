@@ -18,7 +18,9 @@ const (
 	stageGlobalRoot
 	stageGlobalAgent
 	stageGlobalModel
+	stageGlobalModelCustom
 	stageGlobalEffort
+	stageGlobalEffortCustom
 	stageGlobalNativeArgs
 	stageGlobalWindow
 	stageProfile
@@ -29,13 +31,17 @@ const (
 	stageExistingModel
 	stageExistingModelCustom
 	stageExistingEffort
+	stageExistingEffortCustom
 	stageResumeMember
 	stageResumeModelCustom
+	stageResumeEffort
+	stageResumeEffortCustom
 	stageRoles
 	stageRoleBinary
 	stageRoleModel
 	stageRoleModelCustom
 	stageRoleEffort
+	stageRoleEffortCustom
 	stageLead
 	stageLeadMode
 	stageOperator
@@ -312,8 +318,12 @@ func (m BubbleModel) title() string {
 		return "Which agent should run the global orchestrator?"
 	case stageGlobalModel:
 		return "Model for the global orchestrator"
+	case stageGlobalModelCustom:
+		return "Custom model for the global orchestrator"
 	case stageGlobalEffort:
 		return "Effort for the global orchestrator"
+	case stageGlobalEffortCustom:
+		return "Custom effort for the global orchestrator"
 	case stageGlobalNativeArgs:
 		return "Extra native arguments"
 	case stageGlobalWindow:
@@ -334,6 +344,8 @@ func (m BubbleModel) title() string {
 		return "Custom model override · " + m.currentMember().Role
 	case stageExistingEffort:
 		return "Effort override · " + m.currentMember().Role
+	case stageExistingEffortCustom:
+		return "Custom effort override · " + m.currentMember().Role
 	case stageResumeMember:
 		member := m.currentResumeMember()
 		if member.Action == MemberActionFresh {
@@ -342,6 +354,10 @@ func (m BubbleModel) title() string {
 		return "Resume action · " + member.Role
 	case stageResumeModelCustom:
 		return "Custom model for fresh " + m.currentResumeMember().Role
+	case stageResumeEffort:
+		return "Effort for fresh " + m.currentResumeMember().Role
+	case stageResumeEffortCustom:
+		return "Custom effort for fresh " + m.currentResumeMember().Role
 	case stageRoles:
 		return "Choose fresh-roster roles"
 	case stageRoleBinary:
@@ -352,6 +368,8 @@ func (m BubbleModel) title() string {
 		return "Custom model · " + m.currentRole()
 	case stageRoleEffort:
 		return "Effort · " + m.currentRole()
+	case stageRoleEffortCustom:
+		return "Custom effort · " + m.currentRole()
 	case stageLead:
 		return "Choose the visible lead"
 	case stageLeadMode:
@@ -395,9 +413,13 @@ func (m BubbleModel) note() string {
 	case stageGlobalAgent:
 		return "The global orchestrator coordinates project namespaces but owns no project wake mailbox."
 	case stageGlobalModel:
-		return "Leave blank to let the selected agent choose its default model."
+		return "Catalog choices are suggestions; Custom accepts any model name."
+	case stageGlobalModelCustom:
+		return "Enter any model name, or leave blank for automatic."
 	case stageGlobalEffort:
-		return "Automatic lets the selected agent choose its default reasoning effort."
+		return "Catalog choices are suggestions; Custom accepts any effort tier."
+	case stageGlobalEffortCustom:
+		return "Unknown tiers are passed through exactly and may still be rejected by the underlying binary."
 	case stageGlobalNativeArgs:
 		return "These arguments pass to the selected agent; effort is controlled separately."
 	case stageGlobalWindow:
@@ -418,7 +440,9 @@ func (m BubbleModel) note() string {
 	case stageExistingModelCustom:
 		return "Enter a model for this launch only, or leave blank to keep the profile value."
 	case stageExistingEffort:
-		return "This replaces only the native effort args in the in-memory launch plan."
+		return "Catalog choices are suggestions. This replaces only the native effort args in the in-memory launch plan."
+	case stageExistingEffortCustom:
+		return "Enter any effort tier for this launch only; amq-squad warns but passes unknown tiers through."
 	case stageResumeMember:
 		member := m.currentResumeMember()
 		switch member.Action {
@@ -427,16 +451,24 @@ func (m BubbleModel) note() string {
 		case MemberActionRestore:
 			return fmt.Sprintf("Saved launch is read-only: binary=%s · model=%s · effort=%s · saved extra args=%s", defaultString(member.SavedBinary, member.Binary), defaultString(member.SavedModel, "automatic"), defaultString(member.SavedEffort, "automatic"), FormatSavedNativeArgs(member.SavedNativeArgs))
 		default:
-			return "Only launch-fresh members may receive a model override; resume offers no effort override."
+			return "Only launch-fresh members may receive model or effort overrides."
 		}
 	case stageResumeModelCustom:
 		return "This model applies only to the fresh member; leave blank to keep the stored profile model."
+	case stageResumeEffort:
+		return "This effort applies only to the launch-fresh member; catalog choices are advisory."
+	case stageResumeEffortCustom:
+		return "Unknown tiers pass through exactly; restored and live members remain immutable."
 	case stageRoles:
 		return "Comma-separated role ids. Defaults are shown in the field."
 	case stageRoleModel:
 		return "Models pass through to the selected binary verbatim; custom accepts any name."
 	case stageRoleModelCustom:
 		return "Enter any model name, or leave blank for automatic."
+	case stageRoleEffort:
+		return "Catalog choices are suggestions; Custom accepts any tier for the selected binary."
+	case stageRoleEffortCustom:
+		return "Enter any effort tier, or leave blank for automatic."
 	case stageTopology:
 		return "The diagram is the topology that the canonical visibility flag selects."
 	case stageLayoutPreset:
@@ -506,6 +538,7 @@ func (m BubbleModel) summary() string {
 		} else {
 			parts = append(parts, "Commands  unavailable: "+err.Error())
 		}
+		parts = append(parts, effortCatalogWarnings(m.spec, m.ctx)...)
 		return strings.Join(parts, "\n")
 	}
 	parts := []string{
@@ -557,13 +590,14 @@ func (m BubbleModel) summary() string {
 	} else {
 		parts = append(parts, "Commands  unavailable: "+err.Error())
 	}
+	parts = append(parts, effortCatalogWarnings(m.spec, m.ctx)...)
 	parts = append(parts, "", TopologyPreview(m.spec.Visibility))
 	return strings.Join(parts, "\n")
 }
 
 func (m BubbleModel) isTextStage() bool {
 	switch m.stage {
-	case stageProject, stageGlobalRoot, stageGlobalModel, stageGlobalNativeArgs, stageGlobalWindow, stageNewProfile, stageSession, stageExistingModelCustom, stageResumeModelCustom, stageRoles, stageRoleModelCustom, stageLead, stageGoal, stageSeed:
+	case stageProject, stageGlobalRoot, stageGlobalModelCustom, stageGlobalEffortCustom, stageGlobalNativeArgs, stageGlobalWindow, stageNewProfile, stageSession, stageExistingModelCustom, stageExistingEffortCustom, stageResumeModelCustom, stageResumeEffortCustom, stageRoles, stageRoleModelCustom, stageRoleEffortCustom, stageLead, stageGoal, stageSeed:
 		return true
 	default:
 		return false
@@ -581,9 +615,12 @@ func (m *BubbleModel) configureStage() {
 		value = m.spec.Project
 	case stageGlobalRoot:
 		value = m.spec.GlobalRoot
-	case stageGlobalModel:
+	case stageGlobalModelCustom:
 		value = m.spec.GlobalModel
-		placeholder = "optional"
+		placeholder = "leave blank for automatic"
+	case stageGlobalEffortCustom:
+		value = m.spec.GlobalEffort
+		placeholder = "leave blank for automatic"
 	case stageGlobalNativeArgs:
 		if strings.EqualFold(m.spec.GlobalAgent, "codex") {
 			value = m.spec.GlobalCodexArgs
@@ -598,15 +635,24 @@ func (m *BubbleModel) configureStage() {
 	case stageSession:
 		value = defaultString(m.newSessionPrefill, m.ctx.SessionSuggestion)
 	case stageExistingModelCustom:
-		value = parseAssignments(m.spec.Model)[m.currentMember().Role]
+		value = defaultString(parseAssignments(m.spec.Model)[m.currentMember().Role], m.currentMember().Model)
 		placeholder = "leave blank to keep " + defaultString(m.currentMember().Model, "automatic")
+	case stageExistingEffortCustom:
+		value = defaultString(parseAssignments(m.spec.Effort)[m.currentMember().Role], m.currentMember().Effort)
+		placeholder = "leave blank to keep " + defaultString(m.currentMember().Effort, effortAutomatic)
 	case stageResumeModelCustom:
-		value = parseAssignments(m.spec.Model)[m.currentResumeMember().Role]
+		value = defaultString(parseAssignments(m.spec.Model)[m.currentResumeMember().Role], m.currentResumeMember().Model)
 		placeholder = "leave blank to keep " + defaultString(m.currentResumeMember().Model, "automatic")
+	case stageResumeEffortCustom:
+		value = defaultString(parseAssignments(m.spec.Effort)[m.currentResumeMember().Role], m.currentResumeMember().Effort)
+		placeholder = "leave blank to keep " + defaultString(m.currentResumeMember().Effort, effortAutomatic)
 	case stageRoles:
 		value = defaultString(m.spec.Roles, "cto,senior-dev,qa")
 	case stageRoleModelCustom:
 		value = parseAssignments(m.spec.Model)[m.currentRole()]
+		placeholder = "leave blank for automatic"
+	case stageRoleEffortCustom:
+		value = parseAssignments(m.spec.Effort)[m.currentRole()]
 		placeholder = "leave blank for automatic"
 	case stageLead:
 		value = defaultString(m.spec.Lead, defaultLead(m.roleOrder))
@@ -632,8 +678,10 @@ func (m BubbleModel) choices() []choice {
 		return []choice{{value: "project", label: "Project squad"}, {value: "global", label: "Global / NOC orchestrator"}}
 	case stageGlobalAgent:
 		return []choice{{value: "claude", label: "Claude"}, {value: "codex", label: "Codex"}}
+	case stageGlobalModel:
+		return modelChoicesCatalog(m.spec.GlobalAgent, m.ctx.Catalog)
 	case stageGlobalEffort:
-		return effortChoices(m.spec.GlobalAgent)
+		return effortChoicesCatalog(m.spec.GlobalAgent, m.ctx.Catalog)
 	case stageProfile:
 		choices := make([]choice, 0, len(m.ctx.Profiles)+1)
 		for _, profile := range m.ctx.Profiles {
@@ -654,21 +702,24 @@ func (m BubbleModel) choices() []choice {
 	case stageExistingOverride:
 		return []choice{{value: "keep", label: "Keep profile model and effort"}, {value: "override", label: "Override this role for this launch only"}}
 	case stageExistingModel:
-		return existingOverrideModelChoices(m.currentMember())
+		return existingOverrideModelChoicesCatalog(m.currentMember(), m.ctx.Catalog)
 	case stageExistingEffort:
-		return effortChoices(m.currentMember().Binary)
+		return existingOverrideEffortChoices(m.currentMember(), m.ctx.Catalog)
 	case stageResumeMember:
 		member := m.currentResumeMember()
 		if member.Action == MemberActionFresh {
-			return existingOverrideModelChoices(MemberSummary{Role: member.Role, Binary: member.Binary, Model: member.Model, Effort: member.Effort})
+			return existingOverrideModelChoicesCatalog(MemberSummary{Role: member.Role, Binary: member.Binary, Model: member.Model, Effort: member.Effort}, m.ctx.Catalog)
 		}
 		return []choice{{value: "continue", label: fmt.Sprintf("Continue · %s remains %s", member.Role, member.Action)}}
+	case stageResumeEffort:
+		member := m.currentResumeMember()
+		return existingOverrideEffortChoices(MemberSummary{Role: member.Role, Binary: member.Binary, Model: member.Model, Effort: member.Effort}, m.ctx.Catalog)
 	case stageRoleBinary:
 		return []choice{{value: "codex", label: "Codex"}, {value: "claude", label: "Claude"}}
 	case stageRoleModel:
-		return modelChoices(parseAssignments(m.spec.Binary)[m.currentRole()])
+		return modelChoicesCatalog(parseAssignments(m.spec.Binary)[m.currentRole()], m.ctx.Catalog)
 	case stageRoleEffort:
-		return effortChoices(parseAssignments(m.spec.Binary)[m.currentRole()])
+		return effortChoicesCatalog(parseAssignments(m.spec.Binary)[m.currentRole()], m.ctx.Catalog)
 	case stageLeadMode:
 		return []choice{{value: "builder", label: "Builder · lead may implement and delegate"}, {value: "planner", label: "Planner · lead dispatches and reviews; workers mutate"}}
 	case stageOperator:
@@ -717,14 +768,6 @@ func (m BubbleModel) choices() []choice {
 	}
 }
 
-func effortChoices(binary string) []choice {
-	choices := []choice{{value: "automatic", label: "Automatic"}, {value: "low", label: "Low"}, {value: "medium", label: "Medium"}, {value: "high", label: "High"}}
-	if strings.EqualFold(binary, "codex") {
-		choices = append(choices, choice{value: "minimal", label: "Minimal"}, choice{value: "xhigh", label: "Extra high"})
-	}
-	return choices
-}
-
 func (m BubbleModel) defaultCursor() int {
 	choices := m.choices()
 	want := ""
@@ -733,8 +776,10 @@ func (m BubbleModel) defaultCursor() int {
 		want = defaultString(strings.ToLower(strings.TrimSpace(m.spec.Scope)), "project")
 	case stageGlobalAgent:
 		want = defaultString(strings.ToLower(strings.TrimSpace(m.spec.GlobalAgent)), "claude")
+	case stageGlobalModel:
+		want = defaultModelChoiceCatalog(m.spec.GlobalModel, m.spec.GlobalAgent, m.ctx.Catalog)
 	case stageGlobalEffort:
-		want = defaultString(strings.ToLower(strings.TrimSpace(m.spec.GlobalEffort)), effortAutomatic)
+		want = defaultEffortChoiceCatalog(m.spec.GlobalEffort, m.spec.GlobalAgent, m.ctx.Catalog, effortAutomatic)
 	case stageProfile:
 		want = m.spec.Profile
 		if findProfile(m.ctx.Profiles, want) < 0 {
@@ -745,24 +790,36 @@ func (m BubbleModel) defaultCursor() int {
 	case stageExistingModel:
 		// An empty override maps to automatic, which this list omits; the
 		// find-loop then falls through to keep at index zero.
-		want = defaultModelChoice(parseAssignments(m.spec.Model)[m.currentMember().Role], m.currentMember().Binary)
+		want = defaultModelChoiceCatalog(parseAssignments(m.spec.Model)[m.currentMember().Role], m.currentMember().Binary, m.ctx.Catalog)
 	case stageExistingEffort:
-		want = defaultString(m.currentMember().Effort, effortAutomatic)
+		prefill := parseAssignments(m.spec.Effort)[m.currentMember().Role]
+		if strings.TrimSpace(prefill) == "" {
+			want = effortKeepChoice
+		} else {
+			want = defaultEffortChoiceCatalog(prefill, m.currentMember().Binary, m.ctx.Catalog, effortKeepChoice)
+		}
 	case stageResumeMember:
 		if m.currentResumeMember().Action == MemberActionFresh {
-			want = defaultModelChoice(parseAssignments(m.spec.Model)[m.currentResumeMember().Role], m.currentResumeMember().Binary)
+			want = defaultModelChoiceCatalog(parseAssignments(m.spec.Model)[m.currentResumeMember().Role], m.currentResumeMember().Binary, m.ctx.Catalog)
 		} else {
 			want = "continue"
 		}
+	case stageResumeEffort:
+		prefill := parseAssignments(m.spec.Effort)[m.currentResumeMember().Role]
+		if strings.TrimSpace(prefill) == "" {
+			want = effortKeepChoice
+		} else {
+			want = defaultEffortChoiceCatalog(prefill, m.currentResumeMember().Binary, m.ctx.Catalog, effortKeepChoice)
+		}
 	case stageRoleModel:
-		want = defaultModelChoice(parseAssignments(m.spec.Model)[m.currentRole()], parseAssignments(m.spec.Binary)[m.currentRole()])
+		want = defaultModelChoiceCatalog(parseAssignments(m.spec.Model)[m.currentRole()], parseAssignments(m.spec.Binary)[m.currentRole()], m.ctx.Catalog)
 	case stageRoleBinary:
 		want = parseAssignments(m.spec.Binary)[m.currentRole()]
 		if want == "" {
 			want = m.ctx.PreferredBinaries[m.currentRole()]
 		}
 	case stageRoleEffort:
-		want = defaultString(parseAssignments(m.spec.Effort)[m.currentRole()], effortAutomatic)
+		want = defaultEffortChoiceCatalog(parseAssignments(m.spec.Effort)[m.currentRole()], parseAssignments(m.spec.Binary)[m.currentRole()], m.ctx.Catalog, effortAutomatic)
 	case stageLeadMode:
 		want = defaultString(m.spec.LeadMode, "builder")
 	case stageOperator:
@@ -824,10 +881,16 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.spec.GlobalRoot = value
+		if m.opts.LoadCatalog != nil {
+			m.ctx.Catalog = m.opts.LoadCatalog(value)
+		}
 		m.transition(stageGlobalAgent)
-	case stageGlobalModel:
-		m.spec.GlobalModel = value
+	case stageGlobalModelCustom:
+		m.spec.GlobalModel = strings.TrimSpace(value)
 		m.transition(stageGlobalEffort)
+	case stageGlobalEffortCustom:
+		m.spec.GlobalEffort = strings.TrimSpace(value)
+		m.transition(stageGlobalNativeArgs)
 	case stageGlobalNativeArgs:
 		if strings.EqualFold(m.spec.GlobalAgent, "codex") {
 			m.spec.GlobalCodexArgs = value
@@ -871,11 +934,25 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 			m.spec.Model = removeAssignment(m.spec.Model, m.currentMember().Role)
 		}
 		m.transition(stageExistingEffort)
+	case stageExistingEffortCustom:
+		if value != "" && !strings.EqualFold(value, effortAutomatic) {
+			m.spec.Effort = setAssignment(m.spec.Effort, m.currentMember().Role, value)
+		} else {
+			m.spec.Effort = removeAssignment(m.spec.Effort, m.currentMember().Role)
+		}
+		m.nextExistingMember()
 	case stageResumeModelCustom:
 		if value != "" {
 			m.spec.Model = setAssignment(m.spec.Model, m.currentResumeMember().Role, value)
 		} else {
 			m.spec.Model = removeAssignment(m.spec.Model, m.currentResumeMember().Role)
+		}
+		m.transition(stageResumeEffort)
+	case stageResumeEffortCustom:
+		if value != "" && !strings.EqualFold(value, effortAutomatic) {
+			m.spec.Effort = setAssignment(m.spec.Effort, m.currentResumeMember().Role, value)
+		} else {
+			m.spec.Effort = removeAssignment(m.spec.Effort, m.currentResumeMember().Role)
 		}
 		m.nextResumeMember()
 	case stageRoles:
@@ -901,6 +978,18 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 			m.spec.Model = setAssignment(m.spec.Model, m.currentRole(), value)
 		}
 		m.transition(stageRoleEffort)
+	case stageRoleEffortCustom:
+		if value == "" || strings.EqualFold(value, effortAutomatic) {
+			m.spec.Effort = removeAssignment(m.spec.Effort, m.currentRole())
+		} else {
+			m.spec.Effort = setAssignment(m.spec.Effort, m.currentRole(), value)
+		}
+		m.roleIndex++
+		if m.roleIndex < len(m.roleOrder) {
+			m.transition(stageRoleBinary)
+		} else {
+			m.transition(stageLead)
+		}
 	case stageLead:
 		if value == "" {
 			m.err = fmt.Errorf("lead cannot be empty")
@@ -943,13 +1032,28 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 	case stageGlobalAgent:
 		m.spec.GlobalAgent = selected
 		m.transition(stageGlobalModel)
-	case stageGlobalEffort:
-		if selected == effortAutomatic {
-			m.spec.GlobalEffort = ""
-		} else {
-			m.spec.GlobalEffort = selected
+	case stageGlobalModel:
+		switch selected {
+		case modelCustomChoice:
+			m.transition(stageGlobalModelCustom)
+		case effortAutomatic:
+			m.spec.GlobalModel = ""
+			m.transition(stageGlobalEffort)
+		default:
+			m.spec.GlobalModel = selected
+			m.transition(stageGlobalEffort)
 		}
-		m.transition(stageGlobalNativeArgs)
+	case stageGlobalEffort:
+		switch selected {
+		case effortCustomChoice:
+			m.transition(stageGlobalEffortCustom)
+		case effortAutomatic:
+			m.spec.GlobalEffort = ""
+			m.transition(stageGlobalNativeArgs)
+		default:
+			m.spec.GlobalEffort = selected
+			m.transition(stageGlobalNativeArgs)
+		}
 	case stageProfile:
 		if selected == "__create__" {
 			if strings.TrimSpace(m.spec.Profile) != "" && findProfile(m.ctx.Profiles, m.spec.Profile) < 0 {
@@ -1007,8 +1111,16 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 			m.transition(stageExistingEffort)
 		}
 	case stageExistingEffort:
-		m.spec.Effort = setAssignment(m.spec.Effort, m.currentMember().Role, selected)
-		m.nextExistingMember()
+		switch selected {
+		case effortCustomChoice:
+			m.transition(stageExistingEffortCustom)
+		case effortKeepChoice:
+			m.spec.Effort = removeAssignment(m.spec.Effort, m.currentMember().Role)
+			m.nextExistingMember()
+		default:
+			m.spec.Effort = setAssignment(m.spec.Effort, m.currentMember().Role, selected)
+			m.nextExistingMember()
+		}
 	case stageResumeMember:
 		member := m.currentResumeMember()
 		if member.Action != MemberActionFresh {
@@ -1020,9 +1132,21 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 			m.transition(stageResumeModelCustom)
 		case modelKeepChoice:
 			m.spec.Model = removeAssignment(m.spec.Model, member.Role)
-			m.nextResumeMember()
+			m.transition(stageResumeEffort)
 		default:
 			m.spec.Model = setAssignment(m.spec.Model, member.Role, selected)
+			m.transition(stageResumeEffort)
+		}
+	case stageResumeEffort:
+		member := m.currentResumeMember()
+		switch selected {
+		case effortCustomChoice:
+			m.transition(stageResumeEffortCustom)
+		case effortKeepChoice:
+			m.spec.Effort = removeAssignment(m.spec.Effort, member.Role)
+			m.nextResumeMember()
+		default:
+			m.spec.Effort = setAssignment(m.spec.Effort, member.Role, selected)
 			m.nextResumeMember()
 		}
 	case stageRoleBinary:
@@ -1040,6 +1164,10 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 			m.transition(stageRoleEffort)
 		}
 	case stageRoleEffort:
+		if selected == effortCustomChoice {
+			m.transition(stageRoleEffortCustom)
+			break
+		}
 		if selected == effortAutomatic {
 			m.spec.Effort = removeAssignment(m.spec.Effort, m.currentRole())
 		} else {
@@ -1271,9 +1399,9 @@ func (m BubbleModel) phaseIndex() int {
 		switch m.stage {
 		case stageScope, stageGlobalRoot:
 			return 0
-		case stageGlobalAgent, stageGlobalModel:
+		case stageGlobalAgent, stageGlobalModel, stageGlobalModelCustom:
 			return 1
-		case stageGlobalEffort, stageGlobalNativeArgs, stageGlobalWindow:
+		case stageGlobalEffort, stageGlobalEffortCustom, stageGlobalNativeArgs, stageGlobalWindow:
 			return 2
 		default:
 			return 3
@@ -1284,7 +1412,7 @@ func (m BubbleModel) phaseIndex() int {
 		return 0
 	case stageProfile, stageNewProfile, stageExistingSession, stageSession:
 		return 1
-	case stageExistingOverride, stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageResumeMember, stageResumeModelCustom, stageRoles, stageRoleBinary, stageRoleModel, stageRoleModelCustom, stageRoleEffort, stageLead, stageLeadMode:
+	case stageExistingOverride, stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageExistingEffortCustom, stageResumeMember, stageResumeModelCustom, stageResumeEffort, stageResumeEffortCustom, stageRoles, stageRoleBinary, stageRoleModel, stageRoleModelCustom, stageRoleEffort, stageRoleEffortCustom, stageLead, stageLeadMode:
 		return 2
 	case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane:
 		return 3

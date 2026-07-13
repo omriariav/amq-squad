@@ -36,9 +36,19 @@ func TestRunStartPreflightExistingProfileEffortIsLaunchOnlyAndValid(t *testing.T
 	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Project: dir, Members: []team.Member{{Role: "cto", Binary: "codex", Session: "sess"}}}); err != nil {
 		t.Fatal(err)
 	}
-	result := runStartPreflight(runStartPreflightInput{Project: dir, Session: "sess", Visibility: "sibling-tabs", Effort: "cto=high", EffortSet: true})
+	var result runStartPreflightResult
+	_, stderr, err := captureOutput(t, func() error {
+		result = runStartPreflight(runStartPreflightInput{Project: dir, Session: "sess", Visibility: "sibling-tabs", Effort: "cto=FutureTier", EffortSet: true})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(result.Issues) != 0 {
 		t.Fatalf("preflight = %+v", result)
+	}
+	if strings.Contains(stderr, "not in the merged catalog") {
+		t.Fatalf("preflight must validate quietly so the command surface warns once: %q", stderr)
 	}
 	stored, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
@@ -49,12 +59,14 @@ func TestRunStartPreflightExistingProfileEffortIsLaunchOnlyAndValid(t *testing.T
 	}
 }
 
-func TestRunStartPreflightValidatesEffortAgainstSelectedBinary(t *testing.T) {
+func TestRunStartPreflightAcceptsCurrentAndCustomEffortForSupportedBinary(t *testing.T) {
 	dir := t.TempDir()
-	result := runStartPreflight(runStartPreflightInput{
-		Project: dir, Session: "sess", Roles: "qa", Binary: "qa=claude", Visibility: "sibling-tabs", Effort: "qa=xhigh", EffortSet: true,
-	})
-	if len(result.Issues) != 1 || result.Issues[0].Code != runStartPreflightInvalidEffort || !strings.Contains(result.Issues[0].Detail, "unsupported claude effort") {
-		t.Fatalf("preflight = %+v", result)
+	for _, effort := range []string{"xhigh", "max", "FutureTier"} {
+		result := runStartPreflight(runStartPreflightInput{
+			Project: dir, Session: "sess", Roles: "qa", Binary: "qa=claude", Visibility: "sibling-tabs", Effort: "qa=" + effort, EffortSet: true,
+		})
+		if len(result.Issues) != 0 {
+			t.Fatalf("effort %q preflight = %+v", effort, result)
+		}
 	}
 }

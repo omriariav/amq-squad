@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v2/internal/agentcatalog"
 	"github.com/omriariav/amq-squad/v2/internal/catalog"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -246,6 +247,7 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 	}
 	if input.EffortSet {
 		var effortErr error
+		agentCatalog := loadAgentCatalogAndWarn(r.Project)
 		if r.TeamPresent && !r.FreshRoster {
 			efforts, parseErr := parseEffortOverrides(input.Effort)
 			if parseErr != nil {
@@ -253,10 +255,10 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 			} else if existing, readErr := team.ReadProfile(r.Project, r.Profile); readErr != nil {
 				effortErr = fmt.Errorf("read team profile %q: %w", r.Profile, readErr)
 			} else {
-				_, effortErr = applyLaunchEffortOverrides(existing.Members, efforts)
+				_, effortErr = applyLaunchEffortOverridesCatalogMode(existing.Members, efforts, agentCatalog, false)
 			}
 		} else {
-			effortErr = validateRunStartFreshEffort(input.Roles, input.Binary, input.Effort)
+			effortErr = validateRunStartFreshEffort(input.Roles, input.Binary, input.Effort, agentCatalog)
 		}
 		if effortErr != nil {
 			return add(runStartPreflightInvalidEffort, effortErr.Error(), "use role=automatic|low|medium|high assignments")
@@ -265,7 +267,7 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 	return r
 }
 
-func validateRunStartFreshEffort(rolesRaw, binaryRaw, effortRaw string) error {
+func validateRunStartFreshEffort(rolesRaw, binaryRaw, effortRaw string, agentCatalog agentcatalog.Catalog) error {
 	efforts, err := parseEffortOverrides(effortRaw)
 	if err != nil {
 		return err
@@ -304,7 +306,7 @@ func validateRunStartFreshEffort(rolesRaw, binaryRaw, effortRaw string) error {
 		if binary == "" {
 			continue // team init owns the missing-binary error for custom roles.
 		}
-		if _, err := effortArgsForBinary(binary, effort); err != nil {
+		if _, _, err := effortArgsForBinaryCatalog(binary, effort, agentCatalog); err != nil {
 			return fmt.Errorf("--effort %s=%s: %w", role, effort, err)
 		}
 	}

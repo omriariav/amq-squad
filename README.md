@@ -443,6 +443,30 @@ Custom role files can be Markdown with YAML frontmatter, plain Markdown with a
 `.amq-squad/roles/<id>.md`; launch seeds each agent's role file and does not
 clobber later edits.
 
+Model and effort picker suggestions can be overlaid globally in
+`~/.amq-squad/catalog.json` and per project in
+`<team-home>/.amq-squad/catalog.json`; the project layer wins. The catalog is
+advisory and is not stored in `team.json`: explicit values still pass through,
+with a warning for an effort tier that is not listed. A version-1 overlay uses
+ordered object entries:
+
+```json
+{
+  "schema_version": 1,
+  "binaries": {
+    "claude": {
+      "models": [{"value": "opus", "label": "Opus", "enabled": true}],
+      "efforts": [{"value": "max", "label": "Maximum", "enabled": true}]
+    }
+  }
+}
+```
+
+Matching is case-insensitive while the winning entry's `value` spelling is
+preserved. Later entries replace the same value without moving it;
+`enabled:false` hides it. Missing files are normal, and a malformed or future
+schema layer warns and falls back to the lower-precedence catalog.
+
 Launch customization:
 
 ```sh
