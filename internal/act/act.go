@@ -153,10 +153,10 @@ func Preview(m OpMessage) string {
 // Send shells `amq send ...` via the injectable seam, writing the message to the
 // bus. It is the ONLY executing path in this package.
 //
-// Identity safety: Send strips AM_ROOT/AM_BASE_ROOT/AM_ME from the child
-// environment (mirroring cli.envWithoutAMQIdentity) so a stale shell identity
-// cannot redirect the write — the explicit --root/--me on the argv are the sole
-// source of truth.
+// Identity safety: Send strips AM_ROOT/AM_BASE_ROOT/AM_SESSION/AM_ME and
+// AMQ_GLOBAL_ROOT from the child environment (mirroring
+// cli.envWithoutAMQIdentity) so a stale shell identity cannot redirect the
+// write — the explicit --root/--me on the argv are the sole source of truth.
 //
 // Send validates that --to is non-empty before invoking the seam: a write with
 // no recipient is a no-op on the bus and almost certainly an operator mistake,
@@ -169,16 +169,19 @@ func Send(m OpMessage) error {
 	return sendExec("amq", m.argv(), env)
 }
 
-// envWithoutAMQIdentity returns env with the AMQ identity variables removed, so
-// a stale AM_ROOT/AM_BASE_ROOT/AM_ME from a previous shell session cannot
-// override the explicit --root/--me the operator put on the wire. It mirrors
-// cli.envWithoutAMQIdentity (that one is unexported in another package); the
-// behavior is identical and intentionally kept in lockstep.
+// envWithoutAMQIdentity returns env with the AMQ identity/config variables
+// removed, so a stale AM_ROOT/AM_BASE_ROOT/AM_SESSION/AM_ME/AMQ_GLOBAL_ROOT
+// from a previous shell session cannot override the explicit --root/--me the
+// operator put on the wire. It mirrors cli.envWithoutAMQIdentity (that one is
+// unexported in another package); the behavior is identical and intentionally
+// kept in lockstep.
 func envWithoutAMQIdentity(env []string) []string {
 	remove := map[string]bool{
-		"AM_ROOT":      true,
-		"AM_BASE_ROOT": true,
-		"AM_ME":        true,
+		"AM_ROOT":         true,
+		"AM_BASE_ROOT":    true,
+		"AM_SESSION":      true,
+		"AM_ME":           true,
+		"AMQ_GLOBAL_ROOT": true,
 	}
 	out := make([]string, 0, len(env))
 	for _, entry := range env {

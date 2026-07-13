@@ -71,7 +71,19 @@ type amqContext struct {
 	Env        amqEnv
 	Root       string
 	Me         string
+	Session    string
+	PinMode    amqPinMode
 }
+
+// amqPinMode is deliberately independent of amqEnv.SessionName. AMQ returns a
+// display session for an explicit named-profile root, but that root must still
+// be launched with an exact-root/sessionless identity tuple.
+type amqPinMode uint8
+
+const (
+	amqPinExactRoot amqPinMode = iota
+	amqPinSessionful
+)
 
 func runAMQ(args []string) error {
 	if len(args) == 0 {
@@ -122,11 +134,21 @@ func resolveAMQContext(projectFlag, profileFlag, session, me string, projectSet 
 	if err != nil {
 		return amqContext{}, err
 	}
+	profileExplicit := strings.TrimSpace(profileFlag) != ""
+	if !profileExplicit {
+		inferred, ok, err := namedProfileFromInheritedAMQRoot(projectDir, session)
+		if err != nil {
+			return amqContext{}, err
+		}
+		if ok {
+			profile = inferred
+		}
+	}
 	ctx, err := resolveAMQContextForNamespace(projectDir, profile, session, me)
 	if err != nil {
 		return amqContext{}, err
 	}
-	return inferAMQContextProfileFromRoot(ctx, strings.TrimSpace(profileFlag) != ""), nil
+	return inferAMQContextProfileFromRoot(ctx, profileExplicit), nil
 }
 
 func resolveAMQContextForProject(projectDir, session, me string) (amqContext, error) {
@@ -138,13 +160,19 @@ func resolveAMQContextForProject(projectDir, session, me string) (amqContext, er
 	if handle == "" {
 		handle = strings.TrimSpace(me)
 	}
-	return amqContext{
+	ctx := amqContext{
 		ProjectDir: projectDir,
 		Profile:    team.DefaultProfile,
 		Env:        env,
 		Root:       absoluteAMQRoot(projectDir, env.Root),
 		Me:         handle,
-	}, nil
+		Session:    strings.TrimSpace(session),
+		PinMode:    amqPinExactRoot,
+	}
+	if ctx.Session != "" {
+		ctx.PinMode = amqPinSessionful
+	}
+	return ctx, nil
 }
 
 func resolveAMQContextForNamespace(projectDir, profile, session, me string) (amqContext, error) {
@@ -169,7 +197,53 @@ func resolveAMQContextForNamespace(projectDir, profile, session, me string) (amq
 		Env:        env,
 		Root:       absoluteAMQRoot(projectDir, env.Root),
 		Me:         handle,
+		Session:    strings.TrimSpace(session),
+		PinMode:    amqPinExactRoot,
 	}, nil
+}
+
+// namedProfileFromInheritedAMQRoot recognizes only an exact live named-profile
+// root. A bare --session would reinterpret that namespace below .agent-mail
+// and lose the profile segment, so callers must resolve named roots explicitly.
+// Any supplied root that is outside the requested project, malformed, or names
+// a different session is rejected rather than silently falling back to the
+// default profile.
+func namedProfileFromInheritedAMQRoot(projectDir, session string) (string, bool, error) {
+	root, present := os.LookupEnv("AM_ROOT")
+	root = strings.TrimSpace(root)
+	if !present || root == "" {
+		return "", false, nil
+	}
+	if strings.TrimSpace(session) == "" {
+		return "", false, nil
+	}
+	root = absoluteAMQRoot(projectDir, root)
+	base := filepath.Join(filepath.Clean(projectDir), ".agent-mail")
+	rel, err := filepath.Rel(base, root)
+	if err != nil || rel == "." || rel == "" || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", false, usageErrorf("inherited AM_ROOT %q is outside the selected project .agent-mail root; pass an explicit --profile/--project or relaunch the agent shell", root)
+	}
+	parts := strings.Split(filepath.Clean(rel), string(os.PathSeparator))
+	if len(parts) == 1 {
+		if parts[0] != session {
+			return "", false, usageErrorf("inherited AM_ROOT session %q does not match requested --session %q; relaunch the agent shell or pass the exact namespace", parts[0], session)
+		}
+		return "", false, nil
+	}
+	if len(parts) != 2 {
+		return "", false, usageErrorf("inherited AM_ROOT %q is not an exact profile/session mailbox root", root)
+	}
+	if parts[0] == team.DefaultProfile {
+		return "", false, usageErrorf("inherited AM_ROOT %q uses reserved profile segment %q; it collides with the default session namespace", root, team.DefaultProfile)
+	}
+	profile := squadnamespace.NormalizeProfile(parts[0])
+	if err := team.ValidateProfileName(profile); err != nil {
+		return "", false, usageErrorf("inherited AM_ROOT has invalid profile segment %q: %v", parts[0], err)
+	}
+	if parts[1] != session {
+		return "", false, usageErrorf("inherited AM_ROOT session %q does not match requested --session %q; relaunch the agent shell or pass the exact namespace", parts[1], session)
+	}
+	return profile, true, nil
 }
 
 func inferAMQContextProfileFromRoot(ctx amqContext, profileExplicit bool) amqContext {
@@ -219,11 +293,22 @@ func resolveAMQBaseRootForProject(projectDir, session, me string) (string, error
 
 func amqCommandEnv(ctx amqContext) []string {
 	env := envWithoutAMQIdentity(os.Environ())
-	if ctx.Root != "" {
-		env = append(env, "AM_ROOT="+ctx.Root)
+	root := absoluteAMQRoot(ctx.ProjectDir, ctx.Root)
+	if root == "" {
+		return env
 	}
-	if root := absoluteAMQRoot(ctx.ProjectDir, ctx.Env.BaseRoot); root != "" {
-		env = append(env, "AM_BASE_ROOT="+root)
+	baseRoot := root
+	session := ""
+	if ctx.PinMode == amqPinSessionful && strings.TrimSpace(ctx.Session) != "" {
+		baseRoot = absoluteAMQRoot(ctx.ProjectDir, ctx.Env.BaseRoot)
+		if baseRoot == "" {
+			baseRoot = filepath.Dir(root)
+		}
+		session = strings.TrimSpace(ctx.Session)
+	}
+	env = append(env, "AM_ROOT="+root, "AM_BASE_ROOT="+baseRoot)
+	if session != "" {
+		env = append(env, "AM_SESSION="+session)
 	}
 	if ctx.Me != "" {
 		env = append(env, "AM_ME="+ctx.Me)
@@ -397,8 +482,8 @@ func defaultRunAMQStreaming(ctx amqContext, cmd []string) error {
 //
 // It consumes ONLY --project/--session/--me (to resolve the queue root + acting
 // handle, exactly like every other `amq-squad amq` subcommand), injects them as
-// AM_ROOT/AM_BASE_ROOT/AM_ME plus an explicit --root, and forwards every other
-// argument to `amq` verbatim. For send, actor/audit guard flags (--me/--from,
+// a complete AMQ identity tuple plus an explicit --root, and forwards every
+// other argument to `amq` verbatim. For send, actor/audit guard flags (--me/--from,
 // --unsafe-send-as, --reason) are also extracted from the forwarded tail before
 // context resolution so they cannot bypass amq-squad's authority checks. It
 // deliberately does NOT reimplement amq's flag surface; unknown flags flow

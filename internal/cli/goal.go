@@ -898,6 +898,8 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	}
 	wakeResult, err := leadWakeStarter(leadWakeOptions{
 		ProjectDir:     cwd,
+		Profile:        opts.Profile,
+		Session:        env.SessionName,
 		Root:           root,
 		Handle:         handle,
 		Require:        true,

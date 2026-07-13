@@ -148,6 +148,102 @@ func TestResolveAMQContextNormalizesRelativeRootsToAbsoluteEnv(t *testing.T) {
 	}
 }
 
+func TestAMQCommandEnvBuildsCompleteIdentityTuples(t *testing.T) {
+	t.Setenv("AM_ROOT", "/stale/root")
+	t.Setenv("AM_BASE_ROOT", "/stale/base")
+	t.Setenv("AM_SESSION", "stale")
+	t.Setenv("AM_ME", "stale")
+	t.Setenv("AMQ_GLOBAL_ROOT", "/stale/global")
+
+	t.Run("sessionful default profile", func(t *testing.T) {
+		ctx := amqContext{
+			ProjectDir: "/project",
+			Profile:    team.DefaultProfile,
+			Env:        amqEnv{BaseRoot: "/project/.agent-mail"},
+			Root:       "/project/.agent-mail/issue-96",
+			Me:         "cto",
+			Session:    "issue-96",
+			PinMode:    amqPinSessionful,
+		}
+		env := amqCommandEnv(ctx)
+		for key, want := range map[string]string{
+			"AM_ROOT": "/project/.agent-mail/issue-96", "AM_BASE_ROOT": "/project/.agent-mail", "AM_SESSION": "issue-96", "AM_ME": "cto",
+		} {
+			if !envHas(env, key, want) {
+				t.Fatalf("missing %s=%q in %#v", key, want, env)
+			}
+		}
+		if envHasPrefix(env, "AMQ_GLOBAL_ROOT", "") {
+			t.Fatalf("stale AMQ_GLOBAL_ROOT leaked: %#v", env)
+		}
+	})
+
+	t.Run("exact root named profile", func(t *testing.T) {
+		root := "/project/.agent-mail/review/issue-96"
+		ctx := amqContext{ProjectDir: "/project", Profile: "review", Root: root, Me: "cto", Session: "issue-96", PinMode: amqPinExactRoot}
+		env := amqCommandEnv(ctx)
+		for key, want := range map[string]string{"AM_ROOT": root, "AM_BASE_ROOT": root, "AM_ME": "cto"} {
+			if !envHas(env, key, want) {
+				t.Fatalf("missing %s=%q in %#v", key, want, env)
+			}
+		}
+		if envHasPrefix(env, "AM_SESSION", "") {
+			t.Fatalf("exact-root tuple must omit AM_SESSION: %#v", env)
+		}
+	})
+}
+
+func TestResolveAMQContextInfersNamedProfileBeforeAMQResolution(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, ".agent-mail", "review", "issue-96")
+	writeAMQBoundaryTeamProfile(t, dir, "review")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", root)
+	t.Setenv("AM_SESSION", "")
+
+	previous := resolveAMQEnvForAMQCommand
+	resolveAMQEnvForAMQCommand = func(cwd, rootFlag, session, handle string) (amqEnv, error) {
+		if cwd != dir || rootFlag != root || session != "" {
+			t.Fatalf("named root resolver args = cwd=%q root=%q session=%q, want exact root without --session", cwd, rootFlag, session)
+		}
+		return amqEnv{Root: root, BaseRoot: root, Me: handle, AMQVersion: "0.43.0"}, nil
+	}
+	t.Cleanup(func() { resolveAMQEnvForAMQCommand = previous })
+
+	ctx, err := resolveAMQContext(dir, "", "issue-96", "cto", true)
+	if err != nil {
+		t.Fatalf("resolveAMQContext: %v", err)
+	}
+	if ctx.Profile != "review" || ctx.PinMode != amqPinExactRoot {
+		t.Fatalf("context = %+v, want named exact-root context", ctx)
+	}
+	if env := amqCommandEnv(ctx); envHasPrefix(env, "AM_SESSION", "") || !envHas(env, "AM_BASE_ROOT", root) {
+		t.Fatalf("named exact-root tuple = %#v", env)
+	}
+}
+
+func TestNamedProfileFromInheritedAMQRootFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	t.Run("outside project", func(t *testing.T) {
+		t.Setenv("AM_ROOT", filepath.Join(t.TempDir(), ".agent-mail", "review", "issue-96"))
+		if _, _, err := namedProfileFromInheritedAMQRoot(dir, "issue-96"); err == nil {
+			t.Fatal("outside inherited root accepted")
+		}
+	})
+	t.Run("session mismatch", func(t *testing.T) {
+		t.Setenv("AM_ROOT", filepath.Join(dir, ".agent-mail", "review", "other"))
+		if _, _, err := namedProfileFromInheritedAMQRoot(dir, "issue-96"); err == nil {
+			t.Fatal("mismatched inherited session accepted")
+		}
+	})
+	t.Run("default profile path collision", func(t *testing.T) {
+		t.Setenv("AM_ROOT", filepath.Join(dir, ".agent-mail", team.DefaultProfile, "issue-96"))
+		if _, _, err := namedProfileFromInheritedAMQRoot(dir, "issue-96"); err == nil {
+			t.Fatal("colliding default-profile path accepted")
+		}
+	})
+}
+
 func TestAMQRouteAddsJSONByDefault(t *testing.T) {
 	chdir(t, t.TempDir())
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, `{"routable":true}`+"\n")
