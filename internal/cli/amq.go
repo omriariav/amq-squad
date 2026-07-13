@@ -235,6 +235,10 @@ func namedProfileFromInheritedAMQRoot(projectDir, session string) (string, bool,
 	if err != nil || canonicalRel == "." || canonicalRel == "" || canonicalRel == ".." || strings.HasPrefix(canonicalRel, ".."+string(os.PathSeparator)) {
 		return "", false, usageErrorf("inherited AM_ROOT %q resolves outside selected .agent-mail base %q; pass an explicit --profile/--project or relaunch the agent shell", lexicalRoot, base)
 	}
+	expectedRoot := filepath.Clean(filepath.Join(base, rel))
+	if filepath.Clean(resolvedRoot) != expectedRoot {
+		return "", false, usageErrorf("inherited AM_ROOT %q does not preserve selected .agent-mail identity %q after resolution (got %q); nested namespace symlinks are not allowed", lexicalRoot, expectedRoot, resolvedRoot)
+	}
 	if len(parts) == 1 {
 		if parts[0] != session {
 			return "", false, usageErrorf("inherited AM_ROOT session %q does not match requested --session %q; relaunch the agent shell or pass the exact namespace", parts[0], session)
@@ -255,10 +259,6 @@ func namedProfileFromInheritedAMQRoot(projectDir, session string) (string, bool,
 	}
 	if parts[1] != session {
 		return "", false, usageErrorf("inherited AM_ROOT session %q does not match requested --session %q; relaunch the agent shell or pass the exact namespace", parts[1], session)
-	}
-	expectedRoot := filepath.Clean(filepath.Join(base, rel))
-	if filepath.Clean(resolvedRoot) != expectedRoot {
-		return "", false, usageErrorf("inherited AM_ROOT %q does not preserve selected .agent-mail identity %q after resolution (got %q); nested namespace symlinks are not allowed", lexicalRoot, expectedRoot, resolvedRoot)
 	}
 	return profile, true, nil
 }
