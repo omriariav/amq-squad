@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/amqexec"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -50,7 +51,7 @@ type amqBoundaryAuditRecord struct {
 
 func defaultRunAMQCommand(req amqCommandRequest) ([]byte, error) {
 	cmd := exec.Command("amq", req.Arg...)
-	cmd.Env = req.Env
+	cmd.Env = amqexec.NoUpdateCheckEnv(req.Env)
 	cmd.Dir = req.Dir
 	cmd.Stdin = req.Stdin
 	out, err := cmd.CombinedOutput()
@@ -379,7 +380,7 @@ var runAMQStreaming = defaultRunAMQStreaming
 
 func defaultRunAMQStreaming(ctx amqContext, cmd []string) error {
 	c := exec.Command("amq", cmd...)
-	c.Env = amqCommandEnv(ctx)
+	c.Env = amqexec.NoUpdateCheckEnv(amqCommandEnv(ctx))
 	c.Dir = ctx.ProjectDir
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr

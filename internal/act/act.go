@@ -32,6 +32,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v2/internal/amqexec"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
@@ -164,7 +165,7 @@ func Send(m OpMessage) error {
 	if strings.TrimSpace(m.To) == "" {
 		return fmt.Errorf("act: refusing to send with empty --to (no recipient)")
 	}
-	env := envWithoutAMQIdentity(os.Environ())
+	env := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
 	return sendExec("amq", m.argv(), env)
 }
 

@@ -720,6 +720,29 @@ func TestStartExternalLeadWakeRequiredTimeoutStopsSpawnedProcess(t *testing.T) {
 	harness.assertStoppedAfterCleanup(t)
 }
 
+func TestStartExternalLeadWakeDisablesChildUpdateCheck(t *testing.T) {
+	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
+	previous := externalLeadWakeCommand
+	var captured *exec.Cmd
+	externalLeadWakeCommand = func(_ string, _ ...string) *exec.Cmd {
+		captured = exec.Command("/bin/sh", "-c", "exit 0")
+		return captured
+	}
+	t.Cleanup(func() { externalLeadWakeCommand = previous })
+
+	if _, err := startExternalLeadWake(leadWakeOptions{
+		ProjectDir: t.TempDir(),
+		Root:       filepath.Join(t.TempDir(), "root"),
+		Handle:     "cto",
+		Require:    false,
+	}); err != nil {
+		t.Fatalf("startExternalLeadWake: %v", err)
+	}
+	if captured == nil || !envHas(captured.Env, "AMQ_NO_UPDATE_CHECK", "1") {
+		t.Fatalf("wake child environment missing AMQ_NO_UPDATE_CHECK=1: %#v", captured)
+	}
+}
+
 func TestStartExternalLeadWakeNonRequiredTimeoutStopsSpawnedProcessAndReportsNoPID(t *testing.T) {
 	harness := installLeadWakeHelper(t, "spawn-child-late-ready")
 

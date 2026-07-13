@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v2/internal/amqexec"
 )
 
 const (
@@ -309,7 +311,11 @@ func printReviewWorktreeCreated(wt reviewWorktree) {
 }
 
 func toolVersion(dir, name string, args ...string) (string, error) {
-	out, err := commandOutput(dir, sanitizedReviewEnv(os.Environ()), name, args...)
+	env := sanitizedReviewEnv(os.Environ())
+	if name == "amq" {
+		env = amqexec.NoUpdateCheckEnv(env)
+	}
+	out, err := commandOutput(dir, env, name, args...)
 	if err != nil {
 		return "", fmt.Errorf("read %s version for review manifest: %w", name, err)
 	}

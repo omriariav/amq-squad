@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/amqexec"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -572,7 +573,7 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 	}
 	cmd := externalLeadWakeCommand("amq", args...)
 	cmd.Dir = opts.ProjectDir
-	cmd.Env = append(envWithoutAMQIdentity(os.Environ()), "AM_ROOT="+opts.Root, "AM_ME="+opts.Handle)
+	cmd.Env = amqexec.NoUpdateCheckEnv(append(envWithoutAMQIdentity(os.Environ()), "AM_ROOT="+opts.Root, "AM_ME="+opts.Handle))
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

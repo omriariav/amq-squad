@@ -1000,6 +1000,61 @@ func TestRunLaunchDryRunSymphonyForCodex(t *testing.T) {
 	}
 }
 
+func TestDefaultRunSymphonyInitDisablesChildUpdateCheck(t *testing.T) {
+	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
+	setupFakeAMQScript(t, `#!/bin/sh
+if [ "$AMQ_NO_UPDATE_CHECK" != "1" ]; then
+  echo "update check was not disabled" >&2
+  exit 91
+fi
+exit 0
+`)
+
+	err := defaultRunSymphonyInit(symphonyInitConfig{
+		Workflow: filepath.Join(t.TempDir(), "WORKFLOW.md"),
+		Root:     filepath.Join(t.TempDir(), ".agent-mail", "issue-419"),
+		Me:       "cto",
+	})
+	if err != nil {
+		t.Fatalf("defaultRunSymphonyInit: %v", err)
+	}
+}
+
+func TestExecAMQCoopDisablesUpdateCheckWithoutLeakingIdentity(t *testing.T) {
+	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
+	t.Setenv("AM_ROOT", "/stale/root")
+	t.Setenv("AM_BASE_ROOT", "/stale/base")
+	t.Setenv("AM_ME", "stale")
+	previous := amqSyscallExec
+	var gotPath string
+	var gotArgv, gotEnv []string
+	amqSyscallExec = func(path string, argv, env []string) error {
+		gotPath = path
+		gotArgv = append([]string(nil), argv...)
+		gotEnv = append([]string(nil), env...)
+		return nil
+	}
+	t.Cleanup(func() { amqSyscallExec = previous })
+
+	if err := execAMQCoop("/opt/bin/amq", []string{"coop", "exec", "codex"}); err != nil {
+		t.Fatalf("execAMQCoop: %v", err)
+	}
+	if gotPath != "/opt/bin/amq" || !reflect.DeepEqual(gotArgv, []string{"amq", "coop", "exec", "codex"}) {
+		t.Fatalf("exec = path %q argv %#v", gotPath, gotArgv)
+	}
+	if !envHas(gotEnv, "AMQ_NO_UPDATE_CHECK", "1") {
+		t.Fatalf("exec environment missing suppression: %#v", gotEnv)
+	}
+	for _, key := range []string{"AM_ROOT", "AM_BASE_ROOT", "AM_ME"} {
+		if envHasPrefix(gotEnv, key, "") {
+			t.Fatalf("exec environment leaked %s: %#v", key, gotEnv)
+		}
+	}
+	if got := os.Getenv("AMQ_NO_UPDATE_CHECK"); got != "0" {
+		t.Fatalf("parent AMQ_NO_UPDATE_CHECK = %q, want unchanged 0", got)
+	}
+}
+
 func TestRunLaunchSymphonyRejectsNonCodex(t *testing.T) {
 	setupFakeAMQ(t)
 	_, _, err := captureOutput(t, func() error {

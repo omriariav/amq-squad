@@ -40,6 +40,43 @@ func withAMQCommandSeams(t *testing.T, env amqEnv, output string) *[]amqCommandR
 	return &calls
 }
 
+func TestDefaultRunAMQCommandDisablesChildUpdateCheckWithInheritedEnv(t *testing.T) {
+	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
+	setupFakeAMQScript(t, `#!/bin/sh
+if [ "$AMQ_NO_UPDATE_CHECK" != "1" ]; then
+  echo "update available" >&2
+  exit 91
+fi
+printf '%s\n' '{"clean":true}'
+`)
+
+	out, err := defaultRunAMQCommand(amqCommandRequest{Dir: t.TempDir(), Arg: []string{"ops", "--json"}})
+	if err != nil {
+		t.Fatalf("defaultRunAMQCommand: %v", err)
+	}
+	if got, want := string(out), "{\"clean\":true}\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	if got := os.Getenv("AMQ_NO_UPDATE_CHECK"); got != "0" {
+		t.Fatalf("parent AMQ_NO_UPDATE_CHECK = %q, want unchanged 0", got)
+	}
+}
+
+func TestDefaultRunAMQStreamingDisablesChildUpdateCheck(t *testing.T) {
+	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
+	setupFakeAMQScript(t, `#!/bin/sh
+if [ "$AMQ_NO_UPDATE_CHECK" != "1" ]; then
+  exit 91
+fi
+exit 0
+`)
+
+	ctx := amqContext{ProjectDir: t.TempDir(), Root: "/mail/session", Me: "cto"}
+	if err := defaultRunAMQStreaming(ctx, []string{"watch", "--root", ctx.Root}); err != nil {
+		t.Fatalf("defaultRunAMQStreaming: %v", err)
+	}
+}
+
 func TestAMQRouteBuildsRouteExplain(t *testing.T) {
 	chdir(t, t.TempDir())
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, `{"routable":true}`+"\n")

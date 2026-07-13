@@ -44,6 +44,16 @@ func TestCompletionCoversReviewWorktreeModes(t *testing.T) {
 	}
 }
 
+func TestCompletionCoversTmuxHarnessModes(t *testing.T) {
+	for shell, script := range map[string]string{"bash": bashCompletionScript, "zsh": zshCompletionScript, "fish": fishCompletionScript} {
+		for _, want := range []string{"tmux-harness", "exec", "shell"} {
+			if !strings.Contains(script, want) {
+				t.Errorf("%s completion missing tmux-harness token %q", shell, want)
+			}
+		}
+	}
+}
+
 func TestRunCompletionRejectsExtraArgs(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runCompletion([]string{"bash", "extra"})
@@ -292,6 +302,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"resume":          true,
 		"fork":            true,
 		"review-worktree": true,
+		"tmux-harness":    true,
 		"rm":              true,
 		"archive":         true,
 		"next":            true,
