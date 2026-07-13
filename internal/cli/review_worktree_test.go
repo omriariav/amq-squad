@@ -140,6 +140,25 @@ func TestCreateReviewWorktreeDegradesWhenAMQVersionUnavailable(t *testing.T) {
 	}
 }
 
+func TestReviewWorktreeAMQVersionDisablesChildUpdateCheck(t *testing.T) {
+	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
+	setupFakeAMQScript(t, `#!/bin/sh
+if [ "$AMQ_NO_UPDATE_CHECK" != "1" ]; then
+  echo "update check was not disabled" >&2
+  exit 91
+fi
+printf '%s\n' '0.42.0'
+`)
+
+	got, err := toolVersion(t.TempDir(), "amq", "version")
+	if err != nil {
+		t.Fatalf("toolVersion(amq): %v", err)
+	}
+	if got != "0.42.0" {
+		t.Fatalf("AMQ version = %q, want 0.42.0", got)
+	}
+}
+
 func TestCreateReviewWorktreeDegradesWhenAMQIsAbsent(t *testing.T) {
 	repo := seedReviewGitRepo(t)
 	bin := t.TempDir()

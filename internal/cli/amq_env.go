@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v2/internal/amqexec"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -115,7 +116,7 @@ func resolveAMQEnvInDir(cwd, rootFlag, session, handle string) (amqEnv, error) {
 	// Strip AMQ identity vars unconditionally: the operator has already passed
 	// --root/--session/--me on the wire, and a stale AM_ROOT/AM_ME from a
 	// previous shell session must not silently override them.
-	cmd.Env = envWithoutAMQIdentity(os.Environ())
+	cmd.Env = amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
 	if cwd != "" {
 		cmd.Dir = cwd
 	}

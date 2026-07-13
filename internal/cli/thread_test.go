@@ -106,6 +106,25 @@ func TestRunThreadJSONEnvelopeWrapsAMQEntries(t *testing.T) {
 	}
 }
 
+func TestRunAMQThreadDefaultDisablesChildUpdateCheckAndKeepsJSONClean(t *testing.T) {
+	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
+	setupFakeAMQScript(t, `#!/bin/sh
+if [ "$AMQ_NO_UPDATE_CHECK" != "1" ]; then
+  echo "update available" >&2
+  exit 91
+fi
+printf '%s\n' '[{"id":"m1","thread":"decision/ship"}]'
+`)
+
+	out, err := runAMQThreadDefault(threadAMQRequest{Root: "/mail/session", Thread: "decision/ship", JSON: true})
+	if err != nil {
+		t.Fatalf("runAMQThreadDefault: %v", err)
+	}
+	if !json.Valid(out) {
+		t.Fatalf("thread output is not clean JSON: %q", out)
+	}
+}
+
 func TestRunThreadProfileSelectsNamespace(t *testing.T) {
 	base, project := seedThreadSession(t)
 	seedAgentRecord(t, base, "issue-96", "reviewer", launch.Record{

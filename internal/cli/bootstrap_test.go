@@ -725,6 +725,26 @@ func TestRouteCommandQuotesUnsafeValues(t *testing.T) {
 	}
 }
 
+func TestRouteExplainCommandDisablesChildUpdateCheck(t *testing.T) {
+	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
+	setupFakeAMQScript(t, `#!/bin/sh
+if [ "$AMQ_NO_UPDATE_CHECK" != "1" ]; then
+  exit 91
+fi
+printf '%s\n' '{"routable":true,"argv":["amq","send","--to","qa"]}'
+`)
+
+	command, routeErr, ok := routeExplainCommand(
+		"/mail/session", "issue-419",
+		projectIdentity{Name: "app", Known: true},
+		projectIdentity{Name: "app", Known: true},
+		true, "cto", "qa", "issue-419",
+	)
+	if !ok || routeErr != "" || command != "amq send --to qa --thread p2p/cto__qa" {
+		t.Fatalf("route result = command %q, err %q, ok %v", command, routeErr, ok)
+	}
+}
+
 func TestRouteCommandFailsLoudlyWhenCrossProjectIdentityMissing(t *testing.T) {
 	got, errText := routeCommandFor("", "", projectIdentity{}, projectIdentity{Name: "qa", Known: true}, false, "cto", "qa", "fresh-qa")
 	if got != "" {

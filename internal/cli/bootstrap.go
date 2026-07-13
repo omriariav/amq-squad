@@ -11,6 +11,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/omriariav/amq-squad/v2/internal/amqexec"
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/role"
@@ -480,6 +481,7 @@ func routeExplainCommand(sourceRoot, sourceSession string, currentProject, targe
 		args = append(args, "--session", session)
 	}
 	cmd := exec.Command("amq", args...)
+	cmd.Env = amqexec.NoUpdateCheckEnv(nil)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", "", false
