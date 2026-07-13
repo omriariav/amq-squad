@@ -19,6 +19,7 @@ func runResume(args []string) error {
 	noBootstrap := fs.Bool("no-bootstrap", false, "emit fresh launch commands that skip the generated bootstrap prompt")
 	trustRaw := fs.String("trust", "", "Codex trust profile for fresh members: approve-for-me (default), sandboxed, or trusted")
 	modelFlag := fs.String("model", "", "per-persona model overrides for fresh members, e.g. cto=gpt-5.6-sol,fullstack=sonnet")
+	effortFlag := fs.String("effort", "", "per-persona effort overrides for launch-fresh members, e.g. cto=xhigh,fullstack=max")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for fresh members, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for fresh members, e.g. '--chrome'")
 	projectFlag := fs.String("project", "", "project/team-home directory to resume (default: cwd)")
@@ -40,6 +41,7 @@ Usage:
                    [--dry-run] [--json] [--force-duplicate]
                    [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted]
                    [--model role=model,...]
+                   [--effort role=level,...]
                    [--codex-args args] [--claude-args args]
                    [--exec [--terminal tmux] [--target current-window|new-window|new-session]
                            [--layout vertical|horizontal|tiled]
@@ -151,6 +153,7 @@ Examples:
 		TrustRaw:         *trustRaw,
 		ExplicitTrust:    flagWasSet(fs, "trust"),
 		ModelRaw:         *modelFlag,
+		EffortRaw:        *effortFlag,
 		CodexArgsRaw:     *codexArgsRaw,
 		ClaudeArgsRaw:    *claudeArgsRaw,
 		DryRun:           *dryRun,

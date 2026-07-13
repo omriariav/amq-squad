@@ -656,6 +656,40 @@ func TestRunUpLiveHonorsBackendFlags(t *testing.T) {
 	}
 }
 
+func TestRunUpCustomEffortIsLaunchOnlyAndWarns(t *testing.T) {
+	backend := useFakeBackend(t)
+	setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{
+			Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-98",
+			ClaudeArgs: []string{"--chrome", "--effort", "low"},
+		}},
+	})
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runUp([]string{"--terminal", "fake", "--session", "issue-98", "--effort", "qa=FutureTier", "--no-attach"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(stderr, "not in the merged catalog") != 1 {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if len(backend.teams) != 1 {
+		t.Fatalf("backend teams = %d", len(backend.teams))
+	}
+	if want := []string{"--chrome", "--effort", "FutureTier"}; !reflect.DeepEqual(backend.teams[0].Members[0].ClaudeArgs, want) {
+		t.Fatalf("effective args = %#v, want %#v", backend.teams[0].Members[0].ClaudeArgs, want)
+	}
+	stored, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"--chrome", "--effort", "low"}; !reflect.DeepEqual(stored.Members[0].ClaudeArgs, want) {
+		t.Fatalf("profile args mutated: %#v", stored.Members[0].ClaudeArgs)
+	}
+}
+
 // TestRunUpDryRunDoesNotCallBackend guards the contract that --dry-run on
 // `up` is the launch-command preview, never the tmux backend dry-run.
 func TestRunUpDryRunDoesNotCallBackend(t *testing.T) {

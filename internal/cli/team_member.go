@@ -26,7 +26,7 @@ func runTeamMember(args []string) error {
 
 Usage:
   amq-squad team member add <role> --binary <claude|codex> [--handle H]
-      [--session S] [--model M] [--claude-args "…"] [--codex-args "…"]
+      [--session S] [--model M] [--effort E] [--claude-args "…"] [--codex-args "…"]
       [--spawn-origin NAME] [--spawn-depth N]
       [--project DIR] [--profile NAME] [--launch] [--target new-window] [--dry-run] [--json]
   amq-squad team member rm <role> [--project DIR] [--profile NAME]
@@ -151,6 +151,7 @@ func runTeamMemberAdd(args []string) error {
 	handleFlag := fs.String("handle", "", "AMQ handle (defaults to the role)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session (defaults to the team's existing session)")
 	modelFlag := fs.String("model", "", "native model name passed to the binary")
+	effortFlag := fs.String("effort", "", "native effort tier for this member; automatic emits no effort arg")
 	spawnOriginFlag := fs.String("spawn-origin", "", "override recorded composition origin (default: AM_ME or operator/manual)")
 	spawnDepthFlag := fs.Int("spawn-depth", -1, "override recorded composition depth (default: inferred from origin)")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for this member")
@@ -208,6 +209,7 @@ func runTeamMemberAdd(args []string) error {
 	if err != nil {
 		return err
 	}
+	agentCatalog := loadAgentCatalogAndWarn(projectDir)
 
 	var added team.Member
 	buildAdded := func(t team.Team) (team.Member, error) {
@@ -247,6 +249,16 @@ func runTeamMemberAdd(args []string) error {
 		} else {
 			added.CodexArgs = codexArgs
 		}
+		if flagWasSet(fs, "effort") {
+			if bin == "claude" {
+				added.ClaudeArgs = stripNativeEffortArgs(added.ClaudeArgs, bin)
+			} else {
+				added.CodexArgs = stripNativeEffortArgs(added.CodexArgs, bin)
+			}
+			if err := applyMemberEffortCatalog(&added, *effortFlag, agentCatalog); err != nil {
+				return team.Member{}, err
+			}
+		}
 		return added, nil
 	}
 	if *dryRunFlag {
@@ -257,6 +269,12 @@ func runTeamMemberAdd(args []string) error {
 		added, err = buildAdded(t)
 		if err != nil {
 			return err
+		}
+		if *jsonOut {
+			return printJSONEnvelope("team_member_add", mutationResult{
+				Command: "team member add", Status: "preview", Project: projectDir,
+				Session: added.Session, Profile: profile, Role: added.Role, Handle: added.Handle,
+			})
 		}
 		fmt.Printf("# preview: would add %s (%s) to profile %s\n", added.Role, added.Binary, profile)
 		if *launchFlag {

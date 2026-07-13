@@ -119,9 +119,9 @@ type Spec struct {
 }
 
 // ResumeArgs renders the canonical plan-only resume argv. The restore guard is
-// a direct statement about matching history, and model overrides are validated
-// and restricted to launch-fresh members because live and restore actions are
-// immutable.
+// a direct statement about matching history, and model/effort overrides are
+// validated and restricted to launch-fresh members because live and restore
+// actions are immutable.
 func (s Spec) ResumeArgs() ([]string, error) {
 	if s.Backend != BackendResume || !s.RunExecutable || s.ProfileBranch != ProfileBranchExisting {
 		return nil, fmt.Errorf("resume arguments require an executable existing-profile resume selection")
@@ -135,8 +135,8 @@ func (s Spec) ResumeArgs() ([]string, error) {
 	if s.RecordCount < 0 || s.RestoreExisting != (s.RecordCount > 0) {
 		return nil, fmt.Errorf("resume restore guard is inconsistent with matching record count %d", s.RecordCount)
 	}
-	if strings.TrimSpace(s.Effort) != "" || strings.TrimSpace(s.CodexArgs) != "" || strings.TrimSpace(s.ClaudeArgs) != "" || strings.TrimSpace(s.LauncherPane) != "" || strings.TrimSpace(s.Goal) != "" || strings.TrimSpace(s.SeedFrom) != "" {
-		return nil, fmt.Errorf("resume answer model contains unsupported effort, native-arg, launcher, goal, or seed controls")
+	if strings.TrimSpace(s.CodexArgs) != "" || strings.TrimSpace(s.ClaudeArgs) != "" || strings.TrimSpace(s.LauncherPane) != "" || strings.TrimSpace(s.Goal) != "" || strings.TrimSpace(s.SeedFrom) != "" {
+		return nil, fmt.Errorf("resume answer model contains unsupported native-arg, launcher, goal, or seed controls")
 	}
 	args := make([]string, 0, 16)
 	appendValue := func(name, value string) {
@@ -150,12 +150,17 @@ func (s Spec) ResumeArgs() ([]string, error) {
 	if s.RecordCount > 0 {
 		args = append(args, "--restore-existing")
 	}
-	models, err := parseResumeModelAssignments(s.Model)
+	models, err := parseResumeAssignments("model", s.Model)
 	if err != nil {
 		return nil, err
 	}
-	roles := make([]string, 0, len(s.ResumeMembers))
-	allowed := make(map[string]string)
+	efforts, err := parseResumeAssignments("effort", s.Effort)
+	if err != nil {
+		return nil, err
+	}
+	freshRoles := make([]string, 0, len(s.ResumeMembers))
+	allowedModels := make(map[string]string)
+	allowedEfforts := make(map[string]string)
 	actions := make(map[string]MemberAction, len(s.ResumeMembers))
 	runnable := 0
 	for _, member := range s.ResumeMembers {
@@ -174,9 +179,12 @@ func (s Spec) ResumeArgs() ([]string, error) {
 		if member.Action != MemberActionFresh {
 			continue
 		}
+		freshRoles = append(freshRoles, member.Role)
 		if value := strings.TrimSpace(models[member.Role]); value != "" {
-			roles = append(roles, member.Role)
-			allowed[member.Role] = value
+			allowedModels[member.Role] = value
+		}
+		if value := strings.TrimSpace(efforts[member.Role]); value != "" {
+			allowedEfforts[member.Role] = value
 		}
 	}
 	if runnable == 0 {
@@ -188,7 +196,14 @@ func (s Spec) ResumeArgs() ([]string, error) {
 			return nil, fmt.Errorf("resume model override for %q is not allowed for action %q", role, action)
 		}
 	}
-	appendValue("--model", renderAssignments(roles, allowed))
+	for role := range efforts {
+		action, exists := actions[role]
+		if !exists || action != MemberActionFresh {
+			return nil, fmt.Errorf("resume effort override for %q is not allowed for action %q", role, action)
+		}
+	}
+	appendValue("--model", renderAssignments(freshRoles, allowedModels))
+	appendValue("--effort", renderAssignments(freshRoles, allowedEfforts))
 	target, layout, err := resumePlacement(s.Visibility, s.LayoutPreset)
 	if err != nil {
 		return nil, err
@@ -226,7 +241,7 @@ func resumePlacement(visibility, layout string) (string, string, error) {
 	}
 }
 
-func parseResumeModelAssignments(raw string) (map[string]string, error) {
+func parseResumeAssignments(kind, raw string) (map[string]string, error) {
 	out := map[string]string{}
 	for _, item := range strings.Split(raw, ",") {
 		item = strings.TrimSpace(item)
@@ -236,10 +251,10 @@ func parseResumeModelAssignments(raw string) (map[string]string, error) {
 		role, value, ok := strings.Cut(item, "=")
 		role, value = strings.ToLower(strings.TrimSpace(role)), strings.TrimSpace(value)
 		if !ok || role == "" || value == "" {
-			return nil, fmt.Errorf("invalid resume model assignment %q", item)
+			return nil, fmt.Errorf("invalid resume %s assignment %q", kind, item)
 		}
 		if _, exists := out[role]; exists {
-			return nil, fmt.Errorf("duplicate resume model assignment for %q", role)
+			return nil, fmt.Errorf("duplicate resume %s assignment for %q", kind, role)
 		}
 		out[role] = value
 	}
@@ -258,7 +273,7 @@ func (s Spec) GlobalArgs() []string {
 	appendValue("--root", s.GlobalRoot)
 	appendValue("--agent", s.GlobalAgent)
 	appendValue("--model", s.GlobalModel)
-	effort := strings.ToLower(strings.TrimSpace(s.GlobalEffort))
+	effort := strings.TrimSpace(s.GlobalEffort)
 	if effort == "automatic" {
 		effort = ""
 	}

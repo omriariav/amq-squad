@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/omriariav/amq-squad/v2/internal/agentcatalog"
 )
 
 // ErrCancelled reports an explicit q/quit/cancel answer from the numbered
@@ -18,6 +20,7 @@ var ErrCancelled = errors.New("wizard cancelled")
 type NumberedOptions struct {
 	Defaults       Spec
 	InspectProject func(project string) (ProjectContext, error)
+	LoadCatalog    func(root string) agentcatalog.Catalog
 	ProfileExists  func(project, profile string) bool
 	Capabilities   CapabilitySet
 	StartAtProfile bool
@@ -32,6 +35,7 @@ type ProjectContext struct {
 	NewProfileSuggestion string
 	Profiles             []ProfileSummary
 	PreferredBinaries    map[string]string
+	Catalog              agentcatalog.Catalog
 }
 
 type ProfileSummary struct {
@@ -88,7 +92,7 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		}
 		if s.Scope == "global" {
 			s.Backend = BackendGlobalStart
-			return runNumberedGlobal(r, out, s)
+			return runNumberedGlobal(r, out, s, opts.LoadCatalog)
 		}
 		s.Backend = BackendRunStart
 		if s.Project, err = promptText(r, out, "Project directory", s.Project); err != nil {
@@ -154,6 +158,7 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		s.LeadMode = ""
 		if existingProfile != nil && s.Backend == BackendResume {
 			modelOverrides := map[string]string{}
+			effortOverrides := map[string]string{}
 			memberOrder := make([]string, 0, len(s.ResumeMembers))
 			for _, member := range s.ResumeMembers {
 				memberOrder = append(memberOrder, member.Role)
@@ -163,7 +168,8 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 				case MemberActionRestore:
 					fmt.Fprintf(out, "%s restores saved launch %s read-only (binary=%s model=%s effort=%s saved extra args=%s).\n", member.Role, defaultString(member.SavedLaunchIdentity, "recorded"), defaultString(member.SavedBinary, member.Binary), defaultString(member.SavedModel, "automatic"), defaultString(member.SavedEffort, "automatic"), FormatSavedNativeArgs(member.SavedNativeArgs))
 				case MemberActionFresh:
-					modelSel, promptErr := promptChoice(r, out, member.Role+" fresh-launch model", existingOverrideModelChoices(MemberSummary{Role: member.Role, Binary: member.Binary, Model: member.Model, Effort: member.Effort}), modelKeepChoice)
+					summary := MemberSummary{Role: member.Role, Binary: member.Binary, Model: member.Model, Effort: member.Effort}
+					modelSel, promptErr := promptChoice(r, out, member.Role+" fresh-launch model", existingOverrideModelChoicesCatalog(summary, ctx.Catalog), modelKeepChoice)
 					if promptErr != nil {
 						return Spec{}, promptErr
 					}
@@ -178,10 +184,25 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 					} else if modelSel != modelKeepChoice {
 						modelOverrides[member.Role] = modelSel
 					}
+					effortSel, effortErr := promptChoice(r, out, member.Role+" fresh-launch effort", existingOverrideEffortChoices(summary, ctx.Catalog), effortKeepChoice)
+					if effortErr != nil {
+						return Spec{}, effortErr
+					}
+					if effortSel == effortCustomChoice {
+						custom, customErr := promptOptionalOverride(r, out, member.Role+" fresh-launch effort", defaultString(member.Effort, effortAutomatic))
+						if customErr != nil {
+							return Spec{}, customErr
+						}
+						if custom != "" && !strings.EqualFold(custom, effortAutomatic) {
+							effortOverrides[member.Role] = custom
+						}
+					} else if effortSel != effortKeepChoice {
+						effortOverrides[member.Role] = effortSel
+					}
 				}
 			}
 			s.Model = renderAssignments(memberOrder, modelOverrides)
-			s.Effort = ""
+			s.Effort = renderAssignments(memberOrder, effortOverrides)
 			s.OperatorMode = defaultString(existingProfile.OperatorMode, "unspecified")
 			s.OperatorNotifications = existingProfile.OperatorNotifications
 		} else if existingProfile != nil {
@@ -207,7 +228,7 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 				if override != "override" {
 					continue
 				}
-				modelSel, promptErr := promptChoice(r, out, member.Role+" model override", existingOverrideModelChoices(member), modelKeepChoice)
+				modelSel, promptErr := promptChoice(r, out, member.Role+" model override", existingOverrideModelChoicesCatalog(member, ctx.Catalog), modelKeepChoice)
 				if promptErr != nil {
 					return Spec{}, promptErr
 				}
@@ -222,15 +243,21 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 				} else if modelSel != modelKeepChoice {
 					modelOverrides[member.Role] = modelSel
 				}
-				effortChoices := []choice{{value: "automatic", label: "automatic: ignore stored effort for this launch"}, {value: "low", label: "low"}, {value: "medium", label: "medium"}, {value: "high", label: "high"}}
-				if member.Binary == "codex" {
-					effortChoices = append(effortChoices, choice{value: "minimal", label: "minimal"}, choice{value: "xhigh", label: "xhigh"})
-				}
-				effort, promptErr := promptChoice(r, out, member.Role+" effort override", effortChoices, defaultString(member.Effort, effortAutomatic))
+				effort, promptErr := promptChoice(r, out, member.Role+" effort override", existingOverrideEffortChoices(member, ctx.Catalog), effortKeepChoice)
 				if promptErr != nil {
 					return Spec{}, promptErr
 				}
-				effortOverrides[member.Role] = effort
+				if effort == effortCustomChoice {
+					custom, customErr := promptOptionalOverride(r, out, member.Role+" effort override", defaultString(member.Effort, effortAutomatic))
+					if customErr != nil {
+						return Spec{}, customErr
+					}
+					if custom != "" {
+						effortOverrides[member.Role] = custom
+					}
+				} else if effort != effortKeepChoice {
+					effortOverrides[member.Role] = effort
+				}
 			}
 			s.Model = renderAssignments(memberOrder, modelOverrides)
 			s.Effort = renderAssignments(memberOrder, effortOverrides)
@@ -260,7 +287,7 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 			if err != nil {
 				return Spec{}, err
 			}
-			model, promptErr := promptChoice(r, out, role+" model", modelChoices(binaryValues[role]), defaultModelChoice(modelPrefill[role], binaryValues[role]))
+			model, promptErr := promptChoice(r, out, role+" model", modelChoicesCatalog(binaryValues[role], ctx.Catalog), defaultModelChoiceCatalog(modelPrefill[role], binaryValues[role], ctx.Catalog))
 			if promptErr != nil {
 				return Spec{}, promptErr
 			}
@@ -272,13 +299,14 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 			if model != "" && !strings.EqualFold(model, effortAutomatic) {
 				modelValues[role] = model
 			}
-			effortChoices := []choice{{value: "automatic", label: "automatic: let the binary choose"}, {value: "low", label: "low"}, {value: "medium", label: "medium"}, {value: "high", label: "high"}}
-			if binaryValues[role] == "codex" {
-				effortChoices = append(effortChoices, choice{value: "minimal", label: "minimal"}, choice{value: "xhigh", label: "xhigh"})
-			}
-			effort, promptErr := promptChoice(r, out, role+" effort", effortChoices, defaultString(effortPrefill[role], "automatic"))
+			effort, promptErr := promptChoice(r, out, role+" effort", effortChoicesCatalog(binaryValues[role], ctx.Catalog), defaultEffortChoiceCatalog(effortPrefill[role], binaryValues[role], ctx.Catalog, effortAutomatic))
 			if promptErr != nil {
 				return Spec{}, promptErr
+			}
+			if effort == effortCustomChoice {
+				if effort, promptErr = promptText(r, out, role+" effort tier", defaultString(effortPrefill[role], effortAutomatic)); promptErr != nil {
+					return Spec{}, promptErr
+				}
 			}
 			if effort != effortAutomatic {
 				effortValues[role] = effort
@@ -372,12 +400,15 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Review")
+	for _, warning := range effortCatalogWarnings(s, ctx) {
+		fmt.Fprintln(out, warning)
+	}
 	fmt.Fprintf(out, "Goal excerpt:\n%s\nSeed source: %s\nPreview command: %s\nLive command: %s\n", GoalExcerpt(goal), displayValue(seed), previewCommand, liveCommand)
 	fmt.Fprintln(out, "Answers collected. Running the canonical preview next; live launch is a separate default-No decision.")
 	return s, nil
 }
 
-func runNumberedGlobal(r *bufio.Reader, out io.Writer, s Spec) (Spec, error) {
+func runNumberedGlobal(r *bufio.Reader, out io.Writer, s Spec, loadCatalog func(string) agentcatalog.Catalog) (Spec, error) {
 	var err error
 	fmt.Fprintln(out, "This is a neutral control root, not a project profile or session.")
 	if s.GlobalRoot, err = promptText(r, out, "Where should the global orchestrator run?", s.GlobalRoot); err != nil {
@@ -386,21 +417,42 @@ func runNumberedGlobal(r *bufio.Reader, out io.Writer, s Spec) (Spec, error) {
 	if strings.TrimSpace(s.GlobalRoot) == "" {
 		return Spec{}, fmt.Errorf("global root cannot be empty")
 	}
+	catalog := agentcatalog.Builtins()
+	if loadCatalog != nil {
+		catalog = loadCatalog(s.GlobalRoot)
+	}
 	if s.GlobalAgent, err = promptChoice(r, out, "Which agent should run the global orchestrator?", []choice{
 		{value: "claude", label: "Claude"},
 		{value: "codex", label: "Codex"},
 	}, defaultString(strings.ToLower(strings.TrimSpace(s.GlobalAgent)), "claude")); err != nil {
 		return Spec{}, err
 	}
-	if s.GlobalModel, err = promptText(r, out, "Model (optional)", s.GlobalModel); err != nil {
+	model, err := promptChoice(r, out, "Model", modelChoicesCatalog(s.GlobalAgent, catalog), defaultModelChoiceCatalog(s.GlobalModel, s.GlobalAgent, catalog))
+	if err != nil {
 		return Spec{}, err
 	}
-	if s.GlobalEffort, err = promptChoice(r, out, "Effort", effortChoices(s.GlobalAgent), defaultString(strings.ToLower(strings.TrimSpace(s.GlobalEffort)), effortAutomatic)); err != nil {
+	if model == modelCustomChoice {
+		if model, err = promptText(r, out, "Custom model", s.GlobalModel); err != nil {
+			return Spec{}, err
+		}
+	}
+	if strings.EqualFold(model, effortAutomatic) {
+		model = ""
+	}
+	s.GlobalModel = strings.TrimSpace(model)
+	effort, err := promptChoice(r, out, "Effort", effortChoicesCatalog(s.GlobalAgent, catalog), defaultEffortChoiceCatalog(s.GlobalEffort, s.GlobalAgent, catalog, effortAutomatic))
+	if err != nil {
 		return Spec{}, err
 	}
-	if s.GlobalEffort == effortAutomatic {
-		s.GlobalEffort = ""
+	if effort == effortCustomChoice {
+		if effort, err = promptText(r, out, "Custom effort", s.GlobalEffort); err != nil {
+			return Spec{}, err
+		}
 	}
+	if strings.EqualFold(effort, effortAutomatic) {
+		effort = ""
+	}
+	s.GlobalEffort = strings.TrimSpace(effort)
 	if s.GlobalAgent == "codex" {
 		if s.GlobalCodexArgs, err = promptText(r, out, "Codex extra native args (excluding effort)", s.GlobalCodexArgs); err != nil {
 			return Spec{}, err
@@ -425,6 +477,9 @@ func runNumberedGlobal(r *bufio.Reader, out io.Writer, s Spec) (Spec, error) {
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Review")
+	for _, warning := range effortCatalogWarnings(s, ProjectContext{Catalog: catalog}) {
+		fmt.Fprintln(out, warning)
+	}
 	fmt.Fprintf(out, "Scope: Global / NOC orchestrator\nNeutral root: %s\nAgent: %s\nModel: %s\nEffort: %s\nWindow: %s\nNOC contract: poll explicit project/profile/session namespaces; this global orchestrator owns no wake mailbox.\nPreview command: %s\nLive command: %s\n", s.GlobalRoot, s.GlobalAgent, displayValue(s.GlobalModel), defaultString(s.GlobalEffort, effortAutomatic), s.GlobalWindow, previewCommand, liveCommand)
 	fmt.Fprintln(out, "Answers collected. Running the canonical preview next; live launch is a separate default-No decision.")
 	return s, nil
@@ -438,28 +493,24 @@ func displayValue(value string) string {
 }
 
 const (
-	effortAutomatic   = "automatic"
-	modelCustomChoice = "custom"
-	modelKeepChoice   = "keep"
+	effortAutomatic    = "automatic"
+	modelCustomChoice  = "custom"
+	modelKeepChoice    = "keep"
+	effortCustomChoice = "custom"
+	effortKeepChoice   = "keep"
 )
 
 // modelChoices offers common models per binary. Models pass through to the
 // binary verbatim, so this list is a convenience, never an allowlist; the
 // custom row keeps free-text entry available.
 func modelChoices(binary string) []choice {
+	return modelChoicesCatalog(binary, agentcatalog.Builtins())
+}
+
+func modelChoicesCatalog(binary string, catalog agentcatalog.Catalog) []choice {
 	choices := []choice{{value: effortAutomatic, label: "automatic: let the binary choose"}}
-	if strings.EqualFold(binary, "claude") {
-		choices = append(choices,
-			choice{value: "fable", label: "fable"},
-			choice{value: "opus", label: "opus"},
-			choice{value: "sonnet", label: "sonnet"},
-			choice{value: "haiku", label: "haiku"},
-		)
-	} else {
-		choices = append(choices,
-			choice{value: "gpt-5.6-sol", label: "gpt-5.6-sol"},
-			choice{value: "gpt-5.6-terra", label: "gpt-5.6-terra"},
-		)
+	for _, entry := range catalog.Entries(binary, agentcatalog.Models) {
+		choices = append(choices, choice{value: entry.Value, label: entry.Label})
 	}
 	return append(choices, choice{value: modelCustomChoice, label: "custom: type a model name"})
 }
@@ -468,8 +519,12 @@ func modelChoices(binary string) []choice {
 // keep replaces automatic because clearing the override falls back to the
 // stored profile value, not to the binary's default.
 func existingOverrideModelChoices(member MemberSummary) []choice {
+	return existingOverrideModelChoicesCatalog(member, agentcatalog.Builtins())
+}
+
+func existingOverrideModelChoicesCatalog(member MemberSummary, catalog agentcatalog.Catalog) []choice {
 	choices := []choice{{value: modelKeepChoice, label: "keep profile model: " + defaultString(member.Model, "automatic")}}
-	for _, item := range modelChoices(member.Binary) {
+	for _, item := range modelChoicesCatalog(member.Binary, catalog) {
 		if item.value != effortAutomatic {
 			choices = append(choices, item)
 		}
@@ -478,16 +533,102 @@ func existingOverrideModelChoices(member MemberSummary) []choice {
 }
 
 func defaultModelChoice(prefill, binary string) string {
+	return defaultModelChoiceCatalog(prefill, binary, agentcatalog.Builtins())
+}
+
+func defaultModelChoiceCatalog(prefill, binary string, catalog agentcatalog.Catalog) string {
 	prefill = strings.TrimSpace(prefill)
 	if prefill == "" {
 		return effortAutomatic
 	}
-	for _, item := range modelChoices(binary) {
+	for _, item := range modelChoicesCatalog(binary, catalog) {
 		if strings.EqualFold(item.value, prefill) {
 			return item.value
 		}
 	}
 	return modelCustomChoice
+}
+
+func effortChoicesCatalog(binary string, catalog agentcatalog.Catalog) []choice {
+	choices := []choice{{value: effortAutomatic, label: "automatic: let the binary choose"}}
+	for _, entry := range catalog.Entries(binary, agentcatalog.Efforts) {
+		choices = append(choices, choice{value: entry.Value, label: entry.Label})
+	}
+	return append(choices, choice{value: effortCustomChoice, label: "custom: type an effort tier"})
+}
+
+func existingOverrideEffortChoices(member MemberSummary, catalog agentcatalog.Catalog) []choice {
+	choices := []choice{{value: effortKeepChoice, label: "keep profile effort: " + defaultString(member.Effort, effortAutomatic)}}
+	for _, entry := range catalog.Entries(member.Binary, agentcatalog.Efforts) {
+		choices = append(choices, choice{value: entry.Value, label: entry.Label})
+	}
+	return append(choices, choice{value: effortCustomChoice, label: "custom: type an effort tier"})
+}
+
+func defaultEffortChoiceCatalog(prefill, binary string, catalog agentcatalog.Catalog, fallback string) string {
+	prefill = strings.TrimSpace(prefill)
+	if prefill == "" {
+		return fallback
+	}
+	if strings.EqualFold(prefill, effortAutomatic) {
+		return effortAutomatic
+	}
+	for _, entry := range catalog.Entries(binary, agentcatalog.Efforts) {
+		if strings.EqualFold(entry.Value, prefill) {
+			return entry.Value
+		}
+	}
+	return effortCustomChoice
+}
+
+func effortCatalogWarnings(s Spec, ctx ProjectContext) []string {
+	type target struct {
+		role, binary, effort string
+	}
+	var targets []target
+	if strings.EqualFold(s.Scope, "global") {
+		targets = append(targets, target{role: "global", binary: s.GlobalAgent, effort: s.GlobalEffort})
+	} else if s.Backend == BackendResume {
+		efforts := parseAssignments(s.Effort)
+		for _, member := range s.ResumeMembers {
+			if member.Action == MemberActionFresh {
+				targets = append(targets, target{role: member.Role, binary: member.Binary, effort: efforts[member.Role]})
+			}
+		}
+	} else if s.ProfileBranch == ProfileBranchExisting {
+		efforts := parseAssignments(s.Effort)
+		if index := findProfile(ctx.Profiles, s.Profile); index >= 0 {
+			for _, member := range ctx.Profiles[index].Members {
+				targets = append(targets, target{role: member.Role, binary: member.Binary, effort: efforts[member.Role]})
+			}
+		}
+	} else {
+		binaries := parseAssignments(s.Binary)
+		efforts := parseAssignments(s.Effort)
+		for _, role := range splitAssignmentsList(s.Roles) {
+			targets = append(targets, target{role: role, binary: binaries[role], effort: efforts[role]})
+		}
+	}
+
+	seen := map[string]bool{}
+	var warnings []string
+	for _, item := range targets {
+		binary := strings.ToLower(strings.TrimSpace(item.binary))
+		effort := strings.TrimSpace(item.effort)
+		if effort == "" || strings.EqualFold(effort, effortAutomatic) || (binary != "codex" && binary != "claude") {
+			continue
+		}
+		if _, ok := ctx.Catalog.Resolve(binary, agentcatalog.Efforts, effort); ok {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(item.role)) + "\x00" + strings.ToLower(effort)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		warnings = append(warnings, fmt.Sprintf("Warning: effort %s=%s is not in the merged catalog for %s; it will be passed through exactly and may be rejected by the underlying binary.", item.role, effort, binary))
+	}
+	return warnings
 }
 
 func promptProfile(r *bufio.Reader, out io.Writer, current string, ctx ProjectContext) (string, *ProfileSummary, error) {

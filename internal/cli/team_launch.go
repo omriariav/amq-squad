@@ -128,6 +128,7 @@ Usage:
     [--target current-window|new-window|new-session] [--layout vertical|horizontal|tiled]
     [--terminal-session name] [--stagger 750ms] [--no-bootstrap]
     [--trust sandboxed|approve-for-me|trusted] [--model role=model,...]
+    [--effort role=level,...]
     [--codex-args args] [--claude-args args]
     [--force-duplicate] [--no-gitignore] [--symphony] [--dry-run]
 
@@ -193,6 +194,7 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if len(t.Members) == 0 {
 		return fmt.Errorf("team has no members")
 	}
+	agentCatalog := loadAgentCatalogAndWarn(cwd)
 	workstream, err := resolveTeamWorkstreamName(t, opts.Workstream, explicitSession)
 	if err != nil {
 		return err
@@ -206,7 +208,7 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		return fmt.Errorf("no team members are pinned to session %q (all %d member(s) belong to other sessions)", workstream, len(t.Members))
 	}
 	t.Members = active
-	t.Members, err = applyLaunchEffortOverrides(t.Members, opts.EffortOverrides)
+	t.Members, err = applyLaunchEffortOverridesCatalog(t.Members, opts.EffortOverrides, agentCatalog)
 	if err != nil {
 		return err
 	}

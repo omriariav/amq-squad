@@ -34,6 +34,7 @@ func inspectRunStartWizardProject(project string) (runwizard.ProjectContext, err
 		Project:           root,
 		PreferredBinaries: map[string]string{},
 	}
+	ctx.Catalog = loadAgentCatalogAndWarn(root)
 	for _, entry := range catalog.All() {
 		ctx.PreferredBinaries[entry.ID] = entry.PreferredBinary
 	}

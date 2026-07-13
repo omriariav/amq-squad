@@ -94,8 +94,8 @@ func TestSpecGlobalArgsNeverLeakProjectRunFlags(t *testing.T) {
 }
 
 func TestSpecGlobalClaudeEffortUsesOnlyClaudeNativeArgs(t *testing.T) {
-	got := strings.Join((Spec{GlobalRoot: "/n", GlobalAgent: "claude", GlobalEffort: "medium", GlobalCodexArgs: "--search", GlobalClaudeArgs: "--chrome"}).GlobalArgs(), " ")
-	if !strings.Contains(got, "--claude-args --chrome --effort medium") || strings.Contains(got, "--codex-args") {
+	got := strings.Join((Spec{GlobalRoot: "/n", GlobalAgent: "claude", GlobalEffort: "FutureTier", GlobalCodexArgs: "--search", GlobalClaudeArgs: "--chrome"}).GlobalArgs(), " ")
+	if !strings.Contains(got, "--claude-args --chrome --effort FutureTier") || strings.Contains(got, "--codex-args") {
 		t.Fatalf("Claude global args = %s", got)
 	}
 }
@@ -133,18 +133,19 @@ func TestResumeArgsCanonicalComposition(t *testing.T) {
 		records int
 		members []SessionMemberSummary
 		model   string
+		effort  string
 		vis     string
 		layout  string
 		want    []string
 	}{
 		{name: "all restore", records: 2, members: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore}, {Role: "qa", Action: MemberActionRestore}}, vis: "sibling-tabs", layout: "one-window-per-agent", want: []string{"--project", "/repo", "--profile", "release", "--session", "s", "--restore-existing", "--target", "new-window", "--layout", "tiled"}},
-		{name: "restore plus fresh", records: 1, members: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore}, {Role: "qa", Action: MemberActionFresh}}, model: "qa=gpt", vis: "current", layout: "lead-top", want: []string{"--project", "/repo", "--profile", "release", "--session", "s", "--restore-existing", "--model", "qa=gpt", "--target", "current-window", "--layout", "horizontal"}},
+		{name: "restore plus fresh", records: 1, members: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore}, {Role: "qa", Action: MemberActionFresh}}, model: "qa=gpt", effort: "qa=FutureTier", vis: "current", layout: "lead-top", want: []string{"--project", "/repo", "--profile", "release", "--session", "s", "--restore-existing", "--model", "qa=gpt", "--effort", "qa=FutureTier", "--target", "current-window", "--layout", "horizontal"}},
 		{name: "live plus fresh no records", members: []SessionMemberSummary{{Role: "cto", Action: MemberActionLive}, {Role: "qa", Action: MemberActionFresh}}, model: "qa=gpt", vis: "detached", want: []string{"--project", "/repo", "--profile", "release", "--session", "s", "--model", "qa=gpt", "--target", "new-session", "--layout", "tiled"}},
 		{name: "live plus restore", records: 1, members: []SessionMemberSummary{{Role: "cto", Action: MemberActionLive}, {Role: "qa", Action: MemberActionRestore}}, vis: "current", layout: "even-grid", want: []string{"--project", "/repo", "--profile", "release", "--session", "s", "--restore-existing", "--target", "current-window", "--layout", "tiled"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := Spec{Backend: BackendResume, Project: "/repo", Profile: "release", ProfileBranch: ProfileBranchExisting, Session: "s", RunExecutable: true, RunState: RunStateStopped, RecordCount: tt.records, RestoreExisting: tt.records > 0, DiscoveryFingerprint: "fp", ResumeMembers: tt.members, Model: tt.model, Visibility: tt.vis, LayoutPreset: tt.layout}
+			s := Spec{Backend: BackendResume, Project: "/repo", Profile: "release", ProfileBranch: ProfileBranchExisting, Session: "s", RunExecutable: true, RunState: RunStateStopped, RecordCount: tt.records, RestoreExisting: tt.records > 0, DiscoveryFingerprint: "fp", ResumeMembers: tt.members, Model: tt.model, Effort: tt.effort, Visibility: tt.vis, LayoutPreset: tt.layout}
 			got, err := s.ResumeArgs()
 			if err != nil {
 				t.Fatal(err)
@@ -161,7 +162,8 @@ func TestResumeArgsRejectsSemanticLeakage(t *testing.T) {
 	tests := map[string]func(*Spec){
 		"live model":                   func(s *Spec) { s.Model = "cto=gpt" },
 		"unknown model":                func(s *Spec) { s.Model = "other=gpt" },
-		"effort":                       func(s *Spec) { s.Effort = "qa=high" },
+		"live effort":                  func(s *Spec) { s.Effort = "cto=high" },
+		"unknown effort":               func(s *Spec) { s.Effort = "other=high" },
 		"native args":                  func(s *Spec) { s.CodexArgs = "--search" },
 		"launcher":                     func(s *Spec) { s.LauncherPane = "keep" },
 		"goal":                         func(s *Spec) { s.Goal = "replace brief" },

@@ -257,6 +257,7 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
+	agentCatalog := loadAgentCatalogAndWarn(cwd)
 
 	profileExists := team.ExistsProfile(cwd, profile)
 	if profileExists && !*force && !*dryRun {
@@ -440,7 +441,7 @@ Examples:
 			m.Model = strings.TrimSpace(model)
 		}
 		if effort, ok := effortOverrides[id]; ok {
-			if err := applyMemberEffort(&m, effort); err != nil {
+			if err := applyMemberEffortCatalog(&m, effort, agentCatalog); err != nil {
 				return err
 			}
 		}
@@ -747,7 +748,7 @@ func runTeamShow(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
 
 Usage:
-  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted] [--model role=model,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--no-gitignore] [--symphony] [--json]
+  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted] [--model role=model,...] [--effort role=level,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--no-gitignore] [--symphony] [--json]
 
 Examples:
   amq-squad team show
@@ -842,6 +843,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 	if len(t.Members) == 0 {
 		return fmt.Errorf("team has no members")
 	}
+	agentCatalog := loadAgentCatalogAndWarn(projectDir)
 	workstream, err := resolveTeamWorkstreamName(t, opts.RequestedSession, opts.ExplicitSession)
 	if err != nil {
 		return err
@@ -864,7 +866,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		return fmt.Errorf("no team members are pinned to session %q (all %d member(s) belong to other sessions)", workstream, len(t.Members))
 	}
 	t.Members = active
-	t.Members, err = applyLaunchEffortOverrides(t.Members, opts.EffortOverrides)
+	t.Members, err = applyLaunchEffortOverridesCatalog(t.Members, opts.EffortOverrides, agentCatalog)
 	if err != nil {
 		return err
 	}

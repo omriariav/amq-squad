@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -82,6 +83,7 @@ func runTeamResume(args []string) error {
 	noBootstrap := fs.Bool("no-bootstrap", false, "emit fresh launch commands that skip the generated bootstrap prompt")
 	trustRaw := fs.String("trust", "", "Codex trust profile for fresh members: approve-for-me (default), sandboxed, or trusted")
 	modelFlag := fs.String("model", "", "per-persona model overrides for fresh members, e.g. cto=gpt-5.6-sol,fullstack=sonnet")
+	effortFlag := fs.String("effort", "", "per-persona effort overrides for launch-fresh members, e.g. cto=xhigh,fullstack=max")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for fresh members, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for fresh members, e.g. '--chrome'")
 	projectFlag := fs.String("project", "", "project/team-home directory to plan (default: cwd)")
@@ -96,6 +98,7 @@ Usage:
                         [--restore-existing] [--dry-run] [--json] [--force-duplicate]
                         [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted]
                         [--model role=model,...]
+                        [--effort role=level,...]
                         [--codex-args args] [--claude-args args]
 
 Inspects .amq-squad/team.json plus local launch history and live-agent
@@ -169,6 +172,7 @@ Examples:
 		TrustRaw:         *trustRaw,
 		ExplicitTrust:    flagWasSet(fs, "trust"),
 		ModelRaw:         *modelFlag,
+		EffortRaw:        *effortFlag,
 		CodexArgsRaw:     *codexArgsRaw,
 		ClaudeArgsRaw:    *claudeArgsRaw,
 		DryRun:           *dryRun,
@@ -197,6 +201,7 @@ type resumeExecution struct {
 	TrustRaw      string
 	ExplicitTrust bool
 	ModelRaw      string
+	EffortRaw     string
 	CodexArgsRaw  string
 	ClaudeArgsRaw string
 	DryRun        bool
@@ -346,6 +351,10 @@ func executeResume(r resumeExecution) error {
 		return fmt.Errorf("parse --model: %w", err)
 	}
 	modelOverrides = lowercaseKeys(modelOverrides)
+	effortOverrides, err := parseEffortOverrides(r.EffortRaw)
+	if err != nil {
+		return err
+	}
 	binaryArgs, err := parseBinaryArgFlags(r.CodexArgsRaw, r.ClaudeArgsRaw)
 	if err != nil {
 		return err
@@ -401,6 +410,9 @@ func executeResume(r resumeExecution) error {
 	if err := validateModelOverrideKeys(modelOverrides, memberRoles); err != nil {
 		return err
 	}
+	if err := validateEffortOverrideKeys(effortOverrides, memberRoles); err != nil {
+		return err
+	}
 
 	// Optional --role subset: restrict the plan (and --exec) to the named roles.
 	// Validate each against the roster up front so a typo fails clearly instead
@@ -437,12 +449,13 @@ func executeResume(r resumeExecution) error {
 
 	squadBin := teamSquadBin()
 	plans := make([]resumePlan, 0, len(t.Members))
+	planInputs := make(map[string]memberPlanInput, len(t.Members))
 	recordCount := 0
 	for _, m := range orderedTeamMembers(t.Members) {
 		if len(roleSelected) > 0 && !roleSelected[strings.ToLower(m.Role)] {
 			continue
 		}
-		plan, err := planMemberResume(memberPlanInput{
+		input := memberPlanInput{
 			Member:         m,
 			Team:           t,
 			Workstream:     workstream,
@@ -455,17 +468,55 @@ func executeResume(r resumeExecution) error {
 			ModelOverrides: modelOverrides,
 			Profile:        r.Profile,
 			Probe:          probe,
-		})
+		}
+		plan, err := planMemberResume(input)
 		if err != nil {
 			return err
 		}
 		if plan.HasRestoreRecord {
 			recordCount++
 		}
+		planInputs[strings.ToLower(strings.TrimSpace(plan.Role))] = input
 		plans = append(plans, plan)
 	}
 	if namespaceConflict != nil {
 		plans = blockResumePlansForNamespaceConflict(plans, namespaceConflict)
+	}
+	if len(effortOverrides) > 0 {
+		planIndexes := make(map[string]int, len(plans))
+		for i, plan := range plans {
+			planIndexes[strings.ToLower(strings.TrimSpace(plan.Role))] = i
+		}
+		var invalid []string
+		for role := range effortOverrides {
+			index, ok := planIndexes[role]
+			if !ok {
+				invalid = append(invalid, fmt.Sprintf("%s (not selected)", role))
+				continue
+			}
+			plan := plans[index]
+			if plan.Action != resumeFresh {
+				invalid = append(invalid, fmt.Sprintf("%s (%s)", role, plan.Action))
+			}
+		}
+		if len(invalid) > 0 {
+			sort.Strings(invalid)
+			return fmt.Errorf("--effort applies only to launch-fresh members; override target(s) are not launch-fresh: %s", strings.Join(invalid, ", "))
+		}
+		agentCatalog := loadAgentCatalogAndWarn(r.ProjectDir)
+		for role, effort := range effortOverrides {
+			input := planInputs[role]
+			switch normalizedAgentBinary(input.Member.Binary) {
+			case "codex":
+				input.Member.CodexArgs = stripNativeEffortArgs(input.Member.CodexArgs, "codex")
+			case "claude":
+				input.Member.ClaudeArgs = stripNativeEffortArgs(input.Member.ClaudeArgs, "claude")
+			}
+			if err := applyMemberEffortCatalog(&input.Member, effort, agentCatalog); err != nil {
+				return err
+			}
+			plans[planIndexes[role]].Command = freshLaunchCommand(input)
+		}
 	}
 
 	// --restore-existing checks that restorable records EXIST for the

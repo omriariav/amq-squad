@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,202 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
+
+func TestRunResumeEffortIsFreshOnlyAndJSONSafe(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{{
+			Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96",
+			ClaudeArgs: []string{"--chrome", "--effort", "low"},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runResume([]string{"--json", "--effort", "qa=FutureTier"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid([]byte(stdout)) {
+		t.Fatalf("resume JSON is polluted:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "FutureTier") || strings.Contains(stdout, "--effort low") {
+		t.Fatalf("fresh command did not replace stored effort exactly:\n%s", stdout)
+	}
+	if strings.Count(stderr, "not in the merged catalog") != 1 {
+		t.Fatalf("warning count/stderr = %q", stderr)
+	}
+	stored, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(stored.Members[0].ClaudeArgs, " "); got != "--chrome --effort low" {
+		t.Fatalf("resume preview mutated profile args: %q", got)
+	}
+
+	writeMemberLaunchRecord(t, base, "issue-96", "qa", launch.Record{
+		CWD: dir, Binary: "claude", Role: "qa", StartedAt: time.Now(),
+	})
+	_, _, err = captureOutput(t, func() error {
+		return runResume([]string{"--effort", "qa=max"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "qa (restore)") || !strings.Contains(err.Error(), "only to launch-fresh") {
+		t.Fatalf("restore-target effort error = %v", err)
+	}
+}
+
+func TestRunResumeEffortRejectsLiveAndMixedActionsBeforeExec(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		members    []team.Member
+		liveRole   string
+		effort     string
+		wantTarget string
+	}{
+		{
+			name:       "live target",
+			members:    []team.Member{{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"}},
+			liveRole:   "qa",
+			effort:     "qa=max",
+			wantTarget: "qa (live)",
+		},
+		{
+			name: "mixed targets",
+			members: []team.Member{
+				{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+				{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"},
+			},
+			liveRole:   "cto",
+			effort:     "qa=max,cto=high",
+			wantTarget: "cto (live)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			base := setupFakeAMQSessionRoots(t)
+			resumeChdir(t, dir)
+			if err := team.Write(dir, team.Team{Workstream: "issue-96", Members: tc.members}); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(team.ProfilePath(dir, team.DefaultProfile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			agentDir := filepath.Join(base, "issue-96", "agents", tc.liveRole)
+			if err := os.MkdirAll(agentDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			myPID := os.Getpid()
+			writeWakeLock(t, agentDir, wakeLockFile{PID: myPID, Root: filepath.Join(base, "issue-96")})
+			oldProbe := defaultDuplicateLaunchProbe
+			defaultDuplicateLaunchProbe = duplicateLaunchProbe{
+				PIDAlive: func(pid int) bool { return pid == myPID },
+				ProcessMatch: func(pid int, predicate func(string) bool) bool {
+					return predicate("amq wake --me " + tc.liveRole + " --root " + filepath.Join(base, "issue-96"))
+				},
+				Now: time.Now,
+			}
+			oldRun := runTmuxLaunchPlanForResume
+			called := false
+			runTmuxLaunchPlanForResume = func(tmuxLaunchPlan) error {
+				called = true
+				return nil
+			}
+			t.Cleanup(func() {
+				defaultDuplicateLaunchProbe = oldProbe
+				runTmuxLaunchPlanForResume = oldRun
+			})
+
+			_, _, err = captureOutput(t, func() error {
+				return runResume([]string{"--exec", "--effort", tc.effort})
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.wantTarget) || !strings.Contains(err.Error(), "only to launch-fresh") {
+				t.Fatalf("effort action rejection = %v", err)
+			}
+			if called {
+				t.Fatal("mixed invalid effort targets reached the tmux executor")
+			}
+			after, err := os.ReadFile(team.ProfilePath(dir, team.DefaultProfile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(before) {
+				t.Fatal("rejected resume effort changed the profile")
+			}
+		})
+	}
+}
+
+func TestRunResumeEffortPreviewExecCommandParity(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{{
+			Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96",
+			ClaudeArgs: []string{"--chrome", "--effort", "low"},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(team.ProfilePath(dir, team.DefaultProfile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, _, err := captureOutput(t, func() error {
+		return runResume([]string{"--effort", "qa=max"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldRun := runTmuxLaunchPlanForResume
+	oldVerify := verifyResumeExecLaunchRecordsNow
+	var executed tmuxLaunchPlan
+	runTmuxLaunchPlanForResume = func(plan tmuxLaunchPlan) error {
+		executed = plan
+		return nil
+	}
+	verifyResumeExecLaunchRecordsNow = func(checks []resumeExecLaunchCheck, _ map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {
+		results := make([]resumeExecLaunchResult, 0, len(checks))
+		for _, check := range checks {
+			results = append(results, resumeExecLaunchResult{Check: check, State: resumeExecLaunchStateLaunched})
+		}
+		return results
+	}
+	t.Cleanup(func() {
+		runTmuxLaunchPlanForResume = oldRun
+		verifyResumeExecLaunchRecordsNow = oldVerify
+	})
+	if _, _, err := captureOutput(t, func() error {
+		return runResume([]string{"--exec", "--stagger", "0", "--effort", "qa=max"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(executed.Panes) != 1 {
+		t.Fatalf("executed panes = %+v", executed.Panes)
+	}
+	command := executed.Panes[0].Command
+	if !strings.Contains(command, "--chrome") || !strings.Contains(command, "--effort max") || strings.Contains(command, "--effort low") {
+		t.Fatalf("executed effort command = %q", command)
+	}
+	if !strings.Contains(preview, command) {
+		t.Fatalf("preview/exec command mismatch:\npreview:\n%s\nexec: %s", preview, command)
+	}
+	after, err := os.ReadFile(team.ProfilePath(dir, team.DefaultProfile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("resume preview/exec effort override persisted to the profile")
+	}
+}
 
 func TestRunResumeRequiresTeam(t *testing.T) {
 	dir := t.TempDir()
