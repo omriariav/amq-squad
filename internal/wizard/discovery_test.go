@@ -145,6 +145,7 @@ func TestDiscoveryFingerprintChangesForEveryDecisionInputClass(t *testing.T) {
 			v.MemberPlans[0].LivenessSignals = append(v.MemberPlans[0].LivenessSignals, "presence")
 		},
 		"saved launch identity": func(v *DiscoveryFingerprintInput) { v.MemberPlans[0].SavedLaunchIdentity = "launch-x" },
+		"saved launch target":   func(v *DiscoveryFingerprintInput) { v.MemberPlans[0].SavedTarget = "new-session" },
 		"member blocker":        func(v *DiscoveryFingerprintInput) { v.MemberPlans[0].Blocker = "conflict" },
 	}
 	for name, mutate := range tests {
@@ -196,11 +197,11 @@ func fingerprintFixture() DiscoveryFingerprintInput {
 		Lead: "cto", LeadMode: "planner",
 		Operator: DiscoveryOperator{Enabled: true, InteractionMode: "lead_pane", Handle: "user", SelfLead: "cto", SelfAllow: []string{"merge", "spawn"}, SelfRevision: 2, Notifications: DiscoveryNotificationPolicy{Enabled: true, DeliverySemantics: "attention_only", Events: []string{"gate", "local_input_blocked"}, Sinks: []DiscoveryNotificationSink{{ID: "desktop", Type: "desktop", Timeout: "10s"}, {ID: "audit", Type: "command", Argv: []string{"notify", "--json"}, Timeout: "5s"}}}},
 		Session:  "s", SessionSource: "member_pin", MatchingHistorySessions: []string{"history-b", "history-a"},
-		Brief:              DiscoveryBrief{Path: "/repo/.amq-squad/briefs/s.md", Source: "seed", Provenance: "issue:431", ContentDigest: "abc"},
+		Brief:              DiscoveryBrief{Path: "/repo/.amq-squad/briefs/s.md", Source: "seed", Goal: "ship it", Provenance: "issue:431", ContentDigest: "abc"},
 		NamespaceConflicts: []string{"b", "a"}, RecordIDs: []string{"record-2", "record-1"}, RecordCount: 2,
 		NamespaceFacts: []DiscoveryNamespaceFact{{Profile: "release", Session: "s", AMQRoot: "/repo/.agent-mail/release/s", DurableState: true, ProfilePinsSession: true}, {Profile: "default", Session: "s", AMQRoot: "/repo/.agent-mail/s", DurableState: true}},
 		MemberPlans: []DiscoveryMemberPlan{
-			{Role: "cto", Action: MemberActionLive, LivenessStatus: "live", LivenessSignals: []string{"wake", "pid"}, SavedLaunchIdentity: "launch-cto"},
+			{Role: "cto", Action: MemberActionLive, LivenessStatus: "live", LivenessSignals: []string{"wake", "pid"}, SavedLaunchIdentity: "launch-cto", SavedTarget: "current-window"},
 			{Role: "qa", Action: MemberActionRestore, LivenessStatus: "stale", SavedLaunchIdentity: "launch-qa"},
 		},
 	}

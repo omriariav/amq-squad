@@ -82,7 +82,7 @@ func TestRunNumberedAcceptsNumberedChoices(t *testing.T) {
 		"",  // goal
 		"",  // seed
 	}, "\n") + "\n"
-	got, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &bytes.Buffer{}, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
 		ProfileExists: func(string, string) bool { return false },
 	})
@@ -109,7 +109,7 @@ func TestRunNumberedReusesCallerReaderAndPreservesFollowingConsent(t *testing.T)
 		"", "", "", "", "", "", "", "", "", // lead through seed
 		"YES",
 	}
-	reader := bufio.NewReader(strings.NewReader(strings.Join(answers, "\n") + "\n"))
+	reader := bufio.NewReader(strings.NewReader("\n" + strings.Join(answers, "\n") + "\n"))
 	_, err := RunNumbered(reader, &bytes.Buffer{}, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
 		ProfileExists: func(string, string) bool { return false },
@@ -128,7 +128,7 @@ func TestRunNumberedReusesCallerReaderAndPreservesFollowingConsent(t *testing.T)
 
 func TestRunNumberedExistingProfileKeepsRosterAuthoritative(t *testing.T) {
 	input := strings.Repeat("\n", 8)
-	got, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &bytes.Buffer{}, NumberedOptions{
 		Defaults: Spec{
 			Project:    "/repo",
 			Profile:    "review",
@@ -155,7 +155,7 @@ func TestRunNumberedRejectsUnknownChoice(t *testing.T) {
 	answers := make([]string, 15)
 	answers[14] = "99"
 	input := strings.Join(answers, "\n") + "\n"
-	_, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
+	_, err := RunNumbered(strings.NewReader("\n"+input), &bytes.Buffer{}, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
 		ProfileExists: func(string, string) bool { return false },
 	})
@@ -177,7 +177,7 @@ func TestRunNumberedListsExistingProfilesAndUsesPinnedSession(t *testing.T) {
 		"",  // seed
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := RunNumbered(strings.NewReader(input), &out, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &out, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Visibility: "sibling-tabs"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{
@@ -227,7 +227,7 @@ func TestRunNumberedOffersModelListWithCustomEscape(t *testing.T) {
 		"",    // seed
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := RunNumbered(strings.NewReader(input), &out, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &out, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
 		ProfileExists: func(string, string) bool { return false },
 	})
@@ -252,7 +252,7 @@ func TestRunNumberedOffersModelListWithCustomEscape(t *testing.T) {
 		// notifications, launcher, goal, seed
 		"", "", "", "", "", "", "", "", "", "",
 	}, "\n") + "\n"
-	got, err = RunNumbered(strings.NewReader(custom), &bytes.Buffer{}, NumberedOptions{
+	got, err = RunNumbered(strings.NewReader("\n"+custom), &bytes.Buffer{}, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
 		ProfileExists: func(string, string) bool { return false },
 	})
@@ -276,7 +276,7 @@ func TestRunNumberedDerivesPinnedSessionWithoutPrompt(t *testing.T) {
 		"", // seed
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := RunNumbered(strings.NewReader(input), &out, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &out, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Visibility: "sibling-tabs"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{
@@ -320,7 +320,7 @@ func TestRunNumberedNoSessionProfileUsesSuggestedFirstRun(t *testing.T) {
 }
 
 func TestRunNumberedExistingProfileWithoutCLIDiscoveryFailsClosed(t *testing.T) {
-	_, err := RunNumbered(strings.NewReader("\n\n"), &bytes.Buffer{}, NumberedOptions{
+	_, err := RunNumbered(strings.NewReader("\n\n\n"), &bytes.Buffer{}, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "review"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", SessionSuggestion: "issue-444", Profiles: []ProfileSummary{{Name: "review", MemberCount: 1}}}, nil
@@ -331,13 +331,13 @@ func TestRunNumberedExistingProfileWithoutCLIDiscoveryFailsClosed(t *testing.T) 
 	}
 }
 
-func TestRunNumberedMultipleSessionsUseKnownRunListAndDeferResume(t *testing.T) {
-	profile := ProfileSummary{Name: "release", MemberCount: 2, Sessions: []SessionSummary{
+func TestRunNumberedMultipleSessionsUseKnownRunListAndComposeResume(t *testing.T) {
+	profile := ProfileSummary{Name: "release", MemberCount: 2, Members: []MemberSummary{{Role: "cto", Binary: "codex"}, {Role: "qa", Binary: "codex"}}, Sessions: []SessionSummary{
 		{Name: "run-a", Source: SessionSourceLaunchHistory, Classification: RunClassification{State: RunStateNotStarted, Backend: BackendRunStart, Executable: true}, Fresh: 2},
-		{Name: "run-b", Source: SessionSourceLaunchHistory, Fingerprint: "run-b-fp", Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Restore: 2},
+		{Name: "run-b", Source: SessionSourceLaunchHistory, Fingerprint: "run-b-fp", RecordCount: 2, BriefPath: "/repo/.amq-squad/briefs/release/run-b.md", BriefGoal: "First goal line\nSecond goal line", BriefSeed: "gh:owner/repo#431", Members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Restore: 2},
 	}}
 	var out bytes.Buffer
-	got, err := RunNumbered(strings.NewReader("\n\n2\n"), &out, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n\n\n2\n\n\n"), &out, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "release"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
@@ -349,16 +349,103 @@ func TestRunNumberedMultipleSessionsUseKnownRunListAndDeferResume(t *testing.T) 
 	if got.Session != "run-b" || got.Backend != BackendResume || got.RunState != RunStateStopped || got.DiscoveryFingerprint != "run-b-fp" {
 		t.Fatalf("known-session selection = %+v", got)
 	}
-	for _, want := range []string{"Which existing run do you want?", "run-a · launch_history · not started", "run-b · launch_history · stopped", "nothing will be previewed or launched"} {
+	for _, want := range []string{"Which existing run do you want?", "run-a · launch_history · not started", "run-b · launch_history · stopped", "restores saved launch", "Brief preserved for resume", "/repo/.amq-squad/briefs/release/run-b.md", "First goal line\nSecond goal line", "gh:owner/repo#431", "Preview command:", "Live command:", "--exec"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}
 	}
 }
 
+func TestRunNumberedResumePlacementDefaultsAndExplicitOverride(t *testing.T) {
+	members := []SessionMemberSummary{
+		{Role: "cto", Binary: "codex", Action: MemberActionRestore, SavedLaunchIdentity: "a", SavedTarget: "current-window"},
+		{Role: "qa", Binary: "codex", Action: MemberActionRestore, SavedLaunchIdentity: "b", SavedTarget: "current-window"},
+	}
+	summary := SessionSummary{Name: "s", Source: SessionSourceLaunchHistory, Fingerprint: "fp", RecordCount: 2, Members: members, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}}
+	profile := ProfileSummary{Name: "release", MemberCount: 2, Members: []MemberSummary{{Role: "cto", Binary: "codex"}, {Role: "qa", Binary: "codex"}}, Sessions: []SessionSummary{summary}}
+	for _, tt := range []struct{ name, input, visibility, target string }{
+		{name: "agreed saved target", input: "\n\n\n\n", visibility: "current", target: "--target current-window"},
+		{name: "explicit override", input: "\n\n1\n\n", visibility: "sibling-tabs", target: "--target new-window"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			got, err := RunNumbered(strings.NewReader("\n"+tt.input), &out, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+				return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Visibility != tt.visibility || !strings.Contains(out.String(), tt.target) {
+				t.Fatalf("visibility=%q output=%s", got.Visibility, out.String())
+			}
+		})
+	}
+}
+
+func TestRunNumberedResumeActionScopedControls(t *testing.T) {
+	tests := []struct {
+		name    string
+		records int
+		state   RunState
+		members []SessionMemberSummary
+		input   string
+		model   string
+	}{
+		{name: "all restore", records: 2, state: RunStateStopped, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore, SavedBinary: "codex", SavedModel: "saved", SavedEffort: "high", SavedNativeArgs: []string{"--saved"}}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, input: "\n\n\n\n"},
+		{name: "restore fresh", records: 1, state: RunStateStopped, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionRestore}, {Role: "qa", Binary: "codex", Model: "stored", Action: MemberActionFresh}}, input: "\n\n2\n\n\n", model: "qa=gpt-5.6-sol"},
+		{name: "live fresh no records", state: RunStatePartly, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionLive}, {Role: "qa", Binary: "codex", Action: MemberActionFresh}}, input: "\n\n2\n\n\n", model: "qa=gpt-5.6-sol"},
+		{name: "live restore", records: 1, state: RunStatePartly, members: []SessionMemberSummary{{Role: "cto", Binary: "codex", Action: MemberActionLive}, {Role: "qa", Binary: "codex", Action: MemberActionRestore}}, input: "\n\n\n\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			summary := SessionSummary{Name: "s", Source: SessionSourceMemberPin, Fingerprint: "fp", RecordCount: tt.records, Members: tt.members, Classification: RunClassification{State: tt.state, Backend: BackendResume, Executable: true, RestoreExisting: tt.records > 0}}
+			profileMembers := make([]MemberSummary, 0, len(tt.members))
+			for _, member := range tt.members {
+				profileMembers = append(profileMembers, MemberSummary{Role: member.Role, Binary: member.Binary, Model: member.Model, Effort: member.Effort})
+			}
+			profile := ProfileSummary{Name: "release", MemberCount: len(tt.members), Members: profileMembers, Sessions: []SessionSummary{summary}}
+			var out bytes.Buffer
+			got, err := RunNumbered(strings.NewReader("\n"+tt.input), &out, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+				return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Model != tt.model || got.Effort != "" || got.Backend != BackendResume || got.RecordCount != tt.records {
+				t.Fatalf("resume answers=%+v", got)
+			}
+			if strings.Contains(out.String(), "effort override") || strings.Contains(out.String(), "Override cto at launch") {
+				t.Fatalf("resume exposed run-start controls:\n%s", out.String())
+			}
+			if _, err := got.ResumeArgs(); err != nil {
+				t.Fatalf("composed resume args: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunNumberedRunningAndBlockedExistingRunsRemainNonExecutable(t *testing.T) {
+	for _, state := range []RunState{RunStateRunning, RunStateBlocked} {
+		t.Run(string(state), func(t *testing.T) {
+			summary := SessionSummary{Name: "s", Source: SessionSourceMemberPin, Fingerprint: "fp", Classification: RunClassification{State: state}}
+			profile := ProfileSummary{Name: "release", MemberCount: 1, Members: []MemberSummary{{Role: "cto", Binary: "codex"}}, Sessions: []SessionSummary{summary}}
+			var out bytes.Buffer
+			got, err := RunNumbered(strings.NewReader("\n\n\n"), &out, NumberedOptions{Defaults: Spec{Project: "/repo", Profile: "release"}, InspectProject: func(string) (ProjectContext, error) {
+				return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.RunExecutable || got.RunState != state || strings.Contains(out.String(), "Topology") || !strings.Contains(out.String(), "read-only") {
+				t.Fatalf("state=%s got=%+v output=%s", state, got, out.String())
+			}
+		})
+	}
+}
+
 func TestRunNumberedUnknownProfilePrefillDefaultsToCreate(t *testing.T) {
 	input := strings.Repeat("\n", 30)
-	got, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &bytes.Buffer{}, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "brand-new", Session: "explicit-session"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", SessionSuggestion: "suggested-session", NewProfileSuggestion: "squad-suggested-session", Profiles: []ProfileSummary{{Name: "release", MemberCount: 1, PinnedSession: "main"}}}, nil
@@ -424,7 +511,7 @@ func TestRunNumberedExistingProfileCollectsLaunchOnlyOverrides(t *testing.T) {
 		Name: "review", MemberCount: 1, PinnedSession: "review-work",
 		Members: []MemberSummary{{Role: "cto", Binary: "codex", Model: "stored-model", Effort: "low"}}, Sessions: []SessionSummary{discoveredFreshSession("review-work", SessionSourceMemberPin, 1)},
 	}
-	got, err := RunNumbered(strings.NewReader(input), &bytes.Buffer{}, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader("\n"+input), &bytes.Buffer{}, NumberedOptions{
 		Defaults: Spec{Project: "/repo", Profile: "review", Visibility: "sibling-tabs"},
 		InspectProject: func(string) (ProjectContext, error) {
 			return ProjectContext{Project: "/repo", Profiles: []ProfileSummary{profile}}, nil

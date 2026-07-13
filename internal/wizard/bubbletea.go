@@ -13,7 +13,14 @@ import (
 type bubbleStage int
 
 const (
-	stageProject bubbleStage = iota
+	stageScope bubbleStage = iota
+	stageProject
+	stageGlobalRoot
+	stageGlobalAgent
+	stageGlobalModel
+	stageGlobalEffort
+	stageGlobalNativeArgs
+	stageGlobalWindow
 	stageProfile
 	stageNewProfile
 	stageExistingSession
@@ -22,6 +29,8 @@ const (
 	stageExistingModel
 	stageExistingModelCustom
 	stageExistingEffort
+	stageResumeMember
+	stageResumeModelCustom
 	stageRoles
 	stageRoleBinary
 	stageRoleModel
@@ -37,6 +46,7 @@ const (
 	stageLauncherPane
 	stageGoal
 	stageSeed
+	stageResumeBrief
 	stageConfirm
 )
 
@@ -97,10 +107,10 @@ var (
 )
 
 func NewBubbleModel(opts NumberedOptions) (BubbleModel, error) {
-	s := opts.Defaults
+	s := opts.Defaults.Clone()
 	ctx := ProjectContext{Project: s.Project, SessionSuggestion: s.Session}
 	var err error
-	if opts.InspectProject != nil {
+	if opts.StartAtProfile && opts.InspectProject != nil {
 		ctx, err = opts.InspectProject(s.Project)
 		if err != nil {
 			return BubbleModel{}, err
@@ -115,11 +125,15 @@ func NewBubbleModel(opts NumberedOptions) (BubbleModel, error) {
 	input := textinput.New()
 	input.CharLimit = 512
 	input.Width = 64
+	startStage := stageScope
+	if opts.StartAtProfile {
+		startStage = stageProfile
+	}
 	m := BubbleModel{
 		opts:              opts,
 		spec:              s,
 		ctx:               ctx,
-		stage:             stageProject,
+		stage:             startStage,
 		existingIndex:     -1,
 		input:             input,
 		width:             88,
@@ -130,6 +144,9 @@ func NewBubbleModel(opts NumberedOptions) (BubbleModel, error) {
 		m.newProfilePrefill = s.Profile
 	}
 	m.configureStage()
+	if opts.StartAtProfile {
+		m.err = fmt.Errorf("%s", defaultString(opts.RestartMessage, "The selected profile or run changed while the wizard was open. Review the refreshed facts before continuing."))
+	}
 	return m, nil
 }
 
@@ -225,7 +242,7 @@ func (m BubbleModel) View() string {
 
 func (m BubbleModel) renderRail() string {
 	current := m.phaseIndex()
-	labels := []string{"Project", "Team", "Topology", "Goal", "Review"}
+	labels := m.phaseLabels()
 	parts := make([]string, 0, len(labels))
 	for i, label := range labels {
 		marker := "○"
@@ -285,8 +302,22 @@ func (m BubbleModel) renderPanel() string {
 
 func (m BubbleModel) title() string {
 	switch m.stage {
+	case stageScope:
+		return "What do you want to run?"
 	case stageProject:
-		return "Choose the project root"
+		return "Which project owns this squad?"
+	case stageGlobalRoot:
+		return "Where should the global orchestrator run?"
+	case stageGlobalAgent:
+		return "Which agent should run the global orchestrator?"
+	case stageGlobalModel:
+		return "Model for the global orchestrator"
+	case stageGlobalEffort:
+		return "Effort for the global orchestrator"
+	case stageGlobalNativeArgs:
+		return "Extra native arguments"
+	case stageGlobalWindow:
+		return "Window name"
 	case stageProfile:
 		return "Use an existing team setup or create a new one?"
 	case stageNewProfile:
@@ -303,6 +334,14 @@ func (m BubbleModel) title() string {
 		return "Custom model override · " + m.currentMember().Role
 	case stageExistingEffort:
 		return "Effort override · " + m.currentMember().Role
+	case stageResumeMember:
+		member := m.currentResumeMember()
+		if member.Action == MemberActionFresh {
+			return "Model for fresh " + member.Role
+		}
+		return "Resume action · " + member.Role
+	case stageResumeModelCustom:
+		return "Custom model for fresh " + m.currentResumeMember().Role
 	case stageRoles:
 		return "Choose fresh-roster roles"
 	case stageRoleBinary:
@@ -333,6 +372,8 @@ func (m BubbleModel) title() string {
 		return "Optional goal text"
 	case stageSeed:
 		return "Optional brief source"
+	case stageResumeBrief:
+		return "Brief preserved for resume"
 	case stageConfirm:
 		return "Review answers before canonical preview"
 	default:
@@ -342,11 +383,25 @@ func (m BubbleModel) title() string {
 
 func (m BubbleModel) note() string {
 	switch m.stage {
+	case stageScope:
+		return "Project runs use one repository's profiles and sessions. Global/NOC starts one coordinator and does not own project wake mailboxes."
 	case stageProject:
 		if m.ctx.OriginSlug != "" {
 			return "Detected origin " + m.ctx.OriginSlug + ". The nearest git root is the default."
 		}
-		return "The nearest git root is the default; no network access is used."
+		return "Choose the repository root that owns .amq-squad. The nearest git root is suggested; no network access is used."
+	case stageGlobalRoot:
+		return "This is a neutral control root, not a project profile or session."
+	case stageGlobalAgent:
+		return "The global orchestrator coordinates project namespaces but owns no project wake mailbox."
+	case stageGlobalModel:
+		return "Leave blank to let the selected agent choose its default model."
+	case stageGlobalEffort:
+		return "Automatic lets the selected agent choose its default reasoning effort."
+	case stageGlobalNativeArgs:
+		return "These arguments pass to the selected agent; effort is controlled separately."
+	case stageGlobalWindow:
+		return "This names the tmux window used by the global orchestrator."
 	case stageProfile:
 		return "An existing profile keeps its roster, lead, and operator contract. A new profile lets you choose them."
 	case stageExistingSession:
@@ -364,6 +419,18 @@ func (m BubbleModel) note() string {
 		return "Enter a model for this launch only, or leave blank to keep the profile value."
 	case stageExistingEffort:
 		return "This replaces only the native effort args in the in-memory launch plan."
+	case stageResumeMember:
+		member := m.currentResumeMember()
+		switch member.Action {
+		case MemberActionLive:
+			return "Already live: resume keeps this member running and offers no model or effort override."
+		case MemberActionRestore:
+			return fmt.Sprintf("Saved launch is read-only: binary=%s · model=%s · effort=%s · saved extra args=%s", defaultString(member.SavedBinary, member.Binary), defaultString(member.SavedModel, "automatic"), defaultString(member.SavedEffort, "automatic"), FormatSavedNativeArgs(member.SavedNativeArgs))
+		default:
+			return "Only launch-fresh members may receive a model override; resume offers no effort override."
+		}
+	case stageResumeModelCustom:
+		return "This model applies only to the fresh member; leave blank to keep the stored profile model."
 	case stageRoles:
 		return "Comma-separated role ids. Defaults are shown in the field."
 	case stageRoleModel:
@@ -396,9 +463,14 @@ func (m BubbleModel) note() string {
 	case stageSelfOperatorAllow:
 		return "No gate is preselected. Selecting merge opts in explicitly; spawn, release, tag, publish, external send, and destructive filesystem remain human-only. A second verified actor must execute the merge."
 	case stageConfirm:
+		if m.spec.Backend == BackendResume {
+			return "Enter runs the resume preview. Execution is a later default-No Resume now? prompt."
+		}
 		return "Enter collects these answers and runs preview. Live launch is a later default-No prompt."
 	case stageSeed:
 		return "Accepted forms: file:path · issue:393 · gh:owner/repo#393"
+	case stageResumeBrief:
+		return fmt.Sprintf("Resume keeps the existing brief unchanged. Path=%s · goal excerpt=%s · seed=%s", displayValue(m.spec.BriefPath), GoalExcerpt(m.spec.BriefGoal), displayValue(m.spec.BriefSeed))
 	}
 	return ""
 }
@@ -411,10 +483,36 @@ func (m BubbleModel) footer() string {
 }
 
 func (m BubbleModel) summary() string {
+	if strings.EqualFold(m.spec.Scope, "global") {
+		parts := []string{
+			"Scope     global / NOC orchestrator",
+			"Root      " + m.spec.GlobalRoot,
+			"Agent     " + defaultString(m.spec.GlobalAgent, "claude"),
+			"Model     " + defaultString(m.spec.GlobalModel, "automatic"),
+			"Effort    " + defaultString(m.spec.GlobalEffort, "automatic"),
+		}
+		if strings.EqualFold(m.spec.GlobalAgent, "codex") {
+			parts = append(parts, "Native    "+displayValue(m.spec.GlobalCodexArgs))
+		} else {
+			parts = append(parts, "Native    "+displayValue(m.spec.GlobalClaudeArgs))
+		}
+		parts = append(parts,
+			"Window    "+defaultString(m.spec.GlobalWindow, "global-orch"),
+			"Backend   "+string(BackendGlobalStart),
+			"NOC       polls explicit project/profile/session namespaces; owns no wake mailbox",
+		)
+		if previewCommand, liveCommand, err := m.spec.CommandForms(); err == nil {
+			parts = append(parts, "Preview   "+previewCommand, "Live      "+liveCommand)
+		} else {
+			parts = append(parts, "Commands  unavailable: "+err.Error())
+		}
+		return strings.Join(parts, "\n")
+	}
 	parts := []string{
 		"Project   " + m.spec.Project,
 		"Profile   " + defaultString(m.spec.Profile, "default"),
 		"Session   " + m.spec.Session,
+		"Backend   " + defaultString(string(m.spec.Backend), "run_start"),
 	}
 	if m.spec.Roles != "" {
 		parts = append(parts, "Roster    "+m.spec.Roles, "Lead      "+m.spec.Lead+" · "+m.spec.LeadMode)
@@ -427,19 +525,45 @@ func (m BubbleModel) summary() string {
 	if m.spec.Effort != "" {
 		parts = append(parts, "Effort    "+m.spec.Effort+" (launch only)")
 	}
+	if m.spec.Backend == BackendResume {
+		parts = append(parts, fmt.Sprintf("Records   %d · restore-existing=%t", m.spec.RecordCount, m.spec.RecordCount > 0))
+		for _, member := range m.spec.ResumeMembers {
+			value := fmt.Sprintf("  %-10s %s · model=%s · effort=%s", member.Role, member.Action, defaultString(member.Model, "automatic"), defaultString(member.Effort, "automatic"))
+			if member.Action == MemberActionRestore {
+				value = fmt.Sprintf("  %-10s restore · saved model=%s effort=%s extra args=%s", member.Role, defaultString(member.SavedModel, "automatic"), defaultString(member.SavedEffort, "automatic"), FormatSavedNativeArgs(member.SavedNativeArgs))
+			}
+			parts = append(parts, value)
+		}
+	}
 	parts = append(parts, "Operator  "+defaultString(m.spec.OperatorMode, "unspecified")+" · "+operatorContractSummary(m.spec.OperatorMode))
 	parts = append(parts, fmt.Sprintf("Alerts    attention-only notifications=%t", m.spec.OperatorNotifications))
 	parts = append(parts, "Topology  "+m.spec.Visibility)
 	if m.spec.LayoutPreset != "" {
 		parts = append(parts, "Layout    "+m.spec.LayoutPreset)
 	}
-	parts = append(parts, "Launcher  "+defaultString(m.spec.LauncherPane, "legacy keep"), "", TopologyPreview(m.spec.Visibility))
+	if m.spec.Backend == BackendResume {
+		parts = append(parts, "Launcher  kept · resume opens only missing members")
+	} else {
+		parts = append(parts, "Launcher  "+defaultString(m.spec.LauncherPane, "legacy keep"))
+	}
+	goal, seed := m.spec.Goal, m.spec.SeedFrom
+	if m.spec.Backend == BackendResume {
+		goal, seed = m.spec.BriefGoal, m.spec.BriefSeed
+		parts = append(parts, "Brief     "+displayValue(m.spec.BriefPath)+" (preserved)")
+	}
+	parts = append(parts, "Goal      "+GoalExcerpt(goal), "Seed      "+displayValue(seed))
+	if previewCommand, liveCommand, err := m.spec.CommandForms(); err == nil {
+		parts = append(parts, "Preview   "+previewCommand, "Live      "+liveCommand)
+	} else {
+		parts = append(parts, "Commands  unavailable: "+err.Error())
+	}
+	parts = append(parts, "", TopologyPreview(m.spec.Visibility))
 	return strings.Join(parts, "\n")
 }
 
 func (m BubbleModel) isTextStage() bool {
 	switch m.stage {
-	case stageProject, stageNewProfile, stageSession, stageExistingModelCustom, stageRoles, stageRoleModelCustom, stageLead, stageGoal, stageSeed:
+	case stageProject, stageGlobalRoot, stageGlobalModel, stageGlobalNativeArgs, stageGlobalWindow, stageNewProfile, stageSession, stageExistingModelCustom, stageResumeModelCustom, stageRoles, stageRoleModelCustom, stageLead, stageGoal, stageSeed:
 		return true
 	default:
 		return false
@@ -455,6 +579,20 @@ func (m *BubbleModel) configureStage() {
 	switch m.stage {
 	case stageProject:
 		value = m.spec.Project
+	case stageGlobalRoot:
+		value = m.spec.GlobalRoot
+	case stageGlobalModel:
+		value = m.spec.GlobalModel
+		placeholder = "optional"
+	case stageGlobalNativeArgs:
+		if strings.EqualFold(m.spec.GlobalAgent, "codex") {
+			value = m.spec.GlobalCodexArgs
+		} else {
+			value = m.spec.GlobalClaudeArgs
+		}
+		placeholder = "optional"
+	case stageGlobalWindow:
+		value = defaultString(m.spec.GlobalWindow, "global-orch")
 	case stageNewProfile:
 		value = defaultString(m.newProfilePrefill, defaultString(m.ctx.NewProfileSuggestion, "squad-"+defaultString(m.ctx.SessionSuggestion, "project")))
 	case stageSession:
@@ -462,6 +600,9 @@ func (m *BubbleModel) configureStage() {
 	case stageExistingModelCustom:
 		value = parseAssignments(m.spec.Model)[m.currentMember().Role]
 		placeholder = "leave blank to keep " + defaultString(m.currentMember().Model, "automatic")
+	case stageResumeModelCustom:
+		value = parseAssignments(m.spec.Model)[m.currentResumeMember().Role]
+		placeholder = "leave blank to keep " + defaultString(m.currentResumeMember().Model, "automatic")
 	case stageRoles:
 		value = defaultString(m.spec.Roles, "cto,senior-dev,qa")
 	case stageRoleModelCustom:
@@ -487,6 +628,12 @@ func (m *BubbleModel) configureStage() {
 
 func (m BubbleModel) choices() []choice {
 	switch m.stage {
+	case stageScope:
+		return []choice{{value: "project", label: "Project squad"}, {value: "global", label: "Global / NOC orchestrator"}}
+	case stageGlobalAgent:
+		return []choice{{value: "claude", label: "Claude"}, {value: "codex", label: "Codex"}}
+	case stageGlobalEffort:
+		return effortChoices(m.spec.GlobalAgent)
 	case stageProfile:
 		choices := make([]choice, 0, len(m.ctx.Profiles)+1)
 		for _, profile := range m.ctx.Profiles {
@@ -510,6 +657,12 @@ func (m BubbleModel) choices() []choice {
 		return existingOverrideModelChoices(m.currentMember())
 	case stageExistingEffort:
 		return effortChoices(m.currentMember().Binary)
+	case stageResumeMember:
+		member := m.currentResumeMember()
+		if member.Action == MemberActionFresh {
+			return existingOverrideModelChoices(MemberSummary{Role: member.Role, Binary: member.Binary, Model: member.Model, Effort: member.Effort})
+		}
+		return []choice{{value: "continue", label: fmt.Sprintf("Continue · %s remains %s", member.Role, member.Action)}}
 	case stageRoleBinary:
 		return []choice{{value: "codex", label: "Codex"}, {value: "claude", label: "Claude"}}
 	case stageRoleModel:
@@ -557,6 +710,8 @@ func (m BubbleModel) choices() []choice {
 		return []choice{{value: "close-after-start", label: "Close after successful start"}, {value: "keep", label: "Keep this launcher pane"}}
 	case stageConfirm:
 		return []choice{{value: "preview", label: "Run canonical preview, then decide launch separately"}}
+	case stageResumeBrief:
+		return []choice{{value: "continue", label: "Continue with the preserved brief"}}
 	default:
 		return nil
 	}
@@ -574,6 +729,12 @@ func (m BubbleModel) defaultCursor() int {
 	choices := m.choices()
 	want := ""
 	switch m.stage {
+	case stageScope:
+		want = defaultString(strings.ToLower(strings.TrimSpace(m.spec.Scope)), "project")
+	case stageGlobalAgent:
+		want = defaultString(strings.ToLower(strings.TrimSpace(m.spec.GlobalAgent)), "claude")
+	case stageGlobalEffort:
+		want = defaultString(strings.ToLower(strings.TrimSpace(m.spec.GlobalEffort)), effortAutomatic)
 	case stageProfile:
 		want = m.spec.Profile
 		if findProfile(m.ctx.Profiles, want) < 0 {
@@ -587,6 +748,12 @@ func (m BubbleModel) defaultCursor() int {
 		want = defaultModelChoice(parseAssignments(m.spec.Model)[m.currentMember().Role], m.currentMember().Binary)
 	case stageExistingEffort:
 		want = defaultString(m.currentMember().Effort, effortAutomatic)
+	case stageResumeMember:
+		if m.currentResumeMember().Action == MemberActionFresh {
+			want = defaultModelChoice(parseAssignments(m.spec.Model)[m.currentResumeMember().Role], m.currentResumeMember().Binary)
+		} else {
+			want = "continue"
+		}
 	case stageRoleModel:
 		want = defaultModelChoice(parseAssignments(m.spec.Model)[m.currentRole()], parseAssignments(m.spec.Binary)[m.currentRole()])
 	case stageRoleBinary:
@@ -650,6 +817,34 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 		m.ctx = ctx
 		m.spec.SelectProject(defaultString(ctx.Project, value))
 		m.transition(stageProfile)
+	case stageGlobalRoot:
+		if value == "" {
+			m.err = fmt.Errorf("global root cannot be empty")
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		m.spec.GlobalRoot = value
+		m.transition(stageGlobalAgent)
+	case stageGlobalModel:
+		m.spec.GlobalModel = value
+		m.transition(stageGlobalEffort)
+	case stageGlobalNativeArgs:
+		if strings.EqualFold(m.spec.GlobalAgent, "codex") {
+			m.spec.GlobalCodexArgs = value
+			m.spec.GlobalClaudeArgs = ""
+		} else {
+			m.spec.GlobalClaudeArgs = value
+			m.spec.GlobalCodexArgs = ""
+		}
+		m.transition(stageGlobalWindow)
+	case stageGlobalWindow:
+		if value == "" {
+			m.err = fmt.Errorf("window name cannot be empty")
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		m.spec.GlobalWindow = value
+		m.transition(stageConfirm)
 	case stageNewProfile:
 		if value == "" {
 			m.err = fmt.Errorf("profile cannot be empty")
@@ -676,6 +871,13 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 			m.spec.Model = removeAssignment(m.spec.Model, m.currentMember().Role)
 		}
 		m.transition(stageExistingEffort)
+	case stageResumeModelCustom:
+		if value != "" {
+			m.spec.Model = setAssignment(m.spec.Model, m.currentResumeMember().Role, value)
+		} else {
+			m.spec.Model = removeAssignment(m.spec.Model, m.currentResumeMember().Role)
+		}
+		m.nextResumeMember()
 	case stageRoles:
 		m.roleOrder = splitAssignmentsList(value)
 		if len(m.roleOrder) == 0 {
@@ -729,6 +931,25 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 	}
 	m.pushHistory()
 	switch m.stage {
+	case stageScope:
+		m.spec.Scope = selected
+		if selected == "global" {
+			m.spec.Backend = BackendGlobalStart
+			m.transition(stageGlobalRoot)
+		} else {
+			m.spec.Backend = BackendRunStart
+			m.transition(stageProject)
+		}
+	case stageGlobalAgent:
+		m.spec.GlobalAgent = selected
+		m.transition(stageGlobalModel)
+	case stageGlobalEffort:
+		if selected == effortAutomatic {
+			m.spec.GlobalEffort = ""
+		} else {
+			m.spec.GlobalEffort = selected
+		}
+		m.transition(stageGlobalNativeArgs)
 	case stageProfile:
 		if selected == "__create__" {
 			if strings.TrimSpace(m.spec.Profile) != "" && findProfile(m.ctx.Profiles, m.spec.Profile) < 0 {
@@ -788,6 +1009,22 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 	case stageExistingEffort:
 		m.spec.Effort = setAssignment(m.spec.Effort, m.currentMember().Role, selected)
 		m.nextExistingMember()
+	case stageResumeMember:
+		member := m.currentResumeMember()
+		if member.Action != MemberActionFresh {
+			m.nextResumeMember()
+			break
+		}
+		switch selected {
+		case modelCustomChoice:
+			m.transition(stageResumeModelCustom)
+		case modelKeepChoice:
+			m.spec.Model = removeAssignment(m.spec.Model, member.Role)
+			m.nextResumeMember()
+		default:
+			m.spec.Model = setAssignment(m.spec.Model, member.Role, selected)
+			m.nextResumeMember()
+		}
 	case stageRoleBinary:
 		m.spec.Binary = setAssignment(m.spec.Binary, m.currentRole(), selected)
 		m.transition(stageRoleModel)
@@ -843,7 +1080,14 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 		if selected != "continue" {
 			m.spec.OperatorNotifications = selected == "yes"
 		}
-		m.transition(stageLauncherPane)
+		if m.spec.Backend == BackendResume {
+			m.spec.LauncherPane = ""
+			m.spec.Goal = ""
+			m.spec.SeedFrom = ""
+			m.transition(stageResumeBrief)
+		} else {
+			m.transition(stageLauncherPane)
+		}
 	case stageTopology:
 		m.spec.Visibility = selected
 		m.transition(stageLayoutPreset)
@@ -853,6 +1097,8 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 	case stageLauncherPane:
 		m.spec.LauncherPane = selected
 		m.transition(stageGoal)
+	case stageResumeBrief:
+		m.transition(stageConfirm)
 	case stageConfirm:
 		m.done = true
 		return m, tea.Quit
@@ -869,16 +1115,33 @@ func (m *BubbleModel) nextExistingMember() {
 	}
 }
 
+func (m *BubbleModel) nextResumeMember() {
+	m.roleIndex++
+	if m.roleIndex < len(m.spec.ResumeMembers) {
+		m.transition(stageResumeMember)
+	} else {
+		m.transition(stageTopology)
+	}
+}
+
 func (m *BubbleModel) selectExistingSession(session SessionSummary) {
 	m.spec.SelectExistingSession(session)
 	profile := m.ctx.Profiles[m.existingIndex]
 	m.spec.OperatorMode = defaultString(profile.OperatorMode, "unspecified")
 	m.spec.OperatorNotifications = profile.OperatorNotifications
 	m.roleIndex = 0
-	if m.spec.Backend != BackendRunStart || !m.spec.RunExecutable {
-		// Slice 3 owns resume composition and action-scoped controls. Returning a
-		// non-run-start Spec is safe because the CLI refuses to preview it.
+	if !m.spec.RunExecutable {
 		m.done = true
+		return
+	}
+	if m.spec.Backend == BackendResume {
+		m.spec.Model = ""
+		m.spec.Effort = ""
+		if len(m.spec.ResumeMembers) == 0 {
+			m.done = true
+			return
+		}
+		m.transition(stageResumeMember)
 		return
 	}
 	if len(profile.Members) == 0 {
@@ -895,8 +1158,8 @@ func (m *BubbleModel) transition(stage bubbleStage) {
 
 func (m *BubbleModel) pushHistory() {
 	m.history = append(m.history, bubbleSnapshot{
-		spec:              m.spec,
-		ctx:               m.ctx,
+		spec:              m.spec.Clone(),
+		ctx:               cloneProjectContext(m.ctx),
 		stage:             m.stage,
 		cursor:            m.cursor,
 		existingIndex:     m.existingIndex,
@@ -943,9 +1206,9 @@ func (m BubbleModel) back() (tea.Model, tea.Cmd) {
 		m.rejectExistingSnapshot(last, stageProfile, fmt.Errorf("the selected profile or run changed while the wizard was open; review the refreshed facts before continuing"))
 		return m, textinput.Blink
 	}
-	m.spec = last.spec
+	m.spec = last.spec.Clone()
 	if !refreshedExisting {
-		m.ctx = last.ctx
+		m.ctx = cloneProjectContext(last.ctx)
 	}
 	m.stage = last.stage
 	m.cursor = last.cursor
@@ -968,9 +1231,8 @@ func (m BubbleModel) back() (tea.Model, tea.Cmd) {
 }
 
 func (m *BubbleModel) rejectExistingSnapshot(last bubbleSnapshot, stage bubbleStage, err error) {
-	m.spec = last.spec
-	m.spec.clearSelectedRun()
-	m.spec.clearFreshProfileAnswers()
+	m.spec = last.spec.Clone()
+	m.spec.InvalidateExistingRun()
 	m.stage = stage
 	m.existingIndex = findProfile(m.ctx.Profiles, m.spec.Profile)
 	m.roleOrder = nil
@@ -1005,18 +1267,39 @@ func snapshotCompatible(snapshot bubbleSnapshot, current ProjectContext) bool {
 }
 
 func (m BubbleModel) phaseIndex() int {
-	switch m.stage {
-	case stageProject:
-		return 0
-	case stageProfile, stageNewProfile, stageExistingSession, stageSession, stageExistingOverride, stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageRoles, stageRoleBinary, stageRoleModel, stageRoleModelCustom, stageRoleEffort, stageLead, stageLeadMode:
-		return 1
-	case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane:
-		return 2
-	case stageGoal, stageSeed:
-		return 3
-	default:
-		return 4
+	if strings.EqualFold(m.spec.Scope, "global") {
+		switch m.stage {
+		case stageScope, stageGlobalRoot:
+			return 0
+		case stageGlobalAgent, stageGlobalModel:
+			return 1
+		case stageGlobalEffort, stageGlobalNativeArgs, stageGlobalWindow:
+			return 2
+		default:
+			return 3
+		}
 	}
+	switch m.stage {
+	case stageScope, stageProject:
+		return 0
+	case stageProfile, stageNewProfile, stageExistingSession, stageSession:
+		return 1
+	case stageExistingOverride, stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageResumeMember, stageResumeModelCustom, stageRoles, stageRoleBinary, stageRoleModel, stageRoleModelCustom, stageRoleEffort, stageLead, stageLeadMode:
+		return 2
+	case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane:
+		return 3
+	case stageGoal, stageSeed, stageResumeBrief:
+		return 4
+	default:
+		return 5
+	}
+}
+
+func (m BubbleModel) phaseLabels() []string {
+	if strings.EqualFold(m.spec.Scope, "global") {
+		return []string{"Scope", "Agent", "Run controls", "Review"}
+	}
+	return []string{"Scope", "Profile & run", "Team", "Run controls", "Brief", "Review"}
 }
 
 func operatorContractSummary(mode string) string {
@@ -1084,6 +1367,30 @@ func (m BubbleModel) currentMember() MemberSummary {
 		return MemberSummary{Role: "role"}
 	}
 	return members[m.roleIndex]
+}
+
+func (m BubbleModel) currentResumeMember() SessionMemberSummary {
+	if m.roleIndex < 0 || m.roleIndex >= len(m.spec.ResumeMembers) {
+		return SessionMemberSummary{Role: "role", Action: MemberActionBlocked}
+	}
+	return m.spec.ResumeMembers[m.roleIndex]
+}
+
+func cloneProjectContext(ctx ProjectContext) ProjectContext {
+	out := ctx
+	out.PreferredBinaries = make(map[string]string, len(ctx.PreferredBinaries))
+	for key, value := range ctx.PreferredBinaries {
+		out.PreferredBinaries[key] = value
+	}
+	out.Profiles = append([]ProfileSummary(nil), ctx.Profiles...)
+	for i := range out.Profiles {
+		out.Profiles[i].Members = append([]MemberSummary(nil), ctx.Profiles[i].Members...)
+		out.Profiles[i].Sessions = append([]SessionSummary(nil), ctx.Profiles[i].Sessions...)
+		for j := range out.Profiles[i].Sessions {
+			out.Profiles[i].Sessions[j].Members = cloneSessionMembers(ctx.Profiles[i].Sessions[j].Members)
+		}
+	}
+	return out
 }
 
 func findProfile(profiles []ProfileSummary, name string) int {

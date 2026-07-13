@@ -2,14 +2,17 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
@@ -27,7 +30,10 @@ var (
 	runStartBubbleAdapter          func([]string, string) error
 	runStartWizardProjectExecute   = runRunStart
 	runStartWizardGlobalExecute    = runGlobalStart
+	runStartWizardResumeExecute    = runResume
+	runStartWizardInspectProject   = inspectRunStartWizardProject
 	runStartWizardConfirm          = promptRunStartWizardLaunch
+	runStartWizardResumeConfirm    = promptRunStartWizardResume
 	runStartWizardOpenTTY          = func() (io.ReadWriteCloser, error) { return os.OpenFile("/dev/tty", os.O_RDWR, 0) }
 	runStartWizardBubbleProgram    = runwizard.RunBubbleTea
 )
@@ -162,41 +168,34 @@ func stripWizardUIArgs(args []string) ([]string, string, error) {
 }
 
 func runNumberedRunStartWizard(args []string, version string) error {
-	prefill, err := parseRunStartWizardPrefill(args)
-	if err != nil {
-		return err
-	}
 	reader := bufio.NewReader(runStartWizardInput)
-	scope, cancelled, err := promptRunStartWizardScope(reader, runStartWizardOutput, prefill.Scope)
-	if err != nil || cancelled {
-		return err
-	}
-	prefill.Scope = scope
-	if scope == "global" {
-		spec, collectErr := collectGlobalWizard(reader, runStartWizardOutput, prefill)
-		if collectErr != nil {
-			return collectErr
-		}
-		return finishRunStartWizard(spec, version, reader, runStartWizardOutput)
-	}
 	prefill, opts, err := prepareRunStartWizard(args)
 	if err != nil {
 		return err
 	}
-	prefill.Scope = "project"
 	opts.Defaults = prefill
-	spec, err := runwizard.RunNumbered(reader, runStartWizardOutput, opts)
-	if err != nil {
-		return err
+	for {
+		spec, runErr := runwizard.RunNumbered(reader, runStartWizardOutput, opts)
+		if runErr != nil {
+			if errors.Is(runErr, runwizard.ErrCancelled) {
+				fmt.Fprintln(runStartWizardOutput, "Wizard cancelled. Nothing changed.")
+				return nil
+			}
+			return runErr
+		}
+		finishErr := finishRunStartWizard(spec, version, reader, runStartWizardOutput)
+		var restart *wizardRestartError
+		if !errors.As(finishErr, &restart) {
+			return finishErr
+		}
+		discardWizardBufferedInput(reader)
+		opts.Defaults = restart.Defaults
+		opts.StartAtProfile = true
+		opts.RestartMessage = restart.Message
 	}
-	return finishRunStartWizard(spec, version, reader, runStartWizardOutput)
 }
 
 func runBubbleRunStartWizard(args []string, version string) error {
-	prefill, err := parseRunStartWizardPrefill(args)
-	if err != nil {
-		return err
-	}
 	tty, err := runStartWizardOpenTTY()
 	if err != nil {
 		fmt.Fprintf(runStartWizardOutput, "Full-screen wizard unavailable (%v); using the numbered adapter.\n", err)
@@ -204,43 +203,39 @@ func runBubbleRunStartWizard(args []string, version string) error {
 	}
 	defer tty.Close()
 	reader := bufio.NewReader(tty)
-	scope, cancelled, err := promptRunStartWizardScope(reader, tty, prefill.Scope)
-	if err != nil || cancelled {
-		return err
-	}
-	prefill.Scope = scope
-	if scope == "global" {
-		spec, collectErr := collectGlobalWizard(reader, tty, prefill)
-		if collectErr != nil {
-			return collectErr
-		}
-		return finishRunStartWizard(spec, version, reader, tty)
-	}
 	prefill, opts, err := prepareRunStartWizard(args)
 	if err != nil {
 		return err
 	}
-	prefill.Scope = "project"
 	opts.Defaults = prefill
 	// Bubble Tea enables raw mode only when its input is the tty file itself;
 	// a wrapping reader leaves the terminal cooked and every key is swallowed.
-	// The scope prompt's reader may have over-read past its line; drop that
-	// typeahead so it cannot resurface at the launch confirmation and answer
-	// it on the user's behalf.
-	if buffered := reader.Buffered(); buffered > 0 {
-		if _, err := reader.Discard(buffered); err != nil {
-			return err
+	for {
+		result, runErr := runStartWizardBubbleProgram(tty, tty, opts)
+		if runErr != nil {
+			return runErr
 		}
+		if result.Cancelled {
+			fmt.Fprintln(runStartWizardOutput, "Wizard cancelled. Nothing changed.")
+			return nil
+		}
+		finishErr := finishRunStartWizard(result.Spec, version, reader, tty)
+		var restart *wizardRestartError
+		if !errors.As(finishErr, &restart) {
+			return finishErr
+		}
+		discardWizardBufferedInput(reader)
+		opts.Defaults = restart.Defaults
+		opts.StartAtProfile = true
+		opts.RestartMessage = restart.Message
 	}
-	result, err := runStartWizardBubbleProgram(tty, tty, opts)
-	if err != nil {
-		return err
+}
+
+func discardWizardBufferedInput(reader *bufio.Reader) {
+	if reader == nil || reader.Buffered() == 0 {
+		return
 	}
-	if result.Cancelled {
-		fmt.Fprintln(runStartWizardOutput, "Wizard cancelled. Nothing changed.")
-		return nil
-	}
-	return finishRunStartWizard(result.Spec, version, reader, tty)
+	_, _ = reader.Discard(reader.Buffered())
 }
 
 func prepareRunStartWizard(args []string) (runwizard.Spec, runwizard.NumberedOptions, error) {
@@ -255,24 +250,86 @@ func prepareRunStartWizard(args []string) (runwizard.Spec, runwizard.NumberedOpt
 		}
 		prefill.Project = cwd
 	}
-	initialContext, err := inspectRunStartWizardProject(prefill.Project)
-	if err != nil {
-		return runwizard.Spec{}, runwizard.NumberedOptions{}, err
-	}
-	prefill.Project = initialContext.Project
 	if strings.TrimSpace(prefill.Profile) == "" {
 		prefill.Profile = team.DefaultProfile
+	}
+	if strings.TrimSpace(prefill.GlobalRoot) == "" {
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return runwizard.Spec{}, runwizard.NumberedOptions{}, fmt.Errorf("resolve default global root: %w", homeErr)
+		}
+		prefill.GlobalRoot = filepath.Join(home, "Code")
+	}
+	if strings.TrimSpace(prefill.GlobalWindow) == "" {
+		prefill.GlobalWindow = "global-orch"
 	}
 	if prefill.Backend == "" {
 		prefill.Backend = runwizard.BackendRunStart
 	}
 	opts := runwizard.NumberedOptions{
-		InspectProject: inspectRunStartWizardProject,
+		InspectProject: runStartWizardInspectProject,
 		ProfileExists: func(project, profile string) bool {
 			return team.ExistsProfile(strings.TrimSpace(project), strings.TrimSpace(profile))
 		},
 	}
 	return prefill, opts, nil
+}
+
+const wizardDiscoveryChangedMessage = "The selected profile or run changed while the wizard was open. Review the refreshed facts before continuing."
+
+type wizardRestartError struct {
+	Defaults runwizard.Spec
+	Message  string
+	Cause    error
+}
+
+func (e *wizardRestartError) Error() string {
+	if e.Cause != nil {
+		return e.Message + " (" + e.Cause.Error() + ")"
+	}
+	return e.Message
+}
+
+func (e *wizardRestartError) Unwrap() error { return e.Cause }
+
+func refreshWizardExistingSelection(spec runwizard.Spec) error {
+	if spec.ProfileBranch != runwizard.ProfileBranchExisting {
+		return nil
+	}
+	stale := func(cause error) error {
+		defaults := spec.Clone()
+		defaults.InvalidateExistingRun()
+		return &wizardRestartError{Defaults: defaults, Message: wizardDiscoveryChangedMessage, Cause: cause}
+	}
+	if strings.TrimSpace(spec.DiscoveryFingerprint) == "" {
+		return stale(fmt.Errorf("reviewed discovery fingerprint is empty"))
+	}
+	ctx, err := runStartWizardInspectProject(spec.Project)
+	if err != nil {
+		return stale(fmt.Errorf("refresh project discovery: %w", err))
+	}
+	for _, profile := range ctx.Profiles {
+		if !squadnamespace.ProfilesEqual(profile.Name, spec.Profile) {
+			continue
+		}
+		for _, session := range profile.Sessions {
+			if session.Name != spec.Session {
+				continue
+			}
+			if strings.TrimSpace(session.Fingerprint) == "" {
+				return stale(fmt.Errorf("refreshed discovery fingerprint is empty"))
+			}
+			if session.Fingerprint != spec.DiscoveryFingerprint {
+				return stale(fmt.Errorf("discovery fingerprint changed"))
+			}
+			if session.Classification.Backend != spec.Backend || session.Classification.State != spec.RunState || session.Classification.Executable != spec.RunExecutable || session.RecordCount != spec.RecordCount || (session.RecordCount > 0) != spec.RestoreExisting || !reflect.DeepEqual(session.Members, spec.ResumeMembers) {
+				return stale(fmt.Errorf("refreshed run contract changed without a fingerprint change"))
+			}
+			return nil
+		}
+		return stale(fmt.Errorf("selected session %q is missing", spec.Session))
+	}
+	return stale(fmt.Errorf("selected profile %q is missing", spec.Profile))
 }
 
 func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out io.Writer) error {
@@ -290,9 +347,57 @@ func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out
 		}
 		return runStartWizardGlobalExecute(liveArgs)
 	}
-	if spec.Backend == runwizard.BackendResume || spec.RunState == runwizard.RunStateRunning || spec.RunState == runwizard.RunStateBlocked || !spec.RunExecutable && spec.ProfileBranch == runwizard.ProfileBranchExisting {
-		fmt.Fprintf(out, "Selected existing run %s/%s is %s (backend=%s). Resume execution and action-scoped controls are deferred to the next wizard slice; nothing was previewed or launched.\n", spec.Profile, spec.Session, spec.RunState, spec.Backend)
+	if spec.ProfileBranch == runwizard.ProfileBranchExisting && spec.OperatorNotificationsSet {
+		visibility := spec.Visibility
+		if strings.TrimSpace(visibility) == "" {
+			visibility = visibilitySiblingTabs
+		}
+		prefillCheck := runStartPreflight(runStartPreflightInput{
+			Project:                  spec.Project,
+			Profile:                  spec.Profile,
+			ProfileExplicit:          true,
+			Session:                  spec.Session,
+			Visibility:               visibility,
+			OperatorNotifications:    spec.OperatorNotificationsRequested,
+			OperatorNotificationsSet: true,
+		})
+		for _, issue := range prefillCheck.Issues {
+			if issue.Code != runStartPreflightExistingOperatorNotifications {
+				continue
+			}
+			fmt.Fprintf(runStartWizardOutput, "\nPreflight blocked [%s]: %s\n", issue.Code, issue.Detail)
+			for _, fix := range issue.SuggestedFixes {
+				fmt.Fprintf(runStartWizardOutput, "  - %s\n", fix)
+			}
+			return fmt.Errorf("%s", issue.Detail)
+		}
+	}
+	if spec.ProfileBranch == runwizard.ProfileBranchExisting && !spec.RunExecutable {
+		fmt.Fprintf(out, "Selected existing run %s/%s is %s (backend=%s). This state is read-only; nothing was previewed or launched.\n", spec.Profile, spec.Session, spec.RunState, spec.Backend)
 		return nil
+	}
+	if err := refreshWizardExistingSelection(spec); err != nil {
+		return err
+	}
+	if spec.Backend == runwizard.BackendResume {
+		canonicalArgs, err := spec.ResumeArgs()
+		if err != nil {
+			return err
+		}
+		liveArgs := append(append([]string{}, canonicalArgs...), "--exec")
+		fmt.Printf("\nEquivalent flag command (preview only):\n  %s\n\n", shellCommand("amq-squad", append([]string{"resume"}, canonicalArgs...)...))
+		fmt.Printf("Equivalent flag command (live, only after explicit Yes):\n  %s\n\n", shellCommand("amq-squad", append([]string{"resume"}, liveArgs...)...))
+		if err := runStartWizardResumeExecute(canonicalArgs); err != nil {
+			return err
+		}
+		resume, err := runStartWizardResumeConfirm(in, out)
+		if err != nil || !resume {
+			return err
+		}
+		if err := refreshWizardExistingSelection(spec); err != nil {
+			return err
+		}
+		return runStartWizardResumeExecute(liveArgs)
 	}
 	preflight := runStartPreflight(runStartPreflightInput{
 		Project:                  spec.Project,
@@ -341,6 +446,9 @@ func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out
 	if err != nil || !launch {
 		return err
 	}
+	if err := refreshWizardExistingSelection(spec); err != nil {
+		return err
+	}
 	return runStartWizardProjectExecute(liveArgs, version)
 }
 
@@ -357,107 +465,17 @@ func promptRunStartWizardLaunch(in io.Reader, out io.Writer) (bool, error) {
 	return line == "y" || line == "yes", nil
 }
 
-func promptRunStartWizardScope(in io.Reader, out io.Writer, current string) (scope string, cancelled bool, err error) {
-	current = strings.ToLower(strings.TrimSpace(current))
-	if current == "project" || current == "global" {
-		return current, false, nil
-	}
-	fmt.Fprint(out, "Scope\n  1) Project run\n  2) Global / NOC orchestrator\nChoose [1]: ")
+func promptRunStartWizardResume(in io.Reader, out io.Writer) (bool, error) {
+	fmt.Fprint(out, "Resume now? [y/N] ")
 	line, err := readWizardLine(in)
+	if err == io.EOF {
+		return false, nil
+	}
 	if err != nil {
-		return "", false, err
-	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "", "1", "project":
-		return "project", false, nil
-	case "2", "global", "noc":
-		return "global", false, nil
-	case "q", "quit", "cancel":
-		fmt.Fprintln(out, "Wizard cancelled. Nothing changed.")
-		return "", true, nil
-	default:
-		return "", false, usageErrorf("invalid wizard scope %q", strings.TrimSpace(line))
-	}
-}
-
-func collectGlobalWizard(in io.Reader, out io.Writer, spec runwizard.Spec) (runwizard.Spec, error) {
-	if _, ok := in.(*bufio.Reader); !ok {
-		in = bufio.NewReader(in)
-	}
-	spec.Scope = "global"
-	spec.Backend = runwizard.BackendGlobalStart
-	if strings.TrimSpace(spec.GlobalRoot) == "" {
-		if home, homeErr := os.UserHomeDir(); homeErr == nil {
-			spec.GlobalRoot = filepath.Join(home, "Code")
-		} else {
-			return spec, fmt.Errorf("resolve default global root: %w", homeErr)
-		}
-	}
-	var err error
-	if spec.GlobalRoot, err = promptWizardText(in, out, "Neutral root", spec.GlobalRoot); err != nil {
-		return spec, err
-	}
-	if spec.GlobalAgent, err = promptWizardChoice(in, out, "Agent", spec.GlobalAgent, []string{"claude", "codex"}); err != nil {
-		return spec, err
-	}
-	if spec.GlobalModel, err = promptWizardText(in, out, "Model (optional)", spec.GlobalModel); err != nil {
-		return spec, err
-	}
-	efforts := []string{"automatic", "low", "medium", "high"}
-	if spec.GlobalAgent == "codex" {
-		efforts = append(efforts, "minimal", "xhigh")
-	}
-	if spec.GlobalEffort, err = promptWizardChoice(in, out, "Effort", spec.GlobalEffort, efforts); err != nil {
-		return spec, err
-	}
-	if spec.GlobalAgent == "codex" {
-		if spec.GlobalCodexArgs, err = promptWizardText(in, out, "Codex extra native args (excluding effort)", spec.GlobalCodexArgs); err != nil {
-			return spec, err
-		}
-	} else if spec.GlobalClaudeArgs, err = promptWizardText(in, out, "Claude extra native args (excluding effort)", spec.GlobalClaudeArgs); err != nil {
-		return spec, err
-	}
-	if strings.TrimSpace(spec.GlobalWindow) == "" {
-		spec.GlobalWindow = "global-orch"
-	}
-	if spec.GlobalWindow, err = promptWizardText(in, out, "Window name", spec.GlobalWindow); err != nil {
-		return spec, err
-	}
-	fmt.Fprintln(out, "NOC contract: poll explicit project/profile/session namespaces; this global orchestrator owns no wake mailbox.")
-	return spec, nil
-}
-
-func promptWizardText(in io.Reader, out io.Writer, label, current string) (string, error) {
-	fmt.Fprintf(out, "%s [%s]: ", label, current)
-	line, err := readWizardLine(in)
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(line) == "" {
-		return current, nil
-	}
-	return strings.TrimSpace(line), nil
-}
-
-func promptWizardChoice(in io.Reader, out io.Writer, label, current string, values []string) (string, error) {
-	if strings.TrimSpace(current) == "" {
-		current = values[0]
-	}
-	fmt.Fprintf(out, "%s (%s) [%s]: ", label, strings.Join(values, "/"), current)
-	line, err := readWizardLine(in)
-	if err != nil {
-		return "", err
+		return false, err
 	}
 	line = strings.ToLower(strings.TrimSpace(line))
-	if line == "" {
-		line = strings.ToLower(strings.TrimSpace(current))
-	}
-	for _, value := range values {
-		if line == value {
-			return line, nil
-		}
-	}
-	return "", usageErrorf("invalid %s %q", strings.ToLower(label), line)
+	return line == "y" || line == "yes", nil
 }
 
 func readWizardLine(in io.Reader) (string, error) {
@@ -535,7 +553,9 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 		Lead:                           *lead,
 		LeadMode:                       *leadMode,
 		Visibility:                     *visibility,
+		VisibilityExplicit:             flagWasSet(fs, "visibility"),
 		LayoutPreset:                   *layoutPreset,
+		LayoutExplicit:                 flagWasSet(fs, "layout-preset"),
 		LauncherPane:                   *launcherPane,
 		ExternalLead:                   *externalLead,
 		Goal:                           *goal,
