@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
+	"github.com/omriariav/amq-squad/v2/internal/flock"
 )
 
 const (
@@ -252,6 +253,24 @@ func HasRecord(agentDir string) bool {
 // The agent mailbox is expected to exist (coop exec creates it), but Write
 // also creates missing parents so the record can be written pre-exec.
 func Write(agentDir string, rec Record) error {
+	return WithRecordLock(agentDir, func() error { return WriteUnderRecordLock(agentDir, rec) })
+}
+
+// RecordLockPath is the shared writer lock for one launch record.
+func RecordLockPath(agentDir string) string { return Path(agentDir) + ".lock" }
+
+// WithRecordLock serializes launch record writers and narrow conditional
+// read/write control-plane operations.
+func WithRecordLock(agentDir string, fn func() error) error {
+	if err := os.MkdirAll(ExtensionDir(agentDir), 0o700); err != nil {
+		return fmt.Errorf("ensure extension dir: %w", err)
+	}
+	return flock.WithLock(RecordLockPath(agentDir), fn)
+}
+
+// WriteUnderRecordLock writes a record while the caller holds WithRecordLock.
+// It is exported only for compound compare-and-write sections.
+func WriteUnderRecordLock(agentDir string, rec Record) error {
 	dir := ExtensionDir(agentDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("ensure extension dir: %w", err)

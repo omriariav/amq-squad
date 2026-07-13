@@ -38,6 +38,11 @@ type claudeSettingsOverlay struct {
 	DisableAllHooks bool            `json:"disableAllHooks,omitempty"`
 }
 
+// teamOverlayAfterRead is a deterministic test seam. It runs while a real
+// overlay mutation holds the profile writer lock, after reading the snapshot
+// that will be validated and written.
+var teamOverlayAfterRead = func() {}
+
 func runTeamOverlay(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(os.Stderr, `amq-squad team overlay - per-member Claude settings overlays
@@ -106,16 +111,6 @@ func runTeamOverlayInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	t, err := team.ReadProfile(projectDir, profile)
-	if err != nil {
-		return fmt.Errorf("read team: %w", err)
-	}
-
-	targets, err := overlayTargets(t, *roleFlag, *workers)
-	if err != nil {
-		return err
-	}
-
 	overlay := claudeSettingsOverlay{EnabledPlugins: map[string]bool{}}
 	for _, id := range splitCommaList(*disablePluginsRaw) {
 		overlay.EnabledPlugins[id] = false
@@ -127,61 +122,84 @@ func runTeamOverlayInit(args []string) error {
 	}
 	body = append(body, '\n')
 
-	changed := false
-	for _, idx := range targets {
-		m := &t.Members[idx]
-		path := overlayPath(t.Project, m.Role)
-		rel, err := overlayRelPath(m.EffectiveCWD(t.Project), path)
+	apply := func(t team.Team, writeProfile func(team.Team) error) error {
+		targets, err := overlayTargets(t, *roleFlag, *workers)
 		if err != nil {
-			return fmt.Errorf("member %s: %w", m.Role, err)
+			return err
 		}
+		changed := false
+		for _, idx := range targets {
+			m := &t.Members[idx]
+			path := overlayPath(t.Project, m.Role)
+			rel, err := overlayRelPath(m.EffectiveCWD(t.Project), path)
+			if err != nil {
+				return fmt.Errorf("member %s: %w", m.Role, err)
+			}
 
-		// 1. The overlay file. No-clobber: an existing (possibly user-edited)
-		// overlay is kept unless --force; wiring still proceeds either way.
-		fileAction := "write"
-		if _, statErr := os.Stat(path); statErr == nil && !*force {
-			fileAction = "keep existing"
-		}
-		// 2. The team.json wiring. Runs before the dry-run gate on purpose:
-		// a foreign --settings conflict would block any real run, so the
-		// preview should fail the same way instead of printing a plan that
-		// could never execute.
-		wireAction, newArgs, err := wireSettingsArg(m.ClaudeArgs, rel, *force)
-		if err != nil {
-			return fmt.Errorf("member %s: %w", m.Role, err)
-		}
+			// 1. The overlay file. No-clobber: an existing (possibly user-edited)
+			// overlay is kept unless --force; wiring still proceeds either way.
+			fileAction := "write"
+			if _, statErr := os.Stat(path); statErr == nil && !*force {
+				fileAction = "keep existing"
+			}
+			// 2. The team.json wiring. Runs before the dry-run gate on purpose:
+			// a foreign --settings conflict would block any real run, so the
+			// preview should fail the same way instead of printing a plan that
+			// could never execute.
+			wireAction, newArgs, err := wireSettingsArg(m.ClaudeArgs, rel, *force)
+			if err != nil {
+				return fmt.Errorf("member %s: %w", m.Role, err)
+			}
 
-		fmt.Printf("%s:\n  overlay: %s (%s)\n  claude_args: %s (%s)\n",
-			m.Role, path, fileAction, joinedAgentArgs(newArgs), wireAction)
+			fmt.Printf("%s:\n  overlay: %s (%s)\n  claude_args: %s (%s)\n",
+				m.Role, path, fileAction, joinedAgentArgs(newArgs), wireAction)
+
+			if *dryRun {
+				continue
+			}
+			if fileAction == "write" {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					return fmt.Errorf("create overlays dir: %w", err)
+				}
+				if err := os.WriteFile(path, body, 0o644); err != nil {
+					return fmt.Errorf("write overlay: %w", err)
+				}
+			}
+			if wireAction != "unchanged" {
+				m.ClaudeArgs = newArgs
+				changed = true
+			}
+		}
 
 		if *dryRun {
-			continue
+			fmt.Println("\n(dry run - nothing written)")
+			return nil
 		}
-		if fileAction == "write" {
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				return fmt.Errorf("create overlays dir: %w", err)
-			}
-			if err := os.WriteFile(path, body, 0o644); err != nil {
-				return fmt.Errorf("write overlay: %w", err)
+		if changed {
+			if err := writeProfile(t); err != nil {
+				return fmt.Errorf("write team.json: %w", err)
 			}
 		}
-		if wireAction != "unchanged" {
-			m.ClaudeArgs = newArgs
-			changed = true
-		}
-	}
-
-	if *dryRun {
-		fmt.Println("\n(dry run - nothing written)")
+		fmt.Printf("\nnext: amq-squad up --dry-run   # the wired members launch with --settings\n")
 		return nil
 	}
-	if changed {
-		if err := team.WriteProfile(projectDir, profile, t); err != nil {
-			return fmt.Errorf("write team.json: %w", err)
+	if *dryRun {
+		t, err := team.ReadProfile(projectDir, profile)
+		if err != nil {
+			return fmt.Errorf("read team: %w", err)
 		}
+		return apply(t, nil)
 	}
-	fmt.Printf("\nnext: amq-squad up --dry-run   # the wired members launch with --settings\n")
-	return nil
+	return team.WithProfileLock(projectDir, profile, func() error {
+		t, err := team.ReadProfile(projectDir, profile)
+		if err != nil {
+			return fmt.Errorf("read team: %w", err)
+		}
+		teamOverlayAfterRead()
+		return apply(t, func(updated team.Team) error {
+			return team.WriteProfileUnderLock(projectDir, profile, updated)
+		})
+	})
 }
 
 // overlayTargets resolves --role/--workers to member indexes. --workers means

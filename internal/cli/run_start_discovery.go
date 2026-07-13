@@ -386,6 +386,8 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 		summary.Members = append(summary.Members, row)
 		fingerprint.MemberPlans = append(fingerprint.MemberPlans, runStartWizardDiscoveryMemberPlan(plan, action))
 	}
+	summary.GoalPlan = buildResumeGoalPlan(planningTeam, profile, session, plans, false, false)
+	fingerprint.GoalPlan = summary.GoalPlan
 	if len(active) == 0 {
 		summary.Blocked = len(t.Members)
 	}

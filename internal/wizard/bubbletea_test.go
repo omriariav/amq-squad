@@ -353,6 +353,31 @@ func TestBubbleResumeUsesAgreedSavedPlacementAndShowsPreservedReviewEvidence(t *
 	}
 }
 
+func TestBubbleResumeGoalDefaultsNoAndRendersSafeEvidence(t *testing.T) {
+	m := BubbleModel{stage: stageResumeGoal, spec: Spec{Backend: BackendResume, ResumeGoalPlan: ResumeGoalPlan{Eligible: true, Action: "redeliver", Goal: "safe\x1b[31mRED\x1b[0m\x00"}}}
+	choices := m.choices()
+	if len(choices) != 2 || choices[0].value != "no" || m.cursor != 0 {
+		t.Fatalf("resume goal default choices=%+v cursor=%d", choices, m.cursor)
+	}
+	if guidance := m.note(); strings.ContainsRune(guidance, '\x1b') || strings.ContainsRune(guidance, '\x00') || strings.Contains(guidance, "[31m") {
+		t.Fatalf("unsafe guidance: %q", guidance)
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.spec.RedeliverGoal || m.stage != stageConfirm {
+		t.Fatalf("default No not preserved: stage=%v spec=%+v", m.stage, m.spec)
+	}
+	yes := BubbleModel{stage: stageResumeGoal, cursor: 1, spec: Spec{Backend: BackendResume, ResumeGoalPlan: ResumeGoalPlan{Eligible: true, Action: "redeliver", Goal: "safe"}}}
+	yes = updateBubble(t, yes, tea.KeyMsg{Type: tea.KeyEnter})
+	if !yes.spec.RedeliverGoal || yes.stage != stageConfirm {
+		t.Fatalf("explicit Yes not preserved: stage=%v spec=%+v", yes.stage, yes.spec)
+	}
+	blocked := BubbleModel{stage: stageResumeBrief, spec: Spec{Backend: BackendResume, ResumeGoalPlan: ResumeGoalPlan{Eligible: false, Action: "blocked", Reason: "claim missing"}}}
+	blocked = updateBubble(t, blocked, tea.KeyMsg{Type: tea.KeyEnter})
+	if blocked.stage != stageConfirm || blocked.spec.RedeliverGoal {
+		t.Fatalf("ineligible goal did not bypass choice: stage=%v spec=%+v", blocked.stage, blocked.spec)
+	}
+}
+
 func TestBubblePhaseRailsAreScopeSpecific(t *testing.T) {
 	project := BubbleModel{spec: Spec{Scope: "project"}}
 	if got, want := strings.Join(project.phaseLabels(), "|"), "Scope|Profile & run|Team|Run controls|Brief|Review"; got != want {

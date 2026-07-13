@@ -120,6 +120,7 @@ var completionGoalSubcommands = []string{
 	"claim",
 	"deliver",
 	"draft",
+	"retry-attempt",
 	"start",
 }
 
@@ -302,6 +303,7 @@ var completionCommonFlags = []string{
 	"--no-operator",
 	"--no-preauthorize-inscope",
 	"--no-require-wake",
+	"--no-redeliver-goal-prompt",
 	"--no-wake",
 	"--numbered",
 	"--once",
@@ -330,6 +332,9 @@ var completionCommonFlags = []string{
 	"--register-orchestrator",
 	"--reset",
 	"--restore-existing",
+	"--redeliver-goal",
+	"--resume-transition",
+	"--restore-goal-binding",
 	"--review-age",
 	"--role",
 	"--role-file",

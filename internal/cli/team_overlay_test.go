@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -89,6 +90,52 @@ func TestOverlayInitIdempotent(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("re-running overlay init must not duplicate --settings: %v", m.ClaudeArgs)
+	}
+}
+
+func TestOverlayInitSerializesProfileReadModifyWrite(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "analyst", Binary: "claude", Handle: "analyst", Session: "s"}}})
+	chdir(t, dir)
+	oldHook := teamOverlayAfterRead
+	writerDone := make(chan error, 1)
+	teamOverlayAfterRead = func() {
+		started := make(chan struct{})
+		go func() {
+			close(started)
+			writerDone <- team.WithProfileLock(dir, team.DefaultProfile, func() error {
+				current, err := team.ReadProfile(dir, team.DefaultProfile)
+				if err != nil {
+					return err
+				}
+				current.Members[0].Model = "concurrent-profile-update"
+				return team.WriteProfileUnderLock(dir, team.DefaultProfile, current)
+			})
+		}()
+		<-started
+		select {
+		case err := <-writerDone:
+			t.Fatalf("profile writer interleaved with overlay RMW: %v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	t.Cleanup(func() { teamOverlayAfterRead = oldHook })
+	if _, _, err := captureOutput(t, func() error { return runTeamOverlay([]string{"init", "--role", "analyst"}) }); err != nil {
+		t.Fatalf("overlay init: %v", err)
+	}
+	select {
+	case err := <-writerDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("concurrent profile writer did not resume")
+	}
+	current, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Members[0].Model != "concurrent-profile-update" || len(current.Members[0].ClaudeArgs) != 2 {
+		t.Fatalf("lost concurrent or overlay update: %+v", current.Members[0])
 	}
 }
 

@@ -323,7 +323,7 @@ func refreshWizardExistingSelection(spec runwizard.Spec) error {
 			if session.Fingerprint != spec.DiscoveryFingerprint {
 				return stale(fmt.Errorf("discovery fingerprint changed"))
 			}
-			if session.Classification.Backend != spec.Backend || session.Classification.State != spec.RunState || session.Classification.Executable != spec.RunExecutable || session.RecordCount != spec.RecordCount || (session.RecordCount > 0) != spec.RestoreExisting || !reflect.DeepEqual(session.Members, spec.ResumeMembers) {
+			if session.Classification.Backend != spec.Backend || session.Classification.State != spec.RunState || session.Classification.Executable != spec.RunExecutable || session.RecordCount != spec.RecordCount || (session.RecordCount > 0) != spec.RestoreExisting || !reflect.DeepEqual(session.Members, spec.ResumeMembers) || !reflect.DeepEqual(session.GoalPlan, spec.ResumeGoalPlan) {
 				return stale(fmt.Errorf("refreshed run contract changed without a fingerprint change"))
 			}
 			return nil

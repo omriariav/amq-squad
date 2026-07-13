@@ -147,7 +147,7 @@ func runTeamLeadClear(args []string) error {
 		t.Orchestrated = false
 		t.Lead = ""
 		t.LeadMode = ""
-		return team.WriteProfile(projectDir, profile, t)
+		return team.WriteProfileUnderLock(projectDir, profile, t)
 	}); err != nil {
 		return err
 	}
@@ -397,11 +397,7 @@ func runLeadRegister(args []string) error {
 		},
 	}
 	rec.Terminal = launch.TerminalInfoFromTmux(rec.Tmux)
-	if preserveExternalGoalBinding(existingRec, existingRecErr, role, env.SessionName) {
-		gb := *existingRec.GoalBinding
-		rec.GoalBinding = &gb
-	}
-	if err := launch.Write(agentDir, rec); err != nil {
+	if err := writeExternalLeadLaunchRecord(agentDir, rec, role, env.SessionName); err != nil {
 		return fmt.Errorf("write external launch record: %w", err)
 	}
 	if err := setTeamLeadForProfile(projectDir, profile, role, "", false); err != nil {
@@ -414,6 +410,17 @@ func runLeadRegister(args []string) error {
 		fmt.Printf("wake: %s\n", wakeResult.Detail)
 	}
 	return nil
+}
+
+func writeExternalLeadLaunchRecord(agentDir string, rec launch.Record, role, session string) error {
+	return launch.WithRecordLock(agentDir, func() error {
+		current, currentErr := launch.Read(agentDir)
+		if preserveExternalGoalBinding(current, currentErr, role, session) {
+			gb := *current.GoalBinding
+			rec.GoalBinding = &gb
+		}
+		return launch.WriteUnderRecordLock(agentDir, rec)
+	})
 }
 
 func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, viaExplicit, argsExplicit bool, existing launch.Record, existingErr error, role, handle, profile, session, root, paneID string) (wakeInjectConfig, error) {
@@ -764,7 +771,7 @@ func setTeamLeadForProfile(projectDir, profile, role string, leadMode string, le
 		if leadModeSet {
 			t.LeadMode = leadModeForPersist(leadMode)
 		}
-		return team.WriteProfile(projectDir, profile, t)
+		return team.WriteProfileUnderLock(projectDir, profile, t)
 	})
 }
 

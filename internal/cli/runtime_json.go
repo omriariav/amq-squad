@@ -10,6 +10,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 // tmuxRuntimeJSON is the stable tmux runtime-identity block that amq-noc (and
@@ -393,18 +394,24 @@ type resumeLivenessJSON struct {
 // classification `resume` prints, in a stable shape clients can render as
 // actions. It is a read-only preview (never executes).
 type resumeEnvelopeData struct {
-	TeamHome          string                 `json:"team_home"`
-	Workstream        string                 `json:"workstream"`
-	Profile           string                 `json:"profile,omitempty"`
-	Mode              string                 `json:"mode"`
-	NamespaceConflict *namespaceConflictData `json:"namespace_conflict,omitempty"`
-	Members           int                    `json:"members"`
-	Plan              []resumeMemberJSON     `json:"plan"`
+	TeamHome                  string                     `json:"team_home"`
+	Workstream                string                     `json:"workstream"`
+	Profile                   string                     `json:"profile,omitempty"`
+	Mode                      string                     `json:"mode"`
+	NamespaceConflict         *namespaceConflictData     `json:"namespace_conflict,omitempty"`
+	Members                   int                        `json:"members"`
+	Plan                      []resumeMemberJSON         `json:"plan"`
+	GoalPlan                  *runwizard.ResumeGoalPlan  `json:"goal_plan,omitempty"`
+	NativeGoalBlockedRecovery []resumeNativeGoalRecovery `json:"native_goal_blocked_recovery,omitempty"`
 }
 
 // writeResumeJSON emits the resume_plan envelope. Pane liveness is resolved once
 // across every member that carries a tmux identity.
 func writeResumeJSON(out io.Writer, t team.Team, workstream string, mode resumeMode, profile string, conflict *namespaceConflictData, plans []resumePlan) error {
+	return writeResumeJSONWithGoal(out, t, workstream, mode, profile, conflict, plans, runwizard.ResumeGoalPlan{})
+}
+
+func writeResumeJSONWithGoal(out io.Writer, t team.Team, workstream string, mode resumeMode, profile string, conflict *namespaceConflictData, plans []resumePlan, goalPlan runwizard.ResumeGoalPlan) error {
 	rows := make([]resumeMemberJSON, 0, len(plans))
 	var livePanes map[string]bool
 	for _, p := range plans {
@@ -441,14 +448,21 @@ func writeResumeJSON(out io.Writer, t team.Team, workstream string, mode resumeM
 	if profile == team.DefaultProfile {
 		profile = ""
 	}
+	var goalPlanJSON *runwizard.ResumeGoalPlan
+	if goalPlan.SchemaVersion != 0 {
+		copy := goalPlan
+		goalPlanJSON = &copy
+	}
 	return writeJSONEnvelope(out, "resume_plan", resumeEnvelopeData{
-		TeamHome:          t.Project,
-		Workstream:        workstream,
-		Profile:           profile,
-		Mode:              string(mode),
-		NamespaceConflict: conflict,
-		Members:           len(rows),
-		Plan:              rows,
+		TeamHome:                  t.Project,
+		Workstream:                workstream,
+		Profile:                   profile,
+		Mode:                      string(mode),
+		NamespaceConflict:         conflict,
+		Members:                   len(rows),
+		Plan:                      rows,
+		GoalPlan:                  goalPlanJSON,
+		NativeGoalBlockedRecovery: resumeNativeGoalBlockedRecoveries(plans),
 	})
 }
 

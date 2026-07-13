@@ -378,6 +378,24 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		s.SeedFrom = ""
 		fmt.Fprintln(out, "This wizard pane stays open; resume only opens missing agent panes.")
 		fmt.Fprintf(out, "Brief preserved for resume: path=%s\ngoal excerpt:\n%s\nseed source=%s\n", displayValue(s.BriefPath), GoalExcerpt(s.BriefGoal), displayValue(s.BriefSeed))
+		if s.ResumeGoalPlan.Eligible {
+			fmt.Fprintf(out, "Recorded goal evidence (bounded):\n%s\n", GoalExcerpt(s.ResumeGoalPlan.Goal))
+			defaultChoice := "no"
+			if s.RedeliverGoal {
+				defaultChoice = "yes"
+			}
+			choice, choiceErr := promptChoice(r, out, "Re-deliver the recorded lead goal after verified re-orientation?", []choice{
+				{value: "no", label: "No · keep the restored binding without creating a new attempt"},
+				{value: "yes", label: "Yes · create one new claim-once attempt after launch verification"},
+			}, defaultChoice)
+			if choiceErr != nil {
+				return Spec{}, choiceErr
+			}
+			s.RedeliverGoal = choice == "yes"
+		} else {
+			s.RedeliverGoal = false
+			fmt.Fprintf(out, "Recorded goal redelivery: %s · %s\n", defaultString(s.ResumeGoalPlan.Action, "unavailable"), s.ResumeGoalPlan.Reason)
+		}
 	} else {
 		if s.LauncherPane, err = promptChoice(r, out, "Launcher pane", launcherPaneChoices(s.Visibility, s.ExternalLead), defaultLauncherPane(s.LauncherPane, s.Visibility, s.ExternalLead)); err != nil {
 			return Spec{}, err
