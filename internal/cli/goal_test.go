@@ -591,117 +591,72 @@ func TestGoalDeliveryUnconfirmedQueuesClaimOnceAMQFallback(t *testing.T) {
 	}
 }
 
-func TestGoalDeliverySerializesOrdinaryLaunchBindingWithConcurrentWriter(t *testing.T) {
-	dir, base, _, prompts := setupGoalDeliveryFailureTest(t, nil)
-	agentDir := filepath.Join(base, "issue-96", "agents", "cto")
-	oldHook, oldSend := goalBeforeOrdinaryBindingCAS, sendPromptToPane
-	writerDone := make(chan error, 1)
-	goalBeforeOrdinaryBindingCAS = func() {
-		started := make(chan struct{})
-		go func() {
-			close(started)
-			writerDone <- launch.WithRecordLock(agentDir, func() error {
-				rec, err := launch.Read(agentDir)
-				if err != nil {
-					return err
+func TestGoalDeliveryReleasesIdentityLocksBeforeBlockedSend(t *testing.T) {
+	for _, kind := range []string{"launch", "team"} {
+		t.Run(kind, func(t *testing.T) {
+			dir, base, _, prompts := setupGoalDeliveryFailureTest(t, nil)
+			agentDir := filepath.Join(base, "issue-96", "agents", "cto")
+			oldSend := sendPromptToPane
+			writerDone := make(chan error, 1)
+			sendPromptToPane = func(paneID, prompt string) error {
+				go func() {
+					switch kind {
+					case "launch":
+						writerDone <- launch.WithRecordLock(agentDir, func() error {
+							rec, err := launch.Read(agentDir)
+							if err != nil {
+								return err
+							}
+							rec.Model = "concurrent-send-launch-update"
+							return launch.WriteUnderRecordLock(agentDir, rec)
+						})
+					case "team":
+						writerDone <- team.WithProfileLock(dir, team.DefaultProfile, func() error {
+							current, err := team.ReadProfile(dir, team.DefaultProfile)
+							if err != nil {
+								return err
+							}
+							current.Members[0].Model = "concurrent-send-team-update"
+							return team.WriteProfileUnderLock(dir, team.DefaultProfile, current)
+						})
+					}
+				}()
+				select {
+				case err := <-writerDone:
+					if err != nil {
+						t.Fatalf("%s writer while send blocked: %v", kind, err)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatalf("%s writer was blocked by external send", kind)
 				}
-				rec.Model = "concurrent-resume-update"
-				return launch.WriteUnderRecordLock(agentDir, rec)
+				return oldSend(paneID, prompt)
+			}
+			t.Cleanup(func() { sendPromptToPane = oldSend })
+
+			_, _, err := captureOutput(t, func() error {
+				return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely"})
 			})
-		}()
-		<-started
-		select {
-		case err := <-writerDone:
-			t.Fatalf("concurrent writer completed inside ordinary delivery writer lock: %v", err)
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-	sendPromptToPane = func(paneID, prompt string) error {
-		select {
-		case err := <-writerDone:
-			t.Fatalf("concurrent writer interleaved before ordinary delivery send: %v", err)
-		default:
-		}
-		return oldSend(paneID, prompt)
-	}
-	t.Cleanup(func() {
-		goalBeforeOrdinaryBindingCAS = oldHook
-		sendPromptToPane = oldSend
-	})
-
-	if _, _, err := captureOutput(t, func() error {
-		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely"})
-	}); err != nil {
-		t.Fatalf("ordinary goal delivery: %v", err)
-	}
-	select {
-	case err := <-writerDone:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("concurrent launch writer did not resume after ordinary delivery")
-	}
-	if len(*prompts) != 1 {
-		t.Fatalf("ordinary delivery prompts=%v", *prompts)
-	}
-	rec, err := launch.Read(agentDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec.Model != "concurrent-resume-update" || rec.GoalBinding == nil || !rec.GoalBinding.NativeGoal {
-		t.Fatalf("ordinary delivery lost concurrent launch update: model=%q binding=%+v", rec.Model, rec.GoalBinding)
-	}
-}
-
-func TestGoalDeliverySerializesOrdinaryPostSendBindingWithConcurrentWriter(t *testing.T) {
-	dir, base, _, prompts := setupGoalDeliveryFailureTest(t, nil)
-	agentDir := filepath.Join(base, "issue-96", "agents", "cto")
-	oldHook := goalBeforePostDeliveryBindingCAS
-	writerDone := make(chan error, 1)
-	goalBeforePostDeliveryBindingCAS = func() {
-		started := make(chan struct{})
-		go func() {
-			close(started)
-			writerDone <- launch.WithRecordLock(agentDir, func() error {
-				rec, err := launch.Read(agentDir)
-				if err != nil {
-					return err
+			if len(*prompts) != 1 {
+				t.Fatalf("ordinary delivery prompts=%v", *prompts)
+			}
+			if kind == "team" {
+				if err == nil || !strings.Contains(err.Error(), "team generation changed after pane delivery") {
+					t.Fatalf("team update must cause explicit stale-generation refusal, got %v", err)
 				}
-				rec.Model = "concurrent-post-send-update"
-				return launch.WriteUnderRecordLock(agentDir, rec)
-			})
-		}()
-		<-started
-		select {
-		case err := <-writerDone:
-			t.Fatalf("concurrent writer completed inside post-send binding RMW: %v", err)
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-	t.Cleanup(func() { goalBeforePostDeliveryBindingCAS = oldHook })
-	if _, _, err := captureOutput(t, func() error {
-		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely"})
-	}); err != nil {
-		t.Fatalf("ordinary goal delivery: %v", err)
-	}
-	select {
-	case err := <-writerDone:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("concurrent launch writer did not resume after post-send binding update")
-	}
-	if len(*prompts) != 1 {
-		t.Fatalf("ordinary delivery prompts=%v", *prompts)
-	}
-	rec, err := launch.Read(agentDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec.Model != "concurrent-post-send-update" || rec.GoalBinding == nil || rec.GoalBinding.Detail != "native /goal delivered as a first-class claim-once control action" {
-		t.Fatalf("ordinary post-send RMW lost state: model=%q binding=%+v", rec.Model, rec.GoalBinding)
+				current, readErr := team.ReadProfile(dir, team.DefaultProfile)
+				if readErr != nil || current.Members[0].Model != "concurrent-send-team-update" {
+					t.Fatalf("team writer did not survive blocked send: model=%q err=%v", current.Members[0].Model, readErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("launch update should merge after blocked send: %v", err)
+			}
+			rec, readErr := launch.Read(agentDir)
+			if readErr != nil || rec.Model != "concurrent-send-launch-update" || rec.GoalBinding == nil || rec.GoalBinding.Detail != "native /goal delivered as a first-class claim-once control action" {
+				t.Fatalf("post-send merge lost independent launch update: model=%q binding=%+v err=%v", rec.Model, rec.GoalBinding, readErr)
+			}
+		})
 	}
 }
 

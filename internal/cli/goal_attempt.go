@@ -77,6 +77,21 @@ type goalRetryCASSnapshot struct {
 	LaunchModTime int64
 }
 
+// goalRetryPostSendIdentityError reports an identity/generation change that
+// happened while the native retry was in flight. The prompt may already be in
+// the pane, so creating another attempt or retrying blindly would be unsafe.
+type goalRetryPostSendIdentityError struct {
+	AttemptID string
+	Cause     error
+}
+
+func (e *goalRetryPostSendIdentityError) Error() string {
+	return fmt.Sprintf("goal retry-attempt %s was sent but current identity/generation changed afterward: %v; do not create or retry another attempt", e.AttemptID, e.Cause)
+}
+
+func (e *goalRetryPostSendIdentityError) Unwrap() error   { return e.Cause }
+func (e *goalRetryPostSendIdentityError) RetrySafe() bool { return false }
+
 func goalAttemptDir(projectDir, profile, session string) string {
 	base := filepath.Join(projectDir, team.DirName, "goal-attempts")
 	if squadnamespace.NormalizeProfile(profile) != team.DefaultProfile {
@@ -465,6 +480,20 @@ func runGoalRetryAttemptLocked(opts goalDeliveryOptions, attemptID string) error
 	if reason, disabled := mr.nativePromptInjectionDisabledReason(); disabled {
 		return fmt.Errorf("%s", reason)
 	}
+	// The exact generation/identity check is intentionally a short critical
+	// section. Pane discovery, native input, AMQ fallback, and output run only
+	// after the profile and launch-record locks are released.
+	var sendRuntime memberRuntime
+	if err := withGoalIdentityWriterLocks(opts, mr.AgentDir, func() error {
+		sendRuntime, err = validateGoalRetrySendCAS(opts, attempt, attemptID, cas)
+		if err != nil {
+			return err
+		}
+		goalBeforeRetrySendCAS()
+		return nil
+	}); err != nil {
+		return err
+	}
 	panes, err := statusPaneLister()
 	if err != nil {
 		if tmuxpane.IsPermissionDenied(err) {
@@ -472,12 +501,14 @@ func runGoalRetryAttemptLocked(opts goalDeliveryOptions, attemptID string) error
 		}
 		panes = nil
 	}
-	paneID, _, ok := resolveControlTarget(mr, resolvedWorkstream, panes)
+	paneID, _, ok := resolveControlTarget(sendRuntime, resolvedWorkstream, panes)
 	if !ok || strings.TrimSpace(paneID) == "" {
-		return fmt.Errorf("no live tmux pane found for role %q", opts.Role)
+		return fmt.Errorf("goal retry-attempt refused: exact live pane disappeared before send")
 	}
 	// Claim publication does not share the delivery lock, so re-read at the
-	// last possible point before pane mutation.
+	// last possible point before pane mutation. This check is outside the
+	// identity locks by design: the claim protocol itself is the at-most-once
+	// arbiter, and no writer may be stalled behind tmux work.
 	if claimBytes, claimErr := os.ReadFile(claimPath); claimErr == nil {
 		var claim goalAttemptClaim
 		if json.Unmarshal(claimBytes, &claim) != nil || validateResumeGoalClaim(claim, attempt) != nil {
@@ -487,44 +518,36 @@ func runGoalRetryAttemptLocked(opts goalDeliveryOptions, attemptID string) error
 	} else if !os.IsNotExist(claimErr) {
 		return fmt.Errorf("goal retry-attempt refused: recheck claim: %w", claimErr)
 	}
-	return withGoalIdentityWriterLocks(opts, mr.AgentDir, func() error {
-		mr, err = validateGoalRetrySendCAS(opts, attempt, attemptID, cas)
-		if err != nil {
-			return err
+	opts.Goal = attempt.Goal
+	opts.AttemptID = attemptID
+	if err := sendPromptToPane(paneID, sendRuntime.Record.GoalBinding.Command); err != nil {
+		var queued *tmuxpane.QueuedInputError
+		if errors.As(err, &queued) {
+			fmt.Fprintf(os.Stderr, "warning: existing goal attempt %s is queued in the lead input; do not retry again\n", attemptID)
+			return nil
 		}
-		goalBeforeRetrySendCAS()
-		panes, err = statusPaneLister()
-		if err != nil {
-			if tmuxpane.IsPermissionDenied(err) {
-				return errTmuxAccessDenied()
+		var unconfirmed *tmuxpane.SubmitUnconfirmedError
+		if errors.As(err, &unconfirmed) {
+			fallback, fallbackErr := goalFallbackAMQSend(opts)
+			if fallbackErr != nil {
+				return &goalFallbackDurabilityError{DeliveryErr: err, FallbackErr: fallbackErr}
 			}
-			panes = nil
+			fmt.Fprintf(os.Stderr, "warning: native retry was unconfirmed; durable fallback %s reuses attempt %s\n", fallback.MessageID, attemptID)
+			return nil
 		}
-		paneID, _, ok = resolveControlTarget(mr, resolvedWorkstream, panes)
-		if !ok || strings.TrimSpace(paneID) == "" {
-			return fmt.Errorf("goal retry-attempt refused: exact live pane disappeared before send")
-		}
-		opts.Goal = attempt.Goal
-		opts.AttemptID = attemptID
-		if err := sendPromptToPane(paneID, mr.Record.GoalBinding.Command); err != nil {
-			var queued *tmuxpane.QueuedInputError
-			if errors.As(err, &queued) {
-				fmt.Fprintf(os.Stderr, "warning: existing goal attempt %s is queued in the lead input; do not retry again\n", attemptID)
-				return nil
-			}
-			var unconfirmed *tmuxpane.SubmitUnconfirmedError
-			if errors.As(err, &unconfirmed) {
-				fallback, fallbackErr := goalFallbackAMQSend(opts)
-				if fallbackErr != nil {
-					return &goalFallbackDurabilityError{DeliveryErr: err, FallbackErr: fallbackErr}
-				}
-				fmt.Fprintf(os.Stderr, "warning: native retry was unconfirmed; durable fallback %s reuses attempt %s\n", fallback.MessageID, attemptID)
-				return nil
-			}
-			return err
-		}
-		fmt.Printf("Re-delivered existing goal attempt %s to %s; no new attempt was created.\n", attemptID, opts.Role)
-		return nil
+		return err
+	}
+	if err := validateGoalRetryAfterExternalSend(opts, sendRuntime.AgentDir, attempt, attemptID, cas); err != nil {
+		return &goalRetryPostSendIdentityError{AttemptID: attemptID, Cause: err}
+	}
+	fmt.Printf("Re-delivered existing goal attempt %s to %s; no new attempt was created.\n", attemptID, opts.Role)
+	return nil
+}
+
+func validateGoalRetryAfterExternalSend(opts goalDeliveryOptions, agentDir string, attempt goalAttemptRecord, attemptID string, expected goalRetryCASSnapshot) error {
+	return withGoalIdentityWriterLocks(opts, agentDir, func() error {
+		_, err := validateGoalRetrySendCAS(opts, attempt, attemptID, expected)
+		return err
 	})
 }
 

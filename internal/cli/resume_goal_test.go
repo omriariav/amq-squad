@@ -510,19 +510,19 @@ func TestResumeGoalTransitionReservedBindingGenerationChangeFailsClosed(t *testi
 	}
 }
 
-func TestResumeGoalTransitionCASBlocksIdentityWritersThroughBindingAndSend(t *testing.T) {
+func TestResumeGoalTransitionReleasesIdentityLocksBeforeBlockedSend(t *testing.T) {
 	for _, kind := range []string{"launch", "team"} {
 		t.Run(kind, func(t *testing.T) {
 			tm, session, _, plan, verified := freshResumeTransitionFixture(t)
 			if err := reserveResumeGoalTransition(tm, team.DefaultProfile, session, verified, plan); err != nil {
 				t.Fatal(err)
 			}
-			oldBindingHook, oldSend, oldLister := goalBeforeTransitionBindingCAS, sendPromptToPane, statusPaneLister
+			oldSend, oldLister := sendPromptToPane, statusPaneLister
 			writerDone := make(chan error, 1)
-			goalBeforeTransitionBindingCAS = func() {
-				started := make(chan struct{})
+			sends := 0
+			sendPromptToPane = func(string, string) error {
+				sends++
 				go func() {
-					close(started)
 					switch kind {
 					case "launch":
 						writerDone <- launch.WithRecordLock(verified.Check.AgentDir, func() error {
@@ -544,42 +544,31 @@ func TestResumeGoalTransitionCASBlocksIdentityWritersThroughBindingAndSend(t *te
 						})
 					}
 				}()
-				<-started
 				select {
 				case err := <-writerDone:
-					t.Fatalf("%s writer completed inside transition identity lock: %v", kind, err)
-				case <-time.After(50 * time.Millisecond):
+					if err != nil {
+						t.Fatalf("%s writer while send blocked: %v", kind, err)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatalf("%s writer was blocked by transition external send", kind)
 				}
-			}
-			sends := 0
-			sendPromptToPane = func(string, string) error {
-				select {
-				case err := <-writerDone:
-					t.Fatalf("%s writer interleaved before pane send: %v", kind, err)
-				default:
-				}
-				sends++
 				return nil
 			}
 			statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
 				return []tmuxpane.TmuxPane{{PaneID: "%447", CWD: tm.Project, Command: "codex"}}, nil
 			}
 			t.Cleanup(func() {
-				goalBeforeTransitionBindingCAS, sendPromptToPane, statusPaneLister = oldBindingHook, oldSend, oldLister
+				sendPromptToPane, statusPaneLister = oldSend, oldLister
 			})
 			opts := goalDeliveryOptions{Project: tm.Project, Profile: team.DefaultProfile, Session: session, Role: "cto", Goal: plan.Goal, Team: tm, Member: tm.Members[0], Namespace: squadnamespace.Resolve(tm.Project, team.DefaultProfile, session), Mode: executionModeProjectLead, ResumeTransitionID: plan.TransitionID}
-			if _, err := executeGoalDelivery(opts); err != nil || sends != 1 {
-				t.Fatalf("kind=%s err=%v sends=%d", kind, err, sends)
-			}
-			select {
-			case err := <-writerDone:
-				if err != nil {
-					t.Fatalf("%s writer after transition: %v", kind, err)
-				}
-			case <-time.After(2 * time.Second):
-				t.Fatalf("%s writer did not resume after transition locks released", kind)
+			_, err := executeGoalDelivery(opts)
+			if sends != 1 {
+				t.Fatalf("kind=%s sends=%d", kind, sends)
 			}
 			if kind == "launch" {
+				if err != nil {
+					t.Fatalf("launch update should merge after transition send: %v", err)
+				}
 				rec, readErr := launch.Read(verified.Check.AgentDir)
 				boundGoal := ""
 				if rec.GoalBinding != nil {
@@ -589,6 +578,9 @@ func TestResumeGoalTransitionCASBlocksIdentityWritersThroughBindingAndSend(t *te
 					t.Fatalf("serialized launch update lost binding: rec=%+v model=%q err=%v", rec.GoalBinding, rec.Model, readErr)
 				}
 			} else {
+				if err == nil || !strings.Contains(err.Error(), "team generation changed after pane delivery") {
+					t.Fatalf("team update must cause explicit stale-generation refusal, got %v", err)
+				}
 				changed, readErr := team.ReadProfile(tm.Project, team.DefaultProfile)
 				if readErr != nil || changed.Members[0].Model != "concurrent-team-update" {
 					t.Fatalf("serialized team update missing: model=%q err=%v", changed.Members[0].Model, readErr)
@@ -598,17 +590,17 @@ func TestResumeGoalTransitionCASBlocksIdentityWritersThroughBindingAndSend(t *te
 	}
 }
 
-func TestResumeGoalTransitionCASBlocksLaunchWriterAfterFinalSendValidation(t *testing.T) {
+func TestResumeGoalTransitionFinalValidationReleasesLockBeforeBlockedSend(t *testing.T) {
 	tm, session, _, plan, verified := freshResumeTransitionFixture(t)
 	if err := reserveResumeGoalTransition(tm, team.DefaultProfile, session, verified, plan); err != nil {
 		t.Fatal(err)
 	}
-	oldSendHook, oldSend, oldLister := goalBeforeTransitionSendCAS, sendPromptToPane, statusPaneLister
+	oldSend, oldLister := sendPromptToPane, statusPaneLister
 	writerDone := make(chan error, 1)
-	goalBeforeTransitionSendCAS = func() {
-		started := make(chan struct{})
+	sends := 0
+	sendPromptToPane = func(string, string) error {
+		sends++
 		go func() {
-			close(started)
 			writerDone <- launch.WithRecordLock(verified.Check.AgentDir, func() error {
 				rec, err := launch.Read(verified.Check.AgentDir)
 				if err != nil {
@@ -618,40 +610,25 @@ func TestResumeGoalTransitionCASBlocksLaunchWriterAfterFinalSendValidation(t *te
 				return launch.WriteUnderRecordLock(verified.Check.AgentDir, rec)
 			})
 		}()
-		<-started
 		select {
 		case err := <-writerDone:
-			t.Fatalf("launch writer completed inside final send CAS: %v", err)
-		case <-time.After(50 * time.Millisecond):
+			if err != nil {
+				t.Fatalf("launch writer while send blocked: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("launch writer was blocked by transition external send")
 		}
-	}
-	sends := 0
-	sendPromptToPane = func(string, string) error {
-		select {
-		case err := <-writerDone:
-			t.Fatalf("launch writer interleaved before send: %v", err)
-		default:
-		}
-		sends++
 		return nil
 	}
 	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
 		return []tmuxpane.TmuxPane{{PaneID: "%447", CWD: tm.Project, Command: "codex"}}, nil
 	}
 	t.Cleanup(func() {
-		goalBeforeTransitionSendCAS, sendPromptToPane, statusPaneLister = oldSendHook, oldSend, oldLister
+		sendPromptToPane, statusPaneLister = oldSend, oldLister
 	})
 	opts := goalDeliveryOptions{Project: tm.Project, Profile: team.DefaultProfile, Session: session, Role: "cto", Goal: plan.Goal, Team: tm, Member: tm.Members[0], Namespace: squadnamespace.Resolve(tm.Project, team.DefaultProfile, session), Mode: executionModeProjectLead, ResumeTransitionID: plan.TransitionID}
 	if _, err := executeGoalDelivery(opts); err != nil || sends != 1 {
 		t.Fatalf("err=%v sends=%d", err, sends)
-	}
-	select {
-	case err := <-writerDone:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("launch writer did not resume after send lock released")
 	}
 	rec, readErr := launch.Read(verified.Check.AgentDir)
 	boundGoal := ""
@@ -1058,7 +1035,7 @@ func TestGoalRetryAttemptQueuedAndFallbackReuseExactAttempt(t *testing.T) {
 	}
 }
 
-func TestGoalRetryAttemptCASBlocksLaunchWriterThroughSend(t *testing.T) {
+func TestGoalRetryAttemptReleasesIdentityLocksBeforeBlockedSend(t *testing.T) {
 	dir, base, _, prompts := setupGoalDeliveryFailureTest(t, nil)
 	tm, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
@@ -1082,12 +1059,10 @@ func TestGoalRetryAttemptCASBlocksLaunchWriterThroughSend(t *testing.T) {
 	if err := launch.Write(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
-	oldHook, oldSend := goalBeforeRetrySendCAS, sendPromptToPane
+	oldSend := sendPromptToPane
 	writerDone := make(chan error, 1)
-	goalBeforeRetrySendCAS = func() {
-		started := make(chan struct{})
+	sendPromptToPane = func(paneID, prompt string) error {
 		go func() {
-			close(started)
 			writerDone <- launch.WithRecordLock(agentDir, func() error {
 				changed, err := launch.Read(agentDir)
 				if err != nil {
@@ -1097,35 +1072,22 @@ func TestGoalRetryAttemptCASBlocksLaunchWriterThroughSend(t *testing.T) {
 				return launch.WriteUnderRecordLock(agentDir, changed)
 			})
 		}()
-		<-started
 		select {
 		case err := <-writerDone:
-			t.Fatalf("retry writer completed inside final CAS: %v", err)
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-	sendPromptToPane = func(paneID, prompt string) error {
-		select {
-		case err := <-writerDone:
-			t.Fatalf("retry writer interleaved before send: %v", err)
-		default:
+			if err != nil {
+				t.Fatalf("retry writer while send blocked: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("retry writer was blocked by external send")
 		}
 		return oldSend(paneID, prompt)
 	}
-	t.Cleanup(func() { goalBeforeRetrySendCAS, sendPromptToPane = oldHook, oldSend })
+	t.Cleanup(func() { sendPromptToPane = oldSend })
 	_, _, err = captureOutput(t, func() error {
 		return runGoal([]string{"retry-attempt", "--project", dir, "--session", "issue-96", "--role", "cto", "--attempt-id", attemptID, "--yes"})
 	})
-	if err != nil || len(*prompts) != 1 {
-		t.Fatalf("retry CAS err=%v prompts=%v", err, *prompts)
-	}
-	select {
-	case err := <-writerDone:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("retry writer did not resume after send lock released")
+	if err == nil || !strings.Contains(err.Error(), "was sent but current identity/generation changed afterward") || len(*prompts) != 1 {
+		t.Fatalf("retry must explicitly refuse stale post-send identity: err=%v prompts=%v", err, *prompts)
 	}
 	current, readErr := launch.Read(agentDir)
 	if readErr != nil || current.Model != "concurrent-retry-update" || current.GoalBinding == nil || current.GoalBinding.Command != rec.GoalBinding.Command {

@@ -291,7 +291,6 @@ func (e *goalPostDeliveryBindingError) RetrySafe() bool { return false }
 // Tests replace it without needing a real AMQ binary or mailbox tree.
 var goalFallbackAMQSend = sendDurableGoalFallback
 var goalDeliveryReceiptWrite = writeDeliveryReceipt
-var goalLaunchWrite = launch.Write
 var goalLaunchWriteUnderRecordLock = launch.WriteUnderRecordLock
 var goalBeforeOrdinaryBindingCAS = func() {}
 var goalBeforePostDeliveryBindingCAS = func() {}
@@ -1120,8 +1119,203 @@ func withCurrentGoalIdentityWriterLocks(opts goalDeliveryOptions, fn func(member
 			if !current.HasRecord || current.AgentDir != locked.AgentDir || currentWorkstream != workstream {
 				return fmt.Errorf("goal delivery refused: current lead identity changed while acquiring writer locks")
 			}
+			if memberHandle(current.Member) != memberHandle(opts.Member) || current.Member.Session != opts.Member.Session ||
+				current.Member.Binary != opts.Member.Binary || canonicalPath(current.Member.EffectiveCWD(opts.Project)) != canonicalPath(opts.Member.EffectiveCWD(opts.Project)) {
+				return fmt.Errorf("goal delivery refused: current lead member identity changed while acquiring writer locks")
+			}
 			return fn(current, currentWorkstream)
 		})
+	})
+}
+
+// goalDeliveryReservation is the immutable identity evidence produced while
+// profile and launch-record writer locks are held. External delivery (tmux,
+// AMQ fallback, receipt persistence, and output) must happen only after those
+// locks have been released. The per-delivery lock remains responsible for
+// serializing attempts for this one role/session.
+type goalDeliveryReservation struct {
+	Runtime                memberRuntime
+	Workstream             string
+	Transition             *resumeGoalTransitionRecord
+	AttemptPath            string
+	TeamDigest             string
+	TeamModTime            int64
+	TransitionSendSnapshot *resumeGoalSendSnapshot
+}
+
+func reserveGoalDeliveryAttempt(opts *goalDeliveryOptions, receipt *deliveryReceiptData, transition *resumeGoalTransitionRecord) (string, error) {
+	attemptPath, err := goalAttemptPath(opts.Project, opts.Profile, opts.Session, receipt.AttemptID)
+	if err != nil {
+		return "", err
+	}
+	if transition != nil {
+		if existing, readErr := readGoalAttempt(attemptPath, receipt.AttemptID); readErr == nil {
+			if validateResumeGoalAttempt(existing, opts.Project, opts.Profile, opts.Session, opts.Role, opts.Member.Handle, opts.Goal, receipt.AttemptID, opts.Namespace) != nil {
+				return "", fmt.Errorf("preallocated transition attempt is mismatched")
+			}
+		} else if errors.Is(readErr, os.ErrNotExist) {
+			createdPath, createErr := goalAttemptCreate(*opts, receipt.AttemptID, receipt.CreatedAt)
+			if createErr != nil {
+				return "", fmt.Errorf("create preallocated claim-once goal attempt: %w", createErr)
+			}
+			attemptPath = createdPath
+		} else {
+			return "", readErr
+		}
+	} else {
+		createdPath, createErr := goalAttemptCreate(*opts, receipt.AttemptID, receipt.CreatedAt)
+		if createErr != nil {
+			return "", fmt.Errorf("create claim-once goal attempt: %w", createErr)
+		}
+		attemptPath = createdPath
+	}
+	receipt.addStage("attempt_recorded", "claim-once goal attempt recorded at "+attemptPath+"; native and AMQ paths share attempt_id="+receipt.AttemptID)
+	return attemptPath, nil
+}
+
+// reserveGoalDeliveryIdentity performs the only pre-send profile/record lock
+// phase. It rereads the current member while locked, validates any transition,
+// and atomically merges the exact binding reservation. It deliberately does
+// not discover panes, send input, write receipts, or emit output.
+func reserveGoalDeliveryIdentity(opts *goalDeliveryOptions, receipt *deliveryReceiptData, prompt *string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (goalDeliveryReservation, error) {
+	reservation := goalDeliveryReservation{Runtime: mr, Workstream: resolvedWorkstream, Transition: transition}
+	if !mr.HasRecord {
+		attemptPath, err := reserveGoalDeliveryAttempt(opts, receipt, transition)
+		if err != nil {
+			return goalDeliveryReservation{}, err
+		}
+		reservation.AttemptPath = attemptPath
+		return reservation, nil
+	}
+	err := withCurrentGoalIdentityWriterLocks(*opts, func(current memberRuntime, currentWorkstream string) error {
+		currentTeam, err := team.ReadProfile(opts.Project, opts.Profile)
+		if err != nil {
+			return fmt.Errorf("reread current team while reserving goal binding: %w", err)
+		}
+		opts.Team = currentTeam
+		opts.Member = current.Member
+		if transition != nil {
+			transition, err = validateResumeGoalTransitionForDelivery(*opts, current)
+			if err != nil {
+				return err
+			}
+			if transition.NewAttemptID != receipt.AttemptID {
+				return fmt.Errorf("resume-goal transition attempt identity changed while reserving binding")
+			}
+		}
+		*prompt = nativeGoalControlPrompt(opts.Goal, currentTeam, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
+		if reason, disabled := current.nativePromptInjectionDisabledReason(); disabled {
+			return fmt.Errorf("%s", reason)
+		}
+		attemptPath, err := reserveGoalDeliveryAttempt(opts, receipt, transition)
+		if err != nil {
+			return err
+		}
+		rec := current.Record
+		if transition != nil && transition.BindingReserved {
+			receipt.addStage("launch_record_reserved", "existing transition launch binding already reserves the exact claim-once attempt")
+		} else {
+			rec.GoalBinding = &launch.GoalBinding{
+				Mode:       "native_goal",
+				NativeGoal: true,
+				Source:     "goal-control",
+				Command:    *prompt,
+				Detail:     "native /goal reserved as a claim-once control action",
+			}
+			if transition != nil {
+				goalBeforeTransitionBindingCAS()
+			} else {
+				goalBeforeOrdinaryBindingCAS()
+			}
+			if err := goalLaunchWriteUnderRecordLock(current.AgentDir, rec); err != nil {
+				return fmt.Errorf("reserve launch goal binding after attempt creation: %w", err)
+			}
+			receipt.addStage("launch_record_reserved", "launch record goal_binding reserved before native /goal delivery")
+		}
+		if transition != nil {
+			if err := ensureResumeGoalTransitionBinding(*opts, transition, current.AgentDir); err != nil {
+				return err
+			}
+		}
+		teamDigest, teamMod, err := readGoalFileGeneration(team.ProfilePath(opts.Project, opts.Profile))
+		if err != nil {
+			return fmt.Errorf("capture team generation after goal reservation: %w", err)
+		}
+		reservation = goalDeliveryReservation{
+			Runtime:     current,
+			Workstream:  currentWorkstream,
+			Transition:  transition,
+			AttemptPath: attemptPath,
+			TeamDigest:  teamDigest,
+			TeamModTime: teamMod,
+		}
+		if transition != nil {
+			_, snapshot, err := captureResumeGoalSendSnapshot(*opts, transition, *prompt, receipt.AttemptID)
+			if err != nil {
+				return err
+			}
+			reservation.TransitionSendSnapshot = &snapshot
+		}
+		return nil
+	})
+	if err != nil {
+		return goalDeliveryReservation{}, err
+	}
+	return reservation, nil
+}
+
+// validateTransitionGoalDeliveryBeforeSend takes a final, narrow locked
+// snapshot. Pane enumeration and the actual send intentionally happen after
+// the locks are released, so concurrent profile/record writers never wait on
+// tmux or AMQ I/O.
+func validateTransitionGoalDeliveryBeforeSend(opts goalDeliveryOptions, reservation goalDeliveryReservation, prompt string, attemptID string) (memberRuntime, string, error) {
+	var runtime memberRuntime
+	var workstream string
+	err := withCurrentGoalIdentityWriterLocks(opts, func(current memberRuntime, currentWorkstream string) error {
+		transition, err := validateResumeGoalTransitionForDelivery(opts, current)
+		if err != nil {
+			return err
+		}
+		if reservation.Transition == nil || transition.NewAttemptID != reservation.Transition.NewAttemptID {
+			return fmt.Errorf("resume-goal transition identity changed immediately before send")
+		}
+		validated, err := validateResumeGoalSendSnapshot(opts, transition, prompt, attemptID, *reservation.TransitionSendSnapshot)
+		if err != nil {
+			return err
+		}
+		goalBeforeTransitionSendCAS()
+		runtime, workstream = validated, currentWorkstream
+		return nil
+	})
+	return runtime, workstream, err
+}
+
+// markGoalDeliveryBindingDelivered is the only post-send profile/record lock
+// phase. It rereads the current record and merges only the binding detail when
+// the expected binding and team generation are still current, preserving
+// unrelated concurrent record fields instead of overwriting a stale snapshot.
+func markGoalDeliveryBindingDelivered(opts goalDeliveryOptions, reservation goalDeliveryReservation, prompt, attemptID string) error {
+	return withCurrentGoalIdentityWriterLocks(opts, func(current memberRuntime, _ string) error {
+		teamDigest, teamMod, err := readGoalFileGeneration(team.ProfilePath(opts.Project, opts.Profile))
+		if err != nil {
+			return fmt.Errorf("capture team generation after pane delivery: %w", err)
+		}
+		if teamDigest != reservation.TeamDigest || teamMod != reservation.TeamModTime {
+			return fmt.Errorf("team generation changed after pane delivery")
+		}
+		if reason, disabled := current.nativePromptInjectionDisabledReason(); disabled {
+			return fmt.Errorf("%s", reason)
+		}
+		rec := current.Record
+		if rec.GoalBinding == nil || rec.GoalBinding.Mode != "native_goal" || !rec.GoalBinding.NativeGoal || rec.GoalBinding.Source != "goal-control" || rec.GoalBinding.Command != prompt {
+			return fmt.Errorf("reserved binding changed after pane delivery")
+		}
+		goalBeforePostDeliveryBindingCAS()
+		rec.GoalBinding.Detail = "native /goal delivered as a first-class claim-once control action"
+		if err := goalLaunchWriteUnderRecordLock(current.AgentDir, rec); err != nil {
+			return err
+		}
+		return nil
 	})
 }
 
@@ -1157,151 +1351,46 @@ func executeGoalDeliveryLocked(opts goalDeliveryOptions) (mutationResult, error)
 		opts.AttemptID = transition.NewAttemptID
 		prompt = nativeGoalControlPrompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
 	}
-	if !mr.HasRecord {
-		return executeGoalDeliveryResolved(opts, receipt, prompt, mr, resolvedWorkstream, transition, false)
-	}
-	var result mutationResult
-	err = withCurrentGoalIdentityWriterLocks(opts, func(current memberRuntime, currentWorkstream string) error {
-		var inner error
-		result, inner = executeGoalDeliveryResolved(opts, receipt, prompt, current, currentWorkstream, transition, true)
-		return inner
-	})
-	return result, err
+	return executeGoalDeliveryResolved(opts, receipt, prompt, mr, resolvedWorkstream, transition)
 }
 
-func executeGoalDeliveryResolved(opts goalDeliveryOptions, receipt deliveryReceiptData, prompt string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord, identityLocksHeld bool) (mutationResult, error) {
+func executeGoalDeliveryResolved(opts goalDeliveryOptions, receipt deliveryReceiptData, prompt string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (mutationResult, error) {
 	var err error
-	if reason, disabled := mr.nativePromptInjectionDisabledReason(); disabled {
-		return mutationResult{}, fmt.Errorf("%s", reason)
+	reservation, err := reserveGoalDeliveryIdentity(&opts, &receipt, &prompt, mr, resolvedWorkstream, transition)
+	if err != nil {
+		attemptPath, _ := goalAttemptPath(opts.Project, opts.Profile, opts.Session, receipt.AttemptID)
+		return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: err}
 	}
-	paneID := ""
-	if transition == nil {
-		panes, listErr := statusPaneLister()
-		if listErr != nil {
-			if tmuxpane.IsPermissionDenied(listErr) {
-				return mutationResult{}, errTmuxAccessDenied()
-			}
-			panes = nil
-		}
-		var ok bool
-		paneID, _, ok = resolveControlTarget(mr, resolvedWorkstream, panes)
-		if !ok || strings.TrimSpace(paneID) == "" {
-			return mutationResult{}, fmt.Errorf("no live tmux pane found for role %q; cannot deliver native /goal", opts.Role)
-		}
-		receipt.PaneID = paneID
-		receipt.addStage("control_delivery_started", "resolved exact target pane for native /goal control")
-	} else {
-		// Re-resolve all transition-bound identity immediately before the first
-		// durable mutation. The transition's generation facts make this a CAS,
-		// not a reuse of the cached runtime record above.
-		mr, resolvedWorkstream, err = resolveMemberRuntime(opts.Project, opts.Profile, opts.Session, true, opts.Role)
-		if err != nil {
-			return mutationResult{}, err
-		}
-		transition, err = validateResumeGoalTransitionForDelivery(opts, mr)
-		if err != nil {
-			return mutationResult{}, err
-		}
-	}
-	attemptPath, pathErr := goalAttemptPath(opts.Project, opts.Profile, opts.Session, receipt.AttemptID)
-	if pathErr != nil {
-		return mutationResult{}, pathErr
-	}
+	mr, resolvedWorkstream, transition = reservation.Runtime, reservation.Workstream, reservation.Transition
+	attemptPath := reservation.AttemptPath
 	if transition != nil {
-		if existing, readErr := readGoalAttempt(attemptPath, receipt.AttemptID); readErr == nil {
-			if validateResumeGoalAttempt(existing, opts.Project, opts.Profile, opts.Session, opts.Role, opts.Member.Handle, opts.Goal, receipt.AttemptID, opts.Namespace) != nil {
-				return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: fmt.Errorf("preallocated transition attempt is mismatched")}
-			}
-		} else if errors.Is(readErr, os.ErrNotExist) {
-			createdPath, createErr := goalAttemptCreate(opts, receipt.AttemptID, receipt.CreatedAt)
-			if createErr != nil {
-				return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: fmt.Errorf("create preallocated claim-once goal attempt: %w", createErr)}
-			}
-			attemptPath = createdPath
-		} else {
-			return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: readErr}
-		}
-	} else {
-		createdPath, createErr := goalAttemptCreate(opts, receipt.AttemptID, receipt.CreatedAt)
-		if createErr != nil {
-			return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: fmt.Errorf("create claim-once goal attempt: %w", createErr)}
-		}
-		attemptPath = createdPath
-	}
-	receipt.addStage("attempt_recorded", "claim-once goal attempt recorded at "+attemptPath+"; native and AMQ paths share attempt_id="+receipt.AttemptID)
-	if transition != nil {
-		mr, resolvedWorkstream, err = resolveMemberRuntime(opts.Project, opts.Profile, opts.Session, true, opts.Role)
+		mr, resolvedWorkstream, err = validateTransitionGoalDeliveryBeforeSend(opts, reservation, prompt, receipt.AttemptID)
 		if err != nil {
 			return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: err}
 		}
-		transition, err = validateResumeGoalTransitionForDelivery(opts, mr)
-		if err != nil {
-			return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: err}
-		}
-		goalBeforeTransitionBindingCAS()
-	}
-	// The transition reservation blocks concurrent delivery while the attempt
-	// and launch binding are published as two durable files.
-	if mr.HasRecord {
-		if transition != nil && transition.BindingReserved {
-			receipt.addStage("launch_record_reserved", "existing transition launch binding already reserves the exact claim-once attempt")
-		} else {
-			rec := mr.Record
-			rec.GoalBinding = &launch.GoalBinding{
-				Mode:       "native_goal",
-				NativeGoal: true,
-				Source:     "goal-control",
-				Command:    prompt,
-				Detail:     "native /goal reserved as a claim-once control action",
-			}
-			write := goalLaunchWrite
-			if identityLocksHeld {
-				goalBeforeOrdinaryBindingCAS()
-				write = goalLaunchWriteUnderRecordLock
-			}
-			if err := write(mr.AgentDir, rec); err != nil {
-				return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: fmt.Errorf("reserve launch goal binding after attempt creation: %w", err)}
-			}
-			receipt.addStage("launch_record_reserved", "launch record goal_binding reserved before native /goal delivery")
-		}
-	}
-	if transition != nil {
-		if err := ensureResumeGoalTransitionBinding(opts, transition, mr.AgentDir); err != nil {
-			return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: err}
-		}
-	}
-	var sendSnapshot resumeGoalSendSnapshot
-	if transition != nil {
-		_, sendSnapshot, err = captureResumeGoalSendSnapshot(opts, transition, prompt, receipt.AttemptID)
-		if err != nil {
-			return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: err}
-		}
-	}
-	if opts.ResumeTransitionID != "" {
 		if err := consumeResumeGoalTransition(opts, receipt.AttemptID); err != nil {
 			return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: err}
 		}
 	}
+	// All pane work occurs outside profile and launch-record writer locks. A
+	// concurrent writer may complete here; the post-send phase below will merge
+	// independent record changes or refuse a stale identity without overwriting.
+	panes, listErr := statusPaneLister()
+	if listErr != nil {
+		if tmuxpane.IsPermissionDenied(listErr) {
+			return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: errTmuxAccessDenied()}
+		}
+		panes = nil
+	}
+	paneID, _, ok := resolveControlTarget(mr, resolvedWorkstream, panes)
+	if !ok || strings.TrimSpace(paneID) == "" {
+		return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: fmt.Errorf("no live tmux pane found for role %q", opts.Role)}
+	}
+	receipt.PaneID = paneID
 	if transition != nil {
-		mr, err = validateResumeGoalSendSnapshot(opts, transition, prompt, receipt.AttemptID, sendSnapshot)
-		if err != nil {
-			return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: err}
-		}
-		goalBeforeTransitionSendCAS()
-		panes, listErr := statusPaneLister()
-		if listErr != nil {
-			if tmuxpane.IsPermissionDenied(listErr) {
-				return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: errTmuxAccessDenied()}
-			}
-			panes = nil
-		}
-		var ok bool
-		paneID, _, ok = resolveControlTarget(mr, resolvedWorkstream, panes)
-		if !ok || strings.TrimSpace(paneID) == "" {
-			return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: fmt.Errorf("no live tmux pane found for role %q", opts.Role)}
-		}
-		receipt.PaneID = paneID
 		receipt.addStage("control_delivery_started", "revalidated exact transition-bound pane immediately before native /goal control")
+	} else {
+		receipt.addStage("control_delivery_started", "resolved exact target pane for native /goal control")
 	}
 	if err := sendPromptToPane(paneID, prompt); err != nil {
 		var queued *tmuxpane.QueuedInputError
@@ -1385,22 +1474,7 @@ func executeGoalDeliveryResolved(opts goalDeliveryOptions, receipt deliveryRecei
 	receipt.Status = "native_goal_delivered"
 	receipt.addStage("native_goal_delivered", "native /goal command delivered without ordinary prompt busy-guard semantics")
 	if mr.HasRecord {
-		if identityLocksHeld {
-			goalBeforePostDeliveryBindingCAS()
-		}
-		rec, readErr := launch.Read(mr.AgentDir)
-		if readErr != nil {
-			return mutationResult{}, &goalPostDeliveryBindingError{AttemptID: receipt.AttemptID, Recovery: goalRetryAttemptCommand(opts, receipt.AttemptID), Cause: readErr}
-		}
-		if rec.GoalBinding == nil || rec.GoalBinding.Command != prompt {
-			return mutationResult{}, &goalPostDeliveryBindingError{AttemptID: receipt.AttemptID, Recovery: goalRetryAttemptCommand(opts, receipt.AttemptID), Cause: fmt.Errorf("reserved binding changed after pane delivery")}
-		}
-		rec.GoalBinding.Detail = "native /goal delivered as a first-class claim-once control action"
-		write := goalLaunchWrite
-		if identityLocksHeld {
-			write = goalLaunchWriteUnderRecordLock
-		}
-		if err := write(mr.AgentDir, rec); err != nil {
+		if err := markGoalDeliveryBindingDelivered(opts, reservation, prompt, receipt.AttemptID); err != nil {
 			return mutationResult{}, &goalPostDeliveryBindingError{AttemptID: receipt.AttemptID, Recovery: goalRetryAttemptCommand(opts, receipt.AttemptID), Cause: err}
 		}
 		receipt.addStage("launch_record_updated", "reserved launch goal_binding marked delivered")
