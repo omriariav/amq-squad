@@ -25,7 +25,7 @@ import (
 // expects to interoperate with. Bumped manually when amq-squad starts to
 // depend on newer AMQ behavior; the doctor check compares the running amq
 // binary's reported version against this floor.
-const doctorMinAMQVersion = "0.42.0"
+const doctorMinAMQVersion = "0.42.1"
 
 type doctorStatus string
 
@@ -81,6 +81,10 @@ type doctorExecution struct {
 	// Getenv reads process environment (injectable so the tmux extended-keys
 	// check can be driven deterministically in tests). Defaults to os.Getenv.
 	Getenv func(name string) string
+	// LookupEnv preserves the distinction between an absent value and an
+	// explicitly empty AM_SESSION. AMQ 0.42.1+ treats that difference as part of
+	// the injected identity contract.
+	LookupEnv func(name string) (string, bool)
 	// TmuxShowOptions returns the value of a server-scoped tmux option (the seam
 	// behind `tmux show-options -s <name>`). It returns the raw value and ok =
 	// false when the option is unset or tmux is unavailable. Injectable so the
@@ -123,6 +127,7 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		LookPath:             exec.LookPath,
 		Probe:                defaultDuplicateLaunchProbe,
 		Getenv:               os.Getenv,
+		LookupEnv:            os.LookupEnv,
 		TmuxShowOptions:      defaultTmuxShowServerOption,
 		PathBinaryVersion:    defaultPathBinaryVersion,
 		CodexSkillCacheRoot:  defaultCodexSkillCacheRoot,
@@ -587,6 +592,7 @@ func countNonOK(checks []doctorCheck) int {
 func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks := []doctorCheck{}
 	checks = append(checks, doctorCheckAMQVersion(d))
+	checks = append(checks, doctorCheckAMQIdentityPin(d))
 	checks = append(checks, doctorCheckAMQOps(d))
 	checks = append(checks, doctorCheckVersionSkew(d))
 	checks = append(checks, doctorCheckCodexSkillCache(d))
@@ -737,6 +743,54 @@ func doctorCheckAMQVersion(d doctorExecution) doctorCheck {
 		Name:   "amq version",
 		Status: doctorOK,
 		Detail: fmt.Sprintf("amq %s (min %s)", got, doctorMinAMQVersion),
+	}
+}
+
+func doctorCheckAMQIdentityPin(d doctorExecution) doctorCheck {
+	lookup := d.LookupEnv
+	if lookup == nil {
+		lookup = func(name string) (string, bool) {
+			if d.Getenv == nil {
+				return "", false
+			}
+			value := d.Getenv(name)
+			return value, value != ""
+		}
+	}
+	root, rootOK := lookup("AM_ROOT")
+	base, baseOK := lookup("AM_BASE_ROOT")
+	session, sessionOK := lookup("AM_SESSION")
+	me, meOK := lookup("AM_ME")
+	if !rootOK && !baseOK && !sessionOK && !meOK {
+		return doctorCheck{Name: "amq identity pin", Status: doctorOK, Detail: "no injected AMQ agent-shell identity"}
+	}
+	root = strings.TrimSpace(root)
+	base = strings.TrimSpace(base)
+	session = strings.TrimSpace(session)
+	me = strings.TrimSpace(me)
+	if rootOK && baseOK && meOK && root != "" && base != "" && me != "" {
+		if !sessionOK && sameResolvedDir(root, base) {
+			return doctorCheck{Name: "amq identity pin", Status: doctorOK, Detail: "healthy exact-root/sessionless pin (AM_ROOT=AM_BASE_ROOT; AM_SESSION omitted; AM_ME set)"}
+		}
+		if sessionOK && session == "" {
+			return doctorCheck{Name: "amq identity pin", Status: doctorWarn, Detail: "legacy or inconsistent injected AMQ identity pin (AM_SESSION is present but empty); stop and resume/relaunch the agent shell after upgrading to amq 0.42.1+; a child command cannot repair its parent shell"}
+		}
+		if session != "" && sameResolvedDir(root, filepath.Join(base, session)) {
+			return doctorCheck{Name: "amq identity pin", Status: doctorOK, Detail: "healthy sessionful pin (AM_ROOT=AM_BASE_ROOT/AM_SESSION; AM_ME set)"}
+		}
+	}
+	sessionState := "absent"
+	if sessionOK {
+		sessionState = "empty"
+		if session != "" {
+			sessionState = "set"
+		}
+	}
+	shape := fmt.Sprintf("AM_ROOT=%t AM_BASE_ROOT=%t AM_SESSION=%s AM_ME=%t", rootOK, baseOK, sessionState, meOK)
+	return doctorCheck{
+		Name:   "amq identity pin",
+		Status: doctorWarn,
+		Detail: "legacy or inconsistent injected AMQ identity pin (" + shape + "); stop and resume/relaunch the agent shell after upgrading to amq 0.42.1+; a child command cannot repair its parent shell",
 	}
 }
 
@@ -1265,8 +1319,8 @@ func parseSemverParts(s string) ([3]int, bool) {
 
 // semverMeetsStableFloor compares a possibly-prerelease version against a
 // stable minimum. A prerelease with the same core is older than the stable
-// release (0.42.0-rc1 < 0.42.0), while a prerelease with a higher core remains
-// newer (0.42.1-rc1 > 0.42.0).
+// release (0.42.1-rc1 < 0.42.1), while a prerelease with a higher core remains
+// newer (0.42.2-rc1 > 0.42.1).
 func semverMeetsStableFloor(version, minimum string) bool {
 	got, ok := parseSemverParts(strings.TrimSpace(version))
 	if !ok {

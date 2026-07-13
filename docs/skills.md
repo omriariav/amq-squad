@@ -217,7 +217,14 @@ Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
 CLI args for one member only — the overlay verb above generates the flagship
 case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it
 for you. Plan emission fails fast when a referenced `--settings` file is
-missing. AMQ floor (v2.20.0+): amq-squad requires amq 0.42.0+. Launches pass
+missing. AMQ floor (v2.20.0+): amq-squad requires amq 0.42.1+. AMQ 0.42.1 is
+the first supported complete identity-pin contract: after upgrading, stop and
+resume/relaunch agents so their parent shells receive a coherent tuple; a child
+command cannot repair stale injected environment. Default profiles use
+`AM_ROOT=AM_BASE_ROOT/AM_SESSION` with a non-empty `AM_SESSION`; named profiles
+use an exact root with `AM_ROOT=AM_BASE_ROOT` and omit `AM_SESSION`. Run
+`amq-squad doctor` before resume if it reports a legacy or inconsistent pin.
+Launches pass
 `--require-wake` so a launch fails immediately when the wake sidecar cannot
 acquire its lock (`--no-require-wake` opts out and persists into resume).
 Use `--wake-inject-mode none` for permission-prompt workflows that require AMQ

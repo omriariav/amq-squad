@@ -13,6 +13,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/amqexec"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -21,6 +22,8 @@ var currentPaneIdentity = tmuxpane.CurrentPaneIdentity
 
 type leadWakeOptions struct {
 	ProjectDir     string
+	Profile        string
+	Session        string
 	Root           string
 	Handle         string
 	Require        bool
@@ -347,6 +350,8 @@ func runLeadRegister(args []string) error {
 	if !*noWake {
 		wakeResult, err = leadWakeStarter(leadWakeOptions{
 			ProjectDir:     cwd,
+			Profile:        profile,
+			Session:        env.SessionName,
 			Root:           root,
 			Handle:         handle,
 			Require:        !*noRequireWake,
@@ -580,7 +585,19 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 	}
 	cmd := externalLeadWakeCommand("amq", args...)
 	cmd.Dir = opts.ProjectDir
-	cmd.Env = amqexec.NoUpdateCheckEnv(append(envWithoutAMQIdentity(os.Environ()), "AM_ROOT="+opts.Root, "AM_ME="+opts.Handle))
+	ctx := amqContext{
+		ProjectDir: opts.ProjectDir,
+		Profile:    squadnamespace.NormalizeProfile(opts.Profile),
+		Root:       absoluteAMQRoot(opts.ProjectDir, opts.Root),
+		Me:         opts.Handle,
+		Session:    strings.TrimSpace(opts.Session),
+		PinMode:    amqPinExactRoot,
+	}
+	if ctx.Profile == team.DefaultProfile && ctx.Session != "" {
+		ctx.PinMode = amqPinSessionful
+		ctx.Env.BaseRoot = filepath.Dir(ctx.Root)
+	}
+	cmd.Env = amqexec.NoUpdateCheckEnv(amqCommandEnv(ctx))
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

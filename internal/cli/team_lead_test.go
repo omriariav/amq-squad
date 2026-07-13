@@ -743,6 +743,38 @@ func TestStartExternalLeadWakeDisablesChildUpdateCheck(t *testing.T) {
 	}
 }
 
+func TestStartExternalLeadWakeUsesCompleteExactRootTuple(t *testing.T) {
+	previous := externalLeadWakeCommand
+	var captured *exec.Cmd
+	externalLeadWakeCommand = func(_ string, _ ...string) *exec.Cmd {
+		captured = exec.Command("/bin/sh", "-c", "exit 0")
+		return captured
+	}
+	t.Cleanup(func() { externalLeadWakeCommand = previous })
+	root := filepath.Join(t.TempDir(), "with space", ".agent-mail", "review", "issue-96")
+	if _, err := startExternalLeadWake(leadWakeOptions{
+		ProjectDir: t.TempDir(),
+		Profile:    "review",
+		Session:    "issue-96",
+		Root:       root,
+		Handle:     "cto",
+		Require:    false,
+	}); err != nil {
+		t.Fatalf("startExternalLeadWake: %v", err)
+	}
+	if captured == nil {
+		t.Fatal("wake command was not captured")
+	}
+	for key, want := range map[string]string{"AM_ROOT": root, "AM_BASE_ROOT": root, "AM_ME": "cto"} {
+		if !envHas(captured.Env, key, want) {
+			t.Fatalf("wake environment missing %s=%q: %#v", key, want, captured.Env)
+		}
+	}
+	if envHasPrefix(captured.Env, "AM_SESSION", "") {
+		t.Fatalf("exact-root wake environment must omit AM_SESSION: %#v", captured.Env)
+	}
+}
+
 func TestStartExternalLeadWakeNonRequiredTimeoutStopsSpawnedProcessAndReportsNoPID(t *testing.T) {
 	harness := installLeadWakeHelper(t, "spawn-child-late-ready")
 

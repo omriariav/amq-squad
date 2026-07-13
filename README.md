@@ -590,7 +590,7 @@ amq-squad completion fish
 ## Requirements
 
 - Go 1.25+
-- `amq` 0.42.0+ on `PATH`
+- `amq` 0.42.1+ on `PATH`
 - `tmux` on `PATH` for Tier A managed panes
 - macOS with iTerm2 for the Tier B backend
 - macOS Terminal.app for the Tier C backend
@@ -599,3 +599,11 @@ amq-squad completion fish
 amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or other goal
 sources happens in the skills or operator tooling; the core binary owns team,
 runtime, and coordination state.
+
+AMQ 0.42.1 is the first supported release for the complete injected identity
+contract. After upgrading from an older AMQ, stop and resume/relaunch agents so
+their shells receive a coherent pin; a child command cannot repair stale parent
+environment variables. Default-profile sessions use `AM_ROOT`, `AM_BASE_ROOT`,
+non-empty `AM_SESSION`, and `AM_ME`. Named profiles use their exact root with
+`AM_ROOT=AM_BASE_ROOT` and no `AM_SESSION`. Run `amq-squad doctor` before
+resuming if it reports a legacy or inconsistent pin.

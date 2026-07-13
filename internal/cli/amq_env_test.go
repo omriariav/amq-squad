@@ -44,7 +44,7 @@ func TestResolveAMQEnvInDirClearsInheritedAMQIdentity(t *testing.T) {
 		"    echo \"unexpected cwd: $actual_cwd\" >&2\n" +
 		"    exit 2\n" +
 		"  fi\n" +
-		"  if [ -n \"$AM_ROOT$AM_BASE_ROOT$AM_ME\" ]; then\n" +
+		"  if [ -n \"$AM_ROOT$AM_BASE_ROOT$AM_ME$AMQ_GLOBAL_ROOT\" ] || env | grep -q '^AM_SESSION='; then\n" +
 		"    printf '%s\\n' '{\"root\":\"/live/session\",\"base_root\":\"/live\",\"me\":\"cto\",\"project\":\"live-project\"}'\n" +
 		"    exit 0\n" +
 		"  fi\n" +
@@ -62,7 +62,9 @@ func TestResolveAMQEnvInDirClearsInheritedAMQIdentity(t *testing.T) {
 	t.Setenv("AMQ_EXPECT_CWD", expectedCWD)
 	t.Setenv("AM_ROOT", "/live/session")
 	t.Setenv("AM_BASE_ROOT", "/live")
+	t.Setenv("AM_SESSION", "")
 	t.Setenv("AM_ME", "cto")
+	t.Setenv("AMQ_GLOBAL_ROOT", "/global/mail")
 
 	got, err := resolveAMQEnvInDir(projectDir, "", "", "amq-squad")
 	if err != nil {
@@ -71,6 +73,21 @@ func TestResolveAMQEnvInDirClearsInheritedAMQIdentity(t *testing.T) {
 	if got.Root != "/target/session" || got.BaseRoot != "/target" ||
 		got.Me != "amq-squad" || got.Project != "target-project" {
 		t.Fatalf("resolveAMQEnvInDir = %+v", got)
+	}
+}
+
+func TestEnvWithoutAMQIdentityRemovesCompleteTuple(t *testing.T) {
+	got := envWithoutAMQIdentity([]string{
+		"KEEP=value",
+		"AM_ROOT=/root",
+		"AM_BASE_ROOT=/base",
+		"AM_SESSION=",
+		"AM_ME=cto",
+		"AMQ_GLOBAL_ROOT=/global",
+		"AMQ_SQUAD_TERMINAL_TITLE=test",
+	})
+	if len(got) != 1 || got[0] != "KEEP=value" {
+		t.Fatalf("sanitized env = %#v, want only KEEP=value", got)
 	}
 }
 

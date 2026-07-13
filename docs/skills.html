@@ -658,8 +658,16 @@ only — the overlay verb above generates the flagship case (a
 <code>--settings</code> overlay that trims a worker's plugins/hooks) and
 wires it for you. Plan emission fails fast when a referenced
 <code>--settings</code> file is missing. AMQ floor (v2.20.0+): amq-squad
-requires amq 0.42.0+. Launches pass <code>--require-wake</code> so a
-launch fails immediately when the wake sidecar cannot acquire its lock
+requires amq 0.42.1+. AMQ 0.42.1 is the first supported complete
+identity-pin contract: after upgrading, stop and resume/relaunch agents
+so their parent shells receive a coherent tuple; a child command cannot
+repair stale injected environment. Default profiles use
+<code>AM_ROOT=AM_BASE_ROOT/AM_SESSION</code> with a non-empty
+<code>AM_SESSION</code>; named profiles use an exact root with
+<code>AM_ROOT=AM_BASE_ROOT</code> and omit <code>AM_SESSION</code>. Run
+<code>amq-squad doctor</code> before resume if it reports a legacy or
+inconsistent pin. Launches pass <code>--require-wake</code> so a launch
+fails immediately when the wake sidecar cannot acquire its lock
 (<code>--no-require-wake</code> opts out and persists into resume). Use
 <code>--wake-inject-mode none</code> for permission-prompt workflows
 that require AMQ wake notices with zero synthetic terminal input; normal

@@ -43,6 +43,9 @@ func resolveAMQEnvForTeamProfile(cwd, profile, session, handle string) (amqEnv, 
 // --require-wake (refuse to launch unless the wake sidecar acquires its lock).
 const minRequireWakeAMQVersion = "0.34.1"
 const minWakeInjectAMQVersion = "0.37.0"
+
+// minWakeInjectModeAMQVersion is a feature-specific capability boundary, not
+// amq-squad's supported AMQ floor; see doctorMinAMQVersion.
 const minWakeInjectModeAMQVersion = "0.42.0"
 const minNoGitignoreAMQVersion = "0.40.0"
 
@@ -169,9 +172,11 @@ func absoluteAMQRoot(cwd, root string) string {
 
 func envWithoutAMQIdentity(env []string) []string {
 	remove := map[string]bool{
-		"AM_ROOT":      true,
-		"AM_BASE_ROOT": true,
-		"AM_ME":        true,
+		"AM_ROOT":         true,
+		"AM_BASE_ROOT":    true,
+		"AM_SESSION":      true,
+		"AM_ME":           true,
+		"AMQ_GLOBAL_ROOT": true,
 	}
 	out := make([]string, 0, len(env))
 	for _, entry := range env {

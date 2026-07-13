@@ -148,6 +148,286 @@ func TestResolveAMQContextNormalizesRelativeRootsToAbsoluteEnv(t *testing.T) {
 	}
 }
 
+func TestAMQCommandEnvBuildsCompleteIdentityTuples(t *testing.T) {
+	t.Setenv("AM_ROOT", "/stale/root")
+	t.Setenv("AM_BASE_ROOT", "/stale/base")
+	t.Setenv("AM_SESSION", "stale")
+	t.Setenv("AM_ME", "stale")
+	t.Setenv("AMQ_GLOBAL_ROOT", "/stale/global")
+
+	t.Run("sessionful default profile", func(t *testing.T) {
+		ctx := amqContext{
+			ProjectDir: "/project",
+			Profile:    team.DefaultProfile,
+			Env:        amqEnv{BaseRoot: "/project/.agent-mail"},
+			Root:       "/project/.agent-mail/issue-96",
+			Me:         "cto",
+			Session:    "issue-96",
+			PinMode:    amqPinSessionful,
+		}
+		env := amqCommandEnv(ctx)
+		for key, want := range map[string]string{
+			"AM_ROOT": "/project/.agent-mail/issue-96", "AM_BASE_ROOT": "/project/.agent-mail", "AM_SESSION": "issue-96", "AM_ME": "cto",
+		} {
+			if !envHas(env, key, want) {
+				t.Fatalf("missing %s=%q in %#v", key, want, env)
+			}
+		}
+		if envHasPrefix(env, "AMQ_GLOBAL_ROOT", "") {
+			t.Fatalf("stale AMQ_GLOBAL_ROOT leaked: %#v", env)
+		}
+	})
+
+	t.Run("exact root named profile", func(t *testing.T) {
+		root := "/project/.agent-mail/review/issue-96"
+		ctx := amqContext{ProjectDir: "/project", Profile: "review", Root: root, Me: "cto", Session: "issue-96", PinMode: amqPinExactRoot}
+		env := amqCommandEnv(ctx)
+		for key, want := range map[string]string{"AM_ROOT": root, "AM_BASE_ROOT": root, "AM_ME": "cto"} {
+			if !envHas(env, key, want) {
+				t.Fatalf("missing %s=%q in %#v", key, want, env)
+			}
+		}
+		if envHasPrefix(env, "AM_SESSION", "") {
+			t.Fatalf("exact-root tuple must omit AM_SESSION: %#v", env)
+		}
+	})
+}
+
+func TestResolveAMQContextInfersNamedProfileBeforeAMQResolution(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, ".agent-mail", "review", "issue-96")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeAMQBoundaryTeamProfile(t, dir, "review")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", root)
+	t.Setenv("AM_SESSION", "")
+
+	previous := resolveAMQEnvForAMQCommand
+	resolveAMQEnvForAMQCommand = func(cwd, rootFlag, session, handle string) (amqEnv, error) {
+		if cwd != dir || rootFlag != root || session != "" {
+			t.Fatalf("named root resolver args = cwd=%q root=%q session=%q, want exact root without --session", cwd, rootFlag, session)
+		}
+		return amqEnv{Root: root, BaseRoot: root, Me: handle, AMQVersion: "0.43.0"}, nil
+	}
+	t.Cleanup(func() { resolveAMQEnvForAMQCommand = previous })
+
+	ctx, err := resolveAMQContext(dir, "", "issue-96", "cto", true)
+	if err != nil {
+		t.Fatalf("resolveAMQContext: %v", err)
+	}
+	if ctx.Profile != "review" || ctx.PinMode != amqPinExactRoot {
+		t.Fatalf("context = %+v, want named exact-root context", ctx)
+	}
+	if env := amqCommandEnv(ctx); envHasPrefix(env, "AM_SESSION", "") || !envHas(env, "AM_BASE_ROOT", root) {
+		t.Fatalf("named exact-root tuple = %#v", env)
+	}
+}
+
+func TestNamedProfileFromInheritedAMQRootFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, ".agent-mail")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("matching default session remains non-inference", func(t *testing.T) {
+		root := filepath.Join(base, "issue-96")
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AM_ROOT", root)
+		profile, ok, err := namedProfileFromInheritedAMQRoot(dir, "issue-96")
+		if err != nil || ok || profile != "" {
+			t.Fatalf("default-session inference = profile %q, ok %t, err %v; want non-inference", profile, ok, err)
+		}
+	})
+	t.Run("symlinked default session rewrites identity inside selected base", func(t *testing.T) {
+		actual := filepath.Join(base, "actual-default-session")
+		if err := os.MkdirAll(actual, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(actual, filepath.Join(base, "issue-default-alias")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		t.Setenv("AM_ROOT", filepath.Join(base, "issue-default-alias"))
+		if _, _, err := namedProfileFromInheritedAMQRoot(dir, "issue-default-alias"); err == nil || !strings.Contains(err.Error(), "does not preserve selected .agent-mail identity") {
+			t.Fatalf("rewritten default inherited root error = %v, want identity-preservation failure", err)
+		}
+	})
+	t.Run("outside project", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), ".agent-mail", "review", "issue-96")
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AM_ROOT", root)
+		if _, _, err := namedProfileFromInheritedAMQRoot(dir, "issue-96"); err == nil {
+			t.Fatal("outside inherited root accepted")
+		}
+	})
+	t.Run("session mismatch", func(t *testing.T) {
+		root := filepath.Join(base, "review", "other")
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AM_ROOT", root)
+		if _, _, err := namedProfileFromInheritedAMQRoot(dir, "issue-96"); err == nil {
+			t.Fatal("mismatched inherited session accepted")
+		}
+	})
+	t.Run("default profile path collision", func(t *testing.T) {
+		root := filepath.Join(base, team.DefaultProfile, "issue-96")
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AM_ROOT", root)
+		if _, _, err := namedProfileFromInheritedAMQRoot(dir, "issue-96"); err == nil {
+			t.Fatal("colliding default-profile path accepted")
+		}
+	})
+	t.Run("unresolvable inherited root", func(t *testing.T) {
+		t.Setenv("AM_ROOT", filepath.Join(base, "review", "missing"))
+		if _, _, err := namedProfileFromInheritedAMQRoot(dir, "issue-96"); err == nil || !strings.Contains(err.Error(), "cannot resolve inherited AM_ROOT") {
+			t.Fatalf("missing inherited root error = %v, want resolution failure", err)
+		}
+	})
+	t.Run("symlinked profile escapes selected base", func(t *testing.T) {
+		outside := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(outside, "issue-96"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(base, "review-escape")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		root := filepath.Join(base, "review-escape", "issue-96")
+		t.Setenv("AM_ROOT", root)
+		if _, _, err := namedProfileFromInheritedAMQRoot(dir, "issue-96"); err == nil || !strings.Contains(err.Error(), "resolves outside selected .agent-mail base") {
+			t.Fatalf("escaped inherited root error = %v, want containment failure", err)
+		}
+	})
+	t.Run("symlinked profile rewrites identity inside selected base", func(t *testing.T) {
+		actual := filepath.Join(base, "actual", "issue-96")
+		if err := os.MkdirAll(actual, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(base, "actual"), filepath.Join(base, "review-alias")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		root := filepath.Join(base, "review-alias", "issue-96")
+		t.Setenv("AM_ROOT", root)
+		if _, _, err := namedProfileFromInheritedAMQRoot(dir, "issue-96"); err == nil || !strings.Contains(err.Error(), "does not preserve selected .agent-mail identity") {
+			t.Fatalf("rewritten inherited root error = %v, want identity-preservation failure", err)
+		}
+	})
+	t.Run("symlinked named session rewrites identity inside selected base", func(t *testing.T) {
+		actual := filepath.Join(base, "review-session", "actual")
+		if err := os.MkdirAll(actual, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(actual, filepath.Join(base, "review-session", "issue-96")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		root := filepath.Join(base, "review-session", "issue-96")
+		t.Setenv("AM_ROOT", root)
+		if _, _, err := namedProfileFromInheritedAMQRoot(dir, "issue-96"); err == nil || !strings.Contains(err.Error(), "does not preserve selected .agent-mail identity") {
+			t.Fatalf("rewritten named-session root error = %v, want identity-preservation failure", err)
+		}
+	})
+	t.Run("selected base symlink is canonical namespace", func(t *testing.T) {
+		project := t.TempDir()
+		resolvedBase := t.TempDir()
+		root := filepath.Join(resolvedBase, "review", "issue-96")
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(resolvedBase, filepath.Join(project, ".agent-mail")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		t.Setenv("AM_ROOT", filepath.Join(project, ".agent-mail", "review", "issue-96"))
+		profile, ok, err := namedProfileFromInheritedAMQRoot(project, "issue-96")
+		if err != nil || !ok || profile != "review" {
+			t.Fatalf("base symlink inference = profile %q, ok %t, err %v", profile, ok, err)
+		}
+	})
+}
+
+func TestResolveAMQContextRefusesInheritedNamedProfileSymlinkEscape(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, ".agent-mail")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "issue-96"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(base, "review")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	t.Setenv("AM_ROOT", filepath.Join(base, "review", "issue-96"))
+
+	previous := resolveAMQEnvForAMQCommand
+	resolveAMQEnvForAMQCommand = func(string, string, string, string) (amqEnv, error) {
+		t.Fatal("AMQ resolver must not run after inherited root escapes selected base")
+		return amqEnv{}, nil
+	}
+	t.Cleanup(func() { resolveAMQEnvForAMQCommand = previous })
+
+	if _, err := resolveAMQContext(dir, "", "issue-96", "qa", true); err == nil || !strings.Contains(err.Error(), "resolves outside selected .agent-mail base") {
+		t.Fatalf("resolveAMQContext symlink escape error = %v, want containment failure", err)
+	}
+}
+
+func TestResolveAMQContextRefusesInheritedNamedProfileSymlinkIdentityRewrite(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, ".agent-mail")
+	actual := filepath.Join(base, "actual", "issue-96")
+	if err := os.MkdirAll(actual, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, "actual"), filepath.Join(base, "review")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	t.Setenv("AM_ROOT", filepath.Join(base, "review", "issue-96"))
+
+	previous := resolveAMQEnvForAMQCommand
+	resolveAMQEnvForAMQCommand = func(string, string, string, string) (amqEnv, error) {
+		t.Fatal("AMQ resolver must not run after inherited root rewrites namespace identity")
+		return amqEnv{}, nil
+	}
+	t.Cleanup(func() { resolveAMQEnvForAMQCommand = previous })
+
+	if _, err := resolveAMQContext(dir, "", "issue-96", "qa", true); err == nil || !strings.Contains(err.Error(), "does not preserve selected .agent-mail identity") {
+		t.Fatalf("resolveAMQContext symlink identity rewrite error = %v, want identity-preservation failure", err)
+	}
+}
+
+func TestResolveAMQContextRefusesInheritedDefaultSessionSymlinkIdentityRewrite(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, ".agent-mail")
+	actual := filepath.Join(base, "actual")
+	if err := os.MkdirAll(actual, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(actual, filepath.Join(base, "issue-96")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	t.Setenv("AM_ROOT", filepath.Join(base, "issue-96"))
+	t.Setenv("AM_BASE_ROOT", base)
+	t.Setenv("AM_SESSION", "issue-96")
+
+	previous := resolveAMQEnvForAMQCommand
+	resolveAMQEnvForAMQCommand = func(string, string, string, string) (amqEnv, error) {
+		t.Fatal("AMQ resolver must not run after inherited default session rewrites namespace identity")
+		return amqEnv{}, nil
+	}
+	t.Cleanup(func() { resolveAMQEnvForAMQCommand = previous })
+
+	if _, err := resolveAMQContext(dir, "", "issue-96", "qa", true); err == nil || !strings.Contains(err.Error(), "does not preserve selected .agent-mail identity") {
+		t.Fatalf("resolveAMQContext default-session symlink identity rewrite error = %v, want identity-preservation failure", err)
+	}
+}
+
 func TestAMQRouteAddsJSONByDefault(t *testing.T) {
 	chdir(t, t.TempDir())
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, `{"routable":true}`+"\n")

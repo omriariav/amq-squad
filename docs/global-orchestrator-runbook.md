@@ -19,8 +19,11 @@ verbs are the source of truth.
   with the default `--visibility sibling-tabs` or `--visibility current`).
   Hidden spawns (`run start --visibility detached --go`) do not require a
   visible pane.
-- `amq-squad` + `amq` on `PATH`; AMQ floor is **0.42.0**. `amq-squad doctor`
-  warns on version skew (children inherit the `amq-squad` on `PATH`).
+- `amq-squad` + `amq` on `PATH`; AMQ floor is **0.42.1**. After upgrading,
+  stop and resume/relaunch agents so the parent shell receives a complete AMQ
+  identity pin; a child command cannot repair stale injected environment.
+  `amq-squad doctor` reports legacy/inconsistent pins and version skew
+  (children inherit the `amq-squad` on `PATH`).
 - In the orchestrator conversation, invoke the **`amq-squad-orchestrator`** skill.
 
 Being inside tmux is **necessary but not sufficient**: a manually started

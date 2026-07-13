@@ -1024,7 +1024,9 @@ func TestExecAMQCoopDisablesUpdateCheckWithoutLeakingIdentity(t *testing.T) {
 	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
 	t.Setenv("AM_ROOT", "/stale/root")
 	t.Setenv("AM_BASE_ROOT", "/stale/base")
+	t.Setenv("AM_SESSION", "")
 	t.Setenv("AM_ME", "stale")
+	t.Setenv("AMQ_GLOBAL_ROOT", "/stale/global")
 	previous := amqSyscallExec
 	var gotPath string
 	var gotArgv, gotEnv []string
@@ -1045,7 +1047,7 @@ func TestExecAMQCoopDisablesUpdateCheckWithoutLeakingIdentity(t *testing.T) {
 	if !envHas(gotEnv, "AMQ_NO_UPDATE_CHECK", "1") {
 		t.Fatalf("exec environment missing suppression: %#v", gotEnv)
 	}
-	for _, key := range []string{"AM_ROOT", "AM_BASE_ROOT", "AM_ME"} {
+	for _, key := range []string{"AM_ROOT", "AM_BASE_ROOT", "AM_SESSION", "AM_ME", "AMQ_GLOBAL_ROOT"} {
 		if envHasPrefix(gotEnv, key, "") {
 			t.Fatalf("exec environment leaked %s: %#v", key, gotEnv)
 		}

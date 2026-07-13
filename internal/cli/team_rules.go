@@ -73,7 +73,7 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 
 	b.WriteString("## Communication\n\n")
 	b.WriteString("- Use focused AMQ threads. At startup and between phases, run `amq drain --include-body` before assuming the current inbox state.\n")
-	b.WriteString("- Inside an amq-squad-launched shell, use bare `amq` commands. amq-squad already injects AM_ROOT, AM_BASE_ROOT, and AM_ME; override them only when intentionally inspecting another project or handle.\n")
+	b.WriteString("- Inside an amq-squad-launched shell, use bare `amq` commands. amq-squad injects a complete AMQ identity tuple: sessionful default roots include AM_SESSION, while exact named roots omit it; override only when intentionally inspecting another project or handle.\n")
 	b.WriteString("- AMQ is the durable coordination record for tasks, reports, reviews, decisions, and gates. Prefer `amq-squad dispatch` or `amq send --kind todo` for assigned work; pane prompts are wake/fallback delivery only and are not the authoritative task body when a durable AMQ task exists.\n")
 	b.WriteString("- Use p2p threads for role-to-role handoffs; send them as `--kind review_request` (or `--kind todo` for a queued task). There is no `handoff` message kind.\n")
 	b.WriteString("- For durable AMQ tasks, reply to the task's `From` field on the same thread. Push ACK/start, progress, blockers, ready-for-review, and DONE reports proactively over AMQ instead of waiting to be polled.\n")
