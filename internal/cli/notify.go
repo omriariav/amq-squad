@@ -28,6 +28,8 @@ var notificationSinkFactory = notificationSink
 
 const defaultOperatorRenotifyAfter = 30 * time.Minute
 
+const notifyStateSchema = 2
+
 type notifyExecution struct {
 	Context         context.Context
 	ProjectDir      string
@@ -344,6 +346,7 @@ func deliverNotificationSinksPersisted(ctx context.Context, projectDir, path str
 				// watcher/manual notify process to retry a valid 60s command sink
 				// while the first delivery was still running.
 				d.ReservationExpires = now.Add(notificationReservationTTL(cfg))
+				d.LastAttempt = now
 				if rec.Deliveries == nil {
 					rec.Deliveries = map[string]attention.Delivery{}
 				}
@@ -387,9 +390,11 @@ func deliverNotificationSinksPersisted(ctx context.Context, projectDir, path str
 					d.LastNotified = now
 					d.LastSuccess = now
 					d.LastEscalation = item.Escalation
+					d.LastError = ""
 				} else {
 					d.LastFailure = now
 					d.FailureCount++
+					d.LastError = attention.NormalizeDeliveryError(errorString(deliveryErr))
 				}
 				rec.Deliveries[cfg.ID] = d
 				st.Items[item.Key] = rec
@@ -875,7 +880,7 @@ func scopedSelfOperatorTombstones(items []operatorAttention, prior notifyStateFi
 }
 
 func selectNotifications(items []operatorAttention, prior notifyStateFile, renotifyAfter time.Duration, now time.Time) ([]operatorAttention, int, notifyStateFile) {
-	next := notifyStateFile{Schema: 2, Items: map[string]notifyStateRecord{}}
+	next := notifyStateFile{Schema: notifyStateSchema, Items: map[string]notifyStateRecord{}}
 	for key, rec := range prior.Items {
 		next.Items[key] = rec
 	}
@@ -960,7 +965,7 @@ func defaultNotifyStatePath(projectDir string) string {
 }
 
 func readNotifyState(path string) (notifyStateFile, error) {
-	st := notifyStateFile{Schema: 2, Items: map[string]notifyStateRecord{}}
+	st := notifyStateFile{Schema: notifyStateSchema, Items: map[string]notifyStateRecord{}}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -974,7 +979,7 @@ func readNotifyState(path string) (notifyStateFile, error) {
 	if err := json.Unmarshal(b, &st); err != nil {
 		return st, fmt.Errorf("parse notify state %s: %w", path, err)
 	}
-	if st.Schema != 1 && st.Schema != 2 {
+	if st.Schema != 1 && st.Schema != notifyStateSchema {
 		return st, fmt.Errorf("parse notify state %s: unsupported schema %d", path, st.Schema)
 	}
 	if st.Items == nil {
@@ -998,7 +1003,7 @@ func readNotifyState(path string) (notifyStateFile, error) {
 			migrated[newKey] = rec
 		}
 		st.Items = migrated
-		st.Schema = 2
+		st.Schema = notifyStateSchema
 	}
 	return st, nil
 }
@@ -1007,7 +1012,7 @@ func writeNotifyState(path string, st notifyStateFile) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("ensure notify state dir: %w", err)
 	}
-	st.Schema = 2 // notify-state schema 2 is independent of team.json schema 3.
+	st.Schema = notifyStateSchema // optional delivery fields are additive.
 	if st.Items == nil {
 		st.Items = map[string]notifyStateRecord{}
 	}

@@ -1010,7 +1010,7 @@ func (s watcherCountingSink) Deliver(context.Context, attention.Event) error {
 	return nil
 }
 
-func TestLeadPaneDirectGateDeliversOnceBeforeRenotify(t *testing.T) {
+func TestLeadPaneDirectGateDeliversOnceAcrossRescanAndRestart(t *testing.T) {
 	project, tm, base := notificationWatcherTeam(t, team.DefaultProfile, "s")
 	seedNotifyLaunch(t, project, base, "s", "cto")
 	oldFactory := notificationSinkFactory
@@ -1034,6 +1034,19 @@ func TestLeadPaneDirectGateDeliversOnceBeforeRenotify(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 	if calls.Load() != 1 {
 		t.Fatalf("duplicate delivery after rescan=%d", calls.Load())
+	}
+	stopTestNotificationWatcher(t, stop, done)
+
+	// A supervised restart must recover the persisted per-sink success and not
+	// replay the still-open gate. No operator command is invoked in either
+	// generation; both discover the durable gate directly from the mailbox.
+	stop, done = startTestNotificationWatcher(t, tm, team.DefaultProfile, "s", base, "integration-token-restarted", nil)
+	waitWatcherRecord(t, path, time.Second, func(r notificationWatcherRecord) bool {
+		return r.OwnerToken == "integration-token-restarted" && r.Health == "healthy" && !r.LastScanAt.IsZero()
+	})
+	time.Sleep(150 * time.Millisecond)
+	if calls.Load() != 1 {
+		t.Fatalf("duplicate delivery after watcher restart=%d", calls.Load())
 	}
 	stopTestNotificationWatcher(t, stop, done)
 }
@@ -1167,6 +1180,47 @@ func TestNotificationWatcherStatusAndDoctorHealthSurfaces(t *testing.T) {
 	check = doctorCheckNotificationWatcher(doctorExecution{ProjectDir: project, Profile: team.DefaultProfile, Probe: duplicateLaunchProbe{Now: func() time.Time { return now }}}, "s")
 	if check.Status != doctorOK || !strings.Contains(check.Detail, "inactive") {
 		t.Fatalf("inactive doctor=%+v", check)
+	}
+}
+
+func TestNotificationWatcherStaleLeaseStatusAndDoctorUnhealthy(t *testing.T) {
+	project, _, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	host, _ := os.Hostname()
+	stale := notificationWatcherRecord{
+		SchemaVersion:  notificationWatcherSchema,
+		ProjectDir:     project,
+		Profile:        team.DefaultProfile,
+		Session:        "s",
+		NamespaceID:    "default/s",
+		PID:            4242,
+		Host:           host,
+		Owner:          "supervised",
+		OwnerToken:     "stale-generation",
+		LeaseTTL:       "15s",
+		LeaseExpiresAt: now.Add(-time.Second),
+		HeartbeatAt:    now.Add(-16 * time.Second),
+		LastScanAt:     now.Add(-16 * time.Second),
+		StatePath:      defaultNotifyStatePath(project),
+		Expected:       true,
+		Health:         "healthy",
+		UpdatedAt:      now.Add(-16 * time.Second),
+	}
+	if err := writeNotificationWatcherRecord(notificationWatcherRuntimePath(project, team.DefaultProfile, "s"), stale); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := statusNotificationWatcherWarnings(project, team.DefaultProfile, "s", now)
+	if len(warnings) != 1 || warnings[0].Kind != "notification_watcher_unhealthy" || !strings.Contains(warnings[0].Detail, "notification watcher lease is stale") {
+		t.Fatalf("stale watcher status warnings=%+v", warnings)
+	}
+	check := doctorCheckNotificationWatcher(doctorExecution{
+		ProjectDir: project,
+		Profile:    team.DefaultProfile,
+		Probe:      duplicateLaunchProbe{Now: func() time.Time { return now }},
+	}, "s")
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "UNHEALTHY") || !strings.Contains(check.Detail, "notification watcher lease is stale") {
+		t.Fatalf("stale watcher doctor=%+v", check)
 	}
 }
 

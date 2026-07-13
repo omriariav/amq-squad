@@ -236,6 +236,7 @@ Examples:
   amq-squad team init --roles cto,fullstack --binary cto=codex
   amq-squad up --dry-run --no-bootstrap
   amq-squad notify --project ~/Code/app
+  amq-squad notifications doctor --project ~/Code/app --session issue-435
   amq-squad stop --project ~/Code/app --all --session issue-96
   amq-squad amq route --session issue-96 --me cto --to fullstack
   amq-squad rm issue-96 --yes
