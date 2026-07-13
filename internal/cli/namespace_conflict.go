@@ -9,6 +9,7 @@ import (
 	"time"
 
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/runtimeaction"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -100,6 +101,51 @@ func suggestedCollisionProfile(profile, session string) string {
 type namespaceConflictOverrideOptions struct {
 	Allowed bool
 	Reason  string
+}
+
+// exactStopNamespaceScope is the complete proof required to treat a durable
+// legacy/default root as evidence rather than a blocker for one deterministic
+// teardown. It is shared by the stop guard and status action filtering so the
+// executable command and the advertised action cannot drift.
+type exactStopNamespaceScope struct {
+	Verb            string
+	ProjectDir      string
+	Profile         string
+	Session         string
+	Role            string
+	All             bool
+	ExplicitProject bool
+	ExplicitProfile bool
+	ExplicitSession bool
+}
+
+func allowsExactNamedProfileStop(conflict *namespaceConflictData, scope exactStopNamespaceScope) bool {
+	profile := squadnamespace.NormalizeProfile(scope.Profile)
+	session := strings.TrimSpace(scope.Session)
+	role := strings.TrimSpace(scope.Role)
+	selectorValid := (role != "") != scope.All
+	expectedRoot := squadnamespace.AMQRoot(scope.ProjectDir, profile, session)
+	return conflict != nil &&
+		strings.EqualFold(strings.TrimSpace(scope.Verb), "stop") &&
+		conflict.Kind == "legacy_session_root" &&
+		squadnamespace.ProfilesEqual(conflict.Profile, profile) &&
+		strings.TrimSpace(conflict.Session) == session &&
+		sameResolvedDir(conflict.RequestedAMQRoot, expectedRoot) &&
+		scope.ExplicitProject && strings.TrimSpace(scope.ProjectDir) != "" &&
+		scope.ExplicitProfile && profile != team.DefaultProfile && strings.TrimSpace(scope.Profile) != "" &&
+		scope.ExplicitSession && session != "" && selectorValid
+}
+
+// ensureNoNamespaceConflictForStop preserves the shared fail-closed guard and
+// bypasses only its one legacy-session-root result for an exact named-profile
+// stop. All other operations and conflict kinds continue through the global
+// policy unchanged.
+func ensureNoNamespaceConflictForStop(scope exactStopNamespaceScope) (bool, error) {
+	conflict := namespaceConflictForProfileSession(scope.ProjectDir, scope.Profile, scope.Session)
+	if allowsExactNamedProfileStop(conflict, scope) {
+		return true, nil
+	}
+	return false, ensureNoNamespaceConflict("stop", scope.ProjectDir, scope.Profile, scope.Session, scope.ExplicitProfile)
 }
 
 type namespaceConflictAuditRecord struct {
@@ -427,7 +473,7 @@ func legacyMailboxSkeletonDir(rel string) bool {
 	}
 }
 
-func disableNamespaceConflictActions(actions []runtimeActionJSON, conflict *namespaceConflictData) []runtimeActionJSON {
+func disableNamespaceConflictActions(actions []runtimeActionJSON, conflict *namespaceConflictData, exactStopScope exactStopNamespaceScope) []runtimeActionJSON {
 	if conflict == nil {
 		return actions
 	}
@@ -436,8 +482,14 @@ func disableNamespaceConflictActions(actions []runtimeActionJSON, conflict *name
 		if !actionBlockedByNamespaceConflict(out[i]) {
 			continue
 		}
+		if (out[i].Kind == "stop" || out[i].Kind == "stop_close_panes") && allowsExactNamedProfileStop(conflict, exactStopScope) {
+			// Skip only the namespace-conflict disable. Never force-enable an
+			// action that another policy already made unavailable.
+			continue
+		}
 		out[i].Available = false
 		out[i].Reason = conflict.Detail
+		runtimeaction.SyncUnavailableReason(&out[i])
 	}
 	return out
 }

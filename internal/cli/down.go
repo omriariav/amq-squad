@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -62,6 +63,8 @@ type processTerminator interface {
 type signalTerminator struct {
 	sig syscall.Signal
 }
+
+type stopTerminatorFactory func(force bool) processTerminator
 
 // newSignalTerminator returns a terminator that sends SIGTERM by default, or
 // SIGKILL when force is set. `stop` genuinely terminates the agent: SIGTERM
@@ -116,6 +119,14 @@ func signalNameOf(term processTerminator) string {
 // recoverable via `amq-squad resume`. --force escalates to SIGKILL for agents
 // that ignore SIGTERM.
 func runStop(args []string) error {
+	return runStopWithDeps(args, func(force bool) processTerminator {
+		return newSignalTerminator(force)
+	}, defaultDuplicateLaunchProbe)
+}
+
+// runStopWithDeps keeps the production stop dependencies immutable while
+// allowing parser-to-execution tests to supply inert process controls.
+func runStopWithDeps(args []string, terminatorForForce stopTerminatorFactory, probe duplicateLaunchProbe) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
 	sessionName := fs.String("session", "", "AMQ workstream session name (default: team workstream)")
 	role := fs.String("role", "", "narrow to a single configured role")
@@ -157,6 +168,7 @@ func runStop(args []string) error {
 	return executeDown(downExecution{
 		Verb:             "stop",
 		ProjectDir:       projectDir,
+		ExplicitProject:  flagWasSet(fs, "project"),
 		RequestedSession: *sessionName,
 		ExplicitSession:  flagWasSet(fs, "session"),
 		ExplicitProfile:  flagWasSet(fs, "profile"),
@@ -166,8 +178,8 @@ func runStop(args []string) error {
 		// default=SIGTERM; --force=SIGKILL escalation for agents that ignore
 		// SIGTERM. The PID-liveness + binary-match guards still apply, so a
 		// reused/foreign PID is never signaled regardless of --force.
-		Terminator: newSignalTerminator(*force),
-		Probe:      defaultDuplicateLaunchProbe,
+		Terminator: terminatorForForce(*force),
+		Probe:      probe,
 		Out:        os.Stdout,
 		ClosePanes: *closePanes,
 	})
@@ -206,6 +218,7 @@ Examples:
 type downExecution struct {
 	Verb             string
 	ProjectDir       string
+	ExplicitProject  bool
 	RequestedSession string
 	ExplicitSession  bool
 	ExplicitProfile  bool
@@ -241,12 +254,34 @@ func executeDown(d downExecution) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflict(verb, d.ProjectDir, d.Profile, workstream, d.ExplicitProfile); err != nil {
+	exactStopScope := exactStopNamespaceScope{
+		Verb:            verb,
+		ProjectDir:      d.ProjectDir,
+		Profile:         d.Profile,
+		Session:         workstream,
+		Role:            d.Role,
+		All:             d.All,
+		ExplicitProject: d.ExplicitProject,
+		ExplicitProfile: d.ExplicitProfile,
+		ExplicitSession: d.ExplicitSession,
+	}
+	exceptionUsed, err := ensureNoNamespaceConflictForStop(exactStopScope)
+	if err != nil {
 		return err
 	}
 	targets, err := selectDownMembers(t, d.Role, d.All)
 	if err != nil {
 		return err
+	}
+	// The exact-stop namespace exception is deliberately stricter than the
+	// historical stop path. Before any watcher, PID, wake, presence, or pane
+	// mutation, prove that every selected launch record belongs to the requested
+	// named namespace. The validation is exception-only so legacy records keep
+	// their established compatibility outside this narrow recovery path.
+	if exceptionUsed {
+		if err := validateExactStopLaunchRecords(t, d.Profile, workstream, targets); err != nil {
+			return err
+		}
 	}
 	finalStop := d.All || noOperationalUntargetedMembers(t, d.Profile, workstream, targets, d.Probe)
 	watcherStopped := false
@@ -258,8 +293,12 @@ func executeDown(d downExecution) error {
 	}
 
 	reports := make([]downReport, 0, len(targets))
+	var exceptionScope *exactStopNamespaceScope
+	if exceptionUsed {
+		exceptionScope = &exactStopScope
+	}
 	for _, m := range targets {
-		reports = append(reports, terminateMember(t, d.Profile, m, workstream, d.Terminator, d.Probe))
+		reports = append(reports, terminateMember(t, d.Profile, m, workstream, d.Terminator, d.Probe, exceptionScope))
 	}
 	if d.ClosePanes {
 		closeDownedPanes(reports, workstream)
@@ -275,6 +314,52 @@ func executeDown(d downExecution) error {
 		}
 	}
 	return renderErr
+}
+
+func validateExactStopLaunchRecords(t team.Team, profile, workstream string, targets []team.Member) error {
+	for _, m := range targets {
+		cwd := m.EffectiveCWD(t.Project)
+		env, err := resolveAMQEnvForTeamProfile(cwd, profile, workstream, m.Handle)
+		if err != nil {
+			return fmt.Errorf("stop refused: resolve named namespace for role %q: %w", m.Role, err)
+		}
+		handle := m.Handle
+		if env.Me != "" {
+			handle = env.Me
+		}
+		expectedRoot := absoluteAMQRoot(cwd, env.Root)
+		agentDir := filepath.Join(expectedRoot, "agents", handle)
+		rec, err := launch.Read(agentDir)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("stop refused: read launch record for role %q before exact named-profile teardown: %w", m.Role, err)
+		}
+		if err := validateExactStopLaunchRecord(rec, m, handle, profile, workstream, expectedRoot); err != nil {
+			return fmt.Errorf("stop refused: launch record for role %q failed exact named-profile identity validation: %w", m.Role, err)
+		}
+	}
+	return nil
+}
+
+func validateExactStopLaunchRecord(rec launch.Record, member team.Member, handle, profile, workstream, expectedRoot string) error {
+	if !squadnamespace.ProfilesEqual(profile, rec.TeamProfile) {
+		return fmt.Errorf("profile %q does not match requested profile %q", squadnamespace.NormalizeProfile(rec.TeamProfile), squadnamespace.NormalizeProfile(profile))
+	}
+	if strings.TrimSpace(rec.Session) != strings.TrimSpace(workstream) {
+		return fmt.Errorf("session %q does not match requested session %q", rec.Session, workstream)
+	}
+	if !sameResolvedDir(rec.Root, expectedRoot) {
+		return fmt.Errorf("root %q does not match requested root %q", rec.Root, expectedRoot)
+	}
+	if rec.Role != "" && !strings.EqualFold(strings.TrimSpace(rec.Role), strings.TrimSpace(member.Role)) {
+		return fmt.Errorf("role %q does not match requested role %q", rec.Role, member.Role)
+	}
+	if rec.Handle != "" && !strings.EqualFold(strings.TrimSpace(rec.Handle), strings.TrimSpace(handle)) {
+		return fmt.Errorf("handle %q does not match requested handle %q", rec.Handle, handle)
+	}
+	return nil
 }
 
 func downReportsConfirmed(reports []downReport) bool {
@@ -360,7 +445,7 @@ func selectDownMembers(t team.Team, role string, all bool) ([]team.Member, error
 	return nil, fmt.Errorf("unknown role %q; team has: %s", role, strings.Join(names, ", "))
 }
 
-func terminateMember(t team.Team, profile string, m team.Member, workstream string, term processTerminator, probe duplicateLaunchProbe) downReport {
+func terminateMember(t team.Team, profile string, m team.Member, workstream string, term processTerminator, probe duplicateLaunchProbe, exactStopScope *exactStopNamespaceScope) downReport {
 	report := downReport{Role: m.Role, Handle: m.Handle, Binary: m.Binary}
 	cwd := m.EffectiveCWD(t.Project)
 	env, err := resolveAMQEnvForTeamProfile(cwd, profile, workstream, m.Handle)
@@ -388,11 +473,19 @@ func terminateMember(t team.Team, profile string, m team.Member, workstream stri
 		report.Detail = "read launch record: " + err.Error()
 		return report
 	}
+	if exactStopScope != nil {
+		if err := validateExactStopLaunchRecord(rec, m, handle, exactStopScope.Profile, exactStopScope.Session, root); err != nil {
+			report.Status = downStatusFailed
+			report.Detail = "launch record failed exact named-profile identity validation: " + err.Error()
+			return report
+		}
+	}
 	if rec.Tmux != nil {
 		report.PaneID = rec.Tmux.PaneID
 	}
 	report.CWD = compareCWD(cwd, rec.CWD)
 	report.PID = rec.AgentPID
+	strictWakeRoot := exactStopScope != nil
 	if rec.External {
 		report.Status = downStatusMaybeLive
 		if report.PaneID != "" {
@@ -411,7 +504,7 @@ func terminateMember(t team.Team, profile string, m team.Member, workstream stri
 			report.Detail = fmt.Sprintf("no pid captured at launch — may still be live (fresh presence, last seen %s); cannot signal", lastSeen.UTC().Format(time.RFC3339))
 			return report
 		}
-		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
+		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, term, probe)
 		if cleaned.failed() {
 			report.Status = downStatusFailed
 			report.Detail = "no pid captured at launch; " + cleaned.summary()
@@ -427,7 +520,7 @@ func terminateMember(t team.Team, profile string, m team.Member, workstream stri
 		return report
 	}
 	if !probe.PIDAlive(rec.AgentPID) {
-		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
+		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, term, probe)
 		if cleaned.failed() {
 			report.Status = downStatusFailed
 			report.Detail = fmt.Sprintf("recorded pid %d is not alive; %s", rec.AgentPID, cleaned.summary())
@@ -447,7 +540,7 @@ func terminateMember(t team.Team, profile string, m team.Member, workstream stri
 		binary = m.Binary
 	}
 	if binary == "" || !probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(binary)) {
-		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
+		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, term, probe)
 		if cleaned.failed() {
 			report.Status = downStatusFailed
 			report.Detail = fmt.Sprintf("pid %d does not match expected binary %q (PID reuse); %s", rec.AgentPID, binary, cleaned.summary())
@@ -478,7 +571,7 @@ func terminateMember(t team.Team, profile string, m team.Member, workstream stri
 	// that as downStatusFailed so renderDownReports counts it correctly;
 	// without this, the per-member detail says "wake survived" but the summary
 	// still reads as a clean success.
-	cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, term, probe)
+	cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, term, probe)
 	if cleaned.failed() {
 		report.Status = downStatusFailed
 		report.Detail = fmt.Sprintf("%s sent to pid %d; %s", sigName, rec.AgentPID, cleaned.summary())
@@ -544,7 +637,7 @@ func (r reapResult) summary() string {
 // include it in user-visible reports. Errors during cleanup are best-effort
 // and do not propagate: the goal is to unblock the next launch, not to
 // guarantee atomicity.
-func reapStaleArtifacts(agentDir, handle, root string, term processTerminator, probe duplicateLaunchProbe) reapResult {
+func reapStaleArtifacts(agentDir, handle, root string, strictRoot bool, term processTerminator, probe duplicateLaunchProbe) reapResult {
 	var result reapResult
 	if agentDir == "" {
 		return result
@@ -565,6 +658,13 @@ func reapStaleArtifacts(agentDir, handle, root string, term processTerminator, p
 			// Corrupt lock: no PID to verify, safe to remove.
 			canRemoveLock = true
 		case lock.PID <= 0:
+			canRemoveLock = true
+		case strictRoot && strings.TrimSpace(lock.Root) != "" && !rootsMatch(lock.Root, root):
+			// The exact named-profile stop exception trusts only the selected
+			// root. A lock copied or poisoned with an explicit legacy/foreign
+			// root is stale for this named agent dir; never inspect or signal
+			// the PID it names. Empty roots retain the historical selected-root
+			// fallback for older locks.
 			canRemoveLock = true
 		case !probe.PIDAlive(lock.PID):
 			canRemoveLock = true

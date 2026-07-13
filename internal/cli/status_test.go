@@ -386,12 +386,13 @@ func TestExecuteStatusIsolatesForeignProfileLaunchRecord(t *testing.T) {
 	}
 }
 
-func TestExecuteStatusJSONNamedProfileDisablesActionsOnLegacySessionRootConflict(t *testing.T) {
+func TestExecuteStatusJSONNamedProfileKeepsExactStopActionsOnLegacySessionRootConflict(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	dir := t.TempDir()
 	seedProfile(t, dir, "release", team.Team{
+		Project: dir,
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main", CWD: dir},
 		},
 		Orchestrated: true,
 		Lead:         "cto",
@@ -403,6 +404,17 @@ func TestExecuteStatusJSONNamedProfileDisablesActionsOnLegacySessionRootConflict
 	if err := os.WriteFile(filepath.Join(legacyAgentDir, "inbox"), []byte("legacy durable state\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	namedRoot := filepath.Join(dir, ".agent-mail", "release", "main")
+	if err := launch.Write(filepath.Join(namedRoot, "agents", "cto"), launch.Record{
+		CWD: dir, Binary: "codex", Handle: "cto", Role: "cto", Session: "main",
+		Root: namedRoot, TeamProfile: "release", AgentPID: 5555,
+		Tmux: &launch.TmuxInfo{Session: "tmux-main", PaneID: "%55"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{
+		PaneID: "%55", CWD: dir, Command: "codex", Title: paneTitleToken("main", "cto"),
+	}}, nil)
 
 	out, err := runStatusExec(t, statusExecution{
 		ProjectDir:       dir,
@@ -410,7 +422,7 @@ func TestExecuteStatusJSONNamedProfileDisablesActionsOnLegacySessionRootConflict
 		RequestedSession: "main",
 		ExplicitSession:  true,
 		JSON:             true,
-		Probe:            statusProbe(nil, nil, time.Now()),
+		Probe:            statusProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now()),
 	})
 	if err != nil {
 		t.Fatalf("status --json: %v\n%s", err, out)
@@ -419,25 +431,42 @@ func TestExecuteStatusJSONNamedProfileDisablesActionsOnLegacySessionRootConflict
 	if env.Data.NamespaceConflict == nil || env.Data.NamespaceConflict.Kind != "legacy_session_root" {
 		t.Fatalf("namespace conflict missing: %+v", env.Data.NamespaceConflict)
 	}
-	for _, action := range env.Data.Actions {
-		switch action.Kind {
-		case "resume_current_window", "resume_new_session", "stop", "stop_close_panes", "attach_control":
-			if action.Available || !strings.Contains(action.Reason, "legacy/default session root") {
-				t.Fatalf("action %s should be unavailable with conflict reason: %+v", action.Kind, action)
-			}
-		case "status", "task_list":
-			if !action.Available {
-				t.Fatalf("read-only action %s should remain available: %+v", action.Kind, action)
-			}
+	if env.Data.NamespaceConflict.RequestedAMQRoot != namedRoot ||
+		env.Data.NamespaceConflict.ConflictingAMQRoot != filepath.Join(dir, ".agent-mail", "main") {
+		t.Fatalf("namespace conflict roots = %+v", env.Data.NamespaceConflict)
+	}
+	sessionActions := actionsByKind(env.Data.Actions)
+	for _, kind := range []string{"status", "resume_preview", "stop", "stop_close_panes", "task_list"} {
+		if action := sessionActions[kind]; !action.Available {
+			t.Fatalf("session action %s should remain available: %+v", kind, action)
 		}
+	}
+	for _, kind := range []string{"resume_current_window", "resume_new_session", "attach_control"} {
+		action := sessionActions[kind]
+		if action.Available || !strings.Contains(action.Reason, "legacy/default session root") || action.UnavailableReason != action.Reason {
+			t.Fatalf("session action %s should be conflict-blocked with canonical reason: %+v", kind, action)
+		}
+	}
+	wantStop := "amq-squad stop --project " + shellQuote(dir) + " --profile release --session main --all"
+	if got := sessionActions["stop"].Command; got != wantStop {
+		t.Fatalf("stop command = %q, want %q", got, wantStop)
+	}
+	if got := sessionActions["stop_close_panes"].Command; got != wantStop+" --close-panes" {
+		t.Fatalf("stop_close_panes command = %q", got)
 	}
 	if len(env.Data.Records) != 1 {
 		t.Fatalf("records = %d", len(env.Data.Records))
 	}
-	for _, action := range env.Data.Records[0].Actions {
-		if (action.Kind == "resume" || action.Kind == "focus" || action.Kind == "send") &&
-			(action.Available || !strings.Contains(action.Reason, "legacy/default session root")) {
-			t.Fatalf("member action %s should be unavailable with conflict reason: %+v", action.Kind, action)
+	memberActions := actionsByKind(env.Data.Records[0].Actions)
+	for _, kind := range []string{"focus", "send", "goal_deliver", "dispatch", "resume"} {
+		action := memberActions[kind]
+		if action.Available || !strings.Contains(action.Reason, "legacy/default session root") || action.UnavailableReason != action.Reason {
+			t.Fatalf("member action %s should be conflict-blocked with canonical reason: %+v", kind, action)
+		}
+	}
+	for _, kind := range []string{"status", "task_list"} {
+		if action := memberActions[kind]; !action.Available {
+			t.Fatalf("member action %s should remain available: %+v", kind, action)
 		}
 	}
 }

@@ -576,7 +576,6 @@ func TestNamedProfileConflictBlocksDirectRuntimeCommands(t *testing.T) {
 		{"goal deliver", func() error {
 			return runGoal([]string{"deliver", "--profile", "review", "--session", "main", "--role", "cto", "--goal", "ship"})
 		}},
-		{"stop", func() error { return runStop([]string{"--profile", "review", "--session", "main", "--all"}) }},
 		{"up", func() error {
 			return runUp([]string{"--profile", "review", "--session", "main", "--terminal", "fake", "--no-bootstrap"})
 		}},

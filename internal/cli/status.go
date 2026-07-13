@@ -359,13 +359,23 @@ func executeStatus(s statusExecution) error {
 	if s.JSON {
 		ns := squadnamespace.Resolve(t.Project, s.Profile, workstream)
 		conflict := namespaceConflictForProfileSession(t.Project, s.Profile, workstream)
+		exactStopScope := exactStopNamespaceScope{
+			Verb:            "stop",
+			ProjectDir:      t.Project,
+			Profile:         s.Profile,
+			Session:         workstream,
+			All:             true,
+			ExplicitProject: true,
+			ExplicitProfile: squadnamespace.NormalizeProfile(s.Profile) != team.DefaultProfile,
+			ExplicitSession: true,
+		}
 		// Attach the stable action commands a client can render/copy per member.
 		for i := range rows {
 			rows[i].Namespace = ns
-			rows[i].Actions = disableNamespaceConflictActions(policyAwareMemberActionsForRow(t, s.Profile, workstream, rows[i]), conflict)
+			rows[i].Actions = disableNamespaceConflictActions(policyAwareMemberActionsForRow(t, s.Profile, workstream, rows[i]), conflict, exactStopScope)
 		}
 		ctx := newSessionStatusContext(t, s.Profile, workstream, firstLiveTmuxSession(rows))
-		ctx.Actions = disableNamespaceConflictActions(ctx.Actions, conflict)
+		ctx.Actions = disableNamespaceConflictActions(ctx.Actions, conflict, exactStopScope)
 		binding := goalBindingForStatus(ns, ctx, rows)
 		operatorView := statusOperatorForTeam(t, ns)
 		applyGoalBindingOpenBlockers(&operatorView, binding)
