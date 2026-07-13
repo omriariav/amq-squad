@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -299,12 +300,18 @@ func TestCloseRefusesReplacementServerOnSameSocket(t *testing.T) {
 	if err := runTmux(ctx, h.TmuxPath, h.env, "", "kill-server"); err != nil {
 		t.Fatalf("kill original harness server: %v", err)
 	}
-	if err := runTmux(ctx, h.TmuxPath, h.env, "", "new-session", "-d", "-s", "replacement"); err != nil {
-		t.Fatalf("start replacement server: %v", err)
+	if err := waitForProcessExit(ctx, h.ServerPID); err != nil {
+		t.Fatalf("wait for original harness server shutdown: %v", err)
 	}
-	replacement, err := outputTmux(ctx, h.TmuxPath, h.env, "", "display-message", "-p", "-t", "replacement", "#{socket_path}\t#{session_id}\t#{pid}")
+
+	// A kill-server client can exit before the old server process has exited.
+	// Start the adversarial replacement only after that lifecycle is
+	// observable, and give it the same deterministic environment and keeper as
+	// a real harness so a CI shell cannot exit and take the replacement with it.
+	replacement, err := outputTmux(ctx, h.TmuxPath, h.env, "", "new-session", "-d", "-P", "-F",
+		"#{socket_path}\t#{session_id}\t#{pid}", "-s", "replacement", "-c", h.CWD, filepath.Join(h.Root, "keeper"))
 	if err != nil {
-		t.Fatalf("read replacement identity: %v", err)
+		t.Fatalf("start replacement server: %v", err)
 	}
 	parts := strings.Split(strings.TrimSpace(replacement), "\t")
 	if len(parts) != 3 || parts[0] != h.SocketPath || parts[1] != h.SessionID || parts[2] == "" {
@@ -323,6 +330,28 @@ func TestCloseRefusesReplacementServerOnSameSocket(t *testing.T) {
 	}
 	if _, statErr := os.Stat(root); statErr != nil {
 		t.Fatalf("private root was removed after replacement mismatch: %v", statErr)
+	}
+}
+
+func waitForProcessExit(ctx context.Context, pid int) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		err := process.Signal(syscall.Signal(0))
+		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
 	}
 }
 
