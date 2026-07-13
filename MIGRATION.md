@@ -7,6 +7,24 @@ session state does **not** need to be migrated.
 
 This guide covers everything you have to change.
 
+## What's new in 2.20.0: AMQ 0.42.1 identity pins
+
+amq-squad 2.20.0 requires **amq 0.42.1+**. This is the first supported AMQ
+release for the complete injected identity contract. Upgrade AMQ, then stop
+and resume/relaunch every agent so its parent shell is rebuilt; a child command
+cannot repair stale inherited variables.
+
+- Default-profile sessions use `AM_ROOT=AM_BASE_ROOT/AM_SESSION`, a non-empty
+  `AM_SESSION`, and `AM_ME`.
+- Named-profile sessions use their exact root with `AM_ROOT=AM_BASE_ROOT` and
+  omit `AM_SESSION` entirely.
+
+Run `amq-squad doctor` before `resume --exec` or `agent resume`. If it reports
+a legacy or inconsistent AMQ identity pin, stop and relaunch instead of relying
+on a bare child command. Until then, use the explicitly scoped
+`amq-squad amq ... --project ... --profile ... --session ...` wrapper for
+control-plane operations.
+
 ## What's new in 2.1.0 (additive; nothing to migrate)
 
 2.1.0 ("orchestrator dogfood hardening") only adds commands and fixes — it

@@ -113,6 +113,28 @@ func TestDenyArgvBareWhenNoReason(t *testing.T) {
 	}
 }
 
+func TestSendSanitizesCompleteAMQIdentityTuple(t *testing.T) {
+	t.Setenv("AM_ROOT", "/stale/root")
+	t.Setenv("AM_BASE_ROOT", "/stale/base")
+	t.Setenv("AM_SESSION", "")
+	t.Setenv("AM_ME", "stale")
+	t.Setenv("AMQ_GLOBAL_ROOT", "/stale/global")
+	rec := withFakeSeam(t)
+	if err := Send(OpMessage{Root: testRoot, Me: "user", To: "cto", Subject: "status", Body: "ok", Thread: "t", Kind: string(state.KindAnswer)}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if !rec.called {
+		t.Fatal("send seam was not called")
+	}
+	for _, key := range []string{"AM_ROOT", "AM_BASE_ROOT", "AM_SESSION", "AM_ME", "AMQ_GLOBAL_ROOT"} {
+		for _, entry := range rec.env {
+			if strings.HasPrefix(entry, key+"=") {
+				t.Fatalf("stale %s leaked to child: %#v", key, rec.env)
+			}
+		}
+	}
+}
+
 func TestBroadcastArgv(t *testing.T) {
 	// Operator handle and a duplicate are filtered; result is sorted+deduped.
 	m := Broadcast(testRoot, testSession,

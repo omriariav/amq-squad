@@ -1075,7 +1075,7 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#
 <h2 id="requirements">Requirements</h2>
 <ul>
 <li>Go 1.25+</li>
-<li><code>amq</code> 0.42.0+ on <code>PATH</code></li>
+<li><code>amq</code> 0.42.1+ on <code>PATH</code></li>
 <li><code>tmux</code> on <code>PATH</code> for Tier A managed panes</li>
 <li>macOS with iTerm2 for the Tier B backend</li>
 <li>macOS Terminal.app for the Tier C backend</li>
@@ -1085,5 +1085,15 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#
 <p>amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or
 other goal sources happens in the skills or operator tooling; the core
 binary owns team, runtime, and coordination state.</p>
+<p>AMQ 0.42.1 is the first supported release for the complete injected
+identity contract. After upgrading from an older AMQ, stop and
+resume/relaunch agents so their shells receive a coherent pin; a child
+command cannot repair stale parent environment variables.
+Default-profile sessions use <code>AM_ROOT</code>,
+<code>AM_BASE_ROOT</code>, non-empty <code>AM_SESSION</code>, and
+<code>AM_ME</code>. Named profiles use their exact root with
+<code>AM_ROOT=AM_BASE_ROOT</code> and no <code>AM_SESSION</code>. Run
+<code>amq-squad doctor</code> before resuming if it reports a legacy or
+inconsistent pin.</p>
 </body>
 </html>
