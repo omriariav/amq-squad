@@ -340,6 +340,53 @@ func TestRunDispatchJSONEnvelopeReportsSubmitQueued(t *testing.T) {
 	}
 }
 
+func TestRunDispatchReportsBracketedPastePreEnterFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		wakeErr    error
+		wantStatus string
+	}{
+		{
+			name:       "marker leak",
+			wakeErr:    &tmuxpane.BracketedPasteLeakError{PaneID: "%7"},
+			wantStatus: "bracketed_paste_leak",
+		},
+		{
+			name: "inspection unavailable",
+			wakeErr: &tmuxpane.BracketedPasteCheckUnavailableError{
+				PaneID: "%7", Cause: errors.New("capture denied"), Detail: "post-paste pane capture failed",
+			},
+			wantStatus: "bracketed_paste_check_unavailable",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			chdir(t, dir)
+			writeDispatchTeam(t, dir)
+			_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-pre-enter to qa\n")
+			_ = withDispatchWakeSeam(t, dispatchOutcome{}, tc.wakeErr)
+
+			stdout, _, err := captureOutput(t, func() error {
+				return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "X", "--body", "y", "--json"})
+			})
+			if err != nil {
+				t.Fatalf("dispatch must preserve durable success: %v", err)
+			}
+			env := decodeJSONEnvelope[mutationResult](t, stdout)
+			if env.Data.Status != "queued_nudge_failed" || env.Data.MessageID != "msg-pre-enter" {
+				t.Fatalf("dispatch result = %+v, want queued_nudge_failed with durable message", env.Data)
+			}
+			r := env.Data.DeliveryReceipt
+			if r == nil || r.Status != tc.wantStatus || r.Method != "durable_amq_plus_prompt_fallback" || !r.Fallback || r.PaneID != "%7" || r.Acknowledged || r.MessageID != "msg-pre-enter" || r.DeliveryState != deliveryStateDeliveredNotDrained {
+				t.Fatalf("dispatch receipt = %+v", r)
+			}
+			if !receiptHasStage(r, tc.wantStatus) || receiptHasStage(r, "submit_attempted") {
+				t.Fatalf("dispatch receipt stages = %+v, want %s and no submit_attempted", r.Stages, tc.wantStatus)
+			}
+		})
+	}
+}
+
 func withDispatchAMQCommandErrorSeam(t *testing.T, env amqEnv, output string, sendErr error) *[]amqCommandRequest {
 	t.Helper()
 	var calls []amqCommandRequest

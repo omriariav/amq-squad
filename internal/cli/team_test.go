@@ -173,6 +173,35 @@ func TestEmitTeamCommandShape(t *testing.T) {
 	}
 }
 
+func TestEmitTeamCommandResolvesWakeModeFromUnderlyingMemberBinary(t *testing.T) {
+	tests := []struct {
+		name, binary, launcher, requested, want string
+	}{
+		{"codex-default", "codex", "", "", "raw"},
+		{"claude-custom-launcher", "claude", "/opt/wrapper", "auto", "raw"},
+		{"explicit-none", "codex", "", "none", "none"},
+		{"unknown-unspecified", "custom-agent", "", "", ""},
+		{"unknown-auto", "custom-agent", "", "auto", "auto"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := emitTeamCommand(emitTeamCommandInput{
+				CWD: "/project", SquadBin: "amq-squad", TeamHome: "/project", Workstream: "s",
+				Member:         team.Member{Role: "worker", Handle: "worker", Binary: test.binary, Launcher: test.launcher},
+				WakeInjectMode: test.requested,
+			})
+			needle := "--wake-inject-mode " + test.want
+			if test.want == "" {
+				if strings.Contains(cmd, "--wake-inject-mode") {
+					t.Fatalf("unexpected wake mode in %s", cmd)
+				}
+			} else if !strings.Contains(cmd, needle) {
+				t.Fatalf("command missing %q: %s", needle, cmd)
+			}
+		})
+	}
+}
+
 func TestEmitTeamCommandIncludesCustomLauncher(t *testing.T) {
 	m := team.Member{
 		Role:         "qa",
@@ -516,8 +545,8 @@ func TestRunTeamShowUsesDefaultSharedWorkstream(t *testing.T) {
 		"--session " + workstream + " --team-workstream",
 		"agent up codex",
 		"agent up claude",
-		"--no-bootstrap --me cto",
-		"--no-bootstrap --me fullstack",
+		"--no-bootstrap --wake-inject-mode raw --me cto",
+		"--no-bootstrap --wake-inject-mode raw --me fullstack",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("team show output missing %q in:\n%s", want, stdout)
@@ -740,6 +769,7 @@ fi
 		t.Fatal(err)
 	}
 	t.Setenv("AMQ_FAKE_BASE", base)
+	t.Setenv("AMQ_FAKE_VERSION", "0.42.1")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return base
 }

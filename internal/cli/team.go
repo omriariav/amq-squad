@@ -1312,7 +1312,7 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 			b.WriteString(shellQuote(arg))
 		}
 	}
-	if mode := strings.TrimSpace(in.WakeInjectMode); mode != "" {
+	if mode := resolveWakeInjectModeForBinary(in.WakeInjectMode, m.Binary); mode != "" {
 		b.WriteString(" --wake-inject-mode ")
 		b.WriteString(shellQuote(mode))
 	}

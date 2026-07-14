@@ -315,7 +315,7 @@ func runLeadRegister(args []string) error {
 		Mode: wakeInjectModeValue,
 		Via:  wakeInjectViaValue,
 		Args: wakeInjectArgValues,
-	}, flagWasSet(fs, "wake-inject-mode"), flagWasSet(fs, "wake-inject-via"), flagWasSet(fs, "wake-inject-arg"), existingRec, existingRecErr, role, handle, profile, env.SessionName, root, id.PaneID)
+	}, flagWasSet(fs, "wake-inject-mode"), flagWasSet(fs, "wake-inject-via"), flagWasSet(fs, "wake-inject-arg"), existingRec, existingRecErr, member.Binary, role, handle, profile, env.SessionName, root, id.PaneID)
 	if err != nil {
 		return err
 	}
@@ -433,7 +433,7 @@ func writeExternalLeadLaunchRecord(agentDir string, rec launch.Record, role, ses
 	})
 }
 
-func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, viaExplicit, argsExplicit bool, existing launch.Record, existingErr error, role, handle, profile, session, root, paneID string) (wakeInjectConfig, error) {
+func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, viaExplicit, argsExplicit bool, existing launch.Record, existingErr error, binary, role, handle, profile, session, root, paneID string) (wakeInjectConfig, error) {
 	resolved := wakeInjectConfig{
 		Mode: strings.TrimSpace(requested.Mode),
 		Via:  strings.TrimSpace(requested.Via),
@@ -450,7 +450,7 @@ func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, v
 	if err != nil {
 		return wakeInjectConfig{}, fmt.Errorf("stored external wake config: %w", err)
 	}
-	resolved.Mode = mode
+	resolved.Mode = resolveWakeInjectModeForBinary(mode, binary)
 	if err := validateWakeInjectConfig(resolved.Mode, resolved.Via, resolved.Args, ""); err != nil {
 		return wakeInjectConfig{}, err
 	}

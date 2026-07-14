@@ -1189,6 +1189,7 @@ func createExternalOrchestratorMailboxFixture(root, handles string) error {
 func seedCtoLeadTeamForOrchestrator(t *testing.T) (string, string) {
 	t.Helper()
 	base := setupFakeAMQSessionRoots(t)
+	t.Setenv("AMQ_FAKE_VERSION", "0.42.0")
 	dir := seedTeam(t, team.Team{
 		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
 		Orchestrated: true,
@@ -1237,13 +1238,13 @@ func TestGoalStartRegisterOrchestratorProducesWakeableIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read orchestrator launch record: %v", err)
 	}
-	if !rec.External || rec.Role != goalOrchestratorRole || rec.WakePID != 9876 || rec.Tmux == nil || rec.Tmux.PaneID != "%99" {
+	if !rec.External || rec.Role != goalOrchestratorRole || rec.WakePID != 9876 || rec.WakeInjectMode != "raw" || rec.Tmux == nil || rec.Tmux.PaneID != "%99" {
 		t.Fatalf("orchestrator launch record = %+v", rec)
 	}
 	if rec.Terminal == nil || rec.Terminal.Backend != "tmux" || rec.Terminal.PaneID != "%99" || rec.Terminal.Target != "external" {
 		t.Fatalf("orchestrator launch terminal identity = %+v", rec.Terminal)
 	}
-	if len(*stubs.wakeOpts) != 1 || (*stubs.wakeOpts)[0].Handle != "global-orch" || !(*stubs.wakeOpts)[0].Require {
+	if len(*stubs.wakeOpts) != 1 || (*stubs.wakeOpts)[0].Handle != "global-orch" || !(*stubs.wakeOpts)[0].Require || (*stubs.wakeOpts)[0].WakeInjectMode != "raw" {
 		t.Fatalf("wake opts = %+v", *stubs.wakeOpts)
 	}
 }
@@ -1359,6 +1360,7 @@ func TestGoalStartRegisterOrchestratorWakeFailureIsHonest(t *testing.T) {
 func seedCtoDeliverTeamForOrchestrator(t *testing.T) (string, string) {
 	t.Helper()
 	base := setupFakeAMQSessionRoots(t)
+	t.Setenv("AMQ_FAKE_VERSION", "0.42.0")
 	dir := seedTeam(t, team.Team{
 		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
 		Orchestrated: true,

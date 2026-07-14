@@ -25,6 +25,7 @@ func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
 	// must re-run, hence no --no-bootstrap in the replayed args.
 	want := []string{
 		"--role", "qa", "--session", "beta",
+		"--wake-inject-mode", "raw",
 		"--launcher", "/opt/launch.sh", "--launcher-args=--pull --workspace /x",
 		"--me", "qa", "claude",
 	}
@@ -96,6 +97,34 @@ func TestLaunchArgsFromRecordReplaysWakeInject(t *testing.T) {
 	}
 }
 
+func TestRestoreMigratesLegacyManagedWakeModesToRaw(t *testing.T) {
+	for _, test := range []struct {
+		name, binary, launcher, stored, want string
+	}{
+		{"codex-blank", "codex", "", "", "raw"},
+		{"claude-auto-custom-launcher", "claude", "/opt/wrapper", "auto", "raw"},
+		{"codex-none", "codex", "", "none", "none"},
+		{"custom-auto", "custom-agent", "", "auto", "auto"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rec := launch.Record{Binary: test.binary, Launcher: test.launcher, Role: "worker", Handle: "worker", Session: "s", WakeInjectMode: test.stored}
+			args := launchArgsFromRecord(rec)
+			found := ""
+			for i := range args {
+				if args[i] == "--wake-inject-mode" && i+1 < len(args) {
+					found = args[i+1]
+				}
+			}
+			if found != test.want {
+				t.Fatalf("restore args mode = %q, want %q: %v", found, test.want, args)
+			}
+			if cmd := emitCommandWithOptions(rec, emitCommandOptions{}); !strings.Contains(cmd, "--wake-inject-mode "+test.want) {
+				t.Fatalf("restore command missing mode %q: %s", test.want, cmd)
+			}
+		})
+	}
+}
+
 func TestLaunchArgsFromRecordReplaysNoGitignore(t *testing.T) {
 	rec := launch.Record{
 		Binary:      "codex",
@@ -107,6 +136,7 @@ func TestLaunchArgsFromRecordReplaysNoGitignore(t *testing.T) {
 	want := []string{
 		"--role", "cto", "--session", "issue-96",
 		"--no-gitignore",
+		"--wake-inject-mode", "raw",
 		"--trust", "sandboxed", "--me", "cto", "codex",
 	}
 	if got := launchArgsFromRecord(rec); !reflect.DeepEqual(got, want) {
@@ -128,6 +158,7 @@ func TestLaunchArgsFromRecordReplaysSymphony(t *testing.T) {
 	want := []string{
 		"--role", "cto", "--session", "issue-96",
 		"--symphony",
+		"--wake-inject-mode", "raw",
 		"--trust", "sandboxed", "--me", "cto", "codex",
 	}
 	if got := launchArgsFromRecord(rec); !reflect.DeepEqual(got, want) {
@@ -145,7 +176,7 @@ func TestLaunchArgsFromRecordPreservesClaudeIdentityForRenameOnResume(t *testing
 		Role:    "fullstack",
 		Session: "issue-96",
 	}
-	want := []string{"--role", "fullstack", "--session", "issue-96", "--me", "fullstack", "claude"}
+	want := []string{"--role", "fullstack", "--session", "issue-96", "--wake-inject-mode", "raw", "--me", "fullstack", "claude"}
 	if got := launchArgsFromRecord(rec); !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord(rec)\n got: %v\nwant: %v", got, want)
 	}
@@ -416,6 +447,7 @@ func TestLaunchArgsFromRecord(t *testing.T) {
 		"--role", "fullstack",
 		"--session", "stream1",
 		"--conversation", "abc",
+		"--wake-inject-mode", "raw",
 		"--me", "fullstack",
 		"claude",
 	}
@@ -436,7 +468,7 @@ func TestLaunchArgsFromRecordPreservesSharedWorkstream(t *testing.T) {
 	// Legacy codex records without a trust field restore as sandboxed; --trust
 	// sandboxed is emitted explicitly so the trust boundary is visible on
 	// replay. No Conversation -> re-orient resume, so --no-bootstrap is absent.
-	want := []string{"--role", "cto", "--session", "cto", "--team-workstream", "--trust", "sandboxed", "--me", "cto", "codex"}
+	want := []string{"--role", "cto", "--session", "cto", "--team-workstream", "--wake-inject-mode", "raw", "--trust", "sandboxed", "--me", "cto", "codex"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
 	}
@@ -453,7 +485,7 @@ func TestLaunchArgsFromRecordUsesRootWithoutSession(t *testing.T) {
 	}
 	got := launchArgsFromRecord(rec)
 	// No Conversation -> re-orient resume, so --no-bootstrap is absent.
-	want := []string{"--root", "/p/.agent-mail", "--trust", "sandboxed", "--me", "codex", "codex"}
+	want := []string{"--root", "/p/.agent-mail", "--wake-inject-mode", "raw", "--trust", "sandboxed", "--me", "codex", "codex"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
 	}
@@ -473,7 +505,7 @@ func TestLaunchArgsFromRecordOmitsRootWhenSessionPresent(t *testing.T) {
 	}
 	got := launchArgsFromRecord(rec)
 	// No Conversation -> re-orient resume, so --no-bootstrap is absent.
-	want := []string{"--session", "stream1", "--me", "claude", "claude"}
+	want := []string{"--session", "stream1", "--wake-inject-mode", "raw", "--me", "claude", "claude"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
 	}
@@ -503,6 +535,7 @@ func TestLaunchArgsFromRecordRoundTripsConversationWithCodexArgs(t *testing.T) {
 		"--role", "cto",
 		"--session", "cto",
 		"--conversation", "X",
+		"--wake-inject-mode", "raw",
 		"--trust", "trusted",
 		"--codex-args=--enable goals",
 		"--me", "cto",
@@ -534,6 +567,7 @@ func TestLaunchArgsFromRecordRoundTripsConversationWithClaudeArgs(t *testing.T) 
 		"--role", "fullstack",
 		"--session", "fs",
 		"--conversation", "Y",
+		"--wake-inject-mode", "raw",
 		"--claude-args=--chrome",
 		"--me", "fullstack",
 		"claude",
@@ -589,6 +623,7 @@ func TestLaunchArgsFromRecordPreservesNoDefaultArgs(t *testing.T) {
 		"--role", "cto",
 		"--session", "rt",
 		"--no-default-args",
+		"--wake-inject-mode", "raw",
 		"--trust", "sandboxed",
 		"--codex-args=--enable goals",
 		"--me", "cto",
@@ -676,6 +711,7 @@ func assertConversationReplayAccepted(t *testing.T, args []string) {
 	conversation := fs.String("conversation", "", "")
 	trustRaw := fs.String("trust", "", "")
 	model := fs.String("model", "", "")
+	_ = fs.String("wake-inject-mode", "", "")
 	_ = fs.Bool("no-bootstrap", false, "")
 	_ = fs.Bool("no-default-args", false, "")
 	_ = fs.Bool("force-duplicate", false, "")
