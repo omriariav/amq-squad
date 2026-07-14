@@ -266,6 +266,81 @@ func TestPaneCleanupRecordFieldMismatchesFailClosed(t *testing.T) {
 	}
 }
 
+func TestPaneCleanupResumeAbsoluteRecordedBinaryMatchesBareConfigured(t *testing.T) {
+	fx := newPaneCleanupFixture(t)
+	absoluteBinary := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(absoluteBinary, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fx.req.Record.Binary = absoluteBinary
+	fx.req.Attestation.Binary = absoluteBinary
+	closeCalls := 0
+	deps := cleanupDeps([]tmuxpane.PaneInspection{foundPane(fx.pane), foundPane(fx.pane)}, nil, &closeCalls)
+	prepared := PreparePaneCleanup(fx.req, deps)
+	if !prepared.Ready {
+		t.Fatalf("absolute resume-style binary should prepare against bare configured executable: %+v", prepared.Result)
+	}
+	if result := ClosePreparedPane(prepared, deps); result.Outcome != PaneCleanupClosed || closeCalls != 1 {
+		t.Fatalf("result=%+v close calls=%d, want closed/1", result, closeCalls)
+	}
+}
+
+func TestPaneCleanupBinaryIdentityNegativeMatrix(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*paneCleanupFixture)
+	}{
+		{name: "different basename", mutate: func(f *paneCleanupFixture) {
+			f.req.Record.Binary = "/opt/agents/claude"
+			f.req.Attestation.Binary = "/opt/agents/claude"
+		}},
+		{name: "prefix lookalike", mutate: func(f *paneCleanupFixture) {
+			f.req.Record.Binary = "/opt/agents/codex-helper"
+			f.req.Attestation.Binary = "/opt/agents/codex-helper"
+		}},
+		{name: "suffix lookalike", mutate: func(f *paneCleanupFixture) {
+			f.req.Record.Binary = "/opt/agents/my-codex"
+			f.req.Attestation.Binary = "/opt/agents/my-codex"
+		}},
+		{name: "relative observed path", mutate: func(f *paneCleanupFixture) {
+			f.req.Record.Binary = "./codex"
+			f.req.Attestation.Binary = "./codex"
+		}},
+		{name: "record attestation explicit path drift", mutate: func(f *paneCleanupFixture) {
+			f.req.Record.Binary = "/opt/one/codex"
+			f.req.Attestation.Binary = "/opt/two/codex"
+		}},
+		{name: "configured explicit path drift", mutate: func(f *paneCleanupFixture) {
+			f.req.Scope.Binary = "/opt/one/codex"
+			f.req.Record.Binary = "/opt/two/codex"
+			f.req.Attestation.Binary = "/opt/two/codex"
+		}},
+		{name: "stale or reused pid", mutate: func(f *paneCleanupFixture) {
+			f.req.Attestation.PID++
+		}},
+		{name: "dead fresh attestation", mutate: func(f *paneCleanupFixture) {
+			f.req.Attestation.Live = false
+		}},
+		{name: "process matcher refused", mutate: func(f *paneCleanupFixture) {
+			f.req.Attestation.BinaryMatch = false
+		}},
+		{name: "missing fresh attestation", mutate: func(f *paneCleanupFixture) {
+			f.req.Attestation = PaneCleanupAgentAttestation{}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fx := newPaneCleanupFixture(t)
+			tt.mutate(&fx)
+			closeCalls := 0
+			prepared := PreparePaneCleanup(fx.req, cleanupDeps([]tmuxpane.PaneInspection{foundPane(fx.pane)}, nil, &closeCalls))
+			if prepared.Ready || prepared.Result.Outcome != PaneCleanupPreservedIdentityUnconfirmed || closeCalls != 0 {
+				t.Fatalf("prepared=%t outcome=%q close calls=%d mismatches=%+v", prepared.Ready, prepared.Result.Outcome, closeCalls, prepared.Result.Mismatches)
+			}
+		})
+	}
+}
+
 func TestPaneCleanupInspectedRuntimeFieldMismatchesFailClosed(t *testing.T) {
 	tests := []struct {
 		name   string
