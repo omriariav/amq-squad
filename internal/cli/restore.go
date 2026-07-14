@@ -331,7 +331,7 @@ func restoreArgvFromRecord(rec launch.Record) []string {
 	// A saved goal binding is restore metadata, never child input. In
 	// particular, a fresh re-orient must not silently replay the old /goal;
 	// resume owns the explicit claim-once redelivery decision after launch.
-	if rec.GoalBinding != nil && rec.GoalBinding.NativeGoal && rec.GoalBinding.Command != "" {
+	if rec.GoalBinding != nil && rec.GoalBinding.Command != "" && (rec.GoalBinding.NativeGoal || rec.GoalBinding.Mode == goalBindingModePrompt) {
 		out := argv[:0]
 		for _, arg := range argv {
 			if arg != rec.GoalBinding.Command {
