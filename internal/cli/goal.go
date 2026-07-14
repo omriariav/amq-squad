@@ -1075,12 +1075,13 @@ func sendDurableGoalFallback(opts goalDeliveryOptions) (goalFallbackDelivery, er
 		"\n\nProceed only when status is claimed. If status is already_claimed, the native path won and this message is a no-op. " +
 		"Never reset or retry this attempt to activate it twice."
 	args := dispatchSendArgs(ctx.Root, sender, target, thread, "todo", subject, body, "", "", 0)
-	out, err := runAMQCommand(amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: args})
+	out, receipt, err := runOwnedDurableSend(durableSendOptions{ProjectDir: opts.Project, Profile: opts.Profile, Session: opts.Session, Role: opts.Role, Kind: "goal_fallback"}, amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: args})
 	if err != nil {
 		return goalFallbackDelivery{}, fmt.Errorf("send durable goal fallback to %s: %w", target, err)
 	}
+	_ = out
 	return goalFallbackDelivery{
-		MessageID: parseSentMessageID(string(out)),
+		MessageID: receipt.MessageID,
 		Root:      ctx.Root,
 		Thread:    thread,
 	}, nil

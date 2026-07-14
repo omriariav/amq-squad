@@ -554,7 +554,7 @@ func deliverTaskOutbox(projectDir, profile, session string, intents []task.Outbo
 		}
 		ctx, resolveErr := resolveAMQContextForNamespace(projectDir, profile, session, started.From)
 		if resolveErr != nil {
-			finished, finishErr := task.FinishOutboxDeliveryForProfile(projectDir, profile, session, started.TaskID, started.ID, "", resolveErr, startedAt.Add(time.Nanosecond))
+			finished, finishErr := task.FinishOutboxDeliveryForProfile(projectDir, profile, session, started.TaskID, started.ID, task.DeliveryOutcome{State: task.DeliveryFailedBeforeInvoke, Error: resolveErr.Error()}, startedAt.Add(time.Nanosecond))
 			if finishErr != nil {
 				deliveryErrs = append(deliveryErrs, finishErr)
 			} else {
@@ -565,9 +565,41 @@ func deliverTaskOutbox(projectDir, profile, session string, intents []task.Outbo
 		}
 		ctx.Me = started.From
 		args := dispatchSendArgs(ctx.Root, started.From, started.To, started.Thread, started.Kind, started.Subject, started.Body, "", "", 0)
-		out, sendErr := runAMQCommand(amqCommandRequest{Dir: projectDir, Env: amqCommandEnv(ctx), Arg: args})
-		messageID := parseSentMessageID(string(out))
-		finished, finishErr := task.FinishOutboxDeliveryForProfile(projectDir, profile, session, started.TaskID, started.ID, messageID, sendErr, startedAt.Add(time.Nanosecond))
+		receipt := newDeliveryReceipt(projectDir, profile, session, started.To, started.To, "task_outbox", "task_outbox")
+		receipt.Sender, receipt.Recipient = started.From, started.To
+		receipt.Recipients = []string{started.To}
+		receipt.Consumers = []deliveryConsumerState{{Consumer: started.To, State: deliveryStateAmbiguousUnknown}}
+		receipt.Root, receipt.Thread = ctx.Root, started.Thread
+		if receipt.Thread == "" {
+			receipt.Thread = receiptCanonicalP2P(started.From, started.To)
+		}
+		receipt.TaskID, receipt.OutboxIntentID = started.TaskID, started.ID
+		receipt.addStage(deliveryStateAmbiguousUnknown, "receipt reserved before task outbox link and AMQ send")
+		if receiptErr := writeDeliveryReceipt(projectDir, profile, session, &receipt); receiptErr != nil {
+			if finished, finishErr := task.FinishOutboxDeliveryForProfile(projectDir, profile, session, started.TaskID, started.ID, task.DeliveryOutcome{State: task.DeliveryFailedBeforeInvoke, Error: receiptErr.Error()}, startedAt.Add(time.Nanosecond)); finishErr == nil {
+				updated = append(updated, finished)
+			} else {
+				deliveryErrs = append(deliveryErrs, finishErr)
+			}
+			deliveryErrs = append(deliveryErrs, receiptErr)
+			continue
+		}
+		linked, linkErr := task.AttachOutboxReceiptForProfile(projectDir, profile, session, started.TaskID, started.ID, receipt.AttemptID, receipt.Path, startedAt.Add(time.Nanosecond))
+		if linkErr != nil {
+			markDeliveryFailedBeforeID(projectDir, profile, session, &receipt, linkErr)
+			if finished, finishErr := task.FinishOutboxDeliveryForProfile(projectDir, profile, session, started.TaskID, started.ID, task.DeliveryOutcome{State: task.DeliveryFailedBeforeInvoke, Error: linkErr.Error()}, startedAt.Add(2*time.Nanosecond)); finishErr == nil {
+				updated = append(updated, finished)
+			} else {
+				deliveryErrs = append(deliveryErrs, finishErr)
+			}
+			deliveryErrs = append(deliveryErrs, linkErr)
+			continue
+		}
+		started = linked
+		out, sendReceipt, sendErr := runOwnedDurableSend(durableSendOptions{ProjectDir: projectDir, Profile: profile, Session: session, Kind: "task_outbox", TaskID: started.TaskID, OutboxIntentID: started.ID, Receipt: &receipt}, amqCommandRequest{Dir: projectDir, Env: amqCommandEnv(ctx), Arg: args})
+		_ = out
+		messageID := sendReceipt.MessageID
+		finished, finishErr := task.FinishOutboxDeliveryForProfile(projectDir, profile, session, started.TaskID, started.ID, taskDeliveryOutcome(sendReceipt, sendErr), startedAt.Add(time.Nanosecond))
 		if finishErr != nil {
 			deliveryErrs = append(deliveryErrs, finishErr)
 		} else {

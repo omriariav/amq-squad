@@ -143,7 +143,7 @@ func TestTaskDoneDeliveryFailureLeavesVisibleClaimAndRecovery(t *testing.T) {
 		t.Fatalf("env=%+v stderr=%s", env, stderr)
 	}
 	successor, _ := taskstore.Show(dir, "s", s.ID)
-	if successor.Status != taskstore.StatusInProgress || len(successor.Outbox) != 1 || successor.Outbox[0].State != taskstore.OutboxFailed || !strings.Contains(successor.Outbox[0].LastError, "AMQ unavailable") {
+	if successor.Status != taskstore.StatusInProgress || len(successor.Outbox) != 1 || successor.Outbox[0].State != taskstore.OutboxUncertain || !strings.Contains(successor.Outbox[0].LastError, "AMQ unavailable") {
 		t.Fatalf("successor delivery state=%+v", successor)
 	}
 	reconcileOut, _, err := captureOutput(t, func() error { return runTask([]string{"reconcile", "--session", "s", "--json"}) })
@@ -151,7 +151,7 @@ func TestTaskDoneDeliveryFailureLeavesVisibleClaimAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	reconcile := decodeJSONEnvelope[taskReconcileEnvelopeData](t, reconcileOut)
-	if !cliFinding(reconcile.Data.Result.Findings, "outbox_failed", s.ID) {
+	if !cliFinding(reconcile.Data.Result.Findings, "outbox_delivery_uncertain", s.ID) {
 		t.Fatalf("findings=%+v", reconcile.Data.Result.Findings)
 	}
 }
@@ -198,7 +198,7 @@ func TestTaskPendingAndUncertainRecoveryCommandsMatchState(t *testing.T) {
 	failedDone, _ := taskstore.DoneAtomicForProfile(dir, team.DefaultProfile, "s", pFailed.ID, taskstore.DoneOptions{Actor: "dev", Notify: true, Now: taskNow().Add(time.Second)})
 	failedIntent := failedDone.Outbox[0]
 	_, _ = taskstore.BeginOutboxDeliveryForProfile(dir, team.DefaultProfile, "s", pFailed.ID, failedIntent.ID, taskNow().Add(2*time.Second))
-	_, _ = taskstore.FinishOutboxDeliveryForProfile(dir, team.DefaultProfile, "s", pFailed.ID, failedIntent.ID, "", errors.New("offline"), taskNow().Add(3*time.Second))
+	_, _ = taskstore.FinishOutboxDeliveryForProfile(dir, team.DefaultProfile, "s", pFailed.ID, failedIntent.ID, taskstore.DeliveryOutcome{State: taskstore.DeliveryFailedBeforeInvoke, Error: "offline"}, taskNow().Add(3*time.Second))
 	failedReconcileOut, _, err := captureOutput(t, func() error { return runTask([]string{"reconcile", "--session", "s", "--json"}) })
 	if err != nil {
 		t.Fatal(err)

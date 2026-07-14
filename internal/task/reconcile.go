@@ -99,7 +99,7 @@ func ReconcileForProfile(projectDir, profile, session string, opts ReconcileOpti
 				switch intent.State {
 				case OutboxPending:
 					result.Findings = append(result.Findings, ReconcileFinding{Kind: "outbox_pending", TaskID: t.ID, IntentID: intent.ID, Detail: "delivery intent is committed but has not begun", Guidance: fmt.Sprintf("task deliver %s --intent %s --me <handle>", t.ID, intent.ID)})
-				case OutboxSending:
+				case OutboxSending, OutboxUncertain:
 					result.Findings = append(result.Findings, ReconcileFinding{Kind: "outbox_delivery_uncertain", TaskID: t.ID, IntentID: intent.ID, Detail: "delivery began but no durable outcome was recorded", Guidance: retryGuidance(t.ID, intent.ID, true) + "; never retry unless non-delivery is confirmed"})
 				case OutboxFailed:
 					result.Findings = append(result.Findings, ReconcileFinding{Kind: "outbox_failed", TaskID: t.ID, IntentID: intent.ID, Detail: "delivery failed: " + intent.LastError, Guidance: retryGuidance(t.ID, intent.ID, false) + "; or task release with an audited reason"})

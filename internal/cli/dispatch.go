@@ -254,34 +254,70 @@ Examples:
 		}
 		taskID = created.ID
 	}
+	receipt.Sender = from
+	receipt.Recipient = member.Handle
+	receipt.Recipients = []string{member.Handle}
+	receipt.Consumers = []deliveryConsumerState{{Consumer: member.Handle, State: deliveryStateAmbiguousUnknown}}
+	receipt.Root = ctx.Root
+	receipt.Thread = strings.TrimSpace(*threadFlag)
+	if receipt.Thread == "" {
+		receipt.Thread = receiptCanonicalP2P(from, member.Handle)
+	}
+	receipt.EvidenceSource = "amq_send_output"
+	receipt.addStage(deliveryStateAmbiguousUnknown, "receipt reserved before task link and AMQ send; no blind retry if interrupted")
+	if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+		return fmt.Errorf("reserve dispatch receipt: %w", err)
+	}
 	var prepared *taskstore.DispatchPrepareResult
 	if taskID != "" {
 		preparedAt := taskNow()
 		p, err := dispatchPrepareTask(projectDir, profile, workstream, taskID, taskstore.DispatchIntentOptions{
 			From: from, Assignee: member.Handle, Thread: *threadFlag, Kind: *kindFlag,
-			Subject: *subjectFlag, Body: taskBody, LeaseDuration: taskstore.DefaultLeaseDuration, Now: preparedAt,
+			Subject: *subjectFlag, Body: taskBody, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
+			LeaseDuration: taskstore.DefaultLeaseDuration, Now: preparedAt,
 		})
 		if err != nil {
+			markDeliveryFailedBeforeID(projectDir, profile, workstream, &receipt, err)
 			return fmt.Errorf("prepare native task %s dispatch transaction: %w", taskID, err)
 		}
 		started, err := dispatchBeginTaskDelivery(projectDir, profile, workstream, taskID, p.Intent.ID, preparedAt.Add(time.Nanosecond))
 		if err != nil {
+			markDeliveryFailedBeforeID(projectDir, profile, workstream, &receipt, err)
 			return fmt.Errorf("begin native task %s delivery: %w", taskID, err)
 		}
 		p.Intent = started
+		receipt.TaskID = taskID
+		receipt.OutboxIntentID = p.Intent.ID
+		if err := persistDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+			cause := fmt.Errorf("link dispatch receipt %s to task outbox %s (send not attempted): %w", receipt.AttemptID, p.Intent.ID, err)
+			finished, finishedIntent, finishErr := dispatchFinishTask(projectDir, profile, workstream, taskID, p.Intent.ID, taskstore.Dispatch{
+				Sender: from, Assignee: member.Handle, Thread: receipt.Thread, Kind: *kindFlag,
+				Subject: *subjectFlag, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
+			}, taskstore.DeliveryOutcome{State: taskstore.DeliveryFailedBeforeInvoke, Error: cause.Error()}, taskNow())
+			if finishErr != nil {
+				return fmt.Errorf("%v; finalize proven pre-invocation failure: %w", cause, finishErr)
+			}
+			p.Task, p.Intent = finished, finishedIntent
+			markDeliveryFailedBeforeID(projectDir, profile, workstream, &receipt, cause)
+			return cause
+		}
 		prepared = &p
 	}
 
 	waitFor := dispatchReceiptWaitFor(*kindFlag, *waitForFlag)
 	waitTimeout := *waitTimeoutFlag
 	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag, waitFor, waitTimeout)
-	out, err := runAMQCommand(amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: sendCmd})
-	msgID := parseSentMessageID(string(out))
+	out, sendReceipt, err := runOwnedDurableSend(durableSendOptions{
+		ProjectDir: projectDir, Profile: profile, Session: workstream, Role: member.Role,
+		ExecutionMode: effectiveTeamExecutionMode(t), Kind: "dispatch", TaskID: taskID, Receipt: &receipt,
+	}, amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: sendCmd})
+	receipt = *sendReceipt
+	msgID := receipt.MessageID
 	if prepared != nil {
 		finished, finishedIntent, finishErr := dispatchFinishTask(projectDir, profile, workstream, taskID, prepared.Intent.ID, taskstore.Dispatch{
 			Sender: from, Assignee: member.Handle, Thread: *threadFlag, Kind: *kindFlag,
-			Subject: *subjectFlag, MessageID: msgID,
-		}, msgID, err, taskNow())
+			Subject: *subjectFlag, MessageID: msgID, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
+		}, taskDeliveryOutcome(&receipt, err), taskNow())
 		if finishErr != nil {
 			return fmt.Errorf("finalize native task %s dispatch outcome (delivery may be uncertain): %w", taskID, finishErr)
 		}
@@ -294,7 +330,9 @@ Examples:
 	}
 	receipt.MessageID = msgID
 	receipt.Root = ctx.Root
-	receipt.Thread = strings.TrimSpace(*threadFlag)
+	if thread := strings.TrimSpace(*threadFlag); thread != "" {
+		receipt.Thread = thread
+	}
 	receipt.Status = "written_to_amq"
 	receipt.addStage("written_to_amq", "durable AMQ message written to recipient inbox")
 	waitTimedOut := dispatchSendWaitTimedOut(out, err, waitFor)
@@ -363,7 +401,7 @@ Examples:
 				Handle:          member.Handle,
 				MessageID:       msgID,
 				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 				DeliveryReceipt: &receipt,
 			})
 		}
@@ -407,7 +445,7 @@ Examples:
 				Handle:          member.Handle,
 				MessageID:       msgID,
 				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 				DeliveryReceipt: &receipt,
 			})
 		}
@@ -447,7 +485,7 @@ Examples:
 				Handle:          member.Handle,
 				MessageID:       msgID,
 				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 				DeliveryReceipt: &receipt,
 			})
 		}
@@ -489,7 +527,7 @@ Examples:
 				Handle:          member.Handle,
 				MessageID:       msgID,
 				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 				DeliveryReceipt: &receipt,
 			})
 		}
@@ -521,7 +559,8 @@ Examples:
 			receipt.addStage(dispatchSubmitUnconfirmed, outcome.Detail)
 		default:
 			receipt.Status = dispatchSubmitConfirmed
-			receipt.addStage(dispatchSubmitConfirmed, "Enter submitted; input-region change observed, or snapshot unavailable (fail-open)")
+			receipt.Acknowledged = true
+			receipt.addStage(dispatchSubmitConfirmed, "Enter submission confirmed by observed input-region change")
 			outcome.SubmitState = dispatchSubmitConfirmed
 		}
 	} else {
@@ -557,7 +596,7 @@ Examples:
 			Handle:          member.Handle,
 			MessageID:       msgID,
 			Root:            ctx.Root,
-			Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+			Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 			DeliveryReceipt: &receipt,
 		})
 	}
@@ -645,30 +684,15 @@ func dispatchCollectCommand(projectDir, session, me string) string {
 		" --timeout 120s --include-body"
 }
 
-func dispatchFollowUpActions(projectDir, profile, session, from, msgID string) []mutationAction {
+func dispatchFollowUpActions(projectDir, profile, session, from, recipient, msgID string) []mutationAction {
 	actions := []mutationAction{
 		followUp("collect", "collect child report", dispatchCollectCommand(projectDir, session, from)),
 	}
 	if strings.TrimSpace(msgID) != "" {
-		actions = append(actions, followUp("receipts", "wait for drain receipt", "amq-squad amq receipts wait --project "+shellQuote(projectDir)+" --session "+shellQuote(session)+" --me "+shellQuote(from)+" --msg-id "+shellQuote(msgID)+" --stage drained"))
+		actions = append(actions, followUp("receipts", "wait for drain receipt", "amq-squad amq receipts wait --project "+shellQuote(projectDir)+" --session "+shellQuote(session)+" --me "+shellQuote(recipient)+" --msg-id "+shellQuote(msgID)+" --stage drained"))
 	}
 	actions = append(actions, followUp("status", "show recipient status", "amq-squad status --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --session "+shellQuote(session)+" --json"))
 	return actions
-}
-
-// parseSentMessageID extracts the message id from `amq send`'s text output,
-// whose confirmation line reads "Sent <id> to <handle> (...)". Returns "" when
-// no such line is found, so the caller can fall back to echoing amq's raw output
-// rather than hiding it.
-func parseSentMessageID(out string) string {
-	for _, line := range strings.Split(out, "\n") {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Sent "); ok {
-			if fields := strings.Fields(rest); len(fields) > 0 {
-				return fields[0]
-			}
-		}
-	}
-	return ""
 }
 
 // dispatchSendArgs builds the `amq send` argv for a dispatch: a durable message

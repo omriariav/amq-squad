@@ -89,35 +89,62 @@ type DependencyOverride struct {
 const (
 	OutboxPending   = "pending"
 	OutboxSending   = "sending"
+	OutboxUncertain = "delivery_uncertain"
 	OutboxDelivered = "delivered"
 	OutboxFailed    = "failed"
 )
 
+const (
+	DeliveryFailedBeforeInvoke = "failed_before_invoke"
+	DeliveryUncertain          = "delivery_uncertain"
+	DeliveryDelivered          = "delivered"
+)
+
+// DeliveryOutcome is the typed command-boundary truth consumed by the task
+// lifecycle. It deliberately distinguishes failures proven before AMQ was
+// invoked from invoked/no-ID outcomes, which are unsafe to retry blindly.
+type DeliveryOutcome struct {
+	State     string
+	MessageID string
+	Error     string
+}
+
+type ReceiptLink struct {
+	AttemptID string `json:"attempt_id"`
+	Path      string `json:"path"`
+}
+
 // OutboxIntent is committed with the task transition before any AMQ send.
 // A process crash in Sending is deliberately uncertain and never auto-retried.
 type OutboxIntent struct {
-	ID          string       `json:"id"`
-	TaskID      string       `json:"task_id"`
-	Type        string       `json:"type"`
-	State       string       `json:"state"`
-	From        string       `json:"from"`
-	To          string       `json:"to"`
-	Thread      string       `json:"thread,omitempty"`
-	Kind        string       `json:"kind"`
-	Subject     string       `json:"subject"`
-	Body        string       `json:"body,omitempty"`
-	MessageID   string       `json:"message_id,omitempty"`
-	LastError   string       `json:"last_error,omitempty"`
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
-	RetryAudits []RetryAudit `json:"retry_audits,omitempty"`
+	ID               string        `json:"id"`
+	TaskID           string        `json:"task_id"`
+	Type             string        `json:"type"`
+	State            string        `json:"state"`
+	From             string        `json:"from"`
+	To               string        `json:"to"`
+	Thread           string        `json:"thread,omitempty"`
+	Kind             string        `json:"kind"`
+	Subject          string        `json:"subject"`
+	Body             string        `json:"body,omitempty"`
+	MessageID        string        `json:"message_id,omitempty"`
+	ReceiptAttemptID string        `json:"receipt_attempt_id,omitempty"`
+	ReceiptPath      string        `json:"receipt_path,omitempty"`
+	ReceiptAttempts  []ReceiptLink `json:"receipt_attempts,omitempty"`
+	LastError        string        `json:"last_error,omitempty"`
+	CreatedAt        time.Time     `json:"created_at"`
+	UpdatedAt        time.Time     `json:"updated_at"`
+	RetryAudits      []RetryAudit  `json:"retry_audits,omitempty"`
 }
 
 type RetryAudit struct {
 	Actor                 string    `json:"actor"`
 	Reason                string    `json:"reason"`
 	At                    time.Time `json:"at"`
+	PreviousState         string    `json:"previous_state,omitempty"`
 	ConfirmedNotDelivered bool      `json:"confirmed_not_delivered,omitempty"`
+	ReceiptAttemptID      string    `json:"receipt_attempt_id,omitempty"`
+	ReceiptPath           string    `json:"receipt_path,omitempty"`
 }
 
 type ReleaseAudit struct {
@@ -143,13 +170,15 @@ type AddInput struct {
 
 // Dispatch records the durable AMQ message linked to a native task.
 type Dispatch struct {
-	Sender       string    `json:"sender,omitempty"`
-	Assignee     string    `json:"assignee,omitempty"`
-	Thread       string    `json:"thread,omitempty"`
-	Kind         string    `json:"kind,omitempty"`
-	Subject      string    `json:"subject,omitempty"`
-	MessageID    string    `json:"message_id,omitempty"`
-	DispatchedAt time.Time `json:"dispatched_at,omitempty"`
+	Sender           string    `json:"sender,omitempty"`
+	Assignee         string    `json:"assignee,omitempty"`
+	Thread           string    `json:"thread,omitempty"`
+	Kind             string    `json:"kind,omitempty"`
+	Subject          string    `json:"subject,omitempty"`
+	MessageID        string    `json:"message_id,omitempty"`
+	ReceiptAttemptID string    `json:"receipt_attempt_id,omitempty"`
+	ReceiptPath      string    `json:"receipt_path,omitempty"`
+	DispatchedAt     time.Time `json:"dispatched_at,omitempty"`
 }
 
 // Dir is the default-profile task directory for a workstream.

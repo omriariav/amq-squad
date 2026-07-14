@@ -24,8 +24,16 @@ func swapDeliver(t *testing.T, results map[string]error) *[]deliverCall {
 	// override paneCapturer afterwards to exercise the retry/error paths.
 	prevSettle, prevVerify, prevCap, prevPaste := submitSettleDelay, submitVerifyDelay, paneCapturer, pasteSettleInterval
 	submitSettleDelay, submitVerifyDelay, pasteSettleInterval = 0, 0, 0
-	paneCapturer = func(string) (string, error) { return "", nil }
 	var calls []deliverCall
+	paneCapturer = func(string) (string, error) {
+		if len(calls) > 0 {
+			last := calls[len(calls)-1].args
+			if len(last) > 0 && last[0] == "send-keys" {
+				return "submitted", nil
+			}
+		}
+		return "staged", nil
+	}
 	prev := deliverExec
 	deliverExec = func(stdin string, args ...string) (string, error) {
 		calls = append(calls, deliverCall{stdin: stdin, args: append([]string(nil), args...)})
@@ -401,8 +409,8 @@ func TestChangedQueuedFooterDegradesToSubmitUnconfirmed(t *testing.T) {
 }
 
 // A changed input region means submitted on the first Enter; a blank/unavailable
-// capture fails open (one Enter, no retry, no error).
-func TestSendPromptSubmitsOnInputChangeOrFailsOpen(t *testing.T) {
+// capture remains explicitly unconfirmed after one Enter.
+func TestSendPromptSubmitsOnInputChangeOrReportsUnavailable(t *testing.T) {
 	// Region CHANGES after Enter -> submitted, single Enter.
 	calls := swapDeliver(t, nil)
 	n := 0
@@ -424,13 +432,16 @@ func TestSendPromptSubmitsOnInputChangeOrFailsOpen(t *testing.T) {
 		t.Fatalf("a changed input region should submit in one Enter, got %d", got)
 	}
 
-	// Blank capture -> can't verify -> fail open (single Enter, no error).
-	calls2 := swapDeliver(t, nil) // its capturer returns "" (blank)
-	if err := SendPromptToPane("%5", "go"); err != nil {
-		t.Fatalf("blank capture must fail open, got %v", err)
+	// Blank capture -> can't verify -> explicit ambiguity (single Enter).
+	calls2 := swapDeliver(t, nil)
+	paneCapturer = func(string) (string, error) { return "", nil }
+	err := SendPromptToPane("%5", "go")
+	var unconfirmed *SubmitUnconfirmedError
+	if !errors.As(err, &unconfirmed) || unconfirmed.Attempts != 1 {
+		t.Fatalf("blank capture must be explicit submit ambiguity, got %T: %v", err, err)
 	}
 	if got := enterCount(*calls2); got != 1 {
-		t.Fatalf("blank capture should fail open after one Enter, got %d", got)
+		t.Fatalf("blank capture should stop after one unconfirmed Enter, got %d", got)
 	}
 }
 
