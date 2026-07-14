@@ -40,6 +40,9 @@ type amqPassthroughOptions struct {
 
 type amqBoundaryAuditRecord struct {
 	At         time.Time `json:"at"`
+	AttemptID  string    `json:"attempt_id,omitempty"`
+	Outcome    string    `json:"outcome,omitempty"`
+	Operation  string    `json:"operation,omitempty"`
 	Subcommand string    `json:"subcommand"`
 	ProjectDir string    `json:"project_dir"`
 	Session    string    `json:"session,omitempty"`
@@ -47,7 +50,20 @@ type amqBoundaryAuditRecord struct {
 	Target     string    `json:"target"`
 	Root       string    `json:"root"`
 	Reason     string    `json:"reason"`
+	MessageID  string    `json:"message_id,omitempty"`
+	Error      string    `json:"error,omitempty"`
 }
+
+type amqBoundaryAuditAttempt struct {
+	AttemptID string
+	Operation string
+	Context   amqContext
+	Actor     string
+	Target    string
+	Reason    string
+}
+
+var appendAMQBoundaryAuditRecord = writeAMQBoundaryAuditRecord
 
 func defaultRunAMQCommand(req amqCommandRequest) ([]byte, error) {
 	cmd := exec.Command("amq", req.Arg...)
@@ -569,7 +585,8 @@ func runAMQPassthrough(sub string, args []string) error {
 		return err
 	}
 	cmd := append([]string{sub, "--root", ctx.Root}, passthrough...)
-	if err := guardAMQPassthrough(sub, ctx, passthrough, opts); err != nil {
+	audit, err := guardAMQPassthrough(sub, ctx, passthrough, opts)
+	if err != nil {
 		return err
 	}
 	if sub == "watch" {
@@ -577,15 +594,15 @@ func runAMQPassthrough(sub string, args []string) error {
 	}
 	if sub == "send" {
 		if passthroughNeedsStdin(passthrough) {
-			return runAMQPassthroughDurableSend(ctx, ctx.Profile, cmd, passthrough, os.Stdin)
+			return runAMQPassthroughDurableSend(ctx, ctx.Profile, cmd, passthrough, os.Stdin, audit)
 		}
-		return runAMQPassthroughDurableSend(ctx, ctx.Profile, cmd, passthrough, nil)
+		return runAMQPassthroughDurableSend(ctx, ctx.Profile, cmd, passthrough, nil, audit)
 	}
 	if sub == "reply" {
 		if passthroughNeedsStdin(passthrough) {
-			return runAMQPassthroughDurableReply(ctx, ctx.Profile, cmd, passthrough, os.Stdin)
+			return runAMQPassthroughDurableReply(ctx, ctx.Profile, cmd, passthrough, os.Stdin, audit)
 		}
-		return runAMQPassthroughDurableReply(ctx, ctx.Profile, cmd, passthrough, nil)
+		return runAMQPassthroughDurableReply(ctx, ctx.Profile, cmd, passthrough, nil, audit)
 	}
 	if passthroughNeedsStdin(passthrough) {
 		return runAndWriteAMQWithStdin(os.Stdout, ctx, cmd, os.Stdin)
@@ -593,19 +610,23 @@ func runAMQPassthrough(sub string, args []string) error {
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
 }
 
-func runAMQPassthroughDurableSend(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader) error {
+func runAMQPassthroughDurableSend(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader, audit *amqBoundaryAuditAttempt) error {
 	session := strings.TrimSpace(ctx.Env.SessionName)
 	if session == "" {
 		session = strings.TrimSpace(ctx.Session)
 	}
+	if err := beginAMQBoundaryAudit(audit); err != nil {
+		return err
+	}
 	out, receipt, err := runOwnedDurableSend(durableSendOptions{
 		ProjectDir: ctx.ProjectDir, Profile: profile, Session: session, Kind: "amq_send",
 	}, amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd, Stdin: stdin})
+	err = finishAMQBoundaryAudit(audit, receipt, err)
 	writeAMQPassthroughDurableOutput(out, receipt, amqBoolFlagPresent(passthrough, "json"))
 	return err
 }
 
-func runAMQPassthroughDurableReply(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader) error {
+func runAMQPassthroughDurableReply(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader, audit *amqBoundaryAuditAttempt) error {
 	originalID := strings.TrimSpace(amqFlagValue(passthrough, "id"))
 	if originalID == "" {
 		return usageErrorf("amq reply requires --id")
@@ -644,9 +665,64 @@ func runAMQPassthroughDurableReply(ctx amqContext, profile string, cmd, passthro
 	receipt.Recipients = []string{strings.TrimSpace(original.From)}
 	receipt.Consumers = []deliveryConsumerState{{Consumer: strings.TrimSpace(original.From), State: deliveryStateAmbiguousUnknown}}
 	receipt.Thread = strings.TrimSpace(original.Thread)
+	if err := beginAMQBoundaryAudit(audit); err != nil {
+		return err
+	}
 	out, durableReceipt, err := runOwnedDurableSend(durableSendOptions{ProjectDir: ctx.ProjectDir, Profile: profile, Session: session, Kind: "amq_reply", Receipt: &receipt}, amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd, Stdin: stdin})
+	err = finishAMQBoundaryAudit(audit, durableReceipt, err)
 	writeAMQPassthroughDurableOutput(out, durableReceipt, amqBoolFlagPresent(passthrough, "json"))
 	return err
+}
+
+func beginAMQBoundaryAudit(audit *amqBoundaryAuditAttempt) error {
+	if audit == nil {
+		return nil
+	}
+	if err := appendAMQBoundaryAuditRecord(audit.record("attempted", "", nil)); err != nil {
+		return fmt.Errorf("persist unsafe %s audit attempt before invoking AMQ: %w", audit.Operation, err)
+	}
+	return nil
+}
+
+func finishAMQBoundaryAudit(audit *amqBoundaryAuditAttempt, receipt *deliveryReceiptData, invokeErr error) error {
+	if audit == nil {
+		return invokeErr
+	}
+	messageID := ""
+	if receipt != nil {
+		messageID = strings.TrimSpace(receipt.MessageID)
+	}
+	outcome := "failed"
+	switch {
+	case messageID != "":
+		// A stable message id is delivery evidence even when AMQ later reports a
+		// wait error or local receipt finalization fails.
+		outcome = "delivered"
+	case receipt != nil && receipt.AMQInvoked:
+		// Invocation without a stable id is not proof of non-delivery. Preserve
+		// that uncertainty explicitly so an operator does not blindly retry.
+		outcome = "uncertain"
+	}
+	if err := appendAMQBoundaryAuditRecord(audit.record(outcome, messageID, invokeErr)); err != nil {
+		if invokeErr != nil {
+			return fmt.Errorf("%v; persist unsafe %s audit outcome %s for attempt %s: %w", invokeErr, audit.Operation, outcome, audit.AttemptID, err)
+		}
+		return fmt.Errorf("unsafe %s delivered message %s but audit attempt %s remains attempted/uncertain: %w", audit.Operation, messageID, audit.AttemptID, err)
+	}
+	return invokeErr
+}
+
+func (a *amqBoundaryAuditAttempt) record(outcome, messageID string, invokeErr error) amqBoundaryAuditRecord {
+	rec := amqBoundaryAuditRecord{
+		At: time.Now().UTC(), AttemptID: a.AttemptID, Outcome: outcome, Operation: a.Operation,
+		Subcommand: "send-as", ProjectDir: a.Context.ProjectDir, Session: boundaryAuditSession(a.Context),
+		Actor: strings.TrimSpace(a.Actor), Target: a.Target, Root: a.Context.Root, Reason: strings.TrimSpace(a.Reason),
+		MessageID: strings.TrimSpace(messageID),
+	}
+	if invokeErr != nil {
+		rec.Error = invokeErr.Error()
+	}
+	return rec
 }
 
 func writeAMQPassthroughDurableOutput(out []byte, receipt *deliveryReceiptData, jsonRequested bool) {
@@ -682,57 +758,64 @@ func amqBoolFlagPresent(args []string, name string) bool {
 	return false
 }
 
-func guardAMQPassthrough(sub string, ctx amqContext, passthrough []string, opts amqPassthroughOptions) error {
+func guardAMQPassthrough(sub string, ctx amqContext, passthrough []string, opts amqPassthroughOptions) (*amqBoundaryAuditAttempt, error) {
 	switch sub {
 	case "send", "reply":
 		if err := guardAMQSelfSend(ctx, passthrough); err != nil {
-			return err
+			return nil, err
 		}
 		return guardAMQSendAsAuthority(sub, ctx, opts)
 	case "drain", "watch":
-		return guardAMQMailboxConsume(sub, ctx, opts)
+		return nil, guardAMQMailboxConsume(sub, ctx, opts)
 	default:
-		return nil
+		return nil, nil
 	}
 }
 
-func guardAMQSendAsAuthority(sub string, ctx amqContext, opts amqPassthroughOptions) error {
+func guardAMQSendAsAuthority(sub string, ctx amqContext, opts amqPassthroughOptions) (*amqBoundaryAuditAttempt, error) {
 	me := strings.TrimSpace(ctx.Me)
 	if me == "" {
-		return nil
+		return nil, nil
 	}
 	t, err := team.ReadProfile(ctx.ProjectDir, ctx.Profile)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	if isOperatorHandle(t, me) {
 		if opts.UnsafeSendAs {
 			reason := strings.TrimSpace(opts.BoundaryReason)
 			if reason == "" {
-				return usageErrorf("amq %s --unsafe-send-as requires --reason <why>", sub)
+				return nil, usageErrorf("amq %s --unsafe-send-as requires --reason <why>", sub)
 			}
-			return writeAMQBoundaryAudit(ctx, "send-as", strings.TrimSpace(os.Getenv("AM_ME")), me, reason)
+			return newAMQBoundaryAuditAttempt(sub, ctx, strings.TrimSpace(os.Getenv("AM_ME")), me, reason), nil
 		}
-		return usageErrorf("refusing amq %s as operator handle %q: the operator is mailbox-only and cannot be impersonated through the normal send/reply path. Use amq-squad operator answer/directive where applicable, or pass --unsafe-send-as --reason <why> for an audited recovery send.", sub, me)
+		return nil, usageErrorf("refusing amq %s as operator handle %q: the operator is mailbox-only and cannot be impersonated through the normal send/reply path. Use amq-squad operator answer/directive where applicable, or pass --unsafe-send-as --reason <why> for an audited recovery send.", sub, me)
 	}
 	member, ok := teamMemberByHandleOrRole(t, me)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	if currentEnvProvesTeamRole(memberHandle(member), member.Role, ctx.Root) {
-		return nil
+		return nil, nil
 	}
 	if teamRoleRecordAuthorizesSendAs(t, member, ctx) {
-		return nil
+		return nil, nil
 	}
 	if opts.UnsafeSendAs {
 		reason := strings.TrimSpace(opts.BoundaryReason)
 		if reason == "" {
-			return usageErrorf("amq %s --unsafe-send-as requires --reason <why>", sub)
+			return nil, usageErrorf("amq %s --unsafe-send-as requires --reason <why>", sub)
 		}
-		return writeAMQBoundaryAudit(ctx, "send-as", strings.TrimSpace(os.Getenv("AM_ME")), me, reason)
+		return newAMQBoundaryAuditAttempt(sub, ctx, strings.TrimSpace(os.Getenv("AM_ME")), me, reason), nil
 	}
-	return usageErrorf("refusing amq %s as team role %q: current runtime is not verified live/bound for this namespace. Launch/resume the role first, or pass --unsafe-send-as --reason <why> for an audited recovery send.", sub, me)
+	return nil, usageErrorf("refusing amq %s as team role %q: current runtime is not verified live/bound for this namespace. Launch/resume the role first, or pass --unsafe-send-as --reason <why> for an audited recovery send.", sub, me)
+}
+
+func newAMQBoundaryAuditAttempt(operation string, ctx amqContext, actor, target, reason string) *amqBoundaryAuditAttempt {
+	return &amqBoundaryAuditAttempt{
+		AttemptID: deliveryAttemptID(time.Now().UTC(), "unsafe_"+operation, strings.TrimSpace(actor), strings.TrimSpace(target)),
+		Operation: operation, Context: ctx, Actor: actor, Target: target, Reason: reason,
+	}
 }
 
 func isOperatorHandle(t team.Team, handle string) bool {
@@ -863,29 +946,34 @@ func teamLeadHandle(t team.Team) string {
 }
 
 func writeAMQBoundaryAudit(ctx amqContext, sub, actor, target, reason string) error {
-	dir := filepath.Join(ctx.ProjectDir, team.DirName, "boundary-audit")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("ensure boundary audit dir: %w", err)
+	rec := amqBoundaryAuditRecord{
+		At: time.Now().UTC(), Subcommand: sub, ProjectDir: ctx.ProjectDir, Session: boundaryAuditSession(ctx),
+		Actor: strings.TrimSpace(actor), Target: target, Root: ctx.Root, Reason: strings.TrimSpace(reason),
 	}
+	return writeAMQBoundaryAuditRecord(rec)
+}
+
+func boundaryAuditSession(ctx amqContext) string {
 	session := strings.TrimSpace(ctx.Env.SessionName)
+	if session == "" {
+		session = strings.TrimSpace(ctx.Session)
+	}
 	if session == "" {
 		session = "unknown-session"
 	}
-	rec := amqBoundaryAuditRecord{
-		At:         time.Now().UTC(),
-		Subcommand: sub,
-		ProjectDir: ctx.ProjectDir,
-		Session:    session,
-		Actor:      strings.TrimSpace(actor),
-		Target:     target,
-		Root:       ctx.Root,
-		Reason:     strings.TrimSpace(reason),
+	return session
+}
+
+func writeAMQBoundaryAuditRecord(rec amqBoundaryAuditRecord) error {
+	dir := filepath.Join(rec.ProjectDir, team.DirName, "boundary-audit")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("ensure boundary audit dir: %w", err)
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
 		return fmt.Errorf("marshal boundary audit: %w", err)
 	}
-	path := filepath.Join(dir, sanitizeWorkstreamName(session)+".jsonl")
+	path := filepath.Join(dir, sanitizeWorkstreamName(rec.Session)+".jsonl")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("open boundary audit: %w", err)

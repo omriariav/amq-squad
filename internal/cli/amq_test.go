@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -787,6 +789,10 @@ func TestAMQReplyAsOperatorHandleRequiresUnsafeOverride(t *testing.T) {
 	if !strings.Contains(string(b), `"target":"user"`) || !strings.Contains(string(b), "repair imported gate answer") {
 		t.Fatalf("operator reply-as audit = %s", b)
 	}
+	records := readAMQBoundaryAuditRecords(t, audit)
+	if len(records) != 2 || records[0].Outcome != "attempted" || records[1].Outcome != "delivered" || records[0].AttemptID == "" || records[0].AttemptID != records[1].AttemptID || records[1].Operation != "reply" || records[1].MessageID != "fixture-reply" {
+		t.Fatalf("operator reply-as audit lifecycle = %+v", records)
+	}
 }
 
 func TestAMQReplyAsTeamRoleRequiresBoundIdentity(t *testing.T) {
@@ -898,6 +904,206 @@ func TestAMQSendAsUnsafeOverrideRequiresReasonAndAudits(t *testing.T) {
 	if !strings.Contains(string(b), "recover stuck gate again") {
 		t.Fatalf("audit record missing non-leading unsafe reason = %s", b)
 	}
+}
+
+func TestAMQUnsafeSendAsAuditLifecycle(t *testing.T) {
+	newFixture := func(t *testing.T) (string, *[]amqCommandRequest, string) {
+		t.Helper()
+		dir := seedTeam(t, team.Team{
+			Orchestrated: true,
+			Lead:         "cto",
+			Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		})
+		base := filepath.Join(dir, ".agent-mail")
+		calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "Sent audited-msg to user\n")
+		return dir, calls, filepath.Join(dir, team.DirName, "boundary-audit", "issue-96.jsonl")
+	}
+
+	t.Run("delivered appends truthful terminal outcome", func(t *testing.T) {
+		dir, calls, auditPath := newFixture(t)
+		_, _, err := captureOutput(t, func() error {
+			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+		})
+		if err != nil {
+			t.Fatalf("unsafe send: %v", err)
+		}
+		if len(*calls) != 1 {
+			t.Fatalf("AMQ calls = %d, want 1", len(*calls))
+		}
+		records := readAMQBoundaryAuditRecords(t, auditPath)
+		if len(records) != 2 || records[0].Outcome != "attempted" || records[1].Outcome != "delivered" || records[0].AttemptID == "" || records[0].AttemptID != records[1].AttemptID || records[1].Operation != "send" || records[1].MessageID != "audited-msg" || records[1].Error != "" {
+			t.Fatalf("audit lifecycle = %+v", records)
+		}
+	})
+
+	t.Run("invoked without stable id appends uncertain with same attempt", func(t *testing.T) {
+		dir, _, auditPath := newFixture(t)
+		previousRun := runAMQCommand
+		calls := 0
+		runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+			calls++
+			return []byte("send failed\n"), errors.New("amq unavailable")
+		}
+		t.Cleanup(func() { runAMQCommand = previousRun })
+		_, _, err := captureOutput(t, func() error {
+			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+		})
+		if err == nil || !strings.Contains(err.Error(), "amq unavailable") {
+			t.Fatalf("unsafe send error = %v", err)
+		}
+		if calls != 1 {
+			t.Fatalf("AMQ calls = %d, want 1", calls)
+		}
+		records := readAMQBoundaryAuditRecords(t, auditPath)
+		if len(records) != 2 || records[0].Outcome != "attempted" || records[1].Outcome != "uncertain" || records[0].AttemptID == "" || records[0].AttemptID != records[1].AttemptID || !strings.Contains(records[1].Error, "amq unavailable") {
+			t.Fatalf("audit lifecycle = %+v", records)
+		}
+	})
+
+	t.Run("stable id remains delivered when AMQ also returns error", func(t *testing.T) {
+		dir, _, auditPath := newFixture(t)
+		previousRun := runAMQCommand
+		calls := 0
+		runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+			calls++
+			return []byte("Sent delivered-with-error to user\nwait timed out\n"), errors.New("wait timed out")
+		}
+		t.Cleanup(func() { runAMQCommand = previousRun })
+		_, _, err := captureOutput(t, func() error {
+			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+		})
+		if err == nil || !strings.Contains(err.Error(), "wait timed out") {
+			t.Fatalf("unsafe send error = %v", err)
+		}
+		if calls != 1 {
+			t.Fatalf("AMQ calls = %d, want 1", calls)
+		}
+		records := readAMQBoundaryAuditRecords(t, auditPath)
+		if len(records) != 2 || records[1].Outcome != "delivered" || records[1].MessageID != "delivered-with-error" || records[0].AttemptID != records[1].AttemptID || !strings.Contains(records[1].Error, "wait timed out") {
+			t.Fatalf("audit lifecycle = %+v", records)
+		}
+	})
+
+	t.Run("failure before invocation appends failed", func(t *testing.T) {
+		dir, calls, auditPath := newFixture(t)
+		previousPersist := persistDeliveryReceipt
+		persistDeliveryReceipt = func(string, string, string, *deliveryReceiptData) error {
+			return errors.New("receipt reservation failed")
+		}
+		t.Cleanup(func() { persistDeliveryReceipt = previousPersist })
+		_, _, err := captureOutput(t, func() error {
+			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+		})
+		if err == nil || !strings.Contains(err.Error(), "receipt reservation failed") {
+			t.Fatalf("unsafe send error = %v", err)
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("AMQ calls = %d, want 0", len(*calls))
+		}
+		records := readAMQBoundaryAuditRecords(t, auditPath)
+		if len(records) != 2 || records[0].Outcome != "attempted" || records[1].Outcome != "failed" || records[0].AttemptID != records[1].AttemptID || !strings.Contains(records[1].Error, "receipt reservation failed") {
+			t.Fatalf("audit lifecycle = %+v", records)
+		}
+	})
+
+	t.Run("attempt persistence failure invokes AMQ zero times", func(t *testing.T) {
+		dir, calls, auditPath := newFixture(t)
+		previousAppend := appendAMQBoundaryAuditRecord
+		appendAMQBoundaryAuditRecord = func(rec amqBoundaryAuditRecord) error {
+			if rec.Outcome == "attempted" {
+				return errors.New("audit disk full")
+			}
+			return previousAppend(rec)
+		}
+		t.Cleanup(func() { appendAMQBoundaryAuditRecord = previousAppend })
+		_, _, err := captureOutput(t, func() error {
+			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+		})
+		if err == nil || !strings.Contains(err.Error(), "audit disk full") {
+			t.Fatalf("unsafe send error = %v", err)
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("AMQ calls = %d, want 0", len(*calls))
+		}
+		if _, statErr := os.Stat(auditPath); !os.IsNotExist(statErr) {
+			t.Fatalf("audit path should not exist after attempted append failure: %v", statErr)
+		}
+	})
+
+	t.Run("terminal persistence gap remains attempted", func(t *testing.T) {
+		dir, calls, auditPath := newFixture(t)
+		previousAppend := appendAMQBoundaryAuditRecord
+		appendAMQBoundaryAuditRecord = func(rec amqBoundaryAuditRecord) error {
+			if rec.Outcome == "delivered" {
+				return errors.New("audit finalization failed")
+			}
+			return previousAppend(rec)
+		}
+		t.Cleanup(func() { appendAMQBoundaryAuditRecord = previousAppend })
+		_, _, err := captureOutput(t, func() error {
+			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+		})
+		if err == nil || !strings.Contains(err.Error(), "remains attempted/uncertain") {
+			t.Fatalf("unsafe send error = %v", err)
+		}
+		if len(*calls) != 1 {
+			t.Fatalf("AMQ calls = %d, want 1", len(*calls))
+		}
+		records := readAMQBoundaryAuditRecords(t, auditPath)
+		if len(records) != 1 || records[0].Outcome != "attempted" || records[0].AttemptID == "" {
+			t.Fatalf("audit lifecycle = %+v", records)
+		}
+	})
+}
+
+func TestAMQSendAsRefusalsWriteNoAudit(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "normal operator impersonation", args: []string{"send", "--session", "issue-96", "--me", team.DefaultOperatorHandle, "--to", "cto", "--kind", "answer", "--subject", "APPROVED: tag"}},
+		{name: "unsafe missing reason", args: []string{"send", "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--to", "user", "--kind", "status", "--subject", "gate"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := seedTeam(t, team.Team{
+				Orchestrated: true,
+				Lead:         "cto",
+				Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+			})
+			chdir(t, dir)
+			base := filepath.Join(dir, ".agent-mail")
+			calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "Sent must-not-run to user\n")
+			_, _, err := captureOutput(t, func() error { return runAMQ(tc.args) })
+			if err == nil {
+				t.Fatal("refusal error = nil")
+			}
+			if len(*calls) != 0 {
+				t.Fatalf("AMQ calls = %d, want 0", len(*calls))
+			}
+			auditPath := filepath.Join(dir, team.DirName, "boundary-audit", "issue-96.jsonl")
+			if _, statErr := os.Stat(auditPath); !os.IsNotExist(statErr) {
+				t.Fatalf("audit path should not exist for refusal: %v", statErr)
+			}
+		})
+	}
+}
+
+func readAMQBoundaryAuditRecords(t *testing.T, path string) []amqBoundaryAuditRecord {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	records := make([]amqBoundaryAuditRecord, 0, len(lines))
+	for _, line := range lines {
+		var rec amqBoundaryAuditRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("parse boundary audit line %q: %v", line, err)
+		}
+		records = append(records, rec)
+	}
+	return records
 }
 
 func TestAMQDrainResolvesRootAndForwards(t *testing.T) {
