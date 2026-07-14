@@ -369,6 +369,61 @@ func BeginOutboxDeliveryForProfile(projectDir, profile, session, taskID, intentI
 	return out, err
 }
 
+// AttachOutboxReceiptForProfile links a pre-send durable receipt projection to
+// an already-sending outbox intent. The receipt is evidence; State remains the
+// transport lifecycle owned by the outbox transaction.
+func AttachOutboxReceiptForProfile(projectDir, profile, session, taskID, intentID, attemptID, receiptPath string, now time.Time) (OutboxIntent, error) {
+	attemptID, receiptPath = strings.TrimSpace(attemptID), strings.TrimSpace(receiptPath)
+	if attemptID == "" || receiptPath == "" {
+		return OutboxIntent{}, fmt.Errorf("outbox receipt attempt id and path are required")
+	}
+	var out OutboxIntent
+	_, err := mutateForProfile(projectDir, profile, session, taskID, func(t *Task, _ map[string]*Task) error {
+		intent, err := taskOutboxIntent(t, intentID)
+		if err != nil {
+			return err
+		}
+		if intent.State != OutboxSending {
+			return fmt.Errorf("outbox intent %s is %s, not sending", intentID, intent.State)
+		}
+		if intent.ReceiptAttemptID != "" && len(intent.ReceiptAttempts) == 0 {
+			intent.ReceiptAttempts = []ReceiptLink{{AttemptID: intent.ReceiptAttemptID, Path: intent.ReceiptPath}}
+		}
+		if intent.ReceiptAttemptID != "" && (intent.ReceiptAttemptID != attemptID || intent.ReceiptPath != receiptPath) {
+			for _, historical := range intent.ReceiptAttempts {
+				if historical.AttemptID == attemptID || historical.Path == receiptPath {
+					return fmt.Errorf("outbox intent %s cannot replay historical receipt attempt or path %s", intentID, attemptID)
+				}
+			}
+			// A replacement consumes the newest retry audit exactly once. Earlier
+			// audits may legitimately have no receipt when that retry failed during
+			// resolution before a receipt attempt could be reserved.
+			if len(intent.RetryAudits) == 0 {
+				return fmt.Errorf("outbox intent %s cannot replace receipt %s without a pending audited retry", intentID, intent.ReceiptAttemptID)
+			}
+			audit := &intent.RetryAudits[len(intent.RetryAudits)-1]
+			if audit.ReceiptAttemptID != "" || audit.ReceiptPath != "" {
+				return fmt.Errorf("outbox intent %s latest audited retry already links receipt %s", intentID, audit.ReceiptAttemptID)
+			}
+			if (audit.PreviousState == OutboxSending || audit.PreviousState == OutboxUncertain) && !audit.ConfirmedNotDelivered {
+				return fmt.Errorf("outbox intent %s uncertain retry audit lacks confirmed non-delivery", intentID)
+			}
+			audit.ReceiptAttemptID, audit.ReceiptPath = attemptID, receiptPath
+		}
+		intent.ReceiptAttemptID = attemptID
+		intent.ReceiptPath = receiptPath
+		link := ReceiptLink{AttemptID: intent.ReceiptAttemptID, Path: intent.ReceiptPath}
+		if !containsReceiptLink(intent.ReceiptAttempts, link) {
+			intent.ReceiptAttempts = append(intent.ReceiptAttempts, link)
+		}
+		intent.UpdatedAt = now
+		t.UpdatedAt = now
+		out = *intent
+		return nil
+	})
+	return out, err
+}
+
 func PendingOutboxIntentForProfile(projectDir, profile, session, taskID, intentID string) (OutboxIntent, error) {
 	t, err := ShowForProfile(projectDir, profile, session, taskID)
 	if err != nil {
@@ -385,14 +440,16 @@ func PendingOutboxIntentForProfile(projectDir, profile, session, taskID, intentI
 }
 
 type DispatchIntentOptions struct {
-	From          string
-	Assignee      string
-	Thread        string
-	Kind          string
-	Subject       string
-	Body          string
-	LeaseDuration time.Duration
-	Now           time.Time
+	From             string
+	Assignee         string
+	Thread           string
+	Kind             string
+	Subject          string
+	Body             string
+	ReceiptAttemptID string
+	ReceiptPath      string
+	LeaseDuration    time.Duration
+	Now              time.Time
 }
 
 type DispatchPrepareResult struct {
@@ -447,7 +504,12 @@ func PrepareDispatchForProfile(projectDir, profile, session, taskID string, opts
 		intent := OutboxIntent{
 			ID: nextIntentID(t, "dispatch", opts.Now), TaskID: t.ID, Type: "task_dispatch", State: OutboxPending,
 			From: strings.TrimSpace(opts.From), To: assignee, Thread: strings.TrimSpace(opts.Thread), Kind: strings.TrimSpace(opts.Kind),
-			Subject: strings.TrimSpace(opts.Subject), Body: opts.Body, CreatedAt: opts.Now, UpdatedAt: opts.Now,
+			Subject: strings.TrimSpace(opts.Subject), Body: opts.Body,
+			ReceiptAttemptID: strings.TrimSpace(opts.ReceiptAttemptID), ReceiptPath: strings.TrimSpace(opts.ReceiptPath),
+			CreatedAt: opts.Now, UpdatedAt: opts.Now,
+		}
+		if intent.ReceiptAttemptID != "" {
+			intent.ReceiptAttempts = []ReceiptLink{{AttemptID: intent.ReceiptAttemptID, Path: intent.ReceiptPath}}
 		}
 		t.Outbox = append(t.Outbox, intent)
 		t.UpdatedAt = opts.Now
@@ -477,7 +539,7 @@ func nextIntentID(t *Task, kind string, now time.Time) string {
 	}
 }
 
-func FinishDispatchForProfile(projectDir, profile, session, taskID, intentID string, dispatch Dispatch, messageID string, sendErr error, now time.Time) (Task, OutboxIntent, error) {
+func FinishDispatchForProfile(projectDir, profile, session, taskID, intentID string, dispatch Dispatch, outcome DeliveryOutcome, now time.Time) (Task, OutboxIntent, error) {
 	var out Task
 	var outIntent OutboxIntent
 	err := withLockForProfile(projectDir, profile, session, func(dir string) error {
@@ -497,19 +559,25 @@ func FinishDispatchForProfile(projectDir, profile, session, taskID, intentID str
 		if intent.State != OutboxSending {
 			return fmt.Errorf("outbox intent %s is %s, not sending", intentID, intent.State)
 		}
-		intent.MessageID = strings.TrimSpace(messageID)
+		if err := validateDeliveryOutcome(outcome); err != nil {
+			return err
+		}
+		intent.MessageID = strings.TrimSpace(outcome.MessageID)
 		intent.UpdatedAt = now
-		if sendErr == nil || intent.MessageID != "" {
+		switch outcome.State {
+		case DeliveryDelivered:
 			intent.State, intent.LastError = OutboxDelivered, ""
-		} else {
-			intent.State, intent.LastError = OutboxFailed, sendErr.Error()
+		case DeliveryUncertain:
+			intent.State, intent.LastError = OutboxUncertain, strings.TrimSpace(outcome.Error)
+		case DeliveryFailedBeforeInvoke:
+			intent.State, intent.LastError = OutboxFailed, strings.TrimSpace(outcome.Error)
 		}
 		dispatch.Sender = strings.TrimSpace(dispatch.Sender)
 		dispatch.Assignee = strings.TrimSpace(dispatch.Assignee)
 		dispatch.Thread = strings.TrimSpace(dispatch.Thread)
 		dispatch.Kind = strings.TrimSpace(dispatch.Kind)
 		dispatch.Subject = strings.TrimSpace(dispatch.Subject)
-		dispatch.MessageID = strings.TrimSpace(messageID)
+		dispatch.MessageID = strings.TrimSpace(outcome.MessageID)
 		if dispatch.DispatchedAt.IsZero() {
 			dispatch.DispatchedAt = now
 		}
@@ -524,7 +592,7 @@ func FinishDispatchForProfile(projectDir, profile, session, taskID, intentID str
 	return out, outIntent, err
 }
 
-func FinishOutboxDeliveryForProfile(projectDir, profile, session, taskID, intentID, messageID string, sendErr error, now time.Time) (OutboxIntent, error) {
+func FinishOutboxDeliveryForProfile(projectDir, profile, session, taskID, intentID string, outcome DeliveryOutcome, now time.Time) (OutboxIntent, error) {
 	var out OutboxIntent
 	_, err := mutateForProfile(projectDir, profile, session, taskID, func(t *Task, _ map[string]*Task) error {
 		intent, err := taskOutboxIntent(t, intentID)
@@ -534,14 +602,21 @@ func FinishOutboxDeliveryForProfile(projectDir, profile, session, taskID, intent
 		if intent.State != OutboxSending {
 			return fmt.Errorf("outbox intent %s is %s, not sending", intentID, intent.State)
 		}
-		intent.MessageID = strings.TrimSpace(messageID)
+		if err := validateDeliveryOutcome(outcome); err != nil {
+			return err
+		}
+		intent.MessageID = strings.TrimSpace(outcome.MessageID)
 		intent.UpdatedAt = now
-		if sendErr == nil || intent.MessageID != "" {
+		switch outcome.State {
+		case DeliveryDelivered:
 			intent.State = OutboxDelivered
 			intent.LastError = ""
-		} else {
+		case DeliveryUncertain:
+			intent.State = OutboxUncertain
+			intent.LastError = strings.TrimSpace(outcome.Error)
+		case DeliveryFailedBeforeInvoke:
 			intent.State = OutboxFailed
-			intent.LastError = sendErr.Error()
+			intent.LastError = strings.TrimSpace(outcome.Error)
 		}
 		out = *intent
 		t.UpdatedAt = now
@@ -563,14 +638,15 @@ func PrepareOutboxRetryForProfile(projectDir, profile, session, taskID, intentID
 		}
 		switch intent.State {
 		case OutboxFailed:
-		case OutboxSending:
+		case OutboxSending, OutboxUncertain:
 			if !confirmNotDelivered {
 				return fmt.Errorf("outbox intent %s is delivery-uncertain; retry requires --confirm-not-delivered", intentID)
 			}
 		default:
 			return fmt.Errorf("outbox intent %s is %s; retry requires failed or delivery-uncertain", intentID, intent.State)
 		}
-		intent.RetryAudits = append(intent.RetryAudits, RetryAudit{Actor: actor, Reason: reason, At: now, ConfirmedNotDelivered: confirmNotDelivered})
+		previousState := intent.State
+		intent.RetryAudits = append(intent.RetryAudits, RetryAudit{Actor: actor, Reason: reason, At: now, PreviousState: previousState, ConfirmedNotDelivered: confirmNotDelivered})
 		intent.State = OutboxPending
 		intent.MessageID, intent.LastError = "", ""
 		intent.UpdatedAt = now
@@ -579,6 +655,36 @@ func PrepareOutboxRetryForProfile(projectDir, profile, session, taskID, intentID
 		return nil
 	})
 	return out, err
+}
+
+func validateDeliveryOutcome(outcome DeliveryOutcome) error {
+	outcome.MessageID = strings.TrimSpace(outcome.MessageID)
+	switch outcome.State {
+	case DeliveryDelivered:
+		if outcome.MessageID == "" {
+			return fmt.Errorf("delivered outcome requires a stable message id")
+		}
+	case DeliveryUncertain:
+		if outcome.MessageID != "" {
+			return fmt.Errorf("delivery-uncertain outcome cannot carry a stable message id")
+		}
+	case DeliveryFailedBeforeInvoke:
+		if outcome.MessageID != "" {
+			return fmt.Errorf("pre-invocation failure cannot carry a stable message id")
+		}
+	default:
+		return fmt.Errorf("unknown delivery outcome %q", outcome.State)
+	}
+	return nil
+}
+
+func containsReceiptLink(links []ReceiptLink, want ReceiptLink) bool {
+	for _, link := range links {
+		if link.AttemptID == want.AttemptID && link.Path == want.Path {
+			return true
+		}
+	}
+	return false
 }
 
 func taskOutboxIntent(t *Task, id string) (*OutboxIntent, error) {

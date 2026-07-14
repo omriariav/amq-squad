@@ -41,9 +41,13 @@ fi
 printf '%s %s|AMQ_NO_UPDATE_CHECK=%s\n' "$1" "$2" "$AMQ_NO_UPDATE_CHECK" >> "$AMQ_FAKE_CALLS"
 
 has_json=0
+has_new=0
 for arg in "$@"; do
   if [ "$arg" = "--json" ]; then
     has_json=1
+  fi
+  if [ "$arg" = "--new" ]; then
+    has_new=1
   fi
 done
 
@@ -110,7 +114,9 @@ case "$1:$2" in
         if [ "$has_json" = "1" ]; then printf '%s\n' '[]'; else printf '%s\n' '[AMQ] drained'; fi
         ;;
       list)
-        if [ "$has_json" = "1" ]; then printf '%s\n' '[]'; else printf '%s\n' 'no messages'; fi
+        if [ "$has_json" = "1" ] && [ "$has_new" = "1" ]; then
+          printf '%s\n' '[{"id":"m1","from":"qa","thread":"p2p/outsider__qa","box":"new","path":"inbox/new/m1.md"}]'
+        elif [ "$has_json" = "1" ]; then printf '%s\n' '[]'; else printf '%s\n' 'no messages'; fi
         ;;
       read)
         if [ "$has_json" = "1" ]; then printf '%s\n' '{"id":"m1"}'; else printf '%s\n' 'read m1'; fi

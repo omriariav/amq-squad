@@ -708,7 +708,7 @@ func TestRunDispatchSendsDurablyThenNudges(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	writeDispatchTeam(t, dir)
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "sent msg abc123\n")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent abc123 to qa\n")
 	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
 
 	stdout, stderr, err := captureOutput(t, func() error {
@@ -727,7 +727,7 @@ func TestRunDispatchSendsDurablyThenNudges(t *testing.T) {
 			t.Fatalf("send args missing %q: %s", want, got)
 		}
 	}
-	if !strings.Contains(stdout, "sent msg abc123") {
+	if !strings.Contains(stdout, "msg abc123") {
 		t.Fatalf("amq send output should pass through: %q", stdout)
 	}
 	if len(*nudges) != 1 || (*nudges)[0] != "qa" {
@@ -787,6 +787,14 @@ func TestRunDispatchCreateTaskLinksMessage(t *testing.T) {
 	if !strings.Contains(stdout, "task t1") {
 		t.Fatalf("dispatch output should include task id:\n%s", stdout)
 	}
+	persisted, err := taskstore.Show(dir, "issue-96", "t1")
+	if err != nil || len(persisted.Outbox) != 1 || persisted.Outbox[0].ReceiptAttemptID == "" || persisted.Outbox[0].ReceiptPath == "" || persisted.Dispatch == nil || persisted.Dispatch.ReceiptAttemptID != persisted.Outbox[0].ReceiptAttemptID {
+		t.Fatalf("task/outbox must link the canonical receipt projection: task=%+v err=%v", persisted, err)
+	}
+	linkedReceipt, err := readDeliveryReceipt(persisted.Outbox[0].ReceiptPath)
+	if err != nil || linkedReceipt.MessageID != "msg-abc" || linkedReceipt.TaskID != "t1" || linkedReceipt.OutboxIntentID != persisted.Outbox[0].ID {
+		t.Fatalf("linked receipt=%+v err=%v", linkedReceipt, err)
+	}
 	show, _, err := captureOutput(t, func() error {
 		return runTask([]string{"show", "t1", "--session", "issue-96"})
 	})
@@ -800,7 +808,7 @@ func TestRunDispatchCreateTaskLinksMessage(t *testing.T) {
 	}
 }
 
-func TestRunDispatchCreateTaskAMQSendFailureLeavesTaskAuditTrail(t *testing.T) {
+func TestRunDispatchCreateTaskAMQSendFailureLeavesUncertainTaskAuditTrail(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	writeDispatchTeam(t, dir)
@@ -838,7 +846,7 @@ func TestRunDispatchCreateTaskAMQSendFailureLeavesTaskAuditTrail(t *testing.T) {
 	if showErr != nil {
 		t.Fatalf("created task should remain inspectable after AMQ failure: %v", showErr)
 	}
-	for _, want := range []string{"ID: t1", "Status: in_progress", "Outbox:", "failed", "error=amq send failed", "Dispatch Assignee: qa"} {
+	for _, want := range []string{"ID: t1", "Status: in_progress", "Outbox:", taskstore.OutboxUncertain, "error=amq send failed", "Dispatch Assignee: qa"} {
 		if !strings.Contains(show, want) {
 			t.Fatalf("failed task-backed dispatch missing %q:\n%s", want, show)
 		}
@@ -851,7 +859,7 @@ func TestRunDispatchCreateTaskFinalizeFailureLeavesUncertainClaimedTask(t *testi
 	writeDispatchTeam(t, dir)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-link to qa\n")
 	prevFinish := dispatchFinishTask
-	dispatchFinishTask = func(projectDir, profile, session, taskID, intentID string, dispatch taskstore.Dispatch, messageID string, sendErr error, now time.Time) (taskstore.Task, taskstore.OutboxIntent, error) {
+	dispatchFinishTask = func(projectDir, profile, session, taskID, intentID string, dispatch taskstore.Dispatch, outcome taskstore.DeliveryOutcome, now time.Time) (taskstore.Task, taskstore.OutboxIntent, error) {
 		return taskstore.Task{}, taskstore.OutboxIntent{}, errors.New("finish failed")
 	}
 	t.Cleanup(func() { dispatchFinishTask = prevFinish })

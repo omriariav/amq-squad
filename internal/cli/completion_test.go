@@ -291,6 +291,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"open":            true,
 		"send":            true,
 		"dispatch":        true,
+		"receipt":         true,
 		"collect":         true,
 		"prune-panes":     true,
 		"console":         true,

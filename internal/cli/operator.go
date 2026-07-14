@@ -452,11 +452,11 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 		}
 		args = append(args, "--context", string(contextJSON))
 	}
-	raw, err := runAMQCommand(amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
+	raw, receipt, err := runOwnedDurableSend(durableSendOptions{ProjectDir: o.Project, Profile: o.Profile, Session: o.Session, Kind: "operator_" + o.Command}, amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
 	if err != nil {
 		return fmt.Errorf("%s send to %s: %w", o.Command, o.To, err)
 	}
-	msgID := parseSentMessageID(string(raw))
+	msgID := receipt.MessageID
 	if o.OnSent != nil {
 		if err := o.OnSent(msgID); err != nil {
 			return fmt.Errorf("%s sent message %s but failed to persist verification receipt: %w", o.Command, msgID, err)
@@ -477,10 +477,11 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 			Actions: []mutationAction{
 				followUp("status", "show operator status", o.FollowUp),
 			},
+			DeliveryReceipt: receipt,
 		})
 	}
 	if msgID != "" {
-		fmt.Fprintf(out, "Sent %s to %s on %s: %s\n", o.Command, o.To, o.Thread, msgID)
+		fmt.Fprintf(out, "Sent %s to %s on %s: %s (attempt %s, state %s, receipt %s)\n", o.Command, o.To, o.Thread, msgID, receipt.AttemptID, receipt.DeliveryState, receipt.Path)
 	} else if msg := strings.TrimSpace(string(raw)); msg != "" {
 		fmt.Fprintln(out, msg)
 	}

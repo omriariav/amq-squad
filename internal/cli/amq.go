@@ -566,10 +566,111 @@ func runAMQPassthrough(sub string, args []string) error {
 	if sub == "watch" {
 		return runAMQStreaming(ctx, cmd)
 	}
+	if sub == "send" {
+		if passthroughNeedsStdin(passthrough) {
+			return runAMQPassthroughDurableSend(ctx, resolvedProfile, cmd, passthrough, os.Stdin)
+		}
+		return runAMQPassthroughDurableSend(ctx, resolvedProfile, cmd, passthrough, nil)
+	}
+	if sub == "reply" {
+		if passthroughNeedsStdin(passthrough) {
+			return runAMQPassthroughDurableReply(ctx, resolvedProfile, cmd, passthrough, os.Stdin)
+		}
+		return runAMQPassthroughDurableReply(ctx, resolvedProfile, cmd, passthrough, nil)
+	}
 	if passthroughNeedsStdin(passthrough) {
 		return runAndWriteAMQWithStdin(os.Stdout, ctx, cmd, os.Stdin)
 	}
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
+}
+
+func runAMQPassthroughDurableSend(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader) error {
+	session := strings.TrimSpace(ctx.Env.SessionName)
+	if session == "" {
+		session = strings.TrimSpace(ctx.Session)
+	}
+	out, receipt, err := runOwnedDurableSend(durableSendOptions{
+		ProjectDir: ctx.ProjectDir, Profile: profile, Session: session, Kind: "amq_send",
+	}, amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd, Stdin: stdin})
+	writeAMQPassthroughDurableOutput(out, receipt, amqBoolFlagPresent(passthrough, "json"))
+	return err
+}
+
+func runAMQPassthroughDurableReply(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader) error {
+	originalID := strings.TrimSpace(amqFlagValue(passthrough, "id"))
+	if originalID == "" {
+		return usageErrorf("amq reply requires --id")
+	}
+	type replyListItem struct {
+		ID     string `json:"id"`
+		From   string `json:"from"`
+		Thread string `json:"thread"`
+		Box    string `json:"box"`
+	}
+	var matches []replyListItem
+	for _, boxFlag := range []string{"--new", "--cur"} {
+		listOut, listErr := runAMQCommand(amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: []string{"list", "--root", ctx.Root, "--me", ctx.Me, boxFlag, "--json"}})
+		if listErr != nil {
+			return fmt.Errorf("resolve durable reply recipient from %s with non-mutating AMQ list: %w", originalID, listErr)
+		}
+		var items []replyListItem
+		if err := json.Unmarshal(listOut, &items); err != nil {
+			return fmt.Errorf("resolve durable reply recipient from %s: corrupt AMQ list JSON: %w", originalID, err)
+		}
+		for _, item := range items {
+			if item.ID == originalID {
+				matches = append(matches, item)
+			}
+		}
+	}
+	if len(matches) != 1 || strings.TrimSpace(matches[0].From) == "" || strings.TrimSpace(matches[0].Thread) == "" {
+		return fmt.Errorf("resolve durable reply recipient from %s: expected one exact non-mutating AMQ list match, found %d", originalID, len(matches))
+	}
+	original := matches[0]
+	session := strings.TrimSpace(ctx.Env.SessionName)
+	if session == "" {
+		session = strings.TrimSpace(ctx.Session)
+	}
+	receipt := newDeliveryReceipt(ctx.ProjectDir, profile, session, "", original.From, "", "amq_reply")
+	receipt.Recipients = []string{strings.TrimSpace(original.From)}
+	receipt.Consumers = []deliveryConsumerState{{Consumer: strings.TrimSpace(original.From), State: deliveryStateAmbiguousUnknown}}
+	receipt.Thread = strings.TrimSpace(original.Thread)
+	out, durableReceipt, err := runOwnedDurableSend(durableSendOptions{ProjectDir: ctx.ProjectDir, Profile: profile, Session: session, Kind: "amq_reply", Receipt: &receipt}, amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd, Stdin: stdin})
+	writeAMQPassthroughDurableOutput(out, durableReceipt, amqBoolFlagPresent(passthrough, "json"))
+	return err
+}
+
+func writeAMQPassthroughDurableOutput(out []byte, receipt *deliveryReceiptData, jsonRequested bool) {
+	if jsonRequested && receipt != nil {
+		payload := firstJSONObject(out)
+		var native map[string]any
+		if len(payload) > 0 && json.Unmarshal(payload, &native) == nil {
+			native["amq_squad_receipt"] = receipt
+			encoded, marshalErr := json.MarshalIndent(native, "", "  ")
+			if marshalErr == nil {
+				_, _ = os.Stdout.Write(append(encoded, '\n'))
+			} else {
+				_, _ = os.Stdout.Write(out)
+			}
+		} else {
+			_, _ = os.Stdout.Write(out)
+		}
+	} else {
+		_, _ = os.Stdout.Write(out)
+		if receipt != nil {
+			fmt.Fprintf(os.Stderr, "receipt: attempt_id=%s message_id=%s state=%s path=%s\n", receipt.AttemptID, receipt.MessageID, receipt.DeliveryState, receipt.Path)
+		}
+	}
+}
+
+func amqBoolFlagPresent(args []string, name string) bool {
+	for _, arg := range args {
+		flagName, value, joined := amqFlagName(arg)
+		if flagName == name && (!joined || value == "true") {
+			return true
+		}
+	}
+	return false
 }
 
 func guardAMQPassthrough(sub string, ctx amqContext, passthrough []string, opts amqPassthroughOptions) error {

@@ -315,6 +315,79 @@ func TestReconcileReportsReviewCyclesDeterministically(t *testing.T) {
 	}
 }
 
+func TestReceiptReplacementRequiresAndConsumesOrderedRetryAudits(t *testing.T) {
+	dir := t.TempDir()
+	task, _ := Add(dir, "s", AddInput{Title: "dispatch", AssignTo: "qa"}, fixedNow)
+	prepared, err := PrepareDispatchForProfile(dir, "default", "s", task.ID, DispatchIntentOptions{
+		From: "cto", Assignee: "qa", Kind: "todo", Subject: "dispatch",
+		ReceiptAttemptID: "attempt-1", ReceiptPath: "/receipts/attempt-1.json", Now: fixedNow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BeginOutboxDeliveryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, fixedNow.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AttachOutboxReceiptForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "", "", fixedNow.Add(2*time.Second)); err == nil {
+		t.Fatal("empty receipt link accepted")
+	}
+	if _, err := AttachOutboxReceiptForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "attempt-2", "/receipts/attempt-2.json", fixedNow.Add(2*time.Second)); err == nil || !strings.Contains(err.Error(), "pending audited retry") {
+		t.Fatalf("unaudited replacement err=%v", err)
+	}
+	if _, _, err := FinishDispatchForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, Dispatch{}, DeliveryOutcome{State: DeliveryFailedBeforeInvoke, Error: "offline"}, fixedNow.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareOutboxRetryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "qa", "network repaired", false, fixedNow.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BeginOutboxDeliveryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, fixedNow.Add(5*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	second, err := AttachOutboxReceiptForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "attempt-2", "/receipts/attempt-2.json", fixedNow.Add(6*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.ReceiptAttempts) != 2 || second.ReceiptAttempts[0].AttemptID != "attempt-1" || second.ReceiptAttempts[1].AttemptID != "attempt-2" || len(second.RetryAudits) != 1 || second.RetryAudits[0].PreviousState != OutboxFailed || second.RetryAudits[0].ConfirmedNotDelivered || second.RetryAudits[0].ReceiptAttemptID != "attempt-2" {
+		t.Fatalf("first retry ordering=%+v", second)
+	}
+	if _, err := AttachOutboxReceiptForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "attempt-unaudited", "/receipts/attempt-unaudited.json", fixedNow.Add(6*time.Second)); err == nil || !strings.Contains(err.Error(), "already links") {
+		t.Fatalf("one retry audit authorized two replacements: %v", err)
+	}
+	if _, err := FinishOutboxDeliveryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, DeliveryOutcome{State: DeliveryUncertain, Error: "no id"}, fixedNow.Add(7*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareOutboxRetryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "qa", "blind", false, fixedNow.Add(8*time.Second)); err == nil {
+		t.Fatal("uncertain retry accepted without confirmation")
+	}
+	if _, err := PrepareOutboxRetryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "qa", "mailbox checked", true, fixedNow.Add(9*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BeginOutboxDeliveryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, fixedNow.Add(10*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AttachOutboxReceiptForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "attempt-1", "/receipts/attempt-1.json", fixedNow.Add(11*time.Second)); err == nil || !strings.Contains(err.Error(), "replay historical") {
+		t.Fatalf("historical receipt replay err=%v", err)
+	}
+	afterReplay, err := ShowForProfile(dir, "default", "s", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterReplayIntent, err := taskOutboxIntent(&afterReplay, prepared.Intent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterReplayIntent.State != OutboxSending || afterReplayIntent.ReceiptAttemptID != "attempt-2" || len(afterReplayIntent.ReceiptAttempts) != 2 || len(afterReplayIntent.RetryAudits) != 2 || afterReplayIntent.RetryAudits[1].ReceiptAttemptID != "" || afterReplayIntent.RetryAudits[1].ReceiptPath != "" {
+		t.Fatalf("historical replay mutated transaction or consumed retry audit: %+v", afterReplayIntent)
+	}
+	third, err := AttachOutboxReceiptForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "attempt-3", "/receipts/attempt-3.json", fixedNow.Add(11*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third.ReceiptAttempts) != 3 || len(third.RetryAudits) != 2 || third.ReceiptAttempts[2].AttemptID != "attempt-3" || third.RetryAudits[1].PreviousState != OutboxUncertain || !third.RetryAudits[1].ConfirmedNotDelivered || third.RetryAudits[1].ReceiptAttemptID != "attempt-3" {
+		t.Fatalf("repeated retry ordering=%+v", third)
+	}
+}
+
 func hasFinding(findings []ReconcileFinding, kind, taskID string) bool {
 	for _, f := range findings {
 		if f.Kind == kind && f.TaskID == taskID {
