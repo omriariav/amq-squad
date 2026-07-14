@@ -37,16 +37,17 @@ type contextCandidate struct {
 }
 
 type contextResolution struct {
-	ProjectDir string             `json:"project"`
-	Root       string             `json:"root"`
-	BaseRoot   string             `json:"base_root"`
-	Session    string             `json:"session,omitempty"`
-	Profile    string             `json:"profile"`
-	Handle     string             `json:"handle,omitempty"`
-	PinMode    string             `json:"pin_mode"`
-	Sources    map[string]string  `json:"sources"`
-	Candidates []contextCandidate `json:"candidates"`
-	Warnings   []string           `json:"warnings,omitempty"`
+	ProjectDir          string             `json:"project"`
+	Root                string             `json:"root"`
+	BaseRoot            string             `json:"base_root"`
+	Session             string             `json:"session,omitempty"`
+	Profile             string             `json:"profile"`
+	Handle              string             `json:"handle,omitempty"`
+	PinMode             string             `json:"pin_mode"`
+	NamespaceGeneration string             `json:"namespace_generation,omitempty"`
+	Sources             map[string]string  `json:"sources"`
+	Candidates          []contextCandidate `json:"candidates"`
+	Warnings            []string           `json:"warnings,omitempty"`
 }
 
 type contextResolveOptions struct {
@@ -584,6 +585,10 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	}
 	if err := validateResolvedContext(resolution); err != nil {
 		return contextResolution{}, err
+	}
+	resolution.NamespaceGeneration, err = namespaceEndpointGeneration(projectDir, profile, session)
+	if err != nil {
+		return contextResolution{}, fmt.Errorf("resolve namespace generation: %w", err)
 	}
 
 	selected := map[string]struct {

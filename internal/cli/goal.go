@@ -193,16 +193,17 @@ type goalApprovalEvidence struct {
 }
 
 type goalDeliveryOptions struct {
-	Project   string
-	Profile   string
-	Session   string
-	Role      string
-	Goal      string
-	AttemptID string
-	Team      team.Team
-	Member    team.Member
-	Namespace squadnamespace.Ref
-	Mode      string
+	Project             string
+	Profile             string
+	Session             string
+	Role                string
+	Goal                string
+	AttemptID           string
+	Team                team.Team
+	Member              team.Member
+	Namespace           squadnamespace.Ref
+	NamespaceGeneration string
+	Mode                string
 	// ResumeTransitionID is an internal, durable compare-and-swap token. It is
 	// accepted only from resume after the fresh lead launch has been verified.
 	ResumeTransitionID string
@@ -516,11 +517,28 @@ command is confirm-gated; pass --yes after reviewing the gate and lead state.
 	if gate == "" {
 		return usageErrorf("goal apply requires --gate <topic>")
 	}
-	target, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal apply", namespaceConflictOverrideOptions{
+	override := namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
 		Reason:  *overrideNamespaceReason,
-	})
+	}
+	target, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal apply", override)
 	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(target.Project, target.Profile, target.Session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentTarget, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal apply", override)
+	if err != nil {
+		return fmt.Errorf("goal apply refused: target re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedGoalTarget("goal apply", target, currentTarget); err != nil {
+		return err
+	}
+	target = currentTarget
+	if err := ensureNoNamespaceConflictWithOverride("goal apply", target.Project, target.Profile, target.Session, flagWasSet(fs, "profile"), override); err != nil {
 		return err
 	}
 	goal, err := approvedGoalFromLeadBinding(target)
@@ -610,6 +628,9 @@ confirm-gated and requires --yes in this first implementation slice.
 		if err != nil {
 			return err
 		}
+		if err := ensureNoNamespaceConflict("goal start", opts.Project, opts.Profile, opts.Session, flagWasSet(fs, "profile")); err != nil {
+			return err
+		}
 		plan := goalStartPlan(opts)
 		if *jsonOut {
 			return printJSONEnvelope("goal_start", plan)
@@ -625,6 +646,22 @@ confirm-gated and requires --yes in this first implementation slice.
 	override := namespaceConflictOverrideOptions{Allowed: *overrideNamespaceConflict, Reason: *overrideNamespaceReason}
 	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", override)
 	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(opts.Project, opts.Profile, opts.Session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentOpts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", override)
+	if err != nil {
+		return fmt.Errorf("goal start refused: target re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedGoalTarget("goal start", opts, currentOpts); err != nil {
+		return err
+	}
+	opts = currentOpts
+	if err := ensureNoNamespaceConflictWithOverride("goal start", opts.Project, opts.Profile, opts.Session, flagWasSet(fs, "profile"), override); err != nil {
 		return err
 	}
 	opts.ResumeTransitionID = strings.TrimSpace(*resumeTransition)
@@ -703,6 +740,22 @@ the busy guard for amq-squad send while goal delivery uses its claim-once path.
 	if err != nil {
 		return err
 	}
+	admission, err := acquireNamespaceWriterAdmission(opts.Project, opts.Profile, opts.Session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentOpts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver", override)
+	if err != nil {
+		return fmt.Errorf("goal deliver refused: target re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedGoalTarget("goal deliver", opts, currentOpts); err != nil {
+		return err
+	}
+	opts = currentOpts
+	if err := ensureNoNamespaceConflictWithOverride("goal deliver", opts.Project, opts.Profile, opts.Session, flagWasSet(fs, "profile"), override); err != nil {
+		return err
+	}
 	if flagWasSet(fs, "register-orchestrator") {
 		if err := registerGoalOrchestrator(opts, *registerOrchestrator, wakeInjectModeValue, flagWasSet(fs, "wake-inject-mode")); err != nil {
 			return err
@@ -755,9 +808,6 @@ func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag st
 	if err != nil {
 		return goalDeliveryOptions{}, err
 	}
-	if err := ensureNoNamespaceConflictWithOverride(command, projectDir, profile, workstream, profileSet, override); err != nil {
-		return goalDeliveryOptions{}, err
-	}
 	role := strings.TrimSpace(roleFlag)
 	if role == "" {
 		role = strings.TrimSpace(t.Lead)
@@ -773,15 +823,29 @@ func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag st
 		return goalDeliveryOptions{}, fmt.Errorf("no team member with role %q in this team", role)
 	}
 	return goalDeliveryOptions{
-		Project:   projectDir,
-		Profile:   profile,
-		Session:   workstream,
-		Role:      role,
-		Team:      t,
-		Member:    member,
-		Namespace: squadnamespace.Resolve(projectDir, profile, workstream),
-		Mode:      effectiveTeamExecutionMode(t),
+		Project:             projectDir,
+		Profile:             profile,
+		Session:             workstream,
+		Role:                role,
+		Team:                t,
+		Member:              member,
+		Namespace:           squadnamespace.Resolve(projectDir, profile, workstream),
+		NamespaceGeneration: ctx.NamespaceGeneration,
+		Mode:                effectiveTeamExecutionMode(t),
 	}, nil
+}
+
+func validateReResolvedGoalTarget(operation string, initial, current goalDeliveryOptions) error {
+	if err := validateReResolvedEndpoint(operation, initial.Namespace, current.Namespace, memberHandle(initial.Member), memberHandle(current.Member)); err != nil {
+		return err
+	}
+	if initial.NamespaceGeneration != current.NamespaceGeneration {
+		return fmt.Errorf("%s refused: namespace generation changed before admission; retry", operation)
+	}
+	if initial.Role != current.Role || initial.Member.Binary != current.Member.Binary || initial.Member.Session != current.Member.Session || canonicalPath(initial.Member.EffectiveCWD(initial.Project)) != canonicalPath(current.Member.EffectiveCWD(current.Project)) {
+		return fmt.Errorf("%s refused: goal target identity changed before admission; retry", operation)
+	}
+	return nil
 }
 
 func approvedGoalFromLeadBinding(opts goalDeliveryOptions) (string, error) {

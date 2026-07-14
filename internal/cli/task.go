@@ -173,6 +173,27 @@ func runTaskAdd(args []string) error {
 	if err != nil {
 		return err
 	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(ns, "")
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentSession, currentProject, currentProfile, currentNS, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
+	if err != nil {
+		return fmt.Errorf("task add refused: context re-resolution under admission failed: %w", err)
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(currentNS, "")
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("task add", initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	session, projectDir, profile, ns = currentSession, currentProject, currentProfile, currentNS
 	if err := ensureNoNamespaceConflict("task add", projectDir, profile, session, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
@@ -411,6 +432,27 @@ func runTaskTransition(args []string, verb string) error {
 	if err != nil {
 		return err
 	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(ns, "")
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentSession, currentProject, currentProfile, currentNS, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
+	if err != nil {
+		return fmt.Errorf("task %s refused: context re-resolution under admission failed: %w", verb, err)
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(currentNS, "")
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("task "+verb, initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	session, projectDir, profile, ns = currentSession, currentProject, currentProfile, currentNS
 	if err := ensureNoNamespaceConflict("task "+verb, projectDir, profile, session, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}

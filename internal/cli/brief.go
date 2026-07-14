@@ -143,6 +143,19 @@ Examples:
 		return err
 	}
 	emitContextDiagnostics(ctx)
+	var admission *namespaceAdmissionLocks
+	if !*dryRun {
+		ctx, admission, err = acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
+			return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+		})
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		if err := ensureNoNamespaceMigration("brief seed", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+			return err
+		}
+	}
 	data, err := seedBriefData(ctx.ProjectDir, ctx.Profile, ctx.Session, *seedFrom, *force, *dryRun)
 	if err != nil {
 		return err
@@ -318,6 +331,16 @@ Examples:
 		return err
 	}
 	emitContextDiagnostics(ctx)
+	ctx, admission, err := acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
+		return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+	})
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	if err := ensureNoNamespaceMigration("brief decision", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+		return err
+	}
 	path, err := appendBriefDecisionForProfile(ctx.ProjectDir, ctx.Profile, ctx.Session, *titleFlag, *bodyFlag, decisionNow())
 	if err != nil {
 		return err

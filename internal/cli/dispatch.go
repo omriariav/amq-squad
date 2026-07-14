@@ -201,6 +201,45 @@ Examples:
 	if err != nil {
 		return err
 	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), memberHandle(member))
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentContext, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, *fromFlag, fs)
+	if err != nil {
+		return fmt.Errorf("dispatch refused: context re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedContext(resolvedContext, currentContext, false); err != nil {
+		return err
+	}
+	currentTeam, err := team.ReadProfile(currentContext.ProjectDir, currentContext.Profile)
+	if err != nil {
+		return fmt.Errorf("dispatch refused: reread team under admission: %w", err)
+	}
+	currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, currentContext.Session, flagWasSet(fs, "session"))
+	if err != nil {
+		return err
+	}
+	currentMember, ok := teamMemberByRole(currentTeam, *roleFlag)
+	if !ok {
+		return fmt.Errorf("dispatch refused: target role %q changed before admission", *roleFlag)
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(currentContext.ProjectDir, currentContext.Profile, currentWorkstream), memberHandle(currentMember))
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("dispatch", initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	if member.Binary != currentMember.Binary || member.Session != currentMember.Session || canonicalPath(member.EffectiveCWD(t.Project)) != canonicalPath(currentMember.EffectiveCWD(currentTeam.Project)) {
+		return fmt.Errorf("dispatch refused: target role %q identity changed before admission; retry", *roleFlag)
+	}
+	resolvedContext, projectDir, profile, t, workstream, member = currentContext, currentContext.ProjectDir, currentContext.Profile, currentTeam, currentWorkstream, currentMember
 	if err := ensureNoNamespaceConflictWithOverride("dispatch", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
 		Reason:  *overrideNamespaceReason,

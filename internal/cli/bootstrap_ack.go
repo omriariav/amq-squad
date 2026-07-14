@@ -10,6 +10,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -50,6 +51,37 @@ func runBootstrapAck(args []string) error {
 	teamHome := strings.TrimSpace(rec.TeamHome)
 	if teamHome == "" {
 		teamHome = rec.CWD
+	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(teamHome, rec.TeamProfile, rec.Session), rec.Handle)
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(teamHome, rec.TeamProfile, rec.Session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentRec, err := launch.Read(agentDir)
+	if err != nil {
+		return fmt.Errorf("bootstrap ack refused: launch identity disappeared before admission: %w", err)
+	}
+	currentTeamHome := strings.TrimSpace(currentRec.TeamHome)
+	if currentTeamHome == "" {
+		currentTeamHome = currentRec.CWD
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(currentTeamHome, currentRec.TeamProfile, currentRec.Session), currentRec.Handle)
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("bootstrap ack", initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	if currentRec.StartedAt != rec.StartedAt || currentRec.Root != rec.Root || currentRec.BootstrapExpectation == nil || rec.BootstrapExpectation == nil || currentRec.BootstrapExpectation.LaunchID != rec.BootstrapExpectation.LaunchID {
+		return usageErrorf("bootstrap ack refused: launch generation changed before admission")
+	}
+	rec, teamHome = currentRec, currentTeamHome
+	if err := ensureNoNamespaceMigration("bootstrap ack", teamHome, rec.TeamProfile, rec.Session); err != nil {
+		return err
 	}
 	cfg, err := team.ReadProfile(teamHome, rec.TeamProfile)
 	if err != nil {
