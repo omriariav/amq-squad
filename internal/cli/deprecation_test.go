@@ -202,6 +202,7 @@ func TestTranslateAgentUpArgs(t *testing.T) {
 		{"claude-args consumes dash-prefixed value", []string{"claude", "--dry-run", "--no-bootstrap", "--claude-args", "--chrome"}, []string{"--dry-run", "--no-bootstrap", "--claude-args", "--chrome", "claude"}},
 		{"trailing codex-args with no value is child", []string{"codex", "--dry-run", "--no-bootstrap", "--codex-args"}, []string{"--dry-run", "--no-bootstrap", "codex", "--", "--codex-args"}},
 		{"post-binary --no-require-wake is a launch flag", []string{"codex", "--dry-run", "--no-require-wake"}, []string{"--dry-run", "--no-require-wake", "codex"}},
+		{"restore goal binding remains a launch flag", []string{"codex", "--role", "cto", "--restore-goal-binding", `{"mode":"native_goal"}`}, []string{"--role", "cto", "--restore-goal-binding", `{"mode":"native_goal"}`, "codex"}},
 		{
 			"post-binary named profile explicit root with spawn metadata",
 			[]string{"claude", "--project", "/repo", "--team-home", "/repo", "--team-profile", "review", "--session", "issue-96", "--team-workstream", "--role", "qa", "--me", "release-reviewer", "--spawn-origin", "release-lead", "--spawn-depth", "1", "--root", "/repo/.agent-mail/review/issue-96"},

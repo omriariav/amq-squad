@@ -272,8 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-v2200" id="toc-whats-new-in-v2200">What's new
-in v2.20.0</a></li>
+<li><a href="#whats-new-in-v2201" id="toc-whats-new-in-v2201">What's new
+in v2.20.1</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#quickstart" id="toc-quickstart">Quickstart</a></li>
 <li><a href="#execution-modes" id="toc-execution-modes">Execution
@@ -324,7 +324,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2200">What's new in v2.20.0</a></li>
+<li><a href="#whats-new-in-v2201">What's new in v2.20.1</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -342,32 +342,29 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
-<h2 id="whats-new-in-v2200">What's new in v2.20.0</h2>
-<p>v2.20.0 makes long-running squad recovery and AMQ compatibility safer
-to ship:</p>
+<h2 id="whats-new-in-v2201">What's new in v2.20.1</h2>
+<p>v2.20.1 fixes restored native-goal metadata in the interactive resume
+path:</p>
 <ul>
-<li><strong>Durable resume-goal recovery.</strong> Recovery preserves
-the exact target and delivery evidence across interrupted launches, so
-an operator can resume a staged goal without silently retargeting or
-losing the durable handoff (#447, PR #466).</li>
-<li><strong>Hermetic AMQ compatibility checks.</strong> Ordinary CLI
-tests install a package-owned fake AMQ and prove that a poison host
-binary is never selected; CI also exercises the supported AMQ floor and
-current AMQ with real sessionful and exact-root tuples (#449, PR
-#468).</li>
-<li><strong>Fail-closed inherited AMQ identities.</strong> Default and
-named sessions keep their lexical namespace identity through resolution.
-Nested profile or session symlink rewrites are rejected before AMQ
-resolver I/O, while a deliberate top-level <code>.agent-mail</code>
-container symlink remains supported.</li>
+<li><strong>Wizard resume preserves <code>--restore-goal-binding</code>
+as launcher metadata.</strong> The
+<code>agent up &lt;binary&gt; [flags]</code> translator now recognizes
+the internal restore flag, so it is parsed by amq-squad instead of being
+forwarded to Codex after a synthesized <code>--</code> child-argument
+boundary.</li>
+<li><strong>Regression coverage pins the generated command
+shape.</strong> The test exercises the post-binary JSON flag exactly
+where restored wizard commands place it.</li>
 </ul>
+<p>See <a href="docs/v2.20.1-release-notes.md">the v2.20.1 release
+notes</a> for details.</p>
 <h2 id="install">Install</h2>
 <p>Install the v2 module path:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.20.0</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.20.1</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>

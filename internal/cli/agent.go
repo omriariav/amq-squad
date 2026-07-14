@@ -286,7 +286,7 @@ func launchKnownFlag(name string) string {
 		return "string-accepts-dash"
 	case "--role", "--session", "--me", "--root", "--project", "--profile", "--team-home", "--team-profile",
 		"--conversation", "--conversation-id", "--trust", "--model", "--launcher", "--wake-inject-via", "--wake-inject-mode",
-		"--spawn-origin", "--spawn-depth",
+		"--spawn-origin", "--spawn-depth", "--restore-goal-binding",
 		"-role", "-session", "-s", "-me", "-root", "-project", "-p", "-profile", "-P", "-team-home", "-team-profile",
 		"-conversation", "-conversation-id", "-trust", "-model", "-launcher", "-wake-inject-via", "-wake-inject-mode",
 		"-spawn-origin", "-spawn-depth":
