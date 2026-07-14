@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        amq-version: [v0.42.1, latest]
+        amq-version: [v0.42.1, v0.43.1, latest]
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -98,7 +98,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        amq-version: [v0.42.1, latest]
+        amq-version: [v0.42.1, v0.43.1]
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

@@ -602,10 +602,15 @@ amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or other goal
 sources happens in the skills or operator tooling; the core binary owns team,
 runtime, and coordination state.
 
+The minimum 0.42.1 compatibility floor is unchanged. This release is
+explicitly validated against pinned 0.43.1; latest remains a
+forward-compatibility canary.
+
 v2.20.0 requires AMQ 0.42.1+, the first supported release for the complete
-injected identity contract. After upgrading from an older AMQ, stop and resume/relaunch agents so
-their shells receive a coherent pin; a child command cannot repair stale parent
-environment variables. Default-profile sessions use `AM_ROOT`, `AM_BASE_ROOT`,
-non-empty `AM_SESSION`, and `AM_ME`. Named profiles use their exact root with
-`AM_ROOT=AM_BASE_ROOT` and no `AM_SESSION`. Run `amq-squad doctor` before
+injected identity contract. After upgrading AMQ, stop and resume/relaunch agents
+so their parent shells refresh the complete identity tuple; a child command
+cannot repair stale parent environment variables. Default-profile sessions use
+`AM_ROOT`, `AM_BASE_ROOT`, non-empty `AM_SESSION`, and `AM_ME`. Named profiles
+use their exact root with `AM_ROOT=AM_BASE_ROOT` and no `AM_SESSION`. Run
+`amq-squad doctor` before
 resuming if it reports a legacy or inconsistent pin.

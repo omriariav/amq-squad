@@ -15,13 +15,15 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/amqexec"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/procinfo"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-// TestRealAMQWakeCompatibility is the required macOS floor/latest contract for
-// native terminal injection. Unlike the Linux queue compatibility test, every
-// case here uses a disposable real tmux PTY and fails (rather than skips) when
-// tmux or native wake injection is unavailable after the lane opts in.
+// TestRealAMQWakeCompatibility is the required macOS floor/current contract,
+// with latest rerun as a forward-compatibility canary. Unlike the Linux queue
+// compatibility test, every case here uses a disposable real tmux PTY and
+// fails (rather than skips) when tmux or native wake injection is unavailable
+// after the lane opts in.
 func TestRealAMQWakeCompatibility(t *testing.T) {
 	amq := strings.TrimSpace(os.Getenv("AMQ_SQUAD_REAL_AMQ"))
 	if amq == "" {
@@ -44,6 +46,7 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 	}
 	squad := filepath.Join(t.TempDir(), "amq-squad")
 	realWakeCommand(t, repo, nil, "go", "build", "-o", squad, "./cmd/amq-squad")
+	nativeRecorder := buildRealWakeRecorder(t, repo)
 
 	t.Run("native wake auto and explicit raw", func(t *testing.T) {
 		for _, mode := range []string{"auto", "raw"} {
@@ -85,6 +88,77 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		if !strings.Contains(line, "managed-raw") {
 			t.Fatalf("submitted managed wake = %q", line)
 		}
+	})
+
+	t.Run("managed stop resume and cleanup", func(t *testing.T) {
+		h := newRealWakeHarness(t, tmux, amq)
+		installNativeRealWakeRecorder(t, nativeRecorder, h.recorder)
+		writeRealWakeTeam(t, h.project, h.session)
+		h.init("cto", "qa")
+		args := []string{"agent", "up", h.recorder, "--project", h.project, "--role", "qa", "--session", h.session, "--team-workstream", "--me", "qa", "--no-bootstrap", "--no-default-args"}
+		h.start(append([]string{squad}, args...))
+		agentDir := filepath.Join(h.root, "agents", "qa")
+		initial, err := launch.Read(agentDir)
+		if err != nil {
+			t.Fatalf("read initial managed launch record: %v", err)
+		}
+		initialWake, err := readWakeLock(agentDir)
+		if err != nil {
+			t.Fatalf("read initial managed wake lock: %v", err)
+		}
+		if initial.AgentPID <= 0 || initialWake.PID <= 0 || initial.Tmux == nil || initial.Tmux.Session != h.tmuxSession {
+			t.Fatalf("initial managed launch record lacks pid/wake/tmux evidence: %+v", initial)
+		}
+		initialPaneID := strings.TrimSpace(realWakeCommand(t, h.project, h.env(), tmux, "display-message", "-p", "-t", h.tmuxSession, "#{pane_id}"))
+		if initialPaneID == "" || initial.Tmux.PaneID != initialPaneID {
+			t.Fatalf("initial managed launch pane/session = %q/%q, want %q/%q", initial.Tmux.PaneID, initial.Tmux.Session, initialPaneID, h.tmuxSession)
+		}
+		assertRealWakeProcessIdentity(t, initial)
+		initialSession := h.tmuxSession
+		stopOut := realWakeCommand(t, h.project, h.env(), squad,
+			"stop", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session, "--role", "qa")
+		t.Logf("initial managed stop: %s", strings.TrimSpace(stopOut))
+		assertRealWakeStopped(t, h, agentDir, initial.AgentPID, initialWake.PID, initialSession)
+
+		if err := os.Remove(h.ready); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if err := os.Remove(h.capture); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		resumedSession := initialSession + "-resume"
+		h.tmuxSession = resumedSession
+		realWakeCommand(t, h.project, h.env(), squad,
+			"resume", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session,
+			"--role", "qa", "--exec", "--target", "new-session", "--terminal-session", resumedSession)
+		waitForRealWakeFile(t, h.ready, "resumed recorder readiness")
+		resumed, err := launch.Read(agentDir)
+		if err != nil {
+			t.Fatalf("read resumed managed launch record: %v", err)
+		}
+		resumedWake, err := readWakeLock(agentDir)
+		if err != nil {
+			t.Fatalf("read resumed managed wake lock: %v", err)
+		}
+		if resumed.AgentPID <= 0 || resumedWake.PID <= 0 || resumed.AgentPID == initial.AgentPID || resumedWake.PID == initialWake.PID || !resumed.StartedAt.After(initial.StartedAt) || resumed.Tmux == nil || resumed.Tmux.Session != resumedSession {
+			t.Fatalf("resumed launch did not record fresh pid/wake/time/tmux evidence: initial=%+v resumed=%+v", initial, resumed)
+		}
+		resumedPaneID := strings.TrimSpace(realWakeCommand(t, h.project, h.env(), tmux, "display-message", "-p", "-t", resumedSession, "#{pane_id}"))
+		if resumedPaneID == "" || resumed.Tmux.PaneID != resumedPaneID {
+			t.Fatalf("resumed managed launch pane/session = %q/%q, want %q/%q", resumed.Tmux.PaneID, resumed.Tmux.Session, resumedPaneID, resumedSession)
+		}
+		assertRealWakeProcessIdentity(t, resumed)
+		h.send("cto", "qa", "managed-resume", "managed resume wake canary")
+		line := h.oneSubmittedLine()
+		assertMarkerFreeWake(t, line)
+		if !strings.Contains(line, "managed-resume") {
+			t.Fatalf("submitted resumed wake = %q", line)
+		}
+
+		stopOut = realWakeCommand(t, h.project, h.env(), squad,
+			"stop", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session, "--role", "qa", "--close-panes")
+		t.Logf("final managed stop: %s", strings.TrimSpace(stopOut))
+		assertRealWakeStopped(t, h, agentDir, resumed.AgentPID, resumedWake.PID, resumedSession)
 	})
 
 	t.Run("dispatch force durable plus prompt fallback", func(t *testing.T) {
@@ -138,6 +212,71 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 	})
 }
 
+func buildRealWakeRecorder(t *testing.T, dir string) string {
+	t.Helper()
+	buildDir := t.TempDir()
+	source := filepath.Join(buildDir, "main.go")
+	binary := filepath.Join(buildDir, "wake-recorder")
+	program := `package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+)
+
+func main() {
+	capture := os.Getenv("WAKE_CAPTURE")
+	ready := os.Getenv("WAKE_READY")
+	f, err := os.OpenFile(capture, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	defer f.Close()
+	// The lifecycle resume path starts from an interactive shell. Disable its
+	// inherited bracketed-paste terminal mode so this native line recorder has
+	// the same plain-input contract as the injection-only shell recorder.
+	fmt.Fprint(os.Stdout, "\x1b[?2004l")
+	if err := os.WriteFile(ready, []byte("ready"), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		if _, err := fmt.Fprintln(f, scanner.Text()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := f.Sync(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+`
+	if err := os.WriteFile(source, []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realWakeCommand(t, dir, nil, "go", "build", "-o", binary, source)
+	return binary
+}
+
+func installNativeRealWakeRecorder(t *testing.T, source, target string) {
+	t.Helper()
+	b, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, b, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type realWakeHarness struct {
 	t           *testing.T
 	tmux        string
@@ -146,6 +285,7 @@ type realWakeHarness struct {
 	root        string
 	session     string
 	tmuxSession string
+	initialTmux string
 	tmuxTmpDir  string
 	recorder    string
 	capture     string
@@ -164,6 +304,7 @@ func newRealWakeHarness(t *testing.T, tmux, amq string) *realWakeHarness {
 		tmuxTmpDir:  filepath.Join("/tmp", "amq-wake-tmux-"+suffix),
 		recorder:    filepath.Join(project, "codex"), capture: filepath.Join(project, "submitted.txt"), ready: filepath.Join(project, "ready"),
 	}
+	h.initialTmux = h.tmuxSession
 	if err := os.MkdirAll(h.tmuxTmpDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -172,9 +313,11 @@ func newRealWakeHarness(t *testing.T, tmux, amq string) *realWakeHarness {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		cmd := exec.Command(tmux, "kill-session", "-t", h.tmuxSession)
-		cmd.Env = h.env()
-		_ = cmd.Run()
+		for _, session := range []string{h.initialTmux, h.tmuxSession} {
+			cmd := exec.Command(tmux, "kill-session", "-t", session)
+			cmd.Env = h.env()
+			_ = cmd.Run()
+		}
 		_ = os.RemoveAll(h.tmuxTmpDir)
 	})
 	return h
@@ -235,6 +378,67 @@ func waitForRealWakeFile(t *testing.T, path, label string) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s at %s", label, path)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func assertRealWakeStopped(t *testing.T, h *realWakeHarness, agentDir string, agentPID, wakePID int, tmuxSession string) {
+	t.Helper()
+	waitForRealWakePIDExit(t, "agent", agentPID)
+	waitForRealWakePIDExit(t, "wake", wakePID)
+	waitForRealWakeCondition(t, "tmux session cleanup", func() bool {
+		cmd := exec.Command(h.tmux, "has-session", "-t", tmuxSession)
+		cmd.Env = h.env()
+		return cmd.Run() != nil
+	})
+	if _, err := os.Stat(filepath.Join(agentDir, ".wake.lock")); !os.IsNotExist(err) {
+		t.Fatalf("wake lock survived stop: %v", err)
+	}
+	presence, err := readPresenceForEntry(agentDir)
+	if err != nil || presence.Status != "offline" {
+		t.Fatalf("presence after stop = %+v / %v, want offline", presence, err)
+	}
+}
+
+func assertRealWakeProcessIdentity(t *testing.T, rec launch.Record) {
+	t.Helper()
+	args, ok := procinfo.Args(rec.AgentPID)
+	fields := strings.Fields(args)
+	if !ok || len(fields) == 0 {
+		t.Fatalf("real procinfo could not read recorded agent pid %d args", rec.AgentPID)
+	}
+	if got, want := filepath.Base(fields[0]), filepath.Base(rec.Binary); got != want {
+		t.Fatalf("recorded agent pid %d first process token basename=%q, want recorded binary basename=%q; args=%q", rec.AgentPID, got, want, args)
+	}
+	matcher := agentProcessMatcher(rec.Binary)
+	if !matcher(args) || !procinfo.Match(rec.AgentPID, matcher) {
+		t.Fatalf("recorded agent pid %d did not satisfy the production binary matcher for %q; args=%q", rec.AgentPID, rec.Binary, args)
+	}
+}
+
+func waitForRealWakePIDExit(t *testing.T, label string, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(8 * time.Second)
+	for realWakePIDAlive(pid) {
+		if time.Now().After(deadline) {
+			out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "pid=,ppid=,state=,command=").CombinedOutput()
+			t.Fatalf("timed out waiting for %s pid %d exit; ps err=%v output=%q", label, pid, err, strings.TrimSpace(string(out)))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func realWakePIDAlive(pid int) bool {
+	return procinfo.Alive(pid)
+}
+
+func waitForRealWakeCondition(t *testing.T, label string, done func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(8 * time.Second)
+	for !done() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", label)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
