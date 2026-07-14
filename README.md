@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.20.0](#whats-new-in-v2200)
+- [What's new in v2.20.1](#whats-new-in-v2201)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,22 +38,18 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.20.0
+## What's new in v2.20.1
 
-v2.20.0 makes long-running squad recovery and AMQ compatibility safer to ship:
+v2.20.1 fixes restored native-goal metadata in the interactive resume path:
 
-- **Durable resume-goal recovery.** Recovery preserves the exact target and
-  delivery evidence across interrupted launches, so an operator can resume a
-  staged goal without silently retargeting or losing the durable handoff (#447,
-  PR #466).
-- **Hermetic AMQ compatibility checks.** Ordinary CLI tests install a
-  package-owned fake AMQ and prove that a poison host binary is never selected;
-  CI also exercises the supported AMQ floor and current AMQ with real
-  sessionful and exact-root tuples (#449, PR #468).
-- **Fail-closed inherited AMQ identities.** Default and named sessions keep
-  their lexical namespace identity through resolution. Nested profile or session
-  symlink rewrites are rejected before AMQ resolver I/O, while a deliberate
-  top-level `.agent-mail` container symlink remains supported.
+- **Wizard resume preserves `--restore-goal-binding` as launcher metadata.**
+  The `agent up <binary> [flags]` translator now recognizes the internal
+  restore flag, so it is parsed by amq-squad instead of being forwarded to
+  Codex after a synthesized `--` child-argument boundary.
+- **Regression coverage pins the generated command shape.** The test exercises
+  the post-binary JSON flag exactly where restored wizard commands place it.
+
+See [the v2.20.1 release notes](docs/v2.20.1-release-notes.md) for details.
 
 ## Install
 
@@ -67,7 +63,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.20.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.20.1
 ```
 
 Install the skills from the plugin marketplace when agents should use the
