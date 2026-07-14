@@ -973,7 +973,7 @@ func TestGoalFallbackNamedProfileUsesNamespacedAMQRoot(t *testing.T) {
 	}
 }
 
-func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
+func TestGoalDeliverRegistersExternalOrchestratorWithoutMutatingConfiguredLead(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
@@ -989,6 +989,10 @@ func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
 		AgentPID: 4242,
 		Tmux:     &launch.TmuxInfo{PaneID: "%7"},
 	})
+	root := filepath.Join(base, "issue-96")
+	if err := createExternalOrchestratorMailboxFixture(root, "legacy"); err != nil {
+		t.Fatal(err)
+	}
 	prevPane := currentPaneIdentity
 	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
 		return &tmuxpane.PaneIdentity{Session: "global", WindowID: "@1", WindowName: "orch", PaneID: "%99"}, nil
@@ -1006,18 +1010,43 @@ func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
 	oldSend := sendPromptToPane
 	var sent []string
 	sendPromptToPane = func(paneID, prompt string) error {
+		scope, scopeErr := newExternalOrchestratorScope(dir, team.DefaultProfile, "issue-96", "global-orch")
+		if scopeErr != nil {
+			t.Fatal(scopeErr)
+		}
+		registry, registryErr := readExternalOrchestratorRegistry(scope)
+		if registryErr != nil || registry.Registrations[len(registry.Registrations)-1].State != externalOrchestratorStateRegistered {
+			t.Fatalf("goal invoked before external registry committed registered: registry=%+v err=%v", registry, registryErr)
+		}
 		sent = append(sent, paneID+"\x00"+prompt)
 		return nil
+	}
+	oldRunAMQ := runAMQCommand
+	var initReq amqCommandRequest
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		if len(req.Arg) > 0 && req.Arg[0] == "init" {
+			initReq = req
+			if err := createExternalOrchestratorMailboxFixture(amqFlagValue(req.Arg, "root"), amqFlagValue(req.Arg, "agents")); err != nil {
+				return nil, err
+			}
+			return []byte("Initialized AMQ root\n"), nil
+		}
+		return oldRunAMQ(req)
 	}
 	t.Cleanup(func() {
 		currentPaneIdentity = prevPane
 		leadWakeStarter = prevWake
 		statusPaneLister = oldLister
 		sendPromptToPane = oldSend
+		runAMQCommand = oldRunAMQ
 	})
+	teamBefore, err := os.ReadFile(team.Path(dir))
+	if err != nil {
+		t.Fatalf("read team bytes before registration: %v", err)
+	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--json"})
+		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--goal", "ship safely", "--register-orchestrator=global-orch", "--json"})
 	})
 	if err != nil {
 		t.Fatalf("goal deliver --register-orchestrator: %v\nstderr:\n%s", err, stderr)
@@ -1029,16 +1058,30 @@ func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
 	if len(sent) != 1 || !strings.HasPrefix(sent[0], "%7\x00/goal --goal") {
 		t.Fatalf("delivery should still target explicit cto pane, sent = %+v", sent)
 	}
+	if got := amqFlagValue(initReq.Arg, "agents"); got != "cto,global-orch,legacy" || !containsString(initReq.Arg, "--force") {
+		t.Fatalf("AMQ init did not preserve union: args=%v", initReq.Arg)
+	}
+	envJoined := strings.Join(initReq.Env, "\n")
+	canonicalRoot, _ := canonicalPathForReceipt(root)
+	if !strings.Contains(envJoined, "AM_ROOT="+canonicalRoot) || !strings.Contains(envJoined, "AM_BASE_ROOT="+canonicalRoot) || strings.Contains(envJoined, "AM_SESSION=") || !strings.Contains(envJoined, "AM_ME=global-orch") {
+		t.Fatalf("AMQ init context is not exact identity-clean root: %v", initReq.Env)
+	}
+	teamAfter, err := os.ReadFile(team.Path(dir))
+	if err != nil {
+		t.Fatalf("read team bytes after registration: %v", err)
+	}
+	if string(teamAfter) != string(teamBefore) {
+		t.Fatalf("register-orchestrator mutated team bytes\nbefore:\n%s\nafter:\n%s", teamBefore, teamAfter)
+	}
 	cfg, err := team.Read(dir)
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
-	if cfg.Lead != goalOrchestratorRole || !cfg.Orchestrated {
-		t.Fatalf("team lead/orchestrated = %q/%v, want orchestrator/true", cfg.Lead, cfg.Orchestrated)
+	if cfg.Lead != "cto" || !cfg.Orchestrated || len(cfg.Members) != 1 || cfg.Members[0].Role != "cto" {
+		t.Fatalf("configured lead/members changed: lead=%q members=%+v", cfg.Lead, cfg.Members)
 	}
-	orch, ok := teamMemberByRole(cfg, goalOrchestratorRole)
-	if !ok || orch.Handle != "global-orch" || orch.Binary != "codex" || orch.Session != "issue-96" {
-		t.Fatalf("orchestrator member = %+v, ok=%v", orch, ok)
+	if _, ok := teamMemberByRole(cfg, goalOrchestratorRole); ok {
+		t.Fatalf("external orchestrator leaked into configured members: %+v", cfg.Members)
 	}
 	if len(wakeOpts) != 1 || wakeOpts[0].Handle != "global-orch" || !wakeOpts[0].Require {
 		t.Fatalf("wake opts = %+v", wakeOpts)
@@ -1052,6 +1095,22 @@ func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
 	}
 	if rec.Terminal == nil || rec.Terminal.Backend != "tmux" || rec.Terminal.PaneID != "%99" || rec.Terminal.Target != "external" {
 		t.Fatalf("orchestrator launch terminal identity = %+v", rec.Terminal)
+	}
+	scope, err := newExternalOrchestratorScope(dir, team.DefaultProfile, "issue-96", "global-orch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := readExternalOrchestratorRegistry(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var states []externalOrchestratorRegistrationState
+	for _, transition := range registry.Registrations[len(registry.Registrations)-1].Transitions {
+		states = append(states, transition.To)
+	}
+	wantStates := []externalOrchestratorRegistrationState{externalOrchestratorStatePlanned, externalOrchestratorStateMailboxInvoked, externalOrchestratorStateMailboxVerified, externalOrchestratorStateRuntimeVerified, externalOrchestratorStateRegistered}
+	if fmt.Sprint(states) != fmt.Sprint(wantStates) {
+		t.Fatalf("registry state ordering = %v, want %v", states, wantStates)
 	}
 }
 
@@ -1085,13 +1144,46 @@ func setupOrchestratorRegStubs(t *testing.T, dir string) orchestratorRegStubs {
 		*sent = append(*sent, paneID+"\x00"+prompt)
 		return nil
 	}
+	oldRunAMQ := runAMQCommand
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		if len(req.Arg) > 0 && req.Arg[0] == "init" {
+			if err := createExternalOrchestratorMailboxFixture(amqFlagValue(req.Arg, "root"), amqFlagValue(req.Arg, "agents")); err != nil {
+				return nil, err
+			}
+			return []byte("Initialized AMQ root\n"), nil
+		}
+		return oldRunAMQ(req)
+	}
 	t.Cleanup(func() {
 		currentPaneIdentity = prevPane
 		leadWakeStarter = prevWake
 		statusPaneLister = oldLister
 		sendPromptToPane = oldSend
+		runAMQCommand = oldRunAMQ
 	})
 	return orchestratorRegStubs{sent: sent, wakeOpts: wakeOpts}
+}
+
+func createExternalOrchestratorMailboxFixture(root, handles string) error {
+	agents := strings.Split(handles, ",")
+	for _, handle := range agents {
+		for _, relative := range []string{"inbox/new", "inbox/cur", "inbox/tmp", "outbox/sent", "receipts", "dlq/new", "dlq/cur", "dlq/tmp"} {
+			if err := os.MkdirAll(filepath.Join(root, "agents", handle, filepath.FromSlash(relative)), 0o700); err != nil {
+				return err
+			}
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, "meta"), 0o700); err != nil {
+		return err
+	}
+	b, err := json.Marshal(struct {
+		Version int      `json:"version"`
+		Agents  []string `json:"agents"`
+	}{Version: 1, Agents: agents})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(root, "meta", "config.json"), b, 0o600)
 }
 
 func seedCtoLeadTeamForOrchestrator(t *testing.T) (string, string) {
@@ -1115,8 +1207,8 @@ func seedCtoLeadTeamForOrchestrator(t *testing.T) (string, string) {
 }
 
 // TestGoalStartRegisterOrchestratorProducesWakeableIdentity proves #287: a single
-// gated command yields the full wakeable orchestrator identity (durable member +
-// launch record bound to the live pane + lead set + wake sidecar requested).
+// gated command yields the external wakeable identity without changing native
+// team authority.
 func TestGoalStartRegisterOrchestratorProducesWakeableIdentity(t *testing.T) {
 	base, dir := seedCtoLeadTeamForOrchestrator(t)
 	stubs := setupOrchestratorRegStubs(t, dir)
@@ -1135,12 +1227,11 @@ func TestGoalStartRegisterOrchestratorProducesWakeableIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
-	if cfg.Lead != goalOrchestratorRole || !cfg.Orchestrated {
+	if cfg.Lead != "cto" || !cfg.Orchestrated {
 		t.Fatalf("team lead/orchestrated = %q/%v", cfg.Lead, cfg.Orchestrated)
 	}
-	orch, ok := teamMemberByRole(cfg, goalOrchestratorRole)
-	if !ok || orch.Handle != "global-orch" {
-		t.Fatalf("orchestrator member = %+v ok=%v", orch, ok)
+	if _, ok := teamMemberByRole(cfg, goalOrchestratorRole); ok {
+		t.Fatalf("external orchestrator leaked into team members: %+v", cfg.Members)
 	}
 	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
 	if err != nil {
@@ -1187,20 +1278,20 @@ func TestGoalStartRegisterOrchestratorNoneModeIsZeroInput(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("goal repair without mode: %v\nstderr:\n%s", err, stderr)
 	}
-	if len(*stubs.wakeOpts) != 2 || (*stubs.wakeOpts)[1].WakeInjectMode != "none" || (*stubs.wakeOpts)[1].WakeInjectCmd != "" {
-		t.Fatalf("goal repair must inherit none: %+v", *stubs.wakeOpts)
+	if len(*stubs.wakeOpts) != 1 {
+		t.Fatalf("registered rerun must not restart wake: %+v", *stubs.wakeOpts)
 	}
 	if _, stderr, err = captureOutput(t, func() error {
 		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--wake-inject-mode", "raw", "--yes", "--json"})
 	}); err != nil {
 		t.Fatalf("goal repair explicit raw: %v\nstderr:\n%s", err, stderr)
 	}
-	if len(*stubs.wakeOpts) != 3 || (*stubs.wakeOpts)[2].WakeInjectMode != "raw" || (*stubs.wakeOpts)[2].WakeInjectCmd != wakeDrainInject() {
-		t.Fatalf("goal explicit raw must override inherited none: %+v", *stubs.wakeOpts)
+	if len(*stubs.wakeOpts) != 1 {
+		t.Fatalf("registered rerun must remain external-action idempotent: %+v", *stubs.wakeOpts)
 	}
 	rec, err = launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
-	if err != nil || rec.WakeInjectMode != "raw" || rec.WakeInjectCmd != wakeDrainInject() {
-		t.Fatalf("goal explicit raw record = %+v, %v", rec, err)
+	if err != nil || rec.WakeInjectMode != "none" || rec.WakeInjectCmd != "" {
+		t.Fatalf("registered rerun mutated launch record = %+v, %v", rec, err)
 	}
 }
 
@@ -1233,8 +1324,8 @@ func TestGoalStartRegisterOrchestratorIdempotentOnRerun(t *testing.T) {
 			count++
 		}
 	}
-	if count != 1 {
-		t.Fatalf("rerun must not duplicate orchestrator member, got %d (members=%+v)", count, cfg.Members)
+	if count != 0 {
+		t.Fatalf("external orchestrator must not enter native members, got %d (members=%+v)", count, cfg.Members)
 	}
 	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
 	if err != nil {
@@ -1287,10 +1378,21 @@ func seedCtoDeliverTeamForOrchestrator(t *testing.T) (string, string) {
 	}
 	oldSend := sendPromptToPane
 	sendPromptToPane = func(string, string) error { return nil }
+	oldRunAMQ := runAMQCommand
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		if len(req.Arg) > 0 && req.Arg[0] == "init" {
+			if err := createExternalOrchestratorMailboxFixture(amqFlagValue(req.Arg, "root"), amqFlagValue(req.Arg, "agents")); err != nil {
+				return nil, err
+			}
+			return []byte("Initialized AMQ root\n"), nil
+		}
+		return oldRunAMQ(req)
+	}
 	t.Cleanup(func() {
 		currentPaneIdentity = prevPane
 		statusPaneLister = oldLister
 		sendPromptToPane = oldSend
+		runAMQCommand = oldRunAMQ
 	})
 	return base, dir
 }

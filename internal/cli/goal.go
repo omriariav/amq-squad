@@ -525,13 +525,6 @@ confirm-gated and requires --yes in this first implementation slice.
 		return usageErrorf("goal start delivery requires --yes (or run --dry-run to preview first)")
 	}
 	override := namespaceConflictOverrideOptions{Allowed: *overrideNamespaceConflict, Reason: *overrideNamespaceReason}
-	if flagWasSet(fs, "register-orchestrator") {
-		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", override)
-		if err != nil {
-			return err
-		}
-		*roleFlag = role
-	}
 	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", override)
 	if err != nil {
 		return err
@@ -609,13 +602,6 @@ runtime accepts goal control messages safely.
 		return err
 	}
 	override := namespaceConflictOverrideOptions{Allowed: *overrideNamespaceConflict, Reason: *overrideNamespaceReason}
-	if flagWasSet(fs, "register-orchestrator") {
-		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver", override)
-		if err != nil {
-			return err
-		}
-		*roleFlag = role
-	}
 	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver", override)
 	if err != nil {
 		return err
@@ -857,20 +843,6 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	if handle == "" {
 		handle = defaultGoalOrchestratorHandle
 	}
-	if _, err := currentPaneIdentity(); err != nil {
-		return err
-	}
-	if err := ensureGoalOrchestratorMember(opts.Project, opts.Profile, opts.Session, handle); err != nil {
-		return err
-	}
-	t, err := team.ReadProfile(opts.Project, opts.Profile)
-	if err != nil {
-		return fmt.Errorf("read team after orchestrator registration: %w", err)
-	}
-	member, ok := memberByRole(t, goalOrchestratorRole)
-	if !ok {
-		return fmt.Errorf("registered orchestrator member missing from team profile")
-	}
 	id, err := currentPaneIdentity()
 	if err != nil {
 		return err
@@ -878,7 +850,31 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	if id == nil {
 		return fmt.Errorf("goal delivery --register-orchestrator requires a current tmux pane (TMUX/TMUX_PANE unset)")
 	}
-	cwd := member.EffectiveCWD(t.Project)
+	lifecycle, err := beginExternalOrchestratorLifecycle(opts, handle, id.PaneID, id.Session, id.WindowID, id.WindowName, currentLaunchTTY(), time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	lifecycle, err = ensureExternalOrchestratorMailbox(opts, lifecycle)
+	if err != nil {
+		return err
+	}
+	if lifecycle.Registration.State == externalOrchestratorStateRegistered {
+		if err := verifyExternalOrchestratorLaunch(lifecycle); err != nil {
+			return fmt.Errorf("registered external orchestrator runtime is incomplete: %w", err)
+		}
+		return nil
+	}
+	if lifecycle.Registration.State == externalOrchestratorStateRuntimeVerified {
+		if err := verifyExternalOrchestratorLaunch(lifecycle); err != nil {
+			return fmt.Errorf("runtime-verified external orchestrator is incomplete: %w", err)
+		}
+		if _, _, err := transitionExternalOrchestratorRegistration(lifecycle.Registration.Identity.Scope, lifecycle.Registration.Generation, externalOrchestratorStateRegistered, externalOrchestratorTransitionEvidence{LaunchPath: filepath.Join(lifecycle.AgentDir, launch.FileName), Outcome: "registered"}, time.Now().UTC()); err != nil {
+			return err
+		}
+		return nil
+	}
+	handle = lifecycle.Registration.Identity.Scope.Handle
+	cwd := opts.Member.EffectiveCWD(opts.Team.Project)
 	env, err := resolveAMQEnvForTeamProfile(cwd, opts.Profile, opts.Session, handle)
 	if err != nil {
 		return fmt.Errorf("resolve orchestrator amq env: %w", err)
@@ -886,8 +882,8 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	if env.Me != "" {
 		handle = env.Me
 	}
-	root := absoluteAMQRoot(cwd, env.Root)
-	agentDir := filepath.Join(root, "agents", handle)
+	root := lifecycle.Root
+	agentDir := lifecycle.AgentDir
 	existingRec, existingRecErr := launch.Read(agentDir)
 	wakeConfig, err := resolveExternalWakeInjectConfig(wakeInjectConfig{Mode: wakeInjectMode}, wakeInjectModeExplicit, false, false, existingRec, existingRecErr, goalOrchestratorRole, handle, opts.Profile, env.SessionName, root, id.PaneID)
 	if err != nil {
@@ -922,7 +918,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	}
 	rec := launch.Record{
 		CWD:              cwd,
-		Binary:           member.Binary,
+		Binary:           opts.Member.Binary,
 		Session:          env.SessionName,
 		SharedWorkstream: true,
 		Handle:           handle,
@@ -931,8 +927,8 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		BaseRoot:         absoluteAMQRoot(cwd, env.BaseRoot),
 		RootSource:       env.RootSource,
 		AMQVersion:       env.AMQVersion,
-		Model:            strings.TrimSpace(member.Model),
-		Trust:            strings.TrimSpace(t.Trust),
+		Model:            strings.TrimSpace(opts.Member.Model),
+		Trust:            strings.TrimSpace(opts.Team.Trust),
 		External:         true,
 		WakeInjectVia:    wakeConfig.Via,
 		WakeInjectArgs:   wakeConfig.Args,
@@ -954,85 +950,14 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	if err := launch.Write(agentDir, rec); err != nil {
 		return fmt.Errorf("write external orchestrator launch record: %w", err)
 	}
-	if err := setTeamLeadForProfile(opts.Project, opts.Profile, goalOrchestratorRole, "", false); err != nil {
+	lifecycle.Registration, _, err = transitionExternalOrchestratorRegistration(lifecycle.Registration.Identity.Scope, lifecycle.Registration.Generation, externalOrchestratorStateRuntimeVerified, externalOrchestratorTransitionEvidence{WakePID: wakePID, LaunchPath: filepath.Join(agentDir, launch.FileName), Outcome: "verified"}, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if _, _, err := transitionExternalOrchestratorRegistration(lifecycle.Registration.Identity.Scope, lifecycle.Registration.Generation, externalOrchestratorStateRegistered, externalOrchestratorTransitionEvidence{WakePID: wakePID, LaunchPath: filepath.Join(agentDir, launch.FileName), Outcome: "registered"}, time.Now().UTC()); err != nil {
 		return err
 	}
 	return nil
-}
-
-func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, roleFlag, handle string, projectSet, profileSet, sessionSet bool, command string, override namespaceConflictOverrideOptions) (string, error) {
-	ctx, err := resolveCanonicalContext(contextResolveOptions{
-		ProjectFlag: projectFlag, ProfileFlag: profileFlag, SessionFlag: sessionFlag,
-		ProjectExplicit: projectSet, ProfileExplicit: profileSet, SessionExplicit: sessionSet,
-	})
-	if err != nil {
-		return "", err
-	}
-	emitContextDiagnostics(ctx)
-	projectDir, profile := ctx.ProjectDir, ctx.Profile
-	if !team.ExistsProfile(projectDir, profile) {
-		return "", fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
-	}
-	t, err := team.ReadProfile(projectDir, profile)
-	if err != nil {
-		return "", fmt.Errorf("read team: %w", err)
-	}
-	workstream, err := resolveTeamWorkstreamName(t, ctx.Session, sessionSet)
-	if err != nil {
-		return "", err
-	}
-	if err := ensureNoNamespaceConflictWithOverride(command, projectDir, profile, workstream, profileSet, override); err != nil {
-		return "", err
-	}
-	if err := ensureGoalOrchestratorMember(projectDir, profile, workstream, strings.TrimSpace(handle)); err != nil {
-		return "", err
-	}
-	role := strings.TrimSpace(roleFlag)
-	if role == "" {
-		role = goalOrchestratorRole
-	}
-	return role, nil
-}
-
-func ensureGoalOrchestratorMember(project, profile, session, handle string) error {
-	handle = strings.TrimSpace(handle)
-	if handle == "" {
-		handle = defaultGoalOrchestratorHandle
-	}
-	return withProfileLock(project, profile, func() error {
-		t, err := team.ReadProfile(project, profile)
-		if err != nil {
-			return fmt.Errorf("read team: %w", err)
-		}
-		if existing, ok := memberByRole(t, goalOrchestratorRole); ok {
-			existingHandle := strings.TrimSpace(existing.Handle)
-			if existingHandle != "" && existingHandle != handle {
-				return fmt.Errorf("orchestrator member already uses handle %q; requested %q", existingHandle, handle)
-			}
-			for i := range t.Members {
-				if strings.EqualFold(t.Members[i].Role, goalOrchestratorRole) {
-					if strings.TrimSpace(t.Members[i].Handle) == "" {
-						t.Members[i].Handle = handle
-					}
-					if strings.TrimSpace(t.Members[i].Binary) == "" {
-						t.Members[i].Binary = "codex"
-					}
-					if strings.TrimSpace(t.Members[i].Session) == "" {
-						t.Members[i].Session = session
-					}
-					break
-				}
-			}
-		} else {
-			t.Members = append(t.Members, team.Member{
-				Role:    goalOrchestratorRole,
-				Binary:  "codex",
-				Handle:  handle,
-				Session: session,
-			})
-		}
-		return team.WriteProfileUnderLock(project, profile, t)
-	})
 }
 
 func writeGoalStartPlan(out *os.File, data goalStartData) {
