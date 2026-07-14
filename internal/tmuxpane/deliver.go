@@ -231,8 +231,9 @@ func bracketedPasteLeaked(paneID string) bool {
 // text) is robust to line wrapping and input-box borders, and engine-agnostic.
 // If submission can never be confirmed it returns a clear error rather than
 // silently leaving the text staged. Best-effort: if the region cannot be
-// captured it fails open (one Enter, no retry) so a capture problem never blocks
-// delivery or spins.
+// captured it returns SubmitUnconfirmedError after the first Enter. Capture
+// absence is not proof that the prompt submitted; callers must keep this
+// outcome explicitly ambiguous rather than reporting success.
 func submitStagedPrompt(paneID string) error {
 	for attempt := 0; attempt < submitAttempts; attempt++ {
 		time.Sleep(submitSettleDelay)
@@ -248,9 +249,11 @@ func submitStagedPrompt(paneID string) error {
 		if afterOK && queuedInputVisible(after) {
 			return &QueuedInputError{PaneID: paneID}
 		}
-		// Submitted when the input region changed; fail open when either snapshot
-		// is unavailable (don't block or retry on a capture we can't trust).
-		if !beforeOK || !afterOK || after != before {
+		if !beforeOK || !afterOK {
+			return &SubmitUnconfirmedError{PaneID: paneID, Attempts: attempt + 1}
+		}
+		// Submitted only when the observed input region changed.
+		if after != before {
 			return nil
 		}
 		// Unchanged: the Enter was dropped — retry.

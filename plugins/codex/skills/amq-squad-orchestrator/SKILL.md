@@ -485,9 +485,15 @@ amq-squad task list --session <S>
 ```
 
 Workers `task claim <id> --me <handle> --session <S>` for pull-style pending
-tasks (gated until deps complete), then `task done <id> --session <S>` / `fail`
-/ `block`. Task-backed `dispatch --create-task/--task` auto-claims pending
-tasks for the target handle after the durable AMQ send and task link succeed.
+tasks (gated until deps complete and carrying renewable leases), then `task done
+<id> --me <handle> --session <S>` / `fail` / `block`. `task done` atomically
+commits completion, newly-ready dependents, an optional `--dispatch-next`
+successor claim, and delivery intents before sending AMQ. With dispatch routing
+it sends the canonical AMQ `status` subject `DONE: <task title>` by default.
+Task-backed `dispatch --create-task/--task` likewise commits the pending claim
+and outbox intent before the durable AMQ send. Use `task reconcile` to diagnose
+stale or legacy leases, journal recovery, link drift, and delivery state; it
+never silently releases ownership or auto-resends uncertain delivery.
 Workers should also keep `amq-squad activity set --session <S> --me <handle>
 --task <id> --phase <phase>` current on claim, phase changes, and long-running
 commands. You watch progress with `task list --session <S>` plus
@@ -791,7 +797,7 @@ Map the report intent to a small, explicit set of valid `--kind` values (these a
 | review ready (work to take over / check) | `review_request` |
 | done / completed deliverable | `status` (subject `DONE: ...`) or `review_request` if it needs sign-off |
 
-There is **no `handoff` kind** and no `done` kind: a "ready for you" report is `review_request`, a queued follow-up task is `todo`, and a plain progress/done note is `status`. An unknown `--kind` is rejected with a validation error and the message is NOT sent, so always pass a valid kind. Valid kinds: `brainstorm, review_request, review_response, question, answer, decision, status, todo`.
+There is **no `handoff` kind** and no `done` kind: a "ready for you" report is `review_request`, a queued follow-up task is `todo`, and a plain progress/done note is `status`. The atomic `task done` command emits that canonical `status` with subject `DONE: <task title>` by default when dispatch routing exists, so do not send a duplicate manual DONE. An unknown `--kind` is rejected with a validation error and the message is NOT sent, so always pass a valid kind. Valid kinds: `brainstorm, review_request, review_response, question, answer, decision, status, todo`.
 
 The lead consumes the mailbox:
 

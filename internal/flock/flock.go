@@ -28,3 +28,17 @@ func WithLock(lockPath string, fn func() error) error {
 	defer unlock(f)
 	return fn()
 }
+
+// WithFile locks an already-open file. Callers that resolve the lock through a
+// directory handle can use this without reopening a path and reintroducing an
+// ancestor-symlink race.
+func WithFile(f *os.File, label string, fn func() error) error {
+	if f == nil {
+		return fmt.Errorf("open lock %s: nil file", label)
+	}
+	if err := lockExclusive(f); err != nil {
+		return fmt.Errorf("lock %s: %w", label, err)
+	}
+	defer unlock(f)
+	return fn()
+}
