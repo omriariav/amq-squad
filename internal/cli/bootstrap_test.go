@@ -32,6 +32,7 @@ func TestBuildBootstrapPrompt(t *testing.T) {
 		"Handle: cto",
 		"Workstream: fresh-cto",
 		"Team rules: /repo/.amq-squad/team-rules.md",
+		"Canonical workspace safety: follow `## Workspace Safety and Cleanup` in /repo/.amq-squad/team-rules.md",
 		"Role file: /repo/.agent-mail/fresh-cto/agents/cto/role.md",
 		"Launch record: /repo/.agent-mail/fresh-cto/agents/cto/launch.json",
 		"AMQ as the durable coordination record for tasks, reports, reviews, decisions, and gates.",
@@ -46,6 +47,18 @@ func TestBuildBootstrapPrompt(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("bootstrap prompt missing %q in:\n%s", want, got)
+		}
+	}
+	for _, duplicatedConcept := range []string{
+		"`amq-squad review-worktree`",
+		"`rm -rf`",
+		"`mktemp -d`",
+		"`git worktree add --detach",
+		"`git worktree remove --force",
+		"session scratchpad",
+	} {
+		if strings.Contains(got, duplicatedConcept) {
+			t.Errorf("bootstrap prompt duplicates canonical team-rules concept %q:\n%s", duplicatedConcept, got)
 		}
 	}
 }

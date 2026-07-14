@@ -68,6 +68,13 @@ Each agent should summarize the prior context it used before taking new work.
 - Bring members up via `amq-squad up`; preview via `amq-squad up --dry-run`. Use `resume` for recovery plans and `fork --from <current> --as <new>` for branching workstreams.
 - If a worker environment cannot rebase safely or lacks the tooling to do it, use merge-style reconciliation instead: fetch the current base, merge it into the work branch, resolve conflicts without discarding user/agent changes, and report the fallback plus conflict evidence in the review handoff. Do not force-push, rewrite history, or treat rebase failure as permission to drop local work.
 
+## Workspace Safety and Cleanup
+
+- Never use `rm -rf`. It is outside the standing safety contract even when a narrow permission allowlist could technically permit it.
+- For disposable reviews, prefer the shipped `amq-squad review-worktree` helper and its printed cleanup command.
+- If the helper is unsuitable, create an isolated directory with `mktemp -d`, attach it with `git worktree add --detach <path> <ref>`, and clean it up with `git worktree remove --force <path>`.
+- Keep scratch files under the session scratchpad. Leave harness-owned cleanup to the harness instead of manually deleting its paths.
+
 ## Approvals
 
 - CTO approval is required for architectural decisions and merge-ready code.
