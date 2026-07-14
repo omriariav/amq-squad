@@ -64,6 +64,17 @@ func runActivitySet(args []string) error {
 	if strings.TrimSpace(*phase) == "" {
 		return usageErrorf("activity set requires --phase")
 	}
+	ctx, admission, err := acquireRevalidatedAMQWriter(ctx, func() (amqContext, error) {
+		return resolveAMQContext(*projectFlag, *profileFlag, *session, *me, flagWasSet(fs, "project"))
+	})
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	ns = squadnamespace.Resolve(ctx.ProjectDir, ctx.Profile, ctx.Session)
+	if err := ensureNoNamespaceConflict("activity set", ctx.ProjectDir, ctx.Profile, ctx.Session, flagWasSet(fs, "profile")); err != nil {
+		return err
+	}
 	path := activity.Path(filepath.Join(ctx.Root, "agents", ctx.Me))
 	file := activity.File{
 		Handle:    ctx.Me,
@@ -112,6 +123,17 @@ func runActivityClear(args []string) error {
 	if err != nil {
 		return err
 	}
+	ctx, admission, err := acquireRevalidatedAMQWriter(ctx, func() (amqContext, error) {
+		return resolveAMQContext(*projectFlag, *profileFlag, *session, *me, flagWasSet(fs, "project"))
+	})
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	ns = squadnamespace.Resolve(ctx.ProjectDir, ctx.Profile, ctx.Session)
+	if err := ensureNoNamespaceConflict("activity clear", ctx.ProjectDir, ctx.Profile, ctx.Session, flagWasSet(fs, "profile")); err != nil {
+		return err
+	}
 	if err := activity.Clear(filepath.Join(ctx.Root, "agents", ctx.Me)); err != nil {
 		return err
 	}
@@ -151,9 +173,6 @@ func activityContext(session, me, projectFlag, profileFlag string, fs *flag.Flag
 	}
 	ctx, err := resolveAMQContext(projectFlag, profileFlag, session, me, flagWasSet(fs, "project"))
 	if err != nil {
-		return amqContext{}, squadnamespace.Ref{}, err
-	}
-	if err := ensureNoNamespaceConflict(operation, ctx.ProjectDir, ctx.Profile, ctx.Session, flagWasSet(fs, "profile")); err != nil {
 		return amqContext{}, squadnamespace.Ref{}, err
 	}
 	return ctx, squadnamespace.Resolve(ctx.ProjectDir, ctx.Profile, ctx.Session), nil

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -208,6 +209,36 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		return err
 	}
 	opts.Workstream = workstream
+	if !opts.DryRun {
+		initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(cwd, opts.Profile, workstream), "")
+		if err != nil {
+			return err
+		}
+		admission, err := acquireNamespaceWriterAdmission(cwd, opts.Profile, workstream)
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		currentTeam, err := team.ReadProfile(cwd, opts.Profile)
+		if err != nil {
+			return fmt.Errorf("team launch refused: reread team under admission: %w", err)
+		}
+		currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, opts.Workstream, true)
+		if err != nil {
+			return err
+		}
+		currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(cwd, opts.Profile, currentWorkstream), "")
+		if err != nil {
+			return err
+		}
+		if err := validateReResolvedEndpointIdentity("team launch", initialIdentity, currentIdentity); err != nil {
+			return err
+		}
+		t, workstream, opts.Workstream = currentTeam, currentWorkstream, currentWorkstream
+		if err := ensureNoNamespaceMigration("team launch", cwd, opts.Profile, workstream); err != nil {
+			return err
+		}
+	}
 	active, skipped := filterMembersBySession(t.Members, workstream)
 	for _, m := range skipped {
 		quietNotice("notice: skipping %s: pinned to session %q, not %q\n", m.Role, m.Session, workstream)

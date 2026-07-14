@@ -247,6 +247,31 @@ func executeDown(d downExecution) error {
 	if err != nil {
 		return err
 	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(d.ProjectDir, d.Profile, workstream), "")
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(d.ProjectDir, d.Profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentTeam, err := team.ReadProfile(d.ProjectDir, d.Profile)
+	if err != nil {
+		return fmt.Errorf("%s refused: reread team under admission: %w", verb, err)
+	}
+	currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, d.RequestedSession, d.ExplicitSession)
+	if err != nil {
+		return err
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(d.ProjectDir, d.Profile, currentWorkstream), "")
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity(verb, initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	t, workstream = currentTeam, currentWorkstream
 	exactStopScope := exactStopNamespaceScope{
 		Verb:            verb,
 		ProjectDir:      d.ProjectDir,

@@ -292,6 +292,40 @@ func runLeadRegister(args []string) error {
 	if err != nil {
 		return err
 	}
+	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentCtx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+	if err != nil {
+		return fmt.Errorf("lead register refused: context re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedContext(ctx, currentCtx, false); err != nil {
+		return err
+	}
+	currentTeam, err := team.ReadProfile(currentCtx.ProjectDir, currentCtx.Profile)
+	if err != nil {
+		return fmt.Errorf("lead register refused: reread team under admission: %w", err)
+	}
+	currentMember, ok := memberByRole(currentTeam, role)
+	if !ok {
+		return fmt.Errorf("lead register refused: lead role %q changed before admission", role)
+	}
+	currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, currentCtx.Session, flagWasSet(fs, "session"))
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpoint("lead register", squadnamespace.Resolve(projectDir, profile, workstream), squadnamespace.Resolve(currentCtx.ProjectDir, currentCtx.Profile, currentWorkstream), memberHandle(member), memberHandle(currentMember)); err != nil {
+		return err
+	}
+	if member.Binary != currentMember.Binary || member.Session != currentMember.Session || canonicalPath(member.EffectiveCWD(t.Project)) != canonicalPath(currentMember.EffectiveCWD(currentTeam.Project)) {
+		return fmt.Errorf("lead register refused: lead identity changed before admission; retry")
+	}
+	ctx, projectDir, profile, t, member, workstream = currentCtx, currentCtx.ProjectDir, currentCtx.Profile, currentTeam, currentMember, currentWorkstream
+	if err := ensureNoNamespaceMigration("lead register", projectDir, profile, workstream); err != nil {
+		return err
+	}
 	id, err := currentPaneIdentity()
 	if err != nil {
 		return err

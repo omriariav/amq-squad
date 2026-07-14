@@ -109,6 +109,16 @@ Examples:
 	if err != nil {
 		return err
 	}
+	ctx, admission, err := acquireRevalidatedAMQWriter(ctx, func() (amqContext, error) {
+		return resolveAMQContext(*projectFlag, *profileFlag, *sessionFlag, *meFlag, flagWasSet(fs, "project"))
+	})
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	if err := ensureNoNamespaceMigration("collect", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+		return err
+	}
 	if err := guardAMQMailboxConsume("collect", ctx, amqPassthroughOptions{
 		OverrideBoundary: *overrideBoundary,
 		BoundaryReason:   *boundaryReason,
