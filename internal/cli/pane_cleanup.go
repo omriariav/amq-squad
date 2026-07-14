@@ -238,6 +238,25 @@ func recordIsExternal(rec launch.Record) bool {
 	return rec.External || mode == adoptionModeExternal || mode == adoptionModeExternalProjectLead || strings.HasPrefix(mode, "external")
 }
 
+// paneCleanupBinaryIdentityMatches applies the same anchored executable-name
+// model as agentProcessMatcher without weakening explicit path identity. A
+// configured bare executable may match an absolute observed executable with
+// the exact same basename. Every other non-identical pair fails closed.
+func paneCleanupBinaryIdentityMatches(configured, observed string) bool {
+	configured = strings.TrimSpace(configured)
+	observed = strings.TrimSpace(observed)
+	if configured == "" || observed == "" {
+		return false
+	}
+	if configured == observed {
+		return true
+	}
+	if filepath.Base(configured) != configured || !filepath.IsAbs(observed) {
+		return false
+	}
+	return filepath.Base(observed) == configured
+}
+
 func validatePaneCleanupRecord(req PaneCleanupRequest, canonicalDir func(string) (string, error)) []PaneCleanupMismatch {
 	rec, scope, att := req.Record, req.Scope, req.Attestation
 	var out []PaneCleanupMismatch
@@ -270,7 +289,9 @@ func validatePaneCleanupRecord(req PaneCleanupRequest, canonicalDir func(string)
 	match("session", scope.Session, rec.Session)
 	match("role", scope.Role, rec.Role)
 	match("handle", scope.Handle, rec.Handle)
-	match("binary", scope.Binary, rec.Binary)
+	if !paneCleanupBinaryIdentityMatches(scope.Binary, rec.Binary) {
+		out = append(out, PaneCleanupMismatch{Field: "binary", Expected: scope.Binary, Actual: rec.Binary})
+	}
 
 	if rec.AgentPID <= 0 || att.PID != rec.AgentPID {
 		out = append(out, PaneCleanupMismatch{Field: "agent_pid", Expected: fmt.Sprintf("%d", rec.AgentPID), Actual: fmt.Sprintf("%d", att.PID)})
@@ -278,7 +299,9 @@ func validatePaneCleanupRecord(req PaneCleanupRequest, canonicalDir func(string)
 	if !att.Live {
 		out = append(out, PaneCleanupMismatch{Field: "agent_live", Expected: "true", Actual: "false"})
 	}
-	if !att.BinaryMatch || strings.TrimSpace(att.Binary) != strings.TrimSpace(scope.Binary) {
+	if !att.BinaryMatch ||
+		!paneCleanupBinaryIdentityMatches(scope.Binary, att.Binary) ||
+		!paneCleanupBinaryIdentityMatches(rec.Binary, att.Binary) {
 		out = append(out, PaneCleanupMismatch{Field: "agent_binary", Expected: scope.Binary, Actual: att.Binary})
 	}
 
