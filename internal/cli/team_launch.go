@@ -158,16 +158,23 @@ Examples:
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
+	resolvedContext, err := resolveCanonicalContext(contextResolveOptions{
+		ProfileFlag: *profileFlag, SessionFlag: *pf.session,
+		ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: flagWasSet(fs, "session"),
+	})
 	if err != nil {
 		return err
+	}
+	emitContextDiagnostics(resolvedContext)
+	if !flagWasSet(fs, "session") && resolvedContext.Sources["session"] != contextSourceDefault {
+		*pf.session = resolvedContext.Session
 	}
 	opts, err := buildLiveLaunchOptions(fs, pf, lf)
 	if err != nil {
 		return err
 	}
 	opts.DryRun = *dryRun
-	opts.Profile = profile
+	opts.Profile = resolvedContext.Profile
 	return executeTeamLaunch(opts, flagWasSet(fs, "session"), flagWasSet(fs, "trust"))
 }
 

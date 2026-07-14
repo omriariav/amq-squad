@@ -151,22 +151,16 @@ Examples:
 	if *forceResend && !*deliver {
 		return usageErrorf("--force-resend requires --deliver")
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
-	if err != nil {
-		return err
-	}
+	emitContextDiagnostics(ctx)
 	return executeNotify(notifyExecution{
-		ProjectDir:    projectDir,
-		Profile:       profile,
-		Session:       *sessionFlag,
+		ProjectDir:    ctx.ProjectDir,
+		Profile:       ctx.Profile,
+		Session:       strings.TrimSpace(*sessionFlag),
+		BaseRoot:      ctx.BaseRoot,
 		RenotifyAfter: *renotifyAfter,
 		DryRun:        *dryRun,
 		JSON:          *jsonOut,

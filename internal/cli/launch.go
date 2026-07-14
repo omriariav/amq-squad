@@ -285,7 +285,25 @@ Examples:
 		return fmt.Errorf("getwd: %w", err)
 	}
 
-	teamProfileValue := strings.TrimSpace(*teamProfile)
+	profileExplicit := flagWasSet(fs, "profile") || flagWasSet(fs, "team-profile")
+	resolvedContext, err := resolveCanonicalContext(contextResolveOptions{
+		ProfileFlag: strings.TrimSpace(*teamProfile), SessionFlag: *session, HandleFlag: handle, RootFlag: *rootFlag,
+		ProfileExplicit: profileExplicit, SessionExplicit: flagWasSet(fs, "session"), HandleExplicit: flagWasSet(fs, "me"), RootExplicit: flagWasSet(fs, "root") && !flagWasSet(fs, "session"),
+	})
+	if err != nil {
+		return err
+	}
+	emitContextDiagnostics(resolvedContext)
+	teamProfileValue := resolvedContext.Profile
+	if !flagWasSet(fs, "session") && resolvedContext.Sources["session"] != contextSourceDefault {
+		*session = resolvedContext.Session
+	}
+	if !flagWasSet(fs, "root") && resolvedContext.Sources["root"] != contextSourceDefault {
+		*rootFlag = resolvedContext.Root
+	}
+	if !flagWasSet(fs, "me") && resolvedContext.Handle != "" {
+		handle = resolvedContext.Handle
+	}
 	rootForLaunch := launchRootFromFlags(cwd, *rootFlag, *session, teamProfileValue)
 
 	// Resolve the AMQ env via the amq CLI so launch.json and the actual

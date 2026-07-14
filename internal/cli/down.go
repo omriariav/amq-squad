@@ -150,31 +150,24 @@ func runStopWithDeps(args []string, terminatorForForce stopTerminatorFactory, pr
 		return usageErrorf("stop requires a target selector: pass --role <role> or --all")
 	}
 
-	profile, err := resolveProfileFlag(*profileFlag)
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionName, "", fs)
 	if err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
-	}
-	if !team.ExistsProfile(projectDir, profile) {
-		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	emitContextDiagnostics(ctx)
+	if !team.ExistsProfile(ctx.ProjectDir, ctx.Profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", ctx.Profile, profileInitCommand(ctx.Profile))
 	}
 	return executeDown(downExecution{
 		Verb:             "stop",
-		ProjectDir:       projectDir,
+		ProjectDir:       ctx.ProjectDir,
 		ExplicitProject:  flagWasSet(fs, "project"),
-		RequestedSession: *sessionName,
+		RequestedSession: ctx.Session,
 		ExplicitSession:  flagWasSet(fs, "session"),
 		ExplicitProfile:  flagWasSet(fs, "profile"),
 		Role:             *role,
 		All:              *all,
-		Profile:          profile,
+		Profile:          ctx.Profile,
 		// default=SIGTERM; --force=SIGKILL escalation for agents that ignore
 		// SIGTERM. The PID-liveness + binary-match guards still apply, so a
 		// reused/foreign PID is never signaled regardless of --force.

@@ -652,10 +652,15 @@ func resolveGoalDeliveryOptions(projectFlag, profileFlag, sessionFlag, roleFlag,
 }
 
 func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag string, projectSet, profileSet, sessionSet bool, command string, override namespaceConflictOverrideOptions) (goalDeliveryOptions, error) {
-	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: projectFlag, ProfileFlag: profileFlag, SessionFlag: sessionFlag,
+		ProjectExplicit: projectSet, ProfileExplicit: profileSet, SessionExplicit: sessionSet,
+	})
 	if err != nil {
 		return goalDeliveryOptions{}, err
 	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
 	if !team.ExistsProfile(projectDir, profile) {
 		return goalDeliveryOptions{}, fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
@@ -663,7 +668,7 @@ func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag st
 	if err != nil {
 		return goalDeliveryOptions{}, fmt.Errorf("read team: %w", err)
 	}
-	workstream, err := resolveTeamWorkstreamName(t, sessionFlag, sessionSet)
+	workstream, err := resolveTeamWorkstreamName(t, ctx.Session, sessionSet)
 	if err != nil {
 		return goalDeliveryOptions{}, err
 	}
@@ -956,10 +961,15 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 }
 
 func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, roleFlag, handle string, projectSet, profileSet, sessionSet bool, command string, override namespaceConflictOverrideOptions) (string, error) {
-	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: projectFlag, ProfileFlag: profileFlag, SessionFlag: sessionFlag,
+		ProjectExplicit: projectSet, ProfileExplicit: profileSet, SessionExplicit: sessionSet,
+	})
 	if err != nil {
 		return "", err
 	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
 	if !team.ExistsProfile(projectDir, profile) {
 		return "", fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
@@ -967,7 +977,7 @@ func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, 
 	if err != nil {
 		return "", fmt.Errorf("read team: %w", err)
 	}
-	workstream, err := resolveTeamWorkstreamName(t, sessionFlag, sessionSet)
+	workstream, err := resolveTeamWorkstreamName(t, ctx.Session, sessionSet)
 	if err != nil {
 		return "", err
 	}

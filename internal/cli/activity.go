@@ -149,17 +149,12 @@ func activityContext(session, me, projectFlag, profileFlag string, fs *flag.Flag
 	if fs.NArg() > 0 {
 		return amqContext{}, squadnamespace.Ref{}, usageErrorf("unexpected argument %q", fs.Arg(0))
 	}
-	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(projectFlag, profileFlag, session, me, flagWasSet(fs, "project"))
 	if err != nil {
 		return amqContext{}, squadnamespace.Ref{}, err
 	}
-	if err := ensureNoNamespaceConflict(operation, projectDir, profile, session, flagWasSet(fs, "profile")); err != nil {
+	if err := ensureNoNamespaceConflict(operation, ctx.ProjectDir, ctx.Profile, ctx.Session, flagWasSet(fs, "profile")); err != nil {
 		return amqContext{}, squadnamespace.Ref{}, err
 	}
-	ctx, err := resolveAMQContextForNamespace(projectDir, profile, session, me)
-	if err != nil {
-		return amqContext{}, squadnamespace.Ref{}, err
-	}
-	ctx = inferAMQContextProfileFromRoot(ctx, flagWasSet(fs, "profile"))
-	return ctx, squadnamespace.Resolve(projectDir, profile, session), nil
+	return ctx, squadnamespace.Resolve(ctx.ProjectDir, ctx.Profile, ctx.Session), nil
 }

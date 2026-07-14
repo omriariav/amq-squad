@@ -402,10 +402,15 @@ type operatorSendOptions struct {
 }
 
 func resolveOperatorCommandContext(projectFlag, profileFlag, sessionFlag string, projectSet, sessionSet bool) (string, string, team.Team, string, string, error) {
-	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: projectFlag, ProfileFlag: profileFlag, SessionFlag: sessionFlag,
+		ProjectExplicit: projectSet, ProfileExplicit: strings.TrimSpace(profileFlag) != "", SessionExplicit: sessionSet,
+	})
 	if err != nil {
 		return "", "", team.Team{}, "", "", err
 	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
 	if !team.ExistsProfile(projectDir, profile) {
 		return "", "", team.Team{}, "", "", fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
@@ -416,7 +421,7 @@ func resolveOperatorCommandContext(projectFlag, profileFlag, sessionFlag string,
 	if !team.SupportsOperatorGates(t) {
 		return "", "", team.Team{}, "", "", usageErrorf("operator gates are disabled for profile %q", profile)
 	}
-	workstream, err := resolveTeamWorkstreamName(t, sessionFlag, sessionSet)
+	workstream, err := resolveTeamWorkstreamName(t, ctx.Session, sessionSet)
 	if err != nil {
 		return "", "", team.Team{}, "", "", err
 	}
@@ -525,14 +530,16 @@ claim a poll lease or move mailbox messages.
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
 	return executeOperatorStatus(operatorExecution{
-		ProjectDir:      projectDir,
-		Profile:         profile,
-		Session:         *sessionFlag,
+		ProjectDir:      ctx.ProjectDir,
+		Profile:         ctx.Profile,
+		Session:         ctx.Session,
+		BaseRoot:        ctx.BaseRoot,
 		JSON:            *jsonOut,
 		Out:             os.Stdout,
 		ResolveBaseRoot: scanBaseRootForProject,
@@ -589,14 +596,16 @@ operator-loop lease for the resolved profile/session.
 	if err := validateOperatorOwner(*owner); err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
 	return executeOperatorPoll(operatorExecution{
-		ProjectDir:      projectDir,
-		Profile:         profile,
-		Session:         *sessionFlag,
+		ProjectDir:      ctx.ProjectDir,
+		Profile:         ctx.Profile,
+		Session:         ctx.Session,
+		BaseRoot:        ctx.BaseRoot,
 		ReadOnly:        *readonly,
 		Owner:           *owner,
 		OwnerID:         *ownerID,
@@ -663,10 +672,11 @@ When stopped, the lease is not released immediately; it expires after --ttl.
 	if err := validateOperatorOwner(*owner); err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
@@ -687,9 +697,10 @@ When stopped, the lease is not released immediately; it expires after --ttl.
 	}
 	return executeOperatorWatch(operatorWatchExecution{
 		operatorExecution: operatorExecution{
-			ProjectDir:      projectDir,
-			Profile:         profile,
-			Session:         *sessionFlag,
+			ProjectDir:      ctx.ProjectDir,
+			Profile:         ctx.Profile,
+			Session:         ctx.Session,
+			BaseRoot:        ctx.BaseRoot,
 			Owner:           *owner,
 			OwnerID:         *ownerID,
 			LeaseTTL:        *leaseTTL,

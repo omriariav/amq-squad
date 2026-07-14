@@ -171,6 +171,9 @@ func TestRunCollectInfersNamedProfileFromResolvedRoot(t *testing.T) {
 	chdir(t, dir)
 	writeAMQBoundaryTeamProfile(t, dir, "review")
 	t.Setenv("AM_ME", "cto")
+	root := filepath.Join(dir, ".agent-mail", "review", "issue-96")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", root)
 	calls := withCollectAMQSeams(t, amqEnv{Root: filepath.Join(".agent-mail", "review", "issue-96"), BaseRoot: ".agent-mail"}, []string{"message\n"})
 
 	_, _, err := captureOutput(t, func() error {

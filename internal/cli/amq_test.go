@@ -202,7 +202,9 @@ func TestResolveAMQContextInfersNamedProfileBeforeAMQResolution(t *testing.T) {
 	writeAMQBoundaryTeamProfile(t, dir, "review")
 	t.Setenv("AM_ROOT", root)
 	t.Setenv("AM_BASE_ROOT", root)
-	t.Setenv("AM_SESSION", "")
+	if err := os.Unsetenv("AM_SESSION"); err != nil {
+		t.Fatal(err)
+	}
 
 	previous := resolveAMQEnvForAMQCommand
 	resolveAMQEnvForAMQCommand = func(cwd, rootFlag, session, handle string) (amqEnv, error) {
@@ -365,6 +367,7 @@ func TestResolveAMQContextRefusesInheritedNamedProfileSymlinkEscape(t *testing.T
 		t.Skipf("symlink unavailable: %v", err)
 	}
 	t.Setenv("AM_ROOT", filepath.Join(base, "review", "issue-96"))
+	t.Setenv("AM_BASE_ROOT", filepath.Join(base, "review", "issue-96"))
 
 	previous := resolveAMQEnvForAMQCommand
 	resolveAMQEnvForAMQCommand = func(string, string, string, string) (amqEnv, error) {
@@ -389,6 +392,7 @@ func TestResolveAMQContextRefusesInheritedNamedProfileSymlinkIdentityRewrite(t *
 		t.Skipf("symlink unavailable: %v", err)
 	}
 	t.Setenv("AM_ROOT", filepath.Join(base, "review", "issue-96"))
+	t.Setenv("AM_BASE_ROOT", filepath.Join(base, "review", "issue-96"))
 
 	previous := resolveAMQEnvForAMQCommand
 	resolveAMQEnvForAMQCommand = func(string, string, string, string) (amqEnv, error) {
@@ -632,6 +636,8 @@ func TestAMQSendAsTeamRoleRequiresBoundIdentity(t *testing.T) {
 	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "sent\n")
 	t.Setenv("AM_ME", "orchestrator")
 	t.Setenv("AM_ROOT", filepath.Join(base, "issue-96"))
+	t.Setenv("AM_BASE_ROOT", base)
+	t.Setenv("AM_SESSION", "issue-96")
 
 	_, _, err := captureOutput(t, func() error {
 		return runAMQ([]string{"send", "--session", "issue-96", "--me", "cto", "--to", "user", "--kind", "status", "--subject", "gate"})
@@ -974,6 +980,9 @@ func TestAMQDrainInfersNamedProfileFromResolvedRoot(t *testing.T) {
 	chdir(t, dir)
 	writeAMQBoundaryTeamProfile(t, dir, "review")
 	t.Setenv("AM_ME", "cto")
+	root := filepath.Join(dir, ".agent-mail", "review", "issue-96")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", root)
 	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(".agent-mail", "review", "issue-96"), BaseRoot: ".agent-mail"}, "{}\n")
 
 	_, _, err := captureOutput(t, func() error {

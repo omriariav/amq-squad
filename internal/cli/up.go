@@ -152,9 +152,22 @@ Examples:
 		return usageErrorf("--yes/-y only applies to --reset on `up`")
 	}
 
-	profile, err := resolveProfileFlag(*profileFlag)
+	requestedContextSession := positionalSession
+	contextSessionExplicit := positionalSession != "" || flagWasSet(fs, "session")
+	if requestedContextSession == "" {
+		requestedContextSession = *pf.session
+	}
+	resolvedContext, err := resolveCanonicalContext(contextResolveOptions{
+		ProfileFlag: *profileFlag, SessionFlag: requestedContextSession,
+		ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: contextSessionExplicit,
+	})
 	if err != nil {
 		return err
+	}
+	emitContextDiagnostics(resolvedContext)
+	profile := resolvedContext.Profile
+	if !contextSessionExplicit && resolvedContext.Sources["session"] != contextSourceDefault {
+		*pf.session = resolvedContext.Session
 	}
 	cwd, err := os.Getwd()
 	if err != nil {

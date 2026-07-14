@@ -309,14 +309,15 @@ Examples:
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
-	if !team.ExistsProfile(projectDir, profile) {
-		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	emitContextDiagnostics(ctx)
+	if !team.ExistsProfile(ctx.ProjectDir, ctx.Profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", ctx.Profile, profileInitCommand(ctx.Profile))
 	}
-	return focusTarget(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), flagWasSet(fs, "profile"), *roleFlag)
+	return focusTarget(ctx.ProjectDir, ctx.Profile, ctx.Session, flagWasSet(fs, "session"), flagWasSet(fs, "profile"), *roleFlag)
 }
 
 // focusTarget resolves and switches to the pane for a role (or the session's
@@ -466,10 +467,12 @@ Examples:
 		return err
 	}
 	warnSuspiciousInlineBody("send", prompt, flagWasSet(fs, "body"), os.Stderr)
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
 	if !team.ExistsProfile(projectDir, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
@@ -480,7 +483,7 @@ Examples:
 	if err := ensureTargetIsNotOperator(t, "send", *roleFlag); err != nil {
 		return err
 	}
-	mr, workstream, err := resolveMemberRuntime(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag)
+	mr, workstream, err := resolveMemberRuntime(projectDir, profile, ctx.Session, flagWasSet(fs, "session"), *roleFlag)
 	if err != nil {
 		return err
 	}
@@ -584,17 +587,13 @@ func readAllPrompt(stdin io.Reader) (string, error) {
 // resolveProjectProfile resolves the --project and --profile flags shared by the
 // runtime control verbs.
 func resolveProjectProfile(projectFlag, profileFlag string, projectSet bool) (string, string, error) {
-	profile, err := resolveProfileFlag(profileFlag)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: projectFlag, ProfileFlag: profileFlag,
+		ProjectExplicit: projectSet, ProfileExplicit: strings.TrimSpace(profileFlag) != "",
+	})
 	if err != nil {
 		return "", "", err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", "", fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, projectFlag, projectSet)
-	if err != nil {
-		return "", "", err
-	}
-	return projectDir, profile, nil
+	emitContextDiagnostics(ctx)
+	return ctx.ProjectDir, ctx.Profile, nil
 }

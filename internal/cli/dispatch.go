@@ -168,10 +168,12 @@ Examples:
 	}
 	warnSuspiciousInlineBody("dispatch", taskBody, flagWasSet(fs, "body"), os.Stderr)
 
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	resolvedContext, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, *fromFlag, fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(resolvedContext)
+	projectDir, profile := resolvedContext.ProjectDir, resolvedContext.Profile
 	if !team.ExistsProfile(projectDir, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
@@ -186,7 +188,7 @@ Examples:
 	if !ok {
 		return fmt.Errorf("no team member with role %q in this team", *roleFlag)
 	}
-	workstream, err := resolveTeamWorkstreamName(t, *sessionFlag, flagWasSet(fs, "session"))
+	workstream, err := resolveTeamWorkstreamName(t, resolvedContext.Session, flagWasSet(fs, "session"))
 	if err != nil {
 		return err
 	}

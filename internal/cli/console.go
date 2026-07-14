@@ -64,10 +64,6 @@ Examples:
 		return err
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
 	effectiveFilter := strings.TrimSpace(*filter)
 	if *sessionFlag != "" && effectiveFilter != "" {
 		return usageErrorf("--session cannot be used with --filter; use --filter session:%s", *sessionFlag)
@@ -76,14 +72,22 @@ Examples:
 		effectiveFilter = "session:" + *sessionFlag
 	}
 
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: *sessionFlag,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: flagWasSet(fs, "session"),
+	})
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
+	selectedBaseRoot := ctx.BaseRoot
+	if ctx.Sources["base_root"] == contextSourceDefault {
+		selectedBaseRoot = ""
+	}
 
 	return executeConsole(consoleExecution{
-		ProjectDir:  projectDir,
-		Profile:     *profileFlag,
+		ProjectDir:  ctx.ProjectDir,
+		Profile:     ctx.Profile,
 		Session:     "",
 		Refresh:     *refresh,
 		AtRiskWait:  *atRiskWait,
@@ -94,6 +98,7 @@ Examples:
 		Out:         os.Stdout,
 		Stderr:      os.Stderr,
 		TeamExists:  team.ExistsProfile,
+		BaseRoot:    selectedBaseRoot,
 		ResolveBase: scanBaseRootForProject,
 		StdoutIsTTY: outputIsTTY(),
 		RunConsole:  console.Run,
@@ -107,6 +112,7 @@ type consoleExecution struct {
 	ProjectDir string
 	Profile    string
 	Session    string
+	BaseRoot   string
 	Refresh    time.Duration
 	AtRiskWait time.Duration
 	ReviewAge  time.Duration
@@ -176,8 +182,8 @@ func executeConsole(s consoleExecution) error {
 
 	// Team exists: resolve the AMQ base root once. An unresolvable root degrades
 	// to a guidance/NoTeam state naming the probe, never a panic.
-	var baseRoot string
-	if s.ResolveBase != nil {
+	baseRoot := strings.TrimSpace(s.BaseRoot)
+	if baseRoot == "" && s.ResolveBase != nil {
 		baseRoot, err = s.ResolveBase(s.ProjectDir)
 	}
 	notice := ""

@@ -100,19 +100,12 @@ func taskNamespace(sessionFlag, projectFlag, profileFlag string, fs *flag.FlagSe
 	if fs.NArg() > 0 {
 		return "", "", "", squadnamespace.Ref{}, usageErrorf("unexpected argument %q", fs.Arg(0))
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", "", "", squadnamespace.Ref{}, fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(projectFlag, profileFlag, session, "", fs)
 	if err != nil {
 		return "", "", "", squadnamespace.Ref{}, err
 	}
-	profile, err := resolveProfileFlag(profileFlag)
-	if err != nil {
-		return "", "", "", squadnamespace.Ref{}, err
-	}
-	return session, projectDir, profile, squadnamespace.Resolve(projectDir, profile, session), nil
+	emitContextDiagnostics(ctx)
+	return ctx.Session, ctx.ProjectDir, ctx.Profile, squadnamespace.Resolve(ctx.ProjectDir, ctx.Profile, ctx.Session), nil
 }
 
 func taskScope(projectDir, profile, session string) string {
