@@ -885,7 +885,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	root := lifecycle.Root
 	agentDir := lifecycle.AgentDir
 	existingRec, existingRecErr := launch.Read(agentDir)
-	wakeConfig, err := resolveExternalWakeInjectConfig(wakeInjectConfig{Mode: wakeInjectMode}, wakeInjectModeExplicit, false, false, existingRec, existingRecErr, goalOrchestratorRole, handle, opts.Profile, env.SessionName, root, id.PaneID)
+	wakeConfig, err := resolveExternalWakeInjectConfig(wakeInjectConfig{Mode: wakeInjectMode}, wakeInjectModeExplicit, false, false, existingRec, existingRecErr, opts.Member.Binary, goalOrchestratorRole, handle, opts.Profile, env.SessionName, root, id.PaneID)
 	if err != nil {
 		return err
 	}

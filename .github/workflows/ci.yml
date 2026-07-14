@@ -91,3 +91,41 @@ jobs:
           set -euo pipefail
           "$AMQ_SQUAD_REAL_AMQ" version
           go test ./internal/cli -run '^TestRealAMQCompatibility$' -count=1 -v -timeout=10m
+
+  real-amq-wake-compatibility:
+    name: real AMQ wake compatibility (${{ matrix.amq-version }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        amq-version: [v0.42.1, latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tmux and requested AMQ
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v tmux >/dev/null || brew install tmux
+          export GOBIN="$RUNNER_TEMP/amq-bin"
+          mkdir -p "$GOBIN"
+          go install github.com/avivsinai/agent-message-queue/cmd/amq@${{ matrix.amq-version }}
+          tmux -V
+          "$GOBIN/amq" version
+
+      - name: Run required real-PTY wake compatibility lane
+        shell: bash
+        env:
+          AMQ_SQUAD_REAL_AMQ: ${{ runner.temp }}/amq-bin/amq
+          AMQ_SQUAD_REAL_AMQ_VERSION: ${{ matrix.amq-version }}
+          AMQ_NO_UPDATE_CHECK: "1"
+        run: |
+          set -euo pipefail
+          go test ./internal/cli -run '^TestRealAMQWakeCompatibility$' -count=1 -v -timeout=10m

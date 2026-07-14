@@ -681,6 +681,59 @@ func TestLeadRegisterWakeInjectModeNoneIsZeroInput(t *testing.T) {
 	}
 }
 
+func TestLeadRegisterDefaultsManagedBinaryWakeModeToRaw(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.42.0")
+	base := os.Getenv("AMQ_FAKE_ROOT")
+	seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
+	prevPane := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "lead", PaneID: "%5"}, nil
+	}
+	var got []leadWakeOptions
+	prevWake := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		got = append(got, opts)
+		return leadWakeResult{PID: 1234, Started: true}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prevPane; leadWakeStarter = prevWake })
+	if _, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
+	}); err != nil {
+		t.Fatalf("lead register default raw: %v", err)
+	}
+	if len(got) != 1 || got[0].WakeInjectMode != "raw" || got[0].WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("managed external lead wake options = %+v", got)
+	}
+	rec, err := launch.Read(filepath.Join(base, "agents", "cto"))
+	if err != nil || rec.Binary != "codex" || rec.WakeInjectMode != "raw" {
+		t.Fatalf("managed external lead record = %+v, %v", rec, err)
+	}
+}
+
+func TestResolveExternalWakeInjectConfigMigratesLegacyManagedModesAndPreservesOverrides(t *testing.T) {
+	for _, test := range []struct {
+		name, stored, requested, binary, want string
+		explicit                              bool
+	}{
+		{"legacy-blank-codex", "", "", "codex", "raw", false},
+		{"legacy-auto-claude", "auto", "", "claude", "raw", false},
+		{"explicit-none", "auto", "none", "codex", "none", true},
+		{"explicit-paste", "", "paste", "claude", "paste", true},
+		{"custom-auto", "auto", "", "custom-agent", "auto", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rec := launch.Record{External: true, Binary: test.binary, Role: "cto", Handle: "cto", Session: "s", Root: "/mail/s", WakeInjectMode: test.stored, Tmux: &launch.TmuxInfo{PaneID: "%5"}}
+			got, err := resolveExternalWakeInjectConfig(wakeInjectConfig{Mode: test.requested}, test.explicit, false, false, rec, nil, test.binary, "cto", "cto", "default", "s", rec.Root, "%5")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Mode != test.want {
+				t.Fatalf("mode = %q, want %q", got.Mode, test.want)
+			}
+		})
+	}
+}
+
 func TestResolveExternalWakeInjectConfigInheritsAssociatedInjector(t *testing.T) {
 	rec := launch.Record{
 		External:       true,
@@ -693,7 +746,7 @@ func TestResolveExternalWakeInjectConfigInheritsAssociatedInjector(t *testing.T)
 		WakeInjectArgs: []string{"--pane", "%5"},
 		Tmux:           &launch.TmuxInfo{PaneID: "%5"},
 	}
-	got, err := resolveExternalWakeInjectConfig(wakeInjectConfig{}, false, false, false, rec, nil, "cto", "cto", "default", "issue-96", rec.Root, "%5")
+	got, err := resolveExternalWakeInjectConfig(wakeInjectConfig{}, false, false, false, rec, nil, rec.Binary, "cto", "cto", "default", "issue-96", rec.Root, "%5")
 	if err != nil {
 		t.Fatalf("inherit external wake config: %v", err)
 	}

@@ -252,6 +252,7 @@ Examples:
 		return usageErrorf("agent up requires a binary (e.g. 'amq-squad agent up codex --role cpo')")
 	}
 	binary := remaining[0]
+	wakeInjectModeValue = resolveWakeInjectModeForBinary(wakeInjectModeValue, binary)
 	if *symphony && normalizedAgentBinary(binary) != "codex" {
 		return usageErrorf("--symphony is only supported for Codex agents; got %s", binary)
 	}

@@ -506,7 +506,24 @@ Examples:
 		receipt.Status = "wake_failed"
 		receipt.Method = "durable_amq_wake_failed"
 		receipt.Detail = werr.Error()
-		receipt.addStage("failed", "pane nudge failed after durable AMQ write: "+werr.Error())
+		var leak *tmuxpane.BracketedPasteLeakError
+		var unavailable *tmuxpane.BracketedPasteCheckUnavailableError
+		switch {
+		case errors.As(werr, &leak):
+			receipt.Status = "bracketed_paste_leak"
+			receipt.Method = "durable_amq_plus_prompt_fallback"
+			receipt.PaneID = leak.PaneID
+			receipt.Fallback = true
+			receipt.addStage("bracketed_paste_leak", "pane nudge stopped before Enter after bracketed-paste markers leaked: "+werr.Error())
+		case errors.As(werr, &unavailable):
+			receipt.Status = "bracketed_paste_check_unavailable"
+			receipt.Method = "durable_amq_plus_prompt_fallback"
+			receipt.PaneID = unavailable.PaneID
+			receipt.Fallback = true
+			receipt.addStage("bracketed_paste_check_unavailable", "pane nudge stopped before Enter because bracketed-paste inspection was unavailable: "+werr.Error())
+		default:
+			receipt.addStage("failed", "pane nudge failed after durable AMQ write: "+werr.Error())
+		}
 		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
 			return err
 		}
