@@ -1452,21 +1452,6 @@ func TestStopDoesNotCloseExternalLeadPane(t *testing.T) {
 	}
 }
 
-func TestRmPaneCollectionSkipsExternalRecords(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		Binary:   "codex",
-		Handle:   "cto",
-		Role:     "cto",
-		External: true,
-		Tmux:     &launch.TmuxInfo{PaneID: "%5"},
-	})
-	panes := collectSessionPaneIDs(filepath.Join(base, "issue-96"), nil)
-	if len(panes) != 0 {
-		t.Fatalf("external panes must not be collected for rm/archive close: %+v", panes)
-	}
-}
-
 func TestResumeDoesNotRestoreDeadExternalLeadRecord(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{

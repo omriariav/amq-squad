@@ -241,24 +241,51 @@ func DefaultPaneLister() ([]TmuxPane, error) {
 	return nil, fmt.Errorf("tmux list-panes: %w", lastErr)
 }
 
-// InspectPaneByID resolves a single pane directly by its tmux id via
+// PaneInspectionState is the typed result of an exact-id pane lookup.  Only
+// PaneInspectionGone is affirmative evidence that the requested id no longer
+// names a pane.  In particular, denied, transient, empty, and malformed reads
+// are not absence evidence.
+type PaneInspectionState string
+
+const (
+	PaneInspectionFound       PaneInspectionState = "found"
+	PaneInspectionGone        PaneInspectionState = "gone"
+	PaneInspectionUnavailable PaneInspectionState = "unavailable"
+	PaneInspectionMalformed   PaneInspectionState = "malformed"
+)
+
+// PaneInspection is the result of inspecting one exact tmux pane id.  Pane is
+// populated only for Found.  Detail is diagnostic and must not be parsed as a
+// policy signal; State is the complete machine-readable classification.
+type PaneInspection struct {
+	State  PaneInspectionState
+	Pane   TmuxPane
+	Detail string
+}
+
+// InspectPaneExactByID resolves a single pane directly by its tmux id via
 // `tmux display-message -t <id>`, bypassing the global `list-panes -a` scan.
 // This is the robust path under iTerm2 tmux -CC control mode, where the global
 // scan can fail wholesale (exit 1) even though the exact recorded pane is still
-// individually addressable. Strictly READ-ONLY. Returns false when paneID is
-// empty, the pane is gone (display-message errors), or the row is malformed.
+// individually addressable. Strictly READ-ONLY. It reports Gone only from
+// affirmative exact-id evidence: a successful fallback row naming a different
+// pane, or a recognized tmux no-target error. Generic command failures remain
+// Unavailable after the bounded read retry; empty/malformed rows are Malformed.
 // It uses the same captureExec seam as PaneIdentityFor so tests never shell real
 // tmux. display-message takes the format as a trailing positional argument (not
 // -F), matching PaneIdentityFor.
-func InspectPaneByID(paneID string) (TmuxPane, bool) {
+func InspectPaneExactByID(paneID string) PaneInspection {
 	id := strings.TrimSpace(paneID)
 	if id == "" {
-		return TmuxPane{}, false
+		return PaneInspection{State: PaneInspectionMalformed, Detail: "empty tmux pane id"}
+	}
+	if !isExactPaneID(id) {
+		return PaneInspection{State: PaneInspectionMalformed, Detail: fmt.Sprintf("tmux pane id %q is not an exact %%<digits> id", id)}
 	}
 	// Retry through transient -CC pauses: a paused control client makes
 	// `display-message -t <id>` return exit 1 / empty even though the pane is
-	// live. A genuinely-gone pane keeps failing and falls through to false
-	// within the bounded budget.
+	// live. Unrecognized failures exhaust the bounded budget as Unavailable.
+	var lastErr error
 	for attempt := 0; attempt < tmuxReadAttempts; attempt++ {
 		out, err := captureExec("display-message", "-p", "-t", id, paneListFormat)
 		if err == nil {
@@ -269,18 +296,72 @@ func InspectPaneByID(paneID string) (TmuxPane, bool) {
 			// reports pane_alive:true for a pane that has been closed (the #156
 			// false positive). Only accept the row when its pane_id matches the
 			// id we asked for; a mismatch means the original pane is gone.
-			if panes := parsePanes(out); len(panes) > 0 && panes[0].PaneID == id {
-				return panes[0], true
+			panes := parsePanes(out)
+			if len(panes) != 1 {
+				return PaneInspection{State: PaneInspectionMalformed, Detail: fmt.Sprintf("unexpected tmux display-message output %q", out)}
 			}
+			if !isExactPaneID(panes[0].PaneID) {
+				return PaneInspection{State: PaneInspectionMalformed, Detail: fmt.Sprintf("tmux returned malformed pane id %q for requested pane %q", panes[0].PaneID, id)}
+			}
+			if panes[0].PaneID != id {
+				return PaneInspection{State: PaneInspectionGone, Detail: fmt.Sprintf("tmux returned fallback pane %q for requested pane %q", panes[0].PaneID, id)}
+			}
+			return PaneInspection{State: PaneInspectionFound, Pane: panes[0]}
 		} else if IsPermissionDenied(err) {
 			// Sandboxed: tmux access is denied, not transient — stop retrying.
-			return TmuxPane{}, false
+			return PaneInspection{State: PaneInspectionUnavailable, Detail: err.Error()}
+		} else if paneLookupDefinitelyGone(err) {
+			return PaneInspection{State: PaneInspectionGone, Detail: err.Error()}
 		}
+		lastErr = err
 		if attempt+1 < tmuxReadAttempts {
 			tmuxReadSleep(tmuxReadBackoff)
 		}
 	}
-	return TmuxPane{}, false
+	detail := fmt.Sprintf("tmux pane %s inspection unavailable after %d attempts", id, tmuxReadAttempts)
+	if lastErr != nil {
+		detail += ": " + lastErr.Error()
+	}
+	return PaneInspection{State: PaneInspectionUnavailable, Detail: detail}
+}
+
+// InspectPaneByID is the compatibility projection used by existing read-only
+// status/focus paths. New destructive policy must consume InspectPaneExactByID
+// so unavailable inspection can never be conflated with a gone pane.
+func InspectPaneByID(paneID string) (TmuxPane, bool) {
+	result := InspectPaneExactByID(paneID)
+	return result.Pane, result.State == PaneInspectionFound
+}
+
+func isExactPaneID(id string) bool {
+	if len(id) < 2 || id[0] != '%' {
+		return false
+	}
+	for _, ch := range id[1:] {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// paneLookupDefinitelyGone recognizes only tmux's explicit no-target errors.
+// Socket/server failures and generic exit errors are deliberately excluded.
+func paneLookupDefinitelyGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		msg += " " + strings.ToLower(string(ee.Stderr))
+	}
+	for _, marker := range []string{"can't find pane", "no such pane", "unknown pane"} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // parsePanes parses the tab-separated `tmux list-panes` output. Malformed rows
