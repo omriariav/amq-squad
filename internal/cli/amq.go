@@ -66,13 +66,14 @@ func defaultRunAMQCommand(req amqCommandRequest) ([]byte, error) {
 }
 
 type amqContext struct {
-	ProjectDir string
-	Profile    string
-	Env        amqEnv
-	Root       string
-	Me         string
-	Session    string
-	PinMode    amqPinMode
+	ProjectDir          string
+	Profile             string
+	Env                 amqEnv
+	Root                string
+	Me                  string
+	Session             string
+	PinMode             amqPinMode
+	NamespaceGeneration string
 }
 
 // amqPinMode is deliberately independent of amqEnv.SessionName. AMQ returns a
@@ -155,13 +156,14 @@ func resolveAMQContext(projectFlag, profileFlag, session, me string, projectSet 
 		pinMode = amqPinExactRoot
 	}
 	return amqContext{
-		ProjectDir: resolved.ProjectDir,
-		Profile:    resolved.Profile,
-		Env:        env,
-		Root:       resolved.Root,
-		Me:         resolved.Handle,
-		Session:    resolved.Session,
-		PinMode:    pinMode,
+		ProjectDir:          resolved.ProjectDir,
+		Profile:             resolved.Profile,
+		Env:                 env,
+		Root:                resolved.Root,
+		Me:                  resolved.Handle,
+		Session:             resolved.Session,
+		PinMode:             pinMode,
+		NamespaceGeneration: resolved.NamespaceGeneration,
 	}, nil
 }
 
@@ -568,6 +570,17 @@ func runAMQPassthrough(sub string, args []string) error {
 	if err != nil {
 		return err
 	}
+	var admission *namespaceAdmissionLocks
+	switch sub {
+	case "send", "reply", "drain", "watch", "read":
+		ctx, admission, err = acquireRevalidatedAMQWriter(ctx, func() (amqContext, error) {
+			return resolveAMQContext(project, profile, session, me, projectSet)
+		})
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+	}
 	cmd := append([]string{sub, "--root", ctx.Root}, passthrough...)
 	if err := guardAMQPassthrough(sub, ctx, passthrough, opts); err != nil {
 		return err
@@ -584,12 +597,23 @@ func runAMQPassthrough(sub string, args []string) error {
 func guardAMQPassthrough(sub string, ctx amqContext, passthrough []string, opts amqPassthroughOptions) error {
 	switch sub {
 	case "send", "reply":
+		if err := ensureNoNamespaceMigration("amq "+sub, ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+			return err
+		}
 		if err := guardAMQSelfSend(ctx, passthrough); err != nil {
 			return err
 		}
 		return guardAMQSendAsAuthority(sub, ctx, opts)
 	case "drain", "watch":
+		if err := ensureNoNamespaceMigration("amq "+sub, ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+			return err
+		}
 		return guardAMQMailboxConsume(sub, ctx, opts)
+	case "read":
+		// AMQ read may move an unread item into cur and emit a receipt, so it
+		// participates in the migration freeze. Preserve its established
+		// cross-mailbox inspection semantics outside a migration.
+		return ensureNoNamespaceMigration("amq read", ctx.ProjectDir, ctx.Profile, ctx.Session)
 	default:
 		return nil
 	}
@@ -1251,6 +1275,19 @@ Usage:
 	if err != nil {
 		return err
 	}
+	var admission *namespaceAdmissionLocks
+	if !*dryRun {
+		ctx, admission, err = acquireRevalidatedAMQWriter(ctx, func() (amqContext, error) {
+			return resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
+		})
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		if err := ensureNoNamespaceMigration("amq dlq "+kind, ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+			return err
+		}
+	}
 	if ctx.Me == "" {
 		return usageErrorf("amq dlq %s requires --me", kind)
 	}
@@ -1292,6 +1329,19 @@ Usage:
 	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
+	}
+	var admission *namespaceAdmissionLocks
+	if !*dryRun {
+		ctx, admission, err = acquireRevalidatedAMQWriter(ctx, func() (amqContext, error) {
+			return resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
+		})
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		if err := ensureNoNamespaceMigration("amq cleanup", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+			return err
+		}
 	}
 	cmd := []string{"cleanup", "--root", ctx.Root, "--tmp-older-than", *olderThan, "--yes"}
 	return previewConfirmAndRunAMQ(os.Stdout, os.Stdin, ctx, cmd, *dryRun, *yes)

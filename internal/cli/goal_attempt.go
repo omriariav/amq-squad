@@ -292,6 +292,17 @@ re-delivery command, and MUST be treated as a no-op by the goal runtime.
 	}
 	emitContextDiagnostics(ctx)
 	projectDir, profile, session := ctx.ProjectDir, ctx.Profile, ctx.Session
+	ctx, admission, err := acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
+		return resolveScopedCommandContext(*projectFlag, *profileFlag, session, "", fs)
+	})
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	projectDir, profile, session = ctx.ProjectDir, ctx.Profile, ctx.Session
+	if err := ensureNoNamespaceMigration("goal claim", projectDir, profile, session); err != nil {
+		return err
+	}
 	attemptID := strings.TrimSpace(*attemptFlag)
 	attemptPath, err := goalAttemptPath(projectDir, profile, session, attemptID)
 	if err != nil {
@@ -390,6 +401,22 @@ re-delivers that exact claim-once control prompt.
 	}
 	opts, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), true, "goal retry-attempt", namespaceConflictOverrideOptions{})
 	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(opts.Project, opts.Profile, opts.Session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentOpts, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), true, "goal retry-attempt", namespaceConflictOverrideOptions{})
+	if err != nil {
+		return fmt.Errorf("goal retry-attempt refused: target re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedGoalTarget("goal retry-attempt", opts, currentOpts); err != nil {
+		return err
+	}
+	opts = currentOpts
+	if err := ensureNoNamespaceConflict("goal retry-attempt", opts.Project, opts.Profile, opts.Session, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
 	attemptID := strings.TrimSpace(*attemptFlag)

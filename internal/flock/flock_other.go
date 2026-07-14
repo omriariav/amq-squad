@@ -13,4 +13,10 @@ import "os"
 // unsuitable for concurrent team mutations.
 func lockExclusive(_ *os.File) error { return nil }
 
+func lockExclusiveRequired(_ *os.File) error { return ErrUnsupported }
+
+func tryLockExclusive(_ *os.File) (bool, error) { return false, ErrUnsupported }
+
+func tryLockShared(_ *os.File) (bool, error) { return false, ErrUnsupported }
+
 func unlock(_ *os.File) {}

@@ -387,6 +387,33 @@ func executeResume(r resumeExecution) error {
 	if err != nil {
 		return err
 	}
+	if r.Exec.Enabled {
+		initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(r.ProjectDir, r.Profile, workstream), "")
+		if err != nil {
+			return err
+		}
+		admission, err := acquireNamespaceWriterAdmission(r.ProjectDir, r.Profile, workstream)
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		currentTeam, err := team.ReadProfile(r.ProjectDir, r.Profile)
+		if err != nil {
+			return fmt.Errorf("resume --exec refused: reread team under admission: %w", err)
+		}
+		currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, r.RequestedSession, r.ExplicitSession)
+		if err != nil {
+			return err
+		}
+		currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(r.ProjectDir, r.Profile, currentWorkstream), "")
+		if err != nil {
+			return err
+		}
+		if err := validateReResolvedEndpointIdentity("resume --exec", initialIdentity, currentIdentity); err != nil {
+			return err
+		}
+		t, workstream = currentTeam, currentWorkstream
+	}
 	namespaceConflict := namespaceConflictForProfileSession(t.Project, r.Profile, workstream)
 	if namespaceConflict == nil {
 		var cerr error

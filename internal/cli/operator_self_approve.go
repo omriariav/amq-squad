@@ -56,6 +56,20 @@ func runOperatorSelfApprove(args []string) error {
 	emitContextDiagnostics(ctx)
 	projectDir, profile := ctx.ProjectDir, ctx.Profile
 	session, gate := ctx.Session, normalizeGateTopic(*gateFlag)
+	ctx, admission, err := acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
+		return resolveCanonicalContext(contextResolveOptions{
+			ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: *sessionFlag,
+			ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: flagWasSet(fs, "session"),
+		})
+	})
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	projectDir, profile, session = ctx.ProjectDir, ctx.Profile, ctx.Session
+	if err := ensureNoNamespaceMigration("operator self-approve", projectDir, profile, session); err != nil {
+		return err
+	}
 	if err := team.ValidateSessionName(session); err != nil || gate == "" {
 		return usageErrorf("self-approve requires valid --session and --gate")
 	}
