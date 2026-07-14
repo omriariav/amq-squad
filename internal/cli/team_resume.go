@@ -554,7 +554,7 @@ func executeResume(r resumeExecution) error {
 		if recordCount > 0 {
 			return fmt.Errorf("--fresh --session %q: %d member(s) already have launch records for this workstream; rerun with --force-duplicate to overwrite", workstream, recordCount)
 		}
-		exists, root, err := teamWorkstreamExists(t, workstream)
+		exists, root, err := teamWorkstreamExists(t, r.Profile, workstream)
 		if err != nil {
 			return err
 		}

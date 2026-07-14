@@ -849,7 +849,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		return err
 	}
 	if opts.Fresh {
-		exists, root, err := teamWorkstreamExists(t, workstream)
+		exists, root, err := teamWorkstreamExists(t, opts.Profile, workstream)
 		if err != nil {
 			return err
 		}
@@ -908,6 +908,15 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 	if opts.Symphony {
 		if err := validateTeamSymphonyMembers(t, members); err != nil {
 			return err
+		}
+	}
+	// A launch-plan preview must validate the same AMQ context that live launch
+	// will use. Fresh default projects resolve structurally without writes;
+	// configured-root failures remain fatal instead of producing a false OK.
+	for _, m := range members {
+		cwd := m.EffectiveCWD(t.Project)
+		if _, err := resolveAMQEnvForTeamLaunchProfile(cwd, opts.Profile, workstream, memberHandle(m)); err != nil {
+			return fmt.Errorf("resolve amq env for %s: %w", memberHandle(m), err)
 		}
 	}
 

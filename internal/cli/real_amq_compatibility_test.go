@@ -67,6 +67,38 @@ func TestRealAMQCompatibility(t *testing.T) {
 		}
 		realAMQRoundTrip(t, binary, ctx, root, "exact-root")
 	})
+
+	// Issue #470: the supported floor and latest lanes must also prove that a
+	// genuinely empty project reaches the recording backend preflight without
+	// relying on ambient AMQ discovery. The default context is synthesized
+	// read-only for later base bootstrap; the named context is an exact root.
+	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, profile := range []string{team.DefaultProfile, "review"} {
+		profile := profile
+		t.Run("fresh launch preflight "+profile, func(t *testing.T) {
+			project := t.TempDir()
+			chdir(t, project)
+			if err := team.WriteProfile(project, profile, issue470Team(project, profile)); err != nil {
+				t.Fatal(err)
+			}
+			backend := useFakeBackend(t)
+			err := executeTeamLaunch(teamLaunchOptions{
+				Terminal:   backend.Name(),
+				Workstream: issue470Session,
+				Profile:    profile,
+				DryRun:     true,
+			}, true, false)
+			if err != nil {
+				t.Fatalf("fresh %s preflight with real AMQ %s: %v", profile, version, err)
+			}
+			if len(backend.dryRuns) != 1 || len(backend.launches) != 0 {
+				t.Fatalf("recording backend dryRuns=%d launches=%d", len(backend.dryRuns), len(backend.launches))
+			}
+			if _, err := os.Stat(filepath.Join(project, ".agent-mail")); !os.IsNotExist(err) {
+				t.Fatalf("real-AMQ preflight mutated fresh project: %v", err)
+			}
+		})
+	}
 }
 
 func realAMQInit(t *testing.T, binary, project, root string) {
