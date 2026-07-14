@@ -41,7 +41,7 @@ type wakeInjectConfig struct {
 
 // wakeDrainInject is the standard instruction amq-squad asks the wake sidecar to
 // inject on each durable-message arrival (amq wake --inject-cmd). It re-engages a
-// lead or orchestrator even after its native /goal reaches a terminal "achieved"
+// lead or orchestrator even after its active goal reaches a terminal "achieved"
 // state: the inbound directive drives an inbox drain through AMQ's sanctioned
 // injector instead of a raw tmux send-keys. Shared by lead register --wake (#283)
 // and the goal orchestrator registration (#288) so both use one mechanism.
@@ -461,7 +461,7 @@ func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, v
 }
 
 func preserveExternalGoalBinding(rec launch.Record, err error, role, session string) bool {
-	if err != nil || rec.GoalBinding == nil || !rec.GoalBinding.NativeGoal {
+	if err != nil || !launchRecordHasGoalBinding(rec) {
 		return false
 	}
 	recRole := strings.TrimSpace(rec.Role)

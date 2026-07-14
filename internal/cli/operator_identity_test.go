@@ -43,7 +43,8 @@ func TestValidateOperatorLaunchRecordAuthorizationAndRuntimeBinding(t *testing.T
 		t.Fatalf("authorized external project lead rejected: %v", err)
 	}
 	externalNativeGoal := externalUnauthorized
-	externalNativeGoal.GoalBinding = &launch.GoalBinding{NativeGoal: true}
+	externalNativeGoal.Binary = "claude"
+	externalNativeGoal.GoalBinding = &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: `/goal --goal "ship"`}
 	if err := validateOperatorLaunchRecord(externalNativeGoal, member, project, "cto", "cto", "default", "s", root, pane); err != nil {
 		t.Fatalf("native-goal external record rejected: %v", err)
 	}
