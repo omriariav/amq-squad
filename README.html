@@ -1084,11 +1084,14 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#
 <p>amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or
 other goal sources happens in the skills or operator tooling; the core
 binary owns team, runtime, and coordination state.</p>
+<p>The minimum 0.42.1 compatibility floor is unchanged. This release is
+explicitly validated against pinned 0.43.1; latest remains a
+forward-compatibility canary.</p>
 <p>v2.20.0 requires AMQ 0.42.1+, the first supported release for the
-complete injected identity contract. After upgrading from an older AMQ,
-stop and resume/relaunch agents so their shells receive a coherent pin;
-a child command cannot repair stale parent environment variables.
-Default-profile sessions use <code>AM_ROOT</code>,
+complete injected identity contract. After upgrading AMQ, stop and
+resume/relaunch agents so their parent shells refresh the complete
+identity tuple; a child command cannot repair stale parent environment
+variables. Default-profile sessions use <code>AM_ROOT</code>,
 <code>AM_BASE_ROOT</code>, non-empty <code>AM_SESSION</code>, and
 <code>AM_ME</code>. Named profiles use their exact root with
 <code>AM_ROOT=AM_BASE_ROOT</code> and no <code>AM_SESSION</code>. Run

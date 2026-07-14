@@ -300,11 +300,14 @@ Plan emission fails fast when a referenced `--settings` file is missing;
 via `codex_args: ["--profile", "<name>"]` instead.
 
 AMQ floor (v2.20.0+): amq-squad requires amq 0.42.1+. AMQ 0.42.1 is the
-first supported complete identity-pin contract: after upgrading, stop and
-resume/relaunch agents so their parent shells receive a coherent tuple; a child
-command cannot repair stale injected environment. Default profiles use
-`AM_ROOT=AM_BASE_ROOT/AM_SESSION` with a non-empty `AM_SESSION`; named profiles
-use an exact root with `AM_ROOT=AM_BASE_ROOT` and omit `AM_SESSION`. Run
+first supported complete identity-pin contract. The minimum 0.42.1
+compatibility floor is unchanged. This release is explicitly validated against
+pinned 0.43.1; latest remains a forward-compatibility canary. After upgrading
+AMQ, stop and resume/relaunch agents so their parent shells refresh the complete
+identity tuple; a child command cannot repair stale injected environment.
+Default profiles use `AM_ROOT=AM_BASE_ROOT/AM_SESSION` with a non-empty
+`AM_SESSION`; named profiles use an exact root with `AM_ROOT=AM_BASE_ROOT` and
+omit `AM_SESSION`. Run
 `amq-squad doctor` before resume if it reports a legacy or inconsistent pin.
 The launch wake
 gate introduced in v2.5.0 passes `--require-wake` to `amq coop exec`, so a
