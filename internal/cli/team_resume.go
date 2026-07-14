@@ -151,17 +151,18 @@ Examples:
 	} else if *restoreExisting {
 		mode = resumeModeRestoreExisting
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
+	resolvedContext, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: *sessionFlag,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: flagWasSet(fs, "session"),
+	})
 	if err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
+	emitContextDiagnostics(resolvedContext)
+	profile := resolvedContext.Profile
+	projectDir := resolvedContext.ProjectDir
+	if !flagWasSet(fs, "session") {
+		*sessionFlag = resolvedContext.Session
 	}
 	if !team.ExistsProfile(projectDir, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))

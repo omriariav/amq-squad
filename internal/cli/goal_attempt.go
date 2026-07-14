@@ -286,10 +286,12 @@ re-delivery command, and MUST be treated as a no-op by the goal runtime.
 	if strings.TrimSpace(*attemptFlag) == "" {
 		return usageErrorf("goal claim requires --attempt-id")
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, session, "", fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile, session := ctx.ProjectDir, ctx.Profile, ctx.Session
 	attemptID := strings.TrimSpace(*attemptFlag)
 	attemptPath, err := goalAttemptPath(projectDir, profile, session, attemptID)
 	if err != nil {

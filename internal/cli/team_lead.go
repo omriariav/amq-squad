@@ -261,9 +261,14 @@ func runLeadRegister(args []string) error {
 	if err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveExistingTeamProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
+	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
+	if !team.ExistsProfile(projectDir, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
 	t, err := team.ReadProfile(projectDir, profile)
 	if err != nil {
@@ -283,7 +288,7 @@ func runLeadRegister(args []string) error {
 	if !ok {
 		return fmt.Errorf("lead role %q is not a team member", role)
 	}
-	workstream, err := resolveTeamWorkstreamName(t, *sessionFlag, flagWasSet(fs, "session"))
+	workstream, err := resolveTeamWorkstreamName(t, ctx.Session, flagWasSet(fs, "session"))
 	if err != nil {
 		return err
 	}

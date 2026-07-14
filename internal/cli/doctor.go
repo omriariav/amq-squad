@@ -397,21 +397,14 @@ Examples:
 	if *allProfiles && flagWasSet(fs, "profile") {
 		return usageErrorf("--all-profiles cannot be combined with --profile")
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
-	if err != nil {
-		return err
-	}
-	d := defaultDoctorExecution(projectDir)
+	emitContextDiagnostics(ctx)
+	d := defaultDoctorExecution(ctx.ProjectDir)
 	d.JSON = *jsonOut
-	d.Profile = profile
+	d.Profile = ctx.Profile
 	d.AllProfiles = *allProfiles
 	d.RunningVersion = version
 	return executeDoctor(d)

@@ -287,32 +287,25 @@ Examples:
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionName, "", fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
 	// No --session: the multi-session board over ALL discovered sessions.
 	// This is the front-door default, so it degrades gracefully rather than
 	// hard-erroring when `amq` is missing or there are no sessions.
 	if !flagWasSet(fs, "session") {
-		return runStatusBoardWithVersion(projectDir, *jsonOut, version)
+		return runStatusBoardWithVersion(ctx.ProjectDir, *jsonOut, version)
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
-	if err != nil {
-		return err
-	}
-	if !team.ExistsProfile(projectDir, profile) {
-		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	if !team.ExistsProfile(ctx.ProjectDir, ctx.Profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", ctx.Profile, profileInitCommand(ctx.Profile))
 	}
 	return executeStatus(statusExecution{
-		ProjectDir:       projectDir,
-		RequestedSession: *sessionName,
+		ProjectDir:       ctx.ProjectDir,
+		RequestedSession: ctx.Session,
 		ExplicitSession:  flagWasSet(fs, "session"),
-		Profile:          profile,
+		Profile:          ctx.Profile,
 		Probe:            defaultDuplicateLaunchProbe,
 		Out:              os.Stdout,
 		JSON:             *jsonOut,

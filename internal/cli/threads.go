@@ -121,23 +121,17 @@ Examples:
 	if *limitFlag < 0 {
 		return usageErrorf("--limit must be >= 0")
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
-	if err != nil {
-		return err
-	}
+	emitContextDiagnostics(ctx)
 	return executeThreads(threadsExecution{
-		ProjectDir: projectDir,
-		Profile:    profile,
-		Session:    *sessionFlag,
+		ProjectDir: ctx.ProjectDir,
+		Profile:    ctx.Profile,
+		Session:    ctx.Session,
 		Limit:      *limitFlag,
+		BaseRoot:   ctx.BaseRoot,
 		Out:        os.Stdout,
 		JSON:       *jsonOut,
 	})

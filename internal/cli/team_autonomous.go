@@ -135,17 +135,13 @@ func readAutonomousTeam(projectFlag, profileFlag string, fs *flag.FlagSet) (team
 }
 
 func resolveAutonomousProjectProfile(projectFlag, profileFlag string, fs *flag.FlagSet) (string, string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", "", fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, projectFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return "", "", err
-	}
-	profile, err := resolveProfileFlag(profileFlag)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: projectFlag, ProfileFlag: profileFlag,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"),
+	})
 	if err != nil {
 		return "", "", err
 	}
-	return projectDir, profile, nil
+	emitContextDiagnostics(ctx)
+	return ctx.ProjectDir, ctx.Profile, nil
 }

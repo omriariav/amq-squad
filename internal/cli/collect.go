@@ -105,15 +105,10 @@ Examples:
 	if timeout < 0 {
 		return usageErrorf("--timeout must be non-negative")
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveAMQContext(*projectFlag, *profileFlag, *sessionFlag, *meFlag, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
 	}
-	ctx, err := resolveAMQContextForNamespace(projectDir, profile, *sessionFlag, *meFlag)
-	if err != nil {
-		return err
-	}
-	ctx = inferAMQContextProfileFromRoot(ctx, flagWasSet(fs, "profile"))
 	if err := guardAMQMailboxConsume("collect", ctx, amqPassthroughOptions{
 		OverrideBoundary: *overrideBoundary,
 		BoundaryReason:   *boundaryReason,

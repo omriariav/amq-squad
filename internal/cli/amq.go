@@ -130,25 +130,39 @@ func amqCommonFlagSet(name, usage string) (*flag.FlagSet, *string, *string, *str
 }
 
 func resolveAMQContext(projectFlag, profileFlag, session, me string, projectSet bool) (amqContext, error) {
-	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	resolved, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: projectFlag, ProfileFlag: profileFlag, SessionFlag: session, HandleFlag: me,
+		ProjectExplicit: projectSet, ProfileExplicit: strings.TrimSpace(profileFlag) != "",
+		SessionExplicit: strings.TrimSpace(session) != "", HandleExplicit: strings.TrimSpace(me) != "",
+	})
 	if err != nil {
 		return amqContext{}, err
 	}
-	profileExplicit := strings.TrimSpace(profileFlag) != ""
-	if !profileExplicit {
-		inferred, ok, err := namedProfileFromInheritedAMQRoot(projectDir, session)
-		if err != nil {
-			return amqContext{}, err
-		}
-		if ok {
-			profile = inferred
-		}
-	}
-	ctx, err := resolveAMQContextForNamespace(projectDir, profile, session, me)
+	emitContextDiagnostics(resolved)
+	// The canonical winner is authoritative. Query AMQ for version/project
+	// metadata using that exact root, then restore the selected tuple instead
+	// of asking the legacy namespace resolver to choose a second time.
+	env, err := resolveAMQEnvForAMQCommand(resolved.ProjectDir, resolved.Root, "", resolved.Handle)
 	if err != nil {
 		return amqContext{}, err
 	}
-	return inferAMQContextProfileFromRoot(ctx, profileExplicit), nil
+	env.Root = resolved.Root
+	env.BaseRoot = resolved.BaseRoot
+	env.SessionName = resolved.Session
+	env.Me = resolved.Handle
+	pinMode := amqPinSessionful
+	if resolved.PinMode == "exact_root" {
+		pinMode = amqPinExactRoot
+	}
+	return amqContext{
+		ProjectDir: resolved.ProjectDir,
+		Profile:    resolved.Profile,
+		Env:        env,
+		Root:       resolved.Root,
+		Me:         resolved.Handle,
+		Session:    resolved.Session,
+		PinMode:    pinMode,
+	}, nil
 }
 
 func resolveAMQContextForProject(projectDir, session, me string) (amqContext, error) {
@@ -550,15 +564,10 @@ func runAMQPassthrough(sub string, args []string) error {
 			return err
 		}
 	}
-	projectDir, resolvedProfile, err := resolveProjectProfile(project, profile, projectSet)
+	ctx, err := resolveAMQContext(project, profile, session, me, projectSet)
 	if err != nil {
 		return err
 	}
-	ctx, err := resolveAMQContextForNamespace(projectDir, resolvedProfile, session, me)
-	if err != nil {
-		return err
-	}
-	ctx = inferAMQContextProfileFromRoot(ctx, strings.TrimSpace(profile) != "")
 	cmd := append([]string{sub, "--root", ctx.Root}, passthrough...)
 	if err := guardAMQPassthrough(sub, ctx, passthrough, opts); err != nil {
 		return err

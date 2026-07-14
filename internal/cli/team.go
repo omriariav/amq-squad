@@ -1881,18 +1881,17 @@ Examples:
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getwd: %w", err)
-		}
-		projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+		ctx, err := resolveCanonicalContext(contextResolveOptions{
+			ProjectFlag: *projectFlag, ProjectExplicit: flagWasSet(fs, "project"),
+		})
 		if err != nil {
 			return err
 		}
-		body, err := rules.Read(projectDir)
+		emitContextDiagnostics(ctx)
+		body, err := rules.Read(ctx.ProjectDir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return fmt.Errorf("no team-rules.md at %s. Run 'amq-squad team rules init' first.", rules.Path(projectDir))
+				return fmt.Errorf("no team-rules.md at %s. Run 'amq-squad team rules init' first.", rules.Path(ctx.ProjectDir))
 			}
 			return fmt.Errorf("read team-rules.md: %w", err)
 		}
@@ -1931,18 +1930,15 @@ Examples:
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getwd: %w", err)
-		}
-		projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
-		if err != nil {
-			return err
-		}
-		profile, err := resolveProfileFlag(*profileFlag)
+		ctx, err := resolveCanonicalContext(contextResolveOptions{
+			ProjectFlag: *projectFlag, ProfileFlag: *profileFlag,
+			ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"),
+		})
 		if err != nil {
 			return err
 		}
+		emitContextDiagnostics(ctx)
+		projectDir, profile := ctx.ProjectDir, ctx.Profile
 		if _, err := selectTeamRulesTemplate(*templateFlag, team.Team{}); err != nil {
 			return err
 		}
@@ -2023,18 +2019,15 @@ Examples:
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"),
+	})
 	if err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
-	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
 
 	body, err := rules.Read(projectDir)
 	if err != nil {

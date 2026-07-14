@@ -119,21 +119,17 @@ func runRm(args []string, mode rmMode) error {
 	if session == "" {
 		session = fs.Arg(0)
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
-	}
-	profile, err := resolveProfileFlag(*profileFlag)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: session,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: true,
+	})
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
 	return executeRm(rmExecution{
-		ProjectDir: projectDir,
-		Session:    session,
+		ProjectDir: ctx.ProjectDir,
+		Session:    ctx.Session,
 		Mode:       mode,
 		Yes:        *yes,
 		Force:      *force || *stopAgents, // --stop-agents is a stronger "tear it down" intent
@@ -143,7 +139,7 @@ func runRm(args []string, mode rmMode) error {
 		Probe:      state.DefaultProbe,
 		Confirm:    os.Stdin,
 		Out:        os.Stdout,
-		Profile:    profile,
+		Profile:    ctx.Profile,
 	})
 }
 

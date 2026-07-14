@@ -39,16 +39,21 @@ func runTeamOperatorSet(args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: *sessionFlag,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: flagWasSet(fs, "session"),
+	})
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
 	mode := strings.TrimSpace(*modeFlag)
 	if err := team.ValidateOperatorInteractionMode(mode); err != nil {
 		return usageErrorf("--mode: %v", err)
 	}
 	return mutateOperatorProfile(projectDir, profile, func(cfg *team.Team) error {
-		if err := rejectRunnableOperatorPolicyMutation(projectDir, profile, strings.TrimSpace(*sessionFlag), *cfg); err != nil {
+		if err := rejectRunnableOperatorPolicyMutation(projectDir, profile, ctx.Session, *cfg); err != nil {
 			return err
 		}
 		if cfg.Operator == nil || !cfg.Operator.Enabled {
@@ -66,7 +71,7 @@ func runTeamOperatorSet(args []string) error {
 			return nil
 		}
 		lead := strings.TrimSpace(*selfFlag)
-		session := strings.TrimSpace(*sessionFlag)
+		session := ctx.Session
 		if !cfg.Orchestrated || lead == "" || lead != cfg.Lead {
 			return usageErrorf("self_operator requires --self equal to the configured orchestrated lead")
 		}
@@ -120,11 +125,15 @@ func runTeamOperatorSelf(args []string) error {
 	if err := parseFlags(fs, args[1:]); err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: *sessionFlag,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: flagWasSet(fs, "session"),
+	})
 	if err != nil {
 		return err
 	}
-	session := strings.TrimSpace(*sessionFlag)
+	emitContextDiagnostics(ctx)
+	projectDir, profile, session := ctx.ProjectDir, ctx.Profile, ctx.Session
 	return mutateOperatorProfile(projectDir, profile, func(cfg *team.Team) error {
 		if err := rejectRunnableOperatorPolicyMutation(projectDir, profile, session, *cfg); err != nil {
 			return err

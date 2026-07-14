@@ -77,14 +77,16 @@ Examples:
 	if fs.NArg() > 0 {
 		return usageErrorf("next takes no positional arguments")
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
 	return executeNext(nextExecution{
-		ProjectDir:      projectDir,
-		Profile:         profile,
-		Session:         *sessionFlag,
+		ProjectDir:      ctx.ProjectDir,
+		Profile:         ctx.Profile,
+		Session:         ctx.Session,
+		BaseRoot:        ctx.BaseRoot,
 		JSON:            *jsonOut,
 		Out:             os.Stdout,
 		ResolveBaseRoot: scanBaseRootForProject,

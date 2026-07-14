@@ -68,19 +68,20 @@ Examples:
 	if fs.NArg() > 0 {
 		return usageErrorf("prune-panes takes no positional arguments; got %d", fs.NArg())
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, SessionFlag: *sessionFlag,
+		ProjectExplicit: flagWasSet(fs, "project"), SessionExplicit: flagWasSet(fs, "session"),
+	})
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
 	return executePrunePanes(prunePanesExecution{
-		ProjectDir:      projectDir,
-		Session:         *sessionFlag,
+		ProjectDir:      ctx.ProjectDir,
+		Session:         strings.TrimSpace(*sessionFlag),
 		ExplicitSession: flagWasSet(fs, "session"),
 		Yes:             *yes,
+		BaseRoot:        ctx.BaseRoot,
 		PaneLister:      statusPaneLister,
 		Confirm:         os.Stdin,
 		Out:             os.Stdout,

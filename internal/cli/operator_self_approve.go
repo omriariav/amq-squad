@@ -46,11 +46,16 @@ func runOperatorSelfApprove(args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: *sessionFlag,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: flagWasSet(fs, "session"),
+	})
 	if err != nil {
 		return err
 	}
-	session, gate := strings.TrimSpace(*sessionFlag), normalizeGateTopic(*gateFlag)
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
+	session, gate := ctx.Session, normalizeGateTopic(*gateFlag)
 	if err := team.ValidateSessionName(session); err != nil || gate == "" {
 		return usageErrorf("self-approve requires valid --session and --gate")
 	}
