@@ -27,6 +27,38 @@ func TestInspectPaneByIDResolvesSinglePane(t *testing.T) {
 	}
 }
 
+func TestInspectPaneExactByIDTypedStates(t *testing.T) {
+	zeroReadBackoff(t)
+	tests := []struct {
+		name  string
+		id    string
+		out   string
+		err   error
+		state PaneInspectionState
+	}{
+		{name: "found", id: "%5", out: "main\t0\t1\t1234\tcodex\t/repo\t%5\t@42\ttitle\twindow\n", state: PaneInspectionFound},
+		{name: "affirmative fallback is gone", id: "%5", out: "main\t0\t1\t1234\tcodex\t/repo\t%9\t@42\ttitle\twindow\n", state: PaneInspectionGone},
+		{name: "recognized no target is gone", id: "%5", err: errors.New("can't find pane: %5"), state: PaneInspectionGone},
+		{name: "generic command failure unavailable", id: "%5", err: errors.New("tmux transport temporarily paused"), state: PaneInspectionUnavailable},
+		{name: "empty output malformed", id: "%5", state: PaneInspectionMalformed},
+		{name: "short row malformed", id: "%5", out: "main\t0\n", state: PaneInspectionMalformed},
+		{name: "row missing pane id malformed", id: "%5", out: "main\t0\t1\t1234\tcodex\t/repo\n", state: PaneInspectionMalformed},
+		{name: "row with malformed pane id malformed", id: "%5", out: "main\t0\t1\t1234\tcodex\t/repo\tnot-an-id\t@42\ttitle\twindow\n", state: PaneInspectionMalformed},
+		{name: "multiple rows malformed", id: "%5", out: "main\t0\t1\t1234\tcodex\t/repo\t%5\t@42\ttitle\twindow\nmain\t0\t2\t4321\tclaude\t/repo\t%6\t@42\ttitle2\twindow\n", state: PaneInspectionMalformed},
+		{name: "empty id malformed", id: " ", state: PaneInspectionMalformed},
+		{name: "non exact id malformed", id: "main:0.1", state: PaneInspectionMalformed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			swapCapture(t, tt.out, tt.err)
+			got := InspectPaneExactByID(tt.id)
+			if got.State != tt.state {
+				t.Fatalf("state = %q, want %q (detail %q)", got.State, tt.state, got.Detail)
+			}
+		})
+	}
+}
+
 func TestInspectPaneByIDMismatchReturnsFalse(t *testing.T) {
 	// tmux `display-message -t <gone-id>` does NOT error — it silently falls
 	// back to the client's CURRENT pane and prints that pane's fields. The row
