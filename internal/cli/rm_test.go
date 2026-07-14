@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,7 +160,7 @@ func TestRunRmProjectTargetsOtherDir(t *testing.T) {
 	chdir(t, other)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runRm([]string{"issue-99", "--project", project, "--yes"}, rmModeDelete)
+		return runRm([]string{"issue-99", "--project", project, "--yes", "--keep-panes"}, rmModeDelete)
 	})
 	if err != nil {
 		t.Fatalf("rm --project: %v\nstderr:\n%s", err, stderr)
@@ -190,7 +191,7 @@ func TestRunRmProfileTargetsNamedNamespace(t *testing.T) {
 	chdir(t, other)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runRm([]string{"issue-101", "--project", project, "--profile", "release", "--yes"}, rmModeDelete)
+		return runRm([]string{"issue-101", "--project", project, "--profile", "release", "--yes", "--keep-panes"}, rmModeDelete)
 	})
 	if err != nil {
 		t.Fatalf("rm --profile release: %v\nstderr:\n%s", err, stderr)
@@ -217,7 +218,7 @@ func TestRunArchiveAcceptsFlagsAfterSession(t *testing.T) {
 	chdir(t, other)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runRm([]string{"issue-100", "--project", project, "--yes"}, rmModeArchive)
+		return runRm([]string{"issue-100", "--project", project, "--yes", "--keep-panes"}, rmModeArchive)
 	})
 	if err != nil {
 		t.Fatalf("archive flags after session: %v\nstderr:\n%s", err, stderr)
@@ -305,18 +306,13 @@ func TestRmRefusesLiveSessionWithoutForce(t *testing.T) {
 
 // TestRmForceOverridesLiveSession: --force tears down a live session's on-disk
 // footprint but must NOT stop the agent or close its pane (the documented
-// contract). It must, however, no longer be SILENT about it: it names the live
-// agent's now-unmanaged pane and points at --stop-agents.
+// contract). Requested pane cleanup therefore returns partial and retains the
+// exact identity evidence needed for explicit operator recovery.
 func TestRmForceOverridesLiveSession(t *testing.T) {
-	base := t.TempDir()
-	projectDir := t.TempDir()
+	projectDir, base, _, _, record, _ := completeRmPaneFixture(t, "issue-96", 4242)
 	root := filepath.Join(base, "issue-96")
-	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", AgentPID: 4242,
-		Root: root, Session: "issue-96", Tmux: &launch.TmuxInfo{PaneID: "%42"},
-	})
+	seedAgentRecord(t, base, "issue-96", "cto", record)
 	liveProbe := rmStateProbe(map[int]bool{4242: true}, map[int]bool{4242: true})
-	closed := swapPaneCloser(t)
 
 	out, err := runRmExec(t, rmExecution{
 		ProjectDir: projectDir,
@@ -328,20 +324,16 @@ func TestRmForceOverridesLiveSession(t *testing.T) {
 		BaseRoot:   base,
 		Probe:      liveProbe,
 	})
-	if err != nil {
-		t.Fatalf("rm --force of a live session should succeed: %v\n%s", err, out)
+	var partial *PartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("rm --force with requested cleanup should report preserved pane: %v\n%s", err, out)
 	}
 	if _, statErr := os.Stat(root); !os.IsNotExist(statErr) {
 		t.Errorf("rm --force should remove the root; stat err = %v", statErr)
 	}
-	// The live agent's pane must be LEFT OPEN (force never kills a live agent).
-	for _, id := range *closed {
-		if id == "%42" {
-			t.Fatalf("rm --force must not close a live agent's pane %%42")
-		}
-	}
-	// ...but it must say so, with the pane and the --stop-agents path.
-	for _, want := range []string{"left RUNNING", "cto", "%42", "--stop-agents"} {
+	// The live agent's pane is explicitly preserved, and the recovery notice
+	// names its retained exact identity without blindly issuing kill-pane.
+	for _, want := range []string{"preserved_identity_unconfirmed", "left RUNNING", "cto", "%9", "inspect retained identity evidence"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("rm --force notice missing %q in:\n%s", want, out)
 		}
@@ -352,17 +344,12 @@ func TestRmForceOverridesLiveSession(t *testing.T) {
 // teardown — it SIGTERMs the live agents, closes their panes, then removes the
 // session.
 func TestRmStopAgentsTearsDownLiveSession(t *testing.T) {
-	base := t.TempDir()
-	projectDir := t.TempDir()
+	projectDir, base, _, _, record, pane := completeRmPaneFixture(t, "issue-96", 4242)
 	root := filepath.Join(base, "issue-96")
-	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
-		Root: root, Session: "issue-96", Tmux: &launch.TmuxInfo{PaneID: "%42"},
-	})
+	seedAgentRecord(t, base, "issue-96", "cto", record)
 	liveProbe := rmStateProbe(map[int]bool{4242: true}, map[int]bool{4242: true})
-	closed := swapPaneCloser(t)
-	swapPaneInspectorMatching(t, "issue-96", map[string]string{"%42": "cto"})
 	term := &recordingTerminator{}
+	closeCalls := 0
 
 	out, err := runRmExec(t, rmExecution{
 		ProjectDir: projectDir,
@@ -376,6 +363,7 @@ func TestRmStopAgentsTearsDownLiveSession(t *testing.T) {
 		Terminator: term,
 		BaseRoot:   base,
 		Probe:      liveProbe,
+		PaneDeps:   rmPaneDeps(pane, &closeCalls),
 	})
 	if err != nil {
 		t.Fatalf("rm --stop-agents should succeed: %v\n%s", err, out)
@@ -383,20 +371,14 @@ func TestRmStopAgentsTearsDownLiveSession(t *testing.T) {
 	if len(term.calls) != 1 || term.calls[0] != 4242 {
 		t.Fatalf("expected SIGTERM of pid 4242, got terminate calls %v", term.calls)
 	}
-	foundPane := false
-	for _, id := range *closed {
-		if id == "%42" {
-			foundPane = true
-		}
-	}
-	if !foundPane {
-		t.Fatalf("--stop-agents must close the live agent's pane %%42; closed = %v", *closed)
+	if closeCalls != 1 {
+		t.Fatalf("--stop-agents must close the live agent's exact pane once; calls = %d", closeCalls)
 	}
 	if _, statErr := os.Stat(root); !os.IsNotExist(statErr) {
 		t.Errorf("--stop-agents should remove the root; stat err = %v", statErr)
 	}
-	if !strings.Contains(out, "stopped agent cto") {
-		t.Errorf("expected 'stopped agent cto' notice, got:\n%s", out)
+	if !strings.Contains(out, "agent=stopped") || !strings.Contains(out, "pane=closed") {
+		t.Errorf("expected independent stopped/closed outcomes, got:\n%s", out)
 	}
 	if strings.Contains(out, "left RUNNING") {
 		t.Errorf("--stop-agents must not print the left-running notice:\n%s", out)

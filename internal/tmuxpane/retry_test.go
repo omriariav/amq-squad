@@ -43,11 +43,15 @@ func TestInspectPaneByIDFailsFastOnPermissionDenied(t *testing.T) {
 	}
 	t.Cleanup(func() { captureExec = prev })
 
+	result := InspectPaneExactByID("%5")
+	if result.State != PaneInspectionUnavailable {
+		t.Fatalf("permission denial state = %q, want unavailable", result.State)
+	}
 	if _, ok := InspectPaneByID("%5"); ok {
 		t.Fatal("a permission denial must return false")
 	}
-	if calls != 1 {
-		t.Fatalf("a permission denial must NOT retry; got %d attempts", calls)
+	if calls != 2 {
+		t.Fatalf("each lookup must fail fast without retry; got %d total attempts", calls)
 	}
 }
 
@@ -107,7 +111,7 @@ func TestInspectPaneByIDRetriesThroughTransientFailure(t *testing.T) {
 	}
 }
 
-func TestInspectPaneByIDGivesUpAtBound(t *testing.T) {
+func TestInspectPaneByIDRecognizedGoneFailsFast(t *testing.T) {
 	zeroReadBackoff(t)
 	calls := 0
 	prev := captureExec
@@ -120,8 +124,27 @@ func TestInspectPaneByIDGivesUpAtBound(t *testing.T) {
 	if _, ok := InspectPaneByID("%9"); ok {
 		t.Fatal("a genuinely-gone pane must return false")
 	}
+	if calls != 1 {
+		t.Fatalf("affirmative gone evidence must not retry, got %d attempts", calls)
+	}
+}
+
+func TestInspectPaneExactByIDGenericFailureExhaustsAsUnavailable(t *testing.T) {
+	zeroReadBackoff(t)
+	calls := 0
+	prev := captureExec
+	captureExec = func(...string) (string, error) {
+		calls++
+		return "", errors.New("exit status 1")
+	}
+	t.Cleanup(func() { captureExec = prev })
+
+	result := InspectPaneExactByID("%9")
+	if result.State != PaneInspectionUnavailable {
+		t.Fatalf("state = %q, want unavailable", result.State)
+	}
 	if calls != tmuxReadAttempts {
-		t.Fatalf("gone pane must fail at the retry bound %d, got %d attempts", tmuxReadAttempts, calls)
+		t.Fatalf("generic failure should exhaust %d attempts, got %d", tmuxReadAttempts, calls)
 	}
 }
 
