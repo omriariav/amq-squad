@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -426,6 +427,7 @@ func runSend(args []string) error {
 	body := fs.String("body", "", "prompt text (alternative to --body-file)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	jsonOut := fs.Bool("json", false, "emit a receipt-bearing JSON envelope")
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	forceFlag := fs.Bool("force", false, "deliver even if the agent appears busy (mid-turn)")
 	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
@@ -523,10 +525,48 @@ Examples:
 			return fmt.Errorf("agent %q at pane %s appears busy (mid-turn); retry when idle, or pass --force to deliver anyway", *roleFlag, paneID)
 		}
 	}
-	if err := sendPromptToPane(paneID, prompt); err != nil {
+	receipt := newDeliveryReceipt(projectDir, profile, workstream, mr.Member.Role, mr.Handle, effectiveTeamExecutionMode(t), "pane_send")
+	receipt.Method = "pane_prompt"
+	receipt.PaneID = paneID
+	receipt.Fallback = true
+	receipt.DeliveryState = deliveryStateAmbiguousUnknown
+	receipt.addStage("pane_submit_attempted", "prompt staged and Enter submission attempted; pane evidence cannot upgrade AMQ delivery state")
+	if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
 		return err
 	}
-	quietNotice("Delivered prompt to %s pane %s.\n", *roleFlag, paneID)
+	sendErr := sendPromptToPane(paneID, prompt)
+	if sendErr == nil {
+		receipt.Status = dispatchSubmitConfirmed
+		receipt.Acknowledged = true
+		receipt.addStage(dispatchSubmitConfirmed, "pane input-region change observed after Enter")
+	} else {
+		var queued *tmuxpane.QueuedInputError
+		var unconfirmed *tmuxpane.SubmitUnconfirmedError
+		switch {
+		case errors.As(sendErr, &queued):
+			receipt.Status = dispatchSubmitQueued
+		case errors.As(sendErr, &unconfirmed):
+			receipt.Status = dispatchSubmitUnconfirmed
+		default:
+			receipt.Status = "pane_failed"
+		}
+		receipt.Detail = sendErr.Error()
+		receipt.addStage(receipt.Status, sendErr.Error())
+	}
+	if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+		return err
+	}
+	if *jsonOut {
+		if err := printJSONEnvelope("send", mutationResult{Command: "send", Status: receipt.Status, Project: projectDir, Profile: profile, Session: workstream, Role: mr.Member.Role, Handle: mr.Handle, DeliveryReceipt: &receipt}); err != nil {
+			return err
+		}
+	}
+	if sendErr != nil {
+		return fmt.Errorf("%v (attempt_id=%s state=%s receipt=%s)", sendErr, receipt.AttemptID, receipt.Status, receipt.Path)
+	}
+	if !*jsonOut {
+		quietNotice("Delivered prompt to %s pane %s (attempt %s, receipt %s).\n", *roleFlag, paneID, receipt.AttemptID, receipt.Path)
+	}
 	return nil
 }
 

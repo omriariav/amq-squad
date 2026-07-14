@@ -23,7 +23,7 @@ var contextCommandScopeInventory = map[string]string{
 	"dispatch": "canonical", "doctor": "canonical", "focus": "canonical", "fork": "canonical",
 	"goal": "canonical_except_draft", "lead": "canonical", "monitor": "canonical_multi_session",
 	"next": "canonical", "notifications": "canonical", "notify": "canonical", "open": "canonical",
-	"operator": "canonical", "prune-panes": "canonical", "resume": "canonical", "rm": "canonical",
+	"operator": "canonical", "prune-panes": "canonical", "receipt": "canonical", "resume": "canonical", "rm": "canonical",
 	"send": "canonical", "status": "canonical", "stop": "canonical", "task": "canonical",
 	"team": "canonical_except_init", "thread": "canonical", "threads": "canonical", "up": "canonical",
 	"verify": "canonical", "bootstrap": "launch_record_bound",
@@ -52,7 +52,7 @@ func TestContextCommandScopeInventoryCoversEveryPublicCommand(t *testing.T) {
 	if len(missing) > 0 || len(stale) > 0 {
 		t.Fatalf("context command inventory drift: missing=%v stale=%v", missing, stale)
 	}
-	for _, required := range []string{"status", "task", "amq", "agent", "up", "resume", "fork", "team", "thread", "brief", "stop", "notify", "doctor", "rm", "console", "verify", "activity", "collect", "dispatch", "operator", "goal", "lead"} {
+	for _, required := range []string{"status", "task", "amq", "agent", "up", "resume", "fork", "team", "thread", "brief", "stop", "notify", "doctor", "rm", "console", "verify", "activity", "collect", "dispatch", "operator", "goal", "lead", "receipt"} {
 		if !strings.HasPrefix(contextCommandScopeInventory[required], "canonical") {
 			t.Errorf("context-bearing command %q is classified %q", required, contextCommandScopeInventory[required])
 		}

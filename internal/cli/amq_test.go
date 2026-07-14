@@ -31,7 +31,28 @@ func withAMQCommandSeams(t *testing.T, env amqEnv, output string) *[]amqCommandR
 	}
 	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
 		calls = append(calls, req)
-		return []byte(output), nil
+		result := output
+		if len(req.Arg) > 0 {
+			switch req.Arg[0] {
+			case "list":
+				// Durable reply resolution intentionally uses the non-mutating
+				// AMQ 0.42.1+ list --json shape, never `amq read`.
+				if containsString(req.Arg, "--new") {
+					result = `[{"id":"q1","from":"cto","thread":"p2p/cto__user","box":"new","path":"inbox/new/q1.md"},{"id":"msg1","from":"qa","thread":"p2p/lead__qa","box":"new","path":"inbox/new/msg1.md"}]` + "\n"
+				} else if containsString(req.Arg, "--cur") {
+					result = "[]\n"
+				}
+			case "send":
+				if parseSentMessageID(result) == "" {
+					result = "Sent fixture-msg to " + amqFlagValue(req.Arg, "to") + "\n"
+				}
+			case "reply":
+				if parseSentMessageID(result) == "" {
+					result = "Replied fixture-reply to fixture-recipient\n"
+				}
+			}
+		}
+		return []byte(result), nil
 	}
 	t.Cleanup(func() {
 		resolveAMQEnvForAMQCommand = prevEnv
@@ -564,7 +585,7 @@ func TestAMQRejectsUnknownSubcommand(t *testing.T) {
 
 func TestAMQSendResolvesRootAndForwards(t *testing.T) {
 	chdir(t, t.TempDir())
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "sent\n")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-send to worker\n")
 
 	_, _, err := captureOutput(t, func() error {
 		return runAMQ([]string{"send", "--session", "issue-96", "--me", "lead", "--to", "worker", "--kind", "todo", "--subject", "go"})
@@ -751,10 +772,10 @@ func TestAMQReplyAsOperatorHandleRequiresUnsafeOverride(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("unsafe operator reply-as with reason should pass: %v", err)
 	}
-	if len(*calls) != 1 {
-		t.Fatalf("calls = %d, want 1", len(*calls))
+	if len(*calls) != 3 {
+		t.Fatalf("calls = %d, want 3 (new list, cur list, reply)", len(*calls))
 	}
-	got := strings.Join((*calls)[0].Arg, " ")
+	got := strings.Join((*calls)[len(*calls)-1].Arg, " ")
 	if strings.Contains(got, "--unsafe-send-as") || strings.Contains(got, "--reason") {
 		t.Fatalf("guard flags should be stripped before bare amq reply: %s", got)
 	}
@@ -1118,7 +1139,14 @@ func TestAMQReadVerbsResolveRootAndForward(t *testing.T) {
 			if _, _, err := captureOutput(t, func() error { return runAMQ(tc.args) }); err != nil {
 				t.Fatalf("amq %s: %v", tc.name, err)
 			}
-			got := strings.Join((*calls)[0].Arg, " ")
+			call := (*calls)[0]
+			if tc.name == "reply" {
+				if len(*calls) != 3 || (*calls)[0].Arg[0] != "list" || (*calls)[1].Arg[0] != "list" {
+					t.Fatalf("reply lookup calls = %#v, want list --new, list --cur, reply", *calls)
+				}
+				call = (*calls)[2]
+			}
+			got := strings.Join(call.Arg, " ")
 			for _, want := range tc.want {
 				if !strings.Contains(got, want) {
 					t.Fatalf("amq %s args missing %q: %s", tc.name, want, got)

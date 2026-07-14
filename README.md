@@ -345,9 +345,19 @@ it before amq-squad receives argv. For bare `amq send`, use `--body -` or
 amq-squad task add --session issue-96 --title "Implement fix" --assign fullstack
 amq-squad dispatch --session issue-96 --role fullstack --task t1 --subject "Implement fix" --body-file ./task.md
 amq-squad activity set --session issue-96 --me fullstack --task t1 --phase testing
+amq-squad task done t1 --session issue-96 --me fullstack --evidence "commit abc" --dispatch-next t2
+amq-squad task reconcile --session issue-96 --json
 amq-squad threads --session issue-96
 amq-squad thread --session issue-96 --id p2p/cto__fullstack --include-body=false
 ```
+
+`task done` commits completion, dependent readiness, an optional successor
+claim, and delivery intents before sending AMQ. When the task has a dispatch
+counterpart it sends the canonical completion signal by default: AMQ kind
+`status` with subject `DONE: <task title>` (`--no-notify` records explicit
+suppression). Claims carry renewable leases; reconcile reports stale or legacy
+leases without silently unclaiming work and never auto-retries an uncertain
+delivery.
 
 Safety preflights:
 
