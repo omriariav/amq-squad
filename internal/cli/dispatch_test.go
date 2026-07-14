@@ -765,6 +765,18 @@ func TestRunDispatchCreateTaskLinksMessage(t *testing.T) {
 	writeDispatchTeam(t, dir)
 	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-abc to qa\n")
 	_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+	previousRun := runAMQCommand
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		committed, err := taskstore.Show(dir, "issue-96", "t1")
+		if err != nil {
+			t.Fatalf("task must exist before AMQ send: %v", err)
+		}
+		if committed.Status != taskstore.StatusInProgress || committed.Lease == nil || len(committed.Outbox) != 1 || committed.Outbox[0].State != taskstore.OutboxSending {
+			t.Fatalf("AMQ send ran before task-backed dispatch commit: %+v", committed)
+		}
+		return previousRun(req)
+	}
+	t.Cleanup(func() { runAMQCommand = previousRun })
 
 	stdout, _, err := captureOutput(t, func() error {
 		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task"})
@@ -826,43 +838,47 @@ func TestRunDispatchCreateTaskAMQSendFailureLeavesTaskAuditTrail(t *testing.T) {
 	if showErr != nil {
 		t.Fatalf("created task should remain inspectable after AMQ failure: %v", showErr)
 	}
-	if !strings.Contains(show, "ID: t1") || strings.Contains(show, "Dispatch Message:") {
-		t.Fatalf("task should remain without dispatch metadata after AMQ failure:\n%s", show)
+	for _, want := range []string{"ID: t1", "Status: in_progress", "Outbox:", "failed", "error=amq send failed", "Dispatch Assignee: qa"} {
+		if !strings.Contains(show, want) {
+			t.Fatalf("failed task-backed dispatch missing %q:\n%s", want, show)
+		}
 	}
 }
 
-func TestRunDispatchCreateTaskLinkFailureLeavesQueuedMessageAndTask(t *testing.T) {
+func TestRunDispatchCreateTaskFinalizeFailureLeavesUncertainClaimedTask(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	writeDispatchTeam(t, dir)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-link to qa\n")
-	prevLink := dispatchLinkTask
-	dispatchLinkTask = func(projectDir, profile, session, id string, dispatch taskstore.Dispatch, now time.Time) (taskstore.Task, error) {
-		return taskstore.Task{}, errors.New("link failed")
+	prevFinish := dispatchFinishTask
+	dispatchFinishTask = func(projectDir, profile, session, taskID, intentID string, dispatch taskstore.Dispatch, messageID string, sendErr error, now time.Time) (taskstore.Task, taskstore.OutboxIntent, error) {
+		return taskstore.Task{}, taskstore.OutboxIntent{}, errors.New("finish failed")
 	}
-	t.Cleanup(func() { dispatchLinkTask = prevLink })
+	t.Cleanup(func() { dispatchFinishTask = prevFinish })
 	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
 
 	_, _, err := captureOutput(t, func() error {
 		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task"})
 	})
-	if err == nil || !strings.Contains(err.Error(), "link native task t1 to dispatch") {
-		t.Fatalf("dispatch should report link failure, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "delivery may be uncertain") {
+		t.Fatalf("dispatch should report uncertain finalize failure, got %v", err)
 	}
 	if len(*calls) != 1 {
-		t.Fatalf("expected one successful AMQ send before link failure, got %d", len(*calls))
+		t.Fatalf("expected one successful AMQ send after committed intent, got %d", len(*calls))
 	}
 	if len(*nudges) != 0 {
-		t.Fatalf("link failure must not nudge because metadata linkage failed, got %v", *nudges)
+		t.Fatalf("finalize failure must not nudge because outcome is uncertain, got %v", *nudges)
 	}
 	show, _, showErr := captureOutput(t, func() error {
 		return runTask([]string{"show", "t1", "--session", "issue-96"})
 	})
 	if showErr != nil {
-		t.Fatalf("created task should remain inspectable after link failure: %v", showErr)
+		t.Fatalf("created task should remain inspectable after finalize failure: %v", showErr)
 	}
-	if !strings.Contains(show, "ID: t1") || strings.Contains(show, "Dispatch Message:") {
-		t.Fatalf("task should remain without dispatch metadata after link failure:\n%s", show)
+	for _, want := range []string{"ID: t1", "Status: in_progress", "Outbox:", "sending"} {
+		if !strings.Contains(show, want) {
+			t.Fatalf("uncertain task missing %q:\n%s", want, show)
+		}
 	}
 }
 
@@ -954,6 +970,20 @@ func TestRunDispatchTaskRejectsBlockedAndTerminalStatusesBeforeSend(t *testing.T
 				return "t1"
 			},
 			want: "task t1 is blocked; dispatch requires pending or in_progress",
+		},
+		{
+			name: "cancelled terminal",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				addClaimedDispatchTask(t)
+				if _, _, err := captureOutput(t, func() error {
+					return runTask([]string{"cancel", "t1", "--me", "qa", "--reason", "superseded", "--session", "issue-96"})
+				}); err != nil {
+					t.Fatal(err)
+				}
+				return "t1"
+			},
+			want: "task t1 is cancelled; dispatch requires pending or in_progress",
 		},
 	}
 	for _, tc := range cases {
