@@ -60,10 +60,6 @@ func launchRecordMatchesPane(rec launch.Record, paneID string) bool {
 		strings.TrimSpace(rec.Tmux.PaneID) == strings.TrimSpace(paneID)
 }
 
-func launchRecordHasNativeGoal(rec launch.Record) bool {
-	return rec.GoalBinding != nil && rec.GoalBinding.NativeGoal
-}
-
 func launchRecordAuthorizesProjectLead(rec launch.Record, role, handle, profile, session, root string) bool {
 	if !launchRecordMatchesIdentity(rec, role, handle, profile, session, root) {
 		return false
@@ -75,7 +71,7 @@ func launchRecordAuthorizesProjectLead(rec launch.Record, role, handle, profile,
 	case adoptionModeExternalProjectLead:
 		return true
 	default:
-		return launchRecordHasNativeGoal(rec)
+		return launchRecordHasGoalBinding(rec)
 	}
 }
 

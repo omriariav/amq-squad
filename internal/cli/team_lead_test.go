@@ -393,12 +393,12 @@ func TestLeadRegisterReapplyDrainInjectOnReRegister(t *testing.T) {
 func TestLeadRegisterPreservesExistingNativeGoalBinding(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Members:      []team.Member{{Role: "cto", Binary: "claude", Handle: "cto", Session: "issue-96"}},
 		Orchestrated: true,
 		Lead:         "cto",
 	})
 	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
+		Binary: "claude", Handle: "cto", Role: "cto", AgentPID: 4242,
 		GoalBinding: &launch.GoalBinding{
 			Mode:       "native_goal",
 			NativeGoal: true,
@@ -457,6 +457,28 @@ func TestLeadRegisterPreservesExistingNativeGoalBinding(t *testing.T) {
 	}
 	if len(env.Data.Records) != 1 || !env.Data.Records[0].OperatorVisible || env.Data.Records[0].AdoptionMode != adoptionModeExternalProjectLead {
 		t.Fatalf("status record after lead register = %+v, want operator-visible external lead", env.Data.Records)
+	}
+}
+
+func TestPreserveExternalGoalBindingRejectsInvalidClaudeBinding(t *testing.T) {
+	validLegacy := launch.Record{
+		Binary: "claude", Role: "cto", Session: "issue-460",
+		GoalBinding: &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship"`},
+	}
+	if !preserveExternalGoalBinding(validLegacy, nil, "cto", "issue-460") {
+		t.Fatal("valid legacy Claude binding was not preserved")
+	}
+	for name, binding := range map[string]*launch.GoalBinding{
+		"corrupt":        {Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship" --unknown value`},
+		"typed mismatch": {Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship"`, Goal: "other"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := validLegacy
+			rec.GoalBinding = binding
+			if preserveExternalGoalBinding(rec, nil, "cto", "issue-460") {
+				t.Fatalf("invalid Claude binding was preserved: %+v", binding)
+			}
+		})
 	}
 }
 

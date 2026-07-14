@@ -272,8 +272,8 @@ Examples:
 			return err
 		}
 	}
-	if restoredGoalBinding != nil && nativeGoalBindingFromArgs(childArgs) != nil {
-		return usageErrorf("--restore-goal-binding cannot be combined with a native /goal child argument")
+	if restoredGoalBinding != nil && goalBindingFromArgs(binary, childArgs) != nil {
+		return usageErrorf("--restore-goal-binding cannot be combined with a goal child argument")
 	}
 
 	handle := *me
@@ -376,7 +376,7 @@ Examples:
 		TeamHome:                     strings.TrimSpace(*teamHome),
 	}
 	if rec.GoalBinding == nil {
-		rec.GoalBinding = nativeGoalBindingFromArgs(childArgs)
+		rec.GoalBinding = goalBindingFromArgs(binary, childArgs)
 	}
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD
@@ -725,15 +725,26 @@ func launchRootFromFlags(cwd, rootFlag, session, profile string) string {
 }
 
 func nativeGoalBindingFromArgs(args []string) *launch.GoalBinding {
+	return goalBindingFromArgs("claude", args)
+}
+
+func goalBindingFromArgs(binary string, args []string) *launch.GoalBinding {
+	contract, err := goalDeliveryContractForBinary(binary)
+	if err != nil {
+		return nil
+	}
 	for _, arg := range args {
 		cmd := strings.TrimSpace(arg)
-		if cmd == "/goal" || strings.HasPrefix(cmd, "/goal ") {
-			return &launch.GoalBinding{
-				Mode:       "native_goal",
-				NativeGoal: true,
-				Source:     "launch-argv",
-				Command:    cmd,
-				Detail:     "launch argv included a native /goal command for the visible lead",
+		if contract.NativeGoal && (cmd == "/goal" || strings.HasPrefix(cmd, "/goal ")) {
+			goal, attemptID, parseErr := parseNativeGoalBindingCommand(cmd)
+			if parseErr == nil {
+				return contract.binding(goal, attemptID, cmd, "launch-argv", "launch argv included a native /goal command for the visible lead")
+			}
+		}
+		if !contract.NativeGoal && strings.HasPrefix(cmd, "AMQ-SQUAD PROMPT GOAL v1\n") {
+			goal, attemptID, parseErr := parseCodexGoalControlPrompt(cmd)
+			if parseErr == nil && goal != "" {
+				return contract.binding(goal, attemptID, cmd, "launch-argv", "launch argv included a structured prompt goal for a Codex visible lead")
 			}
 		}
 	}
