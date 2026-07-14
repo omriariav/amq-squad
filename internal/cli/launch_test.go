@@ -25,6 +25,50 @@ func TestNativeGoalBindingFromArgsDetectsGoalPrompt(t *testing.T) {
 	}
 }
 
+func TestGoalBindingFromArgsUsesStructuredPromptForCodex(t *testing.T) {
+	tm := team.Team{Project: "/tmp/project", Lead: "cto", ExecutionMode: executionModeProjectLead}
+	goal := "ship line one\nship line two"
+	prompt := codexGoalControlPrompt(goal, tm, team.DefaultProfile, "issue-460", "cto", "attempt-460")
+	got := goalBindingFromArgs("codex", []string{"--enable", "goals", prompt})
+	if got == nil || got.NativeGoal || got.Mode != "prompt_goal" || got.Source != "launch-argv" {
+		t.Fatalf("Codex prompt goal binding = %+v", got)
+	}
+	if got.Goal != goal || got.AttemptID != "attempt-460" || got.Command != prompt {
+		t.Fatalf("Codex prompt identity changed: %+v", got)
+	}
+	if strings.Contains(prompt, `ship line one\nship line two`) || !strings.Contains(prompt, "ship line one\nship line two") {
+		t.Fatalf("Codex prompt must carry actual goal newlines: %q", prompt)
+	}
+	if legacy := goalBindingFromArgs("codex", []string{`/goal --goal "ship"`}); legacy != nil {
+		t.Fatalf("Codex must not trust a legacy native /goal binding: %+v", legacy)
+	}
+}
+
+func TestLaunchRecordHasGoalBindingStrictClaude(t *testing.T) {
+	tm := team.Team{ExecutionMode: executionModeProjectLead}
+	withAttempt := nativeGoalControlPrompt("ship", tm, team.DefaultProfile, "issue-460", "cto", "attempt-460")
+	tests := []struct {
+		name    string
+		binding launch.GoalBinding
+		want    bool
+	}{
+		{name: "valid legacy", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship"`}, want: true},
+		{name: "valid typed", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: withAttempt, Goal: "ship", AttemptID: "attempt-460"}, want: true},
+		{name: "corrupt token", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship" --unknown value`}},
+		{name: "partial context", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship" --session issue-460`}},
+		{name: "typed goal mismatch", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: withAttempt, Goal: "other", AttemptID: "attempt-460"}},
+		{name: "typed attempt mismatch", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: withAttempt, Goal: "ship", AttemptID: "other-attempt"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := launch.Record{Binary: "claude", GoalBinding: &tt.binding}
+			if got := launchRecordHasGoalBinding(rec); got != tt.want {
+				t.Fatalf("launchRecordHasGoalBinding(%+v) = %t, want %t", tt.binding, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRunLaunchDryRunSandboxedCodexOmitsBypassDefault(t *testing.T) {
 	setupFakeAMQ(t)
 

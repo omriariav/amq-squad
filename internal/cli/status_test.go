@@ -1491,23 +1491,27 @@ func TestExecuteStatusJSONIncludesSpawnMetadata(t *testing.T) {
 	}
 }
 
-func TestExecuteStatusJSONReportsNativeGoalForLiveLeadRecord(t *testing.T) {
+func TestExecuteStatusJSONReportsPromptGoalForLiveCodexLeadRecord(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
+	tm := team.Team{
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
 			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
 		},
 		Orchestrated: true,
 		Lead:         "cto",
-	})
+	}
+	dir := seedTeam(t, tm)
+	tm.Project = dir
+	prompt := codexGoalControlPrompt("ship", tm, team.DefaultProfile, "issue-96", "cto", "")
 	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
 		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
 		GoalBinding: &launch.GoalBinding{
-			Mode:       "native_goal",
-			NativeGoal: true,
+			Mode:       "prompt_goal",
+			NativeGoal: false,
 			Source:     "launch-argv",
-			Command:    `/goal --goal "ship"`,
+			Command:    prompt,
+			Goal:       "ship",
 		},
 	})
 	seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
@@ -1524,13 +1528,13 @@ func TestExecuteStatusJSONReportsNativeGoalForLiveLeadRecord(t *testing.T) {
 		t.Fatalf("status: %v\n%s", err, out)
 	}
 	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if env.Data.GoalBinding.Mode != "native_goal" || !env.Data.GoalBinding.NativeGoal || !env.Data.GoalBinding.Verified {
+	if env.Data.GoalBinding.Mode != "prompt_goal" || env.Data.GoalBinding.NativeGoal || !env.Data.GoalBinding.Verified {
 		t.Fatalf("goal binding = %+v", env.Data.GoalBinding)
 	}
 	if env.Data.GoalBinding.Source != "launch-record" || env.Data.GoalBinding.NativeSource != "launch-argv" {
 		t.Fatalf("goal binding source = %+v", env.Data.GoalBinding)
 	}
-	if !strings.Contains(env.Data.GoalBinding.Command, "/goal --goal") {
+	if !strings.Contains(env.Data.GoalBinding.Command, "AMQ-SQUAD PROMPT GOAL v1") {
 		t.Fatalf("goal binding command = %+v", env.Data.GoalBinding)
 	}
 }
@@ -1539,14 +1543,14 @@ func TestExecuteStatusJSONReportsBlockedNativeGoalForLiveLeadRecord(t *testing.T
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-274"},
+			{Role: "cto", Binary: "claude", Handle: "cto", Session: "issue-274"},
 			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-274"},
 		},
 		Orchestrated: true,
 		Lead:         "cto",
 	})
 	seedAgentRecord(t, base, "issue-274", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
+		Binary: "claude", Handle: "cto", Role: "cto", AgentPID: 4242,
 		GoalBinding: &launch.GoalBinding{
 			Mode:       "native_goal_blocked",
 			NativeGoal: true,
@@ -1577,7 +1581,7 @@ func TestExecuteStatusJSONReportsBlockedNativeGoalForLiveLeadRecord(t *testing.T
 	}
 }
 
-func TestExecuteStatusJSONReportsMissingNativeGoalForLiveProjectLead(t *testing.T) {
+func TestExecuteStatusJSONReportsMissingPromptGoalForLiveCodexProjectLead(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{
@@ -1602,14 +1606,43 @@ func TestExecuteStatusJSONReportsMissingNativeGoalForLiveProjectLead(t *testing.
 		t.Fatalf("status: %v\n%s", err, out)
 	}
 	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if env.Data.GoalBinding.Mode != "native_goal_missing" || env.Data.GoalBinding.NativeGoal || env.Data.GoalBinding.Verified {
-		t.Fatalf("goal binding = %+v, want missing native goal", env.Data.GoalBinding)
+	if env.Data.GoalBinding.Mode != "prompt_goal_missing" || env.Data.GoalBinding.NativeGoal || env.Data.GoalBinding.Verified {
+		t.Fatalf("goal binding = %+v, want missing prompt goal", env.Data.GoalBinding)
 	}
 	if env.Data.GoalBinding.NativeSource != "missing" || !strings.Contains(env.Data.GoalBinding.Detail, "without launch-record evidence") {
 		t.Fatalf("goal binding detail = %+v", env.Data.GoalBinding)
 	}
-	if env.Data.Execution.GoalBinding != "native_goal_missing" || !env.Data.Execution.ImplementationAllowed {
+	if env.Data.Execution.GoalBinding != "prompt_goal_missing" || !env.Data.Execution.ImplementationAllowed {
 		t.Fatalf("execution goal binding = %+v", env.Data.Execution)
+	}
+}
+
+func TestExecuteStatusJSONRejectsInvalidClaudeGoalBinding(t *testing.T) {
+	for name, binding := range map[string]*launch.GoalBinding{
+		"corrupt":        {Mode: "native_goal", NativeGoal: true, Source: "launch-argv", Command: `/goal --goal "ship" --unknown value`},
+		"typed mismatch": {Mode: "native_goal", NativeGoal: true, Source: "launch-argv", Command: `/goal --goal "ship"`, Goal: "other"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := setupFakeAMQSessionRoots(t)
+			dir := seedTeam(t, team.Team{
+				Members:       []team.Member{{Role: "cto", Binary: "claude", Handle: "cto", Session: "issue-460"}},
+				Orchestrated:  true,
+				Lead:          "cto",
+				ExecutionMode: executionModeProjectLead,
+			})
+			seedAgentRecord(t, base, "issue-460", "cto", launch.Record{Binary: "claude", Handle: "cto", Role: "cto", AgentPID: 4242, GoalBinding: binding})
+			out, err := runStatusExec(t, statusExecution{
+				ProjectDir: dir, RequestedSession: "issue-460", ExplicitSession: true,
+				Probe: statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()), JSON: true,
+			})
+			if err != nil {
+				t.Fatalf("status: %v\n%s", err, out)
+			}
+			env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+			if env.Data.GoalBinding.Mode != "native_goal_missing" || env.Data.GoalBinding.Verified {
+				t.Fatalf("invalid Claude binding surfaced as %+v", env.Data.GoalBinding)
+			}
+		})
 	}
 }
 
@@ -2728,14 +2761,14 @@ func TestExecuteStatusPresenceHandleMismatchIsStaleNotLive(t *testing.T) {
 func TestStatusJSONProvesExternalOrchestratorBinding(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Members:       []team.Member{{Role: goalOrchestratorRole, Binary: "codex", Handle: "global-orch", Session: "issue-96"}},
+		Members:       []team.Member{{Role: goalOrchestratorRole, Binary: "claude", Handle: "global-orch", Session: "issue-96"}},
 		Orchestrated:  true,
 		Lead:          goalOrchestratorRole,
 		ExecutionMode: executionModeProjectLead,
 	})
 	agentDir := seedAgentRecord(t, base, "issue-96", "global-orch", launch.Record{
 		CWD:      dir,
-		Binary:   "codex",
+		Binary:   "claude",
 		Handle:   "global-orch",
 		Role:     goalOrchestratorRole,
 		Session:  "issue-96",

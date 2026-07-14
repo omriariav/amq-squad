@@ -18,7 +18,7 @@ import (
 )
 
 // goalAttemptRecord is the single durable unit consumed by either an injected
-// native /goal prompt or its AMQ fallback. Both delivery paths carry AttemptID;
+// binary-specific goal input or its AMQ fallback. Both delivery paths carry AttemptID;
 // the first path to claim the record owns activation and the other is a no-op.
 type goalAttemptRecord struct {
 	SchemaVersion int                `json:"schema_version"`
@@ -215,8 +215,8 @@ func claimGoalAttempt(projectDir, profile, session, attemptID, route string, now
 		return false, goalAttemptClaim{}, err
 	}
 	route = strings.ToLower(strings.TrimSpace(route))
-	if route != "native" && route != "amq" {
-		return false, goalAttemptClaim{}, fmt.Errorf("goal attempt route must be native or amq")
+	if route != goalClaimRouteNative && route != goalClaimRoutePrompt && route != "amq" {
+		return false, goalAttemptClaim{}, fmt.Errorf("goal attempt route must be native, prompt, or amq")
 	}
 	claim := goalAttemptClaim{AttemptID: attemptID, Route: route, ClaimedAt: now}
 	b, err := json.MarshalIndent(claim, "", "  ")
@@ -240,7 +240,7 @@ func claimGoalAttempt(projectDir, profile, session, attemptID, route string, now
 		if existing.AttemptID != attemptID {
 			return false, goalAttemptClaim{}, &invalidExistingGoalClaimError{Status: "invalid_existing_claim", Path: claimPath, Detail: fmt.Sprintf("attempt_id mismatch: got %q want %q", existing.AttemptID, attemptID)}
 		}
-		if existing.Route != "native" && existing.Route != "amq" {
+		if existing.Route != goalClaimRouteNative && existing.Route != goalClaimRoutePrompt && existing.Route != "amq" {
 			return false, goalAttemptClaim{}, &invalidExistingGoalClaimError{Status: "invalid_existing_claim", Path: claimPath, Detail: fmt.Sprintf("invalid route %q", existing.Route)}
 		}
 		return false, existing, nil
@@ -254,14 +254,14 @@ func runGoalClaim(args []string) error {
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	sessionFlag := fs.String("session", "", "workstream session containing the goal attempt")
 	attemptFlag := fs.String("attempt-id", "", "claim-once goal delivery attempt id")
-	routeFlag := fs.String("route", "", "activation route: native or amq")
+	routeFlag := fs.String("route", "", "activation route: native, prompt, or amq")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned claim result")
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad goal claim - atomically claim one delivered goal attempt
 
 Usage:
-  amq-squad goal claim --attempt-id ID --route native|amq --session S [--profile P] [--project DIR] [--json]
+  amq-squad goal claim --attempt-id ID --route native|prompt|amq --session S [--profile P] [--project DIR] [--json]
 
 Exactly one route can claim an attempt. This is an at-most-once contract: a
 claimant crash before activation may lose the activation, but a second route
@@ -392,6 +392,9 @@ re-delivers that exact claim-once control prompt.
 	if err != nil {
 		return err
 	}
+	if _, err := goalDeliveryContractForBinary(opts.Member.Binary); err != nil {
+		return err
+	}
 	attemptID := strings.TrimSpace(*attemptFlag)
 	if err := os.MkdirAll(goalAttemptDir(opts.Project, opts.Profile, opts.Session), 0o755); err != nil {
 		return err
@@ -420,6 +423,10 @@ func runGoalRetryAttemptLocked(opts goalDeliveryOptions, attemptID string) error
 	opts.Team = currentTeam
 	opts.Member = member
 	opts.Namespace = squadnamespace.Resolve(opts.Project, opts.Profile, opts.Session)
+	contract, err := goalDeliveryContractForBinary(member.Binary)
+	if err != nil {
+		return err
+	}
 	attemptPath, err := goalAttemptPath(opts.Project, opts.Profile, opts.Session, attemptID)
 	if err != nil {
 		return err
@@ -460,14 +467,11 @@ func runGoalRetryAttemptLocked(opts goalDeliveryOptions, attemptID string) error
 		strings.TrimSpace(rec.BootstrapExpectation.LaunchID) == "" || rec.StartedAt.IsZero() || rec.Tmux == nil || rec.Tmux.Target == "adopted" {
 		return fmt.Errorf("goal retry-attempt refused: current launch identity is not the exact fresh lead launch")
 	}
-	if mr.Record.GoalBinding.Mode != "native_goal" || !mr.Record.GoalBinding.NativeGoal || mr.Record.GoalBinding.Source != "goal-control" {
-		return fmt.Errorf("goal retry-attempt refused: current lead binding is not a native goal-control reservation")
-	}
-	goal, boundAttemptID, err := parseGeneratedGoalBinding(mr.Record.GoalBinding.Command)
+	goal, boundAttemptID, err := goalBindingPayload(mr.Record.GoalBinding, contract)
 	if err != nil || boundAttemptID != attemptID || goal != attempt.Goal {
 		return fmt.Errorf("goal retry-attempt refused: current lead binding does not match attempt %s", attemptID)
 	}
-	if expected := nativeGoalControlPrompt(goal, opts.Team, opts.Profile, opts.Session, opts.Role, attemptID); mr.Record.GoalBinding.Command != expected {
+	if expected := contract.prompt(goal, opts.Team, opts.Profile, opts.Session, opts.Role, attemptID); !exactGoalBinding(mr.Record.GoalBinding, contract, goal, attemptID, expected, "goal-control") {
 		return fmt.Errorf("goal retry-attempt refused: current lead binding is not the exact generated command")
 	}
 	teamDigest, teamMod, err := readGoalFileGeneration(team.ProfilePath(opts.Project, opts.Profile))
@@ -525,7 +529,7 @@ func runGoalRetryAttemptLocked(opts goalDeliveryOptions, attemptID string) error
 	if err := sendPromptToPane(paneID, sendRuntime.Record.GoalBinding.Command); err != nil {
 		var queued *tmuxpane.QueuedInputError
 		if errors.As(err, &queued) {
-			fmt.Fprintf(os.Stderr, "warning: existing goal attempt %s is queued in the lead input; do not retry again\n", attemptID)
+			fmt.Fprintf(os.Stderr, "warning: existing %s attempt %s is queued in the lead input; do not retry again\n", contract.Label, attemptID)
 			return nil
 		}
 		var unconfirmed *tmuxpane.SubmitUnconfirmedError
@@ -534,7 +538,7 @@ func runGoalRetryAttemptLocked(opts goalDeliveryOptions, attemptID string) error
 			if fallbackErr != nil {
 				return &goalFallbackDurabilityError{DeliveryErr: err, FallbackErr: fallbackErr}
 			}
-			fmt.Fprintf(os.Stderr, "warning: native retry was unconfirmed; durable fallback %s reuses attempt %s\n", fallback.MessageID, attemptID)
+			fmt.Fprintf(os.Stderr, "warning: %s retry was unconfirmed; durable fallback %s reuses attempt %s\n", contract.Label, fallback.MessageID, attemptID)
 			return nil
 		}
 		return err
@@ -581,12 +585,13 @@ func validateGoalRetrySendCAS(opts goalDeliveryOptions, attempt goalAttemptRecor
 	}
 	rec := mr.Record
 	ns := squadnamespace.Resolve(opts.Project, opts.Profile, opts.Session)
-	goal, boundAttemptID, parseErr := parseGeneratedGoalBinding(rec.GoalBinding.Command)
-	if parseErr != nil || boundAttemptID != attemptID || goal != attempt.Goal || rec.GoalBinding.Mode != "native_goal" || !rec.GoalBinding.NativeGoal || rec.GoalBinding.Source != "goal-control" ||
+	contract, contractErr := goalDeliveryContractForBinary(member.Binary)
+	goal, boundAttemptID, parseErr := goalBindingPayload(rec.GoalBinding, contract)
+	if contractErr != nil || parseErr != nil || boundAttemptID != attemptID || goal != attempt.Goal ||
 		rec.Role != opts.Role || rec.Handle != memberHandle(member) || rec.Session != opts.Session || !squadnamespace.ProfilesEqual(rec.TeamProfile, opts.Profile) || canonicalPath(rec.TeamHome) != canonicalPath(opts.Project) ||
 		canonicalPath(rec.Root) != canonicalPath(ns.AMQRoot) || canonicalPath(rec.CWD) != canonicalPath(member.EffectiveCWD(currentTeam.Project)) || rec.Binary != member.Binary || rec.Conversation != "" ||
 		rec.BootstrapExpectation == nil || !rec.BootstrapExpectation.Required || strings.TrimSpace(rec.BootstrapExpectation.LaunchID) == "" || rec.StartedAt.IsZero() || rec.Tmux == nil || rec.Tmux.Target == "adopted" ||
-		rec.GoalBinding.Command != nativeGoalControlPrompt(goal, currentTeam, opts.Profile, opts.Session, opts.Role, attemptID) {
+		!exactGoalBinding(rec.GoalBinding, contract, goal, attemptID, contract.prompt(goal, currentTeam, opts.Profile, opts.Session, opts.Role, attemptID), "goal-control") {
 		return memberRuntime{}, fmt.Errorf("goal retry-attempt refused: exact launch/binding identity changed immediately before send")
 	}
 	claimPath := goalAttemptClaimPath(mustGoalAttemptPathForRetry(opts, attemptID))

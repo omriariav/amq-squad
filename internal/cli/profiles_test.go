@@ -885,11 +885,11 @@ func TestGoalDeliverNamespaceOverrideDeliversAndAudits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("goal deliver override: %v\n%s", err, stdout)
 	}
-	if len(sent) != 1 || !strings.Contains(sent[0], "/goal --goal") || !strings.Contains(sent[0], "--profile release") {
+	if len(sent) != 1 || !strings.Contains(sent[0], "AMQ-SQUAD PROMPT GOAL v1") || !strings.Contains(sent[0], "profile: release") {
 		t.Fatalf("goal deliver sent = %+v", sent)
 	}
 	env := decodeJSONEnvelope[mutationResult](t, stdout)
-	if env.Kind != "goal_deliver" || env.Data.Status != "native_goal_delivered" {
+	if env.Kind != "goal_deliver" || env.Data.Status != "prompt_goal_delivered" {
 		t.Fatalf("goal deliver envelope = %+v", env)
 	}
 	audit, err := os.ReadFile(filepath.Join(dir, ".amq-squad", "namespace-audit", "main.jsonl"))
