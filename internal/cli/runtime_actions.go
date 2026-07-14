@@ -388,6 +388,30 @@ func focusTarget(projectDir, profile, session string, explicitSession bool, expl
 			}
 			continue
 		}
+		initialIdentity, rerr := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), mr.Handle)
+		if rerr != nil {
+			return rerr
+		}
+		admission, admissionErr := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+		if admissionErr != nil {
+			return admissionErr
+		}
+		defer admission.close()
+		currentRuntime, currentWorkstream, rerr := resolveMemberRuntime(projectDir, profile, session, explicitSession, r)
+		if rerr != nil {
+			return fmt.Errorf("focus refused: target re-resolution under admission failed: %w", rerr)
+		}
+		currentIdentity, rerr := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, currentWorkstream), currentRuntime.Handle)
+		if rerr != nil {
+			return rerr
+		}
+		if err := validateReResolvedEndpointIdentity("focus", initialIdentity, currentIdentity); err != nil {
+			return err
+		}
+		if err := validateReResolvedMemberRuntime("focus", projectDir, profile, mr, workstream, currentRuntime, currentWorkstream); err != nil {
+			return err
+		}
+		mr, workstream = currentRuntime, currentWorkstream
 		if err := ensureNoNamespaceConflict("focus", projectDir, profile, workstream, explicitProfile); err != nil {
 			return err
 		}
@@ -487,10 +511,31 @@ Examples:
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflictWithOverride("send", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
+	override := namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
 		Reason:  *overrideNamespaceReason,
-	}); err != nil {
+	}
+	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentCtx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+	if err != nil {
+		return fmt.Errorf("send refused: context re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedContext(ctx, currentCtx, false); err != nil {
+		return err
+	}
+	currentRuntime, currentWorkstream, err := resolveMemberRuntime(currentCtx.ProjectDir, currentCtx.Profile, currentCtx.Session, flagWasSet(fs, "session"), *roleFlag)
+	if err != nil {
+		return fmt.Errorf("send refused: target re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedMemberRuntime("send", currentCtx.ProjectDir, currentCtx.Profile, mr, workstream, currentRuntime, currentWorkstream); err != nil {
+		return err
+	}
+	ctx, projectDir, profile, mr, workstream = currentCtx, currentCtx.ProjectDir, currentCtx.Profile, currentRuntime, currentWorkstream
+	if err := ensureNoNamespaceConflictWithOverride("send", projectDir, profile, workstream, flagWasSet(fs, "profile"), override); err != nil {
 		return err
 	}
 	if reason, disabled := mr.nativePromptInjectionDisabledReason(); disabled {
@@ -527,6 +572,19 @@ Examples:
 		return err
 	}
 	quietNotice("Delivered prompt to %s pane %s.\n", *roleFlag, paneID)
+	return nil
+}
+
+func validateReResolvedMemberRuntime(operation, projectDir, profile string, initial memberRuntime, initialWorkstream string, current memberRuntime, currentWorkstream string) error {
+	if err := validateReResolvedEndpoint(operation, squadnamespace.Resolve(projectDir, profile, initialWorkstream), squadnamespace.Resolve(projectDir, profile, currentWorkstream), initial.Handle, current.Handle); err != nil {
+		return err
+	}
+	if initial.AgentDir != current.AgentDir || initial.HasRecord != current.HasRecord || initial.Member.Binary != current.Member.Binary || initial.Member.Session != current.Member.Session {
+		return fmt.Errorf("%s refused: runtime target identity changed before admission; retry", operation)
+	}
+	if initial.HasRecord && (initial.Record.StartedAt != current.Record.StartedAt || initial.Record.Root != current.Record.Root || initial.Record.AgentPID != current.Record.AgentPID) {
+		return fmt.Errorf("%s refused: launch generation changed before admission; retry", operation)
+	}
 	return nil
 }
 

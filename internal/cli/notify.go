@@ -156,6 +156,32 @@ Examples:
 		return err
 	}
 	emitContextDiagnostics(ctx)
+	var admission *namespaceAdmissionLocks
+	if !*dryRun {
+		if strings.TrimSpace(*sessionFlag) == "" {
+			ctx, admission, err = acquireRevalidatedContextWriter(ctx, true, func() (contextResolution, error) {
+				return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+			})
+			if err != nil {
+				return err
+			}
+			defer admission.close()
+			if err := ensureNoNamespaceMigrationForProfile("notify", ctx.ProjectDir, ctx.Profile); err != nil {
+				return err
+			}
+		} else {
+			ctx, admission, err = acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
+				return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+			})
+			if err != nil {
+				return err
+			}
+			defer admission.close()
+			if err := ensureNoNamespaceMigration("notify", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+				return err
+			}
+		}
+	}
 	return executeNotify(notifyExecution{
 		ProjectDir:    ctx.ProjectDir,
 		Profile:       ctx.Profile,

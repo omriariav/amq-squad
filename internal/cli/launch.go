@@ -524,6 +524,55 @@ Examples:
 		verbosePolicyEcho()
 		return nil
 	}
+	admissionProject := rec.TeamHome
+	if !filepath.IsAbs(admissionProject) {
+		admissionProject = filepath.Join(cwd, admissionProject)
+	}
+	admissionProject = filepath.Clean(admissionProject)
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(admissionProject, teamProfileValue, env.SessionName), handle)
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(admissionProject, teamProfileValue, env.SessionName)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentContext, err := resolveCanonicalContext(contextResolveOptions{
+		ProfileFlag: strings.TrimSpace(*teamProfile), SessionFlag: *session, HandleFlag: handle, RootFlag: *rootFlag,
+		ProfileExplicit: profileExplicit, SessionExplicit: flagWasSet(fs, "session"), HandleExplicit: flagWasSet(fs, "me"), RootExplicit: flagWasSet(fs, "root") && !flagWasSet(fs, "session"),
+	})
+	if err != nil {
+		return fmt.Errorf("agent up refused: context re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedContext(resolvedContext, currentContext, false); err != nil {
+		return err
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(admissionProject, currentContext.Profile, currentContext.Session), currentContext.Handle)
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("agent up", initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	currentRootForLaunch := launchRootFromFlags(cwd, *rootFlag, *session, currentContext.Profile)
+	currentEnv, err := resolveAMQEnvForLaunch(cwd, currentRootForLaunch, *session, currentContext.Profile, currentContext.Handle)
+	if err != nil {
+		return fmt.Errorf("agent up refused: AMQ identity re-resolution under admission failed: %w", err)
+	}
+	currentHandle := currentContext.Handle
+	if currentEnv.Me != "" {
+		currentHandle = currentEnv.Me
+	}
+	if filepath.Clean(absoluteAMQRoot(cwd, currentEnv.Root)) != filepath.Clean(root) || strings.TrimSpace(currentEnv.SessionName) != strings.TrimSpace(env.SessionName) || currentHandle != handle {
+		return fmt.Errorf("agent up refused: AMQ launch identity changed before admission; retry")
+	}
+	if err := ensureLaunchTargetIsNotOperator(admissionProject, currentContext.Profile, "agent up", *roleFlag, currentHandle); err != nil {
+		return err
+	}
+	if err := ensureNoNamespaceConflict("agent up", admissionProject, teamProfileValue, env.SessionName, profileExplicit); err != nil {
+		return err
+	}
 	if err := validateManagedTmuxLaunch(rec); err != nil {
 		return err
 	}

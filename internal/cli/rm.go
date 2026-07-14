@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -320,6 +321,25 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 		if err := team.ValidateProfileName(profile); err != nil {
 			return false, err
 		}
+	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(e.ProjectDir, profile, session), "")
+	if err != nil {
+		return false, err
+	}
+	admission, err := acquireNamespaceWriterAdmission(e.ProjectDir, profile, session)
+	if err != nil {
+		return false, err
+	}
+	defer admission.close()
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(e.ProjectDir, profile, session), "")
+	if err != nil {
+		return false, err
+	}
+	if err := validateReResolvedEndpointIdentity(verb, initialIdentity, currentIdentity); err != nil {
+		return false, err
+	}
+	if err := ensureNoNamespaceMigration(verb, e.ProjectDir, profile, session); err != nil {
+		return false, err
 	}
 	baseRoot := e.BaseRoot
 	if baseRoot == "" {

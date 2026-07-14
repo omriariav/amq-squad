@@ -248,10 +248,32 @@ non-runnable operator mailbox.
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflictWithOverride("operator answer", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
+	override := namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
 		Reason:  *overrideNamespaceReason,
-	}); err != nil {
+	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), operatorHandle)
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentProject, currentProfile, currentTeam, currentWorkstream, currentOperator, err := resolveOperatorCommandContext(*projectFlag, *profileFlag, *sessionFlag, flagWasSet(fs, "project"), flagWasSet(fs, "session"))
+	if err != nil {
+		return fmt.Errorf("operator answer refused: context re-resolution under admission failed: %w", err)
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(currentProject, currentProfile, currentWorkstream), currentOperator)
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("operator answer", initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	projectDir, profile, t, workstream, operatorHandle = currentProject, currentProfile, currentTeam, currentWorkstream, currentOperator
+	if err := ensureNoNamespaceConflictWithOverride("operator answer", projectDir, profile, workstream, flagWasSet(fs, "profile"), override); err != nil {
 		return err
 	}
 	if err := ensureOperatorCommandTarget(t, to, "operator answer"); err != nil {
@@ -355,10 +377,32 @@ or clear gate/<topic> threads.
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflictWithOverride("operator directive", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
+	override := namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
 		Reason:  *overrideNamespaceReason,
-	}); err != nil {
+	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), operatorHandle)
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentProject, currentProfile, currentTeam, currentWorkstream, currentOperator, err := resolveOperatorCommandContext(*projectFlag, *profileFlag, *sessionFlag, flagWasSet(fs, "project"), flagWasSet(fs, "session"))
+	if err != nil {
+		return fmt.Errorf("operator directive refused: context re-resolution under admission failed: %w", err)
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(currentProject, currentProfile, currentWorkstream), currentOperator)
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("operator directive", initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	projectDir, profile, t, workstream, operatorHandle = currentProject, currentProfile, currentTeam, currentWorkstream, currentOperator
+	if err := ensureNoNamespaceConflictWithOverride("operator directive", projectDir, profile, workstream, flagWasSet(fs, "profile"), override); err != nil {
 		return err
 	}
 	if err := ensureOperatorCommandTarget(t, to, "operator directive"); err != nil {
@@ -601,6 +645,19 @@ operator-loop lease for the resolved profile/session.
 		return err
 	}
 	emitContextDiagnostics(ctx)
+	var admission *namespaceAdmissionLocks
+	if !*readonly {
+		ctx, admission, err = acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
+			return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+		})
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		if err := ensureNoNamespaceMigration("operator poll", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+			return err
+		}
+	}
 	return executeOperatorPoll(operatorExecution{
 		ProjectDir:      ctx.ProjectDir,
 		Profile:         ctx.Profile,
@@ -677,6 +734,16 @@ When stopped, the lease is not released immediately; it expires after --ttl.
 		return err
 	}
 	emitContextDiagnostics(ctx)
+	ctx, admission, err := acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
+		return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+	})
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	if err := ensureNoNamespaceMigration("operator watch", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+		return err
+	}
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
