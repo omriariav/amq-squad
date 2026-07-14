@@ -770,8 +770,18 @@ shell expands it before amq-squad receives argv. For bare
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task add <span class="at">--session</span> issue-96 <span class="at">--title</span> <span class="st">&quot;Implement fix&quot;</span> <span class="at">--assign</span> fullstack</span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack <span class="at">--task</span> t1 <span class="at">--subject</span> <span class="st">&quot;Implement fix&quot;</span> <span class="at">--body-file</span> ./task.md</span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> activity set <span class="at">--session</span> issue-96 <span class="at">--me</span> fullstack <span class="at">--task</span> t1 <span class="at">--phase</span> testing</span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> threads <span class="at">--session</span> issue-96</span>
-<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> thread <span class="at">--session</span> issue-96 <span class="at">--id</span> p2p/cto__fullstack <span class="at">--include-body</span><span class="op">=</span>false</span></code></pre></div>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task done t1 <span class="at">--session</span> issue-96 <span class="at">--me</span> fullstack <span class="at">--evidence</span> <span class="st">&quot;commit abc&quot;</span> <span class="at">--dispatch-next</span> t2</span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task reconcile <span class="at">--session</span> issue-96 <span class="at">--json</span></span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> threads <span class="at">--session</span> issue-96</span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> thread <span class="at">--session</span> issue-96 <span class="at">--id</span> p2p/cto__fullstack <span class="at">--include-body</span><span class="op">=</span>false</span></code></pre></div>
+<p><code>task done</code> commits completion, dependent readiness, an
+optional successor claim, and delivery intents before sending AMQ. When
+the task has a dispatch counterpart it sends the canonical completion
+signal by default: AMQ kind <code>status</code> with subject
+<code>DONE: &lt;task title&gt;</code> (<code>--no-notify</code> records
+explicit suppression). Claims carry renewable leases; reconcile reports
+stale or legacy leases without silently unclaiming work and never
+auto-retries an uncertain delivery.</p>
 <p>Safety preflights:</p>
 <div class="sourceCode" id="cb12"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify action <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>

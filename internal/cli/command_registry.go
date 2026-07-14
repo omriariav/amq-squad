@@ -20,7 +20,7 @@ var commandCatalog = []struct {
 	{Name: "global", Summary: "Stand up a global/NOC orchestrator (poller) at a neutral root"},
 	{Name: "run", Summary: "Create one orchestrated run in a project (managed spawn)"},
 	{Name: "wizard", Summary: "Guided project/global preview with default-No live confirmation"},
-	{Name: "task", Summary: "Native pull-based task store (add/list/claim/done/fail/block)"},
+	{Name: "task", Summary: "Atomic task lifecycle (claim/done/dispatch/reconcile/recovery)"},
 	{Name: "verify", Summary: "Deterministic preflight checks (action, merge, release)"},
 	{Name: "operator", Summary: "Show operator inbox and polling-loop status"},
 	{Name: "activity", Summary: "Write or clear an agent activity heartbeat"},

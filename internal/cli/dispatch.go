@@ -73,14 +73,17 @@ var dispatchWakePane = defaultDispatchWakePane
 // drive the wake-first branch without real liveness probing.
 var dispatchRecipientWakeLive = defaultDispatchRecipientWakeLive
 
-// dispatchLinkTask is a seam for partial-failure tests around post-send task
-// metadata linkage. Production uses taskstore.LinkDispatch directly.
+// dispatchLinkTask and dispatchClaimTask retain the legacy auto-claim helper's
+// test seam. Production task-backed dispatch uses the transaction/outbox seams
+// below so no AMQ announcement can precede the durable claim and intent.
 var dispatchLinkTask = taskstore.LinkDispatchForProfile
-
-// dispatchClaimTask is a seam for post-dispatch auto-claim. Production uses
-// taskstore.Claim directly after the durable message and dispatch link are
-// written, so send/link failures leave the task in its prior audit state.
 var dispatchClaimTask = taskstore.ClaimForProfile
+
+// Task-backed dispatch commits claim + outbox intent before AMQ send. These
+// seams let crash/failure tests prove that no announcement precedes commit.
+var dispatchPrepareTask = taskstore.PrepareDispatchForProfile
+var dispatchBeginTaskDelivery = taskstore.BeginOutboxDeliveryForProfile
+var dispatchFinishTask = taskstore.FinishDispatchForProfile
 
 func runDispatch(args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
@@ -138,6 +141,12 @@ After dispatch, the lead should collect the child's completion/report message
 with the printed root-correct 'amq-squad collect --session ... --me ...'
 command. Drain receipts only prove the child saw the task; they do not prove the
 task is complete.
+
+With --create-task or --task ID, dispatch first commits the native task claim
+and a pending delivery intent, then marks that intent sending, and only then
+sends AMQ. A failed send remains an explicit failed outbox entry; a crash after
+send but before finalization remains delivery-uncertain and is never retried
+automatically.
 
 Use --body-file FILE or --body-file - (stdin) for task bodies containing code,
 commands, backticks, or $() syntax. Inline --body is suitable only for short
@@ -244,26 +253,45 @@ Examples:
 			return fmt.Errorf("create native task for dispatch: %w", err)
 		}
 		taskID = created.ID
-	} else if taskID != "" {
-		task, err := taskstore.ShowForProfile(projectDir, profile, workstream, taskID)
+	}
+	var prepared *taskstore.DispatchPrepareResult
+	if taskID != "" {
+		preparedAt := taskNow()
+		p, err := dispatchPrepareTask(projectDir, profile, workstream, taskID, taskstore.DispatchIntentOptions{
+			From: from, Assignee: member.Handle, Thread: *threadFlag, Kind: *kindFlag,
+			Subject: *subjectFlag, Body: taskBody, LeaseDuration: taskstore.DefaultLeaseDuration, Now: preparedAt,
+		})
 		if err != nil {
-			return fmt.Errorf("link native task for dispatch: %w", err)
+			return fmt.Errorf("prepare native task %s dispatch transaction: %w", taskID, err)
 		}
-		if err := validateDispatchTask(task, member.Handle, projectDir, profile, workstream); err != nil {
-			return err
+		started, err := dispatchBeginTaskDelivery(projectDir, profile, workstream, taskID, p.Intent.ID, preparedAt.Add(time.Nanosecond))
+		if err != nil {
+			return fmt.Errorf("begin native task %s delivery: %w", taskID, err)
 		}
+		p.Intent = started
+		prepared = &p
 	}
 
 	waitFor := dispatchReceiptWaitFor(*kindFlag, *waitForFlag)
 	waitTimeout := *waitTimeoutFlag
 	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag, waitFor, waitTimeout)
 	out, err := runAMQCommand(amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: sendCmd})
+	msgID := parseSentMessageID(string(out))
+	if prepared != nil {
+		finished, finishedIntent, finishErr := dispatchFinishTask(projectDir, profile, workstream, taskID, prepared.Intent.ID, taskstore.Dispatch{
+			Sender: from, Assignee: member.Handle, Thread: *threadFlag, Kind: *kindFlag,
+			Subject: *subjectFlag, MessageID: msgID,
+		}, msgID, err, taskNow())
+		if finishErr != nil {
+			return fmt.Errorf("finalize native task %s dispatch outcome (delivery may be uncertain): %w", taskID, finishErr)
+		}
+		prepared.Task, prepared.Intent = finished, finishedIntent
+	}
 	if err != nil {
 		if !dispatchSendWaitTimedOut(out, err, waitFor) {
 			return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
 		}
 	}
-	msgID := parseSentMessageID(string(out))
 	receipt.MessageID = msgID
 	receipt.Root = ctx.Root
 	receipt.Thread = strings.TrimSpace(*threadFlag)
@@ -275,26 +303,10 @@ Examples:
 	} else if waitFor != "" {
 		receipt.addStage("amq_wait_"+waitFor, fmt.Sprintf("amq send waited for %s receipt with timeout %s", waitFor, waitTimeout))
 	}
-	if taskID != "" {
-		linked, lerr := dispatchLinkTask(projectDir, profile, workstream, taskID, taskstore.Dispatch{
-			Sender:    from,
-			Assignee:  member.Handle,
-			Thread:    *threadFlag,
-			Kind:      *kindFlag,
-			Subject:   *subjectFlag,
-			MessageID: msgID,
-		}, taskNow())
-		if lerr != nil {
-			return fmt.Errorf("link native task %s to dispatch: %w", taskID, lerr)
-		}
-		taskID = linked.ID
-		claimed, didClaim, cerr := autoClaimDispatchedTask(projectDir, profile, workstream, taskID, member.Handle, taskNow())
-		if cerr != nil {
-			return fmt.Errorf("auto-claim native task %s after dispatch: %w", taskID, cerr)
-		}
-		if didClaim {
+	if prepared != nil {
+		if prepared.DidClaim {
 			receipt.addStage("task_claimed", fmt.Sprintf("native task %s marked in_progress for %s", taskID, member.Handle))
-		} else if claimed.Status == taskstore.StatusInProgress {
+		} else if prepared.Task.Status == taskstore.StatusInProgress {
 			receipt.addStage("task_already_in_progress", fmt.Sprintf("native task %s already in_progress for %s", taskID, member.Handle))
 		}
 	}
@@ -600,7 +612,7 @@ func validateDispatchTask(t taskstore.Task, assignee, projectDir, profile, sessi
 		return nil
 	case taskstore.StatusInProgress:
 		return nil
-	case taskstore.StatusCompleted, taskstore.StatusFailed, taskstore.StatusBlocked:
+	case taskstore.StatusCompleted, taskstore.StatusFailed, taskstore.StatusBlocked, taskstore.StatusCancelled:
 		return fmt.Errorf("task %s is %s; dispatch requires pending or in_progress", t.ID, t.Status)
 	default:
 		return fmt.Errorf("task %s has unknown status %q; dispatch requires pending or in_progress", t.ID, t.Status)

@@ -1,6 +1,9 @@
 package cli
 
-import squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+import (
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/task"
+)
 
 type mutationAction struct {
 	Kind    string `json:"kind"`
@@ -26,6 +29,9 @@ type mutationResult struct {
 	Assignee        string               `json:"assignee,omitempty"`
 	Handle          string               `json:"handle,omitempty"`
 	MessageID       string               `json:"message_id,omitempty"`
+	ReleasedTaskIDs []string             `json:"released_task_ids,omitempty"`
+	SuccessorTaskID string               `json:"successor_task_id,omitempty"`
+	Outbox          []task.OutboxIntent  `json:"outbox,omitempty"`
 	Thread          string               `json:"thread,omitempty"`
 	Root            string               `json:"root,omitempty"`
 	Actions         []mutationAction     `json:"actions,omitempty"`
