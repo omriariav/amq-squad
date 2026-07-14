@@ -1072,7 +1072,7 @@ func TestSameProfileSessionUpStatusDispatchNoNamespaceConflict(t *testing.T) {
 
 func TestForkFooterCarriesProfile(t *testing.T) {
 	dir := t.TempDir()
-	base := setupFakeAMQSessionRoots(t)
+	setupFakeAMQSessionRoots(t)
 	resumeChdir(t, dir)
 	seedProfile(t, dir, "review", team.Team{
 		Workstream: "review",
@@ -1081,7 +1081,7 @@ func TestForkFooterCarriesProfile(t *testing.T) {
 		},
 	})
 	// Seed a SOURCE root on disk so fork's source-state check passes.
-	if err := os.MkdirAll(filepath.Join(base, "review", "agents", "cto"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".agent-mail", "review", "review", "agents", "cto"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdout, _, err := captureOutput(t, func() error {

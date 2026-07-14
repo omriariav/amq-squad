@@ -227,7 +227,7 @@ func registerScopedFlagAliases(fs *flag.FlagSet, project, session, profile *stri
 // signal is a restorable record), purely for human-facing messages. No
 // message bodies are inspected.
 func teamWorkstreamExistsOrRestorable(t team.Team, profile, workstream string) (bool, string, error) {
-	if exists, root, err := teamWorkstreamExists(t, workstream); err != nil {
+	if exists, root, err := teamWorkstreamExists(t, profile, workstream); err != nil {
 		return false, "", err
 	} else if exists {
 		return true, root, nil
@@ -244,7 +244,7 @@ func teamWorkstreamExistsOrRestorable(t team.Team, profile, workstream string) (
 	return false, "", nil
 }
 
-func teamWorkstreamExists(t team.Team, workstream string) (bool, string, error) {
+func teamWorkstreamExists(t team.Team, profile, workstream string) (bool, string, error) {
 	seen := map[string]bool{}
 	for _, m := range t.Members {
 		cwd := m.EffectiveCWD(t.Project)
@@ -254,10 +254,11 @@ func teamWorkstreamExists(t team.Team, workstream string) (bool, string, error) 
 			continue
 		}
 		seen[key] = true
-		root, err := resolveAMQRootInDir(cwd, "", workstream, handle)
+		env, err := resolveAMQEnvForTeamLaunchProfile(cwd, profile, workstream, handle)
 		if err != nil {
 			return false, "", err
 		}
+		root := absoluteAMQRoot(cwd, env.Root)
 		if _, err := os.Stat(root); err == nil {
 			return true, root, nil
 		} else if !os.IsNotExist(err) {

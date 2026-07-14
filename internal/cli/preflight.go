@@ -67,6 +67,7 @@ type agentLaunchPreflight struct {
 	Handle     string
 	Workstream string
 	Root       string
+	BaseRoot   string
 	Binary     string
 	Force      bool
 	// DryRun keeps the preflight inspection read-only: stale lock files are

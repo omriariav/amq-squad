@@ -39,6 +39,64 @@ func resolveAMQEnvForTeamProfile(cwd, profile, session, handle string) (amqEnv, 
 	return resolveAMQEnvForLaunch(cwd, root, session, profile, handle)
 }
 
+// resolveAMQEnvForTeamLaunchProfile is the read-only launch resolver. Named
+// profiles always use their deterministic exact root. The default profile
+// first asks AMQ to honor any project configuration; only a genuinely empty
+// project with AMQ's specific "no root is discoverable" failure falls back to
+// the conventional project-local base. The fallback does not create anything:
+// previews stay read-only and the live launcher prepares the selected path
+// only after every roster-wide validation has passed.
+func resolveAMQEnvForTeamLaunchProfile(cwd, profile, session, handle string) (amqEnv, error) {
+	profile = squadnamespace.NormalizeProfile(profile)
+	if profile != team.DefaultProfile {
+		return resolveAMQEnvForTeamProfile(cwd, profile, session, handle)
+	}
+	env, err := resolveAMQEnvForTeamProfile(cwd, profile, session, handle)
+	if err == nil {
+		// Some AMQ-compatible fakes and older envelopes omit base_root; the
+		// generic parser backfills it with root. For a sessionful default
+		// context that would make live bootstrap create the session root itself,
+		// falsely marking a successful fake launch as an existing workstream.
+		// The selected bootstrap target is the base container, not the mailbox.
+		if strings.TrimSpace(session) != "" &&
+			filepath.Clean(strings.TrimSpace(env.BaseRoot)) == filepath.Clean(strings.TrimSpace(env.Root)) {
+			env.BaseRoot = filepath.Dir(env.Root)
+		}
+		return env, nil
+	}
+	if !freshProjectDefaultAMQBootstrapAllowed(cwd, err) {
+		return amqEnv{}, err
+	}
+	root := squadnamespace.AMQRoot(cwd, team.DefaultProfile, session)
+	return amqEnv{
+		Root:        root,
+		BaseRoot:    filepath.Dir(root),
+		SessionName: strings.TrimSpace(session),
+		Me:          strings.TrimSpace(handle),
+		RootSource:  "fresh_project_default",
+	}, nil
+}
+
+func freshProjectDefaultAMQBootstrapAllowed(cwd string, resolveErr error) bool {
+	if strings.TrimSpace(cwd) == "" || resolveErr == nil {
+		return false
+	}
+	message := strings.ToLower(resolveErr.Error())
+	if !strings.Contains(message, "cannot determine root") &&
+		!(strings.Contains(message, "no .amqrc found") && strings.Contains(message, "am_root not set")) {
+		return false
+	}
+	for _, path := range []string{
+		filepath.Join(cwd, ".amqrc"),
+		filepath.Join(cwd, defaultBaseRootName),
+	} {
+		if _, err := os.Stat(path); err == nil || !os.IsNotExist(err) {
+			return false
+		}
+	}
+	return true
+}
+
 // minRequireWakeAMQVersion is the first AMQ release whose `coop exec` accepts
 // --require-wake (refuse to launch unless the wake sidecar acquires its lock).
 const minRequireWakeAMQVersion = "0.34.1"
