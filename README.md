@@ -493,7 +493,8 @@ same-cwd squads; Codex workers use native Codex profiles via `codex_args`.
 
 Claude members may also carry an explicit, role-scoped
 `permission_allowlist`, for example
-`"permission_allowlist": ["Bash(rm -rf /tmp/qa-review/*:*)"]`. amq-squad
+`"permission_allowlist": ["Bash(amq-squad review-worktree remove:*)"]`.
+amq-squad
 merges those patterns into one effective `--allowedTools` grant for that member
 only, records the result in launch history, and shows both the configured and
 effective lists in `up --dry-run --json`. Values beginning with `-` are rejected
@@ -507,6 +508,8 @@ explicit-native provenance separately even when their values are identical.
 Keep each pattern as
 narrow as the member's own scratch or review workspace; the field is rejected
 on non-Claude members and is intentionally not a team-wide trust switch.
+An allowlist grants native tool permission; it does not override the generated
+team rules' `## Workspace Safety and Cleanup` prohibition on `rm -rf`.
 
 Profiles using `permission_allowlist` are written as team schema 4; profiles
 without it remain schema 3. v2.20+ readers accept both and reject future

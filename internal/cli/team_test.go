@@ -2110,6 +2110,7 @@ func TestRenderTeamRulesTemplatesIncludeRequiredSections(t *testing.T) {
 				"## Role Scope and Accountabilities",
 				"## Decision Rights",
 				"## Workflow",
+				"## Workspace Safety and Cleanup",
 				"## Communication",
 				"## Quality Gates",
 				"## Conflict Protocol",
@@ -2122,12 +2123,70 @@ func TestRenderTeamRulesTemplatesIncludeRequiredSections(t *testing.T) {
 				"operator replies `APPROVED:` on the exact PR gate thread",
 				"Workers do not merge, push, tag, release, close issues",
 				"verifiable authorization artifact",
+				"Never use `rm -rf`",
+				"`amq-squad review-worktree` helper",
+				"`mktemp -d`",
+				"`git worktree add --detach <path> <ref>`",
+				"`git worktree remove --force <path>`",
+				"session scratchpad",
+				"Leave harness-owned cleanup to the harness",
 			} {
 				if !strings.Contains(body, want) {
 					t.Errorf("%s template missing %q:\n%s", template, want, body)
 				}
 			}
 		})
+	}
+}
+
+func TestTeamRulesSafetyReferenceMirrorsMatchCanonicalSource(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	sourcePath := filepath.Join(repoRoot, "plugins", "skills-src", "amq-squad", "references", "team-rules-template.md")
+	source, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read canonical team-rules reference: %v", err)
+	}
+	if !strings.Contains(string(source), workspaceSafetySection) {
+		t.Fatalf("canonical team-rules reference missing generated safety section:\n%s", source)
+	}
+	trackedPath := filepath.Join(repoRoot, ".amq-squad", "team-rules.md")
+	tracked, err := os.ReadFile(trackedPath)
+	if err != nil {
+		t.Fatalf("read tracked team-rules dogfood output: %v", err)
+	}
+	if count := strings.Count(string(tracked), workspaceSafetySection); count != 1 {
+		t.Fatalf("tracked team-rules dogfood output contains canonical safety section %d times, want exactly once", count)
+	}
+	for _, mirror := range []string{"claude", "codex"} {
+		mirrorPath := filepath.Join(repoRoot, "plugins", mirror, "skills", "amq-squad", "references", "team-rules-template.md")
+		got, err := os.ReadFile(mirrorPath)
+		if err != nil {
+			t.Fatalf("read %s team-rules reference: %v", mirror, err)
+		}
+		if !bytes.Equal(got, source) {
+			t.Fatalf("%s team-rules reference does not match canonical source", mirror)
+		}
+	}
+
+	permission := "Bash(amq-squad review-worktree remove:*)"
+	if err := team.Validate(team.Team{Members: []team.Member{{
+		Role: "qa", Binary: "claude", Handle: "qa", Session: "review",
+		PermissionAllowlist: []string{permission},
+	}}}); err != nil {
+		t.Fatalf("documented review-worktree permission rule should validate: %v", err)
+	}
+	for _, rel := range []string{
+		"README.md",
+		filepath.Join("docs", "skills.md"),
+		filepath.Join("plugins", "skills-src", "amq-squad", "SKILL.md"),
+	} {
+		body, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		if err != nil {
+			t.Fatalf("read documented permission surface %s: %v", rel, err)
+		}
+		if !strings.Contains(string(body), permission) {
+			t.Fatalf("documented permission surface %s missing narrow helper rule %q", rel, permission)
+		}
 	}
 }
 
