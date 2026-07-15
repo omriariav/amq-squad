@@ -510,7 +510,8 @@ You can also preview a candidate from a deterministic source with
   validates that every referenced `--settings` file exists.
 - **Per-member permission allowlist**: a Claude member may carry
   `permission_allowlist`, for example
-  `"permission_allowlist": ["Bash(rm -rf /tmp/qa-review/*:*)"]`. amq-squad
+  `"permission_allowlist": ["Bash(amq-squad review-worktree remove:*)"]`.
+  amq-squad
   merges it with explicit native `--allowedTools`, applies it only to that
   exact role, shows configured/effective grants in `up --dry-run --json`, and
   persists the effective list in launch history for resume/audit. Resume strips
@@ -523,7 +524,9 @@ You can also preview a candidate from a deterministic source with
   history stores launcher-owned and explicit-native provenance separately even
   when the values are identical. Keep patterns scoped to the member's own
   scratch or review workspace; this is not a team-wide trust switch and the
-  setup wizard does not author it. Profiles using the field write team schema
+  setup wizard does not author it. An allowlist grants native tool permission;
+  it does not override the generated team rules' `## Workspace Safety and
+  Cleanup` prohibition on `rm -rf`. Profiles using the field write team schema
   4; other profiles remain schema 3. Upgrade every reader/writer to v2.20+
   before configuration: pre-v2.20 binaries can silently ignore the field and
   lossily rewrite a schema-4 profile. Use `amq-squad doctor` to detect version

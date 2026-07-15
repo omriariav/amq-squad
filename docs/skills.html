@@ -635,8 +635,8 @@ drain your inbox.</li>
 </table>
 <p>For a narrow Claude-only permission exception, configure a member's
 <code>permission_allowlist</code> in <code>team.json</code>, for example
-<code>["Bash(rm -rf /tmp/qa-review/*:*)"]</code>. The grant is scoped to
-that exact role, merged with any explicit native
+<code>["Bash(amq-squad review-worktree remove:*)"]</code>. The grant is
+scoped to that exact role, merged with any explicit native
 <code>--allowedTools</code>, visible in dry-run JSON and launch history,
 and rebuilt from current policy on resume so removed/narrowed grants are
 revoked. Validation rejects other binaries and values beginning with
@@ -647,7 +647,10 @@ commands keep launcher policy out of executable child argv;
 <code>agent up</code> recomputes it and the launch record stores
 launcher-owned versus explicit provenance separately, including
 equal-valued grants. Prefer scratch/worktree- specific patterns over
-broad command grants. Such profiles write schema 4; profiles without the
+broad command grants. An allowlist grants native tool permission; it
+does not override the generated team rules'
+<code>## Workspace Safety and Cleanup</code> prohibition on
+<code>rm -rf</code>. Such profiles write schema 4; profiles without the
 field stay schema 3. Upgrade all readers/writers to v2.20+ before
 configuring it: pre-v2.20 binaries can silently ignore the field and
 lossily rewrite the profile. Use <code>amq-squad doctor</code> to detect
