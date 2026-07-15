@@ -32,12 +32,12 @@ func TestVerifyActionBlocksGatedReleaseBeforeOperatorAnswer(t *testing.T) {
 	if err == nil {
 		t.Fatal("unanswered release gate should block")
 	}
-	if code := ExitCode(err); code != ExitActionPending {
-		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionPending, err)
+	if code := ExitCode(err); code != ExitActionUnbound {
+		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionUnbound, err)
 	}
 	env := decodeJSONEnvelope[verifyActionResult](t, out)
-	if env.Kind != "verify_action" || env.Data.Decision != actionDecisionPending || env.Data.MessageID != "q1" {
-		t.Fatalf("unexpected pending envelope: %+v", env)
+	if env.Kind != "verify_action" || env.Data.Decision != actionDecisionUnbound || env.Data.MessageID != "q1" {
+		t.Fatalf("unexpected diagnostic-only envelope: %+v", env)
 	}
 }
 
@@ -54,16 +54,16 @@ func TestVerifyActionPassesBoundOperatorAnswer(t *testing.T) {
 	out, err := runVerifyActionExec(t, base, project, verifyActionExecution{
 		Session: "issue-349",
 		Gate:    "gate/release-v1-41-0",
-		Action:  "release",
+		Action:  "github_release",
 		Target:  "draft v1.41.0 release for omriariav/workspace-cli",
 		JSON:    true,
 	})
-	if err != nil {
-		t.Fatalf("bound operator answer should pass: %v\n%s", err, out)
+	if err == nil || ExitCode(err) != ExitActionUnbound {
+		t.Fatalf("raw answer unexpectedly authorized: %v\n%s", err, out)
 	}
 	env := decodeJSONEnvelope[verifyActionResult](t, out)
-	if env.Data.Decision != actionDecisionApproved || env.Data.AnsweredBy != "user" || env.Data.MessageID != "a1" {
-		t.Fatalf("unexpected approved envelope: %+v", env)
+	if env.Data.Decision != actionDecisionUnbound || env.Data.MessageID != "q1" {
+		t.Fatalf("unexpected raw diagnostic envelope: %+v", env)
 	}
 }
 
@@ -114,7 +114,7 @@ func TestVerifyActionLatestOperatorAnswerWinsOverOlderApproval(t *testing.T) {
 		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionUnbound, err)
 	}
 	env := decodeJSONEnvelope[verifyActionResult](t, out)
-	if env.Data.Decision != actionDecisionUnbound || env.Data.MessageID != "a2" {
+	if env.Data.Decision != actionDecisionUnbound || env.Data.MessageID != "q1" {
 		t.Fatalf("latest unbound answer not reported: %+v", env.Data)
 	}
 }
@@ -142,11 +142,11 @@ func TestVerifyActionSameTimestampUsesIDTiebreak(t *testing.T) {
 	if err == nil {
 		t.Fatal("later same-timestamp ID denial should block")
 	}
-	if code := ExitCode(err); code != ExitActionDenied {
-		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionDenied, err)
+	if code := ExitCode(err); code != ExitActionUnbound {
+		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionUnbound, err)
 	}
 	env := decodeJSONEnvelope[verifyActionResult](t, out)
-	if env.Data.Decision != actionDecisionDenied || env.Data.MessageID != "a2" {
+	if env.Data.Decision != actionDecisionUnbound || env.Data.MessageID != "q1" {
 		t.Fatalf("same timestamp tiebreak not pinned: %+v", env.Data)
 	}
 }
@@ -193,8 +193,8 @@ func TestVerifyActionQuestionRequiresStrictBindingFields(t *testing.T) {
 	if err == nil {
 		t.Fatal("prose question mentioning action/target should not bind without Action/Target fields")
 	}
-	if code := ExitCode(err); code != ExitActionNoGate {
-		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionNoGate, err)
+	if code := ExitCode(err); code != ExitActionUnbound {
+		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionUnbound, err)
 	}
 }
 
@@ -257,8 +257,8 @@ func TestVerifyActionRequiresOperatorAnswerSender(t *testing.T) {
 	if err == nil {
 		t.Fatal("answer from non-operator should not pass")
 	}
-	if code := ExitCode(err); code != ExitActionPending {
-		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionPending, err)
+	if code := ExitCode(err); code != ExitActionUnbound {
+		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionUnbound, err)
 	}
 }
 
@@ -281,8 +281,8 @@ func TestVerifyActionRejectsApprovalBeforeLatestGateQuestion(t *testing.T) {
 	if err == nil {
 		t.Fatal("approval before the latest matching gate question should not pass")
 	}
-	if code := ExitCode(err); code != ExitActionPending {
-		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionPending, err)
+	if code := ExitCode(err); code != ExitActionUnbound {
+		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionUnbound, err)
 	}
 }
 
@@ -305,8 +305,8 @@ func TestVerifyActionDeniedExitCode(t *testing.T) {
 	if err == nil {
 		t.Fatal("denied gate should fail")
 	}
-	if code := ExitCode(err); code != ExitActionDenied {
-		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionDenied, err)
+	if code := ExitCode(err); code != ExitActionUnbound {
+		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionUnbound, err)
 	}
 }
 

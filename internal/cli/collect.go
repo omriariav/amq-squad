@@ -65,12 +65,15 @@ func runCollect(args []string) error {
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	overrideBoundary := fs.Bool("override-boundary", false, "allow collecting another project-team member's mailbox and write an audit record")
 	boundaryReason := fs.String("reason", "", "required reason when --override-boundary is set")
+	overrideWaitPosture := fs.Bool("override-wait-posture", false, "allow a verified own-pane lead wait that would normally park, and write an audit record")
+	waitPostureReason := fs.String("wait-posture-reason", "", "distinct required reason when --override-wait-posture is set")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad collect - safely collect once, optionally wait once, then collect once
 
 Usage:
   amq-squad collect --session S --me HANDLE [--timeout D] [--include-body] [--project DIR]
                     [--profile NAME] [--override-boundary --reason WHY]
+                    [--override-wait-posture --wait-posture-reason WHY]
 
 Resolves the workstream AMQ root like 'amq-squad amq drain', then performs a
 kill-safe report-collection procedure:
@@ -83,6 +86,14 @@ kill-safe report-collection procedure:
 This command deliberately does not poll. With the default --timeout 0 it
 collects once and exits. Interrupted output is replayed at least once on the
 next collect rather than losing message bodies.
+
+For a verified lead running in its own pane with operator delivery mode
+lead_pane, a positive wait refuses while any caller-raised gate/<topic> remains
+unresolved, and waits longer than 120s refuse rather than being truncated.
+Park/end the turn so live operator input can be processed. A deliberate
+exception requires --override-wait-posture plus --wait-posture-reason and is
+written to the profile/session wait-posture audit before blocking. --timeout 0
+remains a nonblocking collect and is unchanged.
 
 Examples:
   amq-squad collect --session issue-96 --me cto --include-body
@@ -125,10 +136,19 @@ Examples:
 	}); err != nil {
 		return err
 	}
-	return executeCollect(os.Stdout, ctx, timeout, *includeBody)
+	return executeCollectWithWaitPosture(os.Stdout, ctx, timeout, *includeBody, waitPostureRequest{
+		Command: "collect", WaitKind: "collect_watch", ProjectDir: ctx.ProjectDir,
+		Profile: ctx.Profile, Session: ctx.Session, Root: ctx.Root,
+		Timeout:  timeout,
+		Override: *overrideWaitPosture, Reason: *waitPostureReason,
+	})
 }
 
 func executeCollect(out io.Writer, ctx amqContext, timeout time.Duration, includeBody bool) error {
+	return executeCollectWithWaitPosture(out, ctx, timeout, includeBody, waitPostureRequest{})
+}
+
+func executeCollectWithWaitPosture(out io.Writer, ctx amqContext, timeout time.Duration, includeBody bool, posture waitPostureRequest) error {
 	if out == nil {
 		out = os.Stdout
 	}
@@ -138,6 +158,11 @@ func executeCollect(out io.Writer, ctx amqContext, timeout time.Duration, includ
 	}
 	if nonEmpty || timeout <= 0 {
 		return nil
+	}
+	posture.Blocking = true
+	posture.Timeout = timeout
+	if err := guardOwnedWait(posture); err != nil {
+		return err
 	}
 	if err := runCollectWatch(ctx, timeout); err != nil {
 		return err

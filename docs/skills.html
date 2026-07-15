@@ -1017,6 +1017,19 @@ loop: spawn → dispatch → monitor → coordinate → recover</h3>
 <span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a><span class="co"># 5. COORDINATE — children PUSH reports; the lead collects safely (does not poll)</span></span>
 <span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> collect <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="at">--timeout</span> 120s <span class="at">--include-body</span></span></code></pre></div>
+<p>In <code>lead_pane</code> mode, amq-squad verifies the actual live
+roster pane before its own blocking waits. A configured lead is refused
+when a caller-raised <code>gate/&lt;topic&gt;</code> is unresolved, a
+wait exceeds 120 seconds, or a wait is unbounded. This covers
+<code>collect</code>, wrapped <code>amq watch</code>, wrapped
+<code>amq receipts wait</code>, and amq-squad-owned send/reply/dispatch
+receipt waits. The audited escape hatch is
+<code>--override-wait-posture --wait-posture-reason &lt;why&gt;</code>.
+Direct external <code>amq watch</code> and hand-written
+<code>sleep</code>/<code>until</code> polling loops cannot be
+intercepted and remain forbidden lead posture; use the sanctioned
+read-only <code>amq-squad monitor</code> watchdog or park/end the turn
+so wake can resume it.</p>
 <h3 id="the-agent-event-over-amq-protocol">The
 <code>[AGENT-EVENT]</code>-over-AMQ protocol</h3>
 <p>The key design point: instead of writing status into a parent pane,

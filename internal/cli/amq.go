@@ -33,9 +33,11 @@ var runAMQCommand amqCommandRunner = defaultRunAMQCommand
 var resolveAMQEnvForAMQCommand = resolveAMQEnvInDir
 
 type amqPassthroughOptions struct {
-	OverrideBoundary bool
-	BoundaryReason   string
-	UnsafeSendAs     bool
+	OverrideBoundary    bool
+	BoundaryReason      string
+	UnsafeSendAs        bool
+	OverrideWaitPosture bool
+	WaitPostureReason   string
 }
 
 type amqBoundaryAuditRecord struct {
@@ -581,6 +583,11 @@ func runAMQPassthrough(sub string, args []string) error {
 		if err != nil {
 			return err
 		}
+	} else if sub == "watch" {
+		passthrough, opts, err = consumeAMQWatchPostureFlags(passthrough, opts)
+		if err != nil {
+			return err
+		}
 	}
 	ctx, err := resolveAMQContext(project, profile, session, me, projectSet)
 	if err != nil {
@@ -603,19 +610,34 @@ func runAMQPassthrough(sub string, args []string) error {
 		return err
 	}
 	if sub == "watch" {
+		timeout, err := parseWaitPostureDuration("amq watch", lastAMQWatchTimeout(passthrough), defaultAMQWatchWait)
+		if err != nil {
+			return err
+		}
+		if err := guardOwnedWait(waitPostureForContext("amq watch", "watch", ctx, timeout, timeout == 0, true, opts.OverrideWaitPosture, opts.WaitPostureReason)); err != nil {
+			return err
+		}
 		return runAMQStreaming(ctx, cmd)
 	}
 	if sub == "send" {
-		if passthroughNeedsStdin(passthrough) {
-			return runAMQPassthroughDurableSend(ctx, ctx.Profile, cmd, passthrough, os.Stdin, audit)
+		posture, err := durableSendWaitPosture("amq send", ctx, passthrough, opts.OverrideWaitPosture, opts.WaitPostureReason)
+		if err != nil {
+			return err
 		}
-		return runAMQPassthroughDurableSend(ctx, ctx.Profile, cmd, passthrough, nil, audit)
+		if passthroughNeedsStdin(passthrough) {
+			return runAMQPassthroughDurableSend(ctx, ctx.Profile, cmd, passthrough, os.Stdin, audit, posture)
+		}
+		return runAMQPassthroughDurableSend(ctx, ctx.Profile, cmd, passthrough, nil, audit, posture)
 	}
 	if sub == "reply" {
-		if passthroughNeedsStdin(passthrough) {
-			return runAMQPassthroughDurableReply(ctx, ctx.Profile, cmd, passthrough, os.Stdin, audit)
+		posture, err := durableSendWaitPosture("amq reply", ctx, passthrough, opts.OverrideWaitPosture, opts.WaitPostureReason)
+		if err != nil {
+			return err
 		}
-		return runAMQPassthroughDurableReply(ctx, ctx.Profile, cmd, passthrough, nil, audit)
+		if passthroughNeedsStdin(passthrough) {
+			return runAMQPassthroughDurableReply(ctx, ctx.Profile, cmd, passthrough, os.Stdin, audit, posture)
+		}
+		return runAMQPassthroughDurableReply(ctx, ctx.Profile, cmd, passthrough, nil, audit, posture)
 	}
 	if passthroughNeedsStdin(passthrough) {
 		return runAndWriteAMQWithStdin(os.Stdout, ctx, cmd, os.Stdin)
@@ -623,7 +645,7 @@ func runAMQPassthrough(sub string, args []string) error {
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
 }
 
-func runAMQPassthroughDurableSend(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader, audit *amqBoundaryAuditAttempt) error {
+func runAMQPassthroughDurableSend(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader, audit *amqBoundaryAuditAttempt, posture waitPostureRequest) error {
 	session := strings.TrimSpace(ctx.Env.SessionName)
 	if session == "" {
 		session = strings.TrimSpace(ctx.Session)
@@ -633,13 +655,14 @@ func runAMQPassthroughDurableSend(ctx amqContext, profile string, cmd, passthrou
 	}
 	out, receipt, err := runOwnedDurableSend(durableSendOptions{
 		ProjectDir: ctx.ProjectDir, Profile: profile, Session: session, Kind: "amq_send",
+		WaitPosture: posture,
 	}, amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd, Stdin: stdin})
 	err = finishAMQBoundaryAudit(audit, receipt, err)
 	writeAMQPassthroughDurableOutput(out, receipt, amqBoolFlagPresent(passthrough, "json"))
 	return err
 }
 
-func runAMQPassthroughDurableReply(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader, audit *amqBoundaryAuditAttempt) error {
+func runAMQPassthroughDurableReply(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader, audit *amqBoundaryAuditAttempt, posture waitPostureRequest) error {
 	originalID := strings.TrimSpace(amqFlagValue(passthrough, "id"))
 	if originalID == "" {
 		return usageErrorf("amq reply requires --id")
@@ -681,7 +704,7 @@ func runAMQPassthroughDurableReply(ctx amqContext, profile string, cmd, passthro
 	if err := beginAMQBoundaryAudit(audit); err != nil {
 		return err
 	}
-	out, durableReceipt, err := runOwnedDurableSend(durableSendOptions{ProjectDir: ctx.ProjectDir, Profile: profile, Session: session, Kind: "amq_reply", Receipt: &receipt}, amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd, Stdin: stdin})
+	out, durableReceipt, err := runOwnedDurableSend(durableSendOptions{ProjectDir: ctx.ProjectDir, Profile: profile, Session: session, Kind: "amq_reply", Receipt: &receipt, WaitPosture: posture}, amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd, Stdin: stdin})
 	err = finishAMQBoundaryAudit(audit, durableReceipt, err)
 	writeAMQPassthroughDurableOutput(out, durableReceipt, amqBoolFlagPresent(passthrough, "json"))
 	return err
@@ -1141,6 +1164,29 @@ func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, pro
 			opts.UnsafeSendAs = true
 			i++
 			continue
+		case "override-wait-posture":
+			if sub != "watch" && sub != "send" && sub != "reply" {
+				break
+			}
+			opts.OverrideWaitPosture = true
+			i++
+			continue
+		case "wait-posture-reason":
+			if sub != "watch" && sub != "send" && sub != "reply" {
+				break
+			}
+			val := inlineVal
+			next := i + 1
+			if !hasInline {
+				if next >= len(args) {
+					return "", "", "", "", false, nil, opts, usageErrorf("flag --wait-posture-reason needs a value")
+				}
+				val = args[next]
+				next++
+			}
+			opts.WaitPostureReason = val
+			i = next
+			continue
 		case "reason":
 			if sub != "drain" && sub != "watch" && sub != "send" && sub != "reply" {
 				break
@@ -1198,6 +1244,24 @@ func consumeAMQSendGuardFlags(args []string, initialMe string, opts amqPassthrou
 		case "unsafe-send-as":
 			opts.UnsafeSendAs = true
 			continue
+		case "override-wait-posture":
+			opts.OverrideWaitPosture = true
+			continue
+		case "wait-posture-reason":
+			val := inlineVal
+			if !hasInline {
+				if i+1 >= len(args) {
+					return nil, "", opts, usageErrorf("flag --wait-posture-reason needs a value")
+				}
+				i++
+				val = args[i]
+			}
+			val = strings.TrimSpace(val)
+			if opts.WaitPostureReason != "" && opts.WaitPostureReason != val {
+				return nil, "", opts, usageErrorf("conflicting --wait-posture-reason values for amq send")
+			}
+			opts.WaitPostureReason = val
+			continue
 		case "reason":
 			val := inlineVal
 			if !hasInline {
@@ -1221,6 +1285,39 @@ func consumeAMQSendGuardFlags(args []string, initialMe string, opts amqPassthrou
 		}
 	}
 	return out, me, opts, nil
+}
+
+func consumeAMQWatchPostureFlags(args []string, opts amqPassthroughOptions) ([]string, amqPassthroughOptions, error) {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		name, inlineVal, hasInline := amqFlagName(args[i])
+		switch name {
+		case "override-wait-posture":
+			opts.OverrideWaitPosture = true
+			continue
+		case "wait-posture-reason":
+			val := inlineVal
+			if !hasInline {
+				if i+1 >= len(args) {
+					return nil, opts, usageErrorf("flag --wait-posture-reason needs a value")
+				}
+				i++
+				val = args[i]
+			}
+			val = strings.TrimSpace(val)
+			if opts.WaitPostureReason != "" && opts.WaitPostureReason != val {
+				return nil, opts, usageErrorf("conflicting --wait-posture-reason values for amq watch")
+			}
+			opts.WaitPostureReason = val
+			continue
+		}
+		out = append(out, args[i])
+		if name == "timeout" && !hasInline && i+1 < len(args) {
+			i++
+			out = append(out, args[i])
+		}
+	}
+	return out, opts, nil
 }
 
 func amqSendPassthroughFlagConsumesValue(name string, hasInline bool) bool {
@@ -1293,7 +1390,9 @@ flags) to resolve the queue root — so an external lead reaches
 .agent-mail/<session> instead of the default .agent-mail — and forwards every
 remaining flag to 'amq %s'. For 'send', passthrough --me/--from and
 --unsafe-send-as/--reason are treated as amq-squad guard flags wherever they
-appear. Do not pass --root; it is resolved for you. For a cross-project/
+appear. Wrapper-owned waits accept --override-wait-posture with the distinct
+--wait-posture-reason; these flags are audited and are never forwarded to amq.
+Do not pass --root; it is resolved for you. For a cross-project/
 cross-session target, use inline addressing (--to handle@project:session) or
 place amq's own target flags after '--'.
 
@@ -1347,10 +1446,13 @@ func runAMQReceiptsWait(args []string) error {
 
 Usage:
   amq-squad amq receipts wait --me HANDLE --msg-id ID [--stage drained|dlq] [--timeout 60s] [--project DIR] [--profile NAME] [--session NAME]
+                                     [--override-wait-posture --wait-posture-reason WHY]
 `)
 	msgID := fs.String("msg-id", "", "message id to wait for")
 	stage := fs.String("stage", "drained", "receipt stage to wait for: drained or dlq")
-	timeout := fs.String("timeout", "60s", "maximum wait duration")
+	timeout := fs.Duration("timeout", defaultAMQReceiptWait, "maximum wait duration (0 means unbounded)")
+	overrideWaitPosture := fs.Bool("override-wait-posture", false, "allow a verified own-pane lead wait that would normally park, and write an audit record")
+	waitPostureReason := fs.String("wait-posture-reason", "", "distinct required reason when --override-wait-posture is set")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1360,6 +1462,9 @@ Usage:
 	if *stage != "drained" && *stage != "dlq" {
 		return usageErrorf("--stage must be drained or dlq")
 	}
+	if *timeout < 0 {
+		return usageErrorf("amq receipts wait --timeout must be non-negative")
+	}
 	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
@@ -1367,7 +1472,10 @@ Usage:
 	if ctx.Me == "" {
 		return usageErrorf("amq receipts wait requires --me")
 	}
-	cmd := []string{"receipts", "wait", "--root", ctx.Root, "--me", ctx.Me, "--msg-id", *msgID, "--stage", *stage, "--timeout", *timeout}
+	cmd := []string{"receipts", "wait", "--root", ctx.Root, "--me", ctx.Me, "--msg-id", *msgID, "--stage", *stage, "--timeout", timeout.String()}
+	if err := guardOwnedWait(waitPostureForContext("amq receipts wait", "delivery_receipt", ctx, *timeout, *timeout == 0, true, *overrideWaitPosture, *waitPostureReason)); err != nil {
+		return err
+	}
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
 }
 

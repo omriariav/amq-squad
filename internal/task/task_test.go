@@ -123,3 +123,29 @@ func TestMutateUnknownIDErrors(t *testing.T) {
 		t.Error("claiming an unknown id should error")
 	}
 }
+
+func TestAttentionLifecycleProjection(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		task     Task
+		want     AttentionLifecycle
+		terminal bool
+	}{
+		{name: "pending", task: Task{Status: StatusPending}, want: AttentionLifecycle(StatusPending)},
+		{name: "in progress", task: Task{Status: StatusInProgress}, want: AttentionLifecycle(StatusInProgress)},
+		{name: "failed remains attention bearing", task: Task{Status: StatusFailed}, want: AttentionLifecycle(StatusFailed)},
+		{name: "blocked remains attention bearing", task: Task{Status: StatusBlocked}, want: AttentionLifecycle(StatusBlocked)},
+		{name: "completed", task: Task{Status: StatusCompleted}, want: AttentionLifecycleClosed, terminal: true},
+		{name: "cancelled", task: Task{Status: StatusCancelled}, want: AttentionLifecycleClosed, terminal: true},
+		{name: "replacement linked", task: Task{Status: StatusCancelled, ReplacedBy: "t2"}, want: AttentionLifecycleSuperseded, terminal: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AttentionLifecycleFor(tc.task); got != tc.want {
+				t.Fatalf("AttentionLifecycleFor = %q, want %q", got, tc.want)
+			}
+			if got := IsAttentionLifecycleTerminal(tc.task); got != tc.terminal {
+				t.Fatalf("IsAttentionLifecycleTerminal = %t, want %t", got, tc.terminal)
+			}
+		})
+	}
+}

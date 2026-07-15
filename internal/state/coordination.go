@@ -30,6 +30,15 @@ const (
 	ThreadResolved ThreadStatus = "resolved"
 )
 
+func (s OperatorGateState) IsTerminal() bool {
+	switch s {
+	case OperatorGateStateAnswered, OperatorGateStateClosed, OperatorGateStateWithdrawn:
+		return true
+	default:
+		return false
+	}
+}
+
 // Triage is one of the computed headline tiers (plus Clear). Order of
 // severity: NeedsYou > Blocked > Gated > AtRisk > Clear.
 type Triage string
@@ -142,18 +151,55 @@ func OperatorGateEscalationRank(e OperatorGateEscalation) int {
 	}
 }
 
+// OperatorGateState is the durable lifecycle state derived from the ordered
+// messages on a gate/<topic> thread. Open gates may escalate; terminal states
+// never do. A later gate request deliberately reopens a terminal thread.
+type OperatorGateState string
+
+const (
+	OperatorGateStateUnknown   OperatorGateState = ""
+	OperatorGateStateOpen      OperatorGateState = "open"
+	OperatorGateStateAnswered  OperatorGateState = "answered"
+	OperatorGateStateClosed    OperatorGateState = "closed"
+	OperatorGateStateWithdrawn OperatorGateState = "withdrawn"
+)
+
+// OperatorGateTerminalContext binds a close or withdraw event to one exact
+// open gate generation. Every field is required for terminalization.
+type OperatorGateTerminalContext struct {
+	State            OperatorGateState
+	RequestMessageID string
+	Requester        string
+	Thread           string
+	Actor            string
+}
+
 // OperatorGateSignal describes an unanswered operator-facing gate message. Its
 // age is measured from the LAST unanswered operator-facing message on the
 // gate/<topic> thread, so a re-raised or updated gate starts a fresh clock.
 type OperatorGateSignal struct {
-	LatestID   string
-	From       string
-	Subject    string
-	Kind       Kind
-	Since      time.Time
-	Age        time.Duration
-	Reason     AttnReason
-	Escalation OperatorGateEscalation
+	LatestID     string
+	From         string
+	RawTo        []string
+	ToPresent    bool
+	ToArrayValid bool
+	ToRaw        string
+	Subject      string
+	Kind         Kind
+	Since        time.Time
+	Age          time.Duration
+	Reason       AttnReason
+	Escalation   OperatorGateEscalation
+	Conflicted   bool
+	SchemaOK     bool
+	RawThread    string
+	Refs         []string
+	RefsPresent  bool
+	RefsValid    bool
+	RefsRaw      string
+	// Terminalizable is true only when the selected request generation has
+	// exact, trustworthy protocol identity suitable for a mutation command.
+	Terminalizable bool
 }
 
 // FreshnessSource records WHERE a derived time came from, so the console can be
@@ -258,7 +304,10 @@ type ThreadSummary struct {
 	// goal-reached vs a plain question). It is AttnNone on every non-needs-you
 	// thread. See AttnReason.
 	AttnReason AttnReason
-	// OperatorGate is present when this is an unanswered operator-facing
+	// OperatorGateState records the latest gate lifecycle state even after the
+	// gate becomes terminal and drops out of operator attention.
+	OperatorGateState OperatorGateState
+	// OperatorGate is present only when this is an open operator-facing
 	// gate/<topic> ask. It is independent of LastEventAt because later chatter in
 	// the thread must not hide the age of the still-unanswered gate.
 	OperatorGate *OperatorGateSignal

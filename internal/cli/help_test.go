@@ -61,6 +61,9 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"agent", "resume", "--help"},
 		{"goal", "--help"},
 		{"operator", "--help"},
+		{"gate", "--help"},
+		{"gate", "raise", "--help"},
+		{"gate", "close", "--help"},
 	}
 	for _, args := range cases {
 		stdout, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
@@ -123,6 +126,9 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		{name: "agent resume --help", args: []string{"agent", "resume", "--help"}, want: "amq-squad agent resume"},
 		{name: "goal --help", args: []string{"goal", "--help"}, want: "amq-squad goal"},
 		{name: "operator --help", args: []string{"operator", "--help"}, want: "amq-squad operator"},
+		{name: "gate --help", args: []string{"gate", "--help"}, want: "amq-squad gate"},
+		{name: "gate raise --help", args: []string{"gate", "raise", "--help"}, want: "amq-squad gate raise"},
+		{name: "gate close --help", args: []string{"gate", "close", "--help"}, want: "amq-squad gate close"},
 	}
 	for _, tc := range cases {
 		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })
@@ -131,6 +137,31 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		}
 		if !strings.Contains(stderr, tc.want) {
 			t.Errorf("%s: stderr missing %q in:\n%s", tc.name, tc.want, stderr)
+		}
+	}
+}
+
+func TestGateTopLevelDiscoveryIncludesRaiseAndClose(t *testing.T) {
+	const wantSummary = "Manage durable typed authorization requests (raise and close)"
+	if got := commandSummary("gate"); got != wantSummary {
+		t.Fatalf("gate command summary = %q, want %q", got, wantSummary)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error { return Run([]string{"--help"}, "test") })
+	if err != nil {
+		t.Fatalf("top-level help: %v", err)
+	}
+	if combined := stdout + stderr; !strings.Contains(combined, "gate") || !strings.Contains(combined, wantSummary) {
+		t.Fatalf("top-level help hides gate lifecycle summary:\n%s", combined)
+	}
+
+	_, gateHelp, err := captureOutput(t, func() error { return Run([]string{"gate", "--help"}, "test") })
+	if err != nil {
+		t.Fatalf("gate help: %v", err)
+	}
+	for _, want := range []string{"amq-squad gate raise [options]", "amq-squad gate close [options]"} {
+		if !strings.Contains(gateHelp, want) {
+			t.Fatalf("gate help missing %q:\n%s", want, gateHelp)
 		}
 	}
 }

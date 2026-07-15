@@ -503,6 +503,16 @@ amq-squad focus --session issue-96 --role fullstack   # watch live when needed
 amq-squad collect --session issue-96 --me cto --timeout 120s --include-body
 ```
 
+In `lead_pane` mode, amq-squad verifies the actual live roster pane before its
+own blocking waits. A configured lead is refused when a caller-raised
+`gate/<topic>` is unresolved, a wait exceeds 120 seconds, or a wait is
+unbounded. This covers `collect`, wrapped `amq watch`, wrapped `amq receipts
+wait`, and amq-squad-owned send/reply/dispatch receipt waits. The audited escape
+hatch is `--override-wait-posture --wait-posture-reason <why>`. Direct external
+`amq watch` and hand-written `sleep`/`until` polling loops cannot be intercepted
+and remain forbidden lead posture; use the sanctioned read-only `amq-squad
+monitor` watchdog or park/end the turn so wake can resume it.
+
 ### The `[AGENT-EVENT]`-over-AMQ protocol
 
 The key design point: instead of writing status into a parent pane, children

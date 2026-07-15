@@ -210,6 +210,7 @@ func TestOperatorStatusDisabledProfileIsUnconfigured(t *testing.T) {
 
 func TestOperatorAnswerSendsApprovedGateAnswer(t *testing.T) {
 	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedLegacyOperatorQuestion(t, project, team.DefaultProfile, "s", "cto", "gate/release")
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-answer to cto\n")
 
 	stdout, stderr, err := captureOutput(t, func() error {
@@ -251,6 +252,7 @@ func TestOperatorAnswerNamedProfileUsesExactExplicitSessionRoot(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	seedLegacyOperatorQuestion(t, project, profile, session, "cto", "gate/release")
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent named-answer to cto\n")
 
 	_, stderr, err := captureOutput(t, func() error {
@@ -295,6 +297,7 @@ func TestOperatorAnswerExplicitSessionIgnoresLegacyCrossSessionResidue(t *testin
 	if err := team.WriteProfile(project, profile, cfg); err != nil {
 		t.Fatal(err)
 	}
+	seedLegacyOperatorQuestion(t, project, profile, targetSession, "cto", "gate/release")
 	profilePath := team.ProfilePath(project, profile)
 	before, err := os.ReadFile(profilePath)
 	if err != nil {
@@ -355,6 +358,7 @@ func TestOperatorAnswerExplicitSessionIgnoresLegacyCrossSessionResidue(t *testin
 
 func TestOperatorAnswerSendsDeniedGateAnswerWithGatePrefix(t *testing.T) {
 	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedLegacyOperatorQuestion(t, project, team.DefaultProfile, "s", "cto", "gate/release")
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-denied to cto\n")
 
 	_, stderr, err := captureOutput(t, func() error {
@@ -376,6 +380,17 @@ func TestOperatorAnswerSendsDeniedGateAnswerWithGatePrefix(t *testing.T) {
 			t.Fatalf("operator denied args missing %q: %v", want, args)
 		}
 	}
+}
+
+func seedLegacyOperatorQuestion(t *testing.T, project, profile, session, from, gate string) {
+	t.Helper()
+	base := filepath.Join(project, ".agent-mail")
+	if profile != team.DefaultProfile {
+		base = filepath.Join(base, profile)
+	}
+	root := filepath.Join(base, session)
+	seedAgentRecord(t, base, session, from, launch.Record{CWD: project, Binary: "codex", Role: from, Handle: from, Session: session, Root: root, TeamProfile: profile, AgentPID: 42})
+	seedNotifyMessageToDir(t, filepath.Join(root, "agents", team.DefaultOperatorHandle), "new", notifyMsg{ID: "legacy-question", From: from, To: team.DefaultOperatorHandle, Thread: gate, Subject: "APPROVAL: legacy", Kind: string(state.KindQuestion), Created: notifyNow})
 }
 
 func TestOperatorDirectiveSendsTodoOnCanonicalThread(t *testing.T) {
@@ -413,6 +428,7 @@ func TestOperatorDirectiveSendsTodoOnCanonicalThread(t *testing.T) {
 
 func TestOperatorCommandsRefuseOperatorTarget(t *testing.T) {
 	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedLegacyOperatorQuestion(t, project, team.DefaultProfile, "s", "cto", "gate/release")
 	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg to user\n")
 
 	for _, tc := range []struct {
@@ -581,8 +597,8 @@ func TestOperatorStatusClosesGateAfterOperatorAnswer(t *testing.T) {
 		t.Fatalf("operator status: %v", err)
 	}
 	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
-	if env.Data.OperatorLoop.GatesOpen != 0 || len(env.Data.Attention) != 0 {
-		t.Fatalf("operator status after answer = gates:%d attention:%+v, want closed gate", env.Data.OperatorLoop.GatesOpen, env.Data.Attention)
+	if env.Data.OperatorLoop.GatesOpen != 0 || env.Data.OperatorLoop.Backlog != 0 || len(env.Data.Attention) != 0 {
+		t.Fatalf("operator status after answer = gates:%d backlog:%d attention:%+v, want terminal gate suppressed", env.Data.OperatorLoop.GatesOpen, env.Data.OperatorLoop.Backlog, env.Data.Attention)
 	}
 }
 

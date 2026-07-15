@@ -436,7 +436,10 @@ amq-squad amq thread --session S --me <lead> --id gate/spawn-<role> --include-bo
 
 Never run an unbounded `amq watch` while the gate is open. In particular, do not
 hold `collect` when the operator answers through your own pane; ending the turn
-is what lets that answer flush and avoids a self-deadlock.
+is what lets that answer flush and avoids a self-deadlock. amq-squad enforces
+this posture on its own blocking surfaces, but it cannot intercept a direct
+external `amq watch` or a hand-written shell `sleep`/`until` polling loop; those
+remain forbidden. `amq-squad monitor` is the sanctioned read-only watchdog.
 
 The operator replies on the same thread with `--kind answer`. **Require an
 explicit `APPROVED:` or `DENIED:` token** in that answer (the convention the
@@ -755,7 +758,7 @@ amq-squad task add --session issue-337 \
 
 **Collect briefly, then park.** Use `amq-squad collect --session S --me <lead> --timeout 120s --include-body` immediately after dispatch only when an ACK or report is genuinely imminent. `collect` performs one drain, at most one bounded watch, then one final drain. If the wait is measured in minutes, **PARK by ending the turn**; the wake sidecar resumes you when AMQ arrives, and ending the turn also flushes queued operator input from your pane. Under native `/goal`, waiting on operator-only blocked input is a sanctioned park within minutes.
 
-In live-operator mode, **never hold `collect` while an operator gate is open and the answer arrives through your own pane**: the blocked turn cannot process that answer, creating a self-deadlock. Stall detection belongs to `monitor`'s `idle_with_active_task` watchdog, not to long lead-side collect timers.
+In `lead_pane` mode, amq-squad verifies the actual live roster pane (not `--me` or inherited AMQ identity) before its own blocking waits. A verified configured lead refuses before blocking when any caller-raised `gate/<topic>` is unresolved, when the wait exceeds 120 seconds, or when it is unbounded. The same predicate covers `collect`, wrapped `amq watch`, wrapped `amq receipts wait`, and amq-squad-owned send/reply/dispatch receipt waits. The refusal names every matching gate and tells the lead to park/end the turn. A deliberate exception requires `--override-wait-posture --wait-posture-reason <why>` and must durably audit before the block or send. Verified nonlead panes and nonblocking drains retain their existing behavior. Stall detection belongs to `monitor`'s `idle_with_active_task` watchdog, not to long lead-side collect timers.
 
 **Never background `collect` or `drain`.** Both consume mailbox state; a background reader races the foreground turn and can cause destructive double-consumption. Park and rely on wake instead.
 

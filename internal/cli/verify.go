@@ -78,6 +78,7 @@ func runVerify(args []string) error {
 
 Usage:
   amq-squad verify action --project DIR --session S --gate TOPIC --action KIND --target TARGET [--json]
+  amq-squad verify authorization --file FILE --action KIND --target TARGET --trust-store FILE [--json]
   amq-squad verify merge --evidence <file|-> [--json]
   amq-squad verify release --evidence <file|-> [--json]
 
@@ -93,19 +94,21 @@ operator-performed. Failed evidence prints the failed conditions and exits
 non-zero.
 `)
 		if len(args) == 0 {
-			return usageErrorf("verify requires a subcommand (action, merge, or release)")
+			return usageErrorf("verify requires a subcommand (action, authorization, merge, or release)")
 		}
 		return nil
 	}
 	switch args[0] {
 	case "action":
 		return runVerifyAction(args[1:])
+	case "authorization":
+		return runVerifyAuthorization(args[1:])
 	case "merge":
 		return runVerifyMerge(args[1:])
 	case "release":
 		return runVerifyRelease(args[1:])
 	default:
-		return usageErrorf("unknown 'verify' subcommand: %q. Try action, merge, or release.", args[0])
+		return usageErrorf("unknown 'verify' subcommand: %q. Try action, authorization, merge, or release.", args[0])
 	}
 }
 

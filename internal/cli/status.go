@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -430,13 +432,26 @@ func executeStatus(s statusExecution) error {
 	}
 	if delivery.InteractionMode == team.OperatorInteractionSelfOperator {
 		v := team.EffectiveSelfOperator(t, workstream)
-		fmt.Fprintf(s.Out, "# self_operator: lead=%s/%s allow=%s revision=%d enabled=%t paused=%t hash=%s visibility_notifications=%t human_only=spawn,release,tag,publish,external_send,destructive_filesystem\n", v.LeadRole, v.LeadHandle, strings.Join(v.AllowedGateKinds, ","), v.PolicyRevision, v.Enabled, v.Paused, v.PolicyHash, delivery.NotificationsEnabled)
+		fmt.Fprintf(s.Out, "# self_operator: lead=%s/%s allow=%s revision=%d enabled=%t paused=%t hash=%s visibility_notifications=%t human_only=%s\n", v.LeadRole, v.LeadHandle, strings.Join(v.AllowedGateKinds, ","), v.PolicyRevision, v.Enabled, v.Paused, v.PolicyHash, delivery.NotificationsEnabled, strings.Join(humanOnlyCatalogGateKinds(), ","))
 		if !delivery.NotificationsEnabled {
 			fmt.Fprintln(s.Out, "# self_operator_visibility: notifications disabled; inspect durable gate threads manually")
 		}
 	}
 	fmt.Fprintln(s.Out)
 	return writeStatusTable(s.Out, rows, policy)
+}
+
+func humanOnlyCatalogGateKinds() []string {
+	seen := map[string]bool{}
+	var kinds []string
+	for _, capability := range operatorauth.ActionCapabilities() {
+		if capability.HumanOnly && !seen[capability.GateKind] {
+			seen[capability.GateKind] = true
+			kinds = append(kinds, capability.GateKind)
+		}
+	}
+	sort.Strings(kinds)
+	return kinds
 }
 
 func writeStatusTable(out io.Writer, rows []statusRecord, policy outputPolicy) error {
@@ -498,11 +513,15 @@ func statusAgedOperatorGateWarnings(projectDir, profile, session string, now tim
 	if err != nil || !info.IsDir() {
 		return nil
 	}
+	baseRoot := root
+	if squadnamespace.ProfilesEqual(profile, team.DefaultProfile) {
+		baseRoot = filepath.Dir(root)
+	}
 	data, err := buildOperatorStatusData(operatorExecution{
 		ProjectDir: projectDir,
 		Profile:    profile,
 		Session:    session,
-		BaseRoot:   root,
+		BaseRoot:   baseRoot,
 		Probe: state.Probe{
 			Now: func() time.Time { return now },
 		},
@@ -517,7 +536,7 @@ func statusAgedOperatorGateWarnings(projectDir, profile, session string, now tim
 func statusWarningsForAgedOperatorGates(data operatorStatusEnvelopeData) []statusWarning {
 	var warnings []statusWarning
 	for _, item := range data.Attention {
-		if !strings.HasPrefix(item.Thread, "gate/") {
+		if !isOpenGateAttention(item) {
 			continue
 		}
 		escalation := state.OperatorGateEscalation(item.Escalation)
@@ -590,6 +609,9 @@ func statusTaskWarnings(projectDir, profile, session string) ([]statusWarning, e
 	ns := squadnamespace.Resolve(projectDir, profile, session)
 	var messages []state.Message
 	for _, t := range tasks {
+		if taskstore.IsAttentionLifecycleTerminal(t) {
+			continue
+		}
 		if t.Status == taskstore.StatusInProgress && t.Dispatch != nil {
 			messages, _ = state.ScanSessionMessages(ns.AMQRoot, time.Now)
 			break
@@ -597,6 +619,9 @@ func statusTaskWarnings(projectDir, profile, session string) ([]statusWarning, e
 	}
 	var warnings []statusWarning
 	for _, t := range tasks {
+		if taskstore.IsAttentionLifecycleTerminal(t) {
+			continue
+		}
 		if t.Dispatch == nil {
 			continue
 		}

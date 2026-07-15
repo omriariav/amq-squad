@@ -106,6 +106,7 @@ func TestRunCompletionBashContainsRepresentativeTokens(t *testing.T) {
 		// goal/operator subcommands
 		"goal_subcommands", "apply", "claim", "deliver", "draft", "start",
 		"operator_subcommands", "answer", "directive", "poll", "watch",
+		"gate_subcommands", "raise", "close",
 		"notifications_subcommands", "notifications", "events", "probe",
 		// high-traffic flags
 		"--profile", "--json", "--actions", "--action", "--action-id", "--target-id", "--scope", "--run-action", "--set", "--commands", "--mutating", "--dry-run", "--force", "--force-duplicate", "--session",
@@ -139,6 +140,7 @@ func TestRunCompletionZshContainsRepresentativeTokens(t *testing.T) {
 		"'profile'", "'session'",
 		"goal_subcommands", "'apply'", "'claim'", "'deliver'", "'draft'", "'start'",
 		"operator_subcommands", "'answer'", "'directive'", "'poll'", "'watch'",
+		"gate_subcommands", "'raise'", "'close'",
 		"notifications_subcommands", "'notifications'", "'events'", "'probe'",
 		"'init'", "'profiles'", "'delete'", "'show'",
 		"'--profile'", "'--json'", "'--actions'", "'--action'", "'--action-id'", "'--target-id'", "'--scope'", "'--run-action'", "'--set'", "'--commands'", "'--mutating'", "'--dry-run'", "'--force-duplicate'", "'--approved'", "'--denied'", "'--gate'", "'--goal-id'", "'--attempt-id'", "'--route'",
@@ -173,6 +175,7 @@ func TestRunCompletionFishContainsRepresentativeTokens(t *testing.T) {
 		"-a 'apply'", "-a 'claim'", "-a 'deliver'", "-a 'draft'", "-a 'start'",
 		"__fish_seen_subcommand_from operator",
 		"-a 'answer'", "-a 'directive'", "-a 'poll'", "-a 'watch'",
+		"__fish_seen_subcommand_from gate", "-a 'raise'", "-a 'close'",
 		"__fish_seen_subcommand_from notifications",
 		"-a 'events'", "-a 'probe'",
 		"__fish_seen_subcommand_from rules",
@@ -281,6 +284,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"context":         true,
 		"namespace":       true,
 		"verify":          true,
+		"gate":            true,
 		"operator":        true,
 		"activity":        true,
 		"up":              true,

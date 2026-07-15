@@ -31,6 +31,7 @@ type msgSpec struct {
 	schema    int // 0 => default to 1
 	labels    []string
 	context   string // raw JSON object; empty => omitted
+	replyTo   string
 
 	torn        bool // write an invalid/partial file (must be skipped)
 	badThreadID bool // write the thread id verbatim (caller supplies malformed)
@@ -96,6 +97,9 @@ func seedMessage(t *testing.T, agentDir, state string, s msgSpec) {
 	}
 	if strings.TrimSpace(s.context) != "" {
 		b.WriteString(",\n  \"context\": " + s.context)
+	}
+	if strings.TrimSpace(s.replyTo) != "" {
+		b.WriteString(",\n  \"reply_to\": \"" + s.replyTo + "\"")
 	}
 	b.WriteString("\n}\n---\n")
 	b.WriteString(s.body)

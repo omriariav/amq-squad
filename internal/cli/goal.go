@@ -513,9 +513,9 @@ command is confirm-gated; pass --yes after reviewing the gate and lead state.
 	if fs.NArg() != 0 {
 		return usageErrorf("goal apply takes no positional arguments")
 	}
-	gate := normalizeGateTopic(*gateFlag)
-	if gate == "" {
-		return usageErrorf("goal apply requires --gate <topic>")
+	gate, err := canonicalGateTopic(*gateFlag)
+	if err != nil {
+		return usageErrorf("goal apply: %v", err)
 	}
 	override := namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
