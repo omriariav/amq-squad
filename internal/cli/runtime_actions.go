@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -213,44 +214,6 @@ func resolveDir(dir string) string {
 	return filepath.Clean(abs)
 }
 
-// closeRecordedPaneSafely closes paneID ONLY when the live pane it resolves to is
-// provably the SAME pane the launch record describes — the destructive twin of
-// #156's read-path guard, applied to kill-pane so teardown never closes a pane
-// whose id was REUSED by a different agent/session after a tmux server restart.
-// It inspects the pane by id (InspectPaneByID already verifies the returned
-// pane_id == paneID), then requires positive identity: the pane's title is this
-// agent's amq token, or — for an untitled/clobbered pane — its cwd matches the
-// recorded cwd. A pane that is already gone is a silent no-op. session+role
-// derive the expected amq title token; recordedCWD is the agent's launch cwd (""
-// when unknown). Returns whether it closed, plus a non-empty skip reason when it
-// deliberately left the pane open, so the caller can warn instead of killing the
-// wrong pane.
-func closeRecordedPaneSafely(paneID, session, role, recordedCWD string) (closed bool, skip string) {
-	id := strings.TrimSpace(paneID)
-	if id == "" {
-		return false, ""
-	}
-	p, ok := statusPaneInspector(id)
-	if !ok {
-		return false, "" // pane already gone — nothing to close
-	}
-	switch {
-	case p.Title == paneTitleToken(session, role):
-		// exact amq token -> definitely this agent's pane.
-	case paneTitledForDifferentAgent(p.Title, session, role):
-		return false, fmt.Sprintf("pane %s now belongs to a different agent (title %q); left open (likely pane-id reuse)", id, p.Title)
-	default:
-		// No amq title token to trust: only safe to close if the cwd still matches.
-		if strings.TrimSpace(recordedCWD) == "" || !sameResolvedDir(p.CWD, recordedCWD) {
-			return false, fmt.Sprintf("pane %s identity unconfirmed (cwd %q vs recorded %q); left open", id, p.CWD, recordedCWD)
-		}
-	}
-	if err := paneCloser(id); err != nil {
-		return false, ""
-	}
-	return true, ""
-}
-
 // paneTitledForDifferentAgent reports whether a pane carries an amq title token
 // (amq:<workstream>:<role>) for a role OTHER than the expected one — i.e. the
 // recorded pane id was reused by a sibling agent (e.g. after a tmux server
@@ -309,14 +272,15 @@ Examples:
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
-	if !team.ExistsProfile(projectDir, profile) {
-		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	emitContextDiagnostics(ctx)
+	if !team.ExistsProfile(ctx.ProjectDir, ctx.Profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", ctx.Profile, profileInitCommand(ctx.Profile))
 	}
-	return focusTarget(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), flagWasSet(fs, "profile"), *roleFlag)
+	return focusTarget(ctx.ProjectDir, ctx.Profile, ctx.Session, flagWasSet(fs, "session"), flagWasSet(fs, "profile"), *roleFlag)
 }
 
 // focusTarget resolves and switches to the pane for a role (or the session's
@@ -387,6 +351,30 @@ func focusTarget(projectDir, profile, session string, explicitSession bool, expl
 			}
 			continue
 		}
+		initialIdentity, rerr := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), mr.Handle)
+		if rerr != nil {
+			return rerr
+		}
+		admission, admissionErr := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+		if admissionErr != nil {
+			return admissionErr
+		}
+		defer admission.close()
+		currentRuntime, currentWorkstream, rerr := resolveMemberRuntime(projectDir, profile, session, explicitSession, r)
+		if rerr != nil {
+			return fmt.Errorf("focus refused: target re-resolution under admission failed: %w", rerr)
+		}
+		currentIdentity, rerr := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, currentWorkstream), currentRuntime.Handle)
+		if rerr != nil {
+			return rerr
+		}
+		if err := validateReResolvedEndpointIdentity("focus", initialIdentity, currentIdentity); err != nil {
+			return err
+		}
+		if err := validateReResolvedMemberRuntime("focus", projectDir, profile, mr, workstream, currentRuntime, currentWorkstream); err != nil {
+			return err
+		}
+		mr, workstream = currentRuntime, currentWorkstream
 		if err := ensureNoNamespaceConflict("focus", projectDir, profile, workstream, explicitProfile); err != nil {
 			return err
 		}
@@ -425,6 +413,7 @@ func runSend(args []string) error {
 	body := fs.String("body", "", "prompt text (alternative to --body-file)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
+	jsonOut := fs.Bool("json", false, "emit a receipt-bearing JSON envelope")
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	forceFlag := fs.Bool("force", false, "deliver even if the agent appears busy (mid-turn)")
 	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
@@ -466,10 +455,12 @@ Examples:
 		return err
 	}
 	warnSuspiciousInlineBody("send", prompt, flagWasSet(fs, "body"), os.Stderr)
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
 	if !team.ExistsProfile(projectDir, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
@@ -480,14 +471,35 @@ Examples:
 	if err := ensureTargetIsNotOperator(t, "send", *roleFlag); err != nil {
 		return err
 	}
-	mr, workstream, err := resolveMemberRuntime(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag)
+	mr, workstream, err := resolveMemberRuntime(projectDir, profile, ctx.Session, flagWasSet(fs, "session"), *roleFlag)
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflictWithOverride("send", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
+	override := namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
 		Reason:  *overrideNamespaceReason,
-	}); err != nil {
+	}
+	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentCtx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+	if err != nil {
+		return fmt.Errorf("send refused: context re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedContext(ctx, currentCtx, false); err != nil {
+		return err
+	}
+	currentRuntime, currentWorkstream, err := resolveMemberRuntime(currentCtx.ProjectDir, currentCtx.Profile, currentCtx.Session, flagWasSet(fs, "session"), *roleFlag)
+	if err != nil {
+		return fmt.Errorf("send refused: target re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedMemberRuntime("send", currentCtx.ProjectDir, currentCtx.Profile, mr, workstream, currentRuntime, currentWorkstream); err != nil {
+		return err
+	}
+	ctx, projectDir, profile, mr, workstream = currentCtx, currentCtx.ProjectDir, currentCtx.Profile, currentRuntime, currentWorkstream
+	if err := ensureNoNamespaceConflictWithOverride("send", projectDir, profile, workstream, flagWasSet(fs, "profile"), override); err != nil {
 		return err
 	}
 	if reason, disabled := mr.nativePromptInjectionDisabledReason(); disabled {
@@ -520,10 +532,61 @@ Examples:
 			return fmt.Errorf("agent %q at pane %s appears busy (mid-turn); retry when idle, or pass --force to deliver anyway", *roleFlag, paneID)
 		}
 	}
-	if err := sendPromptToPane(paneID, prompt); err != nil {
+	receipt := newDeliveryReceipt(projectDir, profile, workstream, mr.Member.Role, mr.Handle, effectiveTeamExecutionMode(t), "pane_send")
+	receipt.Method = "pane_prompt"
+	receipt.PaneID = paneID
+	receipt.Fallback = true
+	receipt.DeliveryState = deliveryStateAmbiguousUnknown
+	receipt.addStage("pane_submit_attempted", "prompt staged and Enter submission attempted; pane evidence cannot upgrade AMQ delivery state")
+	if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
 		return err
 	}
-	quietNotice("Delivered prompt to %s pane %s.\n", *roleFlag, paneID)
+	sendErr := sendPromptToPane(paneID, prompt)
+	if sendErr == nil {
+		receipt.Status = dispatchSubmitConfirmed
+		receipt.Acknowledged = true
+		receipt.addStage(dispatchSubmitConfirmed, "pane input-region change observed after Enter")
+	} else {
+		var queued *tmuxpane.QueuedInputError
+		var unconfirmed *tmuxpane.SubmitUnconfirmedError
+		switch {
+		case errors.As(sendErr, &queued):
+			receipt.Status = dispatchSubmitQueued
+		case errors.As(sendErr, &unconfirmed):
+			receipt.Status = dispatchSubmitUnconfirmed
+		default:
+			receipt.Status = "pane_failed"
+		}
+		receipt.Detail = sendErr.Error()
+		receipt.addStage(receipt.Status, sendErr.Error())
+	}
+	if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+		return err
+	}
+	if *jsonOut {
+		if err := printJSONEnvelope("send", mutationResult{Command: "send", Status: receipt.Status, Project: projectDir, Profile: profile, Session: workstream, Role: mr.Member.Role, Handle: mr.Handle, DeliveryReceipt: &receipt}); err != nil {
+			return err
+		}
+	}
+	if sendErr != nil {
+		return fmt.Errorf("%v (attempt_id=%s state=%s receipt=%s)", sendErr, receipt.AttemptID, receipt.Status, receipt.Path)
+	}
+	if !*jsonOut {
+		quietNotice("Delivered prompt to %s pane %s (attempt %s, receipt %s).\n", *roleFlag, paneID, receipt.AttemptID, receipt.Path)
+	}
+	return nil
+}
+
+func validateReResolvedMemberRuntime(operation, projectDir, profile string, initial memberRuntime, initialWorkstream string, current memberRuntime, currentWorkstream string) error {
+	if err := validateReResolvedEndpoint(operation, squadnamespace.Resolve(projectDir, profile, initialWorkstream), squadnamespace.Resolve(projectDir, profile, currentWorkstream), initial.Handle, current.Handle); err != nil {
+		return err
+	}
+	if initial.AgentDir != current.AgentDir || initial.HasRecord != current.HasRecord || initial.Member.Binary != current.Member.Binary || initial.Member.Session != current.Member.Session {
+		return fmt.Errorf("%s refused: runtime target identity changed before admission; retry", operation)
+	}
+	if initial.HasRecord && (initial.Record.StartedAt != current.Record.StartedAt || initial.Record.Root != current.Record.Root || initial.Record.AgentPID != current.Record.AgentPID) {
+		return fmt.Errorf("%s refused: launch generation changed before admission; retry", operation)
+	}
 	return nil
 }
 
@@ -584,17 +647,13 @@ func readAllPrompt(stdin io.Reader) (string, error) {
 // resolveProjectProfile resolves the --project and --profile flags shared by the
 // runtime control verbs.
 func resolveProjectProfile(projectFlag, profileFlag string, projectSet bool) (string, string, error) {
-	profile, err := resolveProfileFlag(profileFlag)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: projectFlag, ProfileFlag: profileFlag,
+		ProjectExplicit: projectSet, ProfileExplicit: strings.TrimSpace(profileFlag) != "",
+	})
 	if err != nil {
 		return "", "", err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", "", fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, projectFlag, projectSet)
-	if err != nil {
-		return "", "", err
-	}
-	return projectDir, profile, nil
+	emitContextDiagnostics(ctx)
+	return ctx.ProjectDir, ctx.Profile, nil
 }

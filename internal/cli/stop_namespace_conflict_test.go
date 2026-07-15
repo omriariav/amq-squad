@@ -12,6 +12,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 const (
@@ -29,6 +30,42 @@ func stopRunnerForTest(term processTerminator, probe duplicateLaunchProbe) func(
 	return func(args []string) error {
 		return runStopWithDeps(args, func(bool) processTerminator { return term }, probe)
 	}
+}
+
+func stopRunnerForPaneTest(term processTerminator, probe duplicateLaunchProbe, paneDeps PaneCleanupDependencies) func([]string) error {
+	return func(args []string) error {
+		return runStopWithPaneDeps(args, func(bool) processTerminator { return term }, probe, paneDeps)
+	}
+}
+
+func exactStopManagedPaneDeps(project string, paneIDs []string, agentPIDs []int) (PaneCleanupDependencies, *[]string) {
+	known := make(map[string]bool, len(paneIDs))
+	for _, paneID := range paneIDs {
+		known[paneID] = true
+	}
+	closed := []string{}
+	return PaneCleanupDependencies{
+		Inspect: func(paneID string) tmuxpane.PaneInspection {
+			if !known[paneID] {
+				return tmuxpane.PaneInspection{State: tmuxpane.PaneInspectionGone, Detail: "pane is gone"}
+			}
+			return tmuxpane.PaneInspection{State: tmuxpane.PaneInspectionFound, Pane: tmuxpane.TmuxPane{
+				Session: "tmux-plane", WindowID: "@1", PaneID: paneID, PID: 100, CWD: project,
+			}}
+		},
+		ChildrenIndex: func() (func(int) []int, error) {
+			return func(parent int) []int {
+				if parent == 100 {
+					return agentPIDs
+				}
+				return nil
+			}, nil
+		},
+		Close: func(paneID string) error {
+			closed = append(closed, paneID)
+			return nil
+		},
+	}, &closed
 }
 
 func swapTeamMemberStopRunner(t *testing.T, runner func([]string) error) {
@@ -71,20 +108,13 @@ func seedExactStopProject(t *testing.T, members []team.Member) (projectDir, name
 func writeExactStopRecord(t *testing.T, namedRoot string, member team.Member, pid int, paneID string) string {
 	t.Helper()
 	agentDir := filepath.Join(namedRoot, "agents", member.Handle)
-	rec := launch.Record{
-		CWD:         member.CWD,
-		Binary:      member.Binary,
-		Handle:      member.Handle,
-		Role:        member.Role,
-		Session:     exactStopSession,
-		Root:        namedRoot,
-		TeamProfile: exactStopProfile,
-		AgentPID:    pid,
-		StartedAt:   time.Now().UTC(),
-	}
+	project := filepath.Dir(filepath.Dir(filepath.Dir(namedRoot)))
+	var tmux *launch.TmuxInfo
 	if paneID != "" {
-		rec.Tmux = &launch.TmuxInfo{Session: "tmux-plane", PaneID: paneID}
+		tmux = &launch.TmuxInfo{Session: "tmux-plane", WindowID: "@1", PaneID: paneID, Target: "new-window"}
 	}
+	rec := fullyManagedLaunchRecord(project, filepath.Dir(namedRoot), namedRoot, exactStopProfile, exactStopSession, member, pid, tmux)
+	rec.StartedAt = time.Now().UTC()
 	if err := launch.Write(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
@@ -340,10 +370,9 @@ func TestRunStopExactNamedProfileRoleAndClosePane(t *testing.T) {
 	writeExactStopRecord(t, namedRoot, members[1], 3200, "%32")
 	legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
 	term := &recordingTerminator{}
-	stop := stopRunnerForTest(term, downFakeProbe(map[int]bool{3100: true, 3200: true}, map[int]bool{3100: true, 3200: true}))
+	paneDeps, closed := exactStopManagedPaneDeps(project, []string{"%31", "%32"}, []int{3100, 3200})
+	stop := stopRunnerForPaneTest(term, downFakeProbe(map[int]bool{3100: true, 3200: true}, map[int]bool{3100: true, 3200: true}), paneDeps)
 	swapStatusPaneLister(t, nil, nil)
-	closed := swapPaneCloser(t)
-	swapPaneInspectorMatching(t, exactStopSession, map[string]string{"%31": "cto", "%32": "qa"})
 
 	stdout, _, err := captureOutput(t, func() error {
 		return stop(exactStopArgs(project, "--role", "cto", "--close-panes"))
@@ -548,10 +577,9 @@ func TestExactNamedProfileStopSafetyRegressions(t *testing.T) {
 		writeExactStopRecord(t, namedRoot, members[1], 6301, "%64")
 		legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
 		term := &recordingTerminator{failOn: map[int]error{6301: errors.New("denied")}}
-		stop := stopRunnerForTest(term, downFakeProbe(map[int]bool{6300: true, 6301: true}, map[int]bool{6300: true, 6301: true}))
+		paneDeps, closed := exactStopManagedPaneDeps(project, []string{"%63", "%64"}, []int{6300, 6301})
+		stop := stopRunnerForPaneTest(term, downFakeProbe(map[int]bool{6300: true, 6301: true}, map[int]bool{6300: true, 6301: true}), paneDeps)
 		swapStatusPaneLister(t, nil, nil)
-		closed := swapPaneCloser(t)
-		swapPaneInspectorMatching(t, exactStopSession, map[string]string{"%63": "cto", "%64": "qa"})
 		stdout, _, err := captureOutput(t, func() error {
 			return stop(exactStopArgs(project, "--all", "--close-panes"))
 		})

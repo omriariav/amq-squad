@@ -635,8 +635,8 @@ drain your inbox.</li>
 </table>
 <p>For a narrow Claude-only permission exception, configure a member's
 <code>permission_allowlist</code> in <code>team.json</code>, for example
-<code>["Bash(rm -rf /tmp/qa-review/*:*)"]</code>. The grant is scoped to
-that exact role, merged with any explicit native
+<code>["Bash(amq-squad review-worktree remove:*)"]</code>. The grant is
+scoped to that exact role, merged with any explicit native
 <code>--allowedTools</code>, visible in dry-run JSON and launch history,
 and rebuilt from current policy on resume so removed/narrowed grants are
 revoked. Validation rejects other binaries and values beginning with
@@ -647,7 +647,10 @@ commands keep launcher policy out of executable child argv;
 <code>agent up</code> recomputes it and the launch record stores
 launcher-owned versus explicit provenance separately, including
 equal-valued grants. Prefer scratch/worktree- specific patterns over
-broad command grants. Such profiles write schema 4; profiles without the
+broad command grants. An allowlist grants native tool permission; it
+does not override the generated team rules'
+<code>## Workspace Safety and Cleanup</code> prohibition on
+<code>rm -rf</code>. Such profiles write schema 4; profiles without the
 field stay schema 3. Upgrade all readers/writers to v2.20+ before
 configuring it: pre-v2.20 binaries can silently ignore the field and
 lossily rewrite the profile. Use <code>amq-squad doctor</code> to detect
@@ -659,9 +662,12 @@ only — the overlay verb above generates the flagship case (a
 wires it for you. Plan emission fails fast when a referenced
 <code>--settings</code> file is missing. AMQ floor (v2.20.0+): amq-squad
 requires amq 0.42.1+. AMQ 0.42.1 is the first supported complete
-identity-pin contract: after upgrading, stop and resume/relaunch agents
-so their parent shells receive a coherent tuple; a child command cannot
-repair stale injected environment. Default profiles use
+identity-pin contract. The minimum 0.42.1 compatibility floor is
+unchanged. This release is explicitly validated against pinned 0.43.1;
+latest remains a forward-compatibility canary. After upgrading AMQ, stop
+and resume/relaunch agents so their parent shells refresh the complete
+identity tuple; a child command cannot repair stale injected
+environment. Default profiles use
 <code>AM_ROOT=AM_BASE_ROOT/AM_SESSION</code> with a non-empty
 <code>AM_SESSION</code>; named profiles use an exact root with
 <code>AM_ROOT=AM_BASE_ROOT</code> and omit <code>AM_SESSION</code>. Run
@@ -1011,6 +1017,19 @@ loop: spawn → dispatch → monitor → coordinate → recover</h3>
 <span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a><span class="co"># 5. COORDINATE — children PUSH reports; the lead collects safely (does not poll)</span></span>
 <span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> collect <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="at">--timeout</span> 120s <span class="at">--include-body</span></span></code></pre></div>
+<p>In <code>lead_pane</code> mode, amq-squad verifies the actual live
+roster pane before its own blocking waits. A configured lead is refused
+when a caller-raised <code>gate/&lt;topic&gt;</code> is unresolved, a
+wait exceeds 120 seconds, or a wait is unbounded. This covers
+<code>collect</code>, wrapped <code>amq watch</code>, wrapped
+<code>amq receipts wait</code>, and amq-squad-owned send/reply/dispatch
+receipt waits. The audited escape hatch is
+<code>--override-wait-posture --wait-posture-reason &lt;why&gt;</code>.
+Direct external <code>amq watch</code> and hand-written
+<code>sleep</code>/<code>until</code> polling loops cannot be
+intercepted and remain forbidden lead posture; use the sanctioned
+read-only <code>amq-squad monitor</code> watchdog or park/end the turn
+so wake can resume it.</p>
 <h3 id="the-agent-event-over-amq-protocol">The
 <code>[AGENT-EVENT]</code>-over-AMQ protocol</h3>
 <p>The key design point: instead of writing status into a parent pane,

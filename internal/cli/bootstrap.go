@@ -305,11 +305,14 @@ func bootstrapExecution(rec launch.Record, teamHome string) *executionModeData {
 
 func bootstrapGoalBindingMode(rec launch.Record, t team.Team) string {
 	if bootstrapRecordIsVisibleLead(rec, t) {
-		if rec.GoalBinding != nil && rec.GoalBinding.NativeGoal {
-			return "native_goal"
+		if launchRecordHasGoalBinding(rec) {
+			return rec.GoalBinding.Mode
 		}
-		if projectExecutionModeRequiresNativeGoal(t) {
-			return "native_goal_missing"
+		if projectExecutionModeRequiresGoalBinding(t) {
+			if contract, err := goalDeliveryContractForBinary(rec.Binary); err == nil {
+				return contract.Mode + "_missing"
+			}
+			return "goal_delivery_unsupported"
 		}
 	}
 	return "amq_task_brief"

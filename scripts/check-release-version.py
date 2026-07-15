@@ -12,6 +12,12 @@ import sys
 VERSION_RE = re.compile(r"^v?([0-9]+\.[0-9]+\.[0-9]+)$")
 SKILL_MARKER_RE = re.compile(r"Skill version:\s*([0-9]+\.[0-9]+\.[0-9]+)")
 AMQ_MIN_VERSION = "0.42.1"
+AMQ_TESTED_CURRENT_VERSION = "0.43.1"
+AMQ_COMPATIBILITY_POLICY = (
+    f"The minimum {AMQ_MIN_VERSION} compatibility floor is unchanged. "
+    f"This release is explicitly validated against pinned {AMQ_TESTED_CURRENT_VERSION}; "
+    "latest remains a forward-compatibility canary."
+)
 
 
 def read(path: str) -> str:
@@ -22,6 +28,11 @@ def read(path: str) -> str:
 def fail_if_missing(path: str, needle: str, failures: list[str]) -> None:
     if needle not in read(path):
         failures.append(f"{path}: missing {needle!r}")
+
+
+def fail_if_missing_normalized(path: str, needle: str, failures: list[str]) -> None:
+    if " ".join(needle.split()) not in " ".join(read(path).split()):
+        failures.append(f"{path}: missing normalized {needle!r}")
 
 
 def main() -> int:
@@ -62,6 +73,15 @@ def main() -> int:
     readme = os.path.join(root, "README.md")
     fail_if_missing(readme, f"go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@{tag}", failures)
     fail_if_missing(readme, f"- `amq` {AMQ_MIN_VERSION}+ on `PATH`", failures)
+    for rel in (
+        "README.md",
+        "docs/skills.md",
+        "docs/global-orchestrator-runbook.md",
+        "plugins/skills-src/amq-squad/SKILL.md",
+        "plugins/claude/skills/amq-squad/SKILL.md",
+        "plugins/codex/skills/amq-squad/SKILL.md",
+    ):
+        fail_if_missing_normalized(os.path.join(root, rel), AMQ_COMPATIBILITY_POLICY, failures)
 
     readme_html = os.path.join(root, "README.html")
     if os.path.exists(readme_html):
@@ -71,6 +91,11 @@ def main() -> int:
             f"<li><code>amq</code> {AMQ_MIN_VERSION}+ on <code>PATH</code></li>",
             failures,
         )
+        fail_if_missing_normalized(readme_html, AMQ_COMPATIBILITY_POLICY, failures)
+
+    skills_html = os.path.join(root, "docs/skills.html")
+    if os.path.exists(skills_html):
+        fail_if_missing_normalized(skills_html, AMQ_COMPATIBILITY_POLICY, failures)
 
     if failures:
         for failure in failures:

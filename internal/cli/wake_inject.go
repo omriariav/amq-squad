@@ -14,6 +14,23 @@ func normalizeWakeInjectMode(raw string) (string, error) {
 	}
 }
 
+// resolveWakeInjectModeForBinary makes managed interactive agents explicit:
+// Codex and Claude use raw injection when no mode (or auto) was selected.
+// Unknown/custom agent binaries retain AMQ's prior unspecified/auto behavior.
+// The binary is the underlying member binary, not an optional launcher.
+func resolveWakeInjectModeForBinary(mode, binary string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode != "" && mode != "auto" {
+		return mode
+	}
+	switch normalizedAgentBinary(binary) {
+	case "codex", "claude":
+		return "raw"
+	default:
+		return mode
+	}
+}
+
 func validateWakeInjectConfig(mode, via string, args []string, injectCmd string) error {
 	if len(args) > 0 && strings.TrimSpace(via) == "" {
 		return usageErrorf("--wake-inject-arg requires --wake-inject-via")

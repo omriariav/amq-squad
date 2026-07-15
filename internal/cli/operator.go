@@ -54,6 +54,7 @@ type operatorWatchExecution struct {
 }
 
 var operatorWatchNotificationPump = deliverOperatorWatchNotifications
+var resolveOperatorAnswerContext = resolveScopedCommandContext
 
 type operatorStatusEnvelopeData struct {
 	ProjectDir       string                       `json:"project_dir"`
@@ -192,7 +193,7 @@ Subcommands:
 Run 'amq-squad operator <subcommand> --help' for subcommand options and flags.
 
 Examples:
-  amq-squad operator answer --gate release --to cto --approved
+  amq-squad operator answer --gate release --approved
   amq-squad operator directive --to cto --subject "ship it" --body "Proceed after checks."
   amq-squad operator status --json
   amq-squad operator poll --readonly --json
@@ -215,6 +216,7 @@ func runOperatorAnswer(args []string) error {
 	actionFlag := fs.String("action", "", "structured normalized action")
 	targetFlag := fs.String("target", "", "exact case-sensitive target")
 	evidenceFlag := fs.String("evidence", "", "optional strict preflight evidence")
+	listKinds := fs.Bool("list-kinds", false, "list the shared action catalog without resolving project context")
 	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
 	overrideNamespaceReason := fs.String("namespace-reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
@@ -222,39 +224,80 @@ func runOperatorAnswer(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad operator answer - answer an operator gate
 
 Usage:
-  amq-squad operator answer [--project DIR] [--profile NAME] [--session S] --gate TOPIC --to HANDLE (--approved|--denied) [--reason TEXT] [--override-namespace-conflict --namespace-reason WHY] [--json]
+  amq-squad operator answer [--project DIR] [--profile NAME] [--session S] --gate TOPIC [--to HANDLE] (--approved|--denied) [--reason TEXT] [--override-namespace-conflict --namespace-reason WHY] [--json]
 
 Sends an AMQ answer from the configured operator handle on gate/<topic>. This
-first-class command avoids hand-writing the operator protocol. The --to handle
-is required for this release slice so the answer cannot accidentally target the
-non-runnable operator mailbox.
+first-class command avoids hand-writing the operator protocol. Typed requests
+auto-bind the exact gate owner; --to is required only for legacy/raw gates.
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	if fs.NArg() > 0 {
+		return usageErrorf("operator answer takes no positional arguments; got %q", fs.Arg(0))
+	}
+	if *listKinds {
+		return printActionKinds(*jsonOut)
+	}
 	if *approved == *denied {
 		return usageErrorf("operator answer requires exactly one of --approved or --denied")
 	}
-	topic := normalizeGateTopic(*gateFlag)
-	if topic == "" {
-		return usageErrorf("operator answer requires --gate <topic>")
+	for name, value := range map[string]string{"kind": *kindFlag, "action": *actionFlag, "target": *targetFlag} {
+		if value != "" {
+			if err := operatorauth.ValidateCanonicalSingleLineField(name, value, true); err != nil {
+				return usageErrorf("operator answer: %v", err)
+			}
+		}
+	}
+	if *kindFlag != "" && *actionFlag != "" {
+		capability, err := operatorauth.ValidateGateAction(*kindFlag, *actionFlag)
+		if err != nil || capability.GateKind != *kindFlag || capability.Action != *actionFlag {
+			return usageErrorf("operator answer requires an exact canonical --kind/--action pair")
+		}
+	}
+	topic, err := canonicalGateTopic(*gateFlag)
+	if err != nil {
+		return usageErrorf("operator answer: %v", err)
 	}
 	to := strings.TrimSpace(*toFlag)
-	if to == "" {
-		return usageErrorf("operator answer requires --to <handle> for the gate owner")
+	resolveAnswerContext := func() (contextResolution, error) {
+		return resolveOperatorAnswerContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+	}
+	initialContext, err := resolveAnswerContext()
+	if err != nil {
+		return err
 	}
 	projectDir, profile, t, workstream, operatorHandle, err := resolveOperatorCommandContext(*projectFlag, *profileFlag, *sessionFlag, flagWasSet(fs, "project"), flagWasSet(fs, "session"))
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflictWithOverride("operator answer", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
+	override := namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
 		Reason:  *overrideNamespaceReason,
-	}); err != nil {
+	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), operatorHandle)
+	if err != nil {
 		return err
 	}
-	if err := ensureOperatorCommandTarget(t, to, "operator answer"); err != nil {
+	admittedContext, admission, err := acquireRevalidatedContextWriter(initialContext, false, resolveAnswerContext)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentProject, currentProfile, currentTeam, currentWorkstream, currentOperator, err := resolveOperatorCommandContext(*projectFlag, *profileFlag, *sessionFlag, flagWasSet(fs, "project"), flagWasSet(fs, "session"))
+	if err != nil {
+		return fmt.Errorf("operator answer refused: context re-resolution under admission failed: %w", err)
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(currentProject, currentProfile, currentWorkstream), currentOperator)
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("operator answer", initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	projectDir, profile, t, workstream, operatorHandle = currentProject, currentProfile, currentTeam, currentWorkstream, currentOperator
+	if err := ensureNoNamespaceConflictWithOverride("operator answer", projectDir, profile, workstream, flagWasSet(fs, "profile"), override); err != nil {
 		return err
 	}
 	decision := "APPROVED"
@@ -262,38 +305,98 @@ non-runnable operator mailbox.
 		decision = "DENIED"
 	}
 	subject := decision + ": " + strings.TrimPrefix(topic, "gate/")
-	body := strings.TrimSpace(*reasonFlag)
+	reason := *reasonFlag
 	thread := topic
-	var context map[string]any
-	var onSent func(string) error
-	structured := flagWasSet(fs, "kind") || flagWasSet(fs, "action") || flagWasSet(fs, "target") || flagWasSet(fs, "evidence")
-	if structured {
-		if strings.TrimSpace(*kindFlag) == "" || strings.TrimSpace(*actionFlag) == "" || strings.TrimSpace(*targetFlag) == "" {
-			return usageErrorf("structured operator answer requires --kind, --action, and --target")
-		}
-		question, questionErr := humanApprovalQuestion(projectDir, profile, workstream, topic, *kindFlag, *actionFlag, *targetFlag)
-		if questionErr != nil {
-			return questionErr
-		}
-		approval := operatorauth.ApprovalContext{SchemaVersion: operatorauth.ApprovalSchemaVersion, Source: "human", SelfApproved: false, GateKind: *kindFlag, Action: operatorauth.NormalizeAction(*actionFlag), Target: strings.TrimSpace(*targetFlag), QuestionMessageID: question.ID, AnsweredByRole: "operator", AnsweredByHandle: operatorHandle, VerifiedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-		if strings.TrimSpace(*evidenceFlag) != "" {
-			b, err := os.ReadFile(*evidenceFlag)
-			if err != nil {
-				return err
-			}
-			sum := sha256.Sum256(b)
-			approval.PreflightPath = *evidenceFlag
-			approval.PreflightSHA256 = fmt.Sprintf("sha256:%x", sum)
-			approval.PreflightKind = "provided"
-		}
-		context = map[string]any{"approval": approval}
-		body = strings.TrimSpace(body + fmt.Sprintf("\nGate-Kind: %s\nAction: %s\nTarget: %s", approval.GateKind, approval.Action, approval.Target))
-		onSent = func(answerID string) error {
-			receipt := operatorauth.Receipt{Gate: topic, GateKind: approval.GateKind, Action: approval.Action, Target: approval.Target, Decision: strings.ToLower(decision), ApprovalSource: "human", QuestionMessageID: question.ID, AnswerMessageID: answerID, AnsweredBy: operatorHandle, Preflight: operatorauth.PreflightReceipt{Kind: approval.PreflightKind, SHA256: approval.PreflightSHA256, Path: approval.PreflightPath, OK: approval.PreflightSHA256 != ""}}
-			return writeSelfApprovalReceipt(projectDir, profile, workstream, topic, answerID, receipt)
+	selected := selectedReleaseContext(admittedContext)
+	selectedQuestion, err := latestGateQuestionInSelectedContext(selected, topic, time.Now)
+	if err != nil {
+		return usageErrorf("operator answer release-domain inspection failed: %v", err)
+	}
+	classification, err := classifyCLIReleaseQuestion(selected, selectedQuestion)
+	if err != nil {
+		return usageErrorf("operator answer release-domain inspection failed: %v", err)
+	}
+	if classification.Disposition == cliReleaseDomainReleaseOwned && !classification.Eligible {
+		return usageErrorf("operator answer refused release-owned gate without an exact eligible claim: %s", classification.Reason)
+	}
+	if classification.Disposition == cliReleaseDomainReleaseOwned {
+		if err := validateReleaseOperatorChildIdentity(classification); err != nil {
+			return usageErrorf("operator answer refused release-owned gate identity: %v", err)
 		}
 	}
-	return sendOperatorAMQ(operatorSendOptions{
+	if classification.Disposition != cliReleaseDomainOrdinary && classification.Disposition != cliReleaseDomainReleaseOwned {
+		return usageErrorf("operator answer refused gate with unknown release-domain ownership")
+	}
+	if !selectedQuestion.AuthorizationRequestPresent {
+		if classification.Disposition != cliReleaseDomainOrdinary {
+			return usageErrorf("release-owned gate question is not a valid typed authorization request")
+		}
+		if flagWasSet(fs, "kind") || flagWasSet(fs, "action") || flagWasSet(fs, "target") || flagWasSet(fs, "evidence") {
+			return usageErrorf("legacy/raw gate answers do not accept structured authorization overrides")
+		}
+		if to == "" {
+			return usageErrorf("operator answer requires --to <handle> for a legacy/raw gate")
+		}
+		if err := ensureOperatorCommandTarget(t, to, "operator answer"); err != nil {
+			return err
+		}
+		return sendOperatorAMQ(operatorSendOptions{
+			Command: "operator answer", Project: projectDir, Profile: profile, Session: workstream,
+			From: operatorHandle, To: to, Thread: thread, Kind: string(state.KindAnswer), Subject: subject, Body: strings.TrimSpace(reason),
+			JSON: *jsonOut, Out: os.Stdout,
+			FollowUp: "amq-squad operator status --project " + shellQuote(projectDir) + operatorProfileArg(profile) + " --session " + shellQuote(workstream) + " --json",
+		})
+	}
+	if !selectedQuestion.AuthorizationRequestValid || selectedQuestion.AuthorizationRequest == nil {
+		return usageErrorf("latest typed gate request is malformed and blocks legacy fallback: %s", selectedQuestion.AuthorizationRequestError)
+	}
+	if err := validateTypedAnswerReason(reason); err != nil {
+		return usageErrorf("operator answer: %v", err)
+	}
+	question, err := operatorAnswerQuestionInSelectedContext(selected, selectedQuestion, topic, *kindFlag, *actionFlag, *targetFlag, t, operatorHandle)
+	if err != nil {
+		return err
+	}
+	request := *question.AuthorizationRequest
+	if to == "" {
+		to = question.From
+	} else if to != question.From {
+		return usageErrorf("operator answer --to %q does not exactly match latest typed gate owner %q", to, question.From)
+	}
+	if err := ensureOperatorCommandTarget(t, to, "operator answer"); err != nil {
+		return err
+	}
+	approval := operatorauth.ApprovalContext{
+		SchemaVersion: operatorauth.ApprovalSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion,
+		Source: "human", SelfApproved: false, GateKind: request.GateKind, Action: request.Action, Target: request.Target, Note: request.Note,
+		QuestionMessageID: question.ID, AnsweredByRole: "operator", AnsweredByHandle: operatorHandle, VerifiedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err := operatorauth.ValidateApproval(approval); err != nil {
+		return usageErrorf("operator answer: %v", err)
+	}
+	if strings.TrimSpace(*evidenceFlag) != "" {
+		b, err := os.ReadFile(*evidenceFlag)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(b)
+		approval.PreflightPath = *evidenceFlag
+		approval.PreflightSHA256 = fmt.Sprintf("sha256:%x", sum)
+		approval.PreflightKind = "provided"
+	}
+	context := map[string]any{"approval": approval}
+	body := fmt.Sprintf("Gate-Kind: %s\nAction: %s\nTarget: %s", approval.GateKind, approval.Action, approval.Target)
+	if approval.Note != "" {
+		body += "\nNote: " + approval.Note
+	}
+	if reason != "" {
+		body += "\nReason: " + reason
+	}
+	onSent := func(answerID string) error {
+		receipt := operatorauth.Receipt{SchemaVersion: operatorauth.ReceiptSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion, Gate: topic, GateKind: approval.GateKind, Action: approval.Action, Target: approval.Target, Note: approval.Note, Decision: strings.ToLower(decision), ApprovalSource: "human", QuestionMessageID: question.ID, AnswerMessageID: answerID, AnsweredBy: operatorHandle, Preflight: operatorauth.PreflightReceipt{Kind: approval.PreflightKind, SHA256: approval.PreflightSHA256, Path: approval.PreflightPath, OK: approval.PreflightSHA256 != ""}}
+		return writeSelfApprovalReceipt(projectDir, profile, workstream, topic, answerID, receipt)
+	}
+	sendOptions := operatorSendOptions{
 		Command:  "operator answer",
 		Project:  projectDir,
 		Profile:  profile,
@@ -309,7 +412,30 @@ non-runnable operator mailbox.
 		JSON:     *jsonOut,
 		Out:      os.Stdout,
 		FollowUp: "amq-squad operator status --project " + shellQuote(projectDir) + operatorProfileArg(profile) + " --session " + shellQuote(workstream) + " --json",
-	})
+	}
+	if classification.Disposition == cliReleaseDomainReleaseOwned {
+		exactContext, exactErr := exactOperatorAMQContext(admittedContext, operatorHandle)
+		if exactErr != nil {
+			return usageErrorf("operator answer exact AMQ context: %v", exactErr)
+		}
+		sendOptions.ExactContext = &exactContext
+		frozen, freezeErr := freezeReleaseOperatorAnswer(sendOptions, question, approval)
+		if freezeErr != nil {
+			return usageErrorf("operator answer frozen release envelope: %v", freezeErr)
+		}
+		guarded, guardErr := classification.NewGuardedUse()
+		if guardErr != nil {
+			return usageErrorf("operator answer release guard: %v", guardErr)
+		}
+		boundary, boundaryErr := releaseOperatorInvocationBoundary(guarded, frozen, func() (releaseOperatorAnswerEnvelope, error) {
+			return freezeReleaseOperatorAnswer(sendOptions, question, approval)
+		})
+		if boundaryErr != nil {
+			return usageErrorf("operator answer release invocation boundary: %v", boundaryErr)
+		}
+		sendOptions.Invocation = boundary
+	}
+	return sendOperatorAMQ(sendOptions)
 }
 
 func runOperatorDirective(args []string) error {
@@ -355,10 +481,32 @@ or clear gate/<topic> threads.
 	if err != nil {
 		return err
 	}
-	if err := ensureNoNamespaceConflictWithOverride("operator directive", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
+	override := namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
 		Reason:  *overrideNamespaceReason,
-	}); err != nil {
+	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), operatorHandle)
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentProject, currentProfile, currentTeam, currentWorkstream, currentOperator, err := resolveOperatorCommandContext(*projectFlag, *profileFlag, *sessionFlag, flagWasSet(fs, "project"), flagWasSet(fs, "session"))
+	if err != nil {
+		return fmt.Errorf("operator directive refused: context re-resolution under admission failed: %w", err)
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(currentProject, currentProfile, currentWorkstream), currentOperator)
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("operator directive", initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	projectDir, profile, t, workstream, operatorHandle = currentProject, currentProfile, currentTeam, currentWorkstream, currentOperator
+	if err := ensureNoNamespaceConflictWithOverride("operator directive", projectDir, profile, workstream, flagWasSet(fs, "profile"), override); err != nil {
 		return err
 	}
 	if err := ensureOperatorCommandTarget(t, to, "operator directive"); err != nil {
@@ -384,28 +532,280 @@ or clear gate/<topic> threads.
 }
 
 type operatorSendOptions struct {
-	Command  string
-	Project  string
-	Profile  string
-	Session  string
-	From     string
-	To       string
-	Thread   string
-	Kind     string
-	Subject  string
-	Body     string
-	JSON     bool
-	Out      io.Writer
-	FollowUp string
-	Context  map[string]any
-	OnSent   func(messageID string) error
+	Command      string
+	Project      string
+	Profile      string
+	Session      string
+	From         string
+	To           string
+	Thread       string
+	Kind         string
+	Subject      string
+	Body         string
+	JSON         bool
+	Out          io.Writer
+	FollowUp     string
+	Context      map[string]any
+	OnSent       func(messageID string) error
+	ExactContext *amqContext
+	Invocation   durableInvocationBoundary
+}
+
+type releaseOperatorAnswerEnvelope struct {
+	Command     string
+	Project     string
+	Profile     string
+	Session     string
+	From        string
+	To          string
+	Thread      string
+	Kind        string
+	Subject     string
+	Body        string
+	ContextJSON string
+	Question    state.Message
+	Approval    operatorauth.ApprovalContext
+	AMQRoot     string
+	AMQBaseRoot string
+	AMQPinMode  amqPinMode
+	Generation  string
+}
+
+func validateReleaseOperatorChildIdentity(classification cliReleaseDomainClassification) error {
+	if !classification.Eligible || classification.Claim == nil || classification.Marker.Role != classification.Claim.Role || classification.Marker.Ordinal != classification.Claim.Ordinal {
+		return fmt.Errorf("exact eligible marker and claim identity are required")
+	}
+	switch classification.Claim.Role {
+	case operatorauth.ReleaseChildTag:
+		if classification.Claim.Ordinal != 0 || classification.Marker.GateKind != operatorauth.GateTag || classification.Claim.Action != "tag" {
+			return fmt.Errorf("tag child identity is not isolated at ordinal zero")
+		}
+	case operatorauth.ReleaseChildGitHubRelease:
+		if classification.Claim.Ordinal != 1 || classification.Marker.GateKind != operatorauth.GateRelease || classification.Claim.Action != "github_release" {
+			return fmt.Errorf("github_release child identity is not isolated at ordinal one")
+		}
+	default:
+		return fmt.Errorf("unsupported release child role %q", classification.Claim.Role)
+	}
+	return nil
+}
+
+func operatorAnswerQuestionInSelectedContext(selected cliReleaseSelectedContext, expected state.Message, gate, kind, action, target string, cfg team.Team, operatorHandle string) (state.Message, error) {
+	if err := validateCLIReleaseSelectedContext(selected); err != nil {
+		return state.Message{}, err
+	}
+	if expected.Thread != gate || expected.RawThread != gate {
+		return state.Message{}, usageErrorf("latest selected gate question does not have the exact raw gate binding")
+	}
+	if !expected.AuthorizationRequestPresent || !expected.AuthorizationRequestValid || expected.AuthorizationRequest == nil {
+		return state.Message{}, usageErrorf("latest selected gate question is not a valid typed authorization request")
+	}
+	request := *expected.AuthorizationRequest
+	if request.Gate != gate || request.Thread != gate {
+		return state.Message{}, usageErrorf("latest selected gate request does not have the exact gate owner binding")
+	}
+	wantNamespace := operatorauth.NamespaceBinding{
+		ProjectDir: selected.ProjectDir, Profile: selected.Profile, Session: selected.Session,
+		NamespaceID: squadnamespace.ID(selected.Profile, selected.Session), Generation: selected.NamespaceGeneration,
+	}
+	if request.Namespace != wantNamespace {
+		return state.Message{}, usageErrorf("latest selected gate request namespace does not match admitted context")
+	}
+	if team.EffectiveOperator(cfg).Handle != operatorHandle {
+		return state.Message{}, usageErrorf("latest selected gate operator identity changed")
+	}
+	if err := validateTypedQuestionRouting(cfg, selected.Session, operatorHandle, expected); err != nil {
+		return state.Message{}, usageErrorf("latest selected typed gate routing: %v", err)
+	}
+	if err := validateTypedAuthorityBody(expected, request); err != nil {
+		return state.Message{}, usageErrorf("latest selected gate question does not have the exact Gate-Kind/Action/Target binding")
+	}
+	if kind != "" && kind != request.GateKind || action != "" && action != request.Action || target != "" && target != request.Target {
+		return state.Message{}, usageErrorf("gate override does not exactly match latest typed authorization request")
+	}
+	return cloneReleaseStateMessage(expected), nil
+}
+
+func exactOperatorAMQContext(admitted contextResolution, operatorHandle string) (amqContext, error) {
+	selected := selectedReleaseContext(admitted)
+	if err := validateCLIReleaseSelectedContext(selected); err != nil {
+		return amqContext{}, err
+	}
+	pinMode := amqPinSessionful
+	if admitted.PinMode == "exact_root" {
+		pinMode = amqPinExactRoot
+	}
+	env := amqEnv{
+		Root: selected.SessionRoot, BaseRoot: selected.BaseRoot, SessionName: selected.Session,
+		Me: operatorHandle,
+	}
+	return amqContext{
+		ProjectDir: selected.ProjectDir, Profile: selected.Profile, Env: env,
+		Root: selected.SessionRoot, Me: operatorHandle, Session: selected.Session,
+		PinMode: pinMode, NamespaceGeneration: selected.NamespaceGeneration,
+	}, nil
+}
+
+func validateExactOperatorAMQContext(ctx amqContext, o operatorSendOptions) error {
+	if ctx.ProjectDir != o.Project || !squadnamespace.ProfilesEqual(ctx.Profile, o.Profile) || ctx.Session != o.Session || ctx.Me != o.From {
+		return fmt.Errorf("exact context identity does not match operator send tuple")
+	}
+	if !filepath.IsAbs(ctx.Root) || filepath.Clean(ctx.Root) != ctx.Root || ctx.Root == string(filepath.Separator) {
+		return fmt.Errorf("exact context root must be absolute, clean, and non-root")
+	}
+	if ctx.Env.Root != ctx.Root || strings.TrimSpace(ctx.NamespaceGeneration) == "" {
+		return fmt.Errorf("exact context root or namespace generation is incomplete")
+	}
+	if ctx.PinMode == amqPinSessionful {
+		if !filepath.IsAbs(ctx.Env.BaseRoot) || filepath.Clean(ctx.Env.BaseRoot) != ctx.Env.BaseRoot || ctx.Env.SessionName != ctx.Session {
+			return fmt.Errorf("exact sessionful context has inconsistent base root or session")
+		}
+	} else if ctx.PinMode != amqPinExactRoot {
+		return fmt.Errorf("exact context has invalid pin mode")
+	}
+	return nil
+}
+
+func freezeReleaseOperatorAnswer(o operatorSendOptions, question state.Message, approval operatorauth.ApprovalContext) (releaseOperatorAnswerEnvelope, error) {
+	if o.ExactContext == nil {
+		return releaseOperatorAnswerEnvelope{}, fmt.Errorf("release answer requires an exact admitted AMQ context")
+	}
+	if o.Kind != string(state.KindAnswer) || o.Thread == "" || o.Thread != question.Thread || question.RawThread != o.Thread || o.From == "" || o.To == "" {
+		return releaseOperatorAnswerEnvelope{}, fmt.Errorf("release answer routing is incomplete or not exact")
+	}
+	if approval.QuestionMessageID != question.ID || approval.AnsweredByHandle != o.From || approval.AnsweredByRole != "operator" {
+		return releaseOperatorAnswerEnvelope{}, fmt.Errorf("release answer approval does not match frozen question or operator")
+	}
+	if err := operatorauth.ValidateApproval(approval); err != nil {
+		return releaseOperatorAnswerEnvelope{}, err
+	}
+	wantContext, err := json.Marshal(map[string]any{"approval": approval})
+	if err != nil {
+		return releaseOperatorAnswerEnvelope{}, err
+	}
+	contextJSON, err := json.Marshal(o.Context)
+	if err != nil {
+		return releaseOperatorAnswerEnvelope{}, err
+	}
+	if !bytes.Equal(contextJSON, wantContext) {
+		return releaseOperatorAnswerEnvelope{}, fmt.Errorf("release answer context is not the complete frozen approval context")
+	}
+	return releaseOperatorAnswerEnvelope{
+		Command: o.Command, Project: o.Project, Profile: o.Profile, Session: o.Session,
+		From: o.From, To: o.To, Thread: o.Thread, Kind: o.Kind, Subject: o.Subject, Body: o.Body,
+		ContextJSON: string(contextJSON), Question: cloneReleaseStateMessage(question), Approval: approval,
+		AMQRoot: o.ExactContext.Root, AMQBaseRoot: o.ExactContext.Env.BaseRoot,
+		AMQPinMode: o.ExactContext.PinMode, Generation: o.ExactContext.NamespaceGeneration,
+	}, nil
+}
+
+func releaseOperatorAnswerEnvelopeEqual(a, b releaseOperatorAnswerEnvelope) bool {
+	return a.Command == b.Command && a.Project == b.Project && squadnamespace.ProfilesEqual(a.Profile, b.Profile) &&
+		a.Session == b.Session && a.From == b.From && a.To == b.To && a.Thread == b.Thread && a.Kind == b.Kind &&
+		a.Subject == b.Subject && a.Body == b.Body && a.ContextJSON == b.ContextJSON && a.Approval == b.Approval &&
+		a.AMQRoot == b.AMQRoot && a.AMQBaseRoot == b.AMQBaseRoot && a.AMQPinMode == b.AMQPinMode && a.Generation == b.Generation &&
+		securityMessageEqual(a.Question, b.Question)
+}
+
+func releaseOperatorInvocationBoundary(guarded *cliReleaseGuardedUse, frozen releaseOperatorAnswerEnvelope, current func() (releaseOperatorAnswerEnvelope, error)) (durableInvocationBoundary, error) {
+	if guarded == nil || current == nil {
+		return durableInvocationBoundary{}, fmt.Errorf("release guard and frozen-envelope reader are required")
+	}
+	return newDurableInvocationBoundary(func(invoke func() error) (durableInvocationResult, error) {
+		var result durableInvocationResult
+		err := guarded.Run(func(observation cliReleaseGuardObservation) error {
+			live, err := current()
+			if err != nil {
+				return err
+			}
+			if !releaseOperatorAnswerEnvelopeEqual(frozen, live) {
+				return fmt.Errorf("release operator answer changed after it was frozen")
+			}
+			if !securityMessageEqual(observation.Question(), frozen.Question) {
+				return fmt.Errorf("release operator answer question changed inside guarded use")
+			}
+			existingID, reconciled, err := inspectReleaseOperatorAnswerReplay(observation, frozen)
+			if err != nil {
+				return err
+			}
+			if reconciled {
+				result, err = newDurableReconciledExistingResult(existingID)
+				return err
+			}
+			if err := invoke(); err != nil {
+				return err
+			}
+			result = newDurableInvokedResult()
+			return nil
+		})
+		return result, err
+	})
+}
+
+func inspectReleaseOperatorAnswerReplay(observation cliReleaseGuardObservation, frozen releaseOperatorAnswerEnvelope) (string, bool, error) {
+	messages, conflict := dedupeSecurityMessages(observation.Messages())
+	if conflict {
+		return "", false, fmt.Errorf("release operator replay inspection found conflicting mailbox copies")
+	}
+	var matchingID string
+	for _, message := range messages {
+		if message.Thread != frozen.Thread || message.RawThread != frozen.Thread || message.Kind != state.KindAnswer || !messageAfter(message, frozen.Question) {
+			continue
+		}
+		if !message.ApprovalPresent || message.Approval == nil || message.Approval.QuestionMessageID != frozen.Question.ID {
+			if message.From == frozen.From {
+				return "", false, fmt.Errorf("release operator replay inspection found an unbound operator answer")
+			}
+			continue
+		}
+		if err := validateReleaseOperatorReplayMessage(message, frozen); err != nil {
+			return "", false, err
+		}
+		if matchingID != "" && matchingID != message.ID {
+			return "", false, fmt.Errorf("release operator replay inspection found multiple matching answers")
+		}
+		matchingID = message.ID
+	}
+	return matchingID, matchingID != "", nil
+}
+
+func validateReleaseOperatorReplayMessage(message state.Message, frozen releaseOperatorAnswerEnvelope) error {
+	if message.From != frozen.From || len(message.To) != 1 || message.To[0] != frozen.To || !message.ApprovalValid || message.Approval == nil {
+		return fmt.Errorf("release operator replay inspection found a conflicting answer identity or route")
+	}
+	if authoritySubject(message) != frozen.Subject || authorityBody(message) != frozen.Body {
+		return fmt.Errorf("release operator replay inspection found an opposite or non-identical answer")
+	}
+	approval := *message.Approval
+	if err := operatorauth.ValidateApproval(approval); err != nil {
+		return fmt.Errorf("release operator replay approval is invalid: %w", err)
+	}
+	expected := frozen.Approval
+	expected.VerifiedAt = approval.VerifiedAt
+	if approval != expected {
+		return fmt.Errorf("release operator replay approval does not equal the frozen semantic context")
+	}
+	rawApproval, present := message.Context["approval"]
+	if !present || len(message.Context) != 1 {
+		return fmt.Errorf("release operator replay context is not the complete typed approval context")
+	}
+	decodedApproval, err := operatorauth.DecodeApproval(rawApproval)
+	if err != nil || decodedApproval != approval {
+		return fmt.Errorf("release operator replay context does not strictly equal its decoded approval: %v", err)
+	}
+	return nil
 }
 
 func resolveOperatorCommandContext(projectFlag, profileFlag, sessionFlag string, projectSet, sessionSet bool) (string, string, team.Team, string, string, error) {
-	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: projectFlag, ProfileFlag: profileFlag, SessionFlag: sessionFlag,
+		ProjectExplicit: projectSet, ProfileExplicit: strings.TrimSpace(profileFlag) != "", SessionExplicit: sessionSet,
+	})
 	if err != nil {
 		return "", "", team.Team{}, "", "", err
 	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
 	if !team.ExistsProfile(projectDir, profile) {
 		return "", "", team.Team{}, "", "", fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
@@ -416,7 +816,7 @@ func resolveOperatorCommandContext(projectFlag, profileFlag, sessionFlag string,
 	if !team.SupportsOperatorGates(t) {
 		return "", "", team.Team{}, "", "", usageErrorf("operator gates are disabled for profile %q", profile)
 	}
-	workstream, err := resolveTeamWorkstreamName(t, sessionFlag, sessionSet)
+	workstream, err := resolveTeamWorkstreamName(t, ctx.Session, sessionSet)
 	if err != nil {
 		return "", "", team.Team{}, "", "", err
 	}
@@ -439,9 +839,18 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 	if out == nil {
 		out = os.Stdout
 	}
-	ctx, err := resolveAMQContextForNamespace(o.Project, o.Profile, o.Session, o.From)
-	if err != nil {
-		return fmt.Errorf("resolve amq root for %s: %w", o.Command, err)
+	var ctx amqContext
+	var err error
+	if o.ExactContext != nil {
+		ctx = *o.ExactContext
+		if err := validateExactOperatorAMQContext(ctx, o); err != nil {
+			return fmt.Errorf("validate exact amq context for %s: %w", o.Command, err)
+		}
+	} else {
+		ctx, err = resolveAMQContextForNamespace(o.Project, o.Profile, o.Session, o.From)
+		if err != nil {
+			return fmt.Errorf("resolve amq root for %s: %w", o.Command, err)
+		}
 	}
 	ctx.Me = o.From
 	args := dispatchSendArgs(ctx.Root, o.From, o.To, o.Thread, o.Kind, o.Subject, o.Body, "", "", 0)
@@ -452,20 +861,34 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 		}
 		args = append(args, "--context", string(contextJSON))
 	}
-	raw, err := runAMQCommand(amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
-	if err != nil {
-		return fmt.Errorf("%s send to %s: %w", o.Command, o.To, err)
+	raw, receipt, sendErr := runOwnedDurableSend(durableSendOptions{ProjectDir: o.Project, Profile: o.Profile, Session: o.Session, Kind: "operator_" + o.Command, Invocation: o.Invocation}, amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
+	var finalPersistErr *durableFinalReceiptPersistError
+	if errors.As(sendErr, &finalPersistErr) {
+		return fmt.Errorf("%s send to %s: %w", o.Command, o.To, sendErr)
 	}
-	msgID := parseSentMessageID(string(raw))
-	if o.OnSent != nil {
-		if err := o.OnSent(msgID); err != nil {
-			return fmt.Errorf("%s sent message %s but failed to persist verification receipt: %w", o.Command, msgID, err)
+	status := "sent"
+	msgID := ""
+	if receipt != nil {
+		msgID = strings.TrimSpace(receipt.MessageID)
+		if msgID == "" && strings.TrimSpace(receipt.ReconciledMessageID) != "" {
+			status = deliveryStateReconciledExisting
+			msgID = strings.TrimSpace(receipt.ReconciledMessageID)
 		}
+	}
+	var onSentErr error
+	if msgID != "" && o.OnSent != nil {
+		onSentErr = o.OnSent(msgID)
+	}
+	if combined := errors.Join(sendErr, onSentErr); combined != nil {
+		return fmt.Errorf("%s send to %s: %w", o.Command, o.To, combined)
+	}
+	if msgID == "" {
+		return fmt.Errorf("%s send to %s returned without a stable sent or reconciled message id", o.Command, o.To)
 	}
 	if o.JSON {
 		return printJSONEnvelope("operator_send", mutationResult{
 			Command:   o.Command,
-			Status:    "sent",
+			Status:    status,
 			Project:   o.Project,
 			Session:   o.Session,
 			Profile:   o.Profile,
@@ -477,24 +900,34 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 			Actions: []mutationAction{
 				followUp("status", "show operator status", o.FollowUp),
 			},
+			DeliveryReceipt: receipt,
 		})
 	}
-	if msgID != "" {
-		fmt.Fprintf(out, "Sent %s to %s on %s: %s\n", o.Command, o.To, o.Thread, msgID)
+	if status == deliveryStateReconciledExisting {
+		fmt.Fprintf(out, "Reconciled existing %s for %s on %s: %s (attempt %s, state %s, receipt %s)\n", o.Command, o.To, o.Thread, msgID, receipt.AttemptID, receipt.DeliveryState, receipt.Path)
+	} else if msgID != "" {
+		fmt.Fprintf(out, "Sent %s to %s on %s: %s (attempt %s, state %s, receipt %s)\n", o.Command, o.To, o.Thread, msgID, receipt.AttemptID, receipt.DeliveryState, receipt.Path)
 	} else if msg := strings.TrimSpace(string(raw)); msg != "" {
 		fmt.Fprintln(out, msg)
 	}
 	return nil
 }
 
-func normalizeGateTopic(gate string) string {
-	gate = strings.TrimSpace(gate)
-	gate = strings.TrimPrefix(gate, "gate/")
-	gate = strings.Trim(gate, "/")
-	if gate == "" {
-		return ""
+func canonicalGateTopic(gate string) (string, error) {
+	return operatorauth.CanonicalGateThread(gate)
+}
+
+func validateTypedAnswerReason(reason string) error {
+	if err := operatorauth.ValidateCanonicalSingleLineField("reason", reason, false); err != nil {
+		return err
 	}
-	return "gate/" + gate
+	lower := strings.ToLower(reason)
+	for _, reserved := range []string{"action:", "target:", "gate-kind:", "note:", "reason:", "approved:", "denied:"} {
+		if strings.HasPrefix(lower, reserved) {
+			return fmt.Errorf("reason must not begin with reserved field %q", strings.TrimSuffix(reserved, ":"))
+		}
+	}
+	return nil
 }
 
 func operatorProfileArg(profile string) string {
@@ -525,14 +958,16 @@ claim a poll lease or move mailbox messages.
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
 	return executeOperatorStatus(operatorExecution{
-		ProjectDir:      projectDir,
-		Profile:         profile,
-		Session:         *sessionFlag,
+		ProjectDir:      ctx.ProjectDir,
+		Profile:         ctx.Profile,
+		Session:         ctx.Session,
+		BaseRoot:        ctx.BaseRoot,
 		JSON:            *jsonOut,
 		Out:             os.Stdout,
 		ResolveBaseRoot: scanBaseRootForProject,
@@ -589,14 +1024,29 @@ operator-loop lease for the resolved profile/session.
 	if err := validateOperatorOwner(*owner); err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
+	var admission *namespaceAdmissionLocks
+	if !*readonly {
+		ctx, admission, err = acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
+			return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+		})
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		if err := ensureNoNamespaceMigration("operator poll", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+			return err
+		}
+	}
 	return executeOperatorPoll(operatorExecution{
-		ProjectDir:      projectDir,
-		Profile:         profile,
-		Session:         *sessionFlag,
+		ProjectDir:      ctx.ProjectDir,
+		Profile:         ctx.Profile,
+		Session:         ctx.Session,
+		BaseRoot:        ctx.BaseRoot,
 		ReadOnly:        *readonly,
 		Owner:           *owner,
 		OwnerID:         *ownerID,
@@ -663,8 +1113,19 @@ When stopped, the lease is not released immediately; it expires after --ttl.
 	if err := validateOperatorOwner(*owner); err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
+		return err
+	}
+	emitContextDiagnostics(ctx)
+	ctx, admission, err := acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
+		return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+	})
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	if err := ensureNoNamespaceMigration("operator watch", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
 		return err
 	}
 	sigCh := make(chan os.Signal, 1)
@@ -687,9 +1148,10 @@ When stopped, the lease is not released immediately; it expires after --ttl.
 	}
 	return executeOperatorWatch(operatorWatchExecution{
 		operatorExecution: operatorExecution{
-			ProjectDir:      projectDir,
-			Profile:         profile,
-			Session:         *sessionFlag,
+			ProjectDir:      ctx.ProjectDir,
+			Profile:         ctx.Profile,
+			Session:         ctx.Session,
+			BaseRoot:        ctx.BaseRoot,
 			Owner:           *owner,
 			OwnerID:         *ownerID,
 			LeaseTTL:        *leaseTTL,
@@ -883,16 +1345,23 @@ func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, e
 		return operatorStatusEnvelopeData{}, fmt.Errorf("scan AMQ base root: %w", err)
 	}
 	data.BaseRoot = snap.BaseRoot
-	items := collectOperatorAttention(o.ProjectDir, o.Profile, snap, operator.Handle, workstream, now())
-	items = mergeOperatorAttention(items, collectRawOpenGateAttention(o.ProjectDir, o.Profile, snap, operator.Handle, workstream, now()))
-	session, sessionOK := operatorSessionSnapshot(snap, o.Profile, workstream)
+	projected, err := collectProjectedOperatorAttention(t, o.ProjectDir, o.Profile, snap, operator.Handle, workstream, now())
+	if err != nil {
+		return operatorStatusEnvelopeData{}, fmt.Errorf("project compound release attention: %w", err)
+	}
+	items := projected.Items
+	items = activeOperatorAttention(items)
+	session, sessionOK := operatorSessionSnapshot(projected.Snapshot, o.Profile, workstream)
+	originalSession, originalSessionOK := operatorSessionSnapshot(snap, o.Profile, workstream)
 	backlog := 0
 	directivesUnacked := 0
 	operatorCursor := ""
 	if sessionOK {
-		backlog = operatorUnreadBacklog(session.Coordination.Threads, operator.Handle)
+		backlog = operatorUnreadBacklogWithProjected(session.Coordination.Threads, operator.Handle, items)
 		directivesUnacked = operatorDirectivesUnacked(session.Coordination.Threads, operator.Handle, teamLeadHandle(t))
-		operatorCursor = operatorInboxHighWater(session.Coordination.Threads, operator.Handle)
+	}
+	if originalSessionOK {
+		operatorCursor = operatorInboxHighWater(originalSession.Coordination.Threads, operator.Handle)
 	}
 	gatesOpen := operatorOpenGates(items)
 	blockedGoals := blockedNativeGoalsInSnapshot(t, o.Profile, workstream, snap)
@@ -915,6 +1384,16 @@ func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, e
 	return data, nil
 }
 
+func activeOperatorAttention(items []operatorAttention) []operatorAttention {
+	active := make([]operatorAttention, 0, len(items))
+	for _, item := range items {
+		if !item.Cleared {
+			active = append(active, item)
+		}
+	}
+	return active
+}
+
 func operatorNow(o operatorExecution) time.Time {
 	if o.Now != nil {
 		return o.Now()
@@ -935,6 +1414,9 @@ func operatorSessionSnapshot(snap state.Snapshot, profile, session string) (stat
 func operatorUnreadBacklog(threads []state.ThreadSummary, operatorHandle string) int {
 	count := 0
 	for _, th := range threads {
+		if strings.HasPrefix(th.ID, "gate/") && th.OperatorGateState.IsTerminal() {
+			continue
+		}
 		if notifyUnreadBy(th, operatorHandle) {
 			count++
 		}
@@ -942,14 +1424,53 @@ func operatorUnreadBacklog(threads []state.ThreadSummary, operatorHandle string)
 	return count
 }
 
+func operatorUnreadBacklogWithProjected(threads []state.ThreadSummary, operatorHandle string, items []operatorAttention) int {
+	activeGateThreads := make(map[string]bool)
+	for _, item := range items {
+		if item.EventType == "gate" && item.Actionable && !item.Cleared {
+			activeGateThreads[item.Thread] = true
+		}
+	}
+
+	unreadThreads := make(map[string]bool)
+	for _, thread := range threads {
+		if strings.HasPrefix(thread.ID, "gate/") {
+			switch thread.OperatorGateState {
+			case state.OperatorGateStateClosed, state.OperatorGateStateWithdrawn:
+				continue
+			case state.OperatorGateStateAnswered:
+				if !activeGateThreads[thread.ID] {
+					continue
+				}
+			}
+		}
+		if notifyUnreadBy(thread, operatorHandle) {
+			unreadThreads[thread.ID] = true
+		}
+	}
+	for _, item := range items {
+		if item.EventType == "compound_release_child" && item.Actionable && item.Answerable && item.Unread {
+			unreadThreads[item.Thread] = true
+		}
+	}
+	return len(unreadThreads)
+}
+
 func operatorOpenGates(items []operatorAttention) int {
 	count := 0
 	for _, item := range items {
-		if strings.HasPrefix(item.Thread, "gate/") {
+		if isOpenGateAttention(item) {
 			count++
 		}
 	}
 	return count
+}
+
+func isOpenGateAttention(item operatorAttention) bool {
+	if !item.Actionable || item.Cleared {
+		return false
+	}
+	return item.EventType == "gate" || item.EventType == "compound_release_child"
 }
 
 func operatorDirectivesUnacked(threads []state.ThreadSummary, operatorHandle, leadHandle string) int {

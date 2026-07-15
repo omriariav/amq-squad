@@ -84,9 +84,9 @@ type Record struct {
 	NoWakeReason string `json:"no_wake_reason,omitempty"`
 	External     bool   `json:"external,omitempty"`
 	// GoalBinding records launch-time evidence that this agent was started with
-	// a native goal command. It is optional and additive: older records omit it,
-	// and NOC/status surfaces must fall back to AMQ task + brief binding unless
-	// a visible lead record carries native evidence.
+	// its binary-specific goal input. It is optional and additive: older records
+	// omit it, and NOC/status surfaces must fall back to AMQ task + brief binding
+	// unless a visible lead record carries matching native_goal or prompt_goal evidence.
 	GoalBinding *GoalBinding `json:"goal_binding,omitempty"`
 	// PreauthorizedActions records the effective Claude --allowedTools patterns
 	// amq-squad granted at launch: explicit native values plus the narrow
@@ -111,7 +111,7 @@ type Record struct {
 	// WakeInjectCmd records the literal instruction the wake sidecar injects on
 	// each durable-message arrival (amq wake --inject-cmd). amq-squad sets it to
 	// the standard drain instruction so an inbound directive re-engages a lead
-	// even after its native /goal reaches a terminal state, via AMQ's sanctioned
+	// even after its active goal reaches a terminal state, via AMQ's sanctioned
 	// injector rather than a raw tmux send-keys. It is set only on the external
 	// wake path (lead register / register-orchestrator); amq coop exec has no
 	// --inject-cmd, so coop-exec restore cannot replay it. Resume repair is via
@@ -149,7 +149,13 @@ type GoalBinding struct {
 	NativeGoal bool   `json:"native_goal"`
 	Source     string `json:"source"`
 	Command    string `json:"command,omitempty"`
-	Detail     string `json:"detail,omitempty"`
+	// Goal and AttemptID are additive typed identity for binary-specific goal
+	// delivery. Legacy native bindings omit them and remain readable through the
+	// strict generated-/goal parser; prompt_goal bindings require them so resume
+	// never has to infer structured prompt contents.
+	Goal      string `json:"goal,omitempty"`
+	AttemptID string `json:"attempt_id,omitempty"`
+	Detail    string `json:"detail,omitempty"`
 }
 
 // TmuxInfo is the exact tmux identity of the pane an agent was launched into.

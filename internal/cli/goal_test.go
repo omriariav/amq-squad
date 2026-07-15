@@ -77,13 +77,13 @@ func TestGoalDraftJSONIncludesMilestoneIssues(t *testing.T) {
 	if data.Session != "v2-7-0" || data.Profile != "codex-v2-7-0" {
 		t.Fatalf("session/profile mismatch: %+v", data)
 	}
-	if data.GoalBinding.Mode != "native_goal_pending" || !data.GoalBinding.NativeGoal || data.GoalBinding.Verified {
+	if data.GoalBinding.Mode != "prompt_goal_pending" || data.GoalBinding.NativeGoal || data.GoalBinding.Verified {
 		t.Fatalf("goal binding mismatch: %+v", data.GoalBinding)
 	}
 	if len(data.IssueSources) != 2 || data.IssueSources[0].Number != 215 || data.IssueSources[1].Number != 216 {
 		t.Fatalf("issues not sorted/included: %+v", data.IssueSources)
 	}
-	for _, want := range []string{"#215 goal draft", "https://github.com/o/r/issues/215", "/goal --goal"} {
+	for _, want := range []string{"#215 goal draft", "https://github.com/o/r/issues/215", "AMQ-SQUAD PROMPT GOAL v1"} {
 		if !strings.Contains(data.BriefSkeleton+data.OrchestratorPrompt, want) {
 			t.Errorf("draft missing %q:\n%+v", want, data)
 		}
@@ -114,7 +114,7 @@ func TestGoalDraftPlannerLeadModeSurfacesDelegationContract(t *testing.T) {
 	if env.Data.Execution.MutableActor != "delegated_workers" {
 		t.Fatalf("mutable_actor = %q, want delegated_workers", env.Data.Execution.MutableActor)
 	}
-	if !strings.Contains(env.Data.OrchestratorPrompt, "--lead-mode planner") {
+	if !strings.Contains(env.Data.OrchestratorPrompt, "lead_mode: planner") {
 		t.Fatalf("orchestrator prompt missing lead mode:\n%s", env.Data.OrchestratorPrompt)
 	}
 	var foundMutation bool
@@ -150,7 +150,7 @@ func TestBuildGoalDraftTargetRootSource(t *testing.T) {
 	}
 	// resolved_unconfirmed must NOT leak into actionable start surfaces or the
 	// execution contract target.
-	if strings.Contains(d.OrchestratorPrompt, "--target-project-root") {
+	if strings.Contains(d.OrchestratorPrompt, "target_project_root:") {
 		t.Fatalf("resolved_unconfirmed must not appear in OrchestratorPrompt:\n%s", d.OrchestratorPrompt)
 	}
 	if mutationsContainTargetRoot(d) {
@@ -169,7 +169,7 @@ func TestBuildGoalDraftTargetRootSource(t *testing.T) {
 	if d2.TargetProjectRootSource != targetRootSourceUnresolved || d2.TargetProjectRoot != "" {
 		t.Fatalf("unresolved: source=%q target=%q, want unresolved + empty", d2.TargetProjectRootSource, d2.TargetProjectRoot)
 	}
-	if strings.Contains(d2.OrchestratorPrompt, "--target-project-root") || mutationsContainTargetRoot(d2) || d2.Execution.TargetProjectRoot != "" {
+	if strings.Contains(d2.OrchestratorPrompt, "target_project_root:") || mutationsContainTargetRoot(d2) || d2.Execution.TargetProjectRoot != "" {
 		t.Fatalf("unresolved must not leak target into prompt/mutations/execution: prompt=%q mut=%+v exec=%q", d2.OrchestratorPrompt, d2.ApplyableMutations, d2.Execution.TargetProjectRoot)
 	}
 
@@ -183,7 +183,7 @@ func TestBuildGoalDraftTargetRootSource(t *testing.T) {
 		t.Fatalf("provided: source=%q, want provided", d3.TargetProjectRootSource)
 	}
 	// provided DOES carry into start surfaces + the execution contract.
-	if !strings.Contains(d3.OrchestratorPrompt, "--target-project-root") || !mutationsContainTargetRoot(d3) {
+	if !strings.Contains(d3.OrchestratorPrompt, "target_project_root:") || !mutationsContainTargetRoot(d3) {
 		t.Fatalf("provided must appear in prompt + mutations: prompt=%q mut=%+v", d3.OrchestratorPrompt, d3.ApplyableMutations)
 	}
 	if d3.Execution.TargetProjectRoot == "" {
@@ -350,11 +350,11 @@ func TestGoalDraftMarkdownIsPreviewOnly(t *testing.T) {
 		"amq send --to user --thread gate/spawn-fullstack",
 		"amq-squad team init",
 		"amq-squad agent up codex",
-		"-- '/goal --goal",
+		"AMQ-SQUAD PROMPT GOAL v1",
 		"amq-squad dispatch --profile issue-225 --session issue-225",
 		"Default visibility is sibling-tabs",
 		"Seeded composition remains the default",
-		"Visible lead binding: native_goal_pending",
+		"Visible lead binding: prompt_goal_pending",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("markdown missing %q:\n%s", want, stdout)
@@ -415,6 +415,22 @@ func TestGoalStartRequiresYesForDelivery(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("goal start without --yes should be confirm-gated, got %v", err)
+	}
+}
+
+func TestGoalDeliveryUnknownBinaryFailsBeforeMutation(t *testing.T) {
+	project := t.TempDir()
+	member := team.Member{Role: "cto", Handle: "cto", Binary: "unknown-agent", Session: "issue-460"}
+	tm := team.Team{Project: project, Members: []team.Member{member}, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead}
+	opts := goalDeliveryOptions{
+		Project: project, Profile: team.DefaultProfile, Session: "issue-460", Role: "cto", Goal: "ship",
+		Team: tm, Member: member, Namespace: squadnamespace.Resolve(project, team.DefaultProfile, "issue-460"), Mode: executionModeProjectLead,
+	}
+	if _, err := executeGoalDelivery(opts); err == nil || !strings.Contains(err.Error(), "does not support binary") {
+		t.Fatalf("unknown binary delivery = %v, want fail-closed contract error", err)
+	}
+	if _, err := os.Stat(goalAttemptDir(project, team.DefaultProfile, "issue-460")); !os.IsNotExist(err) {
+		t.Fatalf("unknown binary delivery mutated attempt state: %v", err)
 	}
 }
 
@@ -481,21 +497,21 @@ func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("goal start --yes: %v\nstderr:\n%s", err, stderr)
 	}
-	if len(events) != 1 || !strings.HasPrefix(events[0], "send:%7\x00/goal --goal") || !strings.Contains(events[0], "ship safely") {
+	if len(events) != 1 || !strings.HasPrefix(events[0], "send:%7\x00AMQ-SQUAD PROMPT GOAL v1\n") || !strings.Contains(events[0], "ship safely") {
 		t.Fatalf("goal start delivery events = %+v", events)
 	}
 	env := decodeJSONEnvelope[goalStartData](t, stdout)
-	if env.Kind != "goal_start" || env.Data.DryRun || env.Data.Status != "native_goal_delivered" {
+	if env.Kind != "goal_start" || env.Data.DryRun || env.Data.Status != "prompt_goal_delivered" {
 		t.Fatalf("goal start delivery envelope = %+v", env)
 	}
-	if env.Data.DeliveryReceipt == nil || env.Data.DeliveryReceipt.PaneID != "%7" || env.Data.DeliveryReceipt.Status != "native_goal_delivered" {
+	if env.Data.DeliveryReceipt == nil || env.Data.DeliveryReceipt.PaneID != "%7" || env.Data.DeliveryReceipt.Status != "prompt_goal_delivered" {
 		t.Fatalf("goal start delivery receipt = %+v", env.Data.DeliveryReceipt)
 	}
 	rec, err := launch.Read(agentDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.GoalBinding == nil || rec.GoalBinding.Source != "goal-control" || !rec.GoalBinding.NativeGoal {
+	if rec.GoalBinding == nil || rec.GoalBinding.Source != "goal-control" || rec.GoalBinding.NativeGoal || rec.GoalBinding.Mode != "prompt_goal" || rec.GoalBinding.Goal != "ship safely" {
 		t.Fatalf("launch goal binding not updated: %+v", rec.GoalBinding)
 	}
 }
@@ -541,14 +557,14 @@ func TestGoalDeliveryQueuedInputRecordsPendingWithoutActionableAMQ(t *testing.T)
 	}
 	env := decodeJSONEnvelope[mutationResult](t, stdout)
 	receipt := env.Data.DeliveryReceipt
-	if env.Data.Status != "native_goal_queued" || receipt == nil || receipt.Fallback || receipt.MessageID != "" || !receiptHasStage(receipt, "native_goal_queued") || !receiptHasStage(receipt, "pending_without_amq_action") {
-		t.Fatalf("queued native goal receipt = %+v", receipt)
+	if env.Data.Status != "prompt_goal_queued" || receipt == nil || receipt.Fallback || receipt.MessageID != "" || !receiptHasStage(receipt, "prompt_goal_queued") || !receiptHasStage(receipt, "pending_without_amq_action") {
+		t.Fatalf("queued prompt goal receipt = %+v", receipt)
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("known queued input must not emit a second actionable AMQ todo; sends=%d", len(*calls))
 	}
 	if len(*prompts) != 1 || !strings.Contains((*prompts)[0], "--attempt-id "+receipt.AttemptID) {
-		t.Fatalf("native prompt does not carry shared attempt id %q: %q", receipt.AttemptID, *prompts)
+		t.Fatalf("structured prompt does not carry shared attempt id %q: %q", receipt.AttemptID, *prompts)
 	}
 	if !strings.Contains(stderr, "without a second actionable AMQ goal") {
 		t.Fatalf("queued warning missing idempotency contract:\n%s", stderr)
@@ -565,11 +581,11 @@ func TestGoalDeliveryUnconfirmedQueuesClaimOnceAMQFallback(t *testing.T) {
 	}
 	env := decodeJSONEnvelope[mutationResult](t, stdout)
 	receipt := env.Data.DeliveryReceipt
-	if env.Data.Status != "durable_goal_fallback" || env.Data.MessageID != "goal-msg-427" || receipt == nil || !receipt.Fallback || receipt.Method != "durable_amq_goal_fallback" || !receiptHasStage(receipt, "native_goal_unconfirmed") || !receiptHasStage(receipt, "claim_once_contract") || !receiptHasStage(receipt, "written_to_amq") {
+	if env.Data.Status != "durable_goal_fallback" || env.Data.MessageID != "goal-msg-427" || receipt == nil || !receipt.Fallback || receipt.Method != "durable_amq_goal_fallback" || !receiptHasStage(receipt, "prompt_goal_unconfirmed") || !receiptHasStage(receipt, "claim_once_contract") || !receiptHasStage(receipt, "written_to_amq") {
 		t.Fatalf("claim-once fallback receipt = %+v", receipt)
 	}
 	if len(*prompts) != 1 || !strings.Contains((*prompts)[0], "--attempt-id "+receipt.AttemptID) {
-		t.Fatalf("native prompt does not carry attempt id %q: %q", receipt.AttemptID, *prompts)
+		t.Fatalf("structured prompt does not carry attempt id %q: %q", receipt.AttemptID, *prompts)
 	}
 	if !strings.Contains(stderr, "Claim-once durable AMQ fallback goal-msg-427 shares attempt "+receipt.AttemptID) {
 		t.Fatalf("claim-once warning missing detail:\n%s", stderr)
@@ -653,7 +669,7 @@ func TestGoalDeliveryReleasesIdentityLocksBeforeBlockedSend(t *testing.T) {
 				t.Fatalf("launch update should merge after blocked send: %v", err)
 			}
 			rec, readErr := launch.Read(agentDir)
-			if readErr != nil || rec.Model != "concurrent-send-launch-update" || rec.GoalBinding == nil || rec.GoalBinding.Detail != "native /goal delivered as a first-class claim-once control action" {
+			if readErr != nil || rec.Model != "concurrent-send-launch-update" || rec.GoalBinding == nil || rec.GoalBinding.Detail != "structured Codex goal prompt delivered as a first-class claim-once control action" {
 				t.Fatalf("post-send merge lost independent launch update: model=%q binding=%+v err=%v", rec.Model, rec.GoalBinding, readErr)
 			}
 		})
@@ -973,7 +989,7 @@ func TestGoalFallbackNamedProfileUsesNamespacedAMQRoot(t *testing.T) {
 	}
 }
 
-func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
+func TestGoalDeliverRegistersExternalOrchestratorWithoutMutatingConfiguredLead(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
@@ -989,6 +1005,10 @@ func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
 		AgentPID: 4242,
 		Tmux:     &launch.TmuxInfo{PaneID: "%7"},
 	})
+	root := filepath.Join(base, "issue-96")
+	if err := createExternalOrchestratorMailboxFixture(root, "legacy"); err != nil {
+		t.Fatal(err)
+	}
 	prevPane := currentPaneIdentity
 	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
 		return &tmuxpane.PaneIdentity{Session: "global", WindowID: "@1", WindowName: "orch", PaneID: "%99"}, nil
@@ -1006,39 +1026,78 @@ func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
 	oldSend := sendPromptToPane
 	var sent []string
 	sendPromptToPane = func(paneID, prompt string) error {
+		scope, scopeErr := newExternalOrchestratorScope(dir, team.DefaultProfile, "issue-96", "global-orch")
+		if scopeErr != nil {
+			t.Fatal(scopeErr)
+		}
+		registry, registryErr := readExternalOrchestratorRegistry(scope)
+		if registryErr != nil || registry.Registrations[len(registry.Registrations)-1].State != externalOrchestratorStateRegistered {
+			t.Fatalf("goal invoked before external registry committed registered: registry=%+v err=%v", registry, registryErr)
+		}
 		sent = append(sent, paneID+"\x00"+prompt)
 		return nil
+	}
+	oldRunAMQ := runAMQCommand
+	var initReq amqCommandRequest
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		if len(req.Arg) > 0 && req.Arg[0] == "init" {
+			initReq = req
+			if err := createExternalOrchestratorMailboxFixture(amqFlagValue(req.Arg, "root"), amqFlagValue(req.Arg, "agents")); err != nil {
+				return nil, err
+			}
+			return []byte("Initialized AMQ root\n"), nil
+		}
+		return oldRunAMQ(req)
 	}
 	t.Cleanup(func() {
 		currentPaneIdentity = prevPane
 		leadWakeStarter = prevWake
 		statusPaneLister = oldLister
 		sendPromptToPane = oldSend
+		runAMQCommand = oldRunAMQ
 	})
+	teamBefore, err := os.ReadFile(team.Path(dir))
+	if err != nil {
+		t.Fatalf("read team bytes before registration: %v", err)
+	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--json"})
+		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--goal", "ship safely", "--register-orchestrator=global-orch", "--json"})
 	})
 	if err != nil {
 		t.Fatalf("goal deliver --register-orchestrator: %v\nstderr:\n%s", err, stderr)
 	}
 	env := decodeJSONEnvelope[mutationResult](t, stdout)
-	if env.Kind != "goal_deliver" || env.Data.Status != "native_goal_delivered" {
+	if env.Kind != "goal_deliver" || env.Data.Status != "prompt_goal_delivered" {
 		t.Fatalf("goal deliver envelope = %+v", env)
 	}
-	if len(sent) != 1 || !strings.HasPrefix(sent[0], "%7\x00/goal --goal") {
+	if len(sent) != 1 || !strings.HasPrefix(sent[0], "%7\x00AMQ-SQUAD PROMPT GOAL v1\n") {
 		t.Fatalf("delivery should still target explicit cto pane, sent = %+v", sent)
+	}
+	if got := amqFlagValue(initReq.Arg, "agents"); got != "cto,global-orch,legacy" || !containsString(initReq.Arg, "--force") {
+		t.Fatalf("AMQ init did not preserve union: args=%v", initReq.Arg)
+	}
+	envJoined := strings.Join(initReq.Env, "\n")
+	canonicalRoot, _ := canonicalPathForReceipt(root)
+	if !strings.Contains(envJoined, "AM_ROOT="+canonicalRoot) || !strings.Contains(envJoined, "AM_BASE_ROOT="+canonicalRoot) || strings.Contains(envJoined, "AM_SESSION=") || !strings.Contains(envJoined, "AM_ME=global-orch") {
+		t.Fatalf("AMQ init context is not exact identity-clean root: %v", initReq.Env)
+	}
+	teamAfter, err := os.ReadFile(team.Path(dir))
+	if err != nil {
+		t.Fatalf("read team bytes after registration: %v", err)
+	}
+	if string(teamAfter) != string(teamBefore) {
+		t.Fatalf("register-orchestrator mutated team bytes\nbefore:\n%s\nafter:\n%s", teamBefore, teamAfter)
 	}
 	cfg, err := team.Read(dir)
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
-	if cfg.Lead != goalOrchestratorRole || !cfg.Orchestrated {
-		t.Fatalf("team lead/orchestrated = %q/%v, want orchestrator/true", cfg.Lead, cfg.Orchestrated)
+	if cfg.Lead != "cto" || !cfg.Orchestrated || len(cfg.Members) != 1 || cfg.Members[0].Role != "cto" {
+		t.Fatalf("configured lead/members changed: lead=%q members=%+v", cfg.Lead, cfg.Members)
 	}
-	orch, ok := teamMemberByRole(cfg, goalOrchestratorRole)
-	if !ok || orch.Handle != "global-orch" || orch.Binary != "codex" || orch.Session != "issue-96" {
-		t.Fatalf("orchestrator member = %+v, ok=%v", orch, ok)
+	if _, ok := teamMemberByRole(cfg, goalOrchestratorRole); ok {
+		t.Fatalf("external orchestrator leaked into configured members: %+v", cfg.Members)
 	}
 	if len(wakeOpts) != 1 || wakeOpts[0].Handle != "global-orch" || !wakeOpts[0].Require {
 		t.Fatalf("wake opts = %+v", wakeOpts)
@@ -1052,6 +1111,22 @@ func TestGoalDeliverRegistersExternalOrchestrator(t *testing.T) {
 	}
 	if rec.Terminal == nil || rec.Terminal.Backend != "tmux" || rec.Terminal.PaneID != "%99" || rec.Terminal.Target != "external" {
 		t.Fatalf("orchestrator launch terminal identity = %+v", rec.Terminal)
+	}
+	scope, err := newExternalOrchestratorScope(dir, team.DefaultProfile, "issue-96", "global-orch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := readExternalOrchestratorRegistry(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var states []externalOrchestratorRegistrationState
+	for _, transition := range registry.Registrations[len(registry.Registrations)-1].Transitions {
+		states = append(states, transition.To)
+	}
+	wantStates := []externalOrchestratorRegistrationState{externalOrchestratorStatePlanned, externalOrchestratorStateMailboxInvoked, externalOrchestratorStateMailboxVerified, externalOrchestratorStateRuntimeVerified, externalOrchestratorStateRegistered}
+	if fmt.Sprint(states) != fmt.Sprint(wantStates) {
+		t.Fatalf("registry state ordering = %v, want %v", states, wantStates)
 	}
 }
 
@@ -1085,18 +1160,52 @@ func setupOrchestratorRegStubs(t *testing.T, dir string) orchestratorRegStubs {
 		*sent = append(*sent, paneID+"\x00"+prompt)
 		return nil
 	}
+	oldRunAMQ := runAMQCommand
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		if len(req.Arg) > 0 && req.Arg[0] == "init" {
+			if err := createExternalOrchestratorMailboxFixture(amqFlagValue(req.Arg, "root"), amqFlagValue(req.Arg, "agents")); err != nil {
+				return nil, err
+			}
+			return []byte("Initialized AMQ root\n"), nil
+		}
+		return oldRunAMQ(req)
+	}
 	t.Cleanup(func() {
 		currentPaneIdentity = prevPane
 		leadWakeStarter = prevWake
 		statusPaneLister = oldLister
 		sendPromptToPane = oldSend
+		runAMQCommand = oldRunAMQ
 	})
 	return orchestratorRegStubs{sent: sent, wakeOpts: wakeOpts}
+}
+
+func createExternalOrchestratorMailboxFixture(root, handles string) error {
+	agents := strings.Split(handles, ",")
+	for _, handle := range agents {
+		for _, relative := range []string{"inbox/new", "inbox/cur", "inbox/tmp", "outbox/sent", "receipts", "dlq/new", "dlq/cur", "dlq/tmp"} {
+			if err := os.MkdirAll(filepath.Join(root, "agents", handle, filepath.FromSlash(relative)), 0o700); err != nil {
+				return err
+			}
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, "meta"), 0o700); err != nil {
+		return err
+	}
+	b, err := json.Marshal(struct {
+		Version int      `json:"version"`
+		Agents  []string `json:"agents"`
+	}{Version: 1, Agents: agents})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(root, "meta", "config.json"), b, 0o600)
 }
 
 func seedCtoLeadTeamForOrchestrator(t *testing.T) (string, string) {
 	t.Helper()
 	base := setupFakeAMQSessionRoots(t)
+	t.Setenv("AMQ_FAKE_VERSION", "0.42.0")
 	dir := seedTeam(t, team.Team{
 		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
 		Orchestrated: true,
@@ -1115,8 +1224,8 @@ func seedCtoLeadTeamForOrchestrator(t *testing.T) (string, string) {
 }
 
 // TestGoalStartRegisterOrchestratorProducesWakeableIdentity proves #287: a single
-// gated command yields the full wakeable orchestrator identity (durable member +
-// launch record bound to the live pane + lead set + wake sidecar requested).
+// gated command yields the external wakeable identity without changing native
+// team authority.
 func TestGoalStartRegisterOrchestratorProducesWakeableIdentity(t *testing.T) {
 	base, dir := seedCtoLeadTeamForOrchestrator(t)
 	stubs := setupOrchestratorRegStubs(t, dir)
@@ -1128,31 +1237,30 @@ func TestGoalStartRegisterOrchestratorProducesWakeableIdentity(t *testing.T) {
 		t.Fatalf("goal start --register-orchestrator --yes: %v\nstderr:\n%s", err, stderr)
 	}
 	env := decodeJSONEnvelope[goalStartData](t, stdout)
-	if env.Kind != "goal_start" || env.Data.DryRun || env.Data.Status != "native_goal_delivered" {
+	if env.Kind != "goal_start" || env.Data.DryRun || env.Data.Status != "prompt_goal_delivered" {
 		t.Fatalf("goal start envelope = %+v", env)
 	}
 	cfg, err := team.Read(dir)
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
-	if cfg.Lead != goalOrchestratorRole || !cfg.Orchestrated {
+	if cfg.Lead != "cto" || !cfg.Orchestrated {
 		t.Fatalf("team lead/orchestrated = %q/%v", cfg.Lead, cfg.Orchestrated)
 	}
-	orch, ok := teamMemberByRole(cfg, goalOrchestratorRole)
-	if !ok || orch.Handle != "global-orch" {
-		t.Fatalf("orchestrator member = %+v ok=%v", orch, ok)
+	if _, ok := teamMemberByRole(cfg, goalOrchestratorRole); ok {
+		t.Fatalf("external orchestrator leaked into team members: %+v", cfg.Members)
 	}
 	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
 	if err != nil {
 		t.Fatalf("read orchestrator launch record: %v", err)
 	}
-	if !rec.External || rec.Role != goalOrchestratorRole || rec.WakePID != 9876 || rec.Tmux == nil || rec.Tmux.PaneID != "%99" {
+	if !rec.External || rec.Role != goalOrchestratorRole || rec.WakePID != 9876 || rec.WakeInjectMode != "raw" || rec.Tmux == nil || rec.Tmux.PaneID != "%99" {
 		t.Fatalf("orchestrator launch record = %+v", rec)
 	}
 	if rec.Terminal == nil || rec.Terminal.Backend != "tmux" || rec.Terminal.PaneID != "%99" || rec.Terminal.Target != "external" {
 		t.Fatalf("orchestrator launch terminal identity = %+v", rec.Terminal)
 	}
-	if len(*stubs.wakeOpts) != 1 || (*stubs.wakeOpts)[0].Handle != "global-orch" || !(*stubs.wakeOpts)[0].Require {
+	if len(*stubs.wakeOpts) != 1 || (*stubs.wakeOpts)[0].Handle != "global-orch" || !(*stubs.wakeOpts)[0].Require || (*stubs.wakeOpts)[0].WakeInjectMode != "raw" {
 		t.Fatalf("wake opts = %+v", *stubs.wakeOpts)
 	}
 }
@@ -1187,20 +1295,20 @@ func TestGoalStartRegisterOrchestratorNoneModeIsZeroInput(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("goal repair without mode: %v\nstderr:\n%s", err, stderr)
 	}
-	if len(*stubs.wakeOpts) != 2 || (*stubs.wakeOpts)[1].WakeInjectMode != "none" || (*stubs.wakeOpts)[1].WakeInjectCmd != "" {
-		t.Fatalf("goal repair must inherit none: %+v", *stubs.wakeOpts)
+	if len(*stubs.wakeOpts) != 1 {
+		t.Fatalf("registered rerun must not restart wake: %+v", *stubs.wakeOpts)
 	}
 	if _, stderr, err = captureOutput(t, func() error {
 		return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--register-orchestrator=global-orch", "--wake-inject-mode", "raw", "--yes", "--json"})
 	}); err != nil {
 		t.Fatalf("goal repair explicit raw: %v\nstderr:\n%s", err, stderr)
 	}
-	if len(*stubs.wakeOpts) != 3 || (*stubs.wakeOpts)[2].WakeInjectMode != "raw" || (*stubs.wakeOpts)[2].WakeInjectCmd != wakeDrainInject() {
-		t.Fatalf("goal explicit raw must override inherited none: %+v", *stubs.wakeOpts)
+	if len(*stubs.wakeOpts) != 1 {
+		t.Fatalf("registered rerun must remain external-action idempotent: %+v", *stubs.wakeOpts)
 	}
 	rec, err = launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
-	if err != nil || rec.WakeInjectMode != "raw" || rec.WakeInjectCmd != wakeDrainInject() {
-		t.Fatalf("goal explicit raw record = %+v, %v", rec, err)
+	if err != nil || rec.WakeInjectMode != "none" || rec.WakeInjectCmd != "" {
+		t.Fatalf("registered rerun mutated launch record = %+v, %v", rec, err)
 	}
 }
 
@@ -1233,8 +1341,8 @@ func TestGoalStartRegisterOrchestratorIdempotentOnRerun(t *testing.T) {
 			count++
 		}
 	}
-	if count != 1 {
-		t.Fatalf("rerun must not duplicate orchestrator member, got %d (members=%+v)", count, cfg.Members)
+	if count != 0 {
+		t.Fatalf("external orchestrator must not enter native members, got %d (members=%+v)", count, cfg.Members)
 	}
 	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
 	if err != nil {
@@ -1268,6 +1376,7 @@ func TestGoalStartRegisterOrchestratorWakeFailureIsHonest(t *testing.T) {
 func seedCtoDeliverTeamForOrchestrator(t *testing.T) (string, string) {
 	t.Helper()
 	base := setupFakeAMQSessionRoots(t)
+	t.Setenv("AMQ_FAKE_VERSION", "0.42.0")
 	dir := seedTeam(t, team.Team{
 		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
 		Orchestrated: true,
@@ -1287,10 +1396,21 @@ func seedCtoDeliverTeamForOrchestrator(t *testing.T) (string, string) {
 	}
 	oldSend := sendPromptToPane
 	sendPromptToPane = func(string, string) error { return nil }
+	oldRunAMQ := runAMQCommand
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		if len(req.Arg) > 0 && req.Arg[0] == "init" {
+			if err := createExternalOrchestratorMailboxFixture(amqFlagValue(req.Arg, "root"), amqFlagValue(req.Arg, "agents")); err != nil {
+				return nil, err
+			}
+			return []byte("Initialized AMQ root\n"), nil
+		}
+		return oldRunAMQ(req)
+	}
 	t.Cleanup(func() {
 		currentPaneIdentity = prevPane
 		statusPaneLister = oldLister
 		sendPromptToPane = oldSend
+		runAMQCommand = oldRunAMQ
 	})
 	return base, dir
 }
@@ -1352,7 +1472,7 @@ func TestGoalApplyRefusesWithoutApprovedGate(t *testing.T) {
 		Lead:          "cto",
 		ExecutionMode: executionModeProjectLead,
 	})
-	tm := team.Team{ExecutionMode: executionModeProjectLead}
+	tm := team.Team{Project: dir, Lead: "cto", ExecutionMode: executionModeProjectLead}
 	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
 		CWD:      dir,
 		Binary:   "codex",
@@ -1362,10 +1482,11 @@ func TestGoalApplyRefusesWithoutApprovedGate(t *testing.T) {
 		AgentPID: 4242,
 		Tmux:     &launch.TmuxInfo{PaneID: "%7"},
 		GoalBinding: &launch.GoalBinding{
-			Mode:       "native_goal",
-			NativeGoal: true,
+			Mode:       "prompt_goal",
+			NativeGoal: false,
 			Source:     "goal-control",
-			Command:    nativeGoalControlPrompt("ship safely", tm, team.DefaultProfile, "issue-96", "cto"),
+			Command:    codexGoalControlPrompt("ship safely", tm, team.DefaultProfile, "issue-96", "cto", ""),
+			Goal:       "ship safely",
 		},
 	})
 	_, _, err := captureOutput(t, func() error {
@@ -1384,7 +1505,7 @@ func TestGoalApplyRequiresYesAfterApprovedGate(t *testing.T) {
 		Lead:          "cto",
 		ExecutionMode: executionModeProjectLead,
 	})
-	tm := team.Team{ExecutionMode: executionModeProjectLead}
+	tm := team.Team{Project: dir, Lead: "cto", ExecutionMode: executionModeProjectLead}
 	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
 		CWD:      dir,
 		Binary:   "codex",
@@ -1394,10 +1515,11 @@ func TestGoalApplyRequiresYesAfterApprovedGate(t *testing.T) {
 		AgentPID: 4242,
 		Tmux:     &launch.TmuxInfo{PaneID: "%7"},
 		GoalBinding: &launch.GoalBinding{
-			Mode:       "native_goal",
-			NativeGoal: true,
+			Mode:       "prompt_goal",
+			NativeGoal: false,
 			Source:     "goal-control",
-			Command:    nativeGoalControlPrompt("ship safely", tm, team.DefaultProfile, "issue-96", "cto"),
+			Command:    codexGoalControlPrompt("ship safely", tm, team.DefaultProfile, "issue-96", "cto", ""),
+			Goal:       "ship safely",
 		},
 	})
 	seedNotifyMessage(t, base, "issue-96", "cto", "new", notifyMsg{
@@ -1428,7 +1550,7 @@ func TestGoalApplyYesJSONVerifiesGateAndDelivers(t *testing.T) {
 		Lead:          "cto",
 		ExecutionMode: executionModeProjectLead,
 	})
-	tm := team.Team{ExecutionMode: executionModeProjectLead}
+	tm := team.Team{Project: dir, Lead: "cto", ExecutionMode: executionModeProjectLead}
 	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
 		CWD:      dir,
 		Binary:   "codex",
@@ -1438,10 +1560,11 @@ func TestGoalApplyYesJSONVerifiesGateAndDelivers(t *testing.T) {
 		AgentPID: 4242,
 		Tmux:     &launch.TmuxInfo{PaneID: "%7"},
 		GoalBinding: &launch.GoalBinding{
-			Mode:       "native_goal",
-			NativeGoal: true,
+			Mode:       "prompt_goal",
+			NativeGoal: false,
 			Source:     "goal-control",
-			Command:    nativeGoalControlPrompt("ship safely", tm, team.DefaultProfile, "issue-96", "cto"),
+			Command:    codexGoalControlPrompt("ship safely", tm, team.DefaultProfile, "issue-96", "cto", ""),
+			Goal:       "ship safely",
 		},
 	})
 	seedNotifyMessage(t, base, "issue-96", "cto", "new", notifyMsg{
@@ -1469,11 +1592,11 @@ func TestGoalApplyYesJSONVerifiesGateAndDelivers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("goal apply --yes: %v\nstderr:\n%s", err, stderr)
 	}
-	if len(sent) != 1 || !strings.Contains(sent[0], "/goal --goal") || !strings.Contains(sent[0], "ship safely") {
+	if len(sent) != 1 || !strings.Contains(sent[0], "AMQ-SQUAD PROMPT GOAL v1") || !strings.Contains(sent[0], "ship safely") {
 		t.Fatalf("goal apply sent = %+v", sent)
 	}
 	env := decodeJSONEnvelope[goalApplyData](t, stdout)
-	if env.Kind != "goal_apply" || env.Data.Status != "native_goal_delivered" || env.Data.GoalID != "g1" {
+	if env.Kind != "goal_apply" || env.Data.Status != "prompt_goal_delivered" || env.Data.GoalID != "g1" {
 		t.Fatalf("goal apply envelope = %+v", env)
 	}
 	if env.Data.ApprovalEvidence == nil || env.Data.ApprovalEvidence.MessageID != "approval-1" || env.Data.Gate != "gate/release" {
@@ -1486,8 +1609,68 @@ func TestGoalApplyYesJSONVerifiesGateAndDelivers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.GoalBinding == nil || rec.GoalBinding.Source != "goal-control" || !rec.GoalBinding.NativeGoal {
+	if rec.GoalBinding == nil || rec.GoalBinding.Source != "goal-control" || rec.GoalBinding.NativeGoal || rec.GoalBinding.Mode != "prompt_goal" {
 		t.Fatalf("launch goal binding not preserved/updated: %+v", rec.GoalBinding)
+	}
+}
+
+func TestGoalApplyRejectsCorruptOrMismatchedPromptBindingBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*launch.GoalBinding)
+	}{
+		{name: "corrupt command", mutate: func(binding *launch.GoalBinding) { binding.Command += "\ncorrupt" }},
+		{name: "typed goal mismatch", mutate: func(binding *launch.GoalBinding) { binding.Goal = "different goal" }},
+		{name: "typed attempt mismatch", mutate: func(binding *launch.GoalBinding) { binding.AttemptID = "different-attempt" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := setupFakeAMQSessionRoots(t)
+			dir := seedTeam(t, team.Team{
+				Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+				Orchestrated:  true,
+				Lead:          "cto",
+				ExecutionMode: executionModeProjectLead,
+			})
+			tm := team.Team{Project: dir, Lead: "cto", ExecutionMode: executionModeProjectLead}
+			const sourceAttempt = "source-attempt"
+			binding := &launch.GoalBinding{
+				Mode:       "prompt_goal",
+				NativeGoal: false,
+				Source:     "goal-control",
+				Command:    codexGoalControlPrompt("ship safely", tm, team.DefaultProfile, "issue-96", "cto", sourceAttempt),
+				Goal:       "ship safely",
+				AttemptID:  sourceAttempt,
+			}
+			tt.mutate(binding)
+			agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+				CWD: dir, Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96",
+				AgentPID: 4242, Tmux: &launch.TmuxInfo{PaneID: "%7"}, GoalBinding: binding,
+			})
+			launchPath := launch.ExistingPath(agentDir)
+			before, err := os.ReadFile(launchPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldSend := sendPromptToPane
+			sends := 0
+			sendPromptToPane = func(string, string) error { sends++; return nil }
+			t.Cleanup(func() { sendPromptToPane = oldSend })
+
+			_, _, err = captureOutput(t, func() error {
+				return runGoal([]string{"apply", "--project", dir, "--session", "issue-96", "--gate", "release", "--yes"})
+			})
+			if err == nil || !strings.Contains(err.Error(), "could not read prompt_goal goal text") {
+				t.Fatalf("invalid prompt binding accepted: %v", err)
+			}
+			after, readErr := os.ReadFile(launchPath)
+			if readErr != nil || string(after) != string(before) || sends != 0 {
+				t.Fatalf("goal apply mutated invalid binding: sends=%d changed=%t err=%v", sends, string(after) != string(before), readErr)
+			}
+			if _, statErr := os.Stat(goalAttemptDir(dir, team.DefaultProfile, "issue-96")); !os.IsNotExist(statErr) {
+				t.Fatalf("goal apply created attempt state for invalid binding: %v", statErr)
+			}
+		})
 	}
 }
 
@@ -1507,7 +1690,7 @@ func TestGoalDraftNamedProfileCommandsCarryNamespace(t *testing.T) {
 	if env.Data.Namespace.ID != "release/main" {
 		t.Fatalf("namespace = %+v, want release/main", env.Data.Namespace)
 	}
-	if env.Data.GoalBinding.Mode != "native_goal_pending" || env.Data.GoalBinding.Source != "orchestrator-prompt" {
+	if env.Data.GoalBinding.Mode != "prompt_goal_pending" || env.Data.GoalBinding.Source != "orchestrator-prompt" {
 		t.Fatalf("goal binding = %+v", env.Data.GoalBinding)
 	}
 	for _, dispatch := range env.Data.Dispatches {
@@ -1557,7 +1740,7 @@ func TestGoalDraftCustomLeadCarriesThroughPlan(t *testing.T) {
 			t.Fatalf("dispatch does not route reports to lead: %+v", dispatch)
 		}
 	}
-	if !strings.Contains(env.Data.OrchestratorPrompt, "--lead release-lead") {
+	if !strings.Contains(env.Data.OrchestratorPrompt, "role: release-lead") {
 		t.Fatalf("orchestrator prompt dropped custom lead: %s", env.Data.OrchestratorPrompt)
 	}
 }
@@ -1605,7 +1788,7 @@ func TestGoalDraftExecutionModeContract(t *testing.T) {
 	if !foundInit {
 		t.Fatalf("initialize profile mutation missing: %+v", env.Data.ApplyableMutations)
 	}
-	if !strings.Contains(env.Data.OrchestratorPrompt, "--mode global_orchestrator") || !strings.Contains(env.Data.OrchestratorPrompt, "--target-contract 2.10.0") {
+	if !strings.Contains(env.Data.OrchestratorPrompt, "mode: global_orchestrator") || !strings.Contains(env.Data.OrchestratorPrompt, "target_contract: 2.10.0") {
 		t.Fatalf("orchestrator prompt dropped execution metadata: %s", env.Data.OrchestratorPrompt)
 	}
 	for _, want := range []string{
@@ -1642,7 +1825,7 @@ func TestGoalDraftAutonomousPreviewRequiresAndEmitsPolicy(t *testing.T) {
 	if env.Data.AutonomousPolicy.MaxActiveAgents != 5 || env.Data.AutonomousPolicy.MaxTotalSpawns != 4 || env.Data.AutonomousPolicy.BudgetTurns != 40 {
 		t.Fatalf("autonomous policy counters mismatch: %+v", env.Data.AutonomousPolicy)
 	}
-	if !strings.Contains(env.Data.BriefSkeleton, "## Autonomous policy") || !strings.Contains(env.Data.OrchestratorPrompt, "--composition autonomous") {
+	if !strings.Contains(env.Data.BriefSkeleton, "## Autonomous policy") || !strings.Contains(env.Data.OrchestratorPrompt, "- composition: autonomous") {
 		t.Fatalf("autonomous draft missing policy/prompt:\n%s\n%s", env.Data.BriefSkeleton, env.Data.OrchestratorPrompt)
 	}
 }
@@ -1663,8 +1846,9 @@ func TestGoalDraftJSONIncludesVisibleLaunchMutation(t *testing.T) {
 	if env.Data.GoalBinding.Command != env.Data.OrchestratorPrompt {
 		t.Fatalf("draft binding command should be the visible lead prompt:\n%q\n%q", env.Data.GoalBinding.Command, env.Data.OrchestratorPrompt)
 	}
-	if got := nativeGoalBindingFromArgs([]string{env.Data.OrchestratorPrompt}); got == nil || !got.NativeGoal {
-		t.Fatalf("generated visible lead prompt must be launch-record detectable as native /goal: %+v", got)
+	if got := goalBindingFromArgs("codex", []string{env.Data.OrchestratorPrompt}); got == nil || got.NativeGoal || got.Mode != "prompt_goal" || got.Goal != env.Data.Goal {
+		_, _, parseErr := parseCodexGoalControlPrompt(env.Data.OrchestratorPrompt)
+		t.Fatalf("generated visible lead prompt must be launch-record detectable as prompt_goal: %+v (parse: %v)\nprompt: %q", got, parseErr, env.Data.OrchestratorPrompt)
 	}
 	found := false
 	for _, mutation := range env.Data.ApplyableMutations {
@@ -1677,7 +1861,7 @@ func TestGoalDraftJSONIncludesVisibleLaunchMutation(t *testing.T) {
 			"--session visible-setup",
 			"--root .agent-mail/codex-visible-setup/visible-setup",
 			"--team-profile codex-visible-setup",
-			"-- '/goal --goal",
+			"AMQ-SQUAD PROMPT GOAL v1",
 		} {
 			if !strings.Contains(mutation.Command, want) {
 				t.Fatalf("visible launch command missing %q: %q", want, mutation.Command)
@@ -1686,7 +1870,7 @@ func TestGoalDraftJSONIncludesVisibleLaunchMutation(t *testing.T) {
 		if !strings.Contains(mutation.Command, "ship visible setup handoff") {
 			t.Fatalf("visible launch command = %q", mutation.Command)
 		}
-		if !strings.Contains(mutation.Reason, "native /goal prompt") {
+		if !strings.Contains(mutation.Reason, "binary-specific goal") {
 			t.Fatalf("visible launch reason = %q", mutation.Reason)
 		}
 	}
@@ -1710,7 +1894,7 @@ func TestGoalDraftSkillInvocationOutput(t *testing.T) {
 	for _, want := range []string{
 		`/amq-squad-orchestrator --goal "ship visible setup handoff" --session "visible-setup" --profile "codex-visible-setup"`,
 		`--mode "project_lead"`,
-		`/goal --goal "ship visible setup handoff"`,
+		`AMQ-SQUAD PROMPT GOAL v1`,
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("skill invocation missing %q in:\n%s", want, stdout)
@@ -1746,8 +1930,8 @@ func TestGoalDraftVisibilityOverrides(t *testing.T) {
 		wantTitle  string
 		wantCmd    string
 	}{
-		{"detached", "launch detached visible lead", "-- '/goal --goal"},
-		{"current", "launch visible lead in current pane", "-- '/goal --goal"},
+		{"detached", "launch detached visible lead", "AMQ-SQUAD PROMPT GOAL v1"},
+		{"current", "launch visible lead in current pane", "AMQ-SQUAD PROMPT GOAL v1"},
 		{"plan", "preview visible lead launch", "--dry-run"},
 	}
 	for _, tc := range cases {

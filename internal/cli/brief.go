@@ -80,19 +80,12 @@ Examples:
 	if !flagWasSet(fs, "session") || strings.TrimSpace(*sessionFlag) == "" {
 		return usageErrorf("brief requires --session NAME")
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
-	if err != nil {
-		return err
-	}
-	data, err := readBriefData(projectDir, profile, *sessionFlag)
+	emitContextDiagnostics(ctx)
+	data, err := readBriefData(ctx.ProjectDir, ctx.Profile, ctx.Session)
 	if err != nil {
 		return err
 	}
@@ -145,19 +138,25 @@ Examples:
 	if !flagWasSet(fs, "seed-from") || strings.TrimSpace(*seedFrom) == "" {
 		return usageErrorf("brief seed requires --seed-from REF")
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
-	if err != nil {
-		return err
+	emitContextDiagnostics(ctx)
+	var admission *namespaceAdmissionLocks
+	if !*dryRun {
+		ctx, admission, err = acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
+			return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+		})
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		if err := ensureNoNamespaceMigration("brief seed", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+			return err
+		}
 	}
-	data, err := seedBriefData(projectDir, profile, *sessionFlag, *seedFrom, *force, *dryRun)
+	data, err := seedBriefData(ctx.ProjectDir, ctx.Profile, ctx.Session, *seedFrom, *force, *dryRun)
 	if err != nil {
 		return err
 	}
@@ -321,25 +320,28 @@ Examples:
 	if fs.NArg() != 0 {
 		return usageErrorf("brief decision takes no positional arguments; use --session NAME --body TEXT")
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
-	if err != nil {
-		return err
-	}
 	if !flagWasSet(fs, "session") || strings.TrimSpace(*sessionFlag) == "" {
 		return usageErrorf("brief decision requires --session NAME")
 	}
 	if !flagWasSet(fs, "body") || strings.TrimSpace(*bodyFlag) == "" {
 		return usageErrorf("brief decision requires --body TEXT")
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
-	path, err := appendBriefDecisionForProfile(projectDir, profile, *sessionFlag, *titleFlag, *bodyFlag, decisionNow())
+	emitContextDiagnostics(ctx)
+	ctx, admission, err := acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
+		return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+	})
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	if err := ensureNoNamespaceMigration("brief decision", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+		return err
+	}
+	path, err := appendBriefDecisionForProfile(ctx.ProjectDir, ctx.Profile, ctx.Session, *titleFlag, *bodyFlag, decisionNow())
 	if err != nil {
 		return err
 	}

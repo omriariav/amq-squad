@@ -99,18 +99,15 @@ func runTeamOverlayInit(args []string) error {
 		return usageErrorf("pass exactly one of --role ROLE or --workers")
 	}
 
-	profile, err := resolveProfileFlag(*profileFlag)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"),
+	})
 	if err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
-	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
 	overlay := claudeSettingsOverlay{EnabledPlugins: map[string]bool{}}
 	for _, id := range splitCommaList(*disablePluginsRaw) {
 		overlay.EnabledPlugins[id] = false

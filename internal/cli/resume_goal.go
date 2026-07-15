@@ -211,14 +211,18 @@ func buildResumeGoalPlan(t team.Team, profile, workstream string, plans []resume
 	result.BindingSource = binding.Source
 	result.BindingDigest = digestJSON(binding)
 	result.BindingCommandDigest = digestBytes([]byte(binding.Command))
-	if binding.Mode != "native_goal" || !binding.NativeGoal || binding.Source != "goal-control" {
+	contract, err := goalDeliveryContractForBinary(member.Binary)
+	if err != nil {
+		return finish("saved goal binding uses an unsupported lead binary")
+	}
+	if binding.Mode != contract.Mode || binding.NativeGoal != contract.NativeGoal || binding.Source != "goal-control" {
 		return finish("saved goal binding is not an original goal-control delivery")
 	}
-	goal, attemptID, err := parseGeneratedGoalBinding(binding.Command)
+	goal, attemptID, err := goalBindingPayload(&binding, contract)
 	if err != nil {
 		return finish("saved goal binding is invalid: " + err.Error())
 	}
-	if expected := nativeGoalControlPrompt(goal, t, profile, workstream, lead, attemptID); binding.Command != expected {
+	if expected := contract.prompt(goal, t, profile, workstream, lead, attemptID); !exactGoalBinding(&binding, contract, goal, attemptID, expected, "goal-control") {
 		return finish("saved goal binding does not exactly match the generated goal-control command")
 	}
 	result.Goal = goal
@@ -405,7 +409,7 @@ func validateResumeGoalClaim(claim goalAttemptClaim, attempt goalAttemptRecord) 
 	switch {
 	case claim.AttemptID != attempt.AttemptID:
 		return fmt.Errorf("attempt_id differs")
-	case claim.Route != "native" && claim.Route != "amq":
+	case claim.Route != goalClaimRouteNative && claim.Route != goalClaimRoutePrompt && claim.Route != "amq":
 		return fmt.Errorf("route %q is invalid", claim.Route)
 	case claim.ClaimedAt.IsZero():
 		return fmt.Errorf("claimed_at is missing")
@@ -419,6 +423,21 @@ func validateResumeGoalClaim(claim goalAttemptClaim, attempt goalAttemptRecord) 
 // "--attempt-id" inside the quoted goal remains goal text and cannot spoof the
 // exactly-one generated attempt flag.
 func parseGeneratedGoalBinding(command string) (string, string, error) {
+	goal, attemptID, err := parseNativeGoalBindingCommand(command)
+	if err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(attemptID) == "" {
+		return "", "", fmt.Errorf("command must contain exactly one non-empty --attempt-id")
+	}
+	return goal, attemptID, nil
+}
+
+// parseNativeGoalBindingCommand accepts the generated Claude /goal grammar.
+// Legacy launch bindings may contain only --goal (and optionally --attempt-id),
+// while contextual bindings must carry session/profile/mode as one complete
+// tuple. All flags are single-use and remain in generator order.
+func parseNativeGoalBindingCommand(command string) (string, string, error) {
 	tokens, err := splitGeneratedGoalTokens(command)
 	if err != nil {
 		return "", "", err
@@ -426,30 +445,55 @@ func parseGeneratedGoalBinding(command string) (string, string, error) {
 	if len(tokens) == 0 || tokens[0] != "/goal" {
 		return "", "", fmt.Errorf("command is not a generated /goal")
 	}
-	var goal, attemptID string
-	goalCount, attemptCount := 0, 0
+	ranks := map[string]int{
+		"--goal": 1, "--session": 2, "--profile": 3, "--mode": 4,
+		"--lead": 5, "--lead-mode": 6, "--target-contract": 7, "--attempt-id": 8,
+	}
+	values := make(map[string]string, len(ranks))
+	lastRank := 0
 	for i := 1; i < len(tokens); i++ {
-		switch tokens[i] {
-		case "--goal":
-			goalCount++
-			if i+1 >= len(tokens) {
-				return "", "", fmt.Errorf("--goal has no value")
-			}
-			i++
-			goal = tokens[i]
-		case "--attempt-id":
-			attemptCount++
-			if i+1 >= len(tokens) {
-				return "", "", fmt.Errorf("--attempt-id has no value")
-			}
-			i++
-			attemptID = tokens[i]
+		flag := tokens[i]
+		rank, ok := ranks[flag]
+		if !ok {
+			return "", "", fmt.Errorf("unsupported generated /goal token %q", flag)
+		}
+		if rank <= lastRank {
+			return "", "", fmt.Errorf("generated /goal flag %s is duplicated or out of order", flag)
+		}
+		if i+1 >= len(tokens) || strings.TrimSpace(tokens[i+1]) == "" {
+			return "", "", fmt.Errorf("%s has no value", flag)
+		}
+		i++
+		values[flag] = tokens[i]
+		lastRank = rank
+	}
+	goal := values["--goal"]
+	if goal == "" {
+		return "", "", fmt.Errorf("command must contain exactly one non-empty --goal")
+	}
+	contextFields := 0
+	for _, flag := range []string{"--session", "--profile", "--mode"} {
+		if values[flag] != "" {
+			contextFields++
 		}
 	}
-	if goalCount != 1 || attemptCount != 1 || goal == "" || strings.TrimSpace(attemptID) == "" {
-		return "", "", fmt.Errorf("command must contain exactly one non-empty --goal and --attempt-id")
+	if contextFields != 0 && contextFields != 3 {
+		return "", "", fmt.Errorf("generated /goal context requires session, profile, and mode together")
 	}
-	return goal, attemptID, nil
+	if contextFields == 0 && (values["--lead"] != "" || values["--lead-mode"] != "" || values["--target-contract"] != "") {
+		return "", "", fmt.Errorf("generated /goal optional context requires session, profile, and mode")
+	}
+	if contextFields == 3 {
+		if normalized, err := normalizeExecutionMode(values["--mode"]); err != nil || normalized != values["--mode"] {
+			return "", "", fmt.Errorf("generated /goal mode is invalid")
+		}
+		if leadMode := values["--lead-mode"]; leadMode != "" {
+			if normalized, err := normalizeLeadMode(leadMode); err != nil || normalized != leadMode || normalized == team.LeadModeBuilder {
+				return "", "", fmt.Errorf("generated /goal lead mode is invalid")
+			}
+		}
+	}
+	return goal, values["--attempt-id"], nil
 }
 
 func splitGeneratedGoalTokens(command string) ([]string, error) {
@@ -486,7 +530,7 @@ func splitGeneratedGoalTokens(command string) ([]string, error) {
 			if i < len(command) && !unicode.IsSpace(rune(command[i])) {
 				return nil, fmt.Errorf("quoted token has an invalid suffix")
 			}
-			value, err := strconv.Unquote(command[start:i])
+			value, err := unquoteGoalPromptValue(command[start:i])
 			if err != nil {
 				return nil, fmt.Errorf("invalid quoted token: %w", err)
 			}
@@ -628,8 +672,8 @@ func deliverResumeGoalAfterLaunch(t team.Team, profile, workstream string, resul
 		message := "resume launched the lead, but post-launch goal redelivery failed: " + err.Error()
 		state, attemptID, attemptPath := resumeGoalDeliveryErrorState(err)
 		switch state {
-		case goalDeliveryStateNativeQueued:
-			message += fmt.Sprintf("\nExact attempt %s is durably recorded at %s and native input is known queued. DO NOT retry or rerun resume; wait for/inspect the claim evidence.", attemptID, attemptPath)
+		case goalDeliveryStateNativeQueued, goalDeliveryStatePromptQueued:
+			message += fmt.Sprintf("\nExact attempt %s is durably recorded at %s and goal input is known queued. DO NOT retry or rerun resume; wait for/inspect the claim evidence.", attemptID, attemptPath)
 		case goalDeliveryStateFallbackSent:
 			message += fmt.Sprintf("\nExact attempt %s is durably recorded at %s and the AMQ fallback was already sent. DO NOT retry or rerun resume; inspect that message and claim evidence.", attemptID, attemptPath)
 		case goalDeliveryStatePaneDelivered:
@@ -661,6 +705,13 @@ func resumeGoalDeliveryErrorState(err error) (state, attemptID, attemptPath stri
 func reserveResumeGoalTransition(t team.Team, profile, workstream string, verified resumeExecLaunchResult, plan runwizard.ResumeGoalPlan) error {
 	check := verified.Check
 	opts := goalDeliveryOptions{Project: t.Project, Profile: profile, Session: workstream, Role: plan.LeadRole}
+	contract, err := goalDeliveryContractForBinary(check.Binary)
+	if err != nil {
+		return err
+	}
+	if plan.BindingMode != contract.Mode || plan.BindingNative != contract.NativeGoal {
+		return fmt.Errorf("saved goal plan does not match the %s delivery contract", contract.Binary)
+	}
 	if err := os.MkdirAll(goalAttemptDir(t.Project, profile, workstream), 0o755); err != nil {
 		return err
 	}
@@ -707,7 +758,7 @@ func reserveResumeGoalTransition(t team.Team, profile, workstream string, verifi
 			Role: plan.LeadRole, Handle: plan.LeadHandle, MemberSession: member.Session, MemberCWD: member.EffectiveCWD(currentTeam.Project), MemberBinary: member.Binary, GoalDigest: digestBytes([]byte(plan.Goal)),
 			OriginalAttemptID: plan.OriginalAttemptID, OriginalBindingDigest: plan.BindingDigest,
 			OriginalAttemptDigest: plan.AttemptDigest, OriginalClaimDigest: plan.ClaimDigest,
-			NewAttemptID: deliveryAttemptID(time.Now().UTC(), "native_goal", plan.LeadRole, plan.LeadHandle),
+			NewAttemptID: deliveryAttemptID(time.Now().UTC(), contract.Mode, plan.LeadRole, plan.LeadHandle),
 			LaunchID:     rec.BootstrapExpectation.LaunchID, LaunchStartedAt: rec.StartedAt.UTC(),
 			TeamRecordDigest: teamDigest, TeamRecordModTime: teamMod, LaunchRecordDigest: launchDigest, LaunchRecordModTime: launchMod,
 			CreatedAt: time.Now().UTC(),
@@ -853,10 +904,12 @@ func validateResumeGoalTransitionForDelivery(opts goalDeliveryOptions, mr member
 }
 
 func resumeGoalTransitionReservedBindingMatches(opts goalDeliveryOptions, tr resumeGoalTransitionRecord, binding *launch.GoalBinding) bool {
-	if binding == nil || binding.Mode != "native_goal" || !binding.NativeGoal || binding.Source != "goal-control" {
+	contract, err := goalDeliveryContractForBinary(opts.Member.Binary)
+	if err != nil {
 		return false
 	}
-	return binding.Command == nativeGoalControlPrompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, tr.NewAttemptID)
+	prompt := contract.prompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, tr.NewAttemptID)
+	return exactGoalBinding(binding, contract, opts.Goal, tr.NewAttemptID, prompt, "goal-control")
 }
 
 func validateResumeGoalTransitionBound(bound resumeGoalTransitionBound, tr resumeGoalTransitionRecord, launchDigest string, launchMod int64) error {
@@ -956,6 +1009,10 @@ func captureResumeGoalSendSnapshot(opts goalDeliveryOptions, tr *resumeGoalTrans
 		member.Session != tr.MemberSession || (member.Session != "" && member.Session != opts.Session) || canonicalPath(member.EffectiveCWD(currentTeam.Project)) != canonicalPath(tr.MemberCWD) || member.Binary != tr.MemberBinary {
 		return memberRuntime{}, resumeGoalSendSnapshot{}, fmt.Errorf("lead team identity changed before resume goal send")
 	}
+	contract, err := goalDeliveryContractForBinary(member.Binary)
+	if err != nil {
+		return memberRuntime{}, resumeGoalSendSnapshot{}, err
+	}
 	mr, _, err := resolveMemberRuntime(opts.Project, opts.Profile, opts.Session, true, opts.Role)
 	if err != nil || !mr.HasRecord || mr.Record.GoalBinding == nil {
 		return memberRuntime{}, resumeGoalSendSnapshot{}, fmt.Errorf("lead launch record unavailable before resume goal send")
@@ -965,8 +1022,8 @@ func captureResumeGoalSendSnapshot(opts goalDeliveryOptions, tr *resumeGoalTrans
 	if rec.Role != opts.Role || rec.Handle != opts.Member.Handle || rec.Session != opts.Session || !squadnamespace.ProfilesEqual(rec.TeamProfile, opts.Profile) ||
 		canonicalPath(rec.TeamHome) != canonicalPath(opts.Project) || canonicalPath(rec.Root) != canonicalPath(ns.AMQRoot) || canonicalPath(rec.CWD) != canonicalPath(member.EffectiveCWD(currentTeam.Project)) ||
 		rec.Binary != member.Binary || rec.Conversation != "" || rec.BootstrapExpectation == nil || !rec.BootstrapExpectation.Required || rec.BootstrapExpectation.LaunchID != tr.LaunchID ||
-		!rec.StartedAt.Equal(tr.LaunchStartedAt) || rec.Tmux == nil || rec.Tmux.Target == "adopted" || rec.GoalBinding.Mode != "native_goal" || !rec.GoalBinding.NativeGoal ||
-		rec.GoalBinding.Source != "goal-control" || rec.GoalBinding.Command != prompt {
+		!rec.StartedAt.Equal(tr.LaunchStartedAt) || rec.Tmux == nil || rec.Tmux.Target == "adopted" ||
+		!exactGoalBinding(rec.GoalBinding, contract, opts.Goal, attemptID, prompt, "goal-control") {
 		return memberRuntime{}, resumeGoalSendSnapshot{}, fmt.Errorf("lead launch identity/binding changed before resume goal send")
 	}
 	attemptPath, err := goalAttemptPath(opts.Project, opts.Profile, opts.Session, attemptID)
@@ -1016,6 +1073,13 @@ func revalidateResumeGoalAfterLaunch(t team.Team, profile, workstream string, ch
 	if !ok {
 		return fmt.Errorf("lead is no longer a team member")
 	}
+	contract, err := goalDeliveryContractForBinary(member.Binary)
+	if err != nil {
+		return err
+	}
+	if plan.BindingMode != contract.Mode || plan.BindingNative != contract.NativeGoal {
+		return fmt.Errorf("saved goal plan does not match the %s delivery contract", contract.Binary)
+	}
 	if canonicalPath(currentTeam.Project) != canonicalPath(t.Project) || member.Role != plan.LeadRole || memberHandle(member) != plan.LeadHandle {
 		return fmt.Errorf("current lead roster identity changed")
 	}
@@ -1059,11 +1123,11 @@ func revalidateResumeGoalAfterLaunch(t team.Team, profile, workstream string, ch
 	if rec.GoalBinding == nil || digestJSON(*rec.GoalBinding) != plan.BindingDigest || digestBytes([]byte(rec.GoalBinding.Command)) != plan.BindingCommandDigest {
 		return fmt.Errorf("saved goal binding changed")
 	}
-	goal, attemptID, err := parseGeneratedGoalBinding(rec.GoalBinding.Command)
+	goal, attemptID, err := goalBindingPayload(rec.GoalBinding, contract)
 	if err != nil || goal != plan.Goal || attemptID != plan.OriginalAttemptID {
 		return fmt.Errorf("saved goal command identity changed")
 	}
-	if expected := nativeGoalControlPrompt(goal, currentTeam, profile, workstream, plan.LeadRole, attemptID); rec.GoalBinding.Command != expected {
+	if expected := contract.prompt(goal, currentTeam, profile, workstream, plan.LeadRole, attemptID); !exactGoalBinding(rec.GoalBinding, contract, goal, attemptID, expected, "goal-control") {
 		return fmt.Errorf("saved goal command no longer matches the team contract")
 	}
 	attemptPath, err := goalAttemptPath(t.Project, profile, workstream, attemptID)
@@ -1086,7 +1150,7 @@ func resumeGoalRecoveryFromTypedError(t team.Team, profile, session, role, agent
 	var postErr *goalPostDeliveryBindingError
 	attemptID := ""
 	if errors.As(deliveryErr, &attemptErr) {
-		if attemptErr.State == goalDeliveryStateNativeQueued || attemptErr.State == goalDeliveryStateFallbackSent || attemptErr.State == goalDeliveryStatePaneDelivered {
+		if attemptErr.State == goalDeliveryStateNativeQueued || attemptErr.State == goalDeliveryStatePromptQueued || attemptErr.State == goalDeliveryStateFallbackSent || attemptErr.State == goalDeliveryStatePaneDelivered {
 			return ""
 		}
 		if !attemptErr.Sent && attemptErr.AttemptPath == "" {
@@ -1113,6 +1177,10 @@ func resumeGoalRecoveryFromTypedError(t team.Team, profile, session, role, agent
 	if !ok {
 		return ""
 	}
+	contract, err := goalDeliveryContractForBinary(member.Binary)
+	if err != nil {
+		return ""
+	}
 	path, err := goalAttemptPath(t.Project, profile, session, attemptID)
 	if err != nil {
 		return ""
@@ -1128,13 +1196,14 @@ func resumeGoalRecoveryFromTypedError(t team.Team, profile, session, role, agent
 	if err != nil || rec.GoalBinding == nil {
 		return ""
 	}
-	goal, boundID, err := parseGeneratedGoalBinding(rec.GoalBinding.Command)
+	goal, boundID, err := goalBindingPayload(rec.GoalBinding, contract)
 	ns := squadnamespace.Resolve(t.Project, profile, session)
-	if err != nil || boundID != attemptID || goal != attempt.Goal || rec.GoalBinding.Mode != "native_goal" || !rec.GoalBinding.NativeGoal || rec.GoalBinding.Source != "goal-control" ||
+	prompt := contract.prompt(goal, current, profile, session, role, attemptID)
+	if err != nil || boundID != attemptID || goal != attempt.Goal || !exactGoalBinding(rec.GoalBinding, contract, goal, attemptID, prompt, "goal-control") ||
 		rec.Role != role || rec.Handle != memberHandle(member) || rec.Session != session || !squadnamespace.ProfilesEqual(rec.TeamProfile, profile) ||
 		canonicalPath(rec.TeamHome) != canonicalPath(t.Project) || canonicalPath(rec.Root) != canonicalPath(ns.AMQRoot) || canonicalPath(rec.CWD) != canonicalPath(member.EffectiveCWD(current.Project)) ||
 		rec.Binary != member.Binary || rec.Conversation != "" || rec.BootstrapExpectation == nil || !rec.BootstrapExpectation.Required || rec.Tmux == nil || rec.Tmux.Target == "adopted" ||
-		rec.GoalBinding.Command != nativeGoalControlPrompt(goal, current, profile, session, role, attemptID) {
+		rec.GoalBinding.Command != prompt {
 		return ""
 	}
 	args := []string{"amq-squad", "goal", "retry-attempt", "--project", t.Project, "--profile", profile, "--session", session, "--role", role, "--attempt-id", attemptID, "--yes"}

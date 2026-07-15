@@ -1,8 +1,8 @@
 # ADR: Verification preflights for actions, merges, and releases
 
-Status: Approved incrementally for v2.3.0, v2.14.0, and v2.18.0
+Status: Approved incrementally for v2.3.0, v2.14.0, v2.18.0, and v2.21.0
 
-Issues: #164 (`verify merge`), #285 (`verify release`), #349 (`verify action`)
+Issues: #164 (`verify merge`), #285 (`verify release`), #349 (`verify action`), #414 (trusted authorization envelope)
 
 ## Context
 
@@ -83,17 +83,41 @@ High-risk actions use a stable operator gate bound to both an action kind and
 an exact target:
 
 ```sh
+amq-squad gate raise \
+  --project <repo> --profile <profile> --session <session> --me <handle> \
+  --gate <topic> --kind release --action github_release \
+  --target "draft v2.18.0 release for owner/repo"
+amq-squad operator answer \
+  --project <repo> --profile <profile> --session <session> \
+  --gate <topic> --approved
 amq-squad verify action \
   --project <repo> --profile <profile> --session <session> \
   --gate <topic> --action github_release \
-  --target "draft v2.18.0 release for owner/repo" --json
+  --target "draft v2.18.0 release for owner/repo" \
+  --emit-authorization --signing-key-file /secure/operator-authz.pem \
+  --authorization-out /secure/release-authz.json --json
+amq-squad verify authorization \
+  --file /secure/release-authz.json --action github_release \
+  --target "draft v2.18.0 release for owner/repo" \
+  --trust-store /secure/operator-authz-trust.json --json
 ```
 
-Both the gate question and the configured operator's later answer must contain
-matching `Action:` and `Target:` fields. Supported action classes include
+The gate question must contain strict `authorization_request` v1 context,
+and the configured operator's later answer must contain matching `approval` v2
+context and a receipt. The body repeats `Gate-Kind:`, `Action:`, and `Target:`
+for human diagnostics, but raw body text and v1 approvals are never typed
+authority. Supported action classes include
 default/protected branch pushes, tag operations, GitHub releases, and external
 sends. A matching `APPROVED:` answer passes; pending, denied, missing, and
 unbound or mismatched answers remain distinct non-zero outcomes.
+
+`verify action --list-kinds` is context-free. Human output lists the canonical
+hard-verifier actions and the custom-action path; JSON keeps sorted canonical
+actions in `actions` and puts the deterministic prose in
+`custom_action_guidance`. Aliases are never listed as action kinds. A custom
+action requires an explicitly bound operator gate with exact `Action` and
+`Target`, followed by manual verification; it is not silently mapped onto a
+built-in capability.
 
 This is a **callable verification boundary, not command interception**. A lead
 or wrapper that never invokes `verify action` is not blocked by the operating
@@ -103,9 +127,45 @@ not a tamper-proof security boundary against an actor that can bypass the CLI or
 forge local AMQ mailbox data. Any wrapper that performs a high-risk operation
 must call the preflight before executing that operation.
 
-`verify action` validates the durable gate state only. It never pushes, tags,
-publishes a release, sends externally, or otherwise performs the requested
-action.
+`verify action` validates the durable gate state only. With
+`--emit-authorization`, a human-approved typed PASS is normalized, signed with
+an explicit Ed25519 PKCS#8 key, and written as an immutable local artifact.
+`verify authorization` verifies that signature against an explicit trust store
+and revalidates all current authority before a wrapper consumes it. Neither
+command pushes, tags, publishes a release, sends externally, or otherwise
+performs the requested action.
+
+The typed request binds the taxonomy version, canonical gate/thread, exact
+current project/profile/session/namespace generation, operator-only recipient,
+current roster/session requester, allowed gate/action pair, and case-sensitive
+target. Canonical gate segments reject empty, dot, dot-dot, whitespace,
+control, and backslash aliases. `Target`, `Note`, and typed-answer `Reason` are
+valid UTF-8, exact single-line, trim-canonical, control-free fields. `Note` is
+excluded from action matching but remains integrity-bearing and must be
+preserved exactly by v2 bodies and receipts. Typed decisions come only from an
+exact one-line `APPROVED: <gate suffix>` or `DENIED: <gate suffix>` subject;
+body decision-like prose has no authority, and every binding line occurs
+exactly once. V2 reservations, preflight evidence, and receipts use
+collision-resistant hashed identities and immutable exact-tuple validation;
+legacy lossy filenames are diagnostic only. A malformed or misrouted latest
+typed question is a visible barrier and cannot fall back to older raw evidence.
+Legacy raw answer bodies remain unstructured diagnostic prose and can never be
+signed authority. Signed artifacts are human-only: self approvals are rejected.
+The fixed-schema length-prefixed canonical payload binds the exact namespace
+generation, gate kind, action, target, structured note, question/answer IDs and
+timestamps, actor, policy/preflight tuple, compound-release active generation,
+and a sorted digest list of the current approval receipt and other evidence.
+Private keys must be owner-controlled regular single-link files with exact mode
+`0600`; envelopes, receipts, preflight files, and trust stores are read through
+no-symlink bounded regular-file checks. Trust stores support overlapping Ed25519
+keys and explicit revocation. The consumer reloads trust after live authority
+revalidation, so revocation racing verification still fails closed.
+
+An authorization envelope remains a callable local verification boundary, not
+a bearer token and not command interception. Every consumer supplies the exact
+expected action/target, and `verify authorization` rechecks the current durable
+gate, receipt bytes, policy/preflight, and compound claim. Stale generations,
+changed evidence, revoked or unknown keys, and malformed artifacts are rejected.
 
 ## Release preflight: `verify release`
 

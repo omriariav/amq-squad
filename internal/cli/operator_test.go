@@ -210,6 +210,7 @@ func TestOperatorStatusDisabledProfileIsUnconfigured(t *testing.T) {
 
 func TestOperatorAnswerSendsApprovedGateAnswer(t *testing.T) {
 	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedLegacyOperatorQuestion(t, project, team.DefaultProfile, "s", "cto", "gate/release")
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-answer to cto\n")
 
 	stdout, stderr, err := captureOutput(t, func() error {
@@ -242,8 +243,122 @@ func TestOperatorAnswerSendsApprovedGateAnswer(t *testing.T) {
 	}
 }
 
+func TestOperatorAnswerNamedProfileUsesExactExplicitSessionRoot(t *testing.T) {
+	project := t.TempDir()
+	profile, session := "release", "session-s"
+	if err := team.WriteProfile(project, profile, team.Team{
+		Project: project,
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: session}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedLegacyOperatorQuestion(t, project, profile, session, "cto", "gate/release")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent named-answer to cto\n")
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runOperator([]string{
+			"answer", "--project", project, "--profile", profile, "--session", session,
+			"--gate", "release", "--to", "cto", "--approved", "--reason", "verified",
+		})
+	})
+	if err != nil {
+		t.Fatalf("operator answer: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("amq calls = %d, want 1", len(*calls))
+	}
+	wantRoot := filepath.Join(project, ".agent-mail", profile, session)
+	call := (*calls)[0]
+	for _, want := range []string{"send", "--root", wantRoot, "--me", "user", "--to", "cto", "--thread", "gate/release", "--kind", "answer", "--subject", "APPROVED: release", "--body", "verified"} {
+		if !argListContains(call.Arg, want) {
+			t.Fatalf("operator answer args missing %q: %v", want, call.Arg)
+		}
+	}
+	for key, want := range map[string]string{"AM_ROOT": wantRoot, "AM_BASE_ROOT": wantRoot, "AM_ME": team.DefaultOperatorHandle} {
+		if !envHas(call.Env, key, want) {
+			t.Fatalf("%s=%q missing from exact-root env: %v", key, want, call.Env)
+		}
+	}
+	if envHasPrefix(call.Env, "AM_SESSION", "") {
+		t.Fatalf("named-profile operator answer must omit AM_SESSION: %v", call.Env)
+	}
+}
+
+func TestOperatorAnswerExplicitSessionIgnoresLegacyCrossSessionResidue(t *testing.T) {
+	project := t.TempDir()
+	profile, targetSession, staleSession := "release", "session-s", "session-t"
+	cfg := team.Team{
+		Project: project, Orchestrated: true, Lead: "orchestrator", Workstream: staleSession,
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: staleSession},
+			{Role: "orchestrator", Binary: "codex", Handle: "orchestrator", Session: staleSession},
+		},
+	}
+	if err := team.WriteProfile(project, profile, cfg); err != nil {
+		t.Fatal(err)
+	}
+	seedLegacyOperatorQuestion(t, project, profile, targetSession, "cto", "gate/release")
+	profilePath := team.ProfilePath(project, profile)
+	before, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleBase := filepath.Join(project, ".agent-mail", profile)
+	staleRoot := filepath.Join(staleBase, staleSession)
+	seedAgentRecord(t, staleBase, staleSession, "cto", launch.Record{
+		CWD: project, Binary: "codex", Role: "cto", Handle: "cto", Session: staleSession,
+		Root: staleRoot, TeamProfile: profile, External: true,
+	})
+	seedAgentRecord(t, staleBase, staleSession, "orchestrator", launch.Record{
+		CWD: project, Binary: "codex", Role: "orchestrator", Handle: "orchestrator", Session: staleSession,
+		Root: staleRoot, TeamProfile: profile, External: true, AdoptionMode: adoptionModeExternalProjectLead,
+	})
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent explicit-answer to cto\n")
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runOperator([]string{
+			"answer", "--project", project, "--profile", profile, "--session", targetSession,
+			"--gate", "release", "--to", "cto", "--denied", "--reason", "not ready",
+		})
+	})
+	if err != nil {
+		t.Fatalf("operator answer: %v\nstderr:\n%s", err, stderr)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("amq calls = %d, want 1", len(*calls))
+	}
+	wantRoot := filepath.Join(project, ".agent-mail", profile, targetSession)
+	call := (*calls)[0]
+	if amqFlagValue(call.Arg, "to") != "cto" || !argListContains(call.Arg, wantRoot) || argListContains(call.Arg, staleRoot) {
+		t.Fatalf("operator answer args = %v, want target cto at exact %s and no stale %s", call.Arg, wantRoot, staleRoot)
+	}
+	for key, want := range map[string]string{"AM_ROOT": wantRoot, "AM_BASE_ROOT": wantRoot, "AM_ME": team.DefaultOperatorHandle} {
+		if !envHas(call.Env, key, want) {
+			t.Fatalf("%s=%q missing from exact-root env: %v", key, want, call.Env)
+		}
+	}
+	if envHasPrefix(call.Env, "AM_SESSION", "") {
+		t.Fatalf("named-profile operator answer must omit AM_SESSION: %v", call.Env)
+	}
+	after, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("operator answer mutated team profile\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	persisted, err := team.ReadProfile(project, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Lead != "orchestrator" || persisted.Workstream != staleSession {
+		t.Fatalf("legacy authority changed: lead=%q workstream=%q, want orchestrator/%s", persisted.Lead, persisted.Workstream, staleSession)
+	}
+}
+
 func TestOperatorAnswerSendsDeniedGateAnswerWithGatePrefix(t *testing.T) {
 	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedLegacyOperatorQuestion(t, project, team.DefaultProfile, "s", "cto", "gate/release")
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-denied to cto\n")
 
 	_, stderr, err := captureOutput(t, func() error {
@@ -265,6 +380,17 @@ func TestOperatorAnswerSendsDeniedGateAnswerWithGatePrefix(t *testing.T) {
 			t.Fatalf("operator denied args missing %q: %v", want, args)
 		}
 	}
+}
+
+func seedLegacyOperatorQuestion(t *testing.T, project, profile, session, from, gate string) {
+	t.Helper()
+	base := filepath.Join(project, ".agent-mail")
+	if profile != team.DefaultProfile {
+		base = filepath.Join(base, profile)
+	}
+	root := filepath.Join(base, session)
+	seedAgentRecord(t, base, session, from, launch.Record{CWD: project, Binary: "codex", Role: from, Handle: from, Session: session, Root: root, TeamProfile: profile, AgentPID: 42})
+	seedNotifyMessageToDir(t, filepath.Join(root, "agents", team.DefaultOperatorHandle), "new", notifyMsg{ID: "legacy-question", From: from, To: team.DefaultOperatorHandle, Thread: gate, Subject: "APPROVAL: legacy", Kind: string(state.KindQuestion), Created: notifyNow})
 }
 
 func TestOperatorDirectiveSendsTodoOnCanonicalThread(t *testing.T) {
@@ -302,6 +428,7 @@ func TestOperatorDirectiveSendsTodoOnCanonicalThread(t *testing.T) {
 
 func TestOperatorCommandsRefuseOperatorTarget(t *testing.T) {
 	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedLegacyOperatorQuestion(t, project, team.DefaultProfile, "s", "cto", "gate/release")
 	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg to user\n")
 
 	for _, tc := range []struct {
@@ -470,8 +597,8 @@ func TestOperatorStatusClosesGateAfterOperatorAnswer(t *testing.T) {
 		t.Fatalf("operator status: %v", err)
 	}
 	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
-	if env.Data.OperatorLoop.GatesOpen != 0 || len(env.Data.Attention) != 0 {
-		t.Fatalf("operator status after answer = gates:%d attention:%+v, want closed gate", env.Data.OperatorLoop.GatesOpen, env.Data.Attention)
+	if env.Data.OperatorLoop.GatesOpen != 0 || env.Data.OperatorLoop.Backlog != 0 || len(env.Data.Attention) != 0 {
+		t.Fatalf("operator status after answer = gates:%d backlog:%d attention:%+v, want terminal gate suppressed", env.Data.OperatorLoop.GatesOpen, env.Data.OperatorLoop.Backlog, env.Data.Attention)
 	}
 }
 

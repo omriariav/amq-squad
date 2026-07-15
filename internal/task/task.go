@@ -21,30 +21,176 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-// Status values for the five-state machine.
+// Status values for the six-state machine.
 const (
 	StatusPending    = "pending"
 	StatusInProgress = "in_progress"
 	StatusCompleted  = "completed"
 	StatusFailed     = "failed"
 	StatusBlocked    = "blocked"
+	StatusCancelled  = "cancelled"
 )
+
+// AttentionLifecycle is the derived operator-attention lifecycle of a task.
+// It is intentionally separate from the persisted execution status: existing
+// stores keep their six-state schema while completed/cancelled work projects to
+// closed, and replacement-linked cancellation projects to superseded.
+type AttentionLifecycle string
+
+const (
+	AttentionLifecycleClosed     AttentionLifecycle = "closed"
+	AttentionLifecycleSuperseded AttentionLifecycle = "superseded"
+)
+
+func AttentionLifecycleFor(t Task) AttentionLifecycle {
+	switch t.Status {
+	case StatusCompleted:
+		return AttentionLifecycleClosed
+	case StatusCancelled:
+		if strings.TrimSpace(t.ReplacedBy) != "" {
+			return AttentionLifecycleSuperseded
+		}
+		return AttentionLifecycleClosed
+	default:
+		return AttentionLifecycle(t.Status)
+	}
+}
+
+func IsAttentionLifecycleTerminal(t Task) bool {
+	switch AttentionLifecycleFor(t) {
+	case AttentionLifecycleClosed, AttentionLifecycleSuperseded:
+		return true
+	default:
+		return false
+	}
+}
+
+const DefaultLeaseDuration = 2 * time.Hour
 
 // Task is one unit of work in a workstream's task store.
 type Task struct {
-	ID            string    `json:"id"`
-	Title         string    `json:"title"`
-	Description   string    `json:"description,omitempty"`
-	Status        string    `json:"status"`
-	AssignedTo    string    `json:"assigned_to,omitempty"`
-	DependsOn     []string  `json:"depends_on,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	Evidence      string    `json:"evidence,omitempty"`
-	FailureReason string    `json:"failure_reason,omitempty"`
-	BlockReason   string    `json:"block_reason,omitempty"`
-	ResetReason   string    `json:"reset_reason,omitempty"`
-	Dispatch      *Dispatch `json:"dispatch,omitempty"`
+	ID                      string               `json:"id"`
+	Title                   string               `json:"title"`
+	Description             string               `json:"description,omitempty"`
+	Status                  string               `json:"status"`
+	AssignedTo              string               `json:"assigned_to,omitempty"`
+	DependsOn               []string             `json:"depends_on,omitempty"`
+	CreatedAt               time.Time            `json:"created_at"`
+	UpdatedAt               time.Time            `json:"updated_at"`
+	Evidence                string               `json:"evidence,omitempty"`
+	FailureReason           string               `json:"failure_reason,omitempty"`
+	BlockReason             string               `json:"block_reason,omitempty"`
+	ResetReason             string               `json:"reset_reason,omitempty"`
+	CancelReason            string               `json:"cancel_reason,omitempty"`
+	ReadyAt                 *time.Time           `json:"ready_at,omitempty"`
+	Lease                   *Lease               `json:"lease,omitempty"`
+	DependencyOverrides     []DependencyOverride `json:"dependency_overrides,omitempty"`
+	Replaces                string               `json:"replaces,omitempty"`
+	ReplacedBy              string               `json:"replaced_by,omitempty"`
+	ReviewOf                string               `json:"review_of,omitempty"`
+	ReviewTasks             []string             `json:"review_tasks,omitempty"`
+	FinalHead               string               `json:"final_head,omitempty"`
+	Outbox                  []OutboxIntent       `json:"outbox,omitempty"`
+	Releases                []ReleaseAudit       `json:"releases,omitempty"`
+	NotificationSuppression *SuppressionAudit    `json:"completion_notification_suppressed,omitempty"`
+	Dispatch                *Dispatch            `json:"dispatch,omitempty"`
+}
+
+// Lease is issued on every new claim. Expiry is evidence for reconcile and
+// explicit recovery only: it never silently unclaims or reassigns a worker.
+// Legacy in_progress task files without this field remain owned and are
+// reported as legacy_unleased.
+type Lease struct {
+	Owner           string     `json:"owner"`
+	IssuedAt        time.Time  `json:"issued_at"`
+	RenewedAt       time.Time  `json:"renewed_at"`
+	ExpiresAt       time.Time  `json:"expires_at"`
+	StaleObservedAt *time.Time `json:"stale_observed_at,omitempty"`
+}
+
+type DependencyState struct {
+	TaskID string `json:"task_id"`
+	Status string `json:"status"`
+}
+
+type DependencyOverride struct {
+	Actor  string            `json:"actor"`
+	Reason string            `json:"reason"`
+	At     time.Time         `json:"at"`
+	Unmet  []DependencyState `json:"unmet"`
+}
+
+const (
+	OutboxPending   = "pending"
+	OutboxSending   = "sending"
+	OutboxUncertain = "delivery_uncertain"
+	OutboxDelivered = "delivered"
+	OutboxFailed    = "failed"
+)
+
+const (
+	DeliveryFailedBeforeInvoke = "failed_before_invoke"
+	DeliveryUncertain          = "delivery_uncertain"
+	DeliveryDelivered          = "delivered"
+)
+
+// DeliveryOutcome is the typed command-boundary truth consumed by the task
+// lifecycle. It deliberately distinguishes failures proven before AMQ was
+// invoked from invoked/no-ID outcomes, which are unsafe to retry blindly.
+type DeliveryOutcome struct {
+	State     string
+	MessageID string
+	Error     string
+}
+
+type ReceiptLink struct {
+	AttemptID string `json:"attempt_id"`
+	Path      string `json:"path"`
+}
+
+// OutboxIntent is committed with the task transition before any AMQ send.
+// A process crash in Sending is deliberately uncertain and never auto-retried.
+type OutboxIntent struct {
+	ID               string        `json:"id"`
+	TaskID           string        `json:"task_id"`
+	Type             string        `json:"type"`
+	State            string        `json:"state"`
+	From             string        `json:"from"`
+	To               string        `json:"to"`
+	Thread           string        `json:"thread,omitempty"`
+	Kind             string        `json:"kind"`
+	Subject          string        `json:"subject"`
+	Body             string        `json:"body,omitempty"`
+	MessageID        string        `json:"message_id,omitempty"`
+	ReceiptAttemptID string        `json:"receipt_attempt_id,omitempty"`
+	ReceiptPath      string        `json:"receipt_path,omitempty"`
+	ReceiptAttempts  []ReceiptLink `json:"receipt_attempts,omitempty"`
+	LastError        string        `json:"last_error,omitempty"`
+	CreatedAt        time.Time     `json:"created_at"`
+	UpdatedAt        time.Time     `json:"updated_at"`
+	RetryAudits      []RetryAudit  `json:"retry_audits,omitempty"`
+}
+
+type RetryAudit struct {
+	Actor                 string    `json:"actor"`
+	Reason                string    `json:"reason"`
+	At                    time.Time `json:"at"`
+	PreviousState         string    `json:"previous_state,omitempty"`
+	ConfirmedNotDelivered bool      `json:"confirmed_not_delivered,omitempty"`
+	ReceiptAttemptID      string    `json:"receipt_attempt_id,omitempty"`
+	ReceiptPath           string    `json:"receipt_path,omitempty"`
+}
+
+type ReleaseAudit struct {
+	Actor  string    `json:"actor"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
+}
+
+type SuppressionAudit struct {
+	Actor  string    `json:"actor"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
 }
 
 // AddInput is the create payload for Add.
@@ -53,17 +199,20 @@ type AddInput struct {
 	Description string
 	DependsOn   []string
 	AssignTo    string
+	ReviewOf    string
 }
 
 // Dispatch records the durable AMQ message linked to a native task.
 type Dispatch struct {
-	Sender       string    `json:"sender,omitempty"`
-	Assignee     string    `json:"assignee,omitempty"`
-	Thread       string    `json:"thread,omitempty"`
-	Kind         string    `json:"kind,omitempty"`
-	Subject      string    `json:"subject,omitempty"`
-	MessageID    string    `json:"message_id,omitempty"`
-	DispatchedAt time.Time `json:"dispatched_at,omitempty"`
+	Sender           string    `json:"sender,omitempty"`
+	Assignee         string    `json:"assignee,omitempty"`
+	Thread           string    `json:"thread,omitempty"`
+	Kind             string    `json:"kind,omitempty"`
+	Subject          string    `json:"subject,omitempty"`
+	MessageID        string    `json:"message_id,omitempty"`
+	ReceiptAttemptID string    `json:"receipt_attempt_id,omitempty"`
+	ReceiptPath      string    `json:"receipt_path,omitempty"`
+	DispatchedAt     time.Time `json:"dispatched_at,omitempty"`
 }
 
 // Dir is the default-profile task directory for a workstream.
@@ -104,6 +253,11 @@ func AddForProfile(projectDir, profile, session string, in AddInput, now time.Ti
 				return fmt.Errorf("depends-on task %q does not exist", dep)
 			}
 		}
+		readyAt := (*time.Time)(nil)
+		if len(dedupeNonEmpty(in.DependsOn)) == 0 {
+			ready := now
+			readyAt = &ready
+		}
 		created = Task{
 			ID:          allocID(tasks),
 			Title:       strings.TrimSpace(in.Title),
@@ -113,8 +267,20 @@ func AddForProfile(projectDir, profile, session string, in AddInput, now time.Ti
 			DependsOn:   dedupeNonEmpty(in.DependsOn),
 			CreatedAt:   now,
 			UpdatedAt:   now,
+			ReadyAt:     readyAt,
+			ReviewOf:    strings.TrimSpace(in.ReviewOf),
 		}
-		return writeTask(dir, created)
+		changed := []Task{created}
+		if created.ReviewOf != "" {
+			target := byID[created.ReviewOf]
+			if target == nil {
+				return fmt.Errorf("review-of task %q does not exist", created.ReviewOf)
+			}
+			target.ReviewTasks = appendUniqueSorted(target.ReviewTasks, created.ID)
+			target.UpdatedAt = now
+			changed = append(changed, *target)
+		}
+		return commitTasks(dir, changed, now)
 	})
 	return created, err
 }
@@ -125,7 +291,12 @@ func List(projectDir, session string) ([]Task, error) {
 }
 
 func ListForProfile(projectDir, profile, session string) ([]Task, error) {
-	tasks, err := readAll(DirForProfile(projectDir, profile, session))
+	var tasks []Task
+	err := withReadLockForProfile(projectDir, profile, session, func(dir string) error {
+		var err error
+		tasks, err = readAll(dir)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +310,7 @@ func Show(projectDir, session, id string) (Task, error) {
 }
 
 func ShowForProfile(projectDir, profile, session, id string) (Task, error) {
-	tasks, err := readAll(DirForProfile(projectDir, profile, session))
+	tasks, err := ListForProfile(projectDir, profile, session)
 	if err != nil {
 		return Task{}, err
 	}
@@ -158,28 +329,7 @@ func Claim(projectDir, session, id, handle string, now time.Time) (Task, error) 
 }
 
 func ClaimForProfile(projectDir, profile, session, id, handle string, now time.Time) (Task, error) {
-	if strings.TrimSpace(handle) == "" {
-		return Task{}, fmt.Errorf("--me handle is required to claim a task")
-	}
-	return mutateForProfile(projectDir, profile, session, id, func(t *Task, all map[string]*Task) error {
-		if t.Status != StatusPending {
-			return fmt.Errorf("task %s is %s, not pending; only pending tasks can be claimed", id, t.Status)
-		}
-		for _, dep := range t.DependsOn {
-			d := all[dep]
-			if d == nil {
-				return fmt.Errorf("task %s depends on %s, which does not exist", id, dep)
-			}
-			if d.Status != StatusCompleted {
-				return fmt.Errorf("task %s is blocked on %s (%s); complete it first", id, dep, d.Status)
-			}
-		}
-		t.Status = StatusInProgress
-		t.AssignedTo = strings.TrimSpace(handle)
-		t.Evidence, t.FailureReason, t.BlockReason, t.ResetReason = "", "", "", ""
-		t.UpdatedAt = now
-		return nil
-	})
+	return ClaimWithOptionsForProfile(projectDir, profile, session, id, ClaimOptions{Actor: handle, LeaseDuration: DefaultLeaseDuration, Now: now})
 }
 
 // Done / Fail / Block are the in_progress → terminal transitions.
@@ -188,7 +338,8 @@ func Done(projectDir, session, id, actor, evidence string, now time.Time) (Task,
 }
 
 func DoneForProfile(projectDir, profile, session, id, actor, evidence string, now time.Time) (Task, error) {
-	return terminalForProfile(projectDir, profile, session, id, actor, StatusCompleted, func(t *Task) { t.Evidence = strings.TrimSpace(evidence) }, now)
+	result, err := DoneAtomicForProfile(projectDir, profile, session, id, DoneOptions{Actor: actor, Evidence: evidence, Notify: true, Now: now})
+	return result.Task, err
 }
 
 func Fail(projectDir, session, id, actor, reason string, now time.Time) (Task, error) {
@@ -222,7 +373,8 @@ func ResetForProfile(projectDir, profile, session, id, actor, reason string, now
 		}
 		t.Status = StatusPending
 		t.AssignedTo = ""
-		t.Evidence, t.FailureReason, t.BlockReason = "", "", ""
+		t.Lease = nil
+		t.Evidence, t.FailureReason, t.BlockReason, t.CancelReason = "", "", "", ""
 		if trimmed := strings.TrimSpace(reason); trimmed != "" {
 			t.ResetReason = trimmed
 		} else {
@@ -270,6 +422,7 @@ func terminalForProfile(projectDir, profile, session, id, actor, to string, set 
 			return err
 		}
 		t.Status = to
+		t.Lease = nil
 		set(t)
 		t.UpdatedAt = now
 		return nil
@@ -315,7 +468,7 @@ func mutateForProfile(projectDir, profile, session, id string, fn func(t *Task, 
 			return err
 		}
 		out = *t
-		return writeTask(dir, *t)
+		return commitTasks(dir, []Task{*t}, t.UpdatedAt)
 	})
 	return out, err
 }
@@ -329,7 +482,28 @@ func withLockForProfile(projectDir, profile, session string, fn func(dir string)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("ensure task dir %s: %w", dir, err)
 	}
-	return flock.WithLock(filepath.Join(dir, ".lock"), func() error { return fn(dir) })
+	return flock.WithLock(filepath.Join(dir, ".lock"), func() error {
+		if _, err := recoverCommittedTransaction(dir); err != nil {
+			return err
+		}
+		return fn(dir)
+	})
+}
+
+func withReadLockForProfile(projectDir, profile, session string, fn func(dir string) error) error {
+	dir := DirForProfile(projectDir, profile, session)
+	if _, err := os.Stat(dir); err != nil {
+		if os.IsNotExist(err) {
+			return fn(dir)
+		}
+		return err
+	}
+	return flock.WithLock(filepath.Join(dir, ".lock"), func() error {
+		if _, err := recoverCommittedTransaction(dir); err != nil {
+			return err
+		}
+		return fn(dir)
+	})
 }
 
 func readAll(dir string) ([]Task, error) {
@@ -345,7 +519,7 @@ func readAll(dir string) ([]Task, error) {
 		// Only finished task files. A crash leaves a "<id>.json.tmp" behind,
 		// which ends in .tmp (not .json) and is correctly skipped here; the
 		// real file only appears after the atomic rename, never partial.
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
@@ -359,22 +533,6 @@ func readAll(dir string) ([]Task, error) {
 		tasks = append(tasks, t)
 	}
 	return tasks, nil
-}
-
-func writeTask(dir string, t Task) error {
-	b, err := json.MarshalIndent(t, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal task: %w", err)
-	}
-	path := filepath.Join(dir, t.ID+".json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return fmt.Errorf("write tmp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("rename: %w", err)
-	}
-	return nil
 }
 
 // indexByID maps id → *Task pointing into the input slice. The pointers are
@@ -433,4 +591,19 @@ func sortTasks(tasks []Task) {
 		}
 		return tasks[i].ID < tasks[j].ID
 	})
+}
+
+func appendUniqueSorted(in []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return in
+	}
+	for _, existing := range in {
+		if existing == value {
+			return in
+		}
+	}
+	out := append(append([]string(nil), in...), value)
+	sort.Strings(out)
+	return out
 }

@@ -252,6 +252,7 @@ Examples:
 		return usageErrorf("agent up requires a binary (e.g. 'amq-squad agent up codex --role cpo')")
 	}
 	binary := remaining[0]
+	wakeInjectModeValue = resolveWakeInjectModeForBinary(wakeInjectModeValue, binary)
 	if *symphony && normalizedAgentBinary(binary) != "codex" {
 		return usageErrorf("--symphony is only supported for Codex agents; got %s", binary)
 	}
@@ -271,8 +272,8 @@ Examples:
 			return err
 		}
 	}
-	if restoredGoalBinding != nil && nativeGoalBindingFromArgs(childArgs) != nil {
-		return usageErrorf("--restore-goal-binding cannot be combined with a native /goal child argument")
+	if restoredGoalBinding != nil && goalBindingFromArgs(binary, childArgs) != nil {
+		return usageErrorf("--restore-goal-binding cannot be combined with a goal child argument")
 	}
 
 	handle := *me
@@ -285,7 +286,25 @@ Examples:
 		return fmt.Errorf("getwd: %w", err)
 	}
 
-	teamProfileValue := strings.TrimSpace(*teamProfile)
+	profileExplicit := flagWasSet(fs, "profile") || flagWasSet(fs, "team-profile")
+	resolvedContext, err := resolveCanonicalContext(contextResolveOptions{
+		ProfileFlag: strings.TrimSpace(*teamProfile), SessionFlag: *session, HandleFlag: handle, RootFlag: *rootFlag,
+		ProfileExplicit: profileExplicit, SessionExplicit: flagWasSet(fs, "session"), HandleExplicit: flagWasSet(fs, "me"), RootExplicit: flagWasSet(fs, "root") && !flagWasSet(fs, "session"),
+	})
+	if err != nil {
+		return err
+	}
+	emitContextDiagnostics(resolvedContext)
+	teamProfileValue := resolvedContext.Profile
+	if !flagWasSet(fs, "session") && resolvedContext.Sources["session"] != contextSourceDefault {
+		*session = resolvedContext.Session
+	}
+	if !flagWasSet(fs, "root") && resolvedContext.Sources["root"] != contextSourceDefault {
+		*rootFlag = resolvedContext.Root
+	}
+	if !flagWasSet(fs, "me") && resolvedContext.Handle != "" {
+		handle = resolvedContext.Handle
+	}
 	rootForLaunch := launchRootFromFlags(cwd, *rootFlag, *session, teamProfileValue)
 
 	// Resolve the AMQ env via the amq CLI so launch.json and the actual
@@ -357,7 +376,7 @@ Examples:
 		TeamHome:                     strings.TrimSpace(*teamHome),
 	}
 	if rec.GoalBinding == nil {
-		rec.GoalBinding = nativeGoalBindingFromArgs(childArgs)
+		rec.GoalBinding = goalBindingFromArgs(binary, childArgs)
 	}
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD
@@ -505,6 +524,57 @@ Examples:
 		quietNotice("(dry run - no files written, not execing)\n")
 		verbosePolicyEcho()
 		return nil
+	}
+	if strings.TrimSpace(env.SessionName) != "" {
+		admissionProject := rec.TeamHome
+		if !filepath.IsAbs(admissionProject) {
+			admissionProject = filepath.Join(cwd, admissionProject)
+		}
+		admissionProject = filepath.Clean(admissionProject)
+		initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(admissionProject, teamProfileValue, env.SessionName), handle)
+		if err != nil {
+			return err
+		}
+		admission, err := acquireNamespaceWriterAdmission(admissionProject, teamProfileValue, env.SessionName)
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		currentContext, err := resolveCanonicalContext(contextResolveOptions{
+			ProfileFlag: strings.TrimSpace(*teamProfile), SessionFlag: *session, HandleFlag: handle, RootFlag: *rootFlag,
+			ProfileExplicit: profileExplicit, SessionExplicit: flagWasSet(fs, "session"), HandleExplicit: flagWasSet(fs, "me"), RootExplicit: flagWasSet(fs, "root") && !flagWasSet(fs, "session"),
+		})
+		if err != nil {
+			return fmt.Errorf("agent up refused: context re-resolution under admission failed: %w", err)
+		}
+		if err := validateReResolvedContext(resolvedContext, currentContext, false); err != nil {
+			return err
+		}
+		currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(admissionProject, currentContext.Profile, currentContext.Session), currentContext.Handle)
+		if err != nil {
+			return err
+		}
+		if err := validateReResolvedEndpointIdentity("agent up", initialIdentity, currentIdentity); err != nil {
+			return err
+		}
+		currentRootForLaunch := launchRootFromFlags(cwd, *rootFlag, *session, currentContext.Profile)
+		currentEnv, err := resolveAMQEnvForLaunch(cwd, currentRootForLaunch, *session, currentContext.Profile, currentContext.Handle)
+		if err != nil {
+			return fmt.Errorf("agent up refused: AMQ identity re-resolution under admission failed: %w", err)
+		}
+		currentHandle := currentContext.Handle
+		if currentEnv.Me != "" {
+			currentHandle = currentEnv.Me
+		}
+		if filepath.Clean(absoluteAMQRoot(cwd, currentEnv.Root)) != filepath.Clean(root) || strings.TrimSpace(currentEnv.SessionName) != strings.TrimSpace(env.SessionName) || currentHandle != handle {
+			return fmt.Errorf("agent up refused: AMQ launch identity changed before admission; retry")
+		}
+		if err := ensureLaunchTargetIsNotOperator(admissionProject, currentContext.Profile, "agent up", *roleFlag, currentHandle); err != nil {
+			return err
+		}
+		if err := ensureNoNamespaceConflict("agent up", admissionProject, teamProfileValue, env.SessionName, profileExplicit); err != nil {
+			return err
+		}
 	}
 	if err := validateManagedTmuxLaunch(rec); err != nil {
 		return err
@@ -706,15 +776,26 @@ func launchRootFromFlags(cwd, rootFlag, session, profile string) string {
 }
 
 func nativeGoalBindingFromArgs(args []string) *launch.GoalBinding {
+	return goalBindingFromArgs("claude", args)
+}
+
+func goalBindingFromArgs(binary string, args []string) *launch.GoalBinding {
+	contract, err := goalDeliveryContractForBinary(binary)
+	if err != nil {
+		return nil
+	}
 	for _, arg := range args {
 		cmd := strings.TrimSpace(arg)
-		if cmd == "/goal" || strings.HasPrefix(cmd, "/goal ") {
-			return &launch.GoalBinding{
-				Mode:       "native_goal",
-				NativeGoal: true,
-				Source:     "launch-argv",
-				Command:    cmd,
-				Detail:     "launch argv included a native /goal command for the visible lead",
+		if contract.NativeGoal && (cmd == "/goal" || strings.HasPrefix(cmd, "/goal ")) {
+			goal, attemptID, parseErr := parseNativeGoalBindingCommand(cmd)
+			if parseErr == nil {
+				return contract.binding(goal, attemptID, cmd, "launch-argv", "launch argv included a native /goal command for the visible lead")
+			}
+		}
+		if !contract.NativeGoal && strings.HasPrefix(cmd, "AMQ-SQUAD PROMPT GOAL v1\n") {
+			goal, attemptID, parseErr := parseCodexGoalControlPrompt(cmd)
+			if parseErr == nil && goal != "" {
+				return contract.binding(goal, attemptID, cmd, "launch-argv", "launch argv included a structured prompt goal for a Codex visible lead")
 			}
 		}
 	}

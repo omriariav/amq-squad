@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.20.1](#whats-new-in-v2201)
+- [What's new in v2.21.0](#whats-new-in-v2210)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,18 +38,37 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.20.1
+## What's new in v2.21.0
 
-v2.20.1 fixes restored native-goal metadata in the interactive resume path:
+v2.21.0 adds a fail-closed execution and authorization layer for long-running
+agent teams:
 
-- **Wizard resume preserves `--restore-goal-binding` as launcher metadata.**
-  The `agent up <binary> [flags]` translator now recognizes the internal
-  restore flag, so it is parsed by amq-squad instead of being forwarded to
-  Codex after a synthesized `--` child-argument boundary.
-- **Regression coverage pins the generated command shape.** The test exercises
-  the post-binary JSON flag exactly where restored wizard commands place it.
+- **Trusted authorization envelopes (#414).** A verified human approval can be
+  emitted as an immutable signed Ed25519 envelope; consumers revalidate its
+  signature, trust/revocation state, exact action and target, durable gate,
+  receipt, namespace generation, policy/preflight, and compound-release claim.
+  The envelope verifies authority; it is not a bearer token or automatic
+  shell, Git, tag, or release action.
+- **Terminal operator-gate lifecycle (#464).** Requesters can close or withdraw
+  the exact current gate generation. Answered, closed, and withdrawn gates stop
+  escalating, while later valid requests reopen with a fresh clock. Completed
+  tasks project to closed attention, cancelled tasks project to closed, and a
+  cancelled task with `ReplacedBy` projects to superseded; failed and blocked
+  tasks remain attention-bearing.
+- **Safe own-pane waits (#416).** In `lead_pane` mode, verified lead waits are
+  refused when caller-raised gates remain open, waits exceed 120 seconds, or
+  waits are unbounded. Deliberate overrides require a reason and durable audit.
+- **Durable tasks, sends, and namespaces.** Task completion and successor
+  dispatch use journals and outbox intents; owned AMQ sends persist delivery
+  receipts; canonical context resolution and cold namespace migration fail
+  closed on ambiguous state.
+- **Stronger launch/runtime recovery.** Fresh AMQ roots bootstrap explicitly,
+  Codex goal delivery is claim-once and resumable, external orchestrator
+  registration is transactional, wake injection is marker-safe, and managed
+  pane cleanup refuses uncertain ownership.
 
-See [the v2.20.1 release notes](docs/v2.20.1-release-notes.md) for details.
+See [the v2.21.0 release notes](docs/v2.21.0-release-notes.md) for the complete
+issue-to-behavior map.
 
 ## Install
 
@@ -63,7 +82,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.20.1
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.21.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
@@ -271,7 +290,9 @@ Safety is part of that protocol:
 - Planner/reviewer-only lead mode (`--lead-mode planner`) prevents a lead from
   treating itself as the implementer.
 - High-risk actions require an operator gate bound to an exact `Action:` and
-  `Target:`. Use `amq-squad verify action` before default/protected branch
+  `Target:`. Raise it with `amq-squad gate raise`; the command sends a typed
+  `authorization_request` context as part of the durable AMQ question.
+  Use `amq-squad verify action` before default/protected branch
   pushes, tags, GitHub releases, external sends, or similar release-critical
   steps.
 - `verify action` is a callable verification boundary, not command
@@ -345,18 +366,60 @@ it before amq-squad receives argv. For bare `amq send`, use `--body -` or
 amq-squad task add --session issue-96 --title "Implement fix" --assign fullstack
 amq-squad dispatch --session issue-96 --role fullstack --task t1 --subject "Implement fix" --body-file ./task.md
 amq-squad activity set --session issue-96 --me fullstack --task t1 --phase testing
+amq-squad task done t1 --session issue-96 --me fullstack --evidence "commit abc" --dispatch-next t2
+amq-squad task reconcile --session issue-96 --json
 amq-squad threads --session issue-96
 amq-squad thread --session issue-96 --id p2p/cto__fullstack --include-body=false
 ```
 
+`task done` commits completion, dependent readiness, an optional successor
+claim, and delivery intents before sending AMQ. When the task has a dispatch
+counterpart it sends the canonical completion signal by default: AMQ kind
+`status` with subject `DONE: <task title>` (`--no-notify` records explicit
+suppression). Claims carry renewable leases; reconcile reports stale or legacy
+leases without silently unclaiming work and never auto-retries an uncertain
+delivery.
+
 Safety preflights:
 
 ```sh
+amq-squad gate raise --project . --session issue-96 --me cto \
+  --gate release --kind release --action github_release \
+  --target "publish v2.21.0 GitHub release"
+amq-squad operator answer --project . --session issue-96 \
+  --gate release --approved
 amq-squad verify action --project . --session issue-96 \
-  --gate release --action github_release --target "publish v2.20.0 GitHub release"
+  --gate release --action github_release --target "publish v2.21.0 GitHub release" \
+  --emit-authorization --signing-key-file /secure/operator-authz.pem \
+  --authorization-out /secure/release-authz.json
+amq-squad verify authorization --file /secure/release-authz.json \
+  --action github_release --target "publish v2.21.0 GitHub release" \
+  --trust-store /secure/operator-authz-trust.json
 amq-squad verify merge --evidence merge-evidence.json
 amq-squad verify release --evidence release-evidence.json
 ```
+
+`gate raise --list-kinds --json`, `operator answer --list-kinds --json`, and
+`verify action --list-kinds --json` expose the same context-free versioned
+action catalog. The verifier listing keeps custom actions outside the hard-kind
+array and carries explicit guidance that they require an exact Action/Target
+operator gate plus manual verification. Canonical gate topics reject empty,
+dot, dot-dot, whitespace,
+control, and backslash path segments. Typed `Target`, `Note`, and answer
+`Reason` values are exact, valid UTF-8, single-line, trim-canonical, and
+control-free; optional action/target overrides must match exactly. Decisions
+come only from the exact `APPROVED: <topic>` or `DENIED: <topic>` subject, while
+the body must repeat each typed binding exactly once. V2 receipts, reservations,
+and preflight evidence use collision-resistant hashed identities and immutable
+tuple validation. Legacy raw answers remain unstructured readable diagnostics
+and cannot authorize an action. A human-approved typed PASS can emit an
+immutable Ed25519 authorization envelope when the caller supplies an explicit
+owner-controlled PKCS#8 key (`0600`). `verify authorization` checks an explicit
+public trust store, exact caller action/target, and the current namespace, gate,
+answer, receipt bytes, policy/preflight, and compound-release generation before
+returning PASS. Revoked/untrusted keys, stale evidence, symlinks, and changed
+authority fail closed. The envelope is a normalized callable boundary for CLI,
+reviewers, and connectors; it never performs the external action.
 
 The action, merge, and final-release-commit contracts are documented together
 in [docs/verification-gate-adr.md](docs/verification-gate-adr.md).
@@ -410,10 +473,11 @@ Invoke skills in Claude Code as `/amq-squad:<skill>` and in Codex as
 `$<skill>`.
 
 Model guidance is intentionally skill-owned because it changes faster than the
-binary. For v2.20.0, use the current model family and per-role model/effort
-recommendations in the installed skills; treat cost as a tie-breaker after
-output quality for shippable work. Prefer that guidance over copying model
-examples from this README.
+binary. For v2.21.0, use the current model family and per-role model/effort
+recommendations in the installed v2.21.0 skills; confirm the startup marker
+`amq-squad skill v2.21.0` matches `amq-squad version`. Treat cost as a
+tie-breaker after output quality for shippable work, and prefer installed-skill
+guidance over copying model examples from this README.
 
 Deep guide: [docs/skills.md](docs/skills.md)
 ([HTML](docs/skills.html)).
@@ -483,7 +547,8 @@ same-cwd squads; Codex workers use native Codex profiles via `codex_args`.
 
 Claude members may also carry an explicit, role-scoped
 `permission_allowlist`, for example
-`"permission_allowlist": ["Bash(rm -rf /tmp/qa-review/*:*)"]`. amq-squad
+`"permission_allowlist": ["Bash(amq-squad review-worktree remove:*)"]`.
+amq-squad
 merges those patterns into one effective `--allowedTools` grant for that member
 only, records the result in launch history, and shows both the configured and
 effective lists in `up --dry-run --json`. Values beginning with `-` are rejected
@@ -497,6 +562,8 @@ explicit-native provenance separately even when their values are identical.
 Keep each pattern as
 narrow as the member's own scratch or review workspace; the field is rejected
 on non-Claude members and is intentionally not a team-wide trust switch.
+An allowlist grants native tool permission; it does not override the generated
+team rules' `## Workspace Safety and Cleanup` prohibition on `rm -rf`.
 
 Profiles using `permission_allowlist` are written as team schema 4; profiles
 without it remain schema 3. v2.20+ readers accept both and reject future
@@ -592,10 +659,15 @@ amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or other goal
 sources happens in the skills or operator tooling; the core binary owns team,
 runtime, and coordination state.
 
+The minimum 0.42.1 compatibility floor is unchanged. This release is
+explicitly validated against pinned 0.43.1; latest remains a
+forward-compatibility canary.
+
 v2.20.0 requires AMQ 0.42.1+, the first supported release for the complete
-injected identity contract. After upgrading from an older AMQ, stop and resume/relaunch agents so
-their shells receive a coherent pin; a child command cannot repair stale parent
-environment variables. Default-profile sessions use `AM_ROOT`, `AM_BASE_ROOT`,
-non-empty `AM_SESSION`, and `AM_ME`. Named profiles use their exact root with
-`AM_ROOT=AM_BASE_ROOT` and no `AM_SESSION`. Run `amq-squad doctor` before
+injected identity contract. After upgrading AMQ, stop and resume/relaunch agents
+so their parent shells refresh the complete identity tuple; a child command
+cannot repair stale parent environment variables. Default-profile sessions use
+`AM_ROOT`, `AM_BASE_ROOT`, non-empty `AM_SESSION`, and `AM_ME`. Named profiles
+use their exact root with `AM_ROOT=AM_BASE_ROOT` and no `AM_SESSION`. Run
+`amq-squad doctor` before
 resuming if it reports a legacy or inconsistent pin.

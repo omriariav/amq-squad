@@ -1,136 +1,142 @@
-# Native task store — design (v2.0 Slice B)
+# Native task store and atomic lifecycle
 
-The lead's dispatch mechanism becomes **task-pull**, not only pane-push: the
-lead decomposes the goal into tasks; workers claim them and self-schedule around
-dependencies. This is the binary-neutral, amq-squad-native analog of the
-`amq swarm` task list (which is Claude-Code-bound and, critically, has **no
-create verb**). Ours has `task add`, so an any-binary lead can decompose.
+The native task store is the durable coordination record for pull-based work.
+Leads decompose a goal into tasks, workers claim them, and dependency gates make
+the next eligible work deterministic across Claude, Codex, and other binaries.
 
-## Storage
+## Storage and transaction boundary
 
-- One directory per workstream: `.amq-squad/tasks/<session>/`.
-- **One JSON file per task**: `<session-tasks-dir>/<id>.json`. Per-file (vs a
-  single `tasks.json`) keeps writes small and lets `list` be a directory scan.
-- **Locking**: all mutations take an exclusive lock on a sidecar
-  `.amq-squad/tasks/<session>/.lock` (via `internal/flock`, the same helper
-  Slice A introduced). The lock is held across the whole read-modify-write so
-  concurrent `claim`s can't both win. `add` also serializes id allocation under
-  the lock.
-- **Atomic writes**: each task file is written `<id>.json.tmp` → `os.Rename`, so
-  a crash mid-write never leaves a partial/invalid task file. (Same pattern as
-  `team.WriteProfile`.)
+- The default profile stores one JSON file per task under
+  `.amq-squad/tasks/<session>/`; named profiles use
+  `.amq-squad/tasks/<profile>/<session>/`.
+- Every read-modify-write operation holds the store's exclusive `.lock` for the
+  complete operation. Readers also take the lock so they cannot observe only
+  some after-images from a multi-task transition.
+- Every mutation, including a single-task mutation, writes a committed
+  `.transaction.json` journal containing the complete task after-images. The
+  commit protocol is: write and `fsync` the journal temp file, rename it to the
+  committed journal, `fsync` the containing directory, write/rename/`fsync`
+  every task after-image, remove the journal, then `fsync` the directory again.
+- Once the journal rename and directory sync complete, the transaction is
+  committed. An official read, mutation, or `task reconcile` replays a committed
+  journal idempotently before exposing task state. An abandoned
+  `.transaction.json.tmp` did not cross the commit point and is only removed by
+  `task reconcile --apply`.
+- Directory `fsync` is enforced on Unix platforms, including Linux and macOS.
+  Windows lacks the same portable `os.File.Sync` directory contract, so
+  directory sync is a documented best-effort no-op there. Files themselves are
+  still synced before rename. Filesystems returning `EINVAL` or `ENOTSUP` for a
+  directory sync are treated as not supporting that operation.
 
-## Task schema (`<id>.json`)
+This journal is an internal recovery record, not a second task API. Task JSON
+files remain the inspectable source after recovery.
 
-```json
-{
-  "id": "t1",
-  "title": "Wire the rate limiter",
-  "description": "…",                // optional
-  "status": "pending",               // pending|in_progress|completed|failed|blocked
-  "assigned_to": "",                 // handle of the claiming agent
-  "depends_on": ["t0"],              // ids that must be completed before claim
-  "created_at": "2026-06-13T…Z",
-  "updated_at": "2026-06-13T…Z",
-  "evidence": "",                    // set on done
-  "failure_reason": "",              // set on fail
-  "block_reason": "",                // set on block
-  "reset_reason": "",                // set on reset
-  "dispatch": {                       // optional durable AMQ link
-    "sender": "cto",
-    "assignee": "fullstack",
-    "thread": "p2p/cto__fullstack",
-    "kind": "todo",
-    "subject": "Wire the rate limiter",
-    "message_id": "2026-...",
-    "dispatched_at": "2026-06-13T…Z"
-  }
-}
-```
+## Additive task schema
 
-amq-squad is the **sole writer** of `.amq-squad/tasks/` (unlike swarm, which
-shares `~/.claude/tasks/` with Claude Code), so tasks round-trip through the
-typed struct and unknown-field preservation is not needed in Slice B. If an
-interop adapter ever shares this store, switch to a `map[string]any` round-trip
-(as swarm does) to preserve foreign fields.
+Existing task files remain valid. Missing lease, readiness, link, or outbox
+fields are interpreted as legacy data and are not silently rewritten by a
+read-only command.
 
-## State machine
+Core fields remain `id`, `title`, `description`, `status`, `assigned_to`,
+`depends_on`, timestamps, terminal reasons/evidence, and optional `dispatch`
+metadata. The atomic lifecycle adds:
 
-```
-pending ──claim──▶ in_progress ──done──▶ completed
-                       │
-                       ├──fail──▶ failed
-                       └──block─▶ blocked
-```
+- `ready_at`, set when a task first has all dependencies completed;
+- `lease` with owner, issuance, renewal, expiry, and optional stale-observed
+  timestamp;
+- audited `dependency_overrides` and `releases`;
+- direct `replaces` / `replaced_by` and `review_of` / `review_tasks` links;
+- `final_head` for the immutable accepted commit or equivalent artifact;
+- `outbox` delivery intents with stable IDs and explicit delivery state;
+- `completion_notification_suppressed` when `--no-notify` is deliberate.
 
-- `claim`: allowed only from `pending`, and only when **every** id in
-  `depends_on` is `completed` (dependency gating). Sets `assigned_to` and
-  `in_progress`; clears terminal fields.
-- `done` / `fail` / `block`: allowed only from `in_progress`.
-  If the task has an assignee, the transition requires `--me` to match
-  `assigned_to`. `done`→`completed` (+ optional evidence); `fail`→`failed`
-  (+ reason); `block`→`blocked` (+ reason).
-- `reset`: returns a non-pending task to `pending`, clears the assignee and
-  terminal fields, optionally records `reset_reason`, and can then be claimed
-  again. For assigned tasks, `--me` must match the assignee.
-- Any other transition is rejected with a clear error naming the current state.
+The six task states are `pending`, `in_progress`, `completed`, `failed`,
+`blocked`, and `cancelled`.
 
-## ID allocation
+## Claims, dependencies, and leases
 
-Under the store lock, scan existing task files, take the max `t<N>` suffix, and
-allocate `t<N+1>` (starts at `t1`). Deterministic, sortable, and race-free
-because allocation happens inside the lock.
+`task claim` normally accepts only a pending task whose dependencies are all
+completed. `--override-dependencies --reason WHY` is the explicit recovery
+escape hatch: it records the actor, time, reason, and exact unmet dependency
+states before claiming.
 
-## Verbs (`amq-squad task …`, new `runTask` dispatcher)
+Every new claim receives a renewable lease (two hours by default). Lease expiry
+is evidence of possible abandonment, not permission to steal work. Reconcile
+reports stale leases and legacy in-progress tasks that have no lease, but never
+auto-unclaims or reassigns either. The assignee can run `task renew`; another
+actor can use `task release --me H --reason WHY` to make an explicit audited
+release. Renewing a legacy in-progress task is its additive migration path.
 
-| Verb | Effect |
+## Atomic completion and successor dispatch
+
+`task done` performs one transaction that can include all of the following:
+
+1. mark the predecessor completed, store evidence and `--final-head`, and clear
+   its lease;
+2. stamp `ready_at` on every directly affected dependent that is now eligible;
+3. with `--dispatch-next ID`, validate that the chosen direct dependent is
+   pending, fully unblocked, and assigned, then claim it with a lease;
+4. commit delivery intents for the canonical completion signal and optional
+   successor dispatch.
+
+Only after that transaction commits may the CLI send AMQ. When the completed
+task has dispatch routing metadata, the default completion signal is AMQ kind
+`status` with subject `DONE: <task title>`; AMQ has no `done` kind. `--no-notify`
+records explicit suppression. A successor dispatch uses AMQ kind `todo`.
+The committed task/successor dispatch outbox is itself a durable return route,
+so completion signaling does not depend on a later legacy metadata-link write.
+
+`amq-squad dispatch --create-task` and `dispatch --task ID` follow the same
+boundary: they commit the claim and delivery intent, mark the intent `sending`,
+and only then invoke `amq send`. Plain dispatch without task backing remains an
+AMQ-only operation.
+
+## Delivery outbox and recovery
+
+Delivery intent states are:
+
+| State | Meaning | Recovery |
+| --- | --- | --- |
+| `pending` | intent committed; send has not begun | `task deliver` |
+| `sending` | send began; durable outcome is unknown | never auto-resend; use `task retry-delivery --confirm-not-delivered` only after verifying non-delivery |
+| `delivered` | message ID or successful outcome recorded | no action |
+| `failed` | send returned a definite failure without a message ID | audited `task retry-delivery`, or explicitly release the task |
+
+Retry records the actor, reason, timestamp, and whether uncertain non-delivery
+was confirmed. Reconcile only diagnoses and prints executable scoped commands;
+it never sends or retries an external message. This prevents duplicate work
+after a crash between the send and its local finalization.
+
+## Direct lifecycle links
+
+`task cancel --replacement ID` atomically records both sides of a supersession
+link and rejects cycles. `task add --review-of ID` records both sides of a review
+link. Reconcile reports dangling, asymmetric, or cyclic links and only applies a
+deterministic missing reverse-link repair when there is no conflict. It never
+guesses which side of a conflicting link is authoritative.
+
+## Commands
+
+| Command | Effect |
 | --- | --- |
-| `task add --title T [--desc D] [--depends-on id,…] [--assign role] --session S` | create a `pending` task; **the goal→task decomposition primitive** |
-| `task list [--status S] [--json] --session S` | list tasks (table or `tasks` JSON envelope) |
-| `task show <id> [--json] --session S` | show one task, including dispatch metadata when present |
-| `task claim <id> --me handle --session S` | pending + deps-completed → in_progress, assigned to `handle` |
-| `task done <id> --me handle [--evidence E] --session S` | in_progress (by assignee) → completed |
-| `task fail <id> --me handle [--reason R] --session S` | in_progress (by assignee) → failed |
-| `task block <id> --me handle [--reason R] --session S` | in_progress (by assignee) → blocked |
-| `task reset <id> --me handle [--reason R] --session S` | non-pending (by assignee when assigned) → pending |
+| `task add` | create a pending task, optionally assigned, dependency-gated, or linked with `--review-of` |
+| `task list` / `task show` | inspect all additive fields; support schema-versioned JSON |
+| `task claim` / `task renew` | claim with a lease or renew/migrate an active lease |
+| `task done` | atomic completion, dependent release, optional successor claim, and committed outbox |
+| `task fail` / `task block` / `task reset` | explicit terminal or reset transitions |
+| `task cancel` | cancel with a required reason and optional replacement link |
+| `task release` | audited explicit ownership release; never automatic |
+| `task deliver` | deliver one pending intent |
+| `task retry-delivery` | audited failed retry, or confirmed-not-delivered uncertain retry |
+| `task reconcile` | read-only deterministic diagnosis and committed-journal replay |
+| `task reconcile --apply` | apply safe internal repairs; never external delivery |
 
-- `--session` resolves the workstream (required; tasks are per-workstream).
-- `claim`/`done`/`fail`/`block`/`reset` operate on an existing id; transitions
-  are validated and assigned terminal/reset transitions are assignee-only.
+Dependency IDs must reference already-created tasks. Because IDs increase
+monotonically, dependency edges form a DAG by construction. Replacement and
+review links are separately cycle-checked because legacy or externally edited
+files may violate their normal creation order.
 
-## Dispatch linkage
-
-Plain `amq-squad dispatch` stays AMQ-only for one-off messages. Task-backed
-dispatch is explicit:
-
-- `dispatch --create-task` creates a native pending task assigned to the target
-  role's handle, sends the durable AMQ message, records the AMQ sender/message
-  id/thread metadata on the task, then auto-claims it for the target handle.
-- `dispatch --task <id>` sends the durable AMQ message and links the returned
-  message metadata to an existing task. The task must be pending or already
-  in_progress for the dispatch target; pending tasks are auto-claimed after the
-  durable send and metadata link succeed.
-- Human and JSON dispatch output include the task id when a native task is
-  involved. If the AMQ send fails after a `--create-task`, the task remains in
-  the store without dispatch metadata so the lead can inspect or reset it rather
-  than losing the audit record.
-- If the AMQ send succeeds but recording dispatch metadata fails, amq-squad
-  reports an error and does not pane-nudge the worker. The durable AMQ message
-  may already be queued, so amq-squad does not try to roll it back. The native
-  task remains inspectable without dispatch metadata; the lead can reconcile
-  from the AMQ send result, manually reset or complete the task, and re-nudge
-  the worker if needed.
-- `amq-squad status` warns when older task-backed dispatch records are still
-  pending after dispatch, and when an in-progress task has a completion-like
-  worker report on its dispatch thread. The completion warning suggests the
-  explicit `task done` command; status does not silently complete tasks.
-
-## Still deferred
-
-- Cycle detection is unnecessary: deps must reference already-created (lower-id)
-  tasks, so the graph is a DAG by construction — see `Add`.
-- Bridge of task changes to AMQ notifications. The v2.7.0 interop decision is
-  docs-only: keep `.amq-squad/tasks/` authoritative and use AMQ swarm as an
-  external notification/adoption boundary. See `docs/amq-swarm-interop.md`.
-- The lead's *judgment* about which tasks to create — that is Slice C (the
-  orchestrate-from-goal skill), validated at the Slice D eval gate.
+`amq-squad status` may still surface completion-like reports for older task
+records, but it never silently completes a task. Task transitions and AMQ
+reports are complementary durable records; the atomic `task done` notification
+is the canonical command path when dispatch routing is present.

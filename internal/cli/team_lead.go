@@ -41,7 +41,7 @@ type wakeInjectConfig struct {
 
 // wakeDrainInject is the standard instruction amq-squad asks the wake sidecar to
 // inject on each durable-message arrival (amq wake --inject-cmd). It re-engages a
-// lead or orchestrator even after its native /goal reaches a terminal "achieved"
+// lead or orchestrator even after its active goal reaches a terminal "achieved"
 // state: the inbound directive drives an inbox drain through AMQ's sanctioned
 // injector instead of a raw tmux send-keys. Shared by lead register --wake (#283)
 // and the goal orchestrator registration (#288) so both use one mechanism.
@@ -261,9 +261,14 @@ func runLeadRegister(args []string) error {
 	if err != nil {
 		return err
 	}
-	projectDir, profile, err := resolveExistingTeamProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
+	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
+	if !team.ExistsProfile(projectDir, profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
 	t, err := team.ReadProfile(projectDir, profile)
 	if err != nil {
@@ -283,8 +288,42 @@ func runLeadRegister(args []string) error {
 	if !ok {
 		return fmt.Errorf("lead role %q is not a team member", role)
 	}
-	workstream, err := resolveTeamWorkstreamName(t, *sessionFlag, flagWasSet(fs, "session"))
+	workstream, err := resolveTeamWorkstreamName(t, ctx.Session, flagWasSet(fs, "session"))
 	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentCtx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+	if err != nil {
+		return fmt.Errorf("lead register refused: context re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedContext(ctx, currentCtx, false); err != nil {
+		return err
+	}
+	currentTeam, err := team.ReadProfile(currentCtx.ProjectDir, currentCtx.Profile)
+	if err != nil {
+		return fmt.Errorf("lead register refused: reread team under admission: %w", err)
+	}
+	currentMember, ok := memberByRole(currentTeam, role)
+	if !ok {
+		return fmt.Errorf("lead register refused: lead role %q changed before admission", role)
+	}
+	currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, currentCtx.Session, flagWasSet(fs, "session"))
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpoint("lead register", squadnamespace.Resolve(projectDir, profile, workstream), squadnamespace.Resolve(currentCtx.ProjectDir, currentCtx.Profile, currentWorkstream), memberHandle(member), memberHandle(currentMember)); err != nil {
+		return err
+	}
+	if member.Binary != currentMember.Binary || member.Session != currentMember.Session || canonicalPath(member.EffectiveCWD(t.Project)) != canonicalPath(currentMember.EffectiveCWD(currentTeam.Project)) {
+		return fmt.Errorf("lead register refused: lead identity changed before admission; retry")
+	}
+	ctx, projectDir, profile, t, member, workstream = currentCtx, currentCtx.ProjectDir, currentCtx.Profile, currentTeam, currentMember, currentWorkstream
+	if err := ensureNoNamespaceMigration("lead register", projectDir, profile, workstream); err != nil {
 		return err
 	}
 	id, err := currentPaneIdentity()
@@ -310,7 +349,7 @@ func runLeadRegister(args []string) error {
 		Mode: wakeInjectModeValue,
 		Via:  wakeInjectViaValue,
 		Args: wakeInjectArgValues,
-	}, flagWasSet(fs, "wake-inject-mode"), flagWasSet(fs, "wake-inject-via"), flagWasSet(fs, "wake-inject-arg"), existingRec, existingRecErr, role, handle, profile, env.SessionName, root, id.PaneID)
+	}, flagWasSet(fs, "wake-inject-mode"), flagWasSet(fs, "wake-inject-via"), flagWasSet(fs, "wake-inject-arg"), existingRec, existingRecErr, member.Binary, role, handle, profile, env.SessionName, root, id.PaneID)
 	if err != nil {
 		return err
 	}
@@ -428,7 +467,7 @@ func writeExternalLeadLaunchRecord(agentDir string, rec launch.Record, role, ses
 	})
 }
 
-func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, viaExplicit, argsExplicit bool, existing launch.Record, existingErr error, role, handle, profile, session, root, paneID string) (wakeInjectConfig, error) {
+func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, viaExplicit, argsExplicit bool, existing launch.Record, existingErr error, binary, role, handle, profile, session, root, paneID string) (wakeInjectConfig, error) {
 	resolved := wakeInjectConfig{
 		Mode: strings.TrimSpace(requested.Mode),
 		Via:  strings.TrimSpace(requested.Via),
@@ -445,7 +484,7 @@ func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, v
 	if err != nil {
 		return wakeInjectConfig{}, fmt.Errorf("stored external wake config: %w", err)
 	}
-	resolved.Mode = mode
+	resolved.Mode = resolveWakeInjectModeForBinary(mode, binary)
 	if err := validateWakeInjectConfig(resolved.Mode, resolved.Via, resolved.Args, ""); err != nil {
 		return wakeInjectConfig{}, err
 	}
@@ -456,7 +495,7 @@ func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, v
 }
 
 func preserveExternalGoalBinding(rec launch.Record, err error, role, session string) bool {
-	if err != nil || rec.GoalBinding == nil || !rec.GoalBinding.NativeGoal {
+	if err != nil || !launchRecordHasGoalBinding(rec) {
 		return false
 	}
 	recRole := strings.TrimSpace(rec.Role)

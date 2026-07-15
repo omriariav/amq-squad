@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -86,7 +87,12 @@ type rmExecution struct {
 	// strings.Reader so y/n is deterministic without real stdin.
 	Confirm io.Reader
 
-	Out io.Writer
+	Out              io.Writer
+	JSON             bool
+	PaneDeps         PaneCleanupDependencies
+	ManifestStore    paneCleanupManifestStore
+	OperationID      string
+	SnapshotPaneWork func(root string, tm team.Team, projectDir, profile, session, baseRoot string, requested bool) ([]rmPaneWork, error)
 }
 
 func runRm(args []string, mode rmMode) error {
@@ -100,6 +106,7 @@ func runRm(args []string, mode rmMode) error {
 	projectFlag := fs.String("project", "", "project/team-home directory to target (default: cwd)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name to remove/archive")
 	profileFlag := fs.String("profile", team.DefaultProfile, "team profile namespace to target (default: default profile)")
+	jsonOut := fs.Bool("json", false, "emit machine-readable teardown results")
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	fs.Usage = rmUsage(fs, mode)
 	args = allowInterspersedFlags(fs, args)
@@ -119,21 +126,17 @@ func runRm(args []string, mode rmMode) error {
 	if session == "" {
 		session = fs.Arg(0)
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
-	}
-	profile, err := resolveProfileFlag(*profileFlag)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: session,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: true,
+	})
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
 	return executeRm(rmExecution{
-		ProjectDir: projectDir,
-		Session:    session,
+		ProjectDir: ctx.ProjectDir,
+		Session:    ctx.Session,
 		Mode:       mode,
 		Yes:        *yes,
 		Force:      *force || *stopAgents, // --stop-agents is a stronger "tear it down" intent
@@ -143,7 +146,8 @@ func runRm(args []string, mode rmMode) error {
 		Probe:      state.DefaultProbe,
 		Confirm:    os.Stdin,
 		Out:        os.Stdout,
-		Profile:    profile,
+		Profile:    ctx.Profile,
+		JSON:       *jsonOut,
 	})
 }
 
@@ -153,8 +157,8 @@ func rmUsage(fs *flag.FlagSet, mode rmMode) func() {
 			fmt.Fprint(os.Stderr, `amq-squad archive - move a finished session aside (non-destructive)
 
 Usage:
-  amq-squad archive <session> [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
-  amq-squad archive --session NAME [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
+  amq-squad archive <session> [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes] [--json]
+  amq-squad archive --session NAME [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes] [--json]
 
 Moves the session's AMQ root dir to <baseRoot>/.archive/<session>/ and moves
 its brief alongside it as .archive/<session>/<session>.md. Nothing is deleted.
@@ -171,6 +175,8 @@ A session with any LIVE agent is refused unless --force. --force moves the
 session aside but does NOT stop the agents (it leaves them running and names the
 now-unmanaged panes). Pass --stop-agents (implies --force) to stop the live
 agents and close their panes as part of the archive.
+--keep-panes keeps pane cleanup not_requested; it does not suppress --stop-agents.
+--json requires --yes and emits one machine-readable lifecycle result.
 
 Examples:
   amq-squad archive issue-96
@@ -184,8 +190,8 @@ Examples:
 		fmt.Fprint(os.Stderr, `amq-squad rm - permanently remove a finished session
 
 Usage:
-  amq-squad rm <session> [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
-  amq-squad rm --session NAME [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes]
+  amq-squad rm <session> [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes] [--json]
+  amq-squad rm --session NAME [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes] [--json]
 
 Deletes the resolved session AMQ root and brief for the selected profile/session
 namespace. This session-destructive verb is confined to that namespace: it never
@@ -205,6 +211,8 @@ which panes are now unmanaged). For a one-command full teardown, pass
 --stop-agents (implies --force): it stops the live agents (SIGTERM) and closes
 their panes before removing. The graceful two-step still works too:
 'amq-squad stop --all [--session <session>] --force --close-panes' then rm.
+--keep-panes keeps pane cleanup not_requested; it does not suppress --stop-agents.
+--json requires --yes and emits one machine-readable lifecycle result.
 
 Examples:
   amq-squad rm issue-96
@@ -303,6 +311,9 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 	if e.StopAgents {
 		e.Force = true
 	}
+	if e.JSON && !e.Yes {
+		return false, usageErrorf("--json requires --yes so stdout remains one machine-readable result")
+	}
 
 	// SAFETY 1: validate the session name BEFORE it is ever joined into a path,
 	// so a traversal ("../foo"), an absolute path, or a name with separators is
@@ -324,6 +335,25 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 		if err := team.ValidateProfileName(profile); err != nil {
 			return false, err
 		}
+	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(e.ProjectDir, profile, session), "")
+	if err != nil {
+		return false, err
+	}
+	admission, err := acquireNamespaceWriterAdmission(e.ProjectDir, profile, session)
+	if err != nil {
+		return false, err
+	}
+	defer admission.close()
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(e.ProjectDir, profile, session), "")
+	if err != nil {
+		return false, err
+	}
+	if err := validateReResolvedEndpointIdentity(verb, initialIdentity, currentIdentity); err != nil {
+		return false, err
+	}
+	if err := ensureNoNamespaceMigration(verb, e.ProjectDir, profile, session); err != nil {
+		return false, err
 	}
 	baseRoot := e.BaseRoot
 	if baseRoot == "" {
@@ -404,8 +434,10 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 		}
 	}
 
-	// PREVIEW: list exactly what will be removed/moved, every time.
-	renderRmPreview(out, e.Mode, target)
+	// PREVIEW: list exactly what will be removed/moved for interactive use.
+	if !e.JSON {
+		renderRmPreview(out, e.Mode, target)
+	}
 
 	// SAFETY 2 (confirm gate): default is NO. Declining makes ZERO changes.
 	if !e.Yes {
@@ -422,19 +454,6 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 	if target.RootExists && len(liveSet) > 0 {
 		liveAgents = liveSessionAgents(target.Root, liveSet)
 	}
-	// Collect the panes to close BEFORE the root is moved/removed (the launch
-	// records live under it). Live agents are excluded by default so rm --force
-	// never kills a still-running agent's pane; --stop-agents closes their
-	// (now-stopped) panes too. Each pane is identity-checked at close time so a
-	// reused pane id never closes the wrong pane.
-	var panesToClose []recordedPane
-	if e.ClosePanes && target.RootExists {
-		exclude := liveSet
-		if e.StopAgents {
-			exclude = nil
-		}
-		panesToClose = collectSessionPaneIDs(target.Root, exclude)
-	}
 
 	var watcherTeam team.Team
 	watcherTeam, watcherTeamErr := team.ReadProfile(e.ProjectDir, profile)
@@ -445,6 +464,43 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 		watcherStatus = inspectNotificationWatcher(watcherTeam, profile, session, notificationWatcherNow())
 		watcherWasActive = watcherStatus.record.Expected && watcherStatus.record.OwnerToken != "" && notificationWatcherNow().Before(watcherStatus.record.LeaseExpiresAt)
 	}
+	manifestTeam := watcherTeam
+	if watcherTeamErr != nil {
+		manifestTeam = team.Team{Project: e.ProjectDir}
+	}
+	var paneWork []rmPaneWork
+	if target.RootExists {
+		snapshot := e.SnapshotPaneWork
+		if snapshot == nil {
+			snapshot = snapshotRmPaneWork
+		}
+		paneWork, err = snapshot(target.Root, manifestTeam, e.ProjectDir, profile, session, baseRoot, e.ClosePanes)
+		if err != nil {
+			return false, err
+		}
+	}
+	operationID := strings.TrimSpace(e.OperationID)
+	if operationID == "" {
+		operationID, err = newPaneCleanupOperationID()
+		if err != nil {
+			return false, err
+		}
+	}
+	manifestStore := e.ManifestStore
+	if manifestStore == nil {
+		manifestStore = filesystemPaneCleanupManifestStore{}
+	}
+	createdAt := time.Now().UTC()
+	preparedManifest := paneCleanupManifest{Schema: paneCleanupManifestSchema, OperationID: operationID, Operation: verb,
+		Phase: paneCleanupManifestPrepared, Project: e.ProjectDir, Profile: profile, Session: session, CreatedAt: createdAt,
+		Entries: plannedRmManifestEntries(paneWork)}
+	manifestHandle, err := manifestStore.Prepare(e.ProjectDir, preparedManifest)
+	if err != nil {
+		return false, paneManifestPrepareError(err)
+	}
+	if !e.JSON {
+		fmt.Fprintf(out, "pane cleanup prepared manifest: %s\n", manifestHandle.Prepared)
+	}
 	if watcherManaged || watcherWasActive {
 		if err := stopNotificationWatcher(e.ProjectDir, profile, session); err != nil {
 			return false, fmt.Errorf("refusing to %s before notification watcher is stopped: %w", verb, err)
@@ -453,9 +509,7 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 	// Only after watcher fencing succeeds may --stop-agents signal members. A
 	// remote or ambiguous watcher therefore refuses the whole destructive
 	// lifecycle before either agent or namespace mutation.
-	if e.StopAgents && len(liveAgents) > 0 {
-		stopLiveSessionAgents(out, liveAgents, e.Terminator)
-	}
+	attestAndStopRmAgents(paneWork, liveSet, e.StopAgents, e.Terminator, e.Probe, e.PaneDeps)
 	restartWatcherAfterFailure := func(mutationErr error) error {
 		if !watcherWasActive || watcherTeamErr != nil {
 			return mutationErr
@@ -469,57 +523,89 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 		return mutationErr
 	}
 
-	if e.Mode == rmModeArchive {
-		if err := archiveSession(out, target); err != nil {
-			return false, restartWatcherAfterFailure(err)
-		}
-	} else if err := deleteSession(out, target); err != nil {
-		return false, restartWatcherAfterFailure(err)
+	mutationOut := out
+	if e.JSON {
+		mutationOut = io.Discard
 	}
-	closeSessionPanes(out, session, panesToClose)
+	mutationStatus := "succeeded"
+	var mutationErr error
+	if e.Mode == rmModeArchive {
+		mutationErr = archiveSession(mutationOut, target)
+	} else {
+		mutationErr = deleteSession(mutationOut, target)
+	}
+	if mutationErr == nil {
+		closePreparedRmPanes(paneWork, e.PaneDeps)
+	} else {
+		mutationStatus = "failed: " + mutationErr.Error()
+		preservePreparedRmPanes(paneWork, "namespace mutation failed; prepared pane was deliberately preserved")
+	}
+	finalManifest := manifestHandle.PreparedManifest
+	finalManifest.Phase = paneCleanupManifestFinalized
+	finalManifest.PreparedSHA256 = manifestHandle.PreparedSHA256
+	finalManifest.NamespaceMutation = mutationStatus
+	finalManifest.FinalizedAt = time.Now().UTC()
+	finalManifest.Entries = finalRmManifestEntries(paneWork)
+	finalizeErr := manifestStore.Finalize(manifestHandle, finalManifest)
+	finalizationStatus := "succeeded"
+	finalManifestPath := manifestHandle.Final
+	finalCandidate := ""
+	if finalizeErr != nil {
+		finalizationStatus = "failed: " + finalizeErr.Error()
+		finalManifestPath = ""
+		finalCandidate = manifestHandle.Final
+	}
+	emitResult := func() error {
+		if e.JSON {
+			return writeJSONEnvelope(out, verb, rmCleanupEnvelopeData{
+				Project: manifestHandle.Project, Profile: profile, Session: session, Root: target.Root, Operation: verb,
+				PreparedManifest: manifestHandle.Prepared, FinalManifest: finalManifestPath, FinalCandidate: finalCandidate,
+				NamespaceMutation: mutationStatus, Finalization: finalizationStatus,
+				Reports: rmCleanupJSONReports(paneWork), Summary: summarizeRmPaneWork(paneWork),
+			})
+		}
+		if finalizeErr == nil {
+			fmt.Fprintf(out, "pane cleanup final manifest: %s\n", manifestHandle.Final)
+		} else {
+			fmt.Fprintf(out, "pane cleanup finalization: %s\n", finalizationStatus)
+			fmt.Fprintf(out, "prepared evidence retained: %s\n", manifestHandle.Prepared)
+			fmt.Fprintf(out, "final manifest candidate (durability uncertain): %s\n", manifestHandle.Final)
+		}
+		renderRmPaneResults(out, paneWork)
+		return nil
+	}
+	if emitErr := emitResult(); emitErr != nil {
+		if mutationErr != nil || finalizeErr != nil {
+			return false, &PartialError{Message: fmt.Sprintf("%s result reporting failed after lifecycle mutation", verb), Cause: errors.Join(mutationErr, finalizeErr, emitErr)}
+		}
+		return false, emitErr
+	}
+	if mutationErr != nil {
+		mutationErr = restartWatcherAfterFailure(mutationErr)
+		if finalizeErr != nil {
+			return false, &PartialError{Message: fmt.Sprintf("%s failed and pane cleanup finalization was uncertain; prepared evidence retained at %s", verb, manifestHandle.Prepared), Cause: errors.Join(mutationErr, finalizeErr)}
+		}
+		if stoppedRmAgentCount(paneWork) > 0 {
+			return false, &PartialError{Message: fmt.Sprintf("%s namespace mutation failed after %d agent(s) were signaled; prepared evidence retained at %s", verb, stoppedRmAgentCount(paneWork), manifestHandle.Prepared), Cause: mutationErr}
+		}
+		return false, mutationErr
+	}
+	if finalizeErr != nil {
+		return false, paneManifestFinalizePartial(manifestHandle, finalizeErr)
+	}
 
 	// Without --stop-agents, this verb removed/moved the session state but
 	// deliberately left live agents running (it does not stop agents). That used
 	// to be SILENT; name the now-unmanaged panes and how to finish the teardown.
 	if len(liveAgents) > 0 && !e.StopAgents {
-		notifyLiveAgentsLeftRunning(out, verb, liveAgents)
+		if !e.JSON {
+			notifyLiveAgentsLeftRunning(out, verb, liveAgents, manifestHandle.Prepared)
+		}
+	}
+	if partial := rmPanePartial(paneWork); partial > 0 {
+		return false, &PartialError{Message: fmt.Sprintf("%s: namespace mutation succeeded but %d requested pane cleanup(s) were preserved or failed", verb, partial)}
 	}
 	return false, nil
-}
-
-// collectSessionPaneIDs reads the recorded tmux pane id of every agent mailbox
-// under <root>/agents, skipping any handle in excludeLive. It is called BEFORE
-// the session root is moved/removed, since the launch records live under it.
-// recordedPane is a pane to close, carried with the identity fields the safe
-// close needs to confirm it was not reused by a different agent.
-type recordedPane struct {
-	PaneID string
-	Role   string
-	CWD    string
-}
-
-func collectSessionPaneIDs(root string, excludeLive map[string]bool) []recordedPane {
-	entries, err := os.ReadDir(filepath.Join(root, "agents"))
-	if err != nil {
-		return nil
-	}
-	var panes []recordedPane
-	for _, ent := range entries {
-		if !ent.IsDir() || excludeLive[ent.Name()] {
-			continue
-		}
-		rec, err := launch.Read(filepath.Join(root, "agents", ent.Name()))
-		if err != nil || rec.Tmux == nil {
-			continue
-		}
-		if rec.External {
-			continue
-		}
-		if id := strings.TrimSpace(rec.Tmux.PaneID); id != "" {
-			panes = append(panes, recordedPane{PaneID: id, Role: rec.Role, CWD: rec.CWD})
-		}
-	}
-	return panes
 }
 
 // sessionAgent is a live agent's recorded identity (handle + agent pid + pane),
@@ -542,7 +628,7 @@ func liveSessionAgents(root string, liveSet map[string]bool) []sessionAgent {
 		if err != nil {
 			continue
 		}
-		sa := sessionAgent{Handle: handle, PID: rec.AgentPID, External: rec.External}
+		sa := sessionAgent{Handle: handle, PID: rec.AgentPID, External: recordIsExternal(rec)}
 		if rec.Tmux != nil {
 			sa.PaneID = strings.TrimSpace(rec.Tmux.PaneID)
 		}
@@ -551,33 +637,10 @@ func liveSessionAgents(root string, liveSet map[string]bool) []sessionAgent {
 	return out
 }
 
-// stopLiveSessionAgents gracefully terminates each live agent's recorded process
-// (SIGTERM via the terminator) — the first half of --stop-agents' teardown; the
-// caller then closes the panes, which guarantees anything still running is gone.
-// Best-effort: a terminate error (already exited / gone) is swallowed.
-func stopLiveSessionAgents(out io.Writer, agents []sessionAgent, term processTerminator) {
-	if term == nil {
-		term = newSignalTerminator(false)
-	}
-	for _, a := range agents {
-		if a.External {
-			continue
-		}
-		if a.PID <= 0 {
-			continue
-		}
-		if err := term.Terminate(a.PID); err == nil {
-			fmt.Fprintf(out, "stopped agent %s (pid %d, %s)\n", a.Handle, a.PID, term.SignalName())
-		}
-	}
-}
-
 // notifyLiveAgentsLeftRunning warns that a teardown removed/moved the session
-// state but deliberately left live agents running (rm/archive never stop
-// agents). It names the now-unmanaged panes and the two ways to finish: a direct
-// kill-pane, or re-running with --stop-agents. Removing the SILENCE is the fix;
-// the kill-semantics are intentionally unchanged.
-func notifyLiveAgentsLeftRunning(out io.Writer, verb string, agents []sessionAgent) {
+// state but deliberately left live agents running. Exact pane IDs are recovery
+// evidence, not standalone authority to mutate a pane after namespace removal.
+func notifyLiveAgentsLeftRunning(out io.Writer, verb string, agents []sessionAgent, preparedManifest string) {
 	handles := make([]string, 0, len(agents))
 	var panes []string
 	var external []string
@@ -594,30 +657,13 @@ func notifyLiveAgentsLeftRunning(out io.Writer, verb string, agents []sessionAge
 	fmt.Fprintf(out, "\nNote: %d live agent(s) left RUNNING (%s --force removes session state but does not stop agents): %s\n",
 		len(agents), verb, strings.Join(handles, ", "))
 	if len(panes) > 0 {
-		cmds := make([]string, 0, len(panes))
-		for _, p := range panes {
-			cmds = append(cmds, "tmux kill-pane -t "+p)
-		}
-		fmt.Fprintf(out, "  their panes are now unmanaged; close them with:  %s\n", strings.Join(cmds, " ; "))
+		fmt.Fprintf(out, "  unmanaged recorded pane id(s): %s\n", strings.Join(panes, ", "))
+		fmt.Fprintf(out, "  inspect retained identity evidence at %s, re-attest the exact pane id, then close only that exact id\n", preparedManifest)
 	}
 	if len(external) > 0 {
 		fmt.Fprintf(out, "  external pane(s) are operator-owned and were left open: %s\n", strings.Join(external, ", "))
 	}
-	fmt.Fprintf(out, "  or re-run with --stop-agents to stop them and close their panes as part of teardown.\n")
-}
-
-// closeSessionPanes best-effort closes each recorded pane (kill-pane) and notes
-// it. A kill error (e.g. the pane is already gone) is swallowed; teardown has
-// already succeeded on disk and must not be reported as failed.
-func closeSessionPanes(out io.Writer, session string, panes []recordedPane) {
-	for _, p := range panes {
-		closed, skip := closeRecordedPaneSafely(p.PaneID, session, p.Role, p.CWD)
-		if closed {
-			fmt.Fprintf(out, "closed tmux pane %s\n", p.PaneID)
-		} else if skip != "" {
-			fmt.Fprintf(out, "left tmux pane open: %s\n", skip)
-		}
-	}
+	fmt.Fprintln(out, "  no title-based or pane-pruning fallback is safe for this recovery")
 }
 
 // liveAgentsInSession returns the handles of agents the repo's liveness

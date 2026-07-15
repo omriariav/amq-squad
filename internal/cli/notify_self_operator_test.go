@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/attention"
+	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -25,17 +26,23 @@ func TestCollectSelfOperatorVisibilityCurrentStateAndClear(t *testing.T) {
 	resolveVerifiedOperatorActor = func(_, profile, session, role, handle string) (verifiedOperatorActor, error) {
 		return verifiedOperatorActor{Role: role, Handle: handle}, nil
 	}
-	before := decideVerifyActionWithPolicy(msgs, "gate/merge-398", "protected_branch_push", target, "user", cfg, "s", project, "default")
+	before := decideTypedVerifyActionWithPolicy(msgs, "gate/merge-398", "protected_branch_push", target, "user", cfg, "s", project, "default")
 	items := collectSelfOperatorVisibilityAttention(cfg, project, "default", snap, "s", time.Now())
-	after := decideVerifyActionWithPolicy(msgs, "gate/merge-398", "protected_branch_push", target, "user", cfg, "s", project, "default")
+	after := decideTypedVerifyActionWithPolicy(msgs, "gate/merge-398", "protected_branch_push", target, "user", cfg, "s", project, "default")
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("collection changed authorization: before=%+v after=%+v", before, after)
 	}
 	if !attentionState(items, "self_approved", false) || !attentionState(items, "human_only_gate", true) {
 		t.Fatalf("valid self state=%+v", items)
 	}
-	answer := state.Message{ID: "h1", From: "user", Thread: "gate/merge-398", Kind: state.KindAnswer, Subject: "DENIED: merge", Body: "Gate-Kind: merge\nAction: protected_branch_push\nTarget: " + target, Created: time.Now().Add(time.Minute)}
-	writeSelfApprovalTestMessage(t, filepath.Join(root, "agents", "user"), "cur", answer, nil)
+	answeredAt := time.Now().Add(time.Minute)
+	approval := operatorauth.ApprovalContext{SchemaVersion: operatorauth.ApprovalSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion, Source: "human", GateKind: operatorauth.GateMerge, Action: "protected_branch_push", Target: target, QuestionMessageID: "q1", AnsweredByRole: "operator", AnsweredByHandle: "user", VerifiedAt: answeredAt.Format(time.RFC3339Nano)}
+	answer := state.Message{ID: "h1", From: "user", To: []string{"cto"}, Thread: "gate/merge-398", Kind: state.KindAnswer, Subject: "DENIED: merge-398", Body: "Gate-Kind: merge\nAction: protected_branch_push\nTarget: " + target, Created: answeredAt, ApprovalPresent: true, ApprovalValid: true, Approval: &approval}
+	receipt := operatorauth.Receipt{SchemaVersion: operatorauth.ReceiptSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion, Gate: answer.Thread, GateKind: approval.GateKind, Action: approval.Action, Target: approval.Target, Decision: "denied", ApprovalSource: "human", QuestionMessageID: "q1", AnswerMessageID: answer.ID, AnsweredBy: "user"}
+	if err := writeSelfApprovalReceipt(project, team.DefaultProfile, "s", answer.Thread, answer.ID, receipt); err != nil {
+		t.Fatal(err)
+	}
+	writeSelfApprovalTestMessage(t, filepath.Join(root, "agents", "user"), "cur", answer, &approval)
 	items = collectSelfOperatorVisibilityAttention(cfg, project, "default", snap, "s", time.Now().Add(2*time.Minute))
 	if !attentionState(items, "self_approved", true) || !attentionState(items, "human_only_gate", true) {
 		t.Fatalf("resolved denial did not clear=%+v", items)
@@ -153,13 +160,13 @@ func TestCollectSelfApprovalAdversarialTable(t *testing.T) {
 			c.Operator.SelfOperator.Sessions["other"] = e
 		}},
 		{"missing receipt", func(t *testing.T, p string, _ *team.Team, _ string, _ *[]state.Message) {
-			path := filepath.Join(selfApprovalStoreDir(p, "default", "s"), safeGateFile("gate/merge-398")+"-a1.receipt.json")
+			path := selfApprovalReceiptPath(p, "default", "s", "gate/merge-398", "q1", "a1")
 			if err := os.Remove(path); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{"tampered receipt", func(t *testing.T, p string, _ *team.Team, _ string, _ *[]state.Message) {
-			path := filepath.Join(selfApprovalStoreDir(p, "default", "s"), safeGateFile("gate/merge-398")+"-a1.receipt.json")
+			path := selfApprovalReceiptPath(p, "default", "s", "gate/merge-398", "q1", "a1")
 			f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 			if err != nil {
 				t.Fatal(err)

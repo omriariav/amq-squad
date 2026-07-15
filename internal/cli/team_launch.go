@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -157,16 +159,23 @@ Examples:
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
+	resolvedContext, err := resolveCanonicalContext(contextResolveOptions{
+		ProfileFlag: *profileFlag, SessionFlag: *pf.session,
+		ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: flagWasSet(fs, "session"),
+	})
 	if err != nil {
 		return err
+	}
+	emitContextDiagnostics(resolvedContext)
+	if !flagWasSet(fs, "session") && resolvedContext.Sources["session"] != contextSourceDefault {
+		*pf.session = resolvedContext.Session
 	}
 	opts, err := buildLiveLaunchOptions(fs, pf, lf)
 	if err != nil {
 		return err
 	}
 	opts.DryRun = *dryRun
-	opts.Profile = profile
+	opts.Profile = resolvedContext.Profile
 	return executeTeamLaunch(opts, flagWasSet(fs, "session"), flagWasSet(fs, "trust"))
 }
 
@@ -200,6 +209,36 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		return err
 	}
 	opts.Workstream = workstream
+	if !opts.DryRun {
+		initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(cwd, opts.Profile, workstream), "")
+		if err != nil {
+			return err
+		}
+		admission, err := acquireNamespaceWriterAdmission(cwd, opts.Profile, workstream)
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		currentTeam, err := team.ReadProfile(cwd, opts.Profile)
+		if err != nil {
+			return fmt.Errorf("team launch refused: reread team under admission: %w", err)
+		}
+		currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, opts.Workstream, true)
+		if err != nil {
+			return err
+		}
+		currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(cwd, opts.Profile, currentWorkstream), "")
+		if err != nil {
+			return err
+		}
+		if err := validateReResolvedEndpointIdentity("team launch", initialIdentity, currentIdentity); err != nil {
+			return err
+		}
+		t, workstream, opts.Workstream = currentTeam, currentWorkstream, currentWorkstream
+		if err := ensureNoNamespaceMigration("team launch", cwd, opts.Profile, workstream); err != nil {
+			return err
+		}
+	}
 	active, skipped := filterMembersBySession(t.Members, workstream)
 	for _, m := range skipped {
 		quietNotice("notice: skipping %s: pinned to session %q, not %q\n", m.Role, m.Session, workstream)
@@ -283,7 +322,7 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		}
 	}
 	if opts.Fresh {
-		exists, root, err := teamWorkstreamExists(t, opts.Workstream)
+		exists, root, err := teamWorkstreamExists(t, opts.Profile, opts.Workstream)
 		if err != nil {
 			return err
 		}
@@ -316,6 +355,30 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 			return fmt.Errorf("%s: %w", m.Role, err)
 		}
 	}
+	briefSnapshot, err := captureLaunchFileSnapshot(briefPathForProfile(t.Project, opts.Profile, opts.Workstream))
+	if err != nil {
+		return fmt.Errorf("snapshot active brief: %w", err)
+	}
+	createdAMQDirs, err := prepareSelectedAMQRoots(preflights, opts.Profile)
+	if err != nil {
+		return errors.Join(err, cleanupCreatedLaunchDirectories(createdAMQDirs))
+	}
+	createdWatcherToken := ""
+	rollbackLaunchPreparation := func(cause error) error {
+		cleanupErrs := []error{cause}
+		if createdWatcherToken != "" {
+			if err := cleanupCreatedNotificationWatcherAfterLaunchFailure(t, opts.Profile, opts.Workstream, createdWatcherToken, defaultDuplicateLaunchProbe); err != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("notification watcher cleanup after clean launch failure: %w", err))
+			}
+		}
+		if err := briefSnapshot.restore(); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("restore active brief after clean launch failure: %w", err))
+		}
+		if err := cleanupCreatedLaunchDirectories(createdAMQDirs); err != nil {
+			cleanupErrs = append(cleanupErrs, err)
+		}
+		return errors.Join(cleanupErrs...)
+	}
 	// Live launch. If the caller (up --seed-from) requested a seeded brief,
 	// write it now: all team-launch validations and preflight have passed,
 	// so we are committed to opening backend panes. Doing the write here
@@ -324,7 +387,7 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	// preflight refusal does not mutate the brief.
 	if opts.SeedBriefContent != "" {
 		if _, err := writeSeedBriefForProfile(t.Project, opts.Profile, opts.Workstream, opts.SeedBriefContent, opts.SeedBriefForce); err != nil {
-			return err
+			return rollbackLaunchPreparation(err)
 		}
 	}
 	// Ensure the team-home active brief exists once before the backend
@@ -332,7 +395,7 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	// brief content (including the seed we may have just written), so this
 	// is safe across reruns and parallel member launches.
 	if _, _, err := ensureBriefStubForProfile(t.Project, opts.Profile, opts.Workstream); err != nil {
-		return fmt.Errorf("ensure brief: %w", err)
+		return rollbackLaunchPreparation(fmt.Errorf("ensure brief: %w", err))
 	}
 	watcherBefore := notificationWatcherGeneration(t, opts.Profile, opts.Workstream)
 	watcherBaseRoot := ""
@@ -340,34 +403,27 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		watcherBaseRoot = filepath.Dir(preflights[0].Root)
 	}
 	if err := reconcileNotificationWatcherStarted(t, opts.Profile, opts.Workstream, watcherBaseRoot); err != nil {
-		return err
+		return rollbackLaunchPreparation(err)
 	}
 	watcherAfter := notificationWatcherGeneration(t, opts.Profile, opts.Workstream)
-	createdWatcherToken := ""
 	if watcherAfter != "" && watcherAfter != watcherBefore {
 		createdWatcherToken = watcherAfter
-	}
-	launchFailure := func(err error) error {
-		if cleanupErr := cleanupCreatedNotificationWatcherAfterLaunchFailure(t, opts.Profile, opts.Workstream, createdWatcherToken, defaultDuplicateLaunchProbe); cleanupErr != nil {
-			return fmt.Errorf("%w; notification watcher cleanup after clean launch failure: %v", err, cleanupErr)
-		}
-		return err
 	}
 	if opts.ResultSink != nil {
 		if resultBackend, ok := backend.(teamLaunchResultBackend); ok {
 			result, err := resultBackend.LaunchWithResult(t, opts)
 			if err != nil {
-				return launchFailure(err)
+				return rollbackLaunchPreparation(err)
 			}
 			opts.ResultSink(result)
 		} else {
 			if err := backend.Launch(t, opts); err != nil {
-				return launchFailure(err)
+				return rollbackLaunchPreparation(err)
 			}
 			opts.ResultSink(teamLaunchResult{})
 		}
 	} else if err := backend.Launch(t, opts); err != nil {
-		return launchFailure(err)
+		return rollbackLaunchPreparation(err)
 	}
 	quietNotice("started %s using profile %s in %s\n", opts.Workstream, opts.Profile, t.Project)
 	if len(preflights) > 0 && preflights[0].Root != "" {
@@ -435,7 +491,7 @@ func buildTeamPreflights(t team.Team, opts teamLaunchOptions) ([]agentLaunchPref
 	out := make([]agentLaunchPreflight, 0, len(members))
 	for _, m := range members {
 		cwd := m.EffectiveCWD(t.Project)
-		env, err := resolveAMQEnvForTeamProfile(cwd, opts.Profile, opts.Workstream, m.Handle)
+		env, err := resolveAMQEnvForTeamLaunchProfile(cwd, opts.Profile, opts.Workstream, m.Handle)
 		if err != nil {
 			return nil, fmt.Errorf("resolve amq env for %s: %w", m.Handle, err)
 		}
@@ -450,6 +506,7 @@ func buildTeamPreflights(t team.Team, opts teamLaunchOptions) ([]agentLaunchPref
 			Handle:     handle,
 			Workstream: env.SessionName,
 			Root:       root,
+			BaseRoot:   absoluteAMQRoot(cwd, env.BaseRoot),
 			Binary:     m.Binary,
 			Force:      opts.ForceDuplicate,
 			DryRun:     opts.DryRun,
@@ -513,7 +570,7 @@ func maybeFilterCurrentExternalLead(t team.Team, workstream, profile, trustMode 
 	}
 	cwd := lead.EffectiveCWD(t.Project)
 	handle := memberHandle(lead)
-	env, err := resolveAMQEnvForTeamProfile(cwd, profile, workstream, handle)
+	env, err := resolveAMQEnvForTeamLaunchProfile(cwd, profile, workstream, handle)
 	if err != nil {
 		if !write {
 			return t, false, nil

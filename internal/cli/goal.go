@@ -193,19 +193,116 @@ type goalApprovalEvidence struct {
 }
 
 type goalDeliveryOptions struct {
-	Project   string
-	Profile   string
-	Session   string
-	Role      string
-	Goal      string
-	AttemptID string
-	Team      team.Team
-	Member    team.Member
-	Namespace squadnamespace.Ref
-	Mode      string
+	Project             string
+	Profile             string
+	Session             string
+	Role                string
+	Goal                string
+	AttemptID           string
+	Team                team.Team
+	Member              team.Member
+	Namespace           squadnamespace.Ref
+	NamespaceGeneration string
+	Mode                string
 	// ResumeTransitionID is an internal, durable compare-and-swap token. It is
 	// accepted only from resume after the fresh lead launch has been verified.
 	ResumeTransitionID string
+}
+
+const (
+	goalBindingModeNative = "native_goal"
+	goalBindingModePrompt = "prompt_goal"
+	goalClaimRouteNative  = "native"
+	goalClaimRoutePrompt  = "prompt"
+)
+
+type goalDeliveryContract struct {
+	Binary     string
+	Mode       string
+	NativeGoal bool
+	ClaimRoute string
+	Method     string
+	Label      string
+}
+
+func goalDeliveryContractForBinary(binary string) (goalDeliveryContract, error) {
+	switch normalizedAgentBinary(binary) {
+	case "claude":
+		return goalDeliveryContract{Binary: "claude", Mode: goalBindingModeNative, NativeGoal: true, ClaimRoute: goalClaimRouteNative, Method: "native_goal_control", Label: "native /goal"}, nil
+	case "codex":
+		return goalDeliveryContract{Binary: "codex", Mode: goalBindingModePrompt, NativeGoal: false, ClaimRoute: goalClaimRoutePrompt, Method: "structured_prompt_goal", Label: "structured Codex goal prompt"}, nil
+	default:
+		return goalDeliveryContract{}, fmt.Errorf("goal delivery does not support binary %q; supported binaries are claude and codex", strings.TrimSpace(binary))
+	}
+}
+
+func (contract goalDeliveryContract) prompt(goal string, t team.Team, profile, session, role, attemptID string) string {
+	if contract.NativeGoal {
+		return nativeGoalControlPrompt(goal, t, profile, session, role, attemptID)
+	}
+	return codexGoalControlPrompt(goal, t, profile, session, role, attemptID)
+}
+
+func (contract goalDeliveryContract) binding(goal, attemptID, prompt, source, detail string) *launch.GoalBinding {
+	return &launch.GoalBinding{
+		Mode:       contract.Mode,
+		NativeGoal: contract.NativeGoal,
+		Source:     source,
+		Command:    prompt,
+		Goal:       goal,
+		AttemptID:  attemptID,
+		Detail:     detail,
+	}
+}
+
+func goalBindingPayload(binding *launch.GoalBinding, contract goalDeliveryContract) (string, string, error) {
+	if binding == nil || binding.Mode != contract.Mode || binding.NativeGoal != contract.NativeGoal {
+		return "", "", fmt.Errorf("goal binding does not match %s delivery", contract.Binary)
+	}
+	if contract.NativeGoal {
+		goal, attemptID, err := parseNativeGoalBindingCommand(binding.Command)
+		if err != nil {
+			return "", "", err
+		}
+		if binding.Goal != "" && binding.Goal != goal {
+			return "", "", fmt.Errorf("native goal binding typed goal does not match command")
+		}
+		if binding.AttemptID != "" && strings.TrimSpace(binding.AttemptID) != attemptID {
+			return "", "", fmt.Errorf("native goal binding typed attempt does not match command")
+		}
+		return goal, attemptID, nil
+	}
+	if binding.Goal == "" {
+		return "", "", fmt.Errorf("prompt goal binding has no typed goal identity")
+	}
+	goal, attemptID, err := parseCodexGoalControlPrompt(binding.Command)
+	if err != nil {
+		return "", "", err
+	}
+	if binding.Goal != goal {
+		return "", "", fmt.Errorf("prompt goal binding typed goal does not match command")
+	}
+	if strings.TrimSpace(binding.AttemptID) != attemptID {
+		return "", "", fmt.Errorf("prompt goal binding typed attempt does not match command")
+	}
+	return goal, attemptID, nil
+}
+
+func exactGoalBinding(binding *launch.GoalBinding, contract goalDeliveryContract, goal, attemptID, prompt, source string) bool {
+	if binding == nil || binding.Mode != contract.Mode || binding.NativeGoal != contract.NativeGoal || binding.Source != source || binding.Command != prompt {
+		return false
+	}
+	boundGoal, boundAttemptID, err := goalBindingPayload(binding, contract)
+	return err == nil && boundGoal == goal && boundAttemptID == strings.TrimSpace(attemptID)
+}
+
+func launchRecordHasGoalBinding(rec launch.Record) bool {
+	contract, err := goalDeliveryContractForBinary(rec.Binary)
+	if err != nil {
+		return false
+	}
+	_, _, err = goalBindingPayload(rec.GoalBinding, contract)
+	return err == nil
 }
 
 type goalDeliveryAttemptError struct {
@@ -287,7 +384,7 @@ func (e *goalPostDeliveryBindingError) Error() string {
 func (e *goalPostDeliveryBindingError) Unwrap() error   { return e.Cause }
 func (e *goalPostDeliveryBindingError) RetrySafe() bool { return false }
 
-// goalFallbackAMQSend is the durable half of ambiguous native goal delivery.
+// goalFallbackAMQSend is the durable half of ambiguous goal delivery.
 // Tests replace it without needing a real AMQ binary or mailbox tree.
 var goalFallbackAMQSend = sendDurableGoalFallback
 var goalDeliveryReceiptWrite = writeDeliveryReceipt
@@ -301,6 +398,8 @@ const (
 	goalDeliveryStateNotSent           = "not_sent"
 	goalDeliveryStateNativeQueued      = "native_queued"
 	goalDeliveryStateNativeUnconfirmed = "native_unconfirmed"
+	goalDeliveryStatePromptQueued      = "prompt_queued"
+	goalDeliveryStatePromptUnconfirmed = "prompt_unconfirmed"
 	goalDeliveryStateFallbackSent      = "fallback_sent"
 	goalDeliveryStatePaneFailed        = "pane_failed"
 	goalDeliveryStatePaneDelivered     = "pane_delivered"
@@ -367,8 +466,8 @@ Usage:
 
 Subcommands:
   apply     apply an operator-approved visible lead goal
-  claim     atomically claim one native/AMQ goal delivery attempt
-  deliver   deliver a native /goal to the resolved visible lead
+  claim     atomically claim one pane/AMQ goal delivery attempt
+  deliver   deliver a binary-specific goal input to the resolved visible lead
   draft     produce a preview-only goal setup plan from a goal description
   retry-attempt  recover delivery of one already-recorded unclaimed attempt
   start     preview or deliver a goal to the current visible lead
@@ -403,8 +502,8 @@ Usage:
   amq-squad goal apply [--project DIR] [--profile NAME] [--session S] [--role ROLE] [--goal-id ID] --gate TOPIC --yes [--override-namespace-conflict --reason WHY] [--json]
 
 Verifies that gate/<topic> contains a real operator APPROVED answer to the
-resolved visible lead, reads the native goal already recorded on that lead's
-launch record, and delivers it through the native /goal control path. This
+resolved visible lead, reads the binary-specific goal already recorded on that
+lead's launch record, and delivers it through that binary's goal contract. This
 command is confirm-gated; pass --yes after reviewing the gate and lead state.
 `)
 	}
@@ -414,15 +513,32 @@ command is confirm-gated; pass --yes after reviewing the gate and lead state.
 	if fs.NArg() != 0 {
 		return usageErrorf("goal apply takes no positional arguments")
 	}
-	gate := normalizeGateTopic(*gateFlag)
-	if gate == "" {
-		return usageErrorf("goal apply requires --gate <topic>")
+	gate, err := canonicalGateTopic(*gateFlag)
+	if err != nil {
+		return usageErrorf("goal apply: %v", err)
 	}
-	target, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal apply", namespaceConflictOverrideOptions{
+	override := namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
 		Reason:  *overrideNamespaceReason,
-	})
+	}
+	target, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal apply", override)
 	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(target.Project, target.Profile, target.Session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentTarget, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal apply", override)
+	if err != nil {
+		return fmt.Errorf("goal apply refused: target re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedGoalTarget("goal apply", target, currentTarget); err != nil {
+		return err
+	}
+	target = currentTarget
+	if err := ensureNoNamespaceConflictWithOverride("goal apply", target.Project, target.Profile, target.Session, flagWasSet(fs, "profile"), override); err != nil {
 		return err
 	}
 	goal, err := approvedGoalFromLeadBinding(target)
@@ -466,9 +582,9 @@ command is confirm-gated; pass --yes after reviewing the gate and lead state.
 func runGoalStart(args []string) error {
 	args = normalizeOptionalStringFlag(args, "--register-orchestrator", defaultGoalOrchestratorHandle)
 	fs := flag.NewFlagSet("goal start", flag.ContinueOnError)
-	goalFlag := fs.String("goal", "", "goal text to deliver as a native /goal control command")
+	goalFlag := fs.String("goal", "", "goal text to deliver through the lead binary's goal contract")
 	sessionFlag := fs.String("session", "", "workstream session of the visible lead")
-	roleFlag := fs.String("role", "", "role to receive the native /goal command (default: configured lead)")
+	roleFlag := fs.String("role", "", "role to receive the binary-specific goal input (default: configured lead)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	registerOrchestrator := fs.String("register-orchestrator", "", "before delivery, register the current pane as external orchestrator handle (default: orchestrator)")
@@ -512,6 +628,9 @@ confirm-gated and requires --yes in this first implementation slice.
 		if err != nil {
 			return err
 		}
+		if err := ensureNoNamespaceConflict("goal start", opts.Project, opts.Profile, opts.Session, flagWasSet(fs, "profile")); err != nil {
+			return err
+		}
 		plan := goalStartPlan(opts)
 		if *jsonOut {
 			return printJSONEnvelope("goal_start", plan)
@@ -525,15 +644,24 @@ confirm-gated and requires --yes in this first implementation slice.
 		return usageErrorf("goal start delivery requires --yes (or run --dry-run to preview first)")
 	}
 	override := namespaceConflictOverrideOptions{Allowed: *overrideNamespaceConflict, Reason: *overrideNamespaceReason}
-	if flagWasSet(fs, "register-orchestrator") {
-		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", override)
-		if err != nil {
-			return err
-		}
-		*roleFlag = role
-	}
 	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", override)
 	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(opts.Project, opts.Profile, opts.Session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentOpts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", override)
+	if err != nil {
+		return fmt.Errorf("goal start refused: target re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedGoalTarget("goal start", opts, currentOpts); err != nil {
+		return err
+	}
+	opts = currentOpts
+	if err := ensureNoNamespaceConflictWithOverride("goal start", opts.Project, opts.Profile, opts.Session, flagWasSet(fs, "profile"), override); err != nil {
 		return err
 	}
 	opts.ResumeTransitionID = strings.TrimSpace(*resumeTransition)
@@ -564,8 +692,8 @@ confirm-gated and requires --yes in this first implementation slice.
 	}
 	if result.Status == "durable_goal_fallback" {
 		fmt.Printf("Queued durable goal fallback for %s on session %s.\n", result.Role, result.Session)
-	} else if result.Status == "native_goal_queued" {
-		fmt.Printf("Queued native goal attempt %s for %s on session %s; no actionable AMQ duplicate was sent.\n", result.DeliveryReceipt.AttemptID, result.Role, result.Session)
+	} else if strings.HasSuffix(result.Status, "_queued") {
+		fmt.Printf("Queued goal attempt %s for %s on session %s; no actionable AMQ duplicate was sent.\n", result.DeliveryReceipt.AttemptID, result.Role, result.Session)
 	} else {
 		fmt.Printf("Started goal on %s for session %s.\n", result.Role, result.Session)
 	}
@@ -575,9 +703,9 @@ confirm-gated and requires --yes in this first implementation slice.
 func runGoalDeliver(args []string) error {
 	args = normalizeOptionalStringFlag(args, "--register-orchestrator", defaultGoalOrchestratorHandle)
 	fs := flag.NewFlagSet("goal deliver", flag.ContinueOnError)
-	goalFlag := fs.String("goal", "", "goal text to deliver as a native /goal control command")
+	goalFlag := fs.String("goal", "", "goal text to deliver through the lead binary's goal contract")
 	sessionFlag := fs.String("session", "", "workstream session of the visible lead")
-	roleFlag := fs.String("role", "", "role to receive the native /goal command (default: configured lead)")
+	roleFlag := fs.String("role", "", "role to receive the binary-specific goal input (default: configured lead)")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
 	registerOrchestrator := fs.String("register-orchestrator", "", "before delivery, register the current pane as external orchestrator handle (default: orchestrator)")
@@ -586,15 +714,14 @@ func runGoalDeliver(args []string) error {
 	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad goal deliver - deliver native /goal as a control action
+		fmt.Fprint(os.Stderr, `amq-squad goal deliver - deliver a binary-specific goal control action
 
 Usage:
   amq-squad goal deliver [--project DIR] [--profile NAME] --session S [--role ROLE] --goal TEXT [--register-orchestrator[=HANDLE] [--wake-inject-mode auto|raw|paste|none]] [--override-namespace-conflict --reason WHY] [--json]
 
-Delivers a native Codex /goal command to the visible lead as a first-class
-control action. This is not an ordinary prompt send: it preserves the busy guard
-for amq-squad send, but /goal delivery may target a busy Codex lead because the
-runtime accepts goal control messages safely.
+Delivers native /goal to Claude or a structured prompt goal to Codex as a
+first-class control action. This is not an ordinary prompt send: it preserves
+the busy guard for amq-squad send while goal delivery uses its claim-once path.
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -609,15 +736,24 @@ runtime accepts goal control messages safely.
 		return err
 	}
 	override := namespaceConflictOverrideOptions{Allowed: *overrideNamespaceConflict, Reason: *overrideNamespaceReason}
-	if flagWasSet(fs, "register-orchestrator") {
-		role, err := prepareGoalOrchestratorRegistration(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, *registerOrchestrator, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver", override)
-		if err != nil {
-			return err
-		}
-		*roleFlag = role
-	}
 	opts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver", override)
 	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(opts.Project, opts.Profile, opts.Session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentOpts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal deliver", override)
+	if err != nil {
+		return fmt.Errorf("goal deliver refused: target re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedGoalTarget("goal deliver", opts, currentOpts); err != nil {
+		return err
+	}
+	opts = currentOpts
+	if err := ensureNoNamespaceConflictWithOverride("goal deliver", opts.Project, opts.Profile, opts.Session, flagWasSet(fs, "profile"), override); err != nil {
 		return err
 	}
 	if flagWasSet(fs, "register-orchestrator") {
@@ -634,10 +770,10 @@ runtime accepts goal control messages safely.
 	}
 	if result.Status == "durable_goal_fallback" {
 		fmt.Printf("Queued durable goal fallback for %s (message %s).\n", result.Role, result.MessageID)
-	} else if result.Status == "native_goal_queued" {
-		fmt.Printf("Queued native /goal attempt %s for %s; no actionable AMQ duplicate was sent.\n", result.DeliveryReceipt.AttemptID, result.Role)
+	} else if strings.HasSuffix(result.Status, "_queued") {
+		fmt.Printf("Queued goal attempt %s for %s; no actionable AMQ duplicate was sent.\n", result.DeliveryReceipt.AttemptID, result.Role)
 	} else {
-		fmt.Printf("Delivered native /goal to %s pane %s (attempt %s).\n", result.Role, result.DeliveryReceipt.PaneID, result.DeliveryReceipt.AttemptID)
+		fmt.Printf("Delivered goal input to %s pane %s (attempt %s).\n", result.Role, result.DeliveryReceipt.PaneID, result.DeliveryReceipt.AttemptID)
 	}
 	return nil
 }
@@ -652,10 +788,15 @@ func resolveGoalDeliveryOptions(projectFlag, profileFlag, sessionFlag, roleFlag,
 }
 
 func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag string, projectSet, profileSet, sessionSet bool, command string, override namespaceConflictOverrideOptions) (goalDeliveryOptions, error) {
-	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: projectFlag, ProfileFlag: profileFlag, SessionFlag: sessionFlag,
+		ProjectExplicit: projectSet, ProfileExplicit: profileSet, SessionExplicit: sessionSet,
+	})
 	if err != nil {
 		return goalDeliveryOptions{}, err
 	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
 	if !team.ExistsProfile(projectDir, profile) {
 		return goalDeliveryOptions{}, fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
@@ -663,11 +804,8 @@ func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag st
 	if err != nil {
 		return goalDeliveryOptions{}, fmt.Errorf("read team: %w", err)
 	}
-	workstream, err := resolveTeamWorkstreamName(t, sessionFlag, sessionSet)
+	workstream, err := resolveTeamWorkstreamName(t, ctx.Session, sessionSet)
 	if err != nil {
-		return goalDeliveryOptions{}, err
-	}
-	if err := ensureNoNamespaceConflictWithOverride(command, projectDir, profile, workstream, profileSet, override); err != nil {
 		return goalDeliveryOptions{}, err
 	}
 	role := strings.TrimSpace(roleFlag)
@@ -685,15 +823,29 @@ func resolveGoalTargetOptions(projectFlag, profileFlag, sessionFlag, roleFlag st
 		return goalDeliveryOptions{}, fmt.Errorf("no team member with role %q in this team", role)
 	}
 	return goalDeliveryOptions{
-		Project:   projectDir,
-		Profile:   profile,
-		Session:   workstream,
-		Role:      role,
-		Team:      t,
-		Member:    member,
-		Namespace: squadnamespace.Resolve(projectDir, profile, workstream),
-		Mode:      effectiveTeamExecutionMode(t),
+		Project:             projectDir,
+		Profile:             profile,
+		Session:             workstream,
+		Role:                role,
+		Team:                t,
+		Member:              member,
+		Namespace:           squadnamespace.Resolve(projectDir, profile, workstream),
+		NamespaceGeneration: ctx.NamespaceGeneration,
+		Mode:                effectiveTeamExecutionMode(t),
 	}, nil
+}
+
+func validateReResolvedGoalTarget(operation string, initial, current goalDeliveryOptions) error {
+	if err := validateReResolvedEndpoint(operation, initial.Namespace, current.Namespace, memberHandle(initial.Member), memberHandle(current.Member)); err != nil {
+		return err
+	}
+	if initial.NamespaceGeneration != current.NamespaceGeneration {
+		return fmt.Errorf("%s refused: namespace generation changed before admission; retry", operation)
+	}
+	if initial.Role != current.Role || initial.Member.Binary != current.Member.Binary || initial.Member.Session != current.Member.Session || canonicalPath(initial.Member.EffectiveCWD(initial.Project)) != canonicalPath(current.Member.EffectiveCWD(current.Project)) {
+		return fmt.Errorf("%s refused: goal target identity changed before admission; retry", operation)
+	}
+	return nil
 }
 
 func approvedGoalFromLeadBinding(opts goalDeliveryOptions) (string, error) {
@@ -707,12 +859,13 @@ func approvedGoalFromLeadBinding(opts goalDeliveryOptions) (string, error) {
 	if !mr.HasRecord {
 		return "", fmt.Errorf("goal apply requires a launch record for visible lead role %q", opts.Role)
 	}
-	if mr.Record.GoalBinding == nil || !mr.Record.GoalBinding.NativeGoal {
-		return "", fmt.Errorf("goal apply requires role %q to have a native goal binding", opts.Role)
+	contract, err := goalDeliveryContractForBinary(mr.Record.Binary)
+	if err != nil {
+		return "", err
 	}
-	goal, ok := extractNativeGoalText(mr.Record.GoalBinding.Command)
-	if !ok || strings.TrimSpace(goal) == "" {
-		return "", fmt.Errorf("goal apply could not read native goal text from role %q launch record", opts.Role)
+	goal, _, err := goalBindingPayload(mr.Record.GoalBinding, contract)
+	if err != nil || strings.TrimSpace(goal) == "" {
+		return "", fmt.Errorf("goal apply could not read %s goal text from role %q launch record", contract.Mode, opts.Role)
 	}
 	return strings.TrimSpace(goal), nil
 }
@@ -852,20 +1005,6 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	if handle == "" {
 		handle = defaultGoalOrchestratorHandle
 	}
-	if _, err := currentPaneIdentity(); err != nil {
-		return err
-	}
-	if err := ensureGoalOrchestratorMember(opts.Project, opts.Profile, opts.Session, handle); err != nil {
-		return err
-	}
-	t, err := team.ReadProfile(opts.Project, opts.Profile)
-	if err != nil {
-		return fmt.Errorf("read team after orchestrator registration: %w", err)
-	}
-	member, ok := memberByRole(t, goalOrchestratorRole)
-	if !ok {
-		return fmt.Errorf("registered orchestrator member missing from team profile")
-	}
 	id, err := currentPaneIdentity()
 	if err != nil {
 		return err
@@ -873,7 +1012,31 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	if id == nil {
 		return fmt.Errorf("goal delivery --register-orchestrator requires a current tmux pane (TMUX/TMUX_PANE unset)")
 	}
-	cwd := member.EffectiveCWD(t.Project)
+	lifecycle, err := beginExternalOrchestratorLifecycle(opts, handle, id.PaneID, id.Session, id.WindowID, id.WindowName, currentLaunchTTY(), time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	lifecycle, err = ensureExternalOrchestratorMailbox(opts, lifecycle)
+	if err != nil {
+		return err
+	}
+	if lifecycle.Registration.State == externalOrchestratorStateRegistered {
+		if err := verifyExternalOrchestratorLaunch(lifecycle); err != nil {
+			return fmt.Errorf("registered external orchestrator runtime is incomplete: %w", err)
+		}
+		return nil
+	}
+	if lifecycle.Registration.State == externalOrchestratorStateRuntimeVerified {
+		if err := verifyExternalOrchestratorLaunch(lifecycle); err != nil {
+			return fmt.Errorf("runtime-verified external orchestrator is incomplete: %w", err)
+		}
+		if _, _, err := transitionExternalOrchestratorRegistration(lifecycle.Registration.Identity.Scope, lifecycle.Registration.Generation, externalOrchestratorStateRegistered, externalOrchestratorTransitionEvidence{LaunchPath: filepath.Join(lifecycle.AgentDir, launch.FileName), Outcome: "registered"}, time.Now().UTC()); err != nil {
+			return err
+		}
+		return nil
+	}
+	handle = lifecycle.Registration.Identity.Scope.Handle
+	cwd := opts.Member.EffectiveCWD(opts.Team.Project)
 	env, err := resolveAMQEnvForTeamProfile(cwd, opts.Profile, opts.Session, handle)
 	if err != nil {
 		return fmt.Errorf("resolve orchestrator amq env: %w", err)
@@ -881,10 +1044,10 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	if env.Me != "" {
 		handle = env.Me
 	}
-	root := absoluteAMQRoot(cwd, env.Root)
-	agentDir := filepath.Join(root, "agents", handle)
+	root := lifecycle.Root
+	agentDir := lifecycle.AgentDir
 	existingRec, existingRecErr := launch.Read(agentDir)
-	wakeConfig, err := resolveExternalWakeInjectConfig(wakeInjectConfig{Mode: wakeInjectMode}, wakeInjectModeExplicit, false, false, existingRec, existingRecErr, goalOrchestratorRole, handle, opts.Profile, env.SessionName, root, id.PaneID)
+	wakeConfig, err := resolveExternalWakeInjectConfig(wakeInjectConfig{Mode: wakeInjectMode}, wakeInjectModeExplicit, false, false, existingRec, existingRecErr, opts.Member.Binary, goalOrchestratorRole, handle, opts.Profile, env.SessionName, root, id.PaneID)
 	if err != nil {
 		return err
 	}
@@ -917,7 +1080,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	}
 	rec := launch.Record{
 		CWD:              cwd,
-		Binary:           member.Binary,
+		Binary:           opts.Member.Binary,
 		Session:          env.SessionName,
 		SharedWorkstream: true,
 		Handle:           handle,
@@ -926,8 +1089,8 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		BaseRoot:         absoluteAMQRoot(cwd, env.BaseRoot),
 		RootSource:       env.RootSource,
 		AMQVersion:       env.AMQVersion,
-		Model:            strings.TrimSpace(member.Model),
-		Trust:            strings.TrimSpace(t.Trust),
+		Model:            strings.TrimSpace(opts.Member.Model),
+		Trust:            strings.TrimSpace(opts.Team.Trust),
 		External:         true,
 		WakeInjectVia:    wakeConfig.Via,
 		WakeInjectArgs:   wakeConfig.Args,
@@ -949,80 +1112,14 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	if err := launch.Write(agentDir, rec); err != nil {
 		return fmt.Errorf("write external orchestrator launch record: %w", err)
 	}
-	if err := setTeamLeadForProfile(opts.Project, opts.Profile, goalOrchestratorRole, "", false); err != nil {
+	lifecycle.Registration, _, err = transitionExternalOrchestratorRegistration(lifecycle.Registration.Identity.Scope, lifecycle.Registration.Generation, externalOrchestratorStateRuntimeVerified, externalOrchestratorTransitionEvidence{WakePID: wakePID, LaunchPath: filepath.Join(agentDir, launch.FileName), Outcome: "verified"}, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if _, _, err := transitionExternalOrchestratorRegistration(lifecycle.Registration.Identity.Scope, lifecycle.Registration.Generation, externalOrchestratorStateRegistered, externalOrchestratorTransitionEvidence{WakePID: wakePID, LaunchPath: filepath.Join(agentDir, launch.FileName), Outcome: "registered"}, time.Now().UTC()); err != nil {
 		return err
 	}
 	return nil
-}
-
-func prepareGoalOrchestratorRegistration(projectFlag, profileFlag, sessionFlag, roleFlag, handle string, projectSet, profileSet, sessionSet bool, command string, override namespaceConflictOverrideOptions) (string, error) {
-	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
-	if err != nil {
-		return "", err
-	}
-	if !team.ExistsProfile(projectDir, profile) {
-		return "", fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
-	}
-	t, err := team.ReadProfile(projectDir, profile)
-	if err != nil {
-		return "", fmt.Errorf("read team: %w", err)
-	}
-	workstream, err := resolveTeamWorkstreamName(t, sessionFlag, sessionSet)
-	if err != nil {
-		return "", err
-	}
-	if err := ensureNoNamespaceConflictWithOverride(command, projectDir, profile, workstream, profileSet, override); err != nil {
-		return "", err
-	}
-	if err := ensureGoalOrchestratorMember(projectDir, profile, workstream, strings.TrimSpace(handle)); err != nil {
-		return "", err
-	}
-	role := strings.TrimSpace(roleFlag)
-	if role == "" {
-		role = goalOrchestratorRole
-	}
-	return role, nil
-}
-
-func ensureGoalOrchestratorMember(project, profile, session, handle string) error {
-	handle = strings.TrimSpace(handle)
-	if handle == "" {
-		handle = defaultGoalOrchestratorHandle
-	}
-	return withProfileLock(project, profile, func() error {
-		t, err := team.ReadProfile(project, profile)
-		if err != nil {
-			return fmt.Errorf("read team: %w", err)
-		}
-		if existing, ok := memberByRole(t, goalOrchestratorRole); ok {
-			existingHandle := strings.TrimSpace(existing.Handle)
-			if existingHandle != "" && existingHandle != handle {
-				return fmt.Errorf("orchestrator member already uses handle %q; requested %q", existingHandle, handle)
-			}
-			for i := range t.Members {
-				if strings.EqualFold(t.Members[i].Role, goalOrchestratorRole) {
-					if strings.TrimSpace(t.Members[i].Handle) == "" {
-						t.Members[i].Handle = handle
-					}
-					if strings.TrimSpace(t.Members[i].Binary) == "" {
-						t.Members[i].Binary = "codex"
-					}
-					if strings.TrimSpace(t.Members[i].Session) == "" {
-						t.Members[i].Session = session
-					}
-					break
-				}
-			}
-		} else {
-			t.Members = append(t.Members, team.Member{
-				Role:    goalOrchestratorRole,
-				Binary:  "codex",
-				Handle:  handle,
-				Session: session,
-			})
-		}
-		return team.WriteProfileUnderLock(project, profile, t)
-	})
 }
 
 func writeGoalStartPlan(out *os.File, data goalStartData) {
@@ -1040,6 +1137,10 @@ func writeGoalStartPlan(out *os.File, data goalStartData) {
 }
 
 func sendDurableGoalFallback(opts goalDeliveryOptions) (goalFallbackDelivery, error) {
+	contract, err := goalDeliveryContractForBinary(opts.Member.Binary)
+	if err != nil {
+		return goalFallbackDelivery{}, err
+	}
 	target := memberHandle(opts.Member)
 	if target == "" {
 		return goalFallbackDelivery{}, fmt.Errorf("goal fallback target role %q has no handle", opts.Role)
@@ -1070,17 +1171,18 @@ func sendDurableGoalFallback(opts goalDeliveryOptions) (goalFallbackDelivery, er
 		" --route amq --json"
 	body := "Launch goal for session " + opts.Session + ":\n\n" + opts.Goal +
 		"\n\nGoal attempt ID: " + attemptID +
-		"\n\nThis is the single actionable AMQ path for an unconfirmed native submission. " +
+		"\n\nThis is the single actionable AMQ path for an unconfirmed " + contract.Label + " submission. " +
 		"Before activating the goal, run:\n\n" + claimCommand +
-		"\n\nProceed only when status is claimed. If status is already_claimed, the native path won and this message is a no-op. " +
+		"\n\nProceed only when status is claimed. If status is already_claimed, the " + contract.ClaimRoute + " path won and this message is a no-op. " +
 		"Never reset or retry this attempt to activate it twice."
 	args := dispatchSendArgs(ctx.Root, sender, target, thread, "todo", subject, body, "", "", 0)
-	out, err := runAMQCommand(amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: args})
+	out, receipt, err := runOwnedDurableSend(durableSendOptions{ProjectDir: opts.Project, Profile: opts.Profile, Session: opts.Session, Role: opts.Role, Kind: "goal_fallback"}, amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: args})
 	if err != nil {
 		return goalFallbackDelivery{}, fmt.Errorf("send durable goal fallback to %s: %w", target, err)
 	}
+	_ = out
 	return goalFallbackDelivery{
-		MessageID: parseSentMessageID(string(out)),
+		MessageID: receipt.MessageID,
 		Root:      ctx.Root,
 		Thread:    thread,
 	}, nil
@@ -1145,7 +1247,7 @@ type goalDeliveryReservation struct {
 	TransitionSendSnapshot *resumeGoalSendSnapshot
 }
 
-func reserveGoalDeliveryAttempt(opts *goalDeliveryOptions, receipt *deliveryReceiptData, transition *resumeGoalTransitionRecord) (string, error) {
+func reserveGoalDeliveryAttempt(opts *goalDeliveryOptions, contract goalDeliveryContract, receipt *deliveryReceiptData, transition *resumeGoalTransitionRecord) (string, error) {
 	attemptPath, err := goalAttemptPath(opts.Project, opts.Profile, opts.Session, receipt.AttemptID)
 	if err != nil {
 		return "", err
@@ -1171,7 +1273,7 @@ func reserveGoalDeliveryAttempt(opts *goalDeliveryOptions, receipt *deliveryRece
 		}
 		attemptPath = createdPath
 	}
-	receipt.addStage("attempt_recorded", "claim-once goal attempt recorded at "+attemptPath+"; native and AMQ paths share attempt_id="+receipt.AttemptID)
+	receipt.addStage("attempt_recorded", "claim-once goal attempt recorded at "+attemptPath+"; "+contract.Label+" and AMQ paths share attempt_id="+receipt.AttemptID)
 	return attemptPath, nil
 }
 
@@ -1179,10 +1281,10 @@ func reserveGoalDeliveryAttempt(opts *goalDeliveryOptions, receipt *deliveryRece
 // phase. It rereads the current member while locked, validates any transition,
 // and atomically merges the exact binding reservation. It deliberately does
 // not discover panes, send input, write receipts, or emit output.
-func reserveGoalDeliveryIdentity(opts *goalDeliveryOptions, receipt *deliveryReceiptData, prompt *string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (goalDeliveryReservation, error) {
+func reserveGoalDeliveryIdentity(opts *goalDeliveryOptions, contract goalDeliveryContract, receipt *deliveryReceiptData, prompt *string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (goalDeliveryReservation, error) {
 	reservation := goalDeliveryReservation{Runtime: mr, Workstream: resolvedWorkstream, Transition: transition}
 	if !mr.HasRecord {
-		attemptPath, err := reserveGoalDeliveryAttempt(opts, receipt, transition)
+		attemptPath, err := reserveGoalDeliveryAttempt(opts, contract, receipt, transition)
 		if err != nil {
 			return goalDeliveryReservation{}, err
 		}
@@ -1205,11 +1307,11 @@ func reserveGoalDeliveryIdentity(opts *goalDeliveryOptions, receipt *deliveryRec
 				return fmt.Errorf("resume-goal transition attempt identity changed while reserving binding")
 			}
 		}
-		*prompt = nativeGoalControlPrompt(opts.Goal, currentTeam, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
+		*prompt = contract.prompt(opts.Goal, currentTeam, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
 		if reason, disabled := current.nativePromptInjectionDisabledReason(); disabled {
 			return fmt.Errorf("%s", reason)
 		}
-		attemptPath, err := reserveGoalDeliveryAttempt(opts, receipt, transition)
+		attemptPath, err := reserveGoalDeliveryAttempt(opts, contract, receipt, transition)
 		if err != nil {
 			return err
 		}
@@ -1217,13 +1319,7 @@ func reserveGoalDeliveryIdentity(opts *goalDeliveryOptions, receipt *deliveryRec
 		if transition != nil && transition.BindingReserved {
 			receipt.addStage("launch_record_reserved", "existing transition launch binding already reserves the exact claim-once attempt")
 		} else {
-			rec.GoalBinding = &launch.GoalBinding{
-				Mode:       "native_goal",
-				NativeGoal: true,
-				Source:     "goal-control",
-				Command:    *prompt,
-				Detail:     "native /goal reserved as a claim-once control action",
-			}
+			rec.GoalBinding = contract.binding(opts.Goal, receipt.AttemptID, *prompt, "goal-control", contract.Label+" reserved as a claim-once control action")
 			if transition != nil {
 				goalBeforeTransitionBindingCAS()
 			} else {
@@ -1232,7 +1328,7 @@ func reserveGoalDeliveryIdentity(opts *goalDeliveryOptions, receipt *deliveryRec
 			if err := goalLaunchWriteUnderRecordLock(current.AgentDir, rec); err != nil {
 				return fmt.Errorf("reserve launch goal binding after attempt creation: %w", err)
 			}
-			receipt.addStage("launch_record_reserved", "launch record goal_binding reserved before native /goal delivery")
+			receipt.addStage("launch_record_reserved", "launch record goal_binding reserved before "+contract.Label+" delivery")
 		}
 		if transition != nil {
 			if err := ensureResumeGoalTransitionBinding(*opts, transition, current.AgentDir); err != nil {
@@ -1296,7 +1392,7 @@ func validateTransitionGoalDeliveryBeforeSend(opts goalDeliveryOptions, reservat
 // phase. It rereads the current record and merges only the binding detail when
 // the expected binding and team generation are still current, preserving
 // unrelated concurrent record fields instead of overwriting a stale snapshot.
-func markGoalDeliveryBindingDelivered(opts goalDeliveryOptions, reservation goalDeliveryReservation, prompt, attemptID string) error {
+func markGoalDeliveryBindingDelivered(opts goalDeliveryOptions, contract goalDeliveryContract, reservation goalDeliveryReservation, prompt, attemptID string) error {
 	return withCurrentGoalIdentityWriterLocks(opts, func(current memberRuntime, _ string) error {
 		teamDigest, teamMod, err := readGoalFileGeneration(team.ProfilePath(opts.Project, opts.Profile))
 		if err != nil {
@@ -1309,11 +1405,11 @@ func markGoalDeliveryBindingDelivered(opts goalDeliveryOptions, reservation goal
 			return fmt.Errorf("%s", reason)
 		}
 		rec := current.Record
-		if rec.GoalBinding == nil || rec.GoalBinding.Mode != "native_goal" || !rec.GoalBinding.NativeGoal || rec.GoalBinding.Source != "goal-control" || rec.GoalBinding.Command != prompt {
+		if !exactGoalBinding(rec.GoalBinding, contract, opts.Goal, attemptID, prompt, "goal-control") {
 			return fmt.Errorf("reserved binding changed after pane delivery")
 		}
 		goalBeforePostDeliveryBindingCAS()
-		rec.GoalBinding.Detail = "native /goal delivered as a first-class claim-once control action"
+		rec.GoalBinding.Detail = contract.Label + " delivered as a first-class claim-once control action"
 		if err := goalLaunchWriteUnderRecordLock(current.AgentDir, rec); err != nil {
 			return err
 		}
@@ -1322,6 +1418,9 @@ func markGoalDeliveryBindingDelivered(opts goalDeliveryOptions, reservation goal
 }
 
 func executeGoalDelivery(opts goalDeliveryOptions) (result mutationResult, err error) {
+	if _, err := goalDeliveryContractForBinary(opts.Member.Binary); err != nil {
+		return mutationResult{}, err
+	}
 	if err := os.MkdirAll(goalAttemptDir(opts.Project, opts.Profile, opts.Session), 0o755); err != nil {
 		return mutationResult{}, fmt.Errorf("ensure goal delivery lock dir: %w", err)
 	}
@@ -1334,11 +1433,15 @@ func executeGoalDelivery(opts goalDeliveryOptions) (result mutationResult, err e
 }
 
 func executeGoalDeliveryLocked(opts goalDeliveryOptions) (mutationResult, error) {
-	receipt := newDeliveryReceipt(opts.Project, opts.Profile, opts.Session, opts.Role, opts.Member.Handle, opts.Mode, "native_goal")
+	contract, err := goalDeliveryContractForBinary(opts.Member.Binary)
+	if err != nil {
+		return mutationResult{}, err
+	}
+	receipt := newDeliveryReceipt(opts.Project, opts.Profile, opts.Session, opts.Role, opts.Member.Handle, opts.Mode, contract.Mode)
 	opts.AttemptID = receipt.AttemptID
-	prompt := nativeGoalControlPrompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
-	receipt.Method = "native_goal_control"
-	receipt.addStage("queued", "native /goal control delivery accepted by amq-squad")
+	prompt := contract.prompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
+	receipt.Method = contract.Method
+	receipt.addStage("queued", contract.Label+" delivery accepted by amq-squad")
 
 	mr, resolvedWorkstream, err := resolveMemberRuntime(opts.Project, opts.Profile, opts.Session, true, opts.Role)
 	if err != nil {
@@ -1351,14 +1454,14 @@ func executeGoalDeliveryLocked(opts goalDeliveryOptions) (mutationResult, error)
 	if transition != nil {
 		receipt.AttemptID = transition.NewAttemptID
 		opts.AttemptID = transition.NewAttemptID
-		prompt = nativeGoalControlPrompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
+		prompt = contract.prompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
 	}
-	return executeGoalDeliveryResolved(opts, receipt, prompt, mr, resolvedWorkstream, transition)
+	return executeGoalDeliveryResolved(opts, contract, receipt, prompt, mr, resolvedWorkstream, transition)
 }
 
-func executeGoalDeliveryResolved(opts goalDeliveryOptions, receipt deliveryReceiptData, prompt string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (mutationResult, error) {
+func executeGoalDeliveryResolved(opts goalDeliveryOptions, contract goalDeliveryContract, receipt deliveryReceiptData, prompt string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (mutationResult, error) {
 	var err error
-	reservation, err := reserveGoalDeliveryIdentity(&opts, &receipt, &prompt, mr, resolvedWorkstream, transition)
+	reservation, err := reserveGoalDeliveryIdentity(&opts, contract, &receipt, &prompt, mr, resolvedWorkstream, transition)
 	if err != nil {
 		attemptPath, _ := goalAttemptPath(opts.Project, opts.Profile, opts.Session, receipt.AttemptID)
 		return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: err}
@@ -1390,20 +1493,24 @@ func executeGoalDeliveryResolved(opts goalDeliveryOptions, receipt deliveryRecei
 	}
 	receipt.PaneID = paneID
 	if transition != nil {
-		receipt.addStage("control_delivery_started", "revalidated exact transition-bound pane immediately before native /goal control")
+		receipt.addStage("control_delivery_started", "revalidated exact transition-bound pane immediately before "+contract.Label)
 	} else {
-		receipt.addStage("control_delivery_started", "resolved exact target pane for native /goal control")
+		receipt.addStage("control_delivery_started", "resolved exact target pane for "+contract.Label)
 	}
 	if err := sendPromptToPane(paneID, prompt); err != nil {
 		var queued *tmuxpane.QueuedInputError
 		var unconfirmed *tmuxpane.SubmitUnconfirmedError
 		if errors.As(err, &queued) {
-			receipt.Status = "native_goal_queued"
+			receipt.Status = contract.Mode + "_queued"
 			receipt.Detail = err.Error()
-			receipt.addStage("native_goal_queued", "native goal text is known present in the lead input and will submit when the agent goes idle")
-			receipt.addStage("pending_without_amq_action", "durable pending evidence recorded; no actionable AMQ fallback emitted because the native text is known present")
+			receipt.addStage(receipt.Status, contract.Label+" text is known present in the lead input and will submit when the agent goes idle")
+			receipt.addStage("pending_without_amq_action", "durable pending evidence recorded; no actionable AMQ fallback emitted because the binary-specific goal input is known present")
 			if writeErr := goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt); writeErr != nil {
-				return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, Sent: true, State: goalDeliveryStateNativeQueued, Cause: &goalFallbackDurabilityError{DeliveryErr: err, FallbackErr: fmt.Errorf("write queued native-goal receipt: %w", writeErr)}}
+				state := goalDeliveryStateNativeQueued
+				if !contract.NativeGoal {
+					state = goalDeliveryStatePromptQueued
+				}
+				return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, Sent: true, State: state, Cause: &goalFallbackDurabilityError{DeliveryErr: err, FallbackErr: fmt.Errorf("write queued goal receipt: %w", writeErr)}}
 			}
 			fmt.Fprintf(os.Stderr, "warning: goal queued in the lead's input; it will submit when the agent goes idle. Pending attempt %s was recorded without a second actionable AMQ goal; continuing.\n", receipt.AttemptID)
 			return mutationResult{
@@ -1422,10 +1529,14 @@ func executeGoalDeliveryResolved(opts goalDeliveryOptions, receipt deliveryRecei
 			fallback, fallbackErr := goalFallbackAMQSend(opts)
 			if fallbackErr != nil {
 				receipt.Status = "failed"
-				receipt.Detail = fmt.Sprintf("native goal submission was unconfirmed and claim-once AMQ fallback failed: %v", fallbackErr)
+				receipt.Detail = fmt.Sprintf("%s submission was unconfirmed and claim-once AMQ fallback failed: %v", contract.Label, fallbackErr)
 				receipt.addStage("failed", receipt.Detail)
 				_ = goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt)
-				return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, Sent: true, State: goalDeliveryStateNativeUnconfirmed, Cause: &goalFallbackDurabilityError{DeliveryErr: err, FallbackErr: fallbackErr}}
+				state := goalDeliveryStateNativeUnconfirmed
+				if !contract.NativeGoal {
+					state = goalDeliveryStatePromptUnconfirmed
+				}
+				return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, Sent: true, State: state, Cause: &goalFallbackDurabilityError{DeliveryErr: err, FallbackErr: fallbackErr}}
 			}
 			receipt.MessageID = fallback.MessageID
 			receipt.Root = fallback.Root
@@ -1434,8 +1545,8 @@ func executeGoalDeliveryResolved(opts goalDeliveryOptions, receipt deliveryRecei
 			receipt.Method = "durable_amq_goal_fallback"
 			receipt.Status = "durable_goal_fallback"
 			receipt.Detail = err.Error()
-			receipt.addStage("native_goal_unconfirmed", err.Error())
-			receipt.addStage("claim_once_contract", "native prompt and AMQ todo share attempt_id="+receipt.AttemptID+" under an at-most-once contract: exactly one route may atomically claim it; a claimant crash before activation is observable but never replayed")
+			receipt.addStage(contract.Mode+"_unconfirmed", err.Error())
+			receipt.addStage("claim_once_contract", contract.Label+" and AMQ todo share attempt_id="+receipt.AttemptID+" under an at-most-once contract: exactly one route may atomically claim it; a claimant crash before activation is observable but never replayed")
 			receipt.addStage("written_to_amq", "single actionable claim-once goal fallback written to the lead inbox")
 			if writeErr := goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt); writeErr != nil {
 				return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, Sent: true, State: goalDeliveryStateFallbackSent, Cause: &goalFallbackSentReceiptError{
@@ -1450,7 +1561,7 @@ func executeGoalDeliveryResolved(opts goalDeliveryOptions, receipt deliveryRecei
 			if messageID == "" {
 				messageID = "(message id unavailable)"
 			}
-			fmt.Fprintf(os.Stderr, "warning: native goal submission was not confirmed. Claim-once durable AMQ fallback %s shares attempt %s; continuing.\n", messageID, receipt.AttemptID)
+			fmt.Fprintf(os.Stderr, "warning: %s submission was not confirmed. Claim-once durable AMQ fallback %s shares attempt %s; continuing.\n", contract.Label, messageID, receipt.AttemptID)
 			return mutationResult{
 				Command:         "goal deliver",
 				Status:          receipt.Status,
@@ -1472,11 +1583,11 @@ func executeGoalDeliveryResolved(opts goalDeliveryOptions, receipt deliveryRecei
 		_ = goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt)
 		return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, Sent: true, State: goalDeliveryStatePaneFailed, Cause: err}
 	}
-	receipt.addStage("pane_settled", "SendPromptToPane waited for target pane output to settle before native /goal control delivery")
-	receipt.Status = "native_goal_delivered"
-	receipt.addStage("native_goal_delivered", "native /goal command delivered without ordinary prompt busy-guard semantics")
+	receipt.addStage("pane_settled", "SendPromptToPane waited for target pane output to settle before "+contract.Label+" delivery")
+	receipt.Status = contract.Mode + "_delivered"
+	receipt.addStage(receipt.Status, contract.Label+" delivered without ordinary prompt busy-guard semantics")
 	if mr.HasRecord {
-		if err := markGoalDeliveryBindingDelivered(opts, reservation, prompt, receipt.AttemptID); err != nil {
+		if err := markGoalDeliveryBindingDelivered(opts, contract, reservation, prompt, receipt.AttemptID); err != nil {
 			return mutationResult{}, &goalPostDeliveryBindingError{AttemptID: receipt.AttemptID, Recovery: goalRetryAttemptCommand(opts, receipt.AttemptID), Cause: err}
 		}
 		receipt.addStage("launch_record_updated", "reserved launch goal_binding marked delivered")
@@ -1507,7 +1618,7 @@ func goalRetryAttemptCommand(opts goalDeliveryOptions, attemptID string) string 
 }
 
 func nativeGoalControlPrompt(goal string, t team.Team, profile, session, role string, attemptIDs ...string) string {
-	args := []string{"/goal", "--goal", strconv.Quote(goal), "--session", session, "--profile", profile, "--mode", effectiveTeamExecutionMode(t)}
+	args := []string{"/goal", "--goal", quoteGoalPromptValue(goal), "--session", session, "--profile", profile, "--mode", effectiveTeamExecutionMode(t)}
 	if role != "" && role != "cto" {
 		args = append(args, "--lead", role)
 	}
@@ -1521,6 +1632,230 @@ func nativeGoalControlPrompt(goal string, t team.Team, profile, session, role st
 		args = append(args, "--attempt-id", strings.TrimSpace(attemptIDs[0]))
 	}
 	return strings.Join(args, " ")
+}
+
+func quoteGoalPromptValue(goal string) string {
+	var b strings.Builder
+	b.Grow(len(goal) + 2)
+	b.WriteByte('"')
+	for _, r := range goal {
+		switch r {
+		case '\\', '"':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+func unquoteGoalPromptValue(token string) (string, error) {
+	if parsed, err := strconv.Unquote(token); err == nil {
+		return parsed, nil
+	}
+	if len(token) < 2 || token[0] != '"' || token[len(token)-1] != '"' {
+		return "", fmt.Errorf("not a quoted goal value")
+	}
+	body := token[1 : len(token)-1]
+	var b strings.Builder
+	escaped := false
+	for _, r := range body {
+		if escaped {
+			switch r {
+			case '\\', '"':
+				b.WriteRune(r)
+			default:
+				return "", fmt.Errorf("unsupported goal escape \\%c", r)
+			}
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		b.WriteRune(r)
+	}
+	if escaped {
+		return "", fmt.Errorf("unterminated goal escape")
+	}
+	return b.String(), nil
+}
+
+func codexGoalControlPrompt(goal string, t team.Team, profile, session, role, attemptID string) string {
+	var b strings.Builder
+	fmt.Fprintln(&b, "AMQ-SQUAD PROMPT GOAL v1")
+	fmt.Fprintln(&b, "This Codex runtime has no native /goal command. Treat this structured prompt as the active goal.")
+	fmt.Fprintf(&b, "profile: %s\n", profile)
+	fmt.Fprintf(&b, "session: %s\n", session)
+	fmt.Fprintf(&b, "mode: %s\n", effectiveTeamExecutionMode(t))
+	fmt.Fprintf(&b, "role: %s\n", role)
+	fmt.Fprintf(&b, "project: %s\n", t.Project)
+	fmt.Fprintf(&b, "lead_mode: %s\n", team.EffectiveLeadMode(t))
+	fmt.Fprintf(&b, "target_contract: %s\n", strings.TrimSpace(t.TargetContract))
+	fmt.Fprintf(&b, "attempt_id: %s\n", strings.TrimSpace(attemptID))
+	fmt.Fprintf(&b, "goal_bytes: %d\n\nGoal:\n", len(goal))
+	b.WriteString(goal)
+	b.WriteString("\n\nDelivery contract:\n")
+	if strings.TrimSpace(attemptID) == "" {
+		b.WriteString("This launch prompt is recorded as prompt_goal evidence for a binary without native /goal.\n")
+		return strings.TrimSuffix(b.String(), "\n")
+	}
+	claim := []string{
+		"amq-squad", "goal", "claim",
+		"--project", t.Project,
+		"--profile", profile,
+		"--session", session,
+		"--attempt-id", strings.TrimSpace(attemptID),
+		"--route", goalClaimRoutePrompt,
+		"--json",
+	}
+	quoted := make([]string, 0, len(claim))
+	for _, arg := range claim {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	b.WriteString("Before acting, run this exact claim command:\n")
+	b.WriteString(strings.Join(quoted, " "))
+	b.WriteString("\nProceed only when status is claimed. If status is already_claimed, another route won and this prompt is a no-op.\n")
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+func parseCodexGoalControlPrompt(prompt string) (string, string, error) {
+	const header = "AMQ-SQUAD PROMPT GOAL v1\n"
+	if !strings.HasPrefix(prompt, header) {
+		return "", "", fmt.Errorf("prompt is not a generated Codex goal")
+	}
+	marker := "\n\nGoal:\n"
+	markerIndex := strings.Index(prompt, marker)
+	if markerIndex < 0 {
+		return "", "", fmt.Errorf("generated Codex goal has no goal marker")
+	}
+	metadata := strings.Split(prompt[:markerIndex], "\n")
+	if len(metadata) != 11 || metadata[0] != "AMQ-SQUAD PROMPT GOAL v1" ||
+		metadata[1] != "This Codex runtime has no native /goal command. Treat this structured prompt as the active goal." {
+		return "", "", fmt.Errorf("generated Codex goal has invalid metadata")
+	}
+	metadataValue := func(index int, label string) (string, error) {
+		prefix := label + ": "
+		if !strings.HasPrefix(metadata[index], prefix) {
+			return "", fmt.Errorf("generated Codex goal has invalid %s metadata", label)
+		}
+		return strings.TrimPrefix(metadata[index], prefix), nil
+	}
+	profile, err := metadataValue(2, "profile")
+	if err != nil {
+		return "", "", err
+	}
+	session, err := metadataValue(3, "session")
+	if err != nil {
+		return "", "", err
+	}
+	mode, err := metadataValue(4, "mode")
+	if err != nil {
+		return "", "", err
+	}
+	if normalized, normalizeErr := normalizeExecutionMode(mode); normalizeErr != nil || normalized != mode {
+		return "", "", fmt.Errorf("generated Codex goal has invalid mode metadata")
+	}
+	if _, err := metadataValue(5, "role"); err != nil {
+		return "", "", err
+	}
+	project, err := metadataValue(6, "project")
+	if err != nil {
+		return "", "", err
+	}
+	leadMode, err := metadataValue(7, "lead_mode")
+	if err != nil {
+		return "", "", err
+	}
+	if normalized, normalizeErr := normalizeLeadMode(leadMode); normalizeErr != nil || normalized != leadMode {
+		return "", "", fmt.Errorf("generated Codex goal has invalid lead_mode metadata")
+	}
+	if _, err := metadataValue(8, "target_contract"); err != nil {
+		return "", "", err
+	}
+	attemptID, err := metadataValue(9, "attempt_id")
+	if err != nil {
+		return "", "", err
+	}
+	if attemptID != strings.TrimSpace(attemptID) {
+		return "", "", fmt.Errorf("generated Codex goal has invalid attempt_id metadata")
+	}
+	goalBytesValue, err := metadataValue(10, "goal_bytes")
+	if err != nil {
+		return "", "", err
+	}
+	goalBytes, err := strconv.Atoi(goalBytesValue)
+	if err != nil || goalBytes < 0 || strconv.Itoa(goalBytes) != goalBytesValue {
+		return "", "", fmt.Errorf("generated Codex goal has invalid goal_bytes")
+	}
+	goalStart := markerIndex + len(marker)
+	if goalStart+goalBytes > len(prompt) {
+		return "", "", fmt.Errorf("generated Codex goal is truncated")
+	}
+	goal := prompt[goalStart : goalStart+goalBytes]
+	suffix := prompt[goalStart+goalBytes:]
+	const deliveryHeader = "\n\nDelivery contract:\n"
+	if !strings.HasPrefix(suffix, deliveryHeader) {
+		return "", "", fmt.Errorf("generated Codex goal has invalid goal boundary")
+	}
+	wantDelivery := "This launch prompt is recorded as prompt_goal evidence for a binary without native /goal."
+	if attemptID != "" {
+		claim := []string{
+			"amq-squad", "goal", "claim",
+			"--project", project,
+			"--profile", profile,
+			"--session", session,
+			"--attempt-id", attemptID,
+			"--route", goalClaimRoutePrompt,
+			"--json",
+		}
+		quoted := make([]string, 0, len(claim))
+		for _, arg := range claim {
+			quoted = append(quoted, shellQuote(arg))
+		}
+		wantDelivery = "Before acting, run this exact claim command:\n" + strings.Join(quoted, " ") +
+			"\nProceed only when status is claimed. If status is already_claimed, another route won and this prompt is a no-op."
+	}
+	wantSuffix := deliveryHeader + wantDelivery
+	if suffix != wantSuffix {
+		if attemptID != "" || !strings.HasPrefix(suffix, wantSuffix) || !validCodexDraftContextSuffix(strings.TrimPrefix(suffix, wantSuffix)) {
+			return "", "", fmt.Errorf("generated Codex goal has invalid delivery contract")
+		}
+	}
+	return goal, attemptID, nil
+}
+
+func validCodexDraftContextSuffix(suffix string) bool {
+	if !strings.HasPrefix(suffix, "\n\nDraft context:\n") {
+		return false
+	}
+	lines := strings.Split(strings.TrimPrefix(suffix, "\n\nDraft context:\n"), "\n")
+	if len(lines) == 0 {
+		return false
+	}
+	order := map[string]int{
+		"control_root":        0,
+		"target_project_root": 1,
+		"repo":                2,
+		"milestone":           3,
+		"composition":         4,
+	}
+	previous := -1
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "- ") {
+			return false
+		}
+		label, value, ok := strings.Cut(strings.TrimPrefix(line, "- "), ": ")
+		position, known := order[label]
+		if !ok || !known || position <= previous || strings.TrimSpace(value) == "" || strings.ContainsRune(value, '\r') {
+			return false
+		}
+		previous = position
+	}
+	return true
 }
 
 func runGoalDraft(args []string) error {
@@ -1738,13 +2073,13 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 		Notes: []string{
 			"Seeded composition remains the default; autonomous composition requires explicit opt-in and policy limits.",
 			"This draft is preview-only and does not mutate team.json, briefs, task files, AMQ mailboxes, launch records, wake locks, or panes.",
-			"Default visibility is sibling-tabs: launch the visible lead from an existing visible tmux pane with the generated native /goal prompt; workers remain behind spawn gates.",
+			"Default visibility is sibling-tabs: launch the visible lead from an existing visible tmux pane with the generated binary-specific goal input; workers remain behind spawn gates.",
 			"Step 1 / Step 2 / Step 3: preview first, create or register the visible goal lead, then monitor the run through that lead.",
 			"Execution mode is explicit: global_orchestrator monitors only; project_lead and project_team mutate through their project-root lead; direct_lead_session is an explicit exception.",
 			"The top-level orchestrator dispatches to the visible goal lead; child agents stay implementation details unless an approval gate, blocker, release risk, or final evidence requires surfacing them.",
 			"Leads must immediately surface any blocker or approval request to the operator/orchestrator-visible surface; never leave it only in an internal pane or hidden gate.",
-			"When wake is unavailable, the parent orchestrator or NOC polls each visible lead's inbox, gates, and status on a cadence; one /goal maps to one visible lead.",
-			"Visible lead binding is explicit: launch the visible lead with the generated native /goal prompt when possible; status falls back to AMQ task + active brief + task store until launch evidence exists.",
+			"When wake is unavailable, the parent orchestrator or NOC polls each visible lead's inbox, gates, and status on a cadence; one goal maps to one visible lead.",
+			"Visible lead binding is explicit: launch the visible lead with the generated binary-specific goal input; status names native_goal for Claude, prompt_goal for Codex, and the corresponding missing mode until launch evidence exists.",
 			"Generated prompts preserve team rules and custom role contracts across profile/session namespaces.",
 			"Use --visibility detached only when a separate tmux session is intentional; use --visibility current for split panes in the current window; use --visibility plan when you want commands only.",
 			"Merge, push, release, destructive filesystem actions, external communications, and provider side effects remain operator-owned.",
@@ -1757,7 +2092,7 @@ func buildGoalDraft(opts goalDraftOptions) (goalDraftData, error) {
 		data.Notes = append(data.Notes, "target_project_root is UNRESOLVED for this global_orchestrator goal (no single git-remote match of the repo under the control root); pass an explicit --target-project-root before start. amq-squad will not guess a project tree from the control root.")
 	}
 	data.OrchestratorPrompt = renderGoalOrchestratorPrompt(data)
-	data.GoalBinding = goalBindingForDraft(data.Namespace, data.OrchestratorPrompt)
+	data.GoalBinding = goalBindingForDraft(data.Namespace, data.OrchestratorPrompt, goalDraftLead(data).Binary)
 	data.Execution = executionContract(mode, controlRoot, targetRoot, profile, session, data.Namespace.ID, lead, data.GoalBinding.Mode, visibility, opts.RuntimeVersion, targetContract, goalVisibleMembers(mode, data.Roster, lead))
 	applyLeadModeToDraftContract(&data.Execution, leadMode, lead, data.Roster)
 	// For a global_orchestrator goal whose target is only a proposal or
@@ -1850,7 +2185,7 @@ func goalDraftSteps(data goalDraftData) []goalDraftStep {
 			Number:        2,
 			Title:         "Create / launch the visible lead",
 			JustHappened:  "You approved the preview.",
-			AboutToHappen: "amq-squad will create the profile/session/team and launch or resume a real visible project lead with the generated native /goal prompt. Use lead registration only from an already verified project-lead pane, never to adopt a global orchestrator pane as the project lead." + register,
+			AboutToHappen: "amq-squad will create the profile/session/team and launch or resume a real visible project lead with the generated binary-specific goal input. Use lead registration only from an already verified project-lead pane, never to adopt a global orchestrator pane as the project lead." + register,
 			Approving:     "Creating durable team config and starting the lead (the first mutating step).",
 			NextGate:      "Per-spawn operator approval on gate/spawn-<role> before any worker is brought up.",
 		},
@@ -1960,16 +2295,34 @@ func quoteSkillInvocationArg(s string) string {
 	return b.String()
 }
 
-func goalBindingForDraft(ns squadnamespace.Ref, command string) goalBindingData {
+func goalBindingForDraft(ns squadnamespace.Ref, command, binary string) goalBindingData {
 	binding := goalBindingForNamespace(ns)
-	binding.Mode = "native_goal_pending"
-	binding.NativeGoal = true
+	contract, err := goalDeliveryContractForBinary(binary)
+	if err != nil {
+		binding.Mode = "goal_delivery_unsupported"
+		binding.Detail = err.Error()
+		return binding
+	}
+	binding.Mode = contract.Mode + "_pending"
+	binding.NativeGoal = contract.NativeGoal
 	binding.Verified = false
 	binding.Source = "orchestrator-prompt"
-	binding.NativeSource = "generated-/goal"
+	binding.NativeSource = "generated-" + contract.Mode
 	binding.Command = command
-	binding.Detail = "The generated visible-lead prompt is a native /goal command; status reports native_goal only after the lead launch record records that command, otherwise AMQ task + brief fallback remains explicit."
+	binding.Detail = "The generated visible-lead input uses the " + contract.Label + " contract; status reports " + contract.Mode + " only after the lead launch record records that exact input, otherwise AMQ task + brief fallback remains explicit."
 	return binding
+}
+
+func goalDraftLead(data goalDraftData) goalRosterMember {
+	if len(data.Roster) == 0 {
+		return goalRosterMember{Role: data.Lead}
+	}
+	for _, member := range data.Roster {
+		if member.Role == data.Lead {
+			return member
+		}
+	}
+	return data.Roster[0]
 }
 
 func inferGoalTargetContract(explicit, milestone string) string {
@@ -2121,7 +2474,7 @@ func renderGoalBriefSkeleton(data goalDraftData) string {
 		fmt.Fprintf(&b, "- Budget turns: %d\n\n", data.AutonomousPolicy.BudgetTurns)
 	}
 	b.WriteString("## Out of scope\n- No autonomous action outside the declared policy envelope.\n- No child-authored spawn or prune authority.\n- No merge, release, destructive filesystem action, external communication, or provider side effect without operator approval.\n\n")
-	b.WriteString("## Acceptance\n- Preview is reviewed before any setup mutation.\n- Spawn gates are explicit and durable.\n- Visible lead binding is declared as native /goal when available, otherwise AMQ task + active brief + task store.\n- Tasks, dispatches, review evidence, and final verification are recorded before merge-ready claims.\n")
+	b.WriteString("## Acceptance\n- Preview is reviewed before any setup mutation.\n- Spawn gates are explicit and durable.\n- Visible lead binding is declared as native_goal for Claude or prompt_goal for Codex, otherwise the matching missing mode plus AMQ task and brief remain explicit.\n- Tasks, dispatches, review evidence, and final verification are recorded before merge-ready claims.\n")
 	return b.String()
 }
 
@@ -2266,25 +2619,25 @@ func goalVisibilityMutation(data goalDraftData) goalCommandPlan {
 		plan = goalCommandPlan{
 			Title:   "launch detached visible lead",
 			Command: command,
-			Reason:  "Start the operator-visible lead with the native /goal prompt, then attach/open its pane deliberately before treating the run as observable.",
+			Reason:  "Start the operator-visible lead with its binary-specific goal input, then attach/open its pane deliberately before treating the run as observable.",
 		}
 	case visibilityCurrent:
 		plan = goalCommandPlan{
 			Title:   "launch visible lead in current pane",
 			Command: command,
-			Reason:  "Start the visible goal lead from the current operator pane with the native /goal prompt; workers remain gated/internal.",
+			Reason:  "Start the visible goal lead from the current operator pane with its binary-specific goal input; workers remain gated/internal.",
 		}
 	case visibilityPlan:
 		plan = goalCommandPlan{
 			Title:   "preview visible lead launch",
 			Command: visibleLeadLaunchCommand(data, true),
-			Reason:  "Preview the native /goal lead launch command only; do not open a pane until the operator approves a concrete visibility mode.",
+			Reason:  "Preview the binary-specific goal lead launch command only; do not open a pane until the operator approves a concrete visibility mode.",
 		}
 	default:
 		plan = goalCommandPlan{
 			Title:   "launch visible lead",
 			Command: command,
-			Reason:  "Run from a visible tmux pane so the lead receives the native /goal prompt; workers are launched later only after their spawn gates are approved.",
+			Reason:  "Run from a visible tmux pane so the lead receives its binary-specific goal input; workers are launched later only after their spawn gates are approved.",
 		}
 	}
 	// #291: surface the lead reasoning-effort default as an inert recommendation,
@@ -2362,7 +2715,36 @@ func visibleLeadLaunchCommand(data goalDraftData, dryRun bool) string {
 }
 
 func renderGoalOrchestratorPrompt(data goalDraftData) string {
-	args := []string{"/goal", "--goal", strconv.Quote(data.Goal), "--session", data.Session, "--profile", data.Profile, "--mode", data.Mode}
+	lead := goalDraftLead(data)
+	contract, err := goalDeliveryContractForBinary(lead.Binary)
+	if err == nil && !contract.NativeGoal {
+		project := data.ControlRoot
+		if data.TargetProjectRootSource == targetRootSourceProvided && strings.TrimSpace(data.TargetProjectRoot) != "" {
+			project = data.TargetProjectRoot
+		}
+		t := team.Team{Project: project, Lead: data.Lead, LeadMode: data.LeadMode, ExecutionMode: data.Mode, TargetContract: data.TargetContract}
+		prompt := contract.prompt(data.Goal, t, data.Profile, data.Session, data.Lead, "")
+		var context strings.Builder
+		context.WriteString(prompt)
+		context.WriteString("\n\nDraft context:")
+		if data.ControlRoot != "" {
+			fmt.Fprintf(&context, "\n- control_root: %s", data.ControlRoot)
+		}
+		if data.TargetProjectRootSource == targetRootSourceProvided && data.TargetProjectRoot != "" {
+			fmt.Fprintf(&context, "\n- target_project_root: %s", data.TargetProjectRoot)
+		}
+		if data.Repo != "" {
+			fmt.Fprintf(&context, "\n- repo: %s", data.Repo)
+		}
+		if data.Milestone != "" {
+			fmt.Fprintf(&context, "\n- milestone: %s", data.Milestone)
+		}
+		if data.Composition != "" {
+			fmt.Fprintf(&context, "\n- composition: %s", data.Composition)
+		}
+		return context.String()
+	}
+	args := []string{"/goal", "--goal", quoteGoalPromptValue(data.Goal), "--session", data.Session, "--profile", data.Profile, "--mode", data.Mode}
 	if data.ControlRoot != "" {
 		args = append(args, "--control-root", data.ControlRoot)
 	}
