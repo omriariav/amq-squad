@@ -149,11 +149,7 @@ func slicesContains(items []string, want string) bool {
 }
 
 func TestVerifyActionEmitsSignedAuthorizationOnlyWithProvisionedKey(t *testing.T) {
-	project, err := os.MkdirTemp("/private/tmp", "amq-cli-signed-project-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(project) })
+	project := shortTestTempDir(t, "amq-cli-signed-project-")
 	profile, session := team.DefaultProfile, "s"
 	cfg := typedHumanTeam()
 	cfg.Project, cfg.Workstream = project, session
@@ -166,11 +162,7 @@ func TestVerifyActionEmitsSignedAuthorizationOnlyWithProvisionedKey(t *testing.T
 	root := filepath.Join(base, session)
 	writeAuthorizationMessage(t, base, session, "user", "new", question)
 	answer := installTypedHumanAnswer(t, project, profile, session, root, question, actionDecisionApproved)
-	cryptoDir, err := os.MkdirTemp("/private/tmp", "amq-cli-authz-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(cryptoDir) })
+	cryptoDir := shortTestTempDir(t, "amq-cli-authz-")
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -348,11 +340,7 @@ func TestSignedCompoundAuthorizationRejectsSuccessorGeneration(t *testing.T) {
 	question := releaseQuestionForCLIClassification(t, selected.SessionRoot, child.QuestionMessageID)
 	installTypedHumanAnswer(t, fixture.adapter.project, fixture.adapter.profile, fixture.adapter.session, fixture.adapter.root, question, actionDecisionApproved)
 
-	cryptoDir, err := os.MkdirTemp("/private/tmp", "amq-cli-compound-authz-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(cryptoDir) })
+	cryptoDir := shortTestTempDir(t, "amq-cli-compound-authz-")
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)

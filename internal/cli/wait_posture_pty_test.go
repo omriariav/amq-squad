@@ -51,11 +51,7 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 	}
 
 	socket := fmt.Sprintf("a416-%d", os.Getpid())
-	tmuxTmp, err := os.MkdirTemp("/private/tmp", "a416-tmux-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmuxTmp) })
+	tmuxTmp := shortTestTempDir(t, "a416-tmux-")
 	var tmuxEnv []string
 	for _, item := range os.Environ() {
 		if strings.HasPrefix(item, "TMUX=") || strings.HasPrefix(item, "TMUX_PANE=") || strings.HasPrefix(item, "TMUX_TMPDIR=") {
@@ -115,10 +111,7 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		"env -u AM_ME -u AM_ROOT -u AM_BASE_ROOT -u AM_SESSION %s collect --project %s --session s --me qa --timeout 30s --override-boundary --reason %s >%s 2>&1; code=$?; printf '%%s\\n' \"$code\" >%s",
 		shellQuote(binary), shellQuote(dir), shellQuote("real PTY alternate mailbox"), shellQuote(outputPath), shellQuote(donePath),
 	)
-	if out, err := tmuxRun("send-keys", "-t", paneID, "-l", command); err != nil {
-		t.Fatalf("stage PTY command: %v\n%s", err, out)
-	}
-	if out, err := tmuxRun("send-keys", "-t", paneID, "Enter"); err != nil {
+	if out, err := tmuxRun("send-keys", "-t", paneID, command, "C-m"); err != nil {
 		t.Fatalf("submit PTY command: %v\n%s", err, out)
 	}
 
