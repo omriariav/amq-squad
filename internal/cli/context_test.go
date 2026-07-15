@@ -391,6 +391,43 @@ func TestResolveCanonicalContextSharedTupleDoesNotRequireHandle(t *testing.T) {
 	}
 }
 
+func TestBareStatusAndContextResolveNamedExactRootWithoutAMSession(t *testing.T) {
+	project := t.TempDir()
+	isolateCanonicalContextTest(t, project)
+	project, _ = os.Getwd()
+	const (
+		profile = "review"
+		session = "issue-481"
+	)
+	root := filepath.Join(project, ".agent-mail", profile, session)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := team.WriteProfile(project, profile, team.Team{Members: []team.Member{{
+		Role: "cto", Binary: "codex", Handle: "cto", Session: session,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", root)
+	t.Setenv("AM_ME", "cto")
+	if err := os.Unsetenv("AM_SESSION"); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, run := range map[string]func() error{
+		"status":  func() error { return runStatus([]string{"--json"}) },
+		"context": func() error { return runContextExplain([]string{"--json"}) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, stderr, err := captureOutput(t, run)
+			if err != nil {
+				t.Fatalf("bare %s rejected exact-root/sessionless identity: %v\n%s", name, err, stderr)
+			}
+		})
+	}
+}
+
 func TestExplicitRootOverridesMalformedInjectedIdentityWithWarning(t *testing.T) {
 	project := t.TempDir()
 	isolateCanonicalContextTest(t, project)

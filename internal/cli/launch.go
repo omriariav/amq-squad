@@ -458,8 +458,9 @@ Examples:
 	// (matching the resolveAMQEnvInDir boundary policy). The same warning
 	// fires once at env resolution time, so this branch stays silent to
 	// avoid duplicating the message.
+	exactRootPin := launchUsesExplicitRoot(rootForLaunch, *session, teamProfileValue)
 	coopArgs := []string{"coop", "exec"}
-	if launchUsesExplicitRoot(rootForLaunch, *session, teamProfileValue) {
+	if exactRootPin {
 		coopArgs = append(coopArgs, "--root", rootForLaunch)
 	} else if *session != "" {
 		coopArgs = append(coopArgs, "--session", *session)
@@ -468,6 +469,11 @@ Examples:
 	}
 	if *me != "" {
 		coopArgs = append(coopArgs, "--me", *me)
+	} else if exactRootPin {
+		// The exact-root child shim changes the executable AMQ sees from the
+		// agent binary to `env`. Keep handle derivation tied to the already
+		// resolved agent identity instead of letting AMQ derive "env".
+		coopArgs = append(coopArgs, "--me", handle)
 	}
 	// Fail the launch at the door when the wake sidecar cannot start and
 	// acquire its lock, instead of detecting a missing/orphaned wake later
@@ -508,6 +514,9 @@ Examples:
 	if launcher != "" {
 		target = launcher
 		trailing = append(append([]string(nil), launcherArgs...), effectiveChildArgs...)
+	}
+	if exactRootPin {
+		target, trailing = exactRootChildCommand(target, trailing)
 	}
 	coopArgs = append(coopArgs, target)
 	if len(trailing) > 0 {
@@ -649,6 +658,21 @@ Examples:
 	// stale AM_ROOT/AM_ME from the launching shell along to the agent would
 	// re-create the identity-leak asymmetry #46 closed for env resolution.
 	return execAMQCoop(amqBin, coopArgs)
+}
+
+// exactRootChildCommand removes AM_SESSION at the final child boundary for a
+// named-profile exact-root launch. AMQ 0.43.1 correctly selects the explicit
+// root but exports AM_SESSION as an empty variable; amq-squad's context
+// contract deliberately distinguishes an omitted session from an explicitly
+// empty, malformed identity. Running the real target through env -u preserves
+// AMQ's wake/coop setup while ensuring the exec'd agent receives the canonical
+// exact-root tuple. All managed up, wizard/run-start, resume, and dynamic member
+// paths converge through runLaunch, so the correction lives at one boundary.
+func exactRootChildCommand(target string, trailing []string) (string, []string) {
+	args := make([]string, 0, len(trailing)+3)
+	args = append(args, "-u", "AM_SESSION", target)
+	args = append(args, trailing...)
+	return "env", args
 }
 
 func execAMQCoop(amqBin string, coopArgs []string) error {

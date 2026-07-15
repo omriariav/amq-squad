@@ -146,6 +146,36 @@ func TestRealAMQCompatibility(t *testing.T) {
 		realAMQRoundTrip(t, binary, ctx, root, "exact-root")
 	})
 
+	t.Run("post-coop child identity", func(t *testing.T) {
+		project := t.TempDir()
+		cleanEnv := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
+
+		defaultSession := "issue-481-default"
+		defaultRoot := filepath.Join(project, ".agent-mail", defaultSession)
+		realAMQInit(t, binary, project, defaultRoot)
+		defaultOut := realAMQCommand(t, binary, project, cleanEnv,
+			"coop", "exec", "--session", defaultSession, "--me", "lead", "--no-wake", "env")
+		defaultChildEnv := strings.Split(defaultOut, "\n")
+		if !envHas(defaultChildEnv, "AM_SESSION", defaultSession) {
+			t.Fatalf("default-profile post-coop child omitted AM_SESSION=%q:\n%s", defaultSession, defaultOut)
+		}
+
+		namedRoot := filepath.Join(project, ".agent-mail", "review", "issue-481-named")
+		realAMQInit(t, binary, project, namedRoot)
+		namedOut := realAMQCommand(t, binary, project, cleanEnv,
+			"coop", "exec", "--root", namedRoot, "--me", "lead", "--no-wake",
+			"env", "--", "-u", "AM_SESSION", "env")
+		namedChildEnv := strings.Split(namedOut, "\n")
+		if envHasPrefix(namedChildEnv, "AM_SESSION", "") {
+			t.Fatalf("named-profile post-coop child retained AM_SESSION:\n%s", namedOut)
+		}
+		for key, want := range map[string]string{"AM_ROOT": namedRoot, "AM_BASE_ROOT": namedRoot, "AM_ME": "lead"} {
+			if !envHas(namedChildEnv, key, want) {
+				t.Fatalf("named-profile post-coop child %s mismatch, want %q:\n%s", key, want, namedOut)
+			}
+		}
+	})
+
 	for _, profile := range []string{team.DefaultProfile, "review"} {
 		profile := profile
 		t.Run("orchestration contract "+profile, func(t *testing.T) {
