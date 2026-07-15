@@ -200,8 +200,8 @@ func TestMonitorFailsClosedOnOperatorReadError(t *testing.T) {
 	if err == nil {
 		t.Fatal("a broken operator-state read must fail closed (non-zero), not report idle")
 	}
-	if !strings.Contains(stdout, `"kind":"monitor_error"`) || strings.Contains(stdout, `"events_found":false`) {
-		t.Fatalf("expected a monitor_error record, not an idle tick:\n%s", stdout)
+	if !strings.Contains(stdout, `"kind":"monitor_error"`) || strings.Contains(stdout, `"kind":"monitor_tick"`) {
+		t.Fatalf("expected an error plus final snapshot, not an idle monitor tick:\n%s", stdout)
 	}
 }
 

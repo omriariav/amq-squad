@@ -995,3 +995,17 @@ func migrationStringsContain(values []string, fragment string) bool {
 	}
 	return false
 }
+
+func TestRepositoryIgnoresPersistentNamespaceAdmissionLocks(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = ".amq-squad/namespace-admission/"
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(line) == want {
+			return
+		}
+	}
+	t.Fatalf("repository .gitignore must include %q so persistent coordination locks never dirty focused-test or operator worktrees", want)
+}

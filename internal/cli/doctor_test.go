@@ -31,6 +31,89 @@ func TestDoctorBootstrapGraceIsInfoAndOverdueIsWarn(t *testing.T) {
 	}
 }
 
+func TestDoctorToolProfilesWarnsForMultipleNonLeadFullWorkers(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Project:      dir,
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Handle: "cto", Binary: "codex", ToolProfile: team.ToolProfileFull},
+			{Role: "backend-dev", Handle: "backend-dev", Binary: "codex", ToolProfile: team.ToolProfileFull},
+			{Role: "qa", Handle: "qa", Binary: "codex", ToolProfile: team.ToolProfileFull},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	check := doctorCheckToolProfiles(doctorExecution{ProjectDir: dir})
+	if check.Status != doctorWarn {
+		t.Fatalf("multiple full worker check = %+v, want warn", check)
+	}
+	for _, want := range []string{"backend-dev", "qa", "multiple workers inherit the full operator tool surface", "prefer generated lean role profiles"} {
+		if !strings.Contains(check.Detail, want) {
+			t.Fatalf("multiple full worker warning missing %q: %+v", want, check)
+		}
+	}
+}
+
+func TestDoctorToolProfilesReportsGeneratedLeanPolicyAndFailsOnDrift(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("HOME", t.TempDir())
+	dir := seedTeam(t, team.Team{
+		Project:      "",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Handle: "cto", Binary: "codex", ToolProfile: team.ToolProfileFull},
+			{Role: "backend-dev", Handle: "backend-dev", Binary: "codex"},
+		},
+	})
+	writeFile(t, filepath.Join(codexHome, "config.toml"), "[mcp_servers.github]\ncommand = \"github\"\n")
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamOverlay([]string{"init", "--role", "backend-dev", "--tool-profile", "coding", "--allow-tools", "mcp:github"})
+	}); err != nil {
+		t.Fatalf("generate lean policy: %v", err)
+	}
+
+	ready := doctorCheckToolProfiles(doctorExecution{ProjectDir: dir})
+	if ready.Status != doctorOK {
+		t.Fatalf("generated lean policy should be ready: %+v", ready)
+	}
+	for _, want := range []string{"backend-dev=coding", "cto=full"} {
+		if !strings.Contains(ready.Detail, want) {
+			t.Fatalf("generated lean policy omits effective assignment %q: %+v", want, ready)
+		}
+	}
+
+	backend := readTeamMember(t, dir, "backend-dev")
+	paths := codexConfigPaths(backend.ToolArgs())
+	if len(paths) == 0 {
+		t.Fatalf("generated Codex profile path unresolved: %+v", backend)
+	}
+	original, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("materialization drift", func(t *testing.T) {
+		writeFile(t, paths[0], "# tampered generated policy\n")
+		check := doctorCheckToolProfiles(doctorExecution{ProjectDir: dir})
+		if check.Status != doctorFail || !strings.Contains(check.Detail, "selected Codex profile content differs") {
+			t.Fatalf("materialization drift reported ready: %+v", check)
+		}
+		if err := os.WriteFile(paths[0], original, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("source drift", func(t *testing.T) {
+		writeFile(t, filepath.Join(dir, ".codex", "config.toml"), "[plugins.\"late-project-helper\"]\nenabled = true\n")
+		check := doctorCheckToolProfiles(doctorExecution{ProjectDir: dir})
+		if check.Status != doctorFail || !strings.Contains(check.Detail, "tool policy drift/not-ready") || !strings.Contains(check.Detail, "late-project-helper") {
+			t.Fatalf("source drift reported ready: %+v", check)
+		}
+	})
+}
+
 func newDoctorExec(t *testing.T, dir string) doctorExecution {
 	t.Helper()
 	return doctorExecution{

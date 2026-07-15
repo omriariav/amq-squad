@@ -12,8 +12,10 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/role"
+	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 // orchestrateTmuxRun executes a tmux command. It is a package var so tests can
@@ -291,6 +293,9 @@ func runRunStart(args []string, version string) error {
 	binaryFlag := fs.String("binary", "", "per-role binary assignments, e.g. \"fullstack=codex,qa=codex\"")
 	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5.6-sol,fullstack=sonnet\"")
 	effortFlag := fs.String("effort", "", "per-role effort, e.g. \"cto=high,qa=medium\" (launch-only for existing profiles; normalized into native member args)")
+	toolProfileFlag := fs.String("tool-profile", "", "per-role tool policy assignments, e.g. \"cto=full,qa=browser\"")
+	launchShapeFlag := fs.String("launch-shape", "", "accepted launch shape: working-team-together or lead-only-staged")
+	stagedRolesFlag := fs.String("staged-roles", "", "comma-separated authored roles excluded from the initial profile")
 	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, noc, or self_operator")
 	selfOperatorLeadFlag := fs.String("self-operator-lead", "", "lead role delegated for exact-session self-operator policy")
 	selfOperatorAllowFlag := fs.String("self-operator-allow", "", "explicit self-operator allowlist (v2.19: merge only)")
@@ -301,8 +306,13 @@ func runRunStart(args []string, version string) error {
 	layoutPresetFlag := fs.String("layout-preset", "", "deterministic layout: lead-left, lead-top, even-grid, or one-window-per-agent")
 	launcherPaneFlag := fs.String("launcher-pane", "", "launcher disposition after successful start: close-after-start or keep")
 	goalFlag := fs.String("goal", "", "after spawn, deliver this goal to the lead")
+	goalSourceFlag := fs.String("goal-source", "", "accepted goal binding source (wizard-generated)")
+	goalDigestFlag := fs.String("goal-digest", "", "accepted goal binding digest (wizard-generated)")
 	seedFlag := fs.String("seed-from", "", "seed the workstream brief from a reference (e.g. issue:96)")
 	externalLead := fs.Bool("external-lead", false, "bind the current pane as the lead and spawn only remaining workers")
+	prepareFlag := fs.Bool("prepare", false, "write only the explicitly approved coordination artifacts; never launch")
+	preparePlanFlag := fs.Bool("prepare-plan", false, "print the canonical read-only coordination-artifact preparation proposal and exit")
+	readinessJSON := fs.Bool("readiness-json", false, "print machine-readable accepted-artifact readiness and exit")
 	goFlag := fs.Bool("go", false, "create for real (default: preview only)")
 	fs.Usage = func() { _ = runRunCmd([]string{"-h"}, version) }
 	if err := parseFlags(fs, args); err != nil {
@@ -310,6 +320,12 @@ func runRunStart(args []string, version string) error {
 	}
 	if fs.NArg() > 0 {
 		return usageErrorf("unexpected argument %q", fs.Arg(0))
+	}
+	if *prepareFlag && *goFlag {
+		return usageErrorf("--prepare and --go are separate approvals and cannot be combined")
+	}
+	if *preparePlanFlag && (*prepareFlag || *goFlag || *readinessJSON) {
+		return usageErrorf("--prepare-plan is a read-only proposal and cannot be combined with --prepare, --go, or --readiness-json")
 	}
 	project := strings.TrimSpace(*projectFlag)
 	session := strings.TrimSpace(*sessionFlag)
@@ -349,6 +365,12 @@ func runRunStart(args []string, version string) error {
 	rolesText := strings.TrimSpace(*rolesFlag)
 	freshRoster := preflight.FreshRoster
 	leadMode := preflight.LeadMode
+	if *goFlag {
+		requestedShape := strings.TrimSpace(*launchShapeFlag)
+		if requestedShape != runwizard.LaunchShapeWorkingTeamTogether && requestedShape != runwizard.LaunchShapeLeadOnlyStaged {
+			return usageErrorf("live project launch requires explicit --launch-shape %s or %s; prepare or migrate the exact roster before launch", runwizard.LaunchShapeWorkingTeamTogether, runwizard.LaunchShapeLeadOnlyStaged)
+		}
+	}
 	layoutSelection, err := resolveRunStartLayout(runStartLayoutInput{
 		Visibility: preflight.Visibility, VisibilitySet: true,
 		Preset: preflight.LayoutPreset, PresetSet: preflight.LayoutPreset != "",
@@ -357,6 +379,17 @@ func runRunStart(args []string, version string) error {
 	})
 	if err != nil {
 		return err
+	}
+	runContext := acceptedRunContext{Version: version, Topology: acceptedTopology(layoutSelection, *externalLead)}
+	if *goFlag {
+		result := calculateRunReadinessWithContext(project, profile, session, runContext)
+		printRunReadiness(result)
+		if !result.Ready {
+			return fmt.Errorf("launch blocked: artifact readiness failed for %s", result.Namespace)
+		}
+		if result.LaunchShape != strings.TrimSpace(*launchShapeFlag) {
+			return fmt.Errorf("launch blocked: accepted launch shape %q differs from requested %q", result.LaunchShape, strings.TrimSpace(*launchShapeFlag))
+		}
 	}
 
 	// Lead resolution: when creating a fresh roster, default the lead to cto.
@@ -383,6 +416,49 @@ func runRunStart(args []string, version string) error {
 		}
 	}
 
+	if *preparePlanFlag || *prepareFlag {
+		var proposalTeam team.Team
+		if teamPresent {
+			existing, readErr := team.ReadProfile(project, profile)
+			if readErr != nil {
+				return readErr
+			}
+			proposalTeam = existing
+			if explicitLead != "" && explicitLead != strings.TrimSpace(existing.Lead) {
+				return usageErrorf("preparation lead %q differs from existing profile lead %q", explicitLead, existing.Lead)
+			}
+		} else {
+			proposalTeam, err = projectedRunPreparationTeam(project, session, leadForNewTeam, leadMode, rolesText, *binaryFlag, *modelFlag, *effortFlag)
+			if err != nil {
+				return err
+			}
+		}
+		proposal, proposalErr := buildRunPreparationProposal(runPreparationProposalInput{
+			Project:         project,
+			Profile:         profile,
+			Session:         session,
+			LaunchShape:     *launchShapeFlag,
+			StagedRoles:     *stagedRolesFlag,
+			ToolProfile:     *toolProfileFlag,
+			Goal:            *goalFlag,
+			GoalSource:      *goalSourceFlag,
+			GoalDigest:      *goalDigestFlag,
+			Seed:            *seedFlag,
+			Team:            proposalTeam,
+			ExistingProfile: teamPresent,
+			Context:         runContext,
+		})
+		if proposalErr != nil {
+			return proposalErr
+		}
+		runContext.PointerPlans = append([]rules.SyncPlan(nil), proposal.PointerPlans...)
+		printRunPreparationProposal(proposal)
+		if *preparePlanFlag {
+			return nil
+		}
+		runPreparationAfterProposal()
+	}
+
 	// Build the create commands as argument slices we can run in-process. This
 	// keeps one tested implementation (no shell-out, structured errors) and lets
 	// the CLI flag layer own things the scripts got wrong (e.g. --binary is a
@@ -406,6 +482,9 @@ func runRunStart(args []string, version string) error {
 		if strings.TrimSpace(*effortFlag) != "" {
 			newTeamArgs = append(newTeamArgs, "--effort", *effortFlag)
 		}
+		// Non-full profiles require generated binary-native materialization.
+		// Create the roster at the backward-compatible full baseline first;
+		// preparation applies the accepted profiles before readiness/launch.
 		if flagWasSet(fs, "operator-mode") {
 			newTeamArgs = append(newTeamArgs, "--operator-mode", strings.TrimSpace(*operatorModeFlag))
 		}
@@ -475,6 +554,11 @@ func runRunStart(args []string, version string) error {
 	fmt.Printf("  session: %s\n", session)
 	fmt.Printf("  lead:    %s\n", leadDisplay)
 	fmt.Printf("  lead-mode: %s\n", leadModeDisplay)
+	if strings.TrimSpace(*launchShapeFlag) != "" {
+		fmt.Printf("  launch-shape: %s\n", strings.TrimSpace(*launchShapeFlag))
+		fmt.Printf("  initial launch: %d members - %s\n", len(sortedUniqueRoles(rolesText)), displayRoleList(sortedUniqueRoles(rolesText)))
+		fmt.Printf("  staged later: %d roles - %s\n", len(sortedUniqueRoles(*stagedRolesFlag)), displayRoleList(sortedUniqueRoles(*stagedRolesFlag)))
+	}
 	if freshRoster {
 		leadModeSuffix := ""
 		if flagWasSet(fs, "lead-mode") {
@@ -518,6 +602,41 @@ func runRunStart(args []string, version string) error {
 			Goal:    *goalFlag,
 		})
 		fmt.Printf("  step %d:  %s\n", upStep+1, previewCmd)
+	}
+
+	if *readinessJSON {
+		result := calculateRunReadinessWithContext(project, profile, session, runContext)
+		if err := writeJSONEnvelope(os.Stdout, "run_readiness", result); err != nil {
+			return err
+		}
+		if !result.Ready {
+			return fmt.Errorf("artifact readiness failed for %s", result.Namespace)
+		}
+		return nil
+	}
+
+	if *prepareFlag {
+		if err := revalidateRunPreparationPointerPlans(runContext.PointerPlans); err != nil {
+			return fmt.Errorf("revalidate accepted pointer plan before preparation writes: %w", err)
+		}
+		if freshRoster {
+			quietNotice("preparing accepted roster; no panes will launch...\n")
+			if err := runNew(newTeamArgs); err != nil {
+				return err
+			}
+		} else if len(newTeamArgs) > 0 {
+			quietNotice("profile %q already exists; accepted preparation will not rewrite its roster\n", profileOrDefault(*profileFlag))
+		}
+		if err := applyRunStartToolProfiles(project, profile, *toolProfileFlag); err != nil {
+			return err
+		}
+		result, err := prepareRunArtifacts(project, profile, session, strings.TrimSpace(*launchShapeFlag), *stagedRolesFlag, *goalFlag, *goalSourceFlag, *goalDigestFlag, *seedFlag, runContext)
+		printRunReadiness(result)
+		if err != nil {
+			return err
+		}
+		fmt.Println("Preparation complete. No panes or workers were launched.")
+		return nil
 	}
 
 	if !*goFlag {
@@ -615,6 +734,9 @@ func runRunStart(args []string, version string) error {
 	if freshRoster {
 		quietNotice("creating roster...\n")
 		if err := runNew(newTeamArgs); err != nil {
+			return err
+		}
+		if err := applyRunStartToolProfiles(project, profile, *toolProfileFlag); err != nil {
 			return err
 		}
 	} else if len(newTeamArgs) > 0 {

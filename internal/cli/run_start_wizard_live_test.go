@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,6 +27,7 @@ func withWizardExecutionSeams(t *testing.T) (*[][]string, *[][]string) {
 	t.Helper()
 	oldProject := runStartWizardProjectExecute
 	oldGlobal := runStartWizardGlobalExecute
+	oldPrepareConfirm := runStartWizardPrepareConfirm
 	oldConfirm := runStartWizardConfirm
 	oldResume := runStartWizardResumeExecute
 	oldResumeConfirm := runStartWizardResumeConfirm
@@ -37,6 +41,7 @@ func withWizardExecutionSeams(t *testing.T) (*[][]string, *[][]string) {
 		globalCalls = append(globalCalls, append([]string(nil), args...))
 		return nil
 	}
+	runStartWizardPrepareConfirm = promptRunStartWizardPrepare
 	runStartWizardConfirm = promptRunStartWizardLaunch
 	runStartWizardResumeExecute = runResume
 	runStartWizardResumeConfirm = promptRunStartWizardResume
@@ -44,6 +49,7 @@ func withWizardExecutionSeams(t *testing.T) (*[][]string, *[][]string) {
 	t.Cleanup(func() {
 		runStartWizardProjectExecute = oldProject
 		runStartWizardGlobalExecute = oldGlobal
+		runStartWizardPrepareConfirm = oldPrepareConfirm
 		runStartWizardConfirm = oldConfirm
 		runStartWizardResumeExecute = oldResume
 		runStartWizardResumeConfirm = oldResumeConfirm
@@ -52,12 +58,147 @@ func withWizardExecutionSeams(t *testing.T) (*[][]string, *[][]string) {
 	return &projectCalls, &globalCalls
 }
 
+func freshWizardProjectSpec(t *testing.T) runwizard.Spec {
+	t.Helper()
+	spec := validWizardProjectSpec(t)
+	spec.ProfileBranch = runwizard.ProfileBranchNew
+	spec.LaunchShape = runwizard.LaunchShapeWorkingTeamTogether
+	spec.StagedRoles = "qa,docs"
+	return spec
+}
+
+func TestFinishFreshWizardPreparationNoIsReadOnly(t *testing.T) {
+	projectCalls, _ := withWizardExecutionSeams(t)
+	spec := freshWizardProjectSpec(t)
+	var prompt strings.Builder
+	if err := finishRunStartWizard(spec, "test", strings.NewReader("\n"), &prompt); err != nil {
+		t.Fatal(err)
+	}
+	if len(*projectCalls) != 1 || !hasWizardArg((*projectCalls)[0], "--prepare-plan") || hasWizardArg((*projectCalls)[0], "--prepare") || hasWizardArg((*projectCalls)[0], "--go") {
+		t.Fatalf("preparation rejection must execute only the read-only proposal: %v", *projectCalls)
+	}
+	if !strings.Contains(prompt.String(), "Prepare coordination artifacts now? [y/N]") {
+		t.Fatalf("missing default-No preparation gate: %q", prompt.String())
+	}
+	if _, err := os.Stat(filepath.Join(spec.Project, ".amq-squad")); !os.IsNotExist(err) {
+		t.Fatalf("preparation rejection mutated project: %v", err)
+	}
+}
+
+func TestFinishFreshWizardPrepareYesLaunchNoRunsPreparationOnly(t *testing.T) {
+	projectCalls, _ := withWizardExecutionSeams(t)
+	spec := freshWizardProjectSpec(t)
+	var prompt strings.Builder
+	if err := finishRunStartWizard(spec, "test", strings.NewReader("y\n\n"), &prompt); err != nil {
+		t.Fatal(err)
+	}
+	if len(*projectCalls) != 2 {
+		t.Fatalf("calls=%v, want proposal then preparation", *projectCalls)
+	}
+	if !hasWizardArg((*projectCalls)[0], "--prepare-plan") {
+		t.Fatalf("first invocation was not the read-only proposal: %v", (*projectCalls)[0])
+	}
+	got := (*projectCalls)[1]
+	if !hasWizardArg(got, "--prepare") || hasWizardArg(got, "--go") {
+		t.Fatalf("preparation boundary crossed live mutation: %v", got)
+	}
+	if !strings.Contains(prompt.String(), "Launch now? [y/N]") {
+		t.Fatalf("missing separate launch gate: %q", prompt.String())
+	}
+	for _, want := range []string{"Initial launch: 1 members - cto", "Staged for later: 2 roles - qa, docs", "Launch shape: working-team-together", "Bootstrap readiness:"} {
+		if !strings.Contains(prompt.String(), want) {
+			t.Fatalf("accepted review missing %q:\n%s", want, prompt.String())
+		}
+	}
+}
+
+func TestFinishFreshWizardTwoApprovalsPrepareThenLaunchMinimalExistingProfileArgs(t *testing.T) {
+	projectCalls, _ := withWizardExecutionSeams(t)
+	spec := freshWizardProjectSpec(t)
+	spec.Visibility = visibilityCurrent
+	spec.LayoutPreset = "lead-left"
+	spec.ExternalLead = true
+	if err := finishRunStartWizard(spec, "test", bufio.NewReader(strings.NewReader("yes\nyes\n")), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(*projectCalls) != 3 {
+		t.Fatalf("calls=%v", *projectCalls)
+	}
+	plan, prepare, live := (*projectCalls)[0], (*projectCalls)[1], (*projectCalls)[2]
+	if !hasWizardArg(plan, "--prepare-plan") || hasWizardArg(plan, "--prepare") || hasWizardArg(plan, "--go") {
+		t.Fatalf("proposal invocation=%v", plan)
+	}
+	if !hasWizardArg(prepare, "--prepare") || hasWizardArg(prepare, "--go") {
+		t.Fatalf("preparation invocation=%v", prepare)
+	}
+	if !hasWizardArg(live, "--go") || hasWizardArg(live, "--prepare") {
+		t.Fatalf("live invocation=%v", live)
+	}
+	joined := strings.Join(live, " ")
+	for _, want := range []string{"--project", "--profile", "--session", "--launch-shape", "--visibility", "--layout-preset", "--launcher-pane", "--goal", "--external-lead", "--go"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("live invocation missing %s: %v", want, live)
+		}
+	}
+	for _, forbidden := range []string{"--roles", "--binary", "--model", "--effort", "--tool-profile", "--staged-roles", "--operator-mode", "--prepare"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("live invocation replayed setup-only %s: %v", forbidden, live)
+		}
+	}
+}
+
+func TestRunStartWizardPrefillCarriesCompositionBoundaryFlags(t *testing.T) {
+	spec, err := parseRunStartWizardPrefill([]string{
+		"--tool-profile", "cto=full,qa=browser",
+		"--launch-shape", runwizard.LaunchShapeLeadOnlyStaged,
+		"--staged-roles", "qa,docs",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.ToolProfile != "cto=full,qa=browser" || spec.LaunchShape != runwizard.LaunchShapeLeadOnlyStaged || spec.StagedRoles != "qa,docs" {
+		t.Fatalf("prefill lost composition boundary flags: %+v", spec)
+	}
+}
+
 func validWizardProjectSpec(t *testing.T) runwizard.Spec {
 	t.Helper()
 	return runwizard.Spec{
 		Scope: "project", Project: t.TempDir(), Profile: "default", Session: "issue-393-slice6",
 		Roles: "cto", Binary: "cto=codex", Lead: "cto", LeadMode: "builder",
 		Visibility: visibilityDetached, OperatorMode: "separate_terminal", LauncherPane: launcherPaneKeep,
+		Goal: "Execute the reviewed test goal",
+	}
+}
+
+func TestFinishWizardBlankGoalWithoutAcceptedBriefFailsBeforePreviewOrConfirmation(t *testing.T) {
+	projectCalls, _ := withWizardExecutionSeams(t)
+	confirmed := false
+	runStartWizardConfirm = func(io.Reader, io.Writer) (bool, error) { confirmed = true; return true, nil }
+	spec := validWizardProjectSpec(t)
+	spec.Goal = ""
+	err := finishRunStartWizard(spec, "test", strings.NewReader("y\n"), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "goal binding is required") || confirmed || len(*projectCalls) != 0 {
+		t.Fatalf("blank goal crossed readiness boundary: err=%v confirmed=%t calls=%v", err, confirmed, *projectCalls)
+	}
+}
+
+func TestFinishWizardDerivesReviewedGoalFromAcceptedBrief(t *testing.T) {
+	projectCalls, _ := withWizardExecutionSeams(t)
+	runStartWizardConfirm = func(io.Reader, io.Writer) (bool, error) { return false, nil }
+	spec := validWizardProjectSpec(t)
+	spec.Goal = ""
+	spec.BriefPath = "/repo/.amq-squad/briefs/default/issue-393-slice6.md"
+	spec.BriefGoal = "Deliver the accepted milestone"
+	if err := finishRunStartWizard(spec, "test", strings.NewReader("n\n"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(*projectCalls) != 1 {
+		t.Fatalf("calls=%v", *projectCalls)
+	}
+	args := strings.Join((*projectCalls)[0], " ")
+	if !strings.Contains(args, "Execute the accepted brief for namespace default/issue-393-slice6") {
+		t.Fatalf("derived goal missing from preview args: %v", (*projectCalls)[0])
 	}
 }
 
@@ -183,8 +324,14 @@ func existingRunStartWizardFixture(t *testing.T, fingerprint string) (runwizard.
 	}
 	members := []runwizard.SessionMemberSummary{{Role: "cto", Binary: "codex", Action: runwizard.MemberActionFresh}}
 	summary := runwizard.SessionSummary{Name: "s", Source: runwizard.SessionSourceSuggestedFirst, Fingerprint: fingerprint, Members: members, Classification: runwizard.RunClassification{State: runwizard.RunStateNotStarted, Backend: runwizard.BackendRunStart, Executable: true}, Fresh: 1}
-	spec := runwizard.Spec{Scope: "project", Project: project, Profile: "release", ProfileBranch: runwizard.ProfileBranchExisting, Visibility: visibilityDetached, LayoutPreset: "", LauncherPane: launcherPaneKeep}
+	spec := runwizard.Spec{
+		Scope: "project", Project: project, Profile: "release", ProfileBranch: runwizard.ProfileBranchExisting,
+		Visibility: visibilityDetached, LayoutPreset: "", LauncherPane: launcherPaneKeep,
+		LaunchShape: runwizard.LaunchShapeWorkingTeamTogether, Goal: "Execute the reviewed existing-run fixture",
+	}
 	spec.SelectExistingSession(summary)
+	spec.LaunchShape = runwizard.LaunchShapeWorkingTeamTogether
+	spec.Goal = "Execute the reviewed existing-run fixture"
 	ctx := runwizard.ProjectContext{Project: project, Profiles: []runwizard.ProfileSummary{{Name: "release", MemberCount: 1, Sessions: []runwizard.SessionSummary{summary}}}}
 	return spec, ctx
 }
@@ -610,8 +757,20 @@ func TestNumberedProjectWizardScriptedYesPreservesReaderAndAddsOnlyGo(t *testing
 		"", "", "", // cto binary/model/effort
 		"", "", "", // senior-dev binary/model/effort
 		"", "", "", // qa binary/model/effort
-		"", "", "", "", "", "", "", "", "", // lead through seed
-		"YES", // post-preview live confirmation
+		"",                                      // lead
+		"",                                      // lead mode
+		"",                                      // launch shape
+		"",                                      // staged roles
+		"",                                      // tool policy
+		"",                                      // topology
+		"",                                      // layout
+		"",                                      // operator mode
+		"",                                      // operator notifications
+		"",                                      // launcher pane
+		"Execute the reviewed numbered fixture", // goal
+		"",                                      // seed
+		"YES",                                   // preparation confirmation
+		"YES",                                   // separate live confirmation
 	}
 	runStartWizardInput = strings.NewReader(strings.Join(answers, "\n") + "\n")
 	var prompts strings.Builder
@@ -623,8 +782,10 @@ func TestNumberedProjectWizardScriptedYesPreservesReaderAndAddsOnlyGo(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertOnlyGoDelta(t, *projectCalls)
-	assertPrintedCanonicalPair(t, stdout, "run", "start", (*projectCalls)[0], (*projectCalls)[1])
+	if len(*projectCalls) != 3 || !hasWizardArg((*projectCalls)[0], "--prepare-plan") || !hasWizardArg((*projectCalls)[1], "--prepare") || !hasWizardArg((*projectCalls)[2], "--go") {
+		t.Fatalf("numbered two-phase calls=%v", *projectCalls)
+	}
+	assertPrintedCanonicalPair(t, stdout, "run", "start", (*projectCalls)[1], (*projectCalls)[2])
 	for _, want := range []string{"What do you want to run?", "Answers are previewed first", "Launch now? [y/N]"} {
 		if !strings.Contains(prompts.String(), want) {
 			t.Fatalf("prompt channel missing %q:\n%s", want, prompts.String())

@@ -324,6 +324,36 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		}, defaultString(s.LeadMode, "builder")); err != nil {
 			return Spec{}, err
 		}
+		if s.LaunchShape, err = promptChoice(r, out, "Launch shape", []choice{
+			{value: LaunchShapeWorkingTeamTogether, label: "Start the working team together: every selected initial member launches after the final approval"},
+			{value: LaunchShapeLeadOnlyStaged, label: "Lead-only staged bootstrap: only the lead launches; every later role requires its own durable spawn gate"},
+		}, s.LaunchShape); err != nil {
+			return Spec{}, err
+		}
+		if err := s.ApplyLaunchShape(); err != nil {
+			return Spec{}, err
+		}
+		roles = splitAssignmentsList(s.Roles)
+		if s.StagedRoles, err = promptText(r, out, "Staged later roles (comma-separated; optional)", s.StagedRoles); err != nil {
+			return Spec{}, err
+		}
+		if err := s.ApplyLaunchShape(); err != nil {
+			return Spec{}, err
+		}
+		recommended := recommendedToolProfileAssignments(roles, s.Lead)
+		full := fullToolProfileAssignments(roles)
+		if s.ToolPolicyMode, err = promptChoice(r, out, "Tool policy", []choice{
+			{value: "recommended", label: "Recommended: broad lead + catalog-minimum lean workers · " + recommended},
+			{value: "full_all", label: "Full for all: explicit broad access (warning: 2+ full workers increase duplicated MCP context and memory/concurrency cost) · " + full},
+		}, defaultString(s.ToolPolicyMode, "recommended")); err != nil {
+			return Spec{}, err
+		}
+		if s.ToolPolicyMode == "full_all" {
+			s.ToolProfile = full
+			fmt.Fprintln(out, "Warning: multiple full workers duplicate MCP/plugin context and increase memory and concurrency pressure.")
+		} else {
+			s.ToolProfile = recommended
+		}
 	}
 
 	if s.Visibility, err = promptChoice(r, out, "Topology", []choice{
@@ -406,6 +436,10 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		if s.SeedFrom, err = promptText(r, out, "Seed brief from file:/issue:/gh: reference (optional)", s.SeedFrom); err != nil {
 			return Spec{}, err
 		}
+		// Resolve accepted-brief bindings for review. A missing/stub binding is
+		// rendered as unverified here and rejected by the final CLI readiness
+		// gate before canonical preview or Launch now is available.
+		_ = s.ResolveGoalBinding()
 	}
 
 	previewCommand, liveCommand, commandErr := s.CommandForms()
@@ -421,7 +455,20 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	for _, warning := range effortCatalogWarnings(s, ctx) {
 		fmt.Fprintln(out, warning)
 	}
-	fmt.Fprintf(out, "Goal excerpt:\n%s\nSeed source: %s\nPreview command: %s\nLive command: %s\n", GoalExcerpt(goal), displayValue(seed), previewCommand, liveCommand)
+	fmt.Fprintf(out, "Goal excerpt:\n%s\nSeed source: %s\n", GoalExcerpt(goal), displayValue(seed))
+	if s.Backend != BackendResume {
+		fmt.Fprintf(out, "Goal binding: %s\n", s.GoalBindingReview())
+	}
+	if s.ToolProfile != "" {
+		fmt.Fprintf(out, "Tool policy: %s · %s\n", defaultString(s.ToolPolicyMode, "recommended"), s.ToolProfile)
+		if countFullToolProfiles(s.ToolProfile) >= 2 {
+			fmt.Fprintln(out, "WARNING: 2+ full workers duplicate MCP/plugin context and increase memory/concurrency pressure.")
+		}
+	}
+	if s.Roles != "" {
+		fmt.Fprintln(out, s.LaunchRosterReview())
+	}
+	fmt.Fprintf(out, "Preview command: %s\nLive command: %s\n", previewCommand, liveCommand)
 	fmt.Fprintln(out, "Answers collected. Running the canonical preview next; live launch is a separate default-No decision.")
 	return s, nil
 }

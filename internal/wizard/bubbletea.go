@@ -44,6 +44,9 @@ const (
 	stageRoleEffortCustom
 	stageLead
 	stageLeadMode
+	stageLaunchShape
+	stageStagedRoles
+	stageToolPolicy
 	stageOperator
 	stageSelfOperatorAllow
 	stageOperatorNotifications
@@ -375,6 +378,12 @@ func (m BubbleModel) title() string {
 		return "Choose the visible lead"
 	case stageLeadMode:
 		return "Choose the lead posture"
+	case stageLaunchShape:
+		return "Choose the explicit initial launch shape"
+	case stageStagedRoles:
+		return "Name roles staged for later"
+	case stageToolPolicy:
+		return "Choose per-agent tool policy"
 	case stageOperator:
 		return "Choose the operator interaction contract"
 	case stageOperatorNotifications:
@@ -388,9 +397,9 @@ func (m BubbleModel) title() string {
 	case stageLauncherPane:
 		return "Choose what happens to this launcher pane"
 	case stageGoal:
-		return "Optional goal text"
+		return "Goal text or accepted brief binding"
 	case stageSeed:
-		return "Optional brief source"
+		return "Brief source"
 	case stageResumeBrief:
 		return "Brief preserved for resume"
 	case stageResumeGoal:
@@ -472,6 +481,12 @@ func (m BubbleModel) note() string {
 		return "Catalog choices are suggestions; Custom accepts any tier for the selected binary."
 	case stageRoleEffortCustom:
 		return "Enter any effort tier, or leave blank for automatic."
+	case stageToolPolicy:
+		return "Recommended keeps the visible lead broad and uses each built-in role's minimum profile. Full for all is explicit and warns about duplicated MCP context plus memory/concurrency pressure."
+	case stageLaunchShape:
+		return "Working-team-together launches the displayed initial roster. Lead-only-staged launches only the lead; every later role requires its own durable spawn gate. Orchestration never chooses this implicitly."
+	case stageStagedRoles:
+		return "Comma-separated roles that have contracts prepared but are absent from the initial profile and bootstrap. Leave blank when nobody is staged."
 	case stageTopology:
 		return "The diagram is the topology that the canonical visibility flag selects."
 	case stageLayoutPreset:
@@ -557,8 +572,15 @@ func (m BubbleModel) summary() string {
 	}
 	if m.spec.Roles != "" {
 		parts = append(parts, "Roster    "+m.spec.Roles, "Lead      "+m.spec.Lead+" · "+m.spec.LeadMode)
+		parts = append(parts, "Shape     "+defaultString(m.spec.LaunchShape, "legacy/unspecified"), "Staged    "+displayValue(m.spec.StagedRoles))
 	} else {
 		parts = append(parts, "Roster    existing profile (authoritative)")
+	}
+	if m.spec.ToolProfile != "" {
+		parts = append(parts, "Tools     "+defaultString(m.spec.ToolPolicyMode, "recommended")+" · "+m.spec.ToolProfile)
+		if countFullToolProfiles(m.spec.ToolProfile) >= 2 {
+			parts = append(parts, "WARNING   2+ full workers duplicate MCP/plugin context and increase memory/concurrency pressure")
+		}
 	}
 	if m.spec.Model != "" {
 		parts = append(parts, "Models    "+m.spec.Model+" (launch only)")
@@ -594,6 +616,9 @@ func (m BubbleModel) summary() string {
 		parts = append(parts, "Brief     "+displayValue(m.spec.BriefPath)+" (preserved)")
 	}
 	parts = append(parts, "Goal      "+GoalExcerpt(goal), "Seed      "+displayValue(seed))
+	if m.spec.Backend != BackendResume {
+		parts = append(parts, "Binding   "+m.spec.GoalBindingReview())
+	}
 	if previewCommand, liveCommand, err := m.spec.CommandForms(); err == nil {
 		parts = append(parts, "Preview   "+previewCommand, "Live      "+liveCommand)
 	} else {
@@ -606,7 +631,7 @@ func (m BubbleModel) summary() string {
 
 func (m BubbleModel) isTextStage() bool {
 	switch m.stage {
-	case stageProject, stageGlobalRoot, stageGlobalModelCustom, stageGlobalEffortCustom, stageGlobalNativeArgs, stageGlobalWindow, stageNewProfile, stageSession, stageExistingModelCustom, stageExistingEffortCustom, stageResumeModelCustom, stageResumeEffortCustom, stageRoles, stageRoleModelCustom, stageRoleEffortCustom, stageLead, stageGoal, stageSeed:
+	case stageProject, stageGlobalRoot, stageGlobalModelCustom, stageGlobalEffortCustom, stageGlobalNativeArgs, stageGlobalWindow, stageNewProfile, stageSession, stageExistingModelCustom, stageExistingEffortCustom, stageResumeModelCustom, stageResumeEffortCustom, stageRoles, stageRoleModelCustom, stageRoleEffortCustom, stageLead, stageStagedRoles, stageGoal, stageSeed:
 		return true
 	default:
 		return false
@@ -665,9 +690,12 @@ func (m *BubbleModel) configureStage() {
 		placeholder = "leave blank for automatic"
 	case stageLead:
 		value = defaultString(m.spec.Lead, defaultLead(m.roleOrder))
+	case stageStagedRoles:
+		value = m.spec.StagedRoles
+		placeholder = "optional"
 	case stageGoal:
 		value = m.spec.Goal
-		placeholder = "optional"
+		placeholder = "blank only with a real accepted brief"
 	case stageSeed:
 		value = m.spec.SeedFrom
 		placeholder = "optional"
@@ -731,6 +759,18 @@ func (m BubbleModel) choices() []choice {
 		return effortChoicesCatalog(parseAssignments(m.spec.Binary)[m.currentRole()], m.ctx.Catalog)
 	case stageLeadMode:
 		return []choice{{value: "builder", label: "Builder · lead may implement and delegate"}, {value: "planner", label: "Planner · lead dispatches and reviews; workers mutate"}}
+	case stageToolPolicy:
+		recommended := recommendedToolProfileAssignments(m.roleOrder, m.spec.Lead)
+		full := fullToolProfileAssignments(m.roleOrder)
+		return []choice{
+			{value: "recommended", label: "Recommended · broad lead + catalog-minimum lean workers · " + recommended},
+			{value: "full_all", label: "Full for all · WARNING: duplicated MCP context and higher memory/concurrency cost · " + full},
+		}
+	case stageLaunchShape:
+		return []choice{
+			{value: LaunchShapeWorkingTeamTogether, label: "Start the working team together · all displayed initial members launch"},
+			{value: LaunchShapeLeadOnlyStaged, label: "Lead-only staged bootstrap · only the lead launches; later roles need spawn gates"},
+		}
 	case stageOperator:
 		if m.existingIndex >= 0 {
 			p := m.ctx.Profiles[m.existingIndex]
@@ -836,6 +876,8 @@ func (m BubbleModel) defaultCursor() int {
 		want = defaultEffortChoiceCatalog(parseAssignments(m.spec.Effort)[m.currentRole()], parseAssignments(m.spec.Binary)[m.currentRole()], m.ctx.Catalog, effortAutomatic)
 	case stageLeadMode:
 		want = defaultString(m.spec.LeadMode, "builder")
+	case stageToolPolicy:
+		want = defaultString(m.spec.ToolPolicyMode, "recommended")
 	case stageOperator:
 		if m.existingIndex >= 0 {
 			want = "continue"
@@ -1020,11 +1062,25 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 		}
 		m.spec.Lead = value
 		m.transition(stageLeadMode)
+	case stageStagedRoles:
+		m.spec.StagedRoles = value
+		if err := m.spec.ApplyLaunchShape(); err != nil {
+			m.err = err
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		m.roleOrder = splitAssignmentsList(m.spec.Roles)
+		m.transition(stageToolPolicy)
 	case stageGoal:
+		m.spec.clearGoalBinding()
 		m.spec.Goal = value
 		m.transition(stageSeed)
 	case stageSeed:
 		m.spec.SeedFrom = value
+		// Keep the review stage available so the operator can see an
+		// unverified binding. finishRunStartWizard fails closed before preview
+		// and before Launch now when this remains unresolved.
+		_ = m.spec.ResolveGoalBinding()
 		m.transition(stageConfirm)
 	}
 	return m, textinput.Blink
@@ -1203,6 +1259,22 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 		}
 	case stageLeadMode:
 		m.spec.LeadMode = selected
+		m.transition(stageLaunchShape)
+	case stageLaunchShape:
+		m.spec.LaunchShape = selected
+		if err := m.spec.ApplyLaunchShape(); err != nil {
+			m.err = err
+			return m, nil
+		}
+		m.roleOrder = splitAssignmentsList(m.spec.Roles)
+		m.transition(stageStagedRoles)
+	case stageToolPolicy:
+		m.spec.ToolPolicyMode = selected
+		if selected == "full_all" {
+			m.spec.ToolProfile = fullToolProfileAssignments(m.roleOrder)
+		} else {
+			m.spec.ToolProfile = recommendedToolProfileAssignments(m.roleOrder, m.spec.Lead)
+		}
 		m.transition(stageTopology)
 	case stageOperator:
 		if selected == "continue" {
@@ -1445,7 +1517,7 @@ func (m BubbleModel) phaseIndex() int {
 	case stageExistingOverride, stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageExistingEffortCustom,
 		stageResumeMember, stageResumeModelCustom, stageResumeEffort, stageResumeEffortCustom,
 		stageRoleModel, stageRoleModelCustom, stageRoleEffort, stageRoleEffortCustom,
-		stageRoles, stageRoleBinary, stageLead, stageLeadMode:
+		stageRoles, stageRoleBinary, stageLead, stageLeadMode, stageLaunchShape, stageStagedRoles, stageToolPolicy:
 		return 2
 	case stageTopology, stageLayoutPreset, stageOperator, stageSelfOperatorAllow, stageOperatorNotifications, stageLauncherPane:
 		return 3

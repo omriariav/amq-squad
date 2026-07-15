@@ -27,7 +27,7 @@ verbs are the source of truth.
   environment.
   `amq-squad doctor` reports legacy/inconsistent pins and version skew
   (children inherit the `amq-squad` on `PATH`).
-- In the orchestrator conversation, invoke the **`amq-squad-orchestrator`** skill.
+- In the verified live-lead conversation, invoke **`amq-squad:orchestrator`**. The old `amq-squad-orchestrator` name is a compatibility redirect only.
 
 Being inside tmux is **necessary but not sufficient**: a manually started
 `claude`/`codex` pane has no `AM_ROOT`/`AM_ME`/launch record, so the control

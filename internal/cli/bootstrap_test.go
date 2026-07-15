@@ -63,6 +63,34 @@ func TestBuildBootstrapPrompt(t *testing.T) {
 	}
 }
 
+func TestGeneratedBootstrapSurfacesEffectiveToolPolicyAndRefusesBroadening(t *testing.T) {
+	rec := launch.Record{
+		Role:        "backend-dev",
+		Handle:      "backend-dev",
+		Binary:      "codex",
+		ToolProfile: team.ToolProfileCoding,
+		ToolConfig:  "amq-squad-default-backend-dev.config.toml",
+		Session:     "issue-476",
+		CWD:         "/repo",
+		Root:        "/repo/.agent-mail/issue-476",
+	}
+	ctx := bootstrapContextFor(rec, "/repo/.agent-mail/issue-476/agents/backend-dev", "")
+	got, err := buildBootstrapPrompt(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Tool profile: coding (native config: amq-squad-default-backend-dev.config.toml)",
+		"Use only the effective tool profile above.",
+		"report the exact capability and task need to the lead/operator",
+		"do not silently broaden or bypass the configured profile",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("generated bootstrap missing tool-policy contract %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestBootstrapExpectationLifecycleAndRosterEligibility(t *testing.T) {
 	project := t.TempDir()
 	if err := team.WriteProfile(project, "named", team.Team{Project: project, Members: []team.Member{{Role: "cto", Handle: "lead", Binary: "claude", Session: "s", CWD: project}}}); err != nil {

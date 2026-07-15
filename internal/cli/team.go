@@ -92,6 +92,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
 	modelFlag := fs.String("model", "", "per-persona model overrides, e.g. cto=gpt-5.6-sol,fullstack=sonnet")
 	effortFlag := fs.String("effort", "", "per-persona effort normalized into native member args, e.g. cto=high,qa=medium")
+	toolProfileFlag := fs.String("tool-profile", "", "per-role capability policy, e.g. cto=full,dev=coding,qa=minimal")
+	toolConfigFlag := fs.String("tool-config", "", "per-role native policy materialization: Claude settings path or Codex profile name")
 	trustRaw := fs.String("trust", "", "Codex trust profile for generated commands: approve-for-me (default), sandboxed, or trusted")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
@@ -290,6 +292,15 @@ Examples:
 	if err != nil {
 		return err
 	}
+	toolProfiles, err := parseKV(*toolProfileFlag)
+	if err != nil {
+		return fmt.Errorf("parse --tool-profile: %w", err)
+	}
+	toolConfigs, err := parseKV(*toolConfigFlag)
+	if err != nil {
+		return fmt.Errorf("parse --tool-config: %w", err)
+	}
+	toolProfiles, toolConfigs = lowercaseKeys(toolProfiles), lowercaseKeys(toolConfigs)
 	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
 	if err != nil {
 		return err
@@ -394,6 +405,18 @@ Examples:
 	if err := validateEffortOverrideKeys(effortOverrides, pickedSet); err != nil {
 		return err
 	}
+	for label, values := range map[string]map[string]string{"--tool-profile": toolProfiles, "--tool-config": toolConfigs} {
+		var unknown []string
+		for role := range values {
+			if !pickedSet[role] {
+				unknown = append(unknown, role)
+			}
+		}
+		if len(unknown) > 0 {
+			sort.Strings(unknown)
+			return fmt.Errorf("%s has unknown role(s): %s", label, strings.Join(unknown, ", "))
+		}
+	}
 
 	members := make([]team.Member, 0, len(picked))
 	seen := make(map[string]bool)
@@ -445,6 +468,8 @@ Examples:
 				return err
 			}
 		}
+		m.ToolProfile = strings.TrimSpace(toolProfiles[id])
+		m.ToolConfig = strings.TrimSpace(toolConfigs[id])
 		if c, ok := cwdOverrides[id]; ok {
 			abs, err := expandPath(c)
 			if err != nil {
@@ -597,15 +622,25 @@ type teamInitDryRun struct {
 }
 
 type teamProfilePlanMember struct {
-	Role                string   `json:"role"`
-	Handle              string   `json:"handle"`
-	Binary              string   `json:"binary"`
-	Model               string   `json:"model,omitempty"`
-	CWD                 string   `json:"cwd"`
-	Session             string   `json:"session"`
-	ClaudeArgs          []string `json:"claude_args,omitempty"`
-	CodexArgs           []string `json:"codex_args,omitempty"`
-	PermissionAllowlist []string `json:"permission_allowlist,omitempty"`
+	Role                 string   `json:"role"`
+	Handle               string   `json:"handle"`
+	Binary               string   `json:"binary"`
+	Model                string   `json:"model,omitempty"`
+	CWD                  string   `json:"cwd"`
+	Session              string   `json:"session"`
+	ToolProfile          string   `json:"tool_profile"`
+	ToolConfig           string   `json:"tool_config,omitempty"`
+	ToolMCPConfig        string   `json:"tool_mcp_config,omitempty"`
+	ToolEnabledSet       []string `json:"tool_enabled_set"`
+	ToolRevokedSet       []string `json:"tool_revoked_set"`
+	ToolPolicySource     string   `json:"tool_policy_source"`
+	ToolPolicySources    []string `json:"tool_policy_sources,omitempty"`
+	ToolPolicyPrecedence string   `json:"tool_policy_precedence"`
+	ToolPolicyDrift      []string `json:"tool_policy_drift"`
+	ToolLaunchArgs       []string `json:"tool_launch_args,omitempty"`
+	ClaudeArgs           []string `json:"claude_args,omitempty"`
+	CodexArgs            []string `json:"codex_args,omitempty"`
+	PermissionAllowlist  []string `json:"permission_allowlist,omitempty"`
 }
 
 type teamProfilePlan struct {
@@ -667,7 +702,7 @@ func printTeamInitDryRun(p teamInitDryRun) error {
 	fmt.Fprintln(os.Stdout, "# writes: none")
 	fmt.Fprintln(os.Stdout)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "ROLE\tHANDLE\tCLI\tMODEL\tCWD\tSESSION"); err != nil {
+	if _, err := fmt.Fprintln(w, "ROLE\tHANDLE\tCLI\tMODEL\tTOOLS\tCWD\tSESSION"); err != nil {
 		return err
 	}
 	for _, m := range orderedTeamMembers(p.Team.Members) {
@@ -675,11 +710,12 @@ func printTeamInitDryRun(p teamInitDryRun) error {
 		if model == "" {
 			model = "-"
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			m.Role,
 			m.Handle,
 			m.Binary,
 			model,
+			m.EffectiveToolProfile(),
 			m.EffectiveCWD(p.Team.Project),
 			m.Session,
 		); err != nil {
@@ -701,15 +737,25 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 	rows := make([]teamProfilePlanMember, 0, len(p.Team.Members))
 	for _, m := range orderedTeamMembers(p.Team.Members) {
 		rows = append(rows, teamProfilePlanMember{
-			Role:                m.Role,
-			Handle:              m.Handle,
-			Binary:              m.Binary,
-			Model:               m.Model,
-			CWD:                 m.EffectiveCWD(p.Team.Project),
-			Session:             m.Session,
-			ClaudeArgs:          m.ClaudeArgs,
-			CodexArgs:           m.CodexArgs,
-			PermissionAllowlist: m.PermissionAllowlist,
+			Role:                 m.Role,
+			Handle:               m.Handle,
+			Binary:               m.Binary,
+			Model:                m.Model,
+			CWD:                  m.EffectiveCWD(p.Team.Project),
+			Session:              m.Session,
+			ToolProfile:          m.EffectiveToolProfile(),
+			ToolConfig:           m.ToolConfig,
+			ToolMCPConfig:        m.ToolMCPConfig,
+			ToolEnabledSet:       m.ToolEnabledSet(),
+			ToolRevokedSet:       append([]string(nil), m.ToolBlocklist...),
+			ToolPolicySource:     m.ToolPolicySource(),
+			ToolPolicySources:    append([]string(nil), m.ToolPolicySources...),
+			ToolPolicyPrecedence: m.ToolPolicyPrecedence(),
+			ToolPolicyDrift:      append([]string(nil), m.ToolPolicyDrift...),
+			ToolLaunchArgs:       m.ToolArgs(),
+			ClaudeArgs:           m.ClaudeArgs,
+			CodexArgs:            m.CodexArgs,
+			PermissionAllowlist:  m.PermissionAllowlist,
 		})
 	}
 	return teamProfilePlan{
@@ -803,6 +849,16 @@ type teamPlanMember struct {
 	Binary               string   `json:"binary"`
 	Model                string   `json:"model,omitempty"`
 	CWD                  string   `json:"cwd"`
+	ToolProfile          string   `json:"tool_profile"`
+	ToolConfig           string   `json:"tool_config,omitempty"`
+	ToolMCPConfig        string   `json:"tool_mcp_config,omitempty"`
+	ToolEnabledSet       []string `json:"tool_enabled_set"`
+	ToolRevokedSet       []string `json:"tool_revoked_set"`
+	ToolPolicySource     string   `json:"tool_policy_source"`
+	ToolPolicySources    []string `json:"tool_policy_sources,omitempty"`
+	ToolPolicyPrecedence string   `json:"tool_policy_precedence"`
+	ToolPolicyDrift      []string `json:"tool_policy_drift"`
+	ToolLaunchArgs       []string `json:"tool_launch_args,omitempty"`
 	ClaudeArgs           []string `json:"claude_args,omitempty"`
 	CodexArgs            []string `json:"codex_args,omitempty"`
 	PermissionAllowlist  []string `json:"permission_allowlist,omitempty"`
@@ -981,6 +1037,16 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 				Binary:               m.Binary,
 				Model:                effectiveModel,
 				CWD:                  cwd,
+				ToolProfile:          m.EffectiveToolProfile(),
+				ToolConfig:           m.ToolConfig,
+				ToolMCPConfig:        m.ToolMCPConfig,
+				ToolEnabledSet:       m.ToolEnabledSet(),
+				ToolRevokedSet:       append([]string(nil), m.ToolBlocklist...),
+				ToolPolicySource:     m.ToolPolicySource(),
+				ToolPolicySources:    append([]string(nil), m.ToolPolicySources...),
+				ToolPolicyPrecedence: m.ToolPolicyPrecedence(),
+				ToolPolicyDrift:      append([]string(nil), m.ToolPolicyDrift...),
+				ToolLaunchArgs:       m.ToolArgs(),
 				ClaudeArgs:           m.ClaudeArgs,
 				CodexArgs:            m.CodexArgs,
 				PermissionAllowlist:  m.PermissionAllowlist,
@@ -1275,6 +1341,24 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 	if in.Model != "" {
 		b.WriteString(" --model ")
 		b.WriteString(shellQuote(in.Model))
+	}
+	b.WriteString(" --tool-profile ")
+	b.WriteString(shellQuote(m.EffectiveToolProfile()))
+	if config := strings.TrimSpace(m.ToolConfig); config != "" {
+		b.WriteString(" --tool-config ")
+		b.WriteString(shellQuote(config))
+	}
+	if config := strings.TrimSpace(m.ToolMCPConfig); config != "" {
+		b.WriteString(" --tool-mcp-config ")
+		b.WriteString(shellQuote(config))
+	}
+	for _, entry := range m.ToolAllowlist {
+		b.WriteString(" --tool-allow ")
+		b.WriteString(shellQuote(entry))
+	}
+	for _, entry := range m.ToolBlocklist {
+		b.WriteString(" --tool-block ")
+		b.WriteString(shellQuote(entry))
 	}
 	if in.TeamHome != "" {
 		b.WriteString(" --team-home ")

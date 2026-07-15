@@ -9,7 +9,7 @@ import (
 
 func TestRunNumberedEnterThroughDefaults(t *testing.T) {
 	var out bytes.Buffer
-	got, err := RunNumbered(strings.NewReader(strings.Repeat("\n", 24)), &out, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader(strings.Repeat("\n", 30)), &out, NumberedOptions{
 		Defaults: Spec{
 			Project:    "/repo",
 			Profile:    "default",
@@ -45,7 +45,7 @@ func TestRunNumberedEnterThroughDefaults(t *testing.T) {
 }
 
 func TestRunNumberedDetachedDefaultsSeparateOperatorTerminal(t *testing.T) {
-	got, err := RunNumbered(strings.NewReader(strings.Repeat("\n", 24)), &bytes.Buffer{}, NumberedOptions{
+	got, err := RunNumbered(strings.NewReader(strings.Repeat("\n", 30)), &bytes.Buffer{}, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s", Visibility: "detached"},
 		ProfileExists: func(string, string) bool { return false },
 	})
@@ -74,6 +74,9 @@ func TestRunNumberedAcceptsNumberedChoices(t *testing.T) {
 		"",  // qa effort
 		"",  // lead
 		"2", // planner
+		"",  // recommended tool policy
+		"",  // working-team-together launch shape
+		"",  // no staged roles
 		"3", // current
 		"",  // lead-left layout
 		"",  // lead-pane operator contract
@@ -104,11 +107,11 @@ func TestRunNumberedClaudeEffortCustomEscapePreservesSpelling(t *testing.T) {
 	answers := []string{
 		"", "", "", "", // project, profile, session, roles
 		"2", "", "7", "FutureTier", // claude, automatic model, custom effort + exact tier
-		"", "", "", "", "", "", "", "", "", // lead through seed
+		"", "", "", "", "", "", "", "", "", "", "", "", // lead through seed
 	}
 	var out bytes.Buffer
 	got, err := RunNumbered(strings.NewReader("\n"+strings.Join(answers, "\n")+"\n"), &out, NumberedOptions{
-		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s", Roles: "qa"},
+		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s", Roles: "qa", Lead: "qa"},
 		ProfileExists: func(string, string) bool { return false },
 	})
 	if err != nil {
@@ -128,7 +131,7 @@ func TestRunNumberedReusesCallerReaderAndPreservesFollowingConsent(t *testing.T)
 		"", "", "", // cto binary/model/effort
 		"", "", "", // senior-dev
 		"", "", "", // qa
-		"", "", "", "", "", "", "", "", "", // lead through seed
+		"", "", "", "", "", "", "", "", "", "", "", "", // lead through seed
 		"YES",
 	}
 	reader := bufio.NewReader(strings.NewReader("\n" + strings.Join(answers, "\n") + "\n"))
@@ -240,6 +243,9 @@ func TestRunNumberedOffersModelListWithCustomEscape(t *testing.T) {
 		"",    // effort
 		"",    // lead
 		"",    // lead mode
+		"",    // recommended tool policy
+		"",    // working-team-together launch shape
+		"",    // no staged roles
 		"",    // topology
 		"",    // layout
 		"",    // operator contract
@@ -270,9 +276,9 @@ func TestRunNumberedOffersModelListWithCustomEscape(t *testing.T) {
 		"",                     // codex binary
 		"4",                    // custom escape (automatic, sol, terra, custom)
 		"gpt-5.7-experimental", // free text
-		// effort, lead, lead mode, topology, layout, operator,
+		// effort, lead, lead mode, launch shape, staged roles, tool policy, topology, layout, operator,
 		// notifications, launcher, goal, seed
-		"", "", "", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "", "", "", "", "", "",
 	}, "\n") + "\n"
 	got, err = RunNumbered(strings.NewReader("\n"+custom), &bytes.Buffer{}, NumberedOptions{
 		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s"},
@@ -283,6 +289,64 @@ func TestRunNumberedOffersModelListWithCustomEscape(t *testing.T) {
 	}
 	if got.Model != "cto=gpt-5.7-experimental" {
 		t.Fatalf("custom model = %q", got.Model)
+	}
+}
+
+func TestRunNumberedToolPolicyRecommendedDisplaysCatalogMinimumAssignments(t *testing.T) {
+	var out bytes.Buffer
+	got, err := RunNumbered(strings.NewReader(strings.Repeat("\n", 30)), &out, NumberedOptions{
+		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s", Roles: "cto,backend-dev,qa", Lead: "cto"},
+		ProfileExists: func(string, string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "cto=full,backend-dev=coding,qa=browser"
+	if got.ToolPolicyMode != "recommended" || got.ToolProfile != want {
+		t.Fatalf("recommended tool policy = mode %q assignments %q", got.ToolPolicyMode, got.ToolProfile)
+	}
+	if strings.Contains(got.ToolProfile, "backend-dev=full") || strings.Contains(got.ToolProfile, "qa=full") {
+		t.Fatalf("full_all became implicit: %q", got.ToolProfile)
+	}
+	for _, text := range []string{
+		"Recommended: broad lead + catalog-minimum lean workers · " + want,
+		"Tool policy: recommended · " + want,
+	} {
+		if !strings.Contains(out.String(), text) {
+			t.Fatalf("numbered wizard output missing %q:\n%s", text, out.String())
+		}
+	}
+}
+
+func TestRunNumberedToolPolicyFullAllIsExplicitAndWarnsInReview(t *testing.T) {
+	answers := []string{
+		"", "", "", "", // project, profile, session, roles
+		"", "", "", // cto binary/model/effort
+		"", "", "", // backend-dev
+		"", "", "", // qa
+		"", "", // lead, lead mode
+		"", "", // working-team-together, no staged roles
+		"2",                        // explicit full_all
+		"", "", "", "", "", "", "", // topology through seed
+	}
+	var out bytes.Buffer
+	got, err := RunNumbered(strings.NewReader("\n"+strings.Join(answers, "\n")+"\n"), &out, NumberedOptions{
+		Defaults:      Spec{Project: "/repo", Profile: "default", Session: "s", Roles: "cto,backend-dev,qa", Lead: "cto"},
+		ProfileExists: func(string, string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ToolPolicyMode != "full_all" || got.ToolProfile != "cto=full,backend-dev=full,qa=full" {
+		t.Fatalf("explicit full_all tool policy = mode %q assignments %q", got.ToolPolicyMode, got.ToolProfile)
+	}
+	for _, text := range []string{
+		"Warning: multiple full workers duplicate MCP/plugin context and increase memory and concurrency pressure.",
+		"WARNING: 2+ full workers duplicate MCP/plugin context and increase memory/concurrency pressure.",
+	} {
+		if !strings.Contains(out.String(), text) {
+			t.Fatalf("numbered wizard output missing %q:\n%s", text, out.String())
+		}
 	}
 }
 

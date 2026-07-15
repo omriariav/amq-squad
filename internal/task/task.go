@@ -21,19 +21,20 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-// Status values for the six-state machine.
+// Status values for the execution state machine.
 const (
-	StatusPending    = "pending"
-	StatusInProgress = "in_progress"
-	StatusCompleted  = "completed"
-	StatusFailed     = "failed"
-	StatusBlocked    = "blocked"
-	StatusCancelled  = "cancelled"
+	StatusPending                   = "pending"
+	StatusInProgress                = "in_progress"
+	StatusCompletedPendingReconcile = "completed_pending_reconcile"
+	StatusCompleted                 = "completed"
+	StatusFailed                    = "failed"
+	StatusBlocked                   = "blocked"
+	StatusCancelled                 = "cancelled"
 )
 
 // AttentionLifecycle is the derived operator-attention lifecycle of a task.
 // It is intentionally separate from the persisted execution status: existing
-// stores keep their six-state schema while completed/cancelled work projects to
+// stores keep their seven-status schema while completed/cancelled work projects to
 // closed, and replacement-linked cancellation projects to superseded.
 type AttentionLifecycle string
 
@@ -67,33 +68,77 @@ func IsAttentionLifecycleTerminal(t Task) bool {
 
 const DefaultLeaseDuration = 2 * time.Hour
 
+const (
+	IntentImplement = "implement"
+	IntentReview    = "review"
+	IntentAudit     = "audit"
+	IntentLifecycle = "lifecycle"
+)
+
 // Task is one unit of work in a workstream's task store.
 type Task struct {
-	ID                      string               `json:"id"`
-	Title                   string               `json:"title"`
-	Description             string               `json:"description,omitempty"`
-	Status                  string               `json:"status"`
-	AssignedTo              string               `json:"assigned_to,omitempty"`
-	DependsOn               []string             `json:"depends_on,omitempty"`
-	CreatedAt               time.Time            `json:"created_at"`
-	UpdatedAt               time.Time            `json:"updated_at"`
-	Evidence                string               `json:"evidence,omitempty"`
-	FailureReason           string               `json:"failure_reason,omitempty"`
-	BlockReason             string               `json:"block_reason,omitempty"`
-	ResetReason             string               `json:"reset_reason,omitempty"`
-	CancelReason            string               `json:"cancel_reason,omitempty"`
-	ReadyAt                 *time.Time           `json:"ready_at,omitempty"`
-	Lease                   *Lease               `json:"lease,omitempty"`
-	DependencyOverrides     []DependencyOverride `json:"dependency_overrides,omitempty"`
-	Replaces                string               `json:"replaces,omitempty"`
-	ReplacedBy              string               `json:"replaced_by,omitempty"`
-	ReviewOf                string               `json:"review_of,omitempty"`
-	ReviewTasks             []string             `json:"review_tasks,omitempty"`
-	FinalHead               string               `json:"final_head,omitempty"`
-	Outbox                  []OutboxIntent       `json:"outbox,omitempty"`
-	Releases                []ReleaseAudit       `json:"releases,omitempty"`
-	NotificationSuppression *SuppressionAudit    `json:"completion_notification_suppressed,omitempty"`
-	Dispatch                *Dispatch            `json:"dispatch,omitempty"`
+	ID                      string                `json:"id"`
+	Title                   string                `json:"title"`
+	Description             string                `json:"description,omitempty"`
+	Intent                  string                `json:"intent,omitempty"`
+	Artifact                string                `json:"artifact,omitempty"`
+	ExpectedBaseSHA         string                `json:"expected_base_sha,omitempty"`
+	Implementer             string                `json:"implementer,omitempty"`
+	Reviewer                string                `json:"reviewer,omitempty"`
+	ParallelWorkExplicit    bool                  `json:"parallel_work_explicit,omitempty"`
+	Status                  string                `json:"status"`
+	AssignedTo              string                `json:"assigned_to,omitempty"`
+	DependsOn               []string              `json:"depends_on"`
+	CreatedAt               time.Time             `json:"created_at"`
+	UpdatedAt               time.Time             `json:"updated_at"`
+	Evidence                string                `json:"evidence,omitempty"`
+	FailureReason           string                `json:"failure_reason,omitempty"`
+	BlockReason             string                `json:"block_reason,omitempty"`
+	ResetReason             string                `json:"reset_reason,omitempty"`
+	CancelReason            string                `json:"cancel_reason,omitempty"`
+	ReadyAt                 *time.Time            `json:"ready_at,omitempty"`
+	Lease                   *Lease                `json:"lease,omitempty"`
+	DependencyOverrides     []DependencyOverride  `json:"dependency_overrides,omitempty"`
+	Replaces                string                `json:"replaces,omitempty"`
+	ReplacedBy              string                `json:"replaced_by,omitempty"`
+	ReviewOf                string                `json:"review_of,omitempty"`
+	ReviewTasks             []string              `json:"review_tasks,omitempty"`
+	FinalHead               string                `json:"final_head,omitempty"`
+	Outbox                  []OutboxIntent        `json:"outbox,omitempty"`
+	Releases                []ReleaseAudit        `json:"releases,omitempty"`
+	NotificationSuppression *SuppressionAudit     `json:"completion_notification_suppressed,omitempty"`
+	Dispatch                *Dispatch             `json:"dispatch,omitempty"`
+	CompletionReconcile     *CompletionReconcile  `json:"completion_reconcile,omitempty"`
+	CompletionLifecycle     *CompletionLifecycle  `json:"completion_lifecycle,omitempty"`
+	CommandEvidence         []CommandEvidenceLink `json:"command_evidence,omitempty"`
+}
+
+// CompletionLifecycle binds one exact completion generation to its canonical
+// report intent and, when supplied, one exact task-scoped operator request.
+// Gate suppression is an audit projection only: it never sends or invents an
+// operator answer and an unresolved request remains explicitly unsuppressed.
+type CompletionLifecycle struct {
+	Generation     string                      `json:"generation"`
+	Actor          string                      `json:"actor"`
+	CompletedAt    time.Time                   `json:"completed_at"`
+	ReportIntentID string                      `json:"report_intent_id,omitempty"`
+	Gate           *CompletionGateCorrelation  `json:"gate,omitempty"`
+	GateHistory    []CompletionGateCorrelation `json:"gate_history,omitempty"`
+}
+
+type CompletionGateCorrelation struct {
+	TaskID              string    `json:"task_id"`
+	Profile             string    `json:"profile"`
+	Session             string    `json:"session"`
+	NamespaceID         string    `json:"namespace_id"`
+	NamespaceGeneration string    `json:"namespace_generation"`
+	Thread              string    `json:"thread"`
+	RequestMessageID    string    `json:"request_message_id"`
+	RequestSHA256       string    `json:"request_sha256"`
+	State               string    `json:"state"`
+	Suppressed          bool      `json:"suppressed"`
+	Reason              string    `json:"reason"`
+	ObservedAt          time.Time `json:"observed_at"`
 }
 
 // Lease is issued on every new claim. Expiry is evidence for reconcile and
@@ -165,6 +210,7 @@ type OutboxIntent struct {
 	ReceiptAttemptID string        `json:"receipt_attempt_id,omitempty"`
 	ReceiptPath      string        `json:"receipt_path,omitempty"`
 	ReceiptAttempts  []ReceiptLink `json:"receipt_attempts,omitempty"`
+	LeadershipEpoch  *uint64       `json:"leadership_epoch,omitempty"`
 	LastError        string        `json:"last_error,omitempty"`
 	CreatedAt        time.Time     `json:"created_at"`
 	UpdatedAt        time.Time     `json:"updated_at"`
@@ -195,11 +241,17 @@ type SuppressionAudit struct {
 
 // AddInput is the create payload for Add.
 type AddInput struct {
-	Title       string
-	Description string
-	DependsOn   []string
-	AssignTo    string
-	ReviewOf    string
+	Title                string
+	Description          string
+	Intent               string
+	Artifact             string
+	ExpectedBaseSHA      string
+	Implementer          string
+	Reviewer             string
+	ParallelWorkExplicit bool
+	DependsOn            []string
+	AssignTo             string
+	ReviewOf             string
 }
 
 // Dispatch records the durable AMQ message linked to a native task.
@@ -213,6 +265,24 @@ type Dispatch struct {
 	ReceiptAttemptID string    `json:"receipt_attempt_id,omitempty"`
 	ReceiptPath      string    `json:"receipt_path,omitempty"`
 	DispatchedAt     time.Time `json:"dispatched_at,omitempty"`
+}
+
+// CommandEvidenceLink is the bounded task projection written only after an
+// immutable command outcome exists. The evidence store remains authoritative;
+// this link is deliberately small and contains no command body or output.
+type CommandEvidenceLink struct {
+	AttemptID         string    `json:"attempt_id"`
+	Actor             string    `json:"actor"`
+	Subject           string    `json:"subject"`
+	ProcessState      string    `json:"process_state"`
+	FinalizationState string    `json:"finalization_state"`
+	ManifestPath      string    `json:"manifest_path"`
+	ManifestSHA256    string    `json:"manifest_sha256"`
+	OutcomePath       string    `json:"outcome_path"`
+	OutcomeSHA256     string    `json:"outcome_sha256"`
+	SummaryPath       string    `json:"summary_path"`
+	SummarySHA256     string    `json:"summary_sha256"`
+	LinkedAt          time.Time `json:"linked_at"`
 }
 
 // Dir is the default-profile task directory for a workstream.
@@ -234,55 +304,140 @@ func AddForProfile(projectDir, profile, session string, in AddInput, now time.Ti
 	if strings.TrimSpace(in.Title) == "" {
 		return Task{}, fmt.Errorf("task title is required")
 	}
+	if err := validateDispatchContract(in); err != nil {
+		return Task{}, err
+	}
 	var created Task
 	err := withLockForProfile(projectDir, profile, session, func(dir string) error {
 		tasks, err := readAll(dir)
 		if err != nil {
 			return err
 		}
-		// Validate dependency ids exist now (a typo'd dep would otherwise gate
-		// the task forever). Because a dep must reference an already-created
-		// task and ids increase monotonically (allocID = max+1), every edge
-		// points from a higher id to a lower one — the dependency graph is a
-		// DAG by construction, so cycles and self-dependencies are impossible
-		// here (a self-dep references the not-yet-allocated id and fails this
-		// existence check).
-		byID := indexByID(tasks)
-		for _, dep := range in.DependsOn {
-			if _, ok := byID[dep]; !ok {
-				return fmt.Errorf("depends-on task %q does not exist", dep)
-			}
-		}
-		readyAt := (*time.Time)(nil)
-		if len(dedupeNonEmpty(in.DependsOn)) == 0 {
-			ready := now
-			readyAt = &ready
-		}
-		created = Task{
-			ID:          allocID(tasks),
-			Title:       strings.TrimSpace(in.Title),
-			Description: strings.TrimSpace(in.Description),
-			Status:      StatusPending,
-			AssignedTo:  strings.TrimSpace(in.AssignTo),
-			DependsOn:   dedupeNonEmpty(in.DependsOn),
-			CreatedAt:   now,
-			UpdatedAt:   now,
-			ReadyAt:     readyAt,
-			ReviewOf:    strings.TrimSpace(in.ReviewOf),
-		}
-		changed := []Task{created}
-		if created.ReviewOf != "" {
-			target := byID[created.ReviewOf]
-			if target == nil {
-				return fmt.Errorf("review-of task %q does not exist", created.ReviewOf)
-			}
-			target.ReviewTasks = appendUniqueSorted(target.ReviewTasks, created.ID)
-			target.UpdatedAt = now
-			changed = append(changed, *target)
+		var changed []Task
+		created, changed, err = addTaskUnderLock(tasks, in, now)
+		if err != nil {
+			return err
 		}
 		return commitTasks(dir, changed, now)
 	})
 	return created, err
+}
+
+// addTaskUnderLock builds a task and any linked review after-images from a
+// snapshot already protected by the profile task-store lock. Keeping task
+// allocation separate from commit lets dispatch atomically authorize a
+// leadership epoch, create the task, and append its outbox intent.
+func addTaskUnderLock(tasks []Task, in AddInput, now time.Time) (Task, []Task, error) {
+	if strings.TrimSpace(in.Title) == "" {
+		return Task{}, nil, fmt.Errorf("task title is required")
+	}
+	if err := validateDispatchContract(in); err != nil {
+		return Task{}, nil, err
+	}
+	// Validate dependency ids exist now (a typo'd dep would otherwise gate
+	// the task forever). Because a dep must reference an already-created
+	// task and ids increase monotonically (allocID = max+1), every edge
+	// points from a higher id to a lower one — the dependency graph is a
+	// DAG by construction, so cycles and self-dependencies are impossible
+	// here (a self-dep references the not-yet-allocated id and fails this
+	// existence check).
+	byID := indexByID(tasks)
+	if strings.TrimSpace(in.Intent) == IntentImplement && !in.ParallelWorkExplicit {
+		for _, existing := range tasks {
+			if existing.Intent == IntentImplement && strings.EqualFold(strings.TrimSpace(existing.Artifact), strings.TrimSpace(in.Artifact)) &&
+				existing.Status != StatusCompleted && existing.Status != StatusFailed && existing.Status != StatusCancelled {
+				return Task{}, nil, fmt.Errorf("artifact %q already has active implementation task %s; pass an explicit parallel-work contract only when competing implementations are intended", strings.TrimSpace(in.Artifact), existing.ID)
+			}
+		}
+	}
+	for _, dep := range in.DependsOn {
+		if _, ok := byID[dep]; !ok {
+			return Task{}, nil, fmt.Errorf("depends-on task %q does not exist", dep)
+		}
+	}
+	readyAt := (*time.Time)(nil)
+	if len(dedupeNonEmpty(in.DependsOn)) == 0 {
+		ready := now
+		readyAt = &ready
+	}
+	created := Task{
+		ID:                   allocID(tasks),
+		Title:                strings.TrimSpace(in.Title),
+		Description:          strings.TrimSpace(in.Description),
+		Intent:               strings.TrimSpace(in.Intent),
+		Artifact:             strings.TrimSpace(in.Artifact),
+		ExpectedBaseSHA:      strings.TrimSpace(in.ExpectedBaseSHA),
+		Implementer:          strings.TrimSpace(in.Implementer),
+		Reviewer:             strings.TrimSpace(in.Reviewer),
+		ParallelWorkExplicit: in.ParallelWorkExplicit,
+		Status:               StatusPending,
+		AssignedTo:           strings.TrimSpace(in.AssignTo),
+		DependsOn:            append([]string{}, dedupeNonEmpty(in.DependsOn)...),
+		CreatedAt:            now,
+		UpdatedAt:            now,
+		ReadyAt:              readyAt,
+		ReviewOf:             strings.TrimSpace(in.ReviewOf),
+	}
+	changed := []Task{created}
+	if created.ReviewOf != "" {
+		target := byID[created.ReviewOf]
+		if target == nil {
+			return Task{}, nil, fmt.Errorf("review-of task %q does not exist", created.ReviewOf)
+		}
+		target.ReviewTasks = appendUniqueSorted(target.ReviewTasks, created.ID)
+		target.UpdatedAt = now
+		changed = append(changed, *target)
+	}
+	return created, changed, nil
+}
+
+func validateDispatchContract(in AddInput) error {
+	values := []string{in.Intent, in.Artifact, in.ExpectedBaseSHA, in.Implementer, in.Reviewer}
+	structured := in.ParallelWorkExplicit
+	for _, value := range values {
+		structured = structured || strings.TrimSpace(value) != ""
+	}
+	if !structured {
+		return nil // legacy task creation remains readable and writable.
+	}
+	intent := strings.TrimSpace(in.Intent)
+	switch intent {
+	case IntentImplement, IntentReview, IntentAudit, IntentLifecycle:
+	default:
+		return fmt.Errorf("task intent is required and must be implement, review, audit, or lifecycle")
+	}
+	for label, value := range map[string]string{
+		"artifact": in.Artifact, "expected base SHA": in.ExpectedBaseSHA,
+		"implementer": in.Implementer, "reviewer": in.Reviewer,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("structured task %s is required", label)
+		}
+	}
+	if strings.TrimSpace(in.Implementer) == strings.TrimSpace(in.Reviewer) {
+		return fmt.Errorf("structured task implementer and reviewer must be distinct")
+	}
+	authority := strings.TrimSpace(in.Implementer)
+	if intent == IntentReview || intent == IntentAudit {
+		authority = strings.TrimSpace(in.Reviewer)
+	}
+	if assigned := strings.TrimSpace(in.AssignTo); assigned != "" && assigned != authority {
+		return fmt.Errorf("structured task assignee %q does not match %s authority actor %q", assigned, intent, authority)
+	}
+	return nil
+}
+
+// AuthorityActor returns the only actor allowed to receive/claim a structured
+// task. Empty means this is a legacy unstructured task.
+func AuthorityActor(t Task) string {
+	switch t.Intent {
+	case IntentImplement, IntentLifecycle:
+		return strings.TrimSpace(t.Implementer)
+	case IntentReview, IntentAudit:
+		return strings.TrimSpace(t.Reviewer)
+	default:
+		return ""
+	}
 }
 
 // List returns all tasks in the workstream, sorted by id.
@@ -365,6 +520,9 @@ func Reset(projectDir, session, id, actor, reason string, now time.Time) (Task, 
 
 func ResetForProfile(projectDir, profile, session, id, actor, reason string, now time.Time) (Task, error) {
 	return mutateForProfile(projectDir, profile, session, id, func(t *Task, _ map[string]*Task) error {
+		if t.Status == StatusCompletedPendingReconcile {
+			return fmt.Errorf("task %s is completed_pending_reconcile and can only be closed by exact evidence reconciliation", id)
+		}
 		if t.Status == StatusPending {
 			return fmt.Errorf("task %s is already pending; reset requires a non-pending task", id)
 		}

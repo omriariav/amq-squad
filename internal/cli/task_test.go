@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/activity"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -62,6 +64,83 @@ func TestTaskRequiresSession(t *testing.T) {
 	}); err == nil || !strings.Contains(err.Error(), "--session is required") {
 		t.Fatalf("want --session required, got %v", err)
 	}
+}
+
+func TestTaskListInfersSessionOnlyFromExactNamedLaunch(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	dir, _ = os.Getwd() // macOS canonicalizes /var test roots to /private/var.
+	withFixedTaskNow(t)
+	const profile, session, handle = "release", "s", "worker"
+	if err := team.WriteProfile(dir, profile, team.Team{
+		Workstream: session,
+		Members:    []team.Member{{Role: handle, Handle: handle, Binary: "codex", Session: session}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"add", "--title", "launch-bound", "--profile", profile, "--session", session})
+	}); err != nil {
+		t.Fatalf("seed named task: %v", err)
+	}
+
+	root := squadnamespace.AMQRoot(dir, profile, session)
+	if err := launch.Write(filepath.Join(root, "agents", handle), launch.Record{
+		CWD: dir, TeamHome: dir, Handle: handle, Role: handle, Session: session,
+		TeamProfile: profile, Root: root, BaseRoot: root,
+	}); err != nil {
+		t.Fatalf("write exact launch record: %v", err)
+	}
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", root)
+	t.Setenv("AM_ME", handle)
+	unsetEnvForTest(t, "AM_SESSION")
+
+	stdout, _, err := captureOutput(t, func() error { return runTask([]string{"list", "--json"}) })
+	if err != nil {
+		t.Fatalf("bare task list in exact launch: %v", err)
+	}
+	listed := decodeJSONEnvelope[tasksEnvelopeData](t, stdout)
+	if listed.Data.Namespace.ID != profile+"/"+session || len(listed.Data.Tasks) != 1 || listed.Data.Tasks[0].Title != "launch-bound" {
+		t.Fatalf("bare task list resolved wrong namespace: %+v", listed.Data)
+	}
+}
+
+func TestTaskListRejectsExplicitlyEmptySessionPin(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	dir, _ = os.Getwd() // keep the fixture root aligned with cwd canonicalization.
+	const profile, session, handle = "release", "s", "worker"
+	root := squadnamespace.AMQRoot(dir, profile, session)
+	if err := launch.Write(filepath.Join(root, "agents", handle), launch.Record{
+		CWD: dir, TeamHome: dir, Handle: handle, Role: handle, Session: session,
+		TeamProfile: profile, Root: root, BaseRoot: root,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", root)
+	t.Setenv("AM_ME", handle)
+	t.Setenv("AM_SESSION", "")
+
+	if _, _, err := captureOutput(t, func() error { return runTask([]string{"list"}) }); err == nil || !strings.Contains(err.Error(), "--session is required") {
+		t.Fatalf("explicitly empty AM_SESSION must fail closed, got %v", err)
+	}
+}
+
+func unsetEnvForTest(t *testing.T, key string) {
+	t.Helper()
+	old, present := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if !present {
+			_ = os.Unsetenv(key)
+			return
+		}
+		_ = os.Setenv(key, old)
+	})
 }
 
 func TestTaskListJSONEnvelope(t *testing.T) {

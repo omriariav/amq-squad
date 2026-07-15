@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/activity"
+	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -25,15 +26,22 @@ func TestActivitySetWritesHeartbeat(t *testing.T) {
 	writeDispatchTeam(t, dir)
 	now := withFixedActivityNow(t)
 	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "")
+	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{Title: "test", AssignTo: "qa"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.ClaimForProfile(dir, team.DefaultProfile, "issue-96", created.ID, "qa", now); err != nil {
+		t.Fatal(err)
+	}
 
 	stdout, _, err := captureOutput(t, func() error {
-		return runActivity([]string{"set", "--session", "issue-96", "--me", "qa", "--phase", "testing", "--task", "t11", "--detail", "make ci", "--json"})
+		return runActivity([]string{"set", "--session", "issue-96", "--me", "qa", "--phase", "testing", "--task", created.ID, "--detail", "make ci", "--json"})
 	})
 	if err != nil {
 		t.Fatalf("activity set: %v\n%s", err, stdout)
 	}
 	env := decodeJSONEnvelope[mutationResult](t, stdout)
-	if env.Kind != "activity" || env.Data.Status != "written" || env.Data.Session != "issue-96" || env.Data.Handle != "qa" || env.Data.TaskID != "t11" {
+	if env.Kind != "activity" || env.Data.Status != "written" || env.Data.Session != "issue-96" || env.Data.Handle != "qa" || env.Data.TaskID != created.ID {
 		t.Fatalf("activity result = %+v", env)
 	}
 
@@ -42,7 +50,7 @@ func TestActivitySetWritesHeartbeat(t *testing.T) {
 		t.Fatalf("read activity: %v", err)
 	}
 	if !ok || snap.Source != activity.SourceHeartbeat || snap.Quality != activity.StateFresh ||
-		snap.TaskID != "t11" || snap.Phase != "testing" || snap.Detail != "make ci" {
+		snap.TaskID != created.ID || snap.Phase != "testing" || snap.Detail != "make ci" {
 		t.Fatalf("activity snapshot = %+v ok=%v", snap, ok)
 	}
 }

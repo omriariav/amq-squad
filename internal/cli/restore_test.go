@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func TestLaunchArgsFromRecordIncludesLauncher(t *testing.T) {
@@ -144,6 +145,40 @@ func TestLaunchArgsFromRecordReplaysNoGitignore(t *testing.T) {
 	}
 	if cmd := emitCommandWithOptions(rec, emitCommandOptions{}); !strings.Contains(cmd, "--no-gitignore") {
 		t.Errorf("emit command missing --no-gitignore: %s", cmd)
+	}
+}
+
+func TestRefreshRecordToolPolicyRevokesStaleGrantsAndReplaysCurrentPolicy(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{
+		Role: "backend", Handle: "backend", Binary: "codex", Session: "s",
+		ToolProfile: team.ToolProfileCoding, ToolConfig: "current-backend",
+		ToolAllowlist: []string{"mcp:github"}, ToolBlocklist: []string{"plugin:project-helper"},
+	}}})
+	oldMember := team.Member{Binary: "codex", ToolProfile: team.ToolProfileFull, ToolConfig: "obsolete-full", ToolBlocklist: []string{"mcp:obsolete"}}
+	rec := launch.Record{
+		Binary: "codex", Role: "backend", Handle: "backend", Session: "s", CWD: dir, TeamHome: dir, TeamProfile: team.DefaultProfile,
+		ToolProfile: oldMember.ToolProfile, ToolConfig: oldMember.ToolConfig, ToolBlocklist: append([]string(nil), oldMember.ToolBlocklist...),
+		Argv: append(oldMember.ToolArgs(), "--unrelated-native-arg"),
+	}
+	refreshed := refreshRecordToolPolicy(rec)
+	if refreshed.ToolConfig != "current-backend" || !reflect.DeepEqual(refreshed.ToolAllowlist, []string{"mcp:github"}) || !reflect.DeepEqual(refreshed.ToolBlocklist, []string{"plugin:project-helper"}) {
+		t.Fatalf("resume did not load current policy: %+v", refreshed)
+	}
+	for _, stale := range []string{"obsolete-full", "mcp_servers.\"obsolete\".enabled=false"} {
+		if containsString(refreshed.Argv, stale) {
+			t.Fatalf("resume retained stale grant/revocation %q in argv: %v", stale, refreshed.Argv)
+		}
+	}
+	if !containsString(refreshed.Argv, "--unrelated-native-arg") {
+		t.Fatalf("resume removed unrelated native args: %v", refreshed.Argv)
+	}
+	replay := launchArgsFromRecord(refreshed)
+	if !containsString(replay, "--tool-block") || !containsString(replay, "plugin:project-helper") {
+		t.Fatalf("resume command does not carry current revocation: %v", replay)
+	}
+	currentArgs := team.Member{Binary: refreshed.Binary, ToolProfile: refreshed.ToolProfile, ToolConfig: refreshed.ToolConfig, ToolMCPConfig: refreshed.ToolMCPConfig, ToolAllowlist: refreshed.ToolAllowlist, ToolBlocklist: refreshed.ToolBlocklist}.ToolArgs()
+	if !containsString(currentArgs, "plugins.\"project-helper\".enabled=false") {
+		t.Fatalf("current policy does not materialize top-precedence revocation: %v", currentArgs)
 	}
 }
 

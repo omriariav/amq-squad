@@ -82,7 +82,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.21.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.22.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
@@ -102,9 +102,11 @@ codex plugin marketplace add omriariav/amq-squad
 codex plugin add amq-squad@amq-squad
 ```
 
-The primary skills are `amq-squad` and `amq-squad-orchestrator`. The older
-`amq-team-setup` and `amq-squad-role-creator` skill entries are redirect stubs.
-The CLI and skills are versioned together.
+The authoritative skills are `amq-squad:wizard` for preparation,
+`amq-squad:cli` for direct operations, and `amq-squad:orchestrator` for a
+verified live lead. `amq-squad`, `amq-squad-orchestrator`, `amq-team-setup`,
+and `amq-squad-role-creator` are compatibility redirects only. The CLI and
+skills are versioned together.
 
 ## Quickstart
 
@@ -369,6 +371,8 @@ amq-squad dispatch --session issue-96 --role fullstack --task t1 --subject "Impl
 amq-squad activity set --session issue-96 --me fullstack --task t1 --phase testing
 amq-squad task done t1 --session issue-96 --me fullstack --evidence "commit abc" --dispatch-next t2
 amq-squad task reconcile --session issue-96 --json
+amq-squad evidence run t1 --session issue-96 --me fullstack --subject "focused tests" --attempt-id test-1 -- go test ./internal/...
+amq-squad evidence list t1 --session issue-96 --limit 20 --json
 amq-squad threads --session issue-96
 amq-squad thread --session issue-96 --id p2p/cto__fullstack --include-body=false
 ```
@@ -380,6 +384,16 @@ counterpart it sends the canonical completion signal by default: AMQ kind
 suppression). Claims carry renewable leases; reconcile reports stale or legacy
 leases without silently unclaiming work and never auto-retries an uncertain
 delivery.
+
+`evidence run` executes argv without a shell for the active structured task
+assignee. It binds canonical namespace, exact task and executable bytes, cwd,
+bounded explicit environment, and attempt identity; publishes immutable
+process/outcome/summary records; and compare-and-swap links their digests to the
+task. A repeated attempt ID returns the original result only for the same full
+request. `evidence show`, `list`, and `lookup` are bounded read-only projections;
+`evidence recover` explicitly reconciles an interrupted finalization. Its AMQ
+report uses only the task's recorded dispatch route and cannot erase evidence
+when delivery fails.
 
 Safety preflights:
 
@@ -465,18 +479,24 @@ selection guidance.
 
 | Skill | Use it for |
 | --- | --- |
-| `amq-squad` | Setup, role authoring, live coordination, draining AMQ, routing review requests, status/history/doctor, runtime controls, and lifecycle commands. |
-| `amq-squad-orchestrator` | Lead-agent operation: spawn, dispatch, monitor, collect reports, coordinate reviews, recover, and produce final evidence. |
-| `amq-team-setup` | Deprecated redirect to `amq-squad`. |
-| `amq-squad-role-creator` | Deprecated redirect to `amq-squad`. |
+| `amq-squad:wizard` | Goal intake, brief/rules/roles/profile preparation, readiness, and the separate launch approval. |
+| `amq-squad:cli` | Direct status, doctor, task, exact activity monitoring, AMQ, gate, recovery, evidence, and read-only release planning. |
+| `amq-squad:orchestrator` | Verified live-lead operation: dispatch, monitor, review convergence, recovery, and final evidence. |
+| Legacy names | `amq-squad`, `amq-squad-orchestrator`, `amq-team-setup`, and `amq-squad-role-creator` are compatibility redirects only. |
 
 Invoke skills in Claude Code as `/amq-squad:<skill>` and in Codex as
 `$<skill>`.
 
+During wizard preparation, the recommended tool policy keeps the visible lead
+broad and assigns each built-in worker its catalog-minimum profile. Choosing
+`full_all` is an explicit opt-in, never an implicit default. Two or more
+`full` members duplicate MCP/plugin context and increase memory and concurrency
+pressure, so the review screen warns before that configuration proceeds.
+
 Model guidance is intentionally skill-owned because it changes faster than the
-binary. For v2.21.0, use the current model family and per-role model/effort
-recommendations in the installed v2.21.0 skills; confirm the startup marker
-`amq-squad skill v2.21.0` matches `amq-squad version`. Treat cost as a
+binary. For v2.22.0, use the current model family and per-role model/effort
+recommendations in the installed v2.22.0 skills; confirm the startup marker
+`amq-squad skill v2.22.0` matches `amq-squad version`. Treat cost as a
 tie-breaker after output quality for shippable work, and prefer installed-skill
 guidance over copying model examples from this README.
 

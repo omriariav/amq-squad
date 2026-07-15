@@ -14,7 +14,41 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
+
+const acceptedRunStartTestGoal = "Execute the accepted run-start fixture"
+
+// prepareRunStartTestInvocation upgrades a legacy live-launch fixture to the
+// accepted two-phase contract. The returned argv performs only the live phase;
+// a synthetic goal is used for preparation but omitted from live argv so tests
+// that are not about goal delivery do not acquire that side effect.
+func prepareRunStartTestInvocation(t *testing.T, args []string) []string {
+	t.Helper()
+	base := make([]string, 0, len(args)+2)
+	for _, arg := range args {
+		if arg != "--go" {
+			base = append(base, arg)
+		}
+	}
+	hasShape, hasGoal := false, false
+	for _, arg := range base {
+		hasShape = hasShape || arg == "--launch-shape"
+		hasGoal = hasGoal || arg == "--goal"
+	}
+	if !hasShape {
+		base = append(base, "--launch-shape", runwizard.LaunchShapeWorkingTeamTogether)
+	}
+	prepareArgs := append([]string{}, base...)
+	if !hasGoal {
+		prepareArgs = append(prepareArgs, "--goal", acceptedRunStartTestGoal)
+	}
+	prepareArgs = append(prepareArgs, "--prepare")
+	if _, _, err := captureOutput(t, func() error { return runRunStart(prepareArgs, "test") }); err != nil {
+		t.Fatalf("prepare accepted run-start fixture: %v", err)
+	}
+	return append(base, "--go")
+}
 
 // withStubbedTmux swaps orchestrateTmuxRun for a recorder and restores it.
 func withStubbedTmux(t *testing.T) *[][]string {
@@ -172,18 +206,16 @@ func TestRunStartLayoutPresetRefusesExistingWorkstreamBeforeLaunch(t *testing.T)
 	})
 	backend := useFakeTmuxBackend(t)
 	base := setupFakeAMQSessionRoots(t)
+	liveArgs := prepareRunStartTestInvocation(t, []string{
+		"--project", dir, "--session", "sess", "--layout-preset", layoutPresetOneWindowPerAgent, "--go",
+	})
 	if err := os.MkdirAll(filepath.Join(base, "sess"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stubCurrentRunStartPane(t, "%42")
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{
-			"--project", dir,
-			"--session", "sess",
-			"--layout-preset", layoutPresetOneWindowPerAgent,
-			"--go",
-		}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err == nil || !strings.Contains(err.Error(), `workstream session "sess" already exists`) {
 		t.Fatalf("layout-preset existing-session error = %v, want collision refusal", err)
@@ -264,9 +296,10 @@ func TestRunStartExternalLeadGoBindsLeadAndSpawnsOnlyWorkers(t *testing.T) {
 	backend := useFakeTmuxBackend(t)
 	stubCurrentRunStartPane(t, "%42")
 	stubRunStartLeadWake(t)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("external-lead --go: %v", err)
@@ -343,12 +376,13 @@ func TestRunStartExternalLeadRefusesExistingWorkstreamBeforeWrites(t *testing.T)
 		},
 	})
 	stubCurrentRunStartPane(t, "%42")
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
 	if err := os.MkdirAll(filepath.Join(base, "sess"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err == nil || !strings.Contains(err.Error(), "session \"sess\" already exists") {
 		t.Fatalf("expected existing workstream refusal, got %v", err)
@@ -370,13 +404,16 @@ func TestRunStartExternalLeadMissingTmuxFailsPreviewAndGoBeforeWrites(t *testing
 					{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
 				},
 			})
+			args := []string{"-p", dir, "-s", "sess", "--external-lead", "--visibility", "detached"}
+			if goMode {
+				stubCurrentRunStartPane(t, "%42")
+				args = prepareRunStartTestInvocation(t, append(args, "--go"))
+				currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+					return nil, nil
+				}
+			}
 			t.Setenv("TMUX", "")
 			t.Setenv("TMUX_PANE", "")
-
-			args := []string{"-p", dir, "-s", "sess", "--external-lead"}
-			if goMode {
-				args = append(args, "--go")
-			}
 			_, _, err := captureOutput(t, func() error {
 				return runRunStart(args, "test")
 			})
@@ -396,7 +433,10 @@ func TestRunStartExternalLeadFreshLeadValidationBeforeTeamWrite(t *testing.T) {
 	stubCurrentRunStartPane(t, "%42")
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "qa", "--lead", "cto", "--external-lead", "--go"}, "test")
+		return runRunStart([]string{
+			"-p", dir, "-s", "sess", "--roles", "qa", "--lead", "cto", "--external-lead",
+			"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether, "--goal", acceptedRunStartTestGoal, "--prepare",
+		}, "test")
 	})
 	if err == nil || !strings.Contains(err.Error(), "not included in --roles") {
 		t.Fatalf("expected pre-write lead validation error, got %v", err)
@@ -435,9 +475,10 @@ func TestRunStartExternalLeadGoalDeliveredToBoundLead(t *testing.T) {
 		func(time.Duration) {},
 		time.Now,
 	)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--goal", "ship it", "--go"})
 
 	if _, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--goal", "ship it", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	}); err != nil {
 		t.Fatalf("external-lead --goal --go: %v", err)
 	}
@@ -467,9 +508,10 @@ func TestRunStartExternalLeadLeadOnlyRosterReportsSuccess(t *testing.T) {
 	backend := useFakeTmuxBackend(t)
 	stubCurrentRunStartPane(t, "%42")
 	stubRunStartLeadWake(t)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("lead-only external-lead --go: %v", err)
@@ -504,9 +546,11 @@ func TestRunStartExternalLeadWorkerValidationBeforeBind(t *testing.T) {
 		return leadWakeResult{PID: 1234, Started: true, Detail: "ready"}, nil
 	}
 	t.Cleanup(func() { leadWakeStarter = prev })
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
+	liveArgs = append(liveArgs[:len(liveArgs)-1], "--model", "missing=gpt-5", "--go")
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--model", "missing=gpt-5", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err == nil || !strings.Contains(err.Error(), "--model has unknown role(s): missing") {
 		t.Fatalf("expected worker validation error, got %v", err)
@@ -576,8 +620,9 @@ func TestRunStartDefaultsToSiblingTabsInPreview(t *testing.T) {
 func TestRunStartGoOutsideTmuxRefusesSiblingTabsDefault(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_PANE", "")
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto", "--go"})
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err == nil {
 		t.Fatal("expected outside-tmux --go to fail under sibling-tabs default")
@@ -603,8 +648,10 @@ func TestRunStartGoInsideTmuxDefaultsToSiblingTabsBackend(t *testing.T) {
 		delete(teamLaunchBackends, "tmux")
 	})
 
+	dir := t.TempDir()
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--roles", "cto", "--go"})
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("run start --go inside tmux: %v", err)
@@ -623,8 +670,9 @@ func TestRunStartFreshPersistsOperatorMode(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%42")
 	backend := useFakeTmuxBackend(t)
 	dir := t.TempDir()
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--roles", "cto", "--operator-mode", "separate_terminal", "--go"})
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "cto", "--operator-mode", "separate_terminal", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -647,8 +695,9 @@ func TestRunStartFreshPersistsNotificationsWithoutChangingOperatorMode(t *testin
 	stubHealthyNotificationWatcherSpawn(t)
 	backend := useFakeTmuxBackend(t)
 	dir := t.TempDir()
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--roles", "cto", "--operator-mode", "separate_terminal", "--operator-notifications", "--go"})
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "cto", "--operator-mode", "separate_terminal", "--operator-notifications", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -725,9 +774,10 @@ func TestRunStartGoAcceptsGenericLeadRole(t *testing.T) {
 		delete(teamLaunchBackends, "tmux")
 	})
 	dir := t.TempDir()
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--roles", "lead", "--lead", "lead", "--go"})
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "lead", "--lead", "lead", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("run start --roles lead --lead lead --go: %v", err)
@@ -943,9 +993,10 @@ func TestRunStartGoGoalWaitsForLeadReadiness(t *testing.T) {
 		func(d time.Duration) { sleeps = append(sleeps, d) },
 		time.Now,
 	)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"})
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("run start --go returned error: %v", err)
@@ -993,9 +1044,10 @@ func TestRunStartGoGoalFailurePrintsQuotedRetryCommand(t *testing.T) {
 	prevTimeout := runStartLeadReadyTimeout
 	runStartLeadReadyTimeout = time.Millisecond
 	t.Cleanup(func() { runStartLeadReadyTimeout = prevTimeout })
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", goal, "--go"})
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", goal, "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err == nil {
 		t.Fatal("expected readiness timeout error")
@@ -1028,9 +1080,10 @@ func TestRunStartGoGoalDeliveryFailureAfterReadyPrintsRetryCommand(t *testing.T)
 		func(time.Duration) {},
 		time.Now,
 	)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"})
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if !errors.Is(err, goalErr) || !strings.Contains(err.Error(), "goal delivery failed after lead became ready") {
 		t.Fatalf("expected wrapped delivery error, got %v", err)
@@ -1064,9 +1117,10 @@ func TestRunStartGoUnconfirmedGoalSubmitWarnsAndContinues(t *testing.T) {
 		func(time.Duration) {},
 		time.Now,
 	)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"})
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("unconfirmed submit must not abort the launch, got %v", err)
@@ -1134,9 +1188,10 @@ func TestRunStartGoQueuedGoalSubmitReportsQueueAndContinues(t *testing.T) {
 		func(time.Duration) {},
 		time.Now,
 	)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"})
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("queued submit must not abort the launch, got %v", err)

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/flock"
@@ -35,41 +36,45 @@ var (
 	receiptBeforeSecureRename = func() {}
 	receiptBeforeRootOpen     = func(string) {}
 	persistDeliveryReceipt    = writeDeliveryReceipt
+	deliveryAttemptSequence   atomic.Uint64
 )
 
 type deliveryReceiptData struct {
-	SchemaVersion       int                     `json:"schema_version"`
-	Generation          uint64                  `json:"generation"`
-	AttemptID           string                  `json:"attempt_id"`
-	Kind                string                  `json:"kind"`
-	Method              string                  `json:"method,omitempty"`
-	Status              string                  `json:"status"`
-	Target              deliveryReceiptTarget   `json:"target"`
-	MessageID           string                  `json:"message_id,omitempty"`
-	ReconciledMessageID string                  `json:"reconciled_message_id,omitempty"`
-	Sender              string                  `json:"sender,omitempty"`
-	Recipient           string                  `json:"recipient,omitempty"`
-	Recipients          []string                `json:"recipients,omitempty"`
-	Consumers           []deliveryConsumerState `json:"consumers,omitempty"`
-	DeliveryState       string                  `json:"delivery_state"`
-	DrainedAt           *time.Time              `json:"drained_at,omitempty"`
-	FailedAt            *time.Time              `json:"failed_at,omitempty"`
-	LastCheckedAt       *time.Time              `json:"last_checked_at,omitempty"`
-	LastCheckError      string                  `json:"last_check_error,omitempty"`
-	NativeStage         string                  `json:"native_stage,omitempty"`
-	EvidenceSource      string                  `json:"evidence_source,omitempty"`
-	AMQInvoked          bool                    `json:"amq_invoked"`
-	TaskID              string                  `json:"task_id,omitempty"`
-	OutboxIntentID      string                  `json:"outbox_intent_id,omitempty"`
-	Root                string                  `json:"root,omitempty"`
-	Thread              string                  `json:"thread,omitempty"`
-	PaneID              string                  `json:"pane_id,omitempty"`
-	Fallback            bool                    `json:"fallback"`
-	Acknowledged        bool                    `json:"acknowledged"`
-	Stages              []deliveryReceiptStage  `json:"stages"`
-	Detail              string                  `json:"detail,omitempty"`
-	Path                string                  `json:"path,omitempty"`
-	CreatedAt           time.Time               `json:"created_at"`
+	SchemaVersion                     int                     `json:"schema_version"`
+	Generation                        uint64                  `json:"generation"`
+	AttemptID                         string                  `json:"attempt_id"`
+	Kind                              string                  `json:"kind"`
+	Method                            string                  `json:"method,omitempty"`
+	Status                            string                  `json:"status"`
+	Target                            deliveryReceiptTarget   `json:"target"`
+	MessageID                         string                  `json:"message_id,omitempty"`
+	ReconciledMessageID               string                  `json:"reconciled_message_id,omitempty"`
+	Sender                            string                  `json:"sender,omitempty"`
+	Recipient                         string                  `json:"recipient,omitempty"`
+	Recipients                        []string                `json:"recipients,omitempty"`
+	Consumers                         []deliveryConsumerState `json:"consumers,omitempty"`
+	DeliveryState                     string                  `json:"delivery_state"`
+	DrainedAt                         *time.Time              `json:"drained_at,omitempty"`
+	FailedAt                          *time.Time              `json:"failed_at,omitempty"`
+	LastCheckedAt                     *time.Time              `json:"last_checked_at,omitempty"`
+	LastCheckError                    string                  `json:"last_check_error,omitempty"`
+	NativeStage                       string                  `json:"native_stage,omitempty"`
+	EvidenceSource                    string                  `json:"evidence_source,omitempty"`
+	AMQInvoked                        bool                    `json:"amq_invoked"`
+	TaskID                            string                  `json:"task_id,omitempty"`
+	CurrentActorImplementationAllowed *bool                   `json:"current_actor_implementation_allowed,omitempty"`
+	LeadImplementationAllowed         *bool                   `json:"lead_implementation_allowed,omitempty"`
+	LeadershipEpoch                   *uint64                 `json:"leadership_epoch,omitempty"`
+	OutboxIntentID                    string                  `json:"outbox_intent_id,omitempty"`
+	Root                              string                  `json:"root,omitempty"`
+	Thread                            string                  `json:"thread,omitempty"`
+	PaneID                            string                  `json:"pane_id,omitempty"`
+	Fallback                          bool                    `json:"fallback"`
+	Acknowledged                      bool                    `json:"acknowledged"`
+	Stages                            []deliveryReceiptStage  `json:"stages"`
+	Detail                            string                  `json:"detail,omitempty"`
+	Path                              string                  `json:"path,omitempty"`
+	CreatedAt                         time.Time               `json:"created_at"`
 }
 
 type deliveryConsumerState struct {
@@ -126,7 +131,7 @@ func deliveryAttemptID(now time.Time, kind, role, handle string) string {
 	if seed == "" {
 		seed = "delivery"
 	}
-	return fmt.Sprintf("%s-%s", now.Format("20060102T150405.000000000Z"), seed)
+	return fmt.Sprintf("%s-%s-p%d-%016x", now.Format("20060102T150405.000000000Z"), seed, os.Getpid(), deliveryAttemptSequence.Add(1))
 }
 
 func (r *deliveryReceiptData) addStage(state, detail string) {
@@ -158,7 +163,7 @@ func writeDeliveryReceipt(projectDir, profile, session string, receipt *delivery
 	path := filepath.Join(dir, receipt.AttemptID+".json")
 	receipt.Path = path
 	lockName := receipt.AttemptID + ".json.lock"
-	lockFile, err := dirRoot.OpenFile(lockName, os.O_CREATE|os.O_RDWR, 0o644)
+	lockFile, err := openDeliveryReceiptLock(dirRoot, lockName)
 	if err != nil {
 		return fmt.Errorf("open delivery receipt lock: %w", err)
 	}
@@ -550,7 +555,7 @@ func updateDeliveryReceiptLocked(projectDir, profile, session, attemptID string,
 	path := filepath.Join(dir, attemptID+".json")
 	var updated deliveryReceiptData
 	lockName := attemptID + ".json.lock"
-	lockFile, err := dirRoot.OpenFile(lockName, os.O_CREATE|os.O_RDWR, 0o644)
+	lockFile, err := openDeliveryReceiptLock(dirRoot, lockName)
 	if err != nil {
 		return deliveryReceiptData{}, fmt.Errorf("open delivery receipt lock: %w", err)
 	}
@@ -575,6 +580,22 @@ func updateDeliveryReceiptLocked(projectDir, profile, session, attemptID string,
 		return nil
 	})
 	return updated, err
+}
+
+// openDeliveryReceiptLock creates a missing sidecar exclusively, then opens an
+// existing sidecar without O_CREATE. On Darwin, concurrent openat calls using
+// O_CREATE|O_NOFOLLOW for the same missing name can spuriously return ENOENT.
+// Splitting create from open also keeps the secure os.Root no-symlink boundary:
+// O_EXCL never follows a link, and the existing-file open retains O_NOFOLLOW.
+func openDeliveryReceiptLock(dirRoot *os.Root, name string) (*os.File, error) {
+	lockFile, err := dirRoot.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o644)
+	if err == nil {
+		return lockFile, nil
+	}
+	if !os.IsExist(err) {
+		return nil, err
+	}
+	return dirRoot.OpenFile(name, os.O_RDWR, 0)
 }
 
 func openReceiptDirRoot(projectDir, profile, session string, create bool) (*os.Root, string, error) {

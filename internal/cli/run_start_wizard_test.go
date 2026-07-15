@@ -153,7 +153,7 @@ func TestNumberedWizardRunsCanonicalPreviewWithoutMutation(t *testing.T) {
 	project := t.TempDir()
 	prevInput := runStartWizardInput
 	prevOutput := runStartWizardOutput
-	runStartWizardInput = strings.NewReader(strings.Repeat("\n", 24))
+	runStartWizardInput = strings.NewReader(strings.Repeat("\n", 32))
 	var prompts bytes.Buffer
 	runStartWizardOutput = &prompts
 	t.Cleanup(func() {
@@ -166,17 +166,18 @@ func TestNumberedWizardRunsCanonicalPreviewWithoutMutation(t *testing.T) {
 			"--project", project,
 			"--profile", "review",
 			"--session", "issue-393",
+			"--goal", "Execute the reviewed preview fixture",
 		}, "test")
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Equivalent flag command (preview only)",
+		"Equivalent flag command (read-only preparation proposal)",
 		"run start --project " + project,
 		"--profile review --session issue-393",
-		"--roles cto,senior-dev,qa",
-		"PREVIEW",
+		"--roles 'cto,senior-dev,qa'",
+		"Proposal only.",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("preview output missing %q:\n%s", want, stdout)

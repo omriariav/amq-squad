@@ -42,6 +42,7 @@ type GateRequestContext struct {
 	Action          string           `json:"action"`
 	Target          string           `json:"target"`
 	Note            string           `json:"note,omitempty"`
+	TaskID          string           `json:"task_id,omitempty"`
 }
 
 type ApprovalContext struct {
@@ -426,6 +427,9 @@ func ValidateGateRequest(r GateRequestContext) error {
 	}
 	if err := ValidateCanonicalSingleLineField("note", r.Note, false); err != nil {
 		return err
+	}
+	if r.TaskID != "" && !regexp.MustCompile(`^t[1-9][0-9]*$`).MatchString(r.TaskID) {
+		return fmt.Errorf("task_id must be one canonical t<N> identifier")
 	}
 	for name, value := range map[string]string{
 		"project_dir":  r.Namespace.ProjectDir,

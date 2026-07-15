@@ -111,6 +111,13 @@ func runLaunch(args []string) error {
 	noPreauthInScope := fs.Bool("no-preauthorize-inscope", false, "do not pre-authorize gh pr create for an orchestrated Claude worker (#296; feature-branch push is not pre-authorized in this slice)")
 	trustRaw := fs.String("trust", "", "Codex trust profile: approve-for-me (default), sandboxed, or trusted (local power mode)")
 	model := fs.String("model", "", "native model name to pass to the agent binary, e.g. 'gpt-5.6-terra' or 'sonnet'")
+	toolProfile := fs.String("tool-profile", "", "effective role capability policy (minimal|coding|browser|data|full|custom)")
+	toolConfig := fs.String("tool-config", "", "binary-native policy config: Claude settings path or Codex profile name")
+	toolMCPConfig := fs.String("tool-mcp-config", "", "Claude strict MCP config generated for the role")
+	var toolAllowlist stringListFlag
+	var toolBlocklist stringListFlag
+	fs.Var(&toolAllowlist, "tool-allow", "audited enabled tool entry (repeatable)")
+	fs.Var(&toolBlocklist, "tool-block", "audited revoked tool entry (repeatable; materialized at launch)")
 	spawnOrigin := fs.String("spawn-origin", "", "runtime composition origin recorded in launch.json")
 	spawnDepth := fs.Int("spawn-depth", 0, "runtime composition depth recorded in launch.json")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args to treat as launch defaults, e.g. '--enable goals'")
@@ -252,6 +259,18 @@ Examples:
 		return usageErrorf("agent up requires a binary (e.g. 'amq-squad agent up codex --role cpo')")
 	}
 	binary := remaining[0]
+	effectiveToolProfile := strings.TrimSpace(*toolProfile)
+	if effectiveToolProfile == "" {
+		effectiveToolProfile = team.ToolProfileFull
+	}
+	switch effectiveToolProfile {
+	case team.ToolProfileMinimal, team.ToolProfileCoding, team.ToolProfileBrowser, team.ToolProfileData, team.ToolProfileFull, team.ToolProfileCustom:
+	default:
+		return usageErrorf("--tool-profile must be minimal, coding, browser, data, full, or custom")
+	}
+	if effectiveToolProfile != team.ToolProfileFull && strings.TrimSpace(*toolConfig) == "" {
+		return usageErrorf("--tool-config is required for non-full tool profile %q", effectiveToolProfile)
+	}
 	wakeInjectModeValue = resolveWakeInjectModeForBinary(wakeInjectModeValue, binary)
 	if *symphony && normalizedAgentBinary(binary) != "codex" {
 		return usageErrorf("--symphony is only supported for Codex agents; got %s", binary)
@@ -260,7 +279,8 @@ Examples:
 	if len(remaining) > 1 {
 		childArgs = append(remaining[1:], childArgs...)
 	}
-	extraDefaultArgs := binaryArgsFor(binary, binaryArgs)
+	toolMember := team.Member{Binary: binary, ToolProfile: effectiveToolProfile, ToolConfig: strings.TrimSpace(*toolConfig), ToolMCPConfig: strings.TrimSpace(*toolMCPConfig), ToolAllowlist: append([]string(nil), toolAllowlist...), ToolBlocklist: append([]string(nil), toolBlocklist...)}
+	extraDefaultArgs := composeBinaryArgs(binary, toolMember.ToolArgs(), binaryArgsFor(binary, binaryArgs))
 	resolvedModel := resolveModelForLaunch(binary, *model, extraDefaultArgs)
 	modelArgs := modelArgsForBinary(binary, resolvedModel)
 	defaultArgs := launchDefaultChildArgsWithTrust(binary, !*noDefaultArgs, modelArgs, extraDefaultArgs, trustMode)
@@ -354,6 +374,11 @@ Examples:
 		Launcher:                     launcher,
 		LauncherArgs:                 launcherArgs,
 		Model:                        resolvedModel,
+		ToolProfile:                  effectiveToolProfile,
+		ToolConfig:                   strings.TrimSpace(*toolConfig),
+		ToolMCPConfig:                strings.TrimSpace(*toolMCPConfig),
+		ToolAllowlist:                append([]string(nil), toolAllowlist...),
+		ToolBlocklist:                append([]string(nil), toolBlocklist...),
 		Trust:                        trustMode,
 		NoDefaultArgs:                *noDefaultArgs,
 		NoPreauthorizeInScope:        *noPreauthInScope,
@@ -380,6 +405,18 @@ Examples:
 	}
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD
+	}
+	if rec.GoalBinding == nil && rec.TeamHome != "" {
+		manifestPath := preparedRunPath(rec.TeamHome, rec.TeamProfile, rec.Session)
+		if _, statErr := os.Stat(manifestPath); statErr == nil {
+			binding, bindingErr := preparedRunLaunchGoalBinding(rec.TeamHome, rec.TeamProfile, rec.Session, rec.Role, rec.Binary)
+			if bindingErr != nil {
+				return fmt.Errorf("load accepted prepared-run goal binding: %w", bindingErr)
+			}
+			rec.GoalBinding = binding
+		} else if !os.IsNotExist(statErr) {
+			return fmt.Errorf("inspect prepared-run goal binding: %w", statErr)
+		}
 	}
 
 	// Capture exact tmux identity (session/window/pane ids) when launched

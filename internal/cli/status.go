@@ -621,16 +621,20 @@ func statusTaskWarnings(projectDir, profile, session string) ([]statusWarning, e
 	ns := squadnamespace.Resolve(projectDir, profile, session)
 	var messages []state.Message
 	for _, t := range tasks {
-		if taskstore.IsAttentionLifecycleTerminal(t) {
-			continue
-		}
-		if t.Status == taskstore.StatusInProgress && t.Dispatch != nil {
+		trackedCompletion := t.CompletionReconcile != nil && t.CompletionReconcile.FirstEvidence != nil
+		if t.Dispatch != nil && (t.Status == taskstore.StatusInProgress || t.Status == taskstore.StatusCompletedPendingReconcile || t.Status == taskstore.StatusCompleted && trackedCompletion) {
 			messages, _ = state.ScanSessionMessages(ns.AMQRoot, time.Now)
 			break
 		}
 	}
 	var warnings []statusWarning
 	for _, t := range tasks {
+		if t.Status == taskstore.StatusCompleted && t.CompletionReconcile != nil && t.CompletionReconcile.FirstEvidence != nil {
+			if warning, ok := taskCompletionEvidenceWarning(projectDir, profile, session, t, messages); ok && warning.Kind != "task_completion_reconcile_ready" {
+				warnings = append(warnings, warning)
+			}
+			continue
+		}
 		if taskstore.IsAttentionLifecycleTerminal(t) {
 			continue
 		}
@@ -640,13 +644,90 @@ func statusTaskWarnings(projectDir, profile, session string) ([]statusWarning, e
 		switch t.Status {
 		case taskstore.StatusPending:
 			warnings = append(warnings, pendingDispatchTaskWarning(projectDir, profile, session, t))
-		case taskstore.StatusInProgress:
-			if report, ok := latestTaskCompletionReport(messages, t); ok {
-				warnings = append(warnings, completionReportTaskWarning(projectDir, profile, session, t, report))
+		case taskstore.StatusInProgress, taskstore.StatusCompletedPendingReconcile:
+			if warning, ok := taskCompletionEvidenceWarning(projectDir, profile, session, t, messages); ok {
+				warnings = append(warnings, warning)
+			}
+			if t.Status == taskstore.StatusCompletedPendingReconcile {
+				if warning, ok := pendingCompletionLeaseWarning(projectDir, profile, session, t, time.Now().UTC()); ok {
+					warnings = append(warnings, warning)
+				}
 			}
 		}
 	}
 	return warnings, nil
+}
+
+func pendingCompletionLeaseWarning(projectDir, profile, session string, t taskstore.Task, now time.Time) (statusWarning, bool) {
+	assignee := strings.TrimSpace(t.AssignedTo)
+	cmd := "amq-squad task renew " + shellQuote(t.ID) + " --me " + shellQuote(assignee) + taskEvidenceScope(projectDir, profile, session)
+	if t.Lease == nil {
+		return statusWarning{Kind: "task_completion_legacy_unleased", Session: session,
+			Detail: fmt.Sprintf("task %s is completed_pending_reconcile without lease metadata; ownership remains %s and only renew or exact evidence reconcile is allowed", t.ID, printableHandle(assignee)), SuggestedCommand: cmd}, true
+	}
+	if !t.Lease.ExpiresAt.After(now) {
+		return statusWarning{Kind: "task_completion_stale_lease", Session: session,
+			Detail: fmt.Sprintf("task %s completed_pending_reconcile lease for %s expired at %s; only renew or exact evidence reconcile is allowed", t.ID, printableHandle(assignee), t.Lease.ExpiresAt.UTC().Format(time.RFC3339Nano)), SuggestedCommand: cmd}, true
+	}
+	return statusWarning{}, false
+}
+
+func taskCompletionEvidenceWarning(projectDir, profile, session string, t taskstore.Task, messages []state.Message) (statusWarning, bool) {
+	evidenceID := ""
+	if t.CompletionReconcile != nil && t.CompletionReconcile.FirstEvidence != nil {
+		evidenceID = strings.TrimSpace(t.CompletionReconcile.FirstEvidence.MessageID)
+	}
+	if evidenceID == "" {
+		var latest state.Message
+		for _, message := range messages {
+			subject := message.Subject
+			if message.AuthorityRaw {
+				subject = message.RawSubject
+			}
+			if !completionDONEOnly(subject) || !messageContainsExactTaskID(message, t.ID) {
+				continue
+			}
+			if evidenceID == "" || message.Created.After(latest.Created) || message.Created.Equal(latest.Created) && message.ID > latest.ID {
+				latest, evidenceID = message, message.ID
+			}
+		}
+	}
+	if evidenceID == "" {
+		if t.Status == taskstore.StatusCompletedPendingReconcile {
+			return statusWarning{Kind: "task_completion_evidence_stale", Session: session, Detail: fmt.Sprintf("task %s is completed_pending_reconcile but has no durable first evidence record", t.ID)}, true
+		}
+		return statusWarning{}, false
+	}
+	selected, err := readTaskSelection(projectDir, profile, session, t.ID)
+	if err != nil {
+		return statusWarning{Kind: "task_completion_evidence_stale", Session: session, Detail: fmt.Sprintf("task %s evidence %s cannot be assessed: %v", t.ID, evidenceID, err)}, true
+	}
+	preview, err := assessTaskCompletionEvidence(selected, evidenceID, time.Now().UTC())
+	if err != nil {
+		return statusWarning{Kind: "task_completion_evidence_stale", Session: session, Detail: fmt.Sprintf("task %s evidence %s cannot be assessed: %v", t.ID, evidenceID, err)}, true
+	}
+	kind := "task_completion_reconcile_ready"
+	if len(preview.Blockers) > 0 {
+		kind = "task_completion_evidence_mismatch"
+		for _, blocker := range preview.Blockers {
+			if blocker == "evidence_id_not_found" || blocker == "recorded_evidence_content_mismatch" || blocker == "conflicting_same_id_content" {
+				kind = "task_completion_evidence_stale"
+				break
+			}
+		}
+	}
+	cmd := "amq-squad task reconcile " + shellQuote(t.ID) + " --evidence-id " + shellQuote(evidenceID) + taskEvidenceScope(projectDir, profile, session) + " --json"
+	detail := fmt.Sprintf("task %s completion evidence %s: first=%s current=%s from=%s to=%s owner=%s thread=%s expected_assignee=%s expected_sender=%s expected_to=%s expected_thread=%s proposed=%s",
+		t.ID, evidenceID, orDash(preview.FirstPath), orDash(preview.CurrentPath), orDash(preview.From), strings.Join(preview.To, ","), orDash(preview.Owner), orDash(preview.CanonicalThread),
+		orDash(preview.Expected.Assignee), orDash(preview.Expected.Sender), orDash(preview.Expected.To), orDash(preview.Expected.Thread), preview.ProposedState)
+	if len(preview.Blockers) > 0 {
+		detail += " blockers=" + strings.Join(preview.Blockers, ",")
+	}
+	return statusWarning{Kind: kind, Session: session, Detail: detail, SuggestedCommand: cmd}, true
+}
+
+func taskEvidenceScope(projectDir, profile, session string) string {
+	return " --project " + shellQuote(projectDir) + " --profile " + shellQuote(squadnamespace.NormalizeProfile(profile)) + " --session " + shellQuote(session)
 }
 
 func pendingDispatchTaskWarning(projectDir, profile, session string, t taskstore.Task) statusWarning {
@@ -671,94 +752,6 @@ func pendingDispatchTaskWarning(projectDir, profile, session string, t taskstore
 		Detail:           detail,
 		SuggestedCommand: cmd,
 	}
-}
-
-func completionReportTaskWarning(projectDir, profile, session string, t taskstore.Task, report state.Message) statusWarning {
-	assignee := taskDispatchAssignee(t)
-	evidence := strings.TrimSpace(report.ID)
-	if evidence == "" {
-		evidence = strings.TrimSpace(report.Subject)
-	}
-	if evidence == "" {
-		evidence = "worker report"
-	}
-	cmd := "amq-squad task done " + shellQuote(t.ID) + " --me " + shellQuote(assignee) +
-		" --evidence " + shellQuote("accepted "+evidence) + taskScope(projectDir, profile, session)
-	detail := fmt.Sprintf("task %s is still in_progress after %s reported completion on %s",
-		t.ID, printableHandle(assignee), report.Created.UTC().Format(time.RFC3339))
-	if report.ID != "" {
-		detail += " (message " + report.ID + ")"
-	}
-	detail += "; if the lead accepts the report, run " + cmd
-	return statusWarning{
-		Kind:             "task_report_pending_completion",
-		Session:          session,
-		Detail:           detail,
-		SuggestedCommand: cmd,
-	}
-}
-
-func latestTaskCompletionReport(messages []state.Message, t taskstore.Task) (state.Message, bool) {
-	d := t.Dispatch
-	if d == nil {
-		return state.Message{}, false
-	}
-	assignee := taskDispatchAssignee(t)
-	if assignee == "" {
-		return state.Message{}, false
-	}
-	after := t.UpdatedAt
-	if d.DispatchedAt.After(after) {
-		after = d.DispatchedAt
-	}
-	var latest state.Message
-	var ok bool
-	for _, msg := range messages {
-		if strings.TrimSpace(msg.From) != assignee {
-			continue
-		}
-		if !msg.Created.After(after) {
-			continue
-		}
-		if !messageMatchesDispatchThread(msg, d) {
-			continue
-		}
-		if !messageLooksLikeCompletionReport(msg) {
-			continue
-		}
-		if !ok || msg.Created.After(latest.Created) || (msg.Created.Equal(latest.Created) && msg.ID > latest.ID) {
-			latest = msg
-			ok = true
-		}
-	}
-	return latest, ok
-}
-
-func messageMatchesDispatchThread(msg state.Message, d *taskstore.Dispatch) bool {
-	if d == nil {
-		return false
-	}
-	expected := statusCanonicalThread(d.Thread)
-	if expected == "" && strings.TrimSpace(d.Sender) != "" && strings.TrimSpace(d.Assignee) != "" {
-		expected = canonicalP2PThread(strings.TrimSpace(d.Sender), strings.TrimSpace(d.Assignee))
-	}
-	if expected == "" {
-		return false
-	}
-	return statusCanonicalThread(msg.Thread) == expected || statusCanonicalThread(msg.RawThread) == expected
-}
-
-func messageLooksLikeCompletionReport(msg state.Message) bool {
-	if msg.Kind == state.KindReviewRequest {
-		return true
-	}
-	text := strings.ToLower(msg.Subject + "\n" + msg.Body)
-	for _, token := range []string{"done", "complete", "completed", "ready for review", "ready to review", "implemented", "finished"} {
-		if strings.Contains(text, token) {
-			return true
-		}
-	}
-	return false
 }
 
 func statusCanonicalThread(raw string) string {
@@ -1426,7 +1419,7 @@ func activeTasksByAssignee(projectDir, profile, workstream string) map[string]ta
 	}
 	out := map[string]taskstore.Task{}
 	for _, t := range tasks {
-		if t.Status != taskstore.StatusInProgress || strings.TrimSpace(t.AssignedTo) == "" {
+		if (t.Status != taskstore.StatusInProgress && t.Status != taskstore.StatusCompletedPendingReconcile) || strings.TrimSpace(t.AssignedTo) == "" {
 			continue
 		}
 		cur, ok := out[t.AssignedTo]

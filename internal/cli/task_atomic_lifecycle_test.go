@@ -276,6 +276,7 @@ func TestTaskReconcileMissingSessionIsReadOnlyAndHelpIsCanonical(t *testing.T) {
 		"task claim", "--lease 2h", "--override-dependencies --reason WHY", "task renew", "task cancel",
 		"task release", "task deliver", "task retry-delivery", "--confirm-not-delivered", "task reconcile",
 		"--final-head SHA", "--dispatch-next ID", "DONE: <task title>", "there is no AMQ kind named done",
+		"completed_pending_reconcile", "--evidence-id ID", "--binding-digest SHA", "--me H",
 	} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("help missing %q:\n%s", want, help)

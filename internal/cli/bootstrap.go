@@ -26,6 +26,8 @@ type bootstrapContext struct {
 	Role             string
 	Handle           string
 	Binary           string
+	ToolProfile      string
+	ToolConfig       string
 	Session          string
 	CWD              string
 	Root             string
@@ -91,6 +93,8 @@ func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
 	ctx.Role = promptText(ctx.Role)
 	ctx.Handle = promptText(ctx.Handle)
 	ctx.Binary = promptText(ctx.Binary)
+	ctx.ToolProfile = promptText(ctx.ToolProfile)
+	ctx.ToolConfig = promptText(ctx.ToolConfig)
 	ctx.Session = promptText(ctx.Session)
 	ctx.CWD = promptText(ctx.CWD)
 	ctx.Root = promptText(ctx.Root)
@@ -230,6 +234,10 @@ func appendGeneratedBootstrapPrompt(args []string, prompt string) []string {
 }
 
 func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrapContext {
+	toolProfile := strings.TrimSpace(rec.ToolProfile)
+	if toolProfile == "" {
+		toolProfile = team.ToolProfileFull
+	}
 	teamRulesPath := ""
 	if teamHome != "" {
 		teamRulesPath = rules.Path(teamHome)
@@ -249,6 +257,8 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		Role:          rec.Role,
 		Handle:        rec.Handle,
 		Binary:        rec.Binary,
+		ToolProfile:   toolProfile,
+		ToolConfig:    rec.ToolConfig,
 		Session:       rec.Session,
 		CWD:           rec.CWD,
 		Root:          rec.Root,

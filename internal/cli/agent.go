@@ -284,7 +284,7 @@ func launchKnownFlag(name string) string {
 		"-codex-args", "-claude-args", "-launcher-args",
 		"-wake-inject-arg":
 		return "string-accepts-dash"
-	case "--role", "--session", "--me", "--root", "--project", "--profile", "--team-home", "--team-profile",
+	case "--role", "--session", "--me", "--root", "--project", "--profile", "--team-home", "--team-profile", "--tool-profile", "--tool-config", "--tool-mcp-config", "--tool-allow", "--tool-block",
 		"--conversation", "--conversation-id", "--trust", "--model", "--launcher", "--wake-inject-via", "--wake-inject-mode",
 		"--spawn-origin", "--spawn-depth", "--restore-goal-binding",
 		"-role", "-session", "-s", "-me", "-root", "-project", "-p", "-profile", "-P", "-team-home", "-team-profile",

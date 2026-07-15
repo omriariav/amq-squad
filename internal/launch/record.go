@@ -48,6 +48,11 @@ type Record struct {
 	Launcher         string   `json:"launcher,omitempty"`
 	LauncherArgs     []string `json:"launcher_args,omitempty"`
 	Model            string   `json:"model,omitempty"`
+	ToolProfile      string   `json:"tool_profile,omitempty"`
+	ToolConfig       string   `json:"tool_config,omitempty"`
+	ToolMCPConfig    string   `json:"tool_mcp_config,omitempty"`
+	ToolAllowlist    []string `json:"tool_allowlist,omitempty"`
+	ToolBlocklist    []string `json:"tool_blocklist,omitempty"`
 	Trust            string   `json:"trust,omitempty"`
 	NoDefaultArgs    bool     `json:"no_default_args,omitempty"`
 	// NoPreauthorizeInScope records the --no-preauthorize-inscope choice so a

@@ -32,6 +32,7 @@ var (
 	runStartWizardGlobalExecute    = runGlobalStart
 	runStartWizardResumeExecute    = runResume
 	runStartWizardInspectProject   = inspectRunStartWizardProject
+	runStartWizardPrepareConfirm   = promptRunStartWizardPrepare
 	runStartWizardConfirm          = promptRunStartWizardLaunch
 	runStartWizardResumeConfirm    = promptRunStartWizardResume
 	runStartWizardOpenTTY          = func() (io.ReadWriteCloser, error) { return os.OpenFile("/dev/tty", os.O_RDWR, 0) }
@@ -56,9 +57,11 @@ Usage:
       [--wizard-ui auto|tui|numbered] [--numbered|--accessible]
 
 This is an alias for 'amq-squad run start --interactive'. It requires an
-interactive terminal and never runs in CI. It previews first, then asks
-"Launch now? [y/N]"; only an explicit yes calls the same canonical command
-with --go. Project-run and global/NOC scopes are supported.
+interactive terminal and never runs in CI. A fresh project run previews first,
+then separately asks to prepare coordination artifacts and to launch. Both
+questions default to No; preparation never opens panes, and only the final
+"Launch now? [y/N]" approval uses --go. Project-run and global/NOC scopes are
+supported.
 TERM=dumb and --wizard-ui numbered use the accessible numbered adapter.
 `)
 		return nil
@@ -400,6 +403,11 @@ func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out
 		}
 		return runStartWizardResumeExecute(liveArgs)
 	}
+	if err := spec.ResolveGoalBinding(); err != nil {
+		fmt.Fprintf(runStartWizardOutput, "\nReadiness blocked [goal_binding]: %s\n", err)
+		return err
+	}
+	fmt.Fprintf(runStartWizardOutput, "\nGoal binding: %s\nGoal text: %s\n", spec.GoalBindingReview(), spec.Goal)
 	preflight := runStartPreflight(runStartPreflightInput{
 		Project:                  spec.Project,
 		Profile:                  spec.Profile,
@@ -436,6 +444,9 @@ func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out
 		return preflight.Err()
 	}
 	canonicalArgs := spec.Args()
+	if spec.ProfileBranch == runwizard.ProfileBranchNew {
+		return finishFreshRunStartWizard(spec, canonicalArgs, version, in, out)
+	}
 	liveArgs := append(append([]string{}, canonicalArgs...), "--go")
 	commandArgs := append([]string{"run", "start"}, canonicalArgs...)
 	fmt.Printf("\nEquivalent flag command (preview only):\n  %s\n\n", shellCommand("amq-squad", commandArgs...))
@@ -451,6 +462,87 @@ func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out
 		return err
 	}
 	return runStartWizardProjectExecute(liveArgs, version)
+}
+
+// finishFreshRunStartWizard keeps artifact preparation and process launch as
+// two explicit, default-No mutations. The preparation invocation receives the
+// complete reviewed composition. Once it succeeds, the profile exists, so the
+// live invocation deliberately contains only existing-profile-compatible
+// runtime flags instead of replaying setup-only roster flags.
+func finishFreshRunStartWizard(spec runwizard.Spec, canonicalArgs []string, version string, in io.Reader, out io.Writer) error {
+	planArgs := append(append([]string{}, canonicalArgs...), "--prepare-plan")
+	fmt.Printf("\nEquivalent flag command (read-only preparation proposal):\n  %s\n\n", shellCommand("amq-squad", append([]string{"run", "start"}, planArgs...)...))
+	if err := runStartWizardProjectExecute(planArgs, version); err != nil {
+		return err
+	}
+	prepareArgs := append(append([]string{}, canonicalArgs...), "--prepare")
+	fmt.Printf("Equivalent flag command (artifact preparation, only after explicit Yes):\n  %s\n\n", shellCommand("amq-squad", append([]string{"run", "start"}, prepareArgs...)...))
+
+	prepare, err := runStartWizardPrepareConfirm(in, out)
+	if err != nil || !prepare {
+		return err
+	}
+	if err := runStartWizardProjectExecute(prepareArgs, version); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "\nAccepted final review:\n%s\n", spec.LaunchRosterReview())
+	fmt.Fprintf(out, "Bootstrap readiness: accepted preparation verified bootstrap artifacts for the initial roster (%s).\n", wizardRosterDisplay(spec.Roles))
+	liveArgs := preparedRunStartLaunchArgs(spec)
+	fmt.Printf("Equivalent flag command (live, only after separate explicit Yes):\n  %s\n\n", shellCommand("amq-squad", append([]string{"run", "start"}, liveArgs...)...))
+
+	launch, err := runStartWizardConfirm(in, out)
+	if err != nil || !launch {
+		return err
+	}
+	return runStartWizardProjectExecute(liveArgs, version)
+}
+
+func preparedRunStartLaunchArgs(spec runwizard.Spec) []string {
+	args := make([]string, 0, 20)
+	appendValue := func(name, value string) {
+		if value = strings.TrimSpace(value); value != "" {
+			args = append(args, name, value)
+		}
+	}
+	appendValue("--project", spec.Project)
+	appendValue("--profile", spec.Profile)
+	appendValue("--session", spec.Session)
+	appendValue("--launch-shape", spec.LaunchShape)
+	appendValue("--visibility", spec.Visibility)
+	appendValue("--layout-preset", spec.LayoutPreset)
+	appendValue("--launcher-pane", spec.LauncherPane)
+	appendValue("--goal", spec.Goal)
+	if spec.ExternalLead {
+		args = append(args, "--external-lead")
+	}
+	return append(args, "--go")
+}
+
+func wizardRosterDisplay(raw string) string {
+	roles := make([]string, 0)
+	for _, role := range strings.Split(raw, ",") {
+		if role = strings.TrimSpace(role); role != "" {
+			roles = append(roles, role)
+		}
+	}
+	if len(roles) == 0 {
+		return "none"
+	}
+	return strings.Join(roles, ", ")
+}
+
+func promptRunStartWizardPrepare(in io.Reader, out io.Writer) (bool, error) {
+	fmt.Fprint(out, "Prepare coordination artifacts now? [y/N] ")
+	line, err := readWizardLine(in)
+	if err == io.EOF {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	line = strings.ToLower(strings.TrimSpace(line))
+	return line == "y" || line == "yes", nil
 }
 
 func promptRunStartWizardLaunch(in io.Reader, out io.Writer) (bool, error) {
@@ -507,6 +599,9 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 	binary := fs.String("binary", "", "")
 	model := fs.String("model", "", "")
 	effort := fs.String("effort", "", "")
+	toolProfile := fs.String("tool-profile", "", "")
+	launchShape := fs.String("launch-shape", "", "")
+	stagedRoles := fs.String("staged-roles", "", "")
 	operatorMode := fs.String("operator-mode", "", "")
 	selfOperatorLead := fs.String("self-operator-lead", "", "")
 	selfOperatorAllow := fs.String("self-operator-allow", "", "")
@@ -543,6 +638,9 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 		Binary:                         *binary,
 		Model:                          *model,
 		Effort:                         *effort,
+		ToolProfile:                    *toolProfile,
+		LaunchShape:                    *launchShape,
+		StagedRoles:                    *stagedRoles,
 		OperatorMode:                   *operatorMode,
 		SelfOperatorLead:               *selfOperatorLead,
 		SelfOperatorAllow:              *selfOperatorAllow,

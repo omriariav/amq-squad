@@ -653,6 +653,8 @@ func externalLeadRecordForLaunch(m team.Member, cwd, handle, root string, env am
 		RootSource:       env.RootSource,
 		AMQVersion:       env.AMQVersion,
 		Model:            memberResolvedModel(m, modelOverrides, binaryArgs),
+		ToolProfile:      m.EffectiveToolProfile(),
+		ToolConfig:       strings.TrimSpace(m.ToolConfig),
 		Trust:            trustMode,
 		External:         true,
 		AdoptionMode:     adoptionModeForExternalLeadRecord(m),

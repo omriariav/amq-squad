@@ -1,4 +1,4 @@
-.PHONY: build test fmt fmt-check vet ci install release-check release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check dogfood-claude clean
+.PHONY: build test fmt fmt-check vet ci install release-check release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
 
 GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*')
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -32,7 +32,7 @@ fmt-check:
 vet:
 	go vet ./...
 
-ci: fmt-check vet test readme-html-check docs-html-check skills-check
+ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check
 
 # Regenerate plugin SKILL.md mirrors from plugins/skills-src.
 skills-generate:
@@ -48,10 +48,18 @@ skills-check:
 	@python3 scripts/generate-plugin-skills.py --check
 	@python3 scripts/check-skill-frontmatter.py
 
+# Current public docs and generated team rules must teach the authoritative
+# namespaced skills. Historical release notes may retain old names, but active
+# invocation examples cannot regress to compatibility redirects.
+skill-routing-check:
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for skill-routing-check" >&2; exit 1; }
+	@python3 scripts/check-current-skill-routing.py
+
 release-check:
 	@test "$(VERSION)" != "dev" || (echo "VERSION is required, for example VERSION=v2.8.1" >&2; exit 1)
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for release-check" >&2; exit 1; }
 	@python3 scripts/check-release-version.py "$(VERSION)"
+	@python3 scripts/check-current-skill-routing.py
 
 # Regenerate the browsable README.html from README.md. Run this whenever
 # README.md changes (the release process bumps README.md, so it runs here).

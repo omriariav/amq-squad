@@ -381,7 +381,7 @@ notes</a> for the complete issue-to-behavior map.</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.21.0</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.22.0</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
@@ -390,10 +390,12 @@ the amq-squad playbooks themselves.</p>
 <p>Codex:</p>
 <div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">codex</span> plugin marketplace add omriariav/amq-squad</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">codex</span> plugin add amq-squad@amq-squad</span></code></pre></div>
-<p>The primary skills are <code>amq-squad</code> and
-<code>amq-squad-orchestrator</code>. The older
-<code>amq-team-setup</code> and <code>amq-squad-role-creator</code>
-skill entries are redirect stubs. The CLI and skills are versioned
+<p>The authoritative skills are <code>amq-squad:wizard</code> for
+preparation, <code>amq-squad:cli</code> for direct operations, and
+<code>amq-squad:orchestrator</code> for a verified live lead.
+<code>amq-squad</code>, <code>amq-squad-orchestrator</code>,
+<code>amq-team-setup</code>, and <code>amq-squad-role-creator</code> are
+compatibility redirects only. The CLI and skills are versioned
 together.</p>
 <h2 id="quickstart">Quickstart</h2>
 <p>Enable the default attention-only desktop notification policy when
@@ -791,8 +793,10 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> activity set <span class="at">--session</span> issue-96 <span class="at">--me</span> fullstack <span class="at">--task</span> t1 <span class="at">--phase</span> testing</span>
 <span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task done t1 <span class="at">--session</span> issue-96 <span class="at">--me</span> fullstack <span class="at">--evidence</span> <span class="st">&quot;commit abc&quot;</span> <span class="at">--dispatch-next</span> t2</span>
 <span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task reconcile <span class="at">--session</span> issue-96 <span class="at">--json</span></span>
-<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> threads <span class="at">--session</span> issue-96</span>
-<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> thread <span class="at">--session</span> issue-96 <span class="at">--id</span> p2p/cto__fullstack <span class="at">--include-body</span><span class="op">=</span>false</span></code></pre></div>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> evidence run t1 <span class="at">--session</span> issue-96 <span class="at">--me</span> fullstack <span class="at">--subject</span> <span class="st">&quot;focused tests&quot;</span> <span class="at">--attempt-id</span> test-1 <span class="at">--</span> go test ./internal/...</span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> evidence list t1 <span class="at">--session</span> issue-96 <span class="at">--limit</span> 20 <span class="at">--json</span></span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> threads <span class="at">--session</span> issue-96</span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> thread <span class="at">--session</span> issue-96 <span class="at">--id</span> p2p/cto__fullstack <span class="at">--include-body</span><span class="op">=</span>false</span></code></pre></div>
 <p><code>task done</code> commits completion, dependent readiness, an
 optional successor claim, and delivery intents before sending AMQ. When
 the task has a dispatch counterpart it sends the canonical completion
@@ -801,6 +805,17 @@ signal by default: AMQ kind <code>status</code> with subject
 explicit suppression). Claims carry renewable leases; reconcile reports
 stale or legacy leases without silently unclaiming work and never
 auto-retries an uncertain delivery.</p>
+<p><code>evidence run</code> executes argv without a shell for the
+active structured task assignee. It binds canonical namespace, exact
+task and executable bytes, cwd, bounded explicit environment, and
+attempt identity; publishes immutable process/outcome/summary records;
+and compare-and-swap links their digests to the task. A repeated attempt
+ID returns the original result only for the same full request.
+<code>evidence show</code>, <code>list</code>, and <code>lookup</code>
+are bounded read-only projections; <code>evidence recover</code>
+explicitly reconciles an interrupted finalization. Its AMQ report uses
+only the task's recorded dispatch route and cannot erase evidence when
+delivery fails.</p>
 <p>Safety preflights:</p>
 <div class="sourceCode" id="cb12"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> gate raise <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="dt">\</span></span>
@@ -908,32 +923,40 @@ model selection guidance.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>amq-squad</code></td>
-<td>Setup, role authoring, live coordination, draining AMQ, routing
-review requests, status/history/doctor, runtime controls, and lifecycle
-commands.</td>
+<td><code>amq-squad:wizard</code></td>
+<td>Goal intake, brief/rules/roles/profile preparation, readiness, and
+the separate launch approval.</td>
 </tr>
 <tr>
-<td><code>amq-squad-orchestrator</code></td>
-<td>Lead-agent operation: spawn, dispatch, monitor, collect reports,
-coordinate reviews, recover, and produce final evidence.</td>
+<td><code>amq-squad:cli</code></td>
+<td>Direct status, doctor, task, activity, AMQ, gate, recovery, and
+lifecycle operations.</td>
 </tr>
 <tr>
-<td><code>amq-team-setup</code></td>
-<td>Deprecated redirect to <code>amq-squad</code>.</td>
+<td><code>amq-squad:orchestrator</code></td>
+<td>Verified live-lead operation: dispatch, monitor, review convergence,
+recovery, and final evidence.</td>
 </tr>
 <tr>
-<td><code>amq-squad-role-creator</code></td>
-<td>Deprecated redirect to <code>amq-squad</code>.</td>
+<td>Legacy names</td>
+<td><code>amq-squad</code>, <code>amq-squad-orchestrator</code>,
+<code>amq-team-setup</code>, and <code>amq-squad-role-creator</code> are
+compatibility redirects only.</td>
 </tr>
 </tbody>
 </table>
 <p>Invoke skills in Claude Code as <code>/amq-squad:&lt;skill&gt;</code>
 and in Codex as <code>$&lt;skill&gt;</code>.</p>
+<p>During wizard preparation, the recommended tool policy keeps the
+visible lead broad and assigns each built-in worker its catalog-minimum
+profile. Choosing <code>full_all</code> is an explicit opt-in, never an
+implicit default. Two or more <code>full</code> members duplicate
+MCP/plugin context and increase memory and concurrency pressure, so the
+review screen warns before that configuration proceeds.</p>
 <p>Model guidance is intentionally skill-owned because it changes faster
-than the binary. For v2.21.0, use the current model family and per-role
-model/effort recommendations in the installed v2.21.0 skills; confirm
-the startup marker <code>amq-squad skill v2.21.0</code> matches
+than the binary. For v2.22.0, use the current model family and per-role
+model/effort recommendations in the installed v2.22.0 skills; confirm
+the startup marker <code>amq-squad skill v2.22.0</code> matches
 <code>amq-squad version</code>. Treat cost as a tie-breaker after output
 quality for shippable work, and prefer installed-skill guidance over
 copying model examples from this README.</p>
