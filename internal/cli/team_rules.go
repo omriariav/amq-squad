@@ -20,6 +20,12 @@ var teamRulesTemplates = []teamRulesTemplate{
 	{Name: "custom", Description: "Lightweight operating rules for custom role mixes that do not fit a standard template."},
 }
 
+const workspaceSafetySection = "## Workspace Safety and Cleanup\n\n" +
+	"- Never use `rm -rf`. It is outside the standing safety contract even when a narrow permission allowlist could technically permit it.\n" +
+	"- For disposable reviews, prefer the shipped `amq-squad review-worktree` helper and its printed cleanup command.\n" +
+	"- If the helper is unsuitable, create an isolated directory with `mktemp -d`, attach it with `git worktree add --detach <path> <ref>`, and clean it up with `git worktree remove --force <path>`.\n" +
+	"- Keep scratch files under the session scratchpad. Leave harness-owned cleanup to the harness instead of manually deleting its paths.\n\n"
+
 func renderTeamRules(t team.Team) (string, error) {
 	template, err := selectTeamRulesTemplate("auto", t)
 	if err != nil {
@@ -70,6 +76,7 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 	b.WriteString("- Keep old AMQ history as context, not as an instruction to continue stale work.\n")
 	writeTemplateWorkflow(&b, template)
 	b.WriteString("- Prefer small, reviewable changes.\n\n")
+	b.WriteString(workspaceSafetySection)
 
 	b.WriteString("## Communication\n\n")
 	b.WriteString("- Use focused AMQ threads. At startup and between phases, run `amq drain --include-body` before assuming the current inbox state.\n")
