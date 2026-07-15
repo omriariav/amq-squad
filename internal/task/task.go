@@ -31,6 +31,40 @@ const (
 	StatusCancelled  = "cancelled"
 )
 
+// AttentionLifecycle is the derived operator-attention lifecycle of a task.
+// It is intentionally separate from the persisted execution status: existing
+// stores keep their six-state schema while completed/cancelled work projects to
+// closed, and replacement-linked cancellation projects to superseded.
+type AttentionLifecycle string
+
+const (
+	AttentionLifecycleClosed     AttentionLifecycle = "closed"
+	AttentionLifecycleSuperseded AttentionLifecycle = "superseded"
+)
+
+func AttentionLifecycleFor(t Task) AttentionLifecycle {
+	switch t.Status {
+	case StatusCompleted:
+		return AttentionLifecycleClosed
+	case StatusCancelled:
+		if strings.TrimSpace(t.ReplacedBy) != "" {
+			return AttentionLifecycleSuperseded
+		}
+		return AttentionLifecycleClosed
+	default:
+		return AttentionLifecycle(t.Status)
+	}
+}
+
+func IsAttentionLifecycleTerminal(t Task) bool {
+	switch AttentionLifecycleFor(t) {
+	case AttentionLifecycleClosed, AttentionLifecycleSuperseded:
+		return true
+	default:
+		return false
+	}
+}
+
 const DefaultLeaseDuration = 2 * time.Hour
 
 // Task is one unit of work in a workstream's task store.

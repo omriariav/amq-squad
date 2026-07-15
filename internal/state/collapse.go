@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 	"time"
@@ -26,6 +27,14 @@ type collapseInput struct {
 	messages []Message
 	agents   []Agent
 	warnings []Warning
+}
+
+// ProjectCoordination is the minimal read-only projection seam for callers
+// that already own one physical mailbox scan and need to remove claimed
+// evidence before ordinary latest-message selection. It performs no I/O and
+// preserves the same collapse semantics as Snapshot construction.
+func ProjectCoordination(messages []Message, agents []Agent, warnings []Warning, now time.Time, th Thresholds) Coordination {
+	return buildCoordination(collapseInput{messages: messages, agents: agents, warnings: warnings}, now, th)
 }
 
 // buildCoordination collapses messages into threads, builds the edge list and a
@@ -172,7 +181,7 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 	parts := keysSorted(a.participants)
 	labels := keysSorted(a.labels)
 	unread := keysSorted(a.unreadBy)
-	operatorGate := a.operatorGateSignal(th.OperatorHandle, now)
+	operatorGateState, operatorGate := ResolveOperatorGate(a.messages, th.OperatorHandle, now)
 
 	status := deriveStatus(a)
 	fresh := computeFreshness(a.lastEventAt, a.latest, now, governingThreshold(status, th))
@@ -185,34 +194,34 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 	historical := isHistoricalNeedsYou(triage, fresh, agents, th.OperatorHandle)
 
 	return ThreadSummary{
-		ID:             a.id,
-		LatestID:       a.latest.ID,
-		Participants:   parts,
-		Subject:        a.subject,
-		Kind:           a.lastKind,
-		Labels:         labels,
-		Orchestrator:   a.orchestrator,
-		FromProject:    a.fromProject,
-		ReplyProject:   a.replyProject,
-		ExternalTaskID: a.externalTaskID,
-		Status:         status,
-		LastEventAt:    a.lastEventAt,
-		MessageCount:   a.count,
-		UnreadBy:       unread,
-		Triage:         triage,
-		Freshness:      fresh,
-		Stale:          stale,
-		Historical:     historical,
-		AttnReason:     reason,
-		OperatorGate:   operatorGate,
+		ID:                a.id,
+		LatestID:          a.latest.ID,
+		Participants:      parts,
+		Subject:           a.subject,
+		Kind:              a.lastKind,
+		Labels:            labels,
+		Orchestrator:      a.orchestrator,
+		FromProject:       a.fromProject,
+		ReplyProject:      a.replyProject,
+		ExternalTaskID:    a.externalTaskID,
+		Status:            status,
+		LastEventAt:       a.lastEventAt,
+		MessageCount:      a.count,
+		UnreadBy:          unread,
+		Triage:            triage,
+		Freshness:         fresh,
+		Stale:             stale,
+		Historical:        historical,
+		AttnReason:        reason,
+		OperatorGateState: operatorGateState,
+		OperatorGate:      operatorGate,
 	}
 }
 
-func (a *threadAccumulator) operatorGateSignal(operatorHandle string, now time.Time) *OperatorGateSignal {
-	if !strings.HasPrefix(a.id, "gate/") {
-		return nil
-	}
-	messages := append([]Message(nil), a.messages...)
+// ResolveOperatorGate replays one gate thread chronologically and returns its
+// lifecycle state plus an escalation signal only while it remains open.
+func ResolveOperatorGate(input []Message, operatorHandle string, now time.Time) (OperatorGateState, *OperatorGateSignal) {
+	messages, conflictedRequests := gateMessagesWithoutConflictingDuplicates(input, operatorHandle)
 	sort.SliceStable(messages, func(i, j int) bool {
 		if !messages[i].Created.Equal(messages[j].Created) {
 			return messages[i].Created.Before(messages[j].Created)
@@ -220,32 +229,232 @@ func (a *threadAccumulator) operatorGateSignal(operatorHandle string, now time.T
 		return messages[i].ID < messages[j].ID
 	})
 	var pending Message
+	pendingConflicted := false
+	pendingTerminalizable := false
+	requestGeneration := 0
+	gateState := OperatorGateStateUnknown
 	for _, m := range messages {
-		if m.Kind == KindAnswer && m.From == operatorHandle {
-			pending = Message{}
-			continue
+		if !pendingConflicted && pendingTerminalizable {
+			if terminal, ok := operatorGateTerminalStateForPending(m, pending, operatorHandle, requestGeneration > 1); ok {
+				pending = Message{}
+				pendingConflicted = false
+				pendingTerminalizable = false
+				gateState = terminal
+				continue
+			}
 		}
-		if operatorGateRequestMessage(m, operatorHandle) {
+		if strings.HasPrefix(m.Thread, "gate/") && operatorGateRequestMessage(m, operatorHandle) {
+			requestGeneration++
 			pending = m
+			pendingConflicted = conflictedRequests[m.ID]
+			pendingTerminalizable = operatorGateRequestTerminalizable(m) && !pendingConflicted
+			gateState = OperatorGateStateOpen
 		}
 	}
 	if pending.ID == "" {
-		return nil
+		return gateState, nil
 	}
 	age := now.Sub(pending.Created)
 	if age < 0 {
 		age = 0
 	}
-	return &OperatorGateSignal{
-		LatestID:   pending.ID,
-		From:       pending.From,
-		Subject:    pending.Subject,
-		Kind:       pending.Kind,
-		Since:      pending.Created,
-		Age:        age,
-		Reason:     ClassifyAttnSubject(pending.Subject),
-		Escalation: OperatorGateEscalationForAge(age),
+	return OperatorGateStateOpen, &OperatorGateSignal{
+		LatestID:       pending.ID,
+		From:           pending.From,
+		RawTo:          append([]string{}, pending.RawTo...),
+		ToPresent:      pending.ToPresent,
+		ToArrayValid:   pending.ToArrayValid,
+		ToRaw:          pending.ToRaw,
+		Subject:        pending.Subject,
+		Kind:           pending.Kind,
+		Since:          pending.Created,
+		Age:            age,
+		Reason:         ClassifyAttnSubject(pending.Subject),
+		Escalation:     OperatorGateEscalationForAge(age),
+		Conflicted:     pendingConflicted,
+		SchemaOK:       pending.SchemaOK,
+		RawThread:      pending.RawThread,
+		Refs:           append([]string{}, pending.Refs...),
+		RefsPresent:    pending.RefsPresent,
+		RefsValid:      pending.RefsValid,
+		RefsRaw:        pending.RefsRaw,
+		Terminalizable: pendingTerminalizable,
 	}
+}
+
+func operatorGateRequestTerminalizable(m Message) bool {
+	return m.SchemaOK && m.ID != "" && m.ID == strings.TrimSpace(m.ID) && m.RawThread != "" && m.RawThread == m.Thread
+}
+
+// operatorGateTerminalStateForPending recognizes terminal lifecycle events
+// only when they bind to the request that is currently pending. That binding
+// prevents a delayed close for an older request from closing a later re-raise.
+func operatorGateTerminalStateForPending(m, pending Message, operatorHandle string, requireAnswerBinding bool) (OperatorGateState, bool) {
+	if pending.ID == "" || m.ID == "" || !strings.HasPrefix(m.Thread, "gate/") || m.Thread != pending.Thread {
+		return OperatorGateStateUnknown, false
+	}
+	if m.RawThread != "" && m.RawThread != pending.Thread {
+		return OperatorGateStateUnknown, false
+	}
+	if m.Kind == KindAnswer && m.From == operatorHandle && addressedTo(m, pending.From) {
+		if m.ReplyTo != "" && m.ReplyTo != pending.ID {
+			return OperatorGateStateUnknown, false
+		}
+		if m.ApprovalPresent && (!m.ApprovalValid || m.Approval == nil || m.Approval.QuestionMessageID != pending.ID) {
+			return OperatorGateStateUnknown, false
+		}
+		if requireAnswerBinding && m.ReplyTo != pending.ID && !m.ApprovalPresent {
+			return OperatorGateStateUnknown, false
+		}
+		return OperatorGateStateAnswered, true
+	}
+	if m.Kind != KindStatus || !m.SchemaOK || m.RawThread == "" || m.RawThread != pending.Thread || !operatorGateTerminalBindingMatches(m, pending.ID) {
+		return OperatorGateStateUnknown, false
+	}
+	if m.From != pending.From || !addressedTo(m, operatorHandle) {
+		return OperatorGateStateUnknown, false
+	}
+	ctx, ok := operatorGateTerminalContext(m)
+	if !ok || ctx.RequestMessageID != pending.ID || ctx.Requester != pending.From || ctx.Thread != pending.Thread || ctx.Actor != m.From {
+		return OperatorGateStateUnknown, false
+	}
+	switch ctx.State {
+	case OperatorGateStateClosed:
+		return OperatorGateStateClosed, true
+	case OperatorGateStateWithdrawn:
+		return OperatorGateStateWithdrawn, true
+	default:
+		return OperatorGateStateUnknown, false
+	}
+}
+
+func operatorGateTerminalBindingMatches(m Message, requestID string) bool {
+	replyPresent := m.ReplyTo != ""
+	if replyPresent && (m.ReplyTo != strings.TrimSpace(m.ReplyTo) || m.ReplyTo != requestID) {
+		return false
+	}
+	if m.RefsPresent {
+		if !m.RefsValid || len(m.Refs) != 1 || m.Refs[0] == "" || m.Refs[0] != strings.TrimSpace(m.Refs[0]) || m.Refs[0] != requestID {
+			return false
+		}
+	}
+	return replyPresent || m.RefsPresent
+}
+
+func operatorGateTerminalContext(m Message) (OperatorGateTerminalContext, bool) {
+	ctx := OperatorGateTerminalContext{
+		State:            OperatorGateState(strings.ToLower(strings.TrimSpace(stringAtPath(m.Context, "gate", "state")))),
+		RequestMessageID: stringAtPath(m.Context, "gate", "request_message_id"),
+		Requester:        stringAtPath(m.Context, "gate", "requester"),
+		Thread:           stringAtPath(m.Context, "gate", "thread"),
+		Actor:            stringAtPath(m.Context, "gate", "actor"),
+	}
+	if ctx.State != OperatorGateStateClosed && ctx.State != OperatorGateStateWithdrawn {
+		return OperatorGateTerminalContext{}, false
+	}
+	if ctx.RequestMessageID == "" || ctx.Requester == "" || ctx.Thread == "" || ctx.Actor == "" {
+		return OperatorGateTerminalContext{}, false
+	}
+	return ctx, true
+}
+
+// gateMessagesWithoutConflictingDuplicates collapses exact mailbox copies.
+// Conflicting terminal evidence is discarded, while a conflicted request ID
+// stays conservatively open through a deterministic request representative.
+func gateMessagesWithoutConflictingDuplicates(input []Message, operatorHandle string) ([]Message, map[string]bool) {
+	groups := map[string][]Message{}
+	var idless []Message
+	for _, m := range input {
+		if m.ID == "" {
+			idless = append(idless, m)
+			continue
+		}
+		groups[m.ID] = append(groups[m.ID], m)
+	}
+	out := append([]Message(nil), idless...)
+	conflictedRequests := map[string]bool{}
+	for _, copies := range groups {
+		byFingerprint := map[string]Message{}
+		for _, m := range copies {
+			byFingerprint[gateMessageFingerprint(m)] = m
+		}
+		if len(byFingerprint) == 1 {
+			for _, m := range byFingerprint {
+				out = append(out, m)
+			}
+			continue
+		}
+		// Conflicting IDs cannot be trusted as terminal evidence. If at least
+		// one copy is a valid request, retain the lexicographically smallest
+		// request fingerprint so attention fails open deterministically.
+		var requestFP string
+		var request Message
+		for fp, m := range byFingerprint {
+			if !strings.HasPrefix(m.Thread, "gate/") || !operatorGateRequestMessage(m, operatorHandle) {
+				continue
+			}
+			if requestFP == "" || fp < requestFP {
+				requestFP, request = fp, m
+			}
+		}
+		if requestFP != "" {
+			out = append(out, request)
+			conflictedRequests[request.ID] = true
+		}
+	}
+	return out, conflictedRequests
+}
+
+func gateMessageFingerprint(m Message) string {
+	to := append([]string{}, m.To...)
+	b, _ := json.Marshal(struct {
+		From                        string
+		To                          []string
+		RawTo                       []string
+		ToPresent                   bool
+		ToArrayValid                bool
+		ToRaw                       string
+		Thread                      string
+		RawThread                   string
+		Subject                     string
+		RawSubject                  string
+		Created                     time.Time
+		RawCreated                  string
+		Priority                    Priority
+		Kind                        Kind
+		ReplyTo                     string
+		Refs                        []string
+		RefsPresent                 bool
+		RefsValid                   bool
+		RefsRaw                     string
+		Labels                      []string
+		Orchestrator                string
+		FromProject                 string
+		ReplyProject                string
+		OrchestratorEvent           string
+		ExternalTaskID              string
+		Context                     map[string]any
+		AuthorizationRequestPresent bool
+		AuthorizationRequestValid   bool
+		AuthorizationRequestError   string
+		ApprovalPresent             bool
+		ApprovalValid               bool
+		ApprovalError               string
+		Body                        string
+		RawBody                     string
+		AuthorityRaw                bool
+		SchemaOK                    bool
+	}{
+		From: m.From, To: to, RawTo: append([]string{}, m.RawTo...), ToPresent: m.ToPresent, ToArrayValid: m.ToArrayValid, ToRaw: m.ToRaw,
+		Thread: m.Thread, RawThread: m.RawThread, Subject: m.Subject, RawSubject: m.RawSubject, Created: m.Created, RawCreated: m.RawCreated,
+		Priority: m.Priority, Kind: m.Kind, ReplyTo: m.ReplyTo, Refs: append([]string{}, m.Refs...), RefsPresent: m.RefsPresent, RefsValid: m.RefsValid, RefsRaw: m.RefsRaw,
+		Labels: append([]string{}, m.Labels...), Orchestrator: m.Orchestrator, FromProject: m.FromProject, ReplyProject: m.ReplyProject,
+		OrchestratorEvent: m.OrchestratorEvent, ExternalTaskID: m.ExternalTaskID, Context: m.Context,
+		AuthorizationRequestPresent: m.AuthorizationRequestPresent, AuthorizationRequestValid: m.AuthorizationRequestValid, AuthorizationRequestError: m.AuthorizationRequestError,
+		ApprovalPresent: m.ApprovalPresent, ApprovalValid: m.ApprovalValid, ApprovalError: m.ApprovalError,
+		Body: m.Body, RawBody: m.RawBody, AuthorityRaw: m.AuthorityRaw, SchemaOK: m.SchemaOK,
+	})
+	return string(b)
 }
 
 func operatorGateRequestMessage(m Message, operatorHandle string) bool {
@@ -253,8 +462,12 @@ func operatorGateRequestMessage(m Message, operatorHandle string) bool {
 		return false
 	}
 	switch m.Kind {
-	case KindQuestion, KindReviewRequest, KindDecision:
+	case KindQuestion, KindReviewRequest:
 		return true
+	case KindDecision:
+		// A DONE/completion decision is terminal prose, not a fresh approval
+		// request. Decisions reopen only with a direct action marker.
+		return hasDirectOperatorActionMarker(messageSignalText(m))
 	default:
 		return false
 	}

@@ -103,6 +103,8 @@ func runDispatch(args []string) error {
 	noWakeFlag := fs.Bool("no-wake", false, "queue the durable task without nudging the pane")
 	waitForFlag := fs.String("wait-for", "", "AMQ receipt stage to wait for after send (default: drained for --kind answer; use none to disable)")
 	waitTimeoutFlag := fs.Duration("wait-timeout", dispatchAnswerDefaultWaitAfter, "maximum time to wait for the AMQ receipt stage")
+	overrideWaitPosture := fs.Bool("override-wait-posture", false, "allow a verified own-pane lead wait that would normally park, and write an audit record")
+	waitPostureReason := fs.String("wait-posture-reason", "", "distinct required reason when --override-wait-posture is set")
 	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
 	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	createTaskFlag := fs.Bool("create-task", false, "create and link a native task-store task before dispatch")
@@ -116,6 +118,7 @@ Usage:
                      [--from HANDLE] [--thread THREAD] [--kind todo] --subject SUBJ
                      (--body TEXT | --body-file FILE) [--priority P]
                      [--force] [--no-wake] [--wait-for STAGE] [--wait-timeout DURATION]
+                     [--override-wait-posture --wait-posture-reason WHY]
                      [--override-namespace-conflict --reason WHY]
                      [--create-task | --task ID] [--json]
 
@@ -170,6 +173,11 @@ Examples:
 	}
 	if *createTaskFlag && strings.TrimSpace(*taskIDFlag) != "" {
 		return usageErrorf("--create-task and --task are mutually exclusive")
+	}
+	waitFor := dispatchReceiptWaitFor(*kindFlag, *waitForFlag)
+	waitTimeout := *waitTimeoutFlag
+	if waitFor != "" && waitTimeout < 0 {
+		return usageErrorf("dispatch --wait-timeout must be non-negative when receipt waiting is enabled")
 	}
 	taskBody, err := readPromptBody(*body, *bodyFile, flagWasSet(fs, "body"), flagWasSet(fs, "body-file"), os.Stdin, stdinIsInteractive())
 	if err != nil {
@@ -345,12 +353,12 @@ Examples:
 		prepared = &p
 	}
 
-	waitFor := dispatchReceiptWaitFor(*kindFlag, *waitForFlag)
-	waitTimeout := *waitTimeoutFlag
 	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag, waitFor, waitTimeout)
+	waitPosture := waitPostureForContext("dispatch", "delivery_receipt", ctx, waitTimeout, waitFor != "" && waitTimeout == 0, waitFor != "", *overrideWaitPosture, *waitPostureReason)
 	out, sendReceipt, err := runOwnedDurableSend(durableSendOptions{
 		ProjectDir: projectDir, Profile: profile, Session: workstream, Role: member.Role,
 		ExecutionMode: effectiveTeamExecutionMode(t), Kind: "dispatch", TaskID: taskID, Receipt: &receipt,
+		WaitPosture: waitPosture,
 	}, amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: sendCmd})
 	receipt = *sendReceipt
 	msgID := receipt.MessageID

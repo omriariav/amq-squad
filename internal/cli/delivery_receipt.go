@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,6 +27,7 @@ const (
 	deliveryStateDeliveredNotDrained = "delivered_not_drained"
 	deliveryStatePartiallyDrained    = "partially_drained"
 	deliveryStateDrained             = "drained"
+	deliveryStateReconciledExisting  = "reconciled_existing"
 )
 
 var (
@@ -36,37 +38,38 @@ var (
 )
 
 type deliveryReceiptData struct {
-	SchemaVersion  int                     `json:"schema_version"`
-	Generation     uint64                  `json:"generation"`
-	AttemptID      string                  `json:"attempt_id"`
-	Kind           string                  `json:"kind"`
-	Method         string                  `json:"method,omitempty"`
-	Status         string                  `json:"status"`
-	Target         deliveryReceiptTarget   `json:"target"`
-	MessageID      string                  `json:"message_id,omitempty"`
-	Sender         string                  `json:"sender,omitempty"`
-	Recipient      string                  `json:"recipient,omitempty"`
-	Recipients     []string                `json:"recipients,omitempty"`
-	Consumers      []deliveryConsumerState `json:"consumers,omitempty"`
-	DeliveryState  string                  `json:"delivery_state"`
-	DrainedAt      *time.Time              `json:"drained_at,omitempty"`
-	FailedAt       *time.Time              `json:"failed_at,omitempty"`
-	LastCheckedAt  *time.Time              `json:"last_checked_at,omitempty"`
-	LastCheckError string                  `json:"last_check_error,omitempty"`
-	NativeStage    string                  `json:"native_stage,omitempty"`
-	EvidenceSource string                  `json:"evidence_source,omitempty"`
-	AMQInvoked     bool                    `json:"amq_invoked"`
-	TaskID         string                  `json:"task_id,omitempty"`
-	OutboxIntentID string                  `json:"outbox_intent_id,omitempty"`
-	Root           string                  `json:"root,omitempty"`
-	Thread         string                  `json:"thread,omitempty"`
-	PaneID         string                  `json:"pane_id,omitempty"`
-	Fallback       bool                    `json:"fallback"`
-	Acknowledged   bool                    `json:"acknowledged"`
-	Stages         []deliveryReceiptStage  `json:"stages"`
-	Detail         string                  `json:"detail,omitempty"`
-	Path           string                  `json:"path,omitempty"`
-	CreatedAt      time.Time               `json:"created_at"`
+	SchemaVersion       int                     `json:"schema_version"`
+	Generation          uint64                  `json:"generation"`
+	AttemptID           string                  `json:"attempt_id"`
+	Kind                string                  `json:"kind"`
+	Method              string                  `json:"method,omitempty"`
+	Status              string                  `json:"status"`
+	Target              deliveryReceiptTarget   `json:"target"`
+	MessageID           string                  `json:"message_id,omitempty"`
+	ReconciledMessageID string                  `json:"reconciled_message_id,omitempty"`
+	Sender              string                  `json:"sender,omitempty"`
+	Recipient           string                  `json:"recipient,omitempty"`
+	Recipients          []string                `json:"recipients,omitempty"`
+	Consumers           []deliveryConsumerState `json:"consumers,omitempty"`
+	DeliveryState       string                  `json:"delivery_state"`
+	DrainedAt           *time.Time              `json:"drained_at,omitempty"`
+	FailedAt            *time.Time              `json:"failed_at,omitempty"`
+	LastCheckedAt       *time.Time              `json:"last_checked_at,omitempty"`
+	LastCheckError      string                  `json:"last_check_error,omitempty"`
+	NativeStage         string                  `json:"native_stage,omitempty"`
+	EvidenceSource      string                  `json:"evidence_source,omitempty"`
+	AMQInvoked          bool                    `json:"amq_invoked"`
+	TaskID              string                  `json:"task_id,omitempty"`
+	OutboxIntentID      string                  `json:"outbox_intent_id,omitempty"`
+	Root                string                  `json:"root,omitempty"`
+	Thread              string                  `json:"thread,omitempty"`
+	PaneID              string                  `json:"pane_id,omitempty"`
+	Fallback            bool                    `json:"fallback"`
+	Acknowledged        bool                    `json:"acknowledged"`
+	Stages              []deliveryReceiptStage  `json:"stages"`
+	Detail              string                  `json:"detail,omitempty"`
+	Path                string                  `json:"path,omitempty"`
+	CreatedAt           time.Time               `json:"created_at"`
 }
 
 type deliveryConsumerState struct {
@@ -141,6 +144,9 @@ func writeDeliveryReceipt(projectDir, profile, session string, receipt *delivery
 	if receipt == nil {
 		return nil
 	}
+	if err := validateDeliveryReceiptCrossFields(*receipt); err != nil {
+		return err
+	}
 	if !safeReceiptAttemptID(receipt.AttemptID) {
 		return fmt.Errorf("unsafe delivery receipt attempt id %q", receipt.AttemptID)
 	}
@@ -178,6 +184,12 @@ func writeDeliveryReceipt(projectDir, profile, session string, receipt *delivery
 }
 
 func mergeDeliveryReceipt(current, incoming deliveryReceiptData) (deliveryReceiptData, error) {
+	if err := validateDeliveryReceiptCrossFields(current); err != nil {
+		return deliveryReceiptData{}, err
+	}
+	if err := validateDeliveryReceiptCrossFields(incoming); err != nil {
+		return deliveryReceiptData{}, err
+	}
 	if err := validateReceiptMergeIdentity(current, incoming); err != nil {
 		return deliveryReceiptData{}, err
 	}
@@ -188,6 +200,10 @@ func mergeDeliveryReceipt(current, incoming deliveryReceiptData) (deliveryReceip
 	if merged.MessageID == "" {
 		merged.MessageID = current.MessageID
 	}
+	if current.ReconciledMessageID != "" && incoming.ReconciledMessageID != "" && current.ReconciledMessageID != incoming.ReconciledMessageID {
+		return deliveryReceiptData{}, fmt.Errorf("receipt_corrupt: attempt %s maps to conflicting reconciled message ids %s and %s", incoming.AttemptID, current.ReconciledMessageID, incoming.ReconciledMessageID)
+	}
+	merged.ReconciledMessageID = mergeSetOnce(current.ReconciledMessageID, incoming.ReconciledMessageID)
 	if len(merged.Recipients) == 0 {
 		merged.Recipients = append([]string(nil), current.Recipients...)
 	}
@@ -220,6 +236,10 @@ func mergeDeliveryReceipt(current, incoming deliveryReceiptData) (deliveryReceip
 	}
 	merged.Stages = mergeReceiptStages(current.Stages, incoming.Stages)
 	merged.Status = mergeReceiptStatus(current, incoming)
+	if merged.ReconciledMessageID != "" {
+		merged.Status = deliveryStateReconciledExisting
+		merged.DeliveryState = deliveryStateReconciledExisting
+	}
 	if incoming.Generation < current.Generation {
 		merged.Method, merged.Detail = current.Method, current.Detail
 	}
@@ -234,9 +254,79 @@ func mergeDeliveryReceipt(current, incoming deliveryReceiptData) (deliveryReceip
 	} else if incoming.Generation < current.Generation {
 		merged.EvidenceSource = current.EvidenceSource
 	}
+	if merged.ReconciledMessageID != "" {
+		merged.EvidenceSource = deliveryStateReconciledExisting
+	}
 	merged.NativeStage = aggregateNativeStage(merged.Consumers, mergeSetOnce(current.NativeStage, incoming.NativeStage))
 	recomputeAggregateDeliveryState(&merged)
+	if err := validateDeliveryReceiptCrossFields(merged); err != nil {
+		return deliveryReceiptData{}, err
+	}
 	return merged, nil
+}
+
+func validateDeliveryReceiptCrossFields(receipt deliveryReceiptData) error {
+	reconciledID := strings.TrimSpace(receipt.ReconciledMessageID)
+	if reconciledID == "" {
+		if receipt.ReconciledMessageID != "" {
+			return fmt.Errorf("receipt_corrupt: reconciled message id is not canonical for attempt %s", receipt.AttemptID)
+		}
+		if receipt.Status == deliveryStateReconciledExisting || receipt.DeliveryState == deliveryStateReconciledExisting {
+			return fmt.Errorf("receipt_corrupt: reconciled state has no reconciled message id for attempt %s", receipt.AttemptID)
+		}
+		if receipt.EvidenceSource == deliveryStateReconciledExisting {
+			return fmt.Errorf("receipt_corrupt: reconciled evidence has no reconciled message id for attempt %s", receipt.AttemptID)
+		}
+		for _, stage := range receipt.Stages {
+			if stage.State == deliveryStateReconciledExisting {
+				return fmt.Errorf("receipt_corrupt: reconciled stage has no reconciled message id for attempt %s", receipt.AttemptID)
+			}
+		}
+		for _, consumer := range receipt.Consumers {
+			if consumer.State == deliveryStateReconciledExisting {
+				return fmt.Errorf("receipt_corrupt: reconciled consumer %s has no reconciled message id for attempt %s", consumer.Consumer, receipt.AttemptID)
+			}
+		}
+		return nil
+	}
+	if receipt.SchemaVersion != deliveryReceiptSchemaVersion {
+		return fmt.Errorf("receipt_corrupt: reconciled message id requires schema %d for attempt %s", deliveryReceiptSchemaVersion, receipt.AttemptID)
+	}
+	if reconciledID != receipt.ReconciledMessageID || strings.ContainsAny(reconciledID, "\r\n\x00") {
+		return fmt.Errorf("receipt_corrupt: reconciled message id is not canonical for attempt %s", receipt.AttemptID)
+	}
+	if receipt.AMQInvoked || receipt.MessageID != "" || receipt.Status != deliveryStateReconciledExisting || receipt.DeliveryState != deliveryStateReconciledExisting {
+		return fmt.Errorf("receipt_corrupt: reconciled receipt has inconsistent invocation or message state for attempt %s", receipt.AttemptID)
+	}
+	if receipt.EvidenceSource != deliveryStateReconciledExisting || receipt.LastCheckedAt != nil || receipt.LastCheckError != "" || receipt.Acknowledged || receipt.Fallback {
+		return fmt.Errorf("receipt_corrupt: reconciled receipt has inconsistent replay or refresh evidence for attempt %s", receipt.AttemptID)
+	}
+	if len(receipt.Recipients) == 0 || len(receipt.Consumers) != len(receipt.Recipients) {
+		return fmt.Errorf("receipt_corrupt: reconciled receipt has inconsistent recipient projection for attempt %s", receipt.AttemptID)
+	}
+	seenConsumers := make(map[string]bool, len(receipt.Consumers))
+	for _, consumer := range receipt.Consumers {
+		if consumer.Consumer == "" || seenConsumers[consumer.Consumer] || !slices.Contains(receipt.Recipients, consumer.Consumer) || consumer.State != deliveryStateReconciledExisting || consumer.Stage != "" || consumer.DrainedAt != nil || consumer.FailedAt != nil {
+			return fmt.Errorf("receipt_corrupt: reconciled consumer %s has inconsistent delivery evidence for attempt %s", consumer.Consumer, receipt.AttemptID)
+		}
+		seenConsumers[consumer.Consumer] = true
+	}
+	if receipt.NativeStage != "" || receipt.DrainedAt != nil || receipt.FailedAt != nil {
+		return fmt.Errorf("receipt_corrupt: reconciled receipt has native or terminal delivery evidence for attempt %s", receipt.AttemptID)
+	}
+	reconciledStage := false
+	for _, stage := range receipt.Stages {
+		switch stage.State {
+		case deliveryStateReconciledExisting:
+			reconciledStage = true
+		case "amq_invocation_boundary", deliveryStateDeliveredNotDrained, deliveryStatePartiallyDrained, deliveryStateDrained, deliveryStateFailed:
+			return fmt.Errorf("receipt_corrupt: reconciled receipt has invocation or delivery stage %s for attempt %s", stage.State, receipt.AttemptID)
+		}
+	}
+	if !reconciledStage {
+		return fmt.Errorf("receipt_corrupt: reconciled receipt has no reconciled stage for attempt %s", receipt.AttemptID)
+	}
+	return nil
 }
 
 func validateReceiptMergeIdentity(current, incoming deliveryReceiptData) error {
@@ -309,6 +399,8 @@ func receiptStatusRank(status string) int {
 		return 30
 	case dispatchSubmitConfirmed, "queued_wake_delivered", "durable_goal_fallback", "native_goal_delivered":
 		return 40
+	case deliveryStateReconciledExisting:
+		return 50
 	default:
 		return 15
 	}
@@ -364,6 +456,12 @@ func mergeConsumerState(a, b deliveryConsumerState) (deliveryConsumerState, erro
 	if b.Stage != "" {
 		return b, nil
 	}
+	if a.State == deliveryStateReconciledExisting {
+		return a, nil
+	}
+	if b.State == deliveryStateReconciledExisting {
+		return b, nil
+	}
 	if a.State == deliveryStateDeliveredNotDrained && b.State == deliveryStateAmbiguousUnknown {
 		return a, nil
 	}
@@ -385,6 +483,12 @@ func mergeReceiptStages(a, b []deliveryReceiptStage) []deliveryReceiptStage {
 }
 
 func writeDeliveryReceiptFile(dirRoot *os.Root, name, path string, receipt *deliveryReceiptData) error {
+	if receipt == nil {
+		return fmt.Errorf("receipt_corrupt: nil delivery receipt")
+	}
+	if err := validateDeliveryReceiptCrossFields(*receipt); err != nil {
+		return err
+	}
 	b, err := json.MarshalIndent(receipt, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal delivery receipt: %w", err)
@@ -637,7 +741,7 @@ func parseSentMessageID(out string) string {
 }
 
 func markDeliverySendResult(receipt *deliveryReceiptData, out []byte, sendErr error) {
-	if receipt == nil {
+	if receipt == nil || receipt.ReconciledMessageID != "" {
 		return
 	}
 	receipt.MessageID = parseSentMessageID(string(out))
@@ -725,6 +829,9 @@ func firstJSONObject(data []byte) []byte {
 }
 
 func applyNativeReceipt(receipt *deliveryReceiptData, native nativeAMQReceipt) error {
+	if receipt != nil && receipt.ReconciledMessageID != "" {
+		return fmt.Errorf("receipt_corrupt: reconciled existing receipt cannot adopt native delivery evidence")
+	}
 	if receipt == nil || native.MsgID != receipt.MessageID || !containsString(receipt.Recipients, native.Consumer) {
 		return fmt.Errorf("native receipt provenance does not match message/consumer")
 	}
@@ -767,7 +874,7 @@ func applyNativeReceipt(receipt *deliveryReceiptData, native nativeAMQReceipt) e
 }
 
 func recomputeAggregateDeliveryState(receipt *deliveryReceiptData) {
-	if receipt == nil || len(receipt.Consumers) == 0 || receipt.DeliveryState == deliveryStateAmbiguousUnknown && receipt.LastCheckError != "" {
+	if receipt == nil || receipt.ReconciledMessageID != "" || len(receipt.Consumers) == 0 || receipt.DeliveryState == deliveryStateAmbiguousUnknown && receipt.LastCheckError != "" {
 		return
 	}
 	drained, failed := 0, 0
@@ -812,6 +919,172 @@ type durableSendOptions struct {
 	TaskID         string
 	OutboxIntentID string
 	Receipt        *deliveryReceiptData
+	Invocation     durableInvocationBoundary
+	WaitPosture    waitPostureRequest
+}
+
+type durableInvocationDisposition string
+
+const (
+	durableInvocationInvoked            durableInvocationDisposition = "invoked"
+	durableInvocationReconciledExisting durableInvocationDisposition = "reconciled_existing"
+)
+
+type durableInvocationResult struct {
+	disposition         durableInvocationDisposition
+	reconciledMessageID string
+}
+
+func newDurableInvokedResult() durableInvocationResult {
+	return durableInvocationResult{disposition: durableInvocationInvoked}
+}
+
+func newDurableReconciledExistingResult(messageID string) (durableInvocationResult, error) {
+	result := durableInvocationResult{disposition: durableInvocationReconciledExisting, reconciledMessageID: messageID}
+	if err := result.validate(); err != nil {
+		return durableInvocationResult{}, err
+	}
+	return result, nil
+}
+
+func (r durableInvocationResult) Disposition() durableInvocationDisposition {
+	return r.disposition
+}
+
+func (r durableInvocationResult) ReconciledMessageID() string {
+	return r.reconciledMessageID
+}
+
+func (r durableInvocationResult) validate() error {
+	switch r.disposition {
+	case durableInvocationInvoked:
+		if r.reconciledMessageID != "" {
+			return fmt.Errorf("durable invocation result cannot bind a reconciled message id when invoked")
+		}
+		return nil
+	case durableInvocationReconciledExisting:
+		if strings.TrimSpace(r.reconciledMessageID) == "" || strings.TrimSpace(r.reconciledMessageID) != r.reconciledMessageID || strings.ContainsAny(r.reconciledMessageID, "\r\n\x00") {
+			return fmt.Errorf("durable invocation reconciled message id is required and must be canonical")
+		}
+		return nil
+	default:
+		return fmt.Errorf("durable invocation result disposition %q is invalid", r.disposition)
+	}
+}
+
+type durableInvocationBoundary struct {
+	run func(func() error) (durableInvocationResult, error)
+}
+
+func newDurableInvocationBoundary(run func(func() error) (durableInvocationResult, error)) (durableInvocationBoundary, error) {
+	if run == nil {
+		return durableInvocationBoundary{}, fmt.Errorf("durable invocation boundary callback is required")
+	}
+	return durableInvocationBoundary{run: run}, nil
+}
+
+func (b durableInvocationBoundary) Run(invoke func() error) (durableInvocationResult, error) {
+	if b.run == nil || invoke == nil {
+		return durableInvocationResult{}, fmt.Errorf("durable invocation boundary and callback are required")
+	}
+	return b.run(invoke)
+}
+
+type durableInvocationPhase string
+
+const (
+	durableInvocationNotStarted            durableInvocationPhase = "not_started"
+	durableInvocationCallbackEntered       durableInvocationPhase = "callback_entered"
+	durableInvocationPreflightFailed       durableInvocationPhase = "preflight_failed"
+	durableInvocationBoundaryPersistFailed durableInvocationPhase = "boundary_persist_failed"
+	durableInvocationBoundaryPersisted     durableInvocationPhase = "boundary_persisted"
+	durableInvocationSubprocessEntered     durableInvocationPhase = "subprocess_entered"
+	durableInvocationSubprocessReturned    durableInvocationPhase = "subprocess_returned"
+)
+
+type durableInvocationBoundaryPersistError struct {
+	AttemptID string
+	Cause     error
+}
+
+type durableFinalReceiptPersistError struct {
+	AttemptID           string
+	MessageID           string
+	ReconciledMessageID string
+	Cause               error
+}
+
+func (e *durableFinalReceiptPersistError) Error() string {
+	if e == nil {
+		return "durable final receipt persistence failed"
+	}
+	return fmt.Sprintf("durable final receipt persistence failed for attempt %s (message_id=%s reconciled_message_id=%s): %v", e.AttemptID, e.MessageID, e.ReconciledMessageID, e.Cause)
+}
+
+func (e *durableFinalReceiptPersistError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+func (e *durableInvocationBoundaryPersistError) Error() string {
+	if e == nil {
+		return "AMQ invocation-boundary persistence failed"
+	}
+	return fmt.Sprintf("AMQ invocation-boundary persistence failed for receipt %s: %v", e.AttemptID, e.Cause)
+}
+
+func (e *durableInvocationBoundaryPersistError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+func isDurableInvocationBoundaryPersistError(err error) bool {
+	var target *durableInvocationBoundaryPersistError
+	return errors.As(err, &target)
+}
+
+func directDurableInvocationBoundary() durableInvocationBoundary {
+	boundary, _ := newDurableInvocationBoundary(func(invoke func() error) (durableInvocationResult, error) {
+		if err := invoke(); err != nil {
+			return durableInvocationResult{}, err
+		}
+		return newDurableInvokedResult(), nil
+	})
+	return boundary
+}
+
+func validateDurableInvocationBoundaryResult(phase durableInvocationPhase, callbackCount int, result durableInvocationResult, boundaryErr error, receipt deliveryReceiptData) error {
+	zero := durableInvocationResult{}
+	if result == zero {
+		switch {
+		case callbackCount == 0 && phase == durableInvocationNotStarted && boundaryErr != nil && !isDurableInvocationBoundaryPersistError(boundaryErr) && !receipt.AMQInvoked && receipt.MessageID == "" && receipt.ReconciledMessageID == "":
+			return nil
+		case callbackCount == 1 && phase == durableInvocationPreflightFailed && boundaryErr != nil && !receipt.AMQInvoked && receipt.MessageID == "" && receipt.ReconciledMessageID == "":
+			return nil
+		case callbackCount == 1 && phase == durableInvocationBoundaryPersistFailed && isDurableInvocationBoundaryPersistError(boundaryErr) && !receipt.AMQInvoked && receipt.MessageID == "" && receipt.ReconciledMessageID == "":
+			return nil
+		default:
+			return fmt.Errorf("durable invocation boundary returned an invalid empty result (phase=%s callbacks=%d)", phase, callbackCount)
+		}
+	}
+	if err := result.validate(); err != nil {
+		return err
+	}
+	switch result.Disposition() {
+	case durableInvocationInvoked:
+		if callbackCount != 1 || phase != durableInvocationSubprocessReturned || !receipt.AMQInvoked || receipt.MessageID != "" || receipt.ReconciledMessageID != "" || isDurableInvocationBoundaryPersistError(boundaryErr) {
+			return fmt.Errorf("durable invocation boundary reported invoked with inconsistent callback or subprocess evidence (phase=%s callbacks=%d)", phase, callbackCount)
+		}
+	case durableInvocationReconciledExisting:
+		if callbackCount != 0 || phase != durableInvocationNotStarted || receipt.AMQInvoked || receipt.MessageID != "" || receipt.ReconciledMessageID != "" || isDurableInvocationBoundaryPersistError(boundaryErr) {
+			return fmt.Errorf("durable invocation boundary reconciled result has inconsistent callback or invocation evidence (phase=%s callbacks=%d)", phase, callbackCount)
+		}
+	}
+	return nil
 }
 
 // runOwnedDurableSend is the one amq-squad-owned send boundary. It reserves a
@@ -861,16 +1134,76 @@ func runOwnedDurableSend(opts durableSendOptions, req amqCommandRequest) ([]byte
 	if err := persistDeliveryReceipt(opts.ProjectDir, opts.Profile, opts.Session, &receipt); err != nil {
 		return nil, &receipt, err
 	}
-	invoked := receipt
-	invoked.AMQInvoked = true
-	invoked.addStage("amq_invocation_boundary", "receipt persisted immediately before invoking AMQ; an interruption after this point is delivery-uncertain")
-	if err := persistDeliveryReceipt(opts.ProjectDir, opts.Profile, opts.Session, &invoked); err != nil {
-		cause := fmt.Errorf("persist AMQ invocation boundary for receipt %s: %w", receipt.AttemptID, err)
+	boundary := opts.Invocation
+	if boundary.run == nil {
+		boundary = directDurableInvocationBoundary()
+	}
+	phase := durableInvocationNotStarted
+	callbackCount := 0
+	var out []byte
+	var sendErr error
+	var result durableInvocationResult
+	var boundaryErr error
+	var boundaryPanic any
+	func() {
+		defer func() { boundaryPanic = recover() }()
+		result, boundaryErr = boundary.Run(func() error {
+			callbackCount++
+			if phase != durableInvocationNotStarted {
+				return fmt.Errorf("durable invocation callback is single-use (phase=%s)", phase)
+			}
+			phase = durableInvocationCallbackEntered
+			if err := guardOwnedWait(opts.WaitPosture); err != nil {
+				phase = durableInvocationPreflightFailed
+				return err
+			}
+			invoked := receipt
+			invoked.AMQInvoked = true
+			invoked.addStage("amq_invocation_boundary", "receipt persisted immediately before invoking AMQ; an interruption after this point is delivery-uncertain")
+			if err := persistDeliveryReceipt(opts.ProjectDir, opts.Profile, opts.Session, &invoked); err != nil {
+				phase = durableInvocationBoundaryPersistFailed
+				return &durableInvocationBoundaryPersistError{AttemptID: receipt.AttemptID, Cause: err}
+			}
+			receipt = invoked
+			phase = durableInvocationBoundaryPersisted
+			phase = durableInvocationSubprocessEntered
+			out, sendErr = runAMQCommand(req)
+			phase = durableInvocationSubprocessReturned
+			return nil
+		})
+	}()
+	defer func() {
+		if boundaryPanic != nil {
+			panic(boundaryPanic)
+		}
+	}()
+	contractErr := validateDurableInvocationBoundaryResult(phase, callbackCount, result, boundaryErr, receipt)
+	if result.Disposition() == durableInvocationReconciledExisting && contractErr == nil {
+		receipt.ReconciledMessageID = result.ReconciledMessageID()
+		receipt.Status = deliveryStateReconciledExisting
+		receipt.DeliveryState = deliveryStateReconciledExisting
+		receipt.EvidenceSource = deliveryStateReconciledExisting
+		for i := range receipt.Consumers {
+			receipt.Consumers[i].State = deliveryStateReconciledExisting
+			receipt.Consumers[i].Stage = ""
+			receipt.Consumers[i].DrainedAt = nil
+			receipt.Consumers[i].FailedAt = nil
+		}
+		receipt.addStage(deliveryStateReconciledExisting, "durable invocation reconciled an existing stable message without invoking AMQ")
+		if err := persistDeliveryReceipt(opts.ProjectDir, opts.Profile, opts.Session, &receipt); err != nil {
+			persistErr := &durableFinalReceiptPersistError{AttemptID: receipt.AttemptID, ReconciledMessageID: receipt.ReconciledMessageID, Cause: err}
+			return nil, &receipt, errors.Join(boundaryErr, contractErr, persistErr)
+		}
+		return nil, &receipt, boundaryErr
+	}
+	if phase == durableInvocationNotStarted || phase == durableInvocationCallbackEntered || phase == durableInvocationPreflightFailed || phase == durableInvocationBoundaryPersistFailed {
+		cause := errors.Join(boundaryErr, contractErr)
+		if cause == nil {
+			cause = fmt.Errorf("durable invocation boundary ended before AMQ invocation")
+		}
 		markDeliveryFailedBeforeID(opts.ProjectDir, opts.Profile, opts.Session, &receipt, cause)
 		return nil, &receipt, cause
 	}
-	receipt = invoked
-	out, sendErr := runAMQCommand(req)
 	markDeliverySendResult(&receipt, out, sendErr)
 	if sendErr == nil && receipt.MessageID == "" {
 		sendErr = fmt.Errorf("AMQ exited successfully without a parseable stable message id")
@@ -879,13 +1212,13 @@ func runOwnedDurableSend(opts durableSendOptions, req amqCommandRequest) ([]byte
 		receipt.addStage(deliveryStateAmbiguousUnknown, sendErr.Error()+"; inspect the recipient mailbox before any retry")
 	}
 	if err := persistDeliveryReceipt(opts.ProjectDir, opts.Profile, opts.Session, &receipt); err != nil {
-		if sendErr != nil {
-			return out, &receipt, fmt.Errorf("%v; persist durable receipt %s for message %s: %w", sendErr, receipt.AttemptID, receipt.MessageID, err)
-		}
-		return out, &receipt, fmt.Errorf("AMQ send exposed message %s but receipt %s update failed: %w", receipt.MessageID, receipt.AttemptID, err)
+		persistErr := &durableFinalReceiptPersistError{AttemptID: receipt.AttemptID, MessageID: receipt.MessageID, Cause: err}
+		cause := errors.Join(boundaryErr, contractErr, sendErr, persistErr)
+		return out, &receipt, &durableSendError{Cause: cause, Receipt: receipt}
 	}
-	if sendErr != nil {
-		return out, &receipt, &durableSendError{Cause: sendErr, Receipt: receipt}
+	finalErr := errors.Join(boundaryErr, contractErr, sendErr)
+	if finalErr != nil {
+		return out, &receipt, &durableSendError{Cause: finalErr, Receipt: receipt}
 	}
 	return out, &receipt, nil
 }
@@ -941,28 +1274,39 @@ func (e *durableSendError) Error() string {
 func (e *durableSendError) Unwrap() error { return e.Cause }
 
 func readDeliveryReceiptAt(root *os.Root, name, path string) (deliveryReceiptData, error) {
-	info, err := root.Lstat(name)
-	if err != nil {
-		return deliveryReceiptData{}, err
-	}
-	if !info.Mode().IsRegular() {
-		return deliveryReceiptData{}, fmt.Errorf("receipt path is not a regular file: %s", path)
-	}
-	receiptBeforeSecureOpen()
-	f, err := root.Open(name)
-	if err != nil {
-		return deliveryReceiptData{}, err
-	}
-	defer f.Close()
-	opened, err := f.Stat()
-	if err != nil || !os.SameFile(info, opened) {
-		return deliveryReceiptData{}, fmt.Errorf("receipt path changed while opening: %s", path)
-	}
-	b, err := io.ReadAll(f)
+	b, err := readDeliveryReceiptRawAt(root, name, path)
 	if err != nil {
 		return deliveryReceiptData{}, err
 	}
 	return decodeDeliveryReceipt(b, path)
+}
+
+// readDeliveryReceiptRawAt is the descriptor-confined read seam shared by the
+// ordinary receipt decoder and read-only compound-release inspection. Keeping
+// the raw bytes lets the latter apply its own strict immutable schema decoder.
+func readDeliveryReceiptRawAt(root *os.Root, name, path string) ([]byte, error) {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || migrationLinkCount(info) != 1 {
+		return nil, fmt.Errorf("receipt path is not a regular file: %s", path)
+	}
+	receiptBeforeSecureOpen()
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || migrationLinkCount(opened) != 1 || !os.SameFile(info, opened) {
+		return nil, fmt.Errorf("receipt path changed while opening: %s", path)
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 func decodeDeliveryReceipt(b []byte, path string) (deliveryReceiptData, error) {
@@ -976,6 +1320,9 @@ func decodeDeliveryReceipt(b []byte, path string) (deliveryReceiptData, error) {
 	if receipt.SchemaVersion < 1 || receipt.SchemaVersion > deliveryReceiptSchemaVersion {
 		return deliveryReceiptData{}, fmt.Errorf("unsupported delivery receipt schema %d at %s", receipt.SchemaVersion, path)
 	}
+	if err := validateDeliveryReceiptCrossFields(receipt); err != nil {
+		return deliveryReceiptData{}, err
+	}
 	if receipt.Recipient == "" {
 		receipt.Recipient = strings.TrimSpace(receipt.Target.Handle)
 	}
@@ -986,6 +1333,9 @@ func decodeDeliveryReceipt(b []byte, path string) (deliveryReceiptData, error) {
 		for _, consumer := range receipt.Recipients {
 			receipt.Consumers = append(receipt.Consumers, deliveryConsumerState{Consumer: consumer, State: receipt.DeliveryState})
 		}
+	}
+	if err := validateDeliveryReceiptCrossFields(receipt); err != nil {
+		return deliveryReceiptData{}, err
 	}
 	return receipt, nil
 }

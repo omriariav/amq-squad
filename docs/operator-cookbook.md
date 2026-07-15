@@ -70,8 +70,39 @@ When a gate is ready to approve, answer it structurally on the same
 `gate/<topic>` thread:
 
 ```sh
-amq-squad operator answer --project <project> --profile <profile> --session <session> --gate <topic> --to <lead-handle> --approved --reason "<reason>" --json
+amq-squad operator answer --project <project> --profile <profile> --session <session> --gate <topic> --approved --reason "<reason>" --json
 ```
+
+For a typed request, `operator answer` binds the latest question and then
+validates its exact operator-only routing, current roster/session requester,
+namespace, and body. `--to`, `--kind`, `--action`, and `--target` are optional
+exact-match assertions. Gate segments reject aliases such as `.`/`..` and
+backslashes. Typed `Target`, `Note`, and `Reason` are valid UTF-8, exact
+single-line, trim-canonical, control-free values. The decision is authoritative
+only in the exact `APPROVED: <topic>` or `DENIED: <topic>` subject; each typed
+body binding must occur exactly once. A malformed or misrouted latest typed
+question blocks fallback. V2 receipts use immutable collision-resistant hashed
+artifact identities. Existing raw gates may still receive an unstructured
+answer with explicit `--to`, but that legacy path is diagnostic and cannot
+satisfy `verify action`. To hand a verified human approval to another CLI,
+reviewer, or connector, emit and then consume a signed envelope:
+
+```sh
+amq-squad verify action --project <project> --profile <profile> --session <session> \
+  --gate <topic> --action <kind> --target "<exact target>" \
+  --emit-authorization --signing-key-file /secure/operator-authz.pem \
+  --authorization-out /secure/action-authz.json
+amq-squad verify authorization --file /secure/action-authz.json \
+  --action <kind> --target "<exact target>" \
+  --trust-store /secure/operator-authz-trust.json
+```
+
+The signing key must be an unencrypted Ed25519 PKCS#8 PEM owned by the current
+user with exact mode `0600`. Provision the public trust store separately; key
+rotation may overlap trusted keys, while a `revoked` entry fails immediately.
+The consumer checks the signature twice around live revalidation of the exact
+namespace, gate, receipt, policy/preflight, and compound-release claim. The
+commands never perform the approved external action.
 
 After a matching gate has an `APPROVED:` answer, apply the approved lead goal:
 

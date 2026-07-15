@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -1298,6 +1300,229 @@ func TestAMQWatchBlocksNonOwnerMailboxInProjectTeam(t *testing.T) {
 	if len(streamed) != 0 {
 		t.Fatalf("blocked watch should not stream, got %v", streamed)
 	}
+}
+
+func TestAMQWatchWaitPostureRefusesAndAuditsBeforeStreaming(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	root := installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+	var order []string
+	previousStream := runAMQStreaming
+	runAMQStreaming = func(_ amqContext, cmd []string) error {
+		order = append(order, "stream")
+		got := strings.Join(cmd, " ")
+		if strings.Contains(got, "override-wait-posture") || strings.Contains(got, "wait-posture-reason") {
+			t.Fatalf("wrapper posture flags forwarded to amq: %s", got)
+		}
+		return nil
+	}
+	t.Cleanup(func() { runAMQStreaming = previousStream })
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"watch", "--session", "issue-96", "--me", "cto", "--poll", "--timeout", "30s"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "gate/release") {
+		t.Fatalf("watch posture error = %v", err)
+	}
+	if len(order) != 0 {
+		t.Fatalf("watch streamed before refusal: %v", order)
+	}
+
+	previousAudit := waitPostureAppendAudit
+	waitPostureAppendAudit = func(rec waitPostureAuditRecord) error {
+		order = append(order, "audit")
+		if !rootsMatch(rec.Root, root) || rec.Command != "amq watch" || rec.Timeout != "30s" {
+			t.Fatalf("watch audit = %+v", rec)
+		}
+		return nil
+	}
+	t.Cleanup(func() { waitPostureAppendAudit = previousAudit })
+	_, _, err = captureOutput(t, func() error {
+		return runAMQ([]string{"watch", "--session", "issue-96", "--me", "cto", "--poll", "--timeout", "30s", "--override-wait-posture", "--wait-posture-reason", "diagnostic watch"})
+	})
+	if err != nil {
+		t.Fatalf("overridden watch: %v", err)
+	}
+	if got := strings.Join(order, ","); got != "audit,stream" {
+		t.Fatalf("watch order = %q, want audit,stream", got)
+	}
+}
+
+func TestAMQReceiptsWaitPostureRefusesBeforeCommand(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "receipt ok\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"receipts", "wait", "--session", "issue-96", "--me", "cto", "--msg-id", "m1", "--timeout", "30s"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "gate/release") {
+		t.Fatalf("receipt wait posture error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("receipt wait invoked amq before refusal: %v", *calls)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runAMQ([]string{"receipts", "wait", "--session", "issue-96", "--me", "cto", "--msg-id", "m1", "--timeout", "0"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "unbounded") {
+		t.Fatalf("unbounded receipt wait error = %v", err)
+	}
+}
+
+func TestAMQWatchWaitPostureUsesLastDuplicateTimeout(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	installAMQWaitPostureRuntime(t, dir, "issue-96", "")
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+	streamed := 0
+	previousStream := runAMQStreaming
+	runAMQStreaming = func(amqContext, []string) error { streamed++; return nil }
+	t.Cleanup(func() { runAMQStreaming = previousStream })
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"watch", "--session", "issue-96", "--me", "cto", "--timeout", "30s", "--timeout", "10m"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "10m0s") {
+		t.Fatalf("last over-limit watch timeout error = %v", err)
+	}
+	if streamed != 0 {
+		t.Fatalf("over-limit duplicate timeout streamed %d times", streamed)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runAMQ([]string{"watch", "--session", "issue-96", "--me", "cto", "--timeout", "10m", "--timeout", "30s"})
+	})
+	if err != nil || streamed != 1 {
+		t.Fatalf("last bounded watch timeout: streamed=%d err=%v", streamed, err)
+	}
+}
+
+func TestAMQSendWaitPostureGuardsBeforeOwnedSend(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	root := installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", filepath.Dir(root))
+	t.Setenv("AM_SESSION", "issue-96")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-wait to qa\n")
+
+	baseRun := runAMQCommand
+	var order []string
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		order = append(order, req.Arg[0])
+		return baseRun(req)
+	}
+	t.Cleanup(func() { runAMQCommand = baseRun })
+	args := []string{"send", "--session", "issue-96", "--me", "cto", "--to", "qa", "--subject", "review", "--wait-for", "drained", "--wait-timeout", "30s"}
+	_, _, err := captureOutput(t, func() error { return runAMQ(args) })
+	if err == nil || !strings.Contains(err.Error(), "gate/release") {
+		t.Fatalf("send wait posture error = %v", err)
+	}
+	if len(*calls) != 0 || len(order) != 0 {
+		t.Fatalf("send invoked before refusal: calls=%v order=%v", *calls, order)
+	}
+
+	previousAudit := waitPostureAppendAudit
+	waitPostureAppendAudit = func(waitPostureAuditRecord) error { order = append(order, "audit"); return nil }
+	t.Cleanup(func() { waitPostureAppendAudit = previousAudit })
+	overrideArgs := append(args, "--override-wait-posture", "--wait-posture-reason", "bounded handoff")
+	_, _, err = captureOutput(t, func() error { return runAMQ(overrideArgs) })
+	if err != nil {
+		t.Fatalf("overridden send: %v", err)
+	}
+	if got := strings.Join(order, ","); got != "audit,send" {
+		t.Fatalf("send order = %q, want audit,send", got)
+	}
+	gotArgs := strings.Join((*calls)[0].Arg, " ")
+	if strings.Contains(gotArgs, "override-wait-posture") || strings.Contains(gotArgs, "wait-posture-reason") {
+		t.Fatalf("wrapper posture flags forwarded: %s", gotArgs)
+	}
+}
+
+func TestAMQSendWaitPostureUsesLastWaitFlagsAndPreservesNoWait(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	root := installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", filepath.Dir(root))
+	t.Setenv("AM_SESSION", "issue-96")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-last to qa\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "cto", "--to", "qa", "--subject", "review", "--wait-for", "none", "--wait-for", "drained", "--wait-timeout", "30s", "--wait-timeout", "10m"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "10m0s") || len(*calls) != 0 {
+		t.Fatalf("last blocking send flags: calls=%d err=%v", len(*calls), err)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "cto", "--to", "qa", "--subject", "review", "--wait-for", "drained", "--wait-for", "none", "--wait-timeout", "-1s"})
+	})
+	if err != nil || len(*calls) != 1 {
+		t.Fatalf("last no-wait send must preserve external behavior: calls=%d err=%v", len(*calls), err)
+	}
+}
+
+func TestAMQReplyWaitPostureGuardsAfterLookupBeforeSend(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	root := installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", filepath.Dir(root))
+	t.Setenv("AM_SESSION", "issue-96")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Replied msg-reply\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"reply", "--session", "issue-96", "--me", "cto", "--id", "msg1", "--body", "ok", "--wait-for", "drained", "--wait-timeout", "30s"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "gate/release") {
+		t.Fatalf("reply wait posture error = %v", err)
+	}
+	if got := strings.Join(collectCallVerbs(*calls), ","); got != "list,list" {
+		t.Fatalf("reply calls = %q, want nonmutating list,list only", got)
+	}
+}
+
+func installAMQWaitPostureRuntime(t *testing.T, dir, session, gate string) string {
+	t.Helper()
+	t.Setenv("AM_ME", "cto")
+	t.Setenv("TMUX_PANE", "%7")
+	op := team.DefaultOperator()
+	op.InteractionMode = team.OperatorInteractionLeadPane
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: session}, {Role: "qa", Binary: "claude", Handle: "qa", Session: session}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(projectRoot, ".agent-mail", session)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousActor := waitPostureResolveCurrentActor
+	waitPostureResolveCurrentActor = func(projectDir, profile, requestedSession string, _ team.Team) (verifiedOperatorActor, error) {
+		return verifiedOperatorActor{Role: "cto", Handle: "cto", Profile: profile, Session: requestedSession, Root: filepath.Join(projectDir, ".agent-mail", requestedSession), PaneID: "%7"}, nil
+	}
+	t.Cleanup(func() { waitPostureResolveCurrentActor = previousActor })
+	threads := []state.ThreadSummary{}
+	if gate != "" {
+		threads = append(threads, state.ThreadSummary{ID: gate, OperatorGate: &state.OperatorGateSignal{From: "cto", Since: time.Now()}})
+	}
+	previousSnapshot := waitPostureLoadSnapshot
+	waitPostureLoadSnapshot = func(projectDir, _ string) (state.Snapshot, error) {
+		selectedRoot := filepath.Join(projectDir, ".agent-mail", session)
+		return state.Snapshot{Sessions: []state.Session{{Name: session, TeamProfile: team.DefaultProfile, NamespaceID: team.DefaultProfile + "/" + session, Root: selectedRoot, Coordination: state.Coordination{Threads: threads}}}}, nil
+	}
+	t.Cleanup(func() { waitPostureLoadSnapshot = previousSnapshot })
+	return root
 }
 
 func writeAMQBoundaryTeam(t *testing.T, dir string) {

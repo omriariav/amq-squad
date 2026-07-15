@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
@@ -94,6 +95,7 @@ func defaultVerifiedCurrentPaneActor(projectDir, profile, _ string, cfg team.Tea
 	if err != nil {
 		return verifiedOperatorActor{}, fmt.Errorf("scan AMQ launch records for actor discovery: %w", err)
 	}
+	var matches []verifiedOperatorActor
 	for _, entry := range entries {
 		rec := entry.Record
 		if squadnamespace.NormalizeProfile(rec.TeamProfile) != profile || !launchRecordMatchesPane(rec, paneID) {
@@ -117,11 +119,23 @@ func defaultVerifiedCurrentPaneActor(projectDir, profile, _ string, cfg team.Tea
 				handle = member.Role
 			}
 			if strings.TrimSpace(rec.Role) == member.Role && strings.TrimSpace(rec.Handle) == handle {
-				return verifiedOperatorActor{Role: member.Role, Handle: handle, Profile: profile, Session: actualSession, Root: root, PaneID: paneID}, nil
+				matches = append(matches, verifiedOperatorActor{Role: member.Role, Handle: handle, Profile: profile, Session: actualSession, Root: root, PaneID: paneID})
+				break
 			}
 		}
 	}
-	return verifiedOperatorActor{}, errNoVerifiedRosterPane
+	if len(matches) == 0 {
+		return verifiedOperatorActor{}, errNoVerifiedRosterPane
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	tuples := make([]string, 0, len(matches))
+	for _, actor := range matches {
+		tuples = append(tuples, fmt.Sprintf("%s/%s profile=%q session=%q root=%q pane=%q", actor.Role, actor.Handle, actor.Profile, actor.Session, actor.Root, actor.PaneID))
+	}
+	sort.Strings(tuples)
+	return verifiedOperatorActor{}, fmt.Errorf("current pane %q has ambiguous verified runnable roster actor tuples: %s", paneID, strings.Join(tuples, ", "))
 }
 
 func verifiedCurrentRosterActor(projectDir, profile, session string, cfg team.Team) (verifiedOperatorActor, error) {

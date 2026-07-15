@@ -271,7 +271,9 @@ Safety is part of that protocol:
 - Planner/reviewer-only lead mode (`--lead-mode planner`) prevents a lead from
   treating itself as the implementer.
 - High-risk actions require an operator gate bound to an exact `Action:` and
-  `Target:`. Use `amq-squad verify action` before default/protected branch
+  `Target:`. Raise it with `amq-squad gate raise`; the command sends a typed
+  `authorization_request` context as part of the durable AMQ question.
+  Use `amq-squad verify action` before default/protected branch
   pushes, tags, GitHub releases, external sends, or similar release-critical
   steps.
 - `verify action` is a callable verification boundary, not command
@@ -362,11 +364,43 @@ delivery.
 Safety preflights:
 
 ```sh
+amq-squad gate raise --project . --session issue-96 --me cto \
+  --gate release --kind release --action github_release \
+  --target "publish v2.20.0 GitHub release"
+amq-squad operator answer --project . --session issue-96 \
+  --gate release --approved
 amq-squad verify action --project . --session issue-96 \
-  --gate release --action github_release --target "publish v2.20.0 GitHub release"
+  --gate release --action github_release --target "publish v2.20.0 GitHub release" \
+  --emit-authorization --signing-key-file /secure/operator-authz.pem \
+  --authorization-out /secure/release-authz.json
+amq-squad verify authorization --file /secure/release-authz.json \
+  --action github_release --target "publish v2.20.0 GitHub release" \
+  --trust-store /secure/operator-authz-trust.json
 amq-squad verify merge --evidence merge-evidence.json
 amq-squad verify release --evidence release-evidence.json
 ```
+
+`gate raise --list-kinds --json`, `operator answer --list-kinds --json`, and
+`verify action --list-kinds --json` expose the same context-free versioned
+action catalog. The verifier listing keeps custom actions outside the hard-kind
+array and carries explicit guidance that they require an exact Action/Target
+operator gate plus manual verification. Canonical gate topics reject empty,
+dot, dot-dot, whitespace,
+control, and backslash path segments. Typed `Target`, `Note`, and answer
+`Reason` values are exact, valid UTF-8, single-line, trim-canonical, and
+control-free; optional action/target overrides must match exactly. Decisions
+come only from the exact `APPROVED: <topic>` or `DENIED: <topic>` subject, while
+the body must repeat each typed binding exactly once. V2 receipts, reservations,
+and preflight evidence use collision-resistant hashed identities and immutable
+tuple validation. Legacy raw answers remain unstructured readable diagnostics
+and cannot authorize an action. A human-approved typed PASS can emit an
+immutable Ed25519 authorization envelope when the caller supplies an explicit
+owner-controlled PKCS#8 key (`0600`). `verify authorization` checks an explicit
+public trust store, exact caller action/target, and the current namespace, gate,
+answer, receipt bytes, policy/preflight, and compound-release generation before
+returning PASS. Revoked/untrusted keys, stale evidence, symlinks, and changed
+authority fail closed. The envelope is a normalized callable boundary for CLI,
+reviewers, and connectors; it never performs the external action.
 
 The action, merge, and final-release-commit contracts are documented together
 in [docs/verification-gate-adr.md](docs/verification-gate-adr.md).

@@ -14,9 +14,80 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/amqexec"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
+
+func TestRealAMQGateCloseReplyRefsCompatibility(t *testing.T) {
+	binary := strings.TrimSpace(os.Getenv("AMQ_SQUAD_REAL_AMQ"))
+	if binary == "" {
+		t.Skip("set AMQ_SQUAD_REAL_AMQ to run disposable AMQ reply/refs compatibility proof")
+	}
+	info, err := os.Stat(binary)
+	if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+		t.Skipf("AMQ_SQUAD_REAL_AMQ is unavailable or not executable: %v", err)
+	}
+	version := strings.TrimSpace(realAMQCommand(t, binary, t.TempDir(), nil, "version"))
+	if !semverMeetsStableFloor(version, "0.43.1") {
+		t.Skipf("AMQ %s predates reply refs compatibility floor 0.43.1", version)
+	}
+
+	project := t.TempDir()
+	root := filepath.Join(project, ".agent-mail", "gate-close-compat")
+	projectClean, rootClean := filepath.Clean(project), filepath.Clean(root)
+	if rootClean == projectClean || !strings.HasPrefix(rootClean, projectClean+string(os.PathSeparator)) {
+		t.Fatalf("refusing real AMQ compatibility root outside temp project: project=%q root=%q", projectClean, rootClean)
+	}
+	realAMQInitAgents(t, binary, project, root, "cto", team.DefaultOperatorHandle)
+	cleanEnv := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
+	const thread = "gate/real-amq-close-refs"
+	questionOut := realAMQCommand(t, binary, project, cleanEnv,
+		"send", "--root", root, "--me", "cto", "--to", team.DefaultOperatorHandle,
+		"--thread", thread, "--kind", "question", "--subject", "APPROVAL: close refs compatibility", "--body", "approve?", "--json")
+	questionID := parseSentMessageID(questionOut)
+	if questionID == "" {
+		t.Fatalf("real AMQ question omitted stable id: %s", questionOut)
+	}
+	contextJSON := `{"gate":{"actor":"cto","request_message_id":"` + questionID + `","requester":"cto","state":"closed","thread":"` + thread + `"}}`
+	replyOut := realAMQCommand(t, binary, project, cleanEnv,
+		"reply", "--root", root, "--me", "cto", "--id", questionID,
+		"--kind", "status", "--subject", "CLOSED: real-amq-close-refs", "--body", "compatibility complete", "--context", contextJSON, "--json")
+	replyID := parseSentMessageID(replyOut)
+	if replyID == "" {
+		t.Fatalf("real AMQ reply omitted stable id: %s", replyOut)
+	}
+
+	messages, warnings := state.ScanSessionMessages(root, time.Now)
+	if len(warnings) != 0 {
+		t.Fatalf("scan real AMQ reply warnings: %+v", warnings)
+	}
+	var terminal *state.Message
+	var threadMessages []state.Message
+	for i := range messages {
+		if messages[i].Thread != thread {
+			continue
+		}
+		threadMessages = append(threadMessages, messages[i])
+		if messages[i].ID == replyID {
+			copy := messages[i]
+			terminal = &copy
+		}
+	}
+	if terminal == nil {
+		t.Fatalf("parsed real AMQ messages omitted reply %s: %+v", replyID, messages)
+	}
+	if terminal.ReplyTo != "" || !terminal.RefsPresent || !terminal.RefsValid || len(terminal.Refs) != 1 || terminal.Refs[0] != questionID {
+		t.Fatalf("real AMQ reply linkage = reply_to:%q refs:%#v present:%t valid:%t", terminal.ReplyTo, terminal.Refs, terminal.RefsPresent, terminal.RefsValid)
+	}
+	if !terminal.ToPresent || !terminal.ToArrayValid || len(terminal.RawTo) != 1 || terminal.RawTo[0] != team.DefaultOperatorHandle {
+		t.Fatalf("real AMQ reply recipient evidence = raw_to:%#v present:%t valid:%t raw:%q", terminal.RawTo, terminal.ToPresent, terminal.ToArrayValid, terminal.ToRaw)
+	}
+	gateState, signal := state.ResolveOperatorGate(threadMessages, team.DefaultOperatorHandle, time.Now())
+	if gateState != state.OperatorGateStateClosed || signal != nil {
+		t.Fatalf("real AMQ reply lifecycle = state:%q signal:%+v", gateState, signal)
+	}
+}
 
 // TestRealAMQCompatibility is intentionally opt-in. Ordinary internal/cli
 // tests must never discover or invoke a host AMQ binary; CI supplies this
@@ -251,14 +322,23 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	const gate = "gate/real-amq-471"
 	const action = "external_send"
 	const target = "real AMQ compatibility canary"
-	questionBody := "Gate-Kind: external_send\nAction: external_send\nTarget: " + target
-	questionOut := realAMQCommand(t, binary, project, amqCommandEnv(ctx), "send", "--to", team.DefaultOperatorHandle, "--thread", gate, "--kind", "question", "--subject", "APPROVAL: external_send", "--body", questionBody, "--json")
-	questionID := parseSentMessageID(questionOut)
-	if questionID == "" {
-		t.Fatalf("real gate question omitted message id: %s", questionOut)
+	const note = "real AMQ typed envelope"
+	questionStdout, questionStderr, err := captureOutput(t, func() error {
+		return runGateRaise([]string{
+			"--project", project, "--profile", profile, "--session", session, "--me", "cto",
+			"--gate", gate, "--kind", action, "--action", action, "--target", target, "--note", note, "--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("real typed gate raise: %v\nstderr:\n%s", err, questionStderr)
+	}
+	questionMutation := decodeJSONEnvelope[mutationResult](t, questionStdout).Data
+	questionID := questionMutation.MessageID
+	if questionID == "" || questionMutation.Thread != gate || questionMutation.DeliveryReceipt == nil {
+		t.Fatalf("real typed gate question omitted durable identity: %+v", questionMutation)
 	}
 	question, err := humanApprovalQuestion(project, profile, session, gate, action, action, target)
-	if err != nil || question.ID != questionID {
+	if err != nil || question.ID != questionID || question.AuthorizationRequest == nil || question.AuthorizationRequest.Note != note {
 		t.Fatalf("real strict gate question id=%q want=%q err=%v", question.ID, questionID, err)
 	}
 	answerStdout, answerStderr, err := captureOutput(t, func() error {
@@ -278,16 +358,16 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	if answer.DeliveryReceipt.MessageID != answer.MessageID || !sameResolvedDir(answer.DeliveryReceipt.Root, ctx.Root) || answer.DeliveryReceipt.DeliveryState != deliveryStateDeliveredNotDrained || answer.DeliveryReceipt.NativeStage != "" {
 		t.Fatalf("real structured operator answer receipt = %+v; message=%s root=%s", answer.DeliveryReceipt, answer.MessageID, ctx.Root)
 	}
-	approvalReceiptPath := filepath.Join(selfApprovalStoreDir(project, profile, session), safeGateFile(gate)+"-"+safeGateFile(answer.MessageID)+".receipt.json")
+	approvalReceiptPath := selfApprovalReceiptPath(project, profile, session, gate, questionID, answer.MessageID)
 	approvalReceiptBytes, err := os.ReadFile(approvalReceiptPath)
 	if err != nil {
 		t.Fatalf("read persisted human approval receipt: %v", err)
 	}
-	var approvalReceipt operatorauth.Receipt
-	if err := json.Unmarshal(approvalReceiptBytes, &approvalReceipt); err != nil {
+	approvalReceipt, err := operatorauth.DecodeReceipt(approvalReceiptBytes)
+	if err != nil {
 		t.Fatalf("decode persisted human approval receipt: %v", err)
 	}
-	if approvalReceipt.QuestionMessageID != questionID || approvalReceipt.AnswerMessageID != answer.MessageID || approvalReceipt.Gate != gate || approvalReceipt.GateKind != action || approvalReceipt.Action != action || approvalReceipt.Target != target || approvalReceipt.Decision != actionDecisionApproved || approvalReceipt.AnsweredBy != team.DefaultOperatorHandle || approvalReceipt.ApprovalSource != "human" || approvalReceipt.SelfApproved {
+	if approvalReceipt.SchemaVersion != operatorauth.ReceiptSchemaVersion || approvalReceipt.TaxonomyVersion != operatorauth.ActionTaxonomyVersion || approvalReceipt.QuestionMessageID != questionID || approvalReceipt.AnswerMessageID != answer.MessageID || approvalReceipt.Gate != gate || approvalReceipt.GateKind != action || approvalReceipt.Action != action || approvalReceipt.Target != target || approvalReceipt.Note != note || approvalReceipt.Decision != actionDecisionApproved || approvalReceipt.AnsweredBy != team.DefaultOperatorHandle || approvalReceipt.ApprovalSource != "human" || approvalReceipt.SelfApproved {
 		t.Fatalf("persisted human approval receipt tuple = %+v; question=%s answer=%s", approvalReceipt, questionID, answer.MessageID)
 	}
 	verifyStdout, verifyStderr, err := captureOutput(t, func() error {

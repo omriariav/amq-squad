@@ -111,6 +111,9 @@ func runReceiptShow(args []string) error {
 }
 
 func findScopedDeliveryReceipts(projectDir, profile, session, messageID string) ([]deliveryReceiptData, error) {
+	if strings.TrimSpace(messageID) == "" {
+		return nil, nil
+	}
 	normalizedProfile := squadnamespace.NormalizeProfile(profile)
 	if session != "" {
 		root, dir, err := openReceiptDirRoot(projectDir, normalizedProfile, session, false)
@@ -176,6 +179,9 @@ func findScopedDeliveryReceipts(projectDir, profile, session, messageID string) 
 }
 
 func scanReceiptDirectory(root *os.Root, dir, projectDir, profile, session, messageID string) ([]deliveryReceiptData, error) {
+	if strings.TrimSpace(messageID) == "" {
+		return nil, nil
+	}
 	f, err := root.Open(".")
 	if err != nil {
 		return nil, err
@@ -201,7 +207,7 @@ func scanReceiptDirectory(root *os.Root, dir, projectDir, profile, session, mess
 		if err := validateReceiptProvenance(r, projectDir, profile, session, path); err != nil {
 			return nil, err
 		}
-		if r.MessageID == messageID {
+		if r.MessageID != "" && r.MessageID == messageID {
 			r.Path = path
 			found = append(found, r)
 		}
@@ -264,6 +270,15 @@ func canonicalPathForReceipt(path string) (string, error) {
 }
 
 func refreshDeliveryReceipt(receipt *deliveryReceiptData, projectDir, profile, session string) error {
+	if receipt == nil {
+		return fmt.Errorf("receipt_corrupt: nil delivery receipt")
+	}
+	if err := validateDeliveryReceiptCrossFields(*receipt); err != nil {
+		return err
+	}
+	if receipt.ReconciledMessageID != "" {
+		return fmt.Errorf("reconciled existing delivery receipt is terminal and cannot be refreshed")
+	}
 	now := time.Now().UTC()
 	receipt.LastCheckedAt = &now
 	receipt.LastCheckError = ""
