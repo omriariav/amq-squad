@@ -25,6 +25,8 @@ type namespaceConflictData struct {
 	Detail             string                       `json:"detail"`
 	RecoveryCommands   []string                     `json:"recovery_commands,omitempty"`
 	Conflicts          []namespaceConflictCandidate `json:"conflicts,omitempty"`
+	MigrationID        string                       `json:"migration_id,omitempty"`
+	MigrationPhase     string                       `json:"migration_phase,omitempty"`
 }
 
 type namespaceConflictCandidate struct {
@@ -168,6 +170,9 @@ type namespaceConflictAuditRecord struct {
 func namespaceConflictForProfileSession(projectDir, profile, session string) *namespaceConflictData {
 	profile = squadnamespace.NormalizeProfile(profile)
 	session = strings.TrimSpace(session)
+	if conflict := namespaceMigrationConflictForProfileSession(projectDir, profile, session); conflict != nil {
+		return conflict
+	}
 	if projectDir == "" || session == "" || profile == team.DefaultProfile {
 		return nil
 	}
@@ -309,6 +314,9 @@ func ensureNoNamespaceConflict(operation, projectDir, profile, session string, e
 
 func ensureNoNamespaceConflictWithOverride(operation, projectDir, profile, session string, explicitProfile bool, override namespaceConflictOverrideOptions) error {
 	if conflict := namespaceConflictForProfileSession(projectDir, profile, session); conflict != nil {
+		if strings.HasPrefix(conflict.Kind, "namespace_migration_") {
+			return namespaceConflictError(operation, conflict)
+		}
 		if override.Allowed {
 			return writeNamespaceConflictAudit(operation, projectDir, profile, session, conflict, override)
 		}

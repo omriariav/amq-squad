@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,6 +81,250 @@ func TestNotifyEscalatesOperatorGateAgeDespiteThrottle(t *testing.T) {
 	})
 	if !strings.Contains(strong, "strong-warning") || !strings.Contains(strong, "APPROVAL: release") {
 		t.Fatalf("strong-warning escalation should bypass throttle:\n%s", strong)
+	}
+}
+
+func TestNotifyTerminalGateTombstonesPersistedNotification(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		terminal notifyMsg
+	}{
+		{
+			name: "answered",
+			terminal: notifyMsg{
+				ID: "terminal", From: "user", To: "cto", Thread: "gate/release",
+				Subject: "APPROVED: release", Kind: "answer", Created: notifyNow.Add(-time.Minute),
+			},
+		},
+		{
+			name: "closed",
+			terminal: notifyMsg{
+				ID: "terminal", From: "cto", To: "user", Thread: "gate/release",
+				Subject: "CLOSED: release", Kind: "status", ReplyTo: "question", Created: notifyNow.Add(-time.Minute),
+				Context: `{"gate":{"state":"closed","request_message_id":"question","requester":"cto","thread":"gate/release","actor":"cto"}}`,
+			},
+		},
+		{
+			name: "withdrawn",
+			terminal: notifyMsg{
+				ID: "terminal", From: "cto", To: "user", Thread: "gate/release",
+				Subject: "WITHDRAWN: release", Kind: "status", ReplyTo: "question", Created: notifyNow.Add(-time.Minute),
+				Context: `{"gate":{"state":"withdrawn","request_message_id":"question","requester":"cto","thread":"gate/release","actor":"cto"}}`,
+			},
+		},
+		{
+			name: "closed via amq reply refs",
+			terminal: notifyMsg{
+				ID: "terminal", From: "cto", To: "user", Thread: "gate/release",
+				Subject: "CLOSED: release", Kind: "status", Refs: []string{"question"}, Created: notifyNow.Add(-time.Minute),
+				Context: `{"gate":{"state":"closed","request_message_id":"question","requester":"cto","thread":"gate/release","actor":"cto"}}`,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project, base, statePath := seedNotifyProject(t, team.DefaultOperator())
+			seedNotifyLaunch(t, project, base, "s", "cto")
+			seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
+				ID: "question", From: "cto", To: "user", Thread: "gate/release",
+				Subject: "APPROVAL: release", Kind: "question", Created: notifyNow.Add(-2 * time.Hour),
+			})
+
+			first := executeNotifyForTest(t, notifyExecution{
+				ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath,
+				RenotifyAfter: time.Hour, Now: func() time.Time { return notifyNow.Add(-30 * time.Minute) },
+			})
+			if !strings.Contains(first, "gate/release") {
+				t.Fatalf("initial gate notification missing:\n%s", first)
+			}
+
+			owner := tc.terminal.To
+			seedNotifyMessage(t, base, "s", owner, "new", tc.terminal)
+			terminal := executeNotifyForTest(t, notifyExecution{
+				ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath,
+				RenotifyAfter: time.Hour, Now: func() time.Time { return notifyNow },
+			})
+			if !strings.Contains(terminal, "no operator attention items") || strings.Contains(terminal, "gate/release") {
+				t.Fatalf("terminal gate should emit no notification:\n%s", terminal)
+			}
+
+			persisted, err := readNotifyState(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := persisted.Items[notifyKey(team.DefaultProfile, "s", "gate/release")]
+			if rec.Active {
+				t.Fatalf("terminal gate notify record remained active: %+v", rec)
+			}
+		})
+	}
+}
+
+func TestNotifyStaleTerminalDoesNotTombstoneReraisedGeneration(t *testing.T) {
+	project, base, statePath := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
+		ID: "q1", From: "cto", To: "user", Thread: "gate/release",
+		Subject: "APPROVAL: first release", Kind: "question", Created: notifyNow.Add(-3 * time.Hour),
+	})
+	_ = executeNotifyForTest(t, notifyExecution{
+		ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath,
+		RenotifyAfter: 4 * time.Hour, Now: func() time.Time { return notifyNow.Add(-2 * time.Hour) },
+	})
+
+	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
+		ID: "q2", From: "cto", To: "user", Thread: "gate/release",
+		Subject: "APPROVAL: reraised release", Kind: "question", Created: notifyNow.Add(-30 * time.Minute),
+	})
+	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
+		ID: "stale-close", From: "cto", To: "user", Thread: "gate/release",
+		Subject: "CLOSED: old release", Kind: "status", ReplyTo: "q1", Created: notifyNow.Add(-20 * time.Minute),
+		Context: `{"gate":{"state":"closed","request_message_id":"q1","requester":"cto","thread":"gate/release","actor":"cto"}}`,
+	})
+
+	out := executeNotifyForTest(t, notifyExecution{
+		ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath,
+		RenotifyAfter: 4 * time.Hour, Now: func() time.Time { return notifyNow },
+	})
+	if !strings.Contains(out, "APPROVAL: reraised release") {
+		t.Fatalf("reraised generation was incorrectly tombstoned:\n%s", out)
+	}
+	persisted, err := readNotifyState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := persisted.Items[notifyKey(team.DefaultProfile, "s", "gate/release")]
+	if !rec.Active || rec.LatestID != "q2" {
+		t.Fatalf("reraised generation notify state = %+v, want active q2", rec)
+	}
+}
+
+func TestNotifyConflictingGateCopiesStayActive(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		seed func(t *testing.T, base string)
+	}{
+		{
+			name: "conflicting request copies",
+			seed: func(t *testing.T, base string) {
+				q1 := notifyMsg{ID: "request", From: "cto", To: "user", Thread: "gate/release", Subject: "APPROVAL: release A", Kind: "question", Created: notifyNow.Add(-3 * time.Hour)}
+				q2 := q1
+				q2.Subject = "APPROVAL: release B"
+				seedNotifyMessage(t, base, "s", "user", "new", q1)
+				seedNotifyMessage(t, base, "s", "cto", "new", q2)
+				seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
+					ID: "close", From: "cto", To: "user", Thread: "gate/release", Subject: "CLOSED: release", Kind: "status", ReplyTo: "request", Created: notifyNow.Add(-time.Hour),
+					Context: `{"gate":{"state":"closed","request_message_id":"request","requester":"cto","thread":"gate/release","actor":"cto"}}`,
+				})
+			},
+		},
+		{
+			name: "conflicting terminal copies",
+			seed: func(t *testing.T, base string) {
+				seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{ID: "request", From: "cto", To: "user", Thread: "gate/release", Subject: "APPROVAL: release", Kind: "question", Created: notifyNow.Add(-3 * time.Hour)})
+				closed := notifyMsg{
+					ID: "terminal", From: "cto", To: "user", Thread: "gate/release", Subject: "CLOSED: release", Kind: "status", ReplyTo: "request", Created: notifyNow.Add(-time.Hour),
+					Context: `{"gate":{"state":"closed","request_message_id":"request","requester":"cto","thread":"gate/release","actor":"cto"}}`,
+				}
+				withdrawn := closed
+				withdrawn.Subject = "WITHDRAWN: release"
+				withdrawn.Context = `{"gate":{"state":"withdrawn","request_message_id":"request","requester":"cto","thread":"gate/release","actor":"cto"}}`
+				seedNotifyMessage(t, base, "s", "user", "new", closed)
+				seedNotifyMessage(t, base, "s", "cto", "new", withdrawn)
+			},
+		},
+		{
+			name: "conflicting answer reply-to copies",
+			seed: func(t *testing.T, base string) {
+				seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{ID: "request", From: "cto", To: "user", Thread: "gate/release", Subject: "APPROVAL: release", Kind: "question", Created: notifyNow.Add(-3 * time.Hour)})
+				answerA := notifyMsg{ID: "answer", From: "user", To: "cto", Thread: "gate/release", Subject: "APPROVED: release", Kind: "answer", ReplyTo: "request", Created: notifyNow.Add(-time.Hour)}
+				answerB := answerA
+				answerB.ReplyTo = "other"
+				seedNotifyMessage(t, base, "s", "cto", "new", answerA)
+				seedNotifyMessage(t, base, "s", "user", "new", answerB)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project, base, statePath := seedNotifyProject(t, team.DefaultOperator())
+			seedNotifyLaunch(t, project, base, "s", "cto")
+			tc.seed(t, base)
+
+			out := executeNotifyForTest(t, notifyExecution{
+				ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath,
+				RenotifyAfter: 4 * time.Hour, Now: func() time.Time { return notifyNow },
+			})
+			if !strings.Contains(out, "gate/release") || !strings.Contains(out, "APPROVAL:") {
+				t.Fatalf("conflicted gate stopped emitting attention:\n%s", out)
+			}
+			persisted, err := readNotifyState(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := persisted.Items[notifyKey(team.DefaultProfile, "s", "gate/release")]
+			if !rec.Active || rec.LatestID != "request" {
+				t.Fatalf("conflicted gate notify record = %+v, want active request", rec)
+			}
+		})
+	}
+}
+
+func TestNotifyRepairedRequestWithBoundCloseStaysActive(t *testing.T) {
+	project, base, statePath := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{ID: "request", From: "cto", To: "user", Thread: "gate//release", Subject: "APPROVAL: release", Kind: "question", Created: notifyNow.Add(-3 * time.Hour)})
+	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
+		ID: "close", From: "cto", To: "user", Thread: "gate/release", Subject: "CLOSED: release", Kind: "status", ReplyTo: "request", Created: notifyNow.Add(-time.Hour),
+		Context: `{"gate":{"state":"closed","request_message_id":"request","requester":"cto","thread":"gate/release","actor":"cto"}}`,
+	})
+
+	out := executeNotifyForTest(t, notifyExecution{ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath, RenotifyAfter: 4 * time.Hour, Now: func() time.Time { return notifyNow }})
+	if !strings.Contains(out, "APPROVAL: release") {
+		t.Fatalf("repaired request was incorrectly terminalized:\n%s", out)
+	}
+	persisted, err := readNotifyState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := persisted.Items[notifyKey(team.DefaultProfile, "s", "gate/release")]; !rec.Active || rec.LatestID != "request" {
+		t.Fatalf("repaired request notify state = %+v", rec)
+	}
+}
+
+func TestNotifyDegradedScanNeverTombstonesPriorGate(t *testing.T) {
+	project, base, statePath := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{ID: "request", From: "cto", To: "user", Thread: "gate/release", Subject: "APPROVAL: release", Kind: "question", Created: notifyNow.Add(-3 * time.Hour)})
+	_ = executeNotifyForTest(t, notifyExecution{ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath, RenotifyAfter: 4 * time.Hour, Now: func() time.Time { return notifyNow.Add(-2 * time.Hour) }})
+
+	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
+		ID: "close", From: "cto", To: "user", Thread: "gate/release", Subject: "CLOSED: release", Kind: "status", ReplyTo: "request", Created: notifyNow.Add(-time.Hour),
+		Context: `{"gate":{"state":"closed","request_message_id":"request","requester":"cto","thread":"gate/release","actor":"cto"}}`,
+	})
+	badDir := filepath.Join(base, "s", "agents", "user", "inbox", "new")
+	if err := os.WriteFile(filepath.Join(badDir, "newer-torn.md"), []byte("---json\n{\"schema\":1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = executeNotifyForTest(t, notifyExecution{ProjectDir: project, Profile: team.DefaultProfile, BaseRoot: base, StatePath: statePath, RenotifyAfter: 4 * time.Hour, Now: func() time.Time { return notifyNow }})
+
+	persisted, err := readNotifyState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := persisted.Items[notifyKey(team.DefaultProfile, "s", "gate/release")]; !rec.Active || rec.LatestID != "request" {
+		t.Fatalf("degraded scan tombstoned prior gate: %+v", rec)
+	}
+}
+
+func TestMergeOperatorAttentionActiveWinsOverClearedInEitherOrder(t *testing.T) {
+	active := operatorAttention{Key: "gate-key", Thread: "gate/release", LatestID: "request"}
+	cleared := operatorAttention{Key: "gate-key", Thread: "gate/release", Cleared: true}
+	for _, pair := range []struct {
+		base, extra []operatorAttention
+	}{{[]operatorAttention{active}, []operatorAttention{cleared}}, {[]operatorAttention{cleared}, []operatorAttention{active}}} {
+		got := mergeOperatorAttention(pair.base, pair.extra)
+		if len(got) != 1 || got[0].Cleared || got[0].LatestID != "request" {
+			t.Fatalf("mergeOperatorAttention = %+v, want active projection", got)
+		}
 	}
 }
 
@@ -289,7 +534,10 @@ type notifyMsg struct {
 	Thread  string
 	Subject string
 	Kind    string
+	ReplyTo string
+	Refs    []string
 	Created time.Time
+	Context string
 }
 
 func seedNotifyMessage(t *testing.T, base, session, owner, box string, msg notifyMsg) {
@@ -307,6 +555,22 @@ func seedNotifyMessageToDir(t *testing.T, agentDir, box string, msg notifyMsg) {
 	if msg.Created.IsZero() {
 		msg.Created = notifyNow
 	}
+	context := ""
+	if strings.TrimSpace(msg.Context) != "" {
+		context = ",\n  \"context\": " + msg.Context
+	}
+	replyTo := ""
+	if strings.TrimSpace(msg.ReplyTo) != "" {
+		replyTo = ",\n  \"reply_to\": \"" + msg.ReplyTo + "\""
+	}
+	refs := ""
+	if len(msg.Refs) > 0 {
+		encoded, err := json.Marshal(msg.Refs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refs = ",\n  \"refs\": " + string(encoded)
+	}
 	body := "---json\n{\n" +
 		"  \"schema\": 1,\n" +
 		"  \"id\": \"" + msg.ID + "\",\n" +
@@ -315,7 +579,7 @@ func seedNotifyMessageToDir(t *testing.T, agentDir, box string, msg notifyMsg) {
 		"  \"thread\": \"" + msg.Thread + "\",\n" +
 		"  \"subject\": \"" + msg.Subject + "\",\n" +
 		"  \"created\": \"" + msg.Created.UTC().Format(time.RFC3339Nano) + "\",\n" +
-		"  \"kind\": \"" + msg.Kind + "\"\n" +
+		"  \"kind\": \"" + msg.Kind + "\"" + replyTo + refs + context + "\n" +
 		"}\n---\nbody\n"
 	if err := os.WriteFile(filepath.Join(dir, msg.ID+".md"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)

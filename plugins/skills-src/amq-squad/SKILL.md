@@ -12,7 +12,7 @@ Launch priming is automatic. `up` / `agent up` inject the bootstrap prompt; agen
 
 This skill is named `amq-squad`; the binary is also named `amq-squad`.
 
-**Skill version: 2.20.1** — on your FIRST response of a session, print the line `amq-squad skill v2.20.1` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
+**Skill version: 2.21.0** — on your FIRST response of a session, print the line `amq-squad skill v2.21.0` before anything else, so the operator can confirm which skill build loaded. An older cached skill lacks this step and stays silent, so the *absence* of this line is itself the signal that the expected build did not load. (Pair it with `amq-squad version` for the binary: skill and binary versions should match.)
 
 ## Context model
 
@@ -55,7 +55,7 @@ The lifecycle is one small state machine: `(none) --up--> running --stop--> stop
 | Mutate the live roster at runtime | `amq-squad team member add <role> --binary B` / `team member rm <role>` / `team member list` |
 | Set or inspect the orchestrated lead | `amq-squad team lead set <role>` / `team lead clear` / `team lead show --json` |
 | Register this pane as an external lead | `amq-squad lead register --role <role> --session S` (project leads require verified identity or `--adopt-project-lead`) |
-| Native pull-based task queue for a workstream | `amq-squad task add --title T --session S` / `task list --session S` / `task claim <id> --me H --session S` / `task done <id> --session S` |
+| Native atomic task lifecycle for a workstream | `amq-squad task add --title T --session S` / `task claim <id> --me H --session S` / `task done <id> --me H --session S` / `task reconcile --session S` |
 | Worker activity heartbeat | `amq-squad activity set --session S --me H --phase testing --task t1` / `activity clear --session S --me H` |
 
 `up` means NEW work and **refuses** a session that already exists — use `resume` to continue it, or `up --reset` to start over. `stop` is the primary teardown (the `down` alias was removed in 2.0). With no `--seed-from`, `up` AUTO-STUBS the brief and prints a one-line notice — so before `up`, decide whether to author the brief first (`up --dry-run --seed-from ...`) or let `up` stub it and edit afterward. `rm`/`archive` are the only destructive ops; both confirm-gate (default No, `--yes` to skip) and refuse a live session unless `--force`.
@@ -64,7 +64,7 @@ Pass `--profile NAME` to operate on a named profile under `.amq-squad/teams/<nam
 
 **Lifecycle safety contract:** before any lifecycle mutation (`stop`, `resume --exec`, `send`, `focus`, `rm`, `archive`, `up --reset`, `team member rm --stop`), resolve the active project, profile, and session explicitly. Run `amq-squad team profiles --json`, the multi-session `amq-squad status`, then `amq-squad status --project <repo> --profile <profile> --session <session> --json`. If more than one profile exists, never run a lifecycle command without `--profile`; omitting it can inspect or mutate the default roster while the active squad lives in a named profile. Mutating commands with `--session` fail closed when an unprofiled default-profile write would collide with a named profile that already owns that session; rerun with `--profile <name>` or the deliberate escape hatch `--profile default`. Prefer the exact commands from `.data.actions[]` and per-record `actions[]` in the scoped `status --json` output instead of hand-assembling `stop`/`resume`/`focus`/`send` commands.
 
-`team member`, `team lead`, `lead register`, and `task` are the dynamic-team primitives. `team member add/rm` mutates `team.json` atomically under an exclusive lock and re-validates it (the new member is NOT launched — run the launch command `team member add` prints: a managed pane via `resume --exec --target new-window`, or `agent up` for an unmanaged one-off). `team lead set/clear/show` mutates or inspects profile orchestration state for an existing roster. `lead register` adopts the current tmux pane as an operator-owned external lead for the session: status/action JSON can render and target it, but lifecycle commands do not own the pane, so `stop`/`rm`/`archive`/`resume` will not kill, close, or replay it. Project-lead registration is fail-closed: the pane must prove exact project/profile/session/role identity, or the operator must use explicit `--adopt-project-lead` from the actual lead pane; a global orchestrator cannot become project `cto` by passing `--role cto`. Project-lead `--no-wake` requires `--compat-no-wake --reason <why>`, while global orchestrator/NOC no-wake remains a polling mode. `amq-squad amq send --me <team-role>` also requires verified role identity unless `--unsafe-send-as --reason <why>` is used for audited recovery. `task` is a native pull-based store under `.amq-squad/tasks/<session>/` for the default profile or `.amq-squad/tasks/<profile>/<session>/` for named profiles: a task is claimable only once all its `--depends-on` tasks are completed, and every mutation is atomic and lock-serialized. Runtime mutations take `--session` where applicable (tasks require it).
+`team member`, `team lead`, `lead register`, and `task` are the dynamic-team primitives. `team member add/rm` mutates `team.json` atomically under an exclusive lock and re-validates it (the new member is NOT launched — run the launch command `team member add` prints: a managed pane via `resume --exec --target new-window`, or `agent up` for an unmanaged one-off). `team lead set/clear/show` mutates or inspects profile orchestration state for an existing roster. `lead register` adopts the current tmux pane as an operator-owned external lead for the session: status/action JSON can render and target it, but lifecycle commands do not own the pane, so `stop`/`rm`/`archive`/`resume` will not kill, close, or replay it. Project-lead registration is fail-closed: the pane must prove exact project/profile/session/role identity, or the operator must use explicit `--adopt-project-lead` from the actual lead pane; a global orchestrator cannot become project `cto` by passing `--role cto`. Project-lead `--no-wake` requires `--compat-no-wake --reason <why>`, while global orchestrator/NOC no-wake remains a polling mode. `amq-squad amq send --me <team-role>` also requires verified role identity unless `--unsafe-send-as --reason <why>` is used for audited recovery. `task` is a native pull-based store under `.amq-squad/tasks/<session>/` for the default profile or `.amq-squad/tasks/<profile>/<session>/` for named profiles. Claims are dependency-gated and leased; explicit overrides/releases are audited. Multi-task completion, dependent readiness, optional successor claim, and delivery intents commit through a durable journal before AMQ is sent. `task reconcile` replays committed journals and diagnoses stale leases, lifecycle links, and delivery state without silently unclaiming or auto-resending. Runtime mutations take `--session` where applicable (tasks require it).
 
 Every command accepts `--json` where machine-readable output makes sense (`status`, `history`, `resume`, `doctor`, `team profiles`, `version`, and `up --dry-run`). JSON outputs are schema-versioned envelopes `{ schema_version, kind, data }`. Diagnostics stay on stderr; stdout under `--json` is pure JSON. For machine clients, the per-member records in `status --session <name> --json` (kind `status`), `history --json`, and `resume --json` (kind `resume_plan`) carry a `tmux` runtime block (`session`, `window_id`, `window_name`, `pane_id`, `target`) plus a computed `pane_alive` — **present only for agents launched in tmux**, so detect by presence. `status --session <name> --json` records additionally carry an `actions` array (`focus`/`send`/`resume`/`status`) with the exact runnable command and an `available` flag, so a client (e.g. amq-noc) renders/copies stable commands instead of inferring tmux state. Managed child rows may also carry `local_input` and a `local_input_blocked` warning when a read-only pane-tail blind-spot detection heuristic sees a local approval/input prompt; this is not a coordination or progress primitive, and absence only means "not observed". (The bare `amq-squad status --json` is the multi-session board envelope `kind: sessions` — it has no per-member records or actions; use `--session <name>` for member detail.)
 
@@ -204,14 +204,15 @@ All three share the same pane-id control contract, so `focus`/`send`/`status` wo
    amq drain --include-body
    ```
    Acknowledge briefly on the same thread when useful - one factual line, not a status update.
-   - Leads collecting child reports should prefer `amq-squad collect --session <S> --me <lead> --timeout 120s --include-body` over raw `amq drain`; use that bounded wait immediately after dispatch only for an ACK or imminent report. For waits measured in minutes, **park/end the turn**: wake resumes on AMQ and ending the turn flushes queued operator pane input. Under `/goal`, operator-only blocked input is a sanctioned park within minutes. In live-operator mode, never hold `collect` while an operator gate is open and the answer arrives through your own pane — that self-deadlocks. Stall detection belongs to `monitor idle_with_active_task`, not collect timers. Never background `collect` or `drain`: both consume mailbox state, so a background reader races foreground processing and risks destructive double-consumption. `collect` resolves the correct root, journals unread bodies before acknowledging them, and has at-least-once replay semantics.
+   - Leads collecting child reports should prefer `amq-squad collect --session <S> --me <lead> --timeout 120s --include-body` over raw `amq drain`; use that bounded wait immediately after dispatch only for an ACK or imminent report. For waits measured in minutes, **park/end the turn**: wake resumes on AMQ and ending the turn flushes queued operator pane input. Under `/goal`, operator-only blocked input is a sanctioned park within minutes. In `lead_pane` mode, amq-squad verifies the actual live pane actor and refuses an own-pane lead block when a caller-raised `gate/<topic>` is unresolved, the requested wait exceeds 120 seconds, or it is unbounded. This applies to `collect`, wrapped `amq watch`, wrapped `amq receipts wait`, and amq-squad-owned send/reply/dispatch receipt waits. A deliberate exception requires `--override-wait-posture --wait-posture-reason <why>` and a durable audit before blocking. The wrapper cannot intercept a direct external `amq watch` or a hand-written shell `sleep`/`until` polling loop; those remain forbidden lead posture. Use the sanctioned read-only `amq-squad monitor` watchdog instead. Never background `collect` or `drain`: both consume mailbox state, so a background reader races foreground processing and risks destructive double-consumption. `collect` resolves the correct root, journals unread bodies before acknowledging them, and has at-least-once replay semantics.
 
 9. **Work the task store (when one drives the workstream).**
    - When the lead has posted work as tasks (`amq-squad task list --session <S>`), the store is the durable source of truth for who-owns-what — keep it in sync; do not just prose-ACK over AMQ.
-   - Before you START a pull-style task that is still `pending`, claim it: `amq-squad task claim <id> --me <handle> --session <S>`. A task-backed `amq-squad dispatch --create-task/--task` auto-claims pending tasks for the target handle after the durable AMQ send and task link succeed; if the task already shows `in_progress` for you, do not re-claim it.
+   - Before you START a pull-style task that is still `pending`, claim it: `amq-squad task claim <id> --me <handle> --session <S>`. New claims carry renewable leases. Dependency overrides require `--override-dependencies --reason WHY`; stale or legacy ownership is never auto-released. A task-backed `amq-squad dispatch --create-task/--task` commits the pending claim and delivery intent before AMQ send; if the task already shows `in_progress` for you, do not re-claim it.
    - Keep worker activity current while you work: `amq-squad activity set --session <S> --me <handle> --task <id> --phase <reading|testing|waiting-on-command> [--detail "..."]` on task claim, meaningful phase changes, and long-running commands. `status --json` and `console` show the heartbeat as `fresh`, `stale`, or `unknown`; task-store ownership is only a weaker fallback, not proof of active progress.
-   - When you FINISH, close it: `amq-squad task done <id> --session <S>`. If you cannot finish, record `task fail <id>` (with a reason) or `task block <id>` rather than leaving it `in_progress`.
-   - The pushed AMQ report and the task transition are complementary, not redundant: the message tells the lead; the store records the state. Do both.
+   - When you FINISH, close it: `amq-squad task done <id> --me <handle> --session <S>`. It atomically records completion and newly-ready dependents; `--dispatch-next ID` can claim and queue an assigned direct successor in the same transaction. With dispatch routing, it then emits AMQ kind `status`, subject `DONE: <task title>`, by default. AMQ has no `done` kind; `--no-notify` is explicit, recorded suppression. If you cannot finish, record `task fail <id>` (with a reason) or `task block <id>` rather than leaving it `in_progress`.
+   - Use `task reconcile --session <S>` for stale/legacy leases, committed-journal recovery, link drift, or pending/failed/uncertain delivery. Deliver pending intents with `task deliver`; retry failed or confirmed-not-delivered uncertain intents only with the printed audited command. Reconcile never sends automatically.
+   - A separate pushed review report may still be required for sign-off and evidence detail. Do not manually duplicate the default canonical DONE status emitted by `task done`.
 
 ## Inbox handling
 
@@ -297,11 +298,14 @@ Plan emission fails fast when a referenced `--settings` file is missing;
 via `codex_args: ["--profile", "<name>"]` instead.
 
 AMQ floor (v2.20.0+): amq-squad requires amq 0.42.1+. AMQ 0.42.1 is the
-first supported complete identity-pin contract: after upgrading, stop and
-resume/relaunch agents so their parent shells receive a coherent tuple; a child
-command cannot repair stale injected environment. Default profiles use
-`AM_ROOT=AM_BASE_ROOT/AM_SESSION` with a non-empty `AM_SESSION`; named profiles
-use an exact root with `AM_ROOT=AM_BASE_ROOT` and omit `AM_SESSION`. Run
+first supported complete identity-pin contract. The minimum 0.42.1
+compatibility floor is unchanged. This release is explicitly validated against
+pinned 0.43.1; latest remains a forward-compatibility canary. After upgrading
+AMQ, stop and resume/relaunch agents so their parent shells refresh the complete
+identity tuple; a child command cannot repair stale injected environment.
+Default profiles use `AM_ROOT=AM_BASE_ROOT/AM_SESSION` with a non-empty
+`AM_SESSION`; named profiles use an exact root with `AM_ROOT=AM_BASE_ROOT` and
+omit `AM_SESSION`. Run
 `amq-squad doctor` before resume if it reports a legacy or inconsistent pin.
 The launch wake
 gate introduced in v2.5.0 passes `--require-wake` to `amq coop exec`, so a
@@ -504,7 +508,8 @@ You can also preview a candidate from a deterministic source with
   validates that every referenced `--settings` file exists.
 - **Per-member permission allowlist**: a Claude member may carry
   `permission_allowlist`, for example
-  `"permission_allowlist": ["Bash(rm -rf /tmp/qa-review/*:*)"]`. amq-squad
+  `"permission_allowlist": ["Bash(amq-squad review-worktree remove:*)"]`.
+  amq-squad
   merges it with explicit native `--allowedTools`, applies it only to that
   exact role, shows configured/effective grants in `up --dry-run --json`, and
   persists the effective list in launch history for resume/audit. Resume strips
@@ -517,7 +522,9 @@ You can also preview a candidate from a deterministic source with
   history stores launcher-owned and explicit-native provenance separately even
   when the values are identical. Keep patterns scoped to the member's own
   scratch or review workspace; this is not a team-wide trust switch and the
-  setup wizard does not author it. Profiles using the field write team schema
+  setup wizard does not author it. An allowlist grants native tool permission;
+  it does not override the generated team rules' `## Workspace Safety and
+  Cleanup` prohibition on `rm -rf`. Profiles using the field write team schema
   4; other profiles remain schema 3. Upgrade every reader/writer to v2.20+
   before configuration: pre-v2.20 binaries can silently ignore the field and
   lossily rewrite a schema-4 profile. Use `amq-squad doctor` to detect version

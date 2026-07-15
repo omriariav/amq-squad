@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -152,9 +153,22 @@ Examples:
 		return usageErrorf("--yes/-y only applies to --reset on `up`")
 	}
 
-	profile, err := resolveProfileFlag(*profileFlag)
+	requestedContextSession := positionalSession
+	contextSessionExplicit := positionalSession != "" || flagWasSet(fs, "session")
+	if requestedContextSession == "" {
+		requestedContextSession = *pf.session
+	}
+	resolvedContext, err := resolveCanonicalContext(contextResolveOptions{
+		ProfileFlag: *profileFlag, SessionFlag: requestedContextSession,
+		ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: contextSessionExplicit,
+	})
 	if err != nil {
 		return err
+	}
+	emitContextDiagnostics(resolvedContext)
+	profile := resolvedContext.Profile
+	if !contextSessionExplicit && resolvedContext.Sources["session"] != contextSourceDefault {
+		*pf.session = resolvedContext.Session
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -239,6 +253,37 @@ Examples:
 	if err != nil {
 		return err
 	}
+	admission, err := acquireNamespaceWriterAdmission(cwd, profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentContext, err := resolveCanonicalContext(contextResolveOptions{
+		ProfileFlag: *profileFlag, SessionFlag: requestedContextSession,
+		ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: contextSessionExplicit,
+	})
+	if err != nil {
+		return fmt.Errorf("up refused: context re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedContext(resolvedContext, currentContext, false); err != nil {
+		return err
+	}
+	currentTeam, err := team.ReadProfile(cwd, currentContext.Profile)
+	if err != nil {
+		return fmt.Errorf("up refused: reread team under admission: %w", err)
+	}
+	currentRequested := positionalSession
+	if currentRequested == "" {
+		currentRequested = *pf.session
+	}
+	currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, currentRequested, explicitSession)
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpoint("up", squadnamespace.Resolve(cwd, profile, workstream), squadnamespace.Resolve(cwd, currentContext.Profile, currentWorkstream), "", ""); err != nil {
+		return err
+	}
+	resolvedContext, profile, t, workstream = currentContext, currentContext.Profile, currentTeam, currentWorkstream
 	if err := ensureNoNamespaceConflict("up", cwd, profile, workstream, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}

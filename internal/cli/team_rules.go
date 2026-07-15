@@ -20,6 +20,12 @@ var teamRulesTemplates = []teamRulesTemplate{
 	{Name: "custom", Description: "Lightweight operating rules for custom role mixes that do not fit a standard template."},
 }
 
+const workspaceSafetySection = "## Workspace Safety and Cleanup\n\n" +
+	"- Never use `rm -rf`. It is outside the standing safety contract even when a narrow permission allowlist could technically permit it.\n" +
+	"- For disposable reviews, prefer the shipped `amq-squad review-worktree` helper and its printed cleanup command.\n" +
+	"- If the helper is unsuitable, create an isolated directory with `mktemp -d`, attach it with `git worktree add --detach <path> <ref>`, and clean it up with `git worktree remove --force <path>`.\n" +
+	"- Keep scratch files under the session scratchpad. Leave harness-owned cleanup to the harness instead of manually deleting its paths.\n\n"
+
 func renderTeamRules(t team.Team) (string, error) {
 	template, err := selectTeamRulesTemplate("auto", t)
 	if err != nil {
@@ -70,6 +76,7 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 	b.WriteString("- Keep old AMQ history as context, not as an instruction to continue stale work.\n")
 	writeTemplateWorkflow(&b, template)
 	b.WriteString("- Prefer small, reviewable changes.\n\n")
+	b.WriteString(workspaceSafetySection)
 
 	b.WriteString("## Communication\n\n")
 	b.WriteString("- Use focused AMQ threads. At startup and between phases, run `amq drain --include-body` before assuming the current inbox state.\n")
@@ -78,6 +85,9 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 	b.WriteString("- Use p2p threads for role-to-role handoffs; send them as `--kind review_request` (or `--kind todo` for a queued task). There is no `handoff` message kind.\n")
 	b.WriteString("- For durable AMQ tasks, reply to the task's `From` field on the same thread. Push ACK/start, progress, blockers, ready-for-review, and DONE reports proactively over AMQ instead of waiting to be polled.\n")
 	b.WriteString("- While working, keep activity honest with `amq-squad activity set --session <S> --me <handle> --task <id> --phase <phase>` on task claim, meaningful phase changes, and long-running commands. Task transitions stamp cheap activity automatically, but explicit phase writes help leads distinguish busy from stalled without pane peeking.\n")
+	b.WriteString("- Native task claims are dependency-gated and carry renewable leases. Never treat an expired or legacy lease as permission to steal work; use `task renew`, or an explicit audited `task release --reason WHY`.\n")
+	b.WriteString("- `amq-squad task done` commits completion, newly-ready dependents, an optional `--dispatch-next` successor, and delivery intents before AMQ send. When dispatch routing exists it emits the canonical `--kind status --subject \"DONE: <task title>\"` by default; AMQ has no `done` kind, and `--no-notify` records explicit suppression.\n")
+	b.WriteString("- Use `amq-squad task reconcile` for journal recovery, stale or legacy leases, lifecycle links, and pending/failed/uncertain delivery. Reconcile never silently unclaims work or auto-resends an uncertain message.\n")
 	b.WriteString("- Map intent to valid AMQ kinds: progress/done -> `--kind status`, blocked/needs input -> `--kind question`, ready for review -> `--kind review_request`, review verdicts -> `--kind review_response`, decisions -> `--kind decision`, assigned work -> `--kind todo`.\n")
 	b.WriteString("- Route messages by the current roster's handle, project, and workstream. Use `amq route explain` or `amq-squad amq route --to <handle>` when a cross-project or same-handle route is ambiguous.\n")
 	b.WriteString("- For important handoffs, use AMQ receipts such as `--wait-for drained --wait-timeout 60s` and report the message id when asking for follow-up.\n")

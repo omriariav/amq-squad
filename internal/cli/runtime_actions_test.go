@@ -622,17 +622,17 @@ func TestGoalDeliverAllowsBusyLeadAndUpdatesGoalBinding(t *testing.T) {
 	if busyCalls != 0 {
 		t.Fatalf("goal deliver must not use ordinary prompt busy guard, busy calls = %d", busyCalls)
 	}
-	if len(sent) != 1 || !strings.Contains(sent[0], "/goal --goal") || !strings.Contains(sent[0], "ship safely") {
+	if len(sent) != 1 || !strings.Contains(sent[0], "AMQ-SQUAD PROMPT GOAL v1") || !strings.Contains(sent[0], "ship safely") {
 		t.Fatalf("goal deliver sent = %+v", sent)
 	}
 	env := decodeJSONEnvelope[mutationResult](t, stdout)
-	if env.Kind != "goal_deliver" || env.Data.Status != "native_goal_delivered" {
+	if env.Kind != "goal_deliver" || env.Data.Status != "prompt_goal_delivered" {
 		t.Fatalf("goal deliver envelope = %+v", env)
 	}
 	if env.Data.DeliveryReceipt == nil ||
-		env.Data.DeliveryReceipt.Kind != "native_goal" ||
-		env.Data.DeliveryReceipt.Method != "native_goal_control" ||
-		env.Data.DeliveryReceipt.Status != "native_goal_delivered" ||
+		env.Data.DeliveryReceipt.Kind != "prompt_goal" ||
+		env.Data.DeliveryReceipt.Method != "structured_prompt_goal" ||
+		env.Data.DeliveryReceipt.Status != "prompt_goal_delivered" ||
 		env.Data.DeliveryReceipt.PaneID != "%7" {
 		t.Fatalf("goal delivery receipt = %+v", env.Data.DeliveryReceipt)
 	}
@@ -640,7 +640,7 @@ func TestGoalDeliverAllowsBusyLeadAndUpdatesGoalBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.GoalBinding == nil || rec.GoalBinding.Source != "goal-control" || !rec.GoalBinding.NativeGoal {
+	if rec.GoalBinding == nil || rec.GoalBinding.Source != "goal-control" || rec.GoalBinding.NativeGoal || rec.GoalBinding.Mode != "prompt_goal" {
 		t.Fatalf("launch goal binding not updated: %+v", rec.GoalBinding)
 	}
 
@@ -656,7 +656,7 @@ func TestGoalDeliverAllowsBusyLeadAndUpdatesGoalBinding(t *testing.T) {
 		t.Fatalf("status: %v\n%s", err, out)
 	}
 	statusEnv := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if statusEnv.Data.GoalBinding.Mode != "native_goal" ||
+	if statusEnv.Data.GoalBinding.Mode != "prompt_goal" ||
 		!statusEnv.Data.GoalBinding.Verified ||
 		statusEnv.Data.GoalBinding.NativeSource != "goal-control" {
 		t.Fatalf("status goal binding = %+v", statusEnv.Data.GoalBinding)

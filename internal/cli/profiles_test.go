@@ -885,11 +885,11 @@ func TestGoalDeliverNamespaceOverrideDeliversAndAudits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("goal deliver override: %v\n%s", err, stdout)
 	}
-	if len(sent) != 1 || !strings.Contains(sent[0], "/goal --goal") || !strings.Contains(sent[0], "--profile release") {
+	if len(sent) != 1 || !strings.Contains(sent[0], "AMQ-SQUAD PROMPT GOAL v1") || !strings.Contains(sent[0], "profile: release") {
 		t.Fatalf("goal deliver sent = %+v", sent)
 	}
 	env := decodeJSONEnvelope[mutationResult](t, stdout)
-	if env.Kind != "goal_deliver" || env.Data.Status != "native_goal_delivered" {
+	if env.Kind != "goal_deliver" || env.Data.Status != "prompt_goal_delivered" {
 		t.Fatalf("goal deliver envelope = %+v", env)
 	}
 	audit, err := os.ReadFile(filepath.Join(dir, ".amq-squad", "namespace-audit", "main.jsonl"))
@@ -1072,7 +1072,7 @@ func TestSameProfileSessionUpStatusDispatchNoNamespaceConflict(t *testing.T) {
 
 func TestForkFooterCarriesProfile(t *testing.T) {
 	dir := t.TempDir()
-	base := setupFakeAMQSessionRoots(t)
+	setupFakeAMQSessionRoots(t)
 	resumeChdir(t, dir)
 	seedProfile(t, dir, "review", team.Team{
 		Workstream: "review",
@@ -1081,7 +1081,7 @@ func TestForkFooterCarriesProfile(t *testing.T) {
 		},
 	})
 	// Seed a SOURCE root on disk so fork's source-state check passes.
-	if err := os.MkdirAll(filepath.Join(base, "review", "agents", "cto"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".agent-mail", "review", "review", "agents", "cto"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdout, _, err := captureOutput(t, func() error {

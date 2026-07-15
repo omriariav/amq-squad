@@ -849,7 +849,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 		return err
 	}
 	if opts.Fresh {
-		exists, root, err := teamWorkstreamExists(t, workstream)
+		exists, root, err := teamWorkstreamExists(t, opts.Profile, workstream)
 		if err != nil {
 			return err
 		}
@@ -908,6 +908,15 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 	if opts.Symphony {
 		if err := validateTeamSymphonyMembers(t, members); err != nil {
 			return err
+		}
+	}
+	// A launch-plan preview must validate the same AMQ context that live launch
+	// will use. Fresh default projects resolve structurally without writes;
+	// configured-root failures remain fatal instead of producing a false OK.
+	for _, m := range members {
+		cwd := m.EffectiveCWD(t.Project)
+		if _, err := resolveAMQEnvForTeamLaunchProfile(cwd, opts.Profile, workstream, memberHandle(m)); err != nil {
+			return fmt.Errorf("resolve amq env for %s: %w", memberHandle(m), err)
 		}
 	}
 
@@ -1303,7 +1312,7 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 			b.WriteString(shellQuote(arg))
 		}
 	}
-	if mode := strings.TrimSpace(in.WakeInjectMode); mode != "" {
+	if mode := resolveWakeInjectModeForBinary(in.WakeInjectMode, m.Binary); mode != "" {
 		b.WriteString(" --wake-inject-mode ")
 		b.WriteString(shellQuote(mode))
 	}
@@ -1872,18 +1881,17 @@ Examples:
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getwd: %w", err)
-		}
-		projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+		ctx, err := resolveCanonicalContext(contextResolveOptions{
+			ProjectFlag: *projectFlag, ProjectExplicit: flagWasSet(fs, "project"),
+		})
 		if err != nil {
 			return err
 		}
-		body, err := rules.Read(projectDir)
+		emitContextDiagnostics(ctx)
+		body, err := rules.Read(ctx.ProjectDir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return fmt.Errorf("no team-rules.md at %s. Run 'amq-squad team rules init' first.", rules.Path(projectDir))
+				return fmt.Errorf("no team-rules.md at %s. Run 'amq-squad team rules init' first.", rules.Path(ctx.ProjectDir))
 			}
 			return fmt.Errorf("read team-rules.md: %w", err)
 		}
@@ -1922,18 +1930,15 @@ Examples:
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getwd: %w", err)
-		}
-		projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
-		if err != nil {
-			return err
-		}
-		profile, err := resolveProfileFlag(*profileFlag)
+		ctx, err := resolveCanonicalContext(contextResolveOptions{
+			ProjectFlag: *projectFlag, ProfileFlag: *profileFlag,
+			ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"),
+		})
 		if err != nil {
 			return err
 		}
+		emitContextDiagnostics(ctx)
+		projectDir, profile := ctx.ProjectDir, ctx.Profile
 		if _, err := selectTeamRulesTemplate(*templateFlag, team.Team{}); err != nil {
 			return err
 		}
@@ -2014,18 +2019,15 @@ Examples:
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"),
+	})
 	if err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
-	}
+	emitContextDiagnostics(ctx)
+	projectDir, profile := ctx.ProjectDir, ctx.Profile
 
 	body, err := rules.Read(projectDir)
 	if err != nil {

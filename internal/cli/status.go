@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -287,32 +289,25 @@ Examples:
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionName, "", fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
 	// No --session: the multi-session board over ALL discovered sessions.
 	// This is the front-door default, so it degrades gracefully rather than
 	// hard-erroring when `amq` is missing or there are no sessions.
 	if !flagWasSet(fs, "session") {
-		return runStatusBoardWithVersion(projectDir, *jsonOut, version)
+		return runStatusBoardWithVersion(ctx.ProjectDir, *jsonOut, version)
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
-	if err != nil {
-		return err
-	}
-	if !team.ExistsProfile(projectDir, profile) {
-		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	if !team.ExistsProfile(ctx.ProjectDir, ctx.Profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", ctx.Profile, profileInitCommand(ctx.Profile))
 	}
 	return executeStatus(statusExecution{
-		ProjectDir:       projectDir,
-		RequestedSession: *sessionName,
+		ProjectDir:       ctx.ProjectDir,
+		RequestedSession: ctx.Session,
 		ExplicitSession:  flagWasSet(fs, "session"),
-		Profile:          profile,
+		Profile:          ctx.Profile,
 		Probe:            defaultDuplicateLaunchProbe,
 		Out:              os.Stdout,
 		JSON:             *jsonOut,
@@ -437,13 +432,26 @@ func executeStatus(s statusExecution) error {
 	}
 	if delivery.InteractionMode == team.OperatorInteractionSelfOperator {
 		v := team.EffectiveSelfOperator(t, workstream)
-		fmt.Fprintf(s.Out, "# self_operator: lead=%s/%s allow=%s revision=%d enabled=%t paused=%t hash=%s visibility_notifications=%t human_only=spawn,release,tag,publish,external_send,destructive_filesystem\n", v.LeadRole, v.LeadHandle, strings.Join(v.AllowedGateKinds, ","), v.PolicyRevision, v.Enabled, v.Paused, v.PolicyHash, delivery.NotificationsEnabled)
+		fmt.Fprintf(s.Out, "# self_operator: lead=%s/%s allow=%s revision=%d enabled=%t paused=%t hash=%s visibility_notifications=%t human_only=%s\n", v.LeadRole, v.LeadHandle, strings.Join(v.AllowedGateKinds, ","), v.PolicyRevision, v.Enabled, v.Paused, v.PolicyHash, delivery.NotificationsEnabled, strings.Join(humanOnlyCatalogGateKinds(), ","))
 		if !delivery.NotificationsEnabled {
 			fmt.Fprintln(s.Out, "# self_operator_visibility: notifications disabled; inspect durable gate threads manually")
 		}
 	}
 	fmt.Fprintln(s.Out)
 	return writeStatusTable(s.Out, rows, policy)
+}
+
+func humanOnlyCatalogGateKinds() []string {
+	seen := map[string]bool{}
+	var kinds []string
+	for _, capability := range operatorauth.ActionCapabilities() {
+		if capability.HumanOnly && !seen[capability.GateKind] {
+			seen[capability.GateKind] = true
+			kinds = append(kinds, capability.GateKind)
+		}
+	}
+	sort.Strings(kinds)
+	return kinds
 }
 
 func writeStatusTable(out io.Writer, rows []statusRecord, policy outputPolicy) error {
@@ -505,11 +513,15 @@ func statusAgedOperatorGateWarnings(projectDir, profile, session string, now tim
 	if err != nil || !info.IsDir() {
 		return nil
 	}
+	baseRoot := root
+	if squadnamespace.ProfilesEqual(profile, team.DefaultProfile) {
+		baseRoot = filepath.Dir(root)
+	}
 	data, err := buildOperatorStatusData(operatorExecution{
 		ProjectDir: projectDir,
 		Profile:    profile,
 		Session:    session,
-		BaseRoot:   root,
+		BaseRoot:   baseRoot,
 		Probe: state.Probe{
 			Now: func() time.Time { return now },
 		},
@@ -524,7 +536,7 @@ func statusAgedOperatorGateWarnings(projectDir, profile, session string, now tim
 func statusWarningsForAgedOperatorGates(data operatorStatusEnvelopeData) []statusWarning {
 	var warnings []statusWarning
 	for _, item := range data.Attention {
-		if !strings.HasPrefix(item.Thread, "gate/") {
+		if !isOpenGateAttention(item) {
 			continue
 		}
 		escalation := state.OperatorGateEscalation(item.Escalation)
@@ -597,6 +609,9 @@ func statusTaskWarnings(projectDir, profile, session string) ([]statusWarning, e
 	ns := squadnamespace.Resolve(projectDir, profile, session)
 	var messages []state.Message
 	for _, t := range tasks {
+		if taskstore.IsAttentionLifecycleTerminal(t) {
+			continue
+		}
 		if t.Status == taskstore.StatusInProgress && t.Dispatch != nil {
 			messages, _ = state.ScanSessionMessages(ns.AMQRoot, time.Now)
 			break
@@ -604,6 +619,9 @@ func statusTaskWarnings(projectDir, profile, session string) ([]statusWarning, e
 	}
 	var warnings []statusWarning
 	for _, t := range tasks {
+		if taskstore.IsAttentionLifecycleTerminal(t) {
+			continue
+		}
 		if t.Dispatch == nil {
 			continue
 		}
@@ -932,7 +950,7 @@ func operatorVisibilityForLead(row *statusRecord, mode string) (bool, string) {
 	if row != nil && (row.External || row.AdoptionMode == "external") {
 		if projectExecutionMode(mode) &&
 			strings.TrimSpace(row.AdoptionMode) != adoptionModeExternalProjectLead &&
-			!launchRecordHasNativeGoal(launch.Record{GoalBinding: row.goalBinding}) {
+			!launchRecordHasGoalBinding(launch.Record{Binary: row.Binary, GoalBinding: row.goalBinding}) {
 			return false, "role_boundary_violation"
 		}
 		if row.Tmux == nil {
@@ -1142,7 +1160,7 @@ func goalBindingForNamespace(ns squadnamespace.Ref) goalBindingData {
 		NativeGoal: false,
 		Verified:   false,
 		Source:     "amq-task-brief",
-		Detail:     "This runtime does not set a native /goal value; the visible lead is bound by the durable AMQ task, active brief, and task store for the namespace.",
+		Detail:     "This runtime has no verified binary-specific goal binding; the visible lead is bound by the durable AMQ task, active brief, and task store for the namespace.",
 	}
 	if ns.Paths.Brief != "" {
 		binding.BriefPath = ns.Paths.Brief
@@ -1158,6 +1176,11 @@ func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows 
 	if !ctx.Orchestrated || strings.TrimSpace(ctx.Lead) == "" {
 		return binding
 	}
+	leadMember, ok := teamMemberByRole(ctx.Team, ctx.Lead)
+	if !ok {
+		return binding
+	}
+	contract, contractErr := goalDeliveryContractForBinary(leadMember.Binary)
 	for _, row := range rows {
 		if row.Role != ctx.Lead {
 			continue
@@ -1165,7 +1188,7 @@ func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows 
 		if row.Status != statusStateLive && row.Status != statusStateWakeLive {
 			continue
 		}
-		if nativeGoalBindingBlocked(row.goalBinding) {
+		if contractErr == nil && contract.NativeGoal && nativeGoalBindingBlocked(row.goalBinding) {
 			binding.Mode = "native_goal_blocked"
 			binding.NativeGoal = true
 			binding.Verified = true
@@ -1179,9 +1202,9 @@ func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows 
 			}
 			return binding
 		}
-		if row.goalBinding != nil && row.goalBinding.NativeGoal {
-			binding.Mode = "native_goal"
-			binding.NativeGoal = true
+		if contractErr == nil && launchRecordHasGoalBinding(launch.Record{Binary: row.Binary, GoalBinding: row.goalBinding}) {
+			binding.Mode = contract.Mode
+			binding.NativeGoal = contract.NativeGoal
 			binding.Verified = true
 			binding.Source = "launch-record"
 			binding.NativeSource = row.goalBinding.Source
@@ -1189,12 +1212,17 @@ func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows 
 			if detail := strings.TrimSpace(row.goalBinding.Detail); detail != "" {
 				binding.Detail = detail
 			} else {
-				binding.Detail = "configured visible lead launch record carries native /goal binding evidence"
+				binding.Detail = "configured visible lead launch record carries verified " + contract.Mode + " binding evidence"
 			}
 			return binding
 		}
-		if projectExecutionModeRequiresNativeGoal(ctx.Team) {
-			return nativeGoalMissingBinding(binding, row)
+		if projectExecutionModeRequiresGoalBinding(ctx.Team) {
+			if contractErr != nil {
+				binding.Mode = "goal_delivery_unsupported"
+				binding.Detail = contractErr.Error()
+				return binding
+			}
+			return goalMissingBinding(binding, row, contract)
 		}
 	}
 	return binding
@@ -1233,7 +1261,7 @@ func blockedNativeGoalsInSnapshot(t team.Team, profile, workstream string, snap 
 	return count
 }
 
-func projectExecutionModeRequiresNativeGoal(t team.Team) bool {
+func projectExecutionModeRequiresGoalBinding(t team.Team) bool {
 	switch effectiveTeamExecutionMode(t) {
 	case executionModeProjectLead, executionModeProjectTeam:
 		return true
@@ -1242,8 +1270,8 @@ func projectExecutionModeRequiresNativeGoal(t team.Team) bool {
 	}
 }
 
-func nativeGoalMissingBinding(binding goalBindingData, row statusRecord) goalBindingData {
-	binding.Mode = "native_goal_missing"
+func goalMissingBinding(binding goalBindingData, row statusRecord, contract goalDeliveryContract) goalBindingData {
+	binding.Mode = contract.Mode + "_missing"
 	binding.NativeGoal = false
 	binding.Verified = false
 	binding.NativeSource = "missing"
@@ -1252,7 +1280,10 @@ func nativeGoalMissingBinding(binding goalBindingData, row statusRecord) goalBin
 	} else {
 		binding.Source = "runtime-observation"
 	}
-	binding.Detail = "A live visible project lead is running without launch-record evidence of a native /goal command; relaunch from the generated /goal plan or treat this as an explicit unsupported fallback before claiming release readiness."
+	binding.Detail = "A live visible project lead is running without launch-record evidence of the required " + contract.Mode + " contract for binary " + contract.Binary + "; relaunch from the generated binary-specific goal plan or treat this as an explicit unsupported fallback before claiming release readiness."
+	if row.goalBinding != nil {
+		binding.Detail += " The recorded binding mode/native flag does not match the lead binary."
+	}
 	return binding
 }
 

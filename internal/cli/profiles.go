@@ -64,14 +64,14 @@ Examples:
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProjectExplicit: flagWasSet(fs, "project"),
+	})
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
+	projectDir := ctx.ProjectDir
 
 	var rows []profileRow
 	if team.Exists(projectDir) {

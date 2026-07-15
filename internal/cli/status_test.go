@@ -12,6 +12,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -782,6 +783,43 @@ func TestStatusWarnsWorkerCompletionReportForInProgressTask(t *testing.T) {
 	}
 }
 
+func TestStatusTaskWarningsSuppressClosedAndSupersededTasks(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	link := func(tk taskstore.Task) {
+		t.Helper()
+		if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "s", tk.ID, taskstore.Dispatch{Sender: "cto", Assignee: "qa", Thread: "p2p/cto__qa", MessageID: "dispatch-" + tk.ID}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	completed, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "completed", AssignTo: "qa"}, now)
+	link(completed)
+	_, _ = taskstore.ClaimForProfile(dir, team.DefaultProfile, "s", completed.ID, "qa", now)
+	if _, err := taskstore.DoneForProfile(dir, team.DefaultProfile, "s", completed.ID, "qa", "done", now); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "cancelled", AssignTo: "qa"}, now)
+	link(cancelled)
+	if _, err := taskstore.CancelForProfile(dir, team.DefaultProfile, "s", cancelled.ID, "qa", "obsolete", "", now); err != nil {
+		t.Fatal(err)
+	}
+	superseded, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "superseded", AssignTo: "qa"}, now)
+	link(superseded)
+	replacement, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "replacement"}, now)
+	if _, err := taskstore.CancelForProfile(dir, team.DefaultProfile, "s", superseded.ID, "qa", "replaced", replacement.ID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings, err := statusTaskWarnings(dir, team.DefaultProfile, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("terminal attention lifecycle emitted status warnings: %+v", warnings)
+	}
+}
+
 func TestStatusWarnsAgedOperatorGate(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
@@ -815,6 +853,63 @@ func TestStatusWarnsAgedOperatorGate(t *testing.T) {
 		!strings.Contains(w.SuggestedCommand, "amq-squad thread") ||
 		!strings.Contains(w.SuggestedCommand, "gate/release") {
 		t.Fatalf("missing aged operator-gate warning: %+v", env.Data.Warnings)
+	}
+}
+
+func TestStatusWarnsAgedOperatorGateNamedProfileExactRoot(t *testing.T) {
+	project := t.TempDir()
+	profile, session := "release", "s"
+	op := team.DefaultOperator()
+	cfg := team.Team{
+		Project: project, Workstream: session, Operator: &op,
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: session}},
+	}
+	if err := team.WriteProfile(project, profile, cfg); err != nil {
+		t.Fatal(err)
+	}
+	root := squadnamespace.AMQRoot(project, profile, session)
+	ctoDir := filepath.Join(root, "agents", "cto")
+	if err := launch.Write(ctoDir, launch.Record{
+		CWD: project, Binary: "codex", Handle: "cto", Role: "cto", Session: session,
+		Root: root, BaseRoot: root, AgentPID: 42, StartedAt: notifyNow, TeamProfile: profile,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedNotifyMessageToDir(t, filepath.Join(root, "agents", team.DefaultOperatorHandle), "new", notifyMsg{
+		ID: "gate-named", From: "cto", To: team.DefaultOperatorHandle, Thread: "gate/release",
+		Subject: "APPROVAL: release", Kind: string(state.KindQuestion), Created: notifyNow.Add(-125 * time.Minute),
+	})
+
+	warnings := statusAgedOperatorGateWarnings(project, profile, session, notifyNow)
+	w := findStatusWarning(warnings, "operator_gate_strong_warning")
+	if w == nil || !strings.Contains(w.Detail, "gate/release") || !strings.Contains(w.SuggestedCommand, "--profile release") {
+		t.Fatalf("missing named-profile aged operator-gate warning: %+v", warnings)
+	}
+}
+
+func TestStatusAgedOperatorGateWarningsIgnoreMissingOrNonDirectoryRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		makeRoot bool
+	}{
+		{name: "missing"},
+		{name: "non-directory", makeRoot: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project := t.TempDir()
+			root := squadnamespace.AMQRoot(project, team.DefaultProfile, "s")
+			if tc.makeRoot {
+				if err := os.MkdirAll(filepath.Dir(root), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(root, []byte("not a session directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if warnings := statusAgedOperatorGateWarnings(project, team.DefaultProfile, "s", notifyNow); len(warnings) != 0 {
+				t.Fatalf("warnings for %s root: %+v", tc.name, warnings)
+			}
+		})
 	}
 }
 
@@ -1491,23 +1586,27 @@ func TestExecuteStatusJSONIncludesSpawnMetadata(t *testing.T) {
 	}
 }
 
-func TestExecuteStatusJSONReportsNativeGoalForLiveLeadRecord(t *testing.T) {
+func TestExecuteStatusJSONReportsPromptGoalForLiveCodexLeadRecord(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
+	tm := team.Team{
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
 			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
 		},
 		Orchestrated: true,
 		Lead:         "cto",
-	})
+	}
+	dir := seedTeam(t, tm)
+	tm.Project = dir
+	prompt := codexGoalControlPrompt("ship", tm, team.DefaultProfile, "issue-96", "cto", "")
 	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
 		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
 		GoalBinding: &launch.GoalBinding{
-			Mode:       "native_goal",
-			NativeGoal: true,
+			Mode:       "prompt_goal",
+			NativeGoal: false,
 			Source:     "launch-argv",
-			Command:    `/goal --goal "ship"`,
+			Command:    prompt,
+			Goal:       "ship",
 		},
 	})
 	seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
@@ -1524,13 +1623,13 @@ func TestExecuteStatusJSONReportsNativeGoalForLiveLeadRecord(t *testing.T) {
 		t.Fatalf("status: %v\n%s", err, out)
 	}
 	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if env.Data.GoalBinding.Mode != "native_goal" || !env.Data.GoalBinding.NativeGoal || !env.Data.GoalBinding.Verified {
+	if env.Data.GoalBinding.Mode != "prompt_goal" || env.Data.GoalBinding.NativeGoal || !env.Data.GoalBinding.Verified {
 		t.Fatalf("goal binding = %+v", env.Data.GoalBinding)
 	}
 	if env.Data.GoalBinding.Source != "launch-record" || env.Data.GoalBinding.NativeSource != "launch-argv" {
 		t.Fatalf("goal binding source = %+v", env.Data.GoalBinding)
 	}
-	if !strings.Contains(env.Data.GoalBinding.Command, "/goal --goal") {
+	if !strings.Contains(env.Data.GoalBinding.Command, "AMQ-SQUAD PROMPT GOAL v1") {
 		t.Fatalf("goal binding command = %+v", env.Data.GoalBinding)
 	}
 }
@@ -1539,14 +1638,14 @@ func TestExecuteStatusJSONReportsBlockedNativeGoalForLiveLeadRecord(t *testing.T
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-274"},
+			{Role: "cto", Binary: "claude", Handle: "cto", Session: "issue-274"},
 			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-274"},
 		},
 		Orchestrated: true,
 		Lead:         "cto",
 	})
 	seedAgentRecord(t, base, "issue-274", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
+		Binary: "claude", Handle: "cto", Role: "cto", AgentPID: 4242,
 		GoalBinding: &launch.GoalBinding{
 			Mode:       "native_goal_blocked",
 			NativeGoal: true,
@@ -1577,7 +1676,7 @@ func TestExecuteStatusJSONReportsBlockedNativeGoalForLiveLeadRecord(t *testing.T
 	}
 }
 
-func TestExecuteStatusJSONReportsMissingNativeGoalForLiveProjectLead(t *testing.T) {
+func TestExecuteStatusJSONReportsMissingPromptGoalForLiveCodexProjectLead(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{
@@ -1602,14 +1701,43 @@ func TestExecuteStatusJSONReportsMissingNativeGoalForLiveProjectLead(t *testing.
 		t.Fatalf("status: %v\n%s", err, out)
 	}
 	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if env.Data.GoalBinding.Mode != "native_goal_missing" || env.Data.GoalBinding.NativeGoal || env.Data.GoalBinding.Verified {
-		t.Fatalf("goal binding = %+v, want missing native goal", env.Data.GoalBinding)
+	if env.Data.GoalBinding.Mode != "prompt_goal_missing" || env.Data.GoalBinding.NativeGoal || env.Data.GoalBinding.Verified {
+		t.Fatalf("goal binding = %+v, want missing prompt goal", env.Data.GoalBinding)
 	}
 	if env.Data.GoalBinding.NativeSource != "missing" || !strings.Contains(env.Data.GoalBinding.Detail, "without launch-record evidence") {
 		t.Fatalf("goal binding detail = %+v", env.Data.GoalBinding)
 	}
-	if env.Data.Execution.GoalBinding != "native_goal_missing" || !env.Data.Execution.ImplementationAllowed {
+	if env.Data.Execution.GoalBinding != "prompt_goal_missing" || !env.Data.Execution.ImplementationAllowed {
 		t.Fatalf("execution goal binding = %+v", env.Data.Execution)
+	}
+}
+
+func TestExecuteStatusJSONRejectsInvalidClaudeGoalBinding(t *testing.T) {
+	for name, binding := range map[string]*launch.GoalBinding{
+		"corrupt":        {Mode: "native_goal", NativeGoal: true, Source: "launch-argv", Command: `/goal --goal "ship" --unknown value`},
+		"typed mismatch": {Mode: "native_goal", NativeGoal: true, Source: "launch-argv", Command: `/goal --goal "ship"`, Goal: "other"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := setupFakeAMQSessionRoots(t)
+			dir := seedTeam(t, team.Team{
+				Members:       []team.Member{{Role: "cto", Binary: "claude", Handle: "cto", Session: "issue-460"}},
+				Orchestrated:  true,
+				Lead:          "cto",
+				ExecutionMode: executionModeProjectLead,
+			})
+			seedAgentRecord(t, base, "issue-460", "cto", launch.Record{Binary: "claude", Handle: "cto", Role: "cto", AgentPID: 4242, GoalBinding: binding})
+			out, err := runStatusExec(t, statusExecution{
+				ProjectDir: dir, RequestedSession: "issue-460", ExplicitSession: true,
+				Probe: statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()), JSON: true,
+			})
+			if err != nil {
+				t.Fatalf("status: %v\n%s", err, out)
+			}
+			env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+			if env.Data.GoalBinding.Mode != "native_goal_missing" || env.Data.GoalBinding.Verified {
+				t.Fatalf("invalid Claude binding surfaced as %+v", env.Data.GoalBinding)
+			}
+		})
 	}
 }
 
@@ -2728,14 +2856,14 @@ func TestExecuteStatusPresenceHandleMismatchIsStaleNotLive(t *testing.T) {
 func TestStatusJSONProvesExternalOrchestratorBinding(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Members:       []team.Member{{Role: goalOrchestratorRole, Binary: "codex", Handle: "global-orch", Session: "issue-96"}},
+		Members:       []team.Member{{Role: goalOrchestratorRole, Binary: "claude", Handle: "global-orch", Session: "issue-96"}},
 		Orchestrated:  true,
 		Lead:          goalOrchestratorRole,
 		ExecutionMode: executionModeProjectLead,
 	})
 	agentDir := seedAgentRecord(t, base, "issue-96", "global-orch", launch.Record{
 		CWD:      dir,
-		Binary:   "codex",
+		Binary:   "claude",
 		Handle:   "global-orch",
 		Role:     goalOrchestratorRole,
 		Session:  "issue-96",

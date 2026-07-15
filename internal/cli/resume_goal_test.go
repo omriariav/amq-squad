@@ -18,17 +18,25 @@ import (
 )
 
 func seededResumeGoalPlan(t *testing.T, conversation string, writeClaim bool) (team.Team, string, []resumePlan) {
+	return seededResumeGoalPlanForBinary(t, conversation, writeClaim, "claude")
+}
+
+func seededResumeGoalPlanForBinary(t *testing.T, conversation string, writeClaim bool, binary string) (team.Team, string, []resumePlan) {
 	t.Helper()
 	project := t.TempDir()
 	session := "issue-447"
 	tm := team.Team{
 		Project: project, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
-		Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: session, CWD: project}},
+		Members: []team.Member{{Role: "cto", Handle: "cto", Binary: binary, Session: session, CWD: project}},
 	}
 	ns := squadnamespace.Resolve(project, team.DefaultProfile, session)
 	const attemptID = "attempt-original"
 	goal := "ship literal --attempt-id fake\nwith \"quotes\""
-	command := nativeGoalControlPrompt(goal, tm, team.DefaultProfile, session, "cto", attemptID)
+	contract, err := goalDeliveryContractForBinary(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := contract.prompt(goal, tm, team.DefaultProfile, session, "cto", attemptID)
 	created := time.Unix(100, 0).UTC()
 	attempt := goalAttemptRecord{SchemaVersion: 1, AttemptID: attemptID, Goal: goal, Project: project, Profile: team.DefaultProfile, Session: session, Namespace: ns, Role: "cto", Handle: "cto", CreatedAt: created}
 	attemptPath, err := goalAttemptPath(project, team.DefaultProfile, session, attemptID)
@@ -40,13 +48,13 @@ func seededResumeGoalPlan(t *testing.T, conversation string, writeClaim bool) (t
 	}
 	writeTestJSON(t, attemptPath, attempt)
 	if writeClaim {
-		writeTestJSON(t, goalAttemptClaimPath(attemptPath), goalAttemptClaim{AttemptID: attemptID, Route: "native", ClaimedAt: created.Add(time.Second)})
+		writeTestJSON(t, goalAttemptClaimPath(attemptPath), goalAttemptClaim{AttemptID: attemptID, Route: contract.ClaimRoute, ClaimedAt: created.Add(time.Second)})
 	}
 	rec := launch.Record{
-		CWD: project, Binary: "codex", Session: session, SharedWorkstream: true, Conversation: conversation,
+		CWD: project, Binary: binary, Session: session, SharedWorkstream: true, Conversation: conversation,
 		Handle: "cto", Role: "cto", Root: ns.AMQRoot, TeamHome: project, TeamProfile: team.DefaultProfile,
 		BootstrapExpectation: &bootstrapack.Expectation{Required: true},
-		GoalBinding:          &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: command, Detail: "delivered"},
+		GoalBinding:          contract.binding(goal, attemptID, command, "goal-control", "delivered"),
 	}
 	return tm, session, []resumePlan{{Role: "cto", Handle: "cto", Action: resumeRestore, HasRestoreRecord: true, RestoreRecord: &rec}}
 }
@@ -72,8 +80,12 @@ func mustGoalAttemptPath(t *testing.T, project, profile, session, attemptID stri
 }
 
 func freshResumeTransitionFixture(t *testing.T) (team.Team, string, []resumePlan, runwizard.ResumeGoalPlan, resumeExecLaunchResult) {
+	return freshResumeTransitionFixtureForBinary(t, "claude")
+}
+
+func freshResumeTransitionFixtureForBinary(t *testing.T, binary string) (team.Team, string, []resumePlan, runwizard.ResumeGoalPlan, resumeExecLaunchResult) {
 	t.Helper()
-	tm, session, plans := seededResumeGoalPlan(t, "", true)
+	tm, session, plans := seededResumeGoalPlanForBinary(t, "", true, binary)
 	if err := team.WriteProfile(tm.Project, team.DefaultProfile, tm); err != nil {
 		t.Fatal(err)
 	}
@@ -97,11 +109,11 @@ func freshResumeTransitionFixture(t *testing.T) (team.Team, string, []resumePlan
 	}
 	oldInspector := statusPaneInspector
 	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
-		return tmuxpane.TmuxPane{PaneID: id, CWD: tm.Project, Command: "codex"}, id == "%447"
+		return tmuxpane.TmuxPane{PaneID: id, CWD: tm.Project, Command: binary}, id == "%447"
 	}
 	t.Cleanup(func() { statusPaneInspector = oldInspector })
 	result := resumeExecLaunchResult{
-		Check: resumeExecLaunchCheck{Role: "cto", Handle: "cto", CWD: tm.Project, AgentDir: agentDir, Workstream: session, Root: ns.AMQRoot, Binary: "codex", Profile: team.DefaultProfile},
+		Check: resumeExecLaunchCheck{Role: "cto", Handle: "cto", CWD: tm.Project, AgentDir: agentDir, Workstream: session, Root: ns.AMQRoot, Binary: binary, Profile: team.DefaultProfile},
 		State: resumeExecLaunchStateLaunched, RecordModTime: info.ModTime(), RecordStarted: rec.StartedAt,
 	}
 	return tm, session, plans, plan, result
@@ -359,6 +371,42 @@ func TestResumeGoalTransitionCreatesExactlyOnePreallocatedAttempt(t *testing.T) 
 	}
 	if attempts != 2 {
 		t.Fatalf("attempts=%d want original+one redelivery; entries=%v", attempts, entries)
+	}
+}
+
+func TestResumeGoalTransitionRedeliversStructuredCodexPrompt(t *testing.T) {
+	tm, session, _, plan, verified := freshResumeTransitionFixtureForBinary(t, "codex")
+	if plan.BindingMode != "prompt_goal" || plan.BindingNative {
+		t.Fatalf("Codex resume plan binding = %+v", plan)
+	}
+	if err := reserveResumeGoalTransition(tm, team.DefaultProfile, session, verified, plan); err != nil {
+		t.Fatal(err)
+	}
+	oldLister, oldSend := statusPaneLister, sendPromptToPane
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		return []tmuxpane.TmuxPane{{PaneID: "%447", CWD: tm.Project, Command: "codex", Title: "amq:" + session + ":cto"}}, nil
+	}
+	var prompt string
+	sendPromptToPane = func(_ string, value string) error { prompt = value; return nil }
+	t.Cleanup(func() { statusPaneLister, sendPromptToPane = oldLister, oldSend })
+	opts := goalDeliveryOptions{Project: tm.Project, Profile: team.DefaultProfile, Session: session, Role: "cto", Goal: plan.Goal, Team: tm, Member: tm.Members[0], Namespace: squadnamespace.Resolve(tm.Project, team.DefaultProfile, session), Mode: executionModeProjectLead, ResumeTransitionID: plan.TransitionID}
+	result, err := executeGoalDelivery(opts)
+	if err != nil {
+		t.Fatalf("Codex transition delivery: %v", err)
+	}
+	if result.Status != "prompt_goal_delivered" || result.DeliveryReceipt == nil {
+		t.Fatalf("Codex transition result = %+v", result)
+	}
+	goal, attemptID, err := parseCodexGoalControlPrompt(prompt)
+	if err != nil || goal != plan.Goal || attemptID != result.DeliveryReceipt.AttemptID {
+		t.Fatalf("Codex redelivery prompt identity = goal %q attempt %q err %v; receipt=%+v", goal, attemptID, err, result.DeliveryReceipt)
+	}
+	if !strings.Contains(prompt, "--route prompt") || !strings.Contains(prompt, "ship literal --attempt-id fake\nwith \"quotes\"") {
+		t.Fatalf("Codex resume prompt lost claim route or actual newline: %q", prompt)
+	}
+	rec, err := launch.Read(verified.Check.AgentDir)
+	if err != nil || !exactGoalBinding(rec.GoalBinding, goalDeliveryContract{Binary: "codex", Mode: goalBindingModePrompt, ClaimRoute: goalClaimRoutePrompt}, plan.Goal, attemptID, prompt, "goal-control") {
+		t.Fatalf("Codex resume binding = %+v err=%v", rec.GoalBinding, err)
 	}
 }
 
@@ -818,11 +866,62 @@ func TestResumeGoalPlanRejectsNonGeneratedRawCommand(t *testing.T) {
 	}
 }
 
+func TestResumeGoalPlanRejectsCorruptOrMismatchedPromptBindingWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*launch.GoalBinding)
+	}{
+		{name: "corrupt command", mutate: func(binding *launch.GoalBinding) { binding.Command += "\ncorrupt" }},
+		{name: "typed goal mismatch", mutate: func(binding *launch.GoalBinding) { binding.Goal = "different goal" }},
+		{name: "typed attempt mismatch", mutate: func(binding *launch.GoalBinding) { binding.AttemptID = "different-attempt" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm, session, plans := seededResumeGoalPlanForBinary(t, "", true, "codex")
+			attemptPath := mustGoalAttemptPath(t, tm.Project, team.DefaultProfile, session, "attempt-original")
+			claimPath := goalAttemptClaimPath(attemptPath)
+			beforeAttempt, err := os.ReadFile(attemptPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeClaim, err := os.ReadFile(claimPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeEntries, err := os.ReadDir(filepath.Dir(attemptPath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := *plans[0].RestoreRecord
+			binding := *rec.GoalBinding
+			tt.mutate(&binding)
+			rec.GoalBinding = &binding
+			plans[0].RestoreRecord = &rec
+			oldSend := sendPromptToPane
+			sends := 0
+			sendPromptToPane = func(string, string) error { sends++; return nil }
+			t.Cleanup(func() { sendPromptToPane = oldSend })
+
+			got := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
+			if got.Eligible || got.Action != "blocked" || !strings.Contains(got.Reason, "saved goal binding is invalid") {
+				t.Fatalf("invalid resume binding accepted: %+v", got)
+			}
+			afterAttempt, attemptErr := os.ReadFile(attemptPath)
+			afterClaim, claimErr := os.ReadFile(claimPath)
+			afterEntries, entriesErr := os.ReadDir(filepath.Dir(attemptPath))
+			if attemptErr != nil || claimErr != nil || entriesErr != nil || string(afterAttempt) != string(beforeAttempt) || string(afterClaim) != string(beforeClaim) || len(afterEntries) != len(beforeEntries) || sends != 0 {
+				t.Fatalf("resume mutated invalid binding: sends=%d entries=%d/%d attempt_changed=%t claim_changed=%t attempt_err=%v claim_err=%v entries_err=%v", sends, len(afterEntries), len(beforeEntries), string(afterAttempt) != string(beforeAttempt), string(afterClaim) != string(beforeClaim), attemptErr, claimErr, entriesErr)
+			}
+		})
+	}
+}
+
 func TestParseGeneratedGoalBindingIsQuoteAware(t *testing.T) {
 	tm := team.Team{ExecutionMode: executionModeProjectLead}
-	command := nativeGoalControlPrompt("say --attempt-id fake and \"quoted\"", tm, "default", "issue-447", "cto", "real-attempt")
+	wantGoal := "say --attempt-id fake and \"quoted\"\nsecond line"
+	command := nativeGoalControlPrompt(wantGoal, tm, "default", "issue-447", "cto", "real-attempt")
 	goal, attemptID, err := parseGeneratedGoalBinding(command)
-	if err != nil || attemptID != "real-attempt" || !strings.Contains(goal, "--attempt-id fake") {
+	if err != nil || attemptID != "real-attempt" || goal != wantGoal || strings.Contains(command, `quoted\nsecond`) {
 		t.Fatalf("parse = goal %q attempt %q err %v", goal, attemptID, err)
 	}
 	if _, _, err := parseGeneratedGoalBinding(command + " --attempt-id duplicate"); err == nil {
@@ -831,8 +930,9 @@ func TestParseGeneratedGoalBindingIsQuoteAware(t *testing.T) {
 }
 
 func TestRestoreGoalBindingIsMetadataNotChildArg(t *testing.T) {
-	command := `/goal --goal "ship" --session s --profile default --mode project_lead --attempt-id a1`
-	rec := launch.Record{CWD: "/tmp/project", Binary: "codex", Role: "cto", Handle: "cto", Session: "s", Argv: []string{"--enable", "goals", command}, GoalBinding: &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: command, Detail: "reserved"}}
+	tm := team.Team{Project: "/tmp/project", Lead: "cto", ExecutionMode: executionModeProjectLead}
+	command := codexGoalControlPrompt("ship\nsecond line", tm, team.DefaultProfile, "s", "cto", "a1")
+	rec := launch.Record{CWD: "/tmp/project", Binary: "codex", Role: "cto", Handle: "cto", Session: "s", Argv: []string{"--enable", "goals", command}, GoalBinding: &launch.GoalBinding{Mode: "prompt_goal", NativeGoal: false, Source: "goal-control", Command: command, Goal: "ship\nsecond line", AttemptID: "a1", Detail: "reserved"}}
 	args := launchArgsFromRecord(rec)
 	var metadata string
 	dash := len(args)
@@ -865,7 +965,10 @@ func TestRestoreGoalBindingIsMetadataNotChildArg(t *testing.T) {
 func TestRunLaunchRestoresGoalBindingMetadataWithoutActivation(t *testing.T) {
 	project := seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "issue-447"}}, Orchestrated: true, Lead: "cto"})
 	setupFakeAMQ(t)
-	binding := &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: `/goal --goal "ship" --session issue-447 --profile default --mode project_lead --attempt-id a1`, Detail: "reserved bytes\nunchanged"}
+	tm := team.Team{Project: project, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "issue-447"}}, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead}
+	goal := "ship\nsecond line"
+	command := codexGoalControlPrompt(goal, tm, team.DefaultProfile, "issue-447", "cto", "a1")
+	binding := &launch.GoalBinding{Mode: "prompt_goal", NativeGoal: false, Source: "goal-control", Command: command, Goal: goal, AttemptID: "a1", Detail: "reserved bytes\nunchanged"}
 	rec := launch.Record{CWD: project, Binary: "codex", Role: "cto", Handle: "cto", Session: "issue-447", SharedWorkstream: true, TeamHome: project, Argv: []string{"--enable", "goals", binding.Command}, GoalBinding: binding}
 	var observed launch.Record
 	var child []string
@@ -880,7 +983,7 @@ func TestRunLaunchRestoresGoalBindingMetadataWithoutActivation(t *testing.T) {
 		t.Fatalf("restored binding changed: got=%+v want=%+v", observed.GoalBinding, binding)
 	}
 	for _, arg := range child {
-		if strings.HasPrefix(strings.TrimSpace(arg), "/goal") {
+		if arg == binding.Command {
 			t.Fatalf("restored binding activated through child argv: %v", child)
 		}
 	}
@@ -890,7 +993,7 @@ func TestRunLaunchRestoresGoalBindingMetadataWithoutActivation(t *testing.T) {
 	}
 	conflict := []string{"--dry-run", "--project", project, "--session", "issue-447", "--role", "cto", "--restore-goal-binding", string(payload), "codex", "--", binding.Command}
 	if _, _, err := captureOutput(t, func() error { return runLaunch(conflict) }); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
-		t.Fatalf("metadata/native-goal conflict accepted: %v", err)
+		t.Fatalf("metadata/prompt-goal conflict accepted: %v", err)
 	}
 }
 
@@ -910,7 +1013,12 @@ func TestGoalRetryAttemptRequiresYesAndNeverCreatesAnotherAttempt(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec.GoalBinding = &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: nativeGoalControlPrompt(opts.Goal, tm, team.DefaultProfile, "issue-96", "cto", attemptID), Detail: "reserved"}
+	contract, err := goalDeliveryContractForBinary(rec.Binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := contract.prompt(opts.Goal, tm, team.DefaultProfile, "issue-96", "cto", attemptID)
+	rec.GoalBinding = contract.binding(opts.Goal, attemptID, prompt, "goal-control", "reserved")
 	rec.Root = opts.Namespace.AMQRoot
 	rec.TeamHome = dir
 	rec.TeamProfile = team.DefaultProfile
@@ -945,7 +1053,7 @@ func TestGoalRetryAttemptRequiresYesAndNeverCreatesAnotherAttempt(t *testing.T) 
 	if attemptRecords != 1 {
 		t.Fatalf("retry created another attempt: %v", entries)
 	}
-	if claimed, _, err := claimGoalAttempt(dir, team.DefaultProfile, "issue-96", attemptID, "native", time.Unix(201, 0).UTC()); err != nil || !claimed {
+	if claimed, _, err := claimGoalAttempt(dir, team.DefaultProfile, "issue-96", attemptID, contract.ClaimRoute, time.Unix(201, 0).UTC()); err != nil || !claimed {
 		t.Fatalf("claim recovery attempt: claimed=%t err=%v", claimed, err)
 	}
 	if _, _, err := captureOutput(t, func() error { return runGoal(append(args, "--yes")) }); err == nil || !strings.Contains(err.Error(), "already claimed") {
@@ -953,6 +1061,75 @@ func TestGoalRetryAttemptRequiresYesAndNeverCreatesAnotherAttempt(t *testing.T) 
 	}
 	if len(*prompts) != 1 {
 		t.Fatalf("claimed retry sent again: %v", *prompts)
+	}
+}
+
+func TestGoalRetryAttemptRejectsCorruptOrMismatchedPromptBindingBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*launch.GoalBinding)
+	}{
+		{name: "corrupt command", mutate: func(binding *launch.GoalBinding) { binding.Command += "\ncorrupt" }},
+		{name: "typed goal mismatch", mutate: func(binding *launch.GoalBinding) { binding.Goal = "different goal" }},
+		{name: "typed attempt mismatch", mutate: func(binding *launch.GoalBinding) { binding.AttemptID = "different-attempt" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, base, calls, prompts := setupGoalDeliveryFailureTest(t, nil)
+			tm, err := team.ReadProfile(dir, team.DefaultProfile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const attemptID = "invalid-binding-retry"
+			ns := squadnamespace.Resolve(dir, team.DefaultProfile, "issue-96")
+			opts := goalDeliveryOptions{Project: dir, Profile: team.DefaultProfile, Session: "issue-96", Role: "cto", Goal: "retry exact", Team: tm, Member: tm.Members[0], Namespace: ns, Mode: executionModeProjectLead}
+			attemptPath, err := createGoalAttempt(opts, attemptID, time.Unix(800, 0).UTC())
+			if err != nil {
+				t.Fatal(err)
+			}
+			agentDir := filepath.Join(base, "issue-96", "agents", "cto")
+			rec, err := launch.Read(agentDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			contract, err := goalDeliveryContractForBinary(rec.Binary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec.Root, rec.TeamHome, rec.TeamProfile = ns.AMQRoot, dir, team.DefaultProfile
+			rec.StartedAt = time.Unix(799, 0).UTC()
+			rec.BootstrapExpectation = &bootstrapack.Expectation{Required: true, LaunchID: "invalid-binding-retry-launch"}
+			prompt := contract.prompt(opts.Goal, tm, team.DefaultProfile, "issue-96", "cto", attemptID)
+			rec.GoalBinding = contract.binding(opts.Goal, attemptID, prompt, "goal-control", "reserved")
+			tt.mutate(rec.GoalBinding)
+			if err := launch.Write(agentDir, rec); err != nil {
+				t.Fatal(err)
+			}
+			launchPath := launch.ExistingPath(agentDir)
+			beforeLaunch, err := os.ReadFile(launchPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeAttempt, err := os.ReadFile(attemptPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, _, err = captureOutput(t, func() error {
+				return runGoal([]string{"retry-attempt", "--project", dir, "--session", "issue-96", "--role", "cto", "--attempt-id", attemptID, "--yes"})
+			})
+			if err == nil || !strings.Contains(err.Error(), "current lead binding does not match attempt") {
+				t.Fatalf("invalid retry binding accepted: %v", err)
+			}
+			afterLaunch, launchErr := os.ReadFile(launchPath)
+			afterAttempt, attemptErr := os.ReadFile(attemptPath)
+			if launchErr != nil || attemptErr != nil || string(afterLaunch) != string(beforeLaunch) || string(afterAttempt) != string(beforeAttempt) || len(*prompts) != 0 || len(*calls) != 0 {
+				t.Fatalf("retry mutated invalid binding: prompts=%v calls=%d launch_changed=%t attempt_changed=%t launch_err=%v attempt_err=%v", *prompts, len(*calls), string(afterLaunch) != string(beforeLaunch), string(afterAttempt) != string(beforeAttempt), launchErr, attemptErr)
+			}
+			if _, claimErr := os.Stat(goalAttemptClaimPath(attemptPath)); !os.IsNotExist(claimErr) {
+				t.Fatalf("retry created claim for invalid binding: %v", claimErr)
+			}
+		})
 	}
 }
 
@@ -1006,7 +1183,12 @@ func TestGoalRetryAttemptQueuedAndFallbackReuseExactAttempt(t *testing.T) {
 			rec.Root, rec.TeamHome, rec.TeamProfile = ns.AMQRoot, dir, team.DefaultProfile
 			rec.StartedAt = time.Unix(599, 0).UTC()
 			rec.BootstrapExpectation = &bootstrapack.Expectation{Required: true, LaunchID: "retry-queued-fallback"}
-			rec.GoalBinding = &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: nativeGoalControlPrompt(opts.Goal, tm, team.DefaultProfile, "issue-96", "cto", attemptID), Detail: "reserved"}
+			contract, err := goalDeliveryContractForBinary(rec.Binary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prompt := contract.prompt(opts.Goal, tm, team.DefaultProfile, "issue-96", "cto", attemptID)
+			rec.GoalBinding = contract.binding(opts.Goal, attemptID, prompt, "goal-control", "reserved")
 			if err := launch.Write(agentDir, rec); err != nil {
 				t.Fatal(err)
 			}
@@ -1055,7 +1237,12 @@ func TestGoalRetryAttemptReleasesIdentityLocksBeforeBlockedSend(t *testing.T) {
 	rec.Root, rec.TeamHome, rec.TeamProfile = ns.AMQRoot, dir, team.DefaultProfile
 	rec.StartedAt = time.Unix(699, 0).UTC()
 	rec.BootstrapExpectation = &bootstrapack.Expectation{Required: true, LaunchID: "retry-cas-launch"}
-	rec.GoalBinding = &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: nativeGoalControlPrompt(opts.Goal, tm, team.DefaultProfile, "issue-96", "cto", attemptID), Detail: "reserved"}
+	contract, err := goalDeliveryContractForBinary(rec.Binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := contract.prompt(opts.Goal, tm, team.DefaultProfile, "issue-96", "cto", attemptID)
+	rec.GoalBinding = contract.binding(opts.Goal, attemptID, prompt, "goal-control", "reserved")
 	if err := launch.Write(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
@@ -1103,11 +1290,15 @@ func TestQueuedRedeliveryReservesSecondAttemptAndBlocksThird(t *testing.T) {
 	}
 	ns := squadnamespace.Resolve(dir, team.DefaultProfile, "issue-96")
 	original := goalDeliveryOptions{Project: dir, Profile: team.DefaultProfile, Session: "issue-96", Role: "cto", Goal: "ship safely", Team: tm, Member: tm.Members[0], Namespace: ns, Mode: executionModeProjectLead}
+	contract, err := goalDeliveryContractForBinary(tm.Members[0].Binary)
+	if err != nil {
+		t.Fatal(err)
+	}
 	const originalID = "original-claimed"
 	if _, err := createGoalAttempt(original, originalID, time.Unix(300, 0).UTC()); err != nil {
 		t.Fatal(err)
 	}
-	if claimed, _, err := claimGoalAttempt(dir, team.DefaultProfile, "issue-96", originalID, "native", time.Unix(301, 0).UTC()); err != nil || !claimed {
+	if claimed, _, err := claimGoalAttempt(dir, team.DefaultProfile, "issue-96", originalID, contract.ClaimRoute, time.Unix(301, 0).UTC()); err != nil || !claimed {
 		t.Fatalf("claim original: %t %v", claimed, err)
 	}
 	if _, _, err := captureOutput(t, func() error {
@@ -1120,7 +1311,7 @@ func TestQueuedRedeliveryReservesSecondAttemptAndBlocksThird(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, secondID, err := parseGeneratedGoalBinding(rec.GoalBinding.Command)
+	_, secondID, err := goalBindingPayload(rec.GoalBinding, contract)
 	if err != nil || secondID == "" || secondID == originalID {
 		t.Fatalf("reserved binding did not advance attempt: %q %v", secondID, err)
 	}
@@ -1153,7 +1344,7 @@ func TestResumeExplicitRedeliveryRejectsPendingSecondAttemptBeforeMutation(t *te
 		sendErr    error
 		claimRoute string
 	}{
-		{name: "queued native", sendErr: &tmuxpane.QueuedInputError{PaneID: "%7"}, claimRoute: "native"},
+		{name: "queued prompt", sendErr: &tmuxpane.QueuedInputError{PaneID: "%7"}, claimRoute: "prompt"},
 		{name: "durable fallback", sendErr: &tmuxpane.SubmitUnconfirmedError{PaneID: "%7", Attempts: 3}, claimRoute: "amq"},
 	}
 	for _, tt := range tests {
@@ -1163,6 +1354,10 @@ func TestResumeExplicitRedeliveryRejectsPendingSecondAttemptBeforeMutation(t *te
 				t.Fatal(err)
 			}
 			tm, err := team.ReadProfile(dir, team.DefaultProfile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			contract, err := goalDeliveryContractForBinary(tm.Members[0].Binary)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1186,7 +1381,8 @@ func TestResumeExplicitRedeliveryRejectsPendingSecondAttemptBeforeMutation(t *te
 			rec.TeamProfile = team.DefaultProfile
 			rec.SharedWorkstream = true
 			rec.BootstrapExpectation = &bootstrapack.Expectation{Required: true, LaunchID: "fresh-resume-redelivery"}
-			rec.GoalBinding = &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: nativeGoalControlPrompt(original.Goal, tm, team.DefaultProfile, "issue-96", "cto", originalID), Detail: "delivered"}
+			prompt := contract.prompt(original.Goal, tm, team.DefaultProfile, "issue-96", "cto", originalID)
+			rec.GoalBinding = contract.binding(original.Goal, originalID, prompt, "goal-control", "delivered")
 			goalPlan := buildResumeGoalPlan(tm, team.DefaultProfile, "issue-96", []resumePlan{{Role: "cto", Handle: "cto", Action: resumeRestore, HasRestoreRecord: true, RestoreRecord: &rec}}, false, false)
 			if !goalPlan.Eligible {
 				t.Fatalf("original settled plan ineligible: %+v", goalPlan)
@@ -1207,10 +1403,10 @@ func TestResumeExplicitRedeliveryRejectsPendingSecondAttemptBeforeMutation(t *te
 			}
 			t.Cleanup(func() { statusPaneInspector = oldInspector })
 			// Assert the durable attempt and launch binding exist before either the
-			// queued-native or unconfirmed/fallback send seam runs.
+			// queued-prompt or unconfirmed/fallback send seam runs.
 			underlyingSend := sendPromptToPane
 			sendPromptToPane = func(paneID, prompt string) error {
-				_, attemptID, parseErr := parseGeneratedGoalBinding(prompt)
+				_, attemptID, parseErr := parseCodexGoalControlPrompt(prompt)
 				if parseErr != nil {
 					t.Fatalf("parse outgoing redelivery: %v", parseErr)
 				}
@@ -1233,7 +1429,7 @@ func TestResumeExplicitRedeliveryRejectsPendingSecondAttemptBeforeMutation(t *te
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, secondID, err := parseGeneratedGoalBinding(current.GoalBinding.Command)
+			_, secondID, err := goalBindingPayload(current.GoalBinding, contract)
 			if err != nil || secondID == originalID {
 				t.Fatalf("second binding = %q, %v", secondID, err)
 			}
@@ -1272,7 +1468,7 @@ func TestResumeExplicitRedeliveryRejectsPendingSecondAttemptBeforeMutation(t *te
 			if attempts != 2 {
 				t.Fatalf("attempt count=%d want 2", attempts)
 			}
-			if claimed, _, err := claimGoalAttempt(dir, team.DefaultProfile, "issue-96", secondID, "native", time.Now().UTC()); err != nil || !claimed {
+			if claimed, _, err := claimGoalAttempt(dir, team.DefaultProfile, "issue-96", secondID, contract.ClaimRoute, time.Now().UTC()); err != nil || !claimed {
 				t.Fatalf("pending second attempt is not actionable: claimed=%t err=%v", claimed, err)
 			}
 		})

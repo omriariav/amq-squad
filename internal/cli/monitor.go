@@ -295,6 +295,9 @@ func collectMonitorEvents(o monitorLoopOptions) ([]monitorEvent, error) {
 			return nil, fmt.Errorf("monitor: read task store for session %q: %w", session, err)
 		}
 		for _, tk := range tasks {
+			if taskstore.IsAttentionLifecycleTerminal(tk) {
+				continue
+			}
 			if tk.Status == taskstore.StatusBlocked || tk.Status == taskstore.StatusFailed {
 				detail := tk.Title
 				if r := strings.TrimSpace(tk.BlockReason + tk.FailureReason); r != "" {

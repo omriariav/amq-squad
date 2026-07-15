@@ -10,6 +10,7 @@ Identity:
 Startup files:
 {{- if .TeamRulesPath }}
 - Team rules: {{.TeamRulesPath}}
+- Canonical workspace safety: follow `## Workspace Safety and Cleanup` in {{.TeamRulesPath}}. This bootstrap references that single source instead of repeating its commands.
 {{- else }}
 - Team rules: not configured
 {{- end }}

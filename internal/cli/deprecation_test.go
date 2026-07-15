@@ -96,7 +96,7 @@ if [ "$1" = "env" ]; then
     echo "unexpected cwd: $actual" >&2
     exit 17
   fi
-  printf '{"root":"%s"}\n' "$AMQ_FAKE_ROOT"
+  printf '{"root":"%s","amq_version":"0.42.1"}\n' "$AMQ_FAKE_ROOT"
   exit 0
 fi
 echo "unexpected amq command: $*" >&2
@@ -274,7 +274,7 @@ exit 1
 
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runAgentUp([]string{
-			"claude",
+			"custom-agent",
 			"--project", project,
 			"--team-home", project,
 			"--team-profile", "review",
@@ -295,7 +295,7 @@ exit 1
 	if !strings.Contains(stdout, "amq coop exec --root "+shellQuote(namedRoot)) {
 		t.Fatalf("dry-run should use explicit named-profile root, got:\n%s", stdout)
 	}
-	if strings.Contains(stdout, "-- claude") || strings.Contains(stdout, "-- --spawn-origin") || strings.Contains(stdout, "-- --root") {
+	if strings.Contains(stdout, "-- custom-agent") || strings.Contains(stdout, "-- --spawn-origin") || strings.Contains(stdout, "-- --root") {
 		t.Fatalf("launch flags leaked into child argv:\n%s", stdout)
 	}
 	if strings.Contains(stdout, "--session issue-96") {

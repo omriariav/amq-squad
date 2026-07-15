@@ -49,6 +49,7 @@ type downReport struct {
 	CWD    string
 	Status downStatus
 	Detail string
+	Pane   PaneCleanupResult `json:"pane"`
 }
 
 // processTerminator abstracts process-termination so tests can substitute a
@@ -127,12 +128,17 @@ func runStop(args []string) error {
 // runStopWithDeps keeps the production stop dependencies immutable while
 // allowing parser-to-execution tests to supply inert process controls.
 func runStopWithDeps(args []string, terminatorForForce stopTerminatorFactory, probe duplicateLaunchProbe) error {
+	return runStopWithPaneDeps(args, terminatorForForce, probe, PaneCleanupDependencies{})
+}
+
+func runStopWithPaneDeps(args []string, terminatorForForce stopTerminatorFactory, probe duplicateLaunchProbe, paneDeps PaneCleanupDependencies) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
 	sessionName := fs.String("session", "", "AMQ workstream session name (default: team workstream)")
 	role := fs.String("role", "", "narrow to a single configured role")
 	all := fs.Bool("all", false, "target every configured member of the team")
 	force := fs.Bool("force", false, "escalate to SIGKILL for agents that ignore SIGTERM")
 	closePanes := fs.Bool("close-panes", false, "also close each stopped agent's tmux pane (default: keep, so final output stays readable; resume re-creates panes)")
+	jsonOut := fs.Bool("json", false, "emit machine-readable stop results")
 	projectFlag := fs.String("project", "", "project/team-home directory to target (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to target (default: default profile)")
 	registerScopedFlagAliases(fs, projectFlag, sessionName, profileFlag)
@@ -150,31 +156,24 @@ func runStopWithDeps(args []string, terminatorForForce stopTerminatorFactory, pr
 		return usageErrorf("stop requires a target selector: pass --role <role> or --all")
 	}
 
-	profile, err := resolveProfileFlag(*profileFlag)
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionName, "", fs)
 	if err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
-	}
-	if !team.ExistsProfile(projectDir, profile) {
-		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	emitContextDiagnostics(ctx)
+	if !team.ExistsProfile(ctx.ProjectDir, ctx.Profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", ctx.Profile, profileInitCommand(ctx.Profile))
 	}
 	return executeDown(downExecution{
 		Verb:             "stop",
-		ProjectDir:       projectDir,
+		ProjectDir:       ctx.ProjectDir,
 		ExplicitProject:  flagWasSet(fs, "project"),
-		RequestedSession: *sessionName,
+		RequestedSession: ctx.Session,
 		ExplicitSession:  flagWasSet(fs, "session"),
 		ExplicitProfile:  flagWasSet(fs, "profile"),
 		Role:             *role,
 		All:              *all,
-		Profile:          profile,
+		Profile:          ctx.Profile,
 		// default=SIGTERM; --force=SIGKILL escalation for agents that ignore
 		// SIGTERM. The PID-liveness + binary-match guards still apply, so a
 		// reused/foreign PID is never signaled regardless of --force.
@@ -182,13 +181,15 @@ func runStopWithDeps(args []string, terminatorForForce stopTerminatorFactory, pr
 		Probe:      probe,
 		Out:        os.Stdout,
 		ClosePanes: *closePanes,
+		JSON:       *jsonOut,
+		PaneDeps:   paneDeps,
 	})
 }
 
 func stopUsage() string {
 	var b strings.Builder
 	b.WriteString("amq-squad stop - stop configured team members (the session stays resumable)\n\n")
-	b.WriteString("Usage:\n  amq-squad stop (--role R | --all) [--project DIR] [--force] [--close-panes] [--profile NAME] [--session NAME]\n\n")
+	b.WriteString("Usage:\n  amq-squad stop (--role R | --all) [--project DIR] [--force] [--close-panes] [--profile NAME] [--session NAME] [--json]\n\n")
 	b.WriteString(`Exactly one selector is required: --role R or --all. --all targets the
 configured members from this project's team.json in the resolved session
 (default: the team's workstream). --project targets another team-home without
@@ -202,6 +203,9 @@ ignore SIGTERM.
 
 The on-disk state (launch record, mailbox, brief) is PRESERVED, so the session
 is recoverable: bring it back with 'amq-squad resume'.
+
+--close-panes requests fail-closed exact-identity pane cleanup after signaling.
+--json emits one machine-readable result with separate agent and pane outcomes.
 
 Exit codes: a successful stop exits 0; a mixed run (some stopped, some failed
 or unconfirmed) exits 3.
@@ -231,6 +235,8 @@ type downExecution struct {
 	// ClosePanes closes each downed agent's recorded tmux pane after teardown.
 	// stop defaults this OFF (final output stays readable; --close-panes opts in).
 	ClosePanes bool
+	JSON       bool
+	PaneDeps   PaneCleanupDependencies
 }
 
 func executeDown(d downExecution) error {
@@ -254,6 +260,31 @@ func executeDown(d downExecution) error {
 	if err != nil {
 		return err
 	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(d.ProjectDir, d.Profile, workstream), "")
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(d.ProjectDir, d.Profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentTeam, err := team.ReadProfile(d.ProjectDir, d.Profile)
+	if err != nil {
+		return fmt.Errorf("%s refused: reread team under admission: %w", verb, err)
+	}
+	currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, d.RequestedSession, d.ExplicitSession)
+	if err != nil {
+		return err
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(d.ProjectDir, d.Profile, currentWorkstream), "")
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity(verb, initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	t, workstream = currentTeam, currentWorkstream
 	exactStopScope := exactStopNamespaceScope{
 		Verb:            verb,
 		ProjectDir:      d.ProjectDir,
@@ -298,12 +329,9 @@ func executeDown(d downExecution) error {
 		exceptionScope = &exactStopScope
 	}
 	for _, m := range targets {
-		reports = append(reports, terminateMember(t, d.Profile, m, workstream, d.Terminator, d.Probe, exceptionScope))
+		reports = append(reports, terminateMember(t, d.ProjectDir, d.Profile, m, workstream, d.Terminator, d.Probe, exceptionScope, d.ClosePanes, d.PaneDeps))
 	}
-	if d.ClosePanes {
-		closeDownedPanes(reports, workstream)
-	}
-	renderErr := renderDownReports(d.Out, verb, workstream, reports)
+	renderErr := renderDownReportsScoped(d.Out, verb, d.ProjectDir, d.Profile, workstream, reports, d.JSON)
 	if watcherStopped && !downReportsConfirmed(reports) {
 		restartErr := reconcileNotificationWatcherStarted(t, d.Profile, workstream, "")
 		if restartErr != nil {
@@ -396,37 +424,6 @@ func shouldStopNotificationWatcherAfterDown(all bool, targeted []team.Member, ro
 	return true
 }
 
-// closeDownedPanes closes the recorded tmux pane of every member that is
-// confirmed DOWN (stopped / cleaned / not-live) and carries a recorded pane id.
-// maybe-live and failed members are deliberately left alone — amq-squad never
-// closes a pane it is not sure is dead. Best-effort: a kill-pane error (e.g. the
-// pane is already gone) is swallowed and the teardown result is unaffected.
-func closeDownedPanes(reports []downReport, workstream string) {
-	for i := range reports {
-		r := &reports[i]
-		if strings.TrimSpace(r.PaneID) == "" {
-			continue
-		}
-		switch r.Status {
-		case downStatusStopped, downStatusCleaned, downStatusNotLive:
-			closed, skip := closeRecordedPaneSafely(r.PaneID, workstream, r.Role, r.CWD)
-			note := ""
-			if closed {
-				note = "closed tmux pane " + r.PaneID
-			} else if skip != "" {
-				note = "left tmux pane open: " + skip
-			}
-			if note != "" {
-				if strings.TrimSpace(r.Detail) == "" {
-					r.Detail = note
-				} else {
-					r.Detail += "; " + note
-				}
-			}
-		}
-	}
-}
-
 func selectDownMembers(t team.Team, role string, all bool) ([]team.Member, error) {
 	members := orderedTeamMembers(t.Members)
 	if all {
@@ -445,8 +442,9 @@ func selectDownMembers(t team.Team, role string, all bool) ([]team.Member, error
 	return nil, fmt.Errorf("unknown role %q; team has: %s", role, strings.Join(names, ", "))
 }
 
-func terminateMember(t team.Team, profile string, m team.Member, workstream string, term processTerminator, probe duplicateLaunchProbe, exactStopScope *exactStopNamespaceScope) downReport {
+func terminateMember(t team.Team, projectDir, profile string, m team.Member, workstream string, term processTerminator, probe duplicateLaunchProbe, exactStopScope *exactStopNamespaceScope, closePanes bool, paneDeps PaneCleanupDependencies) downReport {
 	report := downReport{Role: m.Role, Handle: m.Handle, Binary: m.Binary}
+	report.Pane = paneCleanupUnavailableWithoutRecord(closePanes, "launch record unavailable")
 	cwd := m.EffectiveCWD(t.Project)
 	env, err := resolveAMQEnvForTeamProfile(cwd, profile, workstream, m.Handle)
 	if err != nil {
@@ -485,8 +483,18 @@ func terminateMember(t team.Team, profile string, m team.Member, workstream stri
 	}
 	report.CWD = compareCWD(cwd, rec.CWD)
 	report.PID = rec.AgentPID
+	baseRoot := absoluteAMQRoot(cwd, env.BaseRoot)
+	if strings.TrimSpace(workstream) != "" && sameResolvedDir(baseRoot, root) {
+		baseRoot = filepath.Dir(root)
+	}
+	request := paneCleanupRequestForMember(t, projectDir, profile, workstream, m, handle, cwd, root, baseRoot, rec, closePanes, PaneCleanupAgentAttestation{})
+	prepare := func(att PaneCleanupAgentAttestation) PaneCleanupPreparation {
+		request.Attestation = att
+		return PreparePaneCleanup(request, paneDeps)
+	}
 	strictWakeRoot := exactStopScope != nil
-	if rec.External {
+	if recordIsExternal(rec) {
+		report.Pane = prepare(PaneCleanupAgentAttestation{}).Result
 		report.Status = downStatusMaybeLive
 		if report.PaneID != "" {
 			report.Detail = fmt.Sprintf("external/adopted pane %s is operator-owned; stop it manually if needed", report.PaneID)
@@ -496,6 +504,7 @@ func terminateMember(t team.Team, profile string, m team.Member, workstream stri
 		return report
 	}
 	if rec.AgentPID <= 0 {
+		report.Pane = prepare(PaneCleanupAgentAttestation{}).Result
 		// No pid was captured at launch (e.g. codex seats never recorded one).
 		// There is nothing to signal, so consult presence before implying the
 		// member is gone: a fresh heartbeat means it may well still be running.
@@ -520,6 +529,7 @@ func terminateMember(t team.Team, profile string, m team.Member, workstream stri
 		return report
 	}
 	if !probe.PIDAlive(rec.AgentPID) {
+		report.Pane = prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: rec.Binary, Live: false}).Result
 		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, term, probe)
 		if cleaned.failed() {
 			report.Status = downStatusFailed
@@ -539,7 +549,9 @@ func terminateMember(t team.Team, profile string, m team.Member, workstream stri
 	if binary == "" {
 		binary = m.Binary
 	}
-	if binary == "" || !probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(binary)) {
+	binaryMatch := binary != "" && probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(binary))
+	if !binaryMatch {
+		report.Pane = prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: binary, Live: true, BinaryMatch: false}).Result
 		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, term, probe)
 		if cleaned.failed() {
 			report.Status = downStatusFailed
@@ -555,11 +567,19 @@ func terminateMember(t team.Team, profile string, m team.Member, workstream stri
 		report.Detail = fmt.Sprintf("pid %d does not match expected binary %q (PID reuse)", rec.AgentPID, binary)
 		return report
 	}
+	prepared := prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: binary, Live: true, BinaryMatch: true})
+	report.Pane = prepared.Result
 	sigName := signalNameOf(term)
 	if err := term.Terminate(rec.AgentPID); err != nil {
+		if prepared.Ready {
+			report.Pane = paneCleanupPreservedAfterPreparation(prepared, "agent signal failed; pane preserved")
+		}
 		report.Status = downStatusFailed
 		report.Detail = fmt.Sprintf("terminate pid %d: %v", rec.AgentPID, err)
 		return report
+	}
+	if prepared.Ready {
+		report.Pane = ClosePreparedPane(prepared, paneDeps)
 	}
 	// The agent itself just received the stop signal. Reap the wake sidecar and
 	// flip presence offline up front so a racing `up` cannot collide on
@@ -750,8 +770,59 @@ func presenceFreshFor(agentDir, handle string, probe duplicateLaunchProbe) (time
 }
 
 func renderDownReports(out io.Writer, verb, workstream string, reports []downReport) error {
+	return renderDownReportsScoped(out, verb, "", "", workstream, reports, false)
+}
+
+type downAgentJSON struct {
+	Outcome downStatus `json:"outcome"`
+	Detail  string     `json:"detail"`
+}
+
+type downReportJSON struct {
+	Role   string            `json:"role"`
+	Handle string            `json:"handle"`
+	Agent  downAgentJSON     `json:"agent"`
+	Pane   PaneCleanupResult `json:"pane"`
+}
+
+type downEnvelopeData struct {
+	Project string           `json:"project,omitempty"`
+	Profile string           `json:"profile,omitempty"`
+	Session string           `json:"session"`
+	Root    string           `json:"root,omitempty"`
+	Reports []downReportJSON `json:"reports"`
+	Summary rmPaneSummary    `json:"pane_summary"`
+}
+
+func renderDownReportsScoped(out io.Writer, verb, project, profile, workstream string, reports []downReport, jsonOut bool) error {
+	paneFailures := 0
+	paneSummary := rmPaneSummary{}
+	jsonReports := make([]downReportJSON, 0, len(reports))
+	for i := range reports {
+		if reports[i].Pane.Outcome == "" {
+			reports[i].Pane = PaneCleanupResult{Outcome: PaneCleanupNotRequested, Detail: "pane cleanup was not requested"}
+		}
+		if reports[i].Pane.Outcome != PaneCleanupClosed && reports[i].Pane.Outcome != PaneCleanupAlreadyGone && reports[i].Pane.Outcome != PaneCleanupNotRequested {
+			paneFailures++
+		}
+		addPaneOutcomeSummary(&paneSummary, reports[i].Pane.Outcome)
+		jsonReports = append(jsonReports, downReportJSON{Role: reports[i].Role, Handle: reports[i].Handle,
+			Agent: downAgentJSON{Outcome: reports[i].Status, Detail: reports[i].Detail}, Pane: reports[i].Pane})
+	}
+	if jsonOut {
+		if err := writeJSONEnvelope(out, verb, downEnvelopeData{Project: project, Profile: profile, Session: workstream, Root: firstDownRoot(reports), Reports: jsonReports, Summary: paneSummary}); err != nil {
+			return err
+		}
+		return downResultError(verb, reports, paneFailures)
+	}
 	fmt.Fprintf(out, "# amq-squad %s\n", verb)
 	fmt.Fprintf(out, "# workstream: %s\n", workstream)
+	if project != "" {
+		fmt.Fprintf(out, "# project:    %s\n", project)
+	}
+	if profile != "" {
+		fmt.Fprintf(out, "# profile:    %s\n", profile)
+	}
 	if root := firstDownRoot(reports); root != "" {
 		fmt.Fprintf(out, "# AM_ROOT:    %s\n", root)
 	}
@@ -760,7 +831,16 @@ func renderDownReports(out io.Writer, verb, workstream string, reports []downRep
 	policy := outputPolicyCurrent()
 	var stopped, notLive, maybeLive, failed, cleaned int
 	for _, r := range reports {
-		fmt.Fprintf(out, "%-12s %-10s %s\n", r.Role, colorStatus(policy, string(r.Status)), r.Detail)
+		fmt.Fprintf(out, "%-12s agent=%-10s pane=%-30s %s\n", r.Role, colorStatus(policy, string(r.Status)), r.Pane.Outcome, r.Detail)
+		if r.Pane.Detail != "" {
+			fmt.Fprintf(out, "  pane detail: %s\n", r.Pane.Detail)
+		}
+		for _, mismatch := range r.Pane.Mismatches {
+			fmt.Fprintf(out, "  pane mismatch %s expected=%q actual=%q\n", mismatch.Field, mismatch.Expected, mismatch.Actual)
+		}
+		if r.Pane.Recovery != nil {
+			fmt.Fprintf(out, "  pane recovery: pane=%s session=%s window=%s\n", r.Pane.Recovery.Identity.PaneID, r.Pane.Recovery.Identity.TmuxSession, r.Pane.Recovery.Identity.WindowID)
+		}
 		switch r.Status {
 		case downStatusStopped:
 			stopped++
@@ -776,6 +856,11 @@ func renderDownReports(out io.Writer, verb, workstream string, reports []downRep
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "# summary: %d stopped, %d cleaned, %d not-live, %d maybe-live, %d failed\n", stopped, cleaned, notLive, maybeLive, failed)
+	fmt.Fprintf(out, "# pane cleanup: %d closed, %d already_gone, %d not_requested, %d preserved, %d close_failed, %d inspection_unavailable\n",
+		paneSummary.Closed, paneSummary.AlreadyGone, paneSummary.NotRequested, paneSummary.Preserved, paneSummary.CloseFailed, paneSummary.InspectionUnavailable)
+	if paneFailures > 0 {
+		fmt.Fprintln(out, "# recovery: preserved panes require explicit operator review; use mismatch/recovery identity above before manual action")
+	}
 	// State-aware resumable hint: a stop preserves on-disk state, so make it
 	// explicit that the session can be brought back.
 	if stopped > 0 {
@@ -786,6 +871,9 @@ func renderDownReports(out io.Writer, verb, workstream string, reports []downRep
 		fmt.Fprintf(out, "WARN: %d member(s) had no pid to signal but still report fresh presence — they may still be running.\n", maybeLive)
 		fmt.Fprintf(out, "      %s can only signal pids it recorded at launch. Stop the underlying tmux pane / terminal\n", verb)
 		fmt.Fprintln(out, "      manually, then re-run 'amq-squad status' to confirm (AM_ROOT above shows where presence lives).")
+	}
+	if paneFailures > 0 {
+		return &PartialError{Message: fmt.Sprintf("%s: %d pane cleanup(s) were not completed", verb, paneFailures)}
 	}
 	if failed > 0 {
 		msg := fmt.Sprintf("%s: %d of %d target(s) failed", verb, failed, len(reports))
@@ -803,6 +891,36 @@ func renderDownReports(out io.Writer, verb, workstream string, reports []downRep
 	}
 	// Members we could not confirm stopped must not read as a clean success:
 	// surface them as partial so the exit code (3) signals "not fully down".
+	if maybeLive > 0 {
+		return &PartialError{Message: fmt.Sprintf("%s: %d member(s) may still be live (no pid to signal)", verb, maybeLive)}
+	}
+	return nil
+}
+
+func downResultError(verb string, reports []downReport, paneFailures int) error {
+	var stopped, cleaned, maybeLive, failed int
+	for _, report := range reports {
+		switch report.Status {
+		case downStatusStopped:
+			stopped++
+		case downStatusCleaned:
+			cleaned++
+		case downStatusMaybeLive:
+			maybeLive++
+		case downStatusFailed:
+			failed++
+		}
+	}
+	if paneFailures > 0 {
+		return &PartialError{Message: fmt.Sprintf("%s: %d pane cleanup(s) were not completed", verb, paneFailures)}
+	}
+	if failed > 0 {
+		msg := fmt.Sprintf("%s: %d of %d target(s) failed", verb, failed, len(reports))
+		if stopped > 0 || cleaned > 0 || maybeLive > 0 {
+			return &PartialError{Message: msg}
+		}
+		return errors.New(msg)
+	}
 	if maybeLive > 0 {
 		return &PartialError{Message: fmt.Sprintf("%s: %d member(s) may still be live (no pid to signal)", verb, maybeLive)}
 	}

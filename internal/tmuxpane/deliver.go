@@ -56,6 +56,30 @@ func (e *BracketedPasteLeakError) Error() string {
 	return fmt.Sprintf("tmux pane %s did not ingest the bracketed paste (markers leaked as text); the agent is likely still starting up — prompt not delivered, retry shortly", e.PaneID)
 }
 
+// BracketedPasteCheckUnavailableError reports that a multi-line prompt was
+// pasted but the mandatory pre-Enter inspection could not observe a nonblank
+// pane. Enter is deliberately withheld: without a trustworthy capture we
+// cannot prove that bracketed-paste markers were consumed rather than rendered
+// into the input box.
+type BracketedPasteCheckUnavailableError struct {
+	PaneID string
+	Cause  error
+	Detail string
+}
+
+func (e *BracketedPasteCheckUnavailableError) Error() string {
+	detail := strings.TrimSpace(e.Detail)
+	if detail == "" {
+		detail = "post-paste pane capture was unavailable"
+	}
+	if e.Cause != nil {
+		return fmt.Sprintf("could not verify bracketed paste in tmux pane %s before Enter: %s: %v", e.PaneID, detail, e.Cause)
+	}
+	return fmt.Sprintf("could not verify bracketed paste in tmux pane %s before Enter: %s", e.PaneID, detail)
+}
+
+func (e *BracketedPasteCheckUnavailableError) Unwrap() error { return e.Cause }
+
 // deliverExec is the seam for tmux subprocesses used by prompt delivery. Unlike
 // execRunner it accepts optional stdin (so prompt text reaches tmux via
 // `load-buffer -` rather than argv) and returns combined output for diagnostics.
@@ -147,8 +171,8 @@ func SendPromptToPane(paneID, prompt string) error {
 	// input — a dispatch keeps the durable message queued and surfaces the miss.
 	if bracketed {
 		time.Sleep(submitSettleDelay) // let the paste render before inspecting
-		if bracketedPasteLeaked(paneID) {
-			return &BracketedPasteLeakError{PaneID: paneID}
+		if err := inspectBracketedPaste(paneID); err != nil {
+			return err
 		}
 	}
 	// Submit robustly — the Enter must not race the paste (the #86 hang).
@@ -204,17 +228,29 @@ func waitPaneSettled(paneID string) {
 	}
 }
 
-// bracketedPasteLeaked reports whether a bracketed-paste control marker is
-// visible as literal text in the pane — the signature of a paste that landed
-// before the TUI enabled bracketed-paste mode, so tmux's ESC[200~/ESC[201~
-// wrappers were echoed rather than consumed. Best-effort: a capture failure
-// reports false (never block delivery on a capture we cannot trust).
-func bracketedPasteLeaked(paneID string) bool {
+// inspectBracketedPaste performs the mandatory post-paste, pre-Enter check for
+// a multi-line prompt. A visible marker is a definite leak. A capture error or
+// blank capture is unobservable and therefore also blocks Enter. Only a
+// nonblank, marker-free observation permits submission.
+func inspectBracketedPaste(paneID string) error {
 	out, err := paneCapturer(paneID)
 	if err != nil {
-		return false
+		return &BracketedPasteCheckUnavailableError{
+			PaneID: paneID,
+			Cause:  err,
+			Detail: "post-paste pane capture failed",
+		}
 	}
-	return strings.Contains(out, "[200~") || strings.Contains(out, "[201~")
+	if strings.TrimSpace(out) == "" {
+		return &BracketedPasteCheckUnavailableError{
+			PaneID: paneID,
+			Detail: "post-paste pane capture was blank",
+		}
+	}
+	if strings.Contains(out, "[200~") || strings.Contains(out, "[201~") {
+		return &BracketedPasteLeakError{PaneID: paneID}
+	}
+	return nil
 }
 
 // submitStagedPrompt presses Enter to submit a just-pasted prompt and confirms
@@ -231,8 +267,9 @@ func bracketedPasteLeaked(paneID string) bool {
 // text) is robust to line wrapping and input-box borders, and engine-agnostic.
 // If submission can never be confirmed it returns a clear error rather than
 // silently leaving the text staged. Best-effort: if the region cannot be
-// captured it fails open (one Enter, no retry) so a capture problem never blocks
-// delivery or spins.
+// captured it returns SubmitUnconfirmedError after the first Enter. Capture
+// absence is not proof that the prompt submitted; callers must keep this
+// outcome explicitly ambiguous rather than reporting success.
 func submitStagedPrompt(paneID string) error {
 	for attempt := 0; attempt < submitAttempts; attempt++ {
 		time.Sleep(submitSettleDelay)
@@ -248,9 +285,11 @@ func submitStagedPrompt(paneID string) error {
 		if afterOK && queuedInputVisible(after) {
 			return &QueuedInputError{PaneID: paneID}
 		}
-		// Submitted when the input region changed; fail open when either snapshot
-		// is unavailable (don't block or retry on a capture we can't trust).
-		if !beforeOK || !afterOK || after != before {
+		if !beforeOK || !afterOK {
+			return &SubmitUnconfirmedError{PaneID: paneID, Attempts: attempt + 1}
+		}
+		// Submitted only when the observed input region changed.
+		if after != before {
 			return nil
 		}
 		// Unchanged: the Enter was dropped — retry.

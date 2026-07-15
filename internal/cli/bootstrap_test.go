@@ -32,6 +32,7 @@ func TestBuildBootstrapPrompt(t *testing.T) {
 		"Handle: cto",
 		"Workstream: fresh-cto",
 		"Team rules: /repo/.amq-squad/team-rules.md",
+		"Canonical workspace safety: follow `## Workspace Safety and Cleanup` in /repo/.amq-squad/team-rules.md",
 		"Role file: /repo/.agent-mail/fresh-cto/agents/cto/role.md",
 		"Launch record: /repo/.agent-mail/fresh-cto/agents/cto/launch.json",
 		"AMQ as the durable coordination record for tasks, reports, reviews, decisions, and gates.",
@@ -46,6 +47,18 @@ func TestBuildBootstrapPrompt(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("bootstrap prompt missing %q in:\n%s", want, got)
+		}
+	}
+	for _, duplicatedConcept := range []string{
+		"`amq-squad review-worktree`",
+		"`rm -rf`",
+		"`mktemp -d`",
+		"`git worktree add --detach",
+		"`git worktree remove --force",
+		"session scratchpad",
+	} {
+		if strings.Contains(got, duplicatedConcept) {
+			t.Errorf("bootstrap prompt duplicates canonical team-rules concept %q:\n%s", duplicatedConcept, got)
 		}
 	}
 }
@@ -197,7 +210,7 @@ func TestBootstrapPromptIncludesExecutionMode(t *testing.T) {
 		"Target project root: /tmp/project",
 		"Mutable actor: cto",
 		"Implementation allowed: true",
-		"Goal binding: native_goal_missing",
+		"Goal binding: prompt_goal_missing",
 		"visible project team",
 	} {
 		if !strings.Contains(got, want) {
@@ -206,9 +219,9 @@ func TestBootstrapPromptIncludesExecutionMode(t *testing.T) {
 	}
 }
 
-func TestBootstrapPromptReportsNativeGoalBindingForVisibleLead(t *testing.T) {
+func TestBootstrapPromptReportsPromptGoalBindingForCodexVisibleLead(t *testing.T) {
 	teamHome := t.TempDir()
-	if err := team.Write(teamHome, team.Team{
+	tm := team.Team{
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-247"},
 			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-247"},
@@ -216,9 +229,12 @@ func TestBootstrapPromptReportsNativeGoalBindingForVisibleLead(t *testing.T) {
 		Orchestrated:  true,
 		Lead:          "cto",
 		ExecutionMode: executionModeProjectLead,
-	}); err != nil {
+	}
+	if err := team.Write(teamHome, tm); err != nil {
 		t.Fatal(err)
 	}
+	tm.Project = teamHome
+	prompt := codexGoalControlPrompt("ship", tm, team.DefaultProfile, "issue-247", "cto", "")
 	root := filepath.Join(teamHome, ".agent-mail", "issue-247")
 	rec := launch.Record{
 		CWD:              teamHome,
@@ -229,21 +245,46 @@ func TestBootstrapPromptReportsNativeGoalBindingForVisibleLead(t *testing.T) {
 		Root:             root,
 		SharedWorkstream: true,
 		GoalBinding: &launch.GoalBinding{
-			Mode:       "native_goal",
-			NativeGoal: true,
+			Mode:       "prompt_goal",
+			NativeGoal: false,
 			Source:     "launch-argv",
-			Command:    `/goal --goal "ship"`,
+			Command:    prompt,
+			Goal:       "ship",
 		},
 	}
 	got, err := buildBootstrapPrompt(bootstrapContextFor(rec, filepath.Join(root, "agents", "cto"), teamHome))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, "Goal binding: native_goal") {
-		t.Fatalf("bootstrap prompt should expose verified native launch binding:\n%s", got)
+	if !strings.Contains(got, "Goal binding: prompt_goal") {
+		t.Fatalf("bootstrap prompt should expose verified prompt launch binding:\n%s", got)
 	}
-	if strings.Contains(got, "Goal binding: native_goal_missing") {
-		t.Fatalf("bootstrap prompt should not report missing native goal when launch record has it:\n%s", got)
+	if strings.Contains(got, "Goal binding: prompt_goal_missing") {
+		t.Fatalf("bootstrap prompt should not report missing prompt goal when launch record has it:\n%s", got)
+	}
+}
+
+func TestBootstrapGoalBindingModeStrictClaudeVerification(t *testing.T) {
+	tm := team.Team{
+		Members:       []team.Member{{Role: "cto", Binary: "claude", Handle: "cto", Session: "issue-460"}},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	}
+	validLegacy := launch.Record{Binary: "claude", Role: "cto", GoalBinding: &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship"`}}
+	if got := bootstrapGoalBindingMode(validLegacy, tm); got != "native_goal" {
+		t.Fatalf("valid legacy Claude binding mode = %q", got)
+	}
+	for name, binding := range map[string]*launch.GoalBinding{
+		"corrupt":        {Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship" --unknown value`},
+		"typed mismatch": {Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship"`, Goal: "other"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := launch.Record{Binary: "claude", Role: "cto", GoalBinding: binding}
+			if got := bootstrapGoalBindingMode(rec, tm); got != "native_goal_missing" {
+				t.Fatalf("invalid Claude binding mode = %q, want native_goal_missing", got)
+			}
+		})
 	}
 }
 

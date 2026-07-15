@@ -107,6 +107,59 @@ func TestMonitorEmitsBlockedTaskEvent(t *testing.T) {
 	}
 }
 
+func TestMonitorEmitsFailedTaskEvent(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}}})
+	withMonitorOperatorState(t, 0, 0)
+	now := time.Now()
+	tk, err := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "do x"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.ClaimForProfile(dir, team.DefaultProfile, "s", tk.ID, "cto", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.FailForProfile(dir, team.DefaultProfile, "s", tk.ID, "cto", "boom", now); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error { return runMonitor([]string{"--session", "s", "--once", "--json"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, monitorEventBlockedTask) || !strings.Contains(stdout, "boom") || !strings.Contains(stdout, "failed") {
+		t.Fatalf("expected failed task attention event:\n%s", stdout)
+	}
+}
+
+func TestMonitorSuppressesClosedAndSupersededTasks(t *testing.T) {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}}})
+	withMonitorOperatorState(t, 0, 0)
+	now := time.Now()
+
+	completed, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "completed"}, now)
+	_, _ = taskstore.ClaimForProfile(dir, team.DefaultProfile, "s", completed.ID, "cto", now)
+	if _, err := taskstore.DoneForProfile(dir, team.DefaultProfile, "s", completed.ID, "cto", "done", now); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "cancelled"}, now)
+	if _, err := taskstore.CancelForProfile(dir, team.DefaultProfile, "s", cancelled.ID, "cto", "obsolete", "", now); err != nil {
+		t.Fatal(err)
+	}
+	superseded, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "superseded"}, now)
+	replacement, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "replacement"}, now)
+	if _, err := taskstore.CancelForProfile(dir, team.DefaultProfile, "s", superseded.ID, "cto", "replaced", replacement.ID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error { return runMonitor([]string{"--session", "s", "--once", "--json"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, `"events_found":false`) || strings.Contains(stdout, monitorEventBlockedTask) {
+		t.Fatalf("closed/superseded tasks should not wake monitor:\n%s", stdout)
+	}
+}
+
 func TestMonitorIdleLoopIsBoundedByMaxTicks(t *testing.T) {
 	seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},

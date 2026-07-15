@@ -393,12 +393,12 @@ func TestLeadRegisterReapplyDrainInjectOnReRegister(t *testing.T) {
 func TestLeadRegisterPreservesExistingNativeGoalBinding(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Members:      []team.Member{{Role: "cto", Binary: "claude", Handle: "cto", Session: "issue-96"}},
 		Orchestrated: true,
 		Lead:         "cto",
 	})
 	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
+		Binary: "claude", Handle: "cto", Role: "cto", AgentPID: 4242,
 		GoalBinding: &launch.GoalBinding{
 			Mode:       "native_goal",
 			NativeGoal: true,
@@ -457,6 +457,28 @@ func TestLeadRegisterPreservesExistingNativeGoalBinding(t *testing.T) {
 	}
 	if len(env.Data.Records) != 1 || !env.Data.Records[0].OperatorVisible || env.Data.Records[0].AdoptionMode != adoptionModeExternalProjectLead {
 		t.Fatalf("status record after lead register = %+v, want operator-visible external lead", env.Data.Records)
+	}
+}
+
+func TestPreserveExternalGoalBindingRejectsInvalidClaudeBinding(t *testing.T) {
+	validLegacy := launch.Record{
+		Binary: "claude", Role: "cto", Session: "issue-460",
+		GoalBinding: &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship"`},
+	}
+	if !preserveExternalGoalBinding(validLegacy, nil, "cto", "issue-460") {
+		t.Fatal("valid legacy Claude binding was not preserved")
+	}
+	for name, binding := range map[string]*launch.GoalBinding{
+		"corrupt":        {Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship" --unknown value`},
+		"typed mismatch": {Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship"`, Goal: "other"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := validLegacy
+			rec.GoalBinding = binding
+			if preserveExternalGoalBinding(rec, nil, "cto", "issue-460") {
+				t.Fatalf("invalid Claude binding was preserved: %+v", binding)
+			}
+		})
 	}
 }
 
@@ -681,6 +703,59 @@ func TestLeadRegisterWakeInjectModeNoneIsZeroInput(t *testing.T) {
 	}
 }
 
+func TestLeadRegisterDefaultsManagedBinaryWakeModeToRaw(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.42.0")
+	base := os.Getenv("AMQ_FAKE_ROOT")
+	seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
+	prevPane := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "lead", PaneID: "%5"}, nil
+	}
+	var got []leadWakeOptions
+	prevWake := leadWakeStarter
+	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
+		got = append(got, opts)
+		return leadWakeResult{PID: 1234, Started: true}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prevPane; leadWakeStarter = prevWake })
+	if _, _, err := captureOutput(t, func() error {
+		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
+	}); err != nil {
+		t.Fatalf("lead register default raw: %v", err)
+	}
+	if len(got) != 1 || got[0].WakeInjectMode != "raw" || got[0].WakeInjectCmd != wakeDrainInject() {
+		t.Fatalf("managed external lead wake options = %+v", got)
+	}
+	rec, err := launch.Read(filepath.Join(base, "agents", "cto"))
+	if err != nil || rec.Binary != "codex" || rec.WakeInjectMode != "raw" {
+		t.Fatalf("managed external lead record = %+v, %v", rec, err)
+	}
+}
+
+func TestResolveExternalWakeInjectConfigMigratesLegacyManagedModesAndPreservesOverrides(t *testing.T) {
+	for _, test := range []struct {
+		name, stored, requested, binary, want string
+		explicit                              bool
+	}{
+		{"legacy-blank-codex", "", "", "codex", "raw", false},
+		{"legacy-auto-claude", "auto", "", "claude", "raw", false},
+		{"explicit-none", "auto", "none", "codex", "none", true},
+		{"explicit-paste", "", "paste", "claude", "paste", true},
+		{"custom-auto", "auto", "", "custom-agent", "auto", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rec := launch.Record{External: true, Binary: test.binary, Role: "cto", Handle: "cto", Session: "s", Root: "/mail/s", WakeInjectMode: test.stored, Tmux: &launch.TmuxInfo{PaneID: "%5"}}
+			got, err := resolveExternalWakeInjectConfig(wakeInjectConfig{Mode: test.requested}, test.explicit, false, false, rec, nil, test.binary, "cto", "cto", "default", "s", rec.Root, "%5")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Mode != test.want {
+				t.Fatalf("mode = %q, want %q", got.Mode, test.want)
+			}
+		})
+	}
+}
+
 func TestResolveExternalWakeInjectConfigInheritsAssociatedInjector(t *testing.T) {
 	rec := launch.Record{
 		External:       true,
@@ -693,7 +768,7 @@ func TestResolveExternalWakeInjectConfigInheritsAssociatedInjector(t *testing.T)
 		WakeInjectArgs: []string{"--pane", "%5"},
 		Tmux:           &launch.TmuxInfo{PaneID: "%5"},
 	}
-	got, err := resolveExternalWakeInjectConfig(wakeInjectConfig{}, false, false, false, rec, nil, "cto", "cto", "default", "issue-96", rec.Root, "%5")
+	got, err := resolveExternalWakeInjectConfig(wakeInjectConfig{}, false, false, false, rec, nil, rec.Binary, "cto", "cto", "default", "issue-96", rec.Root, "%5")
 	if err != nil {
 		t.Fatalf("inherit external wake config: %v", err)
 	}
@@ -1449,21 +1524,6 @@ func TestStopDoesNotCloseExternalLeadPane(t *testing.T) {
 	}
 	if !strings.Contains(out, "external/adopted pane %5 is operator-owned") {
 		t.Fatalf("stop output missing external safety detail:\n%s", out)
-	}
-}
-
-func TestRmPaneCollectionSkipsExternalRecords(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		Binary:   "codex",
-		Handle:   "cto",
-		Role:     "cto",
-		External: true,
-		Tmux:     &launch.TmuxInfo{PaneID: "%5"},
-	})
-	panes := collectSessionPaneIDs(filepath.Join(base, "issue-96"), nil)
-	if len(panes) != 0 {
-		t.Fatalf("external panes must not be collected for rm/archive close: %+v", panes)
 	}
 }
 

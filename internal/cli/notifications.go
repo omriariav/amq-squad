@@ -237,15 +237,15 @@ Examples:
 	if fs.NArg() != 0 {
 		return usageErrorf("notifications doctor takes no positional arguments; got %d", fs.NArg())
 	}
-	projectDir, profile, tm, err := resolveNotificationsTeam(*projectFlag, flagWasSet(fs, "project"), *profileFlag)
+	ctx, tm, err := resolveNotificationsTeam(*projectFlag, *profileFlag, *sessionFlag, fs)
 	if err != nil {
 		return err
 	}
-	session, err := resolveTeamWorkstreamName(tm, strings.TrimSpace(*sessionFlag), strings.TrimSpace(*sessionFlag) != "")
+	session, err := resolveTeamWorkstreamName(tm, ctx.Session, flagWasSet(fs, "session"))
 	if err != nil {
 		return err
 	}
-	return executeNotificationsDoctor(notificationsDoctorExecution{ProjectDir: projectDir, Profile: profile, Session: session, Limit: *limit, JSON: *jsonOut, Out: os.Stdout})
+	return executeNotificationsDoctor(notificationsDoctorExecution{ProjectDir: ctx.ProjectDir, Profile: ctx.Profile, Session: session, Limit: *limit, JSON: *jsonOut, Out: os.Stdout})
 }
 
 func runNotificationsProbe(args []string) error {
@@ -276,15 +276,15 @@ Examples:
 	if fs.NArg() != 0 {
 		return usageErrorf("notifications probe takes no positional arguments; got %d", fs.NArg())
 	}
-	projectDir, profile, tm, err := resolveNotificationsTeam(*projectFlag, flagWasSet(fs, "project"), *profileFlag)
+	ctx, tm, err := resolveNotificationsTeam(*projectFlag, *profileFlag, *sessionFlag, fs)
 	if err != nil {
 		return err
 	}
-	session, err := resolveTeamWorkstreamName(tm, strings.TrimSpace(*sessionFlag), strings.TrimSpace(*sessionFlag) != "")
+	session, err := resolveTeamWorkstreamName(tm, ctx.Session, flagWasSet(fs, "session"))
 	if err != nil {
 		return err
 	}
-	return executeNotificationsProbe(notificationsProbeExecution{ProjectDir: projectDir, Profile: profile, Session: session, SinkID: *sinkID, JSON: *jsonOut, Out: os.Stdout})
+	return executeNotificationsProbe(notificationsProbeExecution{ProjectDir: ctx.ProjectDir, Profile: ctx.Profile, Session: session, SinkID: *sinkID, JSON: *jsonOut, Out: os.Stdout})
 }
 
 func runNotificationsHistory(verb string, args []string) error {
@@ -316,31 +316,24 @@ Examples:
 	if fs.NArg() != 0 {
 		return usageErrorf("notifications %s takes no positional arguments; got %d", verb, fs.NArg())
 	}
-	projectDir, profile, _, err := resolveNotificationsTeam(*projectFlag, flagWasSet(fs, "project"), *profileFlag)
+	ctx, _, err := resolveNotificationsTeam(*projectFlag, *profileFlag, *sessionFlag, fs)
 	if err != nil {
 		return err
 	}
-	return executeNotificationsHistory(notificationsHistoryExecution{ProjectDir: projectDir, Profile: profile, Session: strings.TrimSpace(*sessionFlag), Limit: *limit, JSON: *jsonOut, Out: os.Stdout})
+	return executeNotificationsHistory(notificationsHistoryExecution{ProjectDir: ctx.ProjectDir, Profile: ctx.Profile, Session: strings.TrimSpace(*sessionFlag), Limit: *limit, JSON: *jsonOut, Out: os.Stdout})
 }
 
-func resolveNotificationsTeam(project string, projectExplicit bool, profileValue string) (string, string, team.Team, error) {
-	cwd, err := os.Getwd()
+func resolveNotificationsTeam(project, profile, session string, fs *flag.FlagSet) (contextResolution, team.Team, error) {
+	ctx, err := resolveScopedCommandContext(project, profile, session, "", fs)
 	if err != nil {
-		return "", "", team.Team{}, fmt.Errorf("getwd: %w", err)
+		return contextResolution{}, team.Team{}, err
 	}
-	projectDir, err := resolveProjectDirFlag(cwd, project, projectExplicit)
+	emitContextDiagnostics(ctx)
+	tm, err := team.ReadProfile(ctx.ProjectDir, ctx.Profile)
 	if err != nil {
-		return "", "", team.Team{}, err
+		return contextResolution{}, team.Team{}, fmt.Errorf("read team profile %q: %w", ctx.Profile, err)
 	}
-	profile, err := resolveProfileFlag(profileValue)
-	if err != nil {
-		return "", "", team.Team{}, err
-	}
-	tm, err := team.ReadProfile(projectDir, profile)
-	if err != nil {
-		return "", "", team.Team{}, fmt.Errorf("read team profile %q: %w", profile, err)
-	}
-	return projectDir, profile, tm, nil
+	return ctx, tm, nil
 }
 
 func executeNotificationsDoctor(n notificationsDoctorExecution) error {

@@ -175,6 +175,7 @@ func TestLaunchArgsFromRecordModelRoundTrips(t *testing.T) {
 	want := []string{
 		"--role", "cto",
 		"--session", "s",
+		"--wake-inject-mode", "raw",
 		"--trust", "sandboxed",
 		"--model", "gpt-5",
 		"--me", "cto",

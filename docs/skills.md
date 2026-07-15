@@ -199,7 +199,8 @@ This is the everyday skill. The lifecycle is one small state machine:
 
 For a narrow Claude-only permission exception, configure a member's
 `permission_allowlist` in `team.json`, for example
-`["Bash(rm -rf /tmp/qa-review/*:*)"]`. The grant is scoped to that exact role,
+`["Bash(amq-squad review-worktree remove:*)"]`. The grant is scoped to that
+exact role,
 merged with any explicit native `--allowedTools`, visible in dry-run JSON and
 launch history, and rebuilt from current policy on resume so removed/narrowed
 grants are revoked. Validation rejects other binaries and values beginning with
@@ -208,7 +209,9 @@ grants are revoked. Validation rejects other binaries and values beginning with
 launcher policy out of executable child argv; `agent up` recomputes it and the
 launch record stores launcher-owned versus explicit provenance separately,
 including equal-valued grants. Prefer scratch/worktree-
-specific patterns over broad command grants. Such profiles write schema 4;
+specific patterns over broad command grants. An allowlist grants native tool
+permission; it does not override the generated team rules' `## Workspace
+Safety and Cleanup` prohibition on `rm -rf`. Such profiles write schema 4;
 profiles without the field stay schema 3. Upgrade all readers/writers to v2.20+
 before configuring it: pre-v2.20 binaries can silently ignore the field and
 lossily rewrite the profile. Use `amq-squad doctor` to detect version skew.
@@ -218,11 +221,14 @@ CLI args for one member only — the overlay verb above generates the flagship
 case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it
 for you. Plan emission fails fast when a referenced `--settings` file is
 missing. AMQ floor (v2.20.0+): amq-squad requires amq 0.42.1+. AMQ 0.42.1 is
-the first supported complete identity-pin contract: after upgrading, stop and
-resume/relaunch agents so their parent shells receive a coherent tuple; a child
-command cannot repair stale injected environment. Default profiles use
-`AM_ROOT=AM_BASE_ROOT/AM_SESSION` with a non-empty `AM_SESSION`; named profiles
-use an exact root with `AM_ROOT=AM_BASE_ROOT` and omit `AM_SESSION`. Run
+the first supported complete identity-pin contract. The minimum 0.42.1
+compatibility floor is unchanged. This release is explicitly validated against
+pinned 0.43.1; latest remains a forward-compatibility canary. After upgrading
+AMQ, stop and resume/relaunch agents so their parent shells refresh the complete
+identity tuple; a child command cannot repair stale injected environment.
+Default profiles use `AM_ROOT=AM_BASE_ROOT/AM_SESSION` with a non-empty
+`AM_SESSION`; named profiles use an exact root with `AM_ROOT=AM_BASE_ROOT` and
+omit `AM_SESSION`. Run
 `amq-squad doctor` before resume if it reports a legacy or inconsistent pin.
 Launches pass
 `--require-wake` so a launch fails immediately when the wake sidecar cannot
@@ -496,6 +502,16 @@ amq-squad focus --session issue-96 --role fullstack   # watch live when needed
 # 5. COORDINATE — children PUSH reports; the lead collects safely (does not poll)
 amq-squad collect --session issue-96 --me cto --timeout 120s --include-body
 ```
+
+In `lead_pane` mode, amq-squad verifies the actual live roster pane before its
+own blocking waits. A configured lead is refused when a caller-raised
+`gate/<topic>` is unresolved, a wait exceeds 120 seconds, or a wait is
+unbounded. This covers `collect`, wrapped `amq watch`, wrapped `amq receipts
+wait`, and amq-squad-owned send/reply/dispatch receipt waits. The audited escape
+hatch is `--override-wait-posture --wait-posture-reason <why>`. Direct external
+`amq watch` and hand-written `sleep`/`until` polling loops cannot be intercepted
+and remain forbidden lead posture; use the sanctioned read-only `amq-squad
+monitor` watchdog or park/end the turn so wake can resume it.
 
 ### The `[AGENT-EVENT]`-over-AMQ protocol
 

@@ -151,17 +151,18 @@ Examples:
 	} else if *restoreExisting {
 		mode = resumeModeRestoreExisting
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
+	resolvedContext, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: *sessionFlag,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: flagWasSet(fs, "session"),
+	})
 	if err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
+	emitContextDiagnostics(resolvedContext)
+	profile := resolvedContext.Profile
+	projectDir := resolvedContext.ProjectDir
+	if !flagWasSet(fs, "session") {
+		*sessionFlag = resolvedContext.Session
 	}
 	if !team.ExistsProfile(projectDir, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
@@ -386,6 +387,33 @@ func executeResume(r resumeExecution) error {
 	if err != nil {
 		return err
 	}
+	if r.Exec.Enabled {
+		initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(r.ProjectDir, r.Profile, workstream), "")
+		if err != nil {
+			return err
+		}
+		admission, err := acquireNamespaceWriterAdmission(r.ProjectDir, r.Profile, workstream)
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		currentTeam, err := team.ReadProfile(r.ProjectDir, r.Profile)
+		if err != nil {
+			return fmt.Errorf("resume --exec refused: reread team under admission: %w", err)
+		}
+		currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, r.RequestedSession, r.ExplicitSession)
+		if err != nil {
+			return err
+		}
+		currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(r.ProjectDir, r.Profile, currentWorkstream), "")
+		if err != nil {
+			return err
+		}
+		if err := validateReResolvedEndpointIdentity("resume --exec", initialIdentity, currentIdentity); err != nil {
+			return err
+		}
+		t, workstream = currentTeam, currentWorkstream
+	}
 	namespaceConflict := namespaceConflictForProfileSession(t.Project, r.Profile, workstream)
 	if namespaceConflict == nil {
 		var cerr error
@@ -554,7 +582,7 @@ func executeResume(r resumeExecution) error {
 		if recordCount > 0 {
 			return fmt.Errorf("--fresh --session %q: %d member(s) already have launch records for this workstream; rerun with --force-duplicate to overwrite", workstream, recordCount)
 		}
-		exists, root, err := teamWorkstreamExists(t, workstream)
+		exists, root, err := teamWorkstreamExists(t, r.Profile, workstream)
 		if err != nil {
 			return err
 		}

@@ -33,13 +33,18 @@ var runAMQCommand amqCommandRunner = defaultRunAMQCommand
 var resolveAMQEnvForAMQCommand = resolveAMQEnvInDir
 
 type amqPassthroughOptions struct {
-	OverrideBoundary bool
-	BoundaryReason   string
-	UnsafeSendAs     bool
+	OverrideBoundary    bool
+	BoundaryReason      string
+	UnsafeSendAs        bool
+	OverrideWaitPosture bool
+	WaitPostureReason   string
 }
 
 type amqBoundaryAuditRecord struct {
 	At         time.Time `json:"at"`
+	AttemptID  string    `json:"attempt_id,omitempty"`
+	Outcome    string    `json:"outcome,omitempty"`
+	Operation  string    `json:"operation,omitempty"`
 	Subcommand string    `json:"subcommand"`
 	ProjectDir string    `json:"project_dir"`
 	Session    string    `json:"session,omitempty"`
@@ -47,7 +52,20 @@ type amqBoundaryAuditRecord struct {
 	Target     string    `json:"target"`
 	Root       string    `json:"root"`
 	Reason     string    `json:"reason"`
+	MessageID  string    `json:"message_id,omitempty"`
+	Error      string    `json:"error,omitempty"`
 }
+
+type amqBoundaryAuditAttempt struct {
+	AttemptID string
+	Operation string
+	Context   amqContext
+	Actor     string
+	Target    string
+	Reason    string
+}
+
+var appendAMQBoundaryAuditRecord = writeAMQBoundaryAuditRecord
 
 func defaultRunAMQCommand(req amqCommandRequest) ([]byte, error) {
 	cmd := exec.Command("amq", req.Arg...)
@@ -66,13 +84,14 @@ func defaultRunAMQCommand(req amqCommandRequest) ([]byte, error) {
 }
 
 type amqContext struct {
-	ProjectDir string
-	Profile    string
-	Env        amqEnv
-	Root       string
-	Me         string
-	Session    string
-	PinMode    amqPinMode
+	ProjectDir          string
+	Profile             string
+	Env                 amqEnv
+	Root                string
+	Me                  string
+	Session             string
+	PinMode             amqPinMode
+	NamespaceGeneration string
 }
 
 // amqPinMode is deliberately independent of amqEnv.SessionName. AMQ returns a
@@ -130,25 +149,40 @@ func amqCommonFlagSet(name, usage string) (*flag.FlagSet, *string, *string, *str
 }
 
 func resolveAMQContext(projectFlag, profileFlag, session, me string, projectSet bool) (amqContext, error) {
-	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	resolved, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: projectFlag, ProfileFlag: profileFlag, SessionFlag: session, HandleFlag: me,
+		ProjectExplicit: projectSet, ProfileExplicit: strings.TrimSpace(profileFlag) != "",
+		SessionExplicit: strings.TrimSpace(session) != "", HandleExplicit: strings.TrimSpace(me) != "",
+	})
 	if err != nil {
 		return amqContext{}, err
 	}
-	profileExplicit := strings.TrimSpace(profileFlag) != ""
-	if !profileExplicit {
-		inferred, ok, err := namedProfileFromInheritedAMQRoot(projectDir, session)
-		if err != nil {
-			return amqContext{}, err
-		}
-		if ok {
-			profile = inferred
-		}
-	}
-	ctx, err := resolveAMQContextForNamespace(projectDir, profile, session, me)
+	emitContextDiagnostics(resolved)
+	// The canonical winner is authoritative. Query AMQ for version/project
+	// metadata using that exact root, then restore the selected tuple instead
+	// of asking the legacy namespace resolver to choose a second time.
+	env, err := resolveAMQEnvForAMQCommand(resolved.ProjectDir, resolved.Root, "", resolved.Handle)
 	if err != nil {
 		return amqContext{}, err
 	}
-	return inferAMQContextProfileFromRoot(ctx, profileExplicit), nil
+	env.Root = resolved.Root
+	env.BaseRoot = resolved.BaseRoot
+	env.SessionName = resolved.Session
+	env.Me = resolved.Handle
+	pinMode := amqPinSessionful
+	if resolved.PinMode == "exact_root" {
+		pinMode = amqPinExactRoot
+	}
+	return amqContext{
+		ProjectDir:          resolved.ProjectDir,
+		Profile:             resolved.Profile,
+		Env:                 env,
+		Root:                resolved.Root,
+		Me:                  resolved.Handle,
+		Session:             resolved.Session,
+		PinMode:             pinMode,
+		NamespaceGeneration: resolved.NamespaceGeneration,
+	}, nil
 }
 
 func resolveAMQContextForProject(projectDir, session, me string) (amqContext, error) {
@@ -549,22 +583,61 @@ func runAMQPassthrough(sub string, args []string) error {
 		if err != nil {
 			return err
 		}
+	} else if sub == "watch" {
+		passthrough, opts, err = consumeAMQWatchPostureFlags(passthrough, opts)
+		if err != nil {
+			return err
+		}
 	}
-	projectDir, resolvedProfile, err := resolveProjectProfile(project, profile, projectSet)
+	ctx, err := resolveAMQContext(project, profile, session, me, projectSet)
 	if err != nil {
 		return err
 	}
-	ctx, err := resolveAMQContextForNamespace(projectDir, resolvedProfile, session, me)
-	if err != nil {
-		return err
+	var admission *namespaceAdmissionLocks
+	switch sub {
+	case "send", "reply", "drain", "watch", "read":
+		ctx, admission, err = acquireRevalidatedAMQWriter(ctx, func() (amqContext, error) {
+			return resolveAMQContext(project, profile, session, me, projectSet)
+		})
+		if err != nil {
+			return err
+		}
+		defer admission.close()
 	}
-	ctx = inferAMQContextProfileFromRoot(ctx, strings.TrimSpace(profile) != "")
 	cmd := append([]string{sub, "--root", ctx.Root}, passthrough...)
-	if err := guardAMQPassthrough(sub, ctx, passthrough, opts); err != nil {
+	audit, err := guardAMQPassthrough(sub, ctx, passthrough, opts)
+	if err != nil {
 		return err
 	}
 	if sub == "watch" {
+		timeout, err := parseWaitPostureDuration("amq watch", lastAMQWatchTimeout(passthrough), defaultAMQWatchWait)
+		if err != nil {
+			return err
+		}
+		if err := guardOwnedWait(waitPostureForContext("amq watch", "watch", ctx, timeout, timeout == 0, true, opts.OverrideWaitPosture, opts.WaitPostureReason)); err != nil {
+			return err
+		}
 		return runAMQStreaming(ctx, cmd)
+	}
+	if sub == "send" {
+		posture, err := durableSendWaitPosture("amq send", ctx, passthrough, opts.OverrideWaitPosture, opts.WaitPostureReason)
+		if err != nil {
+			return err
+		}
+		if passthroughNeedsStdin(passthrough) {
+			return runAMQPassthroughDurableSend(ctx, ctx.Profile, cmd, passthrough, os.Stdin, audit, posture)
+		}
+		return runAMQPassthroughDurableSend(ctx, ctx.Profile, cmd, passthrough, nil, audit, posture)
+	}
+	if sub == "reply" {
+		posture, err := durableSendWaitPosture("amq reply", ctx, passthrough, opts.OverrideWaitPosture, opts.WaitPostureReason)
+		if err != nil {
+			return err
+		}
+		if passthroughNeedsStdin(passthrough) {
+			return runAMQPassthroughDurableReply(ctx, ctx.Profile, cmd, passthrough, os.Stdin, audit, posture)
+		}
+		return runAMQPassthroughDurableReply(ctx, ctx.Profile, cmd, passthrough, nil, audit, posture)
 	}
 	if passthroughNeedsStdin(passthrough) {
 		return runAndWriteAMQWithStdin(os.Stdout, ctx, cmd, os.Stdin)
@@ -572,57 +645,224 @@ func runAMQPassthrough(sub string, args []string) error {
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
 }
 
-func guardAMQPassthrough(sub string, ctx amqContext, passthrough []string, opts amqPassthroughOptions) error {
-	switch sub {
-	case "send", "reply":
-		if err := guardAMQSelfSend(ctx, passthrough); err != nil {
-			return err
+func runAMQPassthroughDurableSend(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader, audit *amqBoundaryAuditAttempt, posture waitPostureRequest) error {
+	session := strings.TrimSpace(ctx.Env.SessionName)
+	if session == "" {
+		session = strings.TrimSpace(ctx.Session)
+	}
+	if err := beginAMQBoundaryAudit(audit); err != nil {
+		return err
+	}
+	out, receipt, err := runOwnedDurableSend(durableSendOptions{
+		ProjectDir: ctx.ProjectDir, Profile: profile, Session: session, Kind: "amq_send",
+		WaitPosture: posture,
+	}, amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd, Stdin: stdin})
+	err = finishAMQBoundaryAudit(audit, receipt, err)
+	writeAMQPassthroughDurableOutput(out, receipt, amqBoolFlagPresent(passthrough, "json"))
+	return err
+}
+
+func runAMQPassthroughDurableReply(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader, audit *amqBoundaryAuditAttempt, posture waitPostureRequest) error {
+	originalID := strings.TrimSpace(amqFlagValue(passthrough, "id"))
+	if originalID == "" {
+		return usageErrorf("amq reply requires --id")
+	}
+	type replyListItem struct {
+		ID     string `json:"id"`
+		From   string `json:"from"`
+		Thread string `json:"thread"`
+		Box    string `json:"box"`
+	}
+	var matches []replyListItem
+	for _, boxFlag := range []string{"--new", "--cur"} {
+		listOut, listErr := runAMQCommand(amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: []string{"list", "--root", ctx.Root, "--me", ctx.Me, boxFlag, "--json"}})
+		if listErr != nil {
+			return fmt.Errorf("resolve durable reply recipient from %s with non-mutating AMQ list: %w", originalID, listErr)
 		}
-		return guardAMQSendAsAuthority(sub, ctx, opts)
-	case "drain", "watch":
-		return guardAMQMailboxConsume(sub, ctx, opts)
-	default:
+		var items []replyListItem
+		if err := json.Unmarshal(listOut, &items); err != nil {
+			return fmt.Errorf("resolve durable reply recipient from %s: corrupt AMQ list JSON: %w", originalID, err)
+		}
+		for _, item := range items {
+			if item.ID == originalID {
+				matches = append(matches, item)
+			}
+		}
+	}
+	if len(matches) != 1 || strings.TrimSpace(matches[0].From) == "" || strings.TrimSpace(matches[0].Thread) == "" {
+		return fmt.Errorf("resolve durable reply recipient from %s: expected one exact non-mutating AMQ list match, found %d", originalID, len(matches))
+	}
+	original := matches[0]
+	session := strings.TrimSpace(ctx.Env.SessionName)
+	if session == "" {
+		session = strings.TrimSpace(ctx.Session)
+	}
+	receipt := newDeliveryReceipt(ctx.ProjectDir, profile, session, "", original.From, "", "amq_reply")
+	receipt.Recipients = []string{strings.TrimSpace(original.From)}
+	receipt.Consumers = []deliveryConsumerState{{Consumer: strings.TrimSpace(original.From), State: deliveryStateAmbiguousUnknown}}
+	receipt.Thread = strings.TrimSpace(original.Thread)
+	if err := beginAMQBoundaryAudit(audit); err != nil {
+		return err
+	}
+	out, durableReceipt, err := runOwnedDurableSend(durableSendOptions{ProjectDir: ctx.ProjectDir, Profile: profile, Session: session, Kind: "amq_reply", Receipt: &receipt, WaitPosture: posture}, amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd, Stdin: stdin})
+	err = finishAMQBoundaryAudit(audit, durableReceipt, err)
+	writeAMQPassthroughDurableOutput(out, durableReceipt, amqBoolFlagPresent(passthrough, "json"))
+	return err
+}
+
+func beginAMQBoundaryAudit(audit *amqBoundaryAuditAttempt) error {
+	if audit == nil {
 		return nil
+	}
+	if err := appendAMQBoundaryAuditRecord(audit.record("attempted", "", nil)); err != nil {
+		return fmt.Errorf("persist unsafe %s audit attempt before invoking AMQ: %w", audit.Operation, err)
+	}
+	return nil
+}
+
+func finishAMQBoundaryAudit(audit *amqBoundaryAuditAttempt, receipt *deliveryReceiptData, invokeErr error) error {
+	if audit == nil {
+		return invokeErr
+	}
+	messageID := ""
+	if receipt != nil {
+		messageID = strings.TrimSpace(receipt.MessageID)
+	}
+	outcome := "failed"
+	switch {
+	case messageID != "":
+		// A stable message id is delivery evidence even when AMQ later reports a
+		// wait error or local receipt finalization fails.
+		outcome = "delivered"
+	case receipt != nil && receipt.AMQInvoked:
+		// Invocation without a stable id is not proof of non-delivery. Preserve
+		// that uncertainty explicitly so an operator does not blindly retry.
+		outcome = "uncertain"
+	}
+	if err := appendAMQBoundaryAuditRecord(audit.record(outcome, messageID, invokeErr)); err != nil {
+		if invokeErr != nil {
+			return fmt.Errorf("%v; persist unsafe %s audit outcome %s for attempt %s: %w", invokeErr, audit.Operation, outcome, audit.AttemptID, err)
+		}
+		return fmt.Errorf("unsafe %s delivered message %s but audit attempt %s remains attempted/uncertain: %w", audit.Operation, messageID, audit.AttemptID, err)
+	}
+	return invokeErr
+}
+
+func (a *amqBoundaryAuditAttempt) record(outcome, messageID string, invokeErr error) amqBoundaryAuditRecord {
+	rec := amqBoundaryAuditRecord{
+		At: time.Now().UTC(), AttemptID: a.AttemptID, Outcome: outcome, Operation: a.Operation,
+		Subcommand: "send-as", ProjectDir: a.Context.ProjectDir, Session: boundaryAuditSession(a.Context),
+		Actor: strings.TrimSpace(a.Actor), Target: a.Target, Root: a.Context.Root, Reason: strings.TrimSpace(a.Reason),
+		MessageID: strings.TrimSpace(messageID),
+	}
+	if invokeErr != nil {
+		rec.Error = invokeErr.Error()
+	}
+	return rec
+}
+
+func writeAMQPassthroughDurableOutput(out []byte, receipt *deliveryReceiptData, jsonRequested bool) {
+	if jsonRequested && receipt != nil {
+		payload := firstJSONObject(out)
+		var native map[string]any
+		if len(payload) > 0 && json.Unmarshal(payload, &native) == nil {
+			native["amq_squad_receipt"] = receipt
+			encoded, marshalErr := json.MarshalIndent(native, "", "  ")
+			if marshalErr == nil {
+				_, _ = os.Stdout.Write(append(encoded, '\n'))
+			} else {
+				_, _ = os.Stdout.Write(out)
+			}
+		} else {
+			_, _ = os.Stdout.Write(out)
+		}
+	} else {
+		_, _ = os.Stdout.Write(out)
+		if receipt != nil {
+			fmt.Fprintf(os.Stderr, "receipt: attempt_id=%s message_id=%s state=%s path=%s\n", receipt.AttemptID, receipt.MessageID, receipt.DeliveryState, receipt.Path)
+		}
 	}
 }
 
-func guardAMQSendAsAuthority(sub string, ctx amqContext, opts amqPassthroughOptions) error {
+func amqBoolFlagPresent(args []string, name string) bool {
+	for _, arg := range args {
+		flagName, value, joined := amqFlagName(arg)
+		if flagName == name && (!joined || value == "true") {
+			return true
+		}
+	}
+	return false
+}
+
+func guardAMQPassthrough(sub string, ctx amqContext, passthrough []string, opts amqPassthroughOptions) (*amqBoundaryAuditAttempt, error) {
+	switch sub {
+	case "send", "reply":
+		if err := ensureNoNamespaceMigration("amq "+sub, ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+			return nil, err
+		}
+		if err := guardAMQSelfSend(ctx, passthrough); err != nil {
+			return nil, err
+		}
+		return guardAMQSendAsAuthority(sub, ctx, opts)
+	case "drain", "watch":
+		if err := ensureNoNamespaceMigration("amq "+sub, ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+			return nil, err
+		}
+		return nil, guardAMQMailboxConsume(sub, ctx, opts)
+	case "read":
+		// AMQ read may move an unread item into cur and emit a receipt, so it
+		// participates in the migration freeze. Preserve its established
+		// cross-mailbox inspection semantics outside a migration.
+		return nil, ensureNoNamespaceMigration("amq read", ctx.ProjectDir, ctx.Profile, ctx.Session)
+	default:
+		return nil, nil
+	}
+}
+
+func guardAMQSendAsAuthority(sub string, ctx amqContext, opts amqPassthroughOptions) (*amqBoundaryAuditAttempt, error) {
 	me := strings.TrimSpace(ctx.Me)
 	if me == "" {
-		return nil
+		return nil, nil
 	}
 	t, err := team.ReadProfile(ctx.ProjectDir, ctx.Profile)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	if isOperatorHandle(t, me) {
 		if opts.UnsafeSendAs {
 			reason := strings.TrimSpace(opts.BoundaryReason)
 			if reason == "" {
-				return usageErrorf("amq %s --unsafe-send-as requires --reason <why>", sub)
+				return nil, usageErrorf("amq %s --unsafe-send-as requires --reason <why>", sub)
 			}
-			return writeAMQBoundaryAudit(ctx, "send-as", strings.TrimSpace(os.Getenv("AM_ME")), me, reason)
+			return newAMQBoundaryAuditAttempt(sub, ctx, strings.TrimSpace(os.Getenv("AM_ME")), me, reason), nil
 		}
-		return usageErrorf("refusing amq %s as operator handle %q: the operator is mailbox-only and cannot be impersonated through the normal send/reply path. Use amq-squad operator answer/directive where applicable, or pass --unsafe-send-as --reason <why> for an audited recovery send.", sub, me)
+		return nil, usageErrorf("refusing amq %s as operator handle %q: the operator is mailbox-only and cannot be impersonated through the normal send/reply path. Use amq-squad operator answer/directive where applicable, or pass --unsafe-send-as --reason <why> for an audited recovery send.", sub, me)
 	}
 	member, ok := teamMemberByHandleOrRole(t, me)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	if currentEnvProvesTeamRole(memberHandle(member), member.Role, ctx.Root) {
-		return nil
+		return nil, nil
 	}
 	if teamRoleRecordAuthorizesSendAs(t, member, ctx) {
-		return nil
+		return nil, nil
 	}
 	if opts.UnsafeSendAs {
 		reason := strings.TrimSpace(opts.BoundaryReason)
 		if reason == "" {
-			return usageErrorf("amq %s --unsafe-send-as requires --reason <why>", sub)
+			return nil, usageErrorf("amq %s --unsafe-send-as requires --reason <why>", sub)
 		}
-		return writeAMQBoundaryAudit(ctx, "send-as", strings.TrimSpace(os.Getenv("AM_ME")), me, reason)
+		return newAMQBoundaryAuditAttempt(sub, ctx, strings.TrimSpace(os.Getenv("AM_ME")), me, reason), nil
 	}
-	return usageErrorf("refusing amq %s as team role %q: current runtime is not verified live/bound for this namespace. Launch/resume the role first, or pass --unsafe-send-as --reason <why> for an audited recovery send.", sub, me)
+	return nil, usageErrorf("refusing amq %s as team role %q: current runtime is not verified live/bound for this namespace. Launch/resume the role first, or pass --unsafe-send-as --reason <why> for an audited recovery send.", sub, me)
+}
+
+func newAMQBoundaryAuditAttempt(operation string, ctx amqContext, actor, target, reason string) *amqBoundaryAuditAttempt {
+	return &amqBoundaryAuditAttempt{
+		AttemptID: deliveryAttemptID(time.Now().UTC(), "unsafe_"+operation, strings.TrimSpace(actor), strings.TrimSpace(target)),
+		Operation: operation, Context: ctx, Actor: actor, Target: target, Reason: reason,
+	}
 }
 
 func isOperatorHandle(t team.Team, handle string) bool {
@@ -753,29 +993,34 @@ func teamLeadHandle(t team.Team) string {
 }
 
 func writeAMQBoundaryAudit(ctx amqContext, sub, actor, target, reason string) error {
-	dir := filepath.Join(ctx.ProjectDir, team.DirName, "boundary-audit")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("ensure boundary audit dir: %w", err)
+	rec := amqBoundaryAuditRecord{
+		At: time.Now().UTC(), Subcommand: sub, ProjectDir: ctx.ProjectDir, Session: boundaryAuditSession(ctx),
+		Actor: strings.TrimSpace(actor), Target: target, Root: ctx.Root, Reason: strings.TrimSpace(reason),
 	}
+	return writeAMQBoundaryAuditRecord(rec)
+}
+
+func boundaryAuditSession(ctx amqContext) string {
 	session := strings.TrimSpace(ctx.Env.SessionName)
+	if session == "" {
+		session = strings.TrimSpace(ctx.Session)
+	}
 	if session == "" {
 		session = "unknown-session"
 	}
-	rec := amqBoundaryAuditRecord{
-		At:         time.Now().UTC(),
-		Subcommand: sub,
-		ProjectDir: ctx.ProjectDir,
-		Session:    session,
-		Actor:      strings.TrimSpace(actor),
-		Target:     target,
-		Root:       ctx.Root,
-		Reason:     strings.TrimSpace(reason),
+	return session
+}
+
+func writeAMQBoundaryAuditRecord(rec amqBoundaryAuditRecord) error {
+	dir := filepath.Join(rec.ProjectDir, team.DirName, "boundary-audit")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("ensure boundary audit dir: %w", err)
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
 		return fmt.Errorf("marshal boundary audit: %w", err)
 	}
-	path := filepath.Join(dir, sanitizeWorkstreamName(session)+".jsonl")
+	path := filepath.Join(dir, sanitizeWorkstreamName(rec.Session)+".jsonl")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("open boundary audit: %w", err)
@@ -919,6 +1164,29 @@ func splitAMQPassthroughArgsWithOptions(sub string, args []string) (project, pro
 			opts.UnsafeSendAs = true
 			i++
 			continue
+		case "override-wait-posture":
+			if sub != "watch" && sub != "send" && sub != "reply" {
+				break
+			}
+			opts.OverrideWaitPosture = true
+			i++
+			continue
+		case "wait-posture-reason":
+			if sub != "watch" && sub != "send" && sub != "reply" {
+				break
+			}
+			val := inlineVal
+			next := i + 1
+			if !hasInline {
+				if next >= len(args) {
+					return "", "", "", "", false, nil, opts, usageErrorf("flag --wait-posture-reason needs a value")
+				}
+				val = args[next]
+				next++
+			}
+			opts.WaitPostureReason = val
+			i = next
+			continue
 		case "reason":
 			if sub != "drain" && sub != "watch" && sub != "send" && sub != "reply" {
 				break
@@ -976,6 +1244,24 @@ func consumeAMQSendGuardFlags(args []string, initialMe string, opts amqPassthrou
 		case "unsafe-send-as":
 			opts.UnsafeSendAs = true
 			continue
+		case "override-wait-posture":
+			opts.OverrideWaitPosture = true
+			continue
+		case "wait-posture-reason":
+			val := inlineVal
+			if !hasInline {
+				if i+1 >= len(args) {
+					return nil, "", opts, usageErrorf("flag --wait-posture-reason needs a value")
+				}
+				i++
+				val = args[i]
+			}
+			val = strings.TrimSpace(val)
+			if opts.WaitPostureReason != "" && opts.WaitPostureReason != val {
+				return nil, "", opts, usageErrorf("conflicting --wait-posture-reason values for amq send")
+			}
+			opts.WaitPostureReason = val
+			continue
 		case "reason":
 			val := inlineVal
 			if !hasInline {
@@ -999,6 +1285,39 @@ func consumeAMQSendGuardFlags(args []string, initialMe string, opts amqPassthrou
 		}
 	}
 	return out, me, opts, nil
+}
+
+func consumeAMQWatchPostureFlags(args []string, opts amqPassthroughOptions) ([]string, amqPassthroughOptions, error) {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		name, inlineVal, hasInline := amqFlagName(args[i])
+		switch name {
+		case "override-wait-posture":
+			opts.OverrideWaitPosture = true
+			continue
+		case "wait-posture-reason":
+			val := inlineVal
+			if !hasInline {
+				if i+1 >= len(args) {
+					return nil, opts, usageErrorf("flag --wait-posture-reason needs a value")
+				}
+				i++
+				val = args[i]
+			}
+			val = strings.TrimSpace(val)
+			if opts.WaitPostureReason != "" && opts.WaitPostureReason != val {
+				return nil, opts, usageErrorf("conflicting --wait-posture-reason values for amq watch")
+			}
+			opts.WaitPostureReason = val
+			continue
+		}
+		out = append(out, args[i])
+		if name == "timeout" && !hasInline && i+1 < len(args) {
+			i++
+			out = append(out, args[i])
+		}
+	}
+	return out, opts, nil
 }
 
 func amqSendPassthroughFlagConsumesValue(name string, hasInline bool) bool {
@@ -1071,7 +1390,9 @@ flags) to resolve the queue root — so an external lead reaches
 .agent-mail/<session> instead of the default .agent-mail — and forwards every
 remaining flag to 'amq %s'. For 'send', passthrough --me/--from and
 --unsafe-send-as/--reason are treated as amq-squad guard flags wherever they
-appear. Do not pass --root; it is resolved for you. For a cross-project/
+appear. Wrapper-owned waits accept --override-wait-posture with the distinct
+--wait-posture-reason; these flags are audited and are never forwarded to amq.
+Do not pass --root; it is resolved for you. For a cross-project/
 cross-session target, use inline addressing (--to handle@project:session) or
 place amq's own target flags after '--'.
 
@@ -1125,10 +1446,13 @@ func runAMQReceiptsWait(args []string) error {
 
 Usage:
   amq-squad amq receipts wait --me HANDLE --msg-id ID [--stage drained|dlq] [--timeout 60s] [--project DIR] [--profile NAME] [--session NAME]
+                                     [--override-wait-posture --wait-posture-reason WHY]
 `)
 	msgID := fs.String("msg-id", "", "message id to wait for")
 	stage := fs.String("stage", "drained", "receipt stage to wait for: drained or dlq")
-	timeout := fs.String("timeout", "60s", "maximum wait duration")
+	timeout := fs.Duration("timeout", defaultAMQReceiptWait, "maximum wait duration (0 means unbounded)")
+	overrideWaitPosture := fs.Bool("override-wait-posture", false, "allow a verified own-pane lead wait that would normally park, and write an audit record")
+	waitPostureReason := fs.String("wait-posture-reason", "", "distinct required reason when --override-wait-posture is set")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1138,6 +1462,9 @@ Usage:
 	if *stage != "drained" && *stage != "dlq" {
 		return usageErrorf("--stage must be drained or dlq")
 	}
+	if *timeout < 0 {
+		return usageErrorf("amq receipts wait --timeout must be non-negative")
+	}
 	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
@@ -1145,7 +1472,10 @@ Usage:
 	if ctx.Me == "" {
 		return usageErrorf("amq receipts wait requires --me")
 	}
-	cmd := []string{"receipts", "wait", "--root", ctx.Root, "--me", ctx.Me, "--msg-id", *msgID, "--stage", *stage, "--timeout", *timeout}
+	cmd := []string{"receipts", "wait", "--root", ctx.Root, "--me", ctx.Me, "--msg-id", *msgID, "--stage", *stage, "--timeout", timeout.String()}
+	if err := guardOwnedWait(waitPostureForContext("amq receipts wait", "delivery_receipt", ctx, *timeout, *timeout == 0, true, *overrideWaitPosture, *waitPostureReason)); err != nil {
+		return err
+	}
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
 }
 
@@ -1242,6 +1572,19 @@ Usage:
 	if err != nil {
 		return err
 	}
+	var admission *namespaceAdmissionLocks
+	if !*dryRun {
+		ctx, admission, err = acquireRevalidatedAMQWriter(ctx, func() (amqContext, error) {
+			return resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
+		})
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		if err := ensureNoNamespaceMigration("amq dlq "+kind, ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+			return err
+		}
+	}
 	if ctx.Me == "" {
 		return usageErrorf("amq dlq %s requires --me", kind)
 	}
@@ -1283,6 +1626,19 @@ Usage:
 	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
 	if err != nil {
 		return err
+	}
+	var admission *namespaceAdmissionLocks
+	if !*dryRun {
+		ctx, admission, err = acquireRevalidatedAMQWriter(ctx, func() (amqContext, error) {
+			return resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
+		})
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		if err := ensureNoNamespaceMigration("amq cleanup", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+			return err
+		}
 	}
 	cmd := []string{"cleanup", "--root", ctx.Root, "--tmp-older-than", *olderThan, "--yes"}
 	return previewConfirmAndRunAMQ(os.Stdout, os.Stdin, ctx, cmd, *dryRun, *yes)

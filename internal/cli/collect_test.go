@@ -125,6 +125,62 @@ func TestRunCollectEmptyDrainZeroTimeoutDoesNotWatch(t *testing.T) {
 	}
 }
 
+func TestExecuteCollectNonEmptyDrainSkipsWaitPostureGuard(t *testing.T) {
+	fx := newWaitPostureFixture(t, team.OperatorInteractionLeadPane)
+	now := time.Date(2026, 7, 15, 9, 0, 0, 0, time.UTC)
+	seedNotifyMessage(t, fx.base, fx.session, "user", "new", notifyMsg{ID: "pending", From: "cto", To: "user", Thread: "gate/pending", Subject: "APPROVAL: pending", Kind: "question", Created: now})
+	fx.installSnapshot(t)
+	seedCollectMessage(t, fx.root, "cto", "ready", "ready now")
+	calls := withCollectAMQSeams(t, amqEnv{Root: fx.root, BaseRoot: fx.base}, nil)
+
+	var out bytes.Buffer
+	if err := executeCollectWithWaitPosture(&out, collectTestContext(fx.dir, fx.root, "cto"), 30*time.Second, false, fx.request(30*time.Second)); err != nil {
+		t.Fatalf("nonempty first drain should not enter wait posture: %v", err)
+	}
+	if !strings.Contains(out.String(), "ID: ready") {
+		t.Fatalf("output = %q", out.String())
+	}
+	if got := collectCallVerbs(*calls); strings.Join(got, ",") != "read" {
+		t.Fatalf("verbs = %v, want read only", got)
+	}
+}
+
+func TestExecuteCollectEmptyDrainGuardsImmediatelyBeforeWatch(t *testing.T) {
+	fx := newWaitPostureFixture(t, team.OperatorInteractionLeadPane)
+	now := time.Date(2026, 7, 15, 9, 0, 0, 0, time.UTC)
+	seedNotifyMessage(t, fx.base, fx.session, "user", "new", notifyMsg{ID: "pending", From: "cto", To: "user", Thread: "gate/pending", Subject: "APPROVAL: pending", Kind: "question", Created: now})
+	fx.installSnapshot(t)
+
+	var order []string
+	calls := withCollectAMQSeamsFunc(t, amqEnv{Root: fx.root, BaseRoot: fx.base}, func(req amqCommandRequest, _ int) ([]byte, error) {
+		order = append(order, req.Arg[0])
+		return nil, errors.New("exit status 4: No new messages (timeout)")
+	})
+	ctx := collectTestContext(fx.dir, fx.root, "cto")
+	req := fx.request(30 * time.Second)
+	if err := executeCollectWithWaitPosture(io.Discard, ctx, 30*time.Second, false, req); err == nil || !strings.Contains(err.Error(), "gate/pending") {
+		t.Fatalf("pending gate error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("calls before refusal = %v, want none", collectCallVerbs(*calls))
+	}
+
+	previousAudit := waitPostureAppendAudit
+	waitPostureAppendAudit = func(waitPostureAuditRecord) error {
+		order = append(order, "audit")
+		return nil
+	}
+	t.Cleanup(func() { waitPostureAppendAudit = previousAudit })
+	req.Override = true
+	req.Reason = "bounded diagnostic watch"
+	if err := executeCollectWithWaitPosture(io.Discard, ctx, 30*time.Second, false, req); err != nil {
+		t.Fatalf("overridden collect: %v", err)
+	}
+	if got := strings.Join(order, ","); got != "audit,watch" {
+		t.Fatalf("order = %q, want audit,watch", got)
+	}
+}
+
 func TestRunCollectBlocksNonOwnerMailboxInProjectTeam(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -171,6 +227,9 @@ func TestRunCollectInfersNamedProfileFromResolvedRoot(t *testing.T) {
 	chdir(t, dir)
 	writeAMQBoundaryTeamProfile(t, dir, "review")
 	t.Setenv("AM_ME", "cto")
+	root := filepath.Join(dir, ".agent-mail", "review", "issue-96")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", root)
 	calls := withCollectAMQSeams(t, amqEnv{Root: filepath.Join(".agent-mail", "review", "issue-96"), BaseRoot: ".agent-mail"}, []string{"message\n"})
 
 	_, _, err := captureOutput(t, func() error {
@@ -234,6 +293,46 @@ func TestRunCollectOverrideWritesAuditAndExecutes(t *testing.T) {
 		if !strings.Contains(string(b), want) {
 			t.Fatalf("audit missing %q:\n%s", want, string(b))
 		}
+	}
+}
+
+func TestRunCollectBoundaryOverrideCannotHideActualLeadPaneActor(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	calls := withCollectAMQSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, nil)
+
+	_, _, err := captureOutput(t, func() error {
+		return runCollect([]string{"--session", "issue-96", "--me", "qa", "--timeout", "30s", "--override-boundary", "--reason", "recover child report"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "gate/release") {
+		t.Fatalf("alternate-mailbox collect posture error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("alternate-mailbox collect watched before refusal: %v", *calls)
+	}
+}
+
+func TestRunCollectVerifiedNonLeadPaneKeepsBoundedWait(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	t.Setenv("AM_ME", "qa")
+	previousActor := waitPostureResolveCurrentActor
+	waitPostureResolveCurrentActor = func(projectDir, profile, session string, _ team.Team) (verifiedOperatorActor, error) {
+		return verifiedOperatorActor{Role: "qa", Handle: "qa", Profile: profile, Session: session, Root: filepath.Join(projectDir, ".agent-mail", session), PaneID: "%9"}, nil
+	}
+	t.Cleanup(func() { waitPostureResolveCurrentActor = previousActor })
+	calls := withCollectAMQSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, nil)
+
+	_, _, err := captureOutput(t, func() error {
+		return runCollect([]string{"--session", "issue-96", "--me", "qa", "--timeout", "30s"})
+	})
+	if err != nil {
+		t.Fatalf("nonlead bounded collect changed: %v", err)
+	}
+	if got := strings.Join(collectCallVerbs(*calls), ","); got != "watch" {
+		t.Fatalf("nonlead collect calls = %q, want watch", got)
 	}
 }
 

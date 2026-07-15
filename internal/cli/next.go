@@ -77,14 +77,16 @@ Examples:
 	if fs.NArg() > 0 {
 		return usageErrorf("next takes no positional arguments")
 	}
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(ctx)
 	return executeNext(nextExecution{
-		ProjectDir:      projectDir,
-		Profile:         profile,
-		Session:         *sessionFlag,
+		ProjectDir:      ctx.ProjectDir,
+		Profile:         ctx.Profile,
+		Session:         ctx.Session,
+		BaseRoot:        ctx.BaseRoot,
 		JSON:            *jsonOut,
 		Out:             os.Stdout,
 		ResolveBaseRoot: scanBaseRootForProject,
@@ -133,20 +135,30 @@ func executeNext(ne nextExecution) error {
 }
 
 // deriveNextAction returns the highest-priority operator action from the
-// operator status snapshot. Priority: open gate → inbox backlog → unacked
-// directives → stale poll loop → idle (false).
+// operator status snapshot. Priority: answerable attention → inspect-only
+// release recovery → inbox backlog → unacked directives → stale poll loop →
+// idle (false).
 func deriveNextAction(data operatorStatusEnvelopeData, projectDir string) (nextActionData, bool) {
 	profile := data.Profile
 	session := data.Session
 
-	// Priority 1: open operator gate needing an answer.
+	// Priority 1: explicit answerable attention. Thread naming is descriptive,
+	// not authority for actionability.
 	for _, item := range data.Attention {
-		if strings.HasPrefix(item.Thread, "gate/") {
+		if isOpenGateAttention(item) && item.Answerable {
 			return nextGateAnswerAction(item, projectDir, profile, session, data.Namespace), true
 		}
 	}
 
-	// Priority 2: operator inbox backlog.
+	// Priority 2: inspect-only open gates, release recovery, or degradation.
+	for _, item := range data.Attention {
+		inspectOnlyRelease := item.Actionable && !item.Cleared && !item.Answerable && (item.EventType == "compound_release_recovery" || item.EventType == "compound_release_degraded")
+		if isOpenGateAttention(item) && !item.Answerable || inspectOnlyRelease {
+			return nextInspectAttentionAction(item, profile, session, data.Namespace), true
+		}
+	}
+
+	// Priority 3: operator inbox backlog.
 	if data.OperatorLoop.Backlog > 0 {
 		cmd := nextOperatorStatusCmd(projectDir, profile, session)
 		a := nextActionData{
@@ -164,7 +176,7 @@ func deriveNextAction(data operatorStatusEnvelopeData, projectDir string) (nextA
 		return a, true
 	}
 
-	// Priority 3: unacknowledged directives.
+	// Priority 4: unacknowledged directives.
 	if data.OperatorLoop.DirectivesUnacked > 0 {
 		cmd := nextOperatorStatusCmd(projectDir, profile, session)
 		a := nextActionData{
@@ -182,7 +194,7 @@ func deriveNextAction(data operatorStatusEnvelopeData, projectDir string) (nextA
 		return a, true
 	}
 
-	// Priority 4: stale operator poll loop.
+	// Priority 5: stale operator poll loop.
 	if data.OperatorLoop.State == "poller_stale" {
 		cmd := nextOperatorPollCmd(projectDir, profile, session)
 		a := nextActionData{
@@ -201,6 +213,17 @@ func deriveNextAction(data operatorStatusEnvelopeData, projectDir string) (nextA
 	}
 
 	return nextActionData{}, false
+}
+
+func nextInspectAttentionAction(item operatorAttention, profile, session string, ns squadnamespace.Ref) nextActionData {
+	label := item.Subject
+	if label == "" {
+		label = "inspect compound release recovery"
+	}
+	return nextActionData{
+		ID: item.EventType, Kind: item.EventType, Label: label, ActionKind: "display",
+		Command: item.Inspect, Available: item.Inspect != "", Profile: profile, Session: session, Namespace: ns,
+	}
 }
 
 func nextGateAnswerAction(item operatorAttention, projectDir, profile, session string, ns squadnamespace.Ref) nextActionData {

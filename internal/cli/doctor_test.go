@@ -272,7 +272,7 @@ func TestExecuteDoctorAMQEnvCommandFails(t *testing.T) {
 
 func TestExecuteDoctorAMQVersionAccepts0421AndNewer(t *testing.T) {
 	dir := t.TempDir()
-	for _, v := range []string{"0.42.1", "v0.42.2-rc1", "1.0.0+build42"} {
+	for _, v := range []string{"0.42.1", "v0.42.2-rc1", "0.43.1", "1.0.0+build42"} {
 		d := newDoctorExec(t, dir)
 		d.ResolveAMQEnv = func(string) (amqEnv, error) {
 			return amqEnv{AMQVersion: v, Root: dir}, nil

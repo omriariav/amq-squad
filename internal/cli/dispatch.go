@@ -73,14 +73,17 @@ var dispatchWakePane = defaultDispatchWakePane
 // drive the wake-first branch without real liveness probing.
 var dispatchRecipientWakeLive = defaultDispatchRecipientWakeLive
 
-// dispatchLinkTask is a seam for partial-failure tests around post-send task
-// metadata linkage. Production uses taskstore.LinkDispatch directly.
+// dispatchLinkTask and dispatchClaimTask retain the legacy auto-claim helper's
+// test seam. Production task-backed dispatch uses the transaction/outbox seams
+// below so no AMQ announcement can precede the durable claim and intent.
 var dispatchLinkTask = taskstore.LinkDispatchForProfile
-
-// dispatchClaimTask is a seam for post-dispatch auto-claim. Production uses
-// taskstore.Claim directly after the durable message and dispatch link are
-// written, so send/link failures leave the task in its prior audit state.
 var dispatchClaimTask = taskstore.ClaimForProfile
+
+// Task-backed dispatch commits claim + outbox intent before AMQ send. These
+// seams let crash/failure tests prove that no announcement precedes commit.
+var dispatchPrepareTask = taskstore.PrepareDispatchForProfile
+var dispatchBeginTaskDelivery = taskstore.BeginOutboxDeliveryForProfile
+var dispatchFinishTask = taskstore.FinishDispatchForProfile
 
 func runDispatch(args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
@@ -100,6 +103,8 @@ func runDispatch(args []string) error {
 	noWakeFlag := fs.Bool("no-wake", false, "queue the durable task without nudging the pane")
 	waitForFlag := fs.String("wait-for", "", "AMQ receipt stage to wait for after send (default: drained for --kind answer; use none to disable)")
 	waitTimeoutFlag := fs.Duration("wait-timeout", dispatchAnswerDefaultWaitAfter, "maximum time to wait for the AMQ receipt stage")
+	overrideWaitPosture := fs.Bool("override-wait-posture", false, "allow a verified own-pane lead wait that would normally park, and write an audit record")
+	waitPostureReason := fs.String("wait-posture-reason", "", "distinct required reason when --override-wait-posture is set")
 	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
 	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	createTaskFlag := fs.Bool("create-task", false, "create and link a native task-store task before dispatch")
@@ -113,6 +118,7 @@ Usage:
                      [--from HANDLE] [--thread THREAD] [--kind todo] --subject SUBJ
                      (--body TEXT | --body-file FILE) [--priority P]
                      [--force] [--no-wake] [--wait-for STAGE] [--wait-timeout DURATION]
+                     [--override-wait-posture --wait-posture-reason WHY]
                      [--override-namespace-conflict --reason WHY]
                      [--create-task | --task ID] [--json]
 
@@ -139,6 +145,12 @@ with the printed root-correct 'amq-squad collect --session ... --me ...'
 command. Drain receipts only prove the child saw the task; they do not prove the
 task is complete.
 
+With --create-task or --task ID, dispatch first commits the native task claim
+and a pending delivery intent, then marks that intent sending, and only then
+sends AMQ. A failed send remains an explicit failed outbox entry; a crash after
+send but before finalization remains delivery-uncertain and is never retried
+automatically.
+
 Use --body-file FILE or --body-file - (stdin) for task bodies containing code,
 commands, backticks, or $() syntax. Inline --body is suitable only for short
 plain prose: the caller's shell expands inline text before amq-squad receives
@@ -162,16 +174,23 @@ Examples:
 	if *createTaskFlag && strings.TrimSpace(*taskIDFlag) != "" {
 		return usageErrorf("--create-task and --task are mutually exclusive")
 	}
+	waitFor := dispatchReceiptWaitFor(*kindFlag, *waitForFlag)
+	waitTimeout := *waitTimeoutFlag
+	if waitFor != "" && waitTimeout < 0 {
+		return usageErrorf("dispatch --wait-timeout must be non-negative when receipt waiting is enabled")
+	}
 	taskBody, err := readPromptBody(*body, *bodyFile, flagWasSet(fs, "body"), flagWasSet(fs, "body-file"), os.Stdin, stdinIsInteractive())
 	if err != nil {
 		return err
 	}
 	warnSuspiciousInlineBody("dispatch", taskBody, flagWasSet(fs, "body"), os.Stderr)
 
-	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	resolvedContext, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, *fromFlag, fs)
 	if err != nil {
 		return err
 	}
+	emitContextDiagnostics(resolvedContext)
+	projectDir, profile := resolvedContext.ProjectDir, resolvedContext.Profile
 	if !team.ExistsProfile(projectDir, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
@@ -186,10 +205,49 @@ Examples:
 	if !ok {
 		return fmt.Errorf("no team member with role %q in this team", *roleFlag)
 	}
-	workstream, err := resolveTeamWorkstreamName(t, *sessionFlag, flagWasSet(fs, "session"))
+	workstream, err := resolveTeamWorkstreamName(t, resolvedContext.Session, flagWasSet(fs, "session"))
 	if err != nil {
 		return err
 	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), memberHandle(member))
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentContext, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, *fromFlag, fs)
+	if err != nil {
+		return fmt.Errorf("dispatch refused: context re-resolution under admission failed: %w", err)
+	}
+	if err := validateReResolvedContext(resolvedContext, currentContext, false); err != nil {
+		return err
+	}
+	currentTeam, err := team.ReadProfile(currentContext.ProjectDir, currentContext.Profile)
+	if err != nil {
+		return fmt.Errorf("dispatch refused: reread team under admission: %w", err)
+	}
+	currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, currentContext.Session, flagWasSet(fs, "session"))
+	if err != nil {
+		return err
+	}
+	currentMember, ok := teamMemberByRole(currentTeam, *roleFlag)
+	if !ok {
+		return fmt.Errorf("dispatch refused: target role %q changed before admission", *roleFlag)
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(currentContext.ProjectDir, currentContext.Profile, currentWorkstream), memberHandle(currentMember))
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("dispatch", initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	if member.Binary != currentMember.Binary || member.Session != currentMember.Session || canonicalPath(member.EffectiveCWD(t.Project)) != canonicalPath(currentMember.EffectiveCWD(currentTeam.Project)) {
+		return fmt.Errorf("dispatch refused: target role %q identity changed before admission; retry", *roleFlag)
+	}
+	resolvedContext, projectDir, profile, t, workstream, member = currentContext, currentContext.ProjectDir, currentContext.Profile, currentTeam, currentWorkstream, currentMember
 	if err := ensureNoNamespaceConflictWithOverride("dispatch", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
 		Reason:  *overrideNamespaceReason,
@@ -244,29 +302,86 @@ Examples:
 			return fmt.Errorf("create native task for dispatch: %w", err)
 		}
 		taskID = created.ID
-	} else if taskID != "" {
-		task, err := taskstore.ShowForProfile(projectDir, profile, workstream, taskID)
+	}
+	receipt.Sender = from
+	receipt.Recipient = member.Handle
+	receipt.Recipients = []string{member.Handle}
+	receipt.Consumers = []deliveryConsumerState{{Consumer: member.Handle, State: deliveryStateAmbiguousUnknown}}
+	receipt.Root = ctx.Root
+	receipt.Thread = strings.TrimSpace(*threadFlag)
+	if receipt.Thread == "" {
+		receipt.Thread = receiptCanonicalP2P(from, member.Handle)
+	}
+	receipt.EvidenceSource = "amq_send_output"
+	receipt.addStage(deliveryStateAmbiguousUnknown, "receipt reserved before task link and AMQ send; no blind retry if interrupted")
+	if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+		return fmt.Errorf("reserve dispatch receipt: %w", err)
+	}
+	var prepared *taskstore.DispatchPrepareResult
+	if taskID != "" {
+		preparedAt := taskNow()
+		p, err := dispatchPrepareTask(projectDir, profile, workstream, taskID, taskstore.DispatchIntentOptions{
+			From: from, Assignee: member.Handle, Thread: *threadFlag, Kind: *kindFlag,
+			Subject: *subjectFlag, Body: taskBody, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
+			LeaseDuration: taskstore.DefaultLeaseDuration, Now: preparedAt,
+		})
 		if err != nil {
-			return fmt.Errorf("link native task for dispatch: %w", err)
+			markDeliveryFailedBeforeID(projectDir, profile, workstream, &receipt, err)
+			return fmt.Errorf("prepare native task %s dispatch transaction: %w", taskID, err)
 		}
-		if err := validateDispatchTask(task, member.Handle, projectDir, profile, workstream); err != nil {
-			return err
+		started, err := dispatchBeginTaskDelivery(projectDir, profile, workstream, taskID, p.Intent.ID, preparedAt.Add(time.Nanosecond))
+		if err != nil {
+			markDeliveryFailedBeforeID(projectDir, profile, workstream, &receipt, err)
+			return fmt.Errorf("begin native task %s delivery: %w", taskID, err)
 		}
+		p.Intent = started
+		receipt.TaskID = taskID
+		receipt.OutboxIntentID = p.Intent.ID
+		if err := persistDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+			cause := fmt.Errorf("link dispatch receipt %s to task outbox %s (send not attempted): %w", receipt.AttemptID, p.Intent.ID, err)
+			finished, finishedIntent, finishErr := dispatchFinishTask(projectDir, profile, workstream, taskID, p.Intent.ID, taskstore.Dispatch{
+				Sender: from, Assignee: member.Handle, Thread: receipt.Thread, Kind: *kindFlag,
+				Subject: *subjectFlag, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
+			}, taskstore.DeliveryOutcome{State: taskstore.DeliveryFailedBeforeInvoke, Error: cause.Error()}, taskNow())
+			if finishErr != nil {
+				return fmt.Errorf("%v; finalize proven pre-invocation failure: %w", cause, finishErr)
+			}
+			p.Task, p.Intent = finished, finishedIntent
+			markDeliveryFailedBeforeID(projectDir, profile, workstream, &receipt, cause)
+			return cause
+		}
+		prepared = &p
 	}
 
-	waitFor := dispatchReceiptWaitFor(*kindFlag, *waitForFlag)
-	waitTimeout := *waitTimeoutFlag
 	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag, waitFor, waitTimeout)
-	out, err := runAMQCommand(amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: sendCmd})
+	waitPosture := waitPostureForContext("dispatch", "delivery_receipt", ctx, waitTimeout, waitFor != "" && waitTimeout == 0, waitFor != "", *overrideWaitPosture, *waitPostureReason)
+	out, sendReceipt, err := runOwnedDurableSend(durableSendOptions{
+		ProjectDir: projectDir, Profile: profile, Session: workstream, Role: member.Role,
+		ExecutionMode: effectiveTeamExecutionMode(t), Kind: "dispatch", TaskID: taskID, Receipt: &receipt,
+		WaitPosture: waitPosture,
+	}, amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: sendCmd})
+	receipt = *sendReceipt
+	msgID := receipt.MessageID
+	if prepared != nil {
+		finished, finishedIntent, finishErr := dispatchFinishTask(projectDir, profile, workstream, taskID, prepared.Intent.ID, taskstore.Dispatch{
+			Sender: from, Assignee: member.Handle, Thread: *threadFlag, Kind: *kindFlag,
+			Subject: *subjectFlag, MessageID: msgID, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
+		}, taskDeliveryOutcome(&receipt, err), taskNow())
+		if finishErr != nil {
+			return fmt.Errorf("finalize native task %s dispatch outcome (delivery may be uncertain): %w", taskID, finishErr)
+		}
+		prepared.Task, prepared.Intent = finished, finishedIntent
+	}
 	if err != nil {
 		if !dispatchSendWaitTimedOut(out, err, waitFor) {
 			return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
 		}
 	}
-	msgID := parseSentMessageID(string(out))
 	receipt.MessageID = msgID
 	receipt.Root = ctx.Root
-	receipt.Thread = strings.TrimSpace(*threadFlag)
+	if thread := strings.TrimSpace(*threadFlag); thread != "" {
+		receipt.Thread = thread
+	}
 	receipt.Status = "written_to_amq"
 	receipt.addStage("written_to_amq", "durable AMQ message written to recipient inbox")
 	waitTimedOut := dispatchSendWaitTimedOut(out, err, waitFor)
@@ -275,26 +390,10 @@ Examples:
 	} else if waitFor != "" {
 		receipt.addStage("amq_wait_"+waitFor, fmt.Sprintf("amq send waited for %s receipt with timeout %s", waitFor, waitTimeout))
 	}
-	if taskID != "" {
-		linked, lerr := dispatchLinkTask(projectDir, profile, workstream, taskID, taskstore.Dispatch{
-			Sender:    from,
-			Assignee:  member.Handle,
-			Thread:    *threadFlag,
-			Kind:      *kindFlag,
-			Subject:   *subjectFlag,
-			MessageID: msgID,
-		}, taskNow())
-		if lerr != nil {
-			return fmt.Errorf("link native task %s to dispatch: %w", taskID, lerr)
-		}
-		taskID = linked.ID
-		claimed, didClaim, cerr := autoClaimDispatchedTask(projectDir, profile, workstream, taskID, member.Handle, taskNow())
-		if cerr != nil {
-			return fmt.Errorf("auto-claim native task %s after dispatch: %w", taskID, cerr)
-		}
-		if didClaim {
+	if prepared != nil {
+		if prepared.DidClaim {
 			receipt.addStage("task_claimed", fmt.Sprintf("native task %s marked in_progress for %s", taskID, member.Handle))
-		} else if claimed.Status == taskstore.StatusInProgress {
+		} else if prepared.Task.Status == taskstore.StatusInProgress {
 			receipt.addStage("task_already_in_progress", fmt.Sprintf("native task %s already in_progress for %s", taskID, member.Handle))
 		}
 	}
@@ -351,7 +450,7 @@ Examples:
 				Handle:          member.Handle,
 				MessageID:       msgID,
 				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 				DeliveryReceipt: &receipt,
 			})
 		}
@@ -395,7 +494,7 @@ Examples:
 				Handle:          member.Handle,
 				MessageID:       msgID,
 				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 				DeliveryReceipt: &receipt,
 			})
 		}
@@ -435,7 +534,7 @@ Examples:
 				Handle:          member.Handle,
 				MessageID:       msgID,
 				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 				DeliveryReceipt: &receipt,
 			})
 		}
@@ -454,7 +553,24 @@ Examples:
 		receipt.Status = "wake_failed"
 		receipt.Method = "durable_amq_wake_failed"
 		receipt.Detail = werr.Error()
-		receipt.addStage("failed", "pane nudge failed after durable AMQ write: "+werr.Error())
+		var leak *tmuxpane.BracketedPasteLeakError
+		var unavailable *tmuxpane.BracketedPasteCheckUnavailableError
+		switch {
+		case errors.As(werr, &leak):
+			receipt.Status = "bracketed_paste_leak"
+			receipt.Method = "durable_amq_plus_prompt_fallback"
+			receipt.PaneID = leak.PaneID
+			receipt.Fallback = true
+			receipt.addStage("bracketed_paste_leak", "pane nudge stopped before Enter after bracketed-paste markers leaked: "+werr.Error())
+		case errors.As(werr, &unavailable):
+			receipt.Status = "bracketed_paste_check_unavailable"
+			receipt.Method = "durable_amq_plus_prompt_fallback"
+			receipt.PaneID = unavailable.PaneID
+			receipt.Fallback = true
+			receipt.addStage("bracketed_paste_check_unavailable", "pane nudge stopped before Enter because bracketed-paste inspection was unavailable: "+werr.Error())
+		default:
+			receipt.addStage("failed", "pane nudge failed after durable AMQ write: "+werr.Error())
+		}
 		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
 			return err
 		}
@@ -477,7 +593,7 @@ Examples:
 				Handle:          member.Handle,
 				MessageID:       msgID,
 				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 				DeliveryReceipt: &receipt,
 			})
 		}
@@ -509,7 +625,8 @@ Examples:
 			receipt.addStage(dispatchSubmitUnconfirmed, outcome.Detail)
 		default:
 			receipt.Status = dispatchSubmitConfirmed
-			receipt.addStage(dispatchSubmitConfirmed, "Enter submitted; input-region change observed, or snapshot unavailable (fail-open)")
+			receipt.Acknowledged = true
+			receipt.addStage(dispatchSubmitConfirmed, "Enter submission confirmed by observed input-region change")
 			outcome.SubmitState = dispatchSubmitConfirmed
 		}
 	} else {
@@ -545,7 +662,7 @@ Examples:
 			Handle:          member.Handle,
 			MessageID:       msgID,
 			Root:            ctx.Root,
-			Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, msgID),
+			Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 			DeliveryReceipt: &receipt,
 		})
 	}
@@ -600,7 +717,7 @@ func validateDispatchTask(t taskstore.Task, assignee, projectDir, profile, sessi
 		return nil
 	case taskstore.StatusInProgress:
 		return nil
-	case taskstore.StatusCompleted, taskstore.StatusFailed, taskstore.StatusBlocked:
+	case taskstore.StatusCompleted, taskstore.StatusFailed, taskstore.StatusBlocked, taskstore.StatusCancelled:
 		return fmt.Errorf("task %s is %s; dispatch requires pending or in_progress", t.ID, t.Status)
 	default:
 		return fmt.Errorf("task %s has unknown status %q; dispatch requires pending or in_progress", t.ID, t.Status)
@@ -633,30 +750,15 @@ func dispatchCollectCommand(projectDir, session, me string) string {
 		" --timeout 120s --include-body"
 }
 
-func dispatchFollowUpActions(projectDir, profile, session, from, msgID string) []mutationAction {
+func dispatchFollowUpActions(projectDir, profile, session, from, recipient, msgID string) []mutationAction {
 	actions := []mutationAction{
 		followUp("collect", "collect child report", dispatchCollectCommand(projectDir, session, from)),
 	}
 	if strings.TrimSpace(msgID) != "" {
-		actions = append(actions, followUp("receipts", "wait for drain receipt", "amq-squad amq receipts wait --project "+shellQuote(projectDir)+" --session "+shellQuote(session)+" --me "+shellQuote(from)+" --msg-id "+shellQuote(msgID)+" --stage drained"))
+		actions = append(actions, followUp("receipts", "wait for drain receipt", "amq-squad amq receipts wait --project "+shellQuote(projectDir)+" --session "+shellQuote(session)+" --me "+shellQuote(recipient)+" --msg-id "+shellQuote(msgID)+" --stage drained"))
 	}
 	actions = append(actions, followUp("status", "show recipient status", "amq-squad status --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --session "+shellQuote(session)+" --json"))
 	return actions
-}
-
-// parseSentMessageID extracts the message id from `amq send`'s text output,
-// whose confirmation line reads "Sent <id> to <handle> (...)". Returns "" when
-// no such line is found, so the caller can fall back to echoing amq's raw output
-// rather than hiding it.
-func parseSentMessageID(out string) string {
-	for _, line := range strings.Split(out, "\n") {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Sent "); ok {
-			if fields := strings.Fields(rest); len(fields) > 0 {
-				return fields[0]
-			}
-		}
-	}
-	return ""
 }
 
 // dispatchSendArgs builds the `amq send` argv for a dispatch: a durable message

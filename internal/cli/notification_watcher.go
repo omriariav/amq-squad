@@ -295,6 +295,36 @@ func inspectNotificationWatcher(t team.Team, profile, session string, now time.T
 // up/run start/resume. A live launch never proceeds with enabled notification
 // policy unless a scoped watcher owns a fresh lease on this host.
 func reconcileNotificationWatcherStarted(t team.Team, profile, session, baseRoot string) error {
+	teamExisted := team.ExistsProfile(t.Project, profile)
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(t.Project, profile, session), "")
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWatcherAdmission(t.Project, profile, session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentTeam := t
+	if teamExisted {
+		currentTeam, err = team.ReadProfile(t.Project, profile)
+		if err != nil {
+			return fmt.Errorf("notification watcher start refused: reread team under admission: %w", err)
+		}
+	} else if team.ExistsProfile(t.Project, profile) {
+		return fmt.Errorf("notification watcher start refused: team profile appeared before admission; retry")
+	}
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(t.Project, profile, session), "")
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("notification watcher start", initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	t = currentTeam
+	if err := ensureNoNamespaceMigration("notification watcher start", t.Project, profile, session); err != nil {
+		return err
+	}
 	policy := team.EffectiveOperatorNotifications(t.Operator)
 	if !policy.Enabled {
 		return nil
@@ -415,6 +445,25 @@ func stopNotificationWatcher(projectDir, profile, session string) error {
 }
 
 func stopNotificationWatcherGeneration(projectDir, profile, session, expectedToken string) error {
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, session), "")
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWatcherAdmission(projectDir, profile, session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, session), "")
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("notification watcher stop", initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	if err := ensureNoNamespaceMigration("notification watcher stop", projectDir, profile, session); err != nil {
+		return err
+	}
 	path := notificationWatcherRuntimePath(projectDir, profile, session)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("ensure notification watcher runtime dir: %w", err)
@@ -593,6 +642,25 @@ func executeNotificationWatcher(w notificationWatcherExecution) error {
 		return err
 	}
 	if _, err := resolveProfileFlag(profile); err != nil {
+		return err
+	}
+	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(w.ProjectDir, profile, w.Session), "")
+	if err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWatcherAdmission(w.ProjectDir, profile, w.Session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(w.ProjectDir, profile, w.Session), "")
+	if err != nil {
+		return err
+	}
+	if err := validateReResolvedEndpointIdentity("notification watcher", initialIdentity, currentIdentity); err != nil {
+		return err
+	}
+	if err := ensureNoNamespaceMigration("notification watcher", w.ProjectDir, profile, w.Session); err != nil {
 		return err
 	}
 	t, err := team.ReadProfile(w.ProjectDir, profile)

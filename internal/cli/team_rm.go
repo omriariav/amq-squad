@@ -75,21 +75,17 @@ Examples:
 	if fs.NArg() == 1 {
 		profileArg = fs.Arg(0)
 	}
-	profile, err := resolveProfileFlag(profileArg)
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: *projectFlag, ProfileFlag: profileArg,
+		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: fs.NArg() == 1 || flagWasSet(fs, "profile"),
+	})
 	if err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
-	}
+	emitContextDiagnostics(ctx)
 	return executeTeamRemove(teamRemoveExecution{
-		ProjectDir:  projectDir,
-		Profile:     profile,
+		ProjectDir:  ctx.ProjectDir,
+		Profile:     ctx.Profile,
 		AllProfiles: *allProfiles,
 		Yes:         *yes,
 		DryRun:      *dryRun,

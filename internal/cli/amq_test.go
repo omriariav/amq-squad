@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -31,7 +35,28 @@ func withAMQCommandSeams(t *testing.T, env amqEnv, output string) *[]amqCommandR
 	}
 	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
 		calls = append(calls, req)
-		return []byte(output), nil
+		result := output
+		if len(req.Arg) > 0 {
+			switch req.Arg[0] {
+			case "list":
+				// Durable reply resolution intentionally uses the non-mutating
+				// AMQ 0.42.1+ list --json shape, never `amq read`.
+				if containsString(req.Arg, "--new") {
+					result = `[{"id":"q1","from":"cto","thread":"p2p/cto__user","box":"new","path":"inbox/new/q1.md"},{"id":"msg1","from":"qa","thread":"p2p/lead__qa","box":"new","path":"inbox/new/msg1.md"}]` + "\n"
+				} else if containsString(req.Arg, "--cur") {
+					result = "[]\n"
+				}
+			case "send":
+				if parseSentMessageID(result) == "" {
+					result = "Sent fixture-msg to " + amqFlagValue(req.Arg, "to") + "\n"
+				}
+			case "reply":
+				if parseSentMessageID(result) == "" {
+					result = "Replied fixture-reply to fixture-recipient\n"
+				}
+			}
+		}
+		return []byte(result), nil
 	}
 	t.Cleanup(func() {
 		resolveAMQEnvForAMQCommand = prevEnv
@@ -202,7 +227,9 @@ func TestResolveAMQContextInfersNamedProfileBeforeAMQResolution(t *testing.T) {
 	writeAMQBoundaryTeamProfile(t, dir, "review")
 	t.Setenv("AM_ROOT", root)
 	t.Setenv("AM_BASE_ROOT", root)
-	t.Setenv("AM_SESSION", "")
+	if err := os.Unsetenv("AM_SESSION"); err != nil {
+		t.Fatal(err)
+	}
 
 	previous := resolveAMQEnvForAMQCommand
 	resolveAMQEnvForAMQCommand = func(cwd, rootFlag, session, handle string) (amqEnv, error) {
@@ -365,6 +392,7 @@ func TestResolveAMQContextRefusesInheritedNamedProfileSymlinkEscape(t *testing.T
 		t.Skipf("symlink unavailable: %v", err)
 	}
 	t.Setenv("AM_ROOT", filepath.Join(base, "review", "issue-96"))
+	t.Setenv("AM_BASE_ROOT", filepath.Join(base, "review", "issue-96"))
 
 	previous := resolveAMQEnvForAMQCommand
 	resolveAMQEnvForAMQCommand = func(string, string, string, string) (amqEnv, error) {
@@ -389,6 +417,7 @@ func TestResolveAMQContextRefusesInheritedNamedProfileSymlinkIdentityRewrite(t *
 		t.Skipf("symlink unavailable: %v", err)
 	}
 	t.Setenv("AM_ROOT", filepath.Join(base, "review", "issue-96"))
+	t.Setenv("AM_BASE_ROOT", filepath.Join(base, "review", "issue-96"))
 
 	previous := resolveAMQEnvForAMQCommand
 	resolveAMQEnvForAMQCommand = func(string, string, string, string) (amqEnv, error) {
@@ -560,7 +589,7 @@ func TestAMQRejectsUnknownSubcommand(t *testing.T) {
 
 func TestAMQSendResolvesRootAndForwards(t *testing.T) {
 	chdir(t, t.TempDir())
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "sent\n")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-send to worker\n")
 
 	_, _, err := captureOutput(t, func() error {
 		return runAMQ([]string{"send", "--session", "issue-96", "--me", "lead", "--to", "worker", "--kind", "todo", "--subject", "go"})
@@ -632,6 +661,8 @@ func TestAMQSendAsTeamRoleRequiresBoundIdentity(t *testing.T) {
 	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "sent\n")
 	t.Setenv("AM_ME", "orchestrator")
 	t.Setenv("AM_ROOT", filepath.Join(base, "issue-96"))
+	t.Setenv("AM_BASE_ROOT", base)
+	t.Setenv("AM_SESSION", "issue-96")
 
 	_, _, err := captureOutput(t, func() error {
 		return runAMQ([]string{"send", "--session", "issue-96", "--me", "cto", "--to", "user", "--kind", "status", "--subject", "gate"})
@@ -745,10 +776,10 @@ func TestAMQReplyAsOperatorHandleRequiresUnsafeOverride(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("unsafe operator reply-as with reason should pass: %v", err)
 	}
-	if len(*calls) != 1 {
-		t.Fatalf("calls = %d, want 1", len(*calls))
+	if len(*calls) != 3 {
+		t.Fatalf("calls = %d, want 3 (new list, cur list, reply)", len(*calls))
 	}
-	got := strings.Join((*calls)[0].Arg, " ")
+	got := strings.Join((*calls)[len(*calls)-1].Arg, " ")
 	if strings.Contains(got, "--unsafe-send-as") || strings.Contains(got, "--reason") {
 		t.Fatalf("guard flags should be stripped before bare amq reply: %s", got)
 	}
@@ -759,6 +790,10 @@ func TestAMQReplyAsOperatorHandleRequiresUnsafeOverride(t *testing.T) {
 	}
 	if !strings.Contains(string(b), `"target":"user"`) || !strings.Contains(string(b), "repair imported gate answer") {
 		t.Fatalf("operator reply-as audit = %s", b)
+	}
+	records := readAMQBoundaryAuditRecords(t, audit)
+	if len(records) != 2 || records[0].Outcome != "attempted" || records[1].Outcome != "delivered" || records[0].AttemptID == "" || records[0].AttemptID != records[1].AttemptID || records[1].Operation != "reply" || records[1].MessageID != "fixture-reply" {
+		t.Fatalf("operator reply-as audit lifecycle = %+v", records)
 	}
 }
 
@@ -873,6 +908,206 @@ func TestAMQSendAsUnsafeOverrideRequiresReasonAndAudits(t *testing.T) {
 	}
 }
 
+func TestAMQUnsafeSendAsAuditLifecycle(t *testing.T) {
+	newFixture := func(t *testing.T) (string, *[]amqCommandRequest, string) {
+		t.Helper()
+		dir := seedTeam(t, team.Team{
+			Orchestrated: true,
+			Lead:         "cto",
+			Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		})
+		base := filepath.Join(dir, ".agent-mail")
+		calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "Sent audited-msg to user\n")
+		return dir, calls, filepath.Join(dir, team.DirName, "boundary-audit", "issue-96.jsonl")
+	}
+
+	t.Run("delivered appends truthful terminal outcome", func(t *testing.T) {
+		dir, calls, auditPath := newFixture(t)
+		_, _, err := captureOutput(t, func() error {
+			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+		})
+		if err != nil {
+			t.Fatalf("unsafe send: %v", err)
+		}
+		if len(*calls) != 1 {
+			t.Fatalf("AMQ calls = %d, want 1", len(*calls))
+		}
+		records := readAMQBoundaryAuditRecords(t, auditPath)
+		if len(records) != 2 || records[0].Outcome != "attempted" || records[1].Outcome != "delivered" || records[0].AttemptID == "" || records[0].AttemptID != records[1].AttemptID || records[1].Operation != "send" || records[1].MessageID != "audited-msg" || records[1].Error != "" {
+			t.Fatalf("audit lifecycle = %+v", records)
+		}
+	})
+
+	t.Run("invoked without stable id appends uncertain with same attempt", func(t *testing.T) {
+		dir, _, auditPath := newFixture(t)
+		previousRun := runAMQCommand
+		calls := 0
+		runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+			calls++
+			return []byte("send failed\n"), errors.New("amq unavailable")
+		}
+		t.Cleanup(func() { runAMQCommand = previousRun })
+		_, _, err := captureOutput(t, func() error {
+			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+		})
+		if err == nil || !strings.Contains(err.Error(), "amq unavailable") {
+			t.Fatalf("unsafe send error = %v", err)
+		}
+		if calls != 1 {
+			t.Fatalf("AMQ calls = %d, want 1", calls)
+		}
+		records := readAMQBoundaryAuditRecords(t, auditPath)
+		if len(records) != 2 || records[0].Outcome != "attempted" || records[1].Outcome != "uncertain" || records[0].AttemptID == "" || records[0].AttemptID != records[1].AttemptID || !strings.Contains(records[1].Error, "amq unavailable") {
+			t.Fatalf("audit lifecycle = %+v", records)
+		}
+	})
+
+	t.Run("stable id remains delivered when AMQ also returns error", func(t *testing.T) {
+		dir, _, auditPath := newFixture(t)
+		previousRun := runAMQCommand
+		calls := 0
+		runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+			calls++
+			return []byte("Sent delivered-with-error to user\nwait timed out\n"), errors.New("wait timed out")
+		}
+		t.Cleanup(func() { runAMQCommand = previousRun })
+		_, _, err := captureOutput(t, func() error {
+			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+		})
+		if err == nil || !strings.Contains(err.Error(), "wait timed out") {
+			t.Fatalf("unsafe send error = %v", err)
+		}
+		if calls != 1 {
+			t.Fatalf("AMQ calls = %d, want 1", calls)
+		}
+		records := readAMQBoundaryAuditRecords(t, auditPath)
+		if len(records) != 2 || records[1].Outcome != "delivered" || records[1].MessageID != "delivered-with-error" || records[0].AttemptID != records[1].AttemptID || !strings.Contains(records[1].Error, "wait timed out") {
+			t.Fatalf("audit lifecycle = %+v", records)
+		}
+	})
+
+	t.Run("failure before invocation appends failed", func(t *testing.T) {
+		dir, calls, auditPath := newFixture(t)
+		previousPersist := persistDeliveryReceipt
+		persistDeliveryReceipt = func(string, string, string, *deliveryReceiptData) error {
+			return errors.New("receipt reservation failed")
+		}
+		t.Cleanup(func() { persistDeliveryReceipt = previousPersist })
+		_, _, err := captureOutput(t, func() error {
+			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+		})
+		if err == nil || !strings.Contains(err.Error(), "receipt reservation failed") {
+			t.Fatalf("unsafe send error = %v", err)
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("AMQ calls = %d, want 0", len(*calls))
+		}
+		records := readAMQBoundaryAuditRecords(t, auditPath)
+		if len(records) != 2 || records[0].Outcome != "attempted" || records[1].Outcome != "failed" || records[0].AttemptID != records[1].AttemptID || !strings.Contains(records[1].Error, "receipt reservation failed") {
+			t.Fatalf("audit lifecycle = %+v", records)
+		}
+	})
+
+	t.Run("attempt persistence failure invokes AMQ zero times", func(t *testing.T) {
+		dir, calls, auditPath := newFixture(t)
+		previousAppend := appendAMQBoundaryAuditRecord
+		appendAMQBoundaryAuditRecord = func(rec amqBoundaryAuditRecord) error {
+			if rec.Outcome == "attempted" {
+				return errors.New("audit disk full")
+			}
+			return previousAppend(rec)
+		}
+		t.Cleanup(func() { appendAMQBoundaryAuditRecord = previousAppend })
+		_, _, err := captureOutput(t, func() error {
+			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+		})
+		if err == nil || !strings.Contains(err.Error(), "audit disk full") {
+			t.Fatalf("unsafe send error = %v", err)
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("AMQ calls = %d, want 0", len(*calls))
+		}
+		if _, statErr := os.Stat(auditPath); !os.IsNotExist(statErr) {
+			t.Fatalf("audit path should not exist after attempted append failure: %v", statErr)
+		}
+	})
+
+	t.Run("terminal persistence gap remains attempted", func(t *testing.T) {
+		dir, calls, auditPath := newFixture(t)
+		previousAppend := appendAMQBoundaryAuditRecord
+		appendAMQBoundaryAuditRecord = func(rec amqBoundaryAuditRecord) error {
+			if rec.Outcome == "delivered" {
+				return errors.New("audit finalization failed")
+			}
+			return previousAppend(rec)
+		}
+		t.Cleanup(func() { appendAMQBoundaryAuditRecord = previousAppend })
+		_, _, err := captureOutput(t, func() error {
+			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
+		})
+		if err == nil || !strings.Contains(err.Error(), "remains attempted/uncertain") {
+			t.Fatalf("unsafe send error = %v", err)
+		}
+		if len(*calls) != 1 {
+			t.Fatalf("AMQ calls = %d, want 1", len(*calls))
+		}
+		records := readAMQBoundaryAuditRecords(t, auditPath)
+		if len(records) != 1 || records[0].Outcome != "attempted" || records[0].AttemptID == "" {
+			t.Fatalf("audit lifecycle = %+v", records)
+		}
+	})
+}
+
+func TestAMQSendAsRefusalsWriteNoAudit(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "normal operator impersonation", args: []string{"send", "--session", "issue-96", "--me", team.DefaultOperatorHandle, "--to", "cto", "--kind", "answer", "--subject", "APPROVED: tag"}},
+		{name: "unsafe missing reason", args: []string{"send", "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--to", "user", "--kind", "status", "--subject", "gate"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := seedTeam(t, team.Team{
+				Orchestrated: true,
+				Lead:         "cto",
+				Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+			})
+			chdir(t, dir)
+			base := filepath.Join(dir, ".agent-mail")
+			calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "Sent must-not-run to user\n")
+			_, _, err := captureOutput(t, func() error { return runAMQ(tc.args) })
+			if err == nil {
+				t.Fatal("refusal error = nil")
+			}
+			if len(*calls) != 0 {
+				t.Fatalf("AMQ calls = %d, want 0", len(*calls))
+			}
+			auditPath := filepath.Join(dir, team.DirName, "boundary-audit", "issue-96.jsonl")
+			if _, statErr := os.Stat(auditPath); !os.IsNotExist(statErr) {
+				t.Fatalf("audit path should not exist for refusal: %v", statErr)
+			}
+		})
+	}
+}
+
+func readAMQBoundaryAuditRecords(t *testing.T, path string) []amqBoundaryAuditRecord {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	records := make([]amqBoundaryAuditRecord, 0, len(lines))
+	for _, line := range lines {
+		var rec amqBoundaryAuditRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("parse boundary audit line %q: %v", line, err)
+		}
+		records = append(records, rec)
+	}
+	return records
+}
+
 func TestAMQDrainResolvesRootAndForwards(t *testing.T) {
 	chdir(t, t.TempDir())
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
@@ -974,6 +1209,9 @@ func TestAMQDrainInfersNamedProfileFromResolvedRoot(t *testing.T) {
 	chdir(t, dir)
 	writeAMQBoundaryTeamProfile(t, dir, "review")
 	t.Setenv("AM_ME", "cto")
+	root := filepath.Join(dir, ".agent-mail", "review", "issue-96")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", root)
 	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(".agent-mail", "review", "issue-96"), BaseRoot: ".agent-mail"}, "{}\n")
 
 	_, _, err := captureOutput(t, func() error {
@@ -1064,6 +1302,229 @@ func TestAMQWatchBlocksNonOwnerMailboxInProjectTeam(t *testing.T) {
 	}
 }
 
+func TestAMQWatchWaitPostureRefusesAndAuditsBeforeStreaming(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	root := installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+	var order []string
+	previousStream := runAMQStreaming
+	runAMQStreaming = func(_ amqContext, cmd []string) error {
+		order = append(order, "stream")
+		got := strings.Join(cmd, " ")
+		if strings.Contains(got, "override-wait-posture") || strings.Contains(got, "wait-posture-reason") {
+			t.Fatalf("wrapper posture flags forwarded to amq: %s", got)
+		}
+		return nil
+	}
+	t.Cleanup(func() { runAMQStreaming = previousStream })
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"watch", "--session", "issue-96", "--me", "cto", "--poll", "--timeout", "30s"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "gate/release") {
+		t.Fatalf("watch posture error = %v", err)
+	}
+	if len(order) != 0 {
+		t.Fatalf("watch streamed before refusal: %v", order)
+	}
+
+	previousAudit := waitPostureAppendAudit
+	waitPostureAppendAudit = func(rec waitPostureAuditRecord) error {
+		order = append(order, "audit")
+		if !rootsMatch(rec.Root, root) || rec.Command != "amq watch" || rec.Timeout != "30s" {
+			t.Fatalf("watch audit = %+v", rec)
+		}
+		return nil
+	}
+	t.Cleanup(func() { waitPostureAppendAudit = previousAudit })
+	_, _, err = captureOutput(t, func() error {
+		return runAMQ([]string{"watch", "--session", "issue-96", "--me", "cto", "--poll", "--timeout", "30s", "--override-wait-posture", "--wait-posture-reason", "diagnostic watch"})
+	})
+	if err != nil {
+		t.Fatalf("overridden watch: %v", err)
+	}
+	if got := strings.Join(order, ","); got != "audit,stream" {
+		t.Fatalf("watch order = %q, want audit,stream", got)
+	}
+}
+
+func TestAMQReceiptsWaitPostureRefusesBeforeCommand(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "receipt ok\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"receipts", "wait", "--session", "issue-96", "--me", "cto", "--msg-id", "m1", "--timeout", "30s"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "gate/release") {
+		t.Fatalf("receipt wait posture error = %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("receipt wait invoked amq before refusal: %v", *calls)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runAMQ([]string{"receipts", "wait", "--session", "issue-96", "--me", "cto", "--msg-id", "m1", "--timeout", "0"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "unbounded") {
+		t.Fatalf("unbounded receipt wait error = %v", err)
+	}
+}
+
+func TestAMQWatchWaitPostureUsesLastDuplicateTimeout(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	installAMQWaitPostureRuntime(t, dir, "issue-96", "")
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "{}\n")
+	streamed := 0
+	previousStream := runAMQStreaming
+	runAMQStreaming = func(amqContext, []string) error { streamed++; return nil }
+	t.Cleanup(func() { runAMQStreaming = previousStream })
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"watch", "--session", "issue-96", "--me", "cto", "--timeout", "30s", "--timeout", "10m"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "10m0s") {
+		t.Fatalf("last over-limit watch timeout error = %v", err)
+	}
+	if streamed != 0 {
+		t.Fatalf("over-limit duplicate timeout streamed %d times", streamed)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runAMQ([]string{"watch", "--session", "issue-96", "--me", "cto", "--timeout", "10m", "--timeout", "30s"})
+	})
+	if err != nil || streamed != 1 {
+		t.Fatalf("last bounded watch timeout: streamed=%d err=%v", streamed, err)
+	}
+}
+
+func TestAMQSendWaitPostureGuardsBeforeOwnedSend(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	root := installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", filepath.Dir(root))
+	t.Setenv("AM_SESSION", "issue-96")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-wait to qa\n")
+
+	baseRun := runAMQCommand
+	var order []string
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		order = append(order, req.Arg[0])
+		return baseRun(req)
+	}
+	t.Cleanup(func() { runAMQCommand = baseRun })
+	args := []string{"send", "--session", "issue-96", "--me", "cto", "--to", "qa", "--subject", "review", "--wait-for", "drained", "--wait-timeout", "30s"}
+	_, _, err := captureOutput(t, func() error { return runAMQ(args) })
+	if err == nil || !strings.Contains(err.Error(), "gate/release") {
+		t.Fatalf("send wait posture error = %v", err)
+	}
+	if len(*calls) != 0 || len(order) != 0 {
+		t.Fatalf("send invoked before refusal: calls=%v order=%v", *calls, order)
+	}
+
+	previousAudit := waitPostureAppendAudit
+	waitPostureAppendAudit = func(waitPostureAuditRecord) error { order = append(order, "audit"); return nil }
+	t.Cleanup(func() { waitPostureAppendAudit = previousAudit })
+	overrideArgs := append(args, "--override-wait-posture", "--wait-posture-reason", "bounded handoff")
+	_, _, err = captureOutput(t, func() error { return runAMQ(overrideArgs) })
+	if err != nil {
+		t.Fatalf("overridden send: %v", err)
+	}
+	if got := strings.Join(order, ","); got != "audit,send" {
+		t.Fatalf("send order = %q, want audit,send", got)
+	}
+	gotArgs := strings.Join((*calls)[0].Arg, " ")
+	if strings.Contains(gotArgs, "override-wait-posture") || strings.Contains(gotArgs, "wait-posture-reason") {
+		t.Fatalf("wrapper posture flags forwarded: %s", gotArgs)
+	}
+}
+
+func TestAMQSendWaitPostureUsesLastWaitFlagsAndPreservesNoWait(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	root := installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", filepath.Dir(root))
+	t.Setenv("AM_SESSION", "issue-96")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-last to qa\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "cto", "--to", "qa", "--subject", "review", "--wait-for", "none", "--wait-for", "drained", "--wait-timeout", "30s", "--wait-timeout", "10m"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "10m0s") || len(*calls) != 0 {
+		t.Fatalf("last blocking send flags: calls=%d err=%v", len(*calls), err)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runAMQ([]string{"send", "--session", "issue-96", "--me", "cto", "--to", "qa", "--subject", "review", "--wait-for", "drained", "--wait-for", "none", "--wait-timeout", "-1s"})
+	})
+	if err != nil || len(*calls) != 1 {
+		t.Fatalf("last no-wait send must preserve external behavior: calls=%d err=%v", len(*calls), err)
+	}
+}
+
+func TestAMQReplyWaitPostureGuardsAfterLookupBeforeSend(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	root := installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", filepath.Dir(root))
+	t.Setenv("AM_SESSION", "issue-96")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Replied msg-reply\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runAMQ([]string{"reply", "--session", "issue-96", "--me", "cto", "--id", "msg1", "--body", "ok", "--wait-for", "drained", "--wait-timeout", "30s"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "gate/release") {
+		t.Fatalf("reply wait posture error = %v", err)
+	}
+	if got := strings.Join(collectCallVerbs(*calls), ","); got != "list,list" {
+		t.Fatalf("reply calls = %q, want nonmutating list,list only", got)
+	}
+}
+
+func installAMQWaitPostureRuntime(t *testing.T, dir, session, gate string) string {
+	t.Helper()
+	t.Setenv("AM_ME", "cto")
+	t.Setenv("TMUX_PANE", "%7")
+	op := team.DefaultOperator()
+	op.InteractionMode = team.OperatorInteractionLeadPane
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: session}, {Role: "qa", Binary: "claude", Handle: "qa", Session: session}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(projectRoot, ".agent-mail", session)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousActor := waitPostureResolveCurrentActor
+	waitPostureResolveCurrentActor = func(projectDir, profile, requestedSession string, _ team.Team) (verifiedOperatorActor, error) {
+		return verifiedOperatorActor{Role: "cto", Handle: "cto", Profile: profile, Session: requestedSession, Root: filepath.Join(projectDir, ".agent-mail", requestedSession), PaneID: "%7"}, nil
+	}
+	t.Cleanup(func() { waitPostureResolveCurrentActor = previousActor })
+	threads := []state.ThreadSummary{}
+	if gate != "" {
+		threads = append(threads, state.ThreadSummary{ID: gate, OperatorGate: &state.OperatorGateSignal{From: "cto", Since: time.Now()}})
+	}
+	previousSnapshot := waitPostureLoadSnapshot
+	waitPostureLoadSnapshot = func(projectDir, _ string) (state.Snapshot, error) {
+		selectedRoot := filepath.Join(projectDir, ".agent-mail", session)
+		return state.Snapshot{Sessions: []state.Session{{Name: session, TeamProfile: team.DefaultProfile, NamespaceID: team.DefaultProfile + "/" + session, Root: selectedRoot, Coordination: state.Coordination{Threads: threads}}}}, nil
+	}
+	t.Cleanup(func() { waitPostureLoadSnapshot = previousSnapshot })
+	return root
+}
+
 func writeAMQBoundaryTeam(t *testing.T, dir string) {
 	t.Helper()
 	writeAMQBoundaryTeamProfile(t, dir, team.DefaultProfile)
@@ -1109,7 +1570,14 @@ func TestAMQReadVerbsResolveRootAndForward(t *testing.T) {
 			if _, _, err := captureOutput(t, func() error { return runAMQ(tc.args) }); err != nil {
 				t.Fatalf("amq %s: %v", tc.name, err)
 			}
-			got := strings.Join((*calls)[0].Arg, " ")
+			call := (*calls)[0]
+			if tc.name == "reply" {
+				if len(*calls) != 3 || (*calls)[0].Arg[0] != "list" || (*calls)[1].Arg[0] != "list" {
+					t.Fatalf("reply lookup calls = %#v, want list --new, list --cur, reply", *calls)
+				}
+				call = (*calls)[2]
+			}
+			got := strings.Join(call.Arg, " ")
 			for _, want := range tc.want {
 				if !strings.Contains(got, want) {
 					t.Fatalf("amq %s args missing %q: %s", tc.name, want, got)

@@ -79,30 +79,46 @@ type messageHeader struct {
 // physical facts the scanner observed (which mailbox state, which owning
 // handle's inbox it sat in, the file path, and the body).
 type Message struct {
-	ID        string
-	From      string
-	To        []string
-	Thread    string // canonicalized via canonicalThreadID
-	RawThread string // the thread id exactly as written on disk
-	Subject   string
-	Created   time.Time
-	Priority  Priority
-	Kind      Kind
-	ReplyTo   string
-	Labels    []string
+	ID           string
+	From         string
+	To           []string
+	RawTo        []string
+	ToPresent    bool
+	ToArrayValid bool
+	ToRaw        string
+	Thread       string // canonicalized via canonicalThreadID
+	RawThread    string // the thread id exactly as written on disk
+	Subject      string
+	RawSubject   string // exact subject header used by typed authority checks
+	Created      time.Time
+	RawCreated   string // exact created header text before parsing/defaulting
+	Priority     Priority
+	Kind         Kind
+	ReplyTo      string
+	Refs         []string
+	RefsPresent  bool
+	RefsValid    bool
+	RefsRaw      string
+	Labels       []string
 	// Integration/routing metadata is optional AMQ context for federated or
 	// orchestrator-originated traffic.
-	Orchestrator      string
-	FromProject       string
-	ReplyProject      string
-	OrchestratorEvent string
-	ExternalTaskID    string
-	Context           map[string]any
-	Approval          *operatorauth.ApprovalContext
-	ApprovalPresent   bool
-	ApprovalValid     bool
-	ApprovalError     string
-	Body              string
+	Orchestrator                string
+	FromProject                 string
+	ReplyProject                string
+	OrchestratorEvent           string
+	ExternalTaskID              string
+	Context                     map[string]any
+	AuthorizationRequest        *operatorauth.GateRequestContext
+	AuthorizationRequestPresent bool
+	AuthorizationRequestValid   bool
+	AuthorizationRequestError   string
+	Approval                    *operatorauth.ApprovalContext
+	ApprovalPresent             bool
+	ApprovalValid               bool
+	ApprovalError               string
+	Body                        string
+	RawBody                     string // exact body content before display trimming
+	AuthorityRaw                bool   // RawSubject/RawBody came from the durable envelope
 
 	// Owner is the handle whose inbox this copy was found in.
 	Owner string
@@ -176,12 +192,15 @@ func parseMessageFile(path, owner string, state MailboxState, now func() time.Ti
 	if err != nil {
 		return Message{}, false, err
 	}
-	header, body, perr := splitFrontmatter(data)
+	header, body, rawBody, perr := splitFrontmatter(data)
 	if perr != nil {
 		return Message{}, false, perr
 	}
 
 	var h messageHeader
+	if err := operatorauth.ValidateUnambiguousJSON([]byte(header)); err != nil {
+		return Message{}, false, &parseError{reason: "ambiguous frontmatter json: " + err.Error()}
+	}
 	if err := json.Unmarshal([]byte(header), &h); err != nil {
 		// Tolerate a bare-string `to` by retrying with a lenient shape before
 		// giving up: some malformed/older writers emit `"to":"cto"`.
@@ -192,16 +211,28 @@ func parseMessageFile(path, owner string, state MailboxState, now func() time.Ti
 		}
 	}
 
+	rawTo, toPresent, toArrayValid, toRaw := decodeMessageRecipients(header)
+	refs, refsPresent, refsValid, refsRaw := decodeMessageRefs(header)
 	m := Message{
 		ID:                strings.TrimSpace(h.ID),
 		From:              strings.TrimSpace(h.From),
 		To:                cleanRecipients(h.To),
+		RawTo:             rawTo,
+		ToPresent:         toPresent,
+		ToArrayValid:      toArrayValid,
+		ToRaw:             toRaw,
 		RawThread:         h.Thread,
 		Thread:            canonicalThreadID(h.Thread),
 		Subject:           strings.TrimSpace(h.Subject),
+		RawSubject:        h.Subject,
+		RawCreated:        h.Created,
 		Priority:          normalizePriority(h.Priority),
 		Kind:              normalizeKind(h.Kind),
-		ReplyTo:           strings.TrimSpace(h.ReplyTo),
+		ReplyTo:           h.ReplyTo,
+		Refs:              refs,
+		RefsPresent:       refsPresent,
+		RefsValid:         refsValid,
+		RefsRaw:           refsRaw,
 		Labels:            cleanLabels(h.Labels),
 		Orchestrator:      strings.TrimSpace(h.Orchestrator),
 		FromProject:       strings.TrimSpace(h.FromProject),
@@ -210,12 +241,26 @@ func parseMessageFile(path, owner string, state MailboxState, now func() time.Ti
 		ExternalTaskID:    externalTaskIDFromContext(h.Context),
 		Context:           h.Context,
 		Body:              body,
+		RawBody:           rawBody,
+		AuthorityRaw:      true,
 		Owner:             owner,
 		State:             state,
 		Path:              path,
 		SchemaOK:          h.Schema == MessageSchema,
 	}
 	m.Created = parseCreated(h.Created, path, now)
+	if rawRequest, present := h.Context["authorization_request"]; present {
+		m.AuthorizationRequestPresent = true
+		request, requestErr := operatorauth.DecodeGateRequest(rawRequest)
+		if requestErr != nil {
+			m.AuthorizationRequestError = requestErr.Error()
+		} else if request.Thread != m.RawThread || request.Thread != m.Thread {
+			m.AuthorizationRequestError = "authorization request thread does not exactly match message thread"
+		} else {
+			m.AuthorizationRequest = &request
+			m.AuthorizationRequestValid = true
+		}
+	}
 	if rawApproval, present := h.Context["approval"]; present {
 		m.ApprovalPresent = true
 		approval, approvalErr := operatorauth.DecodeApproval(rawApproval)
@@ -252,16 +297,16 @@ func (e *parseError) Error() string { return e.reason }
 //
 // It tolerates a bare leading `---` fence (no `json` tag) and CRLF. It returns
 // an error (never panics) when no closing fence is found.
-func splitFrontmatter(data []byte) (header, body string, err error) {
+func splitFrontmatter(data []byte) (header, body, rawBody string, err error) {
 	sc := bufio.NewScanner(strings.NewReader(string(data)))
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
 	if !sc.Scan() {
-		return "", "", &parseError{reason: "empty file"}
+		return "", "", "", &parseError{reason: "empty file"}
 	}
 	first := strings.TrimSpace(strings.TrimRight(sc.Text(), "\r"))
 	if first != "---json" && first != "---" {
-		return "", "", &parseError{reason: "missing ---json frontmatter fence"}
+		return "", "", "", &parseError{reason: "missing ---json frontmatter fence"}
 	}
 
 	var headerLines []string
@@ -275,10 +320,10 @@ func splitFrontmatter(data []byte) (header, body string, err error) {
 		headerLines = append(headerLines, line)
 	}
 	if err := sc.Err(); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if !closed {
-		return "", "", &parseError{reason: "unterminated frontmatter (no closing ---)"}
+		return "", "", "", &parseError{reason: "unterminated frontmatter (no closing ---)"}
 	}
 
 	var bodyLines []string
@@ -286,9 +331,28 @@ func splitFrontmatter(data []byte) (header, body string, err error) {
 		bodyLines = append(bodyLines, strings.TrimRight(sc.Text(), "\r"))
 	}
 	if err := sc.Err(); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return strings.Join(headerLines, "\n"), strings.TrimSpace(strings.Join(bodyLines, "\n")), nil
+	// Capture the authority body from the normalized file rather than Scanner,
+	// which drops all terminal empty records. CRLF and one file-terminating
+	// newline are framing; any additional outer whitespace remains observable.
+	normalized := strings.ReplaceAll(string(data), "\r\n", "\n")
+	lines := strings.Split(normalized, "\n")
+	closing := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			closing = i
+			break
+		}
+	}
+	if closing >= 0 {
+		rawLines := lines[closing+1:]
+		if len(rawLines) > 0 && rawLines[len(rawLines)-1] == "" {
+			rawLines = rawLines[:len(rawLines)-1]
+		}
+		rawBody = strings.Join(rawLines, "\n")
+	}
+	return strings.Join(headerLines, "\n"), strings.TrimSpace(strings.Join(bodyLines, "\n")), rawBody, nil
 }
 
 // tryLenientHeader retries decoding with `to` as a free-form value so a bare
@@ -333,6 +397,50 @@ func tryLenientHeader(header string) (messageHeader, bool) {
 		}
 	}
 	return h, true
+}
+
+func decodeMessageRecipients(header string) (recipients []string, present, arrayValid bool, rawValue string) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(header), &fields); err != nil {
+		return nil, false, false, ""
+	}
+	raw, present := fields["to"]
+	if !present {
+		return nil, false, false, ""
+	}
+	rawValue = string(raw)
+	if string(raw) == "null" {
+		return nil, true, false, rawValue
+	}
+	if err := json.Unmarshal(raw, &recipients); err != nil {
+		return nil, true, false, rawValue
+	}
+	if recipients == nil {
+		recipients = []string{}
+	}
+	return recipients, true, true, rawValue
+}
+
+func decodeMessageRefs(header string) (refs []string, present, valid bool, rawValue string) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(header), &fields); err != nil {
+		return nil, false, false, ""
+	}
+	raw, present := fields["refs"]
+	if !present {
+		return nil, false, true, ""
+	}
+	rawValue = string(raw)
+	if string(raw) == "null" {
+		return nil, true, false, rawValue
+	}
+	if err := json.Unmarshal(raw, &refs); err != nil {
+		return nil, true, false, rawValue
+	}
+	if refs == nil {
+		refs = []string{}
+	}
+	return refs, true, true, rawValue
 }
 
 func externalTaskIDFromContext(ctx map[string]any) string {

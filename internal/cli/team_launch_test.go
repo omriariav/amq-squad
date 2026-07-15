@@ -204,8 +204,8 @@ func TestRunTeamLaunchDryRunDefaultsToCurrentWindow(t *testing.T) {
 		"tmux select-layout -t \"$window\" even-horizontal",
 		"agent up codex",
 		"agent up claude",
-		"--no-bootstrap --me cto",
-		"--no-bootstrap --me fullstack",
+		"--no-bootstrap --wake-inject-mode raw --me cto",
+		"--no-bootstrap --wake-inject-mode raw --me fullstack",
 		"--trust approve-for-me",
 		"--sandbox workspace-write",
 		"--ask-for-approval on-request",
@@ -257,8 +257,8 @@ func TestRunTeamLaunchDryRunUsesExplicitSharedWorkstream(t *testing.T) {
 		"--session issue-96 --team-workstream",
 		"agent up codex",
 		"agent up claude",
-		"--no-bootstrap --me cto",
-		"--no-bootstrap --me fullstack",
+		"--no-bootstrap --wake-inject-mode raw --me cto",
+		"--no-bootstrap --wake-inject-mode raw --me fullstack",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("dry-run output missing %q in:\n%s", want, stdout)

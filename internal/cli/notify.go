@@ -91,6 +91,9 @@ type operatorAttention struct {
 	Actor          string           `json:"actor,omitempty"`
 	PolicyRevision int64            `json:"policy_revision,omitempty"`
 	Summary        string           `json:"summary,omitempty"`
+	Actionable     bool             `json:"actionable"`
+	Answerable     bool             `json:"answerable"`
+	Unread         bool             `json:"-"`
 	Cleared        bool             `json:"-"`
 }
 
@@ -151,22 +154,42 @@ Examples:
 	if *forceResend && !*deliver {
 		return usageErrorf("--force-resend requires --deliver")
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
 		return err
 	}
-	profile, err := resolveProfileFlag(*profileFlag)
-	if err != nil {
-		return err
+	emitContextDiagnostics(ctx)
+	var admission *namespaceAdmissionLocks
+	if !*dryRun {
+		if strings.TrimSpace(*sessionFlag) == "" {
+			ctx, admission, err = acquireRevalidatedContextWriter(ctx, true, func() (contextResolution, error) {
+				return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+			})
+			if err != nil {
+				return err
+			}
+			defer admission.close()
+			if err := ensureNoNamespaceMigrationForProfile("notify", ctx.ProjectDir, ctx.Profile); err != nil {
+				return err
+			}
+		} else {
+			ctx, admission, err = acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
+				return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
+			})
+			if err != nil {
+				return err
+			}
+			defer admission.close()
+			if err := ensureNoNamespaceMigration("notify", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
+				return err
+			}
+		}
 	}
 	return executeNotify(notifyExecution{
-		ProjectDir:    projectDir,
-		Profile:       profile,
-		Session:       *sessionFlag,
+		ProjectDir:    ctx.ProjectDir,
+		Profile:       ctx.Profile,
+		Session:       strings.TrimSpace(*sessionFlag),
+		BaseRoot:      ctx.BaseRoot,
 		RenotifyAfter: *renotifyAfter,
 		DryRun:        *dryRun,
 		JSON:          *jsonOut,
@@ -229,9 +252,12 @@ func executeNotify(n notifyExecution) error {
 	if err != nil {
 		return fmt.Errorf("scan AMQ base root: %w", err)
 	}
-	items := collectOperatorAttention(n.ProjectDir, profile, snap, operator.Handle, strings.TrimSpace(n.Session), now())
-	items = mergeOperatorAttention(items, collectRawOpenGateAttention(n.ProjectDir, profile, snap, operator.Handle, strings.TrimSpace(n.Session), now()))
-	items = mergeOperatorAttention(items, collectSelfOperatorVisibilityAttention(t, n.ProjectDir, profile, snap, strings.TrimSpace(n.Session), now()))
+	projected, err := collectProjectedOperatorAttention(t, n.ProjectDir, profile, snap, operator.Handle, strings.TrimSpace(n.Session), now())
+	if err != nil {
+		return fmt.Errorf("project compound release attention: %w", err)
+	}
+	items := projected.Items
+	items = mergeOperatorAttention(items, collectSelfOperatorVisibilityAttentionCaptured(t, n.ProjectDir, profile, projected.Snapshot, strings.TrimSpace(n.Session), now(), projected.Captures))
 	workstream, _ := resolveTeamWorkstreamName(t, strings.TrimSpace(n.Session), strings.TrimSpace(n.Session) != "")
 	items = mergeOperatorAttention(items, collectLocalInputAttention(t, profile, workstream, now()))
 	statePath := strings.TrimSpace(n.StatePath)
@@ -310,10 +336,13 @@ func deliverNotificationSinksPersisted(ctx context.Context, projectDir, path str
 		allowed["local_input_blocked"] = true
 		allowed["self_approved"] = true
 		allowed["human_only_gate"] = true
+		allowed["compound_release_child"] = true
+		allowed["compound_release_recovery"] = true
+		allowed["compound_release_degraded"] = true
 	}
 	for _, cfg := range policy.Sinks {
 		for _, item := range items {
-			if item.Cleared || !allowed[item.EventType] || (item.EventType != "gate" && item.EventType != "local_input_blocked" && item.EventType != "self_approved" && item.EventType != "human_only_gate") {
+			if item.Cleared || !allowed[item.EventType] || (item.EventType != "gate" && item.EventType != "local_input_blocked" && item.EventType != "self_approved" && item.EventType != "human_only_gate" && item.EventType != "compound_release_child" && item.EventType != "compound_release_recovery" && item.EventType != "compound_release_degraded") {
 				continue
 			}
 			token := ""
@@ -452,6 +481,7 @@ func collectOperatorAttention(projectDir, profile string, snap state.Snapshot, o
 			if strings.HasPrefix(th.ID, "gate/") {
 				eventType = "gate"
 			}
+			answerable := eventType == "gate"
 			item := operatorAttention{
 				EventType:   eventType,
 				Key:         notifyKey(profile, sess.Name, th.ID),
@@ -468,6 +498,8 @@ func collectOperatorAttention(projectDir, profile string, snap state.Snapshot, o
 				LastEventAt: th.LastEventAt,
 				Inspect:     notifyInspectCommand(projectDir, profile, sess.Name, th.ID),
 				Respond:     notifyRespondCommand(operatorHandle, from, th.ID, th.AttnReason),
+				Actionable:  true,
+				Answerable:  answerable,
 			}
 			applyThreadOperatorGateAttention(&item, th)
 			item.Respond = notifyRespondCommand(operatorHandle, item.From, th.ID, item.Reason)
@@ -490,11 +522,15 @@ func collectOperatorAttention(projectDir, profile string, snap state.Snapshot, o
 	return out
 }
 
-type rawGateState struct {
-	pending state.Message
+// collectGateAttentionProjection is the authoritative gate-open projection for
+// notify, operator status, and next. Raw legacy gates retain structural
+// any-answer closure. A typed authorization_request gate closes only when the
+// shared evidence resolver accepts an exact v2 answer and durable receipt.
+func collectGateAttentionProjection(t team.Team, projectDir, profile string, snap state.Snapshot, operatorHandle, onlySession string, now time.Time) []operatorAttention {
+	return collectGateAttentionProjectionCaptured(t, projectDir, profile, snap, operatorHandle, onlySession, now, nil)
 }
 
-func collectRawOpenGateAttention(projectDir, profile string, snap state.Snapshot, operatorHandle, onlySession string, now time.Time) []operatorAttention {
+func collectGateAttentionProjectionCaptured(t team.Team, projectDir, profile string, snap state.Snapshot, operatorHandle, onlySession string, now time.Time, captures map[string]operatorSessionCapture) []operatorAttention {
 	var out []operatorAttention
 	profile = squadnamespace.NormalizeProfile(profile)
 	for _, sess := range snap.Sessions {
@@ -504,59 +540,146 @@ func collectRawOpenGateAttention(projectDir, profile string, snap state.Snapshot
 		if onlySession != "" && sess.Name != onlySession {
 			continue
 		}
-		msgs, _ := state.ScanSessionMessages(sess.Root, func() time.Time { return now })
-		byThread := map[string]rawGateState{}
-		seen := map[string]bool{}
-		for _, msg := range msgs {
-			if msg.ID != "" {
-				if seen[msg.ID] {
-					continue
-				}
-				seen[msg.ID] = true
-			}
-			if !strings.HasPrefix(msg.Thread, "gate/") {
-				continue
-			}
-			gate := byThread[msg.Thread]
-			switch msg.Kind {
-			case state.KindQuestion, state.KindReviewRequest, state.KindDecision:
-				if rawOperatorGateRequestMessage(msg, operatorHandle, sess.Agents) {
-					gate.pending = msg
-				}
-			case state.KindAnswer:
-				if msg.From == operatorHandle {
-					gate.pending = state.Message{}
-				}
-			}
-			byThread[msg.Thread] = gate
+		capture, captured := captures[sess.Name]
+		msgs, warnings := capture.Messages, capture.Warnings
+		if !captured {
+			msgs, warnings = scanOperatorSessionMessages(sess.Root, func() time.Time { return now })
 		}
-		for thread, gate := range byThread {
-			msg := gate.pending
-			if msg.ID == "" {
+		byThread := map[string][]state.Message{}
+		for _, msg := range msgs {
+			if strings.HasPrefix(msg.Thread, "gate/") {
+				byThread[msg.Thread] = append(byThread[msg.Thread], msg)
+			}
+		}
+		for thread, threadMsgs := range byThread {
+			threadMsgs, conflict := dedupeSecurityMessages(threadMsgs)
+			sort.SliceStable(threadMsgs, func(i, j int) bool { return messageAfter(threadMsgs[j], threadMsgs[i]) })
+			lifecycleMessages := make([]state.Message, 0, len(threadMsgs))
+			for _, msg := range threadMsgs {
+				if msg.From == operatorHandle || sessionHasAgentHandle(sess.Agents, msg.From) {
+					lifecycleMessages = append(lifecycleMessages, msg)
+				}
+			}
+			gateState, gate := state.ResolveOperatorGate(lifecycleMessages, operatorHandle, now)
+			question := latestGateQuestionCandidate(threadMsgs, thread)
+			if question == nil || !question.AuthorizationRequestPresent {
+				// Projection-only legacy observability: review_request/decision records
+				// without typed context remain visible, but can never become an
+				// authorization candidate. A typed question, even malformed, remains
+				// the barrier and cannot be displaced by a later non-question.
+				var legacy *state.Message
+				for i := range threadMsgs {
+					msg := threadMsgs[i]
+					if gateState == state.OperatorGateStateOpen && gate != nil && msg.ID != gate.LatestID {
+						continue
+					}
+					if (msg.Kind == state.KindQuestion || msg.Kind == state.KindReviewRequest || msg.Kind == state.KindDecision) && !msg.AuthorizationRequestPresent && rawOperatorGateRequestMessage(msg, operatorHandle, sess.Agents) && (legacy == nil || messageAfter(msg, *legacy)) {
+						copy := msg
+						legacy = &copy
+					}
+				}
+				question = legacy
+			}
+			if question == nil {
 				continue
 			}
-			age := now.Sub(msg.Created)
-			if age < 0 {
-				age = 0
-			}
-			out = append(out, operatorAttention{
+			item := operatorAttention{
 				EventType:   "gate",
 				Key:         notifyKey(profile, sess.Name, thread),
 				Profile:     profile,
 				Session:     sess.Name,
 				NamespaceID: sess.NamespaceID,
 				Thread:      thread,
-				LatestID:    msg.ID,
-				From:        msg.From,
-				Subject:     msg.Subject,
-				Kind:        msg.Kind,
-				Reason:      state.ClassifyAttnSubject(msg.Subject),
-				Age:         roundDuration(age).String(),
-				LastEventAt: msg.Created,
-				Escalation:  string(state.OperatorGateEscalationForAge(age)),
+				LatestID:    question.ID,
+				From:        question.From,
+				Subject:     question.Subject,
+				Kind:        question.Kind,
+				Reason:      state.ClassifyAttnSubject(question.Subject),
+				LastEventAt: question.Created,
 				Inspect:     notifyInspectCommand(projectDir, profile, sess.Name, thread),
-				Respond:     notifyRespondCommand(operatorHandle, msg.From, thread, state.ClassifyAttnSubject(msg.Subject)),
-			})
+				Respond:     notifyRespondCommand(operatorHandle, question.From, thread, state.ClassifyAttnSubject(question.Subject)),
+				Actionable:  true,
+				Answerable:  true,
+			}
+			age := now.Sub(question.Created)
+			if age < 0 {
+				age = 0
+			}
+			item.Age = roundDuration(age).String()
+			item.Escalation = string(state.OperatorGateEscalationForAge(age))
+
+			if conflict {
+				item.Summary = "duplicate_message_conflict"
+				item.Answerable = false
+				item.Respond = ""
+				out = append(out, item)
+				continue
+			}
+			if len(warnings) > 0 {
+				item.Summary = "message_scan_degraded"
+				item.Answerable = false
+				item.Respond = ""
+				out = append(out, item)
+				continue
+			}
+			if gateState == state.OperatorGateStateClosed || gateState == state.OperatorGateStateWithdrawn {
+				item.Cleared = true
+				item.Actionable = false
+				item.Answerable = false
+				item.Respond = ""
+				out = append(out, item)
+				continue
+			}
+			if !question.AuthorizationRequestPresent {
+				closed := gateState == state.OperatorGateStateAnswered
+				item.Cleared = closed
+				item.Actionable = !closed
+				item.Answerable = !closed
+				if closed {
+					item.Respond = ""
+				}
+				out = append(out, item)
+				continue
+			}
+
+			questionEvidence := resolveTypedHumanEvidence(projectDir, profile, sess.Name, thread, operatorHandle, t, *question, nil)
+			if questionEvidence.Reason != "gate_pending" {
+				item.Summary = questionEvidence.Reason
+				item.Answerable = false
+				item.Respond = ""
+				out = append(out, item)
+				continue
+			}
+			facts := make([]operatorauth.MessageFact, 0)
+			reasons := map[string]string{}
+			for i := range threadMsgs {
+				msg := threadMsgs[i]
+				if msg.From != operatorHandle || !messageAfter(msg, *question) {
+					continue
+				}
+				evidence := resolveTypedHumanEvidence(projectDir, profile, sess.Name, thread, operatorHandle, t, *question, &msg)
+				bound := evidence.Disposition == actionDecisionApproved || evidence.Disposition == actionDecisionDenied
+				reasons[msg.ID] = evidence.Reason
+				facts = append(facts, operatorauth.MessageFact{ID: msg.ID, From: msg.From, Kind: string(msg.Kind), Decision: evidence.Disposition, Bound: bound, After: true, Order: int64(i + 1)})
+			}
+			precedence := operatorauth.ResolvePrecedence(facts, operatorHandle, "")
+			switch {
+			case precedence.Decision == actionDecisionApproved || precedence.Decision == actionDecisionDenied:
+				item.Cleared = true
+				item.Actionable = false
+				item.Answerable = false
+				item.Respond = ""
+				item.LatestID = precedence.MessageID
+			case precedence.Barrier:
+				item.LatestID = precedence.MessageID
+				item.Summary = reasons[precedence.MessageID]
+				if item.Summary == "" {
+					item.Summary = "human_intervention_pending"
+				}
+			default:
+				item.Summary = "gate_pending"
+			}
+			out = append(out, item)
 		}
 	}
 	sortOperatorAttention(out)
@@ -567,6 +690,10 @@ func collectRawOpenGateAttention(projectDir, profile string, snap state.Snapshot
 // observations. These records never answer a gate and are not consumed by the
 // action verifier.
 func collectSelfOperatorVisibilityAttention(t team.Team, projectDir, profile string, snap state.Snapshot, onlySession string, now time.Time) []operatorAttention {
+	return collectSelfOperatorVisibilityAttentionCaptured(t, projectDir, profile, snap, onlySession, now, nil)
+}
+
+func collectSelfOperatorVisibilityAttentionCaptured(t team.Team, projectDir, profile string, snap state.Snapshot, onlySession string, now time.Time, captures map[string]operatorSessionCapture) []operatorAttention {
 	var out []operatorAttention
 	if t.Operator == nil || t.Operator.InteractionMode != team.OperatorInteractionSelfOperator {
 		return nil
@@ -577,10 +704,14 @@ func collectSelfOperatorVisibilityAttention(t team.Team, projectDir, profile str
 			continue
 		}
 		view := team.EffectiveSelfOperator(t, sess.Name)
-		msgs, warnings := state.ScanSessionMessages(sess.Root, func() time.Time { return now })
+		capture, captured := captures[sess.Name]
+		msgs, warnings := capture.Messages, capture.Warnings
+		if !captured {
+			msgs, warnings = scanOperatorSessionMessages(sess.Root, func() time.Time { return now })
+		}
 		if len(warnings) > 0 {
 			thread := "gate/degraded-scan"
-			out = append(out, operatorAttention{EventType: "human_only_gate", Key: attention.HumanOnlyGateKey(profile, sess.Name, thread), Profile: profile, Session: sess.Name, NamespaceID: sess.NamespaceID, Thread: thread, LatestID: "degraded", Subject: "message scan degraded", Summary: "message scan degraded; visibility fails closed", Inspect: "amq-squad status --project " + notifyShellQuote(projectDir) + " --profile " + notifyShellQuote(profile) + " --session " + notifyShellQuote(sess.Name), LastEventAt: now})
+			out = append(out, operatorAttention{EventType: "human_only_gate", Key: attention.HumanOnlyGateKey(profile, sess.Name, thread), Profile: profile, Session: sess.Name, NamespaceID: sess.NamespaceID, Thread: thread, LatestID: "degraded", Subject: "message scan degraded", Summary: "message scan degraded; visibility fails closed", Inspect: "amq-squad status --project " + notifyShellQuote(projectDir) + " --profile " + notifyShellQuote(profile) + " --session " + notifyShellQuote(sess.Name), LastEventAt: now, Actionable: true, Answerable: false})
 			continue
 		}
 		var conflict bool
@@ -593,15 +724,9 @@ func collectSelfOperatorVisibilityAttention(t team.Team, projectDir, profile str
 		}
 		for thread, threadMsgs := range byThread {
 			inspect := notifyInspectCommand(projectDir, profile, sess.Name, thread)
-			selfItem := operatorAttention{EventType: "self_approved", Key: attention.SelfApprovedKey(profile, sess.Name, thread), Profile: profile, Session: sess.Name, NamespaceID: sess.NamespaceID, Thread: thread, Cleared: true, Inspect: inspect}
-			humanItem := operatorAttention{EventType: "human_only_gate", Key: attention.HumanOnlyGateKey(profile, sess.Name, thread), Profile: profile, Session: sess.Name, NamespaceID: sess.NamespaceID, Thread: thread, Cleared: true, Inspect: inspect}
-			var q *state.Message
-			for i := range threadMsgs {
-				if threadMsgs[i].Kind == state.KindQuestion && (q == nil || messageAfter(threadMsgs[i], *q)) {
-					c := threadMsgs[i]
-					q = &c
-				}
-			}
+			selfItem := operatorAttention{EventType: "self_approved", Key: attention.SelfApprovedKey(profile, sess.Name, thread), Profile: profile, Session: sess.Name, NamespaceID: sess.NamespaceID, Thread: thread, Cleared: true, Inspect: inspect, Actionable: false, Answerable: false}
+			humanItem := operatorAttention{EventType: "human_only_gate", Key: attention.HumanOnlyGateKey(profile, sess.Name, thread), Profile: profile, Session: sess.Name, NamespaceID: sess.NamespaceID, Thread: thread, Cleared: true, Inspect: inspect, Actionable: false, Answerable: false}
+			q := latestGateQuestionCandidate(threadMsgs, thread)
 			if q == nil {
 				out = append(out, selfItem, humanItem)
 				continue
@@ -610,29 +735,62 @@ func collectSelfOperatorVisibilityAttention(t team.Team, projectDir, profile str
 			humanItem.LatestID = q.ID
 			selfItem.LastEventAt = q.Created
 			humanItem.LastEventAt = q.Created
-			binding, bindErr := operatorauth.ParseStrictBinding(q.Subject + "\n" + q.Body)
-			humanItem.GateKind = binding.GateKind
 			humanItem.Subject = q.Subject
 			humanItem.Kind = q.Kind
-			if conflict || bindErr != nil {
-				humanItem.Cleared = false
+			if conflict {
+				activateInspectOnlyAttention(&humanItem)
 				humanItem.Summary = "conflicting or malformed gate state requires human attention"
 				out = append(out, selfItem, humanItem)
 				continue
 			}
-			action, target := operatorauth.NormalizeAction(binding.Action), binding.Target
+			questionEvidence := resolveTypedHumanEvidence(projectDir, profile, sess.Name, thread, team.EffectiveOperator(t).Handle, t, *q, nil)
+			typedRequestValid := questionEvidence.Reason == "gate_pending"
+			var binding operatorauth.Binding
+			if q.AuthorizationRequestPresent {
+				if !typedRequestValid {
+					activateInspectOnlyAttention(&humanItem)
+					humanItem.Summary = questionEvidence.Reason
+					out = append(out, selfItem, humanItem)
+					continue
+				}
+				binding = questionEvidence.Binding
+			} else {
+				var bindErr error
+				binding, bindErr = operatorauth.ParseStrictBinding(q.Subject + "\n" + q.Body)
+				if bindErr != nil {
+					activateInspectOnlyAttention(&humanItem)
+					humanItem.Summary = "conflicting or malformed gate state requires human attention"
+					out = append(out, selfItem, humanItem)
+					continue
+				}
+			}
+			humanItem.GateKind = binding.GateKind
+			action, actionErr := operatorauth.CanonicalAction(binding.Action)
+			if actionErr != nil {
+				activateInspectOnlyAttention(&humanItem)
+				humanItem.Summary = "conflicting or malformed gate state requires human attention"
+				out = append(out, selfItem, humanItem)
+				continue
+			}
+			target := binding.Target
 			facts := []operatorauth.MessageFact{}
+			reasons := map[string]string{}
 			for i, msg := range threadMsgs {
 				if msg.From != team.EffectiveOperator(t).Handle || !messageAfter(msg, *q) {
 					continue
 				}
 				decision, bound := actionDecisionPending, false
-				if msg.Kind == state.KindAnswer && strictBindingMatches(msg.Subject+"\n"+msg.Body, action, target) {
+				if typedRequestValid {
+					evidence := resolveTypedHumanEvidence(projectDir, profile, sess.Name, thread, team.EffectiveOperator(t).Handle, t, *q, &msg)
+					decision = evidence.Disposition
+					bound = decision == actionDecisionApproved || decision == actionDecisionDenied
+					reasons[msg.ID] = evidence.Reason
+				} else if msg.Kind == state.KindAnswer && strictBindingMatches(msg.Subject+"\n"+msg.Body, action, target) {
 					decision = classifyDecision(msg.Subject + "\n" + msg.Body)
 					bound = decision == actionDecisionApproved || decision == actionDecisionDenied
-				}
-				if msg.ApprovalPresent {
-					bound = bound && validTypedHumanApproval(msg, team.EffectiveOperator(t).Handle, q.ID, binding, action, target)
+					if msg.ApprovalPresent {
+						bound = bound && validTypedHumanApproval(msg, team.EffectiveOperator(t).Handle, q.ID, binding, action, target)
+					}
 				}
 				facts = append(facts, operatorauth.MessageFact{ID: msg.ID, From: msg.From, Decision: decision, Bound: bound, After: true, Order: int64(i + 1)})
 			}
@@ -642,8 +800,11 @@ func collectSelfOperatorVisibilityAttention(t team.Team, projectDir, profile str
 				continue
 			}
 			if precedence.Barrier {
-				humanItem.Cleared = false
-				humanItem.Summary = "human intervention pending; inspect durable gate"
+				activateInspectOnlyAttention(&humanItem)
+				humanItem.Summary = reasons[precedence.MessageID]
+				if humanItem.Summary == "" {
+					humanItem.Summary = "human intervention pending; inspect durable gate"
+				}
 				out = append(out, selfItem, humanItem)
 				continue
 			}
@@ -655,13 +816,13 @@ func collectSelfOperatorVisibilityAttention(t team.Team, projectDir, profile str
 					answer = &c
 				}
 			}
-			allowed := view.Enabled && binding.GateKind == operatorauth.GateMerge && operatorauth.Evaluate(binding.GateKind, action, view.AllowedGateKinds) == nil
+			allowed := typedRequestValid && view.Enabled && q.AuthorizationRequest.GateKind == operatorauth.GateMerge && operatorauth.Evaluate(q.AuthorizationRequest.GateKind, q.AuthorizationRequest.Action, view.AllowedGateKinds) == nil
 			validSelf := false
 			if allowed && answer != nil && answer.ApprovalValid && answer.Approval != nil {
 				a := *answer.Approval
-				validSelf = answer.From == view.LeadHandle && a.Source == "self_operator" && a.SelfApproved && a.AnsweredByRole == view.LeadRole && a.AnsweredByHandle == view.LeadHandle && a.QuestionMessageID == q.ID && a.GateKind == binding.GateKind && operatorauth.NormalizeAction(a.Action) == action && a.Target == target && a.PolicyRevision == view.PolicyRevision && a.PolicyHash == view.PolicyHash && validateSelfApprovalReceipt(projectDir, profile, sess.Name, thread, answer.ID, a) == nil && revalidateSelfApprovalEvidence(projectDir, a, target) == nil
+				validSelf = answer.From == view.LeadHandle && a.SchemaVersion == operatorauth.ApprovalSchemaVersion && a.TaxonomyVersion == operatorauth.ActionTaxonomyVersion && a.Source == "self_operator" && a.SelfApproved && a.AnsweredByRole == view.LeadRole && a.AnsweredByHandle == view.LeadHandle && a.QuestionMessageID == q.ID && canonicalGateActionMatches(a.GateKind, a.Action, q.AuthorizationRequest.GateKind, q.AuthorizationRequest.Action) && a.Target == q.AuthorizationRequest.Target && a.Note == q.AuthorizationRequest.Note && a.PolicyRevision == view.PolicyRevision && a.PolicyHash == view.PolicyHash && validateApprovalReceipt(projectDir, profile, sess.Name, thread, *answer, a) == nil && revalidateSelfApprovalEvidence(projectDir, a, target) == nil
 				if validSelf {
-					selfItem.Cleared = false
+					activateInspectOnlyAttention(&selfItem)
 					selfItem.LatestID = answer.ID
 					selfItem.Actor = a.AnsweredByHandle
 					selfItem.GateKind = a.GateKind
@@ -671,7 +832,7 @@ func collectSelfOperatorVisibilityAttention(t team.Team, projectDir, profile str
 				}
 			}
 			if !validSelf && (!allowed || answer != nil) {
-				humanItem.Cleared = false
+				activateInspectOnlyAttention(&humanItem)
 				humanItem.Summary = "human-only gate requires operator attention; notification does not authorize an answer"
 			}
 			out = append(out, selfItem, humanItem)
@@ -718,7 +879,7 @@ func collectLocalInputAttention(t team.Team, profile, session string, now time.T
 		}
 		key := attention.LocalInputKey(profile, session, row.Role)
 		if !ok {
-			out = append(out, operatorAttention{EventType: "local_input_blocked", Key: key, Profile: profile, Session: session, Role: row.Role, Cleared: true})
+			out = append(out, operatorAttention{EventType: "local_input_blocked", Key: key, Profile: profile, Session: session, Role: row.Role, Cleared: true, Actionable: false, Answerable: false})
 			continue
 		}
 		fp := attention.LocalInputFingerprint(row.Tmux.PaneID, blocker.Kind, blocker.Destructive, blocker.Summary)
@@ -726,7 +887,7 @@ func collectLocalInputAttention(t team.Team, profile, session string, now time.T
 		if blocker.Destructive {
 			summary = "destructive local prompt: " + summary
 		}
-		out = append(out, operatorAttention{EventType: "local_input_blocked", Key: key, Profile: profile, Session: session, NamespaceID: squadnamespace.ID(profile, session), LatestID: fp, Role: row.Role, Subject: "local input blocked", Summary: summary, Age: "0s", LastEventAt: now, Inspect: "amq-squad focus --project " + notifyShellQuote(t.Project) + " --profile " + notifyShellQuote(profile) + " --session " + notifyShellQuote(session) + " --role " + notifyShellQuote(row.Role)})
+		out = append(out, operatorAttention{EventType: "local_input_blocked", Key: key, Profile: profile, Session: session, NamespaceID: squadnamespace.ID(profile, session), LatestID: fp, Role: row.Role, Subject: "local input blocked", Summary: summary, Age: "0s", LastEventAt: now, Inspect: "amq-squad focus --project " + notifyShellQuote(t.Project) + " --profile " + notifyShellQuote(profile) + " --session " + notifyShellQuote(session) + " --role " + notifyShellQuote(row.Role), Actionable: true, Answerable: false})
 	}
 	return out
 }
@@ -746,6 +907,13 @@ func applyThreadOperatorGateAttention(item *operatorAttention, th state.ThreadSu
 	item.Escalation = string(gate.Escalation)
 }
 
+func activateInspectOnlyAttention(item *operatorAttention) {
+	item.Cleared = false
+	item.Actionable = true
+	item.Answerable = false
+	item.Respond = ""
+}
+
 func rawOperatorGateRequestMessage(msg state.Message, operatorHandle string, agents []state.Agent) bool {
 	return operatorMessageToContains(msg, operatorHandle) && sessionHasAgentHandle(agents, msg.From)
 }
@@ -762,7 +930,15 @@ func mergeOperatorAttention(base, extra []operatorAttention) []operatorAttention
 	}
 	for _, item := range extra {
 		if i, ok := index[item.Key]; ok {
-			merged[i] = item
+			// Conflicting projections fail open: an active observation always
+			// beats a cleared tombstone, independent of merge order.
+			if merged[i].Cleared && !item.Cleared {
+				merged[i] = item
+			} else if !merged[i].Cleared && item.Cleared {
+				continue
+			} else {
+				merged[i] = item
+			}
 			continue
 		}
 		index[item.Key] = len(merged)
@@ -873,7 +1049,7 @@ func scopedSelfOperatorTombstones(items []operatorAttention, prior notifyStateFi
 			kind = "human_only_gate"
 		}
 		if kind != "" {
-			items = append(items, operatorAttention{EventType: kind, Key: key, Cleared: true})
+			items = append(items, operatorAttention{EventType: kind, Key: key, Cleared: true, Actionable: false, Answerable: false})
 		}
 	}
 	return items
@@ -1054,7 +1230,7 @@ func deliverNotificationSinks(ctx context.Context, projectDir string, items []op
 		allowed[kind] = true
 	}
 	if len(allowed) == 0 {
-		for _, kind := range []string{"gate", "local_input_blocked", "self_approved", "human_only_gate"} {
+		for _, kind := range []string{"gate", "local_input_blocked", "self_approved", "human_only_gate", "compound_release_child", "compound_release_recovery", "compound_release_degraded"} {
 			allowed[kind] = true
 		}
 	}
