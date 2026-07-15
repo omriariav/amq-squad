@@ -16,11 +16,10 @@ import (
 
 func authorizationCryptoFixture(t *testing.T) (AuthorizationSigner, string, ed25519.PublicKey) {
 	t.Helper()
-	dir, err := os.MkdirTemp("/private/tmp", "amq-authz-test-")
+	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
