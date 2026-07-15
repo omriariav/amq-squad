@@ -38,11 +38,12 @@ process is exec'd.
    - `records[].terminal.pid_alive` is true for live agent processes.
    - `records[].terminal.tty` is present when Terminal.app exposes the tab TTY.
    - `focus` is unavailable with the stable-addressing/manual-focus reason.
-   - `send` and `goal_deliver` are unavailable with the #375 Accessibility
-     safety reason.
-   - `dispatch` is available because durable AMQ dispatch does not require pane
-     injection. If the wake sidecar is not live, the optional pane nudge is
-     skipped with the same #375 safety reason.
+   - raw `send` and effective `goal_deliver` are unavailable with the #375
+     Accessibility safety reason because the current goal command requires a
+     live native prompt target.
+   - `dispatch` is available only when status verifies the exact namespace,
+     handle, and initialized durable mailbox. If the wake sidecar is not live,
+     the optional pane nudge is skipped with the same #375 safety reason.
 
 5. Manually focus the Terminal.app window or tab if you need to inspect it.
 

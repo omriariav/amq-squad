@@ -40,10 +40,12 @@ process is exec'd.
    - `focus` is available when `window_id` is present and the agent PID/binary
      verifies live. A closed iTerm2 window can still fail at focus time; the
      command should report that the recorded window could not be raised.
-   - `send` and `goal_deliver` are unavailable with the #374 safety reason.
-   - `dispatch` is available because durable AMQ dispatch does not require pane
-     injection; the optional pane nudge is skipped for iTerm2 with the #374
-     safety reason.
+   - raw `send` and effective `goal_deliver` are unavailable with the #374
+     safety reason because the current goal command requires a live native
+     prompt target.
+   - `dispatch` is available only when status verifies the exact namespace,
+     handle, and initialized durable mailbox; the optional pane nudge is skipped
+     for iTerm2 with the #374 safety reason.
 
 5. Focus a role:
 

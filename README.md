@@ -320,15 +320,16 @@ promise.
 
 | Backend | Tier | Launch/visibility | Focus | Send prompt / native goal delivery | Dispatch | Stop/resume |
 | --- | --- | --- | --- | --- | --- | --- |
-| tmux | Tier A | Managed panes in current window, sibling windows, or detached session. | Available only while the recorded pane is live; otherwise reason is `agent pane is not live`. | Available only while the recorded pane is live; otherwise reason is `agent pane is not live`. | Always available because durable AMQ dispatch does not require pane injection. | Full managed stop/resume through launch records and tmux pane identity. |
-| iTerm2 | Tier B | One visible native iTerm2 window per agent. Terminal metadata is captured and then stripped from the agent env. | Available only with a recorded window id and verified agent PID/binary liveness. Missing id reports `iTerm2 window id is unavailable`; dead/mismatched process reports `iTerm2 focus requires verified agent PID liveness`. | Disabled: `iTerm2 prompt/native-goal injection is disabled until #374 proves safe send/capture/busy support`. | Always available because durable AMQ dispatch does not require pane injection. | Agent process stop/resume is managed; native prompt injection is not. |
-| Terminal.app | Tier C | Visible native Terminal.app tabs/windows. Window identity is derived from the launched tab TTY when available. | Disabled: `Terminal.app focus requires stable window/tab addressing; manual focus is required`. | Disabled: `Terminal.app prompt/native-goal injection is disabled until #375 proves safe Accessibility-based input`. | Always available because durable AMQ dispatch does not require pane injection. | Agent process stop/resume is managed; native focus/input remain manual. |
-| cmux | Pending | No backend is shipped. | Pending #330 re-entry bar. | Pending #330 re-entry bar. | Durable AMQ dispatch remains the intended control plane once a backend exists. | Pending #330 re-entry bar. |
+| tmux | Tier A | Managed panes in current window, sibling windows, or detached session. | Available only while the recorded pane is live; otherwise reason is `agent pane is not live`. | Available only while the recorded pane is live; otherwise reason is `agent pane is not live`. | Available when the row proves an exact namespace, handle, and initialized durable AMQ mailbox. | Full managed stop/resume through launch records and tmux pane identity. |
+| iTerm2 | Tier B | One visible native iTerm2 window per agent. Terminal metadata is captured and then stripped from the agent env. | Available only with a recorded window id and verified agent PID/binary liveness. Missing id reports `iTerm2 window id is unavailable`; dead/mismatched process reports `iTerm2 focus requires verified agent PID liveness`. | Native send/capture/busy/local-input and effective goal delivery remain unsupported after the #374 evidence review because the current goal command requires a live native prompt target. | Available only with an exact durable AMQ member route. | Agent process stop/resume is managed; native prompt injection is not. |
+| Terminal.app | Tier C | Visible native Terminal.app tabs/windows. Window identity is derived from the launched tab TTY when available. | Disabled: `Terminal.app focus requires stable window/tab addressing; manual focus is required`. | Native send/capture/busy/local-input and effective goal delivery remain unsupported after the #375 Accessibility and targeting review because the current goal command requires a live native prompt target. | Available only with an exact durable AMQ member route. | Agent process stop/resume is managed; native focus/input remain manual. |
+| cmux | Pending | No backend is shipped. | Pending #330 re-entry bar. | Pending #330 re-entry bar. | Requires an exact durable AMQ member route once a backend exists. | Pending #330 re-entry bar. |
 
 Manual smoke flows live in
 [docs/iterm2-tier-b-smoke.md](docs/iterm2-tier-b-smoke.md) and
 [docs/terminal-app-tier-c-smoke.md](docs/terminal-app-tier-c-smoke.md). The
-capability contract is implemented in `internal/runtimecontrol`.
+capability contract is implemented in `internal/runtimecontrol` and documented
+in [docs/terminal-runtime-contract.md](docs/terminal-runtime-contract.md).
 
 ## Command map
 

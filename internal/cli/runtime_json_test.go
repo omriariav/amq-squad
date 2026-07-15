@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -82,8 +84,10 @@ func TestTerminalRuntimeFromITerm2Info(t *testing.T) {
 func TestPolicyAwareMemberActionsForTerminalAppRow(t *testing.T) {
 	tm := team.Team{Project: "/repo", Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex"}}}
 	row := statusRecord{
-		Role:    "cto",
-		Signals: statusSignals{AgentPID: 1234, AgentAlive: true, BinaryMatch: true},
+		Role:     "cto",
+		Handle:   "cto",
+		AgentDir: t.TempDir(), // Stale/unscoped directory is not a verified AMQ route.
+		Signals:  statusSignals{AgentPID: 1234, AgentAlive: true, BinaryMatch: true},
 		Terminal: &terminalRuntimeJSON{
 			Backend:  "terminal_app",
 			Session:  "issue-332",
@@ -102,22 +106,49 @@ func TestPolicyAwareMemberActionsForTerminalAppRow(t *testing.T) {
 	if action := byKind["focus"]; action.Available || action.Reason != runtimecontrol.TerminalAppFocusDisabledReason {
 		t.Fatalf("Terminal.app focus action = %+v", action)
 	}
-	for _, kind := range []string{"send", "goal_deliver"} {
-		action := byKind[kind]
-		if action.Available || action.Reason != runtimecontrol.TerminalAppInjectionDisabledReason {
-			t.Fatalf("%s action = %+v", kind, action)
+	if action := byKind["send"]; action.Available || action.Reason != runtimecontrol.TerminalAppInjectionDisabledReason {
+		t.Fatalf("send action = %+v", action)
+	}
+	if action := byKind["goal_deliver"]; action.Available || action.Reason == "" {
+		t.Fatalf("unevidenced goal delivery must fail closed: %+v", action)
+	}
+	if action := byKind["dispatch"]; action.Available || action.Reason == "" {
+		t.Fatalf("unevidenced dispatch must fail closed: %+v", action)
+	}
+
+	root := t.TempDir()
+	row.Handle = "cto"
+	row.Root = root
+	row.Session = "issue-332"
+	row.Namespace.Profile = "default"
+	row.Namespace.Session = row.Session
+	row.Namespace.ID = "default/issue-332"
+	row.AgentDir = filepath.Join(root, "agents", "cto")
+	if err := os.MkdirAll(filepath.Join(row.AgentDir, "inbox", "cur"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"new", "tmp"} {
+		if err := os.MkdirAll(filepath.Join(row.AgentDir, "inbox", name), 0o755); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if !byKind["dispatch"].Available {
-		t.Fatalf("Terminal.app dispatch should be available: %+v", byKind["dispatch"])
+	for _, action := range policyAwareMemberActionsForRow(tm, "default", "issue-332", row) {
+		if action.Kind == "goal_deliver" && action.Available {
+			t.Fatalf("durable member evidence must not claim native goal delivery: %+v", action)
+		}
+		if action.Kind == "dispatch" && !action.Available {
+			t.Fatalf("verified mailbox route should enable dispatch: %+v", action)
+		}
 	}
 }
 
 func TestPolicyAwareMemberActionsForITerm2Row(t *testing.T) {
 	tm := team.Team{Project: "/repo", Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex"}}}
 	row := statusRecord{
-		Role:    "cto",
-		Signals: statusSignals{AgentPID: 1234, AgentAlive: true, BinaryMatch: true},
+		Role:     "cto",
+		Handle:   "cto",
+		AgentDir: t.TempDir(), // No namespace root: fail closed despite directory existence.
+		Signals:  statusSignals{AgentPID: 1234, AgentAlive: true, BinaryMatch: true},
 		Terminal: &terminalRuntimeJSON{
 			Backend:  "iterm2",
 			Session:  "issue-331",
@@ -134,15 +165,16 @@ func TestPolicyAwareMemberActionsForITerm2Row(t *testing.T) {
 	if !byKind["focus"].Available {
 		t.Fatalf("iTerm2 focus should be available with window id: %+v", byKind["focus"])
 	}
-	for _, kind := range []string{"send", "goal_deliver"} {
-		action := byKind[kind]
-		if action.Available || !strings.Contains(action.Reason, "disabled until #374") {
-			t.Fatalf("%s action = %+v", kind, action)
-		}
+	if action := byKind["send"]; action.Available || action.Reason != runtimecontrol.ITerm2InjectionDisabledReason {
+		t.Fatalf("send action = %+v", action)
 	}
-	if !byKind["dispatch"].Available {
-		t.Fatalf("iTerm2 dispatch should be available: %+v", byKind["dispatch"])
+	if action := byKind["goal_deliver"]; action.Available || action.Reason == "" {
+		t.Fatalf("unevidenced goal delivery must fail closed: %+v", action)
 	}
+	if action := byKind["dispatch"]; action.Available || action.Reason == "" {
+		t.Fatalf("unevidenced dispatch must fail closed: %+v", action)
+	}
+
 }
 
 func TestSyncTerminalRuntimeFromTmuxUsesSamePaneAlive(t *testing.T) {
@@ -159,6 +191,44 @@ func TestSyncTerminalRuntimeFromTmuxUsesSamePaneAlive(t *testing.T) {
 	syncTerminalRuntimeFromTmux(&row)
 	if row.Terminal.PaneAlive {
 		t.Fatalf("terminal pane_alive must follow tmux pane_alive: %+v", row.Terminal)
+	}
+}
+
+func TestDecorateTerminalRuntimeCapabilitiesIsExplicitForLocalInput(t *testing.T) {
+	tests := []struct {
+		name      string
+		row       statusRecord
+		wantTier  string
+		wantState string
+	}{
+		{name: "tmux", row: statusRecord{Terminal: &terminalRuntimeJSON{Backend: runtimecontrol.BackendTmux, PaneAlive: true}}, wantTier: runtimecontrol.TierA, wantState: runtimecontrol.SupportSupported},
+		{name: "iterm2", row: statusRecord{Signals: statusSignals{AgentAlive: true, BinaryMatch: true}, Terminal: &terminalRuntimeJSON{Backend: runtimecontrol.BackendITerm2, WindowID: "101", PIDAlive: true}}, wantTier: runtimecontrol.TierB, wantState: runtimecontrol.SupportUnsupported},
+		{name: "terminal", row: statusRecord{Signals: statusSignals{AgentAlive: true, BinaryMatch: true}, Terminal: &terminalRuntimeJSON{Backend: runtimecontrol.BackendTerminalApp, WindowID: "401", PIDAlive: true}}, wantTier: runtimecontrol.TierC, wantState: runtimecontrol.SupportUnsupported},
+		{name: "unknown", row: statusRecord{Terminal: &terminalRuntimeJSON{Backend: "future"}}, wantTier: runtimecontrol.TierUnsupported, wantState: runtimecontrol.SupportUnknown},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			decorateTerminalRuntimeCapabilities(&tc.row)
+			if tc.row.Terminal.Tier != tc.wantTier {
+				t.Fatalf("tier = %q", tc.row.Terminal.Tier)
+			}
+			local := tc.row.Terminal.Capabilities[string(runtimecontrol.CapabilityLocalInput)]
+			if local.State != tc.wantState || (local.State != runtimecontrol.SupportSupported && (local.ReasonCode == "" || local.Reason == "")) {
+				t.Fatalf("local-input state = %+v", local)
+			}
+			if _, ok := tc.row.Terminal.Capabilities[string(runtimecontrol.CapabilityGoalDeliver)]; ok {
+				t.Fatalf("effective goal action leaked into raw terminal capabilities")
+			}
+			if _, ok := tc.row.Terminal.Capabilities[string(runtimecontrol.CapabilityDispatch)]; ok {
+				t.Fatalf("effective dispatch action leaked into raw terminal capabilities")
+			}
+			goal := runtimeCapabilitiesForStatusRow(tc.row).State(runtimecontrol.CapabilityGoalDeliver)
+			if tc.name == "iterm2" || tc.name == "terminal" {
+				if goal.Available || goal.State != runtimecontrol.SupportUnsupported || goal.ReasonCode == "" {
+					t.Fatalf("unevidenced effective goal action = %+v", goal)
+				}
+			}
+		})
 	}
 }
 
@@ -282,6 +352,9 @@ func TestWriteResumeJSONShapeAndPaneAlive(t *testing.T) {
 	}
 	if cto.Tmux == nil || cto.Tmux.PaneID != "%265" || !cto.Tmux.PaneAlive {
 		t.Errorf("cto tmux/pane_alive wrong: %+v", cto.Tmux)
+	}
+	if cto.Terminal == nil || cto.Terminal.Backend != runtimecontrol.BackendTmux || cto.Terminal.Tier != runtimecontrol.TierA || cto.Terminal.Capabilities[string(runtimecontrol.CapabilityLocalInput)].State != runtimecontrol.SupportSupported {
+		t.Errorf("cto authoritative terminal contract wrong: %+v", cto.Terminal)
 	}
 	qa := env.Data.Plan[1]
 	if qa.Action != "launch fresh" || qa.Tmux != nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -46,6 +47,14 @@ var statusLocalInputDetector = func(paneID string) (tmuxpane.LocalInputBlocker, 
 		return tmuxpane.LocalInputBlocker{}, false
 	}
 	return blocker, ok
+}
+
+var statusTerminalContext = func() runtimecontrol.HostContext {
+	controlMode := false
+	if strings.TrimSpace(os.Getenv("TMUX")) != "" {
+		controlMode = len(tmuxControlModeClients()) > 0
+	}
+	return runtimecontrol.DetectHostContext(os.Environ(), controlMode)
 }
 
 // paneCloser closes an agent's tmux pane on teardown (kill-pane). Injected as a
@@ -92,6 +101,7 @@ type statusEnvelopeData struct {
 	OperatorDelivery    operatorDeliveryData        `json:"operator_delivery"`
 	NotificationWatcher notificationWatcherStatus   `json:"notification_watcher"`
 	Capabilities        team.Capabilities           `json:"capabilities"`
+	TerminalContext     runtimecontrol.HostContext  `json:"terminal_context"`
 	Orchestrated        bool                        `json:"orchestrated,omitempty"`
 	Lead                string                      `json:"lead,omitempty"`
 	LeadHandle          string                      `json:"lead_handle,omitempty"`
@@ -367,6 +377,7 @@ func executeStatus(s statusExecution) error {
 		// Attach the stable action commands a client can render/copy per member.
 		for i := range rows {
 			rows[i].Namespace = ns
+			decorateTerminalRuntimeCapabilities(&rows[i])
 			rows[i].Actions = disableNamespaceConflictActions(policyAwareMemberActionsForRow(t, s.Profile, workstream, rows[i]), conflict, exactStopScope)
 		}
 		ctx := newSessionStatusContext(t, s.Profile, workstream, firstLiveTmuxSession(rows))
@@ -399,6 +410,7 @@ func executeStatus(s statusExecution) error {
 			OperatorDelivery:    operatorDeliveryForTeam(t),
 			NotificationWatcher: inspectNotificationWatcher(t, s.Profile, workstream, now),
 			Capabilities:        team.EffectiveCapabilities(t),
+			TerminalContext:     statusTerminalContext(),
 			Orchestrated:        ctx.Orchestrated,
 			Lead:                ctx.Lead,
 			LeadHandle:          ctx.LeadHandle,

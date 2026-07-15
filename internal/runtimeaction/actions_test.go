@@ -46,10 +46,13 @@ func TestMemberKeepsTmuxDeadPaneCompatibility(t *testing.T) {
 		byKind[action.Kind] = action
 	}
 
-	for _, kind := range []string{"focus", "send", "goal_deliver"} {
+	for _, kind := range []string{"focus", "send"} {
 		if byKind[kind].Available || byKind[kind].Reason != "agent pane is not live" {
 			t.Fatalf("%s action = %+v, want existing dead-pane behavior", kind, byKind[kind])
 		}
+	}
+	if goal := byKind["goal_deliver"]; goal.Available || goal.Reason != "the current goal-deliver command requires a live native prompt target" {
+		t.Fatalf("goal_deliver action = %+v, want executable-path failure", goal)
 	}
 	if !byKind["dispatch"].Available {
 		t.Fatalf("dispatch must remain available for dead tmux panes")

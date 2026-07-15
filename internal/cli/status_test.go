@@ -13,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -199,6 +200,11 @@ func TestRunStatusProjectTargetsSessionOtherDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	chdir(t, other)
+	oldContext := statusTerminalContext
+	statusTerminalContext = func() runtimecontrol.HostContext {
+		return runtimecontrol.DetectHostContext([]string{"TERM_PROGRAM=iTerm.app", "TMUX=/tmp/tmux"}, true)
+	}
+	t.Cleanup(func() { statusTerminalContext = oldContext })
 
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runStatus([]string{"--project", project, "--session", "issue-99", "--json"})
@@ -212,6 +218,13 @@ func TestRunStatusProjectTargetsSessionOtherDir(t *testing.T) {
 	}
 	if env.Data.Workstream != "issue-99" {
 		t.Fatalf("status --project workstream = %q, want issue-99", env.Data.Workstream)
+	}
+	terminal := env.Data.TerminalContext
+	if terminal.SchemaVersion != runtimecontrol.HostContextSchemaVersion || terminal.Backend != runtimecontrol.BackendTmux || terminal.HostProgram != "iterm2" || !terminal.InsideTmux || !terminal.ControlMode || terminal.Tier != runtimecontrol.TierA {
+		t.Fatalf("terminal_context = %+v", terminal)
+	}
+	if state := terminal.Capabilities[string(runtimecontrol.CapabilityLocalInput)]; state.State != runtimecontrol.SupportSupported {
+		t.Fatalf("terminal_context local_input_detect = %+v", state)
 	}
 }
 
@@ -2127,14 +2140,21 @@ func TestExecuteStatusJSONPolicyDisablesDirectChildControlActions(t *testing.T) 
 		Lead:          "release-lead",
 		ExecutionMode: executionModeProjectTeam,
 	})
-	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+	leadAgentDir := seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
 		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7001,
 		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@1", PaneID: "%1", Target: "new-window"},
 	})
-	seedAgentRecord(t, base, "v2-11-0", "developer", launch.Record{
+	childAgentDir := seedAgentRecord(t, base, "v2-11-0", "developer", launch.Record{
 		Binary: "claude", Handle: "developer", Role: "developer", AgentPID: 7002,
 		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@2", PaneID: "%2", Target: "new-window"},
 	})
+	for _, agentDir := range []string{leadAgentDir, childAgentDir} {
+		for _, mailboxDir := range []string{"cur", "new", "tmp"} {
+			if err := os.MkdirAll(filepath.Join(agentDir, "inbox", mailboxDir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}, {PaneID: "%2"}}, nil)
 
 	out, err := runStatusExec(t, statusExecution{

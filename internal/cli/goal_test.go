@@ -12,6 +12,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -545,6 +546,49 @@ func setupGoalDeliveryFailureTest(t *testing.T, sendErr error) (string, string, 
 		sendPromptToPane = oldSend
 	})
 	return dir, base, calls, &prompts
+}
+
+func TestNativeTerminalWithoutPaneStatusMatchesGoalDeliveryFailure(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	project := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: project, Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96", AgentPID: 4242,
+		Terminal: &launch.TerminalInfo{Backend: runtimecontrol.BackendITerm2, WindowID: "101", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, nil, nil)
+
+	statusJSON, err := runStatusExec(t, statusExecution{
+		ProjectDir:       project,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Profile:          team.DefaultProfile,
+		Probe:            statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()),
+		JSON:             true,
+	})
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, statusJSON)
+	if len(env.Data.Records) != 1 {
+		t.Fatalf("status records = %d", len(env.Data.Records))
+	}
+	for _, action := range env.Data.Records[0].Actions {
+		if action.Kind == "goal_deliver" && action.Available {
+			t.Fatalf("status advertised unavailable native goal path: %+v", action)
+		}
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--project", project, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--json"})
+	})
+	if err == nil || !strings.Contains(err.Error(), runtimecontrol.ITerm2InjectionDisabledReason) {
+		t.Fatalf("goal delivery without native pane = %v", err)
+	}
 }
 
 func TestGoalDeliveryQueuedInputRecordsPendingWithoutActionableAMQ(t *testing.T) {
