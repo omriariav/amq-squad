@@ -10,11 +10,7 @@ import (
 )
 
 func TestWriteImmutableAuthorizationHandlesShortWritesAndCleansFailures(t *testing.T) {
-	dir, err := os.MkdirTemp("/private/tmp", "amq-authz-write-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := shortTestTempDir(t, "amq-authz-write-")
 
 	originalWrite, originalSync := authorizationArtifactWrite, authorizationArtifactSync
 	originalClose, originalRemove := authorizationArtifactClose, authorizationArtifactRemove
@@ -65,11 +61,7 @@ func TestWriteImmutableAuthorizationHandlesShortWritesAndCleansFailures(t *testi
 }
 
 func TestWriteImmutableAuthorizationRejectsUnsafeExistingArtifacts(t *testing.T) {
-	dir, err := os.MkdirTemp("/private/tmp", "amq-authz-collision-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := shortTestTempDir(t, "amq-authz-collision-")
 	raw := []byte("same bytes")
 
 	existing := filepath.Join(dir, "existing.json")
