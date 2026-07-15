@@ -291,6 +291,7 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 	}
 	windowTarget := plan.Session + ":0"
 	firstTarget := plan.Session + ":0.0"
+	reuseExistingSession := false
 	switch plan.Target {
 	case "current-window":
 		paneID := strings.TrimSpace(os.Getenv("TMUX_PANE"))
@@ -310,6 +311,11 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 		windowTarget = strings.TrimSpace(windowTarget)
 		firstTarget = paneID
 	case "new-session":
+		if tmuxSessionExists(plan.Session) && plan.AllowExistingSession {
+			windowTarget = plan.Session + ":0"
+			reuseExistingSession = true
+			break
+		}
 		if err := tmuxEnsureSessionAbsent(plan.Session); err != nil {
 			return teamLaunchResult{}, err
 		}
@@ -330,7 +336,7 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 	}
 	targets := []string{}
 	panesToSplit := plan.Panes
-	if plan.Target != "current-window" {
+	if plan.Target != "current-window" && !reuseExistingSession {
 		if err := tmuxRunCommand("tmux", "select-pane", "-t", firstTarget, "-T", paneTitleToken(plan.Workstream, plan.Panes[0].Role)); err != nil {
 			return teamLaunchResult{}, err
 		}
@@ -383,7 +389,11 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 		}
 		return teamLaunchResult{}, nil
 	}
-	quietNotice("Created tmux session %s. Attach with: tmux attach -t %s\n", plan.Session, shellQuote(plan.Session))
+	if reuseExistingSession {
+		quietNotice("Added %d team pane(s) to existing tmux session %s. Attach with: tmux attach -t %s\n", len(targets), plan.Session, shellQuote(plan.Session))
+	} else {
+		quietNotice("Created tmux session %s. Attach with: tmux attach -t %s\n", plan.Session, shellQuote(plan.Session))
+	}
 	verbosePolicyEcho()
 	if collectResult {
 		return launchResult, nil

@@ -1299,9 +1299,10 @@ func buildStatusRowsWithLocalInputDetector(t team.Team, profile, workstream stri
 	defer func() { statusPaneLister = restoreLister }()
 
 	members := orderedTeamMembers(t.Members)
+	replacement := newBatchReplacementPaneResolver()
 	rows := make([]statusRecord, 0, len(members))
 	for _, m := range members {
-		rows = append(rows, classifyMemberStatus(t, profile, m, workstream, probe))
+		rows = append(rows, classifyMemberStatusWithReplacementResolver(t, profile, m, workstream, probe, replacement))
 	}
 	// #95: adopt a live tmux pane for live agents with no recorded tmux identity
 	// (launched outside amq-squad's tmux backend, e.g. a raw `tmux new-window`),
@@ -1553,6 +1554,10 @@ func firstStatusRoot(rows []statusRecord) string {
 }
 
 func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe) statusRecord {
+	return classifyMemberStatusWithReplacementResolver(t, profile, m, workstream, probe, classifierReplacementPane)
+}
+
+func classifyMemberStatusWithReplacementResolver(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe, replacement replacementPaneResolver) statusRecord {
 	rec := statusRecord{
 		Role:        m.Role,
 		Handle:      m.Handle,
@@ -1581,7 +1586,7 @@ func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream
 	// checks and returns the verdict, signals, detail, status state, and the
 	// persisted tmux identity. classifyMemberStatus then just adopts them; the
 	// verdict->statusState mapping lives in the classifier (Status field).
-	live := classifyAgentLiveness(rec.AgentDir, root, profile, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe)
+	live := classifyAgentLivenessWithReplacementResolver(rec.AgentDir, root, profile, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe, replacement)
 	rec.Tmux = tmuxRuntimeFromInfo(live.Tmux)
 	if live.LaunchFound {
 		rec.Terminal = terminalRuntimeFromInfo(live.LaunchRecord.Terminal)
@@ -1669,6 +1674,47 @@ func liveReplacementPane(m team.Member, rec statusRecord, workstream string) (st
 		return "", false
 	}
 	return tmuxpane.SuggestJump(target), true
+}
+
+// newBatchReplacementPaneResolver preserves the neutral resolver's
+// single-member fallback while making roster classification injective: once a
+// physical pane is assigned to one stale role, later roles cannot reuse it.
+// The pane snapshot is loaded lazily because most healthy rosters never need
+// replacement detection at all.
+func newBatchReplacementPaneResolver() replacementPaneResolver {
+	var (
+		loaded  bool
+		panes   []tmuxpane.TmuxPane
+		loadErr error
+	)
+	claimed := make(map[string]struct{})
+	return func(role, handle, binary, cwd, workstream string) (string, bool) {
+		if !loaded {
+			panes, loadErr = statusPaneLister()
+			loaded = true
+		}
+		if loadErr != nil || len(panes) == 0 {
+			return "", false
+		}
+
+		available := make([]tmuxpane.TmuxPane, 0, len(panes))
+		for _, pane := range panes {
+			if _, used := claimed[replacementPaneKey(pane.Session, pane.Window, pane.Pane)]; !used {
+				available = append(available, pane)
+			}
+		}
+		agent := state.Agent{Handle: handle, Role: role, Engine: binary}
+		target, ok := tmuxpane.ResolveTmuxTargetForSession(agent, workstream, cwd, available, nil)
+		if !ok {
+			return "", false
+		}
+		claimed[replacementPaneKey(target.Session, target.Window, target.Pane)] = struct{}{}
+		return tmuxpane.SuggestJump(target), true
+	}
+}
+
+func replacementPaneKey(session, window, pane string) string {
+	return session + "\x00" + window + "\x00" + pane
 }
 
 func readWakeLock(agentDir string) (wakeLockFile, error) {

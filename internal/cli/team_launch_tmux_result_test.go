@@ -170,6 +170,34 @@ func TestRunTmuxNewSessionWithResultCapturesExactFirstPaneBeforeSend(t *testing.
 	}
 }
 
+func TestRunTmuxNewSessionResumeStageReusesExistingLeadSession(t *testing.T) {
+	t.Setenv("TMUX", "")
+	oldExists := tmuxSessionExists
+	tmuxSessionExists = func(session string) bool { return session == "squad" }
+	t.Cleanup(func() { tmuxSessionExists = oldExists })
+	runCalls := stubTmuxResultCommands(t, func(name string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "new-session" {
+			t.Fatalf("dependent stage must not recreate the lead session: %s %s", name, strings.Join(args, " "))
+		}
+		if len(args) > 0 && args[0] == "split-window" {
+			return "%10\n", nil
+		}
+		return "", fmt.Errorf("unexpected output command: %s %s", name, strings.Join(args, " "))
+	})
+
+	err := runTmuxLaunchPlan(tmuxLaunchPlan{
+		Session: "squad", Workstream: "issue-473", Target: "new-session", Layout: "vertical", AllowExistingSession: true,
+		Panes: []teamLaunchPane{{Role: "qa", CWD: "/repo", Command: "worker-command"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(*runCalls, "\n")
+	if !strings.Contains(joined, "select-pane -t %10 -T amq:issue-473:qa") || !strings.Contains(joined, "send-keys -t %10") {
+		t.Fatalf("dependent stage calls = %s", joined)
+	}
+}
+
 func TestTmuxLaunchResultRejectsNameLikePaneAndWindowTargets(t *testing.T) {
 	oldOutput := tmuxOutputCommand
 	t.Cleanup(func() { tmuxOutputCommand = oldOutput })
