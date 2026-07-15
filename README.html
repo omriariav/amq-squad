@@ -272,8 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-v2201" id="toc-whats-new-in-v2201">What's new
-in v2.20.1</a></li>
+<li><a href="#whats-new-in-v2210" id="toc-whats-new-in-v2210">What's new
+in v2.21.0</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#quickstart" id="toc-quickstart">Quickstart</a></li>
 <li><a href="#execution-modes" id="toc-execution-modes">Execution
@@ -324,7 +324,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2201">What's new in v2.20.1</a></li>
+<li><a href="#whats-new-in-v2210">What's new in v2.21.0</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -342,29 +342,46 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
-<h2 id="whats-new-in-v2201">What's new in v2.20.1</h2>
-<p>v2.20.1 fixes restored native-goal metadata in the interactive resume
-path:</p>
+<h2 id="whats-new-in-v2210">What's new in v2.21.0</h2>
+<p>v2.21.0 adds a fail-closed execution and authorization layer for
+long-running agent teams:</p>
 <ul>
-<li><strong>Wizard resume preserves <code>--restore-goal-binding</code>
-as launcher metadata.</strong> The
-<code>agent up &lt;binary&gt; [flags]</code> translator now recognizes
-the internal restore flag, so it is parsed by amq-squad instead of being
-forwarded to Codex after a synthesized <code>--</code> child-argument
-boundary.</li>
-<li><strong>Regression coverage pins the generated command
-shape.</strong> The test exercises the post-binary JSON flag exactly
-where restored wizard commands place it.</li>
+<li><strong>Trusted authorization envelopes (#414).</strong> A verified
+human approval can be emitted as an immutable signed Ed25519 envelope;
+consumers revalidate its signature, trust/revocation state, exact action
+and target, durable gate, receipt, namespace generation,
+policy/preflight, and compound-release claim. The envelope verifies
+authority; it is not a bearer token or automatic shell, Git, tag, or
+release action.</li>
+<li><strong>Terminal operator-gate lifecycle (#464).</strong> Requesters
+can close or withdraw the exact current gate generation. Answered,
+closed, and withdrawn gates stop escalating, while later valid requests
+reopen with a fresh clock. Completed tasks project to closed attention,
+cancelled tasks project to closed, and a cancelled task with
+<code>ReplacedBy</code> projects to superseded; failed and blocked tasks
+remain attention-bearing.</li>
+<li><strong>Safe own-pane waits (#416).</strong> In
+<code>lead_pane</code> mode, verified lead waits are refused when
+caller-raised gates remain open, waits exceed 120 seconds, or waits are
+unbounded. Deliberate overrides require a reason and durable audit.</li>
+<li><strong>Durable tasks, sends, and namespaces.</strong> Task
+completion and successor dispatch use journals and outbox intents; owned
+AMQ sends persist delivery receipts; canonical context resolution and
+cold namespace migration fail closed on ambiguous state.</li>
+<li><strong>Stronger launch/runtime recovery.</strong> Fresh AMQ roots
+bootstrap explicitly, Codex goal delivery is claim-once and resumable,
+external orchestrator registration is transactional, wake injection is
+marker-safe, and managed pane cleanup refuses uncertain ownership.</li>
 </ul>
-<p>See <a href="docs/v2.20.1-release-notes.md">the v2.20.1 release
-notes</a> for details.</p>
+<p>See <a href="docs/v2.21.0-release-notes.md">the v2.21.0 release
+notes</a> for the complete issue-to-behavior map.</p>
 <h2 id="install">Install</h2>
 <p>Install the v2 module path:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.20.1</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.21.0</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
@@ -788,15 +805,15 @@ auto-retries an uncertain delivery.</p>
 <div class="sourceCode" id="cb12"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> gate raise <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="dt">\</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--gate</span> release <span class="at">--kind</span> release <span class="at">--action</span> github_release <span class="dt">\</span></span>
-<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target</span> <span class="st">&quot;publish v2.20.0 GitHub release&quot;</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target</span> <span class="st">&quot;publish v2.21.0 GitHub release&quot;</span></span>
 <span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> operator answer <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
 <span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--gate</span> release <span class="at">--approved</span></span>
 <span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify action <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--gate</span> release <span class="at">--action</span> github_release <span class="at">--target</span> <span class="st">&quot;publish v2.20.0 GitHub release&quot;</span> <span class="dt">\</span></span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--gate</span> release <span class="at">--action</span> github_release <span class="at">--target</span> <span class="st">&quot;publish v2.21.0 GitHub release&quot;</span> <span class="dt">\</span></span>
 <span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--emit-authorization</span> <span class="at">--signing-key-file</span> /secure/operator-authz.pem <span class="dt">\</span></span>
 <span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--authorization-out</span> /secure/release-authz.json</span>
 <span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify authorization <span class="at">--file</span> /secure/release-authz.json <span class="dt">\</span></span>
-<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--action</span> github_release <span class="at">--target</span> <span class="st">&quot;publish v2.20.0 GitHub release&quot;</span> <span class="dt">\</span></span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--action</span> github_release <span class="at">--target</span> <span class="st">&quot;publish v2.21.0 GitHub release&quot;</span> <span class="dt">\</span></span>
 <span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--trust-store</span> /secure/operator-authz-trust.json</span>
 <span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify merge <span class="at">--evidence</span> merge-evidence.json</span>
 <span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> verify release <span class="at">--evidence</span> release-evidence.json</span></code></pre></div>
@@ -914,10 +931,12 @@ coordinate reviews, recover, and produce final evidence.</td>
 <p>Invoke skills in Claude Code as <code>/amq-squad:&lt;skill&gt;</code>
 and in Codex as <code>$&lt;skill&gt;</code>.</p>
 <p>Model guidance is intentionally skill-owned because it changes faster
-than the binary. For v2.20.0, use the current model family and per-role
-model/effort recommendations in the installed skills; treat cost as a
-tie-breaker after output quality for shippable work. Prefer that
-guidance over copying model examples from this README.</p>
+than the binary. For v2.21.0, use the current model family and per-role
+model/effort recommendations in the installed v2.21.0 skills; confirm
+the startup marker <code>amq-squad skill v2.21.0</code> matches
+<code>amq-squad version</code>. Treat cost as a tie-breaker after output
+quality for shippable work, and prefer installed-skill guidance over
+copying model examples from this README.</p>
 <p>Deep guide: <a href="docs/skills.md">docs/skills.md</a> (<a
 href="docs/skills.html">HTML</a>).</p>
 <p>That guide also defines goal-first composition modes: manual rosters,

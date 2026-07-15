@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.20.1](#whats-new-in-v2201)
+- [What's new in v2.21.0](#whats-new-in-v2210)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,18 +38,37 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.20.1
+## What's new in v2.21.0
 
-v2.20.1 fixes restored native-goal metadata in the interactive resume path:
+v2.21.0 adds a fail-closed execution and authorization layer for long-running
+agent teams:
 
-- **Wizard resume preserves `--restore-goal-binding` as launcher metadata.**
-  The `agent up <binary> [flags]` translator now recognizes the internal
-  restore flag, so it is parsed by amq-squad instead of being forwarded to
-  Codex after a synthesized `--` child-argument boundary.
-- **Regression coverage pins the generated command shape.** The test exercises
-  the post-binary JSON flag exactly where restored wizard commands place it.
+- **Trusted authorization envelopes (#414).** A verified human approval can be
+  emitted as an immutable signed Ed25519 envelope; consumers revalidate its
+  signature, trust/revocation state, exact action and target, durable gate,
+  receipt, namespace generation, policy/preflight, and compound-release claim.
+  The envelope verifies authority; it is not a bearer token or automatic
+  shell, Git, tag, or release action.
+- **Terminal operator-gate lifecycle (#464).** Requesters can close or withdraw
+  the exact current gate generation. Answered, closed, and withdrawn gates stop
+  escalating, while later valid requests reopen with a fresh clock. Completed
+  tasks project to closed attention, cancelled tasks project to closed, and a
+  cancelled task with `ReplacedBy` projects to superseded; failed and blocked
+  tasks remain attention-bearing.
+- **Safe own-pane waits (#416).** In `lead_pane` mode, verified lead waits are
+  refused when caller-raised gates remain open, waits exceed 120 seconds, or
+  waits are unbounded. Deliberate overrides require a reason and durable audit.
+- **Durable tasks, sends, and namespaces.** Task completion and successor
+  dispatch use journals and outbox intents; owned AMQ sends persist delivery
+  receipts; canonical context resolution and cold namespace migration fail
+  closed on ambiguous state.
+- **Stronger launch/runtime recovery.** Fresh AMQ roots bootstrap explicitly,
+  Codex goal delivery is claim-once and resumable, external orchestrator
+  registration is transactional, wake injection is marker-safe, and managed
+  pane cleanup refuses uncertain ownership.
 
-See [the v2.20.1 release notes](docs/v2.20.1-release-notes.md) for details.
+See [the v2.21.0 release notes](docs/v2.21.0-release-notes.md) for the complete
+issue-to-behavior map.
 
 ## Install
 
@@ -63,7 +82,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.20.1
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.21.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
@@ -366,15 +385,15 @@ Safety preflights:
 ```sh
 amq-squad gate raise --project . --session issue-96 --me cto \
   --gate release --kind release --action github_release \
-  --target "publish v2.20.0 GitHub release"
+  --target "publish v2.21.0 GitHub release"
 amq-squad operator answer --project . --session issue-96 \
   --gate release --approved
 amq-squad verify action --project . --session issue-96 \
-  --gate release --action github_release --target "publish v2.20.0 GitHub release" \
+  --gate release --action github_release --target "publish v2.21.0 GitHub release" \
   --emit-authorization --signing-key-file /secure/operator-authz.pem \
   --authorization-out /secure/release-authz.json
 amq-squad verify authorization --file /secure/release-authz.json \
-  --action github_release --target "publish v2.20.0 GitHub release" \
+  --action github_release --target "publish v2.21.0 GitHub release" \
   --trust-store /secure/operator-authz-trust.json
 amq-squad verify merge --evidence merge-evidence.json
 amq-squad verify release --evidence release-evidence.json
@@ -454,10 +473,11 @@ Invoke skills in Claude Code as `/amq-squad:<skill>` and in Codex as
 `$<skill>`.
 
 Model guidance is intentionally skill-owned because it changes faster than the
-binary. For v2.20.0, use the current model family and per-role model/effort
-recommendations in the installed skills; treat cost as a tie-breaker after
-output quality for shippable work. Prefer that guidance over copying model
-examples from this README.
+binary. For v2.21.0, use the current model family and per-role model/effort
+recommendations in the installed v2.21.0 skills; confirm the startup marker
+`amq-squad skill v2.21.0` matches `amq-squad version`. Treat cost as a
+tie-breaker after output quality for shippable work, and prefer installed-skill
+guidance over copying model examples from this README.
 
 Deep guide: [docs/skills.md](docs/skills.md)
 ([HTML](docs/skills.html)).
