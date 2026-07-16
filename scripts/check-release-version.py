@@ -35,6 +35,25 @@ def fail_if_missing_normalized(path: str, needle: str, failures: list[str]) -> N
         failures.append(f"{path}: missing normalized {needle!r}")
 
 
+def require_release_notes(root: str, tag: str, failures: list[str]) -> None:
+    release_notes_rel = f"docs/{tag}-release-notes.md"
+    release_notes = os.path.join(root, release_notes_rel)
+    if not os.path.isfile(release_notes):
+        failures.append(f"{release_notes_rel}: missing canonical release notes")
+        return
+
+    expected_heading = f"# amq-squad {tag}"
+    first_nonempty_line = next(
+        (line.strip() for line in read(release_notes).splitlines() if line.strip()),
+        "",
+    )
+    if first_nonempty_line != expected_heading:
+        failures.append(
+            f"{release_notes_rel}: first heading {first_nonempty_line!r} "
+            f"!= {expected_heading!r}"
+        )
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         sys.stderr.write("usage: check-release-version.py VERSION\n")
@@ -48,6 +67,8 @@ def main() -> int:
     tag = "v" + version
     root = os.getcwd()
     failures: list[str] = []
+
+    require_release_notes(root, tag, failures)
 
     mirrors = {
         "claude": "plugins/claude/.claude-plugin/plugin.json",
