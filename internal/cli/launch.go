@@ -406,6 +406,17 @@ Examples:
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD
 	}
+	preparedLaunchContext, err := preparedContextForLaunchRecord(rec)
+	if err != nil {
+		return fmt.Errorf("load accepted prepared launch identity: %w", err)
+	}
+	if rec.GoalBinding == nil && rec.Conversation == "" && preparedLaunchContext != nil && preparedLaunchContext.Member.Role == preparedLaunchContext.Team.Lead {
+		preparedBinding, err := preparedGoalBinding(preparedLaunchContext.Team, preparedLaunchContext.Manifest.Profile, preparedLaunchContext.Manifest.Session, preparedLaunchContext.Member, preparedLaunchContext.Binding)
+		if err != nil {
+			return fmt.Errorf("load accepted prepared goal binding: %w", err)
+		}
+		rec.GoalBinding = preparedBinding
+	}
 
 	// Capture exact tmux identity (session/window/pane ids) when launched
 	// inside tmux, so clients can target follow-up control by stable pane id
@@ -462,15 +473,34 @@ Examples:
 	if err != nil {
 		return err
 	}
+	if *dryRun && bootstrapAppended && !expectation.Required {
+		if preparedLaunchContext != nil && !(preparedLaunchContext.Manifest.Topology.ExternalLead && rec.Role == preparedLaunchContext.Team.Lead) {
+			expectation.Required = true
+			expectation.NotRequiredReason = ""
+		}
+	}
 	rec.BootstrapExpectation = &expectation
 	if bootstrapAppended {
-		prompt, err := buildBootstrapPrompt(bootstrapContextFor(rec, agentDir, *teamHome))
+		bootstrapContext := bootstrapContextFor(rec, agentDir, *teamHome)
+		if preparedLaunchContext != nil {
+			bootstrapContext.CurrentTeam, bootstrapContext.Warnings = bootstrapCurrentTeamWithRoster(rec, *teamHome, true)
+		}
+		prompt, err := buildBootstrapPrompt(bootstrapContext)
 		if err != nil {
 			return err
+		}
+		if err := revalidatePreparedBootstrapPromptForLaunch(rec, prompt, preparedLaunchContext); err != nil {
+			return fmt.Errorf("prepared bootstrap launch validation: %w", err)
 		}
 		// Terminate native option parsing so optional/variadic flags can never
 		// consume generated prompt text. The prompt remains the final argv token.
 		effectiveChildArgs = appendGeneratedBootstrapPrompt(effectiveChildArgs, prompt)
+	} else if preparedLaunchContext != nil {
+		return fmt.Errorf("prepared bootstrap launch validation: accepted run member %s cannot launch without its exact bootstrap prompt", rec.Role)
+	} else if context, err := preparedContextForLaunchRecord(rec); err != nil {
+		return fmt.Errorf("prepared bootstrap launch validation: %w", err)
+	} else if context != nil {
+		return fmt.Errorf("prepared bootstrap launch validation: prepared run appeared after launch identity capture")
 	}
 	if launchPlanObserver != nil {
 		launchPlanObserver(rec, append([]string(nil), effectiveChildArgs...))

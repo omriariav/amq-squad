@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/catalog"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
@@ -23,6 +24,7 @@ import (
 )
 
 const preparedRunSchema = 1
+const preparedRunGoalDeliveryPlanned = "planned_unverified"
 
 type preparedRunManifest struct {
 	SchemaVersion     int                                  `json:"schema_version"`
@@ -46,6 +48,7 @@ type preparedRunManifest struct {
 	GoalNamespace     string                               `json:"goal_namespace"`
 	GoalDigest        string                               `json:"goal_digest"`
 	GoalSource        string                               `json:"goal_source"`
+	GoalDeliveryState string                               `json:"goal_delivery_state"`
 	ArtifactDigests   map[string]string                    `json:"artifact_digests"`
 	RoleDigests       map[string]string                    `json:"role_digests"`
 	BootstrapDigests  map[string]string                    `json:"bootstrap_digests"`
@@ -152,11 +155,174 @@ func acceptedTaskOwnership(tm team.Team, member team.Member) string {
 }
 
 func acceptedMemberIdentity(tm team.Team, member team.Member) preparedRunMemberIdentity {
+	return resolvedMemberIdentity(tm, member, nil, tm.BinaryArgs)
+}
+
+func resolvedMemberIdentity(tm team.Team, member team.Member, modelOverrides map[string]string, binaryArgs map[string][]string) preparedRunMemberIdentity {
 	return preparedRunMemberIdentity{
-		Role: member.Role, Handle: member.Handle, Binary: normalizedAgentBinary(member.Binary),
-		Model: member.Model, Effort: memberEffort(member), TaskOwnership: acceptedTaskOwnership(tm, member),
+		Role: member.Role, Handle: memberHandle(member), Binary: normalizedAgentBinary(member.Binary),
+		Model: memberResolvedModel(member, modelOverrides, binaryArgs), Effort: memberResolvedEffort(member, binaryArgs), TaskOwnership: acceptedTaskOwnership(tm, member),
 		ToolProfile: member.EffectiveToolProfile(), ToolConfig: member.ToolConfig, ToolMCPConfig: member.ToolMCPConfig,
 	}
+}
+
+func memberResolvedEffort(member team.Member, binaryArgs map[string][]string) string {
+	resolved := member
+	args := composeBinaryArgs(member.Binary, binaryArgsFor(member.Binary, binaryArgs), member.ExtraArgs())
+	switch normalizedAgentBinary(member.Binary) {
+	case "codex":
+		resolved.CodexArgs = args
+	case "claude":
+		resolved.ClaudeArgs = args
+	}
+	return memberEffort(resolved)
+}
+
+type preparedLaunchRecordContext struct {
+	Manifest preparedRunManifest
+	Team     team.Team
+	Member   team.Member
+	Binding  acceptedGoalBinding
+}
+
+func preparedContextForLaunchRecord(rec launch.Record) (*preparedLaunchRecordContext, error) {
+	project := strings.TrimSpace(rec.TeamHome)
+	if project == "" {
+		project = strings.TrimSpace(rec.CWD)
+	}
+	profile := squadnamespace.NormalizeProfile(rec.TeamProfile)
+	session := strings.TrimSpace(rec.Session)
+	manifest, err := readPreparedRunManifest(project, profile, session)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if manifest.Project != project || manifest.Profile != profile || manifest.Session != session || manifest.Namespace != profile+"/"+session {
+		return nil, fmt.Errorf("prepared launch record namespace drift: accepted=%s current=%s/%s", manifest.Namespace, profile, session)
+	}
+	if manifest.GoalDeliveryState != preparedRunGoalDeliveryPlanned {
+		return nil, fmt.Errorf("prepared goal delivery state %q is invalid; want %q", manifest.GoalDeliveryState, preparedRunGoalDeliveryPlanned)
+	}
+	readiness := calculateRunReadinessWithContext(project, profile, session, acceptedRunContext{Version: manifest.Environment.BinaryVersion, Topology: manifest.Topology})
+	if !readiness.Ready {
+		for _, row := range readiness.Rows {
+			if row.Status != "ready" {
+				return nil, fmt.Errorf("prepared launch readiness drift [%s/%s]: %s", row.Artifact, row.Status, row.Evidence)
+			}
+		}
+		return nil, fmt.Errorf("prepared launch readiness drift")
+	}
+	tm, err := team.ReadProfile(project, profile)
+	if err != nil {
+		return nil, err
+	}
+	active, _ := filterMembersBySession(tm.Members, session)
+	tm.Members = active
+	var member team.Member
+	found := false
+	for _, candidate := range tm.Members {
+		if candidate.Role == rec.Role && memberHandle(candidate) == rec.Handle {
+			member, found = candidate, true
+			break
+		}
+	}
+	if !found || !containsRole(manifest.InitialRoster, rec.Role) {
+		return nil, fmt.Errorf("launch record actor %s/%s is not in the accepted exact-session roster", rec.Role, rec.Handle)
+	}
+	accepted, ok := manifest.Members[member.Role]
+	if !ok || !reflect.DeepEqual(accepted, acceptedMemberIdentity(tm, member)) {
+		return nil, fmt.Errorf("launch record member identity for %s differs from accepted preparation", member.Role)
+	}
+	if normalizedAgentBinary(rec.Binary) != accepted.Binary || rec.Handle != accepted.Handle || rec.Model != accepted.Model || !sameFilesystemPath(rec.CWD, member.EffectiveCWD(tm.Project)) || rec.ToolProfile != accepted.ToolProfile || rec.ToolConfig != accepted.ToolConfig || rec.ToolMCPConfig != accepted.ToolMCPConfig {
+		return nil, fmt.Errorf("actual launch record input for %s differs from accepted binary/handle/cwd/tool identity", member.Role)
+	}
+	binding := acceptedGoalBinding{Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest}
+	if err := validateAcceptedGoalBinding(binding); err != nil {
+		return nil, err
+	}
+	return &preparedLaunchRecordContext{Manifest: manifest, Team: tm, Member: member, Binding: binding}, nil
+}
+
+func preparedGoalBindingForLaunchRecord(rec launch.Record) (*launch.GoalBinding, error) {
+	context, err := preparedContextForLaunchRecord(rec)
+	if err != nil || context == nil || context.Member.Role != context.Team.Lead {
+		return nil, err
+	}
+	return preparedGoalBinding(context.Team, context.Manifest.Profile, context.Manifest.Session, context.Member, context.Binding)
+}
+
+func validatePreparedBootstrapPromptForLaunch(rec launch.Record, prompt string) error {
+	context, err := preparedContextForLaunchRecord(rec)
+	if err != nil {
+		return err
+	}
+	return validatePreparedBootstrapPromptAgainstContext(rec, prompt, context)
+}
+
+func revalidatePreparedBootstrapPromptForLaunch(rec launch.Record, prompt string, expected *preparedLaunchRecordContext) error {
+	current, err := preparedContextForLaunchRecord(rec)
+	if err != nil {
+		return err
+	}
+	if expected != nil {
+		if current == nil {
+			return fmt.Errorf("accepted prepared launch identity disappeared before bootstrap validation")
+		}
+		if !reflect.DeepEqual(current.Manifest, expected.Manifest) {
+			return fmt.Errorf("accepted prepared launch identity changed before bootstrap validation")
+		}
+	}
+	return validatePreparedBootstrapPromptAgainstContext(rec, prompt, current)
+}
+
+func validatePreparedBootstrapPromptAgainstContext(rec launch.Record, prompt string, context *preparedLaunchRecordContext) error {
+	if context == nil {
+		return nil
+	}
+	expectedBinding := context.Manifest.BootstrapBindings[context.Member.Role]
+	if !bootstrapHasExactLine(prompt, "- "+expectedBinding) {
+		return fmt.Errorf("actual bootstrap binding for %s differs from accepted %q", context.Member.Role, expectedBinding)
+	}
+	if context.Member.Role == context.Team.Lead {
+		if rec.GoalBinding == nil || rec.GoalBinding.Source != "prepared-run" || rec.GoalBinding.DeliveryState != goalBindingDeliveryPrepared {
+			return fmt.Errorf("actual lead launch record for %s does not carry the accepted planned/unverified goal binding", context.Member.Role)
+		}
+		contract, err := goalDeliveryContractForBinary(rec.Binary)
+		if err != nil {
+			return err
+		}
+		goal, _, err := goalBindingPayload(rec.GoalBinding, contract)
+		if err != nil || goal != context.Binding.Text {
+			return fmt.Errorf("actual lead launch goal differs from accepted preparation")
+		}
+	} else if rec.GoalBinding != nil {
+		return fmt.Errorf("non-lead launch record %s unexpectedly carries a goal binding", context.Member.Role)
+	}
+	digest := digestRunArtifactBytes([]byte(prompt))
+	if accepted := context.Manifest.BootstrapDigests[context.Member.Role]; accepted != digest {
+		expectedPrompt, expectedErr := preparedBootstrap(context.Manifest.Project, context.Manifest.Profile, context.Manifest.Session, context.Binding, context.Team, context.Member, acceptedRunContext{Version: context.Manifest.Environment.BinaryVersion, Topology: context.Manifest.Topology})
+		if expectedErr == nil {
+			return fmt.Errorf("actual bootstrap digest drift for %s: accepted=%q actual=%q; %s", context.Member.Role, accepted, digest, firstBootstrapPromptDifference(expectedPrompt, prompt))
+		}
+		return fmt.Errorf("actual bootstrap digest drift for %s: accepted=%q actual=%q", context.Member.Role, accepted, digest)
+	}
+	return nil
+}
+
+func firstBootstrapPromptDifference(expected, actual string) string {
+	wantLines, gotLines := strings.Split(expected, "\n"), strings.Split(actual, "\n")
+	limit := len(wantLines)
+	if len(gotLines) < limit {
+		limit = len(gotLines)
+	}
+	for i := 0; i < limit; i++ {
+		if wantLines[i] != gotLines[i] {
+			return fmt.Sprintf("first differing line %d: accepted=%q actual=%q", i+1, wantLines[i], gotLines[i])
+		}
+	}
+	return fmt.Sprintf("line count differs: accepted=%d actual=%d", len(wantLines), len(gotLines))
 }
 
 func acceptedExecutionRoots(tm team.Team) (string, string) {
@@ -339,14 +505,36 @@ func preparedGoalBinding(tm team.Team, profile, session string, member team.Memb
 	return contract.binding(binding.Text, attempt, prompt, "prepared-run", "accepted preparation goal binding source="+binding.Source+" digest="+binding.Digest), nil
 }
 
-func preparedBootstrap(project, profile, session string, binding acceptedGoalBinding, tm team.Team, member team.Member) (string, error) {
-	root := squadnamespace.AMQRoot(project, profile, session)
-	agentDir := filepath.Join(root, "agents", member.Handle)
+func preparedBootstrap(project, profile, session string, binding acceptedGoalBinding, tm team.Team, member team.Member, context acceptedRunContext) (string, error) {
+	runtimeCWD, err := canonicalDir(member.EffectiveCWD(tm.Project))
+	if err != nil {
+		return "", err
+	}
+	handle := memberHandle(member)
+	env, err := resolveAMQEnvForTeamLaunchProfile(runtimeCWD, profile, session, handle)
+	if err != nil {
+		return "", err
+	}
+	root := env.Root
+	if context.Topology.ExternalLead && member.Role == tm.Lead {
+		root = absoluteAMQRoot(runtimeCWD, root)
+	}
+	agentDir := filepath.Join(root, "agents", handle)
+	requiredAck := !(context.Topology.ExternalLead && member.Role == tm.Lead)
+	expectation := &bootstrapack.Expectation{Required: requiredAck}
+	if !requiredAck {
+		expectation.NotRequiredReason = "external lead is already running in the adopted pane"
+	}
 	rec := launch.Record{
-		Role: member.Role, Handle: member.Handle, Binary: member.Binary,
+		Role: member.Role, Handle: handle, Binary: member.Binary,
 		ToolProfile: member.EffectiveToolProfile(), ToolConfig: member.ToolConfig,
-		Session: session, CWD: member.EffectiveCWD(tm.Project), Root: root,
+		Session: session, CWD: runtimeCWD, Root: root,
 		TeamHome: project, TeamProfile: profile, SharedWorkstream: true,
+		External:             context.Topology.ExternalLead && member.Role == tm.Lead,
+		BootstrapExpectation: expectation,
+	}
+	if err := validateAcceptedGoalBinding(binding); err != nil {
+		return "", err
 	}
 	if member.Role == tm.Lead {
 		goalBinding, err := preparedGoalBinding(tm, profile, session, member, binding)
@@ -355,7 +543,9 @@ func preparedBootstrap(project, profile, session string, binding acceptedGoalBin
 		}
 		rec.GoalBinding = goalBinding
 	}
-	prompt, err := buildBootstrapPrompt(bootstrapContextFor(rec, agentDir, project))
+	bootstrapContext := bootstrapContextFor(rec, agentDir, project)
+	bootstrapContext.CurrentTeam, bootstrapContext.Warnings = bootstrapCurrentTeamWithRoster(rec, project, true)
+	prompt, err := buildBootstrapPrompt(bootstrapContext)
 	if err != nil {
 		return "", err
 	}
@@ -390,6 +580,9 @@ func preparedBootstrap(project, profile, session string, binding acceptedGoalBin
 func expectedPreparedBootstrapBindingLine(tm team.Team, profile, session string, member team.Member, binding acceptedGoalBinding) (string, error) {
 	if member.Role != strings.TrimSpace(tm.Lead) {
 		return "Goal binding: amq_task_brief", nil
+	}
+	if err := validateAcceptedGoalBinding(binding); err != nil {
+		return "", err
 	}
 	prepared, err := preparedGoalBinding(tm, profile, session, member, binding)
 	if err != nil {
@@ -439,14 +632,24 @@ func buildPreparedRunManifest(project, profile, session, shape, stagedRaw string
 	if err != nil {
 		return preparedRunManifest{}, err
 	}
+	active, skipped := filterMembersBySession(tm.Members, session)
+	tm.Members = active
+	if len(tm.Members) == 0 {
+		return preparedRunManifest{}, fmt.Errorf("preparation has no members for session %q", session)
+	}
 	initial := teamMemberRoles(tm.Members)
 	staged := sortedUniqueRoles(stagedRaw)
+	for _, member := range skipped {
+		if !containsRole(staged, member.Role) {
+			return preparedRunManifest{}, fmt.Errorf("preparation excludes profile member %q pinned to session %q; add it to --staged-roles or prepare its own session explicitly", member.Role, member.Session)
+		}
+	}
 	controlRoot, targetRoot := acceptedExecutionRoots(tm)
 	manifest := preparedRunManifest{
 		SchemaVersion: preparedRunSchema, Project: project, Profile: profile, Session: session,
 		Namespace: profile + "/" + session, LaunchShape: shape, InitialRoster: initial,
 		StagedRoster: staged, Lead: tm.Lead, GoalText: binding.Text, GoalNamespace: binding.Namespace,
-		GoalDigest: binding.Digest, GoalSource: binding.Source,
+		GoalDigest: binding.Digest, GoalSource: binding.Source, GoalDeliveryState: preparedRunGoalDeliveryPlanned,
 		ExecutionMode: effectiveTeamExecutionMode(tm), ControlRoot: controlRoot, TargetRoot: targetRoot,
 		TargetContract: tm.TargetContract, LeadMode: team.EffectiveLeadMode(tm), Topology: context.Topology,
 		Members:         map[string]preparedRunMemberIdentity{},
@@ -477,7 +680,7 @@ func buildPreparedRunManifest(project, profile, session, shape, stagedRaw string
 		if err != nil {
 			return preparedRunManifest{}, err
 		}
-		prompt, err := preparedBootstrap(project, profile, session, binding, tm, member)
+		prompt, err := preparedBootstrap(project, profile, session, binding, tm, member, context)
 		if err != nil {
 			return preparedRunManifest{}, err
 		}
@@ -581,6 +784,9 @@ func preparedRunLiveGoalBinding(project, profile, session, goal, source, digest 
 	if err := validateAcceptedGoalBinding(binding); err != nil {
 		return acceptedGoalBinding{}, err
 	}
+	if manifest.GoalDeliveryState != preparedRunGoalDeliveryPlanned {
+		return acceptedGoalBinding{}, fmt.Errorf("prepared goal delivery state %q is invalid; want %q", manifest.GoalDeliveryState, preparedRunGoalDeliveryPlanned)
+	}
 	wantNamespace := profile + "/" + session
 	if binding.Namespace != wantNamespace {
 		return acceptedGoalBinding{}, fmt.Errorf("prepared goal namespace %q does not match live namespace %q", binding.Namespace, wantNamespace)
@@ -599,6 +805,85 @@ func preparedRunLiveGoalBinding(project, profile, session, goal, source, digest 
 		}
 	}
 	return binding, nil
+}
+
+// validatePreparedLaunchBootstrapInputs re-derives the exact, binary-specific
+// bootstrap input immediately before any external-lead registration or managed
+// worker spawn. Preparation is accepted intent only: the visible lead carries
+// the exact planned binding in its launch input, but it remains unverified
+// until the post-start delivery CAS succeeds.
+func validatePreparedLaunchBootstrapInputs(project, profile, session string, context acceptedRunContext, modelRaw, effortRaw, codexArgsRaw, claudeArgsRaw string) error {
+	profile = squadnamespace.NormalizeProfile(profile)
+	manifest, err := readPreparedRunManifest(project, profile, session)
+	if err != nil {
+		return err
+	}
+	if manifest.GoalDeliveryState != preparedRunGoalDeliveryPlanned {
+		return fmt.Errorf("prepared goal delivery state %q is invalid; want %q", manifest.GoalDeliveryState, preparedRunGoalDeliveryPlanned)
+	}
+	if !reflect.DeepEqual(manifest.Topology, context.Topology) {
+		return fmt.Errorf("launch topology differs from accepted bootstrap input: accepted=%+v current=%+v", manifest.Topology, context.Topology)
+	}
+	tm, err := team.ReadProfile(project, profile)
+	if err != nil {
+		return err
+	}
+	active, skipped := filterMembersBySession(tm.Members, session)
+	tm.Members = active
+	effortOverrides, err := parseEffortOverrides(effortRaw)
+	if err != nil {
+		return err
+	}
+	tm.Members, err = applyLaunchEffortOverridesCatalog(tm.Members, effortOverrides, loadAgentCatalogAndWarn(project))
+	if err != nil {
+		return err
+	}
+	binaryArgs, err := parseBinaryArgFlags(codexArgsRaw, claudeArgsRaw)
+	if err != nil {
+		return err
+	}
+	mergedBinaryArgs := mergeBinaryArgs(tm.BinaryArgs, binaryArgs)
+	modelOverrides := parseRoleAssignments(modelRaw)
+	actualRoles := teamMemberRoles(tm.Members)
+	if !sameRoleSet(actualRoles, manifest.InitialRoster) {
+		return fmt.Errorf("exact launch roster differs from accepted bootstrap roster: accepted=[%s] actual=[%s]", strings.Join(manifest.InitialRoster, ","), strings.Join(actualRoles, ","))
+	}
+	for _, member := range skipped {
+		if !containsRole(manifest.StagedRoster, member.Role) {
+			return fmt.Errorf("profile member %q pinned to other session %q is neither launchable nor explicitly staged", member.Role, member.Session)
+		}
+	}
+	if len(manifest.BootstrapDigests) != len(tm.Members) || len(manifest.BootstrapBindings) != len(tm.Members) {
+		return fmt.Errorf("accepted bootstrap rows do not exactly match launch roster: members=%d digests=%d bindings=%d", len(tm.Members), len(manifest.BootstrapDigests), len(manifest.BootstrapBindings))
+	}
+	for _, member := range tm.Members {
+		actual := resolvedMemberIdentity(tm, member, modelOverrides, mergedBinaryArgs)
+		if accepted, ok := manifest.Members[member.Role]; !ok || !reflect.DeepEqual(accepted, actual) {
+			return fmt.Errorf("actual launch identity drift for %s: accepted=%+v actual=%+v", member.Role, accepted, actual)
+		}
+	}
+	binding := acceptedGoalBinding{Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest}
+	if err := validateAcceptedGoalBinding(binding); err != nil {
+		return err
+	}
+	for _, member := range tm.Members {
+		expectedBinding, err := expectedPreparedBootstrapBindingLine(tm, profile, session, member, binding)
+		if err != nil {
+			return err
+		}
+		if got := manifest.BootstrapBindings[member.Role]; got != expectedBinding {
+			return fmt.Errorf("launch bootstrap binding drift for %s: accepted=%q actual=%q", member.Role, got, expectedBinding)
+		}
+		prompt, err := preparedBootstrap(project, profile, session, binding, tm, member, context)
+		if err != nil {
+			return err
+		}
+		actualDigest := digestRunArtifactBytes([]byte(prompt))
+		if got := manifest.BootstrapDigests[member.Role]; got != actualDigest {
+			return fmt.Errorf("launch bootstrap digest drift for %s: accepted=%q actual=%q", member.Role, got, actualDigest)
+		}
+	}
+	return nil
 }
 
 func calculateRunReadiness(project, profile, session string) runReadinessResult {
@@ -639,13 +924,19 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 		add("goal_binding", "drifted", fmt.Sprintf("accepted namespace=%q current=%q", manifest.GoalNamespace, namespace), "return to preparation for the exact namespace")
 	} else if err := validateAcceptedGoalBinding(binding); err != nil {
 		add("goal_binding", "drifted", err.Error(), "return to preparation and accept one canonical goal binding")
+	} else if manifest.GoalDeliveryState != preparedRunGoalDeliveryPlanned {
+		add("goal_binding", "drifted", fmt.Sprintf("accepted delivery state=%q want=%q", manifest.GoalDeliveryState, preparedRunGoalDeliveryPlanned), "return to preparation; prepared goal intent must remain planned and unverified until live delivery")
 	} else {
-		add("goal_binding", "ready", fmt.Sprintf("verified source=%s namespace=%s digest=%s", binding.Source, binding.Namespace, binding.Digest), "")
+		add("goal_binding", "ready", fmt.Sprintf("planned/unverified source=%s namespace=%s digest=%s", binding.Source, binding.Namespace, binding.Digest), "")
 	}
 	tm, teamErr := team.ReadProfile(project, profile)
+	var skippedMembers []team.Member
 	if teamErr != nil {
 		add("profile", "missing", teamErr.Error(), "approve preparation to create the exact initial profile")
 	} else {
+		active, skipped := filterMembersBySession(tm.Members, session)
+		tm.Members = active
+		skippedMembers = skipped
 		actual := teamMemberRoles(tm.Members)
 		controlRoot, targetRoot := acceptedExecutionRoots(tm)
 		if effectiveTeamExecutionMode(tm) != manifest.ExecutionMode || controlRoot != manifest.ControlRoot || targetRoot != manifest.TargetRoot || tm.TargetContract != manifest.TargetContract || team.EffectiveLeadMode(tm) != manifest.LeadMode {
@@ -656,11 +947,11 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 			add("execution", "ready", fmt.Sprintf("mode=%s control=%s target=%s contract=%s lead_mode=%s", manifest.ExecutionMode, manifest.ControlRoot, manifest.TargetRoot, manifest.TargetContract, manifest.LeadMode), "")
 		}
 		if !sameRoleSet(actual, manifest.InitialRoster) {
-			add("profile", "drifted", fmt.Sprintf("initial roster mismatch: accepted %d [%s], profile %d [%s]", len(manifest.InitialRoster), strings.Join(manifest.InitialRoster, ", "), len(actual), strings.Join(actual, ", ")), "return to preparation; do not silently add or remove members")
+			add("profile", "drifted", fmt.Sprintf("initial roster mismatch: accepted %d [%s], session-filtered profile %d [%s]", len(manifest.InitialRoster), strings.Join(manifest.InitialRoster, ", "), len(actual), strings.Join(actual, ", ")), "return to preparation; do not silently add or remove members")
 		} else if digest, err := digestFile(team.ProfilePath(project, profile)); err != nil || digest != manifest.ArtifactDigests["profile"] {
 			add("profile", "drifted", "profile content differs from the accepted preparation snapshot", "review the profile diff and approve preparation again")
 		} else {
-			add("profile", "ready", fmt.Sprintf("%d members - %s", len(actual), strings.Join(actual, ", ")), "")
+			add("profile", "ready", fmt.Sprintf("%d session members - %s", len(actual), strings.Join(actual, ", ")), "")
 		}
 		for _, member := range tm.Members {
 			accepted, ok := manifest.Members[member.Role]
@@ -693,9 +984,13 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 		add("team_rules", "ready", rulesPath+" sha256="+digest, "")
 	}
 	actualInitial := map[string]bool{}
+	skippedByRole := map[string]team.Member{}
 	if teamErr == nil {
 		for _, member := range tm.Members {
 			actualInitial[member.Role] = true
+		}
+		for _, member := range skippedMembers {
+			skippedByRole[member.Role] = member
 		}
 	}
 	for _, roleID := range append(append([]string(nil), manifest.InitialRoster...), manifest.StagedRoster...) {
@@ -722,9 +1017,16 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 	}
 	for _, roleID := range manifest.StagedRoster {
 		if actualInitial[roleID] {
-			add("staged_role:"+roleID, "drifted", "staged-only role is present in the initial profile", "return to preparation and choose the intended roster explicitly")
+			add("staged_role:"+roleID, "drifted", "staged-only role is present in the exact session launch roster", "return to preparation and choose the intended roster explicitly")
+		} else if member, ok := skippedByRole[roleID]; ok {
+			add("staged_role:"+roleID, "ready", fmt.Sprintf("pinned to other session %q; absent from exact session launch", member.Session), "")
 		} else {
-			add("staged_role:"+roleID, "ready", "absent from initial profile; separate durable spawn gate required", "")
+			add("staged_role:"+roleID, "ready", "absent from exact session launch; separate durable spawn gate required", "")
+		}
+	}
+	for _, member := range skippedMembers {
+		if !containsRole(manifest.StagedRoster, member.Role) {
+			add("staged_role:"+member.Role, "drifted", fmt.Sprintf("profile member is pinned to other session %q but was not explicitly staged", member.Session), "return to preparation and add the other-session member to the accepted staged roster")
 		}
 	}
 	if teamErr == nil {
@@ -748,7 +1050,7 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 				add(artifact, "drifted", fmt.Sprintf("accepted bootstrap goal binding=%q current=%q", manifest.BootstrapBindings[member.Role], expectedBinding), "approve preparation again with the exact binary-specific goal binding")
 				continue
 			}
-			prompt, err := preparedBootstrap(project, profile, session, binding, tm, member)
+			prompt, err := preparedBootstrap(project, profile, session, binding, tm, member, acceptedRunContext{Version: context.Version, Topology: manifest.Topology})
 			if err != nil {
 				add(artifact, "drifted", err.Error(), "repair the referenced artifact and approve preparation again")
 			} else if digestRunArtifactBytes([]byte(prompt)) != manifest.BootstrapDigests[member.Role] {
@@ -758,7 +1060,7 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 				add(artifact, "ready", fmt.Sprintf("namespace=%s/%s role=%s lead=%s brief=%s rules=%s role_path=%s goal_mode=%s goal_digest=%s routing=durable-amq gates=operator-contract sha256=%s",
 					profile, session, member.Role, tm.Lead,
 					briefPathForProfile(project, profile, session), rules.Path(project),
-					role.ExistingPath(filepath.Join(squadnamespace.AMQRoot(project, profile, session), "agents", member.Handle)),
+					role.ExistingPath(filepath.Join(squadnamespace.AMQRoot(project, profile, session), "agents", memberHandle(member))),
 					goalMode, manifest.GoalDigest, digestRunArtifactBytes([]byte(prompt))), "")
 			}
 		}
@@ -885,6 +1187,11 @@ func prepareRunArtifacts(project, profile, session, shape, stagedRaw, goal, goal
 	tm, err := team.ReadProfile(project, profile)
 	if err != nil {
 		return runReadinessResult{}, err
+	}
+	active, _ := filterMembersBySession(tm.Members, session)
+	tm.Members = active
+	if len(tm.Members) == 0 {
+		return runReadinessResult{}, fmt.Errorf("preparation has no members for session %q", session)
 	}
 	if _, err := validatePreparedBootstrapSemantics(tm, profile, session, binding); err != nil {
 		return runReadinessResult{}, err

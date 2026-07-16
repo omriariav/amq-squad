@@ -407,6 +407,9 @@ func runRunStart(args []string, version string) error {
 		if err != nil {
 			return fmt.Errorf("launch blocked: accepted live goal binding mismatch: %w", err)
 		}
+		if err := validatePreparedLaunchBootstrapInputs(project, profile, session, runContext, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag); err != nil {
+			return fmt.Errorf("launch blocked: accepted bootstrap input mismatch: %w", err)
+		}
 	}
 
 	// Lead resolution: when creating a fresh roster, default the lead to cto.

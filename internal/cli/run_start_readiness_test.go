@@ -117,7 +117,7 @@ func TestDirectLeadSessionPreparationUsesExactBinaryGoalBinding(t *testing.T) {
 				t.Fatalf("manifest binding line = %q, want %q", got, wantLine)
 			}
 			binding := acceptedGoalBinding{Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest}
-			prompt, err := preparedBootstrap(dir, profile, session, binding, tm, tm.Members[0])
+			prompt, err := preparedBootstrap(dir, profile, session, binding, tm, tm.Members[0], acceptedRunContext{Version: "test", Topology: manifest.Topology})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -956,7 +956,7 @@ func TestRunReadinessFiveAuthoredThreeIntendedOneProfileFailsExactRoster(t *test
 		}
 	}
 	for _, roleID := range []string{"protocol-reviewer", "operator-reviewer"} {
-		if row := readinessRow(result, "staged_role:"+roleID); row.Status != "ready" || !strings.Contains(row.Evidence, "absent from initial profile") {
+		if row := readinessRow(result, "staged_role:"+roleID); row.Status != "ready" || !strings.Contains(row.Evidence, "absent from exact session launch") {
 			t.Fatalf("staged absence %s = %+v", roleID, row)
 		}
 		if got := readinessRowStatus(result, "bootstrap:"+roleID); got != "" {
@@ -1001,7 +1001,7 @@ func TestPreparedBootstrapEvidenceInitialOnlyExactContract(t *testing.T) {
 	}
 }
 
-func TestPreparedRunGoalBindingCodexClaudeParityAndNoMissingBootstrap(t *testing.T) {
+func TestPreparedRunGoalBindingCodexClaudeParityInActualLaunchInput(t *testing.T) {
 	for _, binary := range []string{"codex", "claude"} {
 		t.Run(binary, func(t *testing.T) {
 			dir := prepareRunStartBinaryFixture(t, binary)
@@ -1042,6 +1042,7 @@ func TestPreparedRunGoalBindingCodexClaudeParityAndNoMissingBootstrap(t *testing
 					"--team-home", dir,
 					"--team-profile", team.DefaultProfile,
 					"--role", "cto",
+					"--me", "cto",
 					"--session", "prepared",
 					"--trust", "sandboxed",
 					"--dry-run",
@@ -1051,12 +1052,12 @@ func TestPreparedRunGoalBindingCodexClaudeParityAndNoMissingBootstrap(t *testing
 			if err != nil {
 				t.Fatalf("dry-run launch: %v", err)
 			}
-			if observed.GoalBinding != nil {
-				t.Fatalf("direct launch inherited undelivered prepared binding: %+v", observed.GoalBinding)
+			if observed.GoalBinding == nil || observed.GoalBinding.Source != "prepared-run" || observed.GoalBinding.DeliveryState != goalBindingDeliveryPrepared || observed.GoalBinding.Goal != manifest.GoalText || launchRecordHasGoalBinding(observed) {
+				t.Fatalf("actual launch did not preserve accepted planned/unverified binding: %+v", observed.GoalBinding)
 			}
 			joined := strings.Join(argv, "\n")
-			if !strings.Contains(joined, "Goal binding: "+wantMode+"_missing") {
-				t.Fatalf("%s direct-launch bootstrap claimed an undelivered prepared binding:\n%s", binary, joined)
+			if !strings.Contains(joined, "Goal binding: "+wantMode) || strings.Contains(joined, "Goal binding: "+wantMode+"_missing") {
+				t.Fatalf("%s actual-launch bootstrap did not carry the accepted binding:\n%s", binary, joined)
 			}
 		})
 	}
@@ -1075,14 +1076,14 @@ func TestDirectLaunchNeverTrustsDriftedPreparedGoalBinding(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runLaunch([]string{
 			"--project", dir, "--team-home", dir, "--team-profile", team.DefaultProfile,
-			"--role", "cto", "--session", "prepared", "--trust", "sandboxed", "--dry-run", "codex",
+			"--role", "cto", "--me", "cto", "--session", "prepared", "--trust", "sandboxed", "--dry-run", "codex",
 		})
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "prepared launch readiness drift [brief/drifted]") {
+		t.Fatalf("drifted prepared launch error = %v", err)
 	}
 	if observed.GoalBinding != nil {
-		t.Fatalf("direct launch trusted drifted prepared manifest: %+v", observed.GoalBinding)
+		t.Fatalf("drifted prepared launch reached launch observer: %+v", observed.GoalBinding)
 	}
 }
 

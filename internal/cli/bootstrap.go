@@ -251,7 +251,12 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		selfOperator = &view
 	}
 	orchestrated, isLead, leadHandle := bootstrapOrchestration(rec, teamHome)
-	currentTeam, warnings := bootstrapCurrentTeam(rec, teamHome)
+	exactSessionRoster := false
+	if home := strings.TrimSpace(teamHome); home != "" && strings.TrimSpace(rec.Session) != "" {
+		_, err := os.Stat(preparedRunPath(home, rec.TeamProfile, rec.Session))
+		exactSessionRoster = err == nil || !os.IsNotExist(err)
+	}
+	currentTeam, warnings := bootstrapCurrentTeamWithRoster(rec, teamHome, exactSessionRoster)
 	execution := bootstrapExecution(rec, teamHome)
 	return bootstrapContext{
 		Role:          rec.Role,
@@ -394,6 +399,10 @@ func bootstrapOperator(rec launch.Record, teamHome string) (team.OperatorView, b
 }
 
 func bootstrapCurrentTeam(rec launch.Record, teamHome string) ([]bootstrapTeamMember, []string) {
+	return bootstrapCurrentTeamWithRoster(rec, teamHome, false)
+}
+
+func bootstrapCurrentTeamWithRoster(rec launch.Record, teamHome string, exactSessionRoster bool) ([]bootstrapTeamMember, []string) {
 	home := teamHome
 	if home == "" {
 		home = rec.CWD
@@ -407,6 +416,13 @@ func bootstrapCurrentTeam(rec launch.Record, teamHome string) ([]bootstrapTeamMe
 	}
 	if len(t.Members) == 0 {
 		return nil, nil
+	}
+	if exactSessionRoster {
+		active, _ := filterMembersBySession(t.Members, rec.Session)
+		t.Members = active
+		if len(t.Members) == 0 {
+			return nil, nil
+		}
 	}
 
 	currentProject := projectIdentityForCWD(rec.CWD)

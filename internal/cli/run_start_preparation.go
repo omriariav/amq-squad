@@ -168,6 +168,8 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 	tm := in.Team
 	tm.Project = in.Project
 	tm.Lead = strings.TrimSpace(tm.Lead)
+	activeMembers, skippedMembers := filterMembersBySession(tm.Members, in.Session)
+	tm.Members = activeMembers
 	proposal := runPreparationProposal{
 		Project: in.Project, Namespace: in.Profile + "/" + in.Session, ExecutionMode: effectiveTeamExecutionMode(tm), Topology: in.Context.Topology,
 		LaunchShape: in.LaunchShape, Lead: tm.Lead,
@@ -178,6 +180,11 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 	}
 	if in.LaunchShape != runwizard.LaunchShapeWorkingTeamTogether && in.LaunchShape != runwizard.LaunchShapeLeadOnlyStaged {
 		return proposal, fmt.Errorf("preparation proposal requires explicit launch shape")
+	}
+	for _, member := range skippedMembers {
+		if !containsRole(proposal.StagedRoster, member.Role) {
+			return proposal, fmt.Errorf("preparation proposal excludes profile member %q pinned to session %q; add it to --staged-roles or prepare its own session explicitly", member.Role, member.Session)
+		}
 	}
 	resolvedTopology, topologyErr := resolveRunStartLayout(runStartLayoutInput{
 		Visibility: in.Context.Topology.Visibility, VisibilitySet: true,
@@ -222,7 +229,7 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 	if err != nil {
 		return proposal, err
 	}
-	add("goal_binding", "ready", fmt.Sprintf("source=%s namespace=%s digest=%s", binding.Source, binding.Namespace, binding.Digest), "")
+	add("goal_binding", "ready", fmt.Sprintf("planned/unverified source=%s namespace=%s digest=%s", binding.Source, binding.Namespace, binding.Digest), "")
 	bootstrapBindings, err := validatePreparedBootstrapSemantics(tm, in.Profile, in.Session, binding)
 	if err != nil {
 		return proposal, err
@@ -333,7 +340,15 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 		for _, member := range tm.Members {
 			identities = append(identities, fmt.Sprintf("%s(handle=%s binary=%s policy=%s)", member.Role, member.Handle, member.Binary, member.EffectiveToolProfile()))
 		}
-		add("profile", "ready", "preserve exact members at "+profilePath+": "+strings.Join(identities, ", "), "")
+		evidence := "preserve exact session members at " + profilePath + ": " + strings.Join(identities, ", ")
+		if len(skippedMembers) > 0 {
+			skipped := make([]string, 0, len(skippedMembers))
+			for _, member := range skippedMembers {
+				skipped = append(skipped, fmt.Sprintf("%s(session=%s)", member.Role, member.Session))
+			}
+			evidence += "; explicitly staged other-session members: " + strings.Join(skipped, ", ")
+		}
+		add("profile", "ready", evidence, "")
 	} else if _, readErr := os.Stat(profilePath); os.IsNotExist(readErr) {
 		add("profile", "ready", "planned create "+profilePath, "")
 	} else if readErr != nil {
@@ -345,11 +360,12 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 	root := squadnamespace.AMQRoot(in.Project, in.Profile, in.Session)
 	for _, member := range tm.Members {
 		roleID := member.Role
+		handle := memberHandle(member)
 		binary := strings.TrimSpace(member.Binary)
 		if binary != "codex" && binary != "claude" {
 			return proposal, fmt.Errorf("bootstrap blocker [missing] %s: explicit codex or claude binary is required", roleID)
 		}
-		policyEvidence := fmt.Sprintf("handle=%s binary=%s effective=%s config=%s mcp=%s", member.Handle, binary, member.EffectiveToolProfile(), member.ToolConfig, member.ToolMCPConfig)
+		policyEvidence := fmt.Sprintf("handle=%s binary=%s effective=%s config=%s mcp=%s", handle, binary, member.EffectiveToolProfile(), member.ToolConfig, member.ToolMCPConfig)
 		for _, file := range policyFiles[roleID] {
 			policyEvidence += fmt.Sprintf(" planned_%s=%s", file.Action, file.Path)
 		}
@@ -357,9 +373,9 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 			policyEvidence += " preserve_effective_policy"
 		}
 		add("tool_policy:"+roleID, "ready", policyEvidence, "")
-		agentDir := filepath.Join(root, "agents", member.Handle)
+		agentDir := filepath.Join(root, "agents", handle)
 		goalMode := strings.TrimPrefix(bootstrapBindings[roleID], "Goal binding: ")
-		add("bootstrap:"+roleID, "ready", fmt.Sprintf("planned namespace=%s role=%s lead=%s root=%s brief=%s rules=%s role_path=%s goal_mode=%s goal_digest=%s routing=durable-amq gates=operator-contract",
+		add("bootstrap:"+roleID, "ready", fmt.Sprintf("planned/unverified namespace=%s role=%s lead=%s root=%s brief=%s rules=%s role_path=%s goal_mode=%s goal_digest=%s routing=durable-amq gates=operator-contract",
 			proposal.Namespace, roleID, tm.Lead, root, briefPath, rulesPath, role.ExistingPath(agentDir), goalMode, binding.Digest), "")
 	}
 	for _, roleID := range proposal.StagedRoster {

@@ -333,7 +333,10 @@ func runLeadRegister(args []string) error {
 	if id == nil {
 		return fmt.Errorf("lead register requires a current tmux pane (TMUX/TMUX_PANE unset)")
 	}
-	cwd := member.EffectiveCWD(t.Project)
+	cwd, err := canonicalDir(member.EffectiveCWD(t.Project))
+	if err != nil {
+		return fmt.Errorf("resolve external lead cwd: %w", err)
+	}
 	handle := memberHandle(member)
 	env, err := resolveAMQEnvForTeamProfile(cwd, profile, workstream, handle)
 	if err != nil {
@@ -418,7 +421,10 @@ func runLeadRegister(args []string) error {
 		BaseRoot:         absoluteAMQRoot(cwd, env.BaseRoot),
 		RootSource:       env.RootSource,
 		AMQVersion:       env.AMQVersion,
-		Model:            strings.TrimSpace(member.Model),
+		Model:            memberResolvedModel(member, nil, t.BinaryArgs),
+		ToolProfile:      member.EffectiveToolProfile(),
+		ToolConfig:       strings.TrimSpace(member.ToolConfig),
+		ToolMCPConfig:    strings.TrimSpace(member.ToolMCPConfig),
 		Trust:            strings.TrimSpace(t.Trust),
 		External:         true,
 		AdoptionMode:     auth.AdoptionMode,
@@ -432,6 +438,7 @@ func runLeadRegister(args []string) error {
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
 		TeamProfile:      profile,
+		TeamHome:         projectDir,
 		Tmux: &launch.TmuxInfo{
 			Session:    id.Session,
 			WindowID:   id.WindowID,
@@ -440,7 +447,37 @@ func runLeadRegister(args []string) error {
 			Target:     "external",
 		},
 	}
+	effectiveBinaryArgs := composeBinaryArgs(member.Binary, binaryArgsFor(member.Binary, t.BinaryArgs), member.ExtraArgs())
+	switch normalizedAgentBinary(member.Binary) {
+	case "codex":
+		rec.CodexArgs = effectiveBinaryArgs
+	case "claude":
+		rec.ClaudeArgs = effectiveBinaryArgs
+	}
 	rec.Terminal = launch.TerminalInfoFromTmux(rec.Tmux)
+	preparedContext, err := preparedContextForLaunchRecord(rec)
+	if err != nil {
+		return fmt.Errorf("load accepted prepared external-lead identity: %w", err)
+	}
+	var preparedBinding *launch.GoalBinding
+	if preparedContext != nil && preparedContext.Member.Role == preparedContext.Team.Lead {
+		preparedBinding, err = preparedGoalBinding(preparedContext.Team, preparedContext.Manifest.Profile, preparedContext.Manifest.Session, preparedContext.Member, preparedContext.Binding)
+		if err != nil {
+			return fmt.Errorf("load accepted prepared external-lead goal binding: %w", err)
+		}
+	}
+	rec.GoalBinding = preparedBinding
+	if preparedContext != nil {
+		bootstrapContext := bootstrapContextFor(rec, agentDir, projectDir)
+		bootstrapContext.CurrentTeam, bootstrapContext.Warnings = bootstrapCurrentTeamWithRoster(rec, projectDir, true)
+		prompt, err := buildBootstrapPrompt(bootstrapContext)
+		if err != nil {
+			return err
+		}
+		if err := revalidatePreparedBootstrapPromptForLaunch(rec, prompt, preparedContext); err != nil {
+			return fmt.Errorf("validate accepted external-lead launch input: %w", err)
+		}
+	}
 	if err := writeExternalLeadLaunchRecord(agentDir, rec, role, env.SessionName); err != nil {
 		return fmt.Errorf("write external launch record: %w", err)
 	}
