@@ -97,10 +97,24 @@ func runLaunch(args []string) error {
 	if err != nil {
 		return err
 	}
+	desc, err := preparedRestoreDescriptorFromInternalEnv()
+	if err != nil {
+		return err
+	}
+	if desc != nil {
+		if !token.complete() || desc.Token != token {
+			return fmt.Errorf("prepared restore descriptor/token mismatch")
+		}
+		return runLaunchWithIntent(args, token, desc)
+	}
 	return runLaunchWithPreparedToken(args, token)
 }
 
 func runLaunchWithPreparedToken(args []string, requestedPreparedToken preparedRunToken) error {
+	return runLaunchWithIntent(args, requestedPreparedToken, nil)
+}
+
+func runLaunchWithIntent(args []string, requestedPreparedToken preparedRunToken, restoreDesc *preparedRestoreDescriptor) error {
 	// Split at "--" so launcher flags aren't consumed by amq-squad's parser.
 	squadArgs, childArgs := splitDashDash(args)
 
@@ -214,7 +228,7 @@ Examples:
 			return err
 		}
 		return runInProject(project, func() error {
-			return runLaunchWithPreparedToken(rest, requestedPreparedToken)
+			return runLaunchWithIntent(rest, requestedPreparedToken, restoreDesc)
 		})
 	}
 	trustExplicit := flagWasSet(fs, "trust")
@@ -423,6 +437,9 @@ Examples:
 		return fmt.Errorf("agent up refused: prepared run token is incomplete")
 	}
 	applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
+	if restoreDesc != nil && preparedRestoreSemanticDigest(rec) != restoreDesc.SemanticDigest {
+		return fmt.Errorf("prepared restore descriptor does not match persisted launch record")
+	}
 	// A live prepared launch enters both the namespace writer domain and the
 	// prepared-manifest reader domain before reading accepted state. Preparation
 	// writers take the matching exclusive manifest admission, so the accepted
@@ -496,7 +513,7 @@ Examples:
 			return fmt.Errorf("agent up refused: %w", err)
 		}
 	}
-	preparedLaunchContext, err := preparedContextForLaunchRecord(rec)
+	preparedLaunchContext, err := preparedContextForLaunchRecordMode(rec, restoreDesc != nil)
 	if err != nil {
 		return fmt.Errorf("load accepted prepared launch identity: %w", err)
 	}
@@ -511,7 +528,7 @@ Examples:
 	if requestedPreparedToken.empty() {
 		applyPreparedRunTokenToRecord(&rec, preparedRunTokenForContext(preparedLaunchContext))
 	}
-	if rec.GoalBinding == nil && rec.Conversation == "" && preparedLaunchContext != nil && preparedLaunchContext.Member.Role == preparedLaunchContext.Team.Lead {
+	if restoreDesc == nil && rec.GoalBinding == nil && rec.Conversation == "" && preparedLaunchContext != nil && preparedLaunchContext.Member.Role == preparedLaunchContext.Team.Lead {
 		preparedBinding, err := preparedGoalBinding(preparedLaunchContext.Team, preparedLaunchContext.Manifest.Profile, preparedLaunchContext.Manifest.Session, preparedLaunchContext.Member, preparedLaunchContext.Binding)
 		if err != nil {
 			return fmt.Errorf("load accepted prepared goal binding: %w", err)
@@ -591,25 +608,25 @@ Examples:
 		if err != nil {
 			return err
 		}
-		if err := revalidatePreparedBootstrapPromptForLaunch(rec, prompt, preparedLaunchContext); err != nil {
+		if err := revalidatePreparedBootstrapPromptForLaunchMode(rec, prompt, preparedLaunchContext, restoreDesc != nil); err != nil {
 			return fmt.Errorf("prepared bootstrap launch validation: %w", err)
 		}
 		preparedPrompt = prompt
 		// Terminate native option parsing so optional/variadic flags can never
 		// consume generated prompt text. The prompt remains the final argv token.
 		effectiveChildArgs = appendGeneratedBootstrapPrompt(effectiveChildArgs, prompt)
-	} else if preparedLaunchContext != nil {
+	} else if preparedLaunchContext != nil && restoreDesc == nil {
 		return fmt.Errorf("prepared bootstrap launch validation: accepted run member %s cannot launch without its exact bootstrap prompt", rec.Role)
-	} else if context, err := preparedContextForLaunchRecord(rec); err != nil {
+	} else if context, err := preparedContextForLaunchRecordMode(rec, restoreDesc != nil); err != nil {
 		return fmt.Errorf("prepared bootstrap launch validation: %w", err)
-	} else if context != nil {
+	} else if context != nil && restoreDesc == nil {
 		return fmt.Errorf("prepared bootstrap launch validation: prepared run appeared after launch identity capture")
 	}
 	revalidatePrepared := func(stage string) error {
 		if preparedLaunchContext == nil {
 			return nil
 		}
-		if err := revalidatePreparedBootstrapPromptForLaunch(rec, preparedPrompt, preparedLaunchContext); err != nil {
+		if err := revalidatePreparedBootstrapPromptForLaunchMode(rec, preparedPrompt, preparedLaunchContext, restoreDesc != nil); err != nil {
 			return fmt.Errorf("prepared launch changed before %s: accepted prepared launch identity no longer matches: %w", stage, err)
 		}
 		return nil
@@ -761,7 +778,11 @@ Examples:
 	if err := revalidatePrepared("record write"); err != nil {
 		return err
 	}
-	recordWrite, err := writeLaunchRecordWithSnapshot(agentDir, rec)
+	expectedRestoreDigest := ""
+	if restoreDesc != nil {
+		expectedRestoreDigest = restoreDesc.RecordDigest
+	}
+	recordWrite, err := writeLaunchRecordWithSnapshot(agentDir, rec, expectedRestoreDigest)
 	if err != nil {
 		return fmt.Errorf("write launch record: %w", err)
 	}
@@ -816,15 +837,20 @@ type launchRecordWriteSnapshot struct {
 	Written  launch.Record
 }
 
-func writeLaunchRecordWithSnapshot(agentDir string, rec launch.Record) (launchRecordWriteSnapshot, error) {
+func writeLaunchRecordWithSnapshot(agentDir string, rec launch.Record, expectedRestoreDigest string) (launchRecordWriteSnapshot, error) {
 	var snapshot launchRecordWriteSnapshot
 	err := launch.WithRecordLock(agentDir, func() error {
 		previous, err := launch.Read(agentDir)
 		switch {
 		case err == nil:
 			snapshot.Previous = &previous
+			if expectedRestoreDigest != "" && preparedRestoreRecordDigest(previous) != expectedRestoreDigest {
+				return fmt.Errorf("prepared restore persisted launch record changed before CAS")
+			}
 		case !os.IsNotExist(err):
 			return fmt.Errorf("snapshot existing launch record: %w", err)
+		case expectedRestoreDigest != "":
+			return fmt.Errorf("prepared restore persisted launch record is missing")
 		}
 		if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
 			return err
@@ -884,7 +910,7 @@ func exactRootChildCommand(target string, trailing []string) (string, []string) 
 }
 
 func execAMQCoop(amqBin string, coopArgs []string) error {
-	env := amqexec.NoUpdateCheckEnv(envWithoutPreparedRunToken(envWithoutAMQIdentity(os.Environ())))
+	env := amqexec.NoUpdateCheckEnv(envWithoutPreparedRunRestore(envWithoutPreparedRunToken(envWithoutAMQIdentity(os.Environ()))))
 	return amqSyscallExec(amqBin, append([]string{"amq"}, coopArgs...), env)
 }
 

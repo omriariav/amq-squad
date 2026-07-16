@@ -28,6 +28,18 @@ import (
 const preparedRunSchema = 2
 const preparedRunGoalDeliveryPlanned = "planned_unverified"
 const internalPreparedRunTokenEnv = "AMQ_SQUAD_INTERNAL_PREPARED_RUN_TOKEN"
+const internalPreparedRunRestoreEnv = "AMQ_SQUAD_INTERNAL_PREPARED_RUN_RESTORE"
+
+type preparedRestoreDescriptor struct {
+	Token          preparedRunToken `json:"token"`
+	RecordDigest   string           `json:"record_digest"`
+	SemanticDigest string           `json:"semantic_digest"`
+}
+
+func encodePreparedRestoreDescriptor(d preparedRestoreDescriptor) string {
+	b, _ := json.Marshal(d)
+	return string(b)
+}
 
 type preparedRunManifest struct {
 	SchemaVersion     int                                  `json:"schema_version"`
@@ -158,6 +170,83 @@ func envWithoutPreparedRunToken(env []string) []string {
 		}
 	}
 	return out
+}
+
+func envWithoutPreparedRunRestore(env []string) []string {
+	prefix := internalPreparedRunRestoreEnv + "="
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+func preparedRestoreDescriptorFromInternalEnv() (*preparedRestoreDescriptor, error) {
+	raw := strings.TrimSpace(os.Getenv(internalPreparedRunRestoreEnv))
+	if raw == "" {
+		return nil, nil
+	}
+	var d preparedRestoreDescriptor
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		return nil, fmt.Errorf("invalid internal prepared restore descriptor: %w", err)
+	}
+	if !d.Token.complete() || strings.TrimSpace(d.RecordDigest) == "" || strings.TrimSpace(d.SemanticDigest) == "" {
+		return nil, fmt.Errorf("internal prepared restore descriptor is incomplete")
+	}
+	return &d, nil
+}
+
+func preparedRestoreRecordDigest(rec launch.Record) string {
+	b, _ := json.Marshal(rec)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func preparedRestoreSemanticDigest(rec launch.Record) string {
+	clone := preparedRestoreSemanticRecord(rec)
+	b, _ := json.Marshal(clone)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func preparedRestoreSemanticRecord(rec launch.Record) launch.Record {
+	clone := rec
+	if clone.Conversation != "" {
+		clone.Argv = stripConversationRestoreArgs(clone.Binary, clone.Argv, clone.Conversation)
+	}
+	clone.AgentPID, clone.AgentTTY, clone.StartedAt = 0, "", time.Time{}
+	clone.Schema, clone.AdoptionMode, clone.LauncherPaneID = 0, "", ""
+	if len(clone.CodexArgs) == 0 {
+		clone.CodexArgs = nil
+	}
+	if len(clone.ClaudeArgs) == 0 {
+		clone.ClaudeArgs = nil
+	}
+	if len(clone.LauncherArgs) == 0 {
+		clone.LauncherArgs = nil
+	}
+	if len(clone.ToolAllowlist) == 0 {
+		clone.ToolAllowlist = nil
+	}
+	if len(clone.ToolBlocklist) == 0 {
+		clone.ToolBlocklist = nil
+	}
+	if len(clone.PreauthorizedActions) == 0 {
+		clone.PreauthorizedActions = nil
+	}
+	if len(clone.LauncherPreauthorizedActions) == 0 {
+		clone.LauncherPreauthorizedActions = nil
+	}
+	if len(clone.ExplicitAllowedTools) == 0 {
+		clone.ExplicitAllowedTools = nil
+	}
+	if len(clone.WakeInjectArgs) == 0 {
+		clone.WakeInjectArgs = nil
+	}
+	clone.BootstrapExpectation, clone.Tmux, clone.Terminal = nil, nil, nil
+	return clone
 }
 
 func preparedRunTokenFromSnapshot(manifest preparedRunManifest, digest string) preparedRunToken {
@@ -357,6 +446,10 @@ type preparedLaunchRecordContext struct {
 }
 
 func preparedContextForLaunchRecord(rec launch.Record) (*preparedLaunchRecordContext, error) {
+	return preparedContextForLaunchRecordMode(rec, false)
+}
+
+func preparedContextForLaunchRecordMode(rec launch.Record, restoring bool) (*preparedLaunchRecordContext, error) {
 	project := strings.TrimSpace(rec.TeamHome)
 	if project == "" {
 		project = strings.TrimSpace(rec.CWD)
@@ -373,8 +466,11 @@ func preparedContextForLaunchRecord(rec launch.Record) (*preparedLaunchRecordCon
 	if manifest.Project != project || manifest.Profile != profile || manifest.Session != session || manifest.Namespace != profile+"/"+session {
 		return nil, fmt.Errorf("prepared launch record namespace drift: accepted=%s current=%s/%s", manifest.Namespace, profile, session)
 	}
-	if manifest.GoalDeliveryState != preparedRunGoalDeliveryPlanned {
+	if !restoring && manifest.GoalDeliveryState != preparedRunGoalDeliveryPlanned {
 		return nil, fmt.Errorf("prepared goal delivery state %q is invalid; want %q", manifest.GoalDeliveryState, preparedRunGoalDeliveryPlanned)
+	}
+	if restoring && manifest.GoalDeliveryState != preparedRunGoalDeliveryPlanned {
+		return nil, fmt.Errorf("prepared goal delivery state %q is not restorable; want %q", manifest.GoalDeliveryState, preparedRunGoalDeliveryPlanned)
 	}
 	readiness := calculateRunReadinessWithContext(project, profile, session, acceptedRunContext{Version: manifest.Environment.BinaryVersion, Topology: manifest.Topology})
 	if !readiness.Ready {
@@ -411,6 +507,9 @@ func preparedContextForLaunchRecord(rec launch.Record) (*preparedLaunchRecordCon
 		actualNativeArgs = rec.CodexArgs
 	}
 	actualEffectiveArgs := canonicalLaunchRecordArgs(rec)
+	if restoring && rec.Conversation != "" {
+		actualEffectiveArgs = stripConversationRestoreArgs(rec.Binary, actualEffectiveArgs, rec.Conversation)
+	}
 	recordToken := preparedRunTokenFromRecord(rec)
 	if !recordToken.empty() {
 		if err := validatePreparedRunToken(recordToken, manifest, manifestDigest); err != nil {
@@ -424,7 +523,92 @@ func preparedContextForLaunchRecord(rec launch.Record) (*preparedLaunchRecordCon
 	if err := validateAcceptedGoalBinding(binding); err != nil {
 		return nil, err
 	}
+	if restoring && member.Role == tm.Lead {
+		expected, err := preparedGoalBinding(tm, manifest.Profile, manifest.Session, member, binding)
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case rec.GoalBinding != nil && rec.GoalBinding.DeliveryState == goalBindingDeliveryPrepared:
+			if !reflect.DeepEqual(rec.GoalBinding, expected) {
+				return nil, fmt.Errorf("restored prepared lead binding differs from accepted preparation")
+			}
+		case rec.GoalBinding != nil && rec.GoalBinding.DeliveryState == goalBindingDeliveryDelivered:
+			contract, err := goalDeliveryContractForBinary(rec.Binary)
+			if err != nil {
+				return nil, err
+			}
+			goal, attempt, err := goalBindingPayload(rec.GoalBinding, contract)
+			expectedPrompt := contract.prompt(binding.Text, tm, manifest.Profile, manifest.Session, member.Role, attempt)
+			if err != nil || goal != binding.Text || strings.TrimSpace(attempt) == "" || !exactGoalBinding(rec.GoalBinding, contract, binding.Text, attempt, expectedPrompt, "goal-control") || rec.GoalBinding.Detail != contract.Label+" delivered as a first-class claim-once control action" {
+				return nil, fmt.Errorf("restored delivered lead binding lacks exact claim-once delivery identity")
+			}
+			if err := validatePreparedRestoreDeliveredEvidence(rec, manifest, tm, member, contract, attempt); err != nil {
+				return nil, err
+			}
+		case rec.GoalBinding != nil:
+			return nil, fmt.Errorf("restored lead binding state %q is not restorable", rec.GoalBinding.DeliveryState)
+		default:
+			return nil, fmt.Errorf("restored lead lacks prepared or delivered goal binding")
+		}
+	} else if restoring && rec.GoalBinding != nil {
+		return nil, fmt.Errorf("restored worker unexpectedly carries a goal binding")
+	}
 	return &preparedLaunchRecordContext{Manifest: manifest, Digest: manifestDigest, Team: tm, Member: member, Binding: binding}, nil
+}
+
+func validatePreparedRestoreDeliveredEvidence(rec launch.Record, manifest preparedRunManifest, tm team.Team, member team.Member, contract goalDeliveryContract, attemptID string) error {
+	project := strings.TrimSpace(rec.TeamHome)
+	if project == "" {
+		project = rec.CWD
+	}
+	ns := squadnamespace.Resolve(project, manifest.Profile, manifest.Session)
+	attemptPath, err := goalAttemptPath(project, manifest.Profile, manifest.Session, attemptID)
+	if err != nil {
+		return err
+	}
+	attempt, err := readGoalAttempt(attemptPath, attemptID)
+	if err != nil {
+		return fmt.Errorf("restored delivered goal attempt evidence: %w", err)
+	}
+	if err := validateResumeGoalAttempt(attempt, project, manifest.Profile, manifest.Session, member.Role, rec.Handle, manifest.GoalText, attemptID, ns); err != nil {
+		return fmt.Errorf("restored delivered goal attempt evidence differs: %w", err)
+	}
+	claimBytes, err := os.ReadFile(goalAttemptClaimPath(attemptPath))
+	if err != nil {
+		return fmt.Errorf("restored delivered goal claim evidence: %w", err)
+	}
+	var claim goalAttemptClaim
+	if err := json.Unmarshal(claimBytes, &claim); err != nil {
+		return fmt.Errorf("restored delivered goal claim evidence is invalid: %w", err)
+	}
+	if err := validateResumeGoalClaim(claim, attempt); err != nil || claim.Route != contract.ClaimRoute {
+		return fmt.Errorf("restored delivered goal claim route differs from binary contract")
+	}
+	receiptRoot, receiptDir, err := openReceiptDirRoot(project, manifest.Profile, manifest.Session, false)
+	if err != nil {
+		return fmt.Errorf("restored delivered receipt evidence: %w", err)
+	}
+	defer receiptRoot.Close()
+	receiptPath := filepath.Join(receiptDir, attemptID+".json")
+	receipt, err := readDeliveryReceiptAt(receiptRoot, attemptID+".json", receiptPath)
+	if err != nil {
+		return fmt.Errorf("restored delivered receipt evidence is invalid: %w", err)
+	}
+	token := preparedRunTokenFromRecord(rec)
+	if receipt.SchemaVersion != deliveryReceiptSchemaVersion || receipt.AttemptID != attemptID || receipt.Kind != contract.Mode || receipt.Method != contract.Method || receipt.Status != contract.Mode+"_delivered" || canonicalPath(receipt.Target.ProjectDir) != canonicalPath(project) || !squadnamespace.ProfilesEqual(receipt.Target.Profile, manifest.Profile) || receipt.Target.Session != manifest.Session || receipt.Target.NamespaceID != manifest.Namespace || receipt.Target.Role != member.Role || receipt.Target.Handle != rec.Handle || receipt.Target.ExecutionMode != effectiveTeamExecutionMode(tm) || strings.TrimSpace(receipt.PaneID) == "" || receipt.Fallback || receipt.AMQInvoked || receipt.PreparedRunGeneration != token.Generation || receipt.PreparedRunDigest != token.ManifestDigest || receipt.PreparedRunGoalNamespace != token.GoalNamespace || receipt.PreparedRunGoalDigest != token.GoalDigest || !deliveryReceiptHasStage(receipt, "launch_record_updated") {
+		return fmt.Errorf("restored delivered receipt evidence differs from exact prepared claim-once delivery")
+	}
+	return nil
+}
+
+func deliveryReceiptHasStage(receipt deliveryReceiptData, stage string) bool {
+	for _, evidence := range receipt.Stages {
+		if evidence.State == stage {
+			return true
+		}
+	}
+	return false
 }
 
 func preparedGoalBindingForLaunchRecord(rec launch.Record) (*launch.GoalBinding, error) {
@@ -444,7 +628,11 @@ func validatePreparedBootstrapPromptForLaunch(rec launch.Record, prompt string) 
 }
 
 func revalidatePreparedBootstrapPromptForLaunch(rec launch.Record, prompt string, expected *preparedLaunchRecordContext) error {
-	current, err := preparedContextForLaunchRecord(rec)
+	return revalidatePreparedBootstrapPromptForLaunchMode(rec, prompt, expected, false)
+}
+
+func revalidatePreparedBootstrapPromptForLaunchMode(rec launch.Record, prompt string, expected *preparedLaunchRecordContext, restoring bool) error {
+	current, err := preparedContextForLaunchRecordMode(rec, restoring)
 	if err != nil {
 		return err
 	}
@@ -456,10 +644,20 @@ func revalidatePreparedBootstrapPromptForLaunch(rec launch.Record, prompt string
 			return fmt.Errorf("accepted prepared launch identity changed before bootstrap validation")
 		}
 	}
-	return validatePreparedBootstrapPromptAgainstContext(rec, prompt, current)
+	if restoring && strings.TrimSpace(prompt) == "" {
+		if strings.TrimSpace(rec.Conversation) == "" {
+			return fmt.Errorf("prepared restore without saved conversation requires the accepted bootstrap prompt")
+		}
+		return nil
+	}
+	return validatePreparedBootstrapPromptAgainstContextMode(rec, prompt, current, restoring)
 }
 
 func validatePreparedBootstrapPromptAgainstContext(rec launch.Record, prompt string, context *preparedLaunchRecordContext) error {
+	return validatePreparedBootstrapPromptAgainstContextMode(rec, prompt, context, false)
+}
+
+func validatePreparedBootstrapPromptAgainstContextMode(rec launch.Record, prompt string, context *preparedLaunchRecordContext, restoring bool) error {
 	if context == nil {
 		return nil
 	}
@@ -468,7 +666,7 @@ func validatePreparedBootstrapPromptAgainstContext(rec launch.Record, prompt str
 		return fmt.Errorf("actual bootstrap binding for %s differs from accepted %q", context.Member.Role, expectedBinding)
 	}
 	if context.Member.Role == context.Team.Lead {
-		if rec.GoalBinding == nil || rec.GoalBinding.Source != "prepared-run" || rec.GoalBinding.DeliveryState != goalBindingDeliveryPrepared {
+		if rec.GoalBinding == nil || (rec.GoalBinding.DeliveryState == goalBindingDeliveryPrepared && rec.GoalBinding.Source != "prepared-run") || (rec.GoalBinding.DeliveryState == goalBindingDeliveryDelivered && (!restoring || rec.GoalBinding.Source != "goal-control")) || (rec.GoalBinding.DeliveryState != goalBindingDeliveryPrepared && rec.GoalBinding.DeliveryState != goalBindingDeliveryDelivered) {
 			return fmt.Errorf("actual lead launch record for %s does not carry the accepted planned/unverified goal binding", context.Member.Role)
 		}
 		contract, err := goalDeliveryContractForBinary(rec.Binary)

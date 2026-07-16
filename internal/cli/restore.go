@@ -225,7 +225,11 @@ func execRestoreRecord(rec launch.Record) error {
 	if err := os.Chdir(rec.CWD); err != nil {
 		return fmt.Errorf("chdir %s: %w", rec.CWD, err)
 	}
-	return runLaunchWithPreparedToken(launchArgsFromRecord(rec), preparedRunTokenFromRecord(rec))
+	token := preparedRunTokenFromRecord(rec)
+	if token.empty() {
+		return runLaunchWithPreparedToken(launchArgsFromRecord(rec), token)
+	}
+	return runLaunchWithIntent(launchArgsFromRecord(rec), token, &preparedRestoreDescriptor{Token: token, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec)})
 }
 
 func launchArgsFromRecord(rec launch.Record) []string {
@@ -565,6 +569,11 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 		b.WriteString("=")
 		b.WriteString(shellQuote(encodePreparedRunToken(token)))
 		b.WriteString(" ")
+		desc := preparedRestoreDescriptor{Token: token, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec)}
+		b.WriteString(internalPreparedRunRestoreEnv)
+		b.WriteString("=")
+		b.WriteString(shellQuote(encodePreparedRestoreDescriptor(desc)))
+		b.WriteString(" ")
 	}
 	b.WriteString(shellQuote(generatedSquadCommand()))
 	b.WriteString(" agent up ")
@@ -683,6 +692,10 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	if rec.Handle != "" && rec.Handle != defaultHandleFor(rec.Binary) {
 		b.WriteString(" --me ")
 		b.WriteString(shellQuote(rec.Handle))
+	}
+	if home := strings.TrimSpace(rec.TeamHome); home != "" {
+		b.WriteString(" --team-home ")
+		b.WriteString(shellQuote(home))
 	}
 	if profile := strings.TrimSpace(rec.TeamProfile); profile != "" && profile != team.DefaultProfile {
 		b.WriteString(" --team-profile ")

@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -810,7 +813,7 @@ func TestPreparedRunTokenTransportIsInternalAndRestoreReplayIsExact(t *testing.T
 		t.Fatalf("launch record token=%+v want=%+v", got, token)
 	}
 	restoreCommand := emitCommand(observed)
-	if !strings.Contains(restoreCommand, internalPreparedRunTokenEnv+"=") || strings.Contains(restoreCommand, "--prepared-run-") {
+	if !strings.Contains(restoreCommand, internalPreparedRunTokenEnv+"=") || !strings.Contains(restoreCommand, internalPreparedRunRestoreEnv+"=") || strings.Contains(restoreCommand, "--prepared-run-") {
 		t.Fatalf("restore must replay internal token exactly: %s", restoreCommand)
 	}
 
@@ -836,6 +839,439 @@ func TestPreparedRunTokenTransportIsInternalAndRestoreReplayIsExact(t *testing.T
 	})
 	if err == nil || !strings.Contains(err.Error(), "prepared run token changed") || observerCalls != 0 {
 		t.Fatalf("stale restore err=%v observer_calls=%d requested=%+v observed=%+v team_home=%q cwd=%q", err, observerCalls, token, preparedRunTokenFromRecord(staleObserved), staleObserved.TeamHome, staleObserved.CWD)
+	}
+}
+
+func TestPreparedDeliveredManagedRestoreReachesExec(t *testing.T) {
+	for _, binary := range []string{"codex", "claude"} {
+		for _, conversation := range []string{"", "saved-conversation"} {
+			t.Run(binary+"/conversation="+conversation, func(t *testing.T) {
+				runPreparedDeliveredManagedRestoreCase(t, binary, conversation)
+			})
+		}
+	}
+}
+
+func TestPreparedRestoreRawRecordCASRejectsFullFieldReplacement(t *testing.T) {
+	agentDir := t.TempDir()
+	rec := launch.Record{CWD: "/project", Binary: "codex", Role: "cto", Handle: "cto", Session: "prepared", BootstrapExpectation: &bootstrapack.Expectation{Required: true}}
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := preparedRestoreRecordDigest(persisted)
+	replaced := persisted
+	replaced.BootstrapExpectation = &bootstrapack.Expectation{Required: false, NotRequiredReason: "replacement"}
+	if err := launch.Write(agentDir, replaced); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeLaunchRecordWithSnapshot(agentDir, persisted, digest); err == nil || !strings.Contains(err.Error(), "persisted launch record changed before CAS") {
+		t.Fatalf("full-field replacement CAS error=%v", err)
+	}
+}
+
+func TestPreparedRestoreDescriptorTransportFailsClosed(t *testing.T) {
+	token := preparedRunToken{Generation: "g", ManifestDigest: "d", GoalNamespace: "default/s", GoalDigest: "goal"}
+	desc := preparedRestoreDescriptor{Token: token, RecordDigest: "record", SemanticDigest: "semantic"}
+	other := token
+	other.Generation = "other"
+	for _, tc := range []struct{ name, tokenEnv, descEnv, needle string }{
+		{name: "descriptor-without-token", descEnv: encodePreparedRestoreDescriptor(desc), needle: "descriptor/token mismatch"},
+		{name: "incomplete-descriptor", tokenEnv: encodePreparedRunToken(token), descEnv: `{"token":{"generation":"g"}}`, needle: "descriptor is incomplete"},
+		{name: "mismatched-token", tokenEnv: encodePreparedRunToken(other), descEnv: encodePreparedRestoreDescriptor(desc), needle: "descriptor/token mismatch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(internalPreparedRunTokenEnv, tc.tokenEnv)
+			t.Setenv(internalPreparedRunRestoreEnv, tc.descEnv)
+			execs := 0
+			oldExec := amqSyscallExec
+			amqSyscallExec = func(string, []string, []string) error { execs++; return nil }
+			t.Cleanup(func() { amqSyscallExec = oldExec })
+			if err := runLaunch(nil); err == nil || !strings.Contains(err.Error(), tc.needle) {
+				t.Fatalf("error=%v want %q", err, tc.needle)
+			}
+			if execs != 0 {
+				t.Fatalf("invalid descriptor reached exec=%d", execs)
+			}
+		})
+	}
+}
+
+func TestPreparedManagedWorkerSavedConversationRestoreReachesExec(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	originalCWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalCWD); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+	if _, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{"--project", dir, "--profile", team.DefaultProfile, "--session", "prepared", "--roles", "cto,qa", "--binary", "cto=codex,qa=claude", "--lead", "cto", "--launch-shape", runwizard.LaunchShapeWorkingTeamTogether, "--goal", "Execute worker restore fixture", "--visibility", "detached", "--prepare"}, "test")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manifest, digest, err := readPreparedRunManifestSnapshot(dir, team.DefaultProfile, "prepared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := preparedRunTokenFromSnapshot(manifest, digest)
+	t.Setenv(envTmuxTarget, "new-window")
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%43")
+	oldPane := launchCurrentPaneIdentity
+	launchCurrentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "managed", WindowID: "@2", WindowName: "qa", PaneID: "%43"}, nil
+	}
+	t.Cleanup(func() { launchCurrentPaneIdentity = oldPane })
+	oldTerminal := launchStdinIsTerminal
+	launchStdinIsTerminal = func() bool { return true }
+	t.Cleanup(func() { launchStdinIsTerminal = oldTerminal })
+	var execEnvs [][]string
+	var execArgv [][]string
+	oldExec := amqSyscallExec
+	amqSyscallExec = func(_ string, argv, env []string) error {
+		execArgv = append(execArgv, append([]string(nil), argv...))
+		execEnvs = append(execEnvs, append([]string(nil), env...))
+		return nil
+	}
+	t.Cleanup(func() { amqSyscallExec = oldExec })
+	args := []string{"--project", dir, "--team-home", dir, "--team-profile", team.DefaultProfile, "--role", "qa", "--me", "qa", "--session", "prepared", "--trust", trustModeApproveForMe, "claude"}
+	if _, _, err := captureOutput(t, func() error { return runLaunchWithPreparedToken(args, token) }); err != nil {
+		t.Fatalf("worker launch: %v", err)
+	}
+	env, err := resolveAMQEnvForTeamLaunchProfile(dir, team.DefaultProfile, "prepared", "qa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(env.Root, "agents", "qa")
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.AgentPID = 0
+	rec.Conversation = "worker-thread"
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := execRestoreRecord(rec); err != nil {
+		t.Fatalf("worker restore: %v", err)
+	}
+	stored, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(execArgv) != 2 || stored.GoalBinding != nil || preparedRunTokenFromRecord(stored) != token || generatedBootstrapPrompt(execArgv[1]) != "" {
+		t.Fatalf("worker restore evidence exec=%d binding=%+v token=%+v", len(execArgv), stored.GoalBinding, preparedRunTokenFromRecord(stored))
+	}
+	for _, entry := range execEnvs[1] {
+		if strings.HasPrefix(entry, internalPreparedRunTokenEnv+"=") || strings.HasPrefix(entry, internalPreparedRunRestoreEnv+"=") {
+			t.Fatalf("worker transport leaked: %q", entry)
+		}
+	}
+	stored.AgentPID = 0
+	if err := launch.Write(agentDir, stored); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := filepath.Join(t.TempDir(), "amq-squad-helper")
+	wrapperBody := "#!/bin/sh\nPREPARED_RESTORE_HELPER_PATH=" + shellQuote(os.Getenv("PATH")) + " GO_WANT_PREPARED_RESTORE_HELPER=1 exec " + shellQuote(os.Args[0]) + " -test.run=TestPreparedRestoreShellHelper -- \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(wrapperBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldGenerated := generatedSquadCommandOverride
+	generatedSquadCommandOverride = wrapper
+	t.Cleanup(func() { generatedSquadCommandOverride = oldGenerated })
+	capturePath := filepath.Join(t.TempDir(), "exec-captured")
+	t.Setenv("PREPARED_RESTORE_CAPTURE", capturePath)
+	emitted := emitCommand(stored)
+	cmd := exec.Command("sh", "-c", emitted)
+	cmd.Env = os.Environ()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("emitted shell restore: %v\n%s", err, out)
+	}
+	if b, err := os.ReadFile(capturePath); err != nil || string(b) != "exec-stripped" {
+		t.Fatalf("emitted helper capture=%q err=%v", b, err)
+	}
+}
+
+func TestPreparedRestoreShellHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_PREPARED_RESTORE_HELPER") != "1" {
+		return
+	}
+	sep := -1
+	for i, arg := range os.Args {
+		if arg == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep < 0 || sep+3 > len(os.Args) || os.Args[sep+1] != "agent" || os.Args[sep+2] != "up" {
+		os.Exit(2)
+	}
+	if err := os.Setenv("PATH", os.Getenv("PREPARED_RESTORE_HELPER_PATH")); err != nil {
+		os.Exit(2)
+	}
+	launchCurrentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "managed", WindowID: "@2", WindowName: "qa", PaneID: "%43"}, nil
+	}
+	launchStdinIsTerminal = func() bool { return true }
+	amqSyscallExec = func(_ string, _ []string, env []string) error {
+		for _, entry := range env {
+			if strings.HasPrefix(entry, internalPreparedRunTokenEnv+"=") || strings.HasPrefix(entry, internalPreparedRunRestoreEnv+"=") {
+				return fmt.Errorf("internal transport leaked")
+			}
+		}
+		return os.WriteFile(os.Getenv("PREPARED_RESTORE_CAPTURE"), []byte("exec-stripped"), 0o644)
+	}
+	if err := runAgentUp(os.Args[sep+3:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(3)
+	}
+	os.Exit(0)
+}
+
+func runPreparedDeliveredManagedRestoreCase(t *testing.T, binary, conversation string) {
+	setupFakeAMQSessionRoots(t)
+	dir := prepareRunStartBinaryFixture(t, binary)
+	originalCWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalCWD); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+	manifest, digest, err := readPreparedRunManifestSnapshot(dir, team.DefaultProfile, "prepared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := preparedRunTokenFromSnapshot(manifest, digest)
+	t.Setenv(envTmuxTarget, "new-session")
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%42")
+	oldPane := launchCurrentPaneIdentity
+	launchCurrentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "managed", WindowID: "@1", WindowName: "cto", PaneID: "%42"}, nil
+	}
+	t.Cleanup(func() { launchCurrentPaneIdentity = oldPane })
+	oldTerminal := launchStdinIsTerminal
+	launchStdinIsTerminal = func() bool { return true }
+	t.Cleanup(func() { launchStdinIsTerminal = oldTerminal })
+	var execArgv [][]string
+	var execEnvs [][]string
+	oldExec := amqSyscallExec
+	amqSyscallExec = func(_ string, argv, env []string) error {
+		execArgv = append(execArgv, append([]string(nil), argv...))
+		execEnvs = append(execEnvs, append([]string(nil), env...))
+		return nil
+	}
+	t.Cleanup(func() { amqSyscallExec = oldExec })
+	if _, _, err := captureOutput(t, func() error {
+		return runLaunchWithPreparedToken(withoutArg(preparedLeadLaunchArgs(dir, binary), "--dry-run"), token)
+	}); err != nil {
+		t.Fatalf("initial launch: %v", err)
+	}
+	oldLister, oldSend := statusPaneLister, sendPromptToPane
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		return []tmuxpane.TmuxPane{{PaneID: "%42", CWD: dir, Command: binary, Title: "amq:prepared:cto"}}, nil
+	}
+	sendPromptToPane = func(string, string) error { return nil }
+	t.Cleanup(func() { statusPaneLister, sendPromptToPane = oldLister, oldSend })
+	opts, err := resolveGoalDeliveryOptions(dir, team.DefaultProfile, "prepared", "cto", manifest.GoalText, true, true, true, "goal start", namespaceConflictOverrideOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.PreparedRunToken = token
+	result, err := executeGoalDelivery(opts)
+	if err != nil {
+		t.Fatalf("goal delivery: %v", err)
+	}
+	if result.DeliveryReceipt == nil {
+		t.Fatal("missing receipt")
+	}
+	receipt := result.DeliveryReceipt
+	contract, _ := goalDeliveryContractForBinary(binary)
+	if claimed, _, err := claimGoalAttempt(dir, team.DefaultProfile, "prepared", receipt.AttemptID, contract.ClaimRoute, time.Now().UTC()); err != nil || !claimed {
+		t.Fatalf("claim: %v", err)
+	}
+	if claimed, existing, err := claimGoalAttempt(dir, team.DefaultProfile, "prepared", receipt.AttemptID, "amq", time.Now().UTC()); err != nil || claimed || existing.Route != contract.ClaimRoute {
+		t.Fatalf("duplicate claim was not rejected claimed=%t existing=%+v err=%v", claimed, existing, err)
+	}
+	env, err := resolveAMQEnvForTeamLaunchProfile(dir, team.DefaultProfile, "prepared", "cto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(env.Root, "agents", "cto")
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeBinding := *rec.GoalBinding
+	rec.AgentPID = 0
+	rec.Conversation = conversation
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := execRestoreRecord(rec); err != nil {
+		t.Fatalf("delivered restore: %v", err)
+	}
+	stored, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(execArgv) != 2 || !reflect.DeepEqual(stored.GoalBinding, &beforeBinding) || preparedRunTokenFromRecord(stored) != token {
+		t.Fatalf("restore evidence exec=%d binding=%+v token=%+v", len(execArgv), stored.GoalBinding, preparedRunTokenFromRecord(stored))
+	}
+	for _, entry := range execEnvs[1] {
+		if strings.HasPrefix(entry, internalPreparedRunTokenEnv+"=") || strings.HasPrefix(entry, internalPreparedRunRestoreEnv+"=") {
+			t.Fatalf("internal restore transport leaked: %q", entry)
+		}
+	}
+	restorePrompt := generatedBootstrapPrompt(execArgv[1])
+	if conversation == "" {
+		if restorePrompt == "" || digestRunArtifactBytes([]byte(restorePrompt)) != manifest.BootstrapDigests["cto"] {
+			t.Fatalf("restore bootstrap is not exact accepted prompt")
+		}
+		desc := &preparedRestoreDescriptor{Token: token, RecordDigest: preparedRestoreRecordDigest(stored), SemanticDigest: preparedRestoreSemanticDigest(stored)}
+		if err := runLaunchWithIntent(append([]string{"--no-bootstrap"}, launchArgsFromRecord(stored)...), token, desc); err == nil || !strings.Contains(err.Error(), "requires the accepted bootstrap prompt") {
+			t.Fatalf("no-conversation no-bootstrap restore error=%v", err)
+		}
+	} else if restorePrompt != "" {
+		t.Fatalf("saved-conversation restore replayed bootstrap")
+	}
+	if binary == "codex" && conversation == "" {
+		baselineExec := len(execArgv)
+		good := stored
+		good.AgentPID = 0
+		expectRejected := func(name string, candidate launch.Record) {
+			t.Helper()
+			if err := launch.Write(agentDir, candidate); err != nil {
+				t.Fatal(err)
+			}
+			if err := execRestoreRecord(candidate); err == nil {
+				t.Fatalf("%s restore unexpectedly succeeded", name)
+			}
+			if len(execArgv) != baselineExec {
+				t.Fatalf("%s reached exec", name)
+			}
+			current, err := launch.Read(agentDir)
+			if err != nil || !reflect.DeepEqual(current, candidate) {
+				t.Fatalf("%s unsafe overwrite current=%+v err=%v", name, current, err)
+			}
+		}
+		for _, tc := range []struct {
+			name   string
+			mutate func(*launch.GoalBinding)
+		}{
+			{name: "binding-reserved", mutate: func(b *launch.GoalBinding) { b.DeliveryState = goalBindingDeliveryReserved }},
+			{name: "binding-source", mutate: func(b *launch.GoalBinding) { b.Source = "prepared-run" }},
+			{name: "binding-detail", mutate: func(b *launch.GoalBinding) { b.Detail = "wrong" }},
+			{name: "binding-goal", mutate: func(b *launch.GoalBinding) { b.Goal = "wrong" }},
+			{name: "binding-attempt", mutate: func(b *launch.GoalBinding) { b.AttemptID = "wrong" }},
+			{name: "binding-command", mutate: func(b *launch.GoalBinding) { b.Command += " --profile wrong" }},
+		} {
+			candidate := good
+			bindingCopy := *good.GoalBinding
+			tc.mutate(&bindingCopy)
+			candidate.GoalBinding = &bindingCopy
+			expectRejected(tc.name, candidate)
+		}
+		if err := launch.Write(agentDir, good); err != nil {
+			t.Fatal(err)
+		}
+		attemptPath, _ := goalAttemptPath(dir, team.DefaultProfile, "prepared", receipt.AttemptID)
+		claimPath := goalAttemptClaimPath(attemptPath)
+		receiptPath := filepath.Join(deliveryReceiptDir(dir, team.DefaultProfile, "prepared"), receipt.AttemptID+".json")
+		for _, pathCase := range []struct{ name, path string }{{"attempt-missing", attemptPath}, {"claim-missing", claimPath}, {"receipt-missing", receiptPath}} {
+			backup := pathCase.path + ".backup"
+			if err := os.Rename(pathCase.path, backup); err != nil {
+				t.Fatal(err)
+			}
+			expectRejected(pathCase.name, good)
+			if err := os.Rename(backup, pathCase.path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, pathCase := range []struct{ name, path string }{{"attempt-corrupt", attemptPath}, {"claim-corrupt", claimPath}, {"receipt-corrupt", receiptPath}} {
+			original, err := os.ReadFile(pathCase.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(pathCase.path, []byte("{"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			expectRejected(pathCase.name, good)
+			if err := os.WriteFile(pathCase.path, original, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		claimBytes, err := os.ReadFile(claimPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var changedClaim goalAttemptClaim
+		if err := json.Unmarshal(claimBytes, &changedClaim); err != nil {
+			t.Fatal(err)
+		}
+		changedClaim.Route = "amq"
+		changedClaimBytes, _ := json.MarshalIndent(changedClaim, "", "  ")
+		if err := os.WriteFile(claimPath, append(changedClaimBytes, '\n'), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		expectRejected("claim-wrong-route", good)
+		if err := os.WriteFile(claimPath, claimBytes, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		receiptBytes, err := os.ReadFile(receiptPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			name   string
+			mutate func(*deliveryReceiptData)
+		}{
+			{name: "receipt-target", mutate: func(r *deliveryReceiptData) { r.Target.Handle = "wrong" }},
+			{name: "receipt-method", mutate: func(r *deliveryReceiptData) { r.Method = "wrong" }},
+			{name: "receipt-status", mutate: func(r *deliveryReceiptData) { r.Status = "wrong" }},
+			{name: "receipt-token", mutate: func(r *deliveryReceiptData) { r.PreparedRunDigest = "wrong" }},
+			{name: "receipt-stage", mutate: func(r *deliveryReceiptData) { r.Stages = nil }},
+			{name: "receipt-fallback", mutate: func(r *deliveryReceiptData) { r.Fallback = true }},
+		} {
+			var changed deliveryReceiptData
+			if err := json.Unmarshal(receiptBytes, &changed); err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(&changed)
+			payload, _ := json.MarshalIndent(changed, "", "  ")
+			if err := os.WriteFile(receiptPath, append(payload, '\n'), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			expectRejected(tc.name, good)
+		}
+		if err := os.WriteFile(receiptPath, receiptBytes, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		receiptBackup := receiptPath + ".target"
+		if err := os.Rename(receiptPath, receiptBackup); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(receiptBackup, receiptPath); err != nil {
+			t.Fatal(err)
+		}
+		expectRejected("receipt-symlink", good)
+		if err := os.Remove(receiptPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(receiptBackup, receiptPath); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
