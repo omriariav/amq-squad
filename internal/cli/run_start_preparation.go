@@ -16,6 +16,8 @@ import (
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
+var preparedManifestWriterAcquired = func(string, string, string) error { return nil }
+
 type runPreparationProposal struct {
 	Project       string
 	Namespace     string
@@ -251,7 +253,7 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 		}
 	}
 	for _, member := range tm.Members {
-		identity := acceptedMemberIdentity(tm, member)
+		identity := acceptedMemberIdentity(tm, member, in.Profile, in.Session)
 		add("member:"+member.Role, "ready", fmt.Sprintf("handle=%s binary=%s model=%s effort=%s task_ownership=%s tool_policy=%s config=%s mcp=%s",
 			identity.Handle, identity.Binary, identity.Model, identity.Effort, identity.TaskOwnership, identity.ToolProfile, identity.ToolConfig, identity.ToolMCPConfig), "")
 	}
@@ -445,8 +447,21 @@ func preflightPreparedRunManifestAncestors(path string) error {
 	}
 }
 
-func executeRunPreparationTransaction(paths []string, manifestPath string, mutate func() (runReadinessResult, error)) (result runReadinessResult, err error) {
+func executeRunPreparationTransaction(project, profile, session string, paths []string, manifestPath string, mutate func() (runReadinessResult, error)) (result runReadinessResult, err error) {
 	if err := preflightPreparedRunManifestAncestors(manifestPath); err != nil {
+		return runReadinessResult{}, err
+	}
+	namespaceAdmission, err := acquireNamespaceWriterAdmission(project, profile, session)
+	if err != nil {
+		return runReadinessResult{}, err
+	}
+	defer namespaceAdmission.close()
+	manifestAdmission, err := acquirePreparedManifestWriterAdmission(project, profile, session)
+	if err != nil {
+		return runReadinessResult{}, err
+	}
+	defer manifestAdmission.close()
+	if err := preparedManifestWriterAcquired(project, profile, session); err != nil {
 		return runReadinessResult{}, err
 	}
 	snapshots, err := snapshotRunPreparationFiles(paths...)

@@ -1044,7 +1044,7 @@ func TestPreparedRunGoalBindingCodexClaudeParityInActualLaunchInput(t *testing.T
 					"--role", "cto",
 					"--me", "cto",
 					"--session", "prepared",
-					"--trust", "sandboxed",
+					"--trust", trustModeApproveForMe,
 					"--dry-run",
 					binary,
 				})

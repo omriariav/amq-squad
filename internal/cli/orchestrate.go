@@ -28,12 +28,16 @@ var (
 	runStartUpWithVersion   = runUpWithVersion
 	runStartGoalWithVersion = runGoalWithVersion
 
-	runStartLeadReadyTimeout        = 45 * time.Second
-	runStartLeadReadyInitialBackoff = 250 * time.Millisecond
-	runStartLeadReadyMaxBackoff     = 2 * time.Second
-	runStartLeadReadySleep          = time.Sleep
-	runStartLeadReadyNow            = time.Now
-	runStartLeadReadyCheck          = defaultRunStartLeadReadyCheck
+	runStartLeadReadyTimeout          = 45 * time.Second
+	runStartLeadReadyInitialBackoff   = 250 * time.Millisecond
+	runStartLeadReadyMaxBackoff       = 2 * time.Second
+	runStartLeadReadySleep            = time.Sleep
+	runStartLeadReadyNow              = time.Now
+	runStartLeadReadyCheck            = defaultRunStartLeadReadyCheck
+	runStartExternalLeadAfterRegister = func(string, string, string, string) error { return nil }
+	runStartExecuteExternalWorkers    = func(project string, opts teamLaunchOptions) error {
+		return runInProject(project, func() error { return executeTeamLaunch(opts, true, false) })
+	}
 )
 
 type runStartGoalDeliveryOptions struct {
@@ -651,7 +655,7 @@ func runRunStart(args []string, version string) error {
 		if err := revalidateRunPreparationPointerPlans(runContext.PointerPlans); err != nil {
 			return fmt.Errorf("revalidate accepted pointer plan before preparation writes: %w", err)
 		}
-		result, err := executeRunPreparationTransaction(preparationProposal.MutationPaths, preparedRunPath(project, profile, session), func() (runReadinessResult, error) {
+		result, err := executeRunPreparationTransaction(project, profile, session, preparationProposal.MutationPaths, preparedRunPath(project, profile, session), func() (runReadinessResult, error) {
 			if freshRoster {
 				quietNotice("preparing accepted roster; no panes will launch...\n")
 				if err := runNew(newTeamArgs); err != nil {
@@ -728,14 +732,20 @@ func runRunStart(args []string, version string) error {
 		if err := runStartRegisterExternalLead(project, profile, session, externalLeadRole); err != nil {
 			return err
 		}
+		if err := runStartExternalLeadAfterRegister(project, profile, session, externalLeadRole); err != nil {
+			return err
+		}
 		opts, err := runStartTeamLaunchOptions(layoutSelection, session, profile, externalSeedContent, false, false, externalLeadRole, true, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag)
 		if err != nil {
 			return err
 		}
 		var launchResult teamLaunchResult
 		opts.ResultSink = func(result teamLaunchResult) { launchResult = result }
+		if err := validatePreparedExternalLeadStoredBeforeWorkerSpawn(project, profile, session, externalLeadRole); err != nil {
+			return fmt.Errorf("external lead record changed before worker spawn: %w", err)
+		}
 		quietNotice("spawning remaining workers (--visibility %s)...\n", visibility)
-		if err := runInProject(project, func() error { return executeTeamLaunch(opts, true, false) }); err != nil {
+		if err := runStartExecuteExternalWorkers(project, opts); err != nil {
 			return err
 		}
 		goalOpts := runStartGoalDeliveryOptions{

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -28,7 +29,9 @@ import (
 const envTmuxTarget = "AMQ_SQUAD_TMUX_TARGET"
 
 var launchPlanObserver func(launch.Record, []string)
+var preparedLaunchAfterRecordWrite = func(launch.Record) error { return nil }
 var amqSyscallExec = syscall.Exec
+var launchCurrentPaneIdentity = tmuxpane.CurrentPaneIdentity
 
 // envTmuxLauncherPane carries the pane id that initiated a managed tmux launch.
 // The child process runs in the agent pane, so it cannot recover this later
@@ -406,6 +409,66 @@ Examples:
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD
 	}
+	// A live prepared launch enters both the namespace writer domain and the
+	// prepared-manifest reader domain before reading accepted state. Preparation
+	// writers take the matching exclusive manifest admission, so the accepted
+	// generation cannot change through record write or exec.
+	if !*dryRun && strings.TrimSpace(env.SessionName) != "" {
+		admissionProject := rec.TeamHome
+		if !filepath.IsAbs(admissionProject) {
+			admissionProject = filepath.Join(cwd, admissionProject)
+		}
+		admissionProject = filepath.Clean(admissionProject)
+		initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(admissionProject, teamProfileValue, env.SessionName), handle)
+		if err != nil {
+			return err
+		}
+		admission, err := acquireNamespaceWriterAdmission(admissionProject, teamProfileValue, env.SessionName)
+		if err != nil {
+			return err
+		}
+		defer admission.close()
+		currentContext, err := resolveCanonicalContext(contextResolveOptions{
+			ProfileFlag: strings.TrimSpace(*teamProfile), SessionFlag: *session, HandleFlag: handle, RootFlag: *rootFlag,
+			ProfileExplicit: profileExplicit, SessionExplicit: flagWasSet(fs, "session"), HandleExplicit: flagWasSet(fs, "me"), RootExplicit: flagWasSet(fs, "root") && !flagWasSet(fs, "session"),
+		})
+		if err != nil {
+			return fmt.Errorf("agent up refused: context re-resolution under admission failed: %w", err)
+		}
+		if err := validateReResolvedContext(resolvedContext, currentContext, false); err != nil {
+			return err
+		}
+		currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(admissionProject, currentContext.Profile, currentContext.Session), currentContext.Handle)
+		if err != nil {
+			return err
+		}
+		if err := validateReResolvedEndpointIdentity("agent up", initialIdentity, currentIdentity); err != nil {
+			return err
+		}
+		currentRootForLaunch := launchRootFromFlags(cwd, *rootFlag, *session, currentContext.Profile)
+		currentEnv, err := resolveAMQEnvForLaunch(cwd, currentRootForLaunch, *session, currentContext.Profile, currentContext.Handle)
+		if err != nil {
+			return fmt.Errorf("agent up refused: AMQ identity re-resolution under admission failed: %w", err)
+		}
+		currentHandle := currentContext.Handle
+		if currentEnv.Me != "" {
+			currentHandle = currentEnv.Me
+		}
+		if filepath.Clean(absoluteAMQRoot(cwd, currentEnv.Root)) != filepath.Clean(root) || strings.TrimSpace(currentEnv.SessionName) != strings.TrimSpace(env.SessionName) || currentHandle != handle {
+			return fmt.Errorf("agent up refused: AMQ launch identity changed before admission; retry")
+		}
+		if err := ensureLaunchTargetIsNotOperator(admissionProject, currentContext.Profile, "agent up", *roleFlag, currentHandle); err != nil {
+			return err
+		}
+		if err := ensureNoNamespaceConflict("agent up", admissionProject, teamProfileValue, env.SessionName, profileExplicit); err != nil {
+			return err
+		}
+		manifestAdmission, err := acquirePreparedManifestReaderAdmission(admissionProject, teamProfileValue, env.SessionName)
+		if err != nil {
+			return err
+		}
+		defer manifestAdmission.close()
+	}
 	preparedLaunchContext, err := preparedContextForLaunchRecord(rec)
 	if err != nil {
 		return fmt.Errorf("load accepted prepared launch identity: %w", err)
@@ -423,7 +486,7 @@ Examples:
 	// instead of re-inferring from window names. Best-effort: a capture failure
 	// must never block the launch. This runs before exec while $TMUX/$TMUX_PANE
 	// still describe this agent's pane.
-	if id, err := tmuxpane.CurrentPaneIdentity(); err == nil && id != nil {
+	if id, err := launchCurrentPaneIdentity(); err == nil && id != nil {
 		target := strings.TrimSpace(os.Getenv(envTmuxTarget))
 		launcherPane := strings.TrimSpace(os.Getenv(envTmuxLauncherPane))
 		if launcherPane == "" && target == "" {
@@ -459,6 +522,7 @@ Examples:
 	}
 	bootstrapAppended := !*noBootstrap && shouldAppendBootstrapWithDefaults(bootstrapEligibilityArgs, defaultArgs)
 	bootstrapSuppressedReason := ""
+	var preparedPrompt string
 	if bootstrapAppended {
 		boundary, err := assessNativePromptBoundary(binary, bootstrapEligibilityArgs)
 		if err != nil {
@@ -492,6 +556,7 @@ Examples:
 		if err := revalidatePreparedBootstrapPromptForLaunch(rec, prompt, preparedLaunchContext); err != nil {
 			return fmt.Errorf("prepared bootstrap launch validation: %w", err)
 		}
+		preparedPrompt = prompt
 		// Terminate native option parsing so optional/variadic flags can never
 		// consume generated prompt text. The prompt remains the final argv token.
 		effectiveChildArgs = appendGeneratedBootstrapPrompt(effectiveChildArgs, prompt)
@@ -501,6 +566,18 @@ Examples:
 		return fmt.Errorf("prepared bootstrap launch validation: %w", err)
 	} else if context != nil {
 		return fmt.Errorf("prepared bootstrap launch validation: prepared run appeared after launch identity capture")
+	}
+	revalidatePrepared := func(stage string) error {
+		if preparedLaunchContext == nil {
+			return nil
+		}
+		if err := revalidatePreparedBootstrapPromptForLaunch(rec, preparedPrompt, preparedLaunchContext); err != nil {
+			return fmt.Errorf("prepared launch changed before %s: %w", stage, err)
+		}
+		return nil
+	}
+	if err := revalidatePrepared("launch plan observer"); err != nil {
+		return err
 	}
 	if launchPlanObserver != nil {
 		launchPlanObserver(rec, append([]string(nil), effectiveChildArgs...))
@@ -589,57 +666,6 @@ Examples:
 		verbosePolicyEcho()
 		return nil
 	}
-	if strings.TrimSpace(env.SessionName) != "" {
-		admissionProject := rec.TeamHome
-		if !filepath.IsAbs(admissionProject) {
-			admissionProject = filepath.Join(cwd, admissionProject)
-		}
-		admissionProject = filepath.Clean(admissionProject)
-		initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(admissionProject, teamProfileValue, env.SessionName), handle)
-		if err != nil {
-			return err
-		}
-		admission, err := acquireNamespaceWriterAdmission(admissionProject, teamProfileValue, env.SessionName)
-		if err != nil {
-			return err
-		}
-		defer admission.close()
-		currentContext, err := resolveCanonicalContext(contextResolveOptions{
-			ProfileFlag: strings.TrimSpace(*teamProfile), SessionFlag: *session, HandleFlag: handle, RootFlag: *rootFlag,
-			ProfileExplicit: profileExplicit, SessionExplicit: flagWasSet(fs, "session"), HandleExplicit: flagWasSet(fs, "me"), RootExplicit: flagWasSet(fs, "root") && !flagWasSet(fs, "session"),
-		})
-		if err != nil {
-			return fmt.Errorf("agent up refused: context re-resolution under admission failed: %w", err)
-		}
-		if err := validateReResolvedContext(resolvedContext, currentContext, false); err != nil {
-			return err
-		}
-		currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(admissionProject, currentContext.Profile, currentContext.Session), currentContext.Handle)
-		if err != nil {
-			return err
-		}
-		if err := validateReResolvedEndpointIdentity("agent up", initialIdentity, currentIdentity); err != nil {
-			return err
-		}
-		currentRootForLaunch := launchRootFromFlags(cwd, *rootFlag, *session, currentContext.Profile)
-		currentEnv, err := resolveAMQEnvForLaunch(cwd, currentRootForLaunch, *session, currentContext.Profile, currentContext.Handle)
-		if err != nil {
-			return fmt.Errorf("agent up refused: AMQ identity re-resolution under admission failed: %w", err)
-		}
-		currentHandle := currentContext.Handle
-		if currentEnv.Me != "" {
-			currentHandle = currentEnv.Me
-		}
-		if filepath.Clean(absoluteAMQRoot(cwd, currentEnv.Root)) != filepath.Clean(root) || strings.TrimSpace(currentEnv.SessionName) != strings.TrimSpace(env.SessionName) || currentHandle != handle {
-			return fmt.Errorf("agent up refused: AMQ launch identity changed before admission; retry")
-		}
-		if err := ensureLaunchTargetIsNotOperator(admissionProject, currentContext.Profile, "agent up", *roleFlag, currentHandle); err != nil {
-			return err
-		}
-		if err := ensureNoNamespaceConflict("agent up", admissionProject, teamProfileValue, env.SessionName, profileExplicit); err != nil {
-			return err
-		}
-	}
 	if err := validateManagedTmuxLaunch(rec); err != nil {
 		return err
 	}
@@ -675,12 +701,18 @@ Examples:
 	// applies the same skip rule bootstrap uses (explicit --team-home or
 	// cwd-with-team-rules-md only) so the two sources stay aligned.
 	if briefHome := resolveBriefHome(*teamHome, cwd); briefHome != "" {
+		if err := revalidatePrepared("brief preparation"); err != nil {
+			return err
+		}
 		if _, _, err := ensureBriefStubForProfile(briefHome, rec.TeamProfile, rec.Session); err != nil {
 			return fmt.Errorf("ensure brief: %w", err)
 		}
 	}
 
 	if rec.Symphony {
+		if err := revalidatePrepared("symphony initialization"); err != nil {
+			return err
+		}
 		workflow := filepath.Join(cwd, "WORKFLOW.md")
 		if err := runSymphonyInit(symphonyInitConfig{Workflow: workflow, Root: root, Me: handle}); err != nil {
 			return err
@@ -688,17 +720,40 @@ Examples:
 		quietNotice("symphony: patched %s with AMQ lifecycle hooks for %s (root %s)\n", workflow, handle, root)
 	}
 
-	if err := launch.Write(agentDir, rec); err != nil {
+	if err := revalidatePrepared("record write"); err != nil {
+		return err
+	}
+	recordWrite, err := writeLaunchRecordWithSnapshot(agentDir, rec)
+	if err != nil {
 		return fmt.Errorf("write launch record: %w", err)
+	}
+	rollbackLaunchRecord := func(cause error) error {
+		rollbackErr := rollbackLaunchRecordIfCurrent(agentDir, recordWrite)
+		if rollbackErr != nil {
+			return fmt.Errorf("%w; launch record rollback failed: %v", cause, rollbackErr)
+		}
+		return cause
+	}
+	if err := preparedLaunchAfterRecordWrite(rec); err != nil {
+		return rollbackLaunchRecord(err)
+	}
+	if err := revalidatePrepared("post-write launch record admission"); err != nil {
+		return rollbackLaunchRecord(err)
 	}
 
 	// Seed role.md from the catalog when the role is known, or from a staged
 	// custom-role document under the team-home. Never overwrites user edits.
 	if *roleFlag != "" {
+		if err := revalidatePrepared("role seed"); err != nil {
+			return rollbackLaunchRecord(err)
+		}
 		roleHome := resolveBriefHome(*teamHome, cwd)
 		if err := seedRoleStub(agentDir, *roleFlag, roleHome); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: seed role.md: %v\n", err)
 		}
+	}
+	if err := revalidatePrepared("session rename scheduling"); err != nil {
+		return rollbackLaunchRecord(err)
 	}
 	if err := maybeScheduleClaudeSessionRename(rec); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: schedule Claude session rename: %v\n", err)
@@ -708,11 +763,64 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("amq not found in PATH: %w", err)
 	}
+	if err := revalidatePrepared("exec"); err != nil {
+		return rollbackLaunchRecord(err)
+	}
 	// Strip inherited AMQ identity vars before exec'ing coop exec. We already
 	// resolved the right --root/--session/--me on the command line; passing a
 	// stale AM_ROOT/AM_ME from the launching shell along to the agent would
 	// re-create the identity-leak asymmetry #46 closed for env resolution.
 	return execAMQCoop(amqBin, coopArgs)
+}
+
+type launchRecordWriteSnapshot struct {
+	Previous *launch.Record
+	Written  launch.Record
+}
+
+func writeLaunchRecordWithSnapshot(agentDir string, rec launch.Record) (launchRecordWriteSnapshot, error) {
+	var snapshot launchRecordWriteSnapshot
+	err := launch.WithRecordLock(agentDir, func() error {
+		previous, err := launch.Read(agentDir)
+		switch {
+		case err == nil:
+			snapshot.Previous = &previous
+		case !os.IsNotExist(err):
+			return fmt.Errorf("snapshot existing launch record: %w", err)
+		}
+		if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
+			return err
+		}
+		written, err := launch.Read(agentDir)
+		if err != nil {
+			return fmt.Errorf("read written launch record: %w", err)
+		}
+		snapshot.Written = written
+		return nil
+	})
+	return snapshot, err
+}
+
+func rollbackLaunchRecordIfCurrent(agentDir string, snapshot launchRecordWriteSnapshot) error {
+	return launch.WithRecordLock(agentDir, func() error {
+		current, err := launch.Read(agentDir)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read current launch record: %w", err)
+		}
+		if !reflect.DeepEqual(current, snapshot.Written) {
+			return nil
+		}
+		if snapshot.Previous != nil {
+			return launch.WriteUnderRecordLock(agentDir, *snapshot.Previous)
+		}
+		if err := os.Remove(launch.Path(agentDir)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	})
 }
 
 // exactRootChildCommand removes AM_SESSION at the final child boundary for a

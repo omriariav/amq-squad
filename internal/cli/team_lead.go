@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -326,6 +327,11 @@ func runLeadRegister(args []string) error {
 	if err := ensureNoNamespaceMigration("lead register", projectDir, profile, workstream); err != nil {
 		return err
 	}
+	manifestAdmission, err := acquirePreparedManifestReaderAdmission(projectDir, profile, workstream)
+	if err != nil {
+		return err
+	}
+	defer manifestAdmission.close()
 	id, err := currentPaneIdentity()
 	if err != nil {
 		return err
@@ -389,27 +395,7 @@ func runLeadRegister(args []string) error {
 		wakeInjectCmdValue = ""
 	}
 	var wakeResult leadWakeResult
-	if !*noWake {
-		wakeResult, err = leadWakeStarter(leadWakeOptions{
-			ProjectDir:     cwd,
-			Profile:        profile,
-			Session:        env.SessionName,
-			Root:           root,
-			Handle:         handle,
-			Require:        !*noRequireWake,
-			WakeInjectVia:  wakeInjectViaValue,
-			WakeInjectArgs: wakeInjectArgValues,
-			WakeInjectMode: wakeInjectModeValue,
-			WakeInjectCmd:  wakeInjectCmdValue,
-		})
-		if err != nil {
-			return fmt.Errorf("start external lead wake: %w", err)
-		}
-	}
-	wakePID := wakeResult.PID
-	if lock, lockErr := readWakeLock(agentDir); lockErr == nil && lock.PID > 0 {
-		wakePID = lock.PID
-	}
+	wakePID := 0
 	rec := launch.Record{
 		CWD:              cwd,
 		Binary:           member.Binary,
@@ -447,7 +433,16 @@ func runLeadRegister(args []string) error {
 			Target:     "external",
 		},
 	}
-	effectiveBinaryArgs := composeBinaryArgs(member.Binary, binaryArgsFor(member.Binary, t.BinaryArgs), member.ExtraArgs())
+	acceptedIdentity := acceptedMemberIdentity(t, member, profile, workstream)
+	rec.Argv = append([]string(nil), acceptedIdentity.EffectiveArgs...)
+	rec.Model = acceptedIdentity.Model
+	rec.Trust = acceptedIdentity.Trust
+	rec.ToolAllowlist = append([]string(nil), acceptedIdentity.ToolAllowlist...)
+	rec.ToolBlocklist = append([]string(nil), acceptedIdentity.ToolBlocklist...)
+	rec.LauncherPreauthorizedActions = append([]string(nil), acceptedIdentity.LauncherAuthority...)
+	rec.PreauthorizedActions = append([]string(nil), acceptedIdentity.LauncherAuthority...)
+	rec.NoPreauthorizeInScope = acceptedIdentity.NoPreauthorize
+	effectiveBinaryArgs := acceptedIdentity.NativeArgs
 	switch normalizedAgentBinary(member.Binary) {
 	case "codex":
 		rec.CodexArgs = effectiveBinaryArgs
@@ -467,19 +462,63 @@ func runLeadRegister(args []string) error {
 		}
 	}
 	rec.GoalBinding = preparedBinding
+	preparedPrompt := ""
 	if preparedContext != nil {
 		bootstrapContext := bootstrapContextFor(rec, agentDir, projectDir)
 		bootstrapContext.CurrentTeam, bootstrapContext.Warnings = bootstrapCurrentTeamWithRoster(rec, projectDir, true)
-		prompt, err := buildBootstrapPrompt(bootstrapContext)
+		preparedPrompt, err = buildBootstrapPrompt(bootstrapContext)
 		if err != nil {
 			return err
 		}
-		if err := revalidatePreparedBootstrapPromptForLaunch(rec, prompt, preparedContext); err != nil {
+		if err := revalidatePreparedBootstrapPromptForLaunch(rec, preparedPrompt, preparedContext); err != nil {
 			return fmt.Errorf("validate accepted external-lead launch input: %w", err)
 		}
 	}
+	revalidatePrepared := func(stage string) error {
+		if preparedContext == nil {
+			return nil
+		}
+		if err := revalidatePreparedBootstrapPromptForLaunch(rec, preparedPrompt, preparedContext); err != nil {
+			return fmt.Errorf("prepared external lead changed before %s: %w", stage, err)
+		}
+		return nil
+	}
+	if err := revalidatePrepared("wake start"); err != nil {
+		return err
+	}
+	if !*noWake {
+		wakeResult, err = leadWakeStarter(leadWakeOptions{
+			ProjectDir:     cwd,
+			Profile:        profile,
+			Session:        env.SessionName,
+			Root:           root,
+			Handle:         handle,
+			Require:        !*noRequireWake,
+			WakeInjectVia:  wakeInjectViaValue,
+			WakeInjectArgs: wakeInjectArgValues,
+			WakeInjectMode: wakeInjectModeValue,
+			WakeInjectCmd:  wakeInjectCmdValue,
+		})
+		if err != nil {
+			return fmt.Errorf("start external lead wake: %w", err)
+		}
+	}
+	wakePID = wakeResult.PID
+	if lock, lockErr := readWakeLock(agentDir); lockErr == nil && lock.PID > 0 {
+		wakePID = lock.PID
+	}
+	rec.WakePID = wakePID
+	if err := revalidatePrepared("launch record write"); err != nil {
+		return err
+	}
 	if err := writeExternalLeadLaunchRecord(agentDir, rec, role, env.SessionName); err != nil {
 		return fmt.Errorf("write external launch record: %w", err)
+	}
+	if err := validateStoredPreparedExternalLeadRecord(agentDir, rec, preparedContext); err != nil {
+		return fmt.Errorf("validate stored external launch record: %w", err)
+	}
+	if err := revalidatePrepared("team lead profile write"); err != nil {
+		return err
 	}
 	if err := setTeamLeadForProfile(projectDir, profile, role, "", false); err != nil {
 		return err
@@ -496,7 +535,7 @@ func runLeadRegister(args []string) error {
 func writeExternalLeadLaunchRecord(agentDir string, rec launch.Record, role, session string) error {
 	return launch.WithRecordLock(agentDir, func() error {
 		current, currentErr := launch.Read(agentDir)
-		if preserveExternalGoalBinding(current, currentErr, role, session) {
+		if preserveExternalGoalBindingForRecord(current, currentErr, rec, role, session) {
 			gb := *current.GoalBinding
 			rec.GoalBinding = &gb
 		}
@@ -541,6 +580,155 @@ func preserveExternalGoalBinding(rec launch.Record, err error, role, session str
 	}
 	recSession := strings.TrimSpace(rec.Session)
 	return recSession == "" || recSession == strings.TrimSpace(session)
+}
+
+func preserveExternalGoalBindingForRecord(rec launch.Record, err error, planned launch.Record, role, session string) bool {
+	if planned.GoalBinding == nil {
+		return preserveExternalGoalBinding(rec, err, role, session)
+	}
+	if err != nil || !launchRecordHasGoalBinding(rec) {
+		return false
+	}
+	if !samePreparedExternalRecordIdentity(rec, planned, role, session) {
+		return false
+	}
+	recSession := strings.TrimSpace(rec.Session)
+	if recSession != "" && recSession != strings.TrimSpace(session) {
+		return false
+	}
+	return exactExternalGoalBindingIdentity(rec.Binary, rec.GoalBinding, planned.GoalBinding)
+}
+
+func samePreparedExternalRecordIdentity(current, planned launch.Record, role, session string) bool {
+	paneID := ""
+	if planned.Tmux != nil {
+		paneID = planned.Tmux.PaneID
+	}
+	return current.External && planned.External &&
+		launchRecordMatchesSamePaneIdentity(current, role, planned.Handle, planned.TeamProfile, session, planned.Root, paneID) &&
+		normalizedAgentBinary(current.Binary) == normalizedAgentBinary(planned.Binary) &&
+		sameFilesystemPath(current.CWD, planned.CWD) &&
+		sameOptionalFilesystemPath(current.BaseRoot, planned.BaseRoot) &&
+		sameOptionalFilesystemPath(current.TeamHome, planned.TeamHome) &&
+		current.SharedWorkstream == planned.SharedWorkstream &&
+		strings.TrimSpace(current.RootSource) == strings.TrimSpace(planned.RootSource) &&
+		strings.TrimSpace(current.AdoptionMode) == strings.TrimSpace(planned.AdoptionMode) &&
+		reflect.DeepEqual(current.Tmux, planned.Tmux) &&
+		reflect.DeepEqual(current.Terminal, planned.Terminal)
+}
+
+func sameOptionalFilesystemPath(current, planned string) bool {
+	if strings.TrimSpace(current) == "" || strings.TrimSpace(planned) == "" {
+		return strings.TrimSpace(current) == strings.TrimSpace(planned)
+	}
+	return sameFilesystemPath(current, planned)
+}
+
+func exactExternalGoalBindingIdentity(binary string, delivered, planned *launch.GoalBinding) bool {
+	contract, err := goalDeliveryContractForBinary(binary)
+	if err != nil || delivered == nil || planned == nil || delivered.Mode != planned.Mode || delivered.NativeGoal != planned.NativeGoal || delivered.Command != planned.Command {
+		return false
+	}
+	deliveredGoal, deliveredAttempt, err := goalBindingPayload(delivered, contract)
+	if err != nil {
+		return false
+	}
+	plannedGoal, plannedAttempt, err := goalBindingPayload(planned, contract)
+	return err == nil && deliveredGoal == plannedGoal && deliveredAttempt == plannedAttempt
+}
+
+func validateStoredPreparedExternalLeadRecord(agentDir string, expected launch.Record, context *preparedLaunchRecordContext) error {
+	if context == nil {
+		return nil
+	}
+	stored, err := launch.Read(agentDir)
+	if err != nil {
+		return err
+	}
+	currentContext, err := preparedContextForLaunchRecord(stored)
+	if err != nil {
+		return err
+	}
+	if currentContext == nil || currentContext.Manifest.Generation != context.Manifest.Generation || currentContext.Digest != context.Digest {
+		return fmt.Errorf("stored external lead record no longer matches the accepted manifest generation")
+	}
+	if reflect.DeepEqual(stored.GoalBinding, expected.GoalBinding) {
+		return nil
+	}
+	if launchRecordHasGoalBinding(stored) && exactExternalGoalBindingIdentity(stored.Binary, stored.GoalBinding, expected.GoalBinding) {
+		return nil
+	}
+	return fmt.Errorf("stored external lead goal binding differs from the newly validated goal/attempt")
+}
+
+func validatePreparedExternalLeadStoredBeforeWorkerSpawn(project, profile, session, role string) error {
+	endpointAdmission, err := acquireNamespaceWriterAdmission(project, profile, session)
+	if err != nil {
+		return err
+	}
+	defer endpointAdmission.close()
+	manifestAdmission, err := acquirePreparedManifestReaderAdmission(project, profile, session)
+	if err != nil {
+		return err
+	}
+	defer manifestAdmission.close()
+	tm, err := team.ReadProfile(project, profile)
+	if err != nil {
+		return err
+	}
+	member, ok := memberByRole(tm, role)
+	if !ok {
+		return fmt.Errorf("prepared external lead %q disappeared before worker spawn", role)
+	}
+	cwd, err := canonicalDir(member.EffectiveCWD(tm.Project))
+	if err != nil {
+		return err
+	}
+	env, err := resolveAMQEnvForTeamLaunchProfile(cwd, profile, session, memberHandle(member))
+	if err != nil {
+		return err
+	}
+	agentDir := filepath.Join(env.Root, "agents", memberHandle(member))
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		return err
+	}
+	id, err := currentPaneIdentity()
+	if err != nil {
+		return err
+	}
+	if id == nil || strings.TrimSpace(id.PaneID) == "" {
+		return fmt.Errorf("prepared external lead pane identity disappeared before worker spawn")
+	}
+	expectedTmux := &launch.TmuxInfo{
+		Session: id.Session, WindowID: id.WindowID, WindowName: id.WindowName,
+		PaneID: id.PaneID, Target: "external",
+	}
+	expectedIdentity := launch.Record{
+		CWD: cwd, Binary: member.Binary, Session: env.SessionName, SharedWorkstream: true,
+		Handle: memberHandle(member), Role: role, Root: absoluteAMQRoot(cwd, env.Root),
+		BaseRoot: absoluteAMQRoot(cwd, env.BaseRoot), RootSource: env.RootSource,
+		TeamProfile: profile, TeamHome: project, External: true,
+		AdoptionMode: adoptionModeExternalProjectLead, Tmux: expectedTmux,
+		Terminal: launch.TerminalInfoFromTmux(expectedTmux),
+	}
+	if !samePreparedExternalRecordIdentity(rec, expectedIdentity, role, env.SessionName) {
+		return fmt.Errorf("stored external lead record identity differs from the registered pane contract")
+	}
+	context, err := preparedContextForLaunchRecord(rec)
+	if err != nil {
+		return err
+	}
+	if context == nil || context.Member.Role != context.Team.Lead {
+		return fmt.Errorf("stored external lead record has no accepted prepared context")
+	}
+	planned, err := preparedGoalBinding(context.Team, context.Manifest.Profile, context.Manifest.Session, context.Member, context.Binding)
+	if err != nil {
+		return err
+	}
+	expected := rec
+	expected.GoalBinding = planned
+	return validateStoredPreparedExternalLeadRecord(agentDir, expected, context)
 }
 
 type leadRegisterAuthInput struct {

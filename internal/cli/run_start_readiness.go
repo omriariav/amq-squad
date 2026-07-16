@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -23,11 +24,12 @@ import (
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
-const preparedRunSchema = 1
+const preparedRunSchema = 2
 const preparedRunGoalDeliveryPlanned = "planned_unverified"
 
 type preparedRunManifest struct {
 	SchemaVersion     int                                  `json:"schema_version"`
+	Generation        string                               `json:"generation"`
 	Project           string                               `json:"project"`
 	Profile           string                               `json:"profile"`
 	Session           string                               `json:"session"`
@@ -66,15 +68,23 @@ type preparedRunTopology struct {
 }
 
 type preparedRunMemberIdentity struct {
-	Role          string `json:"role"`
-	Handle        string `json:"handle"`
-	Binary        string `json:"binary"`
-	Model         string `json:"model,omitempty"`
-	Effort        string `json:"effort"`
-	TaskOwnership string `json:"task_ownership"`
-	ToolProfile   string `json:"tool_profile"`
-	ToolConfig    string `json:"tool_config,omitempty"`
-	ToolMCPConfig string `json:"tool_mcp_config,omitempty"`
+	Role                string   `json:"role"`
+	Handle              string   `json:"handle"`
+	Binary              string   `json:"binary"`
+	Model               string   `json:"model,omitempty"`
+	Effort              string   `json:"effort"`
+	TaskOwnership       string   `json:"task_ownership"`
+	Trust               string   `json:"trust"`
+	NativeArgs          []string `json:"native_args"`
+	EffectiveArgs       []string `json:"effective_args"`
+	ToolProfile         string   `json:"tool_profile"`
+	ToolConfig          string   `json:"tool_config,omitempty"`
+	ToolMCPConfig       string   `json:"tool_mcp_config,omitempty"`
+	ToolAllowlist       []string `json:"tool_allowlist"`
+	ToolBlocklist       []string `json:"tool_blocklist"`
+	PermissionAllowlist []string `json:"permission_allowlist"`
+	LauncherAuthority   []string `json:"launcher_preauthorized_actions"`
+	NoPreauthorize      bool     `json:"no_preauthorize_inscope"`
 }
 
 type preparedRunEnvironment struct {
@@ -154,16 +164,63 @@ func acceptedTaskOwnership(tm team.Team, member team.Member) string {
 	return "plan_dispatch_review_gates; implementation=lead_or_delegated_workers"
 }
 
-func acceptedMemberIdentity(tm team.Team, member team.Member) preparedRunMemberIdentity {
-	return resolvedMemberIdentity(tm, member, nil, tm.BinaryArgs)
+func acceptedMemberIdentity(tm team.Team, member team.Member, profile, session string) preparedRunMemberIdentity {
+	return resolvedMemberIdentity(tm, member, profile, session, nil, tm.BinaryArgs, false)
 }
 
-func resolvedMemberIdentity(tm team.Team, member team.Member, modelOverrides map[string]string, binaryArgs map[string][]string) preparedRunMemberIdentity {
-	return preparedRunMemberIdentity{
-		Role: member.Role, Handle: memberHandle(member), Binary: normalizedAgentBinary(member.Binary),
-		Model: memberResolvedModel(member, modelOverrides, binaryArgs), Effort: memberResolvedEffort(member, binaryArgs), TaskOwnership: acceptedTaskOwnership(tm, member),
-		ToolProfile: member.EffectiveToolProfile(), ToolConfig: member.ToolConfig, ToolMCPConfig: member.ToolMCPConfig,
+func resolvedMemberIdentity(tm team.Team, member team.Member, profile, session string, modelOverrides map[string]string, binaryArgs map[string][]string, noPreauthorize bool) preparedRunMemberIdentity {
+	binary := normalizedAgentBinary(member.Binary)
+	nativeArgs := composeBinaryArgs(member.Binary, binaryArgsFor(member.Binary, binaryArgs), member.ExtraArgs())
+	model := memberResolvedModel(member, modelOverrides, binaryArgs)
+	toolAndNativeArgs := composeBinaryArgs(member.Binary, member.ToolArgs(), nativeArgs)
+	trust := defaultTrustMode()
+	if strings.TrimSpace(tm.Trust) != "" {
+		// Team validation already rejects an invalid persisted trust value. Keep
+		// this identity helper total while still matching launch resolution.
+		if resolved, err := normalizeTrustMode(tm.Trust); err == nil {
+			trust = resolved
+		}
 	}
+	effectiveArgs := launchDefaultChildArgsWithTrust(member.Binary, true, modelArgsForBinary(member.Binary, model), toolAndNativeArgs, trust)
+	var launcherAuthority []string
+	if binary == "claude" {
+		if !noPreauthorize && tm.Orchestrated && !strings.EqualFold(member.Role, tm.Lead) {
+			launcherAuthority = append(launcherAuthority, claudeInScopePreauthAllowlist(session)...)
+		}
+		launcherAuthority = append(launcherAuthority, member.PermissionAllowlist...)
+		launcherAuthority = dedupeSortedStrings(launcherAuthority)
+	}
+	return preparedRunMemberIdentity{
+		Role: member.Role, Handle: memberHandle(member), Binary: binary,
+		Model: model, Effort: effortFromEffectiveArgs(binary, effectiveArgs), TaskOwnership: acceptedTaskOwnership(tm, member),
+		Trust: trust, NativeArgs: append([]string(nil), nativeArgs...), EffectiveArgs: append([]string(nil), effectiveArgs...),
+		ToolProfile: member.EffectiveToolProfile(), ToolConfig: member.ToolConfig, ToolMCPConfig: member.ToolMCPConfig,
+		ToolAllowlist: dedupeSortedStrings(member.ToolAllowlist), ToolBlocklist: dedupeSortedStrings(member.ToolBlocklist),
+		PermissionAllowlist: dedupeSortedStrings(member.PermissionAllowlist),
+		LauncherAuthority:   launcherAuthority, NoPreauthorize: noPreauthorize,
+	}
+}
+
+func effortFromEffectiveArgs(binary string, args []string) string {
+	member := team.Member{Binary: binary}
+	switch normalizedAgentBinary(binary) {
+	case "codex":
+		member.CodexArgs = append([]string(nil), args...)
+	case "claude":
+		member.ClaudeArgs = append([]string(nil), args...)
+	}
+	return memberEffort(member)
+}
+
+func canonicalLaunchRecordArgs(rec launch.Record) []string {
+	args := append([]string(nil), rec.Argv...)
+	if len(rec.LauncherPreauthorizedActions) == 0 {
+		return args
+	}
+	if len(rec.ExplicitAllowedTools) > 0 {
+		return replaceClaudeAllowedTools(args, rec.ExplicitAllowedTools)
+	}
+	return stripRecordedLauncherPreauth(args, rec.PreauthorizedActions)
 }
 
 func memberResolvedEffort(member team.Member, binaryArgs map[string][]string) string {
@@ -180,6 +237,7 @@ func memberResolvedEffort(member team.Member, binaryArgs map[string][]string) st
 
 type preparedLaunchRecordContext struct {
 	Manifest preparedRunManifest
+	Digest   string
 	Team     team.Team
 	Member   team.Member
 	Binding  acceptedGoalBinding
@@ -192,7 +250,7 @@ func preparedContextForLaunchRecord(rec launch.Record) (*preparedLaunchRecordCon
 	}
 	profile := squadnamespace.NormalizeProfile(rec.TeamProfile)
 	session := strings.TrimSpace(rec.Session)
-	manifest, err := readPreparedRunManifest(project, profile, session)
+	manifest, manifestDigest, err := readPreparedRunManifestSnapshot(project, profile, session)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -232,17 +290,22 @@ func preparedContextForLaunchRecord(rec launch.Record) (*preparedLaunchRecordCon
 		return nil, fmt.Errorf("launch record actor %s/%s is not in the accepted exact-session roster", rec.Role, rec.Handle)
 	}
 	accepted, ok := manifest.Members[member.Role]
-	if !ok || !reflect.DeepEqual(accepted, acceptedMemberIdentity(tm, member)) {
+	if !ok || !reflect.DeepEqual(accepted, acceptedMemberIdentity(tm, member, profile, session)) {
 		return nil, fmt.Errorf("launch record member identity for %s differs from accepted preparation", member.Role)
 	}
-	if normalizedAgentBinary(rec.Binary) != accepted.Binary || rec.Handle != accepted.Handle || rec.Model != accepted.Model || !sameFilesystemPath(rec.CWD, member.EffectiveCWD(tm.Project)) || rec.ToolProfile != accepted.ToolProfile || rec.ToolConfig != accepted.ToolConfig || rec.ToolMCPConfig != accepted.ToolMCPConfig {
-		return nil, fmt.Errorf("actual launch record input for %s differs from accepted binary/handle/cwd/tool identity", member.Role)
+	actualNativeArgs := rec.ClaudeArgs
+	if accepted.Binary == "codex" {
+		actualNativeArgs = rec.CodexArgs
+	}
+	actualEffectiveArgs := canonicalLaunchRecordArgs(rec)
+	if normalizedAgentBinary(rec.Binary) != accepted.Binary || rec.Handle != accepted.Handle || rec.Model != accepted.Model || !sameFilesystemPath(rec.CWD, member.EffectiveCWD(tm.Project)) || rec.Trust != accepted.Trust || !reflect.DeepEqual(actualNativeArgs, accepted.NativeArgs) || !reflect.DeepEqual(dedupeSortedStrings(rec.LauncherPreauthorizedActions), accepted.LauncherAuthority) || rec.NoPreauthorizeInScope != accepted.NoPreauthorize || !reflect.DeepEqual(actualEffectiveArgs, accepted.EffectiveArgs) || effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs) != accepted.Effort || rec.ToolProfile != accepted.ToolProfile || rec.ToolConfig != accepted.ToolConfig || rec.ToolMCPConfig != accepted.ToolMCPConfig || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolAllowlist), accepted.ToolAllowlist) || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolBlocklist), accepted.ToolBlocklist) {
+		return nil, fmt.Errorf("actual launch record input for %s differs from accepted binary/handle/cwd/tool identity: accepted=%+v actual={binary:%s handle:%s model:%s trust:%s native:%v effective:%v effort:%s launcher_authority:%v no_preauthorize:%t tool_profile:%s tool_config:%s tool_mcp:%s tool_allow:%v tool_block:%v}", member.Role, accepted, normalizedAgentBinary(rec.Binary), rec.Handle, rec.Model, rec.Trust, actualNativeArgs, actualEffectiveArgs, effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs), dedupeSortedStrings(rec.LauncherPreauthorizedActions), rec.NoPreauthorizeInScope, rec.ToolProfile, rec.ToolConfig, rec.ToolMCPConfig, dedupeSortedStrings(rec.ToolAllowlist), dedupeSortedStrings(rec.ToolBlocklist))
 	}
 	binding := acceptedGoalBinding{Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest}
 	if err := validateAcceptedGoalBinding(binding); err != nil {
 		return nil, err
 	}
-	return &preparedLaunchRecordContext{Manifest: manifest, Team: tm, Member: member, Binding: binding}, nil
+	return &preparedLaunchRecordContext{Manifest: manifest, Digest: manifestDigest, Team: tm, Member: member, Binding: binding}, nil
 }
 
 func preparedGoalBindingForLaunchRecord(rec launch.Record) (*launch.GoalBinding, error) {
@@ -270,7 +333,7 @@ func revalidatePreparedBootstrapPromptForLaunch(rec launch.Record, prompt string
 		if current == nil {
 			return fmt.Errorf("accepted prepared launch identity disappeared before bootstrap validation")
 		}
-		if !reflect.DeepEqual(current.Manifest, expected.Manifest) {
+		if current.Manifest.Generation != expected.Manifest.Generation || current.Digest != expected.Digest || !reflect.DeepEqual(current.Manifest, expected.Manifest) {
 			return fmt.Errorf("accepted prepared launch identity changed before bootstrap validation")
 		}
 	}
@@ -393,19 +456,35 @@ func writePreparedRunManifest(path string, manifest preparedRunManifest) error {
 }
 
 func readPreparedRunManifest(project, profile, session string) (preparedRunManifest, error) {
+	manifest, _, err := readPreparedRunManifestSnapshot(project, profile, session)
+	return manifest, err
+}
+
+func readPreparedRunManifestSnapshot(project, profile, session string) (preparedRunManifest, string, error) {
 	path := preparedRunPath(project, profile, session)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return preparedRunManifest{}, err
+		return preparedRunManifest{}, "", err
 	}
 	var manifest preparedRunManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return preparedRunManifest{}, fmt.Errorf("decode prepared run %s: %w", path, err)
+		return preparedRunManifest{}, "", fmt.Errorf("decode prepared run %s: %w", path, err)
 	}
 	if manifest.SchemaVersion != preparedRunSchema {
-		return preparedRunManifest{}, fmt.Errorf("prepared run schema %d is unsupported", manifest.SchemaVersion)
+		return preparedRunManifest{}, "", fmt.Errorf("prepared run schema %d is unsupported", manifest.SchemaVersion)
 	}
-	return manifest, nil
+	if strings.TrimSpace(manifest.Generation) == "" {
+		return preparedRunManifest{}, "", fmt.Errorf("prepared run %s has no immutable generation", path)
+	}
+	return manifest, digestRunArtifactBytes(data), nil
+}
+
+func newPreparedRunGeneration() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate prepared run identity: %w", err)
+	}
+	return hex.EncodeToString(raw[:]), nil
 }
 
 func digestRunArtifactBytes(data []byte) string {
@@ -645,8 +724,12 @@ func buildPreparedRunManifest(project, profile, session, shape, stagedRaw string
 		}
 	}
 	controlRoot, targetRoot := acceptedExecutionRoots(tm)
+	generation, err := newPreparedRunGeneration()
+	if err != nil {
+		return preparedRunManifest{}, err
+	}
 	manifest := preparedRunManifest{
-		SchemaVersion: preparedRunSchema, Project: project, Profile: profile, Session: session,
+		SchemaVersion: preparedRunSchema, Generation: generation, Project: project, Profile: profile, Session: session,
 		Namespace: profile + "/" + session, LaunchShape: shape, InitialRoster: initial,
 		StagedRoster: staged, Lead: tm.Lead, GoalText: binding.Text, GoalNamespace: binding.Namespace,
 		GoalDigest: binding.Digest, GoalSource: binding.Source, GoalDeliveryState: preparedRunGoalDeliveryPlanned,
@@ -675,7 +758,7 @@ func buildPreparedRunManifest(project, profile, session, shape, stagedRaw string
 		manifest.RoleDigests[roleID] = digest
 	}
 	for _, member := range tm.Members {
-		manifest.Members[member.Role] = acceptedMemberIdentity(tm, member)
+		manifest.Members[member.Role] = acceptedMemberIdentity(tm, member, profile, session)
 		bindingLine, err := expectedPreparedBootstrapBindingLine(tm, profile, session, member, binding)
 		if err != nil {
 			return preparedRunManifest{}, err
@@ -857,7 +940,7 @@ func validatePreparedLaunchBootstrapInputs(project, profile, session string, con
 		return fmt.Errorf("accepted bootstrap rows do not exactly match launch roster: members=%d digests=%d bindings=%d", len(tm.Members), len(manifest.BootstrapDigests), len(manifest.BootstrapBindings))
 	}
 	for _, member := range tm.Members {
-		actual := resolvedMemberIdentity(tm, member, modelOverrides, mergedBinaryArgs)
+		actual := resolvedMemberIdentity(tm, member, profile, session, modelOverrides, mergedBinaryArgs, false)
 		if accepted, ok := manifest.Members[member.Role]; !ok || !reflect.DeepEqual(accepted, actual) {
 			return fmt.Errorf("actual launch identity drift for %s: accepted=%+v actual=%+v", member.Role, accepted, actual)
 		}
@@ -955,7 +1038,7 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 		}
 		for _, member := range tm.Members {
 			accepted, ok := manifest.Members[member.Role]
-			current := acceptedMemberIdentity(tm, member)
+			current := acceptedMemberIdentity(tm, member, profile, session)
 			if !ok || !reflect.DeepEqual(accepted, current) {
 				add("member:"+member.Role, "drifted", fmt.Sprintf("accepted=%+v current=%+v", accepted, current), "return to preparation and accept the exact binary/model/effort/task/tool identity")
 			} else {

@@ -6,10 +6,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
@@ -277,6 +279,319 @@ func TestPreparedManagedLaunchDriftFailsBeforeObserver(t *testing.T) {
 	}
 }
 
+func TestPreparedDirectLiveLaunchRejectsCodexClaudeNativeAndToolDriftBeforeSideEffects(t *testing.T) {
+	for _, tc := range []struct {
+		binary string
+		name   string
+		extra  []string
+	}{
+		{binary: "codex", name: "native-effort", extra: []string{"--codex-args=-c model_reasoning_effort=low"}},
+		{binary: "claude", name: "native-effort", extra: []string{"--claude-args=--effort low"}},
+		{binary: "codex", name: "tool-allow", extra: []string{"--tool-allow", "mcp:unaccepted"}},
+		{binary: "claude", name: "tool-allow", extra: []string{"--tool-allow", "mcp:unaccepted"}},
+		{binary: "codex", name: "tool-block", extra: []string{"--tool-block", "mcp:unaccepted"}},
+		{binary: "claude", name: "tool-block", extra: []string{"--tool-block", "mcp:unaccepted"}},
+	} {
+		t.Run(tc.binary+"/"+tc.name, func(t *testing.T) {
+			setupFakeAMQSessionRoots(t)
+			dir := prepareRunStartBinaryFixture(t, tc.binary)
+			t.Setenv(envTmuxTarget, "new-session")
+			t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+			t.Setenv("TMUX_PANE", "%42")
+			oldPane := launchCurrentPaneIdentity
+			launchCurrentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+				return &tmuxpane.PaneIdentity{Session: "managed", WindowID: "@1", WindowName: "cto", PaneID: "%42"}, nil
+			}
+			t.Cleanup(func() { launchCurrentPaneIdentity = oldPane })
+			oldTerminal := launchStdinIsTerminal
+			launchStdinIsTerminal = func() bool { return true }
+			t.Cleanup(func() { launchStdinIsTerminal = oldTerminal })
+			observerCalls := 0
+			oldObserver := launchPlanObserver
+			launchPlanObserver = func(launch.Record, []string) { observerCalls++ }
+			t.Cleanup(func() { launchPlanObserver = oldObserver })
+			execCalls := 0
+			oldExec := amqSyscallExec
+			amqSyscallExec = func(string, []string, []string) error { execCalls++; return nil }
+			t.Cleanup(func() { amqSyscallExec = oldExec })
+			args := withoutArg(preparedLeadLaunchArgs(dir, tc.binary), "--dry-run")
+			args = append(args[:len(args)-1], append(tc.extra, args[len(args)-1])...)
+			agentUpArgs := append([]string{tc.binary}, args[:len(args)-1]...)
+			_, _, err := captureOutput(t, func() error { return runAgentUp(agentUpArgs) })
+			if err == nil || !strings.Contains(err.Error(), "actual launch record input") {
+				t.Fatalf("unaccepted direct %s input error = %v", tc.binary, err)
+			}
+			if observerCalls != 0 || execCalls != 0 {
+				t.Fatalf("unaccepted direct %s input reached observer=%d exec=%d", tc.binary, observerCalls, execCalls)
+			}
+			env, envErr := resolveAMQEnvForTeamLaunchProfile(dir, team.DefaultProfile, "prepared", "cto")
+			if envErr != nil {
+				t.Fatal(envErr)
+			}
+			agentDir := filepath.Join(env.Root, "agents", "cto")
+			if _, readErr := launch.Read(agentDir); !os.IsNotExist(readErr) {
+				t.Fatalf("unaccepted direct %s input left launch record: %v", tc.binary, readErr)
+			}
+		})
+	}
+
+	t.Run("claude-worker-no-preauthorize", func(t *testing.T) {
+		setupFakeAMQSessionRoots(t)
+		dir := t.TempDir()
+		if _, _, err := captureOutput(t, func() error {
+			return runRunStart([]string{
+				"--project", dir, "--profile", team.DefaultProfile, "--session", "prepared",
+				"--roles", "cto,qa", "--binary", "cto=codex,qa=claude", "--lead", "cto",
+				"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether,
+				"--goal", "Freeze complete Claude launcher authority", "--visibility", visibilityDetached, "--prepare",
+			}, "test")
+		}); err != nil {
+			t.Fatal(err)
+		}
+		manifest, err := readPreparedRunManifest(dir, team.DefaultProfile, "prepared")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(manifest.Members["qa"].LauncherAuthority) == 0 {
+			t.Fatal("prepared Claude worker did not freeze built-in launcher authority")
+		}
+		calls := 0
+		oldObserver := launchPlanObserver
+		launchPlanObserver = func(launch.Record, []string) { calls++ }
+		t.Cleanup(func() { launchPlanObserver = oldObserver })
+		_, _, err = captureOutput(t, func() error {
+			return runLaunch([]string{
+				"--project", dir, "--team-home", dir, "--team-profile", team.DefaultProfile,
+				"--role", "qa", "--me", "qa", "--session", "prepared", "--trust", trustModeApproveForMe,
+				"--no-preauthorize-inscope", "--dry-run", "claude",
+			})
+		})
+		if err == nil || calls != 0 {
+			t.Fatalf("Claude authority opt-out err=%v observer_calls=%d", err, calls)
+		}
+	})
+}
+
+func TestPreparedManifestMutationOrRemovalAfterRecordWriteRollsBackWithoutExec(t *testing.T) {
+	for _, action := range []string{"mutate", "remove"} {
+		t.Run(action, func(t *testing.T) {
+			setupFakeAMQSessionRoots(t)
+			dir := prepareRunStartBinaryFixture(t, "codex")
+			t.Setenv(envTmuxTarget, "new-session")
+			t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+			t.Setenv("TMUX_PANE", "%42")
+			oldPane := launchCurrentPaneIdentity
+			launchCurrentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+				return &tmuxpane.PaneIdentity{Session: "managed", WindowID: "@1", WindowName: "cto", PaneID: "%42"}, nil
+			}
+			t.Cleanup(func() { launchCurrentPaneIdentity = oldPane })
+			oldTerminal := launchStdinIsTerminal
+			launchStdinIsTerminal = func() bool { return true }
+			t.Cleanup(func() { launchStdinIsTerminal = oldTerminal })
+			oldAfterWrite := preparedLaunchAfterRecordWrite
+			preparedLaunchAfterRecordWrite = func(launch.Record) error {
+				path := preparedRunPath(dir, team.DefaultProfile, "prepared")
+				if action == "remove" {
+					return os.Remove(path)
+				}
+				manifest, err := readPreparedRunManifest(dir, team.DefaultProfile, "prepared")
+				if err != nil {
+					return err
+				}
+				manifest.PreparedAt = manifest.PreparedAt.Add(time.Second)
+				return writePreparedRunManifest(path, manifest)
+			}
+			t.Cleanup(func() { preparedLaunchAfterRecordWrite = oldAfterWrite })
+			execCalls := 0
+			oldExec := amqSyscallExec
+			amqSyscallExec = func(string, []string, []string) error { execCalls++; return nil }
+			t.Cleanup(func() { amqSyscallExec = oldExec })
+			args := withoutArg(preparedLeadLaunchArgs(dir, "codex"), "--dry-run")
+			_, _, err := captureOutput(t, func() error { return runLaunch(args) })
+			if err == nil || !strings.Contains(err.Error(), "accepted prepared launch identity") {
+				t.Fatalf("post-write manifest %s error = %v", action, err)
+			}
+			if execCalls != 0 {
+				t.Fatalf("post-write manifest %s executed %d times", action, execCalls)
+			}
+			env, envErr := resolveAMQEnvForTeamLaunchProfile(dir, team.DefaultProfile, "prepared", "cto")
+			if envErr != nil {
+				t.Fatal(envErr)
+			}
+			agentDir := filepath.Join(env.Root, "agents", "cto")
+			if _, readErr := launch.Read(agentDir); !os.IsNotExist(readErr) {
+				t.Fatalf("post-write manifest %s left launch record: %v", action, readErr)
+			}
+		})
+	}
+}
+
+func TestPreparedLaunchRollbackPreservesConcurrentRecordReplacement(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := prepareRunStartBinaryFixture(t, "codex")
+	t.Setenv(envTmuxTarget, "new-session")
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%42")
+	oldPane := launchCurrentPaneIdentity
+	launchCurrentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "managed", WindowID: "@1", WindowName: "cto", PaneID: "%42"}, nil
+	}
+	t.Cleanup(func() { launchCurrentPaneIdentity = oldPane })
+	oldTerminal := launchStdinIsTerminal
+	launchStdinIsTerminal = func() bool { return true }
+	t.Cleanup(func() { launchStdinIsTerminal = oldTerminal })
+	env, err := resolveAMQEnvForTeamLaunchProfile(dir, team.DefaultProfile, "prepared", "cto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(env.Root, "agents", "cto")
+	oldAfterWrite := preparedLaunchAfterRecordWrite
+	preparedLaunchAfterRecordWrite = func(rec launch.Record) error {
+		replacement := rec
+		replacement.Conversation = "concurrent-replacement"
+		replacement.StartedAt = replacement.StartedAt.Add(time.Second)
+		if err := launch.Write(agentDir, replacement); err != nil {
+			return err
+		}
+		return os.Remove(preparedRunPath(dir, team.DefaultProfile, "prepared"))
+	}
+	t.Cleanup(func() { preparedLaunchAfterRecordWrite = oldAfterWrite })
+	execCalls := 0
+	oldExec := amqSyscallExec
+	amqSyscallExec = func(string, []string, []string) error { execCalls++; return nil }
+	t.Cleanup(func() { amqSyscallExec = oldExec })
+	_, _, err = captureOutput(t, func() error {
+		return runLaunch(withoutArg(preparedLeadLaunchArgs(dir, "codex"), "--dry-run"))
+	})
+	if err == nil || execCalls != 0 {
+		t.Fatalf("post-write drift err=%v exec_calls=%d", err, execCalls)
+	}
+	stored, readErr := launch.Read(agentDir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if stored.Conversation != "concurrent-replacement" {
+		t.Fatalf("rollback overwrote concurrent replacement: %+v", stored)
+	}
+}
+
+func TestPreparedManifestLockOrderFreshPreparationAndDirectLaunchDoNotDeadlock(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	writerReady := make(chan struct{})
+	releaseWriter := make(chan struct{})
+	oldWriterSeam := preparedManifestWriterAcquired
+	preparedManifestWriterAcquired = func(string, string, string) error {
+		close(writerReady)
+		<-releaseWriter
+		return nil
+	}
+	t.Cleanup(func() { preparedManifestWriterAcquired = oldWriterSeam })
+	prepareDone := make(chan error, 1)
+	go func() {
+		prepareDone <- runRunStart([]string{
+			"--project", dir, "--profile", team.DefaultProfile, "--session", "prepared",
+			"--roles", "cto", "--binary", "cto=codex", "--lead", "cto",
+			"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether,
+			"--goal", "Prove nested fresh preparation lock order", "--visibility", visibilityDetached, "--prepare",
+		}, "test")
+	}()
+	select {
+	case <-writerReady:
+	case <-time.After(5 * time.Second):
+		t.Fatal("fresh preparation did not reach prepared-manifest admission")
+	}
+	launchDone := make(chan error, 1)
+	go func() {
+		launchDone <- runLaunch([]string{
+			"--project", dir, "--team-home", dir, "--role", "cto", "--me", "cto",
+			"--session", "prepared", "--trust", trustModeApproveForMe, "codex",
+		})
+	}()
+	select {
+	case err := <-launchDone:
+		if err == nil || !strings.Contains(err.Error(), "prepared.lock") {
+			t.Fatalf("direct launch while preparation owns manifest admission error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("direct launch deadlocked behind fresh preparation")
+	}
+	close(releaseWriter)
+	select {
+	case err := <-prepareDone:
+		if err != nil {
+			t.Fatalf("fresh nested preparation failed after release: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("fresh nested preparation deadlocked after release")
+	}
+}
+
+func TestPreparedExternalBindingPreservesOnlySameDeliveredGoalAttemptAndRecordIdentity(t *testing.T) {
+	contract, err := goalDeliveryContractForBinary("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm := team.Team{Project: "/project", Orchestrated: true, Lead: "cto", Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "sess"}}}
+	plannedRecord := launch.Record{
+		CWD: "/project", Binary: "codex", Session: "sess", Handle: "cto", Role: "cto", Root: "/mail/sess",
+		TeamProfile: team.DefaultProfile, External: true, AdoptionMode: adoptionModeExternalProjectLead,
+		Tmux: &launch.TmuxInfo{PaneID: "%42", Session: "tmux", Target: "external"},
+	}
+	plannedBinding := func(goal, attempt string) *launch.GoalBinding {
+		prompt := contract.prompt(goal, tm, team.DefaultProfile, "sess", "cto", attempt)
+		return contract.binding(goal, attempt, prompt, "prepared-run", "accepted")
+	}
+	deliveredBinding := func(goal, attempt string) *launch.GoalBinding {
+		prompt := contract.prompt(goal, tm, team.DefaultProfile, "sess", "cto", attempt)
+		binding := contract.binding(goal, attempt, prompt, "goal-control", "delivered")
+		binding.DeliveryState = goalBindingDeliveryDelivered
+		return binding
+	}
+	for _, tc := range []struct {
+		name             string
+		deliveredGoal    string
+		deliveredAttempt string
+		mutateIdentity   func(*launch.Record)
+		wantPreserved    bool
+	}{
+		{name: "same-goal-same-attempt", deliveredGoal: "ship", deliveredAttempt: "attempt-1", wantPreserved: true},
+		{name: "different-goal", deliveredGoal: "old", deliveredAttempt: "attempt-1"},
+		{name: "different-attempt", deliveredGoal: "ship", deliveredAttempt: "attempt-old"},
+		{name: "different-pane-identity", deliveredGoal: "ship", deliveredAttempt: "attempt-1", mutateIdentity: func(rec *launch.Record) { rec.Tmux.PaneID = "%99" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agentDir := filepath.Join(t.TempDir(), "agents", "cto")
+			planned := plannedRecord
+			planned.Tmux = &launch.TmuxInfo{PaneID: "%42", Session: "tmux", Target: "external"}
+			planned.GoalBinding = plannedBinding("ship", "attempt-1")
+			current := planned
+			current.Tmux = &launch.TmuxInfo{PaneID: "%42", Session: "tmux", Target: "external"}
+			current.GoalBinding = deliveredBinding(tc.deliveredGoal, tc.deliveredAttempt)
+			if tc.mutateIdentity != nil {
+				tc.mutateIdentity(&current)
+			}
+			if err := launch.Write(agentDir, current); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeExternalLeadLaunchRecord(agentDir, planned, "cto", "sess"); err != nil {
+				t.Fatal(err)
+			}
+			stored, err := launch.Read(agentDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			preserved := stored.GoalBinding != nil && stored.GoalBinding.DeliveryState == goalBindingDeliveryDelivered
+			if preserved != tc.wantPreserved {
+				t.Fatalf("preserved=%t want=%t binding=%+v", preserved, tc.wantPreserved, stored.GoalBinding)
+			}
+			if !tc.wantPreserved && !reflect.DeepEqual(stored.GoalBinding, planned.GoalBinding) {
+				t.Fatalf("mismatched prior binding did not persist planned state: got=%+v want=%+v", stored.GoalBinding, planned.GoalBinding)
+			}
+		})
+	}
+}
+
 func TestDirectLaunchWithoutPreparedManifestPreservesLegacyBehavior(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	dir := t.TempDir()
@@ -417,12 +732,83 @@ func TestPreparedExternalLeadMismatchWritesNoRecordOrPane(t *testing.T) {
 	}
 }
 
+func TestPreparedExternalStoredMutationAfterRegistrationPreventsWorkerExecution(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*launch.Record)
+	}{
+		{name: "goal", mutate: func(rec *launch.Record) {
+			changed := *rec.GoalBinding
+			changed.Goal = "unaccepted concurrent goal"
+			rec.GoalBinding = &changed
+		}},
+		{name: "attempt", mutate: func(rec *launch.Record) {
+			changed := *rec.GoalBinding
+			changed.AttemptID = "unaccepted-concurrent-attempt"
+			rec.GoalBinding = &changed
+		}},
+		{name: "pane-identity", mutate: func(rec *launch.Record) {
+			rec.Tmux.PaneID = "%99"
+			rec.Terminal.PaneID = "%99"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := seedTeam(t, team.Team{
+				Project: "", Orchestrated: true, Lead: "cto",
+				Members: []team.Member{
+					{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+					{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+				},
+			})
+			backend := useFakeTmuxBackend(t)
+			stubCurrentRunStartPane(t, "%42")
+			stubRunStartLeadWake(t)
+			liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
+			oldAfterRegister := runStartExternalLeadAfterRegister
+			runStartExternalLeadAfterRegister = func(project, profile, session, role string) error {
+				agentDir := filepath.Join(squadnamespace.AMQRoot(project, profile, session), "agents", role)
+				rec, err := launch.Read(agentDir)
+				if err != nil {
+					return err
+				}
+				tc.mutate(&rec)
+				return launch.Write(agentDir, rec)
+			}
+			t.Cleanup(func() { runStartExternalLeadAfterRegister = oldAfterRegister })
+			workerExecCalls := 0
+			oldWorkerExec := runStartExecuteExternalWorkers
+			runStartExecuteExternalWorkers = func(string, teamLaunchOptions) error {
+				workerExecCalls++
+				return nil
+			}
+			t.Cleanup(func() { runStartExecuteExternalWorkers = oldWorkerExec })
+			_, _, err := captureOutput(t, func() error { return runRunStart(liveArgs, "test") })
+			if err == nil || !strings.Contains(err.Error(), "changed before worker spawn") {
+				t.Fatalf("stored external mutation error = %v", err)
+			}
+			if workerExecCalls != 0 || len(backend.launches) != 0 {
+				t.Fatalf("stored external mutation reached worker executor=%d backend_launches=%d", workerExecCalls, len(backend.launches))
+			}
+		})
+	}
+}
+
 func preparedLeadLaunchArgs(dir, binary string) []string {
 	return []string{
 		"--project", dir, "--team-home", dir, "--team-profile", team.DefaultProfile,
 		"--role", "cto", "--me", "cto", "--session", "prepared",
-		"--trust", "sandboxed", "--dry-run", binary,
+		"--trust", trustModeApproveForMe, "--dry-run", binary,
 	}
+}
+
+func withoutArg(args []string, remove string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg != remove {
+			out = append(out, arg)
+		}
+	}
+	return out
 }
 
 func generatedBootstrapPrompt(argv []string) string {

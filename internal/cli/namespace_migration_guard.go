@@ -221,6 +221,10 @@ func namespaceAdmissionEndpointLockPath(projectDir, profile, session string) str
 	return filepath.Join(projectDir, team.DirName, namespaceAdmissionDir, squadnamespace.NormalizeProfile(profile), strings.TrimSpace(session)+".lock")
 }
 
+func preparedManifestAdmissionLockPath(projectDir, profile, session string) string {
+	return filepath.Join(projectDir, team.DirName, namespaceAdmissionDir, squadnamespace.NormalizeProfile(profile), strings.TrimSpace(session)+".prepared.lock")
+}
+
 func acquireNamespaceAdmissionPaths(projectDir string, shared bool, paths ...string) (*namespaceAdmissionLocks, error) {
 	paths = dedupeMigrationStrings(paths)
 	sort.Strings(paths)
@@ -258,6 +262,26 @@ func acquireNamespaceWriterAdmission(projectDir, profile, session string) (*name
 		return nil, err
 	}
 	return acquireNamespaceAdmissionPaths(projectDir, true, namespaceAdmissionEndpointLockPath(projectDir, profile, session))
+}
+
+// acquirePreparedManifestReaderAdmission serializes a live prepared launch
+// against every sanctioned preparation writer. The shared lock is held from
+// accepted-state read through launch-record write and exec.
+func acquirePreparedManifestReaderAdmission(projectDir, profile, session string) (*namespaceAdmissionLocks, error) {
+	if err := team.ValidateSessionName(strings.TrimSpace(session)); err != nil {
+		return nil, fmt.Errorf("prepared manifest reader admission requires valid session: %w", err)
+	}
+	return acquireNamespaceAdmissionPaths(projectDir, true, preparedManifestAdmissionLockPath(projectDir, profile, session))
+}
+
+// acquirePreparedManifestWriterAdmission is the matching exclusive authority
+// for artifact preparation. It composes with the namespace shared admission:
+// migration excludes both paths, while a live launch excludes preparation.
+func acquirePreparedManifestWriterAdmission(projectDir, profile, session string) (*namespaceAdmissionLocks, error) {
+	if err := team.ValidateSessionName(strings.TrimSpace(session)); err != nil {
+		return nil, fmt.Errorf("prepared manifest writer admission requires valid session: %w", err)
+	}
+	return acquireNamespaceAdmissionPaths(projectDir, false, preparedManifestAdmissionLockPath(projectDir, profile, session))
 }
 
 func acquireNamespaceProfileWriterAdmission(projectDir, profile string) (*namespaceAdmissionLocks, error) {
