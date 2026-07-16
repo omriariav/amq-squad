@@ -33,6 +33,7 @@ func prepareIssue470Run(t *testing.T, project, profile string, extras ...string)
 	if _, _, err := captureOutput(t, func() error { return runRunStart(args, "test") }); err != nil {
 		t.Fatalf("prepare accepted issue-470 fixture: %v", err)
 	}
+	stubSuccessfulRunStartGoalDelivery(t)
 }
 
 func setupStrictFreshProjectAMQ(t *testing.T) string {
@@ -291,6 +292,7 @@ func TestIssue470RunStartFreshAMQMatrix(t *testing.T) {
 					} else {
 						liveArgs = append(liveArgs, "--visibility", "detached")
 					}
+					stubSuccessfulRunStartGoalDelivery(t)
 					_, _, err = captureOutput(t, func() error { return runRunStart(append(liveArgs, "--go"), "test") })
 					if err != nil {
 						t.Fatalf("live run: %v", err)

@@ -299,7 +299,10 @@ func TestBootstrapGoalBindingModeStrictClaudeVerification(t *testing.T) {
 		Lead:          "cto",
 		ExecutionMode: executionModeProjectLead,
 	}
-	validLegacy := launch.Record{Binary: "claude", Role: "cto", GoalBinding: &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship"`}}
+	validLegacy := launch.Record{Binary: "claude", Role: "cto", GoalBinding: &launch.GoalBinding{
+		Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: `/goal --goal "ship"`,
+		Detail: "native /goal delivered as a first-class claim-once control action",
+	}}
 	if got := bootstrapGoalBindingMode(validLegacy, tm); got != "native_goal" {
 		t.Fatalf("valid legacy Claude binding mode = %q", got)
 	}

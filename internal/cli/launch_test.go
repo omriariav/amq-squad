@@ -44,26 +44,44 @@ func TestGoalBindingFromArgsUsesStructuredPromptForCodex(t *testing.T) {
 	}
 }
 
-func TestLaunchRecordHasGoalBindingStrictClaude(t *testing.T) {
-	tm := team.Team{ExecutionMode: executionModeProjectLead}
-	withAttempt := nativeGoalControlPrompt("ship", tm, team.DefaultProfile, "issue-460", "cto", "attempt-460")
-	tests := []struct {
-		name    string
-		binding launch.GoalBinding
-		want    bool
-	}{
-		{name: "valid legacy", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship"`}, want: true},
-		{name: "valid typed", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: withAttempt, Goal: "ship", AttemptID: "attempt-460"}, want: true},
-		{name: "corrupt token", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship" --unknown value`}},
-		{name: "partial context", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship" --session issue-460`}},
-		{name: "typed goal mismatch", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: withAttempt, Goal: "other", AttemptID: "attempt-460"}},
-		{name: "typed attempt mismatch", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: withAttempt, Goal: "ship", AttemptID: "other-attempt"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rec := launch.Record{Binary: "claude", GoalBinding: &tt.binding}
-			if got := launchRecordHasGoalBinding(rec); got != tt.want {
-				t.Fatalf("launchRecordHasGoalBinding(%+v) = %t, want %t", tt.binding, got, tt.want)
+func TestLaunchRecordGoalBindingDeliveryStateUpgradeCompatibility(t *testing.T) {
+	tm := team.Team{Project: "/tmp/project", Lead: "cto", ExecutionMode: executionModeProjectLead}
+	for _, binary := range []string{"codex", "claude"} {
+		t.Run(binary, func(t *testing.T) {
+			contract, err := goalDeliveryContractForBinary(binary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const attempt = "attempt-460"
+			prompt := contract.prompt("ship", tm, team.DefaultProfile, "issue-460", "cto", attempt)
+			binding := func(source, state, detail string) launch.GoalBinding {
+				got := *contract.binding("ship", attempt, prompt, source, detail)
+				got.DeliveryState = state
+				return got
+			}
+			legacyDeliveredDetail := contract.Label + " delivered as a first-class claim-once control action"
+			tests := []struct {
+				name    string
+				binding launch.GoalBinding
+				want    bool
+			}{
+				{name: "new delivered", binding: binding("goal-control", goalBindingDeliveryDelivered, "delivered"), want: true},
+				{name: "new reserved", binding: binding("goal-control", goalBindingDeliveryReserved, "reserved")},
+				{name: "new prepared", binding: binding("prepared-run", goalBindingDeliveryPrepared, "accepted")},
+				{name: "new unknown state", binding: binding("goal-control", "future", legacyDeliveredDetail)},
+				{name: "legacy launch argv", binding: binding("launch-argv", "", "process input"), want: true},
+				{name: "legacy delivered goal control", binding: binding("goal-control", "", legacyDeliveredDetail), want: true},
+				{name: "legacy reserved goal control", binding: binding("goal-control", "", contract.Label+" reserved as a claim-once control action")},
+				{name: "legacy prepared run", binding: binding("prepared-run", "", legacyDeliveredDetail)},
+				{name: "legacy unknown source", binding: binding("goal-runtime", "", legacyDeliveredDetail)},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					rec := launch.Record{Binary: binary, GoalBinding: &tt.binding}
+					if got := launchRecordHasGoalBinding(rec); got != tt.want {
+						t.Fatalf("launchRecordHasGoalBinding(%+v) = %t, want %t", tt.binding, got, tt.want)
+					}
+				})
 			}
 		})
 	}

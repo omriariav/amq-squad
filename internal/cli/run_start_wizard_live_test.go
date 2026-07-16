@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
@@ -135,7 +136,7 @@ func TestFinishFreshWizardTwoApprovalsPrepareThenLaunchMinimalExistingProfileArg
 		t.Fatalf("live invocation=%v", live)
 	}
 	joined := strings.Join(live, " ")
-	for _, want := range []string{"--project", "--profile", "--session", "--launch-shape", "--visibility", "--layout-preset", "--launcher-pane", "--goal", "--external-lead", "--go"} {
+	for _, want := range []string{"--project", "--profile", "--session", "--launch-shape", "--visibility", "--layout-preset", "--launcher-pane", "--goal", "--goal-source", "--goal-digest", "--external-lead", "--go"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("live invocation missing %s: %v", want, live)
 		}
@@ -211,13 +212,14 @@ func TestFinishWizardProjectPreviewNoIsReadOnly(t *testing.T) {
 	if len(*projectCalls) != 1 || hasWizardArg((*projectCalls)[0], "--go") {
 		t.Fatalf("calls = %v", *projectCalls)
 	}
-	if !strings.Contains(prompt.String(), "Launch now? [y/N]") {
-		t.Fatalf("missing default-No confirmation: %q", prompt.String())
+	if !strings.Contains(prompt.String(), "Prepare coordination artifacts now? [y/N]") {
+		t.Fatalf("missing default-No preparation confirmation: %q", prompt.String())
 	}
 }
 
-func TestFinishWizardProjectYesAddsOnlyGoAndRechecks(t *testing.T) {
+func TestFinishWizardProjectTwoApprovalsUsePreparedLiveArgs(t *testing.T) {
 	projectCalls, _ := withWizardExecutionSeams(t)
+	runStartWizardPrepareConfirm = func(io.Reader, io.Writer) (bool, error) { return true, nil }
 	runStartWizardConfirm = func(io.Reader, io.Writer) (bool, error) { return true, nil }
 	spec := validWizardProjectSpec(t)
 	stdout, _, err := captureOutput(t, func() error {
@@ -226,8 +228,14 @@ func TestFinishWizardProjectYesAddsOnlyGoAndRechecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertOnlyGoDelta(t, *projectCalls)
-	assertPrintedCanonicalPair(t, stdout, "run", "start", (*projectCalls)[0], (*projectCalls)[1])
+	if len(*projectCalls) != 3 || !hasWizardArg((*projectCalls)[0], "--prepare-plan") || !hasWizardArg((*projectCalls)[1], "--prepare") || !hasWizardArg((*projectCalls)[2], "--go") {
+		t.Fatalf("calls=%v", *projectCalls)
+	}
+	for _, want := range []string{"--goal", "--goal-source", "--goal-digest"} {
+		if !hasWizardArg((*projectCalls)[2], want) {
+			t.Fatalf("live args missing %s: %v", want, (*projectCalls)[2])
+		}
+	}
 	for _, prompt := range []string{"Launch now?", "Scope", "Choose [1]"} {
 		if strings.Contains(stdout, prompt) {
 			t.Fatalf("prompt leaked to stdout: %q in %s", prompt, stdout)
@@ -292,10 +300,11 @@ func TestFinishWizardBlockedSuggestedFirstNeverReachesExplicitYes(t *testing.T) 
 
 func TestFinishWizardLiveRechecksAndSurfacesNewCollision(t *testing.T) {
 	projectCalls, _ := withWizardExecutionSeams(t)
+	runStartWizardPrepareConfirm = func(io.Reader, io.Writer) (bool, error) { return true, nil }
 	runStartWizardConfirm = func(io.Reader, io.Writer) (bool, error) { return true, nil }
 	runStartWizardProjectExecute = func(args []string, version string) error {
 		*projectCalls = append(*projectCalls, append([]string(nil), args...))
-		if len(*projectCalls) == 2 {
+		if len(*projectCalls) == 3 {
 			return errors.New("workstream already exists")
 		}
 		return nil
@@ -304,7 +313,9 @@ func TestFinishWizardLiveRechecksAndSurfacesNewCollision(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("second canonical check error = %v calls=%v", err, *projectCalls)
 	}
-	assertOnlyGoDelta(t, *projectCalls)
+	if len(*projectCalls) != 3 || !hasWizardArg((*projectCalls)[0], "--prepare-plan") || !hasWizardArg((*projectCalls)[1], "--prepare") || !hasWizardArg((*projectCalls)[2], "--go") {
+		t.Fatalf("unexpected staged calls=%v", *projectCalls)
+	}
 }
 
 func resumeWizardFixture(fingerprint string) (runwizard.Spec, runwizard.ProjectContext) {
@@ -337,19 +348,27 @@ func existingRunStartWizardFixture(t *testing.T, fingerprint string) (runwizard.
 }
 
 func TestFinishWizardExistingRunStartFreshnessGates(t *testing.T) {
-	t.Run("unchanged twice", func(t *testing.T) {
+	t.Run("unchanged through preparation and launch", func(t *testing.T) {
 		projectCalls, _ := withWizardExecutionSeams(t)
 		spec, ctx := existingRunStartWizardFixture(t, "A")
 		inspections := 0
 		runStartWizardInspectProject = func(string) (runwizard.ProjectContext, error) { inspections++; return ctx, nil }
+		runStartWizardPrepareConfirm = func(io.Reader, io.Writer) (bool, error) { return true, nil }
 		runStartWizardConfirm = func(io.Reader, io.Writer) (bool, error) { return true, nil }
 		if err := finishRunStartWizard(spec, "test", strings.NewReader(""), io.Discard); err != nil {
 			t.Fatal(err)
 		}
-		if inspections != 2 {
+		if inspections != 3 {
 			t.Fatalf("inspections=%d", inspections)
 		}
-		assertOnlyGoDelta(t, *projectCalls)
+		if len(*projectCalls) != 3 || !hasWizardArg((*projectCalls)[0], "--prepare-plan") || !hasWizardArg((*projectCalls)[1], "--prepare") || !hasWizardArg((*projectCalls)[2], "--go") {
+			t.Fatalf("proposal/preparation/live sequence=%v", *projectCalls)
+		}
+		for _, want := range []string{"--goal", "--goal-source", "--goal-digest"} {
+			if !hasWizardArg((*projectCalls)[2], want) {
+				t.Fatalf("live args missing reviewed %s: %v", want, (*projectCalls)[2])
+			}
+		}
 	})
 
 	t.Run("delta before preview", func(t *testing.T) {
@@ -366,7 +385,7 @@ func TestFinishWizardExistingRunStartFreshnessGates(t *testing.T) {
 		}
 	})
 
-	t.Run("delta after yes", func(t *testing.T) {
+	t.Run("delta before preparation", func(t *testing.T) {
 		projectCalls, _ := withWizardExecutionSeams(t)
 		spec, current := existingRunStartWizardFixture(t, "A")
 		_, changed := existingRunStartWizardFixture(t, "B")
@@ -378,10 +397,32 @@ func TestFinishWizardExistingRunStartFreshnessGates(t *testing.T) {
 			}
 			return changed, nil
 		}
+		runStartWizardPrepareConfirm = func(io.Reader, io.Writer) (bool, error) { return true, nil }
 		runStartWizardConfirm = func(io.Reader, io.Writer) (bool, error) { return true, nil }
 		err := finishRunStartWizard(spec, "test", strings.NewReader(""), io.Discard)
 		var restart *wizardRestartError
 		if !errors.As(err, &restart) || len(*projectCalls) != 1 || hasWizardArg((*projectCalls)[0], "--go") {
+			t.Fatalf("err=%v calls=%v", err, *projectCalls)
+		}
+	})
+
+	t.Run("delta before live", func(t *testing.T) {
+		projectCalls, _ := withWizardExecutionSeams(t)
+		spec, current := existingRunStartWizardFixture(t, "A")
+		_, changed := existingRunStartWizardFixture(t, "B")
+		inspections := 0
+		runStartWizardInspectProject = func(string) (runwizard.ProjectContext, error) {
+			inspections++
+			if inspections < 3 {
+				return current, nil
+			}
+			return changed, nil
+		}
+		runStartWizardPrepareConfirm = func(io.Reader, io.Writer) (bool, error) { return true, nil }
+		runStartWizardConfirm = func(io.Reader, io.Writer) (bool, error) { return true, nil }
+		err := finishRunStartWizard(spec, "test", strings.NewReader(""), io.Discard)
+		var restart *wizardRestartError
+		if !errors.As(err, &restart) || len(*projectCalls) != 2 || !hasWizardArg((*projectCalls)[1], "--prepare") {
 			t.Fatalf("err=%v calls=%v", err, *projectCalls)
 		}
 	})
@@ -398,6 +439,95 @@ func TestFinishWizardExistingRunStartFreshnessGates(t *testing.T) {
 			}
 			if inspections != 1 || len(*projectCalls) != 1 {
 				t.Fatalf("inspections=%d calls=%v", inspections, *projectCalls)
+			}
+		})
+	}
+}
+
+func TestExistingProfileWizardRealBackendPreparesMissingReadyAndDriftedManifestsBeforeLaunch(t *testing.T) {
+	for _, profile := range []string{team.DefaultProfile, "release"} {
+		t.Run(profile, func(t *testing.T) {
+			withWizardExecutionSeams(t)
+			project := t.TempDir()
+			const session = "s"
+			tm := team.Team{
+				Project: project, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
+				ControlRoot: project, TargetProjectRoot: project,
+				Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: session}},
+			}
+			if err := team.WriteProfile(project, profile, tm); err != nil {
+				t.Fatal(err)
+			}
+			summary := runwizard.SessionSummary{
+				Name: session, Source: runwizard.SessionSourceSuggestedFirst, Fingerprint: "stable",
+				Members:        []runwizard.SessionMemberSummary{{Role: "cto", Binary: "codex", Action: runwizard.MemberActionFresh}},
+				Classification: runwizard.RunClassification{State: runwizard.RunStateNotStarted, Backend: runwizard.BackendRunStart, Executable: true}, Fresh: 1,
+			}
+			spec := runwizard.Spec{
+				Scope: "project", Project: project, Profile: profile, ProfileBranch: runwizard.ProfileBranchExisting,
+				Visibility: visibilityDetached, LauncherPane: launcherPaneKeep,
+				LaunchShape: runwizard.LaunchShapeWorkingTeamTogether, Goal: "Execute the accepted existing profile",
+			}
+			spec.SelectExistingSession(summary)
+			spec.LaunchShape = runwizard.LaunchShapeWorkingTeamTogether
+			spec.Goal = "Execute the accepted existing profile"
+			spec.Visibility = visibilityDetached
+			spec.LauncherPane = launcherPaneKeep
+			ctx := runwizard.ProjectContext{Project: project, Profiles: []runwizard.ProfileSummary{{Name: profile, MemberCount: 1, Sessions: []runwizard.SessionSummary{summary}}}}
+			runStartWizardInspectProject = func(string) (runwizard.ProjectContext, error) { return ctx, nil }
+			runStartWizardProjectExecute = func(args []string, version string) error { return runRunStart(args, version) }
+			runStartWizardPrepareConfirm = func(io.Reader, io.Writer) (bool, error) { return true, nil }
+			allowLaunch := false
+			runStartWizardConfirm = func(io.Reader, io.Writer) (bool, error) { return allowLaunch, nil }
+			upCalls, goalCalls := 0, 0
+			stubRunStartGoalDelivery(t,
+				func([]string, string) error { upCalls++; return nil },
+				func([]string, string) error { goalCalls++; return nil },
+				func(string, string, string, string) (runStartLeadReadiness, error) {
+					return runStartLeadReadiness{Ready: true, Detail: "live"}, nil
+				},
+				func(time.Duration) {}, time.Now,
+			)
+			runWizard := func() {
+				t.Helper()
+				if _, _, err := captureOutput(t, func() error { return finishRunStartWizard(spec, "test", strings.NewReader(""), io.Discard) }); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if _, err := os.Stat(preparedRunPath(project, profile, session)); !os.IsNotExist(err) {
+				t.Fatalf("fixture unexpectedly prepared: %v", err)
+			}
+			runWizard()
+			if result := calculateRunReadiness(project, profile, session); !result.Ready {
+				t.Fatalf("missing manifest was not prepared: %+v", result)
+			}
+			runWizard()
+			if result := calculateRunReadiness(project, profile, session); !result.Ready {
+				t.Fatalf("ready manifest did not remain ready: %+v", result)
+			}
+			briefPath := briefPathForProfile(project, profile, session)
+			brief, err := os.ReadFile(briefPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(briefPath, append(brief, []byte("\noperator-approved drift\n")...), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if result := calculateRunReadiness(project, profile, session); result.Ready || readinessRow(result, "brief").Status != "drifted" {
+				t.Fatalf("drifted manifest was not detected: %+v", result)
+			}
+			runWizard()
+			if result := calculateRunReadiness(project, profile, session); !result.Ready {
+				t.Fatalf("explicit preparation approval did not accept current drifted artifact: %+v", result)
+			}
+			if upCalls != 0 || goalCalls != 0 {
+				t.Fatalf("launch occurred before separate approval: up=%d goal=%d", upCalls, goalCalls)
+			}
+			allowLaunch = true
+			runWizard()
+			if upCalls != 1 || goalCalls != 1 {
+				t.Fatalf("approved prepared run did not launch and deliver exactly once: up=%d goal=%d", upCalls, goalCalls)
 			}
 		})
 	}
@@ -841,7 +971,7 @@ func TestBubbleWizardReturnsFromProgramThenConfirmsOnSameTTY(t *testing.T) {
 	oldOpen := runStartWizardOpenTTY
 	oldProgram := runStartWizardBubbleProgram
 	t.Cleanup(func() { runStartWizardOpenTTY, runStartWizardBubbleProgram = oldOpen, oldProgram })
-	tty := wizardTestTTY{reader: bytes.NewReader([]byte("yes\n")), writes: &bytes.Buffer{}}
+	tty := wizardTestTTY{reader: bytes.NewReader([]byte("yes\nyes\n")), writes: &bytes.Buffer{}}
 	runStartWizardOpenTTY = func() (io.ReadWriteCloser, error) { return tty, nil }
 	spec := validWizardProjectSpec(t)
 	runStartWizardBubbleProgram = func(in io.Reader, out io.Writer, opts runwizard.NumberedOptions) (runwizard.BubbleResult, error) {
@@ -850,7 +980,7 @@ func TestBubbleWizardReturnsFromProgramThenConfirmsOnSameTTY(t *testing.T) {
 	if err := runBubbleRunStartWizard([]string{"--scope", "project", "--project", spec.Project}, "test"); err != nil {
 		t.Fatal(err)
 	}
-	assertOnlyGoDelta(t, *projectCalls)
+	assertPreparedWizardSequence(t, *projectCalls)
 	if !strings.Contains(tty.writes.String(), "Launch now? [y/N]") {
 		t.Fatalf("confirmation not written to same tty: %q", tty.writes.String())
 	}
@@ -1101,7 +1231,7 @@ func TestBubbleWizardProgramOwnsScopeInputBeforeLaunchConfirmation(t *testing.T)
 	oldOpen := runStartWizardOpenTTY
 	oldProgram := runStartWizardBubbleProgram
 	t.Cleanup(func() { runStartWizardOpenTTY, runStartWizardBubbleProgram = oldOpen, oldProgram })
-	tty := wizardTestTTY{reader: &wizardLineReader{lines: []string{"1\n", "yes\n"}}, writes: &bytes.Buffer{}}
+	tty := wizardTestTTY{reader: &wizardLineReader{lines: []string{"1\n", "yes\n", "yes\n"}}, writes: &bytes.Buffer{}}
 	runStartWizardOpenTTY = func() (io.ReadWriteCloser, error) { return tty, nil }
 	spec := validWizardProjectSpec(t)
 	runStartWizardBubbleProgram = func(in io.Reader, out io.Writer, opts runwizard.NumberedOptions) (runwizard.BubbleResult, error) {
@@ -1114,7 +1244,19 @@ func TestBubbleWizardProgramOwnsScopeInputBeforeLaunchConfirmation(t *testing.T)
 	if err := runBubbleRunStartWizard([]string{"--project", spec.Project}, "test"); err != nil {
 		t.Fatal(err)
 	}
-	assertOnlyGoDelta(t, *projectCalls)
+	assertPreparedWizardSequence(t, *projectCalls)
+}
+
+func assertPreparedWizardSequence(t *testing.T, calls [][]string) {
+	t.Helper()
+	if len(calls) != 3 || !hasWizardArg(calls[0], "--prepare-plan") || !hasWizardArg(calls[1], "--prepare") || !hasWizardArg(calls[2], "--go") {
+		t.Fatalf("proposal/preparation/live sequence = %v", calls)
+	}
+	for _, want := range []string{"--goal", "--goal-source", "--goal-digest"} {
+		if !hasWizardArg(calls[2], want) {
+			t.Fatalf("live args missing reviewed %s: %v", want, calls[2])
+		}
+	}
 }
 
 func assertOnlyGoDelta(t *testing.T, calls [][]string) {

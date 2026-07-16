@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
@@ -20,10 +21,11 @@ import (
 const acceptedRunStartTestGoal = "Execute the accepted run-start fixture"
 
 // prepareRunStartTestInvocation upgrades a legacy live-launch fixture to the
-// accepted two-phase contract. The returned argv performs only the live phase;
-// a synthetic goal is used for preparation but omitted from live argv so tests
-// that are not about goal delivery do not acquire that side effect.
-func prepareRunStartTestInvocation(t *testing.T, args []string) []string {
+// accepted two-phase contract. The returned argv performs only the live phase.
+// Omitted live flags now hydrate and deliver the accepted goal, so legacy tests
+// get a successful delivery seam unless they explicitly preserve a seam that
+// exercises delivery behavior.
+func prepareRunStartTestInvocation(t *testing.T, args []string, preserveGoalDeliverySeam ...bool) []string {
 	t.Helper()
 	base := make([]string, 0, len(args)+2)
 	for _, arg := range args {
@@ -47,7 +49,24 @@ func prepareRunStartTestInvocation(t *testing.T, args []string) []string {
 	if _, _, err := captureOutput(t, func() error { return runRunStart(prepareArgs, "test") }); err != nil {
 		t.Fatalf("prepare accepted run-start fixture: %v", err)
 	}
+	if len(preserveGoalDeliverySeam) == 0 || !preserveGoalDeliverySeam[0] {
+		stubSuccessfulRunStartGoalDelivery(t)
+	}
 	return append(base, "--go")
+}
+
+func stubSuccessfulRunStartGoalDelivery(t *testing.T) {
+	t.Helper()
+	prevGoal := runStartGoalWithVersion
+	prevReady := runStartLeadReadyCheck
+	runStartGoalWithVersion = func([]string, string) error { return nil }
+	runStartLeadReadyCheck = func(string, string, string, string) (runStartLeadReadiness, error) {
+		return runStartLeadReadiness{Ready: true, Detail: "test lead ready"}, nil
+	}
+	t.Cleanup(func() {
+		runStartGoalWithVersion = prevGoal
+		runStartLeadReadyCheck = prevReady
+	})
 }
 
 // withStubbedTmux swaps orchestrateTmuxRun for a recorder and restores it.
@@ -475,7 +494,7 @@ func TestRunStartExternalLeadGoalDeliveredToBoundLead(t *testing.T) {
 		func(time.Duration) {},
 		time.Now,
 	)
-	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--goal", "ship it", "--go"})
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--goal", "ship it", "--go"}, true)
 
 	if _, _, err := captureOutput(t, func() error {
 		return runRunStart(liveArgs, "test")
@@ -493,6 +512,87 @@ func TestRunStartExternalLeadGoalDeliveredToBoundLead(t *testing.T) {
 	}
 	if strings.Contains(goal, "--register-orchestrator") {
 		t.Fatalf("external-lead goal delivery must not re-register orchestrator: %q", goal)
+	}
+}
+
+func TestRunStartGoHydratesOmittedAcceptedGoalAcrossBinariesAndLeadModes(t *testing.T) {
+	for _, binary := range []string{"codex", "claude"} {
+		for _, external := range []bool{false, true} {
+			name := binary + "/managed"
+			if external {
+				name = binary + "/external"
+			}
+			t.Run(name, func(t *testing.T) {
+				dir := seedTeam(t, team.Team{
+					Orchestrated: true, Lead: "cto",
+					Members: []team.Member{
+						{Role: "cto", Binary: binary, Handle: "cto", Session: "sess"},
+						{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+					},
+				})
+				args := []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--go"}
+				if external {
+					useFakeTmuxBackend(t)
+					stubCurrentRunStartPane(t, "%42")
+					stubRunStartLeadWake(t)
+					args = append(args, "--external-lead")
+				}
+				liveArgs := prepareRunStartTestInvocation(t, args)
+				var goalCalls [][]string
+				stubRunStartGoalDelivery(t,
+					func([]string, string) error { return nil },
+					func(args []string, _ string) error {
+						goalCalls = append(goalCalls, append([]string(nil), args...))
+						return nil
+					},
+					func(string, string, string, string) (runStartLeadReadiness, error) {
+						return runStartLeadReadiness{Ready: true, Detail: "live"}, nil
+					},
+					func(time.Duration) {}, time.Now,
+				)
+				if _, _, err := captureOutput(t, func() error { return runRunStart(liveArgs, "test") }); err != nil {
+					t.Fatalf("omitted live goal must hydrate and deliver: %v", err)
+				}
+				goalValue := ""
+				if len(goalCalls) == 1 {
+					for i := 0; i+1 < len(goalCalls[0]); i++ {
+						if goalCalls[0][i] == "--goal" {
+							goalValue = goalCalls[0][i+1]
+							break
+						}
+					}
+				}
+				if len(goalCalls) != 1 || goalValue != acceptedRunStartTestGoal {
+					t.Fatalf("hydrated goal calls=%v", goalCalls)
+				}
+			})
+		}
+	}
+}
+
+func TestRunStartExternalLeadGoalMismatchBlocksBeforeRegistrationOrWorkerSpawn(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true, Lead: "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+		},
+	})
+	backend := useFakeTmuxBackend(t)
+	stubCurrentRunStartPane(t, "%42")
+	stubRunStartLeadWake(t)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--external-lead", "--go"})
+	liveArgs = append(liveArgs, "--goal", "substituted goal")
+	_, _, err := captureOutput(t, func() error { return runRunStart(liveArgs, "test") })
+	if err == nil || !strings.Contains(err.Error(), "live goal text mismatch") {
+		t.Fatalf("external mismatch error=%v", err)
+	}
+	if len(backend.launches) != 0 {
+		t.Fatalf("external mismatch spawned workers: %+v", backend.launches)
+	}
+	agentDir := filepath.Join(squadnamespace.AMQRoot(dir, team.DefaultProfile, "sess"), "agents", "cto")
+	if _, readErr := launch.Read(agentDir); !os.IsNotExist(readErr) {
+		t.Fatalf("external mismatch registered lead before validation: %v", readErr)
 	}
 }
 
@@ -993,7 +1093,7 @@ func TestRunStartGoGoalWaitsForLeadReadiness(t *testing.T) {
 		func(d time.Duration) { sleeps = append(sleeps, d) },
 		time.Now,
 	)
-	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"})
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, true)
 
 	_, _, err := captureOutput(t, func() error {
 		return runRunStart(liveArgs, "test")
@@ -1044,7 +1144,7 @@ func TestRunStartGoGoalFailurePrintsQuotedRetryCommand(t *testing.T) {
 	prevTimeout := runStartLeadReadyTimeout
 	runStartLeadReadyTimeout = time.Millisecond
 	t.Cleanup(func() { runStartLeadReadyTimeout = prevTimeout })
-	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", goal, "--go"})
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", goal, "--go"}, true)
 
 	_, stderr, err := captureOutput(t, func() error {
 		return runRunStart(liveArgs, "test")
@@ -1080,7 +1180,7 @@ func TestRunStartGoGoalDeliveryFailureAfterReadyPrintsRetryCommand(t *testing.T)
 		func(time.Duration) {},
 		time.Now,
 	)
-	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"})
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, true)
 
 	_, stderr, err := captureOutput(t, func() error {
 		return runRunStart(liveArgs, "test")
@@ -1117,7 +1217,7 @@ func TestRunStartGoUnconfirmedGoalSubmitWarnsAndContinues(t *testing.T) {
 		func(time.Duration) {},
 		time.Now,
 	)
-	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"})
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, true)
 
 	_, stderr, err := captureOutput(t, func() error {
 		return runRunStart(liveArgs, "test")
@@ -1188,7 +1288,7 @@ func TestRunStartGoQueuedGoalSubmitReportsQueueAndContinues(t *testing.T) {
 		func(time.Duration) {},
 		time.Now,
 	)
-	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"})
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, true)
 
 	_, stderr, err := captureOutput(t, func() error {
 		return runRunStart(liveArgs, "test")

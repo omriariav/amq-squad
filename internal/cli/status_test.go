@@ -2935,10 +2935,11 @@ func TestStatusJSONProvesExternalOrchestratorBinding(t *testing.T) {
 		WakePID:  4321,
 		Tmux:     &launch.TmuxInfo{Session: "global", WindowID: "@1", PaneID: "%99", Target: "external"},
 		GoalBinding: &launch.GoalBinding{
-			Mode:       "native_goal",
-			NativeGoal: true,
-			Source:     "goal-control",
-			Command:    `/goal --goal "ship safely"`,
+			Mode:          "native_goal",
+			NativeGoal:    true,
+			Source:        "goal-control",
+			Command:       `/goal --goal "ship safely"`,
+			DeliveryState: goalBindingDeliveryDelivered,
 		},
 	})
 	writeWakeLock(t, agentDir, wakeLockFile{PID: 4321, Root: filepath.Join(base, "issue-96"), Started: time.Now()})

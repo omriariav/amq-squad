@@ -100,6 +100,76 @@ func prepareRunStartFixture(t *testing.T, shape string) string {
 	return dir
 }
 
+func TestPreparedRunLiveGoalBindingHydratesAcceptedManifestAndRejectsSuppliedMismatch(t *testing.T) {
+	dir := prepareRunStartFixture(t, runwizard.LaunchShapeWorkingTeamTogether)
+	manifest, err := readPreparedRunManifest(dir, team.DefaultProfile, "prepared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := preparedRunLiveGoalBinding(dir, team.DefaultProfile, "prepared", "", "", "")
+	if err != nil {
+		t.Fatalf("omitted live flags must hydrate from accepted manifest: %v", err)
+	}
+	if got.Text != manifest.GoalText || got.Source != manifest.GoalSource || got.Digest != manifest.GoalDigest || got.Namespace != manifest.GoalNamespace {
+		t.Fatalf("hydrated binding=%+v manifest=%+v", got, manifest)
+	}
+
+	for _, tc := range []struct {
+		name, goal, source, digest, want string
+	}{
+		{name: "text", goal: "substituted goal", want: "live goal text mismatch"},
+		{name: "source", source: "accepted_brief", want: "live goal source mismatch"},
+		{name: "digest", digest: "sha256:stale", want: "live goal digest mismatch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := preparedRunLiveGoalBinding(dir, team.DefaultProfile, "prepared", tc.goal, tc.source, tc.digest)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("mismatch error=%v want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunStartGoGoalMismatchBlocksBeforeManagedSpawnOrDelivery(t *testing.T) {
+	dir := prepareRunStartFixture(t, runwizard.LaunchShapeWorkingTeamTogether)
+	manifest, err := readPreparedRunManifest(dir, team.DefaultProfile, "prepared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "text", args: []string{"--goal", "substituted goal"}},
+		{name: "source", args: []string{"--goal-source", "accepted_brief"}},
+		{name: "digest", args: []string{"--goal-digest", "sha256:stale"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upCalls, goalCalls := 0, 0
+			stubRunStartGoalDelivery(t,
+				func([]string, string) error { upCalls++; return nil },
+				func([]string, string) error { goalCalls++; return nil },
+				func(string, string, string, string) (runStartLeadReadiness, error) {
+					return runStartLeadReadiness{Ready: true}, nil
+				},
+				func(time.Duration) {}, time.Now,
+			)
+			args := []string{
+				"--project", dir, "--profile", team.DefaultProfile, "--session", "prepared",
+				"--launch-shape", manifest.LaunchShape, "--visibility", "detached", "--go",
+			}
+			args = append(args, tc.args...)
+			_, _, runErr := captureOutput(t, func() error { return runRunStart(args, "test") })
+			if runErr == nil || !strings.Contains(runErr.Error(), "accepted live goal binding mismatch") {
+				t.Fatalf("mismatch launch error=%v", runErr)
+			}
+			if upCalls != 0 || goalCalls != 0 {
+				t.Fatalf("mismatch crossed zero-spawn boundary: up=%d goal=%d", upCalls, goalCalls)
+			}
+		})
+	}
+}
+
 func TestRunStartPreparationProposalIsReadOnlyAndPrecedesPreparationWrites(t *testing.T) {
 	dir := t.TempDir()
 	args := []string{
@@ -325,7 +395,18 @@ func TestNamedProfilePreparationPreservesNamespaceBootstrapAndLaunchBinding(t *t
 			t.Fatalf("named bootstrap missing %q: %s", want, bootstrap)
 		}
 	}
-	binding, bindErr := preparedRunLaunchGoalBinding(dir, profile, session, "cto", "codex")
+	manifest, err := readPreparedRunManifest(dir, profile, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm, err := team.ReadProfile(dir, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, bindErr := preparedGoalBinding(tm, profile, session, tm.Members[0], acceptedGoalBinding{
+		Text: manifest.GoalText, Source: manifest.GoalSource,
+		Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest,
+	})
 	if bindErr != nil {
 		t.Fatal(bindErr)
 	}
@@ -611,11 +692,22 @@ func TestPreparedRunGoalBindingCodexClaudeParityAndNoMissingBootstrap(t *testing
 	for _, binary := range []string{"codex", "claude"} {
 		t.Run(binary, func(t *testing.T) {
 			dir := prepareRunStartBinaryFixture(t, binary)
-			binding, err := preparedRunLaunchGoalBinding(dir, team.DefaultProfile, "prepared", "cto", binary)
+			manifest, err := readPreparedRunManifest(dir, team.DefaultProfile, "prepared")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if binding == nil || binding.Source != "prepared-run" || binding.Goal != "Execute the accepted readiness fixture" || !launchRecordHasGoalBinding(launch.Record{Binary: binary, GoalBinding: binding}) {
+			tm, err := team.ReadProfile(dir, team.DefaultProfile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			binding, err := preparedGoalBinding(tm, team.DefaultProfile, "prepared", tm.Members[0], acceptedGoalBinding{
+				Text: manifest.GoalText, Source: manifest.GoalSource,
+				Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if binding == nil || binding.Source != "prepared-run" || binding.Goal != "Execute the accepted readiness fixture" || binding.DeliveryState != goalBindingDeliveryPrepared || launchRecordHasGoalBinding(launch.Record{Binary: binary, GoalBinding: binding}) {
 				t.Fatalf("prepared %s binding = %+v", binary, binding)
 			}
 			wantMode := map[string]string{"codex": "prompt_goal", "claude": "native_goal"}[binary]
@@ -646,29 +738,26 @@ func TestPreparedRunGoalBindingCodexClaudeParityAndNoMissingBootstrap(t *testing
 			if err != nil {
 				t.Fatalf("dry-run launch: %v", err)
 			}
-			if observed.GoalBinding == nil || observed.GoalBinding.Source != "prepared-run" || observed.GoalBinding.Goal != binding.Goal {
-				t.Fatalf("launch record did not inherit prepared binding: %+v", observed.GoalBinding)
+			if observed.GoalBinding != nil {
+				t.Fatalf("direct launch inherited undelivered prepared binding: %+v", observed.GoalBinding)
 			}
 			joined := strings.Join(argv, "\n")
-			if !strings.Contains(joined, "Goal binding: "+wantMode) || strings.Contains(joined, "Goal binding: "+wantMode+"_missing") {
-				t.Fatalf("%s bootstrap did not carry verified prepared binding:\n%s", binary, joined)
+			if !strings.Contains(joined, "Goal binding: "+wantMode+"_missing") {
+				t.Fatalf("%s direct-launch bootstrap claimed an undelivered prepared binding:\n%s", binary, joined)
 			}
 		})
 	}
 }
 
-func TestPreparedRunLaunchBindingRejectsDriftedReadiness(t *testing.T) {
+func TestDirectLaunchNeverTrustsDriftedPreparedGoalBinding(t *testing.T) {
 	dir := prepareRunStartBinaryFixture(t, "codex")
 	path := briefPathForProfile(dir, team.DefaultProfile, "prepared")
 	if err := os.WriteFile(path, []byte("# changed after accepted preparation\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if binding, err := preparedRunLaunchGoalBinding(dir, team.DefaultProfile, "prepared", "cto", "codex"); err == nil || binding != nil || !strings.Contains(err.Error(), "no longer ready") {
-		t.Fatalf("drifted prepared binding = %+v err=%v", binding, err)
-	}
-	called := false
+	var observed launch.Record
 	oldObserver := launchPlanObserver
-	launchPlanObserver = func(launch.Record, []string) { called = true }
+	launchPlanObserver = func(rec launch.Record, _ []string) { observed = rec }
 	t.Cleanup(func() { launchPlanObserver = oldObserver })
 	_, _, err := captureOutput(t, func() error {
 		return runLaunch([]string{
@@ -676,8 +765,11 @@ func TestPreparedRunLaunchBindingRejectsDriftedReadiness(t *testing.T) {
 			"--role", "cto", "--session", "prepared", "--trust", "sandboxed", "--dry-run", "codex",
 		})
 	})
-	if err == nil || !strings.Contains(err.Error(), "prepared run is no longer ready") || called {
-		t.Fatalf("direct launch trusted drifted manifest: err=%v observer=%t", err, called)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observed.GoalBinding != nil {
+		t.Fatalf("direct launch trusted drifted prepared manifest: %+v", observed.GoalBinding)
 	}
 }
 

@@ -381,6 +381,7 @@ func runRunStart(args []string, version string) error {
 		return err
 	}
 	runContext := acceptedRunContext{Version: version, Topology: acceptedTopology(layoutSelection, *externalLead)}
+	var liveGoalBinding acceptedGoalBinding
 	if *goFlag {
 		result := calculateRunReadinessWithContext(project, profile, session, runContext)
 		printRunReadiness(result)
@@ -389,6 +390,10 @@ func runRunStart(args []string, version string) error {
 		}
 		if result.LaunchShape != strings.TrimSpace(*launchShapeFlag) {
 			return fmt.Errorf("launch blocked: accepted launch shape %q differs from requested %q", result.LaunchShape, strings.TrimSpace(*launchShapeFlag))
+		}
+		liveGoalBinding, err = preparedRunLiveGoalBinding(project, profile, session, *goalFlag, *goalSourceFlag, *goalDigestFlag)
+		if err != nil {
+			return fmt.Errorf("launch blocked: accepted live goal binding mismatch: %w", err)
 		}
 	}
 
@@ -704,19 +709,17 @@ func runRunStart(args []string, version string) error {
 		if err := runInProject(project, func() error { return executeTeamLaunch(opts, true, false) }); err != nil {
 			return err
 		}
-		if strings.TrimSpace(*goalFlag) != "" {
-			opts := runStartGoalDeliveryOptions{
-				Project: project,
-				Profile: profile,
-				Session: session,
-				Role:    externalLeadRole,
-				Goal:    *goalFlag,
-				Version: version,
-			}
-			quietNotice("waiting for lead readiness before goal delivery...\n")
-			if err := deliverRunStartGoalWhenReady(opts); err != nil {
-				return err
-			}
+		goalOpts := runStartGoalDeliveryOptions{
+			Project: project,
+			Profile: profile,
+			Session: session,
+			Role:    externalLeadRole,
+			Goal:    liveGoalBinding.Text,
+			Version: version,
+		}
+		quietNotice("waiting for lead readiness before goal delivery...\n")
+		if err := deliverRunStartGoalWhenReady(goalOpts); err != nil {
+			return err
 		}
 		quietNotice("done. Current pane is the lead; drive remaining workers with dispatch/monitor/collect.\n")
 		if layoutSelection.requestedFinalization() {
@@ -769,26 +772,24 @@ func runRunStart(args []string, version string) error {
 	} else if err := runStartUpWithVersion(upArgs, version); err != nil {
 		return err
 	}
-	// 3) optional goal delivery. Resolve the role before waiting so the
+	// 3) accepted goal delivery. Resolve the role before waiting so the
 	// fallback command is exact and ready to paste if the cold spawn never
 	// reaches a deliverable pane.
-	if strings.TrimSpace(*goalFlag) != "" {
-		leadRole, err := resolveRunStartGoalLead(project, profile, explicitLead, freshRoster, leadForNewTeam)
-		if err != nil {
-			return err
-		}
-		opts := runStartGoalDeliveryOptions{
-			Project: project,
-			Profile: profile,
-			Session: session,
-			Role:    leadRole,
-			Goal:    *goalFlag,
-			Version: version,
-		}
-		quietNotice("waiting for lead readiness before goal delivery...\n")
-		if err := deliverRunStartGoalWhenReady(opts); err != nil {
-			return err
-		}
+	leadRole, err := resolveRunStartGoalLead(project, profile, explicitLead, freshRoster, leadForNewTeam)
+	if err != nil {
+		return err
+	}
+	opts := runStartGoalDeliveryOptions{
+		Project: project,
+		Profile: profile,
+		Session: session,
+		Role:    leadRole,
+		Goal:    liveGoalBinding.Text,
+		Version: version,
+	}
+	quietNotice("waiting for lead readiness before goal delivery...\n")
+	if err := deliverRunStartGoalWhenReady(opts); err != nil {
+		return err
 	}
 	quietNotice("done. Attach to the lead window and drive with dispatch/monitor/collect.\n")
 	if layoutSelection.requestedFinalization() {

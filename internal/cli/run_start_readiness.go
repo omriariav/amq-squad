@@ -512,43 +512,41 @@ func resolveAcceptedGoalBinding(project, profile, session, goal, source, claimed
 	return binding, nil
 }
 
-func preparedRunLaunchGoalBinding(project, profile, session, role, binary string) (*launch.GoalBinding, error) {
-	readiness := calculateRunReadiness(project, profile, session)
-	if !readiness.Ready {
-		return nil, fmt.Errorf("prepared run is no longer ready for %s", readiness.Namespace)
-	}
+// preparedRunLiveGoalBinding hydrates the only goal accepted for a live run
+// from the prepared manifest. Live flags are optional transport proof: when a
+// caller supplies one, it must equal the accepted value byte-for-byte. This
+// check runs before any external-lead registration or managed process spawn.
+func preparedRunLiveGoalBinding(project, profile, session, goal, source, digest string) (acceptedGoalBinding, error) {
+	profile = squadnamespace.NormalizeProfile(profile)
 	manifest, err := readPreparedRunManifest(project, profile, session)
 	if err != nil {
-		return nil, err
-	}
-	if err := validatePreparedLaunchShape(manifest); err != nil {
-		return nil, err
+		return acceptedGoalBinding{}, err
 	}
 	binding := acceptedGoalBinding{
 		Text: manifest.GoalText, Source: manifest.GoalSource,
 		Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest,
 	}
 	if err := validateAcceptedGoalBinding(binding); err != nil {
-		return nil, err
+		return acceptedGoalBinding{}, err
 	}
-	if binding.Namespace != squadnamespace.NormalizeProfile(profile)+"/"+session {
-		return nil, fmt.Errorf("prepared goal namespace %q does not match launch namespace", binding.Namespace)
+	wantNamespace := profile + "/" + session
+	if binding.Namespace != wantNamespace {
+		return acceptedGoalBinding{}, fmt.Errorf("prepared goal namespace %q does not match live namespace %q", binding.Namespace, wantNamespace)
 	}
-	if role != manifest.Lead {
-		return nil, nil
+	for _, check := range []struct {
+		name     string
+		provided string
+		accepted string
+	}{
+		{name: "text", provided: goal, accepted: binding.Text},
+		{name: "source", provided: source, accepted: binding.Source},
+		{name: "digest", provided: digest, accepted: binding.Digest},
+	} {
+		if check.provided != "" && check.provided != check.accepted {
+			return acceptedGoalBinding{}, fmt.Errorf("live goal %s mismatch: supplied=%q accepted=%q", check.name, check.provided, check.accepted)
+		}
 	}
-	tm, err := team.ReadProfile(project, profile)
-	if err != nil {
-		return nil, err
-	}
-	member, ok := memberByRole(tm, role)
-	if !ok {
-		return nil, fmt.Errorf("prepared lead %q is absent from profile", role)
-	}
-	if normalizedAgentBinary(member.Binary) != normalizedAgentBinary(binary) {
-		return nil, fmt.Errorf("prepared lead binary %q differs from launch binary %q", member.Binary, binary)
-	}
-	return preparedGoalBinding(tm, profile, session, member, binding)
+	return binding, nil
 }
 
 func calculateRunReadiness(project, profile, session string) runReadinessResult {

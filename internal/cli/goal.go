@@ -244,14 +244,24 @@ func (contract goalDeliveryContract) prompt(goal string, t team.Team, profile, s
 }
 
 func (contract goalDeliveryContract) binding(goal, attemptID, prompt, source, detail string) *launch.GoalBinding {
+	deliveryState := ""
+	switch source {
+	case "prepared-run":
+		deliveryState = goalBindingDeliveryPrepared
+	case "goal-control":
+		deliveryState = goalBindingDeliveryReserved
+	case "launch-argv":
+		deliveryState = goalBindingDeliveryDelivered
+	}
 	return &launch.GoalBinding{
-		Mode:       contract.Mode,
-		NativeGoal: contract.NativeGoal,
-		Source:     source,
-		Command:    prompt,
-		Goal:       goal,
-		AttemptID:  attemptID,
-		Detail:     detail,
+		Mode:          contract.Mode,
+		NativeGoal:    contract.NativeGoal,
+		Source:        source,
+		Command:       prompt,
+		DeliveryState: deliveryState,
+		Goal:          goal,
+		AttemptID:     attemptID,
+		Detail:        detail,
 	}
 }
 
@@ -302,8 +312,37 @@ func launchRecordHasGoalBinding(rec launch.Record) bool {
 		return false
 	}
 	_, _, err = goalBindingPayload(rec.GoalBinding, contract)
-	return err == nil
+	if err != nil || rec.GoalBinding == nil {
+		return false
+	}
+	switch rec.GoalBinding.DeliveryState {
+	case goalBindingDeliveryPrepared, goalBindingDeliveryReserved:
+		return false
+	case goalBindingDeliveryDelivered:
+		return true
+	case "":
+		// Upgrade compatibility is intentionally narrow. launch-argv was
+		// process input, while legacy goal-control became delivered only after
+		// the exact post-send detail transition. Other empty-state sources are
+		// not durable delivery evidence.
+		switch rec.GoalBinding.Source {
+		case "launch-argv":
+			return true
+		case "goal-control":
+			return rec.GoalBinding.Detail == contract.Label+" delivered as a first-class claim-once control action"
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
+
+const (
+	goalBindingDeliveryPrepared  = "prepared"
+	goalBindingDeliveryReserved  = "reserved"
+	goalBindingDeliveryDelivered = "delivered"
+)
 
 type goalDeliveryAttemptError struct {
 	AttemptID   string
@@ -1409,6 +1448,7 @@ func markGoalDeliveryBindingDelivered(opts goalDeliveryOptions, contract goalDel
 			return fmt.Errorf("reserved binding changed after pane delivery")
 		}
 		goalBeforePostDeliveryBindingCAS()
+		rec.GoalBinding.DeliveryState = goalBindingDeliveryDelivered
 		rec.GoalBinding.Detail = contract.Label + " delivered as a first-class claim-once control action"
 		if err := goalLaunchWriteUnderRecordLock(current.AgentDir, rec); err != nil {
 			return err

@@ -154,6 +154,10 @@ type GoalBinding struct {
 	NativeGoal bool   `json:"native_goal"`
 	Source     string `json:"source"`
 	Command    string `json:"command,omitempty"`
+	// DeliveryState separates accepted/prepared bootstrap evidence from a
+	// reserved control action and a control action whose delivery completed.
+	// Empty is the legacy state and remains readable for pre-v2.22 records.
+	DeliveryState string `json:"delivery_state,omitempty"`
 	// Goal and AttemptID are additive typed identity for binary-specific goal
 	// delivery. Legacy native bindings omit them and remain readable through the
 	// strict generated-/goal parser; prompt_goal bindings require them so resume

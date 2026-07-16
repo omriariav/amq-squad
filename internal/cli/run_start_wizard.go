@@ -445,32 +445,14 @@ func finishRunStartWizard(spec runwizard.Spec, version string, in io.Reader, out
 		return preflight.Err()
 	}
 	canonicalArgs := spec.Args()
-	if spec.ProfileBranch == runwizard.ProfileBranchNew {
-		return finishFreshRunStartWizard(spec, canonicalArgs, version, in, out)
-	}
-	liveArgs := append(append([]string{}, canonicalArgs...), "--go")
-	commandArgs := append([]string{"run", "start"}, canonicalArgs...)
-	fmt.Printf("\nEquivalent flag command (preview only):\n  %s\n\n", shellCommand("amq-squad", commandArgs...))
-	fmt.Printf("Equivalent flag command (live, only after explicit Yes):\n  %s\n\n", shellCommand("amq-squad", append([]string{"run", "start"}, liveArgs...)...))
-	if err := runStartWizardProjectExecute(canonicalArgs, version); err != nil {
-		return err
-	}
-	launch, err := runStartWizardConfirm(in, out)
-	if err != nil || !launch {
-		return err
-	}
-	if err := refreshWizardExistingSelection(spec); err != nil {
-		return err
-	}
-	return runStartWizardProjectExecute(liveArgs, version)
+	return finishPreparedRunStartWizard(spec, canonicalArgs, version, in, out)
 }
 
-// finishFreshRunStartWizard keeps artifact preparation and process launch as
-// two explicit, default-No mutations. The preparation invocation receives the
-// complete reviewed composition. Once it succeeds, the profile exists, so the
-// live invocation deliberately contains only existing-profile-compatible
-// runtime flags instead of replaying setup-only roster flags.
-func finishFreshRunStartWizard(spec runwizard.Spec, canonicalArgs []string, version string, in io.Reader, out io.Writer) error {
+// finishPreparedRunStartWizard keeps artifact preparation and process launch
+// as two explicit, default-No mutations for both new and existing profiles.
+// Existing profiles are authoritative: preparation snapshots their current
+// roster and never rewrites unrelated profile state.
+func finishPreparedRunStartWizard(spec runwizard.Spec, canonicalArgs []string, version string, in io.Reader, out io.Writer) error {
 	planArgs := append(append([]string{}, canonicalArgs...), "--prepare-plan")
 	fmt.Printf("\nEquivalent flag command (read-only preparation proposal):\n  %s\n\n", shellCommand("amq-squad", append([]string{"run", "start"}, planArgs...)...))
 	if err := runStartWizardProjectExecute(planArgs, version); err != nil {
@@ -482,6 +464,11 @@ func finishFreshRunStartWizard(spec runwizard.Spec, canonicalArgs []string, vers
 	prepare, err := runStartWizardPrepareConfirm(in, out)
 	if err != nil || !prepare {
 		return err
+	}
+	if spec.ProfileBranch == runwizard.ProfileBranchExisting {
+		if err := refreshWizardExistingSelection(spec); err != nil {
+			return err
+		}
 	}
 	if err := runStartWizardProjectExecute(prepareArgs, version); err != nil {
 		return err
@@ -495,6 +482,11 @@ func finishFreshRunStartWizard(spec runwizard.Spec, canonicalArgs []string, vers
 	launch, err := runStartWizardConfirm(in, out)
 	if err != nil || !launch {
 		return err
+	}
+	if spec.ProfileBranch == runwizard.ProfileBranchExisting {
+		if err := refreshWizardExistingSelection(spec); err != nil {
+			return err
+		}
 	}
 	return runStartWizardProjectExecute(liveArgs, version)
 }
@@ -514,6 +506,8 @@ func preparedRunStartLaunchArgs(spec runwizard.Spec) []string {
 	appendValue("--layout-preset", spec.LayoutPreset)
 	appendValue("--launcher-pane", spec.LauncherPane)
 	appendValue("--goal", spec.Goal)
+	appendValue("--goal-source", spec.GoalBindingSource)
+	appendValue("--goal-digest", spec.GoalBindingDigest)
 	if spec.ExternalLead {
 		args = append(args, "--external-lead")
 	}

@@ -406,18 +406,6 @@ Examples:
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD
 	}
-	if rec.GoalBinding == nil && rec.TeamHome != "" {
-		manifestPath := preparedRunPath(rec.TeamHome, rec.TeamProfile, rec.Session)
-		if _, statErr := os.Stat(manifestPath); statErr == nil {
-			binding, bindingErr := preparedRunLaunchGoalBinding(rec.TeamHome, rec.TeamProfile, rec.Session, rec.Role, rec.Binary)
-			if bindingErr != nil {
-				return fmt.Errorf("load accepted prepared-run goal binding: %w", bindingErr)
-			}
-			rec.GoalBinding = binding
-		} else if !os.IsNotExist(statErr) {
-			return fmt.Errorf("inspect prepared-run goal binding: %w", statErr)
-		}
-	}
 
 	// Capture exact tmux identity (session/window/pane ids) when launched
 	// inside tmux, so clients can target follow-up control by stable pane id

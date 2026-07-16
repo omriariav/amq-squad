@@ -404,7 +404,7 @@ func TestLeadRegisterPreservesExistingNativeGoalBinding(t *testing.T) {
 			NativeGoal: true,
 			Source:     "goal-control",
 			Command:    `/goal --goal "ship"`,
-			Detail:     "native /goal delivered as a first-class control action",
+			Detail:     "native /goal delivered as a first-class claim-once control action",
 		},
 	})
 	prev := currentPaneIdentity
@@ -463,7 +463,10 @@ func TestLeadRegisterPreservesExistingNativeGoalBinding(t *testing.T) {
 func TestPreserveExternalGoalBindingRejectsInvalidClaudeBinding(t *testing.T) {
 	validLegacy := launch.Record{
 		Binary: "claude", Role: "cto", Session: "issue-460",
-		GoalBinding: &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship"`},
+		GoalBinding: &launch.GoalBinding{
+			Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: `/goal --goal "ship"`,
+			Detail: "native /goal delivered as a first-class claim-once control action",
+		},
 	}
 	if !preserveExternalGoalBinding(validLegacy, nil, "cto", "issue-460") {
 		t.Fatal("valid legacy Claude binding was not preserved")
