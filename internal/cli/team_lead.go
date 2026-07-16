@@ -780,7 +780,7 @@ func validatePreparedExternalLeadStoredBeforeWorkerSpawn(project, profile, sessi
 	if err != nil {
 		return err
 	}
-	agentDir := filepath.Join(env.Root, "agents", memberHandle(member))
+	agentDir := filepath.Join(absoluteAMQRoot(cwd, env.Root), "agents", memberHandle(member))
 	rec, err := launch.Read(agentDir)
 	if err != nil {
 		return err
@@ -843,7 +843,7 @@ func preparedExternalLeadRecordSnapshot(project, profile, session, role string) 
 	if err != nil {
 		return "", nil, err
 	}
-	agentDir := filepath.Join(env.Root, "agents", memberHandle(member))
+	agentDir := filepath.Join(absoluteAMQRoot(cwd, env.Root), "agents", memberHandle(member))
 	rec, err := launch.Read(agentDir)
 	if os.IsNotExist(err) {
 		return agentDir, nil, nil

@@ -323,3 +323,73 @@ func TestExternalPreGoalManifestLossUsesRecordAndWakeCAS(t *testing.T) {
 		})
 	}
 }
+
+func TestPreparedExternalRecordLookupIgnoresCallerCWDForRelativeRoot(t *testing.T) {
+	project := t.TempDir()
+	if err := team.Write(project, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{{
+			Role: "cto", Handle: "cto", Binary: "codex", Session: "sess",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, project)
+	stubCurrentRunStartPane(t, "%42")
+	stubRunStartLeadWake(t)
+	prepareRunStartTestInvocation(t, []string{
+		"--project", project,
+		"--session", "sess",
+		"--external-lead",
+		"--visibility", "detached",
+		"--go",
+	}, true)
+	manifest, digest, err := readPreparedRunManifestSnapshot(project, team.DefaultProfile, "sess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := preparedRunTokenFromSnapshot(manifest, digest)
+	if err := runLeadRegisterWithPreparedToken([]string{
+		"--project", project,
+		"--session", "sess",
+		"--role", "cto",
+		"--adopt-project-lead",
+	}, token); err != nil {
+		t.Fatalf("register prepared external lead: %v", err)
+	}
+
+	env, err := resolveAMQEnvForTeamLaunchProfile(project, team.DefaultProfile, "sess", "cto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.IsAbs(env.Root) {
+		t.Fatalf("fixture requires a relative resolved root, got %q", env.Root)
+	}
+	memberAgentDir := filepath.Join(absoluteAMQRoot(project, env.Root), "agents", "cto")
+	memberRecord, err := launch.Read(memberAgentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	callerCWD := t.TempDir()
+	callerAgentDir := filepath.Join(absoluteAMQRoot(callerCWD, env.Root), "agents", "cto")
+	decoy := memberRecord
+	decoy.Root = absoluteAMQRoot(callerCWD, env.Root)
+	decoy.Conversation = "caller-root-decoy"
+	if err := launch.Write(callerAgentDir, decoy); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, callerCWD)
+
+	snapshotDir, snapshot, err := preparedExternalLeadRecordSnapshot(project, team.DefaultProfile, "sess", "cto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameFilesystemPath(snapshotDir, memberAgentDir) || snapshot == nil || snapshot.Conversation == decoy.Conversation {
+		t.Fatalf("snapshot selected caller root: dir=%q record=%+v want member dir %q", snapshotDir, snapshot, memberAgentDir)
+	}
+	if err := validatePreparedExternalLeadStoredBeforeWorkerSpawn(project, team.DefaultProfile, "sess", "cto", token); err != nil {
+		t.Fatalf("pre-worker validation selected caller root: %v", err)
+	}
+}
