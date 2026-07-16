@@ -337,6 +337,10 @@ func (b *issue470FailingBackend) Launch(team.Team, teamLaunchOptions) error {
 	b.launches++
 	return errors.New("injected immediately before backend launch")
 }
+func (b *issue470FailingBackend) LaunchWithResult(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
+	return teamLaunchResult{}, b.Launch(t, opts)
+}
+func (*issue470FailingBackend) preparedResultBeforeDispatch() {}
 
 func TestIssue470LaunchFailureRollsBackPreparedState(t *testing.T) {
 	for _, profile := range []string{team.DefaultProfile, "review"} {

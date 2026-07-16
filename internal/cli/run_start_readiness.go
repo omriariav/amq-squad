@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ import (
 
 const preparedRunSchema = 2
 const preparedRunGoalDeliveryPlanned = "planned_unverified"
+const internalPreparedRunTokenEnv = "AMQ_SQUAD_INTERNAL_PREPARED_RUN_TOKEN"
 
 type preparedRunManifest struct {
 	SchemaVersion     int                                  `json:"schema_version"`
@@ -98,6 +100,117 @@ type acceptedRunContext struct {
 	Version      string
 	Topology     preparedRunTopology
 	PointerPlans []rules.SyncPlan
+}
+
+// preparedRunToken is the immutable identity of one accepted schema-2
+// preparation. run start --go pins it for the whole transaction and carries it
+// through every child launch and the final goal reservation.
+type preparedRunToken struct {
+	Generation     string `json:"generation"`
+	ManifestDigest string `json:"manifest_digest"`
+	GoalNamespace  string `json:"goal_namespace"`
+	GoalDigest     string `json:"goal_digest"`
+}
+
+type preparedRunIdentityMismatchError struct {
+	detail string
+}
+
+func (e *preparedRunIdentityMismatchError) Error() string {
+	return e.detail
+}
+
+func preparedRunIdentityMismatchf(format string, args ...any) error {
+	return &preparedRunIdentityMismatchError{detail: fmt.Sprintf(format, args...)}
+}
+
+func isPreparedRunIdentityMismatch(err error) bool {
+	var mismatch *preparedRunIdentityMismatchError
+	return errors.As(err, &mismatch)
+}
+
+func encodePreparedRunToken(t preparedRunToken) string {
+	b, _ := json.Marshal(t)
+	return string(b)
+}
+
+func preparedRunTokenFromInternalEnv() (preparedRunToken, error) {
+	raw := strings.TrimSpace(os.Getenv(internalPreparedRunTokenEnv))
+	if raw == "" {
+		return preparedRunToken{}, nil
+	}
+	var token preparedRunToken
+	if err := json.Unmarshal([]byte(raw), &token); err != nil {
+		return preparedRunToken{}, fmt.Errorf("invalid internal prepared run token: %w", err)
+	}
+	if !token.complete() {
+		return preparedRunToken{}, fmt.Errorf("internal prepared run token is incomplete")
+	}
+	return token, nil
+}
+
+func envWithoutPreparedRunToken(env []string) []string {
+	prefix := internalPreparedRunTokenEnv + "="
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+func preparedRunTokenFromSnapshot(manifest preparedRunManifest, digest string) preparedRunToken {
+	return preparedRunToken{
+		Generation: strings.TrimSpace(manifest.Generation), ManifestDigest: strings.TrimSpace(digest),
+		GoalNamespace: strings.TrimSpace(manifest.GoalNamespace), GoalDigest: strings.TrimSpace(manifest.GoalDigest),
+	}
+}
+
+func (t preparedRunToken) empty() bool {
+	return t.Generation == "" && t.ManifestDigest == "" && t.GoalNamespace == "" && t.GoalDigest == ""
+}
+
+func (t preparedRunToken) complete() bool {
+	return t.Generation != "" && t.ManifestDigest != "" && t.GoalNamespace != "" && t.GoalDigest != ""
+}
+
+func validatePreparedRunToken(t preparedRunToken, manifest preparedRunManifest, digest string) error {
+	if t.empty() {
+		return nil
+	}
+	if !t.complete() {
+		return fmt.Errorf("prepared run token is incomplete")
+	}
+	current := preparedRunTokenFromSnapshot(manifest, digest)
+	if current != t {
+		return preparedRunIdentityMismatchf("prepared run token changed: accepted_generation=%s current_generation=%s accepted_digest=%s current_digest=%s", t.Generation, current.Generation, t.ManifestDigest, current.ManifestDigest)
+	}
+	return nil
+}
+
+func preparedRunTokenForContext(context *preparedLaunchRecordContext) preparedRunToken {
+	if context == nil {
+		return preparedRunToken{}
+	}
+	return preparedRunTokenFromSnapshot(context.Manifest, context.Digest)
+}
+
+func preparedRunTokenFromRecord(rec launch.Record) preparedRunToken {
+	return preparedRunToken{
+		Generation: strings.TrimSpace(rec.PreparedRunGeneration), ManifestDigest: strings.TrimSpace(rec.PreparedRunDigest),
+		GoalNamespace: strings.TrimSpace(rec.PreparedRunGoalNamespace), GoalDigest: strings.TrimSpace(rec.PreparedRunGoalDigest),
+	}
+}
+
+func applyPreparedRunTokenToRecord(rec *launch.Record, token preparedRunToken) {
+	if rec == nil || token.empty() {
+		return
+	}
+	rec.PreparedRunGeneration = token.Generation
+	rec.PreparedRunDigest = token.ManifestDigest
+	rec.PreparedRunGoalNamespace = token.GoalNamespace
+	rec.PreparedRunGoalDigest = token.GoalDigest
 }
 
 var preparedRunRequiredCapabilities = []string{"amq-routing", "bootstrap-render", "goal-binding", "pointer-sync", "terminal-context", "tmux-topology", "tool-policy"}
@@ -298,6 +411,12 @@ func preparedContextForLaunchRecord(rec launch.Record) (*preparedLaunchRecordCon
 		actualNativeArgs = rec.CodexArgs
 	}
 	actualEffectiveArgs := canonicalLaunchRecordArgs(rec)
+	recordToken := preparedRunTokenFromRecord(rec)
+	if !recordToken.empty() {
+		if err := validatePreparedRunToken(recordToken, manifest, manifestDigest); err != nil {
+			return nil, fmt.Errorf("launch record prepared identity differs from accepted preparation: %w", err)
+		}
+	}
 	if normalizedAgentBinary(rec.Binary) != accepted.Binary || rec.Handle != accepted.Handle || rec.Model != accepted.Model || !sameFilesystemPath(rec.CWD, member.EffectiveCWD(tm.Project)) || rec.Trust != accepted.Trust || !reflect.DeepEqual(actualNativeArgs, accepted.NativeArgs) || !reflect.DeepEqual(dedupeSortedStrings(rec.LauncherPreauthorizedActions), accepted.LauncherAuthority) || rec.NoPreauthorizeInScope != accepted.NoPreauthorize || !reflect.DeepEqual(actualEffectiveArgs, accepted.EffectiveArgs) || effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs) != accepted.Effort || rec.ToolProfile != accepted.ToolProfile || rec.ToolConfig != accepted.ToolConfig || rec.ToolMCPConfig != accepted.ToolMCPConfig || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolAllowlist), accepted.ToolAllowlist) || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolBlocklist), accepted.ToolBlocklist) {
 		return nil, fmt.Errorf("actual launch record input for %s differs from accepted binary/handle/cwd/tool identity: accepted=%+v actual={binary:%s handle:%s model:%s trust:%s native:%v effective:%v effort:%s launcher_authority:%v no_preauthorize:%t tool_profile:%s tool_config:%s tool_mcp:%s tool_allow:%v tool_block:%v}", member.Role, accepted, normalizedAgentBinary(rec.Binary), rec.Handle, rec.Model, rec.Trust, actualNativeArgs, actualEffectiveArgs, effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs), dedupeSortedStrings(rec.LauncherPreauthorizedActions), rec.NoPreauthorizeInScope, rec.ToolProfile, rec.ToolConfig, rec.ToolMCPConfig, dedupeSortedStrings(rec.ToolAllowlist), dedupeSortedStrings(rec.ToolBlocklist))
 	}

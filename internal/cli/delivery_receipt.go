@@ -75,6 +75,20 @@ type deliveryReceiptData struct {
 	Detail                            string                  `json:"detail,omitempty"`
 	Path                              string                  `json:"path,omitempty"`
 	CreatedAt                         time.Time               `json:"created_at"`
+	PreparedRunGeneration             string                  `json:"prepared_run_generation,omitempty"`
+	PreparedRunDigest                 string                  `json:"prepared_run_digest,omitempty"`
+	PreparedRunGoalNamespace          string                  `json:"prepared_run_goal_namespace,omitempty"`
+	PreparedRunGoalDigest             string                  `json:"prepared_run_goal_digest,omitempty"`
+}
+
+func applyPreparedRunTokenToReceipt(receipt *deliveryReceiptData, token preparedRunToken) {
+	if receipt == nil || token.empty() {
+		return
+	}
+	receipt.PreparedRunGeneration = token.Generation
+	receipt.PreparedRunDigest = token.ManifestDigest
+	receipt.PreparedRunGoalNamespace = token.GoalNamespace
+	receipt.PreparedRunGoalDigest = token.GoalDigest
 }
 
 type deliveryConsumerState struct {
@@ -350,6 +364,10 @@ func validateReceiptMergeIdentity(current, incoming deliveryReceiptData) error {
 		{"thread", current.Thread == incoming.Thread},
 		{"path", filepath.Clean(current.Path) == filepath.Clean(incoming.Path)},
 		{"created_at", current.CreatedAt.Equal(incoming.CreatedAt)},
+		{"prepared_run_generation", current.PreparedRunGeneration == incoming.PreparedRunGeneration},
+		{"prepared_run_digest", current.PreparedRunDigest == incoming.PreparedRunDigest},
+		{"prepared_run_goal_namespace", current.PreparedRunGoalNamespace == incoming.PreparedRunGoalNamespace},
+		{"prepared_run_goal_digest", current.PreparedRunGoalDigest == incoming.PreparedRunGoalDigest},
 	}
 	for _, check := range checks {
 		if !check.ok {

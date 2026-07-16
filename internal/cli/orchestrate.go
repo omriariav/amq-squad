@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -25,8 +26,23 @@ import (
 var orchestrateTmuxRun = func(args ...string) error { return exec.Command("tmux", args...).Run() }
 
 var (
-	runStartUpWithVersion   = runUpWithVersion
-	runStartGoalWithVersion = runGoalWithVersion
+	runStartUpWithVersion       = runUpWithVersion
+	runStartGoalWithVersion     = runGoalWithVersion
+	runStartPinnedUpWithVersion = func(args []string, version string, token preparedRunToken, resultSink func(teamLaunchResult)) error {
+		if reflect.ValueOf(runStartUpWithVersion).Pointer() != reflect.ValueOf(runUpWithVersion).Pointer() {
+			return runStartUpWithVersion(args, version)
+		}
+		return runUpWithVersionAndPreparedTokenAndResult(args, version, token, resultSink)
+	}
+	runStartPinnedGoalWithVersion = func(args []string, version string, token preparedRunToken) error {
+		if reflect.ValueOf(runStartGoalWithVersion).Pointer() != reflect.ValueOf(runGoalWithVersion).Pointer() {
+			return runStartGoalWithVersion(args, version)
+		}
+		if len(args) == 0 || args[0] != "start" {
+			return fmt.Errorf("internal prepared goal delivery requires goal start")
+		}
+		return runGoalStartWithPreparedToken(args[1:], token)
+	}
 
 	runStartLeadReadyTimeout          = 45 * time.Second
 	runStartLeadReadyInitialBackoff   = 250 * time.Millisecond
@@ -38,15 +54,17 @@ var (
 	runStartExecuteExternalWorkers    = func(project string, opts teamLaunchOptions) error {
 		return runInProject(project, func() error { return executeTeamLaunch(opts, true, false) })
 	}
+	runStartBeforePinnedGoalDelivery = func(runStartGoalDeliveryOptions) error { return nil }
 )
 
 type runStartGoalDeliveryOptions struct {
-	Project string
-	Profile string
-	Session string
-	Role    string
-	Goal    string
-	Version string
+	Project          string
+	Profile          string
+	Session          string
+	Role             string
+	Goal             string
+	Version          string
+	PreparedRunToken preparedRunToken
 }
 
 type runStartLeadReadiness struct {
@@ -398,7 +416,26 @@ func runRunStart(args []string, version string) error {
 	}
 	runContext := acceptedRunContext{Version: version, Topology: acceptedTopology(layoutSelection, *externalLead)}
 	var liveGoalBinding acceptedGoalBinding
+	var preparedToken preparedRunToken
 	if *goFlag {
+		endpointAdmission, admissionErr := acquireNamespaceWriterAdmission(project, profile, session)
+		if admissionErr != nil {
+			return admissionErr
+		}
+		defer endpointAdmission.close()
+		manifestAdmission, admissionErr := acquirePreparedManifestReaderAdmission(project, profile, session)
+		if admissionErr != nil {
+			return admissionErr
+		}
+		defer manifestAdmission.close()
+		manifest, manifestDigest, snapshotErr := readPreparedRunManifestSnapshot(project, profile, session)
+		if snapshotErr != nil {
+			return fmt.Errorf("artifact readiness failed: pin accepted prepared run: %w", snapshotErr)
+		}
+		preparedToken = preparedRunTokenFromSnapshot(manifest, manifestDigest)
+		if !preparedToken.complete() {
+			return fmt.Errorf("launch blocked: accepted prepared run identity is incomplete")
+		}
 		result := calculateRunReadinessWithContext(project, profile, session, runContext)
 		printRunReadiness(result)
 		if !result.Ready {
@@ -728,36 +765,50 @@ func runRunStart(args []string, version string) error {
 		if err := validateRunStartExternalLeadWorkerLaunch(project, layoutSelection, session, profile, externalLeadRole, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag); err != nil {
 			return err
 		}
+		externalAgentDir, _, err := preparedExternalLeadRecordSnapshot(project, profile, session, externalLeadRole)
+		if err != nil {
+			return fmt.Errorf("snapshot external lead record before registration: %w", err)
+		}
 		quietNotice("binding current pane as external lead %s...\n", externalLeadRole)
-		if err := runStartRegisterExternalLead(project, profile, session, externalLeadRole); err != nil {
-			return err
-		}
-		if err := runStartExternalLeadAfterRegister(project, profile, session, externalLeadRole); err != nil {
-			return err
-		}
-		opts, err := runStartTeamLaunchOptions(layoutSelection, session, profile, externalSeedContent, false, false, externalLeadRole, true, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag)
+		registration, err := runStartRegisterExternalLead(project, profile, session, externalLeadRole, preparedToken)
 		if err != nil {
 			return err
 		}
+		rollbackExternalRecord := func(cause error) error {
+			return errors.Join(cause, rollbackPreparedExternalLeadRegistration(externalAgentDir, registration))
+		}
+		if err := runStartExternalLeadAfterRegister(project, profile, session, externalLeadRole); err != nil {
+			return rollbackExternalRecord(err)
+		}
+		opts, err := runStartTeamLaunchOptions(layoutSelection, session, profile, externalSeedContent, false, false, externalLeadRole, true, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag)
+		if err != nil {
+			return rollbackExternalRecord(err)
+		}
 		var launchResult teamLaunchResult
+		opts.PreparedRunToken = preparedToken
 		opts.ResultSink = func(result teamLaunchResult) { launchResult = result }
-		if err := validatePreparedExternalLeadStoredBeforeWorkerSpawn(project, profile, session, externalLeadRole); err != nil {
-			return fmt.Errorf("external lead record changed before worker spawn: %w", err)
+		if err := validatePreparedExternalLeadStoredBeforeWorkerSpawn(project, profile, session, externalLeadRole, preparedToken); err != nil {
+			return rollbackExternalRecord(fmt.Errorf("external lead record changed before worker spawn: %w", err))
 		}
 		quietNotice("spawning remaining workers (--visibility %s)...\n", visibility)
 		if err := runStartExecuteExternalWorkers(project, opts); err != nil {
-			return err
+			return rollbackExternalRecord(err)
 		}
 		goalOpts := runStartGoalDeliveryOptions{
-			Project: project,
-			Profile: profile,
-			Session: session,
-			Role:    externalLeadRole,
-			Goal:    liveGoalBinding.Text,
-			Version: version,
+			Project:          project,
+			Profile:          profile,
+			Session:          session,
+			Role:             externalLeadRole,
+			Goal:             liveGoalBinding.Text,
+			Version:          version,
+			PreparedRunToken: preparedToken,
 		}
 		quietNotice("waiting for lead readiness before goal delivery...\n")
 		if err := deliverRunStartGoalWhenReady(goalOpts); err != nil {
+			if isPreparedRunIdentityMismatch(err) {
+				workerCleanupErr := rollbackPreparedManagedLaunch(project, profile, session, opts.Target, preparedToken, launchResult)
+				return errors.Join(err, workerCleanupErr, rollbackExternalRecord(nil))
+			}
 			return err
 		}
 		quietNotice("done. Current pane is the lead; drive remaining workers with dispatch/monitor/collect.\n")
@@ -801,6 +852,7 @@ func runRunStart(args []string, version string) error {
 			return launchErr
 		}
 		launchOpts.WarnStubBrief = strings.TrimSpace(*seedFlag) == ""
+		launchOpts.PreparedRunToken = preparedToken
 		// Preserve canonical `up`'s refuse-existing/TOCTOU guard on the direct
 		// result-returning launch path used by layout finalization.
 		launchOpts.Fresh = true
@@ -808,7 +860,7 @@ func runRunStart(args []string, version string) error {
 		if launchErr := runInProject(project, func() error { return executeTeamLaunch(launchOpts, true, false) }); launchErr != nil {
 			return launchErr
 		}
-	} else if err := runStartUpWithVersion(upArgs, version); err != nil {
+	} else if err := runStartPinnedUpWithVersion(upArgs, version, preparedToken, func(result teamLaunchResult) { launchResult = result }); err != nil {
 		return err
 	}
 	// 3) accepted goal delivery. Resolve the role before waiting so the
@@ -819,15 +871,19 @@ func runRunStart(args []string, version string) error {
 		return err
 	}
 	opts := runStartGoalDeliveryOptions{
-		Project: project,
-		Profile: profile,
-		Session: session,
-		Role:    leadRole,
-		Goal:    liveGoalBinding.Text,
-		Version: version,
+		Project:          project,
+		Profile:          profile,
+		Session:          session,
+		Role:             leadRole,
+		Goal:             liveGoalBinding.Text,
+		Version:          version,
+		PreparedRunToken: preparedToken,
 	}
 	quietNotice("waiting for lead readiness before goal delivery...\n")
 	if err := deliverRunStartGoalWhenReady(opts); err != nil {
+		if isPreparedRunIdentityMismatch(err) {
+			return errors.Join(err, rollbackPreparedManagedLaunch(project, profile, session, layoutSelection.Target, preparedToken, launchResult))
+		}
 		return err
 	}
 	quietNotice("done. Attach to the lead window and drive with dispatch/monitor/collect.\n")
@@ -845,6 +901,64 @@ func runRunStart(args []string, version string) error {
 		}
 	}
 	return nil
+}
+
+func rollbackPreparedManagedLaunch(project, profile, session, target string, token preparedRunToken, result teamLaunchResult) error {
+	var cleanupErrs []error
+	for _, pane := range result.Panes {
+		if err := rollbackPreparedManagedLaunchPane(project, profile, session, target, token, pane); err != nil {
+			cleanupErrs = append(cleanupErrs, err)
+		}
+	}
+	return errors.Join(cleanupErrs...)
+}
+
+func rollbackPreparedManagedLaunchPane(project, profile, session, target string, token preparedRunToken, pane teamLaunchResultPane) error {
+	tm, err := team.ReadProfile(project, profile)
+	if err != nil {
+		return fmt.Errorf("read team for rollback role %s: %w", pane.Role, err)
+	}
+	member, ok := memberByRole(tm, pane.Role)
+	if !ok {
+		return fmt.Errorf("rollback result role %q is not a configured team member", pane.Role)
+	}
+	cwd, err := canonicalDir(member.EffectiveCWD(tm.Project))
+	if err != nil {
+		return err
+	}
+	env, err := resolveAMQEnvForTeamLaunchProfile(cwd, profile, session, memberHandle(member))
+	if err != nil {
+		return err
+	}
+	agentDir := filepath.Join(absoluteAMQRoot(cwd, env.Root), "agents", memberHandle(member))
+	return launch.WithRecordLock(agentDir, func() error {
+		current, readErr := launch.Read(agentDir)
+		recordExists := readErr == nil
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return fmt.Errorf("read current launch record for rollback role %s: %w", pane.Role, readErr)
+		}
+		if recordExists {
+			if current.External || preparedRunTokenFromRecord(current) != token || current.Tmux == nil || strings.TrimSpace(current.Tmux.PaneID) != strings.TrimSpace(pane.PaneID) {
+				return nil
+			}
+		}
+		killKind := "kill-pane"
+		killTarget := pane.PaneID
+		if target == "new-window" {
+			killKind = "kill-window"
+			killTarget = pane.WindowID
+		}
+		if err := tmuxRunCommand("tmux", killKind, "-t", killTarget); err != nil {
+			return fmt.Errorf("cleanup run-owned %s for role %s at %s: %w", strings.TrimPrefix(killKind, "kill-"), pane.Role, killTarget, err)
+		}
+		if !recordExists {
+			return nil
+		}
+		if err := os.Remove(launch.Path(agentDir)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove run-owned launch record for role %s: %w", pane.Role, err)
+		}
+		return nil
+	})
 }
 
 func appendExistingTeamPassthroughArgs(dst []string, teamPresent bool, model, codexArgs, claudeArgs string) []string {
@@ -1124,16 +1238,19 @@ func validateRunStartExternalLeadWorkerLaunch(project string, layout runStartLay
 	})
 }
 
-func runStartRegisterExternalLead(project, profile, session, lead string) error {
+func runStartRegisterExternalLead(project, profile, session, lead string, preparedToken preparedRunToken) (preparedExternalLeadRegistration, error) {
 	args := []string{
-		"register",
 		"--project", project,
 		"--profile", profile,
 		"--session", session,
 		"--role", lead,
 		"--adopt-project-lead",
 	}
-	return runLead(args)
+	var result preparedExternalLeadRegistration
+	err := runLeadRegisterWithPreparedToken(args, preparedToken, func(registration preparedExternalLeadRegistration) {
+		result = registration
+	})
+	return result, err
 }
 
 func teamExistsForProfile(project, profile string) bool {
@@ -1206,6 +1323,9 @@ func deliverRunStartGoalWhenReady(opts runStartGoalDeliveryOptions) error {
 		return err
 	}
 	quietNotice("delivering goal to lead...\n")
+	if err := runStartBeforePinnedGoalDelivery(opts); err != nil {
+		return err
+	}
 	args := []string{
 		"start",
 		"--project", opts.Project,
@@ -1215,7 +1335,7 @@ func deliverRunStartGoalWhenReady(opts runStartGoalDeliveryOptions) error {
 		"--goal", opts.Goal,
 		"--yes",
 	}
-	if err := runStartGoalWithVersion(args, opts.Version); err != nil {
+	if err := runStartPinnedGoalWithVersion(args, opts.Version, opts.PreparedRunToken); err != nil {
 		var sentReceiptErr *goalFallbackSentReceiptError
 		if errors.As(err, &sentReceiptErr) {
 			fmt.Fprintf(os.Stderr, "warning: claim-once goal fallback %s was sent on %s, but local receipt persistence failed: %v\n", sentReceiptErr.MessageID, sentReceiptErr.Thread, sentReceiptErr.ReceiptErr)

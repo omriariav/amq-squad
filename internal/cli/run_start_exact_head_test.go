@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -527,6 +529,68 @@ func TestPreparedManifestLockOrderFreshPreparationAndDirectLaunchDoNotDeadlock(t
 	}
 }
 
+func TestRunStartPinnedAdmissionsSerializePublicPreparationThroughGoal(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Project: "", Orchestrated: true, Lead: "cto",
+		Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "sess"}},
+	})
+	base := []string{
+		"--project", dir, "--profile", team.DefaultProfile, "--session", "sess",
+		"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether,
+		"--goal", "Keep one accepted generation", "--visibility", visibilityDetached,
+	}
+	if _, _, err := captureOutput(t, func() error { return runRunStart(append(append([]string{}, base...), "--prepare"), "test") }); err != nil {
+		t.Fatalf("initial prepare: %v", err)
+	}
+	writerWaiting := make(chan struct{})
+	oldBefore := preparedManifestWriterBeforeAdmission
+	preparedManifestWriterBeforeAdmission = func(string, string, string) error {
+		close(writerWaiting)
+		return nil
+	}
+	t.Cleanup(func() { preparedManifestWriterBeforeAdmission = oldBefore })
+	prepareDone := make(chan error, 1)
+	oldUp := runStartUpWithVersion
+	runStartUpWithVersion = func([]string, string) error {
+		go func() {
+			prepareDone <- runRunStart(append(append([]string{}, base...), "--prepare"), "test")
+		}()
+		select {
+		case <-writerWaiting:
+		case <-time.After(5 * time.Second):
+			return fmt.Errorf("public prepare did not reach writer admission")
+		}
+		select {
+		case err := <-prepareDone:
+			return fmt.Errorf("public prepare escaped pinned reader admission: %v", err)
+		case <-time.After(50 * time.Millisecond):
+			return nil
+		}
+	}
+	oldGoal := runStartGoalWithVersion
+	oldReady := runStartLeadReadyCheck
+	runStartGoalWithVersion = func([]string, string) error { return nil }
+	runStartLeadReadyCheck = func(string, string, string, string) (runStartLeadReadiness, error) {
+		return runStartLeadReadiness{Ready: true}, nil
+	}
+	t.Cleanup(func() {
+		runStartUpWithVersion = oldUp
+		runStartGoalWithVersion = oldGoal
+		runStartLeadReadyCheck = oldReady
+	})
+	if err := runRunStart(append(append([]string{}, base...), "--go"), "test"); err != nil {
+		t.Fatalf("pinned go: %v", err)
+	}
+	select {
+	case err := <-prepareDone:
+		if err != nil {
+			t.Fatalf("serialized public prepare: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("public prepare remained blocked after pinned run returned")
+	}
+}
+
 func TestPreparedExternalBindingPreservesOnlySameDeliveredGoalAttemptAndRecordIdentity(t *testing.T) {
 	contract, err := goalDeliveryContractForBinary("codex")
 	if err != nil {
@@ -574,7 +638,7 @@ func TestPreparedExternalBindingPreservesOnlySameDeliveredGoalAttemptAndRecordId
 			if err := launch.Write(agentDir, current); err != nil {
 				t.Fatal(err)
 			}
-			if err := writeExternalLeadLaunchRecord(agentDir, planned, "cto", "sess"); err != nil {
+			if _, err := writeExternalLeadLaunchRecord(agentDir, planned, "cto", "sess"); err != nil {
 				t.Fatal(err)
 			}
 			stored, err := launch.Read(agentDir)
@@ -661,6 +725,11 @@ func TestPreparedExternalLeadRecordEvidenceCodexClaude(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			_, manifestDigest, err := readPreparedRunManifestSnapshot(dir, team.DefaultProfile, "sess")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantToken := preparedRunTokenFromSnapshot(manifest, manifestDigest)
 			recordDir := filepath.Join(squadnamespace.AMQRoot(dir, team.DefaultProfile, "sess"), "agents", "cto")
 			rec, err := launch.Read(recordDir)
 			if err != nil {
@@ -670,6 +739,9 @@ func TestPreparedExternalLeadRecordEvidenceCodexClaude(t *testing.T) {
 			wantMode := map[string]string{"codex": "prompt_goal", "claude": "native_goal"}[binary]
 			if !rec.External || rec.Role != manifest.Members["cto"].Role || rec.Handle != manifest.Members["cto"].Handle || rec.Binary != manifest.Members["cto"].Binary || rec.Model != effectiveModel || manifest.Members["cto"].Model != effectiveModel || rec.GoalBinding == nil || rec.GoalBinding.Mode != wantMode || rec.GoalBinding.Source != "prepared-run" || rec.GoalBinding.DeliveryState != goalBindingDeliveryPrepared || rec.GoalBinding.Goal != manifest.GoalText {
 				t.Fatalf("external accepted record identity/binding = %+v", rec)
+			}
+			if got := preparedRunTokenFromRecord(rec); got != wantToken {
+				t.Fatalf("external record token=%+v want=%+v", got, wantToken)
 			}
 			if launchRecordHasGoalBinding(rec) {
 				t.Fatalf("external planned binding was fabricated as delivered: %+v", rec.GoalBinding)
@@ -702,7 +774,68 @@ func TestPreparedExternalLeadRecordEvidenceCodexClaude(t *testing.T) {
 			if len(backend.launches) != 1 || !reflect.DeepEqual(roles, []string{"qa"}) {
 				t.Fatalf("external worker launch roles=%v launches=%d", roles, len(backend.launches))
 			}
+			if backend.launches[0].PreparedRunToken != wantToken {
+				t.Fatalf("external worker token=%+v want=%+v", backend.launches[0].PreparedRunToken, wantToken)
+			}
 		})
+	}
+}
+
+func TestPreparedRunTokenTransportIsInternalAndRestoreReplayIsExact(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := prepareRunStartBinaryFixture(t, "codex")
+	manifest, digest, err := readPreparedRunManifestSnapshot(dir, team.DefaultProfile, "prepared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := preparedRunTokenFromSnapshot(manifest, digest)
+	cmd := emitTeamCommand(emitTeamCommandInput{
+		CWD: dir, SquadBin: "amq-squad", TeamHome: dir, Workstream: "prepared", Profile: team.DefaultProfile,
+		Member: team.Member{Role: "cto", Handle: "cto", Binary: "codex", CWD: dir}, PreparedRunToken: token,
+	})
+	if !strings.Contains(cmd, internalPreparedRunTokenEnv+"=") || strings.Contains(cmd, "--prepared-run-") {
+		t.Fatalf("prepared token transport must be internal-only: %s", cmd)
+	}
+
+	var observed launch.Record
+	oldObserver := launchPlanObserver
+	launchPlanObserver = func(rec launch.Record, _ []string) { observed = rec }
+	t.Cleanup(func() { launchPlanObserver = oldObserver })
+	if _, _, err := captureOutput(t, func() error {
+		return runLaunchWithPreparedToken(preparedLeadLaunchArgs(dir, "codex"), token)
+	}); err != nil {
+		t.Fatalf("exact token launch: %v", err)
+	}
+	if got := preparedRunTokenFromRecord(observed); got != token {
+		t.Fatalf("launch record token=%+v want=%+v", got, token)
+	}
+	restoreCommand := emitCommand(observed)
+	if !strings.Contains(restoreCommand, internalPreparedRunTokenEnv+"=") || strings.Contains(restoreCommand, "--prepared-run-") {
+		t.Fatalf("restore must replay internal token exactly: %s", restoreCommand)
+	}
+
+	mutatePreparedManifest(t, dir, func(m *preparedRunManifest) { m.Generation = "replacement-generation" })
+	changedManifest, changedDigest, err := readPreparedRunManifestSnapshot(dir, team.DefaultProfile, "prepared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed := preparedRunTokenFromSnapshot(changedManifest, changedDigest); changed == token {
+		t.Fatalf("test mutation did not replace prepared token: %+v", changed)
+	}
+	if err := validatePreparedRunToken(token, changedManifest, changedDigest); err == nil {
+		t.Fatal("changed manifest unexpectedly validates the original token")
+	}
+	if _, err := preparedContextForLaunchRecord(observed); err == nil {
+		t.Fatal("stale launch record unexpectedly revalidated against replacement manifest")
+	}
+	observerCalls := 0
+	var staleObserved launch.Record
+	launchPlanObserver = func(rec launch.Record, _ []string) { observerCalls++; staleObserved = rec }
+	_, _, err = captureOutput(t, func() error {
+		return runLaunchWithPreparedToken(preparedLeadLaunchArgs(dir, "codex"), token)
+	})
+	if err == nil || !strings.Contains(err.Error(), "prepared run token changed") || observerCalls != 0 {
+		t.Fatalf("stale restore err=%v observer_calls=%d requested=%+v observed=%+v team_home=%q cwd=%q", err, observerCalls, token, preparedRunTokenFromRecord(staleObserved), staleObserved.TeamHome, staleObserved.CWD)
 	}
 }
 
@@ -765,6 +898,7 @@ func TestPreparedExternalStoredMutationAfterRegistrationPreventsWorkerExecution(
 			stubRunStartLeadWake(t)
 			liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
 			oldAfterRegister := runStartExternalLeadAfterRegister
+			var mutatedRecord launch.Record
 			runStartExternalLeadAfterRegister = func(project, profile, session, role string) error {
 				agentDir := filepath.Join(squadnamespace.AMQRoot(project, profile, session), "agents", role)
 				rec, err := launch.Read(agentDir)
@@ -772,6 +906,7 @@ func TestPreparedExternalStoredMutationAfterRegistrationPreventsWorkerExecution(
 					return err
 				}
 				tc.mutate(&rec)
+				mutatedRecord = rec
 				return launch.Write(agentDir, rec)
 			}
 			t.Cleanup(func() { runStartExternalLeadAfterRegister = oldAfterRegister })
@@ -789,7 +924,239 @@ func TestPreparedExternalStoredMutationAfterRegistrationPreventsWorkerExecution(
 			if workerExecCalls != 0 || len(backend.launches) != 0 {
 				t.Fatalf("stored external mutation reached worker executor=%d backend_launches=%d", workerExecCalls, len(backend.launches))
 			}
+			stored, readErr := launch.Read(filepath.Join(squadnamespace.AMQRoot(dir, team.DefaultProfile, "sess"), "agents", "cto"))
+			if readErr != nil || !reflect.DeepEqual(stored, mutatedRecord) {
+				t.Fatalf("concurrent replacement was not preserved: %v", readErr)
+			}
 		})
+	}
+}
+
+func TestPreparedExternalTokenFailureRollsBackOwnedRecord(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Project: "", Orchestrated: true, Lead: "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+		},
+	})
+	backend := useFakeTmuxBackend(t)
+	stubCurrentRunStartPane(t, "%42")
+	stubRunStartLeadWake(t)
+	base := []string{"-p", dir, "-s", "sess", "--external-lead", "--goal", "Rollback only this prepared generation", "--launch-shape", runwizard.LaunchShapeWorkingTeamTogether}
+	if _, _, err := captureOutput(t, func() error { return runRunStart(append(append([]string{}, base...), "--prepare"), "test") }); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	stubSuccessfulRunStartGoalDelivery(t)
+	agentDir := filepath.Join(squadnamespace.AMQRoot(dir, team.DefaultProfile, "sess"), "agents", "cto")
+	baselineLaunches := len(backend.launches)
+	oldAfterRegister := runStartExternalLeadAfterRegister
+	runStartExternalLeadAfterRegister = func(project, profile, session, role string) error {
+		manifest, err := readPreparedRunManifest(project, profile, session)
+		if err != nil {
+			return err
+		}
+		manifest.Generation = "forced-drift-after-registration"
+		return writePreparedRunManifest(preparedRunPath(project, profile, session), manifest)
+	}
+	t.Cleanup(func() { runStartExternalLeadAfterRegister = oldAfterRegister })
+	_, _, err := captureOutput(t, func() error { return runRunStart(append(append([]string{}, base...), "--go"), "test") })
+	if err == nil {
+		t.Fatal("forced external prepared drift unexpectedly launched")
+	}
+	if len(backend.launches) != baselineLaunches {
+		t.Fatalf("forced drift reached worker backend: before=%d after=%d", baselineLaunches, len(backend.launches))
+	}
+	stored, readErr := launch.Read(agentDir)
+	if !os.IsNotExist(readErr) {
+		t.Fatalf("run-owned external record was not removed: %v %+v", readErr, stored)
+	}
+}
+
+func TestPreparedExternalRollbackRestoresPriorRecordByFixedCAS(t *testing.T) {
+	agentDir := filepath.Join(t.TempDir(), "agents", "cto")
+	previous := launch.Record{Schema: 1, Role: "cto", Handle: "cto", Session: "sess", Conversation: "prior"}
+	written := launch.Record{Role: "cto", Handle: "cto", Session: "sess", Conversation: "run-owned"}
+	if err := launch.Write(agentDir, written); err != nil {
+		t.Fatal(err)
+	}
+	written, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, err := rollbackPreparedExternalLeadRecord(agentDir, &previous, written)
+	if err != nil || !applied {
+		t.Fatalf("rollback applied=%t error=%v", applied, err)
+	}
+	stored, err := launch.Read(agentDir)
+	if err != nil || !reflect.DeepEqual(stored, previous) {
+		t.Fatalf("prior record restoration err=%v got=%+v want=%+v", err, stored, previous)
+	}
+}
+
+func TestPreparedExternalPreWriteFailureQuiescesNewWakeAndWritesNoRecord(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Project: "", Orchestrated: true, Lead: "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+		},
+	})
+	useFakeTmuxBackend(t)
+	stubCurrentRunStartPane(t, "%42")
+	stubRunStartLeadWake(t)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
+	oldAfterWake := externalLeadAfterWakeStart
+	externalLeadAfterWakeStart = func(leadWakeResult) error { return fmt.Errorf("forced pre-write failure") }
+	t.Cleanup(func() { externalLeadAfterWakeStart = oldAfterWake })
+	oldSignal := externalLeadWakeProcessGroupSignal
+	var signals []syscall.Signal
+	externalLeadWakeProcessGroupSignal = func(pgid int, signal syscall.Signal) error {
+		if pgid != 1234 {
+			t.Fatalf("cleanup pgid=%d want=1234", pgid)
+		}
+		signals = append(signals, signal)
+		if signal == 0 {
+			return syscall.ESRCH
+		}
+		return nil
+	}
+	t.Cleanup(func() { externalLeadWakeProcessGroupSignal = oldSignal })
+	_, _, err := captureOutput(t, func() error { return runRunStart(liveArgs, "test") })
+	if err == nil || !strings.Contains(err.Error(), "forced pre-write failure") {
+		t.Fatalf("pre-write failure=%v", err)
+	}
+	if !reflect.DeepEqual(signals, []syscall.Signal{syscall.SIGTERM, 0}) {
+		t.Fatalf("wake cleanup signals=%v", signals)
+	}
+	agentDir := filepath.Join(squadnamespace.AMQRoot(dir, team.DefaultProfile, "sess"), "agents", "cto")
+	if _, err := launch.Read(agentDir); !os.IsNotExist(err) {
+		t.Fatalf("pre-write failure left launch record: %v", err)
+	}
+}
+
+func TestPreparedExternalRollbackPreservesExistingWake(t *testing.T) {
+	oldSignal := externalLeadWakeProcessGroupSignal
+	calls := 0
+	externalLeadWakeProcessGroupSignal = func(int, syscall.Signal) error { calls++; return nil }
+	t.Cleanup(func() { externalLeadWakeProcessGroupSignal = oldSignal })
+	if err := rollbackStartedExternalLeadWake(leadWakeResult{PID: 2222, Started: false}); err != nil || calls != 0 {
+		t.Fatalf("existing wake cleanup err=%v signal_calls=%d", err, calls)
+	}
+}
+
+func TestPinnedGoalReservationRejectsChangedPreparedBindingBeforeAttempt(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Project: "", Orchestrated: true, Lead: "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+		},
+	})
+	useFakeTmuxBackend(t)
+	stubCurrentRunStartPane(t, "%42")
+	stubRunStartLeadWake(t)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
+	if _, _, err := captureOutput(t, func() error { return runRunStart(liveArgs, "test") }); err != nil {
+		t.Fatalf("external lead go: %v", err)
+	}
+	manifest, digest, err := readPreparedRunManifestSnapshot(dir, team.DefaultProfile, "sess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := preparedRunTokenFromSnapshot(manifest, digest)
+	agentDir := filepath.Join(squadnamespace.AMQRoot(dir, team.DefaultProfile, "sess"), "agents", "cto")
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := *rec.GoalBinding
+	changed.DeliveryState = goalBindingDeliveryDelivered
+	rec.GoalBinding = &changed
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	opts, err := resolveGoalDeliveryOptions(dir, team.DefaultProfile, "sess", "cto", manifest.GoalText, true, true, true, "goal start", namespaceConflictOverrideOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.PreparedRunToken = token
+	_, err = executeGoalDelivery(opts)
+	if err == nil || !strings.Contains(err.Error(), "not the exact pinned prepared binding") {
+		t.Fatalf("changed prepared binding error=%v", err)
+	}
+	entries, readErr := os.ReadDir(goalAttemptDir(dir, team.DefaultProfile, "sess"))
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatal(readErr)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".json") {
+			t.Fatalf("changed prepared binding created attempt/receipt artifact %s", entry.Name())
+		}
+	}
+	stored, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(stored.GoalBinding, rec.GoalBinding) {
+		t.Fatalf("changed prepared binding was mutated: before=%+v after=%+v", rec.GoalBinding, stored.GoalBinding)
+	}
+}
+
+func TestPreparedRunSuccessCarriesOneTokenAcrossRecordBootstrapAndReceipt(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Project: "", Orchestrated: true, Lead: "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+		},
+	})
+	useFakeTmuxBackend(t)
+	stubCurrentRunStartPane(t, "%42")
+	stubRunStartLeadWake(t)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--goal", "Deliver one pinned generation", "--go"})
+	if _, _, err := captureOutput(t, func() error { return runRunStart(liveArgs, "test") }); err != nil {
+		t.Fatalf("external lead go: %v", err)
+	}
+	manifest, digest, err := readPreparedRunManifestSnapshot(dir, team.DefaultProfile, "sess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := preparedRunTokenFromSnapshot(manifest, digest)
+	agentDir := filepath.Join(squadnamespace.AMQRoot(dir, team.DefaultProfile, "sess"), "agents", "cto")
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preparedRunTokenFromRecord(rec) != token || rec.BootstrapExpectation == nil || rec.BootstrapExpectation.Required {
+		t.Fatalf("record/bootstrap token evidence rec=%+v token=%+v", rec, token)
+	}
+	oldLister, oldSend := statusPaneLister, sendPromptToPane
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
+		return []tmuxpane.TmuxPane{{PaneID: "%42", CWD: dir, Command: "codex", Title: "amq:sess:cto"}}, nil
+	}
+	sendPromptToPane = func(string, string) error { return nil }
+	t.Cleanup(func() { statusPaneLister, sendPromptToPane = oldLister, oldSend })
+	opts, err := resolveGoalDeliveryOptions(dir, team.DefaultProfile, "sess", "cto", manifest.GoalText, true, true, true, "goal start", namespaceConflictOverrideOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.PreparedRunToken = token
+	result, err := executeGoalDelivery(opts)
+	if err != nil {
+		t.Fatalf("pinned goal delivery: %v", err)
+	}
+	receipt := result.DeliveryReceipt
+	if receipt == nil || receipt.PreparedRunGeneration != token.Generation || receipt.PreparedRunDigest != token.ManifestDigest || receipt.PreparedRunGoalNamespace != token.GoalNamespace || receipt.PreparedRunGoalDigest != token.GoalDigest {
+		t.Fatalf("receipt token evidence=%+v want=%+v", receipt, token)
+	}
+	stored, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preparedRunTokenFromRecord(stored) != token || stored.BootstrapExpectation == nil {
+		t.Fatalf("post-delivery record/bootstrap token changed: %+v", stored)
 	}
 }
 

@@ -31,6 +31,7 @@ type namespaceAdmissionLocks struct {
 // that interval; tests use the seam to prove the mandatory re-resolution under
 // the acquired admission rejects a namespace that migrated in the meantime.
 var namespaceWriterBeforeAdmission = func(string, string, string) error { return nil }
+var preparedManifestWriterBeforeAdmission = func(string, string, string) error { return nil }
 
 func (l *namespaceAdmissionLocks) close() {
 	for i := len(l.locks) - 1; i >= 0; i-- {
@@ -280,6 +281,9 @@ func acquirePreparedManifestReaderAdmission(projectDir, profile, session string)
 func acquirePreparedManifestWriterAdmission(projectDir, profile, session string) (*namespaceAdmissionLocks, error) {
 	if err := team.ValidateSessionName(strings.TrimSpace(session)); err != nil {
 		return nil, fmt.Errorf("prepared manifest writer admission requires valid session: %w", err)
+	}
+	if err := preparedManifestWriterBeforeAdmission(projectDir, squadnamespace.NormalizeProfile(profile), strings.TrimSpace(session)); err != nil {
+		return nil, err
 	}
 	return acquireNamespaceAdmissionPaths(projectDir, false, preparedManifestAdmissionLockPath(projectDir, profile, session))
 }

@@ -18,12 +18,22 @@ func runUp(args []string) error {
 }
 
 func runUpWithVersion(args []string, version string) error {
+	return runUpWithVersionAndPreparedToken(args, version, preparedRunToken{})
+}
+
+func runUpWithVersionAndPreparedToken(args []string, version string, preparedToken preparedRunToken) error {
+	return runUpWithVersionAndPreparedTokenAndResult(args, version, preparedToken, nil)
+}
+
+func runUpWithVersionAndPreparedTokenAndResult(args []string, version string, preparedToken preparedRunToken, resultSink func(teamLaunchResult)) error {
 	project, rest, err := peelProjectFlag(args)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(project) != "" {
-		return runInProject(project, func() error { return runUpWithVersion(rest, version) })
+		return runInProject(project, func() error {
+			return runUpWithVersionAndPreparedTokenAndResult(rest, version, preparedToken, resultSink)
+		})
 	}
 
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
@@ -325,6 +335,8 @@ Examples:
 	opts.SeedBriefContent = seedContent
 	opts.SeedBriefForce = *force || *reset
 	opts.Profile = profile
+	opts.PreparedRunToken = preparedToken
+	opts.ResultSink = resultSink
 	// When no brief source was supplied, the launch path auto-stubs the brief
 	// (ensureBriefStub) and we nudge the operator with a warn-if-stub notice
 	// AFTER the launch succeeds, so the message reflects a real launch. Carry

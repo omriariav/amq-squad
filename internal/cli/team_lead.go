@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/amqexec"
+	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -56,7 +57,41 @@ type leadWakeResult struct {
 	Detail  string
 }
 
+type preparedExternalLeadRegistration struct {
+	RecordWrite launchRecordWriteSnapshot
+	Wake        leadWakeResult
+}
+
 var leadWakeStarter = startExternalLeadWake
+var externalLeadAfterWakeStart = func(leadWakeResult) error { return nil }
+var externalLeadAfterRecordWrite = func(string, launch.Record) error { return nil }
+var externalLeadWakeSleep = time.Sleep
+
+func rollbackStartedExternalLeadWake(result leadWakeResult) error {
+	if !result.Started || result.PID <= 0 {
+		return nil
+	}
+	if err := externalLeadWakeProcessGroupSignal(result.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("stop run-owned external lead wake process group %d: %w", result.PID, err)
+	}
+	for i := 0; i < 50; i++ {
+		if err := externalLeadWakeProcessGroupSignal(result.PID, 0); errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		externalLeadWakeSleep(20 * time.Millisecond)
+	}
+	if err := externalLeadWakeProcessGroupSignal(result.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("kill non-quiescent run-owned external lead wake process group %d: %w", result.PID, err)
+	}
+	for i := 0; i < 50; i++ {
+		if err := externalLeadWakeProcessGroupSignal(result.PID, 0); errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		externalLeadWakeSleep(20 * time.Millisecond)
+	}
+	return fmt.Errorf("run-owned external lead wake process group %d did not quiesce", result.PID)
+}
+
 var externalLeadWakeCommand = exec.Command
 var externalLeadWakeReadyTimeout = 5 * time.Second
 var externalLeadWakePollInterval = 50 * time.Millisecond
@@ -221,6 +256,17 @@ session root, so child reports create the same attention path spawned agents get
 }
 
 func runLeadRegister(args []string) error {
+	return runLeadRegisterWithPreparedToken(args, preparedRunToken{})
+}
+
+func runLeadRegisterWithPreparedToken(args []string, requestedPreparedToken preparedRunToken, resultSink ...func(preparedExternalLeadRegistration)) (retErr error) {
+	var wakeResult leadWakeResult
+	wakeCleanupPending := false
+	defer func() {
+		if wakeCleanupPending {
+			retErr = errors.Join(retErr, rollbackStartedExternalLeadWake(wakeResult))
+		}
+	}()
 	fs := flag.NewFlagSet("lead register", flag.ContinueOnError)
 	roleFlag := fs.String("role", "", "lead role to register (defaults to configured lead, then AM_ME)")
 	sessionFlag := fs.String("session", "", "AMQ workstream session (default: team workstream)")
@@ -394,7 +440,6 @@ func runLeadRegister(args []string) error {
 	if wakeInjectModeValue == "none" {
 		wakeInjectCmdValue = ""
 	}
-	var wakeResult leadWakeResult
 	wakePID := 0
 	rec := launch.Record{
 		CWD:              cwd,
@@ -433,6 +478,11 @@ func runLeadRegister(args []string) error {
 			Target:     "external",
 		},
 	}
+	rec.BootstrapExpectation = &bootstrapack.Expectation{Required: false, NotRequiredReason: "external lead is already running in the adopted pane"}
+	if !requestedPreparedToken.empty() && !requestedPreparedToken.complete() {
+		return fmt.Errorf("lead register refused: prepared run token is incomplete")
+	}
+	applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
 	acceptedIdentity := acceptedMemberIdentity(t, member, profile, workstream)
 	rec.Argv = append([]string(nil), acceptedIdentity.EffectiveArgs...)
 	rec.Model = acceptedIdentity.Model
@@ -454,6 +504,15 @@ func runLeadRegister(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load accepted prepared external-lead identity: %w", err)
 	}
+	if !requestedPreparedToken.empty() {
+		if preparedContext == nil {
+			return fmt.Errorf("lead register refused: pinned prepared run identity disappeared")
+		}
+		if err := validatePreparedRunToken(requestedPreparedToken, preparedContext.Manifest, preparedContext.Digest); err != nil {
+			return fmt.Errorf("lead register refused: %w", err)
+		}
+	}
+	applyPreparedRunTokenToRecord(&rec, preparedRunTokenForContext(preparedContext))
 	var preparedBinding *launch.GoalBinding
 	if preparedContext != nil && preparedContext.Member.Role == preparedContext.Team.Lead {
 		preparedBinding, err = preparedGoalBinding(preparedContext.Team, preparedContext.Manifest.Profile, preparedContext.Manifest.Session, preparedContext.Member, preparedContext.Binding)
@@ -502,6 +561,10 @@ func runLeadRegister(args []string) error {
 		if err != nil {
 			return fmt.Errorf("start external lead wake: %w", err)
 		}
+		wakeCleanupPending = wakeResult.Started
+		if err := externalLeadAfterWakeStart(wakeResult); err != nil {
+			return err
+		}
 	}
 	wakePID = wakeResult.PID
 	if lock, lockErr := readWakeLock(agentDir); lockErr == nil && lock.PID > 0 {
@@ -511,18 +574,31 @@ func runLeadRegister(args []string) error {
 	if err := revalidatePrepared("launch record write"); err != nil {
 		return err
 	}
-	if err := writeExternalLeadLaunchRecord(agentDir, rec, role, env.SessionName); err != nil {
+	recordWrite, err := writeExternalLeadLaunchRecord(agentDir, rec, role, env.SessionName)
+	if err != nil {
 		return fmt.Errorf("write external launch record: %w", err)
 	}
+	rollbackRegistration := func(cause error) error {
+		applied, rollbackErr := rollbackLaunchRecordIfCurrent(agentDir, recordWrite)
+		wakeCleanupPending = applied
+		return errors.Join(cause, rollbackErr)
+	}
+	if err := externalLeadAfterRecordWrite(agentDir, recordWrite.Written); err != nil {
+		return rollbackRegistration(err)
+	}
 	if err := validateStoredPreparedExternalLeadRecord(agentDir, rec, preparedContext); err != nil {
-		return fmt.Errorf("validate stored external launch record: %w", err)
+		return rollbackRegistration(fmt.Errorf("validate stored external launch record: %w", err))
 	}
 	if err := revalidatePrepared("team lead profile write"); err != nil {
-		return err
+		return rollbackRegistration(err)
 	}
 	if err := setTeamLeadForProfile(projectDir, profile, role, "", false); err != nil {
-		return err
+		return rollbackRegistration(err)
 	}
+	if len(resultSink) > 0 && resultSink[0] != nil {
+		resultSink[0](preparedExternalLeadRegistration{RecordWrite: recordWrite, Wake: wakeResult})
+	}
+	wakeCleanupPending = false
 	fmt.Printf("registered external lead %s (%s) at pane %s for session %s.\n", role, handle, id.PaneID, env.SessionName)
 	if *noWake {
 		fmt.Println("wake: skipped (--no-wake); lead must collect manually")
@@ -532,15 +608,31 @@ func runLeadRegister(args []string) error {
 	return nil
 }
 
-func writeExternalLeadLaunchRecord(agentDir string, rec launch.Record, role, session string) error {
-	return launch.WithRecordLock(agentDir, func() error {
+func writeExternalLeadLaunchRecord(agentDir string, rec launch.Record, role, session string) (launchRecordWriteSnapshot, error) {
+	var snapshot launchRecordWriteSnapshot
+	err := launch.WithRecordLock(agentDir, func() error {
 		current, currentErr := launch.Read(agentDir)
+		if currentErr == nil {
+			previous := current
+			snapshot.Previous = &previous
+		} else if !os.IsNotExist(currentErr) {
+			return currentErr
+		}
 		if preserveExternalGoalBindingForRecord(current, currentErr, rec, role, session) {
 			gb := *current.GoalBinding
 			rec.GoalBinding = &gb
 		}
-		return launch.WriteUnderRecordLock(agentDir, rec)
+		if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
+			return err
+		}
+		written, err := launch.Read(agentDir)
+		if err != nil {
+			return err
+		}
+		snapshot.Written = written
+		return nil
 	})
+	return snapshot, err
 }
 
 func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, viaExplicit, argsExplicit bool, existing launch.Record, existingErr error, binary, role, handle, profile, session, root, paneID string) (wakeInjectConfig, error) {
@@ -661,7 +753,7 @@ func validateStoredPreparedExternalLeadRecord(agentDir string, expected launch.R
 	return fmt.Errorf("stored external lead goal binding differs from the newly validated goal/attempt")
 }
 
-func validatePreparedExternalLeadStoredBeforeWorkerSpawn(project, profile, session, role string) error {
+func validatePreparedExternalLeadStoredBeforeWorkerSpawn(project, profile, session, role string, expectedToken preparedRunToken) error {
 	endpointAdmission, err := acquireNamespaceWriterAdmission(project, profile, session)
 	if err != nil {
 		return err
@@ -692,6 +784,9 @@ func validatePreparedExternalLeadStoredBeforeWorkerSpawn(project, profile, sessi
 	rec, err := launch.Read(agentDir)
 	if err != nil {
 		return err
+	}
+	if preparedRunTokenFromRecord(rec) != expectedToken {
+		return fmt.Errorf("stored external lead prepared run token differs from the parent transaction")
 	}
 	id, err := currentPaneIdentity()
 	if err != nil {
@@ -729,6 +824,46 @@ func validatePreparedExternalLeadStoredBeforeWorkerSpawn(project, profile, sessi
 	expected := rec
 	expected.GoalBinding = planned
 	return validateStoredPreparedExternalLeadRecord(agentDir, expected, context)
+}
+
+func preparedExternalLeadRecordSnapshot(project, profile, session, role string) (string, *launch.Record, error) {
+	tm, err := team.ReadProfile(project, profile)
+	if err != nil {
+		return "", nil, err
+	}
+	member, ok := memberByRole(tm, role)
+	if !ok {
+		return "", nil, fmt.Errorf("prepared external lead %q is not a team member", role)
+	}
+	cwd, err := canonicalDir(member.EffectiveCWD(tm.Project))
+	if err != nil {
+		return "", nil, err
+	}
+	env, err := resolveAMQEnvForTeamLaunchProfile(cwd, profile, session, memberHandle(member))
+	if err != nil {
+		return "", nil, err
+	}
+	agentDir := filepath.Join(env.Root, "agents", memberHandle(member))
+	rec, err := launch.Read(agentDir)
+	if os.IsNotExist(err) {
+		return agentDir, nil, nil
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	return agentDir, &rec, nil
+}
+
+func rollbackPreparedExternalLeadRecord(agentDir string, previous *launch.Record, written launch.Record) (bool, error) {
+	return rollbackLaunchRecordIfCurrent(agentDir, launchRecordWriteSnapshot{Previous: previous, Written: written})
+}
+
+func rollbackPreparedExternalLeadRegistration(agentDir string, registration preparedExternalLeadRegistration) error {
+	applied, rollbackErr := rollbackPreparedExternalLeadRecord(agentDir, registration.RecordWrite.Previous, registration.RecordWrite.Written)
+	if rollbackErr != nil || !applied {
+		return rollbackErr
+	}
+	return rollbackStartedExternalLeadWake(registration.Wake)
 }
 
 type leadRegisterAuthInput struct {

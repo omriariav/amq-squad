@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -111,10 +112,12 @@ func stubCurrentRunStartPane(t *testing.T, paneID string) {
 func stubRunStartLeadWake(t *testing.T) {
 	t.Helper()
 	prev := leadWakeStarter
+	prevSignal := externalLeadWakeProcessGroupSignal
 	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
 		return leadWakeResult{PID: 1234, Started: true, Detail: "ready"}, nil
 	}
-	t.Cleanup(func() { leadWakeStarter = prev })
+	externalLeadWakeProcessGroupSignal = func(int, syscall.Signal) error { return syscall.ESRCH }
+	t.Cleanup(func() { leadWakeStarter, externalLeadWakeProcessGroupSignal = prev, prevSignal })
 }
 
 func TestGlobalStartPreviewDoesNotLaunch(t *testing.T) {

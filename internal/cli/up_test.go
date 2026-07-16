@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -69,6 +70,26 @@ func (f *fakeBackend) Launch(t team.Team, opts teamLaunchOptions) error {
 	f.teams = append(f.teams, t)
 	return nil
 }
+
+func (f *fakeBackend) LaunchWithResult(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
+	if err := f.Launch(t, opts); err != nil {
+		return teamLaunchResult{}, err
+	}
+	members := orderedTeamMembers(t.Members)
+	result := teamLaunchResult{Panes: make([]teamLaunchResultPane, 0, len(members))}
+	for i, member := range members {
+		window := "@1"
+		if opts.Target == "new-window" {
+			window = fmt.Sprintf("@%d", i+1)
+		}
+		result.Panes = append(result.Panes, teamLaunchResultPane{
+			Role: member.Role, PaneID: fmt.Sprintf("%%%d", i+1), WindowID: window,
+		})
+	}
+	return result, nil
+}
+
+func (*fakeBackend) preparedResultBeforeDispatch() {}
 
 // useFakeBackend registers a fresh fake backend under the name "fake" for
 // the duration of t and restores the prior teamLaunchBackends entry on

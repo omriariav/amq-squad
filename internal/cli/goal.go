@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -207,6 +208,7 @@ type goalDeliveryOptions struct {
 	// ResumeTransitionID is an internal, durable compare-and-swap token. It is
 	// accepted only from resume after the fresh lead launch has been verified.
 	ResumeTransitionID string
+	PreparedRunToken   preparedRunToken
 }
 
 const (
@@ -619,6 +621,10 @@ command is confirm-gated; pass --yes after reviewing the gate and lead state.
 }
 
 func runGoalStart(args []string) error {
+	return runGoalStartWithPreparedToken(args, preparedRunToken{})
+}
+
+func runGoalStartWithPreparedToken(args []string, preparedToken preparedRunToken) error {
 	args = normalizeOptionalStringFlag(args, "--register-orchestrator", defaultGoalOrchestratorHandle)
 	fs := flag.NewFlagSet("goal start", flag.ContinueOnError)
 	goalFlag := fs.String("goal", "", "goal text to deliver through the lead binary's goal contract")
@@ -692,6 +698,16 @@ confirm-gated and requires --yes in this first implementation slice.
 		return err
 	}
 	defer admission.close()
+	if !preparedToken.empty() {
+		if !preparedToken.complete() {
+			return fmt.Errorf("goal start refused: prepared run token is incomplete")
+		}
+		manifestAdmission, err := acquirePreparedManifestReaderAdmission(opts.Project, opts.Profile, opts.Session)
+		if err != nil {
+			return err
+		}
+		defer manifestAdmission.close()
+	}
 	currentOpts, err := resolveGoalDeliveryOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, goal, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), flagWasSet(fs, "session"), "goal start", override)
 	if err != nil {
 		return fmt.Errorf("goal start refused: target re-resolution under admission failed: %w", err)
@@ -704,6 +720,7 @@ confirm-gated and requires --yes in this first implementation slice.
 		return err
 	}
 	opts.ResumeTransitionID = strings.TrimSpace(*resumeTransition)
+	opts.PreparedRunToken = preparedToken
 	if flagWasSet(fs, "register-orchestrator") {
 		if err := registerGoalOrchestrator(opts, *registerOrchestrator, wakeInjectModeValue, flagWasSet(fs, "wake-inject-mode")); err != nil {
 			return err
@@ -1322,6 +1339,9 @@ func reserveGoalDeliveryAttempt(opts *goalDeliveryOptions, contract goalDelivery
 // not discover panes, send input, write receipts, or emit output.
 func reserveGoalDeliveryIdentity(opts *goalDeliveryOptions, contract goalDeliveryContract, receipt *deliveryReceiptData, prompt *string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (goalDeliveryReservation, error) {
 	reservation := goalDeliveryReservation{Runtime: mr, Workstream: resolvedWorkstream, Transition: transition}
+	if !opts.PreparedRunToken.empty() && !mr.HasRecord {
+		return goalDeliveryReservation{}, preparedRunIdentityMismatchf("pinned prepared goal delivery requires the accepted launch record")
+	}
 	if !mr.HasRecord {
 		attemptPath, err := reserveGoalDeliveryAttempt(opts, contract, receipt, transition)
 		if err != nil {
@@ -1337,6 +1357,29 @@ func reserveGoalDeliveryIdentity(opts *goalDeliveryOptions, contract goalDeliver
 		}
 		opts.Team = currentTeam
 		opts.Member = current.Member
+		if !opts.PreparedRunToken.empty() {
+			manifest, digest, err := readPreparedRunManifestSnapshot(opts.Project, opts.Profile, opts.Session)
+			if err != nil {
+				return preparedRunIdentityMismatchf("pinned prepared run identity disappeared before goal reservation: %v", err)
+			}
+			if err := validatePreparedRunToken(opts.PreparedRunToken, manifest, digest); err != nil {
+				return fmt.Errorf("goal reservation refused: %w", err)
+			}
+			if preparedRunTokenFromRecord(current.Record) != opts.PreparedRunToken {
+				return preparedRunIdentityMismatchf("goal reservation refused: lead launch record prepared run token differs from the parent transaction")
+			}
+			binding := acceptedGoalBinding{Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest}
+			if err := validateAcceptedGoalBinding(binding); err != nil || binding.Text != opts.Goal || binding.Namespace != opts.PreparedRunToken.GoalNamespace || binding.Digest != opts.PreparedRunToken.GoalDigest {
+				return preparedRunIdentityMismatchf("goal reservation refused: requested goal differs from the pinned prepared binding")
+			}
+			expectedPreparedBinding, err := preparedGoalBinding(currentTeam, opts.Profile, opts.Session, current.Member, binding)
+			if err != nil {
+				return fmt.Errorf("goal reservation refused: derive prepared binding: %w", err)
+			}
+			if !reflect.DeepEqual(current.Record.GoalBinding, expectedPreparedBinding) {
+				return preparedRunIdentityMismatchf("goal reservation refused: lead launch record goal binding is not the exact pinned prepared binding")
+			}
+		}
 		if transition != nil {
 			transition, err = validateResumeGoalTransitionForDelivery(*opts, current)
 			if err != nil {
@@ -1478,6 +1521,7 @@ func executeGoalDeliveryLocked(opts goalDeliveryOptions) (mutationResult, error)
 		return mutationResult{}, err
 	}
 	receipt := newDeliveryReceipt(opts.Project, opts.Profile, opts.Session, opts.Role, opts.Member.Handle, opts.Mode, contract.Mode)
+	applyPreparedRunTokenToReceipt(&receipt, opts.PreparedRunToken)
 	opts.AttemptID = receipt.AttemptID
 	prompt := contract.prompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
 	receipt.Method = contract.Method

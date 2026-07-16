@@ -93,6 +93,14 @@ func (f *stringListFlag) Set(value string) error {
 // and the replay path (execRestoreRecord). It is internal-only and carries no
 // deprecation surface of its own.
 func runLaunch(args []string) error {
+	token, err := preparedRunTokenFromInternalEnv()
+	if err != nil {
+		return err
+	}
+	return runLaunchWithPreparedToken(args, token)
+}
+
+func runLaunchWithPreparedToken(args []string, requestedPreparedToken preparedRunToken) error {
 	// Split at "--" so launcher flags aren't consumed by amq-squad's parser.
 	squadArgs, childArgs := splitDashDash(args)
 
@@ -205,7 +213,9 @@ Examples:
 		if err != nil {
 			return err
 		}
-		return runInProject(project, func() error { return runLaunch(rest) })
+		return runInProject(project, func() error {
+			return runLaunchWithPreparedToken(rest, requestedPreparedToken)
+		})
 	}
 	trustExplicit := flagWasSet(fs, "trust")
 	trustMode, err := normalizeTrustMode(*trustRaw)
@@ -409,6 +419,10 @@ Examples:
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD
 	}
+	if !requestedPreparedToken.empty() && !requestedPreparedToken.complete() {
+		return fmt.Errorf("agent up refused: prepared run token is incomplete")
+	}
+	applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
 	// A live prepared launch enters both the namespace writer domain and the
 	// prepared-manifest reader domain before reading accepted state. Preparation
 	// writers take the matching exclusive manifest admission, so the accepted
@@ -469,9 +483,33 @@ Examples:
 		}
 		defer manifestAdmission.close()
 	}
+	if !requestedPreparedToken.empty() {
+		manifestProject := strings.TrimSpace(rec.TeamHome)
+		if manifestProject == "" {
+			manifestProject = strings.TrimSpace(rec.CWD)
+		}
+		manifest, digest, err := readPreparedRunManifestSnapshot(manifestProject, rec.TeamProfile, rec.Session)
+		if err != nil {
+			return fmt.Errorf("agent up refused: read pinned prepared run identity: %w", err)
+		}
+		if err := validatePreparedRunToken(requestedPreparedToken, manifest, digest); err != nil {
+			return fmt.Errorf("agent up refused: %w", err)
+		}
+	}
 	preparedLaunchContext, err := preparedContextForLaunchRecord(rec)
 	if err != nil {
 		return fmt.Errorf("load accepted prepared launch identity: %w", err)
+	}
+	if !requestedPreparedToken.empty() {
+		if preparedLaunchContext == nil {
+			return fmt.Errorf("agent up refused: pinned prepared run identity disappeared")
+		}
+		if err := validatePreparedRunToken(requestedPreparedToken, preparedLaunchContext.Manifest, preparedLaunchContext.Digest); err != nil {
+			return fmt.Errorf("agent up refused: %w", err)
+		}
+	}
+	if requestedPreparedToken.empty() {
+		applyPreparedRunTokenToRecord(&rec, preparedRunTokenForContext(preparedLaunchContext))
 	}
 	if rec.GoalBinding == nil && rec.Conversation == "" && preparedLaunchContext != nil && preparedLaunchContext.Member.Role == preparedLaunchContext.Team.Lead {
 		preparedBinding, err := preparedGoalBinding(preparedLaunchContext.Team, preparedLaunchContext.Manifest.Profile, preparedLaunchContext.Manifest.Session, preparedLaunchContext.Member, preparedLaunchContext.Binding)
@@ -572,7 +610,7 @@ Examples:
 			return nil
 		}
 		if err := revalidatePreparedBootstrapPromptForLaunch(rec, preparedPrompt, preparedLaunchContext); err != nil {
-			return fmt.Errorf("prepared launch changed before %s: %w", stage, err)
+			return fmt.Errorf("prepared launch changed before %s: accepted prepared launch identity no longer matches: %w", stage, err)
 		}
 		return nil
 	}
@@ -728,7 +766,7 @@ Examples:
 		return fmt.Errorf("write launch record: %w", err)
 	}
 	rollbackLaunchRecord := func(cause error) error {
-		rollbackErr := rollbackLaunchRecordIfCurrent(agentDir, recordWrite)
+		_, rollbackErr := rollbackLaunchRecordIfCurrent(agentDir, recordWrite)
 		if rollbackErr != nil {
 			return fmt.Errorf("%w; launch record rollback failed: %v", cause, rollbackErr)
 		}
@@ -801,8 +839,9 @@ func writeLaunchRecordWithSnapshot(agentDir string, rec launch.Record) (launchRe
 	return snapshot, err
 }
 
-func rollbackLaunchRecordIfCurrent(agentDir string, snapshot launchRecordWriteSnapshot) error {
-	return launch.WithRecordLock(agentDir, func() error {
+func rollbackLaunchRecordIfCurrent(agentDir string, snapshot launchRecordWriteSnapshot) (bool, error) {
+	applied := false
+	err := launch.WithRecordLock(agentDir, func() error {
 		current, err := launch.Read(agentDir)
 		if os.IsNotExist(err) {
 			return nil
@@ -814,13 +853,19 @@ func rollbackLaunchRecordIfCurrent(agentDir string, snapshot launchRecordWriteSn
 			return nil
 		}
 		if snapshot.Previous != nil {
-			return launch.WriteUnderRecordLock(agentDir, *snapshot.Previous)
+			if err := launch.WriteUnderRecordLock(agentDir, *snapshot.Previous); err != nil {
+				return err
+			}
+			applied = true
+			return nil
 		}
 		if err := os.Remove(launch.Path(agentDir)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
+		applied = true
 		return nil
 	})
+	return applied, err
 }
 
 // exactRootChildCommand removes AM_SESSION at the final child boundary for a
@@ -839,7 +884,7 @@ func exactRootChildCommand(target string, trailing []string) (string, []string) 
 }
 
 func execAMQCoop(amqBin string, coopArgs []string) error {
-	env := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
+	env := amqexec.NoUpdateCheckEnv(envWithoutPreparedRunToken(envWithoutAMQIdentity(os.Environ())))
 	return amqSyscallExec(amqBin, append([]string{"amq"}, coopArgs...), env)
 }
 

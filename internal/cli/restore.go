@@ -225,7 +225,7 @@ func execRestoreRecord(rec launch.Record) error {
 	if err := os.Chdir(rec.CWD); err != nil {
 		return fmt.Errorf("chdir %s: %w", rec.CWD, err)
 	}
-	return runLaunch(launchArgsFromRecord(rec))
+	return runLaunchWithPreparedToken(launchArgsFromRecord(rec), preparedRunTokenFromRecord(rec))
 }
 
 func launchArgsFromRecord(rec launch.Record) []string {
@@ -560,6 +560,12 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	// Binary positional sits immediately after `agent up` so the printed
 	// command reads as the documented 1.0 shape.
 	b.WriteString(" && ")
+	if token := preparedRunTokenFromRecord(rec); !token.empty() {
+		b.WriteString(internalPreparedRunTokenEnv)
+		b.WriteString("=")
+		b.WriteString(shellQuote(encodePreparedRunToken(token)))
+		b.WriteString(" ")
+	}
 	b.WriteString(shellQuote(generatedSquadCommand()))
 	b.WriteString(" agent up ")
 	b.WriteString(shellQuote(rec.Binary))

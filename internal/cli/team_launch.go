@@ -65,7 +65,9 @@ type teamLaunchOptions struct {
 	AllowNoMembersAfterExternalLead bool
 	// ResultSink is used only by run start layout finalization. Backends that
 	// can return exact runtime IDs call it synchronously before Launch returns.
-	ResultSink func(teamLaunchResult)
+	ResultSink       func(teamLaunchResult)
+	PreparedRunToken preparedRunToken
+	PreparedRunGuard func(stage, role string) error
 }
 
 type teamLaunchResult struct {
@@ -93,6 +95,15 @@ type teamLaunchBackend interface {
 
 type teamLaunchResultBackend interface {
 	LaunchWithResult(team.Team, teamLaunchOptions) (teamLaunchResult, error)
+}
+
+// preparedTeamLaunchResultBackend promises that a pinned launch resolves and
+// validates its complete role-to-pane/window result before dispatching the
+// first member command. The parent transaction must never infer ownership
+// from a result produced only after children may already have started.
+type preparedTeamLaunchResultBackend interface {
+	teamLaunchResultBackend
+	preparedResultBeforeDispatch()
 }
 
 // Terminal support is intentionally backend-based. A new terminal integration
@@ -191,6 +202,14 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if err := backend.Validate(opts); err != nil {
 		return err
 	}
+	if !opts.PreparedRunToken.empty() {
+		if opts.ResultSink == nil {
+			return fmt.Errorf("pinned prepared team launch requires an exact result sink")
+		}
+		if _, ok := backend.(preparedTeamLaunchResultBackend); !ok {
+			return fmt.Errorf("pinned prepared team launch requires a backend that validates exact results before dispatch")
+		}
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -209,6 +228,28 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		return err
 	}
 	opts.Workstream = workstream
+	if !opts.PreparedRunToken.empty() {
+		if !opts.PreparedRunToken.complete() {
+			return fmt.Errorf("team launch refused: prepared run token is incomplete")
+		}
+		manifest, digest, err := readPreparedRunManifestSnapshot(cwd, opts.Profile, workstream)
+		if err != nil {
+			return fmt.Errorf("team launch refused: read pinned prepared run: %w", err)
+		}
+		if err := validatePreparedRunToken(opts.PreparedRunToken, manifest, digest); err != nil {
+			return fmt.Errorf("team launch refused: %w", err)
+		}
+		opts.PreparedRunGuard = func(stage, role string) error {
+			current, currentDigest, err := readPreparedRunManifestSnapshot(cwd, opts.Profile, workstream)
+			if err != nil {
+				return fmt.Errorf("prepared run guard before %s for %s: %w", stage, role, err)
+			}
+			if err := validatePreparedRunToken(opts.PreparedRunToken, current, currentDigest); err != nil {
+				return fmt.Errorf("prepared run guard before %s for %s: %w", stage, role, err)
+			}
+			return nil
+		}
+	}
 	if !opts.DryRun {
 		initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(cwd, opts.Profile, workstream), "")
 		if err != nil {
@@ -312,6 +353,9 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 				}
 			}
 			quietNotice("lead bound; no remaining workers to spawn for session %s.\n", opts.Workstream)
+			if opts.ResultSink != nil {
+				opts.ResultSink(teamLaunchResult{})
+			}
 			return nil
 		}
 		return fmt.Errorf("no team members to launch after external lead filtering")
@@ -446,6 +490,55 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	return nil
 }
 
+func validateCompleteTeamLaunchResult(panes []teamLaunchPane, target string, result teamLaunchResult) error {
+	if len(result.Panes) != len(panes) {
+		return fmt.Errorf("team launch result has %d role(s), want %d", len(result.Panes), len(panes))
+	}
+	expected := make(map[string]struct{}, len(panes))
+	for _, pane := range panes {
+		role := strings.TrimSpace(pane.Role)
+		if role == "" {
+			return fmt.Errorf("team launch plan contains an empty role")
+		}
+		if _, exists := expected[role]; exists {
+			return fmt.Errorf("team launch plan contains duplicate role %q", role)
+		}
+		expected[role] = struct{}{}
+	}
+	seenRoles := make(map[string]struct{}, len(result.Panes))
+	seenPanes := make(map[string]struct{}, len(result.Panes))
+	seenWindows := make(map[string]struct{}, len(result.Panes))
+	for _, pane := range result.Panes {
+		role := strings.TrimSpace(pane.Role)
+		if _, ok := expected[role]; !ok {
+			return fmt.Errorf("team launch result contains unexpected role %q", role)
+		}
+		if _, exists := seenRoles[role]; exists {
+			return fmt.Errorf("team launch result contains duplicate role %q", role)
+		}
+		seenRoles[role] = struct{}{}
+		paneID, err := exactTmuxPaneID(pane.PaneID)
+		if err != nil {
+			return fmt.Errorf("team launch result for role %s: %w", role, err)
+		}
+		if _, exists := seenPanes[paneID]; exists {
+			return fmt.Errorf("team launch result contains duplicate pane %s", paneID)
+		}
+		seenPanes[paneID] = struct{}{}
+		windowID, err := exactTmuxWindowID(pane.WindowID)
+		if err != nil {
+			return fmt.Errorf("team launch result for role %s: %w", role, err)
+		}
+		if target == "new-window" {
+			if _, exists := seenWindows[windowID]; exists {
+				return fmt.Errorf("new-window team launch result contains duplicate window %s", windowID)
+			}
+			seenWindows[windowID] = struct{}{}
+		}
+	}
+	return nil
+}
+
 func commandProfileArg(profile string) string {
 	profile = strings.TrimSpace(profile)
 	if profile == "" || profile == team.DefaultProfile {
@@ -534,22 +627,23 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 			Role: m.Role,
 			CWD:  cwd,
 			Command: emitTeamCommand(emitTeamCommandInput{
-				CWD:            cwd,
-				SquadBin:       opts.SquadBin,
-				TeamHome:       t.Project,
-				Member:         m,
-				NoBootstrap:    opts.NoBootstrap,
-				Workstream:     opts.Workstream,
-				BinaryArgs:     binaryArgs,
-				TrustMode:      opts.Trust,
-				Model:          memberResolvedModel(m, opts.ModelOverrides, binaryArgs),
-				ForceDuplicate: opts.ForceDuplicate,
-				NoGitignore:    opts.NoGitignore,
-				Symphony:       opts.Symphony,
-				Profile:        opts.Profile,
-				WakeInjectVia:  opts.WakeInjectVia,
-				WakeInjectArgs: opts.WakeInjectArgs,
-				WakeInjectMode: opts.WakeInjectMode,
+				CWD:              cwd,
+				SquadBin:         opts.SquadBin,
+				TeamHome:         t.Project,
+				Member:           m,
+				NoBootstrap:      opts.NoBootstrap,
+				Workstream:       opts.Workstream,
+				BinaryArgs:       binaryArgs,
+				TrustMode:        opts.Trust,
+				Model:            memberResolvedModel(m, opts.ModelOverrides, binaryArgs),
+				ForceDuplicate:   opts.ForceDuplicate,
+				NoGitignore:      opts.NoGitignore,
+				Symphony:         opts.Symphony,
+				Profile:          opts.Profile,
+				WakeInjectVia:    opts.WakeInjectVia,
+				WakeInjectArgs:   opts.WakeInjectArgs,
+				WakeInjectMode:   opts.WakeInjectMode,
+				PreparedRunToken: opts.PreparedRunToken,
 			}),
 		})
 	}
