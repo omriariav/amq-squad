@@ -27,6 +27,7 @@ type runPreparationProposal struct {
 	StagedRoster  []string
 	Rows          []runReadinessRow
 	PointerPlans  []rules.SyncPlan
+	MutationPaths []string
 }
 
 type runPreparationProposalInput struct {
@@ -190,7 +191,13 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 	observation := observePreparedRunEnvironment(in.Project, in.Context.Version)
 	for _, check := range []doctorCheck{observation.Skill, observation.AMQ, observation.Terminal} {
 		if check.Status != doctorOK {
-			return proposal, fmt.Errorf("preparation environment blocker [%s/%s]: %s", check.Name, check.Status, check.Detail)
+			detail := check.Detail
+			if check.Name == "amq version" {
+				if remedy := freshRunPreparationAMQRemedy(in.Project, tm, detail); remedy != "" {
+					detail += "; " + remedy
+				}
+			}
+			return proposal, fmt.Errorf("preparation environment blocker [%s/%s]: %s", check.Name, check.Status, detail)
 		}
 	}
 	environmentEvidence := fmt.Sprintf("observed_binary=%s skill=%s amq=%s terminal=%s topology=%s/%s",
@@ -232,6 +239,9 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 	for _, plan := range policyPlans {
 		tm.Members[plan.Index] = plan.After
 		policyFiles[plan.After.Role] = append([]generatedPolicyFile(nil), plan.Files...)
+		for _, file := range plan.Files {
+			proposal.MutationPaths = append(proposal.MutationPaths, file.Path)
+		}
 	}
 	for _, member := range tm.Members {
 		identity := acceptedMemberIdentity(tm, member)
@@ -309,6 +319,15 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 	}
 
 	profilePath := team.ProfilePath(in.Project, in.Profile)
+	proposal.MutationPaths = append(proposal.MutationPaths,
+		profilePath,
+		briefPath,
+		rulesPath,
+		preparedRunPath(in.Project, in.Profile, in.Session),
+	)
+	for _, plan := range pointerPlans {
+		proposal.MutationPaths = append(proposal.MutationPaths, plan.Target)
+	}
 	if in.ExistingProfile {
 		identities := make([]string, 0, len(tm.Members))
 		for _, member := range tm.Members {
@@ -347,8 +366,96 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 		add("staged_role:"+roleID, "ready", "planned absent from profile/bootstrap; separate durable spawn gate required", "")
 	}
 	add("prepared_manifest", "ready", "planned create "+preparedRunPath(in.Project, in.Profile, in.Session), "")
+	proposal.MutationPaths = cleanUniquePreparationPaths(proposal.MutationPaths)
 	sort.SliceStable(proposal.Rows, func(i, j int) bool { return proposal.Rows[i].Artifact < proposal.Rows[j].Artifact })
 	return proposal, nil
+}
+
+func freshRunPreparationAMQRemedy(project string, tm team.Team, detail string) string {
+	if !freshProjectDefaultAMQBootstrapAllowed(project, fmt.Errorf("%s", detail)) {
+		return ""
+	}
+	handles := make([]string, 0, len(tm.Members)+1)
+	for _, member := range tm.Members {
+		if handle := strings.TrimSpace(member.Handle); handle != "" {
+			handles = append(handles, handle)
+		}
+	}
+	if operator := team.EffectiveOperator(tm); operator.Enabled && strings.TrimSpace(operator.Handle) != "" {
+		handles = append(handles, strings.TrimSpace(operator.Handle))
+	}
+	handles = dedupeSortedStrings(handles)
+	if len(handles) == 0 {
+		handles = []string{"user"}
+	}
+	root := filepath.Join(project, defaultBaseRootName)
+	return fmt.Sprintf("initialize the fresh project AMQ base without launching, then rerun the proposal: `amq init --root %s --agents %s`", shellQuote(root), shellQuote(strings.Join(handles, ",")))
+}
+
+func cleanUniquePreparationPaths(paths []string) []string {
+	seen := make(map[string]bool, len(paths))
+	result := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." || seen[path] {
+			continue
+		}
+		seen[path] = true
+		result = append(result, path)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func preflightPreparedRunManifestAncestors(path string) error {
+	parent := filepath.Dir(filepath.Clean(path))
+	for {
+		info, err := os.Stat(parent)
+		switch {
+		case err == nil:
+			if !info.IsDir() {
+				return fmt.Errorf("prepared manifest ancestor %s is not a directory", parent)
+			}
+			return nil
+		case os.IsNotExist(err):
+			next := filepath.Dir(parent)
+			if next == parent {
+				return nil
+			}
+			parent = next
+		default:
+			return fmt.Errorf("preflight prepared manifest ancestor %s: %w", parent, err)
+		}
+	}
+}
+
+func executeRunPreparationTransaction(paths []string, manifestPath string, mutate func() (runReadinessResult, error)) (result runReadinessResult, err error) {
+	if err := preflightPreparedRunManifestAncestors(manifestPath); err != nil {
+		return runReadinessResult{}, err
+	}
+	snapshots, err := snapshotRunPreparationFiles(paths...)
+	if err != nil {
+		return runReadinessResult{}, err
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if rollbackErr := restoreRunPreparationFiles(snapshots); rollbackErr != nil {
+			if err == nil {
+				err = rollbackErr
+			} else {
+				err = fmt.Errorf("%w; preparation transaction rollback failed: %v", err, rollbackErr)
+			}
+		}
+	}()
+	result, err = mutate()
+	if err != nil {
+		return result, err
+	}
+	committed = true
+	return result, nil
 }
 
 func buildRunPreparationPointerPlans(project, profile string, tm team.Team, rulesBody string) ([]rules.SyncPlan, error) {

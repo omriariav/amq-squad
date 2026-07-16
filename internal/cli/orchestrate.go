@@ -433,6 +433,7 @@ func runRunStart(args []string, version string) error {
 		}
 	}
 
+	var preparationProposal runPreparationProposal
 	if *preparePlanFlag || *prepareFlag {
 		var proposalTeam team.Team
 		if teamPresent {
@@ -469,6 +470,7 @@ func runRunStart(args []string, version string) error {
 		if proposalErr != nil {
 			return proposalErr
 		}
+		preparationProposal = proposal
 		runContext.PointerPlans = append([]rules.SyncPlan(nil), proposal.PointerPlans...)
 		printRunPreparationProposal(proposal)
 		if *preparePlanFlag {
@@ -584,8 +586,17 @@ func runRunStart(args []string, version string) error {
 	fmt.Printf("  lead:    %s\n", leadDisplay)
 	fmt.Printf("  lead-mode: %s\n", leadModeDisplay)
 	if strings.TrimSpace(*launchShapeFlag) != "" {
+		initialRoster := sortedUniqueRoles(rolesText)
+		if teamPresent {
+			existing, readErr := team.ReadProfile(project, profile)
+			if readErr != nil {
+				return readErr
+			}
+			active, _ := filterMembersBySession(existing.Members, session)
+			initialRoster = teamMemberRoles(active)
+		}
 		fmt.Printf("  launch-shape: %s\n", strings.TrimSpace(*launchShapeFlag))
-		fmt.Printf("  initial launch: %d members - %s\n", len(sortedUniqueRoles(rolesText)), displayRoleList(sortedUniqueRoles(rolesText)))
+		fmt.Printf("  initial launch: %d members - %s\n", len(initialRoster), displayRoleList(initialRoster))
 		fmt.Printf("  staged later: %d roles - %s\n", len(sortedUniqueRoles(*stagedRolesFlag)), displayRoleList(sortedUniqueRoles(*stagedRolesFlag)))
 	}
 	if freshRoster {
@@ -637,18 +648,20 @@ func runRunStart(args []string, version string) error {
 		if err := revalidateRunPreparationPointerPlans(runContext.PointerPlans); err != nil {
 			return fmt.Errorf("revalidate accepted pointer plan before preparation writes: %w", err)
 		}
-		if freshRoster {
-			quietNotice("preparing accepted roster; no panes will launch...\n")
-			if err := runNew(newTeamArgs); err != nil {
-				return err
+		result, err := executeRunPreparationTransaction(preparationProposal.MutationPaths, preparedRunPath(project, profile, session), func() (runReadinessResult, error) {
+			if freshRoster {
+				quietNotice("preparing accepted roster; no panes will launch...\n")
+				if err := runNew(newTeamArgs); err != nil {
+					return runReadinessResult{}, err
+				}
+			} else if len(newTeamArgs) > 0 {
+				quietNotice("profile %q already exists; accepted preparation will not rewrite its roster\n", profileOrDefault(*profileFlag))
 			}
-		} else if len(newTeamArgs) > 0 {
-			quietNotice("profile %q already exists; accepted preparation will not rewrite its roster\n", profileOrDefault(*profileFlag))
-		}
-		if err := applyRunStartToolProfiles(project, profile, *toolProfileFlag); err != nil {
-			return err
-		}
-		result, err := prepareRunArtifacts(project, profile, session, strings.TrimSpace(*launchShapeFlag), *stagedRolesFlag, *goalFlag, *goalSourceFlag, *goalDigestFlag, *seedFlag, runContext)
+			if err := applyRunStartToolProfiles(project, profile, *toolProfileFlag); err != nil {
+				return runReadinessResult{}, err
+			}
+			return prepareRunArtifacts(project, profile, session, strings.TrimSpace(*launchShapeFlag), *stagedRolesFlag, *goalFlag, *goalSourceFlag, *goalDigestFlag, *seedFlag, runContext)
+		})
 		printRunReadiness(result)
 		if err != nil {
 			return err

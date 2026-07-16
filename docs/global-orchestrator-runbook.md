@@ -135,8 +135,9 @@ Requirements:
 
 - **Binary** — `--binary "role=bin,..."` (per role). `global start` uses `--agent`.
 - **Model** — `--model "role=model,..."` (forwarded to `new team` and `up`).
-- **Effort** — no first-class flag; ride `--codex-args`/`--claude-args`
-  (e.g. `--codex-args "..."`). Same convention as the rest of the CLI.
+- **Effort** — `--effort "role=level,..."`; amq-squad normalizes it into the
+  selected binary's native form. Keep unrelated native flags in
+  `--codex-args`/`--claude-args` instead of duplicating effort there.
 
 ### Visibility (do I see the agents?)
 
@@ -165,11 +166,33 @@ layout:
 | `even-grid` | current window, tiled splits | tiled panes |
 | `one-window-per-agent` | sibling windows | one agent per window, focused on the configured lead |
 
-Example:
+Use the same proposal, default-No preparation, readiness, and separate
+default-No launch sequence for deterministic layouts. Keep the layout and
+launcher contract identical at every stage:
 
 ```sh
+# proposal only
 amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --layout-preset lead-left --launcher-pane close-after-start --go
+  --roles "cto,fullstack,qa" --layout-preset lead-left \
+  --launcher-pane close-after-start --launch-shape working-team-together \
+  --goal "fix issue 96" --prepare-plan
+
+# default-No preparation approval; no panes launch
+amq-squad run start -p ~/Code/app -s issue-96 -P release \
+  --roles "cto,fullstack,qa" --layout-preset lead-left \
+  --launcher-pane close-after-start --launch-shape working-team-together \
+  --goal "fix issue 96" --prepare
+
+# readiness is read-only and must preserve the accepted topology
+amq-squad run start -p ~/Code/app -s issue-96 -P release \
+  --layout-preset lead-left --launcher-pane close-after-start \
+  --launch-shape working-team-together --readiness-json
+
+# separate default-No launch approval; copy the accepted digest exactly
+amq-squad run start -p ~/Code/app -s issue-96 -P release \
+  --layout-preset lead-left --launcher-pane close-after-start \
+  --launch-shape working-team-together --goal "fix issue 96" \
+  --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
 ```
 
 A preset defaults to `--launcher-pane close-after-start`. Pass `keep` when the

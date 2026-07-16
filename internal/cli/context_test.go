@@ -574,6 +574,29 @@ func TestContextExplainJSONHumanHelpAndCompletion(t *testing.T) {
 	}
 }
 
+func TestContextExplainDegradesForExplicitlyEmptyInjectedSession(t *testing.T) {
+	project := t.TempDir()
+	isolateCanonicalContextTest(t, project)
+	root := filepath.Join(project, ".agent-mail", "review", "issue-463")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", root)
+	t.Setenv("AM_SESSION", "")
+	t.Setenv("AM_ME", "cto")
+
+	stdout, stderr, err := captureOutput(t, func() error { return runContextExplain(nil) })
+	if err != nil {
+		t.Fatalf("degraded context explain failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	for _, want := range []string{"profile:   review", "session:   issue-463", root, "explicitly empty AM_SESSION"} {
+		if !strings.Contains(stdout+stderr, want) {
+			t.Fatalf("degraded context explain missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout, stderr)
+		}
+	}
+	if _, _, statusErr := captureOutput(t, func() error { return runStatus([]string{"--json"}) }); statusErr == nil || !strings.Contains(statusErr.Error(), "explicitly empty AM_SESSION") {
+		t.Fatalf("ordinary status must still fail closed, got %v", statusErr)
+	}
+}
+
 func TestOrdinaryEntrypointsEmitAllContextCandidates(t *testing.T) {
 	project := t.TempDir()
 	isolateCanonicalContextTest(t, project)

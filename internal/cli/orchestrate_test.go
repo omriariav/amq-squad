@@ -223,6 +223,7 @@ func TestRunStartOperatorDocsCarryCompletePreparationAndLaunchContract(t *testin
 		"README.md",
 		filepath.Join("docs", "skills.md"),
 		filepath.Join("docs", "global-orchestrator-runbook.md"),
+		filepath.Join("docs", "issue-393-layout-smoke.md"),
 		filepath.Join("plugins", "skills-src", "wizard", "SKILL.md"),
 	} {
 		data, err := os.ReadFile(filepath.Join(repoRoot, rel))
@@ -235,6 +236,13 @@ func TestRunStartOperatorDocsCarryCompletePreparationAndLaunchContract(t *testin
 				t.Errorf("%s missing operator launch contract token %q", rel, want)
 			}
 		}
+		for _, command := range directRunStartGoExamples(body) {
+			for _, want := range []string{"--launch-shape", "--goal-source", "--goal-digest"} {
+				if !strings.Contains(command, want) {
+					t.Errorf("%s has direct run-start launch without %s:\n%s", rel, want, command)
+				}
+			}
+		}
 	}
 	readme, err := os.ReadFile(filepath.Join(repoRoot, "README.md"))
 	if err != nil {
@@ -243,6 +251,34 @@ func TestRunStartOperatorDocsCarryCompletePreparationAndLaunchContract(t *testin
 	if strings.Count(string(readme), "--external-lead") < 4 {
 		t.Fatalf("README external-lead example must carry proposal, prepare, readiness, and launch stages")
 	}
+}
+
+func directRunStartGoExamples(body string) []string {
+	lines := strings.Split(body, "\n")
+	var commands []string
+	for i := 0; i < len(lines); i++ {
+		if !strings.Contains(lines[i], "amq-squad run start") {
+			continue
+		}
+		command := strings.TrimSpace(lines[i])
+		for strings.HasSuffix(command, "\\") && i+1 < len(lines) {
+			i++
+			command += " " + strings.TrimSpace(lines[i])
+		}
+		if docCommandHasFlag(command, "--go") {
+			commands = append(commands, command)
+		}
+	}
+	return commands
+}
+
+func docCommandHasFlag(command, flag string) bool {
+	for _, field := range strings.Fields(command) {
+		if field == flag || strings.HasPrefix(field, flag+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRunStartRequiresProjectAndSession(t *testing.T) {
@@ -1014,7 +1050,7 @@ func TestRunStartExistingProfileWithRolesInfersLead(t *testing.T) {
 		t.Fatalf("setup new team: %v", err)
 	}
 	out, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "cto,qa", "--goal", "do x"}, "test")
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "cto,qa", "--goal", "do x", "--launch-shape", runwizard.LaunchShapeWorkingTeamTogether}, "test")
 	})
 	if err != nil {
 		t.Fatalf("preview error: %v", err)
@@ -1027,6 +1063,9 @@ func TestRunStartExistingProfileWithRolesInfersLead(t *testing.T) {
 	}
 	if !strings.Contains(out, "already exists") {
 		t.Fatalf("should note the existing profile / skipped roster:\n%s", out)
+	}
+	if !strings.Contains(out, "initial launch: 2 members - cto, qa") || strings.Contains(out, "initial launch: 0 members") {
+		t.Fatalf("existing profile summary must use its authoritative roster:\n%s", out)
 	}
 }
 

@@ -58,12 +58,13 @@ type contextResolveOptions struct {
 	RootFlag     string
 	BaseRootFlag string
 
-	ProjectExplicit  bool
-	ProfileExplicit  bool
-	SessionExplicit  bool
-	HandleExplicit   bool
-	RootExplicit     bool
-	BaseRootExplicit bool
+	ProjectExplicit   bool
+	ProfileExplicit   bool
+	SessionExplicit   bool
+	HandleExplicit    bool
+	RootExplicit      bool
+	BaseRootExplicit  bool
+	AllowMalformedEnv bool
 }
 
 type injectedContext struct {
@@ -398,7 +399,7 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	envContext, envWarnings, envErr := readInjectedContext(projectDir)
 	resolution.Warnings = append(resolution.Warnings, envWarnings...)
 	if envErr != nil {
-		if !explicitContextCanOverrideMalformedEnv(opts, projectDir) {
+		if !opts.AllowMalformedEnv && !explicitContextCanOverrideMalformedEnv(opts, projectDir) {
 			return contextResolution{}, envErr
 		}
 		resolution.Warnings = append(resolution.Warnings, envErr.Error())
@@ -996,6 +997,7 @@ invalidating the prior tuple's session, handle, root, and base root.
 		ProjectFlag: *project, ProfileFlag: *profile, SessionFlag: *session, HandleFlag: *me, RootFlag: *root, BaseRootFlag: *baseRoot,
 		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: flagWasSet(fs, "session"),
 		HandleExplicit: flagWasSet(fs, "me"), RootExplicit: flagWasSet(fs, "root"), BaseRootExplicit: flagWasSet(fs, "base-root"),
+		AllowMalformedEnv: true,
 	})
 	if err != nil {
 		return err

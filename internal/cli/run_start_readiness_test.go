@@ -426,6 +426,115 @@ func TestRunStartPreparationProposalIsReadOnlyAndPrecedesPreparationWrites(t *te
 	}
 }
 
+func TestFreshProfilePreparationFailureRollsBackEveryAcceptedTarget(t *testing.T) {
+	dir := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	sentinels := map[string][]byte{
+		filepath.Join(dir, rules.AgentsFile): []byte("operator AGENTS sentinel\n"),
+		filepath.Join(dir, rules.ClaudeFile): []byte("operator CLAUDE sentinel\n"),
+	}
+	for path, body := range sentinels {
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldBuild := buildPreparedRunManifestForPreparation
+	buildPreparedRunManifestForPreparation = func(string, string, string, string, string, acceptedGoalBinding, acceptedRunContext) (preparedRunManifest, error) {
+		return preparedRunManifest{}, fmt.Errorf("injected fresh-profile post-proposal failure")
+	}
+	t.Cleanup(func() { buildPreparedRunManifestForPreparation = oldBuild })
+
+	_, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{
+			"--project", dir, "--profile", team.DefaultProfile, "--session", "atomic-fresh",
+			"--roles", "cto,qa", "--binary", "cto=codex,qa=codex", "--lead", "cto",
+			"--tool-profile", "cto=minimal,qa=browser",
+			"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether,
+			"--goal", "Exercise the complete fresh preparation transaction", "--visibility", "detached", "--prepare",
+		}, "test")
+	})
+	if err == nil || !strings.Contains(err.Error(), "injected fresh-profile post-proposal failure") {
+		t.Fatalf("preparation error = %v", err)
+	}
+	for _, path := range []string{
+		team.ProfilePath(dir, team.DefaultProfile),
+		rules.Path(dir),
+		briefPathForProfile(dir, team.DefaultProfile, "atomic-fresh"),
+		preparedRunPath(dir, team.DefaultProfile, "atomic-fresh"),
+		filepath.Join(codexHome, generatedCodexProfileName(team.DefaultProfile, "cto")+".config.toml"),
+		filepath.Join(codexHome, generatedCodexProfileName(team.DefaultProfile, "qa")+".config.toml"),
+	} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("failed fresh preparation left target %s: %v", path, statErr)
+		}
+	}
+	for path, want := range sentinels {
+		got, readErr := os.ReadFile(path)
+		if readErr != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("failed fresh preparation changed %s: read=%v got=%q", path, readErr, got)
+		}
+	}
+}
+
+func TestFreshProfilePreparationPreflightsManifestAncestorsBeforeRosterWrites(t *testing.T) {
+	dir := t.TempDir()
+	blockedAncestor := filepath.Join(dir, team.DirName, "prepared")
+	if err := os.MkdirAll(filepath.Dir(blockedAncestor), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blockedAncestor, []byte("operator-owned blocker\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{
+			"--project", dir, "--profile", team.DefaultProfile, "--session", "ancestor-blocked",
+			"--roles", "cto", "--binary", "cto=codex", "--lead", "cto",
+			"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether,
+			"--goal", "Preflight the prepared manifest ancestry", "--visibility", "detached", "--prepare",
+		}, "test")
+	})
+	if err == nil || !strings.Contains(err.Error(), "preflight prepared manifest ancestor") {
+		t.Fatalf("manifest ancestor error = %v", err)
+	}
+	for _, path := range []string{team.ProfilePath(dir, team.DefaultProfile), rules.Path(dir), briefPathForProfile(dir, team.DefaultProfile, "ancestor-blocked")} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("manifest ancestor failure crossed mutation boundary at %s: %v", path, statErr)
+		}
+	}
+	got, readErr := os.ReadFile(blockedAncestor)
+	if readErr != nil || string(got) != "operator-owned blocker\n" {
+		t.Fatalf("manifest ancestor changed: read=%v got=%q", readErr, got)
+	}
+}
+
+func TestFreshRunPreparationAMQFailureIncludesBootstrapRemedy(t *testing.T) {
+	dir := t.TempDir()
+	layout, err := resolveRunStartLayout(runStartLayoutInput{Visibility: visibilityDetached, VisibilitySet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldObserve := observePreparedRunEnvironment
+	observePreparedRunEnvironment = func(string, string) preparedRunEnvironmentObservation {
+		return preparedRunEnvironmentObservation{
+			BinaryVersion: "test",
+			Skill:         doctorCheck{Name: "skill version", Status: doctorOK, Detail: "matching"},
+			AMQ:           doctorCheck{Name: "amq version", Status: doctorFail, Detail: "amq env failed: cannot determine root: no .amqrc found and AM_ROOT not set"},
+			Terminal:      doctorCheck{Name: "terminal context", Status: doctorOK, Detail: "detached"},
+		}
+	}
+	t.Cleanup(func() { observePreparedRunEnvironment = oldObserve })
+	_, err = buildRunPreparationProposal(runPreparationProposalInput{
+		Project: dir, Profile: team.DefaultProfile, Session: "fresh", LaunchShape: runwizard.LaunchShapeWorkingTeamTogether,
+		Goal: "Bootstrap AMQ explicitly", Team: team.Team{Project: dir, Orchestrated: true, Lead: "cto", Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "fresh"}}},
+		Context: acceptedRunContext{Version: "test", Topology: acceptedTopology(layout, false)},
+	})
+	wantRoot := filepath.Join(dir, defaultBaseRootName)
+	if err == nil || !strings.Contains(err.Error(), "amq init --root "+shellQuote(wantRoot)) || !strings.Contains(err.Error(), "--agents "+shellQuote("cto,user")) || !strings.Contains(err.Error(), "then rerun the proposal") {
+		t.Fatalf("fresh AMQ remedy = %v", err)
+	}
+}
+
 func TestRunStartPreparationPreflightsEveryGeneratedPolicyBeforeAnyWrite(t *testing.T) {
 	dir := t.TempDir()
 	codexHome := t.TempDir()
