@@ -195,11 +195,9 @@ func TestRealAMQCompatibility(t *testing.T) {
 			if err := team.WriteProfile(project, profile, issue470Team(project, profile)); err != nil {
 				t.Fatal(err)
 			}
+			prepareIssue470Run(t, project, profile, "--visibility", visibilityDetached)
 			backend := useFakeTmuxBackend(t)
-			args := []string{"--project", project, "--session", issue470Session, "--visibility", visibilityDetached, "--go"}
-			if profile != team.DefaultProfile {
-				args = append(args, "--profile", profile)
-			}
+			args := issue470RunArgs(project, profile, "--visibility", visibilityDetached, "--go")
 			_, _, err := captureOutput(t, func() error { return runRunStart(args, "test") })
 			if err != nil {
 				t.Fatalf("fresh %s live launch with real AMQ %s: %v", profile, version, err)
