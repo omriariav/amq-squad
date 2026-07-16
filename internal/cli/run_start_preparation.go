@@ -42,6 +42,93 @@ type runPreparationProposalInput struct {
 
 var runPreparationAfterProposal = func() {}
 
+type runPreparationFileSnapshot struct {
+	Path   string
+	Exists bool
+	Data   []byte
+	Mode   os.FileMode
+}
+
+func snapshotRunPreparationFiles(paths ...string) ([]runPreparationFileSnapshot, error) {
+	seen := make(map[string]bool, len(paths))
+	snapshots := make([]runPreparationFileSnapshot, 0, len(paths))
+	for _, path := range paths {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." || seen[path] {
+			continue
+		}
+		seen[path] = true
+		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			snapshots = append(snapshots, runPreparationFileSnapshot{Path: path})
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("snapshot preparation target %s: %w", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("snapshot preparation target %s: expected a regular file", path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot preparation target %s: %w", path, err)
+		}
+		snapshots = append(snapshots, runPreparationFileSnapshot{Path: path, Exists: true, Data: data, Mode: info.Mode().Perm()})
+	}
+	return snapshots, nil
+}
+
+func restoreRunPreparationFiles(snapshots []runPreparationFileSnapshot) error {
+	var firstErr error
+	for i := len(snapshots) - 1; i >= 0; i-- {
+		snapshot := snapshots[i]
+		var err error
+		if !snapshot.Exists {
+			err = os.Remove(snapshot.Path)
+			if os.IsNotExist(err) {
+				err = nil
+			}
+		} else {
+			err = restoreRunPreparationFile(snapshot)
+		}
+		if err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("restore preparation target %s: %w", snapshot.Path, err)
+		}
+	}
+	return firstErr
+}
+
+func restoreRunPreparationFile(snapshot runPreparationFileSnapshot) error {
+	if err := os.MkdirAll(filepath.Dir(snapshot.Path), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(snapshot.Path), ".amq-squad-prepare-rollback-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	if err := tmp.Chmod(snapshot.Mode); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if _, err := tmp.Write(snapshot.Data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpPath, snapshot.Path); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
+}
+
 func projectedRunPreparationTeam(project, session, lead, leadMode, rolesRaw, binaryRaw, modelRaw, effortRaw string) (team.Team, error) {
 	roles := sortedUniqueRoles(rolesRaw)
 	binaries := parseRoleAssignments(binaryRaw)
@@ -109,7 +196,12 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 	environmentEvidence := fmt.Sprintf("observed_binary=%s skill=%s amq=%s terminal=%s topology=%s/%s",
 		observation.BinaryVersion, observation.Skill.Detail, observation.AMQ.Detail, observation.Terminal.Detail, in.Context.Topology.Visibility, in.Context.Topology.Target)
 	if len(proposal.InitialRoster) == 0 || !containsRole(proposal.InitialRoster, tm.Lead) {
-		return proposal, fmt.Errorf("preparation proposal lead %q must be in the non-empty initial roster", tm.Lead)
+		if len(proposal.InitialRoster) > 0 {
+			suggested := proposal.InitialRoster[0]
+			return proposal, fmt.Errorf("preparation proposal lead %q must be in the non-empty initial roster; set a declared lead with `amq-squad team lead set %s --project %s --profile %s`, then rerun preparation for --session %s",
+				tm.Lead, shellQuote(suggested), shellQuote(in.Project), shellQuote(in.Profile), shellQuote(in.Session))
+		}
+		return proposal, fmt.Errorf("preparation proposal requires a non-empty initial roster and declared lead")
 	}
 	if in.LaunchShape == runwizard.LaunchShapeLeadOnlyStaged && (len(proposal.InitialRoster) != 1 || proposal.InitialRoster[0] != tm.Lead) {
 		return proposal, fmt.Errorf("lead-only-staged proposal requires exact initial roster [%s]", tm.Lead)
@@ -124,6 +216,10 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 		return proposal, err
 	}
 	add("goal_binding", "ready", fmt.Sprintf("source=%s namespace=%s digest=%s", binding.Source, binding.Namespace, binding.Digest), "")
+	bootstrapBindings, err := validatePreparedBootstrapSemantics(tm, in.Profile, in.Session, binding)
+	if err != nil {
+		return proposal, err
+	}
 
 	policyPlans, err := buildRunStartToolProfilePlans(tm, in.Profile, in.ToolProfile)
 	if err != nil {
@@ -243,14 +339,7 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 		}
 		add("tool_policy:"+roleID, "ready", policyEvidence, "")
 		agentDir := filepath.Join(root, "agents", member.Handle)
-		goalMode := "amq_task_brief"
-		if roleID == tm.Lead {
-			contract, contractErr := goalDeliveryContractForBinary(binary)
-			if contractErr != nil {
-				return proposal, contractErr
-			}
-			goalMode = contract.Mode
-		}
+		goalMode := strings.TrimPrefix(bootstrapBindings[roleID], "Goal binding: ")
 		add("bootstrap:"+roleID, "ready", fmt.Sprintf("planned namespace=%s role=%s lead=%s root=%s brief=%s rules=%s role_path=%s goal_mode=%s goal_digest=%s routing=durable-amq gates=operator-contract",
 			proposal.Namespace, roleID, tm.Lead, root, briefPath, rulesPath, role.ExistingPath(agentDir), goalMode, binding.Digest), "")
 	}

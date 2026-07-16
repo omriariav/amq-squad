@@ -25,31 +25,32 @@ import (
 const preparedRunSchema = 1
 
 type preparedRunManifest struct {
-	SchemaVersion    int                                  `json:"schema_version"`
-	Project          string                               `json:"project"`
-	Profile          string                               `json:"profile"`
-	Session          string                               `json:"session"`
-	Namespace        string                               `json:"namespace"`
-	LaunchShape      string                               `json:"launch_shape"`
-	InitialRoster    []string                             `json:"initial_roster"`
-	StagedRoster     []string                             `json:"staged_roster"`
-	Lead             string                               `json:"lead"`
-	ExecutionMode    string                               `json:"execution_mode"`
-	ControlRoot      string                               `json:"control_root"`
-	TargetRoot       string                               `json:"target_root"`
-	TargetContract   string                               `json:"target_contract,omitempty"`
-	LeadMode         string                               `json:"lead_mode"`
-	Topology         preparedRunTopology                  `json:"topology"`
-	Members          map[string]preparedRunMemberIdentity `json:"members"`
-	Environment      preparedRunEnvironment               `json:"environment"`
-	GoalText         string                               `json:"goal_text"`
-	GoalNamespace    string                               `json:"goal_namespace"`
-	GoalDigest       string                               `json:"goal_digest"`
-	GoalSource       string                               `json:"goal_source"`
-	ArtifactDigests  map[string]string                    `json:"artifact_digests"`
-	RoleDigests      map[string]string                    `json:"role_digests"`
-	BootstrapDigests map[string]string                    `json:"bootstrap_digests"`
-	PreparedAt       time.Time                            `json:"prepared_at"`
+	SchemaVersion     int                                  `json:"schema_version"`
+	Project           string                               `json:"project"`
+	Profile           string                               `json:"profile"`
+	Session           string                               `json:"session"`
+	Namespace         string                               `json:"namespace"`
+	LaunchShape       string                               `json:"launch_shape"`
+	InitialRoster     []string                             `json:"initial_roster"`
+	StagedRoster      []string                             `json:"staged_roster"`
+	Lead              string                               `json:"lead"`
+	ExecutionMode     string                               `json:"execution_mode"`
+	ControlRoot       string                               `json:"control_root"`
+	TargetRoot        string                               `json:"target_root"`
+	TargetContract    string                               `json:"target_contract,omitempty"`
+	LeadMode          string                               `json:"lead_mode"`
+	Topology          preparedRunTopology                  `json:"topology"`
+	Members           map[string]preparedRunMemberIdentity `json:"members"`
+	Environment       preparedRunEnvironment               `json:"environment"`
+	GoalText          string                               `json:"goal_text"`
+	GoalNamespace     string                               `json:"goal_namespace"`
+	GoalDigest        string                               `json:"goal_digest"`
+	GoalSource        string                               `json:"goal_source"`
+	ArtifactDigests   map[string]string                    `json:"artifact_digests"`
+	RoleDigests       map[string]string                    `json:"role_digests"`
+	BootstrapDigests  map[string]string                    `json:"bootstrap_digests"`
+	BootstrapBindings map[string]string                    `json:"bootstrap_goal_bindings"`
+	PreparedAt        time.Time                            `json:"prepared_at"`
 }
 
 type preparedRunTopology struct {
@@ -195,6 +196,8 @@ type runReadinessResult struct {
 	StagedRoster  []string            `json:"staged_roster"`
 	StagedCount   int                 `json:"staged_count"`
 	Lead          string              `json:"lead"`
+	GoalSource    string              `json:"goal_source"`
+	GoalDigest    string              `json:"goal_digest"`
 	Rows          []runReadinessRow   `json:"rows"`
 }
 
@@ -369,21 +372,65 @@ func preparedBootstrap(project, profile, session string, binding acceptedGoalBin
 		"Operator gate routing:",
 		"amq drain --include-body",
 	}
-	if member.Role == tm.Lead {
-		contract, err := goalDeliveryContractForBinary(member.Binary)
-		if err != nil {
-			return "", err
-		}
-		required = append(required, "Goal binding: "+contract.Mode)
-	} else {
-		required = append(required, "Goal binding: amq_task_brief")
-	}
 	for _, required := range required {
 		if !strings.Contains(prompt, required) {
 			return "", fmt.Errorf("generated bootstrap for %s omits %q", member.Role, required)
 		}
 	}
+	expectedBinding, err := expectedPreparedBootstrapBindingLine(tm, profile, session, member, binding)
+	if err != nil {
+		return "", err
+	}
+	if !bootstrapHasExactLine(prompt, "- "+expectedBinding) {
+		return "", fmt.Errorf("generated bootstrap for %s omits exact line %q", member.Role, expectedBinding)
+	}
 	return prompt, nil
+}
+
+func expectedPreparedBootstrapBindingLine(tm team.Team, profile, session string, member team.Member, binding acceptedGoalBinding) (string, error) {
+	if member.Role != strings.TrimSpace(tm.Lead) {
+		return "Goal binding: amq_task_brief", nil
+	}
+	prepared, err := preparedGoalBinding(tm, profile, session, member, binding)
+	if err != nil {
+		return "", err
+	}
+	mode, ok := preparedBootstrapGoalBindingMode(launch.Record{Binary: member.Binary, GoalBinding: prepared})
+	if !ok {
+		return "", fmt.Errorf("prepared bootstrap binding for %s is not an exact validated prepared-run state", member.Role)
+	}
+	contract, err := goalDeliveryContractForBinary(member.Binary)
+	if err != nil {
+		return "", err
+	}
+	if mode != contract.Mode {
+		return "", fmt.Errorf("prepared bootstrap binding for %s resolved mode %q, want %q", member.Role, mode, contract.Mode)
+	}
+	return "Goal binding: " + mode, nil
+}
+
+func bootstrapHasExactLine(prompt, want string) bool {
+	for _, line := range strings.Split(prompt, "\n") {
+		if strings.TrimSpace(line) == strings.TrimSpace(want) {
+			return true
+		}
+	}
+	return false
+}
+
+func validatePreparedBootstrapSemantics(tm team.Team, profile, session string, binding acceptedGoalBinding) (map[string]string, error) {
+	if strings.TrimSpace(tm.Lead) == "" {
+		return nil, fmt.Errorf("preparation bootstrap blocker: declare a lead with `amq-squad team lead set <role>` before preparation")
+	}
+	lines := make(map[string]string, len(tm.Members))
+	for _, member := range tm.Members {
+		line, err := expectedPreparedBootstrapBindingLine(tm, profile, session, member, binding)
+		if err != nil {
+			return nil, fmt.Errorf("preparation bootstrap blocker [%s]: %w", member.Role, err)
+		}
+		lines[member.Role] = line
+	}
+	return lines, nil
 }
 
 func buildPreparedRunManifest(project, profile, session, shape, stagedRaw string, binding acceptedGoalBinding, context acceptedRunContext) (preparedRunManifest, error) {
@@ -404,7 +451,7 @@ func buildPreparedRunManifest(project, profile, session, shape, stagedRaw string
 		TargetContract: tm.TargetContract, LeadMode: team.EffectiveLeadMode(tm), Topology: context.Topology,
 		Members:         map[string]preparedRunMemberIdentity{},
 		Environment:     preparedRunEnvironment{BinaryVersion: strings.TrimSpace(context.Version), SkillVersion: strings.TrimSpace(context.Version), AMQMinimum: doctorMinAMQVersion, Capabilities: append([]string(nil), preparedRunRequiredCapabilities...)},
-		ArtifactDigests: map[string]string{}, RoleDigests: map[string]string{}, BootstrapDigests: map[string]string{}, PreparedAt: time.Now().UTC(),
+		ArtifactDigests: map[string]string{}, RoleDigests: map[string]string{}, BootstrapDigests: map[string]string{}, BootstrapBindings: map[string]string{}, PreparedAt: time.Now().UTC(),
 	}
 	for label, path := range map[string]string{
 		"brief":      briefPathForProfile(project, profile, session),
@@ -426,11 +473,16 @@ func buildPreparedRunManifest(project, profile, session, shape, stagedRaw string
 	}
 	for _, member := range tm.Members {
 		manifest.Members[member.Role] = acceptedMemberIdentity(tm, member)
+		bindingLine, err := expectedPreparedBootstrapBindingLine(tm, profile, session, member, binding)
+		if err != nil {
+			return preparedRunManifest{}, err
+		}
 		prompt, err := preparedBootstrap(project, profile, session, binding, tm, member)
 		if err != nil {
 			return preparedRunManifest{}, err
 		}
 		manifest.BootstrapDigests[member.Role] = digestRunArtifactBytes([]byte(prompt))
+		manifest.BootstrapBindings[member.Role] = bindingLine
 	}
 	return manifest, nil
 }
@@ -556,13 +608,17 @@ func calculateRunReadiness(project, profile, session string) runReadinessResult 
 func calculateRunReadinessWithContext(project, profile, session string, context acceptedRunContext) runReadinessResult {
 	profile = squadnamespace.NormalizeProfile(profile)
 	namespace := profile + "/" + session
-	result := runReadinessResult{Namespace: namespace}
+	result := runReadinessResult{Namespace: namespace, InitialRoster: []string{}, StagedRoster: []string{}, Rows: []runReadinessRow{}}
 	manifest, err := readPreparedRunManifest(project, profile, session)
 	if err != nil {
 		result.Rows = append(result.Rows, runReadinessRow{Artifact: "preparation", Status: "missing", Evidence: err.Error(), Fix: "return to wizard preparation and approve the rendered artifact mutations"})
 		return result
 	}
-	result.LaunchShape, result.InitialRoster, result.StagedRoster, result.Lead = manifest.LaunchShape, manifest.InitialRoster, manifest.StagedRoster, manifest.Lead
+	result.LaunchShape = manifest.LaunchShape
+	result.InitialRoster = append([]string{}, manifest.InitialRoster...)
+	result.StagedRoster = append([]string{}, manifest.StagedRoster...)
+	result.Lead = manifest.Lead
+	result.GoalSource, result.GoalDigest = manifest.GoalSource, manifest.GoalDigest
 	result.ExecutionMode, result.Topology = manifest.ExecutionMode, manifest.Topology
 	result.InitialCount, result.StagedCount = len(result.InitialRoster), len(result.StagedRoster)
 	add := func(artifact, status, evidence, fix string) {
@@ -683,18 +739,22 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 				add(artifact, "missing", "accepted initial member is absent from the profile and bootstrap plan", "return to preparation and restore the exact accepted initial roster")
 				continue
 			}
+			expectedBinding, bindingErr := expectedPreparedBootstrapBindingLine(tm, profile, session, member, binding)
+			if bindingErr != nil {
+				add(artifact, "drifted", bindingErr.Error(), "repair the accepted goal binding and approve preparation again")
+				continue
+			}
+			if manifest.BootstrapBindings[member.Role] != expectedBinding {
+				add(artifact, "drifted", fmt.Sprintf("accepted bootstrap goal binding=%q current=%q", manifest.BootstrapBindings[member.Role], expectedBinding), "approve preparation again with the exact binary-specific goal binding")
+				continue
+			}
 			prompt, err := preparedBootstrap(project, profile, session, binding, tm, member)
 			if err != nil {
 				add(artifact, "drifted", err.Error(), "repair the referenced artifact and approve preparation again")
 			} else if digestRunArtifactBytes([]byte(prompt)) != manifest.BootstrapDigests[member.Role] {
 				add(artifact, "drifted", "generated bootstrap differs from accepted preview", "review the bootstrap diff and approve preparation again")
 			} else {
-				goalMode := "amq_task_brief"
-				if member.Role == tm.Lead {
-					if contract, contractErr := goalDeliveryContractForBinary(member.Binary); contractErr == nil {
-						goalMode = contract.Mode
-					}
-				}
+				goalMode := strings.TrimPrefix(expectedBinding, "Goal binding: ")
 				add(artifact, "ready", fmt.Sprintf("namespace=%s/%s role=%s lead=%s brief=%s rules=%s role_path=%s goal_mode=%s goal_digest=%s routing=durable-amq gates=operator-contract sha256=%s",
 					profile, session, member.Role, tm.Lead,
 					briefPathForProfile(project, profile, session), rules.Path(project),
@@ -808,7 +868,9 @@ func displayRoleList(roles []string) string {
 	return strings.Join(roles, ", ")
 }
 
-func prepareRunArtifacts(project, profile, session, shape, stagedRaw, goal, goalSource, goalDigest, seed string, context acceptedRunContext) (runReadinessResult, error) {
+var buildPreparedRunManifestForPreparation = buildPreparedRunManifest
+
+func prepareRunArtifacts(project, profile, session, shape, stagedRaw, goal, goalSource, goalDigest, seed string, context acceptedRunContext) (result runReadinessResult, err error) {
 	profile = squadnamespace.NormalizeProfile(profile)
 	if err := revalidateRunPreparationPointerPlans(context.PointerPlans); err != nil {
 		return runReadinessResult{}, fmt.Errorf("revalidate accepted pointer plan before preparation writes: %w", err)
@@ -816,7 +878,39 @@ func prepareRunArtifacts(project, profile, session, shape, stagedRaw, goal, goal
 	if shape != runwizard.LaunchShapeWorkingTeamTogether && shape != runwizard.LaunchShapeLeadOnlyStaged {
 		return runReadinessResult{}, fmt.Errorf("preparation requires explicit --launch-shape working-team-together or lead-only-staged")
 	}
+	binding, err := resolveAcceptedGoalBinding(project, profile, session, goal, goalSource, goalDigest)
+	if err != nil {
+		return runReadinessResult{}, err
+	}
+	tm, err := team.ReadProfile(project, profile)
+	if err != nil {
+		return runReadinessResult{}, err
+	}
+	if _, err := validatePreparedBootstrapSemantics(tm, profile, session, binding); err != nil {
+		return runReadinessResult{}, err
+	}
 	briefPath := briefPathForProfile(project, profile, session)
+	mutationPaths := []string{briefPath, rules.Path(project), preparedRunPath(project, profile, session)}
+	for _, plan := range context.PointerPlans {
+		mutationPaths = append(mutationPaths, plan.Target)
+	}
+	snapshots, err := snapshotRunPreparationFiles(mutationPaths...)
+	if err != nil {
+		return runReadinessResult{}, err
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if rollbackErr := restoreRunPreparationFiles(snapshots); rollbackErr != nil {
+			if err == nil {
+				err = rollbackErr
+			} else {
+				err = fmt.Errorf("%w; preparation rollback failed: %v", err, rollbackErr)
+			}
+		}
+	}()
 	if _, err := os.Stat(briefPath); os.IsNotExist(err) {
 		var content, source string
 		if strings.TrimSpace(seed) != "" {
@@ -856,21 +950,18 @@ func prepareRunArtifacts(project, profile, session, shape, stagedRaw, goal, goal
 	if _, err := rules.Apply(context.PointerPlans); err != nil {
 		return runReadinessResult{}, fmt.Errorf("apply accepted pointer plan: %w", err)
 	}
-	binding, err := resolveAcceptedGoalBinding(project, profile, session, goal, goalSource, goalDigest)
-	if err != nil {
-		return runReadinessResult{}, err
-	}
-	manifest, err := buildPreparedRunManifest(project, profile, session, shape, stagedRaw, binding, context)
+	manifest, err := buildPreparedRunManifestForPreparation(project, profile, session, shape, stagedRaw, binding, context)
 	if err != nil {
 		return runReadinessResult{}, err
 	}
 	if err := writePreparedRunManifest(preparedRunPath(project, profile, session), manifest); err != nil {
 		return runReadinessResult{}, err
 	}
-	result := calculateRunReadinessWithContext(project, profile, session, context)
+	result = calculateRunReadinessWithContext(project, profile, session, context)
 	if !result.Ready {
 		return result, fmt.Errorf("artifact readiness failed after preparation")
 	}
+	committed = true
 	return result, nil
 }
 

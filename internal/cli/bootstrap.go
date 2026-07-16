@@ -318,6 +318,14 @@ func bootstrapGoalBindingMode(rec launch.Record, t team.Team) string {
 		if launchRecordHasGoalBinding(rec) {
 			return rec.GoalBinding.Mode
 		}
+		// Preparation records accepted goal intent before any pane exists. That
+		// state is deliberately not delivered launch evidence, but its exact,
+		// binary-specific mode still belongs in the generated bootstrap preview.
+		// Keep this path narrower than launchRecordHasGoalBinding so preparation
+		// can never promote itself to verified live-goal delivery.
+		if mode, ok := preparedBootstrapGoalBindingMode(rec); ok {
+			return mode
+		}
 		if projectExecutionModeRequiresGoalBinding(t) {
 			if contract, err := goalDeliveryContractForBinary(rec.Binary); err == nil {
 				return contract.Mode + "_missing"
@@ -326,6 +334,20 @@ func bootstrapGoalBindingMode(rec launch.Record, t team.Team) string {
 		}
 	}
 	return "amq_task_brief"
+}
+
+func preparedBootstrapGoalBindingMode(rec launch.Record) (string, bool) {
+	if rec.GoalBinding == nil || rec.GoalBinding.Source != "prepared-run" || rec.GoalBinding.DeliveryState != goalBindingDeliveryPrepared {
+		return "", false
+	}
+	contract, err := goalDeliveryContractForBinary(rec.Binary)
+	if err != nil {
+		return "", false
+	}
+	if _, _, err := goalBindingPayload(rec.GoalBinding, contract); err != nil {
+		return "", false
+	}
+	return contract.Mode, true
 }
 
 func bootstrapRecordIsVisibleLead(rec launch.Record, t team.Team) bool {

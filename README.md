@@ -135,18 +135,49 @@ The shortest working path for a visible project lead and workers:
 ```sh
 cd ~/Code/my-project
 
-# Guided preview with an explicit, default-No live confirmation. In an
-# interactive terminal, zero-argument `amq-squad run start` opens the same
-# wizard.
+# Guided proposal, default-No preparation approval, readiness, and a separate
+# default-No launch approval. In an interactive terminal, zero-argument
+# `amq-squad run start` opens the same wizard.
 amq-squad wizard
 
-# Preview, then create, an orchestrated run. --go is the mutation switch.
+# Scripted equivalent, stage 1: render the read-only proposal. Choose the launch
+# shape explicitly; nothing is written.
 amq-squad run start \
   --project . \
   --session issue-96 \
   --roles cto,fullstack,qa \
   --lead cto \
+  --launch-shape working-team-together \
   --goal "fix issue 96" \
+  --prepare-plan
+
+# Stage 2: after reviewing that proposal, explicitly approve preparation.
+# This writes the accepted coordination artifacts but launches no pane.
+amq-squad run start \
+  --project . \
+  --session issue-96 \
+  --roles cto,fullstack,qa \
+  --lead cto \
+  --launch-shape working-team-together \
+  --goal "fix issue 96" \
+  --prepare
+
+# Stage 3: readiness is read-only and machine-readable.
+amq-squad run start \
+  --project . \
+  --session issue-96 \
+  --launch-shape working-team-together \
+  --readiness-json
+
+# Stage 4: after a separate launch approval, use the exact binding source and
+# digest printed by preparation/readiness. --go never repairs artifacts.
+amq-squad run start \
+  --project . \
+  --session issue-96 \
+  --launch-shape working-team-together \
+  --goal "fix issue 96" \
+  --goal-source operator_goal \
+  --goal-digest 'sha256:<accepted-digest>' \
   --go
 
 # Watch the run.
@@ -175,19 +206,29 @@ the remaining workers should be spawned:
 ```sh
 cd ~/Code/my-project
 
-amq-squad run start \
-  -p . \
-  -s issue-96 \
-  --roles cto,fullstack,qa \
-  --lead cto \
-  --external-lead \
-  --goal "fix issue 96" \
-  --go
+amq-squad run start -p . -s issue-96 \
+  --roles cto,fullstack,qa --lead cto --external-lead \
+  --launch-shape working-team-together --goal "fix issue 96" --prepare-plan
+
+# Default No: run only after approving the rendered preparation proposal.
+amq-squad run start -p . -s issue-96 \
+  --roles cto,fullstack,qa --lead cto --external-lead \
+  --launch-shape working-team-together --goal "fix issue 96" --prepare
+
+amq-squad run start -p . -s issue-96 --external-lead \
+  --launch-shape working-team-together --readiness-json
+
+# Separate default-No launch approval; copy the accepted digest exactly.
+amq-squad run start -p . -s issue-96 --external-lead \
+  --launch-shape working-team-together --goal "fix issue 96" \
+  --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
 ```
 
-`run start` previews by default; `--go` creates. With `--goal`, it waits until
-the lead is live before delivering the goal. If goal delivery fails, it exits
-non-zero and prints an exact retry command.
+`run start` has two independent mutation gates, both default No. `--prepare`
+writes only the proposal-approved artifacts. A later `--go` launches only when
+readiness still matches the accepted manifest, launch shape, goal source, and
+goal digest. With `--goal`, launch waits until the lead is live before delivery;
+failure exits non-zero with an exact retry command.
 
 For a deterministic visible arrangement, pass `--layout-preset lead-left`,
 `lead-top`, `even-grid`, or `one-window-per-agent`. Presets close the launcher
@@ -201,10 +242,13 @@ warning.
 In an interactive terminal, `amq-squad run start` with no arguments now opens
 the guided wizard instead of returning the old missing-flag usage error.
 `amq-squad wizard` and `run start --interactive` are equivalent. The wizard
-first runs the exact canonical preview, then asks `Launch now? [y/N]`; only an
-explicit `y`/`yes` reruns the identical argv with `--go` added. The second call
-rechecks current state, so a collision introduced after preview is still
-refused. The wizard also offers a Global/NOC branch backed by canonical
+first renders the canonical `--prepare-plan` proposal, then asks
+`Prepare coordination artifacts? [y/N]`. Only explicit `y`/`yes` runs the
+separate `--prepare` mutation. It then checks readiness and asks
+`Launch now? [y/N]`; only another explicit `y`/`yes` runs `--go` with the exact
+accepted `--launch-shape`, `--goal-source`, and `--goal-digest`. Every stage
+rechecks current state, so drift after proposal or preparation is refused. The
+wizard also offers a Global/NOC branch backed by canonical
 `amq-squad global start`. It is disabled in CI and never triggers when stdin or
 stderr is not a TTY; non-TTY zero-argument calls retain the usage error. Partial
 flag commands without `--interactive` keep fail-fast parser behavior.
@@ -340,8 +384,11 @@ Common setup and run commands:
 ```sh
 amq-squad new team --roles cto,qa --sync
 amq-squad new profile review --roles cto,qa --sync
-amq-squad run start -p . -s issue-96 --roles cto,qa --lead cto --goal "..." --go
-amq-squad run start -p . -s issue-96 --external-lead --lead cto --roles cto,qa --go
+amq-squad run start -p . -s issue-96 --roles cto,qa --lead cto --goal "..." --launch-shape working-team-together --prepare-plan
+amq-squad run start -p . -s issue-96 --roles cto,qa --lead cto --goal "..." --launch-shape working-team-together --prepare
+amq-squad run start -p . -s issue-96 --launch-shape working-team-together --readiness-json
+amq-squad run start -p . -s issue-96 --launch-shape working-team-together --goal "..." --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
+amq-squad run start -p . -s issue-96 --external-lead --lead cto --roles cto,qa --launch-shape working-team-together --prepare-plan
 amq-squad new session issue-96 --seed-from issue:96
 ```
 

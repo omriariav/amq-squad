@@ -199,9 +199,49 @@ func TestRunCmdDispatch(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unknown 'run' subcommand") {
 		t.Fatalf("expected unknown-subcommand error, got %v", err)
 	}
-	_, _, err = captureOutput(t, func() error { return runRunCmd([]string{"-h"}, "test") })
+	out, errOut, err := captureOutput(t, func() error { return runRunCmd([]string{"-h"}, "test") })
 	if err != nil {
 		t.Fatalf("run -h should not error, got %v", err)
+	}
+	help := out + errOut
+	for _, want := range []string{
+		"--launch-shape working-team-together|lead-only-staged",
+		"--prepare-plan | --prepare | --readiness-json | --go",
+		"--goal-source SOURCE", "--goal-digest SHA256", "--staged-roles", "--tool-profile",
+		"Prepare coordination artifacts? [y/N]", "Launch now? [y/N]",
+		"two separate default-No approvals",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("run help missing %q:\n%s", want, help)
+		}
+	}
+}
+
+func TestRunStartOperatorDocsCarryCompletePreparationAndLaunchContract(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	for _, rel := range []string{
+		"README.md",
+		filepath.Join("docs", "skills.md"),
+		filepath.Join("docs", "global-orchestrator-runbook.md"),
+		filepath.Join("plugins", "skills-src", "wizard", "SKILL.md"),
+	} {
+		data, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		body := string(data)
+		for _, want := range []string{"--prepare-plan", "--prepare", "--readiness-json", "--go", "--launch-shape", "--goal-source", "--goal-digest", "default-No"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s missing operator launch contract token %q", rel, want)
+			}
+		}
+	}
+	readme, err := os.ReadFile(filepath.Join(repoRoot, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(readme), "--external-lead") < 4 {
+		t.Fatalf("README external-lead example must carry proposal, prepare, readiness, and launch stages")
 	}
 }
 
@@ -266,6 +306,14 @@ func TestRunStartExternalLeadPreviewExistingProfileIsReadOnlyAndWorkerOnly(t *te
 	if !strings.Contains(out, "orchestrated run (external lead)") || !strings.Contains(out, "Preview OK") {
 		t.Fatalf("preview output missing external-lead/ok text:\n%s", out)
 	}
+	for _, want := range []string{"--prepare-plan", "--prepare", "--readiness-json", "--launch-shape", "--goal-source", "--goal-digest", "Keep --external-lead on every stage"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("external-lead preview missing staged contract %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Re-run with --external-lead --go") {
+		t.Fatalf("external-lead preview must not jump from proposal to launch:\n%s", out)
+	}
 	if len(backend.dryRuns) != 1 || len(backend.teams) != 1 {
 		t.Fatalf("expected one worker dry-run, got dryRuns=%d teams=%d", len(backend.dryRuns), len(backend.teams))
 	}
@@ -293,6 +341,11 @@ func TestRunStartExternalLeadPreviewFreshProfileDoesNotWriteTeam(t *testing.T) {
 	}
 	if !strings.Contains(out, "Spawn validation is deferred") {
 		t.Fatalf("fresh preview should explain deferred worker validation:\n%s", out)
+	}
+	for _, want := range []string{"--prepare-plan", "--prepare", "--readiness-json", "--launch-shape", "--goal-source", "--goal-digest", "Keep --external-lead on every stage"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("fresh external-lead preview missing staged contract %q:\n%s", want, out)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".amq-squad")); !os.IsNotExist(err) {
 		t.Fatalf("fresh preview must not write .amq-squad, stat err=%v", err)
@@ -1032,6 +1085,14 @@ func TestRunStartExistingProfileMixedPinsProceed(t *testing.T) {
 	if !strings.Contains(out, "Preview OK") {
 		t.Fatalf("preview should validate the runnable member:\n%s", out)
 	}
+	for _, want := range []string{"--prepare-plan", "--prepare", "--readiness-json", "--launch-shape", "--goal-source", "--goal-digest"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("managed preview missing staged contract %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Re-run with --go") {
+		t.Fatalf("managed preview must not jump from preview to launch:\n%s", out)
+	}
 }
 
 func TestRunStartExistingProfileEffortOverrideIsLaunchOnly(t *testing.T) {
@@ -1403,7 +1464,7 @@ func TestRunStartPreviewSeedFromValidatesRealSpawn(t *testing.T) {
 	if !strings.Contains(out, "Preview OK") {
 		t.Fatalf("expected Preview OK for a valid pinned team:\n%s", out)
 	}
-	if !strings.Contains(out, "--seed-from brief is written at --go") {
+	if !strings.Contains(out, "--seed-from brief is written only by an explicitly approved --prepare call") {
 		t.Fatalf("expected seed-from note:\n%s", out)
 	}
 }

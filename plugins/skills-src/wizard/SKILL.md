@@ -29,6 +29,26 @@ Preparation and launch are separate approvals:
 Preparation never launches panes. Launch never repairs or rewrites accepted
 artifacts.
 
+For a non-interactive operator or CI flow, preserve the same four stages and
+the same argv identity:
+
+```sh
+amq-squad run start --project P --profile R --session S --roles cto,qa \
+  --lead cto --launch-shape working-team-together --goal "..." --prepare-plan
+# Default No: repeat only after the operator accepts the rendered proposal.
+amq-squad run start --project P --profile R --session S --roles cto,qa \
+  --lead cto --launch-shape working-team-together --goal "..." --prepare
+amq-squad run start --project P --profile R --session S \
+  --launch-shape working-team-together --readiness-json
+# Separate default-No launch approval; use the exact accepted binding values.
+amq-squad run start --project P --profile R --session S \
+  --launch-shape working-team-together --goal "..." \
+  --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
+```
+
+`--prepare-plan`, `--prepare`, and `--go` are not aliases for one another.
+Never tell an operator to jump from a generic preview directly to `--go`.
+
 ## Goal binding
 
 A launch requires an actionable goal binding for the visible lead. Show its

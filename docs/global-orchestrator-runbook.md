@@ -52,15 +52,17 @@ multi-workstream board protocol.
 
 ## Project run mode (create a run)
 
-Wraps `new team` (if `--roles`) → `up`. **Preview by default** (prints the plan
-and runs read-only `--dry-run` validation whose failures surface); `--go`
-creates for real.
+The shipped contract is proposal → default-No preparation → readiness → a
+separate default-No launch. A generic preview validates only the current spawn
+plan; it is not preparation approval and must not jump directly to `--go`.
 
 The interactive wizard can create either this project-run preview or a
 Global/NOC preview. In a TTY, run `amq-squad wizard` (or zero-argument
 `amq-squad run start`), choose the scope, and review the two canonical commands
-it prints. The preview always runs first. `Launch now? [y/N]` defaults to No;
-only explicit `y`/`yes` reruns the identical argv with one trailing `--go`.
+it prints. The wizard first asks `Prepare coordination artifacts? [y/N]` after
+the read-only proposal. Only explicit `y`/`yes` writes preparation artifacts.
+After readiness passes, `Launch now? [y/N]` is a separate default-No gate whose
+live argv carries the exact accepted launch shape, goal source, and goal digest.
 
 Global/NOC scope collects a neutral root, one `claude` or `codex` agent, model,
 validated effort, extra native arguments excluding effort, and a window name.
@@ -72,12 +74,23 @@ answers use Bubble Tea when enabled. Both return to the same default-No consent
 boundary after canonical preview.
 
 ```sh
-# preview (no mutation)
-amq-squad run start -p ~/Code/app -s issue-96 -P release --roles "cto,fullstack,qa"
-
-# create it
+# proposal (no mutation)
 amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --roles "cto,fullstack,qa" --binary "fullstack=codex" --goal "fix issue 96" --go
+  --roles "cto,fullstack,qa" --binary "fullstack=codex" \
+  --launch-shape working-team-together --goal "fix issue 96" --prepare-plan
+
+# default-No preparation approval; no panes launch
+amq-squad run start -p ~/Code/app -s issue-96 -P release \
+  --roles "cto,fullstack,qa" --binary "fullstack=codex" \
+  --launch-shape working-team-together --goal "fix issue 96" --prepare
+
+amq-squad run start -p ~/Code/app -s issue-96 -P release \
+  --launch-shape working-team-together --readiness-json
+
+# separate default-No launch approval; copy the accepted digest exactly
+amq-squad run start -p ~/Code/app -s issue-96 -P release \
+  --launch-shape working-team-together --goal "fix issue 96" \
+  --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
 ```
 
 ### External lead mode
@@ -90,7 +103,21 @@ workers. It does not run `goal start --register-orchestrator`, add an
 
 ```sh
 amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --roles "cto,fullstack,qa" --external-lead --goal "fix issue 96" --go
+  --roles "cto,fullstack,qa" --external-lead \
+  --launch-shape working-team-together --goal "fix issue 96" --prepare-plan
+
+# Default No: prepare only after accepting the proposal.
+amq-squad run start -p ~/Code/app -s issue-96 -P release \
+  --roles "cto,fullstack,qa" --external-lead \
+  --launch-shape working-team-together --goal "fix issue 96" --prepare
+
+amq-squad run start -p ~/Code/app -s issue-96 -P release --external-lead \
+  --launch-shape working-team-together --readiness-json
+
+# Separate default-No launch approval.
+amq-squad run start -p ~/Code/app -s issue-96 -P release --external-lead \
+  --launch-shape working-team-together --goal "fix issue 96" \
+  --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
 ```
 
 Requirements:

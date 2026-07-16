@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -27,6 +28,209 @@ func TestRunStartGoRequiresExplicitLaunchShapeForFreshRun(t *testing.T) {
 	}
 	if team.Exists(dir) {
 		t.Fatal("omitted launch shape created a fresh profile")
+	}
+}
+
+func TestRunStartReadinessJSONIsPureAndUsesEmptyArrays(t *testing.T) {
+	dir := t.TempDir()
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
+		Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "missing", CWD: dir}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, err := captureOutput(t, func() error {
+		return runRunStart([]string{"--project", dir, "--session", "missing", "--visibility", "detached", "--readiness-json"}, "test")
+	})
+	if err == nil || !strings.Contains(err.Error(), "artifact readiness failed") {
+		t.Fatalf("missing readiness error = %v", err)
+	}
+	if strings.TrimSpace(errOut) != "" {
+		t.Fatalf("readiness JSON wrote human stderr: %q", errOut)
+	}
+	trimmed := strings.TrimSpace(out)
+	if !strings.HasPrefix(trimmed, "{") || strings.Contains(out, "orchestrated run") {
+		t.Fatalf("readiness stdout is not pure JSON:\n%s", out)
+	}
+	for _, want := range []string{`"initial_roster": []`, `"staged_roster": []`, `"rows": [`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("readiness JSON missing non-null array %s:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunStartReadinessJSONExposesAcceptedGoalBinding(t *testing.T) {
+	dir := prepareRunStartFixture(t, runwizard.LaunchShapeWorkingTeamTogether)
+	manifest, err := readPreparedRunManifest(dir, team.DefaultProfile, "prepared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, err := captureOutput(t, func() error {
+		return runRunStart([]string{"--project", dir, "--session", "prepared", "--visibility", "detached", "--readiness-json"}, "test")
+	})
+	if err != nil {
+		t.Fatalf("readiness JSON: %v", err)
+	}
+	if strings.TrimSpace(errOut) != "" || strings.Contains(out, "orchestrated run") || !strings.HasPrefix(strings.TrimSpace(out), "{") {
+		t.Fatalf("readiness output is not pure JSON: stderr=%q stdout=%s", errOut, out)
+	}
+	for _, want := range []string{`"goal_source": "` + manifest.GoalSource + `"`, `"goal_digest": "` + manifest.GoalDigest + `"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("readiness JSON missing %s:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, `"staged_roster": []`) {
+		t.Fatalf("readiness JSON encoded an empty prepared roster as null:\n%s", out)
+	}
+}
+
+func TestDirectLeadSessionPreparationUsesExactBinaryGoalBinding(t *testing.T) {
+	for _, binary := range []string{"codex", "claude"} {
+		t.Run(binary, func(t *testing.T) {
+			dir := t.TempDir()
+			profile := "direct"
+			session := "prepared"
+			tm := team.Team{
+				Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeDirectLeadSession,
+				Members: []team.Member{{Role: "cto", Handle: "cto", Binary: binary, Session: session, CWD: dir}},
+			}
+			if err := team.WriteProfile(dir, profile, tm); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := captureOutput(t, func() error {
+				return runRunStart([]string{
+					"--project", dir, "--profile", profile, "--session", session,
+					"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether,
+					"--goal", "Execute the declared direct lead goal", "--visibility", "detached", "--prepare",
+				}, "test")
+			})
+			if err != nil {
+				t.Fatalf("direct lead preparation: %v", err)
+			}
+			manifest, err := readPreparedRunManifest(dir, profile, session)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantMode := map[string]string{"codex": "prompt_goal", "claude": "native_goal"}[binary]
+			wantLine := "Goal binding: " + wantMode
+			if got := manifest.BootstrapBindings["cto"]; got != wantLine {
+				t.Fatalf("manifest binding line = %q, want %q", got, wantLine)
+			}
+			binding := acceptedGoalBinding{Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest}
+			prompt, err := preparedBootstrap(dir, profile, session, binding, tm, tm.Members[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bootstrapHasExactLine(prompt, "- "+wantLine) || bootstrapHasExactLine(prompt, "- Goal binding: "+wantMode+"_missing") || bootstrapHasExactLine(prompt, "- Goal binding: amq_task_brief") {
+				t.Fatalf("prepared direct lead bootstrap has wrong exact binding line:\n%s", prompt)
+			}
+			prepared, err := preparedGoalBinding(tm, profile, session, tm.Members[0], binding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if launchRecordHasGoalBinding(launch.Record{Binary: binary, GoalBinding: prepared}) {
+				t.Fatal("accepted preparation intent must not become delivered launch evidence")
+			}
+		})
+	}
+}
+
+func TestDirectLeadSessionPreparationFailureLeavesEveryArtifactUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	profile := "direct"
+	session := "prepared"
+	tm := team.Team{
+		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeDirectLeadSession,
+		Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: session, CWD: dir}},
+	}
+	if err := team.WriteProfile(dir, profile, tm); err != nil {
+		t.Fatal(err)
+	}
+	profilePath := team.ProfilePath(dir, profile)
+	profileBefore, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sentinels := map[string]string{
+		filepath.Join(dir, "AGENTS.md"): "operator agents sentinel\n",
+		filepath.Join(dir, "CLAUDE.md"): "operator claude sentinel\n",
+		filepath.Join(squadnamespace.AMQRoot(dir, profile, session), "agents", "cto", "extensions", "io.github.omriariav.amq-squad", "role.md"):      "operator role sentinel\n",
+		filepath.Join(squadnamespace.AMQRoot(dir, profile, session), "agents", "cto", "extensions", "io.github.omriariav.amq-squad", "bootstrap.md"): "operator bootstrap sentinel\n",
+	}
+	for path, body := range sentinels {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldBuild := buildPreparedRunManifestForPreparation
+	buildPreparedRunManifestForPreparation = func(string, string, string, string, string, acceptedGoalBinding, acceptedRunContext) (preparedRunManifest, error) {
+		return preparedRunManifest{}, fmt.Errorf("injected post-write manifest failure")
+	}
+	t.Cleanup(func() { buildPreparedRunManifestForPreparation = oldBuild })
+
+	_, _, err = captureOutput(t, func() error {
+		return runRunStart([]string{
+			"--project", dir, "--profile", profile, "--session", session,
+			"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether,
+			"--goal", "Exercise transactional preparation", "--visibility", "detached", "--prepare",
+		}, "test")
+	})
+	if err == nil || !strings.Contains(err.Error(), "injected post-write manifest failure") {
+		t.Fatalf("preparation error = %v", err)
+	}
+	for _, path := range []string{briefPathForProfile(dir, profile, session), rules.Path(dir), preparedRunPath(dir, profile, session)} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("failed preparation left artifact %s: %v", path, statErr)
+		}
+	}
+	for path, want := range sentinels {
+		got, readErr := os.ReadFile(path)
+		if readErr != nil || string(got) != want {
+			t.Fatalf("failed preparation changed %s: read=%v got=%q", path, readErr, got)
+		}
+	}
+	profileAfter, readErr := os.ReadFile(profilePath)
+	if readErr != nil || !reflect.DeepEqual(profileAfter, profileBefore) {
+		t.Fatalf("failed preparation changed existing profile: read=%v changed=%t", readErr, !reflect.DeepEqual(profileAfter, profileBefore))
+	}
+}
+
+func TestDirectLeadSessionPreparationWithoutDeclaredLeadFailsBeforeMutationWithRemedy(t *testing.T) {
+	dir := t.TempDir()
+	profile := "direct"
+	session := "prepared"
+	if err := team.WriteProfile(dir, profile, team.Team{
+		Project: dir, ExecutionMode: executionModeDirectLeadSession,
+		Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: session, CWD: dir}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(team.ProfilePath(dir, profile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = captureOutput(t, func() error {
+		return runRunStart([]string{
+			"--project", dir, "--profile", profile, "--session", session, "--lead", "cto",
+			"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether,
+			"--goal", "Declare the direct lead", "--visibility", "detached", "--prepare",
+		}, "test")
+	})
+	wantCommand := "amq-squad team lead set cto --project " + shellQuote(dir) + " --profile " + shellQuote(profile)
+	if err == nil || !strings.Contains(err.Error(), wantCommand) || !strings.Contains(err.Error(), "--session "+shellQuote(session)) {
+		t.Fatalf("lead-less remediation error = %v, want command %q", err, wantCommand)
+	}
+	after, readErr := os.ReadFile(team.ProfilePath(dir, profile))
+	if readErr != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("lead-less failure changed profile: read=%v changed=%t", readErr, !reflect.DeepEqual(after, before))
+	}
+	for _, path := range []string{briefPathForProfile(dir, profile, session), rules.Path(dir), preparedRunPath(dir, profile, session), filepath.Join(dir, "AGENTS.md"), filepath.Join(dir, "CLAUDE.md")} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("lead-less failure crossed mutation boundary at %s: %v", path, statErr)
+		}
 	}
 }
 

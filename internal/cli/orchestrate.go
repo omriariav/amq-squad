@@ -210,13 +210,22 @@ Usage:
       [--visibility sibling-tabs|detached|current] [--external-lead]
       [--layout-preset lead-left|lead-top|even-grid|one-window-per-agent]
       [--launcher-pane close-after-start|keep]
-      [--goal TEXT] [--seed-from REF] [--interactive]
-      [--wizard-ui auto|tui|numbered] [--numbered|--accessible] [--go]
+      [--goal TEXT] [--goal-source SOURCE] [--goal-digest SHA256]
+      [--seed-from REF] [--tool-profile "role=profile,..."]
+      --launch-shape working-team-together|lead-only-staged
+      [--staged-roles "role,..."]
+      [--prepare-plan | --prepare | --readiness-json | --go]
+      [--interactive]
+      [--wizard-ui auto|tui|numbered] [--numbered|--accessible]
 
 With no flags in an interactive terminal, or with --interactive explicitly,
 run start opens the guided preview wizard. Non-TTY and CI invocations never
-prompt. The wizard previews first and launches only after an explicit yes at
-"Launch now? [y/N]"; the live call adds only --go and rechecks current state.
+prompt. The wizard first renders a read-only preparation proposal, then uses
+two separate default-No approvals: "Prepare coordination artifacts? [y/N]"
+before any profile/brief/rules/pointer/manifest write, and "Launch now? [y/N]"
+only after accepted-artifact readiness passes. The launch call carries the
+accepted --launch-shape, --goal-source, and --goal-digest binding; it never
+repairs or rewrites preparation artifacts.
 Its first choice can instead delegate to canonical global start for a
 Global/NOC poller. --interactive and --go are mutually exclusive.
 
@@ -241,8 +250,11 @@ human-only.
 attention-only desktop delivery and never changes who may answer or approve a
 gate. Existing profiles remain authoritative and are never rewritten.
 
-Preview by default (prints the plan and runs read-only --dry-run validation, so
-its failures surface honestly); pass --go to create for real.
+The non-interactive contract is proposal -> explicitly approved preparation ->
+readiness -> separately approved launch. Use --prepare-plan for the read-only
+proposal, repeat the accepted command with --prepare to write artifacts without
+launching, inspect --readiness-json, then use --go only with the exact accepted
+launch shape and goal binding. Every mutation/launch gate defaults to No.
 
 External-lead mode (--external-lead) binds the current tmux pane as the
 configured lead, then spawns only the remaining workers. It never registers a
@@ -430,7 +442,8 @@ func runRunStart(args []string, version string) error {
 			}
 			proposalTeam = existing
 			if explicitLead != "" && explicitLead != strings.TrimSpace(existing.Lead) {
-				return usageErrorf("preparation lead %q differs from existing profile lead %q", explicitLead, existing.Lead)
+				return usageErrorf("preparation lead %q differs from existing profile lead %q; set the profile lead with `amq-squad team lead set %s --project %s --profile %s`, then rerun preparation for --session %s",
+					explicitLead, existing.Lead, shellQuote(explicitLead), shellQuote(project), shellQuote(profile), shellQuote(session))
 			}
 		} else {
 			proposalTeam, err = projectedRunPreparationTeam(project, session, leadForNewTeam, leadMode, rolesText, *binaryFlag, *modelFlag, *effortFlag)
@@ -523,6 +536,17 @@ func runRunStart(args []string, version string) error {
 		upArgs = append(upArgs, "--effort", *effortFlag)
 	}
 
+	if *readinessJSON {
+		result := calculateRunReadinessWithContext(project, profile, session, runContext)
+		if err := writeJSONEnvelope(os.Stdout, "run_readiness", result); err != nil {
+			return err
+		}
+		if !result.Ready {
+			return fmt.Errorf("artifact readiness failed for %s", result.Namespace)
+		}
+		return nil
+	}
+
 	leadModeDisplay := leadMode
 	if !flagWasSet(fs, "lead-mode") && teamPresent {
 		if existing, err := team.ReadProfile(project, *profileFlag); err == nil {
@@ -607,17 +631,6 @@ func runRunStart(args []string, version string) error {
 			Goal:    *goalFlag,
 		})
 		fmt.Printf("  step %d:  %s\n", upStep+1, previewCmd)
-	}
-
-	if *readinessJSON {
-		result := calculateRunReadinessWithContext(project, profile, session, runContext)
-		if err := writeJSONEnvelope(os.Stdout, "run_readiness", result); err != nil {
-			return err
-		}
-		if !result.Ready {
-			return fmt.Errorf("artifact readiness failed for %s", result.Namespace)
-		}
-		return nil
 	}
 
 	if *prepareFlag {
@@ -835,16 +848,27 @@ func runStartPreview(newTeamArgs, upArgs []string, freshRoster, teamPresent bool
 		if err := runStartUpWithVersion(append(validateArgs, "--dry-run"), version); err != nil {
 			return fmt.Errorf("spawn dry-run failed: %w", err)
 		}
-		fmt.Print("\nPreview OK. Re-run with --go to create it.\n")
+		fmt.Print("\nPreview OK. This validates only the current spawn plan; it does not approve preparation or launch.\n")
 		if seeded {
-			fmt.Print("(the --seed-from brief is written at --go; preview validated the roster/session without it.)\n")
+			fmt.Print("(the --seed-from brief is written only by an explicitly approved --prepare call.)\n")
 		}
+		printRunStartPreparationNext(false)
 		return nil
 	}
 	fmt.Print("\nRoster plan validated. Spawn (up) validation is deferred: the team does\n" +
-		"not exist yet, so `up --dry-run` cannot check the roster in preview.\n" +
-		"Re-run with --go to create the team and spawn.\n")
+		"not exist yet, so `up --dry-run` cannot check the roster in preview.\n")
+	printRunStartPreparationNext(false)
 	return nil
+}
+
+func printRunStartPreparationNext(externalLead bool) {
+	external := ""
+	if externalLead {
+		external = " Keep --external-lead on every stage."
+	}
+	fmt.Printf("Next: re-run the same namespace, roster, topology, and goal with an explicit --launch-shape and --prepare-plan.%s\n", external)
+	fmt.Print("After reviewing the proposal, replace --prepare-plan with --prepare for the separate default-No preparation approval.\n")
+	fmt.Print("Then inspect --readiness-json. Launch only after a separate default-No approval, using --go with the accepted --launch-shape, --goal-source, and --goal-digest.\n")
 }
 
 type runStartExternalLeadPreviewOptions struct {
@@ -871,15 +895,16 @@ func runStartExternalLeadPreview(opts runStartExternalLeadPreviewOptions) error 
 			return fmt.Errorf("roster dry-run failed: %w", err)
 		}
 		fmt.Print("\nExternal-lead adoption preconditions validated. Spawn validation is deferred: the team does\n" +
-			"not exist yet, so the worker-only launch plan cannot be checked without writing the roster.\n" +
-			"Re-run with --external-lead --go to bind this pane as lead and spawn remaining workers.\n")
+			"not exist yet, so the worker-only launch plan cannot be checked without writing the roster.\n")
+		printRunStartPreparationNext(true)
 		return nil
 	}
 	if opts.TeamPresent {
 		if err := validateRunStartExternalLeadWorkerLaunch(opts.Project, opts.Layout, opts.Session, opts.Profile, opts.Lead, opts.Model, opts.Effort, opts.CodexArgs, opts.ClaudeArgs); err != nil {
 			return fmt.Errorf("worker spawn dry-run failed: %w", err)
 		}
-		fmt.Print("\nPreview OK. Re-run with --external-lead --go to bind this pane as lead and spawn remaining workers.\n")
+		fmt.Print("\nPreview OK. This validates only external-lead adoption and the worker spawn plan.\n")
+		printRunStartPreparationNext(true)
 		return nil
 	}
 	return usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", opts.Profile, opts.Project)

@@ -674,23 +674,40 @@ Shipping GitHub issue #96 with an orchestrated squad, start to finish.
 cd ~/Code/my-project
 ```
 
-1. **Set up the team** — invoke `/amq-squad:wizard` and say *"the goal is
+1. **Propose and prepare** — invoke `/amq-squad:wizard` and say *"the goal is
    GitHub issue #96."* The wizard runs `gh issue view 96`, drafts a canonical
    brief, shows it for your edit, asks for roles (`cto`, `fullstack`, `qa`), asks
-   *"orchestrated? who leads?"* (yes, `cto`), and creates everything:
+   *"orchestrated? who leads?"* (yes, `cto`), and renders the exact read-only
+   preparation proposal. Only an explicit answer to the default-No preparation
+   gate writes the accepted artifacts:
 
    ```sh
-   amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto --sync
-   # + saves .amq-squad/briefs/issue-96.md (your confirmed brief)
+   amq-squad run start --project . --session issue-96 \
+     --roles cto,fullstack,qa --lead cto \
+     --launch-shape working-team-together --goal "fix issue 96" --prepare-plan
+
+   # Default No: run only after accepting the proposal.
+   amq-squad run start --project . --session issue-96 \
+     --roles cto,fullstack,qa --lead cto \
+     --launch-shape working-team-together --goal "fix issue 96" --prepare
    ```
 
-2. **Launch** — after the wizard's separate default-No launch approval, use
-   `/amq-squad:cli` to bring the squad up
-   window-per-agent:
+2. **Prove readiness and launch separately** — preparation launches nothing.
+   The wizard checks the accepted manifest and generated bootstraps, then shows
+   a second default-No launch gate. The equivalent commands are:
 
    ```sh
-   amq-squad up issue-96 --target new-window
+   amq-squad run start --project . --session issue-96 \
+     --launch-shape working-team-together --readiness-json
+
+   # Default No: copy the source/digest from accepted readiness exactly.
+   amq-squad run start --project . --session issue-96 \
+     --launch-shape working-team-together --goal "fix issue 96" \
+     --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
    ```
+
+   `--go` never repairs a brief, profile, role, rule, pointer, tool policy, or
+   manifest. Drift returns to proposal and preparation.
 
 3. **Lead the work** — the `cto` agent (its `team-rules.md` now carries the
    orchestration norm, so it loads `/amq-squad:orchestrator`) dispatches
