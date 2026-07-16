@@ -270,8 +270,9 @@ func prepareRunStartWizard(args []string) (runwizard.Spec, runwizard.NumberedOpt
 		prefill.Backend = runwizard.BackendRunStart
 	}
 	opts := runwizard.NumberedOptions{
-		InspectProject: runStartWizardInspectProject,
-		LoadCatalog:    loadAgentCatalogAndWarn,
+		InspectProject:  runStartWizardInspectProject,
+		LoadCatalog:     loadAgentCatalogAndWarn,
+		TerminalContext: projectRunStartTerminalContext(observeRunStartTerminalContext()),
 		ProfileExists: func(project, profile string) bool {
 			return team.ExistsProfile(strings.TrimSpace(project), strings.TrimSpace(profile))
 		},

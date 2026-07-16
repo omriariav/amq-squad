@@ -17,6 +17,7 @@ import (
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/role"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
@@ -85,39 +86,48 @@ type acceptedRunContext struct {
 	PointerPlans []rules.SyncPlan
 }
 
-var preparedRunRequiredCapabilities = []string{"amq-routing", "bootstrap-render", "goal-binding", "pointer-sync", "tmux-topology", "tool-policy"}
+var preparedRunRequiredCapabilities = []string{"amq-routing", "bootstrap-render", "goal-binding", "pointer-sync", "terminal-context", "tmux-topology", "tool-policy"}
 
 type preparedRunEnvironmentObservation struct {
 	BinaryVersion string
 	Skill         doctorCheck
 	AMQ           doctorCheck
 	Terminal      doctorCheck
+	HostContext   runtimecontrol.HostContext
 	Capabilities  []string
 }
 
 var observePreparedRunEnvironment = func(project, version string) preparedRunEnvironmentObservation {
 	version = strings.TrimSpace(version)
 	if version == "test" {
+		host := runtimecontrol.DetectHostContext([]string{"TERM_PROGRAM=iTerm.app", "TMUX=test"}, true)
 		return preparedRunEnvironmentObservation{
 			BinaryVersion: version,
 			Skill:         doctorCheck{Name: "skill version", Status: doctorOK, Detail: "test harness supplied matching packaged skill"},
 			AMQ:           doctorCheck{Name: "amq version", Status: doctorOK, Detail: "test harness supplied compatible AMQ " + doctorMinAMQVersion},
-			Terminal:      doctorCheck{Name: "tmux", Status: doctorOK, Detail: "test harness supplied tmux launch capability"},
-			Capabilities:  []string{"amq-routing", "tmux-topology"},
+			Terminal:      doctorCheck{Name: "terminal context", Status: doctorOK, Detail: "test harness supplied tmux tier-A launch capability"},
+			HostContext:   host,
+			Capabilities:  []string{"amq-routing", "terminal-context", "tmux-topology"},
 		}
 	}
 	d := defaultDoctorExecution(project)
 	d.RunningVersion = version
+	tmux := doctorCheckTmux(d)
+	host := observeRunStartTerminalContext()
 	observation := preparedRunEnvironmentObservation{
 		BinaryVersion: version,
 		Skill:         doctorCheckSkillVersion(d),
 		AMQ:           doctorCheckAMQVersion(d),
-		Terminal:      doctorCheckTmux(d),
+		Terminal:      runStartTerminalDoctorCheck(host, tmux),
+		HostContext:   host,
 	}
 	if observation.AMQ.Status == doctorOK {
 		observation.Capabilities = append(observation.Capabilities, "amq-routing")
 	}
-	if observation.Terminal.Status == doctorOK {
+	if host.SchemaVersion == runtimecontrol.HostContextSchemaVersion {
+		observation.Capabilities = append(observation.Capabilities, "terminal-context")
+	}
+	if tmux.Status == doctorOK {
 		observation.Capabilities = append(observation.Capabilities, "tmux-topology")
 	}
 	return observation
@@ -730,6 +740,9 @@ func validatePreparedRunEnvironment(project, profile string, manifest preparedRu
 	}
 	if observation.Terminal.Status != doctorOK {
 		return "", fmt.Errorf("observed terminal capability failed [%s]: %s", observation.Terminal.Status, observation.Terminal.Detail)
+	}
+	if observation.HostContext.SchemaVersion != runtimecontrol.HostContextSchemaVersion {
+		return "", fmt.Errorf("observed terminal context schema drift: observed=%d required=%d", observation.HostContext.SchemaVersion, runtimecontrol.HostContextSchemaVersion)
 	}
 	if manifest.Environment.AMQMinimum != doctorMinAMQVersion {
 		return "", fmt.Errorf("accepted AMQ capability floor drift: accepted=%q required=%q", manifest.Environment.AMQMinimum, doctorMinAMQVersion)

@@ -11,6 +11,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
@@ -346,7 +347,8 @@ func TestObservedEnvironmentAndTopologyFailuresBlockReadinessBeforePanes(t *test
 		Skill:         doctorCheck{Name: "skill version", Status: doctorOK, Detail: "observed matching skill test"},
 		AMQ:           doctorCheck{Name: "amq version", Status: doctorOK, Detail: "observed amq " + doctorMinAMQVersion},
 		Terminal:      doctorCheck{Name: "tmux", Status: doctorOK, Detail: "observed tmux"},
-		Capabilities:  []string{"amq-routing", "tmux-topology"},
+		HostContext:   runtimecontrol.DetectHostContext([]string{"TMUX=test"}, false),
+		Capabilities:  []string{"amq-routing", "terminal-context", "tmux-topology"},
 	}
 
 	t.Run("observed skill mismatch", func(t *testing.T) {
@@ -383,6 +385,19 @@ func TestObservedEnvironmentAndTopologyFailuresBlockReadinessBeforePanes(t *test
 		result := calculateRunReadinessWithContext(dir, team.DefaultProfile, "prepared", acceptedRunContext{Version: "test", Topology: other})
 		if result.Ready || readinessRowStatus(result, "environment") != "drifted" || !strings.Contains(readinessRow(result, "environment").Evidence, "requested topology differs") {
 			t.Fatalf("topology mismatch readiness = %+v", result)
+		}
+	})
+
+	t.Run("terminal context schema differs", func(t *testing.T) {
+		backend := useFakeTmuxBackend(t)
+		observation := base
+		observation.HostContext.SchemaVersion++
+		observePreparedRunEnvironment = func(string, string) preparedRunEnvironmentObservation { return observation }
+		out, _, runErr := captureOutput(t, func() error {
+			return runRunStart([]string{"--project", dir, "--profile", team.DefaultProfile, "--session", "prepared", "--visibility", "detached", "--readiness-json"}, "test")
+		})
+		if runErr == nil || !strings.Contains(runErr.Error(), "artifact readiness failed") || !strings.Contains(out, "terminal context schema drift") || len(backend.launches) != 0 {
+			t.Fatalf("terminal schema readiness err=%v launches=%v output=%s", runErr, backend.launches, out)
 		}
 	})
 }

@@ -414,7 +414,7 @@ func (m BubbleModel) title() string {
 func (m BubbleModel) note() string {
 	switch m.stage {
 	case stageScope:
-		return "Project runs use one repository's profiles and sessions. Global/NOC starts one coordinator and does not own project wake mailboxes."
+		return "Project runs use one repository's profiles and sessions. Global/NOC starts one coordinator and does not own project wake mailboxes. " + m.opts.TerminalContext.Summary()
 	case stageProject:
 		if m.ctx.OriginSlug != "" {
 			return "Detected origin " + m.ctx.OriginSlug + ". The nearest git root is the default."
@@ -488,7 +488,7 @@ func (m BubbleModel) note() string {
 	case stageStagedRoles:
 		return "Comma-separated roles that have contracts prepared but are absent from the initial profile and bootstrap. Leave blank when nobody is staged."
 	case stageTopology:
-		return "The diagram is the topology that the canonical visibility flag selects."
+		return "The diagram is the topology that the canonical visibility flag selects. " + topologyDiagnostic(m.opts.TerminalContext, m.spec.Visibility)
 	case stageLayoutPreset:
 		return "Preset mappings use exact tmux pane/window IDs; display names are never control targets."
 	case stageLauncherPane:
@@ -601,6 +601,7 @@ func (m BubbleModel) summary() string {
 	}
 	parts = append(parts, "Operator  "+defaultString(m.spec.OperatorMode, "unspecified")+" · "+operatorContractSummary(m.spec.OperatorMode))
 	parts = append(parts, fmt.Sprintf("Alerts    attention-only notifications=%t", m.spec.OperatorNotifications))
+	parts = append(parts, "Terminal  "+topologyDiagnostic(m.opts.TerminalContext, m.spec.Visibility))
 	parts = append(parts, "Topology  "+m.spec.Visibility)
 	if m.spec.LayoutPreset != "" {
 		parts = append(parts, "Layout    "+m.spec.LayoutPreset)
@@ -800,7 +801,11 @@ func (m BubbleModel) choices() []choice {
 		}
 		return []choice{{value: "merge", label: "☐ merge · select explicitly (second actor executes)"}}
 	case stageTopology:
-		return []choice{{value: "sibling-tabs", label: "One window per agent"}, {value: "current", label: "Panes in this window"}, {value: "detached", label: "Detached squad"}}
+		return []choice{
+			{value: "sibling-tabs", label: annotateTopologyChoice(m.opts.TerminalContext, "sibling-tabs", "One window per agent")},
+			{value: "current", label: annotateTopologyChoice(m.opts.TerminalContext, "current", "Panes in this window")},
+			{value: "detached", label: annotateTopologyChoice(m.opts.TerminalContext, "detached", "Detached squad")},
+		}
 	case stageLayoutPreset:
 		return layoutPresetChoices(m.spec.Visibility)
 	case stageLauncherPane:
@@ -890,7 +895,7 @@ func (m BubbleModel) defaultCursor() int {
 			want = "continue"
 		}
 	case stageTopology:
-		want = defaultString(m.spec.Visibility, "sibling-tabs")
+		want = recommendedTopology(m.spec.Visibility, m.spec.VisibilityExplicit, m.opts.TerminalContext)
 	case stageLayoutPreset:
 		want = defaultLayoutPreset(m.spec.LayoutPreset, m.spec.Visibility)
 	case stageLauncherPane:

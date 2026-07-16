@@ -18,13 +18,14 @@ var ErrCancelled = errors.New("wizard cancelled")
 // injected project inspector. The callback keeps this package independent from
 // git and team persistence packages.
 type NumberedOptions struct {
-	Defaults       Spec
-	InspectProject func(project string) (ProjectContext, error)
-	LoadCatalog    func(root string) agentcatalog.Catalog
-	ProfileExists  func(project, profile string) bool
-	Capabilities   CapabilitySet
-	StartAtProfile bool
-	RestartMessage string
+	Defaults        Spec
+	InspectProject  func(project string) (ProjectContext, error)
+	LoadCatalog     func(root string) agentcatalog.Catalog
+	ProfileExists   func(project, profile string) bool
+	Capabilities    CapabilitySet
+	TerminalContext TerminalContext
+	StartAtProfile  bool
+	RestartMessage  string
 }
 
 type ProjectContext struct {
@@ -76,6 +77,7 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 
 	fmt.Fprintln(out, "amq-squad run start wizard")
 	fmt.Fprintln(out, "Answers are previewed first. Launch requires a separate explicit Yes after preview succeeds.")
+	fmt.Fprintln(out, opts.TerminalContext.Summary())
 	fmt.Fprintln(out)
 
 	var err error
@@ -357,10 +359,10 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	}
 
 	if s.Visibility, err = promptChoice(r, out, "Topology", []choice{
-		{value: "sibling-tabs", label: "sibling-tabs: one visible tmux window per agent"},
-		{value: "detached", label: "detached: hidden tmux session"},
-		{value: "current", label: "current: split the current tmux window"},
-	}, defaultString(s.Visibility, "sibling-tabs")); err != nil {
+		{value: "sibling-tabs", label: annotateTopologyChoice(opts.TerminalContext, "sibling-tabs", "sibling-tabs: one visible tmux window per agent")},
+		{value: "detached", label: annotateTopologyChoice(opts.TerminalContext, "detached", "detached: hidden tmux session")},
+		{value: "current", label: annotateTopologyChoice(opts.TerminalContext, "current", "current: split the current tmux window")},
+	}, recommendedTopology(s.Visibility, s.VisibilityExplicit, opts.TerminalContext)); err != nil {
 		return Spec{}, err
 	}
 	if s.LayoutPreset, err = promptChoice(r, out, "Layout preset", layoutPresetChoices(s.Visibility), defaultLayoutPreset(s.LayoutPreset, s.Visibility)); err != nil {
@@ -452,6 +454,7 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Review")
+	fmt.Fprintln(out, topologyDiagnostic(opts.TerminalContext, s.Visibility))
 	for _, warning := range effortCatalogWarnings(s, ctx) {
 		fmt.Fprintln(out, warning)
 	}

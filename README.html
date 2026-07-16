@@ -708,8 +708,8 @@ session.</td>
 <code>agent pane is not live</code>.</td>
 <td>Available only while the recorded pane is live; otherwise reason is
 <code>agent pane is not live</code>.</td>
-<td>Always available because durable AMQ dispatch does not require pane
-injection.</td>
+<td>Available when the row proves an exact namespace, handle, and
+initialized durable AMQ mailbox.</td>
 <td>Full managed stop/resume through launch records and tmux pane
 identity.</td>
 </tr>
@@ -723,10 +723,10 @@ PID/binary liveness. Missing id reports
 <code>iTerm2 window id is unavailable</code>; dead/mismatched process
 reports
 <code>iTerm2 focus requires verified agent PID liveness</code>.</td>
-<td>Disabled:
-<code>iTerm2 prompt/native-goal injection is disabled until #374 proves safe send/capture/busy support</code>.</td>
-<td>Always available because durable AMQ dispatch does not require pane
-injection.</td>
+<td>Native send/capture/busy/local-input and effective goal delivery
+remain unsupported after the #374 evidence review because the current
+goal command requires a live native prompt target.</td>
+<td>Available only with an exact durable AMQ member route.</td>
 <td>Agent process stop/resume is managed; native prompt injection is
 not.</td>
 </tr>
@@ -737,10 +737,11 @@ not.</td>
 from the launched tab TTY when available.</td>
 <td>Disabled:
 <code>Terminal.app focus requires stable window/tab addressing; manual focus is required</code>.</td>
-<td>Disabled:
-<code>Terminal.app prompt/native-goal injection is disabled until #375 proves safe Accessibility-based input</code>.</td>
-<td>Always available because durable AMQ dispatch does not require pane
-injection.</td>
+<td>Native send/capture/busy/local-input and effective goal delivery
+remain unsupported after the #375 Accessibility and targeting review
+because the current goal command requires a live native prompt
+target.</td>
+<td>Available only with an exact durable AMQ member route.</td>
 <td>Agent process stop/resume is managed; native focus/input remain
 manual.</td>
 </tr>
@@ -750,8 +751,8 @@ manual.</td>
 <td>No backend is shipped.</td>
 <td>Pending #330 re-entry bar.</td>
 <td>Pending #330 re-entry bar.</td>
-<td>Durable AMQ dispatch remains the intended control plane once a
-backend exists.</td>
+<td>Requires an exact durable AMQ member route once a backend
+exists.</td>
 <td>Pending #330 re-entry bar.</td>
 </tr>
 </tbody>
@@ -761,7 +762,8 @@ href="docs/iterm2-tier-b-smoke.md">docs/iterm2-tier-b-smoke.md</a> and
 <a
 href="docs/terminal-app-tier-c-smoke.md">docs/terminal-app-tier-c-smoke.md</a>.
 The capability contract is implemented in
-<code>internal/runtimecontrol</code>.</p>
+<code>internal/runtimecontrol</code> and documented in <a
+href="docs/terminal-runtime-contract.md">docs/terminal-runtime-contract.md</a>.</p>
 <h2 id="command-map">Command map</h2>
 <p>Common setup and run commands:</p>
 <div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--sync</span></span>
@@ -929,8 +931,8 @@ the separate launch approval.</td>
 </tr>
 <tr>
 <td><code>amq-squad:cli</code></td>
-<td>Direct status, doctor, task, activity, AMQ, gate, recovery, and
-lifecycle operations.</td>
+<td>Direct status, doctor, task, exact activity monitoring, AMQ, gate,
+recovery, evidence, and read-only release planning.</td>
 </tr>
 <tr>
 <td><code>amq-squad:orchestrator</code></td>
