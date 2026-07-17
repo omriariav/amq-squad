@@ -278,18 +278,18 @@ model</a></li>
 id="toc-which-skill-do-i-reach-for">Which skill do I reach for?</a></li>
 <li><a href="#installing-and-invoking"
 id="toc-installing-and-invoking">Installing and invoking</a></li>
-<li><a href="#setup-inside-amq-squad"
-id="toc-setup-inside-amq-squad">Setup Inside
-<code>amq-squad</code></a></li>
-<li><a href="#amq-squad--coordinate-a-live-team"
-id="toc-amq-squad--coordinate-a-live-team"><code>amq-squad</code> —
-coordinate a live team</a></li>
-<li><a href="#amq-squad-orchestrator--lead-a-squad"
-id="toc-amq-squad-orchestrator--lead-a-squad"><code>amq-squad-orchestrator</code>
+<li><a href="#preparation-with-amq-squadwizard"
+id="toc-preparation-with-amq-squadwizard">Preparation with
+<code>amq-squad:wizard</code></a></li>
+<li><a href="#amq-squadcli--direct-live-team-operations"
+id="toc-amq-squadcli--direct-live-team-operations"><code>amq-squad:cli</code>
+— direct live-team operations</a></li>
+<li><a href="#amq-squadorchestrator--lead-a-squad"
+id="toc-amq-squadorchestrator--lead-a-squad"><code>amq-squad:orchestrator</code>
 — lead a squad</a></li>
-<li><a href="#role-authoring-inside-amq-squad"
-id="toc-role-authoring-inside-amq-squad">Role Authoring Inside
-<code>amq-squad</code></a></li>
+<li><a href="#role-authoring-with-amq-squadwizard"
+id="toc-role-authoring-with-amq-squadwizard">Role Authoring With
+<code>amq-squad:wizard</code></a></li>
 <li><a href="#end-to-end-walkthrough"
 id="toc-end-to-end-walkthrough">End-to-end walkthrough</a></li>
 <li><a href="#troubleshooting"
@@ -298,13 +298,13 @@ id="toc-troubleshooting">Troubleshooting</a></li>
 </ul>
 </nav>
 <h1 id="using-the-amq-squad-skills">Using the amq-squad skills</h1>
-<p>amq-squad ships <strong>two primary skills</strong> to two plugin
-marketplaces — one for <strong>Claude Code</strong> and one for
-<strong>Codex</strong>. The primary skills are <code>amq-squad</code>
-for operator/member workflows and <code>amq-squad-orchestrator</code>
-for lead-agent bootstrap. The older <code>amq-team-setup</code> and
-<code>amq-squad-role-creator</code> entries remain as redirect stubs so
-existing invocations point back to <code>amq-squad</code>.</p>
+<p>amq-squad ships the same three authoritative skills to the Claude
+Code and Codex marketplaces: <code>amq-squad:wizard</code> for
+preparation, <code>amq-squad:cli</code> for direct operations, and
+<code>amq-squad:orchestrator</code> for a verified live lead.
+<code>amq-squad</code>, <code>amq-squad-orchestrator</code>,
+<code>amq-team-setup</code>, and <code>amq-squad-role-creator</code> are
+compatibility redirects only.</p>
 <p>For the binary's full verb/flag reference, see the main <a
 href="../README.md">README</a>. This document is about the skills.</p>
 <ul>
@@ -312,20 +312,22 @@ href="../README.md">README</a>. This document is about the skills.</p>
 <li><a href="#which-skill-do-i-reach-for">Which skill do I reach
 for?</a></li>
 <li><a href="#installing-and-invoking">Installing and invoking</a></li>
-<li><a href="#amq-squad--coordinate-a-live-team"><code>amq-squad</code>
-— coordinate a live team</a></li>
 <li><a
-href="#amq-squad-orchestrator--lead-a-squad"><code>amq-squad-orchestrator</code>
+href="#preparation-with-amq-squadwizard"><code>amq-squad:wizard</code> —
+prepare a squad</a></li>
+<li><a
+href="#amq-squadcli--direct-live-team-operations"><code>amq-squad:cli</code>
+— direct live-team operations</a></li>
+<li><a
+href="#amq-squadorchestrator--lead-a-squad"><code>amq-squad:orchestrator</code>
 — lead a squad</a></li>
-<li><a href="#setup-inside-amq-squad">Setup inside
-<code>amq-squad</code></a></li>
-<li><a href="#role-authoring-inside-amq-squad">Role authoring inside
-<code>amq-squad</code></a></li>
+<li><a href="#role-authoring-with-amq-squadwizard">Role authoring with
+<code>amq-squad:wizard</code></a></li>
 <li><a href="#end-to-end-walkthrough">End-to-end walkthrough</a></li>
 <li><a href="#troubleshooting">Troubleshooting</a></li>
 </ul>
 <h2 id="the-mental-model">The mental model</h2>
-<p>The two primary skills map onto the actor model:</p>
+<p>The three authoritative skills map onto the actor model:</p>
 <table>
 <thead>
 <tr>
@@ -336,25 +338,28 @@ href="#amq-squad-orchestrator--lead-a-squad"><code>amq-squad-orchestrator</code>
 </thead>
 <tbody>
 <tr>
-<td>Setup, role authoring, live coordination</td>
-<td><strong><code>amq-squad</code></strong></td>
-<td>operators and member agents use it to capture a goal, draft the
-brief, pick roles/profile, author custom roles, bring members up, drain
-inboxes, route handoffs, request reviews, check status,
-stop/resume/fork.</td>
+<td>Preparation</td>
+<td><strong><code>amq-squad:wizard</code></strong></td>
+<td>goal, brief, rules, roles, profile, exact readiness evidence, and
+the separate default-No launch approval.</td>
 </tr>
 <tr>
-<td>Lead orchestration</td>
-<td><strong><code>amq-squad-orchestrator</code></strong></td>
-<td>when one agent is the <strong>lead</strong> that spawns, dispatches,
-and monitors the others and owns the deliverable.</td>
+<td>Direct operations</td>
+<td><strong><code>amq-squad:cli</code></strong></td>
+<td>status, doctor, task, activity, gate, AMQ, resume/stop/archive,
+verification, and evidence commands.</td>
 </tr>
 <tr>
-<td>Deprecated redirects</td>
-<td><code>amq-team-setup</code>,
-<code>amq-squad-role-creator</code></td>
-<td>kept for compatibility; both tell you to use <code>amq-squad</code>
-and its Setup / Role Authoring sections.</td>
+<td>Verified lead orchestration</td>
+<td><strong><code>amq-squad:orchestrator</code></strong></td>
+<td>dispatch, monitoring, review convergence, recovery, pruning, and
+final evidence after launch.</td>
+</tr>
+<tr>
+<td>Compatibility redirects</td>
+<td><code>amq-squad</code>, <code>amq-squad-orchestrator</code>,
+<code>amq-team-setup</code>, <code>amq-squad-role-creator</code></td>
+<td>route old invocations to one authoritative namespaced skill.</td>
 </tr>
 </tbody>
 </table>
@@ -385,36 +390,36 @@ duplicate the content.</p>
 <tbody>
 <tr>
 <td>Start from a ticket / prompt / doc and stand up a new team</td>
-<td><code>amq-squad</code> Setup section</td>
+<td><code>amq-squad:wizard</code></td>
 </tr>
 <tr>
 <td>Turn a Jira/GitHub/URL goal into a confirmed brief</td>
-<td><code>amq-squad</code> Setup section</td>
+<td><code>amq-squad:wizard</code></td>
 </tr>
 <tr>
 <td>Decide who leads an orchestrated squad</td>
-<td><code>amq-squad</code> Setup section wires it;
-<code>amq-squad-orchestrator</code> runs it</td>
+<td><code>amq-squad:wizard</code> wires it;
+<code>amq-squad:orchestrator</code> runs it after launch</td>
 </tr>
 <tr>
-<td>Bring the configured team up and coordinate it</td>
-<td><code>amq-squad</code></td>
+<td>Bring the configured team up</td>
+<td><code>amq-squad:wizard</code> readiness and launch stage</td>
 </tr>
 <tr>
 <td>Drain your inbox, route a handoff, request a review</td>
-<td><code>amq-squad</code></td>
+<td><code>amq-squad:cli</code></td>
 </tr>
 <tr>
 <td>Check the status board / Mission Control / health</td>
-<td><code>amq-squad</code></td>
+<td><code>amq-squad:cli</code></td>
 </tr>
 <tr>
 <td>Spawn child agents and drive them to completion as the lead</td>
-<td><code>amq-squad-orchestrator</code></td>
+<td><code>amq-squad:orchestrator</code></td>
 </tr>
 <tr>
 <td>Add a role that isn't in the catalog</td>
-<td><code>amq-squad</code> Role Authoring section</td>
+<td><code>amq-squad:wizard</code> roles stage</td>
 </tr>
 <tr>
 <td>Debug raw AMQ outside a squad</td>
@@ -422,20 +427,21 @@ duplicate the content.</p>
 </tr>
 </tbody>
 </table>
-<p>Rule of thumb: <strong>operators use <code>amq-squad</code>; lead
-agents use <code>amq-squad-orchestrator</code> at bootstrap</strong>. Do
-not collapse the two further.</p>
+<p>Rule of thumb: prepare with <strong>wizard</strong>, operate directly
+with <strong>cli</strong>, and enter <strong>orchestrator</strong> only
+after the visible lead and live namespace are verified.</p>
 <h2 id="installing-and-invoking">Installing and invoking</h2>
 <p>Install the marketplace once; the skills are then discovered
 automatically.</p>
 <ul>
 <li><strong>Claude Code:</strong>
-<code>/plugin install amq-squad@amq-squad</code>, then invoke a skill as
-<code>/amq-squad:&lt;skill&gt;</code> — e.g.
-<code>/amq-squad:amq-squad</code>.</li>
+<code>/plugin install amq-squad@amq-squad</code>, then invoke
+<code>/amq-squad:wizard</code>, <code>/amq-squad:cli</code>, or
+<code>/amq-squad:orchestrator</code>.</li>
 <li><strong>Codex:</strong> install the Codex marketplace, then invoke a
-skill as <code>$&lt;skill&gt;</code> — e.g.
-<code>$amq-squad</code>.</li>
+skill as <code>$&lt;skill&gt;</code> — e.g. <code>$wizard</code>,
+<code>$cli</code>, or <code>$orchestrator</code> from the amq-squad
+plugin.</li>
 </ul>
 <p>The primary skills are user-invocable and require the
 <code>amq-squad</code> binary on <code>PATH</code>
@@ -445,12 +451,12 @@ metadata differs (a Claude skill carries <code>trigger</code> /
 <code>allowed-tools</code> / <code>argument-hint</code>; the Codex skill
 omits them).</p>
 <hr />
-<h2 id="setup-inside-amq-squad">Setup Inside <code>amq-squad</code></h2>
-<p><strong>Invoke:</strong> <code>/amq-squad:amq-squad</code> (Claude) ·
-<code>$amq-squad</code> (Codex), then use the <code>## Setup</code>
-section. <strong>Use when:</strong> no team exists yet, or you are
-starting a new piece of work and want a real goal/brief in place before
-launch.</p>
+<h2 id="preparation-with-amq-squadwizard">Preparation with
+<code>amq-squad:wizard</code></h2>
+<p><strong>Invoke:</strong> <code>/amq-squad:wizard</code> (Claude) ·
+<code>$wizard</code> (Codex). <strong>Use when:</strong> no team exists
+yet, or you are starting a new piece of work and want a real goal/brief
+in place before launch.</p>
 <p>It is a <strong>wizard</strong>: it walks five steps and confirms
 with you at each gate. Setup stays read-only until the final create step
 (no live launch).</p>
@@ -509,10 +515,18 @@ class="sourceCode md"><code class="sourceCode markdown"><span id="cb1-1"><a href
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">## Scope</span></span>
 <span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">## Out of scope</span></span>
 <span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="fu">## Acceptance     # how we know it&#39;s done; who signs off</span></span></code></pre></div></li>
-<li><p><strong>Roles and profile.</strong> Pick the roster (built-in
-personas or custom roles), the binary behind each
+<li><p><strong>Roles, profile, and tool policy.</strong> Pick the roster
+(built-in personas or custom roles), the binary behind each
 (<code>codex</code>/<code>claude</code>), the team-home, and whether to
-use the default profile or a named one.</p></li>
+use the default profile or a named one. The recommended tool policy
+keeps the visible lead broad and assigns every worker its built-in
+catalog minimum (for example <code>coding</code>, <code>browser</code>,
+<code>data</code>, or <code>minimal</code>). <code>full_all</code> is an
+explicit opt-in, never the default. With two or more <code>full</code>
+members, review warns that each broad agent duplicates MCP/plugin
+context and increases memory and concurrency pressure; keep the
+recommended split unless the work actually requires broad access for
+every member.</p></li>
 <li><p><strong>Orchestrated? Who leads?</strong> Default is
 <strong>no</strong> (a flat, peer-to-peer squad). Say yes and name
 exactly one lead role to run an orchestrated squad.</p></li>
@@ -543,13 +557,14 @@ flag, not pasted prose, so it can't drift. (An existing
 <code>team-rules.md</code> is left untouched; regenerate with
 <code>amq-squad team rules init --force</code>.) Default off; exactly
 one lead; the lead is a team member, never the operator.</p>
-<p>When the wizard is done, continue in
-<strong><code>amq-squad</code></strong> for the first live launch.</p>
+<p>When preparation is accepted, the wizard presents the separate
+default-No live launch approval.</p>
 <hr />
-<h2 id="amq-squad--coordinate-a-live-team"><code>amq-squad</code> —
-coordinate a live team</h2>
-<p><strong>Invoke:</strong> <code>/amq-squad:amq-squad</code> (Claude) ·
-<code>$amq-squad</code> (Codex) <strong>Use when:</strong>
+<h2
+id="amq-squadcli--direct-live-team-operations"><code>amq-squad:cli</code>
+— direct live-team operations</h2>
+<p><strong>Invoke:</strong> <code>/amq-squad:cli</code> (Claude) ·
+<code>$cli</code> (Codex) <strong>Use when:</strong>
 <code>.amq-squad/team.json</code> already exists and you want to run the
 team.</p>
 <p>This is the everyday skill. The lifecycle is one small state
@@ -623,6 +638,18 @@ drain your inbox.</li>
 <td><code>amq-squad console</code> (<code>--once</code> for CI)</td>
 </tr>
 <tr>
+<td>Run and retain task-bound command evidence</td>
+<td><code>amq-squad evidence run TASK --me ACTOR --subject TEXT --attempt-id ID -- COMMAND</code></td>
+</tr>
+<tr>
+<td>Poll with a stable terminal result</td>
+<td><code>amq-squad monitor --session S --timeout 30m --max-ticks 60 --json</code></td>
+</tr>
+<tr>
+<td>Build an exact read-only release plan</td>
+<td><code>amq-squad verify release-plan ... --json</code></td>
+</tr>
+<tr>
 <td>Trim worker context (overlays)</td>
 <td><code>amq-squad team overlay init --workers [--disable-plugins ids] [--disable-all-hooks]</code></td>
 </tr>
@@ -633,6 +660,47 @@ drain your inbox.</li>
 </tr>
 </tbody>
 </table>
+<p><code>evidence run</code> executes argv directly without a shell and
+requires the active structured task assignee. It binds the canonical
+project/profile/session, exact task digest, executable bytes, cwd,
+bounded explicit environment, and attempt identity before publishing
+immutable process, outcome, and summary records. The task link is
+compare-and-swap; replaying the same attempt returns the original result
+only for the same complete request. Use bounded
+<code>evidence show</code>, <code>list</code>, and <code>lookup</code>
+projections for inspection and <code>evidence recover</code> for an
+explicit interrupted-finalization pass. Any AMQ report follows only the
+task's recorded dispatch route and is a separate, non-destructive
+step.</p>
+<p>Monitor suppression is exact: the heartbeat must come from the
+admitted profile/session and match the canonical task and assignee. Only
+enumerated phases are accepted; coding and testing use bounded extended
+windows, while malformed, mismatched, arbitrary, stale, or future-skewed
+claims never suppress. Loops have finite defaults and end with a
+schema-versioned <code>monitor_final</code> snapshot and explicit
+<code>exit_reason</code>; consumers must not infer a result from NDJSON
+ordering.</p>
+<p>Task completion atomically binds its generation, canonical DONE
+report intent, and any exact task-scoped gate request. An open human
+decision is recorded as preserved and unsuppressed. Only an already
+answered, closed, withdrawn, or durably superseded request generation
+may clear attention; exact repeats are idempotent and different request
+identities conflict.</p>
+<p><code>verify release-plan</code> performs no git, GitHub, network,
+authorization, or file mutation. It freezes the canonical absolute
+project/worktree, exact repository and remote URL identity, branch,
+protected/default action taxonomy, candidate SHA, non-force branch/tag
+refspecs, tag annotation/signing, immutable preflight evidence, and
+repository-bound noninteractive release title/notes/draft/
+prerelease/latest policy. Every git command uses
+<code>git -C &lt;project&gt;</code>. Before any push, verification
+requires the named remote to resolve to the frozen URL; file-based notes
+freeze a canonical path and exact SHA-256 verification step. Its
+literal-newline <code>Action:</code> / <code>Target:</code> bodies are
+independently exact. Verification separately requires an annotated local
+tag object, its peeled candidate commit, a valid signature when signed,
+the remote branch SHA, a remote tag object distinct from the commit, and
+the remote peeled candidate SHA.</p>
 <p>For a narrow Claude-only permission exception, configure a member's
 <code>permission_allowlist</code> in <code>team.json</code>, for example
 <code>["Bash(amq-squad review-worktree remove:*)"]</code>. The grant is
@@ -847,16 +915,15 @@ spoofing the operator handle, and checks both the live channel and AMQ
 gate/inbox state before declaring the gate blocked.</p>
 <hr />
 <h2
-id="amq-squad-orchestrator--lead-a-squad"><code>amq-squad-orchestrator</code>
+id="amq-squadorchestrator--lead-a-squad"><code>amq-squad:orchestrator</code>
 — lead a squad</h2>
-<p><strong>Invoke:</strong>
-<code>/amq-squad:amq-squad-orchestrator</code> (Claude) ·
-<code>$amq-squad-orchestrator</code> (Codex) <strong>Use when:</strong>
+<p><strong>Invoke:</strong> <code>/amq-squad:orchestrator</code>
+(Claude) · <code>$orchestrator</code> (Codex) <strong>Use when:</strong>
 you are the <strong>lead</strong> agent of an orchestrated squad — you
 spawn child agents, dispatch tasks to them over durable AMQ, monitor
 them, handle their reports, and own the deliverable to the human.</p>
 <p>This is the discipline on top of the shipped runtime primitives.
-Routine member coordination still belongs to <code>amq-squad</code>;
+Routine member coordination still belongs to <code>amq-squad:cli</code>;
 this skill is specifically the lead's playbook.</p>
 <p>For <code>/goal</code> runs, keep the operator interface as a
 three-step flow:</p>
@@ -883,12 +950,20 @@ polling contract: one <code>/goal</code> per visible lead; each lead
 pushes status, blockers, approval requests, and final evidence to
 AMQ/NOC-visible surfaces; the parent polls lead inboxes, gate threads,
 and <code>status --json</code> on a cadence. Child agents remain
-internal unless the lead escalates them. When a
-<code>global_orchestrator</code> owns more than one active or recently
-active workstream in the same conversation, it must keep an
-in-conversation board and refresh it after every poll, gate answer,
-spawn, stop, final report, or recovery action. The board tracks run
-name, repo, profile/session, lead and pane id, state
+internal unless the lead escalates them. Poll with finite deadline/tick
+bounds and use the final snapshot rather than stream order. Batch review
+by invariant and risk: low-risk docs/projections get focused regular
+tests plus drift checks; medium-risk state changes add adversarial
+identity/idempotence coverage and focused race tests; high-risk
+authority, lifecycle, release, or recovery changes require immutable
+exact-head evidence and full regular/race suites. Completion
+reconciliation may clear only an exact task-scoped request generation
+already terminal or superseded; it must never answer or close an
+unresolved human gate. When a <code>global_orchestrator</code> owns more
+than one active or recently active workstream in the same conversation,
+it must keep an in-conversation board and refresh it after every poll,
+gate answer, spawn, stop, final report, or recovery action. The board
+tracks run name, repo, profile/session, lead and pane id, state
 (<code>running</code>, <code>gated</code>, <code>blocked</code>,
 <code>paused</code>, <code>stale</code>, <code>done</code>,
 <code>closed</code>), last checked time, next poll or wake source,
@@ -1097,16 +1172,15 @@ Orchestrated teams carry the convention as a generated line in their
 <div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96      <span class="co"># re-orient a stalled/stopped session</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent resume fullstack         <span class="co"># revive one child from its saved record</span></span></code></pre></div>
 <hr />
-<h2 id="role-authoring-inside-amq-squad">Role Authoring Inside
-<code>amq-squad</code></h2>
-<p><strong>Invoke:</strong> <code>/amq-squad:amq-squad</code> (Claude) ·
-<code>$amq-squad</code> (Codex), then use the
-<code>## Role Authoring</code> section. <strong>Use when:</strong> you
-need a role the built-in catalog doesn't ship (<code>researcher</code>,
-<code>sre</code>, <code>archivist</code>, <code>data-scientist</code>,
-...). Custom roles are first-class — they appear in
-<code>team.json</code>, <code>team-rules.md</code>, the bootstrap
-prompt, and status/launch exactly like built-ins.</p>
+<h2 id="role-authoring-with-amq-squadwizard">Role Authoring With
+<code>amq-squad:wizard</code></h2>
+<p><strong>Invoke:</strong> <code>/amq-squad:wizard</code> (Claude) ·
+<code>$wizard</code> (Codex), then use the role authoring stage.
+<strong>Use when:</strong> you need a role the built-in catalog doesn't
+ship (<code>researcher</code>, <code>sre</code>, <code>archivist</code>,
+<code>data-scientist</code>, ...). Custom roles are first-class — they
+appear in <code>team.json</code>, <code>team-rules.md</code>, the
+bootstrap prompt, and status/launch exactly like built-ins.</p>
 <p>Two ways, by how much role guidance you want:</p>
 <p><strong>A. Inline (quick, minimal <code>role.md</code>)</strong> —
 just an id + CLI:</p>
@@ -1145,24 +1219,41 @@ finish.</p>
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 0. (once) install the marketplace, then in your project:</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span></code></pre></div>
 <ol type="1">
-<li><p><strong>Set up the team</strong> — invoke
-<code>/amq-squad:amq-squad</code> and say <em>"the goal is GitHub issue
+<li><p><strong>Propose and prepare</strong> — invoke
+<code>/amq-squad:wizard</code> and say <em>"the goal is GitHub issue
 #96."</em> The wizard runs <code>gh issue view 96</code>, drafts a
 canonical brief, shows it for your edit, asks for roles
 (<code>cto</code>, <code>fullstack</code>, <code>qa</code>), asks
-<em>"orchestrated? who leads?"</em> (yes, <code>cto</code>), and creates
-everything:</p>
+<em>"orchestrated? who leads?"</em> (yes, <code>cto</code>), and renders
+the exact read-only preparation proposal. Only an explicit answer to the
+default-No preparation gate writes the accepted artifacts:</p>
 <div class="sourceCode" id="cb13"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--sync</span></span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="co"># + saves .amq-squad/briefs/issue-96.md (your confirmed brief)</span></span></code></pre></div></li>
-<li><p><strong>Launch</strong> — hand off to
-<code>/amq-squad:amq-squad</code> and bring the squad up
-window-per-agent:</p>
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="at">--lead</span> cto <span class="dt">\</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launch-shape</span> working-team-together <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--prepare-plan</span></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Default No: run only after accepting the proposal.</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="at">--lead</span> cto <span class="dt">\</span></span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launch-shape</span> working-team-together <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--prepare</span></span></code></pre></div></li>
+<li><p><strong>Prove readiness and launch separately</strong> —
+preparation launches nothing. The wizard checks the accepted manifest
+and generated bootstraps, then shows a second default-No launch gate.
+The equivalent commands are:</p>
 <div class="sourceCode" id="cb14"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> up issue-96 <span class="at">--target</span> new-window</span></code></pre></div></li>
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launch-shape</span> working-team-together <span class="at">--readiness-json</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Default No: copy the source/digest from accepted readiness exactly.</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launch-shape</span> working-team-together <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="dt">\</span></span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal-source</span> operator_goal <span class="at">--goal-digest</span> <span class="st">&#39;sha256:&lt;accepted-digest&gt;&#39;</span> <span class="at">--go</span></span></code></pre></div>
+<p><code>--go</code> never repairs a brief, profile, role, rule,
+pointer, tool policy, or manifest. Drift returns to proposal and
+preparation.</p></li>
 <li><p><strong>Lead the work</strong> — the <code>cto</code> agent (its
 <code>team-rules.md</code> now carries the orchestration norm, so it
-loads <code>/amq-squad:amq-squad-orchestrator</code>) dispatches to
+loads <code>/amq-squad:orchestrator</code>) dispatches to
 <code>fullstack</code>, monitors, and drains pushed reports:</p>
 <div class="sourceCode" id="cb15"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>

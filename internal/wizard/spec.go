@@ -93,6 +93,15 @@ type Spec struct {
 	Binary                         string
 	Model                          string
 	Effort                         string
+	ToolPolicyMode                 string
+	ToolProfile                    string
+	LaunchShape                    string
+	StagedRoles                    string
+	AuthoredRoles                  string
+	AuthoredBinary                 string
+	AuthoredModel                  string
+	AuthoredEffort                 string
+	AuthoredToolProfile            string
 	OperatorMode                   string
 	SelfOperatorLead               string
 	SelfOperatorAllow              string
@@ -111,6 +120,12 @@ type Spec struct {
 	ExternalLead                   bool
 	Goal                           string
 	SeedFrom                       string
+	GoalBindingSource              string
+	GoalBindingNamespace           string
+	GoalBindingText                string
+	GoalBindingDigest              string
+	GoalBindingDerived             bool
+	GoalBindingVerified            bool
 	GlobalRoot                     string
 	GlobalAgent                    string
 	GlobalModel                    string
@@ -330,6 +345,9 @@ func (s Spec) Args() []string {
 	appendValue("--binary", s.Binary)
 	appendValue("--model", s.Model)
 	appendValue("--effort", s.Effort)
+	appendValue("--tool-profile", s.ToolProfile)
+	appendValue("--launch-shape", s.LaunchShape)
+	appendValue("--staged-roles", s.StagedRoles)
 	if strings.TrimSpace(s.OperatorMode) != "unspecified" {
 		appendValue("--operator-mode", s.OperatorMode)
 	}
@@ -349,6 +367,10 @@ func (s Spec) Args() []string {
 		args = append(args, "--external-lead")
 	}
 	appendValue("--goal", s.Goal)
+	if s.GoalBindingVerified {
+		appendValue("--goal-source", s.GoalBindingSource)
+		appendValue("--goal-digest", s.GoalBindingDigest)
+	}
 	appendValue("--seed-from", s.SeedFrom)
 	return args
 }

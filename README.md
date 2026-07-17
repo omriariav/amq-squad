@@ -82,7 +82,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.21.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.22.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
@@ -102,9 +102,11 @@ codex plugin marketplace add omriariav/amq-squad
 codex plugin add amq-squad@amq-squad
 ```
 
-The primary skills are `amq-squad` and `amq-squad-orchestrator`. The older
-`amq-team-setup` and `amq-squad-role-creator` skill entries are redirect stubs.
-The CLI and skills are versioned together.
+The authoritative skills are `amq-squad:wizard` for preparation,
+`amq-squad:cli` for direct operations, and `amq-squad:orchestrator` for a
+verified live lead. `amq-squad`, `amq-squad-orchestrator`, `amq-team-setup`,
+and `amq-squad-role-creator` are compatibility redirects only. The CLI and
+skills are versioned together.
 
 ## Quickstart
 
@@ -133,18 +135,49 @@ The shortest working path for a visible project lead and workers:
 ```sh
 cd ~/Code/my-project
 
-# Guided preview with an explicit, default-No live confirmation. In an
-# interactive terminal, zero-argument `amq-squad run start` opens the same
-# wizard.
+# Guided proposal, default-No preparation approval, readiness, and a separate
+# default-No launch approval. In an interactive terminal, zero-argument
+# `amq-squad run start` opens the same wizard.
 amq-squad wizard
 
-# Preview, then create, an orchestrated run. --go is the mutation switch.
+# Scripted equivalent, stage 1: render the read-only proposal. Choose the launch
+# shape explicitly; nothing is written.
 amq-squad run start \
   --project . \
   --session issue-96 \
   --roles cto,fullstack,qa \
   --lead cto \
+  --launch-shape working-team-together \
   --goal "fix issue 96" \
+  --prepare-plan
+
+# Stage 2: after reviewing that proposal, explicitly approve preparation.
+# This writes the accepted coordination artifacts but launches no pane.
+amq-squad run start \
+  --project . \
+  --session issue-96 \
+  --roles cto,fullstack,qa \
+  --lead cto \
+  --launch-shape working-team-together \
+  --goal "fix issue 96" \
+  --prepare
+
+# Stage 3: readiness is read-only and machine-readable.
+amq-squad run start \
+  --project . \
+  --session issue-96 \
+  --launch-shape working-team-together \
+  --readiness-json
+
+# Stage 4: after a separate launch approval, use the exact binding source and
+# digest printed by preparation/readiness. --go never repairs artifacts.
+amq-squad run start \
+  --project . \
+  --session issue-96 \
+  --launch-shape working-team-together \
+  --goal "fix issue 96" \
+  --goal-source operator_goal \
+  --goal-digest 'sha256:<accepted-digest>' \
   --go
 
 # Watch the run.
@@ -173,19 +206,29 @@ the remaining workers should be spawned:
 ```sh
 cd ~/Code/my-project
 
-amq-squad run start \
-  -p . \
-  -s issue-96 \
-  --roles cto,fullstack,qa \
-  --lead cto \
-  --external-lead \
-  --goal "fix issue 96" \
-  --go
+amq-squad run start -p . -s issue-96 \
+  --roles cto,fullstack,qa --lead cto --external-lead \
+  --launch-shape working-team-together --goal "fix issue 96" --prepare-plan
+
+# Default No: run only after approving the rendered preparation proposal.
+amq-squad run start -p . -s issue-96 \
+  --roles cto,fullstack,qa --lead cto --external-lead \
+  --launch-shape working-team-together --goal "fix issue 96" --prepare
+
+amq-squad run start -p . -s issue-96 --external-lead \
+  --launch-shape working-team-together --readiness-json
+
+# Separate default-No launch approval; copy the accepted digest exactly.
+amq-squad run start -p . -s issue-96 --external-lead \
+  --launch-shape working-team-together --goal "fix issue 96" \
+  --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
 ```
 
-`run start` previews by default; `--go` creates. With `--goal`, it waits until
-the lead is live before delivering the goal. If goal delivery fails, it exits
-non-zero and prints an exact retry command.
+`run start` has two independent mutation gates, both default No. `--prepare`
+writes only the proposal-approved artifacts. A later `--go` launches only when
+readiness still matches the accepted manifest, launch shape, goal source, and
+goal digest. With `--goal`, launch waits until the lead is live before delivery;
+failure exits non-zero with an exact retry command.
 
 For a deterministic visible arrangement, pass `--layout-preset lead-left`,
 `lead-top`, `even-grid`, or `one-window-per-agent`. Presets close the launcher
@@ -199,10 +242,13 @@ warning.
 In an interactive terminal, `amq-squad run start` with no arguments now opens
 the guided wizard instead of returning the old missing-flag usage error.
 `amq-squad wizard` and `run start --interactive` are equivalent. The wizard
-first runs the exact canonical preview, then asks `Launch now? [y/N]`; only an
-explicit `y`/`yes` reruns the identical argv with `--go` added. The second call
-rechecks current state, so a collision introduced after preview is still
-refused. The wizard also offers a Global/NOC branch backed by canonical
+first renders the canonical `--prepare-plan` proposal, then asks
+`Prepare coordination artifacts? [y/N]`. Only explicit `y`/`yes` runs the
+separate `--prepare` mutation. It then checks readiness and asks
+`Launch now? [y/N]`; only another explicit `y`/`yes` runs `--go` with the exact
+accepted `--launch-shape`, `--goal-source`, and `--goal-digest`. Every stage
+rechecks current state, so drift after proposal or preparation is refused. The
+wizard also offers a Global/NOC branch backed by canonical
 `amq-squad global start`. It is disabled in CI and never triggers when stdin or
 stderr is not a TTY; non-TTY zero-argument calls retain the usage error. Partial
 flag commands without `--interactive` keep fail-fast parser behavior.
@@ -320,15 +366,16 @@ promise.
 
 | Backend | Tier | Launch/visibility | Focus | Send prompt / native goal delivery | Dispatch | Stop/resume |
 | --- | --- | --- | --- | --- | --- | --- |
-| tmux | Tier A | Managed panes in current window, sibling windows, or detached session. | Available only while the recorded pane is live; otherwise reason is `agent pane is not live`. | Available only while the recorded pane is live; otherwise reason is `agent pane is not live`. | Always available because durable AMQ dispatch does not require pane injection. | Full managed stop/resume through launch records and tmux pane identity. |
-| iTerm2 | Tier B | One visible native iTerm2 window per agent. Terminal metadata is captured and then stripped from the agent env. | Available only with a recorded window id and verified agent PID/binary liveness. Missing id reports `iTerm2 window id is unavailable`; dead/mismatched process reports `iTerm2 focus requires verified agent PID liveness`. | Disabled: `iTerm2 prompt/native-goal injection is disabled until #374 proves safe send/capture/busy support`. | Always available because durable AMQ dispatch does not require pane injection. | Agent process stop/resume is managed; native prompt injection is not. |
-| Terminal.app | Tier C | Visible native Terminal.app tabs/windows. Window identity is derived from the launched tab TTY when available. | Disabled: `Terminal.app focus requires stable window/tab addressing; manual focus is required`. | Disabled: `Terminal.app prompt/native-goal injection is disabled until #375 proves safe Accessibility-based input`. | Always available because durable AMQ dispatch does not require pane injection. | Agent process stop/resume is managed; native focus/input remain manual. |
-| cmux | Pending | No backend is shipped. | Pending #330 re-entry bar. | Pending #330 re-entry bar. | Durable AMQ dispatch remains the intended control plane once a backend exists. | Pending #330 re-entry bar. |
+| tmux | Tier A | Managed panes in current window, sibling windows, or detached session. | Available only while the recorded pane is live; otherwise reason is `agent pane is not live`. | Available only while the recorded pane is live; otherwise reason is `agent pane is not live`. | Available when the row proves an exact namespace, handle, and initialized durable AMQ mailbox. | Full managed stop/resume through launch records and tmux pane identity. |
+| iTerm2 | Tier B | One visible native iTerm2 window per agent. Terminal metadata is captured and then stripped from the agent env. | Available only with a recorded window id and verified agent PID/binary liveness. Missing id reports `iTerm2 window id is unavailable`; dead/mismatched process reports `iTerm2 focus requires verified agent PID liveness`. | Native send/capture/busy/local-input and effective goal delivery remain unsupported after the #374 evidence review because the current goal command requires a live native prompt target. | Available only with an exact durable AMQ member route. | Agent process stop/resume is managed; native prompt injection is not. |
+| Terminal.app | Tier C | Visible native Terminal.app tabs/windows. Window identity is derived from the launched tab TTY when available. | Disabled: `Terminal.app focus requires stable window/tab addressing; manual focus is required`. | Native send/capture/busy/local-input and effective goal delivery remain unsupported after the #375 Accessibility and targeting review because the current goal command requires a live native prompt target. | Available only with an exact durable AMQ member route. | Agent process stop/resume is managed; native focus/input remain manual. |
+| cmux | Pending | No backend is shipped. | Pending #330 re-entry bar. | Pending #330 re-entry bar. | Requires an exact durable AMQ member route once a backend exists. | Pending #330 re-entry bar. |
 
 Manual smoke flows live in
 [docs/iterm2-tier-b-smoke.md](docs/iterm2-tier-b-smoke.md) and
 [docs/terminal-app-tier-c-smoke.md](docs/terminal-app-tier-c-smoke.md). The
-capability contract is implemented in `internal/runtimecontrol`.
+capability contract is implemented in `internal/runtimecontrol` and documented
+in [docs/terminal-runtime-contract.md](docs/terminal-runtime-contract.md).
 
 ## Command map
 
@@ -337,8 +384,11 @@ Common setup and run commands:
 ```sh
 amq-squad new team --roles cto,qa --sync
 amq-squad new profile review --roles cto,qa --sync
-amq-squad run start -p . -s issue-96 --roles cto,qa --lead cto --goal "..." --go
-amq-squad run start -p . -s issue-96 --external-lead --lead cto --roles cto,qa --go
+amq-squad run start -p . -s issue-96 --roles cto,qa --lead cto --goal "..." --launch-shape working-team-together --prepare-plan
+amq-squad run start -p . -s issue-96 --roles cto,qa --lead cto --goal "..." --launch-shape working-team-together --prepare
+amq-squad run start -p . -s issue-96 --launch-shape working-team-together --readiness-json
+amq-squad run start -p . -s issue-96 --launch-shape working-team-together --goal "..." --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
+amq-squad run start -p . -s issue-96 --external-lead --lead cto --roles cto,qa --launch-shape working-team-together --prepare-plan
 amq-squad new session issue-96 --seed-from issue:96
 ```
 
@@ -368,6 +418,8 @@ amq-squad dispatch --session issue-96 --role fullstack --task t1 --subject "Impl
 amq-squad activity set --session issue-96 --me fullstack --task t1 --phase testing
 amq-squad task done t1 --session issue-96 --me fullstack --evidence "commit abc" --dispatch-next t2
 amq-squad task reconcile --session issue-96 --json
+amq-squad evidence run t1 --session issue-96 --me fullstack --subject "focused tests" --attempt-id test-1 -- go test ./internal/...
+amq-squad evidence list t1 --session issue-96 --limit 20 --json
 amq-squad threads --session issue-96
 amq-squad thread --session issue-96 --id p2p/cto__fullstack --include-body=false
 ```
@@ -379,6 +431,16 @@ counterpart it sends the canonical completion signal by default: AMQ kind
 suppression). Claims carry renewable leases; reconcile reports stale or legacy
 leases without silently unclaiming work and never auto-retries an uncertain
 delivery.
+
+`evidence run` executes argv without a shell for the active structured task
+assignee. It binds canonical namespace, exact task and executable bytes, cwd,
+bounded explicit environment, and attempt identity; publishes immutable
+process/outcome/summary records; and compare-and-swap links their digests to the
+task. A repeated attempt ID returns the original result only for the same full
+request. `evidence show`, `list`, and `lookup` are bounded read-only projections;
+`evidence recover` explicitly reconciles an interrupted finalization. Its AMQ
+report uses only the task's recorded dispatch route and cannot erase evidence
+when delivery fails.
 
 Safety preflights:
 
@@ -464,18 +526,24 @@ selection guidance.
 
 | Skill | Use it for |
 | --- | --- |
-| `amq-squad` | Setup, role authoring, live coordination, draining AMQ, routing review requests, status/history/doctor, runtime controls, and lifecycle commands. |
-| `amq-squad-orchestrator` | Lead-agent operation: spawn, dispatch, monitor, collect reports, coordinate reviews, recover, and produce final evidence. |
-| `amq-team-setup` | Deprecated redirect to `amq-squad`. |
-| `amq-squad-role-creator` | Deprecated redirect to `amq-squad`. |
+| `amq-squad:wizard` | Goal intake, brief/rules/roles/profile preparation, readiness, and the separate launch approval. |
+| `amq-squad:cli` | Direct status, doctor, task, exact activity monitoring, AMQ, gate, recovery, evidence, and read-only release planning. |
+| `amq-squad:orchestrator` | Verified live-lead operation: dispatch, monitor, review convergence, recovery, and final evidence. |
+| Legacy names | `amq-squad`, `amq-squad-orchestrator`, `amq-team-setup`, and `amq-squad-role-creator` are compatibility redirects only. |
 
 Invoke skills in Claude Code as `/amq-squad:<skill>` and in Codex as
 `$<skill>`.
 
+During wizard preparation, the recommended tool policy keeps the visible lead
+broad and assigns each built-in worker its catalog-minimum profile. Choosing
+`full_all` is an explicit opt-in, never an implicit default. Two or more
+`full` members duplicate MCP/plugin context and increase memory and concurrency
+pressure, so the review screen warns before that configuration proceeds.
+
 Model guidance is intentionally skill-owned because it changes faster than the
-binary. For v2.21.0, use the current model family and per-role model/effort
-recommendations in the installed v2.21.0 skills; confirm the startup marker
-`amq-squad skill v2.21.0` matches `amq-squad version`. Treat cost as a
+binary. For v2.22.0, use the current model family and per-role model/effort
+recommendations in the installed v2.22.0 skills; confirm the startup marker
+`amq-squad skill v2.22.0` matches `amq-squad version`. Treat cost as a
 tie-breaker after output quality for shippable work, and prefer installed-skill
 guidance over copying model examples from this README.
 

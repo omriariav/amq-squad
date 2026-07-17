@@ -77,31 +77,37 @@ def check(path):
 # agent echoes on startup. It must match that mirror's plugin manifest version so
 # the echoed version is trustworthy, not drifted.
 VERSION_MARKER = re.compile(r"Skill version:\s*([0-9]+\.[0-9]+\.[0-9]+)")
-VERSIONED_SKILL = "amq-squad"  # skill id (dir) that must carry the marker
+VERSIONED_SKILLS = (
+    "wizard", "cli", "orchestrator", "amq-squad",
+    "amq-squad-orchestrator", "amq-team-setup", "amq-squad-role-creator",
+)
 MANIFEST = {
     "claude": ".claude-plugin/plugin.json",
     "codex": ".codex-plugin/plugin.json",
 }
 
 
-def check_version_marker(root, mirror):
-    """Return an error string if the amq-squad skill marker != plugin manifest."""
-    skill = os.path.join(root, "plugins", mirror, "skills", VERSIONED_SKILL, "SKILL.md")
+def check_version_markers(root, mirror):
+    """Return errors when any shipped entrypoint marker differs from its manifest."""
     manifest = os.path.join(root, "plugins", mirror, MANIFEST[mirror])
-    if not (os.path.isfile(skill) and os.path.isfile(manifest)):
-        return None  # mirror not present; nothing to compare
-    m = VERSION_MARKER.search(open(skill, encoding="utf-8-sig").read())
-    if not m:
-        return f"{os.path.relpath(skill, root)}: missing `Skill version: X.Y.Z` marker"
+    if not os.path.isfile(manifest):
+        return []
     import json
-
     want = str(json.load(open(manifest, encoding="utf-8")).get("version", "")).strip()
-    if m.group(1) != want:
-        return (
-            f"{os.path.relpath(skill, root)}: marker version {m.group(1)} != "
-            f"manifest version {want} ({os.path.relpath(manifest, root)})"
-        )
-    return None
+    errors = []
+    for skill_id in VERSIONED_SKILLS:
+        skill = os.path.join(root, "plugins", mirror, "skills", skill_id, "SKILL.md")
+        if not os.path.isfile(skill):
+            continue
+        m = VERSION_MARKER.search(open(skill, encoding="utf-8-sig").read())
+        if not m:
+            errors.append(f"{os.path.relpath(skill, root)}: missing `Skill version: X.Y.Z` marker")
+        elif m.group(1) != want:
+            errors.append(
+                f"{os.path.relpath(skill, root)}: marker version {m.group(1)} != "
+                f"manifest version {want} ({os.path.relpath(manifest, root)})"
+            )
+    return errors
 
 
 def main():
@@ -120,8 +126,7 @@ def main():
         else:
             print(f"ok    {rel}")
     for mirror in ("claude", "codex"):
-        err = check_version_marker(root, mirror)
-        if err:
+        for err in check_version_markers(root, mirror):
             failures += 1
             sys.stderr.write(f"FAIL  skill-version marker\n      {err}\n")
     if failures:

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -492,8 +493,9 @@ func TestRunResumeExecSurfacesBlockedGoalRecoveryForMixedRoster(t *testing.T) {
 	} {
 		writeMemberLaunchRecord(t, base, "issue-447", row.role, launch.Record{CWD: dir, Binary: "codex", Role: row.role, Handle: row.role, Session: "issue-447", StartedAt: time.Now(), GoalBinding: row.binding})
 	}
-	oldRun, oldVerify := runTmuxLaunchPlanForResume, verifyResumeExecLaunchRecordsNow
+	oldRun, oldVerify, oldReady := runTmuxLaunchPlanForResume, verifyResumeExecLaunchRecordsNow, verifyResumeLeadReadyNow
 	runTmuxLaunchPlanForResume = func(tmuxLaunchPlan) error { return nil }
+	verifyResumeLeadReadyNow = func(resumeExecLaunchCheck) error { return nil }
 	verifyResumeExecLaunchRecordsNow = func(checks []resumeExecLaunchCheck, _ map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {
 		out := make([]resumeExecLaunchResult, 0, len(checks))
 		for _, check := range checks {
@@ -501,7 +503,9 @@ func TestRunResumeExecSurfacesBlockedGoalRecoveryForMixedRoster(t *testing.T) {
 		}
 		return out
 	}
-	t.Cleanup(func() { runTmuxLaunchPlanForResume, verifyResumeExecLaunchRecordsNow = oldRun, oldVerify })
+	t.Cleanup(func() {
+		runTmuxLaunchPlanForResume, verifyResumeExecLaunchRecordsNow, verifyResumeLeadReadyNow = oldRun, oldVerify, oldReady
+	})
 	_, stderr, err := captureOutput(t, func() error { return runResume([]string{"--exec", "--stagger", "0"}) })
 	if err != nil {
 		t.Fatalf("resume --exec: %v\nstderr:\n%s", err, stderr)
@@ -683,6 +687,201 @@ func TestExecResumePlanNothingToLaunch(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("output missing %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestRunResumeTmuxPlanStagesLeadBeforeDependentsAcrossTargets(t *testing.T) {
+	for _, target := range []string{"current-window", "new-session", "new-window"} {
+		t.Run(target, func(t *testing.T) {
+			oldRun := runTmuxLaunchPlanForResume
+			oldVerify := verifyResumeExecLaunchRecordsNow
+			oldReady := verifyResumeLeadReadyNow
+			t.Cleanup(func() {
+				runTmuxLaunchPlanForResume = oldRun
+				verifyResumeExecLaunchRecordsNow = oldVerify
+				verifyResumeLeadReadyNow = oldReady
+			})
+
+			var events []string
+			var submitted []tmuxLaunchPlan
+			runTmuxLaunchPlanForResume = func(plan tmuxLaunchPlan) error {
+				events = append(events, "run:"+plan.Panes[0].Role)
+				submitted = append(submitted, plan)
+				return nil
+			}
+			verifyResumeExecLaunchRecordsNow = func(checks []resumeExecLaunchCheck, _ map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {
+				events = append(events, "record:"+checks[0].Role)
+				out := make([]resumeExecLaunchResult, 0, len(checks))
+				for _, check := range checks {
+					out = append(out, resumeExecLaunchResult{Check: check, State: resumeExecLaunchStateLaunched})
+				}
+				return out
+			}
+			verifyResumeLeadReadyNow = func(check resumeExecLaunchCheck) error {
+				events = append(events, "ready:"+check.Role)
+				return nil
+			}
+
+			checks := []resumeExecLaunchCheck{{Role: "cto", Handle: "cto"}, {Role: "qa", Handle: "qa"}}
+			results, err := runResumeTmuxPlanWithLeadGate(
+				team.Team{Orchestrated: true, Lead: "cto"}, team.DefaultProfile, "issue-473",
+				tmuxLaunchPlan{Session: "squad", Workstream: "issue-473", Target: target, Layout: "tiled", Panes: []teamLaunchPane{
+					{Role: "cto", Command: "lead"}, {Role: "qa", Command: "worker"},
+				}}, checks, map[string]resumeExecLaunchSnapshot{},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(results) != 2 {
+				t.Fatalf("results = %+v", results)
+			}
+			if got := strings.Join(events, ","); got != "run:cto,record:cto,ready:cto,run:qa,record:qa" {
+				t.Fatalf("staging order = %s", got)
+			}
+			if len(submitted) != 2 || len(submitted[0].Panes) != 1 || len(submitted[1].Panes) != 1 || submitted[1].Panes[0].Role != "qa" {
+				t.Fatalf("submitted plans = %+v", submitted)
+			}
+			if !submitted[1].AllowExistingSession {
+				t.Fatalf("dependent %s plan must reuse the lead's terminal topology", target)
+			}
+		})
+	}
+}
+
+func TestRunResumeTmuxPlanLeadReadinessFailureLaunchesNoDependentsEvenWithForce(t *testing.T) {
+	oldRun := runTmuxLaunchPlanForResume
+	oldVerify := verifyResumeExecLaunchRecordsNow
+	oldReady := verifyResumeLeadReadyNow
+	t.Cleanup(func() {
+		runTmuxLaunchPlanForResume = oldRun
+		verifyResumeExecLaunchRecordsNow = oldVerify
+		verifyResumeLeadReadyNow = oldReady
+	})
+
+	var submitted []string
+	runTmuxLaunchPlanForResume = func(plan tmuxLaunchPlan) error {
+		for _, pane := range plan.Panes {
+			submitted = append(submitted, pane.Role)
+		}
+		return nil
+	}
+	verifyResumeExecLaunchRecordsNow = func(checks []resumeExecLaunchCheck, _ map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {
+		return []resumeExecLaunchResult{{Check: checks[0], State: resumeExecLaunchStateLaunched}}
+	}
+	verifyResumeLeadReadyNow = func(resumeExecLaunchCheck) error { return stubErr("bootstrap mismatch") }
+
+	checks := []resumeExecLaunchCheck{{Role: "cto", Handle: "cto", Force: true}, {Role: "qa", Handle: "qa", Force: true}}
+	_, err := runResumeTmuxPlanWithLeadGate(
+		team.Team{Orchestrated: true, Lead: "cto"}, team.DefaultProfile, "issue-473",
+		tmuxLaunchPlan{Target: "current-window", Panes: []teamLaunchPane{{Role: "cto"}, {Role: "qa"}}},
+		checks, map[string]resumeExecLaunchSnapshot{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "lead readiness failed for cto") || !strings.Contains(err.Error(), "dependent roles were not launched") {
+		t.Fatalf("readiness error = %v", err)
+	}
+	if got := strings.Join(submitted, ","); got != "cto" {
+		t.Fatalf("submitted roles = %q, want lead only", got)
+	}
+}
+
+func TestRunResumeTmuxPlanChecksAlreadyLiveLeadBeforePartialWorkerResume(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	tm := team.Team{Project: dir, Orchestrated: true, Lead: "cto", Members: []team.Member{
+		{Role: "cto", Handle: "cto", Binary: "codex", Session: "issue-473"},
+		{Role: "qa", Handle: "qa", Binary: "codex", Session: "issue-473"},
+	}}
+
+	oldRun := runTmuxLaunchPlanForResume
+	oldVerify := verifyResumeExecLaunchRecordsNow
+	oldReady := verifyResumeLeadReadyNow
+	t.Cleanup(func() {
+		runTmuxLaunchPlanForResume = oldRun
+		verifyResumeExecLaunchRecordsNow = oldVerify
+		verifyResumeLeadReadyNow = oldReady
+	})
+	var events []string
+	verifyResumeLeadReadyNow = func(check resumeExecLaunchCheck) error {
+		events = append(events, "ready:"+check.Role)
+		return nil
+	}
+	runTmuxLaunchPlanForResume = func(plan tmuxLaunchPlan) error {
+		events = append(events, "run:"+plan.Panes[0].Role)
+		return nil
+	}
+	verifyResumeExecLaunchRecordsNow = func(checks []resumeExecLaunchCheck, _ map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {
+		events = append(events, "record:"+checks[0].Role)
+		return []resumeExecLaunchResult{{Check: checks[0], State: resumeExecLaunchStateLaunched}}
+	}
+	workerChecks, err := buildResumeExecLaunchChecks(tm, []teamLaunchPane{{Role: "qa", CWD: dir}}, team.DefaultProfile, "issue-473", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runResumeTmuxPlanWithLeadGate(tm, team.DefaultProfile, "issue-473", tmuxLaunchPlan{
+		Target: "new-window", Panes: []teamLaunchPane{{Role: "qa"}},
+	}, workerChecks, map[string]resumeExecLaunchSnapshot{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(events, ","); got != "ready:cto,run:qa,record:qa" {
+		t.Fatalf("partial-resume order = %s", got)
+	}
+}
+
+func TestInspectResumeLeadReadyRequiresLivePaneAndMatchingBootstrapWhenRequired(t *testing.T) {
+	dir := t.TempDir()
+	agentDir := filepath.Join(dir, "agents", "cto")
+	root := dir
+	now := time.Now().UTC()
+	expect, err := bootstrapack.NewExpectation(true, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", Session: "issue-473", Root: root,
+		AgentPID: 4242, StartedAt: now, TeamProfile: team.DefaultProfile, BootstrapExpectation: &expect,
+		Tmux: &launch.TmuxInfo{PaneID: "%7", Session: "squad", Target: "new-window"},
+	}
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	oldInspect := statusPaneInspector
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		return tmuxpane.TmuxPane{PaneID: id}, id == "%7"
+	}
+	t.Cleanup(func() { statusPaneInspector = oldInspect })
+	probe := duplicateLaunchProbe{
+		PIDAlive: func(pid int) bool { return pid == 4242 },
+		ProcessMatch: func(_ int, predicate func(string) bool) bool {
+			return predicate("codex")
+		},
+		Now: func() time.Time { return now.Add(time.Second) },
+	}
+	check := resumeExecLaunchCheck{Role: "cto", Handle: "cto", Binary: "codex", CWD: dir, AgentDir: agentDir, Root: root, Workstream: "issue-473", Profile: team.DefaultProfile}
+	if ready, detail := inspectResumeLeadReady(check, probe); ready || !strings.Contains(detail, "bootstrap acknowledgement pending") {
+		t.Fatalf("unacknowledged readiness = %t, %q", ready, detail)
+	}
+	if err := bootstrapack.Write(agentDir, bootstrapack.Marker{
+		LaunchID: expect.LaunchID, PromptVersion: expect.PromptVersion, AcknowledgedAt: now.Add(time.Second),
+		Handle: "cto", Role: "cto", Profile: team.DefaultProfile, Session: "issue-473", Root: root,
+		SkillVersion: "2.21.0", Steps: append([]string(nil), bootstrapack.RequiredSteps...),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if ready, detail := inspectResumeLeadReady(check, probe); !ready {
+		t.Fatalf("acknowledged readiness = %t, %q", ready, detail)
+	}
+
+	noBootstrap, err := bootstrapack.NewExpectation(false, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.BootstrapExpectation = &noBootstrap
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	if ready, detail := inspectResumeLeadReady(check, probe); !ready || !strings.Contains(detail, "bootstrap=not_required") {
+		t.Fatalf("no-bootstrap readiness = %t, %q", ready, detail)
 	}
 }
 

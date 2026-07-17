@@ -18,13 +18,14 @@ var ErrCancelled = errors.New("wizard cancelled")
 // injected project inspector. The callback keeps this package independent from
 // git and team persistence packages.
 type NumberedOptions struct {
-	Defaults       Spec
-	InspectProject func(project string) (ProjectContext, error)
-	LoadCatalog    func(root string) agentcatalog.Catalog
-	ProfileExists  func(project, profile string) bool
-	Capabilities   CapabilitySet
-	StartAtProfile bool
-	RestartMessage string
+	Defaults        Spec
+	InspectProject  func(project string) (ProjectContext, error)
+	LoadCatalog     func(root string) agentcatalog.Catalog
+	ProfileExists   func(project, profile string) bool
+	Capabilities    CapabilitySet
+	TerminalContext TerminalContext
+	StartAtProfile  bool
+	RestartMessage  string
 }
 
 type ProjectContext struct {
@@ -76,6 +77,7 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 
 	fmt.Fprintln(out, "amq-squad run start wizard")
 	fmt.Fprintln(out, "Answers are previewed first. Launch requires a separate explicit Yes after preview succeeds.")
+	fmt.Fprintln(out, opts.TerminalContext.Summary())
 	fmt.Fprintln(out)
 
 	var err error
@@ -324,13 +326,43 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		}, defaultString(s.LeadMode, "builder")); err != nil {
 			return Spec{}, err
 		}
+		if s.LaunchShape, err = promptChoice(r, out, "Launch shape", []choice{
+			{value: LaunchShapeWorkingTeamTogether, label: "Start the working team together: every selected initial member launches after the final approval"},
+			{value: LaunchShapeLeadOnlyStaged, label: "Lead-only staged bootstrap: only the lead launches; every later role requires its own durable spawn gate"},
+		}, s.LaunchShape); err != nil {
+			return Spec{}, err
+		}
+		if err := s.ApplyLaunchShape(); err != nil {
+			return Spec{}, err
+		}
+		roles = splitAssignmentsList(s.Roles)
+		if s.StagedRoles, err = promptText(r, out, "Staged later roles (comma-separated; optional)", s.StagedRoles); err != nil {
+			return Spec{}, err
+		}
+		if err := s.ApplyLaunchShape(); err != nil {
+			return Spec{}, err
+		}
+		recommended := recommendedToolProfileAssignments(roles, s.Lead)
+		full := fullToolProfileAssignments(roles)
+		if s.ToolPolicyMode, err = promptChoice(r, out, "Tool policy", []choice{
+			{value: "recommended", label: "Recommended: broad lead + catalog-minimum lean workers · " + recommended},
+			{value: "full_all", label: "Full for all: explicit broad access (warning: 2+ full workers increase duplicated MCP context and memory/concurrency cost) · " + full},
+		}, defaultString(s.ToolPolicyMode, "recommended")); err != nil {
+			return Spec{}, err
+		}
+		if s.ToolPolicyMode == "full_all" {
+			s.ToolProfile = full
+			fmt.Fprintln(out, "Warning: multiple full workers duplicate MCP/plugin context and increase memory and concurrency pressure.")
+		} else {
+			s.ToolProfile = recommended
+		}
 	}
 
 	if s.Visibility, err = promptChoice(r, out, "Topology", []choice{
-		{value: "sibling-tabs", label: "sibling-tabs: one visible tmux window per agent"},
-		{value: "detached", label: "detached: hidden tmux session"},
-		{value: "current", label: "current: split the current tmux window"},
-	}, defaultString(s.Visibility, "sibling-tabs")); err != nil {
+		{value: "sibling-tabs", label: annotateTopologyChoice(opts.TerminalContext, "sibling-tabs", "sibling-tabs: one visible tmux window per agent")},
+		{value: "detached", label: annotateTopologyChoice(opts.TerminalContext, "detached", "detached: hidden tmux session")},
+		{value: "current", label: annotateTopologyChoice(opts.TerminalContext, "current", "current: split the current tmux window")},
+	}, recommendedTopology(s.Visibility, s.VisibilityExplicit, opts.TerminalContext)); err != nil {
 		return Spec{}, err
 	}
 	if s.LayoutPreset, err = promptChoice(r, out, "Layout preset", layoutPresetChoices(s.Visibility), defaultLayoutPreset(s.LayoutPreset, s.Visibility)); err != nil {
@@ -406,6 +438,10 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		if s.SeedFrom, err = promptText(r, out, "Seed brief from file:/issue:/gh: reference (optional)", s.SeedFrom); err != nil {
 			return Spec{}, err
 		}
+		// Resolve accepted-brief bindings for review. A missing/stub binding is
+		// rendered as unverified here and rejected by the final CLI readiness
+		// gate before canonical preview or Launch now is available.
+		_ = s.ResolveGoalBinding()
 	}
 
 	previewCommand, liveCommand, commandErr := s.CommandForms()
@@ -418,10 +454,24 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Review")
+	fmt.Fprintln(out, topologyDiagnostic(opts.TerminalContext, s.Visibility))
 	for _, warning := range effortCatalogWarnings(s, ctx) {
 		fmt.Fprintln(out, warning)
 	}
-	fmt.Fprintf(out, "Goal excerpt:\n%s\nSeed source: %s\nPreview command: %s\nLive command: %s\n", GoalExcerpt(goal), displayValue(seed), previewCommand, liveCommand)
+	fmt.Fprintf(out, "Goal excerpt:\n%s\nSeed source: %s\n", GoalExcerpt(goal), displayValue(seed))
+	if s.Backend != BackendResume {
+		fmt.Fprintf(out, "Goal binding: %s\n", s.GoalBindingReview())
+	}
+	if s.ToolProfile != "" {
+		fmt.Fprintf(out, "Tool policy: %s · %s\n", defaultString(s.ToolPolicyMode, "recommended"), s.ToolProfile)
+		if countFullToolProfiles(s.ToolProfile) >= 2 {
+			fmt.Fprintln(out, "WARNING: 2+ full workers duplicate MCP/plugin context and increase memory/concurrency pressure.")
+		}
+	}
+	if s.Roles != "" {
+		fmt.Fprintln(out, s.LaunchRosterReview())
+	}
+	fmt.Fprintf(out, "Preview command: %s\nLive command: %s\n", previewCommand, liveCommand)
 	fmt.Fprintln(out, "Answers collected. Running the canonical preview next; live launch is a separate default-No decision.")
 	return s, nil
 }

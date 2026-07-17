@@ -9,9 +9,32 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 const issue470Session = "issue-470"
+const issue470Goal = "Execute the accepted fresh AMQ fixture"
+
+func issue470RunArgs(project, profile string, extras ...string) []string {
+	args := []string{
+		"--project", project, "--session", issue470Session,
+		"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether,
+	}
+	if profile != team.DefaultProfile {
+		args = append(args, "--profile", profile)
+	}
+	return append(args, extras...)
+}
+
+func prepareIssue470Run(t *testing.T, project, profile string, extras ...string) {
+	t.Helper()
+	args := issue470RunArgs(project, profile, extras...)
+	args = append(args, "--goal", issue470Goal, "--prepare")
+	if _, _, err := captureOutput(t, func() error { return runRunStart(args, "test") }); err != nil {
+		t.Fatalf("prepare accepted issue-470 fixture: %v", err)
+	}
+	stubSuccessfulRunStartGoalDelivery(t)
+}
 
 func setupStrictFreshProjectAMQ(t *testing.T) string {
 	t.Helper()
@@ -169,8 +192,9 @@ func TestIssue470ConfiguredDefaultRootLivePreparesOnlySelectedBase(t *testing.T)
 		t.Fatal(err)
 	}
 	backend := useFakeTmuxBackend(t)
+	prepareIssue470Run(t, project, team.DefaultProfile, "--visibility", "detached")
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"--project", project, "--session", issue470Session, "--visibility", "detached", "--go"}, "test")
+		return runRunStart(append(issue470RunArgs(project, team.DefaultProfile, "--visibility", "detached"), "--go"), "test")
 	})
 	if err != nil {
 		t.Fatalf("configured-root live launch: %v", err)
@@ -181,8 +205,8 @@ func TestIssue470ConfiguredDefaultRootLivePreparesOnlySelectedBase(t *testing.T)
 	if info, err := os.Stat(filepath.Join(project, "custom-mail")); err != nil || !info.IsDir() {
 		t.Fatalf("configured selected base not prepared: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(project, ".agent-mail")); !os.IsNotExist(err) {
-		t.Fatalf("configured-root launch touched project .agent-mail: %v", err)
+	if _, err := os.Stat(filepath.Join(project, ".agent-mail", issue470Session)); !os.IsNotExist(err) {
+		t.Fatalf("configured-root launch touched default AMQ session root: %v", err)
 	}
 }
 
@@ -192,6 +216,7 @@ func TestIssue470RunStartRefusesExistingSelectedRootBeforeBackend(t *testing.T) 
 			setupStrictFreshProjectAMQ(t)
 			project := t.TempDir()
 			writeIssue470Team(t, project, profile)
+			prepareIssue470Run(t, project, profile, "--visibility", "detached")
 			selected := filepath.Join(project, ".agent-mail", issue470Session)
 			if profile != team.DefaultProfile {
 				selected = filepath.Join(project, ".agent-mail", profile, issue470Session)
@@ -204,10 +229,7 @@ func TestIssue470RunStartRefusesExistingSelectedRootBeforeBackend(t *testing.T) 
 				t.Fatal(err)
 			}
 			backend := useFakeTmuxBackend(t)
-			args := []string{"--project", project, "--session", issue470Session, "--visibility", "detached", "--go"}
-			if profile != team.DefaultProfile {
-				args = append(args, "--profile", profile)
-			}
+			args := append(issue470RunArgs(project, profile, "--visibility", "detached"), "--go")
 			_, _, err := captureOutput(t, func() error { return runRunStart(args, "test") })
 			if err == nil || !strings.Contains(err.Error(), "already exists") || !strings.Contains(err.Error(), selected) {
 				t.Fatalf("existing selected-root refusal=%v", err)
@@ -234,10 +256,7 @@ func TestIssue470RunStartFreshAMQMatrix(t *testing.T) {
 						writeIssue470Team(t, project, profile)
 					}
 					backend := useFakeTmuxBackend(t)
-					args := []string{"--project", project, "--session", issue470Session}
-					if profile != team.DefaultProfile {
-						args = append(args, "--profile", profile)
-					}
+					args := issue470RunArgs(project, profile)
 					if roster == "fresh" {
 						args = append(args, "--roles", "cto", "--lead", "cto")
 					}
@@ -262,7 +281,19 @@ func TestIssue470RunStartFreshAMQMatrix(t *testing.T) {
 						t.Fatalf("preview mutated AMQ state: %v", err)
 					}
 
-					_, _, err = captureOutput(t, func() error { return runRunStart(append(args, "--go"), "test") })
+					prepareArgs := append(append([]string{}, args...), "--goal", issue470Goal, "--prepare")
+					_, _, err = captureOutput(t, func() error { return runRunStart(prepareArgs, "test") })
+					if err != nil {
+						t.Fatalf("prepare: %v", err)
+					}
+					liveArgs := issue470RunArgs(project, profile)
+					if launchPath == "layout-finalization" {
+						liveArgs = append(liveArgs, "--layout-preset", layoutPresetOneWindowPerAgent)
+					} else {
+						liveArgs = append(liveArgs, "--visibility", "detached")
+					}
+					stubSuccessfulRunStartGoalDelivery(t)
+					_, _, err = captureOutput(t, func() error { return runRunStart(append(liveArgs, "--go"), "test") })
 					if err != nil {
 						t.Fatalf("live run: %v", err)
 					}
@@ -306,6 +337,10 @@ func (b *issue470FailingBackend) Launch(team.Team, teamLaunchOptions) error {
 	b.launches++
 	return errors.New("injected immediately before backend launch")
 }
+func (b *issue470FailingBackend) LaunchWithResult(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
+	return teamLaunchResult{}, b.Launch(t, opts)
+}
+func (*issue470FailingBackend) preparedResultBeforeDispatch() {}
 
 func TestIssue470LaunchFailureRollsBackPreparedState(t *testing.T) {
 	for _, profile := range []string{team.DefaultProfile, "review"} {
@@ -318,10 +353,8 @@ func TestIssue470LaunchFailureRollsBackPreparedState(t *testing.T) {
 			teamLaunchBackends["tmux"] = backend
 			t.Cleanup(func() { teamLaunchBackends["tmux"] = previous })
 
-			args := []string{"--project", project, "--session", issue470Session, "--visibility", "detached", "--go"}
-			if profile != team.DefaultProfile {
-				args = append(args, "--profile", profile)
-			}
+			prepareIssue470Run(t, project, profile, "--visibility", "detached")
+			args := append(issue470RunArgs(project, profile, "--visibility", "detached"), "--go")
 			_, _, err := captureOutput(t, func() error { return runRunStart(args, "test") })
 			if err == nil || !strings.Contains(err.Error(), "injected immediately before backend launch") {
 				t.Fatalf("launch error=%v", err)
@@ -329,11 +362,14 @@ func TestIssue470LaunchFailureRollsBackPreparedState(t *testing.T) {
 			if backend.launches != 1 {
 				t.Fatalf("backend attempts=%d, want 1", backend.launches)
 			}
-			if _, err := os.Stat(briefPathForProfile(project, profile, issue470Session)); !os.IsNotExist(err) {
-				t.Fatalf("failed launch left a brief: %v", err)
+			if _, err := os.Stat(briefPathForProfile(project, profile, issue470Session)); err != nil {
+				t.Fatalf("failed launch erased the prepared brief: %v", err)
+			}
+			if _, err := os.Stat(preparedRunPath(project, profile, issue470Session)); err != nil {
+				t.Fatalf("failed launch erased the accepted preparation manifest: %v", err)
 			}
 			if _, err := os.Stat(filepath.Join(project, ".agent-mail")); !os.IsNotExist(err) {
-				t.Fatalf("failed launch left prepared AMQ state: %v", err)
+				t.Fatalf("failed launch left reversible AMQ launch state: %v", err)
 			}
 			if _, err := os.Stat(notificationWatcherRuntimePath(project, profile, issue470Session)); !os.IsNotExist(err) {
 				t.Fatalf("failed launch left a notification watcher: %v", err)
@@ -343,7 +379,7 @@ func TestIssue470LaunchFailureRollsBackPreparedState(t *testing.T) {
 				root = filepath.Join(project, ".agent-mail", profile, issue470Session)
 			}
 			if _, err := launch.Read(filepath.Join(root, "agents", "cto")); !os.IsNotExist(err) {
-				t.Fatalf("failed launch left an agent record: %v", err)
+				t.Fatalf("failed launch left a live agent record: %v", err)
 			}
 		})
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -28,7 +29,9 @@ import (
 const envTmuxTarget = "AMQ_SQUAD_TMUX_TARGET"
 
 var launchPlanObserver func(launch.Record, []string)
+var preparedLaunchAfterRecordWrite = func(launch.Record) error { return nil }
 var amqSyscallExec = syscall.Exec
+var launchCurrentPaneIdentity = tmuxpane.CurrentPaneIdentity
 
 // envTmuxLauncherPane carries the pane id that initiated a managed tmux launch.
 // The child process runs in the agent pane, so it cannot recover this later
@@ -90,6 +93,28 @@ func (f *stringListFlag) Set(value string) error {
 // and the replay path (execRestoreRecord). It is internal-only and carries no
 // deprecation surface of its own.
 func runLaunch(args []string) error {
+	token, err := preparedRunTokenFromInternalEnv()
+	if err != nil {
+		return err
+	}
+	desc, err := preparedRestoreDescriptorFromInternalEnv()
+	if err != nil {
+		return err
+	}
+	if desc != nil {
+		if !token.complete() || desc.Token != token {
+			return fmt.Errorf("prepared restore descriptor/token mismatch")
+		}
+		return runLaunchWithIntent(args, token, desc)
+	}
+	return runLaunchWithPreparedToken(args, token)
+}
+
+func runLaunchWithPreparedToken(args []string, requestedPreparedToken preparedRunToken) error {
+	return runLaunchWithIntent(args, requestedPreparedToken, nil)
+}
+
+func runLaunchWithIntent(args []string, requestedPreparedToken preparedRunToken, restoreDesc *preparedRestoreDescriptor) error {
 	// Split at "--" so launcher flags aren't consumed by amq-squad's parser.
 	squadArgs, childArgs := splitDashDash(args)
 
@@ -111,6 +136,13 @@ func runLaunch(args []string) error {
 	noPreauthInScope := fs.Bool("no-preauthorize-inscope", false, "do not pre-authorize gh pr create for an orchestrated Claude worker (#296; feature-branch push is not pre-authorized in this slice)")
 	trustRaw := fs.String("trust", "", "Codex trust profile: approve-for-me (default), sandboxed, or trusted (local power mode)")
 	model := fs.String("model", "", "native model name to pass to the agent binary, e.g. 'gpt-5.6-terra' or 'sonnet'")
+	toolProfile := fs.String("tool-profile", "", "effective role capability policy (minimal|coding|browser|data|full|custom)")
+	toolConfig := fs.String("tool-config", "", "binary-native policy config: Claude settings path or Codex profile name")
+	toolMCPConfig := fs.String("tool-mcp-config", "", "Claude strict MCP config generated for the role")
+	var toolAllowlist stringListFlag
+	var toolBlocklist stringListFlag
+	fs.Var(&toolAllowlist, "tool-allow", "audited enabled tool entry (repeatable)")
+	fs.Var(&toolBlocklist, "tool-block", "audited revoked tool entry (repeatable; materialized at launch)")
 	spawnOrigin := fs.String("spawn-origin", "", "runtime composition origin recorded in launch.json")
 	spawnDepth := fs.Int("spawn-depth", 0, "runtime composition depth recorded in launch.json")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args to treat as launch defaults, e.g. '--enable goals'")
@@ -195,7 +227,9 @@ Examples:
 		if err != nil {
 			return err
 		}
-		return runInProject(project, func() error { return runLaunch(rest) })
+		return runInProject(project, func() error {
+			return runLaunchWithIntent(rest, requestedPreparedToken, restoreDesc)
+		})
 	}
 	trustExplicit := flagWasSet(fs, "trust")
 	trustMode, err := normalizeTrustMode(*trustRaw)
@@ -252,6 +286,18 @@ Examples:
 		return usageErrorf("agent up requires a binary (e.g. 'amq-squad agent up codex --role cpo')")
 	}
 	binary := remaining[0]
+	effectiveToolProfile := strings.TrimSpace(*toolProfile)
+	if effectiveToolProfile == "" {
+		effectiveToolProfile = team.ToolProfileFull
+	}
+	switch effectiveToolProfile {
+	case team.ToolProfileMinimal, team.ToolProfileCoding, team.ToolProfileBrowser, team.ToolProfileData, team.ToolProfileFull, team.ToolProfileCustom:
+	default:
+		return usageErrorf("--tool-profile must be minimal, coding, browser, data, full, or custom")
+	}
+	if effectiveToolProfile != team.ToolProfileFull && strings.TrimSpace(*toolConfig) == "" {
+		return usageErrorf("--tool-config is required for non-full tool profile %q", effectiveToolProfile)
+	}
 	wakeInjectModeValue = resolveWakeInjectModeForBinary(wakeInjectModeValue, binary)
 	if *symphony && normalizedAgentBinary(binary) != "codex" {
 		return usageErrorf("--symphony is only supported for Codex agents; got %s", binary)
@@ -260,7 +306,8 @@ Examples:
 	if len(remaining) > 1 {
 		childArgs = append(remaining[1:], childArgs...)
 	}
-	extraDefaultArgs := binaryArgsFor(binary, binaryArgs)
+	toolMember := team.Member{Binary: binary, ToolProfile: effectiveToolProfile, ToolConfig: strings.TrimSpace(*toolConfig), ToolMCPConfig: strings.TrimSpace(*toolMCPConfig), ToolAllowlist: append([]string(nil), toolAllowlist...), ToolBlocklist: append([]string(nil), toolBlocklist...)}
+	extraDefaultArgs := composeBinaryArgs(binary, toolMember.ToolArgs(), binaryArgsFor(binary, binaryArgs))
 	resolvedModel := resolveModelForLaunch(binary, *model, extraDefaultArgs)
 	modelArgs := modelArgsForBinary(binary, resolvedModel)
 	defaultArgs := launchDefaultChildArgsWithTrust(binary, !*noDefaultArgs, modelArgs, extraDefaultArgs, trustMode)
@@ -354,6 +401,11 @@ Examples:
 		Launcher:                     launcher,
 		LauncherArgs:                 launcherArgs,
 		Model:                        resolvedModel,
+		ToolProfile:                  effectiveToolProfile,
+		ToolConfig:                   strings.TrimSpace(*toolConfig),
+		ToolMCPConfig:                strings.TrimSpace(*toolMCPConfig),
+		ToolAllowlist:                append([]string(nil), toolAllowlist...),
+		ToolBlocklist:                append([]string(nil), toolBlocklist...),
 		Trust:                        trustMode,
 		NoDefaultArgs:                *noDefaultArgs,
 		NoPreauthorizeInScope:        *noPreauthInScope,
@@ -381,151 +433,18 @@ Examples:
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD
 	}
-
-	// Capture exact tmux identity (session/window/pane ids) when launched
-	// inside tmux, so clients can target follow-up control by stable pane id
-	// instead of re-inferring from window names. Best-effort: a capture failure
-	// must never block the launch. This runs before exec while $TMUX/$TMUX_PANE
-	// still describe this agent's pane.
-	if id, err := tmuxpane.CurrentPaneIdentity(); err == nil && id != nil {
-		target := strings.TrimSpace(os.Getenv(envTmuxTarget))
-		launcherPane := strings.TrimSpace(os.Getenv(envTmuxLauncherPane))
-		if launcherPane == "" && target == "" {
-			launcherPane = id.PaneID
-		}
-		rec.AdoptionMode = launchAdoptionMode(target, launcherPane, id.PaneID)
-		rec.LauncherPaneID = launcherPane
-		rec.Tmux = &launch.TmuxInfo{
-			Session:    id.Session,
-			WindowID:   id.WindowID,
-			WindowName: id.WindowName,
-			PaneID:     id.PaneID,
-			Target:     target,
-		}
-		rec.Terminal = launch.TerminalInfoFromTmux(rec.Tmux)
+	if !requestedPreparedToken.empty() && !requestedPreparedToken.complete() {
+		return fmt.Errorf("agent up refused: prepared run token is incomplete")
 	}
-	if rec.Terminal == nil {
-		rec.Terminal = terminalInfoFromEnv()
-		if rec.Terminal != nil {
-			rec.AdoptionMode = launchAdoptionMode(rec.Terminal.Target, "", "")
-		}
+	applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
+	if restoreDesc != nil && preparedRestoreSemanticDigest(rec) != restoreDesc.SemanticDigest {
+		return fmt.Errorf("prepared restore descriptor does not match persisted launch record")
 	}
-	// Keep generated bootstrap out of launch.json so restore stays compact
-	// and does not replay stale startup text.
-	effectiveChildArgs := append([]string(nil), childArgs...)
-	bootstrapEligibilityArgs := childArgs
-	if len(launcherPreauthorizedActions) > 0 {
-		if len(explicitAllowedTools) > 0 {
-			bootstrapEligibilityArgs = replaceClaudeAllowedTools(childArgs, explicitAllowedTools)
-		} else {
-			bootstrapEligibilityArgs = stripRecordedLauncherPreauth(childArgs, preauthorizedActions)
-		}
-	}
-	bootstrapAppended := !*noBootstrap && shouldAppendBootstrapWithDefaults(bootstrapEligibilityArgs, defaultArgs)
-	bootstrapSuppressedReason := ""
-	if bootstrapAppended {
-		boundary, err := assessNativePromptBoundary(binary, bootstrapEligibilityArgs)
-		if err != nil {
-			return err
-		}
-		if !boundary.Safe {
-			bootstrapAppended = false
-			bootstrapSuppressedReason = boundary.Reason
-		}
-	}
-	expectation, err := bootstrapExpectationForLaunch(rec, bootstrapAppended, *noBootstrap, bootstrapSuppressedReason)
-	if err != nil {
-		return err
-	}
-	rec.BootstrapExpectation = &expectation
-	if bootstrapAppended {
-		prompt, err := buildBootstrapPrompt(bootstrapContextFor(rec, agentDir, *teamHome))
-		if err != nil {
-			return err
-		}
-		// Terminate native option parsing so optional/variadic flags can never
-		// consume generated prompt text. The prompt remains the final argv token.
-		effectiveChildArgs = appendGeneratedBootstrapPrompt(effectiveChildArgs, prompt)
-	}
-	if launchPlanObserver != nil {
-		launchPlanObserver(rec, append([]string(nil), effectiveChildArgs...))
-	}
-
-	// Build the coop exec invocation. Done before any disk writes so
-	// --dry-run is a true preview with zero side effects. --session NAME
-	// is amq shorthand for --root .agent-mail/<name>; passing both is
-	// rejected by amq, so prefer --session when callers supplied both
-	// (matching the resolveAMQEnvInDir boundary policy). The same warning
-	// fires once at env resolution time, so this branch stays silent to
-	// avoid duplicating the message.
-	coopArgs := []string{"coop", "exec"}
-	if launchUsesExplicitRoot(rootForLaunch, *session, teamProfileValue) {
-		coopArgs = append(coopArgs, "--root", rootForLaunch)
-	} else if *session != "" {
-		coopArgs = append(coopArgs, "--session", *session)
-	} else if rootForLaunch != "" {
-		coopArgs = append(coopArgs, "--root", rootForLaunch)
-	}
-	if *me != "" {
-		coopArgs = append(coopArgs, "--me", *me)
-	}
-	// Fail the launch at the door when the wake sidecar cannot start and
-	// acquire its lock, instead of detecting a missing/orphaned wake later
-	// (#30). Version-gated: amq grew --require-wake in 0.34.1, and an empty
-	// or unparseable reported version omits the flag so older amq builds
-	// never see an unknown flag. --no-require-wake is the escape hatch for
-	// TIOCSTI-hostile environments where wake can't acquire its lock but the
-	// operator wants the agent anyway.
-	if !*noRequireWake && amqSupportsRequireWake(env.AMQVersion) {
-		coopArgs = append(coopArgs, "--require-wake")
-	}
-	if *noGitignore {
-		if !amqSupportsNoGitignore(env.AMQVersion) {
-			return fmt.Errorf("--no-gitignore requires amq %s or newer (found %s)", minNoGitignoreAMQVersion, versionOrUnknown(env.AMQVersion))
-		}
-		coopArgs = append(coopArgs, "--no-gitignore")
-	}
-	if wakeInjectViaValue != "" {
-		if !amqSupportsWakeInject(env.AMQVersion) {
-			return fmt.Errorf("--wake-inject-via requires amq %s or newer (found %s)", minWakeInjectAMQVersion, versionOrUnknown(env.AMQVersion))
-		}
-		coopArgs = append(coopArgs, "--wake-inject-via", wakeInjectViaValue)
-		for _, arg := range wakeInjectArgValues {
-			coopArgs = append(coopArgs, "--wake-inject-arg="+arg)
-		}
-	}
-	if wakeInjectModeValue != "" {
-		if !amqSupportsWakeInjectMode(env.AMQVersion) {
-			return fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
-		}
-		coopArgs = append(coopArgs, "--wake-inject-mode", wakeInjectModeValue)
-	}
-	// A custom launcher is exec'd in place of the binary. Launcher args precede
-	// the agent's normal child args; the launcher is expected to forward the
-	// trailing args to the binary so bootstrap and default args still reach it.
-	target := binary
-	trailing := effectiveChildArgs
-	if launcher != "" {
-		target = launcher
-		trailing = append(append([]string(nil), launcherArgs...), effectiveChildArgs...)
-	}
-	coopArgs = append(coopArgs, target)
-	if len(trailing) > 0 {
-		coopArgs = append(coopArgs, "--")
-		coopArgs = append(coopArgs, trailing...)
-	}
-
-	if *dryRun {
-		fmt.Println(shellCommand("amq", coopArgs...))
-		if *symphony {
-			fmt.Fprintf(os.Stderr, "(dry run - would patch existing %s with AMQ Symphony hooks pinned to root %s and handle %s; no files written)\n",
-				filepath.Join(cwd, "WORKFLOW.md"), root, handle)
-		}
-		quietNotice("(dry run - no files written, not execing)\n")
-		verbosePolicyEcho()
-		return nil
-	}
-	if strings.TrimSpace(env.SessionName) != "" {
+	// A live prepared launch enters both the namespace writer domain and the
+	// prepared-manifest reader domain before reading accepted state. Preparation
+	// writers take the matching exclusive manifest admission, so the accepted
+	// generation cannot change through record write or exec.
+	if !*dryRun && strings.TrimSpace(env.SessionName) != "" {
 		admissionProject := rec.TeamHome
 		if !filepath.IsAbs(admissionProject) {
 			admissionProject = filepath.Join(cwd, admissionProject)
@@ -575,6 +494,232 @@ Examples:
 		if err := ensureNoNamespaceConflict("agent up", admissionProject, teamProfileValue, env.SessionName, profileExplicit); err != nil {
 			return err
 		}
+		manifestAdmission, err := acquirePreparedManifestReaderAdmission(admissionProject, teamProfileValue, env.SessionName)
+		if err != nil {
+			return err
+		}
+		defer manifestAdmission.close()
+	}
+	if !requestedPreparedToken.empty() {
+		manifestProject := strings.TrimSpace(rec.TeamHome)
+		if manifestProject == "" {
+			manifestProject = strings.TrimSpace(rec.CWD)
+		}
+		manifest, digest, err := readPreparedRunManifestSnapshot(manifestProject, rec.TeamProfile, rec.Session)
+		if err != nil {
+			return fmt.Errorf("agent up refused: read pinned prepared run identity: %w", err)
+		}
+		if err := validatePreparedRunToken(requestedPreparedToken, manifest, digest); err != nil {
+			return fmt.Errorf("agent up refused: %w", err)
+		}
+	}
+	preparedLaunchContext, err := preparedContextForLaunchRecordMode(rec, restoreDesc != nil)
+	if err != nil {
+		return fmt.Errorf("load accepted prepared launch identity: %w", err)
+	}
+	if !requestedPreparedToken.empty() {
+		if preparedLaunchContext == nil {
+			return fmt.Errorf("agent up refused: pinned prepared run identity disappeared")
+		}
+		if err := validatePreparedRunToken(requestedPreparedToken, preparedLaunchContext.Manifest, preparedLaunchContext.Digest); err != nil {
+			return fmt.Errorf("agent up refused: %w", err)
+		}
+	}
+	if requestedPreparedToken.empty() {
+		applyPreparedRunTokenToRecord(&rec, preparedRunTokenForContext(preparedLaunchContext))
+	}
+	if restoreDesc == nil && rec.GoalBinding == nil && rec.Conversation == "" && preparedLaunchContext != nil && preparedLaunchContext.Member.Role == preparedLaunchContext.Team.Lead {
+		preparedBinding, err := preparedGoalBinding(preparedLaunchContext.Team, preparedLaunchContext.Manifest.Profile, preparedLaunchContext.Manifest.Session, preparedLaunchContext.Member, preparedLaunchContext.Binding)
+		if err != nil {
+			return fmt.Errorf("load accepted prepared goal binding: %w", err)
+		}
+		rec.GoalBinding = preparedBinding
+	}
+
+	// Capture exact tmux identity (session/window/pane ids) when launched
+	// inside tmux, so clients can target follow-up control by stable pane id
+	// instead of re-inferring from window names. Best-effort: a capture failure
+	// must never block the launch. This runs before exec while $TMUX/$TMUX_PANE
+	// still describe this agent's pane.
+	if id, err := launchCurrentPaneIdentity(); err == nil && id != nil {
+		target := strings.TrimSpace(os.Getenv(envTmuxTarget))
+		launcherPane := strings.TrimSpace(os.Getenv(envTmuxLauncherPane))
+		if launcherPane == "" && target == "" {
+			launcherPane = id.PaneID
+		}
+		rec.AdoptionMode = launchAdoptionMode(target, launcherPane, id.PaneID)
+		rec.LauncherPaneID = launcherPane
+		rec.Tmux = &launch.TmuxInfo{
+			Session:    id.Session,
+			WindowID:   id.WindowID,
+			WindowName: id.WindowName,
+			PaneID:     id.PaneID,
+			Target:     target,
+		}
+		rec.Terminal = launch.TerminalInfoFromTmux(rec.Tmux)
+	}
+	if rec.Terminal == nil {
+		rec.Terminal = terminalInfoFromEnv()
+		if rec.Terminal != nil {
+			rec.AdoptionMode = launchAdoptionMode(rec.Terminal.Target, "", "")
+		}
+	}
+	// Keep generated bootstrap out of launch.json so restore stays compact
+	// and does not replay stale startup text.
+	effectiveChildArgs := append([]string(nil), childArgs...)
+	bootstrapEligibilityArgs := childArgs
+	if len(launcherPreauthorizedActions) > 0 {
+		if len(explicitAllowedTools) > 0 {
+			bootstrapEligibilityArgs = replaceClaudeAllowedTools(childArgs, explicitAllowedTools)
+		} else {
+			bootstrapEligibilityArgs = stripRecordedLauncherPreauth(childArgs, preauthorizedActions)
+		}
+	}
+	bootstrapAppended := !*noBootstrap && shouldAppendBootstrapWithDefaults(bootstrapEligibilityArgs, defaultArgs)
+	bootstrapSuppressedReason := ""
+	var preparedPrompt string
+	if bootstrapAppended {
+		boundary, err := assessNativePromptBoundary(binary, bootstrapEligibilityArgs)
+		if err != nil {
+			return err
+		}
+		if !boundary.Safe {
+			bootstrapAppended = false
+			bootstrapSuppressedReason = boundary.Reason
+		}
+	}
+	expectation, err := bootstrapExpectationForLaunch(rec, bootstrapAppended, *noBootstrap, bootstrapSuppressedReason)
+	if err != nil {
+		return err
+	}
+	if *dryRun && bootstrapAppended && !expectation.Required {
+		if preparedLaunchContext != nil && !(preparedLaunchContext.Manifest.Topology.ExternalLead && rec.Role == preparedLaunchContext.Team.Lead) {
+			expectation.Required = true
+			expectation.NotRequiredReason = ""
+		}
+	}
+	rec.BootstrapExpectation = &expectation
+	if bootstrapAppended {
+		bootstrapContext := bootstrapContextFor(rec, agentDir, *teamHome)
+		if preparedLaunchContext != nil {
+			bootstrapContext.CurrentTeam, bootstrapContext.Warnings = bootstrapCurrentTeamWithRoster(rec, *teamHome, true)
+		}
+		prompt, err := buildBootstrapPrompt(bootstrapContext)
+		if err != nil {
+			return err
+		}
+		if err := revalidatePreparedBootstrapPromptForLaunchMode(rec, prompt, preparedLaunchContext, restoreDesc != nil); err != nil {
+			return fmt.Errorf("prepared bootstrap launch validation: %w", err)
+		}
+		preparedPrompt = prompt
+		// Terminate native option parsing so optional/variadic flags can never
+		// consume generated prompt text. The prompt remains the final argv token.
+		effectiveChildArgs = appendGeneratedBootstrapPrompt(effectiveChildArgs, prompt)
+	} else if preparedLaunchContext != nil && restoreDesc == nil {
+		return fmt.Errorf("prepared bootstrap launch validation: accepted run member %s cannot launch without its exact bootstrap prompt", rec.Role)
+	} else if context, err := preparedContextForLaunchRecordMode(rec, restoreDesc != nil); err != nil {
+		return fmt.Errorf("prepared bootstrap launch validation: %w", err)
+	} else if context != nil && restoreDesc == nil {
+		return fmt.Errorf("prepared bootstrap launch validation: prepared run appeared after launch identity capture")
+	}
+	revalidatePrepared := func(stage string) error {
+		if preparedLaunchContext == nil {
+			return nil
+		}
+		if err := revalidatePreparedBootstrapPromptForLaunchMode(rec, preparedPrompt, preparedLaunchContext, restoreDesc != nil); err != nil {
+			return fmt.Errorf("prepared launch changed before %s: accepted prepared launch identity no longer matches: %w", stage, err)
+		}
+		return nil
+	}
+	if err := revalidatePrepared("launch plan observer"); err != nil {
+		return err
+	}
+	if launchPlanObserver != nil {
+		launchPlanObserver(rec, append([]string(nil), effectiveChildArgs...))
+	}
+
+	// Build the coop exec invocation. Done before any disk writes so
+	// --dry-run is a true preview with zero side effects. --session NAME
+	// is amq shorthand for --root .agent-mail/<name>; passing both is
+	// rejected by amq, so prefer --session when callers supplied both
+	// (matching the resolveAMQEnvInDir boundary policy). The same warning
+	// fires once at env resolution time, so this branch stays silent to
+	// avoid duplicating the message.
+	exactRootPin := launchUsesExplicitRoot(rootForLaunch, *session, teamProfileValue)
+	coopArgs := []string{"coop", "exec"}
+	if exactRootPin {
+		coopArgs = append(coopArgs, "--root", rootForLaunch)
+	} else if *session != "" {
+		coopArgs = append(coopArgs, "--session", *session)
+	} else if rootForLaunch != "" {
+		coopArgs = append(coopArgs, "--root", rootForLaunch)
+	}
+	if *me != "" {
+		coopArgs = append(coopArgs, "--me", *me)
+	} else if exactRootPin {
+		// The exact-root child shim changes the executable AMQ sees from the
+		// agent binary to `env`. Keep handle derivation tied to the already
+		// resolved agent identity instead of letting AMQ derive "env".
+		coopArgs = append(coopArgs, "--me", handle)
+	}
+	// Fail the launch at the door when the wake sidecar cannot start and
+	// acquire its lock, instead of detecting a missing/orphaned wake later
+	// (#30). Version-gated: amq grew --require-wake in 0.34.1, and an empty
+	// or unparseable reported version omits the flag so older amq builds
+	// never see an unknown flag. --no-require-wake is the escape hatch for
+	// TIOCSTI-hostile environments where wake can't acquire its lock but the
+	// operator wants the agent anyway.
+	if !*noRequireWake && amqSupportsRequireWake(env.AMQVersion) {
+		coopArgs = append(coopArgs, "--require-wake")
+	}
+	if *noGitignore {
+		if !amqSupportsNoGitignore(env.AMQVersion) {
+			return fmt.Errorf("--no-gitignore requires amq %s or newer (found %s)", minNoGitignoreAMQVersion, versionOrUnknown(env.AMQVersion))
+		}
+		coopArgs = append(coopArgs, "--no-gitignore")
+	}
+	if wakeInjectViaValue != "" {
+		if !amqSupportsWakeInject(env.AMQVersion) {
+			return fmt.Errorf("--wake-inject-via requires amq %s or newer (found %s)", minWakeInjectAMQVersion, versionOrUnknown(env.AMQVersion))
+		}
+		coopArgs = append(coopArgs, "--wake-inject-via", wakeInjectViaValue)
+		for _, arg := range wakeInjectArgValues {
+			coopArgs = append(coopArgs, "--wake-inject-arg="+arg)
+		}
+	}
+	if wakeInjectModeValue != "" {
+		if !amqSupportsWakeInjectMode(env.AMQVersion) {
+			return fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
+		}
+		coopArgs = append(coopArgs, "--wake-inject-mode", wakeInjectModeValue)
+	}
+	// A custom launcher is exec'd in place of the binary. Launcher args precede
+	// the agent's normal child args; the launcher is expected to forward the
+	// trailing args to the binary so bootstrap and default args still reach it.
+	target := binary
+	trailing := effectiveChildArgs
+	if launcher != "" {
+		target = launcher
+		trailing = append(append([]string(nil), launcherArgs...), effectiveChildArgs...)
+	}
+	if exactRootPin {
+		target, trailing = exactRootChildCommand(target, trailing)
+	}
+	coopArgs = append(coopArgs, target)
+	if len(trailing) > 0 {
+		coopArgs = append(coopArgs, "--")
+		coopArgs = append(coopArgs, trailing...)
+	}
+
+	if *dryRun {
+		fmt.Println(shellCommand("amq", coopArgs...))
+		if *symphony {
+			fmt.Fprintf(os.Stderr, "(dry run - would patch existing %s with AMQ Symphony hooks pinned to root %s and handle %s; no files written)\n",
+				filepath.Join(cwd, "WORKFLOW.md"), root, handle)
+		}
+		quietNotice("(dry run - no files written, not execing)\n")
+		verbosePolicyEcho()
+		return nil
 	}
 	if err := validateManagedTmuxLaunch(rec); err != nil {
 		return err
@@ -611,12 +756,18 @@ Examples:
 	// applies the same skip rule bootstrap uses (explicit --team-home or
 	// cwd-with-team-rules-md only) so the two sources stay aligned.
 	if briefHome := resolveBriefHome(*teamHome, cwd); briefHome != "" {
+		if err := revalidatePrepared("brief preparation"); err != nil {
+			return err
+		}
 		if _, _, err := ensureBriefStubForProfile(briefHome, rec.TeamProfile, rec.Session); err != nil {
 			return fmt.Errorf("ensure brief: %w", err)
 		}
 	}
 
 	if rec.Symphony {
+		if err := revalidatePrepared("symphony initialization"); err != nil {
+			return err
+		}
 		workflow := filepath.Join(cwd, "WORKFLOW.md")
 		if err := runSymphonyInit(symphonyInitConfig{Workflow: workflow, Root: root, Me: handle}); err != nil {
 			return err
@@ -624,17 +775,44 @@ Examples:
 		quietNotice("symphony: patched %s with AMQ lifecycle hooks for %s (root %s)\n", workflow, handle, root)
 	}
 
-	if err := launch.Write(agentDir, rec); err != nil {
+	if err := revalidatePrepared("record write"); err != nil {
+		return err
+	}
+	expectedRestoreDigest := ""
+	if restoreDesc != nil {
+		expectedRestoreDigest = restoreDesc.RecordDigest
+	}
+	recordWrite, err := writeLaunchRecordWithSnapshot(agentDir, rec, expectedRestoreDigest)
+	if err != nil {
 		return fmt.Errorf("write launch record: %w", err)
+	}
+	rollbackLaunchRecord := func(cause error) error {
+		_, rollbackErr := rollbackLaunchRecordIfCurrent(agentDir, recordWrite)
+		if rollbackErr != nil {
+			return fmt.Errorf("%w; launch record rollback failed: %v", cause, rollbackErr)
+		}
+		return cause
+	}
+	if err := preparedLaunchAfterRecordWrite(rec); err != nil {
+		return rollbackLaunchRecord(err)
+	}
+	if err := revalidatePrepared("post-write launch record admission"); err != nil {
+		return rollbackLaunchRecord(err)
 	}
 
 	// Seed role.md from the catalog when the role is known, or from a staged
 	// custom-role document under the team-home. Never overwrites user edits.
 	if *roleFlag != "" {
+		if err := revalidatePrepared("role seed"); err != nil {
+			return rollbackLaunchRecord(err)
+		}
 		roleHome := resolveBriefHome(*teamHome, cwd)
 		if err := seedRoleStub(agentDir, *roleFlag, roleHome); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: seed role.md: %v\n", err)
 		}
+	}
+	if err := revalidatePrepared("session rename scheduling"); err != nil {
+		return rollbackLaunchRecord(err)
 	}
 	if err := maybeScheduleClaudeSessionRename(rec); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: schedule Claude session rename: %v\n", err)
@@ -644,6 +822,9 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("amq not found in PATH: %w", err)
 	}
+	if err := revalidatePrepared("exec"); err != nil {
+		return rollbackLaunchRecord(err)
+	}
 	// Strip inherited AMQ identity vars before exec'ing coop exec. We already
 	// resolved the right --root/--session/--me on the command line; passing a
 	// stale AM_ROOT/AM_ME from the launching shell along to the agent would
@@ -651,8 +832,85 @@ Examples:
 	return execAMQCoop(amqBin, coopArgs)
 }
 
+type launchRecordWriteSnapshot struct {
+	Previous *launch.Record
+	Written  launch.Record
+}
+
+func writeLaunchRecordWithSnapshot(agentDir string, rec launch.Record, expectedRestoreDigest string) (launchRecordWriteSnapshot, error) {
+	var snapshot launchRecordWriteSnapshot
+	err := launch.WithRecordLock(agentDir, func() error {
+		previous, err := launch.Read(agentDir)
+		switch {
+		case err == nil:
+			snapshot.Previous = &previous
+			if expectedRestoreDigest != "" && preparedRestoreRecordDigest(previous) != expectedRestoreDigest {
+				return fmt.Errorf("prepared restore persisted launch record changed before CAS")
+			}
+		case !os.IsNotExist(err):
+			return fmt.Errorf("snapshot existing launch record: %w", err)
+		case expectedRestoreDigest != "":
+			return fmt.Errorf("prepared restore persisted launch record is missing")
+		}
+		if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
+			return err
+		}
+		written, err := launch.Read(agentDir)
+		if err != nil {
+			return fmt.Errorf("read written launch record: %w", err)
+		}
+		snapshot.Written = written
+		return nil
+	})
+	return snapshot, err
+}
+
+func rollbackLaunchRecordIfCurrent(agentDir string, snapshot launchRecordWriteSnapshot) (bool, error) {
+	applied := false
+	err := launch.WithRecordLock(agentDir, func() error {
+		current, err := launch.Read(agentDir)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read current launch record: %w", err)
+		}
+		if !reflect.DeepEqual(current, snapshot.Written) {
+			return nil
+		}
+		if snapshot.Previous != nil {
+			if err := launch.WriteUnderRecordLock(agentDir, *snapshot.Previous); err != nil {
+				return err
+			}
+			applied = true
+			return nil
+		}
+		if err := os.Remove(launch.Path(agentDir)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		applied = true
+		return nil
+	})
+	return applied, err
+}
+
+// exactRootChildCommand removes AM_SESSION at the final child boundary for a
+// named-profile exact-root launch. AMQ 0.43.1 correctly selects the explicit
+// root but exports AM_SESSION as an empty variable; amq-squad's context
+// contract deliberately distinguishes an omitted session from an explicitly
+// empty, malformed identity. Running the real target through env -u preserves
+// AMQ's wake/coop setup while ensuring the exec'd agent receives the canonical
+// exact-root tuple. All managed up, wizard/run-start, resume, and dynamic member
+// paths converge through runLaunch, so the correction lives at one boundary.
+func exactRootChildCommand(target string, trailing []string) (string, []string) {
+	args := make([]string, 0, len(trailing)+3)
+	args = append(args, "-u", "AM_SESSION", target)
+	args = append(args, trailing...)
+	return "env", args
+}
+
 func execAMQCoop(amqBin string, coopArgs []string) error {
-	env := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
+	env := amqexec.NoUpdateCheckEnv(envWithoutPreparedRunRestore(envWithoutPreparedRunToken(envWithoutAMQIdentity(os.Environ()))))
 	return amqSyscallExec(amqBin, append([]string{"amq"}, coopArgs...), env)
 }
 

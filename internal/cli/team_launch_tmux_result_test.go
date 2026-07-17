@@ -170,6 +170,34 @@ func TestRunTmuxNewSessionWithResultCapturesExactFirstPaneBeforeSend(t *testing.
 	}
 }
 
+func TestRunTmuxNewSessionResumeStageReusesExistingLeadSession(t *testing.T) {
+	t.Setenv("TMUX", "")
+	oldExists := tmuxSessionExists
+	tmuxSessionExists = func(session string) bool { return session == "squad" }
+	t.Cleanup(func() { tmuxSessionExists = oldExists })
+	runCalls := stubTmuxResultCommands(t, func(name string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "new-session" {
+			t.Fatalf("dependent stage must not recreate the lead session: %s %s", name, strings.Join(args, " "))
+		}
+		if len(args) > 0 && args[0] == "split-window" {
+			return "%10\n", nil
+		}
+		return "", fmt.Errorf("unexpected output command: %s %s", name, strings.Join(args, " "))
+	})
+
+	err := runTmuxLaunchPlan(tmuxLaunchPlan{
+		Session: "squad", Workstream: "issue-473", Target: "new-session", Layout: "vertical", AllowExistingSession: true,
+		Panes: []teamLaunchPane{{Role: "qa", CWD: "/repo", Command: "worker-command"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(*runCalls, "\n")
+	if !strings.Contains(joined, "select-pane -t %10 -T amq:issue-473:qa") || !strings.Contains(joined, "send-keys -t %10") {
+		t.Fatalf("dependent stage calls = %s", joined)
+	}
+}
+
 func TestTmuxLaunchResultRejectsNameLikePaneAndWindowTargets(t *testing.T) {
 	oldOutput := tmuxOutputCommand
 	t.Cleanup(func() { tmuxOutputCommand = oldOutput })
@@ -180,5 +208,201 @@ func TestTmuxLaunchResultRejectsNameLikePaneAndWindowTargets(t *testing.T) {
 	tmuxOutputCommand = func(string, ...string) (string, error) { return "main", nil }
 	if _, err := tmuxLaunchResult([]teamLaunchPane{{Role: "cto"}}, []string{"%2"}); err == nil || !strings.Contains(err.Error(), "exact") {
 		t.Fatalf("name-like window error = %v", err)
+	}
+}
+
+func TestPreparedRunGuardRollsBackCurrentWindowBeforeSecondPane(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%1")
+	nextPane := 1
+	runCalls := stubTmuxResultCommands(t, func(name string, args ...string) (string, error) {
+		call := strings.Join(args, " ")
+		switch {
+		case strings.Contains(call, "#{session_name}:#{window_index}"):
+			return "operator:0\n", nil
+		case len(args) > 0 && args[0] == "split-window":
+			nextPane++
+			return fmt.Sprintf("%%%d\n", nextPane), nil
+		default:
+			return "", fmt.Errorf("unexpected output command: %s %s", name, call)
+		}
+	})
+	guards := 0
+	_, err := runTmuxLaunchPlanWithResult(tmuxLaunchPlan{
+		Session: "unused", Workstream: "pinned", Target: "current-window", Layout: "tiled",
+		Panes: []teamLaunchPane{{Role: "cto", CWD: "/repo", Command: "cto"}, {Role: "qa", CWD: "/repo", Command: "qa"}},
+		PreparedRunGuard: func(stage, role string) error {
+			guards++
+			if stage == "pane creation" && role == "qa" {
+				return fmt.Errorf("prepared generation changed")
+			}
+			return nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "generation changed") {
+		t.Fatalf("guard error=%v", err)
+	}
+	joined := strings.Join(*runCalls, "\n")
+	if guards != 2 || !strings.Contains(joined, "kill-pane -t %2") || strings.Contains(joined, "send-keys") || nextPane != 2 {
+		t.Fatalf("guards=%d next=%d calls=%s", guards, nextPane, joined)
+	}
+}
+
+func TestPreparedRunGuardRollsBackNewWindowsBeforeSecondMember(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%1")
+	nextPane := 1
+	runCalls := stubTmuxResultCommands(t, func(name string, args ...string) (string, error) {
+		call := strings.Join(args, " ")
+		switch {
+		case strings.Contains(call, "#{session_name}"):
+			return "operator\n", nil
+		case len(args) > 0 && args[0] == "new-window":
+			nextPane++
+			return fmt.Sprintf("%%%d\n", nextPane), nil
+		default:
+			return "", fmt.Errorf("unexpected output command: %s %s", name, call)
+		}
+	})
+	_, err := runTmuxWindowsPlanWithResult(tmuxLaunchPlan{
+		Session: "unused", Workstream: "pinned", Target: "new-window", Layout: "tiled",
+		Panes: []teamLaunchPane{{Role: "cto", CWD: "/repo", Command: "cto"}, {Role: "qa", CWD: "/repo", Command: "qa"}},
+		PreparedRunGuard: func(stage, role string) error {
+			if stage == "window creation" && role == "qa" {
+				return fmt.Errorf("prepared digest changed")
+			}
+			return nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "digest changed") {
+		t.Fatalf("guard error=%v", err)
+	}
+	joined := strings.Join(*runCalls, "\n")
+	if !strings.Contains(joined, "kill-window -t %2") || strings.Contains(joined, "send-keys") || nextPane != 2 {
+		t.Fatalf("next=%d calls=%s", nextPane, joined)
+	}
+}
+
+func TestPreparedRunGuardSurfacesPrimaryAndCleanupFailure(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%1")
+	oldOutput, oldRun := tmuxOutputCommand, tmuxRunCommand
+	t.Cleanup(func() { tmuxOutputCommand, tmuxRunCommand = oldOutput, oldRun })
+	tmuxOutputCommand = func(_ string, args ...string) (string, error) {
+		call := strings.Join(args, " ")
+		if strings.Contains(call, "#{session_name}:#{window_index}") {
+			return "operator:0\n", nil
+		}
+		if len(args) > 0 && args[0] == "split-window" {
+			return "%2\n", nil
+		}
+		return "", fmt.Errorf("unexpected output command %s", call)
+	}
+	tmuxRunCommand = func(_ string, args ...string) error {
+		if len(args) > 0 && args[0] == "kill-pane" {
+			return fmt.Errorf("cleanup kill-pane failed")
+		}
+		return nil
+	}
+	_, err := runTmuxLaunchPlanWithResult(tmuxLaunchPlan{
+		Session: "unused", Workstream: "pinned", Target: "current-window", Layout: "tiled",
+		Panes: []teamLaunchPane{{Role: "cto", CWD: "/repo", Command: "cto"}, {Role: "qa", CWD: "/repo", Command: "qa"}},
+		PreparedRunGuard: func(stage, role string) error {
+			if stage == "pane creation" && role == "qa" {
+				return fmt.Errorf("primary prepared token failure")
+			}
+			return nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "primary prepared token failure") || !strings.Contains(err.Error(), "cleanup kill-pane failed") {
+		t.Fatalf("joined rollback error=%v", err)
+	}
+}
+
+func TestPreparedRunGuardBarrierRunsForAllRolesBeforeAnySend(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		target     string
+		windowMode bool
+	}{
+		{name: "current-window", target: "current-window"},
+		{name: "new-window", target: "new-window", windowMode: true},
+		{name: "external-remaining-workers", target: "current-window"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+			t.Setenv("TMUX_PANE", "%1")
+			nextPane := 1
+			calls := stubTmuxResultCommands(t, func(name string, args ...string) (string, error) {
+				call := strings.Join(args, " ")
+				switch {
+				case strings.Contains(call, "#{session_name}:#{window_index}"):
+					return "operator:0\n", nil
+				case strings.Contains(call, "#{session_name}"):
+					return "operator\n", nil
+				case len(args) > 0 && (args[0] == "split-window" || args[0] == "new-window"):
+					nextPane++
+					return fmt.Sprintf("%%%d\n", nextPane), nil
+				case strings.Contains(call, "#{window_id}"):
+					if tc.windowMode {
+						if strings.Contains(call, "-t %2") {
+							return "@2\n", nil
+						}
+						return "@3\n", nil
+					}
+					return "@1\n", nil
+				default:
+					return "", fmt.Errorf("unexpected output command: %s %s", name, call)
+				}
+			})
+			roles := []teamLaunchPane{{Role: "cto", CWD: "/repo", Command: "cto"}, {Role: "qa", CWD: "/repo", Command: "qa"}}
+			if tc.name == "external-remaining-workers" {
+				roles = []teamLaunchPane{{Role: "qa", CWD: "/repo", Command: "qa"}, {Role: "reviewer", CWD: "/repo", Command: "reviewer"}}
+			}
+			plan := tmuxLaunchPlan{Session: "unused", Workstream: "pinned", Target: tc.target, Layout: "tiled", Panes: roles}
+			barriers := 0
+			plan.PreparedRunGuard = func(stage, role string) error {
+				if stage == "command barrier" {
+					barriers++
+					if role == roles[1].Role {
+						return fmt.Errorf("forced barrier drift")
+					}
+				}
+				return nil
+			}
+			var err error
+			if tc.windowMode {
+				_, err = runTmuxWindowsPlanWithResult(plan)
+			} else {
+				_, err = runTmuxLaunchPlanWithResult(plan)
+			}
+			if err == nil || !strings.Contains(err.Error(), "forced barrier drift") {
+				t.Fatalf("barrier error=%v", err)
+			}
+			joined := strings.Join(*calls, "\n")
+			if barriers != 2 || strings.Contains(joined, "send-keys") {
+				t.Fatalf("barriers=%d calls=%s", barriers, joined)
+			}
+		})
+	}
+}
+
+func TestCompleteTeamLaunchResultFailsClosed(t *testing.T) {
+	panes := []teamLaunchPane{{Role: "cto"}, {Role: "qa"}}
+	for _, tc := range []struct {
+		name   string
+		target string
+		result teamLaunchResult
+	}{
+		{name: "missing", result: teamLaunchResult{Panes: []teamLaunchResultPane{{Role: "cto", PaneID: "%1", WindowID: "@1"}}}},
+		{name: "duplicate-role", result: teamLaunchResult{Panes: []teamLaunchResultPane{{Role: "cto", PaneID: "%1", WindowID: "@1"}, {Role: "cto", PaneID: "%2", WindowID: "@1"}}}},
+		{name: "duplicate-pane", result: teamLaunchResult{Panes: []teamLaunchResultPane{{Role: "cto", PaneID: "%1", WindowID: "@1"}, {Role: "qa", PaneID: "%1", WindowID: "@1"}}}},
+		{name: "duplicate-new-window", target: "new-window", result: teamLaunchResult{Panes: []teamLaunchResultPane{{Role: "cto", PaneID: "%1", WindowID: "@1"}, {Role: "qa", PaneID: "%2", WindowID: "@1"}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateCompleteTeamLaunchResult(panes, tc.target, tc.result); err == nil {
+				t.Fatal("incomplete or duplicate result unexpectedly accepted")
+			}
+		})
 	}
 }

@@ -107,22 +107,29 @@ func applyMemberEffortCatalogMode(member *team.Member, effort string, catalog ag
 func memberEffort(member team.Member) string {
 	binary := normalizedAgentBinary(member.Binary)
 	args := member.ExtraArgs()
+	effort := effortAutomatic
 	for i := 0; i < len(args); i++ {
 		if binary == "codex" {
 			if value, consumed, ok := codexEffortArg(args, i); ok {
-				return value
+				effort = value
+				if consumed {
+					i++
+				}
+				continue
 			} else if consumed {
 				i++
 			}
 		}
 		if binary == "claude" && args[i] == "--effort" && i+1 < len(args) {
-			return args[i+1]
+			i++
+			effort = args[i]
+			continue
 		}
 		if binary == "claude" && strings.HasPrefix(args[i], "--effort=") {
-			return strings.TrimPrefix(args[i], "--effort=")
+			effort = strings.TrimPrefix(args[i], "--effort=")
 		}
 	}
-	return effortAutomatic
+	return effort
 }
 
 // applyLaunchEffortOverrides returns an ephemeral roster copy with only the

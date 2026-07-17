@@ -287,10 +287,11 @@ func discoverRunStartWizardSession(t team.Team, profile, session string, source 
 	planningTeam.Members = active
 	plans := make([]resumePlan, 0, len(active))
 	recordCount := 0
+	replacement := newBatchReplacementPaneResolver()
 	for _, member := range orderedTeamMembers(active) {
 		plan, err := runStartWizardPlanMemberResume(memberPlanInput{
 			Member: member, Team: planningTeam, Workstream: session, Mode: resumeModeDefault,
-			SquadBin: teamSquadBin(), BinaryArgs: t.BinaryArgs, Trust: string(trustModeSandboxed), Profile: profile, Probe: defaultDuplicateLaunchProbe,
+			SquadBin: teamSquadBin(), BinaryArgs: t.BinaryArgs, Trust: string(trustModeSandboxed), Profile: profile, Probe: defaultDuplicateLaunchProbe, Replacement: replacement,
 		})
 		if err != nil {
 			plans = append(plans, resumePlan{Role: member.Role, Action: resumeBlocked, Note: err.Error()})

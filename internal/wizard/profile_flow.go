@@ -363,6 +363,7 @@ func (s *Spec) clearDownstreamRunAnswers() {
 	s.ExternalLead = false
 	s.Goal = ""
 	s.SeedFrom = ""
+	s.clearGoalBinding()
 	s.RedeliverGoal = false
 }
 

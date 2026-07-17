@@ -8,13 +8,67 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
+
+const acceptedRunStartTestGoal = "Execute the accepted run-start fixture"
+
+// prepareRunStartTestInvocation upgrades a legacy live-launch fixture to the
+// accepted two-phase contract. The returned argv performs only the live phase.
+// Omitted live flags now hydrate and deliver the accepted goal, so legacy tests
+// get a successful delivery seam unless they explicitly preserve a seam that
+// exercises delivery behavior.
+func prepareRunStartTestInvocation(t *testing.T, args []string, preserveGoalDeliverySeam ...bool) []string {
+	t.Helper()
+	base := make([]string, 0, len(args)+2)
+	for _, arg := range args {
+		if arg != "--go" {
+			base = append(base, arg)
+		}
+	}
+	hasShape, hasGoal := false, false
+	for _, arg := range base {
+		hasShape = hasShape || arg == "--launch-shape"
+		hasGoal = hasGoal || arg == "--goal"
+	}
+	if !hasShape {
+		base = append(base, "--launch-shape", runwizard.LaunchShapeWorkingTeamTogether)
+	}
+	prepareArgs := append([]string{}, base...)
+	if !hasGoal {
+		prepareArgs = append(prepareArgs, "--goal", acceptedRunStartTestGoal)
+	}
+	prepareArgs = append(prepareArgs, "--prepare")
+	if _, _, err := captureOutput(t, func() error { return runRunStart(prepareArgs, "test") }); err != nil {
+		t.Fatalf("prepare accepted run-start fixture: %v", err)
+	}
+	if len(preserveGoalDeliverySeam) == 0 || !preserveGoalDeliverySeam[0] {
+		stubSuccessfulRunStartGoalDelivery(t)
+	}
+	return append(base, "--go")
+}
+
+func stubSuccessfulRunStartGoalDelivery(t *testing.T) {
+	t.Helper()
+	prevGoal := runStartGoalWithVersion
+	prevReady := runStartLeadReadyCheck
+	runStartGoalWithVersion = func([]string, string) error { return nil }
+	runStartLeadReadyCheck = func(string, string, string, string) (runStartLeadReadiness, error) {
+		return runStartLeadReadiness{Ready: true, Detail: "test lead ready"}, nil
+	}
+	t.Cleanup(func() {
+		runStartGoalWithVersion = prevGoal
+		runStartLeadReadyCheck = prevReady
+	})
+}
 
 // withStubbedTmux swaps orchestrateTmuxRun for a recorder and restores it.
 func withStubbedTmux(t *testing.T) *[][]string {
@@ -58,10 +112,12 @@ func stubCurrentRunStartPane(t *testing.T, paneID string) {
 func stubRunStartLeadWake(t *testing.T) {
 	t.Helper()
 	prev := leadWakeStarter
+	prevSignal := externalLeadWakeProcessGroupSignal
 	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
 		return leadWakeResult{PID: 1234, Started: true, Detail: "ready"}, nil
 	}
-	t.Cleanup(func() { leadWakeStarter = prev })
+	externalLeadWakeProcessGroupSignal = func(int, syscall.Signal) error { return syscall.ESRCH }
+	t.Cleanup(func() { leadWakeStarter, externalLeadWakeProcessGroupSignal = prev, prevSignal })
 }
 
 func TestGlobalStartPreviewDoesNotLaunch(t *testing.T) {
@@ -146,10 +202,86 @@ func TestRunCmdDispatch(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unknown 'run' subcommand") {
 		t.Fatalf("expected unknown-subcommand error, got %v", err)
 	}
-	_, _, err = captureOutput(t, func() error { return runRunCmd([]string{"-h"}, "test") })
+	out, errOut, err := captureOutput(t, func() error { return runRunCmd([]string{"-h"}, "test") })
 	if err != nil {
 		t.Fatalf("run -h should not error, got %v", err)
 	}
+	help := out + errOut
+	for _, want := range []string{
+		"--launch-shape working-team-together|lead-only-staged",
+		"--prepare-plan | --prepare | --readiness-json | --go",
+		"--goal-source SOURCE", "--goal-digest SHA256", "--staged-roles", "--tool-profile",
+		"Prepare coordination artifacts? [y/N]", "Launch now? [y/N]",
+		"two separate default-No approvals",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("run help missing %q:\n%s", want, help)
+		}
+	}
+}
+
+func TestRunStartOperatorDocsCarryCompletePreparationAndLaunchContract(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	for _, rel := range []string{
+		"README.md",
+		filepath.Join("docs", "skills.md"),
+		filepath.Join("docs", "global-orchestrator-runbook.md"),
+		filepath.Join("docs", "issue-393-layout-smoke.md"),
+		filepath.Join("plugins", "skills-src", "wizard", "SKILL.md"),
+	} {
+		data, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		body := string(data)
+		for _, want := range []string{"--prepare-plan", "--prepare", "--readiness-json", "--go", "--launch-shape", "--goal-source", "--goal-digest", "default-No"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s missing operator launch contract token %q", rel, want)
+			}
+		}
+		for _, command := range directRunStartGoExamples(body) {
+			for _, want := range []string{"--launch-shape", "--goal-source", "--goal-digest"} {
+				if !strings.Contains(command, want) {
+					t.Errorf("%s has direct run-start launch without %s:\n%s", rel, want, command)
+				}
+			}
+		}
+	}
+	readme, err := os.ReadFile(filepath.Join(repoRoot, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(readme), "--external-lead") < 4 {
+		t.Fatalf("README external-lead example must carry proposal, prepare, readiness, and launch stages")
+	}
+}
+
+func directRunStartGoExamples(body string) []string {
+	lines := strings.Split(body, "\n")
+	var commands []string
+	for i := 0; i < len(lines); i++ {
+		if !strings.Contains(lines[i], "amq-squad run start") {
+			continue
+		}
+		command := strings.TrimSpace(lines[i])
+		for strings.HasSuffix(command, "\\") && i+1 < len(lines) {
+			i++
+			command += " " + strings.TrimSpace(lines[i])
+		}
+		if docCommandHasFlag(command, "--go") {
+			commands = append(commands, command)
+		}
+	}
+	return commands
+}
+
+func docCommandHasFlag(command, flag string) bool {
+	for _, field := range strings.Fields(command) {
+		if field == flag || strings.HasPrefix(field, flag+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRunStartRequiresProjectAndSession(t *testing.T) {
@@ -172,18 +304,16 @@ func TestRunStartLayoutPresetRefusesExistingWorkstreamBeforeLaunch(t *testing.T)
 	})
 	backend := useFakeTmuxBackend(t)
 	base := setupFakeAMQSessionRoots(t)
+	liveArgs := prepareRunStartTestInvocation(t, []string{
+		"--project", dir, "--session", "sess", "--layout-preset", layoutPresetOneWindowPerAgent, "--go",
+	})
 	if err := os.MkdirAll(filepath.Join(base, "sess"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stubCurrentRunStartPane(t, "%42")
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{
-			"--project", dir,
-			"--session", "sess",
-			"--layout-preset", layoutPresetOneWindowPerAgent,
-			"--go",
-		}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err == nil || !strings.Contains(err.Error(), `workstream session "sess" already exists`) {
 		t.Fatalf("layout-preset existing-session error = %v, want collision refusal", err)
@@ -215,6 +345,14 @@ func TestRunStartExternalLeadPreviewExistingProfileIsReadOnlyAndWorkerOnly(t *te
 	if !strings.Contains(out, "orchestrated run (external lead)") || !strings.Contains(out, "Preview OK") {
 		t.Fatalf("preview output missing external-lead/ok text:\n%s", out)
 	}
+	for _, want := range []string{"--prepare-plan", "--prepare", "--readiness-json", "--launch-shape", "--goal-source", "--goal-digest", "Keep --external-lead on every stage"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("external-lead preview missing staged contract %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Re-run with --external-lead --go") {
+		t.Fatalf("external-lead preview must not jump from proposal to launch:\n%s", out)
+	}
 	if len(backend.dryRuns) != 1 || len(backend.teams) != 1 {
 		t.Fatalf("expected one worker dry-run, got dryRuns=%d teams=%d", len(backend.dryRuns), len(backend.teams))
 	}
@@ -243,6 +381,11 @@ func TestRunStartExternalLeadPreviewFreshProfileDoesNotWriteTeam(t *testing.T) {
 	if !strings.Contains(out, "Spawn validation is deferred") {
 		t.Fatalf("fresh preview should explain deferred worker validation:\n%s", out)
 	}
+	for _, want := range []string{"--prepare-plan", "--prepare", "--readiness-json", "--launch-shape", "--goal-source", "--goal-digest", "Keep --external-lead on every stage"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("fresh external-lead preview missing staged contract %q:\n%s", want, out)
+		}
+	}
 	if _, err := os.Stat(filepath.Join(dir, ".amq-squad")); !os.IsNotExist(err) {
 		t.Fatalf("fresh preview must not write .amq-squad, stat err=%v", err)
 	}
@@ -264,9 +407,10 @@ func TestRunStartExternalLeadGoBindsLeadAndSpawnsOnlyWorkers(t *testing.T) {
 	backend := useFakeTmuxBackend(t)
 	stubCurrentRunStartPane(t, "%42")
 	stubRunStartLeadWake(t)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("external-lead --go: %v", err)
@@ -343,12 +487,13 @@ func TestRunStartExternalLeadRefusesExistingWorkstreamBeforeWrites(t *testing.T)
 		},
 	})
 	stubCurrentRunStartPane(t, "%42")
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
 	if err := os.MkdirAll(filepath.Join(base, "sess"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err == nil || !strings.Contains(err.Error(), "session \"sess\" already exists") {
 		t.Fatalf("expected existing workstream refusal, got %v", err)
@@ -370,13 +515,16 @@ func TestRunStartExternalLeadMissingTmuxFailsPreviewAndGoBeforeWrites(t *testing
 					{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
 				},
 			})
+			args := []string{"-p", dir, "-s", "sess", "--external-lead", "--visibility", "detached"}
+			if goMode {
+				stubCurrentRunStartPane(t, "%42")
+				args = prepareRunStartTestInvocation(t, append(args, "--go"))
+				currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+					return nil, nil
+				}
+			}
 			t.Setenv("TMUX", "")
 			t.Setenv("TMUX_PANE", "")
-
-			args := []string{"-p", dir, "-s", "sess", "--external-lead"}
-			if goMode {
-				args = append(args, "--go")
-			}
 			_, _, err := captureOutput(t, func() error {
 				return runRunStart(args, "test")
 			})
@@ -396,7 +544,10 @@ func TestRunStartExternalLeadFreshLeadValidationBeforeTeamWrite(t *testing.T) {
 	stubCurrentRunStartPane(t, "%42")
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "qa", "--lead", "cto", "--external-lead", "--go"}, "test")
+		return runRunStart([]string{
+			"-p", dir, "-s", "sess", "--roles", "qa", "--lead", "cto", "--external-lead",
+			"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether, "--goal", acceptedRunStartTestGoal, "--prepare",
+		}, "test")
 	})
 	if err == nil || !strings.Contains(err.Error(), "not included in --roles") {
 		t.Fatalf("expected pre-write lead validation error, got %v", err)
@@ -435,9 +586,10 @@ func TestRunStartExternalLeadGoalDeliveredToBoundLead(t *testing.T) {
 		func(time.Duration) {},
 		time.Now,
 	)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--goal", "ship it", "--go"}, true)
 
 	if _, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--goal", "ship it", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	}); err != nil {
 		t.Fatalf("external-lead --goal --go: %v", err)
 	}
@@ -455,6 +607,87 @@ func TestRunStartExternalLeadGoalDeliveredToBoundLead(t *testing.T) {
 	}
 }
 
+func TestRunStartGoHydratesOmittedAcceptedGoalAcrossBinariesAndLeadModes(t *testing.T) {
+	for _, binary := range []string{"codex", "claude"} {
+		for _, external := range []bool{false, true} {
+			name := binary + "/managed"
+			if external {
+				name = binary + "/external"
+			}
+			t.Run(name, func(t *testing.T) {
+				dir := seedTeam(t, team.Team{
+					Orchestrated: true, Lead: "cto",
+					Members: []team.Member{
+						{Role: "cto", Binary: binary, Handle: "cto", Session: "sess"},
+						{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+					},
+				})
+				args := []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--go"}
+				if external {
+					useFakeTmuxBackend(t)
+					stubCurrentRunStartPane(t, "%42")
+					stubRunStartLeadWake(t)
+					args = append(args, "--external-lead")
+				}
+				liveArgs := prepareRunStartTestInvocation(t, args)
+				var goalCalls [][]string
+				stubRunStartGoalDelivery(t,
+					func([]string, string) error { return nil },
+					func(args []string, _ string) error {
+						goalCalls = append(goalCalls, append([]string(nil), args...))
+						return nil
+					},
+					func(string, string, string, string) (runStartLeadReadiness, error) {
+						return runStartLeadReadiness{Ready: true, Detail: "live"}, nil
+					},
+					func(time.Duration) {}, time.Now,
+				)
+				if _, _, err := captureOutput(t, func() error { return runRunStart(liveArgs, "test") }); err != nil {
+					t.Fatalf("omitted live goal must hydrate and deliver: %v", err)
+				}
+				goalValue := ""
+				if len(goalCalls) == 1 {
+					for i := 0; i+1 < len(goalCalls[0]); i++ {
+						if goalCalls[0][i] == "--goal" {
+							goalValue = goalCalls[0][i+1]
+							break
+						}
+					}
+				}
+				if len(goalCalls) != 1 || goalValue != acceptedRunStartTestGoal {
+					t.Fatalf("hydrated goal calls=%v", goalCalls)
+				}
+			})
+		}
+	}
+}
+
+func TestRunStartExternalLeadGoalMismatchBlocksBeforeRegistrationOrWorkerSpawn(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true, Lead: "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+		},
+	})
+	backend := useFakeTmuxBackend(t)
+	stubCurrentRunStartPane(t, "%42")
+	stubRunStartLeadWake(t)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--external-lead", "--go"})
+	liveArgs = append(liveArgs, "--goal", "substituted goal")
+	_, _, err := captureOutput(t, func() error { return runRunStart(liveArgs, "test") })
+	if err == nil || !strings.Contains(err.Error(), "live goal text mismatch") {
+		t.Fatalf("external mismatch error=%v", err)
+	}
+	if len(backend.launches) != 0 {
+		t.Fatalf("external mismatch spawned workers: %+v", backend.launches)
+	}
+	agentDir := filepath.Join(squadnamespace.AMQRoot(dir, team.DefaultProfile, "sess"), "agents", "cto")
+	if _, readErr := launch.Read(agentDir); !os.IsNotExist(readErr) {
+		t.Fatalf("external mismatch registered lead before validation: %v", readErr)
+	}
+}
+
 func TestRunStartExternalLeadLeadOnlyRosterReportsSuccess(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Project:      "",
@@ -467,9 +700,10 @@ func TestRunStartExternalLeadLeadOnlyRosterReportsSuccess(t *testing.T) {
 	backend := useFakeTmuxBackend(t)
 	stubCurrentRunStartPane(t, "%42")
 	stubRunStartLeadWake(t)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("lead-only external-lead --go: %v", err)
@@ -504,9 +738,11 @@ func TestRunStartExternalLeadWorkerValidationBeforeBind(t *testing.T) {
 		return leadWakeResult{PID: 1234, Started: true, Detail: "ready"}, nil
 	}
 	t.Cleanup(func() { leadWakeStarter = prev })
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
+	liveArgs = append(liveArgs[:len(liveArgs)-1], "--model", "missing=gpt-5", "--go")
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--external-lead", "--model", "missing=gpt-5", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err == nil || !strings.Contains(err.Error(), "--model has unknown role(s): missing") {
 		t.Fatalf("expected worker validation error, got %v", err)
@@ -576,8 +812,9 @@ func TestRunStartDefaultsToSiblingTabsInPreview(t *testing.T) {
 func TestRunStartGoOutsideTmuxRefusesSiblingTabsDefault(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_PANE", "")
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto", "--go"})
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err == nil {
 		t.Fatal("expected outside-tmux --go to fail under sibling-tabs default")
@@ -603,8 +840,10 @@ func TestRunStartGoInsideTmuxDefaultsToSiblingTabsBackend(t *testing.T) {
 		delete(teamLaunchBackends, "tmux")
 	})
 
+	dir := t.TempDir()
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--roles", "cto", "--go"})
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", t.TempDir(), "-s", "sess", "--roles", "cto", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("run start --go inside tmux: %v", err)
@@ -623,8 +862,9 @@ func TestRunStartFreshPersistsOperatorMode(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%42")
 	backend := useFakeTmuxBackend(t)
 	dir := t.TempDir()
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--roles", "cto", "--operator-mode", "separate_terminal", "--go"})
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "cto", "--operator-mode", "separate_terminal", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -647,8 +887,9 @@ func TestRunStartFreshPersistsNotificationsWithoutChangingOperatorMode(t *testin
 	stubHealthyNotificationWatcherSpawn(t)
 	backend := useFakeTmuxBackend(t)
 	dir := t.TempDir()
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--roles", "cto", "--operator-mode", "separate_terminal", "--operator-notifications", "--go"})
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "cto", "--operator-mode", "separate_terminal", "--operator-notifications", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -725,9 +966,10 @@ func TestRunStartGoAcceptsGenericLeadRole(t *testing.T) {
 		delete(teamLaunchBackends, "tmux")
 	})
 	dir := t.TempDir()
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--roles", "lead", "--lead", "lead", "--go"})
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "lead", "--lead", "lead", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("run start --roles lead --lead lead --go: %v", err)
@@ -811,7 +1053,7 @@ func TestRunStartExistingProfileWithRolesInfersLead(t *testing.T) {
 		t.Fatalf("setup new team: %v", err)
 	}
 	out, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "cto,qa", "--goal", "do x"}, "test")
+		return runRunStart([]string{"-p", dir, "-s", "sess", "--roles", "cto,qa", "--goal", "do x", "--launch-shape", runwizard.LaunchShapeWorkingTeamTogether}, "test")
 	})
 	if err != nil {
 		t.Fatalf("preview error: %v", err)
@@ -824,6 +1066,9 @@ func TestRunStartExistingProfileWithRolesInfersLead(t *testing.T) {
 	}
 	if !strings.Contains(out, "already exists") {
 		t.Fatalf("should note the existing profile / skipped roster:\n%s", out)
+	}
+	if !strings.Contains(out, "initial launch: 2 members - cto, qa") || strings.Contains(out, "initial launch: 0 members") {
+		t.Fatalf("existing profile summary must use its authoritative roster:\n%s", out)
 	}
 }
 
@@ -881,6 +1126,14 @@ func TestRunStartExistingProfileMixedPinsProceed(t *testing.T) {
 	}
 	if !strings.Contains(out, "Preview OK") {
 		t.Fatalf("preview should validate the runnable member:\n%s", out)
+	}
+	for _, want := range []string{"--prepare-plan", "--prepare", "--readiness-json", "--launch-shape", "--goal-source", "--goal-digest"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("managed preview missing staged contract %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Re-run with --go") {
+		t.Fatalf("managed preview must not jump from preview to launch:\n%s", out)
 	}
 }
 
@@ -943,9 +1196,10 @@ func TestRunStartGoGoalWaitsForLeadReadiness(t *testing.T) {
 		func(d time.Duration) { sleeps = append(sleeps, d) },
 		time.Now,
 	)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, true)
 
 	_, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("run start --go returned error: %v", err)
@@ -993,9 +1247,10 @@ func TestRunStartGoGoalFailurePrintsQuotedRetryCommand(t *testing.T) {
 	prevTimeout := runStartLeadReadyTimeout
 	runStartLeadReadyTimeout = time.Millisecond
 	t.Cleanup(func() { runStartLeadReadyTimeout = prevTimeout })
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", goal, "--go"}, true)
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", goal, "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err == nil {
 		t.Fatal("expected readiness timeout error")
@@ -1028,9 +1283,10 @@ func TestRunStartGoGoalDeliveryFailureAfterReadyPrintsRetryCommand(t *testing.T)
 		func(time.Duration) {},
 		time.Now,
 	)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, true)
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if !errors.Is(err, goalErr) || !strings.Contains(err.Error(), "goal delivery failed after lead became ready") {
 		t.Fatalf("expected wrapped delivery error, got %v", err)
@@ -1064,9 +1320,10 @@ func TestRunStartGoUnconfirmedGoalSubmitWarnsAndContinues(t *testing.T) {
 		func(time.Duration) {},
 		time.Now,
 	)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, true)
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("unconfirmed submit must not abort the launch, got %v", err)
@@ -1134,9 +1391,10 @@ func TestRunStartGoQueuedGoalSubmitReportsQueueAndContinues(t *testing.T) {
 		func(time.Duration) {},
 		time.Now,
 	)
+	liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, true)
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runRunStart([]string{"-p", dir, "-s", "sess", "--visibility", "detached", "--goal", "ship it", "--go"}, "test")
+		return runRunStart(liveArgs, "test")
 	})
 	if err != nil {
 		t.Fatalf("queued submit must not abort the launch, got %v", err)
@@ -1248,7 +1506,7 @@ func TestRunStartPreviewSeedFromValidatesRealSpawn(t *testing.T) {
 	if !strings.Contains(out, "Preview OK") {
 		t.Fatalf("expected Preview OK for a valid pinned team:\n%s", out)
 	}
-	if !strings.Contains(out, "--seed-from brief is written at --go") {
+	if !strings.Contains(out, "--seed-from brief is written only by an explicitly approved --prepare call") {
 		t.Fatalf("expected seed-from note:\n%s", out)
 	}
 }

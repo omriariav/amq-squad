@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -293,8 +294,10 @@ const (
 var (
 	runTmuxLaunchPlanForResume       = runTmuxLaunchPlan
 	verifyResumeExecLaunchRecordsNow = verifyResumeExecLaunchRecords
+	verifyResumeLeadReadyNow         = verifyResumeLeadReady
 	resumeExecLaunchVerifyTimeout    = 5 * time.Second
 	resumeExecLaunchVerifyInterval   = 100 * time.Millisecond
+	resumeLeadReadyTimeout           = bootstrapack.GracePeriod
 )
 
 // resumePrinterStyle parameterizes the per-entry-point output surface. The
@@ -492,6 +495,7 @@ func executeResume(r resumeExecution) error {
 	}
 
 	squadBin := teamSquadBin()
+	replacement := newBatchReplacementPaneResolver()
 	plans := make([]resumePlan, 0, len(t.Members))
 	planInputs := make(map[string]memberPlanInput, len(t.Members))
 	recordCount := 0
@@ -512,6 +516,7 @@ func executeResume(r resumeExecution) error {
 			ModelOverrides: modelOverrides,
 			Profile:        r.Profile,
 			Probe:          probe,
+			Replacement:    replacement,
 		}
 		plan, err := planMemberResume(input)
 		if err != nil {
@@ -783,13 +788,13 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 		fmt.Fprintf(os.Stderr, "skipping %s: %s\n", p.Role, p.Note)
 	}
 	snapshots := snapshotResumeExecLaunchRecords(checks)
-	if err := runTmuxLaunchPlanForResume(plan); err != nil {
+	results, err := runResumeTmuxPlanWithLeadGate(t, profile, workstream, plan, checks, snapshots)
+	if err != nil {
 		if cleanupErr := cleanupCreatedNotificationWatcherAfterLaunchFailure(t, profile, workstream, createdWatcherToken, defaultDuplicateLaunchProbe); cleanupErr != nil {
 			return fmt.Errorf("%w; notification watcher cleanup after clean resume failure: %v", err, cleanupErr)
 		}
 		return err
 	}
-	results := verifyResumeExecLaunchRecordsNow(checks, snapshots)
 	if err := resumeExecLaunchError(results); err != nil {
 		if cleanupErr := cleanupCreatedNotificationWatcherAfterLaunchFailure(t, profile, workstream, createdWatcherToken, defaultDuplicateLaunchProbe); cleanupErr != nil {
 			return fmt.Errorf("%w; notification watcher cleanup after clean resume verification failure: %v", err, cleanupErr)
@@ -802,6 +807,170 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 		}
 	}
 	return nil
+}
+
+// runResumeTmuxPlanWithLeadGate stages an orchestrated partial/full recovery so
+// no dependent pane is submitted until the configured lead is both live and
+// operator-addressable. A freshly written launch.json is only an intermediate
+// checkpoint: agent up writes it before exec/bootstrap, so it cannot authorize
+// dependents by itself.
+func runResumeTmuxPlanWithLeadGate(t team.Team, profile, workstream string, plan tmuxLaunchPlan, checks []resumeExecLaunchCheck, snapshots map[string]resumeExecLaunchSnapshot) ([]resumeExecLaunchResult, error) {
+	leadRole := strings.TrimSpace(t.Lead)
+	if !t.Orchestrated || !resumePlanHasDependents(plan, leadRole) {
+		if err := runTmuxLaunchPlanForResume(plan); err != nil {
+			return nil, err
+		}
+		return verifyResumeExecLaunchRecordsNow(checks, snapshots), nil
+	}
+	if leadRole == "" {
+		return nil, fmt.Errorf("orchestrated resume cannot launch dependents: team has no configured lead")
+	}
+
+	leadCheck, err := resumeLeadLaunchCheck(t, profile, workstream, checks, leadRole)
+	if err != nil {
+		return nil, err
+	}
+	leadPane, leadPlanned := resumeLeadPane(plan.Panes, leadRole)
+	if !leadPlanned {
+		if err := verifyResumeLeadReadyNow(leadCheck); err != nil {
+			return nil, fmt.Errorf("lead readiness failed for %s before dependent launch: %w", leadRole, err)
+		}
+		if err := runTmuxLaunchPlanForResume(plan); err != nil {
+			return nil, err
+		}
+		return verifyResumeExecLaunchRecordsNow(checks, snapshots), nil
+	}
+
+	leadPlan := plan
+	leadPlan.Panes = []teamLaunchPane{leadPane}
+	leadPlan.StartDelay = 0
+	if err := runTmuxLaunchPlanForResume(leadPlan); err != nil {
+		return nil, fmt.Errorf("launch lead %s: %w", leadRole, err)
+	}
+	leadSnapshots := map[string]resumeExecLaunchSnapshot{leadCheck.Role: snapshots[leadCheck.Role]}
+	leadResults := verifyResumeExecLaunchRecordsNow([]resumeExecLaunchCheck{leadCheck}, leadSnapshots)
+	if err := resumeExecLaunchError(leadResults); err != nil {
+		return nil, fmt.Errorf("lead launch verification failed for %s; dependent roles were not launched: %w", leadRole, err)
+	}
+	if err := verifyResumeLeadReadyNow(leadCheck); err != nil {
+		return nil, fmt.Errorf("lead readiness failed for %s; dependent roles were not launched: %w", leadRole, err)
+	}
+
+	dependentPlan := plan
+	dependentPlan.Panes = resumeDependentPanes(plan.Panes, leadRole)
+	dependentPlan.AllowExistingSession = true
+	if err := runTmuxLaunchPlanForResume(dependentPlan); err != nil {
+		return nil, err
+	}
+	dependentChecks := resumeDependentChecks(checks, leadRole)
+	dependentResults := verifyResumeExecLaunchRecordsNow(dependentChecks, snapshots)
+	return append(leadResults, dependentResults...), nil
+}
+
+func resumePlanHasDependents(plan tmuxLaunchPlan, leadRole string) bool {
+	for _, pane := range plan.Panes {
+		if !strings.EqualFold(strings.TrimSpace(pane.Role), leadRole) {
+			return true
+		}
+	}
+	return false
+}
+
+func resumeLeadPane(panes []teamLaunchPane, leadRole string) (teamLaunchPane, bool) {
+	for _, pane := range panes {
+		if strings.EqualFold(strings.TrimSpace(pane.Role), leadRole) {
+			return pane, true
+		}
+	}
+	return teamLaunchPane{}, false
+}
+
+func resumeDependentPanes(panes []teamLaunchPane, leadRole string) []teamLaunchPane {
+	out := make([]teamLaunchPane, 0, len(panes))
+	for _, pane := range panes {
+		if !strings.EqualFold(strings.TrimSpace(pane.Role), leadRole) {
+			out = append(out, pane)
+		}
+	}
+	return out
+}
+
+func resumeDependentChecks(checks []resumeExecLaunchCheck, leadRole string) []resumeExecLaunchCheck {
+	out := make([]resumeExecLaunchCheck, 0, len(checks))
+	for _, check := range checks {
+		if !strings.EqualFold(strings.TrimSpace(check.Role), leadRole) {
+			out = append(out, check)
+		}
+	}
+	return out
+}
+
+func resumeLeadLaunchCheck(t team.Team, profile, workstream string, checks []resumeExecLaunchCheck, leadRole string) (resumeExecLaunchCheck, error) {
+	for _, check := range checks {
+		if strings.EqualFold(strings.TrimSpace(check.Role), leadRole) || strings.EqualFold(strings.TrimSpace(check.Handle), leadRole) {
+			return check, nil
+		}
+	}
+	for _, member := range t.Members {
+		if !strings.EqualFold(strings.TrimSpace(member.Role), leadRole) && !strings.EqualFold(strings.TrimSpace(member.Handle), leadRole) {
+			continue
+		}
+		resolved, err := buildResumeExecLaunchChecks(t, []teamLaunchPane{{Role: member.Role, CWD: member.EffectiveCWD(t.Project)}}, profile, workstream, false)
+		if err != nil {
+			return resumeExecLaunchCheck{}, err
+		}
+		if len(resolved) == 1 {
+			return resolved[0], nil
+		}
+	}
+	return resumeExecLaunchCheck{}, fmt.Errorf("orchestrated resume cannot launch dependents: configured lead %q is not in the active roster", leadRole)
+}
+
+// verifyResumeLeadReady waits for evidence that is strictly stronger than a
+// fresh launch record: a live matching agent process (or a registered external
+// lead), a live addressable tmux pane, and a matching bootstrap acknowledgement
+// whenever the launch expectation requires one.
+func verifyResumeLeadReady(check resumeExecLaunchCheck) error {
+	deadline := time.Now().Add(resumeLeadReadyTimeout)
+	last := "lead readiness evidence unavailable"
+	for {
+		ready, detail := inspectResumeLeadReady(check, defaultDuplicateLaunchProbe)
+		if ready {
+			return nil
+		}
+		if strings.TrimSpace(detail) != "" {
+			last = detail
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("%s", last)
+		}
+		time.Sleep(resumeExecLaunchVerifyInterval)
+	}
+}
+
+func inspectResumeLeadReady(check resumeExecLaunchCheck, probe duplicateLaunchProbe) (bool, string) {
+	live := classifyAgentLivenessWithReplacementResolver(check.AgentDir, check.Root, check.Profile, check.Handle, check.Role, check.Binary, check.Workstream, check.CWD, probe, nil)
+	if live.Verdict != livenessAgentLive {
+		return false, live.Detail
+	}
+	rec := live.LaunchRecord
+	paneID := ""
+	if rec.Tmux != nil {
+		paneID = strings.TrimSpace(rec.Tmux.PaneID)
+	}
+	if paneID == "" {
+		return false, "lead launch record has no operator-addressable tmux pane"
+	}
+	if _, ok := statusPaneInspector(paneID); !ok {
+		return false, fmt.Sprintf("lead pane %s is not live", paneID)
+	}
+	bootstrap := bootstrapack.Evaluate(rec.BootstrapExpectation, bootstrapack.Identity{
+		Handle: rec.Handle, Role: rec.Role, Profile: rec.TeamProfile, Session: rec.Session, Root: rec.Root,
+	}, check.AgentDir, probe.Now())
+	if bootstrap.Required && bootstrap.State != "verified" {
+		return false, fmt.Sprintf("bootstrap acknowledgement %s: %s", bootstrap.State, bootstrap.Detail)
+	}
+	return true, fmt.Sprintf("role %s live in pane %s; bootstrap=%s", check.Role, paneID, bootstrap.State)
 }
 
 // buildResumeExecPreflights resolves the AMQ identity for each runnable
@@ -1114,6 +1283,10 @@ type memberPlanInput struct {
 	// classification. Zero value falls back to defaultDuplicateLaunchProbe so
 	// direct callers and tests that omit it still get real liveness checks.
 	Probe duplicateLaunchProbe
+	// Replacement is command-scoped for roster planning so one physical pane
+	// cannot suppress relaunch for multiple stale roles. Nil preserves the
+	// legacy single-member resolver for direct callers.
+	Replacement replacementPaneResolver
 }
 
 // planMemberResume classifies one team member and emits the appropriate
@@ -1200,7 +1373,11 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	// #79 fix: status and resume can never disagree). Computed up front so EVERY
 	// return path below — including the forced preflight-error path — carries a
 	// liveness block.
-	live := classifyAgentLiveness(agentDir, root, in.Profile, handle, m.Role, m.Binary, env.SessionName, cwd, probe)
+	replacement := in.Replacement
+	if replacement == nil {
+		replacement = classifierReplacementPane
+	}
+	live := classifyAgentLivenessWithReplacementResolver(agentDir, root, in.Profile, handle, m.Role, m.Binary, env.SessionName, cwd, probe, replacement)
 	plan.Liveness = &live
 
 	// #95: a live agent launched outside amq-squad's tmux backend has no recorded

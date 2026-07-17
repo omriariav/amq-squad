@@ -19,6 +19,12 @@ import (
 // four live verdicts as "skip-live".
 type agentLivenessVerdict string
 
+// replacementPaneResolver finds a live replacement pane for one stale member.
+// Single-member callers use classifierReplacementPane directly. Roster-level
+// callers provide a command-scoped allocator so one physical pane cannot make
+// several same-cwd/same-engine roles appear live.
+type replacementPaneResolver func(role, handle, binary, cwd, workstream string) (string, bool)
+
 const (
 	// livenessAgentLive: the launch-record AgentPID is alive AND its binary
 	// matches. The agent process itself is verified running.
@@ -100,6 +106,10 @@ func (l agentLiveness) Live() bool {
 // workstream identify the member for the replacement-pane resolver. probe
 // abstracts liveness/process inspection so tests inject deterministic behavior.
 func classifyAgentLiveness(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe) agentLiveness {
+	return classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd, probe, classifierReplacementPane)
+}
+
+func classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe, replacement replacementPaneResolver) agentLiveness {
 	out := agentLiveness{}
 
 	launchRec, launchErr := launch.Read(agentDir)
@@ -213,8 +223,8 @@ func classifyAgentLiveness(agentDir, root, expectedProfile, handle, role, binary
 	// was relaunched OUTSIDE amq-squad, leaving a live replacement process the
 	// launch record never learned about. Look for a live tmux pane that
 	// resolves to this member.
-	if replacementPaneAllowedForRecord(launchErr, launchRec) {
-		if target, ok := classifierReplacementPane(role, handle, binary, cwd, workstream); ok {
+	if replacement != nil && replacementPaneAllowedForRecord(launchErr, launchRec) {
+		if target, ok := replacement(role, handle, binary, cwd, workstream); ok {
 			out.Verdict = livenessReplacementLive
 			out.Status = statusStateLive
 			out.ReplacementTarget = target

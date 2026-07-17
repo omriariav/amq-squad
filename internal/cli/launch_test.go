@@ -44,26 +44,44 @@ func TestGoalBindingFromArgsUsesStructuredPromptForCodex(t *testing.T) {
 	}
 }
 
-func TestLaunchRecordHasGoalBindingStrictClaude(t *testing.T) {
-	tm := team.Team{ExecutionMode: executionModeProjectLead}
-	withAttempt := nativeGoalControlPrompt("ship", tm, team.DefaultProfile, "issue-460", "cto", "attempt-460")
-	tests := []struct {
-		name    string
-		binding launch.GoalBinding
-		want    bool
-	}{
-		{name: "valid legacy", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship"`}, want: true},
-		{name: "valid typed", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: withAttempt, Goal: "ship", AttemptID: "attempt-460"}, want: true},
-		{name: "corrupt token", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship" --unknown value`}},
-		{name: "partial context", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship" --session issue-460`}},
-		{name: "typed goal mismatch", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: withAttempt, Goal: "other", AttemptID: "attempt-460"}},
-		{name: "typed attempt mismatch", binding: launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: withAttempt, Goal: "ship", AttemptID: "other-attempt"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rec := launch.Record{Binary: "claude", GoalBinding: &tt.binding}
-			if got := launchRecordHasGoalBinding(rec); got != tt.want {
-				t.Fatalf("launchRecordHasGoalBinding(%+v) = %t, want %t", tt.binding, got, tt.want)
+func TestLaunchRecordGoalBindingDeliveryStateUpgradeCompatibility(t *testing.T) {
+	tm := team.Team{Project: "/tmp/project", Lead: "cto", ExecutionMode: executionModeProjectLead}
+	for _, binary := range []string{"codex", "claude"} {
+		t.Run(binary, func(t *testing.T) {
+			contract, err := goalDeliveryContractForBinary(binary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const attempt = "attempt-460"
+			prompt := contract.prompt("ship", tm, team.DefaultProfile, "issue-460", "cto", attempt)
+			binding := func(source, state, detail string) launch.GoalBinding {
+				got := *contract.binding("ship", attempt, prompt, source, detail)
+				got.DeliveryState = state
+				return got
+			}
+			legacyDeliveredDetail := contract.Label + " delivered as a first-class claim-once control action"
+			tests := []struct {
+				name    string
+				binding launch.GoalBinding
+				want    bool
+			}{
+				{name: "new delivered", binding: binding("goal-control", goalBindingDeliveryDelivered, "delivered"), want: true},
+				{name: "new reserved", binding: binding("goal-control", goalBindingDeliveryReserved, "reserved")},
+				{name: "new prepared", binding: binding("prepared-run", goalBindingDeliveryPrepared, "accepted")},
+				{name: "new unknown state", binding: binding("goal-control", "future", legacyDeliveredDetail)},
+				{name: "legacy launch argv", binding: binding("launch-argv", "", "process input"), want: true},
+				{name: "legacy delivered goal control", binding: binding("goal-control", "", legacyDeliveredDetail), want: true},
+				{name: "legacy reserved goal control", binding: binding("goal-control", "", contract.Label+" reserved as a claim-once control action")},
+				{name: "legacy prepared run", binding: binding("prepared-run", "", legacyDeliveredDetail)},
+				{name: "legacy unknown source", binding: binding("goal-runtime", "", legacyDeliveredDetail)},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					rec := launch.Record{Binary: binary, GoalBinding: &tt.binding}
+					if got := launchRecordHasGoalBinding(rec); got != tt.want {
+						t.Fatalf("launchRecordHasGoalBinding(%+v) = %t, want %t", tt.binding, got, tt.want)
+					}
+				})
 			}
 		})
 	}
@@ -677,13 +695,90 @@ func TestRunLaunchNamedProfileDerivesProfileRoot(t *testing.T) {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
 	wantRoot := filepath.Join(dir, ".agent-mail", "review", "issue-96")
-	wantCommand := "amq coop exec --root " + wantRoot + " --require-wake custom-agent -- test-prompt"
-	privateWantCommand := "amq coop exec --root /private" + wantRoot + " --require-wake custom-agent -- test-prompt"
+	wantCommand := "amq coop exec --root " + wantRoot + " --me custom-agent --require-wake env -- -u AM_SESSION custom-agent test-prompt"
+	privateWantCommand := "amq coop exec --root /private" + wantRoot + " --me custom-agent --require-wake env -- -u AM_SESSION custom-agent test-prompt"
 	if !strings.Contains(stdout, wantCommand) && !strings.Contains(stdout, privateWantCommand) {
 		t.Fatalf("named-profile launch should use derived profile root %q, got:\n%s", wantRoot, stdout)
 	}
 	if strings.Contains(stdout, "--session issue-96") {
 		t.Fatalf("named-profile launch must not exec AMQ by legacy --session shorthand:\n%s", stdout)
+	}
+}
+
+func TestExactRootChildCommandUnsetsSessionBeforeRealTarget(t *testing.T) {
+	target, args := exactRootChildCommand("/opt/agent", []string{"--model", "test"})
+	if target != "env" {
+		t.Fatalf("target = %q, want env", target)
+	}
+	want := []string{"-u", "AM_SESSION", "/opt/agent", "--model", "test"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestRunLaunchDefaultProfileKeepsSessionfulChildShape(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.43.1")
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--session", "issue-96", "custom-agent"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "amq coop exec --session issue-96 --require-wake custom-agent") {
+		t.Fatalf("default-profile launch lost sessionful shape:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "-u AM_SESSION") {
+		t.Fatalf("default-profile launch must retain AM_SESSION:\n%s", stdout)
+	}
+}
+
+func TestRunLaunchNamedProfileResumeAndDynamicPathsUseExactRootChildShim(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.43.1")
+	project := t.TempDir()
+	chdir(t, project)
+	project, _ = os.Getwd()
+	const (
+		profile = "review"
+		session = "issue-481"
+		handle  = "runtime-dev"
+	)
+	root := filepath.Join(project, ".agent-mail", profile, session)
+	rec := launch.Record{
+		CWD: project, Binary: "custom-agent", Role: handle, Handle: handle,
+		Session: session, Root: root, BaseRoot: root, TeamProfile: profile,
+		TeamHome: project, SharedWorkstream: true, Trust: trustModeSandboxed,
+	}
+
+	tests := map[string]func() error{
+		"resume": func() error {
+			args := append([]string{"--dry-run", "--no-bootstrap"}, launchArgsFromRecord(rec)...)
+			return runLaunch(args)
+		},
+		"dynamic member": func() error {
+			return runAgentUp([]string{
+				"custom-agent", "--dry-run", "--no-bootstrap", "--role", handle, "--me", handle,
+				"--session", session, "--root", root, "--team-profile", profile, "--team-home", project,
+			})
+		},
+	}
+	for name, run := range tests {
+		t.Run(name, func(t *testing.T) {
+			stdout, stderr, err := captureOutput(t, run)
+			if err != nil {
+				t.Fatalf("%s: %v\nstderr:\n%s", name, err, stderr)
+			}
+			for _, want := range []string{
+				"amq coop exec --root " + shellQuote(root), "--me " + handle,
+				"env -- -u AM_SESSION custom-agent",
+			} {
+				if !strings.Contains(stdout, want) {
+					t.Errorf("%s output missing %q:\n%s", name, want, stdout)
+				}
+			}
+			if strings.Contains(stdout, "--session "+session) {
+				t.Errorf("%s must keep named profile exact-root/sessionless:\n%s", name, stdout)
+			}
+		})
 	}
 }
 

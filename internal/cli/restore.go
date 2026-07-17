@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -224,10 +225,15 @@ func execRestoreRecord(rec launch.Record) error {
 	if err := os.Chdir(rec.CWD); err != nil {
 		return fmt.Errorf("chdir %s: %w", rec.CWD, err)
 	}
-	return runLaunch(launchArgsFromRecord(rec))
+	token := preparedRunTokenFromRecord(rec)
+	if token.empty() {
+		return runLaunchWithPreparedToken(launchArgsFromRecord(rec), token)
+	}
+	return runLaunchWithIntent(launchArgsFromRecord(rec), token, &preparedRestoreDescriptor{Token: token, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec)})
 }
 
 func launchArgsFromRecord(rec launch.Record) []string {
+	rec = refreshRecordToolPolicy(rec)
 	var args []string
 	// Only a record with a saved conversation is a true reattach that must
 	// skip bootstrap; a seat with no saved conversation re-runs bootstrap so
@@ -290,6 +296,21 @@ func launchArgsFromRecord(rec launch.Record) []string {
 	if model := resolvedModelForRecord(rec); model != "" {
 		args = append(args, "--model", model)
 	}
+	if profile := strings.TrimSpace(rec.ToolProfile); profile != "" {
+		args = append(args, "--tool-profile", profile)
+	}
+	if config := strings.TrimSpace(rec.ToolConfig); config != "" {
+		args = append(args, "--tool-config", config)
+	}
+	if config := strings.TrimSpace(rec.ToolMCPConfig); config != "" {
+		args = append(args, "--tool-mcp-config", config)
+	}
+	for _, entry := range rec.ToolAllowlist {
+		args = append(args, "--tool-allow", entry)
+	}
+	for _, entry := range rec.ToolBlocklist {
+		args = append(args, "--tool-block", entry)
+	}
 	// =VALUE form keeps the value glued to the flag so a literal "--" inside
 	// the binary args never reaches splitDashDash on replay.
 	if len(rec.CodexArgs) > 0 {
@@ -324,6 +345,73 @@ func launchArgsFromRecord(rec launch.Record) []string {
 		args = append(args, argv...)
 	}
 	return args
+}
+
+// refreshRecordToolPolicy makes resume revoke removed/narrowed helper grants:
+// the current profile is authoritative, while launch.json remains historical
+// evidence. Only the old args introduced by ToolConfig are removed; unrelated
+// operator-native args are preserved byte-for-byte.
+func refreshRecordToolPolicy(rec launch.Record) launch.Record {
+	home := strings.TrimSpace(rec.TeamHome)
+	if home == "" {
+		home = strings.TrimSpace(rec.CWD)
+	}
+	if home == "" || strings.TrimSpace(rec.Role) == "" {
+		return rec
+	}
+	t, err := team.ReadProfile(home, rec.TeamProfile)
+	if err != nil {
+		return rec
+	}
+	for _, member := range t.Members {
+		if member.Role != rec.Role || (rec.Handle != "" && member.Handle != "" && member.Handle != rec.Handle) {
+			continue
+		}
+		rec.Argv = stripRecordedToolPolicy(rec.Argv, rec)
+		rec.ToolProfile = member.EffectiveToolProfile()
+		rec.ToolConfig = strings.TrimSpace(member.ToolConfig)
+		rec.ToolMCPConfig = strings.TrimSpace(member.ToolMCPConfig)
+		rec.ToolAllowlist = append([]string(nil), member.ToolAllowlist...)
+		rec.ToolBlocklist = append([]string(nil), member.ToolBlocklist...)
+		return rec
+	}
+	return rec
+}
+
+func stripRecordedToolPolicy(args []string, rec launch.Record) []string {
+	old := team.Member{Binary: rec.Binary, ToolProfile: rec.ToolProfile, ToolConfig: rec.ToolConfig, ToolMCPConfig: rec.ToolMCPConfig, ToolAllowlist: rec.ToolAllowlist, ToolBlocklist: rec.ToolBlocklist}.ToolArgs()
+	if len(old) == 0 {
+		return append([]string(nil), args...)
+	}
+	for i := 0; i+len(old) <= len(args); i++ {
+		if reflect.DeepEqual(args[i:i+len(old)], old) {
+			return append(append([]string(nil), args[:i]...), args[i+len(old):]...)
+		}
+	}
+	return append([]string(nil), args...)
+}
+
+func stripRecordedToolConfig(args []string, binary, config string) []string {
+	config = strings.TrimSpace(config)
+	if config == "" {
+		return append([]string(nil), args...)
+	}
+	flagName := "--profile"
+	if strings.EqualFold(strings.TrimSpace(binary), "claude") {
+		flagName = "--settings"
+	}
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == flagName && i+1 < len(args) && args[i+1] == config {
+			i++
+			continue
+		}
+		if args[i] == flagName+"="+config {
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
 }
 
 func restoreArgvFromRecord(rec launch.Record) []string {
@@ -468,6 +556,7 @@ type emitCommandOptions struct {
 }
 
 func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
+	rec = refreshRecordToolPolicy(rec)
 	var b strings.Builder
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(rec.CWD))
@@ -475,6 +564,17 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	// Binary positional sits immediately after `agent up` so the printed
 	// command reads as the documented 1.0 shape.
 	b.WriteString(" && ")
+	if token := preparedRunTokenFromRecord(rec); !token.empty() {
+		b.WriteString(internalPreparedRunTokenEnv)
+		b.WriteString("=")
+		b.WriteString(shellQuote(encodePreparedRunToken(token)))
+		b.WriteString(" ")
+		desc := preparedRestoreDescriptor{Token: token, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec)}
+		b.WriteString(internalPreparedRunRestoreEnv)
+		b.WriteString("=")
+		b.WriteString(shellQuote(encodePreparedRestoreDescriptor(desc)))
+		b.WriteString(" ")
+	}
 	b.WriteString(shellQuote(generatedSquadCommand()))
 	b.WriteString(" agent up ")
 	b.WriteString(shellQuote(rec.Binary))
@@ -553,6 +653,26 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 		b.WriteString(" --model ")
 		b.WriteString(shellQuote(model))
 	}
+	if profile := strings.TrimSpace(rec.ToolProfile); profile != "" {
+		b.WriteString(" --tool-profile ")
+		b.WriteString(shellQuote(profile))
+	}
+	if config := strings.TrimSpace(rec.ToolConfig); config != "" {
+		b.WriteString(" --tool-config ")
+		b.WriteString(shellQuote(config))
+	}
+	if config := strings.TrimSpace(rec.ToolMCPConfig); config != "" {
+		b.WriteString(" --tool-mcp-config ")
+		b.WriteString(shellQuote(config))
+	}
+	for _, entry := range rec.ToolAllowlist {
+		b.WriteString(" --tool-allow ")
+		b.WriteString(shellQuote(entry))
+	}
+	for _, entry := range rec.ToolBlocklist {
+		b.WriteString(" --tool-block ")
+		b.WriteString(shellQuote(entry))
+	}
 	if len(rec.CodexArgs) > 0 {
 		b.WriteString(" --codex-args=")
 		b.WriteString(shellQuote(joinedAgentArgs(rec.CodexArgs)))
@@ -572,6 +692,10 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	if rec.Handle != "" && rec.Handle != defaultHandleFor(rec.Binary) {
 		b.WriteString(" --me ")
 		b.WriteString(shellQuote(rec.Handle))
+	}
+	if home := strings.TrimSpace(rec.TeamHome); home != "" {
+		b.WriteString(" --team-home ")
+		b.WriteString(shellQuote(home))
 	}
 	if profile := strings.TrimSpace(rec.TeamProfile); profile != "" && profile != team.DefaultProfile {
 		b.WriteString(" --team-profile ")

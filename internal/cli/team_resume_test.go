@@ -439,6 +439,48 @@ func TestRunTeamResumeLiveReplacementPaneSuppressesCommand(t *testing.T) {
 	}
 }
 
+func TestRunTeamResumeDoesNotSuppressEveryStaleRoleWithOneReplacementPane(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i, role := range []string{"cto", "qa"} {
+		writeMemberLaunchRecord(t, base, "issue-96", role, launch.Record{
+			CWD: dir, Binary: "codex", Role: role, Handle: role, AgentPID: 4242 + i, StartedAt: time.Now(),
+		})
+	}
+	withStubPaneLister(t, []tmuxpane.TmuxPane{
+		{Session: "main", Window: "0", Pane: "3", Command: "codex", CWD: canonicalPath(dir)},
+	}, nil)
+
+	original := defaultDuplicateLaunchProbe
+	defaultDuplicateLaunchProbe = livenessProbe(map[int]bool{}, map[int]bool{}, time.Now())
+	t.Cleanup(func() { defaultDuplicateLaunchProbe = original })
+
+	stdout, _, err := captureOutput(t, func() error { return runTeamResume(nil) })
+	if err != nil {
+		t.Fatalf("runTeamResume: %v", err)
+	}
+	if got := strings.Count(stdout, "recorded pid dead"); got != 1 {
+		t.Fatalf("replacement-live notes = %d, want 1:\n%s", got, stdout)
+	}
+	if got := strings.Count(stdout, "- no command"); got != 1 {
+		t.Fatalf("suppressed commands = %d, want 1:\n%s", got, stdout)
+	}
+	if !strings.Contains(stdout, "amq-squad agent up codex") {
+		t.Fatalf("the unassigned stale role must retain a restore command:\n%s", stdout)
+	}
+}
+
 func TestRunTeamResumeForceDuplicateReplacementPaneEmitsRestoreCommand(t *testing.T) {
 	dir := t.TempDir()
 	base := setupFakeAMQSessionRoots(t)

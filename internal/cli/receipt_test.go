@@ -619,6 +619,78 @@ func TestConcurrentReceiptRefreshCannotDowngradeDrained(t *testing.T) {
 	}
 }
 
+func TestConcurrentSameAttemptReceiptLockCreationSerializes(t *testing.T) {
+	dir := t.TempDir()
+	base := newDeliveryReceipt(dir, team.DefaultProfile, "same-attempt", "", "bob", "", "test")
+	base.AttemptID = "same-attempt"
+	base.Recipients = []string{"bob"}
+	base.Consumers = []deliveryConsumerState{{Consumer: "bob", State: deliveryStateDeliveredNotDrained}}
+	base.DeliveryState = deliveryStateDeliveredNotDrained
+
+	const writers = 32
+	start := make(chan struct{})
+	errs := make(chan error, writers)
+	var wg sync.WaitGroup
+	for range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			receipt := base
+			receipt.Recipients = append([]string(nil), base.Recipients...)
+			receipt.Consumers = append([]deliveryConsumerState(nil), base.Consumers...)
+			receipt.Stages = append([]deliveryReceiptStage(nil), base.Stages...)
+			errs <- writeDeliveryReceipt(dir, team.DefaultProfile, "same-attempt", &receipt)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent same-attempt writer: %v", err)
+		}
+	}
+
+	path := filepath.Join(deliveryReceiptDir(dir, team.DefaultProfile, "same-attempt"), base.AttemptID+".json")
+	final, err := readDeliveryReceipt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.Generation != writers || final.AttemptID != base.AttemptID {
+		t.Fatalf("final receipt = %+v, want generation %d for exact attempt", final, writers)
+	}
+	if info, err := os.Lstat(path + ".lock"); err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("secure lock sidecar = %v, err=%v", info, err)
+	}
+}
+
+func TestDeliveryAttemptIDUniqueAtIdenticalTimestamp(t *testing.T) {
+	now := time.Unix(1_700_000_000, 123_000).UTC()
+	const attempts = 64
+	ids := make(chan string, attempts)
+	var wg sync.WaitGroup
+	for range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ids <- deliveryAttemptID(now, "operator answer", "", "cto")
+		}()
+	}
+	wg.Wait()
+	close(ids)
+	seen := make(map[string]bool, attempts)
+	for id := range ids {
+		if seen[id] {
+			t.Fatalf("duplicate attempt id %q for identical timestamp", id)
+		}
+		seen[id] = true
+	}
+	if len(seen) != attempts {
+		t.Fatalf("unique attempts = %d, want %d", len(seen), attempts)
+	}
+}
+
 func TestStaleWriterMonotonicMergeCannotOverwriteDrained(t *testing.T) {
 	dir := t.TempDir()
 	r := newDeliveryReceipt(dir, team.DefaultProfile, "s", "", "bob", "", "test")

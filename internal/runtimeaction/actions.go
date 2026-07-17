@@ -67,7 +67,11 @@ func SyncUnavailableReason(a *Action) {
 }
 
 func Member(projectDir, profile, session, role string, paneAlive bool) []Action {
-	return MemberForCapabilities(projectDir, profile, session, role, runtimecontrol.TmuxCapabilities(paneAlive))
+	caps := runtimecontrol.ResolveEffectiveActions(
+		runtimecontrol.TmuxCapabilities(paneAlive),
+		runtimecontrol.DeliveryEvidence{DurableAMQ: true},
+	)
+	return MemberForCapabilities(projectDir, profile, session, role, caps)
 }
 
 func MemberForCapabilities(projectDir, profile, session, role string, caps runtimecontrol.Capabilities) []Action {

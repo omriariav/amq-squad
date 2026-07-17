@@ -381,7 +381,7 @@ notes</a> for the complete issue-to-behavior map.</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.21.0</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.22.0</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
@@ -390,10 +390,12 @@ the amq-squad playbooks themselves.</p>
 <p>Codex:</p>
 <div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">codex</span> plugin marketplace add omriariav/amq-squad</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">codex</span> plugin add amq-squad@amq-squad</span></code></pre></div>
-<p>The primary skills are <code>amq-squad</code> and
-<code>amq-squad-orchestrator</code>. The older
-<code>amq-team-setup</code> and <code>amq-squad-role-creator</code>
-skill entries are redirect stubs. The CLI and skills are versioned
+<p>The authoritative skills are <code>amq-squad:wizard</code> for
+preparation, <code>amq-squad:cli</code> for direct operations, and
+<code>amq-squad:orchestrator</code> for a verified live lead.
+<code>amq-squad</code>, <code>amq-squad-orchestrator</code>,
+<code>amq-team-setup</code>, and <code>amq-squad-role-creator</code> are
+compatibility redirects only. The CLI and skills are versioned
 together.</p>
 <h2 id="quickstart">Quickstart</h2>
 <p>Enable the default attention-only desktop notification policy when
@@ -421,54 +423,95 @@ attempts. Command sinks should therefore be idempotent.</p>
 <p>The shortest working path for a visible project lead and workers:</p>
 <div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Guided preview with an explicit, default-No live confirmation. In an</span></span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="co"># interactive terminal, zero-argument `amq-squad run start` opens the same</span></span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="co"># wizard.</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Guided proposal, default-No preparation approval, readiness, and a separate</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="co"># default-No launch approval. In an interactive terminal, zero-argument</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="co"># `amq-squad run start` opens the same wizard.</span></span>
 <span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> wizard</span>
 <span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Preview, then create, an orchestrated run. --go is the mutation switch.</span></span>
-<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="dt">\</span></span>
-<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> . <span class="dt">\</span></span>
-<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="dt">\</span></span>
-<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--lead</span> cto <span class="dt">\</span></span>
-<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="dt">\</span></span>
-<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a>  <span class="at">--go</span></span>
-<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a><span class="co"># Watch the run.</span></span>
-<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96</span>
-<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--session</span> issue-96</span>
-<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a><span class="co"># Queue durable work to a role. Pane nudges are optional; AMQ is authoritative.</span></span>
-<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="dt">\</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Scripted equivalent, stage 1: render the read-only proposal. Choose the launch</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="co"># shape explicitly; nothing is written.</span></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="dt">\</span></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> . <span class="dt">\</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="dt">\</span></span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>  <span class="at">--lead</span> cto <span class="dt">\</span></span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launch-shape</span> working-team-together <span class="dt">\</span></span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="dt">\</span></span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>  <span class="at">--prepare-plan</span></span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a><span class="co"># Stage 2: after reviewing that proposal, explicitly approve preparation.</span></span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a><span class="co"># This writes the accepted coordination artifacts but launches no pane.</span></span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="dt">\</span></span>
+<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> . <span class="dt">\</span></span>
 <span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a>  <span class="at">--role</span> qa <span class="dt">\</span></span>
-<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Run smoke tests&quot;</span> <span class="dt">\</span></span>
-<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a>  <span class="at">--body-file</span> ./qa-task.md</span>
-<span id="cb5-27"><a href="#cb5-27" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a><span class="co"># Stop and resume without losing launch records, briefs, or task state.</span></span>
-<span id="cb5-29"><a href="#cb5-29" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--session</span> issue-96 <span class="at">--all</span></span>
-<span id="cb5-30"><a href="#cb5-30" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span></span>
-<span id="cb5-31"><a href="#cb5-31" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-32"><a href="#cb5-32" aria-hidden="true" tabindex="-1"></a><span class="co"># For a freshly re-oriented lead, explicitly create one new claim-once goal</span></span>
-<span id="cb5-33"><a href="#cb5-33" aria-hidden="true" tabindex="-1"></a><span class="co"># attempt after the launch and original goal evidence are revalidated.</span></span>
-<span id="cb5-34"><a href="#cb5-34" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span> <span class="at">--redeliver-goal</span></span></code></pre></div>
+<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="dt">\</span></span>
+<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a>  <span class="at">--lead</span> cto <span class="dt">\</span></span>
+<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launch-shape</span> working-team-together <span class="dt">\</span></span>
+<span id="cb5-27"><a href="#cb5-27" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="dt">\</span></span>
+<span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a>  <span class="at">--prepare</span></span>
+<span id="cb5-29"><a href="#cb5-29" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-30"><a href="#cb5-30" aria-hidden="true" tabindex="-1"></a><span class="co"># Stage 3: readiness is read-only and machine-readable.</span></span>
+<span id="cb5-31"><a href="#cb5-31" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="dt">\</span></span>
+<span id="cb5-32"><a href="#cb5-32" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> . <span class="dt">\</span></span>
+<span id="cb5-33"><a href="#cb5-33" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb5-34"><a href="#cb5-34" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launch-shape</span> working-team-together <span class="dt">\</span></span>
+<span id="cb5-35"><a href="#cb5-35" aria-hidden="true" tabindex="-1"></a>  <span class="at">--readiness-json</span></span>
+<span id="cb5-36"><a href="#cb5-36" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-37"><a href="#cb5-37" aria-hidden="true" tabindex="-1"></a><span class="co"># Stage 4: after a separate launch approval, use the exact binding source and</span></span>
+<span id="cb5-38"><a href="#cb5-38" aria-hidden="true" tabindex="-1"></a><span class="co"># digest printed by preparation/readiness. --go never repairs artifacts.</span></span>
+<span id="cb5-39"><a href="#cb5-39" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="dt">\</span></span>
+<span id="cb5-40"><a href="#cb5-40" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> . <span class="dt">\</span></span>
+<span id="cb5-41"><a href="#cb5-41" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb5-42"><a href="#cb5-42" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launch-shape</span> working-team-together <span class="dt">\</span></span>
+<span id="cb5-43"><a href="#cb5-43" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="dt">\</span></span>
+<span id="cb5-44"><a href="#cb5-44" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal-source</span> operator_goal <span class="dt">\</span></span>
+<span id="cb5-45"><a href="#cb5-45" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal-digest</span> <span class="st">&#39;sha256:&lt;accepted-digest&gt;&#39;</span> <span class="dt">\</span></span>
+<span id="cb5-46"><a href="#cb5-46" aria-hidden="true" tabindex="-1"></a>  <span class="at">--go</span></span>
+<span id="cb5-47"><a href="#cb5-47" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-48"><a href="#cb5-48" aria-hidden="true" tabindex="-1"></a><span class="co"># Watch the run.</span></span>
+<span id="cb5-49"><a href="#cb5-49" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96</span>
+<span id="cb5-50"><a href="#cb5-50" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--session</span> issue-96</span>
+<span id="cb5-51"><a href="#cb5-51" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-52"><a href="#cb5-52" aria-hidden="true" tabindex="-1"></a><span class="co"># Queue durable work to a role. Pane nudges are optional; AMQ is authoritative.</span></span>
+<span id="cb5-53"><a href="#cb5-53" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> dispatch <span class="dt">\</span></span>
+<span id="cb5-54"><a href="#cb5-54" aria-hidden="true" tabindex="-1"></a>  <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb5-55"><a href="#cb5-55" aria-hidden="true" tabindex="-1"></a>  <span class="at">--role</span> qa <span class="dt">\</span></span>
+<span id="cb5-56"><a href="#cb5-56" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Run smoke tests&quot;</span> <span class="dt">\</span></span>
+<span id="cb5-57"><a href="#cb5-57" aria-hidden="true" tabindex="-1"></a>  <span class="at">--body-file</span> ./qa-task.md</span>
+<span id="cb5-58"><a href="#cb5-58" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-59"><a href="#cb5-59" aria-hidden="true" tabindex="-1"></a><span class="co"># Stop and resume without losing launch records, briefs, or task state.</span></span>
+<span id="cb5-60"><a href="#cb5-60" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--session</span> issue-96 <span class="at">--all</span></span>
+<span id="cb5-61"><a href="#cb5-61" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span></span>
+<span id="cb5-62"><a href="#cb5-62" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-63"><a href="#cb5-63" aria-hidden="true" tabindex="-1"></a><span class="co"># For a freshly re-oriented lead, explicitly create one new claim-once goal</span></span>
+<span id="cb5-64"><a href="#cb5-64" aria-hidden="true" tabindex="-1"></a><span class="co"># attempt after the launch and original goal evidence are revalidated.</span></span>
+<span id="cb5-65"><a href="#cb5-65" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span> <span class="at">--redeliver-goal</span></span></code></pre></div>
 <p>Use <code>--external-lead</code> when the current pane is already the
 project lead and only the remaining workers should be spawned:</p>
 <div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="dt">\</span></span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">-p</span> . <span class="dt">\</span></span>
-<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">-s</span> issue-96 <span class="dt">\</span></span>
-<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="dt">\</span></span>
-<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--lead</span> cto <span class="dt">\</span></span>
-<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--external-lead</span> <span class="dt">\</span></span>
-<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="dt">\</span></span>
-<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--go</span></span></code></pre></div>
-<p><code>run start</code> previews by default; <code>--go</code>
-creates. With <code>--goal</code>, it waits until the lead is live
-before delivering the goal. If goal delivery fails, it exits non-zero
-and prints an exact retry command.</p>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">-p</span> . <span class="at">-s</span> issue-96 <span class="dt">\</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="at">--lead</span> cto <span class="at">--external-lead</span> <span class="dt">\</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launch-shape</span> working-team-together <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--prepare-plan</span></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Default No: run only after approving the rendered preparation proposal.</span></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">-p</span> . <span class="at">-s</span> issue-96 <span class="dt">\</span></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="at">--lead</span> cto <span class="at">--external-lead</span> <span class="dt">\</span></span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launch-shape</span> working-team-together <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--prepare</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">-p</span> . <span class="at">-s</span> issue-96 <span class="at">--external-lead</span> <span class="dt">\</span></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launch-shape</span> working-team-together <span class="at">--readiness-json</span></span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a><span class="co"># Separate default-No launch approval; copy the accepted digest exactly.</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">-p</span> . <span class="at">-s</span> issue-96 <span class="at">--external-lead</span> <span class="dt">\</span></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a>  <span class="at">--launch-shape</span> working-team-together <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="dt">\</span></span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a>  <span class="at">--goal-source</span> operator_goal <span class="at">--goal-digest</span> <span class="st">&#39;sha256:&lt;accepted-digest&gt;&#39;</span> <span class="at">--go</span></span></code></pre></div>
+<p><code>run start</code> has two independent mutation gates, both
+default No. <code>--prepare</code> writes only the proposal-approved
+artifacts. A later <code>--go</code> launches only when readiness still
+matches the accepted manifest, launch shape, goal source, and goal
+digest. With <code>--goal</code>, launch waits until the lead is live
+before delivery; failure exits non-zero with an exact retry command.</p>
 <p>For a deterministic visible arrangement, pass
 <code>--layout-preset lead-left</code>, <code>lead-top</code>,
 <code>even-grid</code>, or <code>one-window-per-agent</code>. Presets
@@ -483,12 +526,16 @@ as a status warning.</p>
 arguments now opens the guided wizard instead of returning the old
 missing-flag usage error. <code>amq-squad wizard</code> and
 <code>run start --interactive</code> are equivalent. The wizard first
-runs the exact canonical preview, then asks
-<code>Launch now? [y/N]</code>; only an explicit
-<code>y</code>/<code>yes</code> reruns the identical argv with
-<code>--go</code> added. The second call rechecks current state, so a
-collision introduced after preview is still refused. The wizard also
-offers a Global/NOC branch backed by canonical
+renders the canonical <code>--prepare-plan</code> proposal, then asks
+<code>Prepare coordination artifacts? [y/N]</code>. Only explicit
+<code>y</code>/<code>yes</code> runs the separate <code>--prepare</code>
+mutation. It then checks readiness and asks
+<code>Launch now? [y/N]</code>; only another explicit
+<code>y</code>/<code>yes</code> runs <code>--go</code> with the exact
+accepted <code>--launch-shape</code>, <code>--goal-source</code>, and
+<code>--goal-digest</code>. Every stage rechecks current state, so drift
+after proposal or preparation is refused. The wizard also offers a
+Global/NOC branch backed by canonical
 <code>amq-squad global start</code>. It is disabled in CI and never
 triggers when stdin or stderr is not a TTY; non-TTY zero-argument calls
 retain the usage error. Partial flag commands without
@@ -706,8 +753,8 @@ session.</td>
 <code>agent pane is not live</code>.</td>
 <td>Available only while the recorded pane is live; otherwise reason is
 <code>agent pane is not live</code>.</td>
-<td>Always available because durable AMQ dispatch does not require pane
-injection.</td>
+<td>Available when the row proves an exact namespace, handle, and
+initialized durable AMQ mailbox.</td>
 <td>Full managed stop/resume through launch records and tmux pane
 identity.</td>
 </tr>
@@ -721,10 +768,10 @@ PID/binary liveness. Missing id reports
 <code>iTerm2 window id is unavailable</code>; dead/mismatched process
 reports
 <code>iTerm2 focus requires verified agent PID liveness</code>.</td>
-<td>Disabled:
-<code>iTerm2 prompt/native-goal injection is disabled until #374 proves safe send/capture/busy support</code>.</td>
-<td>Always available because durable AMQ dispatch does not require pane
-injection.</td>
+<td>Native send/capture/busy/local-input and effective goal delivery
+remain unsupported after the #374 evidence review because the current
+goal command requires a live native prompt target.</td>
+<td>Available only with an exact durable AMQ member route.</td>
 <td>Agent process stop/resume is managed; native prompt injection is
 not.</td>
 </tr>
@@ -735,10 +782,11 @@ not.</td>
 from the launched tab TTY when available.</td>
 <td>Disabled:
 <code>Terminal.app focus requires stable window/tab addressing; manual focus is required</code>.</td>
-<td>Disabled:
-<code>Terminal.app prompt/native-goal injection is disabled until #375 proves safe Accessibility-based input</code>.</td>
-<td>Always available because durable AMQ dispatch does not require pane
-injection.</td>
+<td>Native send/capture/busy/local-input and effective goal delivery
+remain unsupported after the #375 Accessibility and targeting review
+because the current goal command requires a live native prompt
+target.</td>
+<td>Available only with an exact durable AMQ member route.</td>
 <td>Agent process stop/resume is managed; native focus/input remain
 manual.</td>
 </tr>
@@ -748,8 +796,8 @@ manual.</td>
 <td>No backend is shipped.</td>
 <td>Pending #330 re-entry bar.</td>
 <td>Pending #330 re-entry bar.</td>
-<td>Durable AMQ dispatch remains the intended control plane once a
-backend exists.</td>
+<td>Requires an exact durable AMQ member route once a backend
+exists.</td>
 <td>Pending #330 re-entry bar.</td>
 </tr>
 </tbody>
@@ -759,14 +807,18 @@ href="docs/iterm2-tier-b-smoke.md">docs/iterm2-tier-b-smoke.md</a> and
 <a
 href="docs/terminal-app-tier-c-smoke.md">docs/terminal-app-tier-c-smoke.md</a>.
 The capability contract is implemented in
-<code>internal/runtimecontrol</code>.</p>
+<code>internal/runtimecontrol</code> and documented in <a
+href="docs/terminal-runtime-contract.md">docs/terminal-runtime-contract.md</a>.</p>
 <h2 id="command-map">Command map</h2>
 <p>Common setup and run commands:</p>
 <div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,qa <span class="at">--sync</span></span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new profile review <span class="at">--roles</span> cto,qa <span class="at">--sync</span></span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">-p</span> . <span class="at">-s</span> issue-96 <span class="at">--roles</span> cto,qa <span class="at">--lead</span> cto <span class="at">--goal</span> <span class="st">&quot;...&quot;</span> <span class="at">--go</span></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">-p</span> . <span class="at">-s</span> issue-96 <span class="at">--external-lead</span> <span class="at">--lead</span> cto <span class="at">--roles</span> cto,qa <span class="at">--go</span></span>
-<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session issue-96 <span class="at">--seed-from</span> issue:96</span></code></pre></div>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">-p</span> . <span class="at">-s</span> issue-96 <span class="at">--roles</span> cto,qa <span class="at">--lead</span> cto <span class="at">--goal</span> <span class="st">&quot;...&quot;</span> <span class="at">--launch-shape</span> working-team-together <span class="at">--prepare-plan</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">-p</span> . <span class="at">-s</span> issue-96 <span class="at">--roles</span> cto,qa <span class="at">--lead</span> cto <span class="at">--goal</span> <span class="st">&quot;...&quot;</span> <span class="at">--launch-shape</span> working-team-together <span class="at">--prepare</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">-p</span> . <span class="at">-s</span> issue-96 <span class="at">--launch-shape</span> working-team-together <span class="at">--readiness-json</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">-p</span> . <span class="at">-s</span> issue-96 <span class="at">--launch-shape</span> working-team-together <span class="at">--goal</span> <span class="st">&quot;...&quot;</span> <span class="at">--goal-source</span> operator_goal <span class="at">--goal-digest</span> <span class="st">&#39;sha256:&lt;accepted-digest&gt;&#39;</span> <span class="at">--go</span></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> run start <span class="at">-p</span> . <span class="at">-s</span> issue-96 <span class="at">--external-lead</span> <span class="at">--lead</span> cto <span class="at">--roles</span> cto,qa <span class="at">--launch-shape</span> working-team-together <span class="at">--prepare-plan</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new session issue-96 <span class="at">--seed-from</span> issue:96</span></code></pre></div>
 <p>Lifecycle:</p>
 <div class="sourceCode" id="cb10"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96</span>
@@ -791,8 +843,10 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> activity set <span class="at">--session</span> issue-96 <span class="at">--me</span> fullstack <span class="at">--task</span> t1 <span class="at">--phase</span> testing</span>
 <span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task done t1 <span class="at">--session</span> issue-96 <span class="at">--me</span> fullstack <span class="at">--evidence</span> <span class="st">&quot;commit abc&quot;</span> <span class="at">--dispatch-next</span> t2</span>
 <span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> task reconcile <span class="at">--session</span> issue-96 <span class="at">--json</span></span>
-<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> threads <span class="at">--session</span> issue-96</span>
-<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> thread <span class="at">--session</span> issue-96 <span class="at">--id</span> p2p/cto__fullstack <span class="at">--include-body</span><span class="op">=</span>false</span></code></pre></div>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> evidence run t1 <span class="at">--session</span> issue-96 <span class="at">--me</span> fullstack <span class="at">--subject</span> <span class="st">&quot;focused tests&quot;</span> <span class="at">--attempt-id</span> test-1 <span class="at">--</span> go test ./internal/...</span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> evidence list t1 <span class="at">--session</span> issue-96 <span class="at">--limit</span> 20 <span class="at">--json</span></span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> threads <span class="at">--session</span> issue-96</span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> thread <span class="at">--session</span> issue-96 <span class="at">--id</span> p2p/cto__fullstack <span class="at">--include-body</span><span class="op">=</span>false</span></code></pre></div>
 <p><code>task done</code> commits completion, dependent readiness, an
 optional successor claim, and delivery intents before sending AMQ. When
 the task has a dispatch counterpart it sends the canonical completion
@@ -801,6 +855,17 @@ signal by default: AMQ kind <code>status</code> with subject
 explicit suppression). Claims carry renewable leases; reconcile reports
 stale or legacy leases without silently unclaiming work and never
 auto-retries an uncertain delivery.</p>
+<p><code>evidence run</code> executes argv without a shell for the
+active structured task assignee. It binds canonical namespace, exact
+task and executable bytes, cwd, bounded explicit environment, and
+attempt identity; publishes immutable process/outcome/summary records;
+and compare-and-swap links their digests to the task. A repeated attempt
+ID returns the original result only for the same full request.
+<code>evidence show</code>, <code>list</code>, and <code>lookup</code>
+are bounded read-only projections; <code>evidence recover</code>
+explicitly reconciles an interrupted finalization. Its AMQ report uses
+only the task's recorded dispatch route and cannot erase evidence when
+delivery fails.</p>
 <p>Safety preflights:</p>
 <div class="sourceCode" id="cb12"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> gate raise <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="at">--me</span> cto <span class="dt">\</span></span>
@@ -908,32 +973,40 @@ model selection guidance.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>amq-squad</code></td>
-<td>Setup, role authoring, live coordination, draining AMQ, routing
-review requests, status/history/doctor, runtime controls, and lifecycle
-commands.</td>
+<td><code>amq-squad:wizard</code></td>
+<td>Goal intake, brief/rules/roles/profile preparation, readiness, and
+the separate launch approval.</td>
 </tr>
 <tr>
-<td><code>amq-squad-orchestrator</code></td>
-<td>Lead-agent operation: spawn, dispatch, monitor, collect reports,
-coordinate reviews, recover, and produce final evidence.</td>
+<td><code>amq-squad:cli</code></td>
+<td>Direct status, doctor, task, exact activity monitoring, AMQ, gate,
+recovery, evidence, and read-only release planning.</td>
 </tr>
 <tr>
-<td><code>amq-team-setup</code></td>
-<td>Deprecated redirect to <code>amq-squad</code>.</td>
+<td><code>amq-squad:orchestrator</code></td>
+<td>Verified live-lead operation: dispatch, monitor, review convergence,
+recovery, and final evidence.</td>
 </tr>
 <tr>
-<td><code>amq-squad-role-creator</code></td>
-<td>Deprecated redirect to <code>amq-squad</code>.</td>
+<td>Legacy names</td>
+<td><code>amq-squad</code>, <code>amq-squad-orchestrator</code>,
+<code>amq-team-setup</code>, and <code>amq-squad-role-creator</code> are
+compatibility redirects only.</td>
 </tr>
 </tbody>
 </table>
 <p>Invoke skills in Claude Code as <code>/amq-squad:&lt;skill&gt;</code>
 and in Codex as <code>$&lt;skill&gt;</code>.</p>
+<p>During wizard preparation, the recommended tool policy keeps the
+visible lead broad and assigns each built-in worker its catalog-minimum
+profile. Choosing <code>full_all</code> is an explicit opt-in, never an
+implicit default. Two or more <code>full</code> members duplicate
+MCP/plugin context and increase memory and concurrency pressure, so the
+review screen warns before that configuration proceeds.</p>
 <p>Model guidance is intentionally skill-owned because it changes faster
-than the binary. For v2.21.0, use the current model family and per-role
-model/effort recommendations in the installed v2.21.0 skills; confirm
-the startup marker <code>amq-squad skill v2.21.0</code> matches
+than the binary. For v2.22.0, use the current model family and per-role
+model/effort recommendations in the installed v2.22.0 skills; confirm
+the startup marker <code>amq-squad skill v2.22.0</code> matches
 <code>amq-squad version</code>. Treat cost as a tie-breaker after output
 quality for shippable work, and prefer installed-skill guidance over
 copying model examples from this README.</p>

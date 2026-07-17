@@ -35,6 +35,25 @@ def fail_if_missing_normalized(path: str, needle: str, failures: list[str]) -> N
         failures.append(f"{path}: missing normalized {needle!r}")
 
 
+def require_release_notes(root: str, tag: str, failures: list[str]) -> None:
+    release_notes_rel = f"docs/{tag}-release-notes.md"
+    release_notes = os.path.join(root, release_notes_rel)
+    if not os.path.isfile(release_notes):
+        failures.append(f"{release_notes_rel}: missing canonical release notes")
+        return
+
+    expected_heading = f"# amq-squad {tag}"
+    first_nonempty_line = next(
+        (line.strip() for line in read(release_notes).splitlines() if line.strip()),
+        "",
+    )
+    if first_nonempty_line != expected_heading:
+        failures.append(
+            f"{release_notes_rel}: first heading {first_nonempty_line!r} "
+            f"!= {expected_heading!r}"
+        )
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         sys.stderr.write("usage: check-release-version.py VERSION\n")
@@ -49,6 +68,8 @@ def main() -> int:
     root = os.getcwd()
     failures: list[str] = []
 
+    require_release_notes(root, tag, failures)
+
     mirrors = {
         "claude": "plugins/claude/.claude-plugin/plugin.json",
         "codex": "plugins/codex/.codex-plugin/plugin.json",
@@ -59,16 +80,20 @@ def main() -> int:
         if manifest_version != version:
             failures.append(f"{manifest_rel}: version {manifest_version!r} != {version!r}")
 
-        skill_rel = f"plugins/{mirror}/skills/amq-squad/SKILL.md"
-        skill_body = read(os.path.join(root, skill_rel))
-        marker = SKILL_MARKER_RE.search(skill_body)
-        if not marker:
-            failures.append(f"{skill_rel}: missing Skill version marker")
-        elif marker.group(1) != version:
-            failures.append(f"{skill_rel}: Skill version {marker.group(1)!r} != {version!r}")
-        expected_echo = f"amq-squad skill {tag}"
-        if expected_echo not in skill_body:
-            failures.append(f"{skill_rel}: missing startup echo {expected_echo!r}")
+        for skill_id in (
+            "wizard", "cli", "orchestrator", "amq-squad",
+            "amq-squad-orchestrator", "amq-team-setup", "amq-squad-role-creator",
+        ):
+            skill_rel = f"plugins/{mirror}/skills/{skill_id}/SKILL.md"
+            skill_body = read(os.path.join(root, skill_rel))
+            marker = SKILL_MARKER_RE.search(skill_body)
+            if not marker:
+                failures.append(f"{skill_rel}: missing Skill version marker")
+            elif marker.group(1) != version:
+                failures.append(f"{skill_rel}: Skill version {marker.group(1)!r} != {version!r}")
+            expected_echo = f"amq-squad skill {tag}"
+            if expected_echo not in skill_body:
+                failures.append(f"{skill_rel}: missing startup echo {expected_echo!r}")
 
     readme = os.path.join(root, "README.md")
     fail_if_missing(readme, f"go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@{tag}", failures)
@@ -77,9 +102,9 @@ def main() -> int:
         "README.md",
         "docs/skills.md",
         "docs/global-orchestrator-runbook.md",
-        "plugins/skills-src/amq-squad/SKILL.md",
-        "plugins/claude/skills/amq-squad/SKILL.md",
-        "plugins/codex/skills/amq-squad/SKILL.md",
+        "plugins/skills-src/cli/SKILL.md",
+        "plugins/claude/skills/cli/SKILL.md",
+        "plugins/codex/skills/cli/SKILL.md",
     ):
         fail_if_missing_normalized(os.path.join(root, rel), AMQ_COMPATIBILITY_POLICY, failures)
 

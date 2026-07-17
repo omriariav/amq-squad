@@ -10,6 +10,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/activity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -57,12 +58,49 @@ func runActivitySet(args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	ctx, ns, err := activityContext(*session, *me, *projectFlag, *profileFlag, fs, "activity set")
-	if err != nil {
-		return err
-	}
 	if strings.TrimSpace(*phase) == "" {
 		return usageErrorf("activity set requires --phase")
+	}
+	var ctx amqContext
+	var ns squadnamespace.Ref
+	var err error
+	if strings.TrimSpace(*taskID) != "" {
+		selected, selectErr := selectTaskForMutation(*taskID, *session, *projectFlag, *profileFlag, fs)
+		if selectErr != nil {
+			return selectErr
+		}
+		if err := team.ValidateHandle(strings.TrimSpace(*me)); err != nil {
+			return usageErrorf("invalid --me: %v", err)
+		}
+		admission, admissionErr := acquireNamespaceWriterAdmission(selected.ProjectDir, selected.Profile, selected.Session)
+		if admissionErr != nil {
+			return admissionErr
+		}
+		defer admission.close()
+		selected, err = revalidateTaskSelection(selected)
+		if err != nil {
+			return fmt.Errorf("activity set refused: task revalidation under admission failed: %w", err)
+		}
+		if err := validateTaskSelectionNamespace(selected); err != nil {
+			return err
+		}
+		actor := strings.TrimSpace(*me)
+		if strings.TrimSpace(selected.Task.AssignedTo) == "" || strings.TrimSpace(selected.Task.AssignedTo) != actor {
+			return fmt.Errorf("activity set --task %s requires --me to match active assignee %s", selected.Task.ID, printableHandle(selected.Task.AssignedTo))
+		}
+		if selected.Task.Status != taskstore.StatusInProgress && selected.Task.Status != taskstore.StatusCompletedPendingReconcile {
+			return fmt.Errorf("activity set --task %s requires an actively owned task; current status is %s", selected.Task.ID, selected.Task.Status)
+		}
+		ctx, err = resolveAMQContextForNamespace(selected.ProjectDir, selected.Profile, selected.Session, strings.TrimSpace(*me))
+		if err != nil {
+			return err
+		}
+		ns = selected.Namespace
+		return writeTaskActivity(ctx, ns, *taskID, *phase, *detail, jsonOut)
+	}
+	ctx, ns, err = activityContext(*session, *me, *projectFlag, *profileFlag, fs, "activity set")
+	if err != nil {
+		return err
 	}
 	ctx, admission, err := acquireRevalidatedAMQWriter(ctx, func() (amqContext, error) {
 		return resolveAMQContext(*projectFlag, *profileFlag, *session, *me, flagWasSet(fs, "project"))
@@ -75,12 +113,16 @@ func runActivitySet(args []string) error {
 	if err := ensureNoNamespaceConflict("activity set", ctx.ProjectDir, ctx.Profile, ctx.Session, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
+	return writeTaskActivity(ctx, ns, *taskID, *phase, *detail, jsonOut)
+}
+
+func writeTaskActivity(ctx amqContext, ns squadnamespace.Ref, taskID, phase, detail string, jsonOut *bool) error {
 	path := activity.Path(filepath.Join(ctx.Root, "agents", ctx.Me))
 	file := activity.File{
 		Handle:    ctx.Me,
-		TaskID:    *taskID,
-		Phase:     *phase,
-		Detail:    *detail,
+		TaskID:    taskID,
+		Phase:     phase,
+		Detail:    detail,
 		WrittenAt: activityNow(),
 	}
 	if err := activity.Write(filepath.Dir(path), file); err != nil {
@@ -94,17 +136,17 @@ func runActivitySet(args []string) error {
 			Session:   ctx.Env.SessionName,
 			Profile:   ctx.Profile,
 			Namespace: ns,
-			ID:        strings.TrimSpace(*taskID),
-			TaskID:    strings.TrimSpace(*taskID),
+			ID:        strings.TrimSpace(taskID),
+			TaskID:    strings.TrimSpace(taskID),
 			Handle:    ctx.Me,
 			Root:      ctx.Root,
 		})
 	}
 	fmt.Printf("activity written for %s", ctx.Me)
-	if task := strings.TrimSpace(*taskID); task != "" {
+	if task := strings.TrimSpace(taskID); task != "" {
 		fmt.Printf(" task %s", task)
 	}
-	fmt.Printf(" phase %s\n", strings.TrimSpace(*phase))
+	fmt.Printf(" phase %s\n", strings.TrimSpace(phase))
 	return nil
 }
 

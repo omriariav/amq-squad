@@ -27,6 +27,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "plugins" / "skills-src"
 MIRRORS = ("claude", "codex")
 SKILLS = (
+    "wizard",
+    "cli",
+    "orchestrator",
     "amq-squad",
     "amq-squad-orchestrator",
     "amq-team-setup",
@@ -36,6 +39,24 @@ SKILLS = (
 FRONTMATTER = re.compile(r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.S)
 
 CLAUDE_META = {
+    "wizard": {
+        "allowed-tools": "Bash, Read, Write, Edit, MultiEdit, Glob, Grep, WebFetch",
+        "argument-hint": "[request | stage goal|brief|rules|roles|profile|readiness|launch]",
+        "user-invocable": True,
+        "trigger": "/wizard",
+    },
+    "cli": {
+        "allowed-tools": "Bash, Read, Write, Edit, MultiEdit, Glob, Grep",
+        "argument-hint": "[status | doctor | task | activity | gate | resume | stop | archive | context | amq]",
+        "user-invocable": True,
+        "trigger": "/cli",
+    },
+    "orchestrator": {
+        "allowed-tools": "Bash, Read, Write, Edit, Glob, Grep",
+        "argument-hint": "[compose | spawn | dispatch | monitor | review | recover]",
+        "user-invocable": True,
+        "trigger": "/orchestrator",
+    },
     "amq-squad": {
         "allowed-tools": "Bash, Read, Write, Edit, MultiEdit, Glob, Grep",
         "argument-hint": "[drain | review | handoff | status | console | up | focus | send | resume | fork | rm | doctor]",

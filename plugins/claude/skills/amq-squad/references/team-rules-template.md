@@ -24,8 +24,9 @@ Keep only active roster entries in the final file. `.amq-squad/team.json` is aut
 
 ## Skills
 
-- Use the `amq-squad` skill for setup, role authoring, and live coordination: personas, profile choice, team rules, pointer stubs, brief authoring, sync, drains, routing, handoffs, reviews, status/history/doctor, up/down/resume/fork, agent up/resume.
-- Use the `amq-squad-orchestrator` skill only for lead-agent bootstrap and child-agent orchestration.
+- Use `amq-squad:wizard` for goal intake, brief/rules/roles/profile preparation, readiness, and the separate launch approval.
+- Use `amq-squad:cli` for direct status, doctor, task, activity, gate, AMQ, recovery, and lifecycle operations.
+- Use `amq-squad:orchestrator` only as the verified live lead for dispatch, monitoring, review convergence, recovery, and final evidence. The old `amq-squad` and `amq-squad-orchestrator` names are compatibility redirects only.
 - Use raw `amq-cli` only for AMQ debugging outside the squad.
 
 ## Naming model

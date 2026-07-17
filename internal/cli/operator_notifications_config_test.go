@@ -57,7 +57,8 @@ func TestFinishWizardRejectsExplicitNotificationMismatchBeforePreview(t *testing
 	})
 	projectCalls, _ := withWizardExecutionSeams(t)
 	err := finishRunStartWizard(runwizard.Spec{
-		Project: dir, Profile: team.DefaultProfile, Session: "s", Visibility: "sibling-tabs",
+		Scope: "project", Project: dir, Profile: team.DefaultProfile, ProfileBranch: runwizard.ProfileBranchExisting,
+		Session: "s", Visibility: "sibling-tabs", Goal: "Execute the reviewed notification fixture",
 		OperatorNotifications: false, OperatorNotificationsRequested: true, OperatorNotificationsSet: true,
 	}, "test", strings.NewReader(""), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "does not match existing profile") {

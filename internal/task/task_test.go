@@ -39,6 +39,92 @@ func TestAddRequiresTitleAndValidatesDeps(t *testing.T) {
 	}
 }
 
+func TestStructuredDispatchContractBindsActorsAndArtifactOwnership(t *testing.T) {
+	dir := t.TempDir()
+	contract := AddInput{
+		Title: "implement", Intent: IntentImplement, Artifact: "internal/task",
+		ExpectedBaseSHA: "0835361c6869da35067b1c2542c98579876595fa",
+		Implementer:     "dev", Reviewer: "reviewer",
+	}
+	tk, err := Add(dir, "s", contract, fixedNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.Intent != IntentImplement || tk.Artifact != "internal/task" || tk.Implementer != "dev" || tk.Reviewer != "reviewer" {
+		t.Fatalf("structured task lost contract: %+v", tk)
+	}
+	if _, err := Claim(dir, "s", tk.ID, "reviewer", fixedNow); err == nil {
+		t.Fatal("reviewer claimed implementation mutation authority")
+	}
+	if _, err := Claim(dir, "s", tk.ID, "dev", fixedNow); err != nil {
+		t.Fatalf("declared implementer claim: %v", err)
+	}
+	if _, err := Add(dir, "s", contract, fixedNow); err == nil {
+		t.Fatal("competing implementation for one artifact was accepted implicitly")
+	}
+	contract.Title = "parallel experiment"
+	contract.ParallelWorkExplicit = true
+	if _, err := Add(dir, "s", contract, fixedNow); err != nil {
+		t.Fatalf("explicit parallel implementation: %v", err)
+	}
+}
+
+func TestStructuredReviewClaimIsReviewerOnly(t *testing.T) {
+	dir := t.TempDir()
+	tk, err := Add(dir, "s", AddInput{
+		Title: "review", Intent: IntentReview, Artifact: "internal/task",
+		ExpectedBaseSHA: "0835361c6869da35067b1c2542c98579876595fa",
+		Implementer:     "dev", Reviewer: "reviewer",
+	}, fixedNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Claim(dir, "s", tk.ID, "dev", fixedNow); err == nil {
+		t.Fatal("implementer claimed independent review")
+	}
+	if _, err := Claim(dir, "s", tk.ID, "reviewer", fixedNow); err != nil {
+		t.Fatalf("declared reviewer claim: %v", err)
+	}
+}
+
+func TestStructuredTaskRejectsAssigneeAuthorityMismatchBeforePersistence(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct{ intent, assign string }{
+		{IntentImplement, "reviewer"}, {IntentReview, "dev"}, {IntentAudit, "dev"}, {IntentLifecycle, "reviewer"},
+	} {
+		_, err := Add(dir, "s", AddInput{
+			Title: tc.intent, Intent: tc.intent, Artifact: "release/v2.22.0",
+			ExpectedBaseSHA: "0835361c6869da35067b1c2542c98579876595fa",
+			Implementer:     "dev", Reviewer: "reviewer", AssignTo: tc.assign,
+		}, fixedNow)
+		if err == nil {
+			t.Fatalf("%s mismatched assignee was persisted", tc.intent)
+		}
+	}
+	listed, err := List(dir, "s")
+	if err != nil || len(listed) != 0 {
+		t.Fatalf("rejected contracts changed store: tasks=%+v err=%v", listed, err)
+	}
+}
+
+func TestStructuredLifecycleClaimUsesImplementerAuthority(t *testing.T) {
+	dir := t.TempDir()
+	tk, err := Add(dir, "s", AddInput{
+		Title: "prepare tag", Intent: IntentLifecycle, Artifact: "refs/tags/v2.22.0",
+		ExpectedBaseSHA: "0835361c6869da35067b1c2542c98579876595fa",
+		Implementer:     "release-lead", Reviewer: "operator-reviewer", AssignTo: "release-lead",
+	}, fixedNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Claim(dir, "s", tk.ID, "operator-reviewer", fixedNow); err == nil {
+		t.Fatal("reviewer claimed lifecycle execution authority")
+	}
+	if _, err := Claim(dir, "s", tk.ID, "release-lead", fixedNow); err != nil {
+		t.Fatalf("declared lifecycle implementer claim: %v", err)
+	}
+}
+
 func TestClaimGatesOnDependencies(t *testing.T) {
 	dir := t.TempDir()
 	dep, _ := Add(dir, "s", AddInput{Title: "dep"}, fixedNow)

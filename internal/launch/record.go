@@ -48,6 +48,11 @@ type Record struct {
 	Launcher         string   `json:"launcher,omitempty"`
 	LauncherArgs     []string `json:"launcher_args,omitempty"`
 	Model            string   `json:"model,omitempty"`
+	ToolProfile      string   `json:"tool_profile,omitempty"`
+	ToolConfig       string   `json:"tool_config,omitempty"`
+	ToolMCPConfig    string   `json:"tool_mcp_config,omitempty"`
+	ToolAllowlist    []string `json:"tool_allowlist,omitempty"`
+	ToolBlocklist    []string `json:"tool_blocklist,omitempty"`
 	Trust            string   `json:"trust,omitempty"`
 	NoDefaultArgs    bool     `json:"no_default_args,omitempty"`
 	// NoPreauthorizeInScope records the --no-preauthorize-inscope choice so a
@@ -128,6 +133,13 @@ type Record struct {
 	// routing can reuse the same profile without rereading flags.
 	TeamProfile string `json:"team_profile,omitempty"`
 	TeamHome    string `json:"team_home,omitempty"`
+	// PreparedRun* pins this record to the exact schema-2 run-start manifest
+	// accepted by the parent transaction. These fields are additive so legacy
+	// direct launches remain readable and continue to omit them.
+	PreparedRunGeneration    string `json:"prepared_run_generation,omitempty"`
+	PreparedRunDigest        string `json:"prepared_run_digest,omitempty"`
+	PreparedRunGoalNamespace string `json:"prepared_run_goal_namespace,omitempty"`
+	PreparedRunGoalDigest    string `json:"prepared_run_goal_digest,omitempty"`
 	// BootstrapExpectation is additive launch identity evidence used to judge
 	// whether this exact startup prompt was acknowledged. nil is legacy_unknown.
 	BootstrapExpectation *bootstrapack.Expectation `json:"bootstrap_expectation,omitempty"`
@@ -149,6 +161,10 @@ type GoalBinding struct {
 	NativeGoal bool   `json:"native_goal"`
 	Source     string `json:"source"`
 	Command    string `json:"command,omitempty"`
+	// DeliveryState separates accepted/prepared bootstrap evidence from a
+	// reserved control action and a control action whose delivery completed.
+	// Empty is the legacy state and remains readable for pre-v2.22 records.
+	DeliveryState string `json:"delivery_state,omitempty"`
 	// Goal and AttemptID are additive typed identity for binary-specific goal
 	// delivery. Legacy native bindings omit them and remain readable through the
 	// strict generated-/goal parser; prompt_goal bindings require them so resume

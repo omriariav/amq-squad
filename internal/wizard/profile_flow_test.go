@@ -129,6 +129,17 @@ func TestGoalExcerptAndCommandFormsPreserveReviewEvidence(t *testing.T) {
 	}
 }
 
+func TestRunInvalidationClearsGoalBindingEvidence(t *testing.T) {
+	s := Spec{Backend: BackendRunStart, Profile: "release", Session: "old", BriefPath: "/repo/brief.md", BriefGoal: "ship"}
+	if err := s.ResolveGoalBinding(); err != nil {
+		t.Fatal(err)
+	}
+	s.SelectNewSession("new")
+	if s.Goal != "" || s.GoalBindingSource != "" || s.GoalBindingNamespace != "" || s.GoalBindingText != "" || s.GoalBindingDigest != "" || s.GoalBindingDerived || s.GoalBindingVerified {
+		t.Fatalf("stale goal binding survived run invalidation: %+v", s)
+	}
+}
+
 func TestSelectedSessionAndSpecCloneDeepCopyResumeMembers(t *testing.T) {
 	summary := SessionSummary{Name: "s", Fingerprint: "fp", RecordCount: 1, Classification: RunClassification{State: RunStateStopped, Backend: BackendResume, Executable: true, RestoreExisting: true}, Members: []SessionMemberSummary{{Role: "cto", Action: MemberActionRestore, SavedNativeArgs: []string{"saved"}}}}
 	s := Spec{ProfileBranch: ProfileBranchExisting, Profile: "release"}
