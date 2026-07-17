@@ -13,9 +13,12 @@ amq-squad tmux-harness shell --cwd /path/to/disposable/project
 
 ## Managed lead + launcher close + Claude worker
 
-From the attached harness shell:
+From the attached harness shell, use the complete accepted contract. The first
+command is proposal-only. The preparation and launch confirmations are separate
+default-No decisions; do not skip from proposal to launch.
 
 ```sh
+# proposal only
 amq-squad run start \
   --project . \
   --session issue-393-smoke \
@@ -24,7 +27,42 @@ amq-squad run start \
   --lead cto \
   --layout-preset lead-left \
   --launcher-pane close-after-start \
+  --launch-shape working-team-together \
   --goal "report READY only" \
+  --prepare-plan
+
+# default-No preparation approval; no panes launch
+amq-squad run start \
+  --project . \
+  --session issue-393-smoke \
+  --roles cto,qa \
+  --binary qa=claude \
+  --lead cto \
+  --layout-preset lead-left \
+  --launcher-pane close-after-start \
+  --launch-shape working-team-together \
+  --goal "report READY only" \
+  --prepare
+
+# readiness is read-only
+amq-squad run start \
+  --project . \
+  --session issue-393-smoke \
+  --layout-preset lead-left \
+  --launcher-pane close-after-start \
+  --launch-shape working-team-together \
+  --readiness-json
+
+# separate default-No launch approval; copy the accepted digest exactly
+amq-squad run start \
+  --project . \
+  --session issue-393-smoke \
+  --layout-preset lead-left \
+  --launcher-pane close-after-start \
+  --launch-shape working-team-together \
+  --goal "report READY only" \
+  --goal-source operator_goal \
+  --goal-digest 'sha256:<accepted-digest>' \
   --go
 ```
 

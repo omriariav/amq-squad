@@ -41,7 +41,7 @@ func runThreadsExecProfile(t *testing.T, base, projectDir, profile, session stri
 	return out.String(), err
 }
 
-func seedThreadMessage(t *testing.T, agentDir, box, id, from string, to []string, thread, subject, kind string, created time.Time) {
+func seedThreadMessage(t *testing.T, agentDir, box, id, from string, to []string, thread, subject, kind string, created time.Time, bodyOverride ...string) {
 	t.Helper()
 	dir := filepath.Join(agentDir, "inbox", box)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -50,6 +50,10 @@ func seedThreadMessage(t *testing.T, agentDir, box, id, from string, to []string
 	var recipients []string
 	for _, r := range to {
 		recipients = append(recipients, fmt.Sprintf("%q", r))
+	}
+	messageBody := "body for " + id
+	if len(bodyOverride) > 0 {
+		messageBody = bodyOverride[0]
 	}
 	body := fmt.Sprintf(`---json
 {
@@ -63,8 +67,8 @@ func seedThreadMessage(t *testing.T, agentDir, box, id, from string, to []string
   "kind": %q
 }
 ---
-body for %s
-`, id, from, strings.Join(recipients, ", "), thread, subject, created.UTC().Format(time.RFC3339Nano), kind, id)
+%s
+`, id, from, strings.Join(recipients, ", "), thread, subject, created.UTC().Format(time.RFC3339Nano), kind, messageBody)
 	if err := os.WriteFile(filepath.Join(dir, id+".md"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}

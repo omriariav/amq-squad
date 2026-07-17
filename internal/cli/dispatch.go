@@ -85,11 +85,19 @@ var dispatchPrepareTask = taskstore.PrepareDispatchForProfile
 var dispatchBeginTaskDelivery = taskstore.BeginOutboxDeliveryForProfile
 var dispatchFinishTask = taskstore.FinishDispatchForProfile
 
+// dispatchAfterLeadershipRead is a deterministic race seam. Production is a
+// no-op; tests commit a leadership handoff after the advisory outer read and
+// prove the task-store transaction rejects the stale sender/epoch atomically.
+var dispatchAfterLeadershipRead = func(projectDir, profile, session string, state taskstore.LeadershipState) error {
+	return nil
+}
+
 func runDispatch(args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
 	sessionFlag := fs.String("session", "", "workstream session of the team")
 	roleFlag := fs.String("role", "", "role of the child agent to dispatch the task to")
 	fromFlag := fs.String("from", "", "sender handle (default: the orchestration lead, else AM_ME)")
+	leadershipEpoch := fs.Uint64("leadership-epoch", 0, "required current leadership epoch after a durable handoff")
 	threadFlag := fs.String("thread", "", "AMQ thread to send on, e.g. p2p/<lead>__<role> (default: amq's auto thread)")
 	kindFlag := fs.String("kind", "todo", "AMQ message kind (todo, question, status, ...)")
 	subjectFlag := fs.String("subject", "", "task subject line")
@@ -109,6 +117,12 @@ func runDispatch(args []string) error {
 	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	createTaskFlag := fs.Bool("create-task", false, "create and link a native task-store task before dispatch")
 	taskIDFlag := fs.String("task", "", "link dispatch metadata to an existing native task id")
+	taskIntent := fs.String("task-intent", "", "structured created-task intent: implement|review|audit|lifecycle")
+	taskArtifact := fs.String("task-artifact", "", "structured created-task artifact")
+	taskExpectedBase := fs.String("task-expected-base", "", "structured created-task expected base SHA")
+	taskImplementer := fs.String("task-implementer", "", "structured created-task implementer")
+	taskReviewer := fs.String("task-reviewer", "", "structured created-task reviewer")
+	taskParallelWork := fs.Bool("task-parallel-work", false, "explicitly allow competing implementation for the artifact")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad dispatch - queue a durable task for a child and wake it to drain
@@ -259,7 +273,32 @@ Examples:
 	if err != nil {
 		return err
 	}
+	leadership, err := taskstore.ReadLeadershipForProfile(projectDir, profile, workstream)
+	if err != nil {
+		return fmt.Errorf("read leadership authority before dispatch: %w", err)
+	}
+	if leadership.Epoch > 0 {
+		if !flagWasSet(fs, "leadership-epoch") || *leadershipEpoch != leadership.Epoch {
+			return fmt.Errorf("dispatch refused: leadership epoch is %d; pass --leadership-epoch %d after recovering the current record", leadership.Epoch, leadership.Epoch)
+		}
+		if from != leadership.CurrentLead {
+			return fmt.Errorf("dispatch refused: sender %q is stale at leadership epoch %d; current lead is %q", from, leadership.Epoch, leadership.CurrentLead)
+		}
+	} else if flagWasSet(fs, "leadership-epoch") && *leadershipEpoch != 0 {
+		return fmt.Errorf("dispatch refused: no durable leadership handoff exists; expected backward-compatible epoch 0")
+	}
+	if err := dispatchAfterLeadershipRead(projectDir, profile, workstream, leadership); err != nil {
+		return fmt.Errorf("dispatch leadership race seam: %w", err)
+	}
 	receipt := newDeliveryReceipt(projectDir, profile, workstream, member.Role, member.Handle, effectiveTeamExecutionMode(t), "dispatch")
+	// Reserve the deterministic path in memory so a task outbox can link it in
+	// the atomic authority transaction. The file itself is not created until
+	// after that transaction succeeds, so an epoch refusal leaves no receipt.
+	receipt.Path = filepath.Join(deliveryReceiptDir(projectDir, profile, workstream), receipt.AttemptID+".json")
+	leadImplementationAllowed := team.EffectiveLeadMode(t) != team.LeadModePlanner
+	currentActorImplementationAllowed := member.Role != t.Lead || leadImplementationAllowed
+	receipt.LeadImplementationAllowed = &leadImplementationAllowed
+	receipt.CurrentActorImplementationAllowed = &currentActorImplementationAllowed
 	receipt.Method = "durable_amq"
 	receipt.addStage("queued_amq", "dispatch accepted by amq-squad")
 	// Option 3 (#176): warn when the dispatcher handle differs from the
@@ -292,16 +331,29 @@ Examples:
 	}
 
 	taskID := strings.TrimSpace(*taskIDFlag)
+	var createInput *taskstore.AddInput
+	if *createTaskFlag && (strings.TrimSpace(*taskIntent) == taskstore.IntentImplement || strings.TrimSpace(*taskIntent) == taskstore.IntentLifecycle) && member.Role == t.Lead && team.EffectiveLeadMode(t) == team.LeadModePlanner {
+		return fmt.Errorf("create-task dispatch refused: current_actor_implementation_allowed=false for planner lead %s (lead_implementation_allowed=false); route implementation to a mutable worker", member.Role)
+	}
 	if *createTaskFlag {
-		created, err := taskstore.AddForProfile(projectDir, profile, workstream, taskstore.AddInput{
-			Title:       *subjectFlag,
-			Description: taskBody,
-			AssignTo:    member.Handle,
-		}, taskNow())
-		if err != nil {
-			return fmt.Errorf("create native task for dispatch: %w", err)
+		createInput = &taskstore.AddInput{
+			Title: *subjectFlag, Description: taskBody, AssignTo: member.Handle,
+			Intent: *taskIntent, Artifact: *taskArtifact, ExpectedBaseSHA: *taskExpectedBase,
+			Implementer: *taskImplementer, Reviewer: *taskReviewer, ParallelWorkExplicit: *taskParallelWork,
 		}
-		taskID = created.ID
+	}
+	if taskID != "" {
+		currentTask, err := taskstore.ShowForProfile(projectDir, profile, workstream, taskID)
+		if err != nil {
+			return err
+		}
+		if err := validateDispatchTask(currentTask, member.Handle, projectDir, profile, workstream); err != nil {
+			return err
+		}
+		currentActorImplementationAllowed := member.Role != t.Lead || team.EffectiveLeadMode(t) != team.LeadModePlanner
+		if (currentTask.Intent == taskstore.IntentImplement || currentTask.Intent == taskstore.IntentLifecycle) && !currentActorImplementationAllowed {
+			return fmt.Errorf("task %s dispatch refused: current_actor_implementation_allowed=false for planner lead %s (lead_implementation_allowed=false); route implementation to a mutable worker", currentTask.ID, member.Role)
+		}
 	}
 	receipt.Sender = from
 	receipt.Recipient = member.Handle
@@ -314,20 +366,27 @@ Examples:
 	}
 	receipt.EvidenceSource = "amq_send_output"
 	receipt.addStage(deliveryStateAmbiguousUnknown, "receipt reserved before task link and AMQ send; no blind retry if interrupted")
-	if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
-		return fmt.Errorf("reserve dispatch receipt: %w", err)
-	}
 	var prepared *taskstore.DispatchPrepareResult
-	if taskID != "" {
+	if taskID != "" || createInput != nil {
 		preparedAt := taskNow()
 		p, err := dispatchPrepareTask(projectDir, profile, workstream, taskID, taskstore.DispatchIntentOptions{
 			From: from, Assignee: member.Handle, Thread: *threadFlag, Kind: *kindFlag,
 			Subject: *subjectFlag, Body: taskBody, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
 			LeaseDuration: taskstore.DefaultLeaseDuration, Now: preparedAt,
+			Create: createInput,
+			Leadership: taskstore.LeadershipExpectation{
+				Sender: from, ExpectedEpoch: *leadershipEpoch, EpochSpecified: flagWasSet(fs, "leadership-epoch"),
+			},
 		})
 		if err != nil {
-			markDeliveryFailedBeforeID(projectDir, profile, workstream, &receipt, err)
 			return fmt.Errorf("prepare native task %s dispatch transaction: %w", taskID, err)
+		}
+		taskID = p.Task.ID
+		receipt.TaskID = taskID
+		receipt.OutboxIntentID = p.Intent.ID
+		if p.LeadershipEpoch != nil {
+			epoch := *p.LeadershipEpoch
+			receipt.LeadershipEpoch = &epoch
 		}
 		started, err := dispatchBeginTaskDelivery(projectDir, profile, workstream, taskID, p.Intent.ID, preparedAt.Add(time.Nanosecond))
 		if err != nil {
@@ -335,8 +394,6 @@ Examples:
 			return fmt.Errorf("begin native task %s delivery: %w", taskID, err)
 		}
 		p.Intent = started
-		receipt.TaskID = taskID
-		receipt.OutboxIntentID = p.Intent.ID
 		if err := persistDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
 			cause := fmt.Errorf("link dispatch receipt %s to task outbox %s (send not attempted): %w", receipt.AttemptID, p.Intent.ID, err)
 			finished, finishedIntent, finishErr := dispatchFinishTask(projectDir, profile, workstream, taskID, p.Intent.ID, taskstore.Dispatch{
@@ -351,6 +408,8 @@ Examples:
 			return cause
 		}
 		prepared = &p
+	} else if err := persistDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+		return fmt.Errorf("reserve dispatch receipt: %w", err)
 	}
 
 	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag, waitFor, waitTimeout)
@@ -691,6 +750,9 @@ func dispatchRecipientWakeInjectMode(root, handle string) string {
 
 func validateDispatchTask(t taskstore.Task, assignee, projectDir, profile, session string) error {
 	assignee = strings.TrimSpace(assignee)
+	if authority := taskstore.AuthorityActor(t); authority != "" && authority != assignee {
+		return fmt.Errorf("task %s %s authority actor is %s; dispatch target uses handle %s", t.ID, t.Intent, authority, assignee)
+	}
 	assigned := strings.TrimSpace(t.AssignedTo)
 	if assigned != "" && assigned != assignee {
 		return fmt.Errorf("task %s is assigned to %s; dispatch target uses handle %s", t.ID, assigned, assignee)
@@ -717,7 +779,7 @@ func validateDispatchTask(t taskstore.Task, assignee, projectDir, profile, sessi
 		return nil
 	case taskstore.StatusInProgress:
 		return nil
-	case taskstore.StatusCompleted, taskstore.StatusFailed, taskstore.StatusBlocked, taskstore.StatusCancelled:
+	case taskstore.StatusCompletedPendingReconcile, taskstore.StatusCompleted, taskstore.StatusFailed, taskstore.StatusBlocked, taskstore.StatusCancelled:
 		return fmt.Errorf("task %s is %s; dispatch requires pending or in_progress", t.ID, t.Status)
 	default:
 		return fmt.Errorf("task %s has unknown status %q; dispatch requires pending or in_progress", t.ID, t.Status)
@@ -738,6 +800,8 @@ func autoClaimDispatchedTask(projectDir, profile, session, taskID, assignee stri
 		return claimed, err == nil, err
 	case taskstore.StatusInProgress:
 		return current, false, nil
+	case taskstore.StatusCompletedPendingReconcile:
+		return taskstore.Task{}, false, fmt.Errorf("task %s is completed_pending_reconcile; exact evidence reconciliation is required before dispatch", current.ID)
 	default:
 		return taskstore.Task{}, false, fmt.Errorf("task %s is %s; dispatch requires pending or in_progress", current.ID, current.Status)
 	}

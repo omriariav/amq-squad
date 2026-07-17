@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -591,6 +592,7 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckCodexSkillCache(d))
 	checks = append(checks, doctorCheckSkillVersion(d))
 	checks = append(checks, doctorCheckTeamConfig(d))
+	checks = append(checks, doctorCheckToolProfiles(d))
 	checks = append(checks, doctorCheckTeamRulesRoster(d))
 	checks = append(checks, doctorCheckTmux(d))
 	checks = append(checks, doctorCheckTmuxExtendedKeys(d))
@@ -600,8 +602,62 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckBootstrap(d)...)
 	wakeChecks, workstream := doctorCheckWake(d)
 	checks = append(checks, wakeChecks...)
+	checks = append(checks, doctorCheckTaskCompletionEvidence(d, workstream))
 	checks = append(checks, doctorCheckNotificationWatcher(d, workstream))
 	return checks, workstream
+}
+
+func doctorCheckTaskCompletionEvidence(d doctorExecution, workstream string) doctorCheck {
+	const name = "task completion evidence"
+	if strings.TrimSpace(workstream) == "" {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "workstream unresolved; skipped"}
+	}
+	warnings, err := statusTaskWarnings(d.ProjectDir, doctorProfile(d), workstream)
+	if err != nil {
+		return doctorCheck{Name: name, Status: doctorWarn, Detail: err.Error()}
+	}
+	var findings []string
+	for _, warning := range warnings {
+		if strings.HasPrefix(warning.Kind, "task_completion_") {
+			finding := warning.Kind + ": " + warning.Detail
+			if warning.SuggestedCommand != "" {
+				finding += " next=" + warning.SuggestedCommand
+			}
+			findings = append(findings, finding)
+		}
+	}
+	if len(findings) == 0 {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "no completion evidence drift"}
+	}
+	sort.Strings(findings)
+	return doctorCheck{Name: name, Status: doctorWarn, Detail: strings.Join(findings, "; ")}
+}
+
+func doctorCheckToolProfiles(d doctorExecution) doctorCheck {
+	const name = "member tool profiles"
+	profile := doctorProfile(d)
+	if !team.ExistsProfile(d.ProjectDir, profile) {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "no team profile; skipped"}
+	}
+	t, err := team.ReadProfile(d.ProjectDir, profile)
+	if err != nil {
+		return doctorCheck{Name: name, Status: doctorFail, Detail: err.Error()}
+	}
+	if err := validateMemberOverlayPaths(t, t.Members); err != nil {
+		return doctorCheck{Name: name, Status: doctorFail, Detail: err.Error()}
+	}
+	var fullWorkers []string
+	var policies []string
+	for _, member := range orderedTeamMembers(t.Members) {
+		policies = append(policies, member.Role+"="+member.EffectiveToolProfile())
+		if member.Role != t.Lead && member.EffectiveToolProfile() == team.ToolProfileFull {
+			fullWorkers = append(fullWorkers, member.Role)
+		}
+	}
+	if len(fullWorkers) >= 2 {
+		return doctorCheck{Name: name, Status: doctorWarn, Detail: "multiple workers inherit the full operator tool surface: " + strings.Join(fullWorkers, ", ") + "; prefer generated lean role profiles unless full access is intentional"}
+	}
+	return doctorCheck{Name: name, Status: doctorOK, Detail: strings.Join(policies, ", ")}
 }
 
 func doctorCheckNotificationWatcher(d doctorExecution, workstream string) doctorCheck {

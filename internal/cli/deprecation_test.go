@@ -301,6 +301,9 @@ exit 1
 	if strings.Contains(stdout, "--session issue-96") {
 		t.Fatalf("named-profile explicit root should not also pass --session to coop exec:\n%s", stdout)
 	}
+	if !strings.Contains(stdout, "--me release-reviewer") || !strings.Contains(stdout, "env -- -u AM_SESSION custom-agent") {
+		t.Fatalf("named-profile dynamic member launch must omit AM_SESSION at the real child boundary:\n%s", stdout)
+	}
 }
 
 func TestDefaultMeFromRole(t *testing.T) {

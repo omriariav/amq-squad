@@ -1,10 +1,13 @@
 package task
 
 import (
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v2/internal/namespace"
 )
 
 type ClaimOptions struct {
@@ -25,6 +28,16 @@ func ClaimWithOptionsForProfile(projectDir, profile, session, id string, opts Cl
 	return mutateForProfile(projectDir, profile, session, id, func(t *Task, all map[string]*Task) error {
 		if t.Status != StatusPending {
 			return fmt.Errorf("task %s is %s, not pending; only pending tasks can be claimed", id, t.Status)
+		}
+		switch t.Intent {
+		case IntentImplement, IntentLifecycle:
+			if actor != strings.TrimSpace(t.Implementer) {
+				return fmt.Errorf("task %s %s actor is implementer %q; %q cannot claim mutation authority", id, t.Intent, t.Implementer, actor)
+			}
+		case IntentReview, IntentAudit:
+			if actor != strings.TrimSpace(t.Reviewer) {
+				return fmt.Errorf("task %s %s actor is reviewer %q; %q cannot claim it", id, t.Intent, t.Reviewer, actor)
+			}
 		}
 		unmet, err := unmetDependencies(t, all)
 		if err != nil {
@@ -71,7 +84,7 @@ func RenewLeaseForProfile(projectDir, profile, session, id, actor string, durati
 		duration = DefaultLeaseDuration
 	}
 	return mutateForProfile(projectDir, profile, session, id, func(t *Task, _ map[string]*Task) error {
-		if t.Status != StatusInProgress {
+		if t.Status != StatusInProgress && t.Status != StatusCompletedPendingReconcile {
 			return fmt.Errorf("task %s is %s, not in_progress; only active claims have leases", id, t.Status)
 		}
 		if err := requireAssignee(t, actor, "renew"); err != nil {
@@ -96,13 +109,15 @@ func RenewLeaseForProfile(projectDir, profile, session, id, actor string, durati
 }
 
 type DoneOptions struct {
-	Actor          string
-	Evidence       string
-	FinalHead      string
-	DispatchNextID string
-	LeaseDuration  time.Duration
-	Notify         bool
-	Now            time.Time
+	Actor                string
+	Evidence             string
+	FinalHead            string
+	CompletionGeneration string
+	GateCorrelation      *CompletionGateCorrelation
+	DispatchNextID       string
+	LeaseDuration        time.Duration
+	Notify               bool
+	Now                  time.Time
 }
 
 type DoneResult struct {
@@ -128,6 +143,35 @@ func DoneAtomicForProfile(projectDir, profile, session, id string, opts DoneOpti
 		if completed == nil {
 			return fmt.Errorf("task %q not found in workstream %q", id, session)
 		}
+		generation := strings.TrimSpace(opts.CompletionGeneration)
+		if generation == "" {
+			generation = intentID(completed.ID, "completion-generation", opts.Now)
+		}
+		if err := validateCompletionGateCorrelation(completed.ID, profile, session, opts.GateCorrelation); err != nil {
+			return err
+		}
+		if completed.Status == StatusCompleted && completed.CompletionLifecycle != nil {
+			lifecycle := completed.CompletionLifecycle
+			if lifecycle.Generation == generation && completionGateCorrelationIdentityEqual(lifecycle.Gate, opts.GateCorrelation) {
+				if completionGateCorrelationEqual(lifecycle.Gate, opts.GateCorrelation) {
+					result.Task = *completed
+					return nil
+				}
+				if lifecycle.Gate != nil && lifecycle.Gate.State != "open_preserved" && opts.GateCorrelation != nil && opts.GateCorrelation.State == "open_preserved" {
+					return fmt.Errorf("task %s completion gate reconciliation cannot reopen terminal request %s", id, lifecycle.Gate.RequestMessageID)
+				}
+				lifecycle.GateHistory = appendCompletionGateAudit(lifecycle.GateHistory, lifecycle.Gate)
+				lifecycle.Gate = cloneCompletionGateCorrelation(opts.GateCorrelation)
+				lifecycle.GateHistory = appendCompletionGateAudit(lifecycle.GateHistory, lifecycle.Gate)
+				completed.UpdatedAt = opts.Now
+				if err := commitTasks(dir, []Task{*completed}, opts.Now); err != nil {
+					return err
+				}
+				result.Task = *completed
+				return nil
+			}
+			return fmt.Errorf("task %s is already completed by generation %s", id, lifecycle.Generation)
+		}
 		if completed.Status != StatusInProgress {
 			return fmt.Errorf("task %s is %s, not in_progress; claim it before marking it completed", id, completed.Status)
 		}
@@ -139,6 +183,11 @@ func DoneAtomicForProfile(projectDir, profile, session, id string, opts DoneOpti
 		completed.FinalHead = strings.TrimSpace(opts.FinalHead)
 		completed.Lease = nil
 		completed.UpdatedAt = opts.Now
+		completed.CompletionLifecycle = &CompletionLifecycle{
+			Generation: generation, Actor: strings.TrimSpace(opts.Actor), CompletedAt: opts.Now,
+			Gate: cloneCompletionGateCorrelation(opts.GateCorrelation),
+		}
+		completed.CompletionLifecycle.GateHistory = appendCompletionGateAudit(nil, completed.CompletionLifecycle.Gate)
 
 		changed := map[string]*Task{completed.ID: completed}
 		for _, candidate := range tasks {
@@ -168,6 +217,7 @@ func DoneAtomicForProfile(projectDir, profile, session, id string, opts DoneOpti
 					Thread: route.Thread, Kind: "status",
 					Subject: "DONE: " + completed.Title, Body: completionBody(*completed), CreatedAt: opts.Now, UpdatedAt: opts.Now,
 				}
+				completed.CompletionLifecycle.ReportIntentID = intent.ID
 				completed.Outbox = append(completed.Outbox, intent)
 				result.Outbox = append(result.Outbox, intent)
 			} else {
@@ -222,6 +272,82 @@ func DoneAtomicForProfile(projectDir, profile, session, id string, opts DoneOpti
 	return result, err
 }
 
+func validateCompletionGateCorrelation(taskID, profile, session string, correlation *CompletionGateCorrelation) error {
+	if correlation == nil {
+		return nil
+	}
+	if strings.TrimSpace(correlation.TaskID) != taskID || strings.TrimSpace(correlation.Profile) != namespace.NormalizeProfile(profile) ||
+		strings.TrimSpace(correlation.Session) != strings.TrimSpace(session) || strings.TrimSpace(correlation.NamespaceID) != namespace.ID(profile, session) {
+		return fmt.Errorf("completion gate correlation does not match exact task namespace")
+	}
+	for name, value := range map[string]string{
+		"namespace_generation": correlation.NamespaceGeneration,
+		"thread":               correlation.Thread,
+		"request_message_id":   correlation.RequestMessageID,
+		"request_sha256":       correlation.RequestSHA256,
+	} {
+		if strings.TrimSpace(value) == "" || value != strings.TrimSpace(value) {
+			return fmt.Errorf("completion gate correlation %s must be non-empty and trim-canonical", name)
+		}
+	}
+	if len(correlation.RequestSHA256) != 64 || strings.ToLower(correlation.RequestSHA256) != correlation.RequestSHA256 {
+		return fmt.Errorf("completion gate correlation request_sha256 must be exactly 64 lowercase hex characters")
+	}
+	if _, err := hex.DecodeString(correlation.RequestSHA256); err != nil {
+		return fmt.Errorf("completion gate correlation request_sha256 must be exactly 64 lowercase hex characters")
+	}
+	if correlation.Reason == "" || correlation.Reason != strings.TrimSpace(correlation.Reason) || strings.ContainsAny(correlation.Reason, "\r\n\x00") {
+		return fmt.Errorf("completion gate correlation reason must be non-empty canonical single-line text")
+	}
+	if !strings.HasPrefix(correlation.Thread, "gate/") || correlation.ObservedAt.IsZero() {
+		return fmt.Errorf("completion gate correlation thread and observation are required")
+	}
+	switch correlation.State {
+	case "answered", "closed", "withdrawn", "superseded":
+		if !correlation.Suppressed {
+			return fmt.Errorf("terminal completion gate correlation must suppress completed attention")
+		}
+	case "open_preserved":
+		if correlation.Suppressed {
+			return fmt.Errorf("unresolved completion gate correlation must remain unsuppressed")
+		}
+	default:
+		return fmt.Errorf("unsupported completion gate correlation state %q", correlation.State)
+	}
+	return nil
+}
+
+func cloneCompletionGateCorrelation(in *CompletionGateCorrelation) *CompletionGateCorrelation {
+	if in == nil {
+		return nil
+	}
+	copy := *in
+	return &copy
+}
+
+func completionGateCorrelationEqual(a, b *CompletionGateCorrelation) bool {
+	return completionGateCorrelationIdentityEqual(a, b) && (a == nil || a.State == b.State && a.Suppressed == b.Suppressed)
+}
+
+func completionGateCorrelationIdentityEqual(a, b *CompletionGateCorrelation) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.TaskID == b.TaskID && a.Profile == b.Profile && a.Session == b.Session &&
+		a.NamespaceID == b.NamespaceID && a.NamespaceGeneration == b.NamespaceGeneration &&
+		a.Thread == b.Thread && a.RequestMessageID == b.RequestMessageID && a.RequestSHA256 == b.RequestSHA256
+}
+
+func appendCompletionGateAudit(history []CompletionGateCorrelation, gate *CompletionGateCorrelation) []CompletionGateCorrelation {
+	if gate == nil {
+		return history
+	}
+	if len(history) > 0 && completionGateCorrelationEqual(&history[len(history)-1], gate) {
+		return history
+	}
+	return append(history, *cloneCompletionGateCorrelation(gate))
+}
+
 func completionBody(t Task) string {
 	if strings.TrimSpace(t.Evidence) != "" {
 		return strings.TrimSpace(t.Evidence)
@@ -274,7 +400,7 @@ func CancelForProfile(projectDir, profile, session, id, actor, reason, replaceme
 		if cancelled == nil {
 			return fmt.Errorf("task %q not found in workstream %q", id, session)
 		}
-		if cancelled.Status == StatusCompleted || cancelled.Status == StatusCancelled {
+		if cancelled.Status == StatusCompleted || cancelled.Status == StatusCancelled || cancelled.Status == StatusCompletedPendingReconcile {
 			return fmt.Errorf("task %s is %s and cannot be cancelled", id, cancelled.Status)
 		}
 		if cancelled.Status == StatusInProgress {
@@ -450,12 +576,25 @@ type DispatchIntentOptions struct {
 	ReceiptPath      string
 	LeaseDuration    time.Duration
 	Now              time.Time
+	Create           *AddInput
+	Leadership       LeadershipExpectation
+}
+
+// LeadershipExpectation is checked while the task-store lock is held, in the
+// same critical section that commits task creation/claim and the outbox intent.
+// EpochSpecified distinguishes an omitted backward-compatible epoch 0 from an
+// explicit value after a durable leadership handoff exists.
+type LeadershipExpectation struct {
+	Sender         string
+	ExpectedEpoch  uint64
+	EpochSpecified bool
 }
 
 type DispatchPrepareResult struct {
-	Task     Task
-	Intent   OutboxIntent
-	DidClaim bool
+	Task            Task
+	Intent          OutboxIntent
+	DidClaim        bool
+	LeadershipEpoch *uint64
 }
 
 // PrepareDispatchForProfile commits a task-backed dispatch intent (and the
@@ -466,9 +605,28 @@ func PrepareDispatchForProfile(projectDir, profile, session, taskID string, opts
 	}
 	var result DispatchPrepareResult
 	err := withLockForProfile(projectDir, profile, session, func(dir string) error {
+		epoch, err := authorizeLeadershipUnderLock(dir, opts.Leadership)
+		if err != nil {
+			return err
+		}
 		tasks, err := readAll(dir)
 		if err != nil {
 			return err
+		}
+		changed := map[string]Task{}
+		if opts.Create != nil {
+			if strings.TrimSpace(taskID) != "" {
+				return fmt.Errorf("dispatch cannot create and select an existing task in the same transaction")
+			}
+			created, createdChanges, err := addTaskUnderLock(tasks, *opts.Create, opts.Now)
+			if err != nil {
+				return err
+			}
+			taskID = created.ID
+			tasks = append(tasks, created)
+			for _, candidate := range createdChanges {
+				changed[candidate.ID] = candidate
+			}
 		}
 		all := indexByID(tasks)
 		t := all[strings.TrimSpace(taskID)]
@@ -476,6 +634,9 @@ func PrepareDispatchForProfile(projectDir, profile, session, taskID string, opts
 			return fmt.Errorf("task %q not found in workstream %q", taskID, session)
 		}
 		assignee := strings.TrimSpace(opts.Assignee)
+		if authority := AuthorityActor(*t); authority != "" && assignee != authority {
+			return fmt.Errorf("task %s %s authority actor is %s; dispatch target uses handle %s", t.ID, t.Intent, authority, assignee)
+		}
 		if assigned := strings.TrimSpace(t.AssignedTo); assigned != "" && assigned != assignee {
 			return fmt.Errorf("task %s is assigned to %s; dispatch target uses handle %s", t.ID, assigned, assignee)
 		}
@@ -496,7 +657,7 @@ func PrepareDispatchForProfile(projectDir, profile, session, taskID string, opts
 			if strings.TrimSpace(t.AssignedTo) != assignee {
 				return fmt.Errorf("task %s is in_progress for %s, not %s", t.ID, t.AssignedTo, assignee)
 			}
-		case StatusCompleted, StatusFailed, StatusBlocked, StatusCancelled:
+		case StatusCompletedPendingReconcile, StatusCompleted, StatusFailed, StatusBlocked, StatusCancelled:
 			return fmt.Errorf("task %s is %s; dispatch requires pending or in_progress", t.ID, t.Status)
 		default:
 			return fmt.Errorf("task %s has unknown status %q; dispatch requires pending or in_progress", t.ID, t.Status)
@@ -508,18 +669,50 @@ func PrepareDispatchForProfile(projectDir, profile, session, taskID string, opts
 			ReceiptAttemptID: strings.TrimSpace(opts.ReceiptAttemptID), ReceiptPath: strings.TrimSpace(opts.ReceiptPath),
 			CreatedAt: opts.Now, UpdatedAt: opts.Now,
 		}
+		if epoch != nil {
+			value := *epoch
+			intent.LeadershipEpoch = &value
+			result.LeadershipEpoch = &value
+		}
 		if intent.ReceiptAttemptID != "" {
 			intent.ReceiptAttempts = []ReceiptLink{{AttemptID: intent.ReceiptAttemptID, Path: intent.ReceiptPath}}
 		}
 		t.Outbox = append(t.Outbox, intent)
 		t.UpdatedAt = opts.Now
-		if err := commitTasks(dir, []Task{*t}, opts.Now); err != nil {
+		changed[t.ID] = *t
+		toCommit := make([]Task, 0, len(changed))
+		for _, candidate := range changed {
+			toCommit = append(toCommit, candidate)
+		}
+		if err := commitTasks(dir, toCommit, opts.Now); err != nil {
 			return err
 		}
 		result.Task, result.Intent = *t, intent
 		return nil
 	})
 	return result, err
+}
+
+func authorizeLeadershipUnderLock(dir string, expectation LeadershipExpectation) (*uint64, error) {
+	state, err := readLeadership(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read leadership authority during dispatch transaction: %w", err)
+	}
+	sender := strings.TrimSpace(expectation.Sender)
+	if state.Epoch == 0 {
+		if expectation.EpochSpecified && expectation.ExpectedEpoch != 0 {
+			return nil, fmt.Errorf("dispatch refused: no durable leadership handoff exists; expected backward-compatible epoch 0")
+		}
+		return nil, nil
+	}
+	if !expectation.EpochSpecified || expectation.ExpectedEpoch != state.Epoch {
+		return nil, fmt.Errorf("dispatch refused: leadership epoch is %d; recover the current record and authorize that exact epoch", state.Epoch)
+	}
+	if sender != state.CurrentLead {
+		return nil, fmt.Errorf("dispatch refused: sender %q is stale at leadership epoch %d; current lead is %q", sender, state.Epoch, state.CurrentLead)
+	}
+	epoch := state.Epoch
+	return &epoch, nil
 }
 
 func nextIntentID(t *Task, kind string, now time.Time) string {

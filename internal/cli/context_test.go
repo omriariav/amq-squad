@@ -20,7 +20,7 @@ import (
 var contextCommandScopeInventory = map[string]string{
 	"activity": "canonical", "agent": "canonical", "amq": "canonical", "archive": "canonical",
 	"brief": "canonical", "collect": "canonical", "console": "canonical", "context": "canonical",
-	"dispatch": "canonical", "doctor": "canonical", "focus": "canonical", "fork": "canonical",
+	"dispatch": "canonical", "doctor": "canonical", "evidence": "canonical_task_selection", "focus": "canonical", "fork": "canonical",
 	"gate": "canonical", "goal": "canonical_except_draft", "lead": "canonical", "monitor": "canonical_multi_session",
 	"next": "canonical", "notifications": "canonical", "notify": "canonical", "open": "canonical",
 	"namespace": "explicit_endpoint_pair",
@@ -391,6 +391,43 @@ func TestResolveCanonicalContextSharedTupleDoesNotRequireHandle(t *testing.T) {
 	}
 }
 
+func TestBareStatusAndContextResolveNamedExactRootWithoutAMSession(t *testing.T) {
+	project := t.TempDir()
+	isolateCanonicalContextTest(t, project)
+	project, _ = os.Getwd()
+	const (
+		profile = "review"
+		session = "issue-481"
+	)
+	root := filepath.Join(project, ".agent-mail", profile, session)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := team.WriteProfile(project, profile, team.Team{Members: []team.Member{{
+		Role: "cto", Binary: "codex", Handle: "cto", Session: session,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", root)
+	t.Setenv("AM_ME", "cto")
+	if err := os.Unsetenv("AM_SESSION"); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, run := range map[string]func() error{
+		"status":  func() error { return runStatus([]string{"--json"}) },
+		"context": func() error { return runContextExplain([]string{"--json"}) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, stderr, err := captureOutput(t, run)
+			if err != nil {
+				t.Fatalf("bare %s rejected exact-root/sessionless identity: %v\n%s", name, err, stderr)
+			}
+		})
+	}
+}
+
 func TestExplicitRootOverridesMalformedInjectedIdentityWithWarning(t *testing.T) {
 	project := t.TempDir()
 	isolateCanonicalContextTest(t, project)
@@ -534,6 +571,29 @@ func TestContextExplainJSONHumanHelpAndCompletion(t *testing.T) {
 		if !strings.Contains(script, "context") || !strings.Contains(script, "explain") {
 			t.Errorf("%s completion missing context explain", shell)
 		}
+	}
+}
+
+func TestContextExplainDegradesForExplicitlyEmptyInjectedSession(t *testing.T) {
+	project := t.TempDir()
+	isolateCanonicalContextTest(t, project)
+	root := filepath.Join(project, ".agent-mail", "review", "issue-463")
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", root)
+	t.Setenv("AM_SESSION", "")
+	t.Setenv("AM_ME", "cto")
+
+	stdout, stderr, err := captureOutput(t, func() error { return runContextExplain(nil) })
+	if err != nil {
+		t.Fatalf("degraded context explain failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	for _, want := range []string{"profile:   review", "session:   issue-463", root, "explicitly empty AM_SESSION"} {
+		if !strings.Contains(stdout+stderr, want) {
+			t.Fatalf("degraded context explain missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout, stderr)
+		}
+	}
+	if _, _, statusErr := captureOutput(t, func() error { return runStatus([]string{"--json"}) }); statusErr == nil || !strings.Contains(statusErr.Error(), "explicitly empty AM_SESSION") {
+		t.Fatalf("ordinary status must still fail closed, got %v", statusErr)
 	}
 }
 

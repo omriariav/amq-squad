@@ -2,10 +2,13 @@ package cli
 
 import (
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/runtimeaction"
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -35,17 +38,19 @@ type tmuxRuntimeJSON struct {
 // For tmux-backed launches it mirrors tmuxRuntimeJSON so consumers can start
 // selecting a controller by backend without losing the legacy tmux contract.
 type terminalRuntimeJSON struct {
-	Backend    string `json:"backend,omitempty"`
-	Session    string `json:"session,omitempty"`
-	WindowID   string `json:"window_id,omitempty"`
-	WindowName string `json:"window_name,omitempty"`
-	TabID      string `json:"tab_id,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	PaneID     string `json:"pane_id,omitempty"`
-	TTY        string `json:"tty,omitempty"`
-	Target     string `json:"target,omitempty"`
-	PaneAlive  bool   `json:"pane_alive"`
-	PIDAlive   bool   `json:"pid_alive,omitempty"`
+	Backend      string                                    `json:"backend,omitempty"`
+	Session      string                                    `json:"session,omitempty"`
+	WindowID     string                                    `json:"window_id,omitempty"`
+	WindowName   string                                    `json:"window_name,omitempty"`
+	TabID        string                                    `json:"tab_id,omitempty"`
+	SessionID    string                                    `json:"session_id,omitempty"`
+	PaneID       string                                    `json:"pane_id,omitempty"`
+	TTY          string                                    `json:"tty,omitempty"`
+	Target       string                                    `json:"target,omitempty"`
+	PaneAlive    bool                                      `json:"pane_alive"`
+	PIDAlive     bool                                      `json:"pid_alive,omitempty"`
+	Tier         string                                    `json:"tier"`
+	Capabilities map[string]runtimecontrol.CapabilityState `json:"capabilities"`
 }
 
 // tmuxRuntimeFromInfo converts a persisted launch.TmuxInfo into the JSON block,
@@ -207,27 +212,18 @@ func policyAwareMemberActions(t team.Team, profile, session, role string, paneAl
 
 func policyAwareMemberActionsForRow(t team.Team, profile, session string, row statusRecord) []runtimeActionJSON {
 	caps := runtimeCapabilitiesForStatusRow(row)
-	if caps == nil {
-		return policyAwareMemberActions(t, profile, session, row.Role, row.Tmux != nil && row.Tmux.PaneAlive)
-	}
-	return applyMemberActionPolicy(t, row.Role, runtimeaction.MemberForCapabilities(t.Project, profile, session, row.Role, *caps))
+	return applyMemberActionPolicy(t, row.Role, runtimeaction.MemberForCapabilities(t.Project, profile, session, row.Role, caps))
 }
 
-func runtimeCapabilitiesForStatusRow(row statusRecord) *runtimecontrol.Capabilities {
+func rawRuntimeCapabilitiesForStatusRow(row statusRecord) runtimecontrol.Capabilities {
 	if row.Terminal == nil || strings.TrimSpace(row.Terminal.Backend) == "" {
-		return nil
+		return runtimecontrol.UnknownCapabilities("runtime backend is missing")
 	}
 	backend := strings.TrimSpace(row.Terminal.Backend)
 	ctrl, ok := runtimecontrol.DefaultRegistry().Lookup(backend)
 	if !ok {
 		reason := "runtime backend " + backend + " is unsupported"
-		caps := runtimecontrol.NewCapabilities(map[runtimecontrol.Capability]runtimecontrol.CapabilityState{
-			runtimecontrol.CapabilityFocus:       {Available: false, Reason: reason},
-			runtimecontrol.CapabilitySendPrompt:  {Available: false, Reason: reason},
-			runtimecontrol.CapabilityGoalDeliver: {Available: false, Reason: reason},
-			runtimecontrol.CapabilityDispatch:    {Available: false, Reason: reason},
-		})
-		return &caps
+		return runtimecontrol.UnknownCapabilities(reason)
 	}
 	caps := ctrl.Capabilities(runtimecontrol.Identity{
 		Backend:    backend,
@@ -244,7 +240,52 @@ func runtimeCapabilitiesForStatusRow(row statusRecord) *runtimecontrol.Capabilit
 		AgentAlive:  row.Signals.AgentAlive,
 		BinaryMatch: row.Signals.BinaryMatch,
 	})
-	return &caps
+	return caps
+}
+
+func runtimeCapabilitiesForStatusRow(row statusRecord) runtimecontrol.Capabilities {
+	raw := rawRuntimeCapabilitiesForStatusRow(row)
+	return runtimecontrol.ResolveEffectiveActions(raw, runtimecontrol.DeliveryEvidence{
+		DurableAMQ: memberHasDurableAMQ(row),
+	})
+}
+
+func memberHasDurableAMQ(row statusRecord) bool {
+	handle := strings.TrimSpace(row.Handle)
+	root := strings.TrimSpace(row.Root)
+	agentDir := strings.TrimSpace(row.AgentDir)
+	if handle == "" || root == "" || agentDir == "" || strings.TrimSpace(row.Session) == "" {
+		return false
+	}
+	if row.Namespace.Session != row.Session || row.Namespace.ID != squadnamespace.ID(row.Namespace.Profile, row.Session) {
+		return false
+	}
+	expectedAgentDir := filepath.Join(root, "agents", handle)
+	if filepath.Clean(agentDir) != filepath.Clean(expectedAgentDir) {
+		return false
+	}
+	for _, path := range []string{
+		agentDir,
+		filepath.Join(agentDir, "inbox"),
+		filepath.Join(agentDir, "inbox", "cur"),
+		filepath.Join(agentDir, "inbox", "new"),
+		filepath.Join(agentDir, "inbox", "tmp"),
+	} {
+		info, err := os.Stat(path)
+		if err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
+func decorateTerminalRuntimeCapabilities(row *statusRecord) {
+	if row == nil || row.Terminal == nil {
+		return
+	}
+	row.Terminal.Tier = runtimecontrol.TierForBackend(row.Terminal.Backend)
+	caps := rawRuntimeCapabilitiesForStatusRow(*row)
+	row.Terminal.Capabilities = caps.RawSnapshot()
 }
 
 func applyMemberActionPolicy(t team.Team, role string, actions []runtimeActionJSON) []runtimeActionJSON {
@@ -364,16 +405,17 @@ func statusTopologyForRows(rows []statusRecord, orchestrated bool) *statusTopolo
 // human plan (role/action/note/command) and adds the runtime identity so a
 // client can decide whether to focus a live pane or re-open one.
 type resumeMemberJSON struct {
-	Role             string           `json:"role"`
-	Handle           string           `json:"handle,omitempty"`
-	Action           string           `json:"action"`
-	LaunchState      string           `json:"launch_state"`
-	RecordState      string           `json:"record_state"`
-	HasRestoreRecord bool             `json:"has_restore_record"`
-	Wake             string           `json:"wake,omitempty"`
-	Note             string           `json:"note,omitempty"`
-	Command          string           `json:"command,omitempty"`
-	Tmux             *tmuxRuntimeJSON `json:"tmux,omitempty"`
+	Role             string               `json:"role"`
+	Handle           string               `json:"handle,omitempty"`
+	Action           string               `json:"action"`
+	LaunchState      string               `json:"launch_state"`
+	RecordState      string               `json:"record_state"`
+	HasRestoreRecord bool                 `json:"has_restore_record"`
+	Wake             string               `json:"wake,omitempty"`
+	Note             string               `json:"note,omitempty"`
+	Command          string               `json:"command,omitempty"`
+	Tmux             *tmuxRuntimeJSON     `json:"tmux,omitempty"`
+	Terminal         *terminalRuntimeJSON `json:"terminal,omitempty"`
 	// Liveness is the shared liveness verdict (status + detail + signals), the
 	// SAME classification `status --json` reports. A client compares
 	// liveness.status to status's status instead of inferring liveness from the
@@ -430,6 +472,26 @@ func writeResumeJSONWithGoal(out io.Writer, t team.Team, workstream string, mode
 				Signals: p.Liveness.Signals,
 			}
 		}
+		var terminal *terminalRuntimeJSON
+		if p.RestoreRecord != nil {
+			terminal = terminalRuntimeFromInfo(p.RestoreRecord.Terminal)
+		}
+		if terminal == nil {
+			terminal = terminalRuntimeFromTmuxInfo(p.Tmux)
+		}
+		if terminal != nil {
+			if rt != nil && terminal.Backend == runtimecontrol.BackendTmux {
+				terminal.PaneAlive = rt.PaneAlive
+			}
+			if p.Liveness != nil {
+				terminal.PIDAlive = p.Liveness.Signals.AgentAlive && p.Liveness.Signals.BinaryMatch
+			}
+			row := statusRecord{Terminal: terminal}
+			if p.Liveness != nil {
+				row.Signals = p.Liveness.Signals
+			}
+			decorateTerminalRuntimeCapabilities(&row)
+		}
 		rows = append(rows, resumeMemberJSON{
 			Role:             p.Role,
 			Handle:           p.Handle,
@@ -441,6 +503,7 @@ func writeResumeJSONWithGoal(out io.Writer, t team.Team, workstream string, mode
 			Note:             p.Note,
 			Command:          p.Command,
 			Tmux:             rt,
+			Terminal:         terminal,
 			Liveness:         liveness,
 		})
 	}

@@ -26,6 +26,8 @@ type bootstrapContext struct {
 	Role             string
 	Handle           string
 	Binary           string
+	ToolProfile      string
+	ToolConfig       string
 	Session          string
 	CWD              string
 	Root             string
@@ -91,6 +93,8 @@ func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
 	ctx.Role = promptText(ctx.Role)
 	ctx.Handle = promptText(ctx.Handle)
 	ctx.Binary = promptText(ctx.Binary)
+	ctx.ToolProfile = promptText(ctx.ToolProfile)
+	ctx.ToolConfig = promptText(ctx.ToolConfig)
 	ctx.Session = promptText(ctx.Session)
 	ctx.CWD = promptText(ctx.CWD)
 	ctx.Root = promptText(ctx.Root)
@@ -230,6 +234,10 @@ func appendGeneratedBootstrapPrompt(args []string, prompt string) []string {
 }
 
 func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrapContext {
+	toolProfile := strings.TrimSpace(rec.ToolProfile)
+	if toolProfile == "" {
+		toolProfile = team.ToolProfileFull
+	}
 	teamRulesPath := ""
 	if teamHome != "" {
 		teamRulesPath = rules.Path(teamHome)
@@ -243,12 +251,19 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		selfOperator = &view
 	}
 	orchestrated, isLead, leadHandle := bootstrapOrchestration(rec, teamHome)
-	currentTeam, warnings := bootstrapCurrentTeam(rec, teamHome)
+	exactSessionRoster := false
+	if home := strings.TrimSpace(teamHome); home != "" && strings.TrimSpace(rec.Session) != "" {
+		_, err := os.Stat(preparedRunPath(home, rec.TeamProfile, rec.Session))
+		exactSessionRoster = err == nil || !os.IsNotExist(err)
+	}
+	currentTeam, warnings := bootstrapCurrentTeamWithRoster(rec, teamHome, exactSessionRoster)
 	execution := bootstrapExecution(rec, teamHome)
 	return bootstrapContext{
 		Role:          rec.Role,
 		Handle:        rec.Handle,
 		Binary:        rec.Binary,
+		ToolProfile:   toolProfile,
+		ToolConfig:    rec.ToolConfig,
 		Session:       rec.Session,
 		CWD:           rec.CWD,
 		Root:          rec.Root,
@@ -308,6 +323,14 @@ func bootstrapGoalBindingMode(rec launch.Record, t team.Team) string {
 		if launchRecordHasGoalBinding(rec) {
 			return rec.GoalBinding.Mode
 		}
+		// Preparation records accepted goal intent before any pane exists. That
+		// state is deliberately not delivered launch evidence, but its exact,
+		// binary-specific mode still belongs in the generated bootstrap preview.
+		// Keep this path narrower than launchRecordHasGoalBinding so preparation
+		// can never promote itself to verified live-goal delivery.
+		if mode, ok := preparedBootstrapGoalBindingMode(rec); ok {
+			return mode
+		}
 		if projectExecutionModeRequiresGoalBinding(t) {
 			if contract, err := goalDeliveryContractForBinary(rec.Binary); err == nil {
 				return contract.Mode + "_missing"
@@ -316,6 +339,20 @@ func bootstrapGoalBindingMode(rec launch.Record, t team.Team) string {
 		}
 	}
 	return "amq_task_brief"
+}
+
+func preparedBootstrapGoalBindingMode(rec launch.Record) (string, bool) {
+	if rec.GoalBinding == nil || rec.GoalBinding.Source != "prepared-run" || rec.GoalBinding.DeliveryState != goalBindingDeliveryPrepared {
+		return "", false
+	}
+	contract, err := goalDeliveryContractForBinary(rec.Binary)
+	if err != nil {
+		return "", false
+	}
+	if _, _, err := goalBindingPayload(rec.GoalBinding, contract); err != nil {
+		return "", false
+	}
+	return contract.Mode, true
 }
 
 func bootstrapRecordIsVisibleLead(rec launch.Record, t team.Team) bool {
@@ -362,6 +399,10 @@ func bootstrapOperator(rec launch.Record, teamHome string) (team.OperatorView, b
 }
 
 func bootstrapCurrentTeam(rec launch.Record, teamHome string) ([]bootstrapTeamMember, []string) {
+	return bootstrapCurrentTeamWithRoster(rec, teamHome, false)
+}
+
+func bootstrapCurrentTeamWithRoster(rec launch.Record, teamHome string, exactSessionRoster bool) ([]bootstrapTeamMember, []string) {
 	home := teamHome
 	if home == "" {
 		home = rec.CWD
@@ -375,6 +416,13 @@ func bootstrapCurrentTeam(rec launch.Record, teamHome string) ([]bootstrapTeamMe
 	}
 	if len(t.Members) == 0 {
 		return nil, nil
+	}
+	if exactSessionRoster {
+		active, _ := filterMembersBySession(t.Members, rec.Session)
+		t.Members = active
+		if len(t.Members) == 0 {
+			return nil, nil
+		}
 	}
 
 	currentProject := projectIdentityForCWD(rec.CWD)

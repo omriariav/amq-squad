@@ -7,13 +7,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/role"
+	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 // orchestrateTmuxRun executes a tmux command. It is a package var so tests can
@@ -23,24 +26,45 @@ import (
 var orchestrateTmuxRun = func(args ...string) error { return exec.Command("tmux", args...).Run() }
 
 var (
-	runStartUpWithVersion   = runUpWithVersion
-	runStartGoalWithVersion = runGoalWithVersion
+	runStartUpWithVersion       = runUpWithVersion
+	runStartGoalWithVersion     = runGoalWithVersion
+	runStartPinnedUpWithVersion = func(args []string, version string, token preparedRunToken, resultSink func(teamLaunchResult)) error {
+		if reflect.ValueOf(runStartUpWithVersion).Pointer() != reflect.ValueOf(runUpWithVersion).Pointer() {
+			return runStartUpWithVersion(args, version)
+		}
+		return runUpWithVersionAndPreparedTokenAndResult(args, version, token, resultSink)
+	}
+	runStartPinnedGoalWithVersion = func(args []string, version string, token preparedRunToken) error {
+		if reflect.ValueOf(runStartGoalWithVersion).Pointer() != reflect.ValueOf(runGoalWithVersion).Pointer() {
+			return runStartGoalWithVersion(args, version)
+		}
+		if len(args) == 0 || args[0] != "start" {
+			return fmt.Errorf("internal prepared goal delivery requires goal start")
+		}
+		return runGoalStartWithPreparedToken(args[1:], token)
+	}
 
-	runStartLeadReadyTimeout        = 45 * time.Second
-	runStartLeadReadyInitialBackoff = 250 * time.Millisecond
-	runStartLeadReadyMaxBackoff     = 2 * time.Second
-	runStartLeadReadySleep          = time.Sleep
-	runStartLeadReadyNow            = time.Now
-	runStartLeadReadyCheck          = defaultRunStartLeadReadyCheck
+	runStartLeadReadyTimeout          = 45 * time.Second
+	runStartLeadReadyInitialBackoff   = 250 * time.Millisecond
+	runStartLeadReadyMaxBackoff       = 2 * time.Second
+	runStartLeadReadySleep            = time.Sleep
+	runStartLeadReadyNow              = time.Now
+	runStartLeadReadyCheck            = defaultRunStartLeadReadyCheck
+	runStartExternalLeadAfterRegister = func(string, string, string, string) error { return nil }
+	runStartExecuteExternalWorkers    = func(project string, opts teamLaunchOptions) error {
+		return runInProject(project, func() error { return executeTeamLaunch(opts, true, false) })
+	}
+	runStartBeforePinnedGoalDelivery = func(runStartGoalDeliveryOptions) error { return nil }
 )
 
 type runStartGoalDeliveryOptions struct {
-	Project string
-	Profile string
-	Session string
-	Role    string
-	Goal    string
-	Version string
+	Project          string
+	Profile          string
+	Session          string
+	Role             string
+	Goal             string
+	Version          string
+	PreparedRunToken preparedRunToken
 }
 
 type runStartLeadReadiness struct {
@@ -208,13 +232,22 @@ Usage:
       [--visibility sibling-tabs|detached|current] [--external-lead]
       [--layout-preset lead-left|lead-top|even-grid|one-window-per-agent]
       [--launcher-pane close-after-start|keep]
-      [--goal TEXT] [--seed-from REF] [--interactive]
-      [--wizard-ui auto|tui|numbered] [--numbered|--accessible] [--go]
+      [--goal TEXT] [--goal-source SOURCE] [--goal-digest SHA256]
+      [--seed-from REF] [--tool-profile "role=profile,..."]
+      --launch-shape working-team-together|lead-only-staged
+      [--staged-roles "role,..."]
+      [--prepare-plan | --prepare | --readiness-json | --go]
+      [--interactive]
+      [--wizard-ui auto|tui|numbered] [--numbered|--accessible]
 
 With no flags in an interactive terminal, or with --interactive explicitly,
 run start opens the guided preview wizard. Non-TTY and CI invocations never
-prompt. The wizard previews first and launches only after an explicit yes at
-"Launch now? [y/N]"; the live call adds only --go and rechecks current state.
+prompt. The wizard first renders a read-only preparation proposal, then uses
+two separate default-No approvals: "Prepare coordination artifacts? [y/N]"
+before any profile/brief/rules/pointer/manifest write, and "Launch now? [y/N]"
+only after accepted-artifact readiness passes. The launch call carries the
+accepted --launch-shape, --goal-source, and --goal-digest binding; it never
+repairs or rewrites preparation artifacts.
 Its first choice can instead delegate to canonical global start for a
 Global/NOC poller. --interactive and --go are mutually exclusive.
 
@@ -239,8 +272,11 @@ human-only.
 attention-only desktop delivery and never changes who may answer or approve a
 gate. Existing profiles remain authoritative and are never rewritten.
 
-Preview by default (prints the plan and runs read-only --dry-run validation, so
-its failures surface honestly); pass --go to create for real.
+The non-interactive contract is proposal -> explicitly approved preparation ->
+readiness -> separately approved launch. Use --prepare-plan for the read-only
+proposal, repeat the accepted command with --prepare to write artifacts without
+launching, inspect --readiness-json, then use --go only with the exact accepted
+launch shape and goal binding. Every mutation/launch gate defaults to No.
 
 External-lead mode (--external-lead) binds the current tmux pane as the
 configured lead, then spawns only the remaining workers. It never registers a
@@ -291,6 +327,9 @@ func runRunStart(args []string, version string) error {
 	binaryFlag := fs.String("binary", "", "per-role binary assignments, e.g. \"fullstack=codex,qa=codex\"")
 	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5.6-sol,fullstack=sonnet\"")
 	effortFlag := fs.String("effort", "", "per-role effort, e.g. \"cto=high,qa=medium\" (launch-only for existing profiles; normalized into native member args)")
+	toolProfileFlag := fs.String("tool-profile", "", "per-role tool policy assignments, e.g. \"cto=full,qa=browser\"")
+	launchShapeFlag := fs.String("launch-shape", "", "accepted launch shape: working-team-together or lead-only-staged")
+	stagedRolesFlag := fs.String("staged-roles", "", "comma-separated authored roles excluded from the initial profile")
 	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, noc, or self_operator")
 	selfOperatorLeadFlag := fs.String("self-operator-lead", "", "lead role delegated for exact-session self-operator policy")
 	selfOperatorAllowFlag := fs.String("self-operator-allow", "", "explicit self-operator allowlist (v2.19: merge only)")
@@ -301,8 +340,13 @@ func runRunStart(args []string, version string) error {
 	layoutPresetFlag := fs.String("layout-preset", "", "deterministic layout: lead-left, lead-top, even-grid, or one-window-per-agent")
 	launcherPaneFlag := fs.String("launcher-pane", "", "launcher disposition after successful start: close-after-start or keep")
 	goalFlag := fs.String("goal", "", "after spawn, deliver this goal to the lead")
+	goalSourceFlag := fs.String("goal-source", "", "accepted goal binding source (wizard-generated)")
+	goalDigestFlag := fs.String("goal-digest", "", "accepted goal binding digest (wizard-generated)")
 	seedFlag := fs.String("seed-from", "", "seed the workstream brief from a reference (e.g. issue:96)")
 	externalLead := fs.Bool("external-lead", false, "bind the current pane as the lead and spawn only remaining workers")
+	prepareFlag := fs.Bool("prepare", false, "write only the explicitly approved coordination artifacts; never launch")
+	preparePlanFlag := fs.Bool("prepare-plan", false, "print the canonical read-only coordination-artifact preparation proposal and exit")
+	readinessJSON := fs.Bool("readiness-json", false, "print machine-readable accepted-artifact readiness and exit")
 	goFlag := fs.Bool("go", false, "create for real (default: preview only)")
 	fs.Usage = func() { _ = runRunCmd([]string{"-h"}, version) }
 	if err := parseFlags(fs, args); err != nil {
@@ -310,6 +354,12 @@ func runRunStart(args []string, version string) error {
 	}
 	if fs.NArg() > 0 {
 		return usageErrorf("unexpected argument %q", fs.Arg(0))
+	}
+	if *prepareFlag && *goFlag {
+		return usageErrorf("--prepare and --go are separate approvals and cannot be combined")
+	}
+	if *preparePlanFlag && (*prepareFlag || *goFlag || *readinessJSON) {
+		return usageErrorf("--prepare-plan is a read-only proposal and cannot be combined with --prepare, --go, or --readiness-json")
 	}
 	project := strings.TrimSpace(*projectFlag)
 	session := strings.TrimSpace(*sessionFlag)
@@ -349,6 +399,12 @@ func runRunStart(args []string, version string) error {
 	rolesText := strings.TrimSpace(*rolesFlag)
 	freshRoster := preflight.FreshRoster
 	leadMode := preflight.LeadMode
+	if *goFlag {
+		requestedShape := strings.TrimSpace(*launchShapeFlag)
+		if requestedShape != runwizard.LaunchShapeWorkingTeamTogether && requestedShape != runwizard.LaunchShapeLeadOnlyStaged {
+			return usageErrorf("live project launch requires explicit --launch-shape %s or %s; prepare or migrate the exact roster before launch", runwizard.LaunchShapeWorkingTeamTogether, runwizard.LaunchShapeLeadOnlyStaged)
+		}
+	}
 	layoutSelection, err := resolveRunStartLayout(runStartLayoutInput{
 		Visibility: preflight.Visibility, VisibilitySet: true,
 		Preset: preflight.LayoutPreset, PresetSet: preflight.LayoutPreset != "",
@@ -357,6 +413,44 @@ func runRunStart(args []string, version string) error {
 	})
 	if err != nil {
 		return err
+	}
+	runContext := acceptedRunContext{Version: version, Topology: acceptedTopology(layoutSelection, *externalLead)}
+	var liveGoalBinding acceptedGoalBinding
+	var preparedToken preparedRunToken
+	if *goFlag {
+		endpointAdmission, admissionErr := acquireNamespaceWriterAdmission(project, profile, session)
+		if admissionErr != nil {
+			return admissionErr
+		}
+		defer endpointAdmission.close()
+		manifestAdmission, admissionErr := acquirePreparedManifestReaderAdmission(project, profile, session)
+		if admissionErr != nil {
+			return admissionErr
+		}
+		defer manifestAdmission.close()
+		manifest, manifestDigest, snapshotErr := readPreparedRunManifestSnapshot(project, profile, session)
+		if snapshotErr != nil {
+			return fmt.Errorf("artifact readiness failed: pin accepted prepared run: %w", snapshotErr)
+		}
+		preparedToken = preparedRunTokenFromSnapshot(manifest, manifestDigest)
+		if !preparedToken.complete() {
+			return fmt.Errorf("launch blocked: accepted prepared run identity is incomplete")
+		}
+		result := calculateRunReadinessWithContext(project, profile, session, runContext)
+		printRunReadiness(result)
+		if !result.Ready {
+			return fmt.Errorf("launch blocked: artifact readiness failed for %s", result.Namespace)
+		}
+		if result.LaunchShape != strings.TrimSpace(*launchShapeFlag) {
+			return fmt.Errorf("launch blocked: accepted launch shape %q differs from requested %q", result.LaunchShape, strings.TrimSpace(*launchShapeFlag))
+		}
+		liveGoalBinding, err = preparedRunLiveGoalBinding(project, profile, session, *goalFlag, *goalSourceFlag, *goalDigestFlag)
+		if err != nil {
+			return fmt.Errorf("launch blocked: accepted live goal binding mismatch: %w", err)
+		}
+		if err := validatePreparedLaunchBootstrapInputs(project, profile, session, runContext, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag); err != nil {
+			return fmt.Errorf("launch blocked: accepted bootstrap input mismatch: %w", err)
+		}
 	}
 
 	// Lead resolution: when creating a fresh roster, default the lead to cto.
@@ -383,6 +477,52 @@ func runRunStart(args []string, version string) error {
 		}
 	}
 
+	var preparationProposal runPreparationProposal
+	if *preparePlanFlag || *prepareFlag {
+		var proposalTeam team.Team
+		if teamPresent {
+			existing, readErr := team.ReadProfile(project, profile)
+			if readErr != nil {
+				return readErr
+			}
+			proposalTeam = existing
+			if explicitLead != "" && explicitLead != strings.TrimSpace(existing.Lead) {
+				return usageErrorf("preparation lead %q differs from existing profile lead %q; set the profile lead with `amq-squad team lead set %s --project %s --profile %s`, then rerun preparation for --session %s",
+					explicitLead, existing.Lead, shellQuote(explicitLead), shellQuote(project), shellQuote(profile), shellQuote(session))
+			}
+		} else {
+			proposalTeam, err = projectedRunPreparationTeam(project, session, leadForNewTeam, leadMode, rolesText, *binaryFlag, *modelFlag, *effortFlag)
+			if err != nil {
+				return err
+			}
+		}
+		proposal, proposalErr := buildRunPreparationProposal(runPreparationProposalInput{
+			Project:         project,
+			Profile:         profile,
+			Session:         session,
+			LaunchShape:     *launchShapeFlag,
+			StagedRoles:     *stagedRolesFlag,
+			ToolProfile:     *toolProfileFlag,
+			Goal:            *goalFlag,
+			GoalSource:      *goalSourceFlag,
+			GoalDigest:      *goalDigestFlag,
+			Seed:            *seedFlag,
+			Team:            proposalTeam,
+			ExistingProfile: teamPresent,
+			Context:         runContext,
+		})
+		if proposalErr != nil {
+			return proposalErr
+		}
+		preparationProposal = proposal
+		runContext.PointerPlans = append([]rules.SyncPlan(nil), proposal.PointerPlans...)
+		printRunPreparationProposal(proposal)
+		if *preparePlanFlag {
+			return nil
+		}
+		runPreparationAfterProposal()
+	}
+
 	// Build the create commands as argument slices we can run in-process. This
 	// keeps one tested implementation (no shell-out, structured errors) and lets
 	// the CLI flag layer own things the scripts got wrong (e.g. --binary is a
@@ -406,6 +546,9 @@ func runRunStart(args []string, version string) error {
 		if strings.TrimSpace(*effortFlag) != "" {
 			newTeamArgs = append(newTeamArgs, "--effort", *effortFlag)
 		}
+		// Non-full profiles require generated binary-native materialization.
+		// Create the roster at the backward-compatible full baseline first;
+		// preparation applies the accepted profiles before readiness/launch.
 		if flagWasSet(fs, "operator-mode") {
 			newTeamArgs = append(newTeamArgs, "--operator-mode", strings.TrimSpace(*operatorModeFlag))
 		}
@@ -437,6 +580,17 @@ func runRunStart(args []string, version string) error {
 	upArgs = appendExistingTeamPassthroughArgs(upArgs, teamPresent, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
 	if teamPresent && strings.TrimSpace(*effortFlag) != "" {
 		upArgs = append(upArgs, "--effort", *effortFlag)
+	}
+
+	if *readinessJSON {
+		result := calculateRunReadinessWithContext(project, profile, session, runContext)
+		if err := writeJSONEnvelope(os.Stdout, "run_readiness", result); err != nil {
+			return err
+		}
+		if !result.Ready {
+			return fmt.Errorf("artifact readiness failed for %s", result.Namespace)
+		}
+		return nil
 	}
 
 	leadModeDisplay := leadMode
@@ -475,6 +629,20 @@ func runRunStart(args []string, version string) error {
 	fmt.Printf("  session: %s\n", session)
 	fmt.Printf("  lead:    %s\n", leadDisplay)
 	fmt.Printf("  lead-mode: %s\n", leadModeDisplay)
+	if strings.TrimSpace(*launchShapeFlag) != "" {
+		initialRoster := sortedUniqueRoles(rolesText)
+		if teamPresent {
+			existing, readErr := team.ReadProfile(project, profile)
+			if readErr != nil {
+				return readErr
+			}
+			active, _ := filterMembersBySession(existing.Members, session)
+			initialRoster = teamMemberRoles(active)
+		}
+		fmt.Printf("  launch-shape: %s\n", strings.TrimSpace(*launchShapeFlag))
+		fmt.Printf("  initial launch: %d members - %s\n", len(initialRoster), displayRoleList(initialRoster))
+		fmt.Printf("  staged later: %d roles - %s\n", len(sortedUniqueRoles(*stagedRolesFlag)), displayRoleList(sortedUniqueRoles(*stagedRolesFlag)))
+	}
 	if freshRoster {
 		leadModeSuffix := ""
 		if flagWasSet(fs, "lead-mode") {
@@ -518,6 +686,32 @@ func runRunStart(args []string, version string) error {
 			Goal:    *goalFlag,
 		})
 		fmt.Printf("  step %d:  %s\n", upStep+1, previewCmd)
+	}
+
+	if *prepareFlag {
+		if err := revalidateRunPreparationPointerPlans(runContext.PointerPlans); err != nil {
+			return fmt.Errorf("revalidate accepted pointer plan before preparation writes: %w", err)
+		}
+		result, err := executeRunPreparationTransaction(project, profile, session, preparationProposal.MutationPaths, preparedRunPath(project, profile, session), func() (runReadinessResult, error) {
+			if freshRoster {
+				quietNotice("preparing accepted roster; no panes will launch...\n")
+				if err := runNew(newTeamArgs); err != nil {
+					return runReadinessResult{}, err
+				}
+			} else if len(newTeamArgs) > 0 {
+				quietNotice("profile %q already exists; accepted preparation will not rewrite its roster\n", profileOrDefault(*profileFlag))
+			}
+			if err := applyRunStartToolProfiles(project, profile, *toolProfileFlag); err != nil {
+				return runReadinessResult{}, err
+			}
+			return prepareRunArtifacts(project, profile, session, strings.TrimSpace(*launchShapeFlag), *stagedRolesFlag, *goalFlag, *goalSourceFlag, *goalDigestFlag, *seedFlag, runContext)
+		})
+		printRunReadiness(result)
+		if err != nil {
+			return err
+		}
+		fmt.Println("Preparation complete. No panes or workers were launched.")
+		return nil
 	}
 
 	if !*goFlag {
@@ -571,33 +765,51 @@ func runRunStart(args []string, version string) error {
 		if err := validateRunStartExternalLeadWorkerLaunch(project, layoutSelection, session, profile, externalLeadRole, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag); err != nil {
 			return err
 		}
-		quietNotice("binding current pane as external lead %s...\n", externalLeadRole)
-		if err := runStartRegisterExternalLead(project, profile, session, externalLeadRole); err != nil {
-			return err
+		externalAgentDir, _, err := preparedExternalLeadRecordSnapshot(project, profile, session, externalLeadRole)
+		if err != nil {
+			return fmt.Errorf("snapshot external lead record before registration: %w", err)
 		}
-		opts, err := runStartTeamLaunchOptions(layoutSelection, session, profile, externalSeedContent, false, false, externalLeadRole, true, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag)
+		quietNotice("binding current pane as external lead %s...\n", externalLeadRole)
+		registration, err := runStartRegisterExternalLead(project, profile, session, externalLeadRole, preparedToken)
 		if err != nil {
 			return err
 		}
-		var launchResult teamLaunchResult
-		opts.ResultSink = func(result teamLaunchResult) { launchResult = result }
-		quietNotice("spawning remaining workers (--visibility %s)...\n", visibility)
-		if err := runInProject(project, func() error { return executeTeamLaunch(opts, true, false) }); err != nil {
-			return err
+		rollbackExternalRecord := func(cause error) error {
+			return errors.Join(cause, rollbackPreparedExternalLeadRegistration(externalAgentDir, registration))
 		}
-		if strings.TrimSpace(*goalFlag) != "" {
-			opts := runStartGoalDeliveryOptions{
-				Project: project,
-				Profile: profile,
-				Session: session,
-				Role:    externalLeadRole,
-				Goal:    *goalFlag,
-				Version: version,
+		if err := runStartExternalLeadAfterRegister(project, profile, session, externalLeadRole); err != nil {
+			return rollbackExternalRecord(err)
+		}
+		opts, err := runStartTeamLaunchOptions(layoutSelection, session, profile, externalSeedContent, false, false, externalLeadRole, true, *modelFlag, *effortFlag, *codexArgsFlag, *claudeArgsFlag)
+		if err != nil {
+			return rollbackExternalRecord(err)
+		}
+		var launchResult teamLaunchResult
+		opts.PreparedRunToken = preparedToken
+		opts.ResultSink = func(result teamLaunchResult) { launchResult = result }
+		if err := validatePreparedExternalLeadStoredBeforeWorkerSpawn(project, profile, session, externalLeadRole, preparedToken); err != nil {
+			return rollbackExternalRecord(fmt.Errorf("external lead record changed before worker spawn: %w", err))
+		}
+		quietNotice("spawning remaining workers (--visibility %s)...\n", visibility)
+		if err := runStartExecuteExternalWorkers(project, opts); err != nil {
+			return rollbackExternalRecord(err)
+		}
+		goalOpts := runStartGoalDeliveryOptions{
+			Project:          project,
+			Profile:          profile,
+			Session:          session,
+			Role:             externalLeadRole,
+			Goal:             liveGoalBinding.Text,
+			Version:          version,
+			PreparedRunToken: preparedToken,
+		}
+		quietNotice("waiting for lead readiness before goal delivery...\n")
+		if err := deliverRunStartGoalWhenReady(goalOpts); err != nil {
+			if isPreparedRunIdentityMismatch(err) {
+				workerCleanupErr := rollbackPreparedManagedLaunch(project, profile, session, opts.Target, preparedToken, launchResult)
+				return errors.Join(err, workerCleanupErr, rollbackExternalRecord(nil))
 			}
-			quietNotice("waiting for lead readiness before goal delivery...\n")
-			if err := deliverRunStartGoalWhenReady(opts); err != nil {
-				return err
-			}
+			return err
 		}
 		quietNotice("done. Current pane is the lead; drive remaining workers with dispatch/monitor/collect.\n")
 		if layoutSelection.requestedFinalization() {
@@ -615,6 +827,9 @@ func runRunStart(args []string, version string) error {
 	if freshRoster {
 		quietNotice("creating roster...\n")
 		if err := runNew(newTeamArgs); err != nil {
+			return err
+		}
+		if err := applyRunStartToolProfiles(project, profile, *toolProfileFlag); err != nil {
 			return err
 		}
 	} else if len(newTeamArgs) > 0 {
@@ -637,6 +852,7 @@ func runRunStart(args []string, version string) error {
 			return launchErr
 		}
 		launchOpts.WarnStubBrief = strings.TrimSpace(*seedFlag) == ""
+		launchOpts.PreparedRunToken = preparedToken
 		// Preserve canonical `up`'s refuse-existing/TOCTOU guard on the direct
 		// result-returning launch path used by layout finalization.
 		launchOpts.Fresh = true
@@ -644,29 +860,31 @@ func runRunStart(args []string, version string) error {
 		if launchErr := runInProject(project, func() error { return executeTeamLaunch(launchOpts, true, false) }); launchErr != nil {
 			return launchErr
 		}
-	} else if err := runStartUpWithVersion(upArgs, version); err != nil {
+	} else if err := runStartPinnedUpWithVersion(upArgs, version, preparedToken, func(result teamLaunchResult) { launchResult = result }); err != nil {
 		return err
 	}
-	// 3) optional goal delivery. Resolve the role before waiting so the
+	// 3) accepted goal delivery. Resolve the role before waiting so the
 	// fallback command is exact and ready to paste if the cold spawn never
 	// reaches a deliverable pane.
-	if strings.TrimSpace(*goalFlag) != "" {
-		leadRole, err := resolveRunStartGoalLead(project, profile, explicitLead, freshRoster, leadForNewTeam)
-		if err != nil {
-			return err
+	leadRole, err := resolveRunStartGoalLead(project, profile, explicitLead, freshRoster, leadForNewTeam)
+	if err != nil {
+		return err
+	}
+	opts := runStartGoalDeliveryOptions{
+		Project:          project,
+		Profile:          profile,
+		Session:          session,
+		Role:             leadRole,
+		Goal:             liveGoalBinding.Text,
+		Version:          version,
+		PreparedRunToken: preparedToken,
+	}
+	quietNotice("waiting for lead readiness before goal delivery...\n")
+	if err := deliverRunStartGoalWhenReady(opts); err != nil {
+		if isPreparedRunIdentityMismatch(err) {
+			return errors.Join(err, rollbackPreparedManagedLaunch(project, profile, session, layoutSelection.Target, preparedToken, launchResult))
 		}
-		opts := runStartGoalDeliveryOptions{
-			Project: project,
-			Profile: profile,
-			Session: session,
-			Role:    leadRole,
-			Goal:    *goalFlag,
-			Version: version,
-		}
-		quietNotice("waiting for lead readiness before goal delivery...\n")
-		if err := deliverRunStartGoalWhenReady(opts); err != nil {
-			return err
-		}
+		return err
 	}
 	quietNotice("done. Attach to the lead window and drive with dispatch/monitor/collect.\n")
 	if layoutSelection.requestedFinalization() {
@@ -683,6 +901,64 @@ func runRunStart(args []string, version string) error {
 		}
 	}
 	return nil
+}
+
+func rollbackPreparedManagedLaunch(project, profile, session, target string, token preparedRunToken, result teamLaunchResult) error {
+	var cleanupErrs []error
+	for _, pane := range result.Panes {
+		if err := rollbackPreparedManagedLaunchPane(project, profile, session, target, token, pane); err != nil {
+			cleanupErrs = append(cleanupErrs, err)
+		}
+	}
+	return errors.Join(cleanupErrs...)
+}
+
+func rollbackPreparedManagedLaunchPane(project, profile, session, target string, token preparedRunToken, pane teamLaunchResultPane) error {
+	tm, err := team.ReadProfile(project, profile)
+	if err != nil {
+		return fmt.Errorf("read team for rollback role %s: %w", pane.Role, err)
+	}
+	member, ok := memberByRole(tm, pane.Role)
+	if !ok {
+		return fmt.Errorf("rollback result role %q is not a configured team member", pane.Role)
+	}
+	cwd, err := canonicalDir(member.EffectiveCWD(tm.Project))
+	if err != nil {
+		return err
+	}
+	env, err := resolveAMQEnvForTeamLaunchProfile(cwd, profile, session, memberHandle(member))
+	if err != nil {
+		return err
+	}
+	agentDir := filepath.Join(absoluteAMQRoot(cwd, env.Root), "agents", memberHandle(member))
+	return launch.WithRecordLock(agentDir, func() error {
+		current, readErr := launch.Read(agentDir)
+		recordExists := readErr == nil
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return fmt.Errorf("read current launch record for rollback role %s: %w", pane.Role, readErr)
+		}
+		if recordExists {
+			if current.External || preparedRunTokenFromRecord(current) != token || current.Tmux == nil || strings.TrimSpace(current.Tmux.PaneID) != strings.TrimSpace(pane.PaneID) {
+				return nil
+			}
+		}
+		killKind := "kill-pane"
+		killTarget := pane.PaneID
+		if target == "new-window" {
+			killKind = "kill-window"
+			killTarget = pane.WindowID
+		}
+		if err := tmuxRunCommand("tmux", killKind, "-t", killTarget); err != nil {
+			return fmt.Errorf("cleanup run-owned %s for role %s at %s: %w", strings.TrimPrefix(killKind, "kill-"), pane.Role, killTarget, err)
+		}
+		if !recordExists {
+			return nil
+		}
+		if err := os.Remove(launch.Path(agentDir)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove run-owned launch record for role %s: %w", pane.Role, err)
+		}
+		return nil
+	})
 }
 
 func appendExistingTeamPassthroughArgs(dst []string, teamPresent bool, model, codexArgs, claudeArgs string) []string {
@@ -712,16 +988,27 @@ func runStartPreview(newTeamArgs, upArgs []string, freshRoster, teamPresent bool
 		if err := runStartUpWithVersion(append(validateArgs, "--dry-run"), version); err != nil {
 			return fmt.Errorf("spawn dry-run failed: %w", err)
 		}
-		fmt.Print("\nPreview OK. Re-run with --go to create it.\n")
+		fmt.Print("\nPreview OK. This validates only the current spawn plan; it does not approve preparation or launch.\n")
 		if seeded {
-			fmt.Print("(the --seed-from brief is written at --go; preview validated the roster/session without it.)\n")
+			fmt.Print("(the --seed-from brief is written only by an explicitly approved --prepare call.)\n")
 		}
+		printRunStartPreparationNext(false)
 		return nil
 	}
 	fmt.Print("\nRoster plan validated. Spawn (up) validation is deferred: the team does\n" +
-		"not exist yet, so `up --dry-run` cannot check the roster in preview.\n" +
-		"Re-run with --go to create the team and spawn.\n")
+		"not exist yet, so `up --dry-run` cannot check the roster in preview.\n")
+	printRunStartPreparationNext(false)
 	return nil
+}
+
+func printRunStartPreparationNext(externalLead bool) {
+	external := ""
+	if externalLead {
+		external = " Keep --external-lead on every stage."
+	}
+	fmt.Printf("Next: re-run the same namespace, roster, topology, and goal with an explicit --launch-shape and --prepare-plan.%s\n", external)
+	fmt.Print("After reviewing the proposal, replace --prepare-plan with --prepare for the separate default-No preparation approval.\n")
+	fmt.Print("Then inspect --readiness-json. Launch only after a separate default-No approval, using --go with the accepted --launch-shape, --goal-source, and --goal-digest.\n")
 }
 
 type runStartExternalLeadPreviewOptions struct {
@@ -748,15 +1035,16 @@ func runStartExternalLeadPreview(opts runStartExternalLeadPreviewOptions) error 
 			return fmt.Errorf("roster dry-run failed: %w", err)
 		}
 		fmt.Print("\nExternal-lead adoption preconditions validated. Spawn validation is deferred: the team does\n" +
-			"not exist yet, so the worker-only launch plan cannot be checked without writing the roster.\n" +
-			"Re-run with --external-lead --go to bind this pane as lead and spawn remaining workers.\n")
+			"not exist yet, so the worker-only launch plan cannot be checked without writing the roster.\n")
+		printRunStartPreparationNext(true)
 		return nil
 	}
 	if opts.TeamPresent {
 		if err := validateRunStartExternalLeadWorkerLaunch(opts.Project, opts.Layout, opts.Session, opts.Profile, opts.Lead, opts.Model, opts.Effort, opts.CodexArgs, opts.ClaudeArgs); err != nil {
 			return fmt.Errorf("worker spawn dry-run failed: %w", err)
 		}
-		fmt.Print("\nPreview OK. Re-run with --external-lead --go to bind this pane as lead and spawn remaining workers.\n")
+		fmt.Print("\nPreview OK. This validates only external-lead adoption and the worker spawn plan.\n")
+		printRunStartPreparationNext(true)
 		return nil
 	}
 	return usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", opts.Profile, opts.Project)
@@ -950,16 +1238,19 @@ func validateRunStartExternalLeadWorkerLaunch(project string, layout runStartLay
 	})
 }
 
-func runStartRegisterExternalLead(project, profile, session, lead string) error {
+func runStartRegisterExternalLead(project, profile, session, lead string, preparedToken preparedRunToken) (preparedExternalLeadRegistration, error) {
 	args := []string{
-		"register",
 		"--project", project,
 		"--profile", profile,
 		"--session", session,
 		"--role", lead,
 		"--adopt-project-lead",
 	}
-	return runLead(args)
+	var result preparedExternalLeadRegistration
+	err := runLeadRegisterWithPreparedToken(args, preparedToken, func(registration preparedExternalLeadRegistration) {
+		result = registration
+	})
+	return result, err
 }
 
 func teamExistsForProfile(project, profile string) bool {
@@ -1032,6 +1323,9 @@ func deliverRunStartGoalWhenReady(opts runStartGoalDeliveryOptions) error {
 		return err
 	}
 	quietNotice("delivering goal to lead...\n")
+	if err := runStartBeforePinnedGoalDelivery(opts); err != nil {
+		return err
+	}
 	args := []string{
 		"start",
 		"--project", opts.Project,
@@ -1041,7 +1335,7 @@ func deliverRunStartGoalWhenReady(opts runStartGoalDeliveryOptions) error {
 		"--goal", opts.Goal,
 		"--yes",
 	}
-	if err := runStartGoalWithVersion(args, opts.Version); err != nil {
+	if err := runStartPinnedGoalWithVersion(args, opts.Version, opts.PreparedRunToken); err != nil {
 		var sentReceiptErr *goalFallbackSentReceiptError
 		if errors.As(err, &sentReceiptErr) {
 			fmt.Fprintf(os.Stderr, "warning: claim-once goal fallback %s was sent on %s, but local receipt persistence failed: %v\n", sentReceiptErr.MessageID, sentReceiptErr.Thread, sentReceiptErr.ReceiptErr)

@@ -281,6 +281,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"run":             true,
 		"wizard":          true,
 		"task":            true,
+		"evidence":        true,
 		"context":         true,
 		"namespace":       true,
 		"verify":          true,

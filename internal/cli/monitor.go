@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	activitystore "github.com/omriariav/amq-squad/v2/internal/activity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
@@ -20,7 +21,15 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
-const defaultMonitorInterval = 30 * time.Second
+const (
+	defaultMonitorInterval          = 30 * time.Second
+	defaultMonitorTimeout           = 30 * time.Minute
+	defaultMonitorMaxTicks          = 60
+	defaultMonitorCodingStaleAfter  = 30 * time.Minute
+	defaultMonitorTestingStaleAfter = 60 * time.Minute
+	monitorActivityFutureSkew       = 5 * time.Second
+	monitorFinalSchemaVersion       = 1
+)
 
 // monitor event types (#295). Structured and additive so #299's watchdog can
 // add event types later without breaking consumers.
@@ -84,15 +93,22 @@ type monitorEvent struct {
 // A live owner is only ever flagged when Busy is positively known false
 // (BusyKnown=true, Busy=false); unknown busy state is never classified as idle.
 type monitorIdleEvidence struct {
-	Owner            string `json:"owner"`
-	OwnerStatus      string `json:"owner_status"`
-	Live             bool   `json:"live"`
-	BusyKnown        bool   `json:"busy_known"`
-	Busy             bool   `json:"busy"`
-	PaneID           string `json:"pane_id,omitempty"`
-	UnreadInbox      int    `json:"unread_inbox,omitempty"`
-	AgeSeconds       int    `json:"age_seconds"`
-	ThresholdSeconds int    `json:"threshold_seconds"`
+	Owner                     string `json:"owner"`
+	OwnerStatus               string `json:"owner_status"`
+	Live                      bool   `json:"live"`
+	BusyKnown                 bool   `json:"busy_known"`
+	Busy                      bool   `json:"busy"`
+	PaneID                    string `json:"pane_id,omitempty"`
+	UnreadInbox               int    `json:"unread_inbox,omitempty"`
+	AgeSeconds                int    `json:"age_seconds"`
+	ThresholdSeconds          int    `json:"threshold_seconds"`
+	ActivitySource            string `json:"activity_source"`
+	ActivityPhase             string `json:"activity_phase,omitempty"`
+	ActivityAgeSeconds        int    `json:"activity_age_seconds"`
+	ActivityValid             bool   `json:"activity_valid"`
+	ActivityReason            string `json:"activity_reason"`
+	BaseThresholdSeconds      int    `json:"base_threshold_seconds"`
+	EffectiveThresholdSeconds int    `json:"effective_threshold_seconds"`
 }
 
 // monitorTick is the per-tick envelope emitted under --json (one NDJSON object
@@ -102,6 +118,29 @@ type monitorTick struct {
 	Tick        int            `json:"tick"`
 	EventsFound bool           `json:"events_found"`
 	Events      []monitorEvent `json:"events,omitempty"`
+}
+
+// monitorFinal is the stable, self-contained JSON result for one bounded run.
+// Consumers should use it instead of reconstructing state from NDJSON order.
+type monitorFinal struct {
+	SchemaVersion  int            `json:"schema_version"`
+	Kind           string         `json:"kind"`
+	ExitReason     string         `json:"exit_reason"`
+	Ticks          int            `json:"ticks"`
+	EventsFound    bool           `json:"events_found"`
+	Events         []monitorEvent `json:"events,omitempty"`
+	Error          string         `json:"error,omitempty"`
+	TimeoutSeconds int            `json:"timeout_seconds"`
+	MaxTicks       int            `json:"max_ticks"`
+}
+
+type monitorActivityEvidence struct {
+	Source    string
+	Phase     string
+	Age       time.Duration
+	Valid     bool
+	Reason    string
+	Threshold time.Duration
 }
 
 // monitorOperatorState is the read-only operator signal seam, overridable in
@@ -131,10 +170,12 @@ func runMonitor(args []string) error {
 	fs.Var(&sessions, "s", "alias for --session")
 	registerScopedFlagAliases(fs, projectFlag, nil, profileFlag)
 	interval := fs.Duration("interval", defaultMonitorInterval, "poll interval in loop mode")
-	staleAfter := fs.Duration("stale-after", defaultMonitorStaleAfter, "a live owner with an in_progress task untouched for longer than this (and no legitimate wait) is flagged idle_with_active_task")
+	staleAfter := fs.Duration("stale-after", defaultMonitorStaleAfter, "base freshness threshold for an active task or enumerated activity phase")
+	codingStaleAfter := fs.Duration("coding-stale-after", defaultMonitorCodingStaleAfter, "extended freshness threshold for an exact coding heartbeat")
+	testingStaleAfter := fs.Duration("testing-stale-after", defaultMonitorTestingStaleAfter, "extended freshness threshold for an exact testing heartbeat")
 	once := fs.Bool("once", false, "run one tick and exit (no loop)")
-	timeout := fs.Duration("timeout", 0, "stop the loop after this long with no operator-needed event (0 = no timeout)")
-	maxTicks := fs.Int("max-ticks", 0, "stop the loop after this many idle ticks (0 = unlimited)")
+	timeout := fs.Duration("timeout", defaultMonitorTimeout, "stop the loop after this duration (0 disables the deadline only when max-ticks remains finite)")
+	maxTicks := fs.Int("max-ticks", defaultMonitorMaxTicks, "stop the loop after this many idle ticks (0 disables this bound only when timeout remains finite)")
 	var handledIssues stringListFlag
 	fs.Var(&handledIssues, "handled-issue", "issue number already handled; suppresses its merge_gate_ready event (repeatable)")
 	featurePrefix := fs.String("feature-prefix", "", "feature-branch prefix context recorded on merge_gate_ready events (does not suppress anything)")
@@ -182,11 +223,20 @@ Examples:
 	if *staleAfter <= 0 {
 		return usageErrorf("--stale-after must be > 0")
 	}
+	if *codingStaleAfter < *staleAfter {
+		return usageErrorf("--coding-stale-after must be >= --stale-after")
+	}
+	if *testingStaleAfter < *staleAfter {
+		return usageErrorf("--testing-stale-after must be >= --stale-after")
+	}
 	if *timeout < 0 {
 		return usageErrorf("--timeout must be >= 0")
 	}
 	if *maxTicks < 0 {
 		return usageErrorf("--max-ticks must be >= 0")
+	}
+	if !*once && *timeout == 0 && *maxTicks == 0 {
+		return usageErrorf("monitor loop must be bounded: set --timeout and/or --max-ticks")
 	}
 	projectDir, profile, err := resolveProjectProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {
@@ -198,34 +248,38 @@ Examples:
 	}
 
 	return runMonitorLoop(monitorLoopOptions{
-		ProjectDir:    projectDir,
-		Profile:       profile,
-		Sessions:      append([]string(nil), sessions...),
-		Handled:       handled,
-		FeaturePrefix: strings.TrimSpace(*featurePrefix),
-		StaleAfter:    *staleAfter,
-		Interval:      *interval,
-		Once:          *once,
-		Timeout:       *timeout,
-		MaxTicks:      *maxTicks,
-		JSON:          *jsonOut,
-		Out:           os.Stdout,
+		ProjectDir:        projectDir,
+		Profile:           profile,
+		Sessions:          append([]string(nil), sessions...),
+		Handled:           handled,
+		FeaturePrefix:     strings.TrimSpace(*featurePrefix),
+		StaleAfter:        *staleAfter,
+		CodingStaleAfter:  *codingStaleAfter,
+		TestingStaleAfter: *testingStaleAfter,
+		Interval:          *interval,
+		Once:              *once,
+		Timeout:           *timeout,
+		MaxTicks:          *maxTicks,
+		JSON:              *jsonOut,
+		Out:               os.Stdout,
 	})
 }
 
 type monitorLoopOptions struct {
-	ProjectDir    string
-	Profile       string
-	Sessions      []string
-	Handled       map[string]bool
-	FeaturePrefix string
-	StaleAfter    time.Duration
-	Interval      time.Duration
-	Once          bool
-	Timeout       time.Duration
-	MaxTicks      int
-	JSON          bool
-	Out           io.Writer
+	ProjectDir        string
+	Profile           string
+	Sessions          []string
+	Handled           map[string]bool
+	FeaturePrefix     string
+	StaleAfter        time.Duration
+	CodingStaleAfter  time.Duration
+	TestingStaleAfter time.Duration
+	Interval          time.Duration
+	Once              bool
+	Timeout           time.Duration
+	MaxTicks          int
+	JSON              bool
+	Out               io.Writer
 }
 
 func runMonitorLoop(o monitorLoopOptions) error {
@@ -243,6 +297,7 @@ func runMonitorLoop(o monitorLoopOptions) error {
 			// Fail closed: a broken required source is an error, never an idle
 			// tick. Emit a clear error record (JSON or human) and exit non-zero.
 			writeMonitorError(o.Out, tick, err, o.JSON)
+			_ = writeMonitorFinal(o.Out, monitorFinalFor(o, "source_error", tick-1, nil, err), o.JSON)
 			return err
 		}
 		if err := writeMonitorTick(o.Out, monitorTick{
@@ -255,16 +310,28 @@ func runMonitorLoop(o monitorLoopOptions) error {
 		}
 		if len(events) > 0 {
 			// Exit-on-first-event: pull the no-wake orchestrator back now.
+			if err := writeMonitorFinal(o.Out, monitorFinalFor(o, "event", tick, events, nil), o.JSON); err != nil {
+				return err
+			}
 			return nil
 		}
 		if o.Once {
+			if err := writeMonitorFinal(o.Out, monitorFinalFor(o, "once", tick, events, nil), o.JSON); err != nil {
+				return err
+			}
 			return nil
 		}
 		if o.MaxTicks > 0 && tick >= o.MaxTicks {
+			if err := writeMonitorFinal(o.Out, monitorFinalFor(o, "max_ticks", tick, events, nil), o.JSON); err != nil {
+				return err
+			}
 			return nil
 		}
 		if !deadline.IsZero() && !time.Now().Add(o.Interval).Before(deadline) {
 			// The next sleep would reach/pass the deadline: stop cleanly.
+			if err := writeMonitorFinal(o.Out, monitorFinalFor(o, "timeout", tick, events, nil), o.JSON); err != nil {
+				return err
+			}
 			return nil
 		}
 		timer := time.NewTimer(o.Interval)
@@ -272,9 +339,41 @@ func runMonitorLoop(o monitorLoopOptions) error {
 		case <-timer.C:
 		case <-sigCh:
 			timer.Stop()
+			if err := writeMonitorFinal(o.Out, monitorFinalFor(o, "signal", tick, events, nil), o.JSON); err != nil {
+				return err
+			}
 			return nil
 		}
 	}
+}
+
+func monitorFinalFor(o monitorLoopOptions, reason string, ticks int, events []monitorEvent, runErr error) monitorFinal {
+	final := monitorFinal{
+		SchemaVersion: monitorFinalSchemaVersion,
+		Kind:          "monitor_final", ExitReason: reason, Ticks: ticks,
+		EventsFound: len(events) > 0, Events: events,
+		TimeoutSeconds: int(o.Timeout / time.Second), MaxTicks: o.MaxTicks,
+	}
+	if runErr != nil {
+		final.Error = runErr.Error()
+	}
+	return final
+}
+
+func writeMonitorFinal(out io.Writer, final monitorFinal, jsonOut bool) error {
+	if !jsonOut {
+		if final.Error != "" {
+			return nil
+		}
+		fmt.Fprintf(out, "final: %s after %d tick(s); events_found=%t\n", final.ExitReason, final.Ticks, final.EventsFound)
+		return nil
+	}
+	b, err := json.Marshal(final)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, string(b))
+	return err
 }
 
 // collectMonitorEvents gathers operator-needed events across all watched
@@ -364,7 +463,7 @@ func collectMonitorEvents(o monitorLoopOptions) ([]monitorEvent, error) {
 func idleWithActiveTaskEvents(o monitorLoopOptions, session string, tasks []taskstore.Task) ([]monitorEvent, error) {
 	var inProgress []taskstore.Task
 	for _, tk := range tasks {
-		if tk.Status == taskstore.StatusInProgress {
+		if tk.Status == taskstore.StatusInProgress || tk.Status == taskstore.StatusCompletedPendingReconcile {
 			inProgress = append(inProgress, tk)
 		}
 	}
@@ -393,6 +492,7 @@ func idleWithActiveTaskEvents(o monitorLoopOptions, session string, tasks []task
 		}
 		live := row.Status == statusStateLive || row.Status == statusStateWakeLive
 		age := now.Sub(tk.UpdatedAt)
+		activityEvidence := monitorActivityForTask(o, session, tk, now)
 		paneID := ""
 		busy, busyKnown := false, false
 		if row.Tmux != nil && row.Tmux.PaneAlive {
@@ -414,10 +514,17 @@ func idleWithActiveTaskEvents(o monitorLoopOptions, session string, tasks []task
 			if age < o.StaleAfter {
 				continue // confirmed not-busy but task is fresh
 			}
+			if activityEvidence.Valid && activityEvidence.Age <= activityEvidence.Threshold {
+				continue // exact bounded phase heartbeat proves current progress
+			}
 			reason = fmt.Sprintf("owner %q is live, confirmed not busy, and the task is untouched for %s", owner, age.Round(time.Second))
 		} else {
-			// Not-live owner still holding the task: flag regardless of age; busy
-			// is irrelevant (and was not probed).
+			// A valid exact heartbeat is stronger than a stale liveness projection.
+			// Otherwise a not-live owner still holding the task is flagged regardless
+			// of task age; busy is irrelevant (and was not probed).
+			if activityEvidence.Valid && activityEvidence.Age <= activityEvidence.Threshold {
+				continue
+			}
 			reason = fmt.Sprintf("owner %q is %s while owning an in_progress task", owner, row.Status)
 		}
 		unread := unreadByOwner[owner]
@@ -429,22 +536,103 @@ func idleWithActiveTaskEvents(o monitorLoopOptions, session string, tasks []task
 			Type:    monitorEventIdleActiveTask,
 			Session: session,
 			Source:  "task:" + tk.ID + " owner:" + owner + " status:" + string(row.Status),
-			Detail: fmt.Sprintf("%s — %s%s (age %s, threshold %s). Suggested: controlled wake-first re-nudge (amq-squad dispatch) to resume task %s; escalate to operator after repeated no-advance.",
-				tk.Title, reason, inboxDetail, age.Round(time.Second), o.StaleAfter, tk.ID),
+			Detail: fmt.Sprintf("%s — %s%s (task age %s; activity %s phase=%q age=%s validity=%s; base threshold %s; effective threshold %s). Suggested: controlled wake-first re-nudge (amq-squad dispatch) to resume task %s; escalate to operator after repeated no-advance.",
+				tk.Title, reason, inboxDetail, age.Round(time.Second), activityEvidence.Source, activityEvidence.Phase, activityAgeDetail(activityEvidence.Age), activityEvidence.Reason, o.StaleAfter, activityEvidence.Threshold, tk.ID),
 			Idle: &monitorIdleEvidence{
-				Owner:            owner,
-				OwnerStatus:      string(row.Status),
-				Live:             live,
-				BusyKnown:        busyKnown,
-				Busy:             busy,
-				PaneID:           paneID,
-				UnreadInbox:      unread,
-				AgeSeconds:       int(age / time.Second),
-				ThresholdSeconds: int(o.StaleAfter / time.Second),
+				Owner: owner, OwnerStatus: string(row.Status), Live: live,
+				BusyKnown: busyKnown, Busy: busy, PaneID: paneID, UnreadInbox: unread,
+				AgeSeconds: int(age / time.Second), ThresholdSeconds: int(activityEvidence.Threshold / time.Second),
+				ActivitySource: activityEvidence.Source, ActivityPhase: activityEvidence.Phase,
+				ActivityAgeSeconds: int(activityEvidence.Age / time.Second), ActivityValid: activityEvidence.Valid,
+				ActivityReason:            activityEvidence.Reason,
+				BaseThresholdSeconds:      int(o.StaleAfter / time.Second),
+				EffectiveThresholdSeconds: int(activityEvidence.Threshold / time.Second),
 			},
 		})
 	}
 	return out, nil
+}
+
+func monitorActivityForTask(o monitorLoopOptions, session string, tk taskstore.Task, now time.Time) monitorActivityEvidence {
+	base := o.StaleAfter
+	if base <= 0 {
+		base = defaultMonitorStaleAfter
+	}
+	evidence := monitorActivityEvidence{Source: "none", Age: -time.Second, Reason: "heartbeat absent", Threshold: base}
+	owner := strings.TrimSpace(tk.AssignedTo)
+	agentDir := filepath.Join(squadnamespace.AMQRoot(o.ProjectDir, o.Profile, session), "agents", owner)
+	snapshot, ok, err := activitystore.Read(agentDir, now, base)
+	if err != nil {
+		evidence.Source = activitystore.SourceHeartbeat
+		evidence.Reason = "heartbeat malformed: " + err.Error()
+		return evidence
+	}
+	if !ok {
+		return evidence
+	}
+	evidence.Source = snapshot.Source
+	evidence.Phase = strings.TrimSpace(snapshot.Phase)
+	if snapshot.WrittenAt.IsZero() {
+		evidence.Reason = "heartbeat timestamp missing"
+		return evidence
+	}
+	evidence.Age = now.Sub(snapshot.WrittenAt)
+	if snapshot.WrittenAt.After(now.Add(monitorActivityFutureSkew)) {
+		evidence.Reason = "heartbeat timestamp is future-skewed"
+		return evidence
+	}
+	if evidence.Age < 0 {
+		evidence.Age = 0
+	}
+	if strings.TrimSpace(snapshot.Handle) != owner {
+		evidence.Reason = "heartbeat handle does not match exact assignee"
+		return evidence
+	}
+	if strings.TrimSpace(snapshot.TaskID) != strings.TrimSpace(tk.ID) {
+		evidence.Reason = "heartbeat task does not match canonical task"
+		return evidence
+	}
+	threshold, ok := monitorActivityPhaseThreshold(o, evidence.Phase)
+	if !ok {
+		evidence.Reason = "heartbeat phase is not in the bounded phase catalog"
+		return evidence
+	}
+	evidence.Valid = true
+	evidence.Reason = "exact namespace, assignee, task, phase, and timestamp binding"
+	evidence.Threshold = threshold
+	return evidence
+}
+
+func monitorActivityPhaseThreshold(o monitorLoopOptions, phase string) (time.Duration, bool) {
+	base := o.StaleAfter
+	if base <= 0 {
+		base = defaultMonitorStaleAfter
+	}
+	switch strings.TrimSpace(phase) {
+	case "coding":
+		threshold := o.CodingStaleAfter
+		if threshold < base {
+			threshold = defaultMonitorCodingStaleAfter
+		}
+		return threshold, true
+	case "testing":
+		threshold := o.TestingStaleAfter
+		if threshold < base {
+			threshold = defaultMonitorTestingStaleAfter
+		}
+		return threshold, true
+	case "reading", "planning", "review", "waiting", "waiting-on-command", "task_claimed", "task_in_progress":
+		return base, true
+	default:
+		return base, false
+	}
+}
+
+func activityAgeDetail(age time.Duration) string {
+	if age < 0 {
+		return "unavailable"
+	}
+	return age.Round(time.Second).String()
 }
 
 // monitorUnreadInboxCounts records durable messages still sitting unread in

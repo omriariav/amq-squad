@@ -25,6 +25,9 @@ type amqSquadConfig struct {
 }
 
 func resolveModelForLaunch(binary, requested string, nativeArgs []string) string {
+	if model := nativeModelArg(binary, nativeArgs); model != "" {
+		return model
+	}
 	if model := strings.TrimSpace(requested); model != "" {
 		return model
 	}
@@ -35,6 +38,26 @@ func resolveModelForLaunch(binary, requested string, nativeArgs []string) string
 		return codexLocalDefaultModel(nativeArgs)
 	}
 	return ""
+}
+
+func nativeModelArg(binary string, args []string) string {
+	binary = normalizedAgentBinary(binary)
+	model := ""
+	for i := 0; i < len(args); i++ {
+		spec, inline, ok := nativeValueSpecForArg(binary, args[i])
+		if !ok || spec.Canonical != "--model" {
+			continue
+		}
+		if inline {
+			model = strings.TrimSpace(compactNativeValue(args[i]))
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			model = strings.TrimSpace(args[i])
+		}
+	}
+	return model
 }
 
 func memberResolvedModel(m team.Member, overrides map[string]string, binaryArgs map[string][]string) string {

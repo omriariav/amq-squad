@@ -985,6 +985,110 @@ func TestRunDispatchTaskRejectsMismatchedAssigneeBeforeSend(t *testing.T) {
 	}
 }
 
+func TestRunDispatchLeadershipEpochRejectsStaleSenderBeforeArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	if _, err := taskstore.HandoffLeadershipForProfile(dir, team.DefaultProfile, "issue-96", taskstore.LeadershipHandoffInput{
+		ExpectedEpoch: 0, From: "cto", To: "cto-recovery", Reason: "recover lost lead", Now: taskNow(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-epoch to qa\n")
+	for _, args := range [][]string{
+		{"--session", "issue-96", "--role", "qa", "--from", "cto", "--leadership-epoch", "1", "--subject", "stale", "--body", "run", "--create-task"},
+		{"--session", "issue-96", "--role", "qa", "--from", "cto-recovery", "--subject", "missing epoch", "--body", "run", "--create-task"},
+	} {
+		if _, _, err := captureOutput(t, func() error { return runDispatch(args) }); err == nil || !strings.Contains(err.Error(), "leadership epoch") && !strings.Contains(err.Error(), "stale") {
+			t.Fatalf("stale leadership dispatch err=%v", err)
+		}
+	}
+	if tasks, err := taskstore.ListForProfile(dir, team.DefaultProfile, "issue-96"); err != nil || len(tasks) != 0 {
+		t.Fatalf("rejected dispatch persisted tasks/outbox: %+v err=%v", tasks, err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("rejected dispatch invoked AMQ: %d", len(*calls))
+	}
+	if _, err := os.Stat(filepath.Join(dir, team.DirName, "receipts", "issue-96")); !os.IsNotExist(err) {
+		t.Fatalf("rejected dispatch persisted receipt artifact: %v", err)
+	}
+}
+
+func TestRunDispatchLeadershipEpochHandoffAfterOuterReadRejectsAtomically(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	if _, err := taskstore.HandoffLeadershipForProfile(dir, team.DefaultProfile, "issue-96", taskstore.LeadershipHandoffInput{
+		ExpectedEpoch: 0, From: "cto", To: "cto-recovery", Reason: "recover lost lead", Now: taskNow(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-race to qa\n")
+	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+	previousHook := dispatchAfterLeadershipRead
+	hookCalled := false
+	dispatchAfterLeadershipRead = func(projectDir, profile, session string, state taskstore.LeadershipState) error {
+		hookCalled = true
+		if state.Epoch != 1 || state.CurrentLead != "cto-recovery" {
+			t.Fatalf("outer leadership state = %+v", state)
+		}
+		_, err := taskstore.HandoffLeadershipForProfile(projectDir, profile, session, taskstore.LeadershipHandoffInput{
+			ExpectedEpoch: 1, From: "cto-recovery", To: "cto-next", Reason: "deterministic race", Now: taskNow().Add(time.Second),
+		})
+		return err
+	}
+	t.Cleanup(func() { dispatchAfterLeadershipRead = previousHook })
+
+	_, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--from", "cto-recovery", "--leadership-epoch", "1", "--subject", "stale after read", "--body", "run", "--create-task"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "leadership epoch is 2") {
+		t.Fatalf("post-read handoff dispatch err=%v", err)
+	}
+	if !hookCalled {
+		t.Fatal("deterministic post-read handoff hook was not called")
+	}
+	if tasks, listErr := taskstore.ListForProfile(dir, team.DefaultProfile, "issue-96"); listErr != nil || len(tasks) != 0 {
+		t.Fatalf("stale atomic dispatch persisted task/outbox: %+v err=%v", tasks, listErr)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("stale atomic dispatch invoked AMQ: %d", len(*calls))
+	}
+	if len(*nudges) != 0 {
+		t.Fatalf("stale atomic dispatch invoked pane nudge: %v", *nudges)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, team.DirName, "receipts", "issue-96")); !os.IsNotExist(statErr) {
+		t.Fatalf("stale atomic dispatch persisted receipt artifact: %v", statErr)
+	}
+}
+
+func TestRunDispatchLeadershipEpochPersistsAuthorityEvidence(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	if _, err := taskstore.HandoffLeadershipForProfile(dir, team.DefaultProfile, "issue-96", taskstore.LeadershipHandoffInput{
+		ExpectedEpoch: 0, From: "cto", To: "cto-recovery", Reason: "recover lost lead", Now: taskNow(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-epoch to qa\n")
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--from", "cto-recovery", "--leadership-epoch", "1", "--subject", "current", "--body", "run", "--create-task", "--no-wake", "--json"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decodeJSONEnvelope[mutationResult](t, stdout)
+	receipt := got.Data.DeliveryReceipt
+	if receipt == nil || receipt.LeadershipEpoch == nil || *receipt.LeadershipEpoch != 1 || receipt.CurrentActorImplementationAllowed == nil || !*receipt.CurrentActorImplementationAllowed || receipt.LeadImplementationAllowed == nil || !*receipt.LeadImplementationAllowed {
+		t.Fatalf("dispatch authority evidence = %+v", receipt)
+	}
+	tasks, listErr := taskstore.ListForProfile(dir, team.DefaultProfile, "issue-96")
+	if listErr != nil || len(tasks) != 1 || len(tasks[0].Outbox) != 1 || tasks[0].Outbox[0].LeadershipEpoch == nil || *tasks[0].Outbox[0].LeadershipEpoch != 1 {
+		t.Fatalf("durable outbox authority evidence tasks=%+v err=%v", tasks, listErr)
+	}
+}
+
 func TestRunDispatchTaskRejectsBlockedAndTerminalStatusesBeforeSend(t *testing.T) {
 	cases := []struct {
 		name  string

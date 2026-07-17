@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -404,7 +405,7 @@ func TestLeadRegisterPreservesExistingNativeGoalBinding(t *testing.T) {
 			NativeGoal: true,
 			Source:     "goal-control",
 			Command:    `/goal --goal "ship"`,
-			Detail:     "native /goal delivered as a first-class control action",
+			Detail:     "native /goal delivered as a first-class claim-once control action",
 		},
 	})
 	prev := currentPaneIdentity
@@ -413,10 +414,12 @@ func TestLeadRegisterPreservesExistingNativeGoalBinding(t *testing.T) {
 	}
 	t.Cleanup(func() { currentPaneIdentity = prev })
 	prevWake := leadWakeStarter
+	prevSignal := externalLeadWakeProcessGroupSignal
 	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
 		return leadWakeResult{PID: 2222, Started: true, Detail: "ready"}, nil
 	}
-	t.Cleanup(func() { leadWakeStarter = prevWake })
+	externalLeadWakeProcessGroupSignal = func(int, syscall.Signal) error { return syscall.ESRCH }
+	t.Cleanup(func() { leadWakeStarter, externalLeadWakeProcessGroupSignal = prevWake, prevSignal })
 	prevInspector := statusPaneInspector
 	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
 		if id == "%5" {
@@ -463,7 +466,10 @@ func TestLeadRegisterPreservesExistingNativeGoalBinding(t *testing.T) {
 func TestPreserveExternalGoalBindingRejectsInvalidClaudeBinding(t *testing.T) {
 	validLegacy := launch.Record{
 		Binary: "claude", Role: "cto", Session: "issue-460",
-		GoalBinding: &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Command: `/goal --goal "ship"`},
+		GoalBinding: &launch.GoalBinding{
+			Mode: "native_goal", NativeGoal: true, Source: "goal-control", Command: `/goal --goal "ship"`,
+			Detail: "native /goal delivered as a first-class claim-once control action",
+		},
 	}
 	if !preserveExternalGoalBinding(validLegacy, nil, "cto", "issue-460") {
 		t.Fatal("valid legacy Claude binding was not preserved")
@@ -504,10 +510,12 @@ func TestLeadRegisterWriteFailurePreservesTeamLeadConfig(t *testing.T) {
 	}
 	t.Cleanup(func() { currentPaneIdentity = prev })
 	prevWake := leadWakeStarter
+	prevSignal := externalLeadWakeProcessGroupSignal
 	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {
 		return leadWakeResult{PID: 2222, Started: true, Detail: "ready"}, nil
 	}
-	t.Cleanup(func() { leadWakeStarter = prevWake })
+	externalLeadWakeProcessGroupSignal = func(int, syscall.Signal) error { return syscall.ESRCH }
+	t.Cleanup(func() { leadWakeStarter, externalLeadWakeProcessGroupSignal = prevWake, prevSignal })
 
 	if _, _, err := captureOutput(t, func() error {
 		return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
@@ -520,6 +528,80 @@ func TestLeadRegisterWriteFailurePreservesTeamLeadConfig(t *testing.T) {
 	}
 	if !cfg.Orchestrated || cfg.Lead != "qa" {
 		t.Fatalf("team config after failed register = orchestrated:%v lead:%q, want preserved true/qa", cfg.Orchestrated, cfg.Lead)
+	}
+}
+
+func TestLeadRegisterPostWriteRollbackCASGatesWakeOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		replace     bool
+		wantSignals bool
+	}{
+		{name: "applied rollback stops owned wake", wantSignals: true},
+		{name: "concurrent replacement preserves record and wake", replace: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := setupFakeAMQSessionRoots(t)
+			seedTeam(t, team.Team{Orchestrated: true, Lead: "cto", Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
+			prevPane := currentPaneIdentity
+			currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+				return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "lead", PaneID: "%5"}, nil
+			}
+			t.Cleanup(func() { currentPaneIdentity = prevPane })
+			prevWake, prevSignal := leadWakeStarter, externalLeadWakeProcessGroupSignal
+			leadWakeStarter = func(leadWakeOptions) (leadWakeResult, error) {
+				return leadWakeResult{PID: 2222, Started: true, Detail: "ready"}, nil
+			}
+			var signals []syscall.Signal
+			externalLeadWakeProcessGroupSignal = func(pgid int, signal syscall.Signal) error {
+				if pgid != 2222 {
+					t.Fatalf("wake pgid=%d want=2222", pgid)
+				}
+				signals = append(signals, signal)
+				if signal == 0 {
+					return syscall.ESRCH
+				}
+				return nil
+			}
+			t.Cleanup(func() { leadWakeStarter, externalLeadWakeProcessGroupSignal = prevWake, prevSignal })
+			prevAfterWrite := externalLeadAfterRecordWrite
+			var replacement launch.Record
+			externalLeadAfterRecordWrite = func(agentDir string, written launch.Record) error {
+				if tc.replace {
+					replacement = written
+					replacement.Conversation = "concurrent-replacement"
+					if err := launch.Write(agentDir, replacement); err != nil {
+						return err
+					}
+				}
+				return fmt.Errorf("forced post-write failure")
+			}
+			t.Cleanup(func() { externalLeadAfterRecordWrite = prevAfterWrite })
+
+			_, _, err := captureOutput(t, func() error {
+				return runLead([]string{"register", "--role", "cto", "--session", "issue-96", "--adopt-project-lead"})
+			})
+			if err == nil || !strings.Contains(err.Error(), "forced post-write failure") {
+				t.Fatalf("post-write failure=%v", err)
+			}
+			agentDir := filepath.Join(base, "issue-96", "agents", "cto")
+			stored, readErr := launch.Read(agentDir)
+			if tc.replace {
+				if readErr != nil || !reflect.DeepEqual(stored, replacement) {
+					t.Fatalf("replacement preservation err=%v got=%+v want=%+v", readErr, stored, replacement)
+				}
+				if len(signals) != 0 {
+					t.Fatalf("concurrent replacement wake was signaled: %v", signals)
+				}
+				return
+			}
+			if !os.IsNotExist(readErr) {
+				t.Fatalf("applied rollback left record: %v %+v", readErr, stored)
+			}
+			if !reflect.DeepEqual(signals, []syscall.Signal{syscall.SIGTERM, 0}) {
+				t.Fatalf("applied rollback signals=%v", signals)
+			}
+		})
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -514,25 +515,32 @@ func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
 	if rec.GoalBinding == nil || rec.GoalBinding.Source != "goal-control" || rec.GoalBinding.NativeGoal || rec.GoalBinding.Mode != "prompt_goal" || rec.GoalBinding.Goal != "ship safely" {
 		t.Fatalf("launch goal binding not updated: %+v", rec.GoalBinding)
 	}
+	if rec.GoalBinding.DeliveryState != goalBindingDeliveryDelivered || !launchRecordHasGoalBinding(rec) {
+		t.Fatalf("successful delivery must persist verified delivery evidence: %+v", rec.GoalBinding)
+	}
 }
 
 func setupGoalDeliveryFailureTest(t *testing.T, sendErr error) (string, string, *[]amqCommandRequest, *[]string) {
+	return setupGoalDeliveryFailureForBinary(t, "codex", sendErr)
+}
+
+func setupGoalDeliveryFailureForBinary(t *testing.T, binary string, sendErr error) (string, string, *[]amqCommandRequest, *[]string) {
 	t.Helper()
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
-		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Members:       []team.Member{{Role: "cto", Binary: binary, Handle: "cto", Session: "issue-96"}},
 		Orchestrated:  true,
 		Lead:          "cto",
 		ExecutionMode: executionModeProjectLead,
 	})
 	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		CWD: dir, Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96",
+		CWD: dir, Binary: binary, Handle: "cto", Role: "cto", Session: "issue-96",
 		AgentPID: 4242, Tmux: &launch.TmuxInfo{PaneID: "%7"},
 	})
 	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "Sent goal-msg-427 to cto\n")
 	oldLister := statusPaneLister
 	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
-		return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: "codex", Title: "amq:issue-96:cto"}}, nil
+		return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: dir, Command: binary, Title: "amq:issue-96:cto"}}, nil
 	}
 	oldSend := sendPromptToPane
 	var prompts []string
@@ -545,6 +553,70 @@ func setupGoalDeliveryFailureTest(t *testing.T, sendErr error) (string, string, 
 		sendPromptToPane = oldSend
 	})
 	return dir, base, calls, &prompts
+}
+
+func TestGoalDeliveryFailureLeavesUnverifiedReservationAcrossBinaries(t *testing.T) {
+	for _, binary := range []string{"codex", "claude"} {
+		t.Run(binary, func(t *testing.T) {
+			dir, base, _, _ := setupGoalDeliveryFailureForBinary(t, binary, errors.New("pane rejected delivery"))
+			_, _, err := captureOutput(t, func() error {
+				return runGoal([]string{"start", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--yes"})
+			})
+			if err == nil {
+				t.Fatal("expected hard goal delivery failure")
+			}
+			rec, readErr := launch.Read(filepath.Join(base, "issue-96", "agents", "cto"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if rec.GoalBinding == nil || rec.GoalBinding.DeliveryState != goalBindingDeliveryReserved || launchRecordHasGoalBinding(rec) {
+				t.Fatalf("failed delivery surfaced verified binding: %+v", rec.GoalBinding)
+			}
+		})
+	}
+}
+
+func TestNativeTerminalWithoutPaneStatusMatchesGoalDeliveryFailure(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	project := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: project, Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96", AgentPID: 4242,
+		Terminal: &launch.TerminalInfo{Backend: runtimecontrol.BackendITerm2, WindowID: "101", Target: "new-window"},
+	})
+	swapStatusPaneLister(t, nil, nil)
+
+	statusJSON, err := runStatusExec(t, statusExecution{
+		ProjectDir:       project,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Profile:          team.DefaultProfile,
+		Probe:            statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()),
+		JSON:             true,
+	})
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, statusJSON)
+	if len(env.Data.Records) != 1 {
+		t.Fatalf("status records = %d", len(env.Data.Records))
+	}
+	for _, action := range env.Data.Records[0].Actions {
+		if action.Kind == "goal_deliver" && action.Available {
+			t.Fatalf("status advertised unavailable native goal path: %+v", action)
+		}
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runGoal([]string{"deliver", "--project", project, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--json"})
+	})
+	if err == nil || !strings.Contains(err.Error(), runtimecontrol.ITerm2InjectionDisabledReason) {
+		t.Fatalf("goal delivery without native pane = %v", err)
+	}
 }
 
 func TestGoalDeliveryQueuedInputRecordsPendingWithoutActionableAMQ(t *testing.T) {

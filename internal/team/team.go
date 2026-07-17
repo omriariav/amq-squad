@@ -52,6 +52,23 @@ type Member struct {
 	Session string `json:"session"` // AMQ workstream session name
 	Model   string `json:"model,omitempty"`
 	CWD     string `json:"cwd,omitempty"`
+	// ToolProfile is the operator-visible least-required capability class for
+	// this member. ToolConfig is the binary-native materialization selected
+	// before launch: a Claude settings file or a Codex config profile name.
+	// Empty ToolProfile is the backward-compatible full operator surface.
+	ToolProfile   string `json:"tool_profile,omitempty"`
+	ToolConfig    string `json:"tool_config,omitempty"`
+	ToolMCPConfig string `json:"tool_mcp_config,omitempty"`
+	// ToolAllowlist is the audited effective enabled set requested by the
+	// operator. ToolBlocklist records inherited helpers the generated policy
+	// revokes. Entries are namespaced (for example mcp:github or
+	// plugin:gws@workspace) so binary-specific launch materialization remains
+	// unambiguous.
+	ToolAllowlist       []string `json:"tool_allowlist,omitempty"`
+	ToolBlocklist       []string `json:"tool_blocklist,omitempty"`
+	ToolPolicySources   []string `json:"tool_policy_sources,omitempty"`
+	ToolPolicyDrift     []string `json:"tool_policy_drift,omitempty"`
+	ToolDisableAllHooks bool     `json:"tool_disable_all_hooks,omitempty"`
 	// SpawnOrigin and SpawnDepth record how runtime composition added this
 	// member. Seeded/static members default to depth 0. Runtime children added
 	// by the orchestration lead are depth 1 under the default cap.
@@ -96,6 +113,77 @@ func (m Member) ExtraArgs() []string {
 		return nil
 	}
 	return append([]string(nil), args...)
+}
+
+const (
+	ToolProfileMinimal = "minimal"
+	ToolProfileCoding  = "coding"
+	ToolProfileBrowser = "browser"
+	ToolProfileData    = "data"
+	ToolProfileFull    = "full"
+	ToolProfileCustom  = "custom"
+)
+
+func (m Member) EffectiveToolProfile() string {
+	if profile := strings.TrimSpace(m.ToolProfile); profile != "" {
+		return profile
+	}
+	return ToolProfileFull
+}
+
+// ToolArgs materializes the selected policy before the binary starts. The
+// config is deliberately binary-native so narrowing remains under operator
+// control and explicitly requested tools are never silently removed.
+func (m Member) ToolArgs() []string {
+	config := strings.TrimSpace(m.ToolConfig)
+	if config == "" {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(m.Binary)) {
+	case "claude":
+		args := []string{"--settings", config}
+		if mcp := strings.TrimSpace(m.ToolMCPConfig); mcp != "" {
+			args = append(args, "--strict-mcp-config", "--mcp-config", mcp)
+		}
+		return args
+	case "codex":
+		args := []string{"--profile", config}
+		for _, entry := range m.ToolBlocklist {
+			entry = strings.TrimSpace(entry)
+			if name, ok := strings.CutPrefix(entry, "mcp:"); ok && strings.TrimSpace(name) != "" {
+				args = append(args, "-c", fmt.Sprintf("mcp_servers.%q.enabled=false", name))
+			} else if name, ok := strings.CutPrefix(entry, "plugin:"); ok && strings.TrimSpace(name) != "" {
+				args = append(args, "-c", fmt.Sprintf("plugins.%q.enabled=false", name))
+			}
+		}
+		return args
+	default:
+		return nil
+	}
+}
+
+func (m Member) ToolPolicySource() string {
+	if strings.TrimSpace(m.ToolProfile) == "" {
+		return "legacy_default_full"
+	}
+	if m.EffectiveToolProfile() == ToolProfileFull && strings.TrimSpace(m.ToolConfig) == "" {
+		return "explicit_full"
+	}
+	return "member_generated_profile"
+}
+
+func (m Member) ToolEnabledSet() []string {
+	if m.EffectiveToolProfile() == ToolProfileFull && len(m.ToolAllowlist) == 0 {
+		return []string{"*"}
+	}
+	return append([]string(nil), m.ToolAllowlist...)
+}
+
+func (m Member) ToolPolicyPrecedence() string {
+	if strings.EqualFold(strings.TrimSpace(m.Binary), "codex") && len(m.ToolBlocklist) > 0 {
+		return "cli_override>trusted_project>selected_profile>user"
+	}
+	return "binary_native_profile"
 }
 
 // OperatorConfig describes the optional human/operator participant for a
@@ -1287,6 +1375,25 @@ func validateMember(prefix string, m Member) error {
 			return fmt.Errorf("%s.model: %w", prefix, err)
 		}
 	}
+	switch m.EffectiveToolProfile() {
+	case ToolProfileMinimal, ToolProfileCoding, ToolProfileBrowser, ToolProfileData, ToolProfileFull, ToolProfileCustom:
+	default:
+		return fmt.Errorf("%s.tool_profile: use minimal, coding, browser, data, full, or custom", prefix)
+	}
+	if m.EffectiveToolProfile() != ToolProfileFull && strings.TrimSpace(m.ToolConfig) == "" {
+		return fmt.Errorf("%s.tool_config: required for non-full tool profile %q so launch can apply policy before binary start", prefix, m.ToolProfile)
+	}
+	if m.ToolConfig != "" {
+		if err := ValidateDisplayValue("tool_config", m.ToolConfig); err != nil {
+			return fmt.Errorf("%s.tool_config: %w", prefix, err)
+		}
+		if strings.ToLower(strings.TrimSpace(m.Binary)) == "claude" && hasNativeFlag(m.ClaudeArgs, "--settings") {
+			return fmt.Errorf("%s.claude_args: --settings conflicts with tool_config; keep the policy in one field", prefix)
+		}
+		if strings.ToLower(strings.TrimSpace(m.Binary)) == "codex" && hasNativeFlag(m.CodexArgs, "--profile") {
+			return fmt.Errorf("%s.codex_args: --profile conflicts with tool_config; keep the policy in one field", prefix)
+		}
+	}
 	if m.CWD != "" {
 		if err := ValidateDisplayValue("cwd", m.CWD); err != nil {
 			return fmt.Errorf("%s.cwd: %w", prefix, err)
@@ -1362,6 +1469,15 @@ func validateMember(prefix string, m Member) error {
 		return fmt.Errorf("%s.permission_allowlist: member binary is %q; permission_allowlist currently applies only to claude members", prefix, m.Binary)
 	}
 	return nil
+}
+
+func hasNativeFlag(args []string, flag string) bool {
+	for _, arg := range args {
+		if arg == flag || strings.HasPrefix(arg, flag+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func ValidateRoleID(s string) error {

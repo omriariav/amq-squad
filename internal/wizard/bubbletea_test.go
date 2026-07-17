@@ -42,6 +42,50 @@ func TestBubbleModelStartsWithProjectDefaultsAndPhaseRail(t *testing.T) {
 	}
 }
 
+func TestBubbleToolPolicyRecommendedDisplaysCatalogMinimumAssignments(t *testing.T) {
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Lead: "cto"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.roleOrder = []string{"cto", "backend-dev", "qa"}
+	m.stage = stageToolPolicy
+	m.configureStage()
+	const want = "cto=full,backend-dev=coding,qa=browser"
+	view := flattenBubbleView(m.View())
+	for _, text := range []string{"Recommended", "broad lead + catalog-minimum lean workers", want, "Full for all", "duplicated MCP context", "memory/concurrency"} {
+		if !strings.Contains(view, text) {
+			t.Fatalf("tool policy view missing %q:\n%s", text, view)
+		}
+	}
+	if m.cursor != 0 || m.choices()[m.cursor].value != "recommended" {
+		t.Fatalf("full_all became implicit: cursor=%d choices=%+v", m.cursor, m.choices())
+	}
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.stage != stageTopology || m.spec.ToolPolicyMode != "recommended" || m.spec.ToolProfile != want {
+		t.Fatalf("recommended selection = stage %v mode %q assignments %q", m.stage, m.spec.ToolPolicyMode, m.spec.ToolProfile)
+	}
+}
+
+func TestBubbleToolPolicyFullAllIsExplicitAndWarnsInReview(t *testing.T) {
+	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Lead: "cto"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.roleOrder = []string{"cto", "backend-dev", "qa"}
+	m.stage = stageToolPolicy
+	m.configureStage()
+	m.cursor = 1
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.spec.ToolPolicyMode != "full_all" || m.spec.ToolProfile != "cto=full,backend-dev=full,qa=full" {
+		t.Fatalf("explicit full_all selection = mode %q assignments %q", m.spec.ToolPolicyMode, m.spec.ToolProfile)
+	}
+	for _, text := range []string{"Tools     full_all", "2+ full workers duplicate MCP/plugin context", "memory/concurrency pressure"} {
+		if !strings.Contains(m.summary(), text) {
+			t.Fatalf("tool policy review missing %q:\n%s", text, m.summary())
+		}
+	}
+}
+
 func TestBubbleSelfOperatorAllowBackDeselectReselect(t *testing.T) {
 	m, err := NewBubbleModel(NumberedOptions{Defaults: Spec{Project: "/repo", Lead: "cto"}})
 	if err != nil {

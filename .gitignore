@@ -21,6 +21,7 @@ amq-squad-rc-*
 .amq-squad/briefs/
 .amq-squad/evidence/
 .amq-squad/goal-attempts/
+.amq-squad/namespace-admission/
 .amq-squad/notify-state.json
 .amq-squad/notify-state.json.lock
 .amq-squad/notification-watchers/

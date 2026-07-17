@@ -81,11 +81,21 @@ func ReconcileForProfile(projectDir, profile, session string, opts ReconcileOpti
 			if t == nil {
 				continue
 			}
-			if t.Status == StatusInProgress {
+			if t.Status == StatusInProgress || t.Status == StatusCompletedPendingReconcile {
 				if t.Lease == nil {
-					result.Findings = append(result.Findings, ReconcileFinding{Kind: "legacy_unleased", TaskID: t.ID, Detail: "in_progress legacy task has no lease metadata", Guidance: "the assigned worker must run task renew, or an actor must use task release with an audited reason; ownership is preserved"})
+					if t.Status == StatusCompletedPendingReconcile {
+						result.Findings = append(result.Findings, ReconcileFinding{Kind: "legacy_unleased", TaskID: t.ID, Detail: "completed_pending_reconcile task has no lease metadata; ownership is preserved and only exact evidence reconcile may close it", Guidance: fmt.Sprintf("task renew %s --me %s", t.ID, strings.TrimSpace(t.AssignedTo))})
+					} else {
+						result.Findings = append(result.Findings, ReconcileFinding{Kind: "legacy_unleased", TaskID: t.ID, Detail: "in_progress legacy task has no lease metadata", Guidance: "the assigned worker must run task renew, or an actor must use task release with an audited reason; ownership is preserved"})
+					}
 				} else if !opts.Now.IsZero() && !t.Lease.ExpiresAt.After(opts.Now) {
-					result.Findings = append(result.Findings, ReconcileFinding{Kind: "stale_lease", TaskID: t.ID, Detail: fmt.Sprintf("lease for %s expired at %s", t.Lease.Owner, t.Lease.ExpiresAt.UTC().Format(time.RFC3339Nano)), Guidance: "renew by the assignee or explicitly release with --me and --reason; reconcile never unclaims it", Repairable: true})
+					guidance := "renew by the assignee or explicitly release with --me and --reason; reconcile never unclaims it"
+					detail := fmt.Sprintf("lease for %s expired at %s", t.Lease.Owner, t.Lease.ExpiresAt.UTC().Format(time.RFC3339Nano))
+					if t.Status == StatusCompletedPendingReconcile {
+						guidance = fmt.Sprintf("task renew %s --me %s", t.ID, strings.TrimSpace(t.AssignedTo))
+						detail += "; completed_pending_reconcile remains owned and only exact evidence reconcile may close it"
+					}
+					result.Findings = append(result.Findings, ReconcileFinding{Kind: "stale_lease", TaskID: t.ID, Detail: detail, Guidance: guidance, Repairable: true})
 					if opts.Apply && (t.Lease.StaleObservedAt == nil || !t.Lease.StaleObservedAt.Equal(opts.Now)) {
 						observed := opts.Now
 						t.Lease.StaleObservedAt = &observed

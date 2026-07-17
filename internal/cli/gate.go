@@ -9,6 +9,7 @@ import (
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v2/internal/state"
+	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -69,6 +70,7 @@ func runGateRaise(args []string) error {
 	actionFlag := fs.String("action", "", "catalog atomic action")
 	targetFlag := fs.String("target", "", "exact case-sensitive target")
 	noteFlag := fs.String("note", "", "optional integrity-bearing note")
+	taskFlag := fs.String("task", "", "optional canonical task id bound into the typed request")
 	toFlag := fs.String("to", "", "operator handle (default: configured operator)")
 	listKinds := fs.Bool("list-kinds", false, "list the shared action catalog without resolving project context")
 	jsonOut := fs.Bool("json", false, "emit schema-versioned JSON")
@@ -108,6 +110,12 @@ Examples:
 	if err := operatorauth.ValidateCanonicalSingleLineField("note", note, false); err != nil {
 		return usageErrorf("gate raise: %v", err)
 	}
+	taskID := strings.TrimSpace(*taskFlag)
+	if taskID != "" {
+		if err := validateTaskIDLeaf(taskID); err != nil {
+			return usageErrorf("gate raise: %v", err)
+		}
+	}
 
 	resolve := func() (contextResolution, error) {
 		return resolveGateRaiseContext(*projectFlag, *profileFlag, *sessionFlag, *meFlag, fs)
@@ -128,6 +136,11 @@ Examples:
 	if strings.TrimSpace(ctx.Handle) == "" {
 		return usageErrorf("gate raise requires a resolved sender handle; pass --me")
 	}
+	if taskID != "" {
+		if _, err := taskstore.ShowForProfile(ctx.ProjectDir, ctx.Profile, ctx.Session, taskID); err != nil {
+			return usageErrorf("gate raise task binding: %v", err)
+		}
+	}
 	cfg, err := team.ReadProfile(ctx.ProjectDir, ctx.Profile)
 	if err != nil {
 		return fmt.Errorf("read team profile: %w", err)
@@ -144,7 +157,7 @@ Examples:
 		SchemaVersion: operatorauth.GateRequestSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion,
 		Gate: gate, Thread: gate,
 		Namespace: operatorauth.NamespaceBinding{ProjectDir: ctx.ProjectDir, Profile: ctx.Profile, Session: ctx.Session, NamespaceID: squadnamespace.ID(ctx.Profile, ctx.Session), Generation: ctx.NamespaceGeneration},
-		GateKind:  capability.GateKind, Action: capability.Action, Target: target, Note: note,
+		GateKind:  capability.GateKind, Action: capability.Action, Target: target, Note: note, TaskID: taskID,
 	}
 	if err := operatorauth.ValidateGateRequest(request); err != nil {
 		return usageErrorf("gate raise: %v", err)
@@ -152,6 +165,9 @@ Examples:
 	body := fmt.Sprintf("Gate-Kind: %s\nAction: %s\nTarget: %s", request.GateKind, request.Action, request.Target)
 	if request.Note != "" {
 		body += "\nNote: " + request.Note
+	}
+	if request.TaskID != "" {
+		body += "\nTask: " + request.TaskID
 	}
 	return sendOperatorAMQ(operatorSendOptions{
 		Command: "gate raise", Project: ctx.ProjectDir, Profile: ctx.Profile, Session: ctx.Session,

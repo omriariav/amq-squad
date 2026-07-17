@@ -4,8 +4,12 @@ Identity:
 - Role: {{orDefault .Role "(none)"}}
 - Handle: {{.Handle}}
 - Binary: {{.Binary}}
+- Tool profile: {{orDefault .ToolProfile "full"}}{{if .ToolConfig}} (native config: {{.ToolConfig}}){{end}}
 - Workstream: {{orDefault .Session "(default)"}}
 - CWD: {{.CWD}}
+
+Tool capability contract:
+- Use only the effective tool profile above. If a required capability is missing, report the exact capability and task need to the lead/operator; do not silently broaden or bypass the configured profile.
 
 Startup files:
 {{- if .TeamRulesPath }}

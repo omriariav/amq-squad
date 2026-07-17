@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/activity"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -36,10 +38,12 @@ type taskEnvelopeData struct {
 }
 
 type taskReconcileEnvelopeData struct {
-	Session   string               `json:"session"`
-	Profile   string               `json:"profile,omitempty"`
-	Namespace squadnamespace.Ref   `json:"namespace"`
-	Result    task.ReconcileResult `json:"result"`
+	Session    string                         `json:"session"`
+	Profile    string                         `json:"profile,omitempty"`
+	Namespace  squadnamespace.Ref             `json:"namespace"`
+	Result     task.ReconcileResult           `json:"result"`
+	Completion *taskCompletionEvidencePreview `json:"completion,omitempty"`
+	Applied    *task.CompletionEvidenceResult `json:"applied,omitempty"`
 }
 
 // runTask dispatches the native task lifecycle commands: the
@@ -64,6 +68,9 @@ Usage:
   amq-squad task deliver <id> --intent ID --me <handle> --session S [--profile P]
   amq-squad task retry-delivery <id> --intent ID --me <handle> --reason R [--confirm-not-delivered] --session S [--profile P]
   amq-squad task reconcile [--apply] [--json] --session S [--profile P]
+  amq-squad task reconcile <id> --evidence-id ID [--apply --binding-digest SHA --me H] [--json] --session S [--profile P]
+  amq-squad task leadership [--json] --session S [--profile P]
+  amq-squad task handoff --from H --to H --expected-epoch N --reason R [--evidence E] [--json] --session S [--profile P]
 
 Tasks live under .amq-squad/tasks/<session>/ for the default profile, or
 .amq-squad/tasks/<profile>/<session>/ for named profiles. A task is claimable
@@ -77,9 +84,13 @@ task has dispatch metadata, it sends the canonical completion signal by default:
 AMQ kind status with subject "DONE: <task title>". Use --no-notify to suppress
 that signal explicitly; there is no AMQ kind named done.
 
-All multi-task mutations use a durably-synced transaction journal. task reconcile
-replays committed journals, reports stale/legacy leases, lifecycle-link problems,
-and pending/failed/uncertain delivery intents without auto-resending them.
+All multi-task mutations use a durably-synced transaction journal. Store-wide
+task reconcile replays committed journals and reports lease/link/delivery drift.
+Task-scoped reconcile previews one exact raw DONE evidence ID without writing;
+explicit apply consumes the preview binding and audited actor. Exact evidence
+completes atomically without a completion send. Mismatch evidence may enter
+completed_pending_reconcile, retaining assignee/lease and satisfying no dependency.
+Reconcile never deletes/moves mailbox evidence or auto-resends delivery.
 `)
 		if len(args) == 0 {
 			return usageErrorf("task requires a subcommand (add, list, show, claim, renew, done, fail, block, reset, cancel, release, deliver, retry-delivery, reconcile)")
@@ -115,18 +126,90 @@ and pending/failed/uncertain delivery intents without auto-resending them.
 		return runTaskTransition(args[1:], "retry-delivery")
 	case "reconcile":
 		return runTaskReconcile(args[1:])
+	case "leadership":
+		return runTaskLeadership(args[1:])
+	case "handoff":
+		return runTaskHandoff(args[1:])
 	default:
 		return usageErrorf("unknown 'task' subcommand: %q. Try add, list, show, claim, renew, done, fail, block, reset, cancel, release, deliver, retry-delivery, or reconcile.", args[0])
 	}
 }
 
-// taskNamespace resolves --session (required), --project (default cwd), and
-// --profile (default profile). Storage is profile/session-scoped for named
-// profiles and legacy session-scoped for the default profile.
+func runTaskLeadership(args []string) error {
+	fs := flag.NewFlagSet("task leadership", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "emit the durable leadership epoch record")
+	sessionFlag := fs.String("session", "", "AMQ workstream session")
+	profileFlag := fs.String("profile", "", "team profile namespace")
+	projectFlag := fs.String("project", "", "project/team-home directory")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	session, projectDir, profile, _, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
+	if err != nil {
+		return err
+	}
+	state, err := task.ReadLeadershipForProfile(projectDir, profile, session)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSONEnvelope("task_leadership", state)
+	}
+	fmt.Printf("Leadership epoch: %d\nCurrent lead: %s\n", state.Epoch, orDash(state.CurrentLead))
+	for _, handoff := range state.Handoffs {
+		fmt.Printf("Epoch %d: %s -> %s (%s)\n", handoff.Epoch, handoff.From, handoff.To, handoff.Reason)
+	}
+	return nil
+}
+
+func runTaskHandoff(args []string) error {
+	fs := flag.NewFlagSet("task handoff", flag.ContinueOnError)
+	from := fs.String("from", "", "current lead handle")
+	to := fs.String("to", "", "recovery/new lead handle")
+	expectedEpoch := fs.Uint64("expected-epoch", 0, "last observed leadership epoch (CAS guard)")
+	reason := fs.String("reason", "", "handoff/recovery reason")
+	evidence := fs.String("evidence", "", "durable thread or artifact evidence")
+	jsonOut := fs.Bool("json", false, "emit the updated leadership epoch record")
+	sessionFlag := fs.String("session", "", "AMQ workstream session")
+	profileFlag := fs.String("profile", "", "team profile namespace")
+	projectFlag := fs.String("project", "", "project/team-home directory")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	session, projectDir, profile, _, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
+	if err != nil {
+		return err
+	}
+	state, err := task.HandoffLeadershipForProfile(projectDir, profile, session, task.LeadershipHandoffInput{
+		ExpectedEpoch: *expectedEpoch, From: *from, To: *to, Reason: *reason, Evidence: *evidence, Now: taskNow(),
+	})
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSONEnvelope("task_handoff", state)
+	}
+	fmt.Printf("leadership epoch %d: %s -> %s\n", state.Epoch, strings.TrimSpace(*from), state.CurrentLead)
+	return nil
+}
+
+// taskNamespace resolves --session, --project (default cwd), and --profile
+// (default profile). A session is normally explicit. The one exception is a
+// launched agent carrying the exact named-profile root pin: AM_ROOT and
+// AM_BASE_ROOT are the same exact root, AM_SESSION is omitted, and the launch
+// record under that root proves the full namespace. Storage is
+// profile/session-scoped for named profiles and legacy session-scoped for the
+// default profile.
 func taskNamespace(sessionFlag, projectFlag, profileFlag string, fs *flag.FlagSet) (string, string, string, squadnamespace.Ref, error) {
 	session := strings.TrimSpace(sessionFlag)
 	if session == "" {
-		return "", "", "", squadnamespace.Ref{}, usageErrorf("--session is required (tasks are per-workstream)")
+		if inferred, ok := taskSessionFromExactLaunch(); ok {
+			session = inferred
+		} else {
+			return "", "", "", squadnamespace.Ref{}, usageErrorf("--session is required (tasks are per-workstream)")
+		}
 	}
 	// Validate the session name with the same rules as the rest of the
 	// workstream model, so it can't carry path separators or `..` and escape
@@ -145,6 +228,54 @@ func taskNamespace(sessionFlag, projectFlag, profileFlag string, fs *flag.FlagSe
 	return ctx.Session, ctx.ProjectDir, ctx.Profile, squadnamespace.Resolve(ctx.ProjectDir, ctx.Profile, ctx.Session), nil
 }
 
+// taskSessionFromExactLaunch recognizes only the healthy sessionless identity
+// injected into a launched named-profile agent. It deliberately refuses a
+// merely discoverable team/profile default: a human shell without a matching
+// launch record must still pass --session explicitly.
+func taskSessionFromExactLaunch() (string, bool) {
+	ns, ok := taskNamespaceFromExactLaunch()
+	return ns.Session, ok
+}
+
+// taskNamespaceFromExactLaunch returns the full namespace proven by the exact
+// sessionless named-profile identity. Returning only the session would allow
+// subsequent context discovery to drift back to an ambient/default profile.
+func taskNamespaceFromExactLaunch() (exactTaskLaunchNamespace, bool) {
+	root, rootOK := os.LookupEnv("AM_ROOT")
+	baseRoot, baseRootOK := os.LookupEnv("AM_BASE_ROOT")
+	handle, handleOK := os.LookupEnv("AM_ME")
+	_, sessionPresent := os.LookupEnv("AM_SESSION")
+	root = strings.TrimSpace(root)
+	baseRoot = strings.TrimSpace(baseRoot)
+	handle = strings.TrimSpace(handle)
+	if !rootOK || !baseRootOK || !handleOK || sessionPresent || root == "" || baseRoot == "" || handle == "" ||
+		!filepath.IsAbs(root) || !filepath.IsAbs(baseRoot) || !rootsMatch(root, baseRoot) {
+		return exactTaskLaunchNamespace{}, false
+	}
+
+	rec, err := launch.Read(filepath.Join(filepath.Clean(root), "agents", handle))
+	if err != nil || strings.TrimSpace(rec.Handle) != handle || strings.TrimSpace(rec.Session) == "" ||
+		!rootsMatch(rec.Root, root) || squadnamespace.NormalizeProfile(rec.TeamProfile) == team.DefaultProfile {
+		return exactTaskLaunchNamespace{}, false
+	}
+	teamHome := strings.TrimSpace(rec.TeamHome)
+	if teamHome == "" {
+		teamHome = strings.TrimSpace(rec.CWD)
+	}
+	if teamHome == "" || !rootsMatch(squadnamespace.AMQRoot(teamHome, rec.TeamProfile, rec.Session), root) {
+		return exactTaskLaunchNamespace{}, false
+	}
+	teamHome, err = filepath.Abs(filepath.Clean(teamHome))
+	if err != nil {
+		return exactTaskLaunchNamespace{}, false
+	}
+	return exactTaskLaunchNamespace{
+		ProjectDir: teamHome,
+		Profile:    squadnamespace.NormalizeProfile(rec.TeamProfile),
+		Session:    strings.TrimSpace(rec.Session),
+	}, true
+}
+
 func taskScope(projectDir, profile, session string) string {
 	scope := " --project " + shellQuote(projectDir)
 	if profile != "" && profile != team.DefaultProfile {
@@ -158,6 +289,12 @@ func runTaskAdd(args []string) error {
 	fs := flag.NewFlagSet("task add", flag.ContinueOnError)
 	title := fs.String("title", "", "task title (required)")
 	desc := fs.String("desc", "", "task description")
+	intent := fs.String("intent", "", "structured task intent: implement|review|audit|lifecycle")
+	artifact := fs.String("artifact", "", "artifact or mutation scope governed by this task")
+	expectedBase := fs.String("expected-base", "", "expected base commit SHA for the artifact")
+	implementer := fs.String("implementer", "", "actor allowed to implement the artifact")
+	reviewer := fs.String("reviewer", "", "distinct actor responsible for review/audit")
+	parallelWork := fs.Bool("parallel-work", false, "explicitly allow a competing implementation for the same artifact")
 	dependsOn := fs.String("depends-on", "", "comma-separated task ids that must complete first")
 	assign := fs.String("assign", "", "pre-assign to a role/handle (optional)")
 	reviewOf := fs.String("review-of", "", "link this task as a review iteration of an existing task")
@@ -204,11 +341,10 @@ func runTaskAdd(args []string) error {
 		return err
 	}
 	t, err := task.AddForProfile(projectDir, profile, session, task.AddInput{
-		Title:       *title,
-		Description: *desc,
-		DependsOn:   splitCommaList(*dependsOn),
-		AssignTo:    strings.TrimSpace(*assign),
-		ReviewOf:    strings.TrimSpace(*reviewOf),
+		Title: *title, Description: *desc, Intent: *intent, Artifact: *artifact,
+		ExpectedBaseSHA: *expectedBase, Implementer: *implementer, Reviewer: *reviewer,
+		ParallelWorkExplicit: *parallelWork, DependsOn: splitCommaList(*dependsOn),
+		AssignTo: strings.TrimSpace(*assign), ReviewOf: strings.TrimSpace(*reviewOf),
 	}, taskNow())
 	if err != nil {
 		return err
@@ -235,7 +371,7 @@ func runTaskAdd(args []string) error {
 
 func runTaskList(args []string) error {
 	fs := flag.NewFlagSet("task list", flag.ContinueOnError)
-	statusFlag := fs.String("status", "", "filter by status (pending|in_progress|completed|failed|blocked|cancelled)")
+	statusFlag := fs.String("status", "", "filter by status (pending|in_progress|completed_pending_reconcile|completed|failed|blocked|cancelled)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned tasks envelope")
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
 	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
@@ -319,6 +455,14 @@ func printTaskDetails(t task.Task) {
 	fmt.Printf("Status: %s\n", t.Status)
 	fmt.Printf("Assigned: %s\n", orDash(t.AssignedTo))
 	fmt.Printf("Depends: %s\n", orDash(strings.Join(t.DependsOn, ",")))
+	if t.Intent != "" {
+		fmt.Printf("Intent: %s\n", t.Intent)
+		fmt.Printf("Artifact: %s\n", t.Artifact)
+		fmt.Printf("Expected Base: %s\n", t.ExpectedBaseSHA)
+		fmt.Printf("Implementer: %s\n", t.Implementer)
+		fmt.Printf("Reviewer: %s\n", t.Reviewer)
+		fmt.Printf("Parallel Work: %t\n", t.ParallelWorkExplicit)
+	}
 	if t.Description != "" {
 		fmt.Printf("Description: %s\n", t.Description)
 	}
@@ -389,6 +533,7 @@ func runTaskTransition(args []string, verb string) error {
 	// `task fail t1 --evidence E` is a clear "flag not defined" error instead
 	// of silently dropping --evidence.
 	var me, evidence, reason, finalHead, dispatchNext, replacement, intentID string
+	var completionGeneration, gateThread, gateRequestID string
 	var lease time.Duration
 	var overrideDependencies, noNotify, confirmNotDelivered bool
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
@@ -409,6 +554,9 @@ func runTaskTransition(args []string, verb string) error {
 		fs.StringVar(&dispatchNext, "dispatch-next", "", "dependent task to claim and dispatch after the atomic commit")
 		fs.DurationVar(&lease, "lease", task.DefaultLeaseDuration, "successor claim lease duration")
 		fs.BoolVar(&noNotify, "no-notify", false, "explicitly suppress the default canonical DONE: status notification")
+		fs.StringVar(&completionGeneration, "completion-generation", "", "exact idempotence generation (generated and recorded when omitted)")
+		fs.StringVar(&gateThread, "gate", "", "optional exactly task-scoped gate topic to correlate")
+		fs.StringVar(&gateRequestID, "gate-request-id", "", "exact task-scoped gate request message id (requires --gate)")
 	case "fail", "block", "reset", "release":
 		fs.StringVar(&reason, "reason", "", "reason")
 	case "cancel":
@@ -428,10 +576,24 @@ func runTaskTransition(args []string, verb string) error {
 	if err := parseFlags(fs, rest); err != nil {
 		return err
 	}
-	session, projectDir, profile, ns, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
+	// Refuse reserved operator actors before task-file discovery. This is
+	// read-only and preserves the mailbox-only guard even when the supplied task
+	// does not exist; the selected namespace is checked again below.
+	guardProject := *projectFlag
+	if !flagWasSet(fs, "project") {
+		guardProject, _ = os.Getwd()
+	} else if resolved, resolveErr := resolveProjectDirFlag("", *projectFlag, true); resolveErr == nil {
+		guardProject = resolved
+	}
+	guardProfile := squadnamespace.NormalizeProfile(*profileFlag)
+	if err := ensureLaunchTargetIsNotOperator(guardProject, guardProfile, "task "+verb, "", me); err != nil {
+		return err
+	}
+	selected, err := selectTaskForMutation(id, *sessionFlag, *projectFlag, *profileFlag, fs)
 	if err != nil {
 		return err
 	}
+	session, projectDir, profile, ns := selected.Session, selected.ProjectDir, selected.Profile, selected.Namespace
 	initialIdentity, err := captureNamespaceEndpointIdentity(ns, "")
 	if err != nil {
 		return err
@@ -441,19 +603,19 @@ func runTaskTransition(args []string, verb string) error {
 		return err
 	}
 	defer admission.close()
-	currentSession, currentProject, currentProfile, currentNS, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
+	current, err := revalidateTaskSelection(selected)
 	if err != nil {
-		return fmt.Errorf("task %s refused: context re-resolution under admission failed: %w", verb, err)
+		return fmt.Errorf("task %s refused: task revalidation under admission failed: %w", verb, err)
 	}
-	currentIdentity, err := captureNamespaceEndpointIdentity(currentNS, "")
+	currentIdentity, err := captureNamespaceEndpointIdentity(current.Namespace, "")
 	if err != nil {
 		return err
 	}
 	if err := validateReResolvedEndpointIdentity("task "+verb, initialIdentity, currentIdentity); err != nil {
 		return err
 	}
-	session, projectDir, profile, ns = currentSession, currentProject, currentProfile, currentNS
-	if err := ensureNoNamespaceConflict("task "+verb, projectDir, profile, session, flagWasSet(fs, "profile")); err != nil {
+	session, projectDir, profile, ns = current.Session, current.ProjectDir, current.Profile, current.Namespace
+	if err := validateTaskSelectionNamespace(current); err != nil {
 		return err
 	}
 	// The operator is a non-runnable mailbox participant and never acts as a
@@ -463,6 +625,14 @@ func runTaskTransition(args []string, verb string) error {
 		return err
 	}
 	now := taskNow()
+	if verb == "done" {
+		if (strings.TrimSpace(gateThread) == "") != (strings.TrimSpace(gateRequestID) == "") {
+			return usageErrorf("task done requires --gate and --gate-request-id together")
+		}
+		if completionGeneration != strings.TrimSpace(completionGeneration) || strings.ContainsAny(completionGeneration, "\r\n\x00") {
+			return usageErrorf("--completion-generation must be one trim-canonical single-line value")
+		}
+	}
 	var t task.Task
 	var released []string
 	var successorID string
@@ -483,9 +653,17 @@ func runTaskTransition(args []string, verb string) error {
 	case "renew":
 		t, err = task.RenewLeaseForProfile(projectDir, profile, session, id, me, lease, now)
 	case "done":
+		var gateCorrelation *task.CompletionGateCorrelation
+		if strings.TrimSpace(gateThread) != "" {
+			gateCorrelation, err = assessTaskCompletionGateCorrelation(projectDir, profile, session, id, gateThread, gateRequestID, now)
+			if err != nil {
+				break
+			}
+		}
 		var result task.DoneResult
 		result, err = task.DoneAtomicForProfile(projectDir, profile, session, id, task.DoneOptions{
 			Actor: me, Evidence: evidence, FinalHead: finalHead, DispatchNextID: dispatchNext,
+			CompletionGeneration: completionGeneration, GateCorrelation: gateCorrelation,
 			LeaseDuration: lease, Notify: !noNotify, Now: now,
 		})
 		if err == nil {
@@ -567,6 +745,12 @@ func runTaskTransition(args []string, verb string) error {
 	if successorID != "" {
 		fmt.Printf("successor %s claimed and dispatch intent committed before delivery\n", successorID)
 	}
+	if t.CompletionLifecycle != nil {
+		fmt.Printf("completion generation: %s\n", t.CompletionLifecycle.Generation)
+		if gate := t.CompletionLifecycle.Gate; gate != nil {
+			fmt.Printf("completion gate: %s request=%s state=%s suppressed=%t\n", gate.Thread, gate.RequestMessageID, gate.State, gate.Suppressed)
+		}
+	}
 	for _, intent := range outbox {
 		fmt.Printf("outbox %s: %s", intent.ID, intent.State)
 		if intent.MessageID != "" {
@@ -575,6 +759,129 @@ func runTaskTransition(args []string, verb string) error {
 		fmt.Println()
 	}
 	return nil
+}
+
+func assessTaskCompletionGateCorrelation(projectDir, profile, session, taskID, gate, requestID string, now time.Time) (*task.CompletionGateCorrelation, error) {
+	topic, err := strictGateCloseTopic(gate)
+	if err != nil {
+		return nil, err
+	}
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" || strings.ContainsAny(requestID, "\r\n\x00") {
+		return nil, usageErrorf("--gate-request-id requires one exact AMQ message id")
+	}
+	cfg, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return nil, err
+	}
+	operatorHandle := team.EffectiveOperator(cfg).Handle
+	ns := squadnamespace.Resolve(projectDir, profile, session)
+	messages, warnings := state.ScanSessionMessages(ns.AMQRoot, func() time.Time { return now })
+	if len(warnings) > 0 {
+		return nil, fmt.Errorf("task completion gate correlation refused: message scan degraded with %d warning(s)", len(warnings))
+	}
+	var matches []state.Message
+	var threadMessages []state.Message
+	for _, message := range messages {
+		if message.Thread == topic {
+			threadMessages = append(threadMessages, message)
+		}
+		if strings.TrimSpace(message.ID) == requestID && message.Thread == topic {
+			matches = append(matches, message)
+		}
+	}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("task completion gate request %s not found on %s", requestID, topic)
+	}
+	digests := map[string]state.Message{}
+	for _, match := range matches {
+		digest, err := canonicalTaskMessageSHA256(match)
+		if err != nil {
+			return nil, err
+		}
+		digests[digest] = match
+	}
+	if len(digests) != 1 {
+		return nil, fmt.Errorf("task completion gate request %s has conflicting replicas", requestID)
+	}
+	var request state.Message
+	var requestSHA string
+	for digest, match := range digests {
+		requestSHA, request = digest, match
+	}
+	if request.Kind != state.KindQuestion || !request.SchemaOK || !request.AuthorityRaw || request.RawThread != topic ||
+		!request.AuthorizationRequestPresent || !request.AuthorizationRequestValid || request.AuthorizationRequest == nil {
+		return nil, fmt.Errorf("task completion gate request %s is not exact typed raw authority", requestID)
+	}
+	generation, err := namespaceEndpointGeneration(projectDir, profile, session)
+	if err != nil {
+		return nil, err
+	}
+	if !taskCompletionGateRequestMatches(request, topic, projectDir, profile, session, generation, taskID) {
+		return nil, fmt.Errorf("task completion gate request %s does not match exact task namespace binding", requestID)
+	}
+
+	stateName := ""
+	suppressed := false
+	reason := ""
+	var nextQuestion *state.Message
+	for i := range threadMessages {
+		candidate := threadMessages[i]
+		if candidate.Kind != state.KindQuestion || candidate.ID == requestID || !messageAfter(candidate, request) {
+			continue
+		}
+		if !taskCompletionGateRequestMatches(candidate, topic, projectDir, profile, session, generation, taskID) {
+			return nil, fmt.Errorf("task completion gate request %s has newer non-authoritative or mismatched question %s; refusing supersession", requestID, candidate.ID)
+		}
+		if candidate.AuthorizationRequestPresent {
+			if nextQuestion == nil || messageAfter(*nextQuestion, candidate) {
+				copy := candidate
+				nextQuestion = &copy
+			}
+		}
+	}
+	if nextQuestion != nil {
+		stateName, suppressed = "superseded", true
+		reason = "newer durable typed request supersedes the exact task-scoped generation"
+	} else {
+		gateState, resolved := state.ResolveOperatorGate(threadMessages, operatorHandle, now)
+		if gateState == state.OperatorGateStateOpen && (resolved == nil || resolved.LatestID != requestID) {
+			return nil, fmt.Errorf("task completion gate request %s is not the current resolvable generation", requestID)
+		}
+		switch gateState {
+		case state.OperatorGateStateOpen:
+			stateName, suppressed = "open_preserved", false
+			reason = "unresolved human decision preserved; task completion creates no answer or close"
+		case state.OperatorGateStateAnswered:
+			stateName, suppressed = "answered", true
+			reason = "exact task-scoped request already has a durable decision"
+		case state.OperatorGateStateClosed:
+			stateName, suppressed = "closed", true
+			reason = "exact task-scoped request already has a durable close"
+		case state.OperatorGateStateWithdrawn:
+			stateName, suppressed = "withdrawn", true
+			reason = "exact task-scoped request already has a durable withdrawal"
+		default:
+			return nil, fmt.Errorf("task completion gate request %s has unresolved degraded lifecycle %s", requestID, gateState)
+		}
+	}
+	return &task.CompletionGateCorrelation{
+		TaskID: taskID, Profile: squadnamespace.NormalizeProfile(profile), Session: session,
+		NamespaceID: squadnamespace.ID(profile, session), NamespaceGeneration: generation,
+		Thread: topic, RequestMessageID: requestID, RequestSHA256: requestSHA,
+		State: stateName, Suppressed: suppressed, Reason: reason, ObservedAt: now,
+	}, nil
+}
+
+func taskCompletionGateRequestMatches(message state.Message, topic, projectDir, profile, session, generation, taskID string) bool {
+	if message.Kind != state.KindQuestion || !message.SchemaOK || !message.AuthorityRaw || message.Thread != topic || message.RawThread != topic ||
+		!message.AuthorizationRequestPresent || !message.AuthorizationRequestValid || message.AuthorizationRequest == nil {
+		return false
+	}
+	typed := message.AuthorizationRequest
+	return typed.TaskID == taskID && typed.Gate == topic && typed.Thread == topic &&
+		canonicalPath(typed.Namespace.ProjectDir) == canonicalPath(projectDir) && squadnamespace.ProfilesEqual(typed.Namespace.Profile, profile) &&
+		typed.Namespace.Session == session && typed.Namespace.NamespaceID == squadnamespace.ID(profile, session) && typed.Namespace.Generation == generation
 }
 
 func deliverTaskOutbox(projectDir, profile, session string, intents []task.OutboxIntent, now time.Time) ([]task.OutboxIntent, error) {
@@ -648,8 +955,15 @@ func deliverTaskOutbox(projectDir, profile, session string, intents []task.Outbo
 }
 
 func runTaskReconcile(args []string) error {
+	var taskID string
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		taskID, args = args[0], args[1:]
+	}
 	fs := flag.NewFlagSet("task reconcile", flag.ContinueOnError)
 	apply := fs.Bool("apply", false, "apply deterministic internal repairs; never resends external delivery")
+	me := fs.String("me", "", "audited actor applying completion evidence")
+	evidenceID := fs.String("evidence-id", "", "exact AMQ completion evidence message id")
+	bindingDigest := fs.String("binding-digest", "", "accepted preview binding digest (required with evidence --apply)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned reconciliation envelope")
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
 	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
@@ -657,6 +971,16 @@ func runTaskReconcile(args []string) error {
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	completionMode := strings.TrimSpace(taskID) != "" || strings.TrimSpace(*evidenceID) != ""
+	if completionMode {
+		if strings.TrimSpace(taskID) == "" || strings.TrimSpace(*evidenceID) == "" {
+			return usageErrorf("task reconcile completion mode requires both <task-id> and --evidence-id")
+		}
+		return runTaskCompletionReconcile(taskID, *evidenceID, *bindingDigest, *me, *apply, *jsonOut, *sessionFlag, *projectFlag, *profileFlag, fs)
+	}
+	if strings.TrimSpace(*bindingDigest) != "" {
+		return usageErrorf("--binding-digest requires <task-id> --evidence-id and --apply")
 	}
 	session, projectDir, profile, ns, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
 	if err != nil {
@@ -701,6 +1025,112 @@ func runTaskReconcile(args []string) error {
 		fmt.Printf("updated: %s\n", strings.Join(result.ChangedTaskIDs, ","))
 	}
 	return nil
+}
+
+func runTaskCompletionReconcile(taskID, evidenceID, bindingDigest, actor string, apply, jsonOut bool, sessionFlag, projectFlag, profileFlag string, fs *flag.FlagSet) error {
+	selected, err := selectTaskForMutation(taskID, sessionFlag, projectFlag, profileFlag, fs)
+	if err != nil {
+		return err
+	}
+	if err := validateTaskSelectionNamespace(selected); err != nil {
+		return err
+	}
+	now := taskNow()
+	preview, err := assessTaskCompletionEvidence(selected, evidenceID, now)
+	if err != nil {
+		return err
+	}
+	if !apply {
+		if strings.TrimSpace(bindingDigest) != "" {
+			return usageErrorf("--binding-digest is only valid with --apply")
+		}
+		if jsonOut {
+			return printJSONEnvelope("task_reconcile", taskReconcileEnvelopeData{
+				Session: selected.Session, Profile: selected.Profile, Namespace: selected.Namespace, Completion: &preview,
+			})
+		}
+		printTaskCompletionPreview(preview)
+		return nil
+	}
+	if strings.TrimSpace(bindingDigest) == "" {
+		return usageErrorf("completion evidence --apply requires --binding-digest from the accepted preview")
+	}
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return usageErrorf("completion evidence --apply requires --me for the durable audit")
+	}
+	if err := ensureLaunchTargetIsNotOperator(selected.ProjectDir, selected.Profile, "task reconcile --apply", "", actor); err != nil {
+		return err
+	}
+	if strings.TrimSpace(bindingDigest) != preview.BindingSHA256 {
+		return fmt.Errorf("completion evidence binding digest changed or was not accepted: preview=%s supplied=%s", preview.BindingSHA256, strings.TrimSpace(bindingDigest))
+	}
+	if err := validateCompletionApplyPreview(preview); err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(selected.ProjectDir, selected.Profile, selected.Session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	selected, err = revalidateTaskSelection(selected)
+	if err != nil {
+		return fmt.Errorf("task reconcile refused: task revalidation under admission failed: %w", err)
+	}
+	if err := validateTaskSelectionNamespace(selected); err != nil {
+		return err
+	}
+	current, err := assessTaskCompletionEvidence(selected, evidenceID, now)
+	if err != nil {
+		return err
+	}
+	if current.BindingSHA256 != strings.TrimSpace(bindingDigest) {
+		return fmt.Errorf("completion evidence changed after preview: accepted binding %s, current binding %s", strings.TrimSpace(bindingDigest), current.BindingSHA256)
+	}
+	if err := validateCompletionApplyPreview(current); err != nil {
+		return err
+	}
+	applied, err := task.ApplyCompletionEvidenceForProfile(selected.ProjectDir, selected.Profile, selected.Session, selected.Task.ID, task.CompletionEvidenceApply{
+		ExpectedTaskSHA256: selected.FileSHA256,
+		Evidence:           completionEvidenceRecord(current, actor, now),
+		Exact:              current.Exact,
+		Actor:              actor,
+		Now:                now,
+	})
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return printJSONEnvelope("task_reconcile", taskReconcileEnvelopeData{
+			Session: selected.Session, Profile: selected.Profile, Namespace: selected.Namespace,
+			Completion: &current, Applied: &applied,
+		})
+	}
+	printTaskCompletionPreview(current)
+	if applied.Changed {
+		fmt.Printf("applied: %s is now %s\n", applied.Task.ID, applied.Task.Status)
+	} else {
+		fmt.Printf("already applied: %s remains %s\n", applied.Task.ID, applied.Task.Status)
+	}
+	if len(applied.ReleasedTaskIDs) > 0 {
+		fmt.Printf("released dependents: %s\n", strings.Join(applied.ReleasedTaskIDs, ","))
+	}
+	return nil
+}
+
+func printTaskCompletionPreview(preview taskCompletionEvidencePreview) {
+	fmt.Printf("task: %s (%s)\n", preview.TaskPath, preview.TaskFileSHA256)
+	fmt.Printf("namespace: %v\n", preview.TaskNamespace)
+	fmt.Printf("evidence: %s first=%s current=%s digest=%s\n", preview.MessageID, orDash(preview.FirstPath), orDash(preview.CurrentPath), orDash(preview.ContentSHA256))
+	fmt.Printf("observed: from=%s to=%s owner=%s thread=%s\n", orDash(preview.From), strings.Join(preview.To, ","), orDash(preview.Owner), orDash(preview.CanonicalThread))
+	fmt.Printf("expected: assignee=%s sender=%s to=%s thread=%s\n", orDash(preview.Expected.Assignee), orDash(preview.Expected.Sender), orDash(preview.Expected.To), orDash(preview.Expected.Thread))
+	fmt.Printf("proposed: %s\n", preview.ProposedState)
+	if len(preview.Blockers) > 0 {
+		fmt.Printf("blockers: %s\n", strings.Join(preview.Blockers, ","))
+	}
+	if preview.BindingSHA256 != "" {
+		fmt.Printf("binding: %s\n", preview.BindingSHA256)
+	}
 }
 
 func stampTaskActivity(projectDir, profile, session, actor, verb string, t task.Task, now time.Time) {

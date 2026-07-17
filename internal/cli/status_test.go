@@ -13,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -199,6 +200,11 @@ func TestRunStatusProjectTargetsSessionOtherDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	chdir(t, other)
+	oldContext := statusTerminalContext
+	statusTerminalContext = func() runtimecontrol.HostContext {
+		return runtimecontrol.DetectHostContext([]string{"TERM_PROGRAM=iTerm.app", "TMUX=/tmp/tmux"}, true)
+	}
+	t.Cleanup(func() { statusTerminalContext = oldContext })
 
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runStatus([]string{"--project", project, "--session", "issue-99", "--json"})
@@ -212,6 +218,13 @@ func TestRunStatusProjectTargetsSessionOtherDir(t *testing.T) {
 	}
 	if env.Data.Workstream != "issue-99" {
 		t.Fatalf("status --project workstream = %q, want issue-99", env.Data.Workstream)
+	}
+	terminal := env.Data.TerminalContext
+	if terminal.SchemaVersion != runtimecontrol.HostContextSchemaVersion || terminal.Backend != runtimecontrol.BackendTmux || terminal.HostProgram != "iterm2" || !terminal.InsideTmux || !terminal.ControlMode || terminal.Tier != runtimecontrol.TierA {
+		t.Fatalf("terminal_context = %+v", terminal)
+	}
+	if state := terminal.Capabilities[string(runtimecontrol.CapabilityLocalInput)]; state.State != runtimecontrol.SupportSupported {
+		t.Fatalf("terminal_context local_input_detect = %+v", state)
 	}
 }
 
@@ -749,6 +762,7 @@ func TestStatusWarnsWorkerCompletionReportForInProgressTask(t *testing.T) {
 	if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "issue-96", created.ID, taskstore.Dispatch{
 		Sender:    "cto",
 		Assignee:  "qa",
+		Thread:    "p2p/cto__qa",
 		Kind:      "todo",
 		Subject:   "Validate",
 		MessageID: "msg-dispatch",
@@ -760,7 +774,7 @@ func TestStatusWarnsWorkerCompletionReportForInProgressTask(t *testing.T) {
 	}
 	ctoDir := filepath.Join(dir, ".agent-mail", "issue-96", "agents", "cto")
 	seedThreadMessage(t, ctoDir, "new", "msg-done", "qa", []string{"cto"},
-		"p2p/qa__cto", "DONE t1", string(state.KindStatus), now.Add(-5*time.Minute))
+		"p2p/cto__qa", "DONE t1", string(state.KindStatus), now.Add(-5*time.Minute))
 
 	out, err := runStatusExec(t, statusExecution{
 		ProjectDir:       dir,
@@ -773,13 +787,56 @@ func TestStatusWarnsWorkerCompletionReportForInProgressTask(t *testing.T) {
 		t.Fatalf("status --json: %v\n%s", err, out)
 	}
 	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	w := findStatusWarning(env.Data.Warnings, "task_report_pending_completion")
+	w := findStatusWarning(env.Data.Warnings, "task_completion_reconcile_ready")
 	if w == nil ||
-		!strings.Contains(w.Detail, "task t1 is still in_progress after qa reported completion") ||
-		!strings.Contains(w.Detail, "message msg-done") ||
-		!strings.Contains(w.SuggestedCommand, "task done t1 --me qa") ||
-		!strings.Contains(w.SuggestedCommand, "accepted msg-done") {
+		!strings.Contains(w.Detail, "task t1 completion evidence msg-done") ||
+		!strings.Contains(w.SuggestedCommand, "task reconcile t1 --evidence-id msg-done") ||
+		!strings.Contains(w.SuggestedCommand, "--project "+dir) ||
+		!strings.Contains(w.SuggestedCommand, "--profile default --session issue-96") ||
+		strings.Contains(w.SuggestedCommand, "task done") {
 		t.Fatalf("missing completion-report task warning: %+v", env.Data.Warnings)
+	}
+}
+
+func TestStatusDoesNotTreatAckStartCompleteProseAsCompletion(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "platform-dev", Binary: "codex", Handle: "platform-dev", Session: "issue-96"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	now := time.Date(2026, 7, 15, 19, 4, 54, 0, time.UTC)
+	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{Title: "wizard slice", AssignTo: "platform-dev"}, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "issue-96", created.ID, taskstore.Dispatch{
+		Sender: "cto", Assignee: "platform-dev", Thread: "p2p/cto__platform-dev", Kind: "todo", Subject: "TASK t2", MessageID: "dispatch-t2",
+	}, now.Add(-50*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.ClaimForProfile(dir, team.DefaultProfile, "issue-96", created.ID, "platform-dev", now.Add(-40*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	ctoDir := filepath.Join(dir, ".agent-mail", "issue-96", "agents", "cto")
+	seedThreadMessage(t, ctoDir, "new", "2026-07-15T21-21-59.878Z_pid32072_1f1baa43", "platform-dev", []string{"cto"},
+		"p2p/cto__platform-dev", "ACK #477 final hardening matrix", string(state.KindStatus), now,
+		"ACK #477 core acceptance/hardening: complete the negative evidence/apply matrix for t1 and completion reconciliation.")
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir: dir, RequestedSession: "issue-96", ExplicitSession: true, JSON: true,
+		Probe: statusProbe(nil, nil, now.Add(time.Minute)),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	for _, warning := range env.Data.Warnings {
+		if warning.Kind == "task_report_pending_completion" || strings.Contains(warning.SuggestedCommand, "task done") || strings.Contains(warning.Detail, "task done") {
+			t.Fatalf("ACK/start prose must not be completion evidence or blind-close guidance: %+v", warning)
+		}
 	}
 }
 
@@ -2127,14 +2184,21 @@ func TestExecuteStatusJSONPolicyDisablesDirectChildControlActions(t *testing.T) 
 		Lead:          "release-lead",
 		ExecutionMode: executionModeProjectTeam,
 	})
-	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
+	leadAgentDir := seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
 		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7001,
 		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@1", PaneID: "%1", Target: "new-window"},
 	})
-	seedAgentRecord(t, base, "v2-11-0", "developer", launch.Record{
+	childAgentDir := seedAgentRecord(t, base, "v2-11-0", "developer", launch.Record{
 		Binary: "claude", Handle: "developer", Role: "developer", AgentPID: 7002,
 		Tmux: &launch.TmuxInfo{Session: "squad", WindowID: "@2", PaneID: "%2", Target: "new-window"},
 	})
+	for _, agentDir := range []string{leadAgentDir, childAgentDir} {
+		for _, mailboxDir := range []string{"cur", "new", "tmp"} {
+			if err := os.MkdirAll(filepath.Join(agentDir, "inbox", mailboxDir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}, {PaneID: "%2"}}, nil)
 
 	out, err := runStatusExec(t, statusExecution{
@@ -2871,10 +2935,11 @@ func TestStatusJSONProvesExternalOrchestratorBinding(t *testing.T) {
 		WakePID:  4321,
 		Tmux:     &launch.TmuxInfo{Session: "global", WindowID: "@1", PaneID: "%99", Target: "external"},
 		GoalBinding: &launch.GoalBinding{
-			Mode:       "native_goal",
-			NativeGoal: true,
-			Source:     "goal-control",
-			Command:    `/goal --goal "ship safely"`,
+			Mode:          "native_goal",
+			NativeGoal:    true,
+			Source:        "goal-control",
+			Command:       `/goal --goal "ship safely"`,
+			DeliveryState: goalBindingDeliveryDelivered,
 		},
 	})
 	writeWakeLock(t, agentDir, wakeLockFile{PID: 4321, Root: filepath.Join(base, "issue-96"), Started: time.Now()})

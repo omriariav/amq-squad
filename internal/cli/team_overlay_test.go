@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -276,6 +277,198 @@ func TestOverlayInitNoClobberExistingFile(t *testing.T) {
 	// Wiring still proceeds.
 	if args := readTeamMember(t, dir, "analyst").ClaudeArgs; len(args) != 2 {
 		t.Fatalf("wiring should proceed even when the file is kept, got %v", args)
+	}
+}
+
+func TestGeneratedToolPoliciesDiscoverInheritancePreserveAllowAndRevokeConflicts(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("HOME", t.TempDir())
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "claude", Handle: "cto", Session: "s", ToolProfile: team.ToolProfileFull},
+			{Role: "designer", Binary: "claude", Handle: "designer", Session: "s"},
+			{Role: "backend", Binary: "codex", Handle: "backend", Session: "s"},
+		},
+	})
+	writeFile(t, filepath.Join(dir, ".claude", "settings.json"), `{"enabledPlugins":{"gws@workspace":true,"docs@anthropic":true}}`)
+	writeFile(t, filepath.Join(dir, ".mcp.json"), `{"mcpServers":{"browser":{"command":"browser"}}}`)
+	writeFile(t, filepath.Join(codexHome, "config.toml"), "[mcp_servers.github]\ncommand = \"github\"\n")
+	writeFile(t, filepath.Join(dir, ".codex", "config.toml"), "[plugins.\"project-helper\"]\nenabled = true\n")
+
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamOverlay([]string{"init", "--role", "designer", "--tool-profile", "browser", "--allow-tools", "plugin:gws@workspace,mcp:browser"})
+	}); err != nil {
+		t.Fatalf("generate Claude policy: %v", err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamOverlay([]string{"init", "--role", "backend", "--tool-profile", "coding", "--allow-tools", "mcp:github"})
+	}); err != nil {
+		t.Fatalf("generate Codex policy: %v", err)
+	}
+	claude := readTeamMember(t, dir, "designer")
+	if got := strings.Join(claude.ToolEnabledSet(), ","); got != "mcp:browser,plugin:gws@workspace" || !containsString(claude.ToolBlocklist, "plugin:docs@anthropic") {
+		t.Fatalf("Claude effective policy enabled=%v revoked=%v", claude.ToolEnabledSet(), claude.ToolBlocklist)
+	}
+	if args := claude.ToolArgs(); !containsString(args, "--strict-mcp-config") || !containsString(args, "--mcp-config") {
+		t.Fatalf("Claude launch args lack strict MCP enforcement: %v", args)
+	}
+	codex := readTeamMember(t, dir, "backend")
+	if got := strings.Join(codex.ToolEnabledSet(), ","); got != "mcp:github" || !containsString(codex.ToolBlocklist, "plugin:project-helper") {
+		t.Fatalf("Codex effective policy enabled=%v revoked=%v", codex.ToolEnabledSet(), codex.ToolBlocklist)
+	}
+	args := codex.ToolArgs()
+	if !containsString(args, "plugins.\"project-helper\".enabled=false") {
+		t.Fatalf("Codex project conflict lacks top-precedence revocation: %v", args)
+	}
+	if lead := readTeamMember(t, dir, "cto"); lead.EffectiveToolProfile() != team.ToolProfileFull || len(lead.ToolBlocklist) != 0 {
+		t.Fatalf("broad lead policy changed: %+v", lead)
+	}
+	stdout, _, err := captureOutput(t, func() error { return runUp([]string{"--dry-run", "--no-bootstrap", "--json"}) })
+	if err != nil {
+		t.Fatalf("up dry-run with generated policies: %v", err)
+	}
+	plan := decodeJSONEnvelope[teamPlan](t, stdout).Data
+	for _, row := range plan.Plan {
+		switch row.Role {
+		case "designer":
+			if row.ToolPolicySource != "member_generated_profile" || row.ToolPolicyPrecedence != "binary_native_profile" || !containsString(row.ToolLaunchArgs, "--strict-mcp-config") {
+				t.Fatalf("Claude plan lacks effective policy evidence: %+v", row)
+			}
+		case "backend":
+			if row.ToolPolicySource != "member_generated_profile" || !strings.HasPrefix(row.ToolPolicyPrecedence, "cli_override>") || !containsString(row.ToolLaunchArgs, "plugins.\"project-helper\".enabled=false") {
+				t.Fatalf("Codex plan lacks precedence/argv evidence: %+v", row)
+			}
+		}
+	}
+	settingsPath := overlayPath(dir, "designer")
+	mcpPath := strings.TrimSuffix(settingsPath, ".claude.json") + ".claude.mcp.json"
+	originalSettings, _ := os.ReadFile(settingsPath)
+	originalMCP, _ := os.ReadFile(mcpPath)
+	t.Run("tampered settings", func(t *testing.T) {
+		writeFile(t, settingsPath, `{"enabledPlugins":{"docs@anthropic":true}}`)
+		_, _, err := captureOutput(t, func() error { return runUp([]string{"--dry-run", "--no-bootstrap", "--json"}) })
+		if err == nil || !strings.Contains(err.Error(), "Claude settings materialization differs") {
+			t.Fatalf("settings tamper must fail readiness: %v", err)
+		}
+		writeFile(t, settingsPath, string(originalSettings))
+	})
+	t.Run("tampered strict MCP", func(t *testing.T) {
+		writeFile(t, mcpPath, `{"mcpServers":{"browser":{"command":"evil"},"extra":{"command":"extra"}}}`)
+		_, _, err := captureOutput(t, func() error { return runUp([]string{"--dry-run", "--no-bootstrap", "--json"}) })
+		if err == nil || !strings.Contains(err.Error(), "Claude strict MCP materialization differs") {
+			t.Fatalf("strict MCP tamper must fail readiness: %v", err)
+		}
+		writeFile(t, mcpPath, string(originalMCP))
+	})
+	t.Run("same-name source definition drift", func(t *testing.T) {
+		writeFile(t, filepath.Join(dir, ".mcp.json"), `{"mcpServers":{"browser":{"command":"changed-browser"}}}`)
+		_, _, err := captureOutput(t, func() error { return runUp([]string{"--dry-run", "--no-bootstrap", "--json"}) })
+		if err == nil || !strings.Contains(err.Error(), "Claude strict MCP materialization differs") {
+			t.Fatalf("same-name source definition drift must fail readiness: %v", err)
+		}
+	})
+}
+
+func TestGeneratedToolPoliciesFailClosedWithoutPartialWrites(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	dir := seedTeam(t, team.Team{Members: []team.Member{
+		{Role: "backend", Binary: "codex", Handle: "backend", Session: "s"},
+		{Role: "qa", Binary: "codex", Handle: "qa", Session: "s"},
+	}})
+	writeFile(t, filepath.Join(codexHome, "config.toml"), "[mcp_servers.github]\ncommand = \"github\"\n")
+	conflict := filepath.Join(codexHome, generatedCodexProfileName(team.DefaultProfile, "qa")+".config.toml")
+	writeFile(t, conflict, "# operator-owned different policy\n")
+	_, _, err := captureOutput(t, func() error {
+		return runTeamOverlay([]string{"init", "--workers", "--tool-profile", "coding"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "different content") {
+		t.Fatalf("later target conflict must fail closed: %v", err)
+	}
+	first := filepath.Join(codexHome, generatedCodexProfileName(team.DefaultProfile, "backend")+".config.toml")
+	if _, statErr := os.Stat(first); !os.IsNotExist(statErr) {
+		t.Fatalf("validation failure partially wrote first target: %v", statErr)
+	}
+	if got := readTeamMember(t, dir, "backend"); got.ToolProfile != "" || got.ToolConfig != "" {
+		t.Fatalf("validation failure partially persisted team member: %+v", got)
+	}
+}
+
+func TestGeneratedToolPoliciesRejectUnsupportedCodexCapabilitySyntax(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	seedTeam(t, team.Team{Members: []team.Member{{Role: "backend", Binary: "codex", Handle: "backend", Session: "s"}}})
+	writeFile(t, filepath.Join(codexHome, "config.toml"), "mcp_servers = { github = { command = \"gh\" } }\n")
+	_, _, err := captureOutput(t, func() error {
+		return runTeamOverlay([]string{"init", "--role", "backend", "--tool-profile", "coding"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported inline Codex capability syntax") {
+		t.Fatalf("unsupported config must fail closed: %v", err)
+	}
+}
+
+func TestGeneratedToolPolicyDriftBlocksLaunchPlan(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "backend", Binary: "codex", Handle: "backend", Session: "s"}}})
+	writeFile(t, filepath.Join(codexHome, "config.toml"), "[mcp_servers.github]\ncommand = \"github\"\n")
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamOverlay([]string{"init", "--role", "backend", "--tool-profile", "coding"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, ".codex", "config.toml"), "[plugins.\"late-project-helper\"]\nenabled = true\n")
+	_, _, err := captureOutput(t, func() error { return runUp([]string{"--dry-run", "--no-bootstrap", "--json"}) })
+	if err == nil || !strings.Contains(err.Error(), "tool policy drift/not-ready") || !strings.Contains(err.Error(), "late-project-helper") {
+		t.Fatalf("new inherited capability must block launch plan: %v", err)
+	}
+}
+
+func TestGeneratedToolPolicyMidApplyFailureRetainsExactRecoveryEvidence(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	dir := seedTeam(t, team.Team{Members: []team.Member{
+		{Role: "backend", Binary: "codex", Handle: "backend", Session: "s"},
+		{Role: "qa", Binary: "codex", Handle: "qa", Session: "s"},
+	}})
+	writeFile(t, filepath.Join(codexHome, "config.toml"), "[mcp_servers.github]\ncommand = \"github\"\n")
+	previousFault := generatedPolicyApplyFault
+	generatedPolicyApplyFault = func(index int, _ string) error {
+		if index == 0 {
+			return errors.New("injected mid-apply stop")
+		}
+		return nil
+	}
+	t.Cleanup(func() { generatedPolicyApplyFault = previousFault })
+	_, _, err := captureOutput(t, func() error {
+		return runTeamOverlay([]string{"init", "--workers", "--tool-profile", "coding"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "recovery evidence retained") {
+		t.Fatalf("mid-apply failure = %v", err)
+	}
+	manifest := filepath.Join(dir, team.DirName, "evidence", "tool-policy-transaction.json")
+	b, readErr := os.ReadFile(manifest)
+	if readErr != nil {
+		t.Fatalf("recovery journal missing: %v", readErr)
+	}
+	for _, want := range []string{"before_exists", "after_sha256", "staged_path", "backend", "qa"} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("recovery journal missing %q: %s", want, b)
+		}
+	}
+	first := filepath.Join(codexHome, generatedCodexProfileName(team.DefaultProfile, "backend")+".config.toml")
+	secondStaged := filepath.Join(codexHome, generatedCodexProfileName(team.DefaultProfile, "qa")+".config.toml.amq-squad.next")
+	if _, statErr := os.Stat(first); statErr != nil {
+		t.Fatalf("first publish point not represented: %v", statErr)
+	}
+	if _, statErr := os.Stat(secondStaged); statErr != nil {
+		t.Fatalf("remaining intended body is not staged for recovery: %v", statErr)
+	}
+	if member := readTeamMember(t, dir, "backend"); member.ToolConfig != "" {
+		t.Fatalf("team profile must remain pre-transaction until all files publish: %+v", member)
 	}
 }
 

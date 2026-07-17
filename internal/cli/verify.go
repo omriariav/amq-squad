@@ -81,6 +81,7 @@ Usage:
   amq-squad verify authorization --file FILE --action KIND --target TARGET --trust-store FILE [--json]
   amq-squad verify merge --evidence <file|-> [--json]
   amq-squad verify release --evidence <file|-> [--json]
+  amq-squad verify release-plan --repository OWNER/REPO --branch BRANCH --head SHA --version VERSION [options]
 
 The action guard validates a resolved operator gate for high-risk actions
 (default/protected branch push, tags, GitHub releases, external sends). The
@@ -107,8 +108,10 @@ non-zero.
 		return runVerifyMerge(args[1:])
 	case "release":
 		return runVerifyRelease(args[1:])
+	case "release-plan":
+		return runVerifyReleasePlan(args[1:])
 	default:
-		return usageErrorf("unknown 'verify' subcommand: %q. Try action, authorization, merge, or release.", args[0])
+		return usageErrorf("unknown 'verify' subcommand: %q. Try action, authorization, merge, release, or release-plan.", args[0])
 	}
 }
 

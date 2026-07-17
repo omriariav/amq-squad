@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -688,5 +689,35 @@ func TestDefaultTmuxSessionNameSanitizesProject(t *testing.T) {
 	want := "amq-squad-my-project-api"
 	if got != want {
 		t.Fatalf("defaultTmuxSessionName = %q, want %q", got, want)
+	}
+}
+
+func TestNamedProfileThreeSameCWDLaunchCommandsCarryExactRoleRoots(t *testing.T) {
+	project := t.TempDir()
+	const (
+		profile = "review"
+		session = "issue-481"
+	)
+	cfg := team.Team{Project: project, Members: []team.Member{
+		{Role: "cto", Binary: "codex", Handle: "cto", Session: session},
+		{Role: "platform-dev", Binary: "codex", Handle: "platform-dev", Session: session},
+		{Role: "runtime-dev", Binary: "codex", Handle: "runtime-dev", Session: session},
+	}}
+	panes := buildTeamLaunchPanes(cfg, teamLaunchOptions{
+		Profile: profile, Workstream: session, SquadBin: "amq-squad", NoBootstrap: true,
+	})
+	if len(panes) != 3 {
+		t.Fatalf("panes = %d, want 3: %+v", len(panes), panes)
+	}
+	wantRoot := squadnamespace.AMQRoot(project, profile, session)
+	for _, pane := range panes {
+		for _, want := range []string{
+			"agent up codex", "--session " + session, "--root " + shellQuote(wantRoot),
+			"--team-profile " + profile, "--me " + pane.Role,
+		} {
+			if !strings.Contains(pane.Command, want) {
+				t.Errorf("%s command missing %q:\n%s", pane.Role, want, pane.Command)
+			}
+		}
 	}
 }

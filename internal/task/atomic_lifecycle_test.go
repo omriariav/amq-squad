@@ -60,6 +60,144 @@ func TestDoneAtomicClosesReleasesClaimsAndQueuesBeforeDelivery(t *testing.T) {
 	}
 }
 
+func TestDoneAtomicBindsCompletionGenerationAndPreservesUnresolvedGate(t *testing.T) {
+	dir := t.TempDir()
+	now := fixedNow
+	tk, err := Add(dir, "s", AddInput{Title: "build"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Claim(dir, "s", tk.ID, "dev", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LinkDispatch(dir, "s", tk.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", Kind: "todo", MessageID: "dispatch"}, now); err != nil {
+		t.Fatal(err)
+	}
+	correlation := &CompletionGateCorrelation{
+		TaskID: tk.ID, Profile: "default", Session: "s", NamespaceID: "default/s", NamespaceGeneration: "none",
+		Thread: "gate/release", RequestMessageID: "request-1", RequestSHA256: strings.Repeat("a", 64),
+		State: "open_preserved", Suppressed: false, Reason: "unresolved human decision preserved", ObservedAt: now,
+	}
+	result, err := DoneAtomicForProfile(dir, "default", "s", tk.ID, DoneOptions{
+		Actor: "dev", Evidence: "head abc", CompletionGeneration: "completion-1", GateCorrelation: correlation,
+		Notify: true, Now: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := result.Task.CompletionLifecycle
+	if got == nil || got.Generation != "completion-1" || got.ReportIntentID == "" || got.Gate == nil || got.Gate.Suppressed || got.Gate.State != "open_preserved" || len(got.GateHistory) != 1 {
+		t.Fatalf("completion lifecycle = %+v", got)
+	}
+	if len(result.Outbox) != 1 || result.Outbox[0].ID != got.ReportIntentID {
+		t.Fatalf("report and lifecycle were not committed as one generation: outbox=%+v lifecycle=%+v", result.Outbox, got)
+	}
+
+	repeat := *correlation
+	repeat.ObservedAt = now.Add(2 * time.Minute)
+	repeat.Reason = "same exact request observed again"
+	again, err := DoneAtomicForProfile(dir, "default", "s", tk.ID, DoneOptions{
+		Actor: "dev", CompletionGeneration: "completion-1", GateCorrelation: &repeat, Notify: true, Now: now.Add(2 * time.Minute),
+	})
+	if err != nil || again.Task.CompletionLifecycle == nil || again.Task.CompletionLifecycle.Generation != "completion-1" || len(again.Outbox) != 0 {
+		t.Fatalf("exact repeat must be idempotent: result=%+v err=%v", again, err)
+	}
+	if len(again.Task.CompletionLifecycle.GateHistory) != 1 {
+		t.Fatalf("idempotent observation duplicated audit history: %+v", again.Task.CompletionLifecycle.GateHistory)
+	}
+
+	terminal := repeat
+	terminal.State = "closed"
+	terminal.Suppressed = true
+	terminal.Reason = "exact request durably closed"
+	terminal.ObservedAt = now.Add(3 * time.Minute)
+	reconciled, err := DoneAtomicForProfile(dir, "default", "s", tk.ID, DoneOptions{
+		Actor: "dev", CompletionGeneration: "completion-1", GateCorrelation: &terminal, Notify: true, Now: now.Add(3 * time.Minute),
+	})
+	if err != nil || reconciled.Task.CompletionLifecycle == nil || reconciled.Task.CompletionLifecycle.Gate == nil ||
+		!reconciled.Task.CompletionLifecycle.Gate.Suppressed || reconciled.Task.CompletionLifecycle.Gate.State != "closed" || len(reconciled.Outbox) != 0 {
+		t.Fatalf("same request terminal reconciliation failed: result=%+v err=%v", reconciled, err)
+	}
+	history := reconciled.Task.CompletionLifecycle.GateHistory
+	if len(history) != 2 || history[0].State != "open_preserved" || history[0].Suppressed || history[1].State != "closed" || !history[1].Suppressed {
+		t.Fatalf("gate audit history = %+v", history)
+	}
+	repeatedTerminal, err := DoneAtomicForProfile(dir, "default", "s", tk.ID, DoneOptions{
+		Actor: "dev", CompletionGeneration: "completion-1", GateCorrelation: &terminal, Notify: true, Now: now.Add(4 * time.Minute),
+	})
+	if err != nil || len(repeatedTerminal.Task.CompletionLifecycle.GateHistory) != 2 || len(repeatedTerminal.Outbox) != 0 {
+		t.Fatalf("terminal repeat must be idempotent: result=%+v err=%v", repeatedTerminal, err)
+	}
+	if _, err := DoneAtomicForProfile(dir, "default", "s", tk.ID, DoneOptions{
+		Actor: "dev", CompletionGeneration: "completion-1", GateCorrelation: correlation, Notify: true, Now: now.Add(5 * time.Minute),
+	}); err == nil || !strings.Contains(err.Error(), "cannot reopen terminal request") {
+		t.Fatalf("terminal request was reopened: %v", err)
+	}
+
+	different := repeat
+	different.RequestMessageID = "request-2"
+	if _, err := DoneAtomicForProfile(dir, "default", "s", tk.ID, DoneOptions{
+		Actor: "dev", CompletionGeneration: "completion-1", GateCorrelation: &different, Notify: true, Now: now.Add(6 * time.Minute),
+	}); err == nil {
+		t.Fatal("same completion generation accepted a different gate request identity")
+	}
+}
+
+func TestDoneAtomicRejectsSuppressionOfUnresolvedGate(t *testing.T) {
+	dir := t.TempDir()
+	tk, _ := Add(dir, "s", AddInput{Title: "build"}, fixedNow)
+	_, _ = Claim(dir, "s", tk.ID, "dev", fixedNow)
+	correlation := &CompletionGateCorrelation{
+		TaskID: tk.ID, Profile: "default", Session: "s", NamespaceID: "default/s", NamespaceGeneration: "none",
+		Thread: "gate/release", RequestMessageID: "request-1", RequestSHA256: strings.Repeat("a", 64),
+		State: "open_preserved", Suppressed: true, Reason: "invalid", ObservedAt: fixedNow,
+	}
+	if _, err := DoneAtomicForProfile(dir, "default", "s", tk.ID, DoneOptions{Actor: "dev", CompletionGeneration: "completion-1", GateCorrelation: correlation, Now: fixedNow.Add(time.Minute)}); err == nil || !strings.Contains(err.Error(), "must remain unsuppressed") {
+		t.Fatalf("unresolved gate suppression must fail closed, got %v", err)
+	}
+	stored, _ := Show(dir, "s", tk.ID)
+	if stored.Status != StatusInProgress || stored.CompletionLifecycle != nil {
+		t.Fatalf("invalid correlation mutated task: %+v", stored)
+	}
+}
+
+func TestDoneAtomicRejectsNoncanonicalGateCorrelationWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*CompletionGateCorrelation)
+	}{
+		{name: "short digest", edit: func(c *CompletionGateCorrelation) { c.RequestSHA256 = "abc" }},
+		{name: "uppercase digest", edit: func(c *CompletionGateCorrelation) { c.RequestSHA256 = strings.Repeat("A", 64) }},
+		{name: "nonhex digest", edit: func(c *CompletionGateCorrelation) { c.RequestSHA256 = strings.Repeat("g", 64) }},
+		{name: "multiline reason", edit: func(c *CompletionGateCorrelation) { c.Reason = "closed\nforged" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tk, _ := Add(dir, "s", AddInput{Title: "build"}, fixedNow)
+			_, _ = Claim(dir, "s", tk.ID, "dev", fixedNow)
+			correlation := CompletionGateCorrelation{
+				TaskID: tk.ID, Profile: "default", Session: "s", NamespaceID: "default/s", NamespaceGeneration: "none",
+				Thread: "gate/release", RequestMessageID: "request-1", RequestSHA256: strings.Repeat("a", 64),
+				State: "closed", Suppressed: true, Reason: "exact request closed", ObservedAt: fixedNow,
+			}
+			tc.edit(&correlation)
+			if _, err := DoneAtomicForProfile(dir, "default", "s", tk.ID, DoneOptions{
+				Actor: "dev", CompletionGeneration: "completion-1", GateCorrelation: &correlation, Now: fixedNow.Add(time.Minute),
+			}); err == nil {
+				t.Fatal("noncanonical correlation accepted")
+			}
+			stored, err := Show(dir, "s", tk.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.Status != StatusInProgress || stored.CompletionLifecycle != nil {
+				t.Fatalf("rejected correlation mutated task: %+v", stored)
+			}
+		})
+	}
+}
+
 func TestTransactionCrashBoundariesRecoverAtomically(t *testing.T) {
 	phases := []string{
 		transactionPhaseBeforeJournalRename,
