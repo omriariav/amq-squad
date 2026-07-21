@@ -368,12 +368,17 @@ Examples:
 	receipt.addStage(deliveryStateAmbiguousUnknown, "receipt reserved before task link and AMQ send; no blind retry if interrupted")
 	var prepared *taskstore.DispatchPrepareResult
 	if taskID != "" || createInput != nil {
+		generationRef, err := dispatchGenerationRef(projectDir, profile, workstream, ctx.Root, from, member.Handle)
+		if err != nil {
+			return fmt.Errorf("resolve native task dispatch generation: %w", err)
+		}
 		preparedAt := taskNow()
 		p, err := dispatchPrepareTask(projectDir, profile, workstream, taskID, taskstore.DispatchIntentOptions{
 			From: from, Assignee: member.Handle, Thread: *threadFlag, Kind: *kindFlag,
 			Subject: *subjectFlag, Body: taskBody, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
 			LeaseDuration: taskstore.DefaultLeaseDuration, Now: preparedAt,
-			Create: createInput,
+			Create:        createInput,
+			GenerationRef: generationRef,
 			Leadership: taskstore.LeadershipExpectation{
 				Sender: from, ExpectedEpoch: *leadershipEpoch, EpochSpecified: flagWasSet(fs, "leadership-epoch"),
 			},
@@ -738,6 +743,50 @@ Examples:
 		quietNotice("Task queued; pane not nudged: %s\n", outcome.Skipped)
 	}
 	return nil
+}
+
+func dispatchGenerationRef(project, profile, session, root, sender, assignee string) (*taskstore.GenerationRef, error) {
+	type observed struct {
+		handle string
+		ref    taskstore.GenerationRef
+		any    bool
+		err    error
+	}
+	read := func(handle string) observed {
+		rec, err := launch.Read(filepath.Join(root, "agents", strings.TrimSpace(handle)))
+		if err != nil {
+			return observed{handle: handle, err: err}
+		}
+		ref := taskstore.GenerationRef{Generation: rec.PreparedRunGeneration, ManifestDigest: rec.PreparedRunDigest, GoalNamespace: rec.PreparedRunGoalNamespace, GoalDigest: rec.PreparedRunGoalDigest}
+		return observed{handle: handle, ref: ref, any: ref.Generation != "" || ref.ManifestDigest != "" || ref.GoalNamespace != "" || ref.GoalDigest != ""}
+	}
+	left, right := read(sender), read(assignee)
+	prepared, preparedErr := currentPreparedGenerationRef(project, profile, session)
+	if preparedErr != nil {
+		return nil, preparedErr
+	}
+	if prepared == nil {
+		if !left.any && !right.any && (left.err == nil || errors.Is(left.err, os.ErrNotExist)) && (right.err == nil || errors.Is(right.err, os.ErrNotExist)) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("launch records carry prepared identity but the namespace has no accepted prepared artifact")
+	}
+	for _, item := range []observed{left, right} {
+		if item.err != nil {
+			return nil, fmt.Errorf("managed generation requires launch record for %s: %w", item.handle, item.err)
+		}
+		if err := taskstore.ValidateGenerationRef(item.ref); err != nil {
+			return nil, fmt.Errorf("managed generation for %s is incomplete: %w", item.handle, err)
+		}
+	}
+	if left.ref != right.ref {
+		return nil, fmt.Errorf("sender %s and assignee %s launch generation_ref values disagree", sender, assignee)
+	}
+	if left.ref != *prepared {
+		return nil, fmt.Errorf("launch generation_ref does not match the current accepted prepared artifact")
+	}
+	ref := left.ref
+	return &ref, nil
 }
 
 func dispatchRecipientWakeInjectMode(root, handle string) string {

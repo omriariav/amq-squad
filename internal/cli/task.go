@@ -60,6 +60,7 @@ Usage:
   amq-squad task claim <id> --me <handle> [--lease 2h] [--override-dependencies --reason WHY] --session S [--profile P]
   amq-squad task renew <id> --me <handle> [--lease 2h] --session S [--profile P]
   amq-squad task done  <id> --me <handle> [--evidence E] [--final-head SHA] [--dispatch-next ID] [--no-notify] --session S [--profile P]
+  amq-squad task event <id> --event ACK|PROGRESS|CHECKPOINT|REVIEW --me <handle> [--body TEXT] [--evidence-kind K --evidence-id ID --evidence-sha256 SHA] --session S [--profile P]
   amq-squad task fail  <id> --me <handle> [--reason R] --session S [--profile P]
   amq-squad task block <id> --me <handle> [--reason R] --session S [--profile P]
   amq-squad task reset <id> --me <handle> [--reason R] --session S [--profile P]
@@ -93,7 +94,7 @@ completed_pending_reconcile, retaining assignee/lease and satisfying no dependen
 Reconcile never deletes/moves mailbox evidence or auto-resends delivery.
 `)
 		if len(args) == 0 {
-			return usageErrorf("task requires a subcommand (add, list, show, claim, renew, done, fail, block, reset, cancel, release, deliver, retry-delivery, reconcile)")
+			return usageErrorf("task requires a subcommand (add, list, show, claim, renew, event, done, fail, block, reset, cancel, release, deliver, retry-delivery, reconcile)")
 		}
 		return nil
 	}
@@ -110,6 +111,8 @@ Reconcile never deletes/moves mailbox evidence or auto-resends delivery.
 		return runTaskTransition(args[1:], "renew")
 	case "done", "complete":
 		return runTaskTransition(args[1:], "done")
+	case "event":
+		return runTaskEvent(args[1:])
 	case "fail":
 		return runTaskTransition(args[1:], "fail")
 	case "block":
@@ -131,8 +134,175 @@ Reconcile never deletes/moves mailbox evidence or auto-resends delivery.
 	case "handoff":
 		return runTaskHandoff(args[1:])
 	default:
-		return usageErrorf("unknown 'task' subcommand: %q. Try add, list, show, claim, renew, done, fail, block, reset, cancel, release, deliver, retry-delivery, or reconcile.", args[0])
+		return usageErrorf("unknown 'task' subcommand: %q. Try add, list, show, claim, renew, event, done, fail, block, reset, cancel, release, deliver, retry-delivery, or reconcile.", args[0])
 	}
+}
+
+func runTaskEvent(args []string) error {
+	id, rest, ok := peelPositional(args)
+	if !ok {
+		return usageErrorf("task event requires a task id")
+	}
+	fs := flag.NewFlagSet("task event", flag.ContinueOnError)
+	me := fs.String("me", "", "emitting task actor")
+	eventRaw := fs.String("event", "", "ACK|PROGRESS|CHECKPOINT|REVIEW")
+	body := fs.String("body", "", "display-only event body")
+	evidenceKind := fs.String("evidence-kind", "", "typed evidence kind")
+	evidenceID := fs.String("evidence-id", "", "typed evidence id")
+	evidenceSHA := fs.String("evidence-sha256", "", "typed evidence digest")
+	runGeneration := fs.String("run-generation", "", "prepared run generation override")
+	manifestDigest := fs.String("manifest-digest", "", "prepared manifest digest override")
+	goalNamespace := fs.String("goal-namespace", "", "prepared goal namespace override")
+	goalDigest := fs.String("goal-digest", "", "prepared goal digest override")
+	jsonOut := fs.Bool("json", false, "emit schema-versioned mutation output")
+	sessionFlag := fs.String("session", "", "AMQ workstream session")
+	profileFlag := fs.String("profile", "", "team profile namespace")
+	projectFlag := fs.String("project", "", "project/team-home directory")
+	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
+	if err := parseFlags(fs, rest); err != nil {
+		return err
+	}
+	event, err := task.ParseLifecycleEvent(*eventRaw)
+	if err != nil {
+		return usageErrorf("%v", err)
+	}
+	if event == task.LifecycleDone || event == task.LifecycleBlock || event == task.LifecycleCancel {
+		return usageErrorf("task event %s must use the dedicated task %s transition", event, strings.ToLower(string(event)))
+	}
+	selected, err := selectTaskForMutation(id, *sessionFlag, *projectFlag, *profileFlag, fs)
+	if err != nil {
+		return err
+	}
+	if err := ensureLaunchTargetIsNotOperator(selected.ProjectDir, selected.Profile, "task event", "", *me); err != nil {
+		return err
+	}
+	admission, err := acquireNamespaceWriterAdmission(selected.ProjectDir, selected.Profile, selected.Session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	current, err := revalidateTaskSelection(selected)
+	if err != nil {
+		return fmt.Errorf("task event refused: task revalidation under admission failed: %w", err)
+	}
+	ref, err := taskLifecycleGenerationRef(current.Namespace, *me, task.GenerationRef{
+		Generation: *runGeneration, ManifestDigest: *manifestDigest, GoalNamespace: *goalNamespace, GoalDigest: *goalDigest,
+	})
+	if err != nil {
+		return err
+	}
+	var evidence *task.EvidenceRef
+	if *evidenceKind != "" || *evidenceID != "" || *evidenceSHA != "" {
+		evidence = &task.EvidenceRef{Kind: *evidenceKind, ID: *evidenceID, SHA256: *evidenceSHA}
+	}
+	now := taskNow()
+	result, err := task.RecordLifecycleEventForProfile(current.ProjectDir, current.Profile, current.Session, id, task.LifecycleEventOptions{
+		Event: event, Actor: *me, GenerationRef: ref, EvidenceRef: evidence, Body: *body, Now: now,
+	})
+	if err != nil {
+		return err
+	}
+	updated, deliveryErr := deliverTaskOutbox(current.ProjectDir, current.Profile, current.Session, []task.OutboxIntent{result.Intent}, now)
+	if deliveryErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: lifecycle event committed, but delivery needs reconciliation: %v\n", deliveryErr)
+	}
+	stampTaskActivity(current.ProjectDir, current.Profile, current.Session, *me, strings.ToLower(string(event)), result.Task, now)
+	if *jsonOut {
+		return printJSONEnvelope("task_event", mutationResult{Command: "task event", Status: result.Task.Status, Project: current.ProjectDir,
+			Profile: current.Profile, Session: current.Session, Namespace: current.Namespace, ID: result.Task.ID, Outbox: updated})
+	}
+	fmt.Printf("%s lifecycle %s committed as %s\n", result.Task.ID, event, result.Intent.Lifecycle.EventID)
+	for _, intent := range updated {
+		fmt.Printf("outbox %s: %s\n", intent.ID, intent.State)
+	}
+	return deliveryErr
+}
+
+func taskLifecycleGenerationRef(ns squadnamespace.Ref, actor string, explicit task.GenerationRef) (task.GenerationRef, error) {
+	provided := explicit.Generation != "" || explicit.ManifestDigest != "" || explicit.GoalNamespace != "" || explicit.GoalDigest != ""
+	rec, err := launch.Read(filepath.Join(ns.AMQRoot, "agents", strings.TrimSpace(actor)))
+	if err != nil {
+		return task.GenerationRef{}, fmt.Errorf("resolve task lifecycle GenerationRef from actor launch record: %w", err)
+	}
+	ref := task.GenerationRef{Generation: rec.PreparedRunGeneration, ManifestDigest: rec.PreparedRunDigest,
+		GoalNamespace: rec.PreparedRunGoalNamespace, GoalDigest: rec.PreparedRunGoalDigest}
+	if err := task.ValidateGenerationRef(ref); err != nil {
+		return task.GenerationRef{}, fmt.Errorf("actor launch record has incomplete task lifecycle GenerationRef: %w", err)
+	}
+	prepared, err := currentPreparedGenerationRef(ns.TeamHome, ns.Profile, ns.Session)
+	if err != nil {
+		return task.GenerationRef{}, err
+	}
+	if prepared == nil {
+		return task.GenerationRef{}, fmt.Errorf("task lifecycle requires the current accepted prepared artifact")
+	}
+	if ref != *prepared {
+		return task.GenerationRef{}, fmt.Errorf("actor launch generation_ref does not match the current accepted prepared artifact")
+	}
+	if provided {
+		if err := task.ValidateGenerationRef(explicit); err != nil {
+			return task.GenerationRef{}, err
+		}
+		if explicit != ref {
+			return task.GenerationRef{}, fmt.Errorf("explicit generation_ref does not match the current managed actor launch record")
+		}
+	}
+	return ref, nil
+}
+
+func currentPreparedGenerationRef(project, profile, session string) (*task.GenerationRef, error) {
+	manifest, digest, err := readPreparedRunManifestSnapshot(project, profile, session)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read current accepted prepared artifact: %w", err)
+	}
+	ref := task.GenerationRef{Generation: manifest.Generation, ManifestDigest: digest, GoalNamespace: manifest.GoalNamespace, GoalDigest: manifest.GoalDigest}
+	if err := task.ValidateGenerationRef(ref); err != nil {
+		return nil, fmt.Errorf("current accepted prepared artifact is incomplete: %w", err)
+	}
+	return &ref, nil
+}
+
+func taskLifecycleEvidenceRef(t task.Task, attemptID string) (task.EvidenceRef, error) {
+	attemptID = strings.TrimSpace(attemptID)
+	for _, link := range t.CommandEvidence {
+		if link.AttemptID == attemptID {
+			return task.LifecycleCommandEvidenceRef(link)
+		}
+	}
+	return task.EvidenceRef{}, fmt.Errorf("task %s has no immutable command evidence attempt %q", t.ID, attemptID)
+}
+
+func runStructuredTerminalTask(projectDir, profile, session string, ns squadnamespace.Ref, current task.Task, actor, reason, replacement, evidenceID string, explicit task.GenerationRef, event task.LifecycleEvent, now time.Time) (task.Task, []task.OutboxIntent, error) {
+	refProvided := explicit.Generation != "" || explicit.ManifestDigest != "" || explicit.GoalNamespace != "" || explicit.GoalDigest != ""
+	ref, refErr := taskLifecycleGenerationRef(ns, actor, explicit)
+	if refErr != nil && !refProvided && current.LifecycleGenerationRef == nil {
+		// Legacy/queued namespaces without prepared identity keep the old local
+		// transition. They never produce structured evidence or warnings.
+		if event == task.LifecycleBlock {
+			t, err := task.BlockForProfile(projectDir, profile, session, current.ID, actor, reason, now)
+			return t, nil, err
+		}
+		t, err := task.CancelForProfile(projectDir, profile, session, current.ID, actor, reason, replacement, now)
+		return t, nil, err
+	}
+	if refErr != nil {
+		return task.Task{}, nil, refErr
+	}
+	evidence, err := taskLifecycleEvidenceRef(current, evidenceID)
+	if err != nil {
+		return task.Task{}, nil, err
+	}
+	opts := task.TerminalLifecycleOptions{Actor: actor, Reason: reason, ReplacementID: replacement, GenerationRef: ref, EvidenceRef: &evidence, Now: now}
+	var result task.TerminalLifecycleResult
+	if event == task.LifecycleBlock {
+		result, err = task.BlockAtomicLifecycleForProfile(projectDir, profile, session, current.ID, opts)
+	} else {
+		result, err = task.CancelAtomicLifecycleForProfile(projectDir, profile, session, current.ID, opts)
+	}
+	return result.Task, result.Outbox, err
 }
 
 func runTaskLeadership(args []string) error {
@@ -533,7 +703,9 @@ func runTaskTransition(args []string, verb string) error {
 	// `task fail t1 --evidence E` is a clear "flag not defined" error instead
 	// of silently dropping --evidence.
 	var me, evidence, reason, finalHead, dispatchNext, replacement, intentID string
+	var lifecycleEvidenceID string
 	var completionGeneration, gateThread, gateRequestID string
+	var lifecycleRunGeneration, lifecycleManifestDigest, lifecycleGoalNamespace, lifecycleGoalDigest string
 	var lease time.Duration
 	var overrideDependencies, noNotify, confirmNotDelivered bool
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
@@ -557,6 +729,11 @@ func runTaskTransition(args []string, verb string) error {
 		fs.StringVar(&completionGeneration, "completion-generation", "", "exact idempotence generation (generated and recorded when omitted)")
 		fs.StringVar(&gateThread, "gate", "", "optional exactly task-scoped gate topic to correlate")
 		fs.StringVar(&gateRequestID, "gate-request-id", "", "exact task-scoped gate request message id (requires --gate)")
+		fs.StringVar(&lifecycleRunGeneration, "run-generation", "", "prepared run generation override for structured DONE")
+		fs.StringVar(&lifecycleManifestDigest, "manifest-digest", "", "prepared manifest digest override for structured DONE")
+		fs.StringVar(&lifecycleGoalNamespace, "goal-namespace", "", "prepared goal namespace override for structured DONE")
+		fs.StringVar(&lifecycleGoalDigest, "goal-digest", "", "prepared goal digest override for structured DONE")
+		fs.StringVar(&lifecycleEvidenceID, "evidence-id", "", "linked immutable command-evidence attempt for structured DONE")
 	case "fail", "block", "reset", "release":
 		fs.StringVar(&reason, "reason", "", "reason")
 	case "cancel":
@@ -568,6 +745,13 @@ func runTaskTransition(args []string, verb string) error {
 		fs.BoolVar(&confirmNotDelivered, "confirm-not-delivered", false, "confirm an uncertain send did not arrive before retrying")
 	case "deliver":
 		fs.StringVar(&intentID, "intent", "", "pending outbox intent id (required)")
+	}
+	if verb == "block" || verb == "cancel" {
+		fs.StringVar(&lifecycleRunGeneration, "run-generation", "", "prepared run generation override for structured terminal event")
+		fs.StringVar(&lifecycleManifestDigest, "manifest-digest", "", "prepared manifest digest override for structured terminal event")
+		fs.StringVar(&lifecycleGoalNamespace, "goal-namespace", "", "prepared goal namespace override for structured terminal event")
+		fs.StringVar(&lifecycleGoalDigest, "goal-digest", "", "prepared goal digest override for structured terminal event")
+		fs.StringVar(&lifecycleEvidenceID, "evidence-id", "", "linked immutable command-evidence attempt for structured terminal event")
 	}
 	sessionFlag := fs.String("session", "", "AMQ workstream session (required)")
 	profileFlag := fs.String("profile", "", "team profile namespace (default: default profile)")
@@ -661,10 +845,28 @@ func runTaskTransition(args []string, verb string) error {
 			}
 		}
 		var result task.DoneResult
+		var generationRef *task.GenerationRef
+		explicitRef := task.GenerationRef{Generation: lifecycleRunGeneration, ManifestDigest: lifecycleManifestDigest, GoalNamespace: lifecycleGoalNamespace, GoalDigest: lifecycleGoalDigest}
+		refProvided := explicitRef.Generation != "" || explicitRef.ManifestDigest != "" || explicitRef.GoalNamespace != "" || explicitRef.GoalDigest != ""
+		if ref, refErr := taskLifecycleGenerationRef(ns, me, explicitRef); refErr == nil {
+			generationRef = &ref
+		} else if refProvided || current.Task.LifecycleGenerationRef != nil {
+			err = refErr
+			break
+		}
+		var evidenceRef *task.EvidenceRef
+		if strings.TrimSpace(lifecycleEvidenceID) != "" {
+			ref, refErr := taskLifecycleEvidenceRef(current.Task, lifecycleEvidenceID)
+			if refErr != nil {
+				err = refErr
+				break
+			}
+			evidenceRef = &ref
+		}
 		result, err = task.DoneAtomicForProfile(projectDir, profile, session, id, task.DoneOptions{
 			Actor: me, Evidence: evidence, FinalHead: finalHead, DispatchNextID: dispatchNext,
 			CompletionGeneration: completionGeneration, GateCorrelation: gateCorrelation,
-			LeaseDuration: lease, Notify: !noNotify, Now: now,
+			LeaseDuration: lease, Notify: !noNotify, GenerationRef: generationRef, EvidenceRef: evidenceRef, Now: now,
 		})
 		if err == nil {
 			t, released, outbox = result.Task, result.ReleasedTaskIDs, result.Outbox
@@ -676,11 +878,19 @@ func runTaskTransition(args []string, verb string) error {
 	case "fail":
 		t, err = task.FailForProfile(projectDir, profile, session, id, me, reason, now)
 	case "block":
-		t, err = task.BlockForProfile(projectDir, profile, session, id, me, reason, now)
+		t, outbox, err = runStructuredTerminalTask(projectDir, profile, session, ns, current.Task, me, reason, "", lifecycleEvidenceID,
+			task.GenerationRef{Generation: lifecycleRunGeneration, ManifestDigest: lifecycleManifestDigest, GoalNamespace: lifecycleGoalNamespace, GoalDigest: lifecycleGoalDigest}, task.LifecycleBlock, now)
+		if err == nil {
+			outbox, deliveryErr = deliverTaskOutbox(projectDir, profile, session, outbox, now)
+		}
 	case "reset":
 		t, err = task.ResetForProfile(projectDir, profile, session, id, me, reason, now)
 	case "cancel":
-		t, err = task.CancelForProfile(projectDir, profile, session, id, me, reason, replacement, now)
+		t, outbox, err = runStructuredTerminalTask(projectDir, profile, session, ns, current.Task, me, reason, replacement, lifecycleEvidenceID,
+			task.GenerationRef{Generation: lifecycleRunGeneration, ManifestDigest: lifecycleManifestDigest, GoalNamespace: lifecycleGoalNamespace, GoalDigest: lifecycleGoalDigest}, task.LifecycleCancel, now)
+		if err == nil {
+			outbox, deliveryErr = deliverTaskOutbox(projectDir, profile, session, outbox, now)
+		}
 	case "release":
 		t, err = task.ReleaseForProfile(projectDir, profile, session, id, me, reason, now)
 	case "deliver":
@@ -907,6 +1117,20 @@ func deliverTaskOutbox(projectDir, profile, session string, intents []task.Outbo
 		}
 		ctx.Me = started.From
 		args := dispatchSendArgs(ctx.Root, started.From, started.To, started.Thread, started.Kind, started.Subject, started.Body, "", "", 0)
+		if started.Lifecycle != nil {
+			contextJSON, contextErr := task.LifecycleContextJSON(*started.Lifecycle)
+			if contextErr != nil {
+				finished, finishErr := task.FinishOutboxDeliveryForProfile(projectDir, profile, session, started.TaskID, started.ID, task.DeliveryOutcome{State: task.DeliveryFailedBeforeInvoke, Error: contextErr.Error()}, startedAt.Add(time.Nanosecond))
+				if finishErr != nil {
+					deliveryErrs = append(deliveryErrs, finishErr)
+				} else {
+					updated = append(updated, finished)
+				}
+				deliveryErrs = append(deliveryErrs, contextErr)
+				continue
+			}
+			args = append(args, "--context", contextJSON)
+		}
 		receipt := newDeliveryReceipt(projectDir, profile, session, started.To, started.To, "task_outbox", "task_outbox")
 		receipt.Sender, receipt.Recipient = started.From, started.To
 		receipt.Recipients = []string{started.To}
@@ -916,6 +1140,18 @@ func deliverTaskOutbox(projectDir, profile, session string, intents []task.Outbo
 			receipt.Thread = receiptCanonicalP2P(started.From, started.To)
 		}
 		receipt.TaskID, receipt.OutboxIntentID = started.TaskID, started.ID
+		if lifecycle := started.Lifecycle; lifecycle != nil {
+			receipt.LifecycleEventID = lifecycle.EventID
+			receipt.LifecycleEvent = string(lifecycle.Event)
+			receipt.LifecycleTaskGeneration = lifecycle.TaskGeneration
+			receipt.PreparedRunGeneration = lifecycle.GenerationRef.Generation
+			receipt.PreparedRunDigest = lifecycle.GenerationRef.ManifestDigest
+			receipt.PreparedRunGoalNamespace = lifecycle.GenerationRef.GoalNamespace
+			receipt.PreparedRunGoalDigest = lifecycle.GenerationRef.GoalDigest
+			if actorRecord, recordErr := launch.Read(filepath.Join(ctx.Root, "agents", started.From)); recordErr == nil {
+				receipt.PreparedRunLaunchAttempt = reflectedStringField(actorRecord, "PreparedRunLaunchAttempt", "LaunchAttempt")
+			}
+		}
 		receipt.addStage(deliveryStateAmbiguousUnknown, "receipt reserved before task outbox link and AMQ send")
 		if receiptErr := writeDeliveryReceipt(projectDir, profile, session, &receipt); receiptErr != nil {
 			if finished, finishErr := task.FinishOutboxDeliveryForProfile(projectDir, profile, session, started.TaskID, started.ID, task.DeliveryOutcome{State: task.DeliveryFailedBeforeInvoke, Error: receiptErr.Error()}, startedAt.Add(time.Nanosecond)); finishErr == nil {

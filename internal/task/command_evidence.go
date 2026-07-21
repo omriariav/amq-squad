@@ -154,6 +154,49 @@ func sameCommandEvidenceLink(a, b CommandEvidenceLink) bool {
 	return a == b
 }
 
+// LifecycleCommandEvidenceRef returns the stable lifecycle reference for one
+// already-linked immutable command evidence record.
+func LifecycleCommandEvidenceRef(link CommandEvidenceLink) (EvidenceRef, error) {
+	if strings.TrimSpace(link.AttemptID) == "" {
+		return EvidenceRef{}, fmt.Errorf("command evidence attempt id is required")
+	}
+	b, err := json.Marshal(link)
+	if err != nil {
+		return EvidenceRef{}, err
+	}
+	sum := sha256.Sum256(b)
+	return EvidenceRef{Kind: "command_evidence", ID: link.AttemptID, SHA256: hex.EncodeToString(sum[:])}, nil
+}
+
+// ValidateLifecycleEvidenceRef resolves an envelope reference through the
+// task's bounded link and re-verifies the authoritative immutable evidence
+// files before accepting it.
+func ValidateLifecycleEvidenceRef(projectDir, profile, session string, t Task, ref EvidenceRef) error {
+	if err := ValidateEvidenceRef(ref); err != nil {
+		return err
+	}
+	if ref.Kind != "command_evidence" {
+		return fmt.Errorf("task lifecycle evidence_ref kind %q is not immutable command evidence", ref.Kind)
+	}
+	for _, link := range t.CommandEvidence {
+		if link.AttemptID != ref.ID {
+			continue
+		}
+		expected, err := LifecycleCommandEvidenceRef(link)
+		if err != nil {
+			return err
+		}
+		if expected != ref {
+			return fmt.Errorf("task lifecycle evidence_ref digest does not match linked command evidence")
+		}
+		if err := validateCommandEvidenceLink(projectDir, link.Actor, link); err != nil {
+			return err
+		}
+		return verifyCommandEvidenceLinkRecord(projectDir, profile, session, t.ID, link)
+	}
+	return fmt.Errorf("task lifecycle evidence_ref %s does not resolve to a linked command evidence object", ref.ID)
+}
+
 func commandEvidenceProcessState(value string) bool {
 	switch value {
 	case "succeeded", "exited_nonzero", "signaled", "spawn_failed", "wait_failed":

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -66,6 +67,9 @@ type deliveryReceiptData struct {
 	LeadImplementationAllowed         *bool                   `json:"lead_implementation_allowed,omitempty"`
 	LeadershipEpoch                   *uint64                 `json:"leadership_epoch,omitempty"`
 	OutboxIntentID                    string                  `json:"outbox_intent_id,omitempty"`
+	LifecycleEventID                  string                  `json:"lifecycle_event_id,omitempty"`
+	LifecycleEvent                    string                  `json:"lifecycle_event,omitempty"`
+	LifecycleTaskGeneration           string                  `json:"lifecycle_task_generation,omitempty"`
 	Root                              string                  `json:"root,omitempty"`
 	Thread                            string                  `json:"thread,omitempty"`
 	PaneID                            string                  `json:"pane_id,omitempty"`
@@ -76,6 +80,7 @@ type deliveryReceiptData struct {
 	Path                              string                  `json:"path,omitempty"`
 	CreatedAt                         time.Time               `json:"created_at"`
 	PreparedRunGeneration             string                  `json:"prepared_run_generation,omitempty"`
+	PreparedRunLaunchAttempt          string                  `json:"prepared_run_launch_attempt,omitempty"`
 	PreparedRunDigest                 string                  `json:"prepared_run_digest,omitempty"`
 	PreparedRunGoalNamespace          string                  `json:"prepared_run_goal_namespace,omitempty"`
 	PreparedRunGoalDigest             string                  `json:"prepared_run_goal_digest,omitempty"`
@@ -86,9 +91,27 @@ func applyPreparedRunTokenToReceipt(receipt *deliveryReceiptData, token prepared
 		return
 	}
 	receipt.PreparedRunGeneration = token.Generation
+	receipt.PreparedRunLaunchAttempt = preparedRunLaunchAttempt(token)
 	receipt.PreparedRunDigest = token.ManifestDigest
 	receipt.PreparedRunGoalNamespace = token.GoalNamespace
 	receipt.PreparedRunGoalDigest = token.GoalDigest
+}
+
+// preparedRunLaunchAttempt keeps the runtime-owned receipt compatible with
+// the platform-owned token as LaunchAttempt lands independently.
+func preparedRunLaunchAttempt(token preparedRunToken) string {
+	return reflectedStringField(token, "LaunchAttempt")
+}
+
+func reflectedStringField(value any, names ...string) string {
+	reflected := reflect.ValueOf(value)
+	for _, name := range names {
+		field := reflected.FieldByName(name)
+		if field.IsValid() && field.Kind() == reflect.String {
+			return strings.TrimSpace(field.String())
+		}
+	}
+	return ""
 }
 
 type deliveryConsumerState struct {
@@ -365,6 +388,7 @@ func validateReceiptMergeIdentity(current, incoming deliveryReceiptData) error {
 		{"path", filepath.Clean(current.Path) == filepath.Clean(incoming.Path)},
 		{"created_at", current.CreatedAt.Equal(incoming.CreatedAt)},
 		{"prepared_run_generation", current.PreparedRunGeneration == incoming.PreparedRunGeneration},
+		{"prepared_run_launch_attempt", current.PreparedRunLaunchAttempt == incoming.PreparedRunLaunchAttempt},
 		{"prepared_run_digest", current.PreparedRunDigest == incoming.PreparedRunDigest},
 		{"prepared_run_goal_namespace", current.PreparedRunGoalNamespace == incoming.PreparedRunGoalNamespace},
 		{"prepared_run_goal_digest", current.PreparedRunGoalDigest == incoming.PreparedRunGoalDigest},
