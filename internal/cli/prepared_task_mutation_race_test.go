@@ -77,9 +77,12 @@ func newPreparedLifecycleRaceFixture(t *testing.T, withEvidence bool) preparedLi
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, err := taskstore.LinkDispatchForProfile(project, "review", "s", prepared.Task.ID, taskstore.Dispatch{
-		Sender: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo", Subject: "race", MessageID: "dispatch-race",
-	}, now.Add(2*time.Second))
+	if _, err := taskstore.BeginOutboxDeliveryForProfile(project, "review", "s", prepared.Task.ID, prepared.Intent.ID, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := taskstore.FinishDispatchForProfile(project, "review", "s", prepared.Task.ID, prepared.Intent.ID, taskstore.Dispatch{
+		Sender: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo", Subject: "race",
+	}, taskstore.DeliveryOutcome{State: taskstore.DeliveryDelivered, MessageID: "dispatch-race"}, now.Add(3*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}

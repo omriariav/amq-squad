@@ -44,12 +44,16 @@ func TestLifecycleCorrelationUsesValueEqualityAndImmutableEvidence(t *testing.T)
 	project, _ = filepath.EvalSymlinks(project)
 	now := time.Date(2026, 7, 21, 13, 0, 0, 0, time.UTC)
 	generation := taskstore.GenerationRef{Generation: taskLifecycleGenerationOne, ManifestDigest: taskLifecycleManifestDigest, GoalNamespace: "review/s", GoalDigest: taskLifecycleGoalDigest}
-	if _, err := taskstore.PrepareDispatchForProfile(project, "review", "s", seeded.ID, taskstore.DispatchIntentOptions{From: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo", GenerationRef: &generation, Now: now}); err != nil {
+	prepared, err := taskstore.PrepareDispatchForProfile(project, "review", "s", seeded.ID, taskstore.DispatchIntentOptions{From: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo", GenerationRef: &generation, Now: now})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := taskstore.LinkDispatchForProfile(project, "review", "s", seeded.ID, taskstore.Dispatch{
-		Sender: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo", MessageID: "dispatch-1",
-	}, now); err != nil {
+	if _, err := taskstore.BeginOutboxDeliveryForProfile(project, "review", "s", seeded.ID, prepared.Intent.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := taskstore.FinishDispatchForProfile(project, "review", "s", seeded.ID, prepared.Intent.ID, taskstore.Dispatch{
+		Sender: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo",
+	}, taskstore.DeliveryOutcome{State: taskstore.DeliveryDelivered, MessageID: "dispatch-1"}, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := captureOutput(t, func() error {

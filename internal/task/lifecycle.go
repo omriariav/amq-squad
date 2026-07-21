@@ -436,21 +436,43 @@ func completionRoute(t *Task) (Dispatch, bool) {
 }
 
 // CanonicalDispatch returns the one current dispatch authority for lifecycle
-// correlation. A present Task.Dispatch always wins, including placeholders
-// with an empty MessageID. The outbox fallback is deliberately restricted to
-// already-persisted, delivered successor_dispatch records written before
-// successor dispatch became canonical Task.Dispatch state.
+// correlation. Linked or state-bearing projections always win. A legacy
+// projection (no intent ID and no delivery state) remains compatible when it
+// has no dispatch-family outbox, or when the newest delivered task_dispatch
+// has the same stable message ID. Other legacy and nil projections may migrate
+// only from the newest delivered successor_dispatch with a stable message ID.
 func CanonicalDispatch(t Task) (Dispatch, bool) {
 	if t.Dispatch != nil {
-		return *t.Dispatch, true
-	}
-	for i := len(t.Outbox) - 1; i >= 0; i-- {
-		intent := t.Outbox[i]
-		if intent.Type == "successor_dispatch" && intent.State == OutboxDelivered && strings.TrimSpace(intent.MessageID) != "" {
-			return *dispatchFromOutboxIntent(intent), true
+		if isCurrentDispatchProjection(t.Dispatch) {
+			return *t.Dispatch, true
+		}
+		newest := newestDispatchIntent(t.Outbox)
+		if newest == nil {
+			return *t.Dispatch, true
+		}
+		legacyMessageID := strings.TrimSpace(t.Dispatch.MessageID)
+		if newest.Type == "task_dispatch" && newest.State == OutboxDelivered && legacyMessageID != "" && strings.TrimSpace(newest.MessageID) == legacyMessageID {
+			return *t.Dispatch, true
 		}
 	}
+	intent := newestDispatchIntent(t.Outbox)
+	if intent != nil && intent.Type == "successor_dispatch" && intent.State == OutboxDelivered && strings.TrimSpace(intent.MessageID) != "" {
+		return *dispatchFromOutboxIntent(*intent), true
+	}
 	return Dispatch{}, false
+}
+
+func newestDispatchIntent(outbox []OutboxIntent) *OutboxIntent {
+	for i := len(outbox) - 1; i >= 0; i-- {
+		if outbox[i].Type == "task_dispatch" || outbox[i].Type == "successor_dispatch" {
+			return &outbox[i]
+		}
+	}
+	return nil
+}
+
+func isCurrentDispatchProjection(dispatch *Dispatch) bool {
+	return dispatch != nil && (strings.TrimSpace(dispatch.OutboxIntentID) != "" || strings.TrimSpace(dispatch.DeliveryState) != "")
 }
 
 func successorDispatchThread(binding *SuccessorDispatchBinding, sender, assignee string) string {
@@ -478,8 +500,8 @@ func syncCurrentDispatch(t *Task, intent *OutboxIntent, now time.Time) error {
 	if intent.Type != "task_dispatch" && intent.Type != "successor_dispatch" {
 		return nil
 	}
-	if t.Dispatch != nil && strings.TrimSpace(t.Dispatch.OutboxIntentID) != strings.TrimSpace(intent.ID) {
-		return fmt.Errorf("dispatch intent %s is not current Task.Dispatch authority for task %s", intent.ID, t.ID)
+	if err := validateCurrentDispatchIntent(t, intent); err != nil {
+		return err
 	}
 	dispatch := dispatchFromOutboxIntent(*intent)
 	if intent.State == OutboxDelivered && !now.IsZero() {
@@ -488,6 +510,23 @@ func syncCurrentDispatch(t *Task, intent *OutboxIntent, now time.Time) error {
 		dispatch.DispatchedAt = t.Dispatch.DispatchedAt
 	}
 	t.Dispatch = dispatch
+	return nil
+}
+
+func validateCurrentDispatchIntent(t *Task, intent *OutboxIntent) error {
+	if t.Dispatch != nil {
+		currentIntentID := strings.TrimSpace(t.Dispatch.OutboxIntentID)
+		if currentIntentID != "" && currentIntentID == strings.TrimSpace(intent.ID) {
+			return nil
+		}
+		if isCurrentDispatchProjection(t.Dispatch) {
+			return fmt.Errorf("dispatch intent %s is not current Task.Dispatch authority for task %s", intent.ID, t.ID)
+		}
+	}
+	newest := newestDispatchIntent(t.Outbox)
+	if newest == nil || strings.TrimSpace(newest.ID) != strings.TrimSpace(intent.ID) {
+		return fmt.Errorf("dispatch intent %s is not newest nil-Dispatch migration authority for task %s", intent.ID, t.ID)
+	}
 	return nil
 }
 
@@ -1168,8 +1207,8 @@ func FinishDispatchForProfile(projectDir, profile, session, taskID, intentID str
 		if err != nil {
 			return err
 		}
-		if t.Dispatch != nil && strings.TrimSpace(t.Dispatch.OutboxIntentID) != strings.TrimSpace(intent.ID) {
-			return fmt.Errorf("dispatch intent %s is not current Task.Dispatch authority for task %s", intent.ID, t.ID)
+		if err := validateCurrentDispatchIntent(t, intent); err != nil {
+			return err
 		}
 		if intent.State != OutboxSending {
 			return fmt.Errorf("outbox intent %s is %s, not sending", intentID, intent.State)

@@ -587,6 +587,12 @@ func LinkDispatchForProfile(projectDir, profile, session, id string, dispatch Di
 		d.ReceiptAttemptID = strings.TrimSpace(d.ReceiptAttemptID)
 		d.ReceiptPath = strings.TrimSpace(d.ReceiptPath)
 		d.LastError = strings.TrimSpace(d.LastError)
+		if isCurrentDispatchProjection(t.Dispatch) {
+			return fmt.Errorf("dispatch link cannot replace current Task.Dispatch authority for task %s; use the delivery lifecycle APIs", t.ID)
+		}
+		if d.OutboxIntentID != "" || d.DeliveryState != "" {
+			return fmt.Errorf("dispatch link is a legacy API and cannot set outbox intent or delivery state for task %s; use the delivery lifecycle APIs", t.ID)
+		}
 		if d.DispatchedAt.IsZero() {
 			d.DispatchedAt = now
 		}

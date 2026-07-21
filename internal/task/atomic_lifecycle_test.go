@@ -473,19 +473,302 @@ func TestResetReDispatchTombstoneAndPlaceholderRejectStaleSuccessorIntent(t *tes
 }
 
 func TestCanonicalDispatchMigratesOnlyDeliveredNilDispatchSuccessorRecords(t *testing.T) {
-	task := Task{Outbox: []OutboxIntent{
-		{ID: "old-task", Type: "task_dispatch", State: OutboxDelivered, From: "old", To: "worker", MessageID: "old-task-id"},
-		{ID: "legacy-successor", Type: "successor_dispatch", State: OutboxDelivered, From: "cto", To: "worker", Thread: "p2p/cto__worker", MessageID: "legacy-id"},
-	}}
-	dispatch, ok := CanonicalDispatch(task)
-	if !ok || dispatch.OutboxIntentID != "legacy-successor" || dispatch.MessageID != "legacy-id" {
+	legacy := OutboxIntent{ID: "legacy-successor", Type: "successor_dispatch", State: OutboxDelivered, From: "cto", To: "worker", Thread: "p2p/cto__worker", MessageID: "legacy-id"}
+	dispatch, ok := CanonicalDispatch(Task{Outbox: []OutboxIntent{legacy}})
+	if !ok || dispatch.OutboxIntentID != legacy.ID || dispatch.MessageID != legacy.MessageID {
 		t.Fatalf("legacy migration dispatch=%+v ok=%v", dispatch, ok)
 	}
-	task.Dispatch = &Dispatch{DeliveryState: OutboxPending}
+
+	blocking := []OutboxIntent{
+		{ID: "successor-pending", Type: "successor_dispatch", State: OutboxPending},
+		{ID: "successor-sending", Type: "successor_dispatch", State: OutboxSending},
+		{ID: "successor-uncertain", Type: "successor_dispatch", State: OutboxUncertain},
+		{ID: "successor-failed", Type: "successor_dispatch", State: OutboxFailed},
+		{ID: "successor-delivered-no-id", Type: "successor_dispatch", State: OutboxDelivered},
+		{ID: "task-pending", Type: "task_dispatch", State: OutboxPending},
+		{ID: "task-delivered", Type: "task_dispatch", State: OutboxDelivered, MessageID: "new-task-id"},
+	}
+	for _, newer := range blocking {
+		t.Run(newer.ID, func(t *testing.T) {
+			dispatch, ok := CanonicalDispatch(Task{Outbox: []OutboxIntent{legacy, newer}})
+			if ok {
+				t.Fatalf("newer dispatch-family intent revived stale authority: dispatch=%+v", dispatch)
+			}
+		})
+	}
+
+	newer := OutboxIntent{ID: "new-successor", Type: "successor_dispatch", State: OutboxDelivered, MessageID: "new-id"}
+	dispatch, ok = CanonicalDispatch(Task{Outbox: []OutboxIntent{legacy, newer}})
+	if !ok || dispatch.OutboxIntentID != newer.ID || dispatch.MessageID != newer.MessageID {
+		t.Fatalf("newest delivered successor migration dispatch=%+v ok=%v", dispatch, ok)
+	}
+
+	task := Task{Dispatch: &Dispatch{DeliveryState: OutboxPending}, Outbox: []OutboxIntent{legacy}}
 	dispatch, ok = CanonicalDispatch(task)
 	if !ok || dispatch.MessageID != "" || dispatch.DeliveryState != OutboxPending {
 		t.Fatalf("current placeholder did not suppress history: dispatch=%+v ok=%v", dispatch, ok)
 	}
+
+	legacyProjection := &Dispatch{Sender: "cto", Assignee: "worker", MessageID: "stale-pre-reset-id"}
+	dispatch, ok = CanonicalDispatch(Task{Dispatch: legacyProjection})
+	if !ok || dispatch.MessageID != legacyProjection.MessageID {
+		t.Fatalf("standalone legacy projection dispatch=%+v ok=%v", dispatch, ok)
+	}
+	dispatch, ok = CanonicalDispatch(Task{Dispatch: legacyProjection, Outbox: []OutboxIntent{newer}})
+	if !ok || dispatch.OutboxIntentID != newer.ID || dispatch.MessageID != newer.MessageID {
+		t.Fatalf("newer delivered successor did not replace legacy projection: dispatch=%+v ok=%v", dispatch, ok)
+	}
+	dispatch, ok = CanonicalDispatch(Task{Dispatch: legacyProjection, Outbox: []OutboxIntent{{ID: "new-pending", Type: "successor_dispatch", State: OutboxPending}}})
+	if ok {
+		t.Fatalf("pending successor retained stale legacy projection: dispatch=%+v", dispatch)
+	}
+	matchingNormal := OutboxIntent{ID: "legacy-normal", Type: "task_dispatch", State: OutboxDelivered, MessageID: legacyProjection.MessageID}
+	dispatch, ok = CanonicalDispatch(Task{Dispatch: legacyProjection, Outbox: []OutboxIntent{matchingNormal}})
+	if !ok || dispatch.MessageID != legacyProjection.MessageID || dispatch.OutboxIntentID != "" {
+		t.Fatalf("matching legacy normal dispatch lost compatibility: dispatch=%+v ok=%v", dispatch, ok)
+	}
+	mismatchedNormal := matchingNormal
+	mismatchedNormal.ID, mismatchedNormal.MessageID = "different-normal", "different-id"
+	dispatch, ok = CanonicalDispatch(Task{Dispatch: legacyProjection, Outbox: []OutboxIntent{mismatchedNormal}})
+	if ok {
+		t.Fatalf("differing task dispatch retained stale legacy projection: dispatch=%+v", dispatch)
+	}
+	reset := &Dispatch{DeliveryState: "reset"}
+	dispatch, ok = CanonicalDispatch(Task{Dispatch: reset, Outbox: []OutboxIntent{newer}})
+	if !ok || dispatch.DeliveryState != "reset" || dispatch.MessageID != "" {
+		t.Fatalf("newer intent crossed reset tombstone: dispatch=%+v ok=%v", dispatch, ok)
+	}
+}
+
+func TestNilDispatchMigrationRejectsStaleDispatchMutationsWithoutChangingBytes(t *testing.T) {
+	type staleMutation struct {
+		name      string
+		oldState  string
+		newerType string
+		mutate    func(dir, taskID string) error
+	}
+	tests := []staleMutation{
+		{
+			name:     "begin",
+			oldState: OutboxPending,
+			mutate: func(dir, taskID string) error {
+				_, err := BeginOutboxDeliveryForProfile(dir, "default", "s", taskID, "old", fixedNow.Add(2*time.Minute))
+				return err
+			},
+		},
+		{
+			name:     "attach-receipt",
+			oldState: OutboxSending,
+			mutate: func(dir, taskID string) error {
+				_, err := AttachOutboxReceiptForProfile(dir, "default", "s", taskID, "old", "attempt-old", "receipts/old.json", fixedNow.Add(2*time.Minute))
+				return err
+			},
+		},
+		{
+			name:     "finish-outbox",
+			oldState: OutboxSending,
+			mutate: func(dir, taskID string) error {
+				_, err := FinishOutboxDeliveryForProfile(dir, "default", "s", taskID, "old", DeliveryOutcome{State: DeliveryDelivered, MessageID: "stale-id"}, fixedNow.Add(2*time.Minute))
+				return err
+			},
+		},
+		{
+			name:      "retry",
+			oldState:  OutboxFailed,
+			newerType: "task_dispatch",
+			mutate: func(dir, taskID string) error {
+				_, err := PrepareOutboxRetryForProfile(dir, "default", "s", taskID, "old", "qa", "stale retry", false, fixedNow.Add(2*time.Minute))
+				return err
+			},
+		},
+		{
+			name:     "finish-dispatch",
+			oldState: OutboxDelivered,
+			mutate: func(dir, taskID string) error {
+				_, _, err := FinishDispatchForProfile(dir, "default", "s", taskID, "old", Dispatch{Sender: "cto", Assignee: "worker"}, DeliveryOutcome{State: DeliveryDelivered, MessageID: "stale-id"}, fixedNow.Add(2*time.Minute))
+				return err
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			task, err := Add(dir, "s", AddInput{Title: tc.name}, fixedNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			newerType := tc.newerType
+			if newerType == "" {
+				newerType = "successor_dispatch"
+			}
+			_, err = mutateForProfile(dir, "default", "s", task.ID, func(task *Task, _ map[string]*Task) error {
+				task.Dispatch = nil
+				if tc.name == "finish-dispatch" {
+					task.Dispatch = &Dispatch{Sender: "cto", Assignee: "worker", MessageID: "stale-pre-reset-id"}
+				}
+				task.Outbox = []OutboxIntent{
+					{ID: "old", TaskID: task.ID, Type: "successor_dispatch", State: tc.oldState, From: "cto", To: "worker", MessageID: "old-id", UpdatedAt: fixedNow},
+					{ID: "new", TaskID: task.ID, Type: newerType, State: OutboxPending, From: "cto", To: "worker", UpdatedAt: fixedNow.Add(time.Minute)},
+				}
+				task.UpdatedAt = fixedNow.Add(time.Minute)
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(DirForProfile(dir, "default", "s"), task.ID+".json")
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = tc.mutate(dir, task.ID)
+			if err == nil || !strings.Contains(err.Error(), "not newest nil-Dispatch migration authority") {
+				t.Fatalf("stale mutation err=%v", err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(before) != string(after) {
+				t.Fatal("refused stale mutation changed task bytes")
+			}
+		})
+	}
+}
+
+func TestNewestDispatchIntentReplacesLegacyNonIDProjection(t *testing.T) {
+	dir := t.TempDir()
+	task, err := Add(dir, "s", AddInput{Title: "legacy projection"}, fixedNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mutateForProfile(dir, "default", "s", task.ID, func(task *Task, _ map[string]*Task) error {
+		task.Dispatch = &Dispatch{Sender: "cto", Assignee: "worker", MessageID: "stale-pre-reset-id"}
+		task.Outbox = []OutboxIntent{{ID: "new", TaskID: task.ID, Type: "successor_dispatch", State: OutboxPending, From: "cto", To: "worker"}}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BeginOutboxDeliveryForProfile(dir, "default", "s", task.ID, "new", fixedNow.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := ShowForProfile(dir, "default", "s", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Dispatch == nil || updated.Dispatch.OutboxIntentID != "new" || updated.Dispatch.DeliveryState != OutboxSending || updated.Dispatch.MessageID != "" {
+		t.Fatalf("newest intent did not replace legacy projection: %+v", updated.Dispatch)
+	}
+}
+
+func TestLinkDispatchPreservesCurrentAuthorityAndLegacyCompatibility(t *testing.T) {
+	t.Run("pending placeholder rejects legacy link byte-identically", func(t *testing.T) {
+		dir := t.TempDir()
+		task, err := Add(dir, "s", AddInput{Title: "pending placeholder"}, fixedNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared, err := PrepareDispatchForProfile(dir, "default", "s", task.ID, DispatchIntentOptions{From: "cto", Assignee: "worker", Now: fixedNow.Add(time.Minute)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(DirForProfile(dir, "default", "s"), task.ID+".json")
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{Sender: "cto", Assignee: "worker", MessageID: "legacy-id"}, fixedNow.Add(2*time.Minute)); err == nil || !strings.Contains(err.Error(), "cannot replace current Task.Dispatch authority") {
+			t.Fatalf("legacy link err=%v", err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(before) != string(after) {
+			t.Fatal("refused legacy link changed pending task bytes")
+		}
+
+		if _, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{
+			Sender: "cto", Assignee: "worker", OutboxIntentID: prepared.Intent.ID, DeliveryState: OutboxDelivered, MessageID: "linked-id",
+		}, fixedNow.Add(3*time.Minute)); err == nil || !strings.Contains(err.Error(), "use the delivery lifecycle APIs") {
+			t.Fatalf("matching-ID bypass err=%v", err)
+		}
+		afterMatching, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(before) != string(afterMatching) {
+			t.Fatal("refused matching-ID link changed pending task bytes")
+		}
+		unchanged, err := ShowForProfile(dir, "default", "s", task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if unchanged.Dispatch == nil || unchanged.Dispatch.OutboxIntentID != prepared.Intent.ID || unchanged.Dispatch.DeliveryState != OutboxPending || unchanged.Dispatch.MessageID != "" || len(unchanged.Outbox) != 1 || unchanged.Outbox[0].State != OutboxPending || unchanged.Outbox[0].MessageID != "" {
+			t.Fatalf("refused matching-ID link diverged projection and outbox: dispatch=%+v outbox=%+v", unchanged.Dispatch, unchanged.Outbox)
+		}
+	})
+
+	t.Run("reset tombstone rejects link byte-identically", func(t *testing.T) {
+		dir := t.TempDir()
+		task, err := Add(dir, "s", AddInput{Title: "reset tombstone"}, fixedNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = mutateForProfile(dir, "default", "s", task.ID, func(task *Task, _ map[string]*Task) error {
+			task.Dispatch = &Dispatch{DeliveryState: "reset"}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(DirForProfile(dir, "default", "s"), task.ID+".json")
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{Sender: "cto", MessageID: "legacy-id"}, fixedNow.Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "cannot replace current Task.Dispatch authority") {
+			t.Fatalf("reset-crossing link err=%v", err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(before) != string(after) {
+			t.Fatal("refused reset-crossing link changed task bytes")
+		}
+	})
+
+	t.Run("standalone legacy link remains compatible", func(t *testing.T) {
+		dir := t.TempDir()
+		task, err := Add(dir, "s", AddInput{Title: "legacy standalone"}, fixedNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(DirForProfile(dir, "default", "s"), task.ID+".json")
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{Sender: "cto", OutboxIntentID: "fabricated", DeliveryState: OutboxDelivered, MessageID: "fabricated-id"}, fixedNow.Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "legacy API") {
+			t.Fatalf("fabricated current projection err=%v", err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(before) != string(after) {
+			t.Fatal("refused fabricated projection changed task bytes")
+		}
+		linked, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{Sender: "cto", Assignee: "worker", MessageID: "legacy-id"}, fixedNow.Add(time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if linked.Dispatch == nil || linked.Dispatch.MessageID != "legacy-id" || linked.Dispatch.OutboxIntentID != "" || linked.Dispatch.DeliveryState != "" {
+			t.Fatalf("standalone legacy link=%+v", linked.Dispatch)
+		}
+	})
 }
 
 func TestConcurrentReaderCannotObservePartialAfterImages(t *testing.T) {

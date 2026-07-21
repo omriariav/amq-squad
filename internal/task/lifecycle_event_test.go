@@ -18,10 +18,14 @@ func TestStructuredDoneBindsImmutableCommandEvidenceAndGeneration(t *testing.T) 
 		t.Fatal(err)
 	}
 	ref := GenerationRef{Generation: "run-1", ManifestDigest: "manifest-1", GoalNamespace: "review/s", GoalDigest: "goal-1"}
-	if _, err = PrepareDispatchForProfile(project, "review", "s", created.ID, DispatchIntentOptions{From: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo", GenerationRef: &ref, Now: now}); err != nil {
+	prepared, err := PrepareDispatchForProfile(project, "review", "s", created.ID, DispatchIntentOptions{From: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo", GenerationRef: &ref, Now: now})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = LinkDispatchForProfile(project, "review", "s", created.ID, Dispatch{Sender: "cto", Assignee: "worker", Thread: "p2p/cto__worker", MessageID: "dispatch-1"}, now); err != nil {
+	if _, err = BeginOutboxDeliveryForProfile(project, "review", "s", created.ID, prepared.Intent.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = FinishDispatchForProfile(project, "review", "s", created.ID, prepared.Intent.ID, Dispatch{Sender: "cto", Assignee: "worker", Thread: "p2p/cto__worker"}, DeliveryOutcome{State: DeliveryDelivered, MessageID: "dispatch-1"}, now); err != nil {
 		t.Fatal(err)
 	}
 	base := filepath.Join(project, ".amq-squad", "evidence", "commands", "review", "s", "tasks", created.ID, "attempts", "attempt-1")
@@ -59,8 +63,9 @@ func TestLifecycleJournalUsesCommittedAppendOrderNotOccurredAt(t *testing.T) {
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	created, _ := AddForProfile(project, "review", "s", AddInput{Title: "ordered", AssignTo: "worker"}, now)
 	ref := GenerationRef{Generation: "run-1", ManifestDigest: "manifest-1", GoalNamespace: "review/s", GoalDigest: "goal-1"}
-	_, _ = PrepareDispatchForProfile(project, "review", "s", created.ID, DispatchIntentOptions{From: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo", GenerationRef: &ref, Now: now})
-	_, _ = LinkDispatchForProfile(project, "review", "s", created.ID, Dispatch{Sender: "cto", Assignee: "worker", Thread: "p2p/cto__worker", MessageID: "dispatch-1"}, now)
+	prepared, _ := PrepareDispatchForProfile(project, "review", "s", created.ID, DispatchIntentOptions{From: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo", GenerationRef: &ref, Now: now})
+	_, _ = BeginOutboxDeliveryForProfile(project, "review", "s", created.ID, prepared.Intent.ID, now)
+	_, _, _ = FinishDispatchForProfile(project, "review", "s", created.ID, prepared.Intent.ID, Dispatch{Sender: "cto", Assignee: "worker", Thread: "p2p/cto__worker"}, DeliveryOutcome{State: DeliveryDelivered, MessageID: "dispatch-1"}, now)
 	first, err := RecordLifecycleEventForProfile(project, "review", "s", created.ID, LifecycleEventOptions{Event: LifecycleACK, Actor: "worker", GenerationRef: ref, Now: now.Add(2 * time.Hour)})
 	if err != nil {
 		t.Fatal(err)
@@ -133,8 +138,9 @@ func TestStructuredBlockAndCancelCommitTerminalStateEventAndOutboxTogether(t *te
 			now := time.Date(2026, 7, 21, 15, 0, 0, 0, time.UTC)
 			created, _ := AddForProfile(project, "review", "s", AddInput{Title: "terminal", AssignTo: "worker"}, now)
 			ref := GenerationRef{Generation: "run-1", ManifestDigest: "manifest-1", GoalNamespace: "review/s", GoalDigest: "goal-1"}
-			_, _ = PrepareDispatchForProfile(project, "review", "s", created.ID, DispatchIntentOptions{From: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo", GenerationRef: &ref, Now: now})
-			_, _ = LinkDispatchForProfile(project, "review", "s", created.ID, Dispatch{Sender: "cto", Assignee: "worker", Thread: "p2p/cto__worker", MessageID: "dispatch-1"}, now)
+			prepared, _ := PrepareDispatchForProfile(project, "review", "s", created.ID, DispatchIntentOptions{From: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo", GenerationRef: &ref, Now: now})
+			_, _ = BeginOutboxDeliveryForProfile(project, "review", "s", created.ID, prepared.Intent.ID, now)
+			_, _, _ = FinishDispatchForProfile(project, "review", "s", created.ID, prepared.Intent.ID, Dispatch{Sender: "cto", Assignee: "worker", Thread: "p2p/cto__worker"}, DeliveryOutcome{State: DeliveryDelivered, MessageID: "dispatch-1"}, now)
 			base := filepath.Join(project, ".amq-squad", "evidence", "commands", "review", "s", "tasks", created.ID, "attempts", "attempt-terminal")
 			sha := "sha256:" + strings.Repeat("b", 64)
 			link := CommandEvidenceLink{AttemptID: "attempt-terminal", Actor: "worker", Subject: "terminal proof", ProcessState: "succeeded", FinalizationState: "complete",
