@@ -559,11 +559,7 @@ Examples:
 		if stateProject == "" {
 			stateProject = strings.TrimSpace(rec.CWD)
 		}
-		if restoreDesc != nil {
-			if err := consumePreparedRunResume(stateProject, rec.TeamProfile, rec.Session, requestedPreparedToken, rec, *restoreDesc); err != nil {
-				return fmt.Errorf("agent up refused before launch-record or process side effects: %w", err)
-			}
-		} else if !stagedAdmissionConsumed {
+		if restoreDesc == nil && !stagedAdmissionConsumed {
 			if err := consumePreparedRunMember(stateProject, rec.TeamProfile, rec.Session, requestedPreparedToken, rec.Role, rec.Handle); err != nil {
 				return fmt.Errorf("agent up refused before launch-record or process side effects: %w", err)
 			}
@@ -820,10 +816,20 @@ Examples:
 		return err
 	}
 	expectedRestoreDigest := ""
+	var claimPreparedResume func() error
 	if restoreDesc != nil {
 		expectedRestoreDigest = restoreDesc.RecordDigest
+		if !*dryRun && !requestedPreparedToken.empty() {
+			stateProject := strings.TrimSpace(rec.TeamHome)
+			if stateProject == "" {
+				stateProject = strings.TrimSpace(rec.CWD)
+			}
+			claimPreparedResume = func() error {
+				return consumePreparedRunResume(stateProject, rec.TeamProfile, rec.Session, requestedPreparedToken, rec, *restoreDesc)
+			}
+		}
 	}
-	recordWrite, err := writeLaunchRecordWithSnapshot(agentDir, rec, expectedRestoreDigest)
+	recordWrite, err := writeLaunchRecordWithSnapshot(agentDir, rec, expectedRestoreDigest, claimPreparedResume)
 	if err != nil {
 		return fmt.Errorf("write launch record: %w", err)
 	}
@@ -878,7 +884,7 @@ type launchRecordWriteSnapshot struct {
 	Written  launch.Record
 }
 
-func writeLaunchRecordWithSnapshot(agentDir string, rec launch.Record, expectedRestoreDigest string) (launchRecordWriteSnapshot, error) {
+func writeLaunchRecordWithSnapshot(agentDir string, rec launch.Record, expectedRestoreDigest string, claimPreparedResume func() error) (launchRecordWriteSnapshot, error) {
 	var snapshot launchRecordWriteSnapshot
 	err := launch.WithRecordLock(agentDir, func() error {
 		previous, err := launch.Read(agentDir)
@@ -892,6 +898,14 @@ func writeLaunchRecordWithSnapshot(agentDir string, rec launch.Record, expectedR
 			return fmt.Errorf("snapshot existing launch record: %w", err)
 		case expectedRestoreDigest != "":
 			return fmt.Errorf("prepared restore persisted launch record is missing")
+		}
+		// Managed restore follows the global record -> prepared-generation lock
+		// order. The raw persisted-record CAS must pass before the append-only
+		// resume attempt is claimed, and the claim must pass before replacement.
+		if claimPreparedResume != nil {
+			if err := claimPreparedResume(); err != nil {
+				return fmt.Errorf("claim prepared resume: %w", err)
+			}
 		}
 		if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
 			return err

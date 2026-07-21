@@ -380,7 +380,7 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 			proposal.Namespace, roleID, tm.Lead, root, briefPath, rulesPath, role.ExistingPath(agentDir), goalMode, binding.Digest), "")
 	}
 	for _, roleID := range proposal.StagedRoster {
-		add("staged_role:"+roleID, "ready", "planned absent from profile/bootstrap; separate durable spawn gate required", "")
+		add("staged_role:"+roleID, "ready", "configured and sealed for future spawn; excluded from initial roster/bootstrap execution; separate durable spawn gate required", "")
 	}
 	add("prepared_manifest", "ready", "planned create "+preparedRunPath(in.Project, in.Profile, in.Session), "")
 	add("prepared_generation_state", "ready", "planned append under "+preparedRunGenerationsPath(in.Project, in.Profile, in.Session), "")

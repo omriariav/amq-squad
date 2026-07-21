@@ -746,8 +746,15 @@ func TestPreparedExternalLeadRecordEvidenceCodexClaude(t *testing.T) {
 			if !rec.External || rec.Role != manifest.Members["cto"].Role || rec.Handle != manifest.Members["cto"].Handle || rec.Binary != manifest.Members["cto"].Binary || rec.Model != effectiveModel || manifest.Members["cto"].Model != effectiveModel || rec.GoalBinding == nil || rec.GoalBinding.Mode != wantMode || rec.GoalBinding.Source != "prepared-run" || rec.GoalBinding.DeliveryState != goalBindingDeliveryPrepared || rec.GoalBinding.Goal != manifest.GoalText {
 				t.Fatalf("external accepted record identity/binding = %+v", rec)
 			}
-			if got := preparedRunTokenFromRecord(rec); got != wantToken {
-				t.Fatalf("external record token=%+v want=%+v", got, wantToken)
+			recordToken := preparedRunTokenFromRecord(rec)
+			if !samePreparedRunGeneration(recordToken, wantToken) {
+				t.Fatalf("external record generation=%+v want=%+v", recordToken, wantToken)
+			}
+			if err := validatePreparedRunPathID("prepared launch attempt", recordToken.LaunchAttempt); err != nil {
+				t.Fatalf("external record launch attempt=%q: %v", recordToken.LaunchAttempt, err)
+			}
+			if reservation, err := readExactPreparedLaunchReservation(dir, team.DefaultProfile, "sess", recordToken); err != nil || reservation.LaunchAttempt != rec.PreparedRunLaunchAttempt {
+				t.Fatalf("external record launch attempt is not reservation-bound: reservation=%+v record=%+v err=%v", reservation, rec, err)
 			}
 			if launchRecordHasGoalBinding(rec) {
 				t.Fatalf("external planned binding was fabricated as delivered: %+v", rec.GoalBinding)
@@ -780,8 +787,9 @@ func TestPreparedExternalLeadRecordEvidenceCodexClaude(t *testing.T) {
 			if len(backend.launches) != 1 || !reflect.DeepEqual(roles, []string{"qa"}) {
 				t.Fatalf("external worker launch roles=%v launches=%d", roles, len(backend.launches))
 			}
-			if backend.launches[0].PreparedRunToken != wantToken {
-				t.Fatalf("external worker token=%+v want=%+v", backend.launches[0].PreparedRunToken, wantToken)
+			workerToken := backend.launches[0].PreparedRunToken
+			if !samePreparedRunGeneration(workerToken, wantToken) || workerToken.LaunchAttempt != recordToken.LaunchAttempt {
+				t.Fatalf("external worker token=%+v generation=%+v record=%+v", workerToken, wantToken, recordToken)
 			}
 		})
 	}
@@ -871,19 +879,19 @@ func TestPreparedRestoreRawRecordCASRejectsFullFieldReplacement(t *testing.T) {
 	if err := launch.Write(agentDir, replaced); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeLaunchRecordWithSnapshot(agentDir, persisted, digest); err == nil || !strings.Contains(err.Error(), "persisted launch record changed before CAS") {
+	if _, err := writeLaunchRecordWithSnapshot(agentDir, persisted, digest, nil); err == nil || !strings.Contains(err.Error(), "persisted launch record changed before CAS") {
 		t.Fatalf("full-field replacement CAS error=%v", err)
 	}
 }
 
 func TestPreparedRestoreDescriptorTransportFailsClosed(t *testing.T) {
-	token := preparedRunToken{Generation: "g", ManifestDigest: "d", GoalNamespace: "default/s", GoalDigest: "goal"}
-	desc := preparedRestoreDescriptor{Token: token, RecordDigest: "record", SemanticDigest: "semantic"}
+	token := preparedRunToken{Generation: strings.Repeat("a", 32), ManifestDigest: "d", GoalNamespace: "default/s", GoalDigest: "goal", LaunchAttempt: strings.Repeat("b", 32)}
+	desc := preparedRestoreDescriptor{Token: token, AttemptID: strings.Repeat("c", 32), RecordDigest: "record", SemanticDigest: "semantic"}
 	other := token
-	other.Generation = "other"
+	other.Generation = strings.Repeat("d", 32)
 	for _, tc := range []struct{ name, tokenEnv, descEnv, needle string }{
 		{name: "descriptor-without-token", descEnv: encodePreparedRestoreDescriptor(desc), needle: "descriptor/token mismatch"},
-		{name: "incomplete-descriptor", tokenEnv: encodePreparedRunToken(token), descEnv: `{"token":{"generation":"g"}}`, needle: "descriptor is incomplete"},
+		{name: "incomplete-descriptor", tokenEnv: encodePreparedRunToken(token), descEnv: `{"token":{"generation":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`, needle: "descriptor is incomplete"},
 		{name: "mismatched-token", tokenEnv: encodePreparedRunToken(other), descEnv: encodePreparedRestoreDescriptor(desc), needle: "descriptor/token mismatch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -925,6 +933,11 @@ func TestPreparedManagedWorkerSavedConversationRestoreReachesExec(t *testing.T) 
 		t.Fatal(err)
 	}
 	token := preparedRunTokenFromSnapshot(manifest, digest)
+	launchAttempt, err := reservePreparedRunLaunch(dir, team.DefaultProfile, "prepared", token)
+	if err != nil {
+		t.Fatalf("reserve launch: %v", err)
+	}
+	token.LaunchAttempt = launchAttempt
 	t.Setenv(envTmuxTarget, "new-window")
 	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
 	t.Setenv("TMUX_PANE", "%43")
@@ -945,9 +958,20 @@ func TestPreparedManagedWorkerSavedConversationRestoreReachesExec(t *testing.T) 
 		return nil
 	}
 	t.Cleanup(func() { amqSyscallExec = oldExec })
+	if _, _, err := captureOutput(t, func() error {
+		return runLaunchWithPreparedToken(withoutArg(preparedLeadLaunchArgs(dir, "codex"), "--dry-run"), token)
+	}); err != nil {
+		t.Fatalf("lead launch: %v", err)
+	}
 	args := []string{"--project", dir, "--team-home", dir, "--team-profile", team.DefaultProfile, "--role", "qa", "--me", "qa", "--session", "prepared", "--trust", trustModeApproveForMe, "claude"}
 	if _, _, err := captureOutput(t, func() error { return runLaunchWithPreparedToken(args, token) }); err != nil {
 		t.Fatalf("worker launch: %v", err)
+	}
+	if err := consumePreparedRunGoal(dir, team.DefaultProfile, "prepared", token, "cto"); err != nil {
+		t.Fatalf("consume prepared goal: %v", err)
+	}
+	if err := completePreparedRunLaunch(dir, team.DefaultProfile, "prepared", token); err != nil {
+		t.Fatalf("complete launch: %v", err)
 	}
 	env, err := resolveAMQEnvForTeamLaunchProfile(dir, team.DefaultProfile, "prepared", "qa")
 	if err != nil {
@@ -970,10 +994,11 @@ func TestPreparedManagedWorkerSavedConversationRestoreReachesExec(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(execArgv) != 2 || stored.GoalBinding != nil || preparedRunTokenFromRecord(stored) != token || generatedBootstrapPrompt(execArgv[1]) != "" {
+	if len(execArgv) != 3 || stored.GoalBinding != nil || preparedRunTokenFromRecord(stored) != token || generatedBootstrapPrompt(execArgv[2]) != "" {
 		t.Fatalf("worker restore evidence exec=%d binding=%+v token=%+v", len(execArgv), stored.GoalBinding, preparedRunTokenFromRecord(stored))
 	}
-	for _, entry := range execEnvs[1] {
+	const restoreExecIndex = 2
+	for _, entry := range execEnvs[restoreExecIndex] {
 		if strings.HasPrefix(entry, internalPreparedRunTokenEnv+"=") || strings.HasPrefix(entry, internalPreparedRunRestoreEnv+"=") {
 			t.Fatalf("worker transport leaked: %q", entry)
 		}
@@ -1056,6 +1081,11 @@ func runPreparedDeliveredManagedRestoreCase(t *testing.T, binary, conversation s
 		t.Fatal(err)
 	}
 	token := preparedRunTokenFromSnapshot(manifest, digest)
+	launchAttempt, err := reservePreparedRunLaunch(dir, team.DefaultProfile, "prepared", token)
+	if err != nil {
+		t.Fatalf("reserve launch: %v", err)
+	}
+	token.LaunchAttempt = launchAttempt
 	t.Setenv(envTmuxTarget, "new-session")
 	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
 	t.Setenv("TMUX_PANE", "%42")
@@ -1107,6 +1137,9 @@ func runPreparedDeliveredManagedRestoreCase(t *testing.T, binary, conversation s
 	if claimed, existing, err := claimGoalAttempt(dir, team.DefaultProfile, "prepared", receipt.AttemptID, "amq", time.Now().UTC()); err != nil || claimed || existing.Route != contract.ClaimRoute {
 		t.Fatalf("duplicate claim was not rejected claimed=%t existing=%+v err=%v", claimed, existing, err)
 	}
+	if err := completePreparedRunLaunch(dir, team.DefaultProfile, "prepared", token); err != nil {
+		t.Fatalf("complete launch: %v", err)
+	}
 	env, err := resolveAMQEnvForTeamLaunchProfile(dir, team.DefaultProfile, "prepared", "cto")
 	if err != nil {
 		t.Fatal(err)
@@ -1142,7 +1175,11 @@ func runPreparedDeliveredManagedRestoreCase(t *testing.T, binary, conversation s
 		if restorePrompt == "" || digestRunArtifactBytes([]byte(restorePrompt)) != manifest.BootstrapDigests["cto"] {
 			t.Fatalf("restore bootstrap is not exact accepted prompt")
 		}
-		desc := &preparedRestoreDescriptor{Token: token, RecordDigest: preparedRestoreRecordDigest(stored), SemanticDigest: preparedRestoreSemanticDigest(stored)}
+		resumeAttempt, err := newPreparedRunGeneration()
+		if err != nil {
+			t.Fatal(err)
+		}
+		desc := &preparedRestoreDescriptor{Token: token, AttemptID: resumeAttempt, RecordDigest: preparedRestoreRecordDigest(stored), SemanticDigest: preparedRestoreSemanticDigest(stored)}
 		if err := runLaunchWithIntent(append([]string{"--no-bootstrap"}, launchArgsFromRecord(stored)...), token, desc); err == nil || !strings.Contains(err.Error(), "requires the accepted bootstrap prompt") {
 			t.Fatalf("no-conversation no-bootstrap restore error=%v", err)
 		}

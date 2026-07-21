@@ -391,25 +391,134 @@ func TestPreparedRunResumeAttemptIsSingleUseButFreshAttemptIsAllowed(t *testing.
 		t.Fatal(err)
 	}
 
-	rec := launch.Record{Role: "cto", Handle: "cto"}
-	applyPreparedRunTokenToRecord(&rec, token)
+	persisted := launch.Record{Role: "cto", Handle: "cto", AgentPID: 41, AgentTTY: "persisted", StartedAt: time.Unix(1, 0).UTC()}
+	applyPreparedRunTokenToRecord(&persisted, token)
+	candidate := persisted
+	candidate.AgentPID = 42
+	candidate.AgentTTY = "reconstructed"
+	candidate.StartedAt = time.Unix(2, 0).UTC()
+	if preparedRestoreRecordDigest(candidate) == preparedRestoreRecordDigest(persisted) || preparedRestoreSemanticDigest(candidate) != preparedRestoreSemanticDigest(persisted) {
+		t.Fatalf("fixture does not isolate volatile reconstruction: persisted=%+v candidate=%+v", persisted, candidate)
+	}
 	newDescriptor := func() preparedRestoreDescriptor {
 		attempt, err := newPreparedRunGeneration()
 		if err != nil {
 			t.Fatal(err)
 		}
-		return preparedRestoreDescriptor{Token: token, AttemptID: attempt, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec)}
+		return preparedRestoreDescriptor{Token: token, AttemptID: attempt, RecordDigest: preparedRestoreRecordDigest(persisted), SemanticDigest: preparedRestoreSemanticDigest(persisted)}
 	}
 	first := newDescriptor()
-	if err := consumePreparedRunResume(dir, team.DefaultProfile, "prepared", token, rec, first); err != nil {
+	if err := consumePreparedRunResume(dir, team.DefaultProfile, "prepared", token, candidate, first); err != nil {
 		t.Fatal(err)
 	}
-	if err := consumePreparedRunResume(dir, team.DefaultProfile, "prepared", token, rec, first); err == nil || !strings.Contains(err.Error(), "replay refused") {
+	if err := consumePreparedRunResume(dir, team.DefaultProfile, "prepared", token, candidate, first); err == nil || !strings.Contains(err.Error(), "replay refused") {
 		t.Fatalf("resume replay error = %v", err)
 	}
 	second := newDescriptor()
-	if err := consumePreparedRunResume(dir, team.DefaultProfile, "prepared", token, rec, second); err != nil {
+	if err := consumePreparedRunResume(dir, team.DefaultProfile, "prepared", token, candidate, second); err != nil {
 		t.Fatalf("fresh resume attempt failed: %v", err)
+	}
+}
+
+func TestPreparedResumeRecordCASPrecedesGenerationClaim(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(*testing.T, string, launch.Record) *launch.Record
+		needle  string
+	}{
+		{name: "missing", prepare: func(t *testing.T, agentDir string, _ launch.Record) *launch.Record {
+			return nil
+		}, needle: "persisted launch record is missing"},
+		{name: "replaced", prepare: func(t *testing.T, agentDir string, persisted launch.Record) *launch.Record {
+			replaced := persisted
+			replaced.AgentPID++
+			if err := launch.Write(agentDir, replaced); err != nil {
+				t.Fatal(err)
+			}
+			return &replaced
+		}, needle: "persisted launch record changed before CAS"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, _, token := reservePreparedRunStateFixture(t)
+			if err := consumePreparedRunMember(dir, team.DefaultProfile, "prepared", token, "cto", "cto"); err != nil {
+				t.Fatal(err)
+			}
+			if err := consumePreparedRunGoal(dir, team.DefaultProfile, "prepared", token, "cto"); err != nil {
+				t.Fatal(err)
+			}
+			if err := completePreparedRunLaunch(dir, team.DefaultProfile, "prepared", token); err != nil {
+				t.Fatal(err)
+			}
+
+			agentDir := t.TempDir()
+			persisted := launch.Record{CWD: dir, Role: "cto", Handle: "cto", AgentPID: 41, StartedAt: time.Unix(1, 0).UTC()}
+			applyPreparedRunTokenToRecord(&persisted, token)
+			desc := preparedRestoreDescriptor{Token: token, AttemptID: strings.Repeat("e", 32), RecordDigest: preparedRestoreRecordDigest(persisted), SemanticDigest: preparedRestoreSemanticDigest(persisted)}
+			candidate := persisted
+			candidate.AgentPID = 42
+			candidate.StartedAt = time.Unix(2, 0).UTC()
+			wantStored := tc.prepare(t, agentDir, persisted)
+			if wantStored != nil {
+				normalized, err := launch.Read(agentDir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantStored = &normalized
+			}
+			claimCalls := 0
+			done := make(chan error, 1)
+			go func() {
+				_, err := writeLaunchRecordWithSnapshot(agentDir, candidate, desc.RecordDigest, func() error {
+					claimCalls++
+					return consumePreparedRunResume(dir, team.DefaultProfile, "prepared", token, candidate, desc)
+				})
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err == nil || !strings.Contains(err.Error(), tc.needle) {
+					t.Fatalf("record CAS error=%v want %q", err, tc.needle)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("record-to-generation lock order deadlocked")
+			}
+			if claimCalls != 0 {
+				t.Fatalf("raw %s record created %d generation claim(s)", tc.name, claimCalls)
+			}
+			if _, err := os.Stat(preparedRunResumeEventPath(dir, team.DefaultProfile, "prepared", token.Generation, desc.AttemptID)); !os.IsNotExist(err) {
+				t.Fatalf("raw %s record created resume event: %v", tc.name, err)
+			}
+			if wantStored != nil {
+				stored, err := launch.Read(agentDir)
+				if err != nil || preparedRestoreRecordDigest(stored) != preparedRestoreRecordDigest(*wantStored) {
+					t.Fatalf("raw replacement changed: stored=%+v err=%v", stored, err)
+				}
+			}
+		})
+	}
+}
+
+func TestPreparedRunResumeSemanticDriftRejectsBeforeClaim(t *testing.T) {
+	dir, _, token := reservePreparedRunStateFixture(t)
+	if err := consumePreparedRunMember(dir, team.DefaultProfile, "prepared", token, "cto", "cto"); err != nil {
+		t.Fatal(err)
+	}
+	if err := consumePreparedRunGoal(dir, team.DefaultProfile, "prepared", token, "cto"); err != nil {
+		t.Fatal(err)
+	}
+	if err := completePreparedRunLaunch(dir, team.DefaultProfile, "prepared", token); err != nil {
+		t.Fatal(err)
+	}
+	persisted := launch.Record{Role: "cto", Handle: "cto"}
+	applyPreparedRunTokenToRecord(&persisted, token)
+	desc := preparedRestoreDescriptor{Token: token, AttemptID: strings.Repeat("f", 32), RecordDigest: preparedRestoreRecordDigest(persisted), SemanticDigest: preparedRestoreSemanticDigest(persisted)}
+	candidate := persisted
+	candidate.GoalBinding = &launch.GoalBinding{Goal: "semantic drift"}
+	if err := consumePreparedRunResume(dir, team.DefaultProfile, "prepared", token, candidate, desc); err == nil || !strings.Contains(err.Error(), "descriptor changed") {
+		t.Fatalf("semantic drift error=%v", err)
+	}
+	if _, err := os.Stat(preparedRunResumeEventPath(dir, team.DefaultProfile, "prepared", token.Generation, desc.AttemptID)); !os.IsNotExist(err) {
+		t.Fatalf("semantic drift created resume event: %v", err)
 	}
 }
 

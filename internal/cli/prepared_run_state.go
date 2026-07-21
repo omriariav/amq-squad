@@ -439,7 +439,7 @@ func consumePreparedRunResume(project, profile, session string, token preparedRu
 	if err := validatePreparedRunPathID("prepared resume attempt", desc.AttemptID); err != nil {
 		return err
 	}
-	if desc.AttemptID == "" || !samePreparedRunGeneration(desc.Token, token) || desc.RecordDigest != preparedRestoreRecordDigest(rec) || desc.SemanticDigest != preparedRestoreSemanticDigest(rec) {
+	if desc.AttemptID == "" || !samePreparedRunGeneration(desc.Token, token) || desc.SemanticDigest != preparedRestoreSemanticDigest(rec) {
 		return preparedRunIdentityMismatchf("prepared resume descriptor changed before generation claim")
 	}
 	return withPreparedRunStateLock(project, profile, session, token.Generation, func() error {

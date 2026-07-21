@@ -867,7 +867,7 @@ func TestRunReadinessMachineStatuses(t *testing.T) {
 	}{
 		{name: "ready", artifact: "brief", wantStatus: "ready"},
 		{name: "missing", artifact: "role:custom-role", wantStatus: "missing", mutate: func(t *testing.T, dir string, manifest *preparedRunManifest) {
-			addReadinessCustomRole(t, dir, manifest, "custom-role", "# Custom role\n\nOwn a bounded implementation slice.\n")
+			addReadinessCustomRole(t, dir, manifest, "custom-role", team.ActorModeImplementation, "# Custom role\n\nOwn a bounded implementation slice.\n")
 			if err := os.Remove(team.CustomRolePath(dir, "custom-role")); err != nil {
 				t.Fatal(err)
 			}
@@ -879,7 +879,7 @@ func TestRunReadinessMachineStatuses(t *testing.T) {
 			}
 		}},
 		{name: "generic", artifact: "role:custom-role", wantStatus: "generic", mutate: func(t *testing.T, dir string, manifest *preparedRunManifest) {
-			addReadinessCustomRole(t, dir, manifest, "custom-role", "# Custom role\n\nNo catalog description is configured for this custom role. Follow team rules.\n")
+			addReadinessCustomRole(t, dir, manifest, "custom-role", team.ActorModeImplementation, "# Custom role\n\nNo catalog description is configured for this custom role. Follow team rules.\n")
 		}},
 		{name: "stale", artifact: "team_rules", wantStatus: "stale", mutate: func(t *testing.T, dir string, _ *preparedRunManifest) {
 			path := rules.Path(dir)
@@ -934,6 +934,26 @@ func TestRunReadinessFiveAuthoredThreeIntendedOneProfileFailsExactRoster(t *test
 		}
 		manifest.RoleDigests[roleID] = digest
 	}
+	tm, err := team.ReadProfile(dir, manifest.Profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, roleID := range []string{"protocol-reviewer", "operator-reviewer"} {
+		member := team.Member{Role: roleID, Handle: roleID, Binary: "codex", Session: "staged-review", ActorMode: team.ActorModeReview}
+		tm.Members = append(tm.Members, member)
+	}
+	if err := team.WriteProfile(dir, manifest.Profile, tm); err != nil {
+		t.Fatal(err)
+	}
+	for _, roleID := range []string{"platform-dev", "runtime-dev"} {
+		member := team.Member{Role: roleID, Handle: roleID, Binary: "codex", Session: manifest.Session, ActorMode: team.ActorModeImplementation}
+		manifest.Members[roleID] = acceptedMemberIdentity(tm, member, manifest.Profile, manifest.Session)
+	}
+	for _, member := range tm.Members {
+		if strings.HasSuffix(member.Role, "reviewer") {
+			setReadinessAcceptedStagedMember(t, dir, &manifest, tm, member)
+		}
+	}
 	manifest.InitialRoster = []string{"cto", "platform-dev", "runtime-dev"}
 	manifest.StagedRoster = []string{"protocol-reviewer", "operator-reviewer"}
 	republishPreparedRunManifestForTest(t, manifest)
@@ -952,22 +972,32 @@ func TestRunReadinessFiveAuthoredThreeIntendedOneProfileFailsExactRoster(t *test
 		}
 	}
 	for _, roleID := range []string{"protocol-reviewer", "operator-reviewer"} {
-		if row := readinessRow(result, "staged_role:"+roleID); row.Status != "ready" || !strings.Contains(row.Evidence, "absent from exact session launch") {
+		if row := readinessRow(result, "staged_role:"+roleID); row.Status != "ready" || !strings.Contains(row.Evidence, "excluded from initial launch") || !strings.Contains(row.Evidence, "reservation required") {
 			t.Fatalf("staged absence %s = %+v", roleID, row)
 		}
-		if got := readinessRowStatus(result, "bootstrap:"+roleID); got != "" {
-			t.Fatalf("staged-only role %s received bootstrap row %q", roleID, got)
+		if row := readinessRow(result, "bootstrap:"+roleID); row.Status != "ready" || !strings.Contains(row.Evidence, "staged role="+roleID) {
+			t.Fatalf("staged bootstrap %s = %+v", roleID, row)
 		}
 	}
 }
 
-func TestPreparedBootstrapEvidenceInitialOnlyExactContract(t *testing.T) {
+func TestPreparedBootstrapEvidenceSeparatesInitialExecutionFromStagedFutureCommitment(t *testing.T) {
 	dir := prepareRunStartFixture(t, runwizard.LaunchShapeWorkingTeamTogether)
 	manifest, err := readPreparedRunManifest(dir, team.DefaultProfile, "prepared")
 	if err != nil {
 		t.Fatal(err)
 	}
-	addReadinessCustomRole(t, dir, &manifest, "operator-reviewer", "# Operator reviewer\n\nReview durable operator gates and never mutate implementation files.\n")
+	addReadinessCustomRole(t, dir, &manifest, "operator-reviewer", team.ActorModeReview, "# Operator reviewer\n\nReview durable operator gates and never mutate implementation files.\n")
+	if containsRole(manifest.InitialRoster, "operator-reviewer") {
+		t.Fatalf("staged reviewer entered initial roster: %v", manifest.InitialRoster)
+	}
+	if _, ok := manifest.Members["operator-reviewer"]; ok {
+		t.Fatalf("staged reviewer entered initial member identities: %+v", manifest.Members["operator-reviewer"])
+	}
+	stagedIdentity, staged := manifest.StagedMembers["operator-reviewer"]
+	if !containsRole(manifest.StagedRoster, "operator-reviewer") || !staged || stagedIdentity.ActorMode != team.ActorModeReview {
+		t.Fatalf("staged future identity is incomplete: roster=%v identity=%+v", manifest.StagedRoster, stagedIdentity)
+	}
 	republishPreparedRunManifestForTest(t, manifest)
 	result := calculateRunReadiness(dir, team.DefaultProfile, "prepared")
 	row := readinessRow(result, "bootstrap:cto")
@@ -990,8 +1020,8 @@ func TestPreparedBootstrapEvidenceInitialOnlyExactContract(t *testing.T) {
 			t.Fatalf("bootstrap evidence missing %q: %s", want, row.Evidence)
 		}
 	}
-	if got := readinessRowStatus(result, "bootstrap:operator-reviewer"); got != "" {
-		t.Fatalf("staged-only role received bootstrap row %q", got)
+	if staged := readinessRow(result, "bootstrap:operator-reviewer"); staged.Status != "ready" || !strings.Contains(staged.Evidence, "staged role=operator-reviewer") {
+		t.Fatalf("staged future bootstrap commitment row = %+v", staged)
 	}
 }
 
@@ -1228,15 +1258,41 @@ func TestFreshWizardPreparationAndLaunchRejectionsOpenNoPanes(t *testing.T) {
 	}
 }
 
-func addReadinessCustomRole(t *testing.T, dir string, manifest *preparedRunManifest, roleID, body string) {
+func addReadinessCustomRole(t *testing.T, dir string, manifest *preparedRunManifest, roleID, actorMode, body string) {
 	t.Helper()
 	writeAuthoredReadinessRole(t, dir, roleID, body)
 	digest, _, err := roleContractDigest(dir, roleID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	tm, err := team.ReadProfile(dir, manifest.Profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := team.Member{Role: roleID, Handle: roleID, Binary: "codex", Session: manifest.Session + "-staged", ActorMode: actorMode}
+	tm.Members = append(tm.Members, member)
+	if err := team.WriteProfile(dir, manifest.Profile, tm); err != nil {
+		t.Fatal(err)
+	}
 	manifest.StagedRoster = append(manifest.StagedRoster, roleID)
+	setReadinessAcceptedStagedMember(t, dir, manifest, tm, member)
 	manifest.RoleDigests[roleID] = digest
+}
+
+func setReadinessAcceptedStagedMember(t *testing.T, dir string, manifest *preparedRunManifest, tm team.Team, member team.Member) {
+	t.Helper()
+	manifest.StagedMembers[member.Role] = acceptedMemberIdentity(tm, member, manifest.Profile, manifest.Session)
+	binding := acceptedGoalBinding{Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest}
+	bindingLine, err := expectedPreparedBootstrapBindingLine(tm, manifest.Profile, manifest.Session, member, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := preparedBootstrap(dir, manifest.Profile, manifest.Session, binding, tm, member, acceptedRunContext{Version: manifest.Environment.BinaryVersion, Topology: manifest.Topology})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.BootstrapBindings[member.Role] = bindingLine
+	manifest.BootstrapDigests[member.Role] = digestRunArtifactBytes([]byte(prompt))
 }
 
 func prepareRunStartBinaryFixture(t *testing.T, binary string) string {
