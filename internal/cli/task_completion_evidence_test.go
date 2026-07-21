@@ -136,71 +136,21 @@ func TestTaskCompletionReconcilePreviewApplyAndReplicaMovement(t *testing.T) {
 	assertFileBytes(t, namedPath, namedBefore)
 	assertFileBytes(t, defaultPath, defaultBefore)
 	assertFileBytes(t, messagePath, messageBefore)
-	if _, _, err := captureOutput(t, func() error {
-		return runTask([]string{"reconcile", "t1", "--evidence-id", "msg-done", "--binding-digest", preview.BindingSHA256, "--apply", "--me", "cto", "--project", project, "--profile", "release", "--session", "s"})
-	}); err == nil {
-		t.Fatal("legacy prose DONE unexpectedly applied")
-	}
-	return
 	for name, args := range map[string][]string{
-		"missing binding": {"reconcile", "t1", "--evidence-id", "msg-done", "--apply", "--me", "cto", "--project", project, "--profile", "release", "--session", "s"},
-		"wrong binding":   {"reconcile", "t1", "--evidence-id", "msg-done", "--binding-digest", "wrong", "--apply", "--me", "cto", "--project", project, "--profile", "release", "--session", "s"},
-		"missing actor":   {"reconcile", "t1", "--evidence-id", "msg-done", "--binding-digest", preview.BindingSHA256, "--apply", "--project", project, "--profile", "release", "--session", "s"},
+		"matching binding": {"reconcile", "t1", "--evidence-id", "msg-done", "--binding-digest", preview.BindingSHA256, "--apply", "--me", "cto", "--project", project, "--profile", "release", "--session", "s"},
+		"missing binding":  {"reconcile", "t1", "--evidence-id", "msg-done", "--apply", "--me", "cto", "--project", project, "--profile", "release", "--session", "s"},
+		"wrong binding":    {"reconcile", "t1", "--evidence-id", "msg-done", "--binding-digest", "wrong", "--apply", "--me", "cto", "--project", project, "--profile", "release", "--session", "s"},
+		"missing actor":    {"reconcile", "t1", "--evidence-id", "msg-done", "--binding-digest", preview.BindingSHA256, "--apply", "--project", project, "--profile", "release", "--session", "s"},
 	} {
 		if _, _, err := captureOutput(t, func() error { return runTask(args) }); err == nil {
-			t.Fatalf("%s unexpectedly applied", name)
+			t.Fatalf("legacy prose DONE unexpectedly applied with %s", name)
 		}
 		assertFileBytes(t, namedPath, namedBefore)
+		assertFileBytes(t, defaultPath, defaultBefore)
 		assertFileBytes(t, messagePath, messageBefore)
 	}
-
-	applyArgs := []string{"reconcile", "t1", "--evidence-id", "msg-done", "--binding-digest", preview.BindingSHA256, "--apply", "--me", "cto", "--project", project, "--profile", "release", "--session", "s", "--json"}
-	applyOut, _, err := captureOutput(t, func() error { return runTask(applyArgs) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	applied := decodeJSONEnvelope[taskReconcileEnvelopeData](t, applyOut).Data.Applied
-	if applied == nil || !applied.Changed || applied.Task.Status != taskstore.StatusCompleted || applied.Task.CompletionReconcile.CompletedEvidence.AppliedBy != "cto" {
-		t.Fatalf("applied=%+v", applied)
-	}
-	assertFileBytes(t, defaultPath, defaultBefore)
-	assertFileBytes(t, messagePath, messageBefore)
-	repeatOut, _, err := captureOutput(t, func() error { return runTask(applyArgs) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	repeat := decodeJSONEnvelope[taskReconcileEnvelopeData](t, repeatOut).Data.Applied
-	if repeat == nil || repeat.Changed {
-		t.Fatalf("repeat apply=%+v", repeat)
-	}
-
-	// Physical new->cur movement changes paths but not the canonical content or
-	// stable binding identity.
-	curDir := filepath.Join(agentDir, "inbox", "cur")
-	if err := os.MkdirAll(curDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	curPath := filepath.Join(curDir, filepath.Base(messagePath))
-	if err := os.Rename(messagePath, curPath); err != nil {
-		t.Fatal(err)
-	}
-	movedOut, _, err := captureOutput(t, func() error {
-		return runTask([]string{"reconcile", "t1", "--evidence-id", "msg-done", "--project", project, "--profile", "release", "--session", "s", "--json"})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	moved := decodeJSONEnvelope[taskReconcileEnvelopeData](t, movedOut).Data.Completion
-	if moved.BindingSHA256 != preview.BindingSHA256 || moved.ContentSHA256 != preview.ContentSHA256 || moved.FirstPath != messagePath || moved.CurrentPath != curPath {
-		t.Fatalf("movement changed identity: before=%+v after=%+v", preview, moved)
-	}
-	originalScanner := taskCompletionMessageScanner
-	taskCompletionMessageScanner = func(string, func() time.Time) ([]state.Message, []state.Warning) { return nil, nil }
-	warnings, err := statusTaskWarnings(project, "release", "s")
-	taskCompletionMessageScanner = originalScanner
-	if err != nil || findStatusWarning(warnings, "task_completion_evidence_stale") == nil {
-		t.Fatalf("completed stale evidence not surfaced: warnings=%+v err=%v", warnings, err)
-	}
+	// The structured positive path is covered by
+	// TestStructuredDoneBindsImmutableCommandEvidenceAndGeneration.
 }
 
 func TestTaskCompletionEvidenceRawAuthorityMismatchAndTaskTokenBoundaries(t *testing.T) {
@@ -248,7 +198,6 @@ func TestTaskCompletionEvidenceRawAuthorityMismatchAndTaskTokenBoundaries(t *tes
 	assertFileBytes(t, defaultPath, defaultBefore)
 	assertFileBytes(t, messagePath, messageBefore)
 	assertFileBytes(t, namedPath, namedBefore)
-	return
 	missing, err := assessTaskCompletionEvidence(selected, "missing-id", taskNow())
 	if err != nil || !containsTestString(missing.Blockers, "evidence_id_not_found") || missing.ProposedState == taskstore.StatusCompletedPendingReconcile {
 		t.Fatalf("missing assessment=%+v err=%v", missing, err)
