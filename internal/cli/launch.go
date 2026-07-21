@@ -102,7 +102,7 @@ func runLaunch(args []string) error {
 		return err
 	}
 	if desc != nil {
-		if !token.complete() || desc.Token != token {
+		if !token.complete() || !samePreparedRunGeneration(desc.Token, token) {
 			return fmt.Errorf("prepared restore descriptor/token mismatch")
 		}
 		return runLaunchWithIntent(args, token, desc)
@@ -148,6 +148,7 @@ func runLaunchWithIntent(args []string, requestedPreparedToken preparedRunToken,
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args to treat as launch defaults, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args to treat as launch defaults, e.g. '--chrome'")
 	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent for the same handle/workstream is detected")
+	stagedSpawn := fs.Bool("staged-spawn", false, "reserve and consume an accepted staged-role spawn after its durable gate is approved")
 	noRequireWake := fs.Bool("no-require-wake", false, "do not pass --require-wake to amq coop exec (allows launching when the wake sidecar cannot acquire its lock)")
 	noGitignore := fs.Bool("no-gitignore", false, "pass --no-gitignore to amq coop exec (leave .gitignore unchanged during AMQ auto-init)")
 	symphony := fs.Bool("symphony", false, "Codex only: patch the existing WORKFLOW.md with AMQ Symphony lifecycle hooks for this resolved root and handle")
@@ -436,6 +437,9 @@ Examples:
 	if !requestedPreparedToken.empty() && !requestedPreparedToken.complete() {
 		return fmt.Errorf("agent up refused: prepared run token is incomplete")
 	}
+	if *stagedSpawn && (!requestedPreparedToken.empty() || restoreDesc != nil) {
+		return usageErrorf("--staged-spawn cannot be combined with an internal prepared token or restore")
+	}
 	applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
 	if restoreDesc != nil && preparedRestoreSemanticDigest(rec) != restoreDesc.SemanticDigest {
 		return fmt.Errorf("prepared restore descriptor does not match persisted launch record")
@@ -525,8 +529,45 @@ Examples:
 			return fmt.Errorf("agent up refused: %w", err)
 		}
 	}
+	stagedAdmissionConsumed := false
+	if *stagedSpawn {
+		if preparedLaunchContext == nil || !containsRole(preparedLaunchContext.Manifest.StagedRoster, rec.Role) {
+			return fmt.Errorf("agent up --staged-spawn refused: %s/%s is not an accepted staged actor", rec.Role, rec.Handle)
+		}
+		requestedPreparedToken = preparedRunTokenForContext(preparedLaunchContext)
+		if !*dryRun {
+			attempt, err := admitPreparedRunStagedSpawn(rec.TeamHome, rec.TeamProfile, rec.Session, requestedPreparedToken, rec.Role, rec.Handle)
+			if err != nil {
+				return fmt.Errorf("agent up --staged-spawn refused before launch-record or process side effects: %w", err)
+			}
+			requestedPreparedToken.LaunchAttempt = attempt
+			stagedAdmissionConsumed = true
+		}
+		applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
+	}
+	if !*dryRun && requestedPreparedToken.empty() && preparedLaunchContext != nil {
+		if containsRole(preparedLaunchContext.Manifest.StagedRoster, rec.Role) {
+			return fmt.Errorf("agent up refused before launch-record or process side effects: staged actor %s/%s requires an exact single-use spawn reservation for prepared generation %s", rec.Role, rec.Handle, preparedLaunchContext.Manifest.Generation)
+		}
+		return fmt.Errorf("agent up refused before launch-record or process side effects: prepared actor %s/%s requires the exact reserved generation token", rec.Role, rec.Handle)
+	}
 	if requestedPreparedToken.empty() {
 		applyPreparedRunTokenToRecord(&rec, preparedRunTokenForContext(preparedLaunchContext))
+	}
+	if !*dryRun && !requestedPreparedToken.empty() {
+		stateProject := strings.TrimSpace(rec.TeamHome)
+		if stateProject == "" {
+			stateProject = strings.TrimSpace(rec.CWD)
+		}
+		if restoreDesc != nil {
+			if err := consumePreparedRunResume(stateProject, rec.TeamProfile, rec.Session, requestedPreparedToken, rec, *restoreDesc); err != nil {
+				return fmt.Errorf("agent up refused before launch-record or process side effects: %w", err)
+			}
+		} else if !stagedAdmissionConsumed {
+			if err := consumePreparedRunMember(stateProject, rec.TeamProfile, rec.Session, requestedPreparedToken, rec.Role, rec.Handle); err != nil {
+				return fmt.Errorf("agent up refused before launch-record or process side effects: %w", err)
+			}
+		}
 	}
 	if restoreDesc == nil && rec.GoalBinding == nil && rec.Conversation == "" && preparedLaunchContext != nil && preparedLaunchContext.Member.Role == preparedLaunchContext.Team.Lead {
 		preparedBinding, err := preparedGoalBinding(preparedLaunchContext.Team, preparedLaunchContext.Manifest.Profile, preparedLaunchContext.Manifest.Session, preparedLaunchContext.Member, preparedLaunchContext.Binding)

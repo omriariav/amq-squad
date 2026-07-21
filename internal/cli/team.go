@@ -94,6 +94,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	effortFlag := fs.String("effort", "", "per-persona effort normalized into native member args, e.g. cto=high,qa=medium")
 	toolProfileFlag := fs.String("tool-profile", "", "per-role capability policy, e.g. cto=full,dev=coding,qa=minimal")
 	toolConfigFlag := fs.String("tool-config", "", "per-role native policy materialization: Claude settings path or Codex profile name")
+	actorModeFlag := fs.String("actor-mode", "", "per-role execution capability: implementation or review, e.g. dev=implementation,reviewer=review")
 	trustRaw := fs.String("trust", "", "Codex trust profile for generated commands: approve-for-me (default), sandboxed, or trusted")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
@@ -301,6 +302,11 @@ Examples:
 		return fmt.Errorf("parse --tool-config: %w", err)
 	}
 	toolProfiles, toolConfigs = lowercaseKeys(toolProfiles), lowercaseKeys(toolConfigs)
+	actorModes, err := parseKV(*actorModeFlag)
+	if err != nil {
+		return fmt.Errorf("parse --actor-mode: %w", err)
+	}
+	actorModes = lowercaseKeys(actorModes)
 	binaryArgs, err := parseBinaryArgFlags(*codexArgsRaw, *claudeArgsRaw)
 	if err != nil {
 		return err
@@ -405,7 +411,7 @@ Examples:
 	if err := validateEffortOverrideKeys(effortOverrides, pickedSet); err != nil {
 		return err
 	}
-	for label, values := range map[string]map[string]string{"--tool-profile": toolProfiles, "--tool-config": toolConfigs} {
+	for label, values := range map[string]map[string]string{"--tool-profile": toolProfiles, "--tool-config": toolConfigs, "--actor-mode": actorModes} {
 		var unknown []string
 		for role := range values {
 			if !pickedSet[role] {
@@ -455,10 +461,17 @@ Examples:
 			}
 		}
 		m := team.Member{
-			Role:    id,
-			Binary:  binary,
-			Handle:  id,
-			Session: workstream,
+			Role:      id,
+			Binary:    binary,
+			Handle:    id,
+			Session:   workstream,
+			ActorMode: team.ActorModeImplementation,
+		}
+		if mode, ok := actorModes[id]; ok {
+			m.ActorMode = strings.ToLower(strings.TrimSpace(mode))
+			if m.ActorMode != team.ActorModeImplementation && m.ActorMode != team.ActorModeReview {
+				return fmt.Errorf("--actor-mode %s=%s: use %s or %s", id, mode, team.ActorModeImplementation, team.ActorModeReview)
+			}
 		}
 		if model, ok := modelOverrides[id]; ok {
 			m.Model = strings.TrimSpace(model)
@@ -496,6 +509,13 @@ Examples:
 	}
 	if !flagWasSet(fs, "mode") {
 		executionMode = defaultExecutionModeForTeam(orchestrated)
+	}
+	if orchestrated && leadMode == team.LeadModePlanner {
+		for i := range members {
+			if strings.EqualFold(members[i].Role, leadRole) {
+				members[i].ActorMode = team.ActorModeReview
+			}
+		}
 	}
 	composition := strings.TrimSpace(*compositionFlag)
 	autonomousPolicy, err := resolveAutonomousPolicy(composition, *maxAgentsFlag, *maxTotalSpawnsFlag, *allowedRolesFlag, *allowedRoleClassesFlag, *budgetTurnsFlag, *idleReapMinutesFlag)

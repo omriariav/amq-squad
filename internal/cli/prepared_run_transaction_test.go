@@ -162,6 +162,212 @@ func assertNoPreparedGoalArtifacts(t *testing.T, project, profile, session strin
 	}
 }
 
+func TestPreparedGoalAtomicAdmissionRejectsBoundaryIdentityMutationWithoutArtifacts(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		mutate              func(*testing.T, string, string, preparedRunManifest) *launch.Record
+		want                string
+		wantRecordPreserved bool
+	}{
+		{
+			name: "profile-member",
+			mutate: func(t *testing.T, project, _ string, manifest preparedRunManifest) *launch.Record {
+				tm, err := team.ReadProfile(project, team.DefaultProfile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := range tm.Members {
+					if tm.Members[i].Role == "cto" {
+						if manifest.Members["cto"].ActorMode == team.ActorModeImplementation {
+							tm.Members[i].ActorMode = team.ActorModeReview
+						} else {
+							tm.Members[i].ActorMode = team.ActorModeImplementation
+						}
+					}
+				}
+				if err := team.WriteProfileUnderLock(project, team.DefaultProfile, tm); err != nil {
+					t.Fatal(err)
+				}
+				return nil
+			},
+			want: "current lead member identity differs",
+		},
+		{
+			name: "launch-record-goal-binding",
+			mutate: func(t *testing.T, _ string, agentDir string, _ preparedRunManifest) *launch.Record {
+				rec, err := launch.Read(agentDir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				changed := *rec.GoalBinding
+				changed.DeliveryState = goalBindingDeliveryDelivered
+				rec.GoalBinding = &changed
+				rec.Conversation = "concurrent-boundary-mutation"
+				if err := goalLaunchWriteUnderRecordLock(agentDir, rec); err != nil {
+					t.Fatal(err)
+				}
+				return &rec
+			},
+			want:                "not the exact pinned prepared binding",
+			wantRecordPreserved: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project := seedTeam(t, team.Team{Orchestrated: true, Lead: "cto", Members: []team.Member{
+				{Role: "cto", Handle: "cto", Binary: "codex", Session: "sess"},
+				{Role: "qa", Handle: "qa", Binary: "codex", Session: "sess"},
+			}})
+			useFakeTmuxBackend(t)
+			stubCurrentRunStartPane(t, "%42")
+			stubRunStartLeadWake(t)
+			args := prepareRunStartTestInvocation(t, []string{"-p", project, "-s", "sess", "--external-lead", "--go"}, true)
+			manifest, _, err := readPreparedRunManifestSnapshot(project, team.DefaultProfile, "sess")
+			if err != nil {
+				t.Fatal(err)
+			}
+			agentDir := filepath.Join(squadnamespace.AMQRoot(project, team.DefaultProfile, "sess"), "agents", "cto")
+			oldReady := runStartLeadReadyCheck
+			runStartLeadReadyCheck = func(string, string, string, string) (runStartLeadReadiness, error) {
+				return runStartLeadReadiness{Ready: true}, nil
+			}
+			t.Cleanup(func() { runStartLeadReadyCheck = oldReady })
+			var mutated *launch.Record
+			oldBoundary := preparedGoalAdmissionBeforeClaim
+			preparedGoalAdmissionBeforeClaim = func() error {
+				mutated = tc.mutate(t, project, agentDir, manifest)
+				return nil
+			}
+			t.Cleanup(func() { preparedGoalAdmissionBeforeClaim = oldBoundary })
+			oldSend := sendPromptToPane
+			paneSends := 0
+			sendPromptToPane = func(string, string) error { paneSends++; return nil }
+			t.Cleanup(func() { sendPromptToPane = oldSend })
+			oldFallback := goalFallbackAMQSend
+			amqSends := 0
+			goalFallbackAMQSend = func(goalDeliveryOptions) (goalFallbackDelivery, error) {
+				amqSends++
+				return goalFallbackDelivery{}, nil
+			}
+			t.Cleanup(func() { goalFallbackAMQSend = oldFallback })
+
+			_, _, err = captureOutput(t, func() error { return runRunStart(args, "test") })
+			if err == nil || !isPreparedRunIdentityMismatch(err) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("boundary identity mutation error=%v want=%q", err, tc.want)
+			}
+			if _, statErr := os.Stat(preparedRunGoalEventPath(project, team.DefaultProfile, "sess", manifest.Generation)); !os.IsNotExist(statErr) {
+				t.Fatalf("boundary mutation created prepared goal event: %v", statErr)
+			}
+			assertNoPreparedGoalArtifacts(t, project, team.DefaultProfile, "sess")
+			if paneSends != 0 || amqSends != 0 {
+				t.Fatalf("boundary mutation reached pane=%d amq=%d side effects", paneSends, amqSends)
+			}
+			stored, readErr := launch.Read(agentDir)
+			if tc.wantRecordPreserved {
+				if readErr != nil || mutated == nil || !reflect.DeepEqual(stored, *mutated) {
+					t.Fatalf("concurrent record mutation was not preserved: err=%v got=%+v want=%+v", readErr, stored, mutated)
+				}
+			} else if !os.IsNotExist(readErr) {
+				t.Fatalf("owned record survived failed transaction: err=%v record=%+v", readErr, stored)
+			}
+		})
+	}
+}
+
+func TestPreparedGoalAtomicAdmissionCompletesBeforeOrdinaryWriterEnters(t *testing.T) {
+	project, manifest, token := reservePreparedRunStateFixture(t)
+	if err := consumePreparedRunMember(project, team.DefaultProfile, "prepared", token, "cto", "cto"); err != nil {
+		t.Fatal(err)
+	}
+	tm, err := team.ReadProfile(project, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, ok := memberByRole(tm, "cto")
+	if !ok {
+		t.Fatal("missing prepared lead")
+	}
+	binding, err := preparedGoalBinding(tm, team.DefaultProfile, "prepared", member, acceptedGoalBinding{
+		Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentDir, rec := writePreparedManagedTransactionRecord(t, project, team.DefaultProfile, "prepared", "cto", "%42", "@1", token)
+	rec.GoalBinding = binding
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	opts, err := resolveGoalDeliveryOptions(project, team.DefaultProfile, "prepared", "cto", manifest.GoalText, true, true, true, "goal start", namespaceConflictOverrideOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.PreparedRunToken = token
+	contract, err := goalDeliveryContractForBinary(opts.Member.Binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := newDeliveryReceipt(opts.Project, opts.Profile, opts.Session, opts.Role, opts.Member.Handle, opts.Mode, contract.Mode)
+	applyPreparedRunTokenToReceipt(&receipt, token)
+	opts.AttemptID = receipt.AttemptID
+	prompt := contract.prompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
+	mr, workstream, err := resolveMemberRuntime(opts.Project, opts.Profile, opts.Session, true, opts.Role)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writerStarted := make(chan struct{})
+	writerDone := make(chan error, 1)
+	oldBoundary := preparedGoalAdmissionBeforeClaim
+	preparedGoalAdmissionBeforeClaim = func() error {
+		go func() {
+			close(writerStarted)
+			writerDone <- team.WithProfileLock(project, team.DefaultProfile, func() error {
+				if _, err := os.Stat(preparedRunGoalEventPath(project, team.DefaultProfile, "prepared", token.Generation)); err != nil {
+					return fmt.Errorf("ordinary writer entered before prepared goal claim: %w", err)
+				}
+				attemptPath, err := goalAttemptPath(project, team.DefaultProfile, "prepared", receipt.AttemptID)
+				if err != nil {
+					return err
+				}
+				if _, err := os.Stat(attemptPath); err != nil {
+					return fmt.Errorf("ordinary writer entered before goal attempt reservation: %w", err)
+				}
+				stored, err := launch.Read(agentDir)
+				if err != nil {
+					return err
+				}
+				if !exactGoalBinding(stored.GoalBinding, contract, opts.Goal, receipt.AttemptID, prompt, "goal-control") {
+					return fmt.Errorf("ordinary writer entered before exact launch binding reservation")
+				}
+				current, err := team.ReadProfile(project, team.DefaultProfile)
+				if err != nil {
+					return err
+				}
+				for i := range current.Members {
+					if current.Members[i].Role == "cto" {
+						current.Members[i].ActorMode = team.ActorModeReview
+					}
+				}
+				return team.WriteProfileUnderLock(project, team.DefaultProfile, current)
+			})
+		}()
+		<-writerStarted
+		return nil
+	}
+	t.Cleanup(func() { preparedGoalAdmissionBeforeClaim = oldBoundary })
+
+	reservation, err := admitPreparedGoalClaim(&opts, contract, &receipt, &prompt, mr, workstream, nil)
+	if err != nil {
+		t.Fatalf("prepared admission: %v", err)
+	}
+	if err := <-writerDone; err != nil {
+		t.Fatal(err)
+	}
+	if reservation.AttemptPath == "" || !sameFilesystemPath(reservation.Runtime.AgentDir, agentDir) {
+		t.Fatalf("incomplete prepared reservation: %+v", reservation)
+	}
+}
+
 func TestManagedPreGoalManifestLossRollsBackExactTransaction(t *testing.T) {
 	project := seedTeam(t, team.Team{Orchestrated: true, Lead: "cto", Members: []team.Member{
 		{Role: "cto", Handle: "cto", Binary: "codex", Session: "sess"},
@@ -350,6 +556,11 @@ func TestPreparedExternalRecordLookupIgnoresCallerCWDForRelativeRoot(t *testing.
 		t.Fatal(err)
 	}
 	token := preparedRunTokenFromSnapshot(manifest, digest)
+	launchAttempt, err := reservePreparedRunLaunch(project, team.DefaultProfile, "sess", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token.LaunchAttempt = launchAttempt
 	if err := runLeadRegisterWithPreparedToken([]string{
 		"--project", project,
 		"--session", "sess",

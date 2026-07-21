@@ -88,7 +88,7 @@ func TestReadSerializedSelfOperatorConfigRejectsSpawnAcrossSchemas(t *testing.T)
       "sessions": {"s": {"enabled": true, "allowed_gate_kinds": ["spawn"]}}
     }
   },
-  "members": [{"role":"cto","binary":"codex","handle":"cto","session":"s"}]
+  "members": [{"role":"cto","binary":"codex","handle":"cto","session":"s","actor_mode":"review"}]
 }`, tc.schema)
 			if err := os.WriteFile(Path(dir), []byte(raw), 0o644); err != nil {
 				t.Fatal(err)

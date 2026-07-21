@@ -512,6 +512,25 @@ artifacts. A later <code>--go</code> launches only when readiness still
 matches the accepted manifest, launch shape, goal source, and goal
 digest. With <code>--goal</code>, launch waits until the lead is live
 before delivery; failure exits non-zero with an exact retry command.</p>
+<p>v2.23.0 treats preparation as one immutable, single-use generation.
+The accepted current pointer names generation-addressed manifest and
+initial-state artifacts; launch, every initial child, goal admission,
+staged children, and managed resume consume append-only claims from that
+same generation. Do not edit, copy, or repair these files manually. If
+readiness reports drift, a stale pointer, replay, or legacy preparation,
+inspect the reported mismatch and run a fresh reviewed
+<code>--prepare</code>; never delete claims or reuse an old
+<code>--go</code> command.</p>
+<p>For <code>lead-only-staged</code>, every staged role must already be
+a complete configured profile member before preparation. Partition it
+explicitly with <code>--staged-roles</code>, then use
+<code>agent up --staged-spawn</code> only after the initial launch has
+completed and the role's durable spawn gate is approved. Bare
+<code>agent up</code>, changed binary/model/args/tool policy, stale
+generations, and duplicate or concurrent staged spawns fail before child
+record or process side effects. See <a
+href="docs/v2.23.0-platform-migration.md">the v2.23.0 platform migration
+guide</a> for recovery and upgrade examples.</p>
 <p>For a deterministic visible arrangement, pass
 <code>--layout-preset lead-left</code>, <code>lead-top</code>,
 <code>even-grid</code>, or <code>one-window-per-agent</code>. Presets
@@ -585,6 +604,19 @@ members.</td>
 </tr>
 </tbody>
 </table>
+<p>Each schema-5 member also has an explicit <code>actor_mode</code>:
+<code>implementation</code> or <code>review</code>. A planner lead
+remains a delegating reviewer, an implementation worker may edit only
+within its assigned role and durable task, and a review actor remains
+read-only. Bootstrap capability lookup uses the exact trimmed role and
+handle; case drift does not inherit another actor's permissions. Set
+modes when creating a team with
+<code>--actor-mode role=implementation,...</code> or when adding a
+member with
+<code>team member add --actor-mode review|implementation</code>. Legacy
+schema-1 through schema-4 profiles retain their historical effective
+behavior until explicitly migrated; once a profile is written as schema
+5, every member must carry an explicit mode.</p>
 <p><code>--external-lead</code> is a project-lead binding mode: the
 current tmux pane becomes the configured lead for that run, while
 amq-squad spawns the rest of the team. It must run from the lead

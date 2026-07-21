@@ -170,23 +170,22 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 	tm := in.Team
 	tm.Project = in.Project
 	tm.Lead = strings.TrimSpace(tm.Lead)
-	activeMembers, skippedMembers := filterMembersBySession(tm.Members, in.Session)
+	stagedRoles := sortedUniqueRoles(in.StagedRoles)
+	activeMembers, stagedMembers, err := partitionPreparedRunMembers(tm.Members, in.Session, stagedRoles)
+	if err != nil {
+		return runPreparationProposal{}, err
+	}
 	tm.Members = activeMembers
 	proposal := runPreparationProposal{
 		Project: in.Project, Namespace: in.Profile + "/" + in.Session, ExecutionMode: effectiveTeamExecutionMode(tm), Topology: in.Context.Topology,
 		LaunchShape: in.LaunchShape, Lead: tm.Lead,
-		InitialRoster: sortedUniqueRoles(strings.Join(teamMemberRoles(tm.Members), ",")), StagedRoster: sortedUniqueRoles(in.StagedRoles),
+		InitialRoster: sortedUniqueRoles(strings.Join(teamMemberRoles(tm.Members), ",")), StagedRoster: stagedRoles,
 	}
 	add := func(artifact, status, evidence, fix string) {
 		proposal.Rows = append(proposal.Rows, runReadinessRow{Artifact: artifact, Status: status, Evidence: evidence, Fix: fix})
 	}
 	if in.LaunchShape != runwizard.LaunchShapeWorkingTeamTogether && in.LaunchShape != runwizard.LaunchShapeLeadOnlyStaged {
 		return proposal, fmt.Errorf("preparation proposal requires explicit launch shape")
-	}
-	for _, member := range skippedMembers {
-		if !containsRole(proposal.StagedRoster, member.Role) {
-			return proposal, fmt.Errorf("preparation proposal excludes profile member %q pinned to session %q; add it to --staged-roles or prepare its own session explicitly", member.Role, member.Session)
-		}
 	}
 	resolvedTopology, topologyErr := resolveRunStartLayout(runStartLayoutInput{
 		Visibility: in.Context.Topology.Visibility, VisibilitySet: true,
@@ -343,9 +342,9 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 			identities = append(identities, fmt.Sprintf("%s(handle=%s binary=%s policy=%s)", member.Role, member.Handle, member.Binary, member.EffectiveToolProfile()))
 		}
 		evidence := "preserve exact session members at " + profilePath + ": " + strings.Join(identities, ", ")
-		if len(skippedMembers) > 0 {
-			skipped := make([]string, 0, len(skippedMembers))
-			for _, member := range skippedMembers {
+		if len(stagedMembers) > 0 {
+			skipped := make([]string, 0, len(stagedMembers))
+			for _, member := range stagedMembers {
 				skipped = append(skipped, fmt.Sprintf("%s(session=%s)", member.Role, member.Session))
 			}
 			evidence += "; explicitly staged other-session members: " + strings.Join(skipped, ", ")
@@ -384,6 +383,7 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 		add("staged_role:"+roleID, "ready", "planned absent from profile/bootstrap; separate durable spawn gate required", "")
 	}
 	add("prepared_manifest", "ready", "planned create "+preparedRunPath(in.Project, in.Profile, in.Session), "")
+	add("prepared_generation_state", "ready", "planned append under "+preparedRunGenerationsPath(in.Project, in.Profile, in.Session), "")
 	proposal.MutationPaths = cleanUniquePreparationPaths(proposal.MutationPaths)
 	sort.SliceStable(proposal.Rows, func(i, j int) bool { return proposal.Rows[i].Artifact < proposal.Rows[j].Artifact })
 	return proposal, nil

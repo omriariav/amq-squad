@@ -26,6 +26,7 @@ func runTeamMember(args []string) error {
 Usage:
   amq-squad team member add <role> --binary <claude|codex> [--handle H]
       [--session S] [--model M] [--effort E] [--claude-args "…"] [--codex-args "…"]
+      [--actor-mode review|implementation]
       [--spawn-origin NAME] [--spawn-depth N]
       [--project DIR] [--profile NAME] [--launch] [--target new-window] [--dry-run] [--json]
   amq-squad team member rm <role> [--project DIR] [--profile NAME]
@@ -155,6 +156,7 @@ func runTeamMemberAdd(args []string) error {
 	spawnDepthFlag := fs.Int("spawn-depth", -1, "override recorded composition depth (default: inferred from origin)")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for this member")
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for this member")
+	actorModeFlag := fs.String("actor-mode", team.ActorModeReview, "actor execution capability: review (default, read-only) or implementation")
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to mutate (default: default profile)")
 	launchFlag := fs.Bool("launch", false, "after adding, launch pending members with resume --exec")
@@ -203,6 +205,10 @@ func runTeamMemberAdd(args []string) error {
 	if *spawnDepthFlag < -1 {
 		return usageErrorf("--spawn-depth cannot be negative")
 	}
+	actorMode := strings.ToLower(strings.TrimSpace(*actorModeFlag))
+	if actorMode != team.ActorModeReview && actorMode != team.ActorModeImplementation {
+		return usageErrorf("--actor-mode must be %s or %s", team.ActorModeReview, team.ActorModeImplementation)
+	}
 
 	projectDir, profile, err := resolveExistingTeamProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {
@@ -240,6 +246,7 @@ func runTeamMemberAdd(args []string) error {
 			Handle:      handle,
 			Session:     session,
 			Model:       strings.TrimSpace(*modelFlag),
+			ActorMode:   actorMode,
 			SpawnOrigin: origin,
 			SpawnDepth:  depth,
 		}

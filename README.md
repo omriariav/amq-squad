@@ -230,6 +230,23 @@ readiness still matches the accepted manifest, launch shape, goal source, and
 goal digest. With `--goal`, launch waits until the lead is live before delivery;
 failure exits non-zero with an exact retry command.
 
+v2.23.0 treats preparation as one immutable, single-use generation. The
+accepted current pointer names generation-addressed manifest and initial-state
+artifacts; launch, every initial child, goal admission, staged children, and
+managed resume consume append-only claims from that same generation. Do not
+edit, copy, or repair these files manually. If readiness reports drift, a stale
+pointer, replay, or legacy preparation, inspect the reported mismatch and run a
+fresh reviewed `--prepare`; never delete claims or reuse an old `--go` command.
+
+For `lead-only-staged`, every staged role must already be a complete configured
+profile member before preparation. Partition it explicitly with
+`--staged-roles`, then use `agent up --staged-spawn` only after the initial
+launch has completed and the role's durable spawn gate is approved. Bare
+`agent up`, changed binary/model/args/tool policy, stale generations, and
+duplicate or concurrent staged spawns fail before child record or process side
+effects. See [the v2.23.0 platform migration guide](docs/v2.23.0-platform-migration.md)
+for recovery and upgrade examples.
+
 For a deterministic visible arrangement, pass `--layout-preset lead-left`,
 `lead-top`, `even-grid`, or `one-window-per-agent`. Presets close the launcher
 pane after a successful start by default; use `--launcher-pane keep` to retain
@@ -278,6 +295,17 @@ implementation authority. The mode should be explicit in goal-first runs.
 | `project_lead` | One visible project-root lead owns the run, delegates implementation over durable AMQ tasks, and produces final evidence. | Default for most issue or milestone delivery. |
 | `project_team` | Multiple visible project-root agents are launched as first-class members. | The operator wants to watch and address several roles directly. |
 | `direct_lead_session` | The visible project lead may code directly in the project root. | Single-lead exceptions where delegation would add no value. |
+
+Each schema-5 member also has an explicit `actor_mode`: `implementation` or
+`review`. A planner lead remains a delegating reviewer, an implementation
+worker may edit only within its assigned role and durable task, and a review
+actor remains read-only. Bootstrap capability lookup uses the exact trimmed
+role and handle; case drift does not inherit another actor's permissions. Set
+modes when creating a team with `--actor-mode role=implementation,...` or when
+adding a member with `team member add --actor-mode review|implementation`.
+Legacy schema-1 through schema-4 profiles retain their historical effective
+behavior until explicitly migrated; once a profile is written as schema 5,
+every member must carry an explicit mode.
 
 `--external-lead` is a project-lead binding mode: the current tmux pane becomes
 the configured lead for that run, while amq-squad spawns the rest of the team.

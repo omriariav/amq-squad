@@ -79,7 +79,7 @@ func TestPreparedRunMixedSessionRosterIsExactAcrossDefaultAndNamedProfiles(t *te
 			if !reflect.DeepEqual(manifest.InitialRoster, []string{"cto"}) || !reflect.DeepEqual(manifest.StagedRoster, []string{"qa"}) {
 				t.Fatalf("manifest rosters initial=%v staged=%v", manifest.InitialRoster, manifest.StagedRoster)
 			}
-			if len(manifest.Members) != 1 || manifest.Members["cto"].Role != "cto" || len(manifest.BootstrapDigests) != 1 || manifest.BootstrapDigests["cto"] == "" || len(manifest.BootstrapBindings) != 1 {
+			if len(manifest.Members) != 1 || manifest.Members["cto"].Role != "cto" || manifest.StagedMembers["qa"].Role != "qa" || len(manifest.BootstrapDigests) != 2 || manifest.BootstrapDigests["cto"] == "" || manifest.BootstrapDigests["qa"] == "" || len(manifest.BootstrapBindings) != 2 {
 				t.Fatalf("manifest exact-session evidence members=%v digests=%v bindings=%v", manifest.Members, manifest.BootstrapDigests, manifest.BootstrapBindings)
 			}
 
@@ -87,7 +87,7 @@ func TestPreparedRunMixedSessionRosterIsExactAcrossDefaultAndNamedProfiles(t *te
 			if !readiness.Ready || readiness.InitialCount != 1 || readiness.StagedCount != 1 {
 				t.Fatalf("readiness ready=%t initial=%d staged=%d rows=%+v", readiness.Ready, readiness.InitialCount, readiness.StagedCount, readiness.Rows)
 			}
-			if readinessRowStatus(readiness, "bootstrap:cto") != "ready" || readinessRowStatus(readiness, "staged_role:qa") != "ready" || readinessRowStatus(readiness, "bootstrap:qa") != "" {
+			if readinessRowStatus(readiness, "bootstrap:cto") != "ready" || readinessRowStatus(readiness, "staged_role:qa") != "ready" || readinessRowStatus(readiness, "bootstrap:qa") != "ready" {
 				t.Fatalf("readiness bootstrap/staged rows=%+v", readiness.Rows)
 			}
 
@@ -404,6 +404,7 @@ func TestPreparedManifestMutationOrRemovalAfterRecordWriteRollsBackWithoutExec(t
 					return err
 				}
 				manifest.PreparedAt = manifest.PreparedAt.Add(time.Second)
+				manifest = nextPreparedRunManifestForTest(t, manifest)
 				return writePreparedRunManifest(path, manifest)
 			}
 			t.Cleanup(func() { preparedLaunchAfterRecordWrite = oldAfterWrite })
@@ -411,8 +412,9 @@ func TestPreparedManifestMutationOrRemovalAfterRecordWriteRollsBackWithoutExec(t
 			oldExec := amqSyscallExec
 			amqSyscallExec = func(string, []string, []string) error { execCalls++; return nil }
 			t.Cleanup(func() { amqSyscallExec = oldExec })
+			token := reservedPreparedRunTokenForTest(t, dir, team.DefaultProfile, "prepared")
 			args := withoutArg(preparedLeadLaunchArgs(dir, "codex"), "--dry-run")
-			_, _, err := captureOutput(t, func() error { return runLaunch(args) })
+			_, _, err := captureOutput(t, func() error { return runLaunchWithPreparedToken(args, token) })
 			if err == nil || !strings.Contains(err.Error(), "accepted prepared launch identity") {
 				t.Fatalf("post-write manifest %s error = %v", action, err)
 			}
@@ -465,8 +467,9 @@ func TestPreparedLaunchRollbackPreservesConcurrentRecordReplacement(t *testing.T
 	oldExec := amqSyscallExec
 	amqSyscallExec = func(string, []string, []string) error { execCalls++; return nil }
 	t.Cleanup(func() { amqSyscallExec = oldExec })
+	token := reservedPreparedRunTokenForTest(t, dir, team.DefaultProfile, "prepared")
 	_, _, err = captureOutput(t, func() error {
-		return runLaunch(withoutArg(preparedLeadLaunchArgs(dir, "codex"), "--dry-run"))
+		return runLaunchWithPreparedToken(withoutArg(preparedLeadLaunchArgs(dir, "codex"), "--dry-run"), token)
 	})
 	if err == nil || execCalls != 0 {
 		t.Fatalf("post-write drift err=%v exec_calls=%d", err, execCalls)
@@ -1392,7 +1395,7 @@ func TestPreparedExternalTokenFailureRollsBackOwnedRecord(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		manifest.Generation = "forced-drift-after-registration"
+		manifest = nextPreparedRunManifestForTest(t, manifest)
 		return writePreparedRunManifest(preparedRunPath(project, profile, session), manifest)
 	}
 	t.Cleanup(func() { runStartExternalLeadAfterRegister = oldAfterRegister })
@@ -1540,6 +1543,94 @@ func TestPinnedGoalReservationRejectsChangedPreparedBindingBeforeAttempt(t *test
 	}
 }
 
+func TestPinnedGoalProfileAndRecordDriftRejectBeforeNewAttempt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*testing.T, string, string, launch.Record, preparedRunManifest)
+		want   string
+	}{
+		{
+			name: "profile-member",
+			mutate: func(t *testing.T, dir, _ string, _ launch.Record, manifest preparedRunManifest) {
+				tm, err := team.ReadProfile(dir, team.DefaultProfile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := range tm.Members {
+					if tm.Members[i].Role == "cto" {
+						if manifest.Members["cto"].ActorMode == team.ActorModeImplementation {
+							tm.Members[i].ActorMode = team.ActorModeReview
+						} else {
+							tm.Members[i].ActorMode = team.ActorModeImplementation
+						}
+					}
+				}
+				if err := team.WriteProfile(dir, team.DefaultProfile, tm); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "current lead member identity differs",
+		},
+		{
+			name: "launch-record-generation",
+			mutate: func(t *testing.T, _ string, agentDir string, rec launch.Record, _ preparedRunManifest) {
+				rec.PreparedRunDigest = strings.Repeat("0", 64)
+				if err := launch.Write(agentDir, rec); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "launch record prepared run token differs",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := seedTeam(t, team.Team{
+				Project: "", Orchestrated: true, Lead: "cto",
+				Members: []team.Member{
+					{Role: "cto", Binary: "codex", Handle: "cto", Session: "sess"},
+					{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
+				},
+			})
+			useFakeTmuxBackend(t)
+			stubCurrentRunStartPane(t, "%42")
+			stubRunStartLeadWake(t)
+			liveArgs := prepareRunStartTestInvocation(t, []string{"-p", dir, "-s", "sess", "--external-lead", "--go"})
+			if _, _, err := captureOutput(t, func() error { return runRunStart(liveArgs, "test") }); err != nil {
+				t.Fatalf("external lead go: %v", err)
+			}
+			manifest, digest, err := readPreparedRunManifestSnapshot(dir, team.DefaultProfile, "sess")
+			if err != nil {
+				t.Fatal(err)
+			}
+			token := preparedRunTokenFromSnapshot(manifest, digest)
+			agentDir := filepath.Join(squadnamespace.AMQRoot(dir, team.DefaultProfile, "sess"), "agents", "cto")
+			rec, err := launch.Read(agentDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts, err := resolveGoalDeliveryOptions(dir, team.DefaultProfile, "sess", "cto", manifest.GoalText, true, true, true, "goal start", namespaceConflictOverrideOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts.PreparedRunToken = token
+			tc.mutate(t, dir, agentDir, rec, manifest)
+
+			_, err = executeGoalDelivery(opts)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("prepared identity drift error=%v want=%q", err, tc.want)
+			}
+			entries, readErr := os.ReadDir(goalAttemptDir(dir, team.DefaultProfile, "sess"))
+			if readErr != nil && !os.IsNotExist(readErr) {
+				t.Fatal(readErr)
+			}
+			for _, entry := range entries {
+				if strings.HasSuffix(entry.Name(), ".json") {
+					t.Fatalf("prepared identity drift created attempt/receipt artifact %s", entry.Name())
+				}
+			}
+		})
+	}
+}
+
 func TestPreparedRunSuccessCarriesOneTokenAcrossRecordBootstrapAndReceipt(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Project: "", Orchestrated: true, Lead: "cto",
@@ -1634,7 +1725,5 @@ func mutatePreparedManifest(t *testing.T, dir string, mutate func(*preparedRunMa
 		t.Fatal(err)
 	}
 	mutate(&manifest)
-	if err := writePreparedRunManifest(preparedRunPath(dir, manifest.Profile, manifest.Session), manifest); err != nil {
-		t.Fatal(err)
-	}
+	republishPreparedRunManifestForTest(t, manifest)
 }

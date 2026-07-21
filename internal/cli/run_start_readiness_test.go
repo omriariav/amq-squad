@@ -907,9 +907,7 @@ func TestRunReadinessMachineStatuses(t *testing.T) {
 			}
 			if tt.mutate != nil {
 				tt.mutate(t, dir, &manifest)
-				if err := writePreparedRunManifest(preparedRunPath(dir, team.DefaultProfile, "prepared"), manifest); err != nil {
-					t.Fatal(err)
-				}
+				republishPreparedRunManifestForTest(t, manifest)
 			}
 			result := calculateRunReadiness(dir, team.DefaultProfile, "prepared")
 			if got := readinessRowStatus(result, tt.artifact); got != tt.wantStatus {
@@ -938,9 +936,7 @@ func TestRunReadinessFiveAuthoredThreeIntendedOneProfileFailsExactRoster(t *test
 	}
 	manifest.InitialRoster = []string{"cto", "platform-dev", "runtime-dev"}
 	manifest.StagedRoster = []string{"protocol-reviewer", "operator-reviewer"}
-	if err := writePreparedRunManifest(preparedRunPath(dir, team.DefaultProfile, "prepared"), manifest); err != nil {
-		t.Fatal(err)
-	}
+	republishPreparedRunManifestForTest(t, manifest)
 
 	result := calculateRunReadiness(dir, team.DefaultProfile, "prepared")
 	if result.Ready || result.InitialCount != 3 || result.StagedCount != 2 {
@@ -972,9 +968,7 @@ func TestPreparedBootstrapEvidenceInitialOnlyExactContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	addReadinessCustomRole(t, dir, &manifest, "operator-reviewer", "# Operator reviewer\n\nReview durable operator gates and never mutate implementation files.\n")
-	if err := writePreparedRunManifest(preparedRunPath(dir, team.DefaultProfile, "prepared"), manifest); err != nil {
-		t.Fatal(err)
-	}
+	republishPreparedRunManifestForTest(t, manifest)
 	result := calculateRunReadiness(dir, team.DefaultProfile, "prepared")
 	row := readinessRow(result, "bootstrap:cto")
 	if row.Status != "ready" {
@@ -1105,8 +1099,8 @@ func TestRunStartPreparedCompositionLaunchSuccessBothShapes(t *testing.T) {
 		},
 		{
 			name: "lead only staged", shape: runwizard.LaunchShapeLeadOnlyStaged,
-			roles: "cto", binary: "cto=codex", staged: "qa",
-			wantInitial: []string{"cto"}, wantStaged: []string{"qa"}, wantUpMembers: 1,
+			roles: "cto,qa", binary: "cto=codex,qa=claude", staged: "qa",
+			wantInitial: []string{"cto"}, wantStaged: []string{"qa"}, wantUpMembers: 2,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

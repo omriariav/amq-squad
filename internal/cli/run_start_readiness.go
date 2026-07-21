@@ -25,13 +25,14 @@ import (
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
-const preparedRunSchema = 2
+const preparedRunSchema = 3
 const preparedRunGoalDeliveryPlanned = "planned_unverified"
 const internalPreparedRunTokenEnv = "AMQ_SQUAD_INTERNAL_PREPARED_RUN_TOKEN"
 const internalPreparedRunRestoreEnv = "AMQ_SQUAD_INTERNAL_PREPARED_RUN_RESTORE"
 
 type preparedRestoreDescriptor struct {
 	Token          preparedRunToken `json:"token"`
+	AttemptID      string           `json:"attempt_id"`
 	RecordDigest   string           `json:"record_digest"`
 	SemanticDigest string           `json:"semantic_digest"`
 }
@@ -42,34 +43,51 @@ func encodePreparedRestoreDescriptor(d preparedRestoreDescriptor) string {
 }
 
 type preparedRunManifest struct {
-	SchemaVersion     int                                  `json:"schema_version"`
-	Generation        string                               `json:"generation"`
-	Project           string                               `json:"project"`
-	Profile           string                               `json:"profile"`
-	Session           string                               `json:"session"`
-	Namespace         string                               `json:"namespace"`
-	LaunchShape       string                               `json:"launch_shape"`
-	InitialRoster     []string                             `json:"initial_roster"`
-	StagedRoster      []string                             `json:"staged_roster"`
-	Lead              string                               `json:"lead"`
-	ExecutionMode     string                               `json:"execution_mode"`
-	ControlRoot       string                               `json:"control_root"`
-	TargetRoot        string                               `json:"target_root"`
-	TargetContract    string                               `json:"target_contract,omitempty"`
-	LeadMode          string                               `json:"lead_mode"`
-	Topology          preparedRunTopology                  `json:"topology"`
-	Members           map[string]preparedRunMemberIdentity `json:"members"`
-	Environment       preparedRunEnvironment               `json:"environment"`
-	GoalText          string                               `json:"goal_text"`
-	GoalNamespace     string                               `json:"goal_namespace"`
-	GoalDigest        string                               `json:"goal_digest"`
-	GoalSource        string                               `json:"goal_source"`
-	GoalDeliveryState string                               `json:"goal_delivery_state"`
-	ArtifactDigests   map[string]string                    `json:"artifact_digests"`
-	RoleDigests       map[string]string                    `json:"role_digests"`
-	BootstrapDigests  map[string]string                    `json:"bootstrap_digests"`
-	BootstrapBindings map[string]string                    `json:"bootstrap_goal_bindings"`
-	PreparedAt        time.Time                            `json:"prepared_at"`
+	SchemaVersion       int                                  `json:"schema_version"`
+	Generation          string                               `json:"generation"`
+	Project             string                               `json:"project"`
+	Profile             string                               `json:"profile"`
+	Session             string                               `json:"session"`
+	Namespace           string                               `json:"namespace"`
+	LaunchShape         string                               `json:"launch_shape"`
+	InitialRoster       []string                             `json:"initial_roster"`
+	StagedRoster        []string                             `json:"staged_roster"`
+	Lead                string                               `json:"lead"`
+	ExecutionMode       string                               `json:"execution_mode"`
+	ControlRoot         string                               `json:"control_root"`
+	TargetRoot          string                               `json:"target_root"`
+	TargetContract      string                               `json:"target_contract,omitempty"`
+	LeadMode            string                               `json:"lead_mode"`
+	Topology            preparedRunTopology                  `json:"topology"`
+	Members             map[string]preparedRunMemberIdentity `json:"members"`
+	StagedMembers       map[string]preparedRunMemberIdentity `json:"staged_members"`
+	Environment         preparedRunEnvironment               `json:"environment"`
+	GoalText            string                               `json:"goal_text"`
+	GoalNamespace       string                               `json:"goal_namespace"`
+	GoalDigest          string                               `json:"goal_digest"`
+	GoalSource          string                               `json:"goal_source"`
+	GoalDeliveryState   string                               `json:"goal_delivery_state"`
+	ArtifactDigests     map[string]string                    `json:"artifact_digests"`
+	RoleDigests         map[string]string                    `json:"role_digests"`
+	BootstrapDigests    map[string]string                    `json:"bootstrap_digests"`
+	BootstrapBindings   map[string]string                    `json:"bootstrap_goal_bindings"`
+	PreparationRecord   preparedRunPreparationRecord         `json:"preparation_record"`
+	ResumeAuthorization preparedRunResumeAuthorization       `json:"resume_authorization"`
+	PreparedAt          time.Time                            `json:"prepared_at"`
+}
+
+type preparedRunPreparationRecord struct {
+	Generation  string `json:"generation"`
+	Namespace   string `json:"namespace"`
+	LaunchShape string `json:"launch_shape"`
+	Lead        string `json:"lead"`
+}
+
+type preparedRunResumeAuthorization struct {
+	Policy          string `json:"policy"`
+	SingleUse       bool   `json:"single_use"`
+	RecordBound     bool   `json:"record_bound"`
+	GenerationBound bool   `json:"generation_bound"`
 }
 
 type preparedRunTopology struct {
@@ -88,6 +106,7 @@ type preparedRunMemberIdentity struct {
 	Model               string   `json:"model,omitempty"`
 	Effort              string   `json:"effort"`
 	TaskOwnership       string   `json:"task_ownership"`
+	ActorMode           string   `json:"actor_mode"`
 	Trust               string   `json:"trust"`
 	NativeArgs          []string `json:"native_args"`
 	EffectiveArgs       []string `json:"effective_args"`
@@ -114,7 +133,7 @@ type acceptedRunContext struct {
 	PointerPlans []rules.SyncPlan
 }
 
-// preparedRunToken is the immutable identity of one accepted schema-2
+// preparedRunToken is the immutable identity of one accepted schema-3
 // preparation. run start --go pins it for the whole transaction and carries it
 // through every child launch and the final goal reservation.
 type preparedRunToken struct {
@@ -122,6 +141,7 @@ type preparedRunToken struct {
 	ManifestDigest string `json:"manifest_digest"`
 	GoalNamespace  string `json:"goal_namespace"`
 	GoalDigest     string `json:"goal_digest"`
+	LaunchAttempt  string `json:"launch_attempt,omitempty"`
 }
 
 type preparedRunIdentityMismatchError struct {
@@ -158,6 +178,9 @@ func preparedRunTokenFromInternalEnv() (preparedRunToken, error) {
 	if !token.complete() {
 		return preparedRunToken{}, fmt.Errorf("internal prepared run token is incomplete")
 	}
+	if err := validatePreparedRunTokenPathIDs(token, token.LaunchAttempt != ""); err != nil {
+		return preparedRunToken{}, fmt.Errorf("invalid internal prepared run token: %w", err)
+	}
 	return token, nil
 }
 
@@ -192,8 +215,14 @@ func preparedRestoreDescriptorFromInternalEnv() (*preparedRestoreDescriptor, err
 	if err := json.Unmarshal([]byte(raw), &d); err != nil {
 		return nil, fmt.Errorf("invalid internal prepared restore descriptor: %w", err)
 	}
-	if !d.Token.complete() || strings.TrimSpace(d.RecordDigest) == "" || strings.TrimSpace(d.SemanticDigest) == "" {
+	if !d.Token.complete() || strings.TrimSpace(d.AttemptID) == "" || strings.TrimSpace(d.RecordDigest) == "" || strings.TrimSpace(d.SemanticDigest) == "" {
 		return nil, fmt.Errorf("internal prepared restore descriptor is incomplete")
+	}
+	if err := validatePreparedRunTokenPathIDs(d.Token, true); err != nil {
+		return nil, fmt.Errorf("invalid internal prepared restore descriptor: %w", err)
+	}
+	if err := validatePreparedRunPathID("prepared resume attempt", d.AttemptID); err != nil {
+		return nil, fmt.Errorf("invalid internal prepared restore descriptor: %w", err)
 	}
 	return &d, nil
 }
@@ -264,6 +293,15 @@ func (t preparedRunToken) complete() bool {
 	return t.Generation != "" && t.ManifestDigest != "" && t.GoalNamespace != "" && t.GoalDigest != ""
 }
 
+func (t preparedRunToken) generationRef() preparedRunToken {
+	t.LaunchAttempt = ""
+	return t
+}
+
+func samePreparedRunGeneration(left, right preparedRunToken) bool {
+	return left.generationRef() == right.generationRef()
+}
+
 func validatePreparedRunToken(t preparedRunToken, manifest preparedRunManifest, digest string) error {
 	if t.empty() {
 		return nil
@@ -271,8 +309,11 @@ func validatePreparedRunToken(t preparedRunToken, manifest preparedRunManifest, 
 	if !t.complete() {
 		return fmt.Errorf("prepared run token is incomplete")
 	}
+	if err := validatePreparedRunTokenPathIDs(t, t.LaunchAttempt != ""); err != nil {
+		return err
+	}
 	current := preparedRunTokenFromSnapshot(manifest, digest)
-	if current != t {
+	if !samePreparedRunGeneration(current, t) {
 		return preparedRunIdentityMismatchf("prepared run token changed: accepted_generation=%s current_generation=%s accepted_digest=%s current_digest=%s", t.Generation, current.Generation, t.ManifestDigest, current.ManifestDigest)
 	}
 	return nil
@@ -289,6 +330,7 @@ func preparedRunTokenFromRecord(rec launch.Record) preparedRunToken {
 	return preparedRunToken{
 		Generation: strings.TrimSpace(rec.PreparedRunGeneration), ManifestDigest: strings.TrimSpace(rec.PreparedRunDigest),
 		GoalNamespace: strings.TrimSpace(rec.PreparedRunGoalNamespace), GoalDigest: strings.TrimSpace(rec.PreparedRunGoalDigest),
+		LaunchAttempt: strings.TrimSpace(rec.PreparedRunLaunchAttempt),
 	}
 }
 
@@ -300,6 +342,7 @@ func applyPreparedRunTokenToRecord(rec *launch.Record, token preparedRunToken) {
 	rec.PreparedRunDigest = token.ManifestDigest
 	rec.PreparedRunGoalNamespace = token.GoalNamespace
 	rec.PreparedRunGoalDigest = token.GoalDigest
+	rec.PreparedRunLaunchAttempt = token.LaunchAttempt
 }
 
 var preparedRunRequiredCapabilities = []string{"amq-routing", "bootstrap-render", "goal-binding", "pointer-sync", "terminal-context", "tmux-topology", "tool-policy"}
@@ -370,6 +413,34 @@ func acceptedMemberIdentity(tm team.Team, member team.Member, profile, session s
 	return resolvedMemberIdentity(tm, member, profile, session, nil, tm.BinaryArgs, false)
 }
 
+func partitionPreparedRunMembers(members []team.Member, session string, stagedRoles []string) ([]team.Member, []team.Member, error) {
+	active, skipped := filterMembersBySession(members, session)
+	configured := make(map[string]team.Member, len(members))
+	for _, member := range members {
+		configured[member.Role] = member
+	}
+	staged := make([]team.Member, 0, len(stagedRoles))
+	for _, role := range stagedRoles {
+		member, ok := configured[role]
+		if !ok {
+			return nil, nil, fmt.Errorf("staged role %q has no complete profile member definition; configure its handle, binary, model/args, and tool policy before preparation", role)
+		}
+		staged = append(staged, member)
+	}
+	initial := make([]team.Member, 0, len(active))
+	for _, member := range active {
+		if !containsRole(stagedRoles, member.Role) {
+			initial = append(initial, member)
+		}
+	}
+	for _, member := range skipped {
+		if !containsRole(stagedRoles, member.Role) {
+			return nil, nil, fmt.Errorf("preparation excludes profile member %q pinned to session %q; add it to --staged-roles or prepare its own session explicitly", member.Role, member.Session)
+		}
+	}
+	return initial, staged, nil
+}
+
 func resolvedMemberIdentity(tm team.Team, member team.Member, profile, session string, modelOverrides map[string]string, binaryArgs map[string][]string, noPreauthorize bool) preparedRunMemberIdentity {
 	binary := normalizedAgentBinary(member.Binary)
 	nativeArgs := composeBinaryArgs(member.Binary, binaryArgsFor(member.Binary, binaryArgs), member.ExtraArgs())
@@ -386,7 +457,7 @@ func resolvedMemberIdentity(tm team.Team, member team.Member, profile, session s
 	effectiveArgs := launchDefaultChildArgsWithTrust(member.Binary, true, modelArgsForBinary(member.Binary, model), toolAndNativeArgs, trust)
 	var launcherAuthority []string
 	if binary == "claude" {
-		if !noPreauthorize && tm.Orchestrated && !strings.EqualFold(member.Role, tm.Lead) {
+		if !noPreauthorize && tm.Orchestrated && strings.TrimSpace(member.Role) != strings.TrimSpace(tm.Lead) {
 			launcherAuthority = append(launcherAuthority, claudeInScopePreauthAllowlist(session)...)
 		}
 		launcherAuthority = append(launcherAuthority, member.PermissionAllowlist...)
@@ -394,7 +465,7 @@ func resolvedMemberIdentity(tm team.Team, member team.Member, profile, session s
 	}
 	return preparedRunMemberIdentity{
 		Role: member.Role, Handle: memberHandle(member), Binary: binary,
-		Model: model, Effort: effortFromEffectiveArgs(binary, effectiveArgs), TaskOwnership: acceptedTaskOwnership(tm, member),
+		Model: model, Effort: effortFromEffectiveArgs(binary, effectiveArgs), TaskOwnership: acceptedTaskOwnership(tm, member), ActorMode: team.EffectiveActorMode(tm, member),
 		Trust: trust, NativeArgs: append([]string(nil), nativeArgs...), EffectiveArgs: append([]string(nil), effectiveArgs...),
 		ToolProfile: member.EffectiveToolProfile(), ToolConfig: member.ToolConfig, ToolMCPConfig: member.ToolMCPConfig,
 		ToolAllowlist: dedupeSortedStrings(member.ToolAllowlist), ToolBlocklist: dedupeSortedStrings(member.ToolBlocklist),
@@ -472,6 +543,50 @@ func preparedContextForLaunchRecordMode(rec launch.Record, restoring bool) (*pre
 	if restoring && manifest.GoalDeliveryState != preparedRunGoalDeliveryPlanned {
 		return nil, fmt.Errorf("prepared goal delivery state %q is not restorable; want %q", manifest.GoalDeliveryState, preparedRunGoalDeliveryPlanned)
 	}
+	tm, err := team.ReadProfile(project, profile)
+	if err != nil {
+		return nil, err
+	}
+	binding := acceptedGoalBinding{Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest}
+	if err := validateAcceptedGoalBinding(binding); err != nil {
+		return nil, err
+	}
+	if staged, ok := manifest.StagedMembers[rec.Role]; ok && containsRole(manifest.StagedRoster, rec.Role) {
+		if staged.Role != rec.Role || staged.Handle != rec.Handle {
+			return nil, fmt.Errorf("launch record staged actor %s/%s differs from accepted identity %s/%s", rec.Role, rec.Handle, staged.Role, staged.Handle)
+		}
+		if err := validateCurrentPreparedStagedIdentity(project, manifest, rec.Role); err != nil {
+			return nil, err
+		}
+		member := team.Member{}
+		for _, candidate := range tm.Members {
+			if candidate.Role == rec.Role && memberHandle(candidate) == rec.Handle {
+				member = candidate
+				break
+			}
+		}
+		actualNativeArgs := rec.ClaudeArgs
+		if staged.Binary == "codex" {
+			actualNativeArgs = rec.CodexArgs
+		}
+		actualEffectiveArgs := canonicalLaunchRecordArgs(rec)
+		if restoring && rec.Conversation != "" {
+			actualEffectiveArgs = stripConversationRestoreArgs(rec.Binary, actualEffectiveArgs, rec.Conversation)
+		}
+		if normalizedAgentBinary(rec.Binary) != staged.Binary || rec.Model != staged.Model || !sameFilesystemPath(rec.CWD, member.EffectiveCWD(tm.Project)) || rec.Trust != staged.Trust || !reflect.DeepEqual(actualNativeArgs, staged.NativeArgs) || !reflect.DeepEqual(dedupeSortedStrings(rec.LauncherPreauthorizedActions), staged.LauncherAuthority) || rec.NoPreauthorizeInScope != staged.NoPreauthorize || !reflect.DeepEqual(actualEffectiveArgs, staged.EffectiveArgs) || effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs) != staged.Effort || rec.ToolProfile != staged.ToolProfile || rec.ToolConfig != staged.ToolConfig || rec.ToolMCPConfig != staged.ToolMCPConfig || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolAllowlist), staged.ToolAllowlist) || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolBlocklist), staged.ToolBlocklist) {
+			return nil, fmt.Errorf("actual staged launch record input for %s differs from accepted binary/model/args/tool identity", rec.Role)
+		}
+		recordToken := preparedRunTokenFromRecord(rec)
+		if !recordToken.empty() {
+			if err := validatePreparedRunToken(recordToken, manifest, manifestDigest); err != nil {
+				return nil, fmt.Errorf("launch record staged prepared identity differs from accepted preparation: %w", err)
+			}
+		}
+		if restoring && rec.GoalBinding != nil {
+			return nil, fmt.Errorf("restored staged worker unexpectedly carries a goal binding")
+		}
+		return &preparedLaunchRecordContext{Manifest: manifest, Digest: manifestDigest, Team: tm, Member: member, Binding: binding}, nil
+	}
 	readiness := calculateRunReadinessWithContext(project, profile, session, acceptedRunContext{Version: manifest.Environment.BinaryVersion, Topology: manifest.Topology})
 	if !readiness.Ready {
 		for _, row := range readiness.Rows {
@@ -480,10 +595,6 @@ func preparedContextForLaunchRecordMode(rec launch.Record, restoring bool) (*pre
 			}
 		}
 		return nil, fmt.Errorf("prepared launch readiness drift")
-	}
-	tm, err := team.ReadProfile(project, profile)
-	if err != nil {
-		return nil, err
 	}
 	active, _ := filterMembersBySession(tm.Members, session)
 	tm.Members = active
@@ -518,10 +629,6 @@ func preparedContextForLaunchRecordMode(rec launch.Record, restoring bool) (*pre
 	}
 	if normalizedAgentBinary(rec.Binary) != accepted.Binary || rec.Handle != accepted.Handle || rec.Model != accepted.Model || !sameFilesystemPath(rec.CWD, member.EffectiveCWD(tm.Project)) || rec.Trust != accepted.Trust || !reflect.DeepEqual(actualNativeArgs, accepted.NativeArgs) || !reflect.DeepEqual(dedupeSortedStrings(rec.LauncherPreauthorizedActions), accepted.LauncherAuthority) || rec.NoPreauthorizeInScope != accepted.NoPreauthorize || !reflect.DeepEqual(actualEffectiveArgs, accepted.EffectiveArgs) || effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs) != accepted.Effort || rec.ToolProfile != accepted.ToolProfile || rec.ToolConfig != accepted.ToolConfig || rec.ToolMCPConfig != accepted.ToolMCPConfig || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolAllowlist), accepted.ToolAllowlist) || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolBlocklist), accepted.ToolBlocklist) {
 		return nil, fmt.Errorf("actual launch record input for %s differs from accepted binary/handle/cwd/tool identity: accepted=%+v actual={binary:%s handle:%s model:%s trust:%s native:%v effective:%v effort:%s launcher_authority:%v no_preauthorize:%t tool_profile:%s tool_config:%s tool_mcp:%s tool_allow:%v tool_block:%v}", member.Role, accepted, normalizedAgentBinary(rec.Binary), rec.Handle, rec.Model, rec.Trust, actualNativeArgs, actualEffectiveArgs, effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs), dedupeSortedStrings(rec.LauncherPreauthorizedActions), rec.NoPreauthorizeInScope, rec.ToolProfile, rec.ToolConfig, rec.ToolMCPConfig, dedupeSortedStrings(rec.ToolAllowlist), dedupeSortedStrings(rec.ToolBlocklist))
-	}
-	binding := acceptedGoalBinding{Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest}
-	if err := validateAcceptedGoalBinding(binding); err != nil {
-		return nil, err
 	}
 	if restoring && member.Role == tm.Lead {
 		expected, err := preparedGoalBinding(tm, manifest.Profile, manifest.Session, member, binding)
@@ -753,23 +860,10 @@ func preparedRunPath(project, profile, session string) string {
 }
 
 func writePreparedRunManifest(path string, manifest preparedRunManifest) error {
-	data, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return err
+	if filepath.Clean(path) != filepath.Clean(preparedRunPath(manifest.Project, manifest.Profile, manifest.Session)) {
+		return fmt.Errorf("prepared run publication path does not match manifest namespace")
 	}
-	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return publishPreparedRunGeneration(manifest.Project, manifest.Profile, manifest.Session, manifest)
 }
 
 func readPreparedRunManifest(project, profile, session string) (preparedRunManifest, error) {
@@ -779,21 +873,87 @@ func readPreparedRunManifest(project, profile, session string) (preparedRunManif
 
 func readPreparedRunManifestSnapshot(project, profile, session string) (preparedRunManifest, string, error) {
 	path := preparedRunPath(project, profile, session)
-	data, err := os.ReadFile(path)
+	pointerData, err := os.ReadFile(path)
 	if err != nil {
 		return preparedRunManifest{}, "", err
 	}
+	var pointer preparedRunPointer
+	if err := json.Unmarshal(pointerData, &pointer); err != nil || pointer.SchemaVersion != preparedRunPointerSchema || strings.TrimSpace(pointer.Generation) == "" || strings.TrimSpace(pointer.ManifestDigest) == "" || strings.TrimSpace(pointer.StateDigest) == "" {
+		return preparedRunManifest{}, "", fmt.Errorf("prepared run pointer %s is incomplete or legacy; run preparation again", path)
+	}
+	if err := validatePreparedRunPathID("prepared generation", pointer.Generation); err != nil {
+		return preparedRunManifest{}, "", fmt.Errorf("prepared run pointer %s is invalid: %w", path, err)
+	}
+	manifestPath := preparedRunGenerationManifestPath(project, profile, session, pointer.Generation)
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return preparedRunManifest{}, "", fmt.Errorf("read accepted generation manifest %s: %w", manifestPath, err)
+	}
+	digest := digestRunArtifactBytes(data)
+	if digest != pointer.ManifestDigest {
+		return preparedRunManifest{}, "", fmt.Errorf("accepted generation manifest digest changed for %s", pointer.Generation)
+	}
+	initialStatePath := preparedRunInitialStatePath(project, profile, session, pointer.Generation)
+	initialStateData, err := os.ReadFile(initialStatePath)
+	if err != nil {
+		return preparedRunManifest{}, "", fmt.Errorf("read accepted generation initial state %s: %w", initialStatePath, err)
+	}
+	if digestRunArtifactBytes(initialStateData) != pointer.StateDigest {
+		return preparedRunManifest{}, "", fmt.Errorf("accepted generation initial state digest changed for %s", pointer.Generation)
+	}
+	initialState, err := readPreparedRunInitialState(initialStatePath)
+	if err != nil {
+		return preparedRunManifest{}, "", fmt.Errorf("accepted generation initial state is invalid for %s", pointer.Generation)
+	}
 	var manifest preparedRunManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return preparedRunManifest{}, "", fmt.Errorf("decode prepared run %s: %w", path, err)
+		return preparedRunManifest{}, "", fmt.Errorf("decode prepared run %s: %w", manifestPath, err)
 	}
 	if manifest.SchemaVersion != preparedRunSchema {
 		return preparedRunManifest{}, "", fmt.Errorf("prepared run schema %d is unsupported", manifest.SchemaVersion)
 	}
 	if strings.TrimSpace(manifest.Generation) == "" {
-		return preparedRunManifest{}, "", fmt.Errorf("prepared run %s has no immutable generation", path)
+		return preparedRunManifest{}, "", fmt.Errorf("prepared run %s has no immutable generation", manifestPath)
 	}
-	return manifest, digestRunArtifactBytes(data), nil
+	if manifest.Generation != pointer.Generation || !samePreparedRunGeneration(initialState.Token, preparedRunTokenFromSnapshot(manifest, digest)) {
+		return preparedRunManifest{}, "", fmt.Errorf("prepared run pointer, manifest, and initial state disagree for generation %s", pointer.Generation)
+	}
+	if manifest.PreparationRecord.Generation != manifest.Generation || manifest.PreparationRecord.Namespace != manifest.Namespace || manifest.PreparationRecord.LaunchShape != manifest.LaunchShape || manifest.PreparationRecord.Lead != manifest.Lead {
+		return preparedRunManifest{}, "", fmt.Errorf("prepared run %s has an invalid immutable preparation record", path)
+	}
+	if manifest.ResumeAuthorization.Policy != "managed_launch_record" || !manifest.ResumeAuthorization.SingleUse || !manifest.ResumeAuthorization.RecordBound || !manifest.ResumeAuthorization.GenerationBound {
+		return preparedRunManifest{}, "", fmt.Errorf("prepared run %s has an invalid managed resume authorization", path)
+	}
+	for _, role := range manifest.InitialRoster {
+		if err := team.ValidateRoleID(role); err != nil {
+			return preparedRunManifest{}, "", fmt.Errorf("prepared run %s has invalid initial role path token %q", path, role)
+		}
+		identity, ok := manifest.Members[role]
+		if !ok || identity.Role != role {
+			return preparedRunManifest{}, "", fmt.Errorf("prepared run %s has no exact initial identity for %q", path, role)
+		}
+	}
+	if len(manifest.StagedMembers) != len(manifest.StagedRoster) {
+		return preparedRunManifest{}, "", fmt.Errorf("prepared run %s staged identity set is incomplete", path)
+	}
+	for _, role := range manifest.StagedRoster {
+		if err := team.ValidateRoleID(role); err != nil {
+			return preparedRunManifest{}, "", fmt.Errorf("prepared run %s has invalid staged role path token %q", path, role)
+		}
+		identity, ok := manifest.StagedMembers[role]
+		if !ok || identity.Role != role || strings.TrimSpace(identity.Handle) == "" {
+			return preparedRunManifest{}, "", fmt.Errorf("prepared run %s has no exact staged identity for %q", path, role)
+		}
+	}
+	canonicalProject, err := canonicalDir(project)
+	if err != nil {
+		return preparedRunManifest{}, "", err
+	}
+	manifestProject, err := canonicalDir(manifest.Project)
+	if err != nil || manifestProject != canonicalProject {
+		return preparedRunManifest{}, "", fmt.Errorf("prepared run %s project identity changed: accepted=%s current=%s", path, manifest.Project, canonicalProject)
+	}
+	return manifest, digest, nil
 }
 
 func newPreparedRunGeneration() (string, error) {
@@ -1028,18 +1188,17 @@ func buildPreparedRunManifest(project, profile, session, shape, stagedRaw string
 	if err != nil {
 		return preparedRunManifest{}, err
 	}
-	active, skipped := filterMembersBySession(tm.Members, session)
-	tm.Members = active
+	allTeam := tm
+	staged := sortedUniqueRoles(stagedRaw)
+	initialMembers, stagedMembers, err := partitionPreparedRunMembers(tm.Members, session, staged)
+	if err != nil {
+		return preparedRunManifest{}, err
+	}
+	tm.Members = initialMembers
 	if len(tm.Members) == 0 {
 		return preparedRunManifest{}, fmt.Errorf("preparation has no members for session %q", session)
 	}
 	initial := teamMemberRoles(tm.Members)
-	staged := sortedUniqueRoles(stagedRaw)
-	for _, member := range skipped {
-		if !containsRole(staged, member.Role) {
-			return preparedRunManifest{}, fmt.Errorf("preparation excludes profile member %q pinned to session %q; add it to --staged-roles or prepare its own session explicitly", member.Role, member.Session)
-		}
-	}
 	controlRoot, targetRoot := acceptedExecutionRoots(tm)
 	generation, err := newPreparedRunGeneration()
 	if err != nil {
@@ -1053,9 +1212,12 @@ func buildPreparedRunManifest(project, profile, session, shape, stagedRaw string
 		ExecutionMode: effectiveTeamExecutionMode(tm), ControlRoot: controlRoot, TargetRoot: targetRoot,
 		TargetContract: tm.TargetContract, LeadMode: team.EffectiveLeadMode(tm), Topology: context.Topology,
 		Members:         map[string]preparedRunMemberIdentity{},
+		StagedMembers:   map[string]preparedRunMemberIdentity{},
 		Environment:     preparedRunEnvironment{BinaryVersion: strings.TrimSpace(context.Version), SkillVersion: strings.TrimSpace(context.Version), AMQMinimum: doctorMinAMQVersion, Capabilities: append([]string(nil), preparedRunRequiredCapabilities...)},
 		ArtifactDigests: map[string]string{}, RoleDigests: map[string]string{}, BootstrapDigests: map[string]string{}, BootstrapBindings: map[string]string{}, PreparedAt: time.Now().UTC(),
 	}
+	manifest.PreparationRecord = preparedRunPreparationRecord{Generation: generation, Namespace: manifest.Namespace, LaunchShape: shape, Lead: tm.Lead}
+	manifest.ResumeAuthorization = preparedRunResumeAuthorization{Policy: "managed_launch_record", SingleUse: true, RecordBound: true, GenerationBound: true}
 	for label, path := range map[string]string{
 		"brief":      briefPathForProfile(project, profile, session),
 		"team_rules": rules.Path(project),
@@ -1081,6 +1243,19 @@ func buildPreparedRunManifest(project, profile, session, shape, stagedRaw string
 			return preparedRunManifest{}, err
 		}
 		prompt, err := preparedBootstrap(project, profile, session, binding, tm, member, context)
+		if err != nil {
+			return preparedRunManifest{}, err
+		}
+		manifest.BootstrapDigests[member.Role] = digestRunArtifactBytes([]byte(prompt))
+		manifest.BootstrapBindings[member.Role] = bindingLine
+	}
+	for _, member := range stagedMembers {
+		manifest.StagedMembers[member.Role] = acceptedMemberIdentity(allTeam, member, profile, session)
+		bindingLine, err := expectedPreparedBootstrapBindingLine(allTeam, profile, session, member, binding)
+		if err != nil {
+			return preparedRunManifest{}, err
+		}
+		prompt, err := preparedBootstrap(project, profile, session, binding, allTeam, member, context)
 		if err != nil {
 			return preparedRunManifest{}, err
 		}
@@ -1228,8 +1403,11 @@ func validatePreparedLaunchBootstrapInputs(project, profile, session string, con
 	if err != nil {
 		return err
 	}
-	active, skipped := filterMembersBySession(tm.Members, session)
-	tm.Members = active
+	initial, _, err := partitionPreparedRunMembers(tm.Members, session, manifest.StagedRoster)
+	if err != nil {
+		return err
+	}
+	tm.Members = initial
 	effortOverrides, err := parseEffortOverrides(effortRaw)
 	if err != nil {
 		return err
@@ -1248,13 +1426,9 @@ func validatePreparedLaunchBootstrapInputs(project, profile, session string, con
 	if !sameRoleSet(actualRoles, manifest.InitialRoster) {
 		return fmt.Errorf("exact launch roster differs from accepted bootstrap roster: accepted=[%s] actual=[%s]", strings.Join(manifest.InitialRoster, ","), strings.Join(actualRoles, ","))
 	}
-	for _, member := range skipped {
-		if !containsRole(manifest.StagedRoster, member.Role) {
-			return fmt.Errorf("profile member %q pinned to other session %q is neither launchable nor explicitly staged", member.Role, member.Session)
-		}
-	}
-	if len(manifest.BootstrapDigests) != len(tm.Members) || len(manifest.BootstrapBindings) != len(tm.Members) {
-		return fmt.Errorf("accepted bootstrap rows do not exactly match launch roster: members=%d digests=%d bindings=%d", len(tm.Members), len(manifest.BootstrapDigests), len(manifest.BootstrapBindings))
+	acceptedBootstrapCount := len(manifest.InitialRoster) + len(manifest.StagedRoster)
+	if len(manifest.BootstrapDigests) != acceptedBootstrapCount || len(manifest.BootstrapBindings) != acceptedBootstrapCount {
+		return fmt.Errorf("accepted bootstrap rows do not exactly match accepted initial+staged roster: roles=%d digests=%d bindings=%d", acceptedBootstrapCount, len(manifest.BootstrapDigests), len(manifest.BootstrapBindings))
 	}
 	for _, member := range tm.Members {
 		actual := resolvedMemberIdentity(tm, member, profile, session, modelOverrides, mergedBinaryArgs, false)
@@ -1331,12 +1505,19 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 	}
 	tm, teamErr := team.ReadProfile(project, profile)
 	var skippedMembers []team.Member
+	var stagedMembers []team.Member
+	var fullTeam team.Team
 	if teamErr != nil {
 		add("profile", "missing", teamErr.Error(), "approve preparation to create the exact initial profile")
 	} else {
-		active, skipped := filterMembersBySession(tm.Members, session)
-		tm.Members = active
-		skippedMembers = skipped
+		fullTeam = tm
+		initial, staged, partitionErr := partitionPreparedRunMembers(tm.Members, session, manifest.StagedRoster)
+		if partitionErr != nil {
+			add("profile", "drifted", partitionErr.Error(), "restore every accepted initial and staged member definition or approve preparation again")
+		}
+		tm.Members = initial
+		stagedMembers = staged
+		_, skippedMembers = filterMembersBySession(fullTeam.Members, session)
 		actual := teamMemberRoles(tm.Members)
 		controlRoot, targetRoot := acceptedExecutionRoots(tm)
 		if effectiveTeamExecutionMode(tm) != manifest.ExecutionMode || controlRoot != manifest.ControlRoot || targetRoot != manifest.TargetRoot || tm.TargetContract != manifest.TargetContract || team.EffectiveLeadMode(tm) != manifest.LeadMode {
@@ -1360,6 +1541,15 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 				add("member:"+member.Role, "drifted", fmt.Sprintf("accepted=%+v current=%+v", accepted, current), "return to preparation and accept the exact binary/model/effort/task/tool identity")
 			} else {
 				add("member:"+member.Role, "ready", fmt.Sprintf("handle=%s binary=%s model=%s effort=%s task=%s tool_policy=%s", current.Handle, current.Binary, current.Model, current.Effort, current.TaskOwnership, current.ToolProfile), "")
+			}
+		}
+		for _, member := range stagedMembers {
+			accepted, ok := manifest.StagedMembers[member.Role]
+			current := acceptedMemberIdentity(fullTeam, member, profile, session)
+			if !ok || !reflect.DeepEqual(accepted, current) {
+				add("member:"+member.Role, "drifted", fmt.Sprintf("accepted=%+v current=%+v", accepted, current), "return to preparation and accept the exact staged binary/model/effort/task/tool identity")
+			} else {
+				add("member:"+member.Role, "ready", fmt.Sprintf("staged handle=%s binary=%s model=%s effort=%s task=%s tool_policy=%s", current.Handle, current.Binary, current.Model, current.Effort, current.TaskOwnership, current.ToolProfile), "")
 			}
 		}
 	}
@@ -1392,6 +1582,9 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 		for _, member := range skippedMembers {
 			skippedByRole[member.Role] = member
 		}
+		for _, member := range stagedMembers {
+			skippedByRole[member.Role] = member
+		}
 	}
 	for _, roleID := range append(append([]string(nil), manifest.InitialRoster...), manifest.StagedRoster...) {
 		digest, source, err := roleContractDigest(project, roleID)
@@ -1416,12 +1609,10 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 		}
 	}
 	for _, roleID := range manifest.StagedRoster {
-		if actualInitial[roleID] {
-			add("staged_role:"+roleID, "drifted", "staged-only role is present in the exact session launch roster", "return to preparation and choose the intended roster explicitly")
-		} else if member, ok := skippedByRole[roleID]; ok {
-			add("staged_role:"+roleID, "ready", fmt.Sprintf("pinned to other session %q; absent from exact session launch", member.Session), "")
+		if member, ok := skippedByRole[roleID]; ok {
+			add("staged_role:"+roleID, "ready", fmt.Sprintf("configured as %s/%s and excluded from initial launch; separate durable spawn reservation required", roleID, memberHandle(member)), "")
 		} else {
-			add("staged_role:"+roleID, "ready", "absent from exact session launch; separate durable spawn gate required", "")
+			add("staged_role:"+roleID, "drifted", "accepted staged member definition is missing", "restore the full staged profile member or approve preparation again")
 		}
 	}
 	for _, member := range skippedMembers {
@@ -1468,6 +1659,20 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 			add("environment", "drifted", err.Error(), "repair the reported version, capability, topology, pointer, or policy drift and approve preparation again")
 		} else {
 			add("environment", "ready", evidence, "")
+		}
+		for _, member := range stagedMembers {
+			artifact := "bootstrap:" + member.Role
+			expectedBinding, bindingErr := expectedPreparedBootstrapBindingLine(fullTeam, profile, session, member, binding)
+			if bindingErr != nil || manifest.BootstrapBindings[member.Role] != expectedBinding {
+				add(artifact, "drifted", "staged bootstrap binding differs from accepted preparation", "approve preparation again with the exact staged bootstrap binding")
+				continue
+			}
+			prompt, promptErr := preparedBootstrap(project, profile, session, binding, fullTeam, member, acceptedRunContext{Version: context.Version, Topology: manifest.Topology})
+			if promptErr != nil || digestRunArtifactBytes([]byte(prompt)) != manifest.BootstrapDigests[member.Role] {
+				add(artifact, "drifted", "staged generated bootstrap differs from accepted preparation", "review the staged bootstrap diff and approve preparation again")
+			} else {
+				add(artifact, "ready", fmt.Sprintf("staged role=%s handle=%s sha256=%s", member.Role, memberHandle(member), manifest.BootstrapDigests[member.Role]), "")
+			}
 		}
 	}
 	result.Ready = len(result.Rows) > 0
