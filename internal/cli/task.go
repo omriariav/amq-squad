@@ -1149,7 +1149,7 @@ func deliverTaskOutbox(projectDir, profile, session string, intents []task.Outbo
 			receipt.PreparedRunGoalNamespace = lifecycle.GenerationRef.GoalNamespace
 			receipt.PreparedRunGoalDigest = lifecycle.GenerationRef.GoalDigest
 			if actorRecord, recordErr := launch.Read(filepath.Join(ctx.Root, "agents", started.From)); recordErr == nil {
-				receipt.PreparedRunLaunchAttempt = reflectedStringField(actorRecord, "PreparedRunLaunchAttempt", "LaunchAttempt")
+				receipt.PreparedRunLaunchAttempt = strings.TrimSpace(actorRecord.PreparedRunLaunchAttempt)
 			}
 		}
 		receipt.addStage(deliveryStateAmbiguousUnknown, "receipt reserved before task outbox link and AMQ send")

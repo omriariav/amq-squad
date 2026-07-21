@@ -14,11 +14,36 @@ import (
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 )
 
+const (
+	taskLifecycleGenerationOne  = "11111111111111111111111111111111"
+	taskLifecycleGenerationTwo  = "22222222222222222222222222222222"
+	taskLifecycleGenerationNext = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	taskLifecycleGenerationFake = "ffffffffffffffffffffffffffffffff"
+	taskLifecycleManifestDigest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	taskLifecycleGoalDigest     = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+)
+
+func taskLifecyclePreparedManifest(project, generation string) preparedRunManifest {
+	manifest := preparedRunManifest{
+		SchemaVersion: preparedRunSchema,
+		Generation:    generation,
+		Project:       project,
+		Profile:       "review",
+		Session:       "s",
+		Namespace:     "review/s",
+		GoalNamespace: "review/s",
+		GoalDigest:    taskLifecycleGoalDigest,
+	}
+	manifest.PreparationRecord = preparedRunPreparationRecord{Generation: generation, Namespace: manifest.Namespace}
+	manifest.ResumeAuthorization = preparedRunResumeAuthorization{Policy: "managed_launch_record", SingleUse: true, RecordBound: true, GenerationBound: true}
+	return manifest
+}
+
 func TestLifecycleCorrelationUsesValueEqualityAndImmutableEvidence(t *testing.T) {
 	project, seeded := seedEvidenceTask(t, true)
 	project, _ = filepath.EvalSymlinks(project)
 	now := time.Date(2026, 7, 21, 13, 0, 0, 0, time.UTC)
-	generation := taskstore.GenerationRef{Generation: "run-1", ManifestDigest: "manifest-1", GoalNamespace: "review/s", GoalDigest: "goal-1"}
+	generation := taskstore.GenerationRef{Generation: taskLifecycleGenerationOne, ManifestDigest: taskLifecycleManifestDigest, GoalNamespace: "review/s", GoalDigest: taskLifecycleGoalDigest}
 	if _, err := taskstore.PrepareDispatchForProfile(project, "review", "s", seeded.ID, taskstore.DispatchIntentOptions{From: "cto", Assignee: "worker", Thread: "p2p/cto__worker", Kind: "todo", GenerationRef: &generation, Now: now}); err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +115,8 @@ func TestLifecycleCorrelationUsesValueEqualityAndImmutableEvidence(t *testing.T)
 func TestManagedLifecycleRejectsArbitraryOverrideStaleAndMissingActorRecord(t *testing.T) {
 	project := t.TempDir()
 	ns := squadnamespace.Resolve(project, "review", "s")
-	manifest := preparedRunManifest{SchemaVersion: preparedRunSchema, Generation: "run-1", Project: project, Profile: "review", Session: "s", Namespace: "review/s", GoalNamespace: "review/s", GoalDigest: "goal-1"}
-	if err := writePreparedRunManifest(preparedRunPath(project, "review", "s"), manifest); err != nil {
+	manifest := taskLifecyclePreparedManifest(project, taskLifecycleGenerationOne)
+	if err := publishPreparedRunGeneration(project, "review", "s", manifest); err != nil {
 		t.Fatal(err)
 	}
 	_, manifestDigest, err := readPreparedRunManifestSnapshot(project, "review", "s")
@@ -100,32 +125,32 @@ func TestManagedLifecycleRejectsArbitraryOverrideStaleAndMissingActorRecord(t *t
 	}
 	agentDir := filepath.Join(ns.AMQRoot, "agents", "worker")
 	record := launch.Record{Schema: launch.SchemaVersion, CWD: project, Binary: "codex", Handle: "worker", Session: "s", Root: ns.AMQRoot,
-		PreparedRunGeneration: "run-1", PreparedRunDigest: manifestDigest, PreparedRunGoalNamespace: "review/s", PreparedRunGoalDigest: "goal-1"}
+		PreparedRunGeneration: taskLifecycleGenerationOne, PreparedRunDigest: manifestDigest, PreparedRunGoalNamespace: "review/s", PreparedRunGoalDigest: taskLifecycleGoalDigest}
 	if err := launch.Write(agentDir, record); err != nil {
 		t.Fatal(err)
 	}
-	want := taskstore.GenerationRef{Generation: "run-1", ManifestDigest: manifestDigest, GoalNamespace: "review/s", GoalDigest: "goal-1"}
+	want := taskstore.GenerationRef{Generation: taskLifecycleGenerationOne, ManifestDigest: manifestDigest, GoalNamespace: "review/s", GoalDigest: taskLifecycleGoalDigest}
 	if got, err := taskLifecycleGenerationRef(ns, "worker", want); err != nil || got != want {
 		t.Fatalf("matching managed generation rejected: got=%+v err=%v", got, err)
 	}
 	forged := want
-	forged.Generation = "forged"
+	forged.Generation = taskLifecycleGenerationFake
 	if _, err := taskLifecycleGenerationRef(ns, "worker", forged); err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("arbitrary override accepted: %v", err)
 	}
-	record.PreparedRunGeneration = "run-2"
+	record.PreparedRunGeneration = taskLifecycleGenerationTwo
 	if err := launch.Write(agentDir, record); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := taskLifecycleGenerationRef(ns, "worker", want); err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("stale generation accepted: %v", err)
 	}
-	record.PreparedRunGeneration = "run-1"
+	record.PreparedRunGeneration = taskLifecycleGenerationOne
 	if err := launch.Write(agentDir, record); err != nil {
 		t.Fatal(err)
 	}
-	manifest.Generation = "run-advanced"
-	if err := writePreparedRunManifest(preparedRunPath(project, "review", "s"), manifest); err != nil {
+	manifest.Generation = taskLifecycleGenerationNext
+	if err := publishPreparedRunGeneration(project, "review", "s", manifest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := taskLifecycleGenerationRef(ns, "worker", taskstore.GenerationRef{}); err == nil || !strings.Contains(err.Error(), "current accepted") {
@@ -143,8 +168,8 @@ func TestDispatchGenerationRequiresManagedPairAgreement(t *testing.T) {
 	project := t.TempDir()
 	ns := squadnamespace.Resolve(project, "review", "s")
 	root := ns.AMQRoot
-	manifest := preparedRunManifest{SchemaVersion: preparedRunSchema, Generation: "run-1", Project: project, Profile: "review", Session: "s", Namespace: "review/s", GoalNamespace: "review/s", GoalDigest: "goal"}
-	if err := writePreparedRunManifest(preparedRunPath(project, "review", "s"), manifest); err != nil {
+	manifest := taskLifecyclePreparedManifest(project, taskLifecycleGenerationOne)
+	if err := publishPreparedRunGeneration(project, "review", "s", manifest); err != nil {
 		t.Fatal(err)
 	}
 	_, digest, err := readPreparedRunManifestSnapshot(project, "review", "s")
@@ -154,17 +179,17 @@ func TestDispatchGenerationRequiresManagedPairAgreement(t *testing.T) {
 	write := func(handle, generation string) {
 		t.Helper()
 		if err := launch.Write(filepath.Join(root, "agents", handle), launch.Record{Schema: launch.SchemaVersion, Handle: handle,
-			PreparedRunGeneration: generation, PreparedRunDigest: digest, PreparedRunGoalNamespace: "review/s", PreparedRunGoalDigest: "goal"}); err != nil {
+			PreparedRunGeneration: generation, PreparedRunDigest: digest, PreparedRunGoalNamespace: "review/s", PreparedRunGoalDigest: taskLifecycleGoalDigest}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("cto", "run-1")
-	write("worker", "run-2")
+	write("cto", taskLifecycleGenerationOne)
+	write("worker", taskLifecycleGenerationTwo)
 	if _, err := dispatchGenerationRef(project, "review", "s", root, "cto", "worker"); err == nil || !strings.Contains(err.Error(), "disagree") {
 		t.Fatalf("mismatched dispatch generation accepted: %v", err)
 	}
-	write("worker", "run-1")
-	if ref, err := dispatchGenerationRef(project, "review", "s", root, "cto", "worker"); err != nil || ref == nil || ref.Generation != "run-1" {
+	write("worker", taskLifecycleGenerationOne)
+	if ref, err := dispatchGenerationRef(project, "review", "s", root, "cto", "worker"); err != nil || ref == nil || ref.Generation != taskLifecycleGenerationOne {
 		t.Fatalf("matching dispatch generation rejected: ref=%+v err=%v", ref, err)
 	}
 	if err := os.Remove(launch.ExistingPath(filepath.Join(root, "agents", "worker"))); err != nil {

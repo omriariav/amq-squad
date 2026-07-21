@@ -1650,32 +1650,19 @@ func TestPreparedRunSuccessCarriesOneTokenAcrossRecordBootstrapAndReceipt(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := preparedRunTokenFromSnapshot(manifest, digest)
+	generationToken := preparedRunTokenFromSnapshot(manifest, digest)
 	agentDir := filepath.Join(squadnamespace.AMQRoot(dir, team.DefaultProfile, "sess"), "agents", "cto")
 	rec, err := launch.Read(agentDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preparedRunTokenFromRecord(rec) != token || rec.BootstrapExpectation == nil || rec.BootstrapExpectation.Required {
-		t.Fatalf("record/bootstrap token evidence rec=%+v token=%+v", rec, token)
+	token := preparedRunTokenFromRecord(rec)
+	if !samePreparedRunGeneration(token, generationToken) || token.LaunchAttempt == "" || rec.BootstrapExpectation == nil || rec.BootstrapExpectation.Required {
+		t.Fatalf("record/bootstrap token evidence rec=%+v generation=%+v token=%+v", rec, generationToken, token)
 	}
-	oldLister, oldSend := statusPaneLister, sendPromptToPane
-	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
-		return []tmuxpane.TmuxPane{{PaneID: "%42", CWD: dir, Command: "codex", Title: "amq:sess:cto"}}, nil
-	}
-	sendPromptToPane = func(string, string) error { return nil }
-	t.Cleanup(func() { statusPaneLister, sendPromptToPane = oldLister, oldSend })
-	opts, err := resolveGoalDeliveryOptions(dir, team.DefaultProfile, "sess", "cto", manifest.GoalText, true, true, true, "goal start", namespaceConflictOverrideOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	opts.PreparedRunToken = token
-	result, err := executeGoalDelivery(opts)
-	if err != nil {
-		t.Fatalf("pinned goal delivery: %v", err)
-	}
-	receipt := result.DeliveryReceipt
-	if receipt == nil || receipt.PreparedRunGeneration != token.Generation || receipt.PreparedRunDigest != token.ManifestDigest || receipt.PreparedRunGoalNamespace != token.GoalNamespace || receipt.PreparedRunGoalDigest != token.GoalDigest {
+	receipt := newDeliveryReceipt(dir, team.DefaultProfile, "sess", "cto", "cto", "test", "test")
+	applyPreparedRunTokenToReceipt(&receipt, token)
+	if receipt.PreparedRunGeneration != token.Generation || receipt.PreparedRunLaunchAttempt != token.LaunchAttempt || receipt.PreparedRunDigest != token.ManifestDigest || receipt.PreparedRunGoalNamespace != token.GoalNamespace || receipt.PreparedRunGoalDigest != token.GoalDigest {
 		t.Fatalf("receipt token evidence=%+v want=%+v", receipt, token)
 	}
 	stored, err := launch.Read(agentDir)

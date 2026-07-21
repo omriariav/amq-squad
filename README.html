@@ -272,8 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-v2210" id="toc-whats-new-in-v2210">What's new
-in v2.21.0</a></li>
+<li><a href="#whats-new-in-v2230" id="toc-whats-new-in-v2230">What's new
+in v2.23.0</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#quickstart" id="toc-quickstart">Quickstart</a></li>
 <li><a href="#execution-modes" id="toc-execution-modes">Execution
@@ -324,7 +324,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2210">What's new in v2.21.0</a></li>
+<li><a href="#whats-new-in-v2230">What's new in v2.23.0</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -342,46 +342,45 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
-<h2 id="whats-new-in-v2210">What's new in v2.21.0</h2>
-<p>v2.21.0 adds a fail-closed execution and authorization layer for
-long-running agent teams:</p>
+<h2 id="whats-new-in-v2230">What's new in v2.23.0</h2>
+<p>v2.23.0 makes prepared launches, task lifecycle events, and bootstrap
+capabilities share exact durable identities:</p>
 <ul>
-<li><strong>Trusted authorization envelopes (#414).</strong> A verified
-human approval can be emitted as an immutable signed Ed25519 envelope;
-consumers revalidate its signature, trust/revocation state, exact action
-and target, durable gate, receipt, namespace generation,
-policy/preflight, and compound-release claim. The envelope verifies
-authority; it is not a bearer token or automatic shell, Git, tag, or
-release action.</li>
-<li><strong>Terminal operator-gate lifecycle (#464).</strong> Requesters
-can close or withdraw the exact current gate generation. Answered,
-closed, and withdrawn gates stop escalating, while later valid requests
-reopen with a fresh clock. Completed tasks project to closed attention,
-cancelled tasks project to closed, and a cancelled task with
-<code>ReplacedBy</code> projects to superseded; failed and blocked tasks
-remain attention-bearing.</li>
-<li><strong>Safe own-pane waits (#416).</strong> In
-<code>lead_pane</code> mode, verified lead waits are refused when
-caller-raised gates remain open, waits exceed 120 seconds, or waits are
-unbounded. Deliberate overrides require a reason and durable audit.</li>
-<li><strong>Durable tasks, sends, and namespaces.</strong> Task
-completion and successor dispatch use journals and outbox intents; owned
-AMQ sends persist delivery receipts; canonical context resolution and
-cold namespace migration fail closed on ambiguous state.</li>
-<li><strong>Stronger launch/runtime recovery.</strong> Fresh AMQ roots
-bootstrap explicitly, Codex goal delivery is claim-once and resumable,
-external orchestrator registration is transactional, wake injection is
-marker-safe, and managed pane cleanup refuses uncertain ownership.</li>
+<li><strong>Immutable prepared generations (#485).</strong> Preparation
+publishes a generation-addressed manifest and initial state behind a
+digest-bound current pointer. Launch reservation, initial and staged
+members, goal admission, terminal state, and managed resume use
+append-only single-use claims from that generation. Mutation, stale
+input, replay, and rollback races fail before child, goal, record, pane,
+or AMQ side effects.</li>
+<li><strong>Structured task/AMQ lifecycle correlation (#487).</strong>
+Task events bind the task, actor, namespace, prepared generation, claim
+generation, dispatch and outbox anchors, and immutable evidence. ACK,
+progress, checkpoint, review, stale, duplicate, delayed,
+cross-namespace, and arbitrary prose cannot be mistaken for terminal
+completion.</li>
+<li><strong>Actor-relative bootstrap contracts (#492).</strong> Schema-5
+profiles persist an exact <code>actor_mode</code> per member. Planner
+leads remain review-only, implementation workers implement their
+assigned tasks directly, and neither posture nor delegation authority
+leaks between actors. Role and handle matching is case-sensitive and
+fail-closed.</li>
+<li><strong>Deterministic recovery.</strong> Staged roles require
+complete prepared identities and <code>agent up --staged-spawn</code>;
+managed resume requires the exact accepted generation and launch
+attempt. Legacy preparations are never upgraded in place—operators
+create a fresh reviewed preparation.</li>
 </ul>
-<p>See <a href="docs/v2.21.0-release-notes.md">the v2.21.0 release
-notes</a> for the complete issue-to-behavior map.</p>
+<p>See <a href="docs/v2.23.0-release-notes.md">the v2.23.0 release
+notes</a> and <a href="docs/v2.23.0-platform-migration.md">migration
+guide</a> for the complete issue-to-behavior and recovery maps.</p>
 <h2 id="install">Install</h2>
 <p>Install the v2 module path:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.22.0</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.23.0</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
@@ -887,6 +886,14 @@ signal by default: AMQ kind <code>status</code> with subject
 explicit suppression). Claims carry renewable leases; reconcile reports
 stale or legacy leases without silently unclaiming work and never
 auto-retries an uncertain delivery.</p>
+<p>Task-backed lifecycle events are schema-bound records, not subject
+heuristics. They carry the exact actor, task and claim generation,
+namespace, prepared-run generation reference, dispatch/outbox anchors,
+and—where required—immutable command-evidence reference. ACK, progress,
+checkpoint, and review remain nonterminal; only the matching terminal
+task transaction can publish DONE, BLOCK, or cancellation. Delayed,
+duplicate, stale-generation, cross-namespace, or prose-only messages
+remain inspectable but cannot change task state.</p>
 <p><code>evidence run</code> executes argv without a shell for the
 active structured task assignee. It binds canonical namespace, exact
 task and executable bytes, cwd, bounded explicit environment, and
@@ -1036,9 +1043,9 @@ implicit default. Two or more <code>full</code> members duplicate
 MCP/plugin context and increase memory and concurrency pressure, so the
 review screen warns before that configuration proceeds.</p>
 <p>Model guidance is intentionally skill-owned because it changes faster
-than the binary. For v2.22.0, use the current model family and per-role
-model/effort recommendations in the installed v2.22.0 skills; confirm
-the startup marker <code>amq-squad skill v2.22.0</code> matches
+than the binary. For v2.23.0, use the current model family and per-role
+model/effort recommendations in the installed v2.23.0 skills; confirm
+the startup marker <code>amq-squad skill v2.23.0</code> matches
 <code>amq-squad version</code>. Treat cost as a tie-breaker after output
 quality for shippable work, and prefer installed-skill guidance over
 copying model examples from this README.</p>

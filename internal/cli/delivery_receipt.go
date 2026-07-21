@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -91,27 +90,10 @@ func applyPreparedRunTokenToReceipt(receipt *deliveryReceiptData, token prepared
 		return
 	}
 	receipt.PreparedRunGeneration = token.Generation
-	receipt.PreparedRunLaunchAttempt = preparedRunLaunchAttempt(token)
+	receipt.PreparedRunLaunchAttempt = token.LaunchAttempt
 	receipt.PreparedRunDigest = token.ManifestDigest
 	receipt.PreparedRunGoalNamespace = token.GoalNamespace
 	receipt.PreparedRunGoalDigest = token.GoalDigest
-}
-
-// preparedRunLaunchAttempt keeps the runtime-owned receipt compatible with
-// the platform-owned token as LaunchAttempt lands independently.
-func preparedRunLaunchAttempt(token preparedRunToken) string {
-	return reflectedStringField(token, "LaunchAttempt")
-}
-
-func reflectedStringField(value any, names ...string) string {
-	reflected := reflect.ValueOf(value)
-	for _, name := range names {
-		field := reflected.FieldByName(name)
-		if field.IsValid() && field.Kind() == reflect.String {
-			return strings.TrimSpace(field.String())
-		}
-	}
-	return ""
 }
 
 type deliveryConsumerState struct {

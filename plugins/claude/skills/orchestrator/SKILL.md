@@ -6,7 +6,7 @@ argument-hint: "[compose | spawn | dispatch | monitor | review | recover]"
 user-invocable: true
 trigger: "/orchestrator"
 ---
-**Skill version: 2.22.0** - Start the first response by stating the loaded identity as `amq-squad skill v2.22.0` before status or analysis.
+**Skill version: 2.23.0** - Start the first response by stating the loaded identity as `amq-squad skill v2.23.0` before status or analysis.
 
 # amq-squad:orchestrator
 
